@@ -1,0 +1,18 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: seneca
+spec:
+  tenant: Pablo
+  room: grp.pablo
+  alias: seneca
+  harness: openclaw
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_SENECA_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_SENECA_TOKEN_PATH
+    clientCertificate: CAUCE_SENECA_CERT_PATH
+    clientKey: CAUCE_SENECA_KEY_PATH
+    certificateAuthority: CAUCE_SENECA_CA_PATH
+  process: {executablePathEnv: CAUCE_SENECA_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/seneca

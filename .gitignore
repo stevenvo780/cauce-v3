@@ -1,0 +1,63 @@
+# ── deps / build ────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+*.tsbuildinfo
+coverage/
+**/coverage/
+
+# ── test state / evidence (regenerable) ─────────────────────────
+**/.test-state/
+.adapter-e2e-*/
+ops/artifacts/
+ops/backups/
+!ops/artifacts/.gitkeep
+!ops/backups/.gitkeep
+
+# ── env / config ────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.local
+ops/config/*.env
+config/*.env
+
+# ── secrets — NEVER commit (real keys/tokens live outside this repo)
+*.key
+*.pem
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.token
+id_rsa*
+id_ed25519*
+**/pki/
+**/secrets/
+**/tokens/
+# synthetic loopback-only mTLS fixtures used by gateway tests (documented, CN=127.0.0.1)
+!services/gateway/src/test-fixtures/
+!services/gateway/src/test-fixtures/*.pem
+
+# ── tmp / backups / caches ──────────────────────────────────────
+.tmp*/
+*.tmp
+*.bak
+*.bak-*
+*.orig
+*~
+.serena/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+__pycache__/
+*.log
+
+# ── OS / editor ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

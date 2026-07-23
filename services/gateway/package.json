@@ -1,0 +1,19 @@
+{
+  "name": "@cauce/gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/app.ts",
+  "scripts": {
+    "test": "vitest run src/*.test.ts",
+    "typecheck": "tsc --noEmit -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@cauce/protocol": "workspace:*",
+    "@cauce/store": "workspace:*",
+    "@fastify/websocket": "^11.2.0",
+    "fastify": "^5.4.0",
+    "pg": "^8.16.3",
+    "ws": "^8.18.3"
+  }
+}

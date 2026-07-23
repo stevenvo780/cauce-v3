@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Cauce V3 alias watchdog (%i)
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+Unit=cauce-v3-watchdog@%i.service
+
+[Install]
+WantedBy=timers.target

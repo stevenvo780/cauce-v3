@@ -1,0 +1,18 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: socrates
+spec:
+  tenant: Steven
+  room: grp.steven
+  alias: socrates
+  harness: claude
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_SOCRATES_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_SOCRATES_TOKEN_PATH
+    clientCertificate: CAUCE_SOCRATES_CERT_PATH
+    clientKey: CAUCE_SOCRATES_KEY_PATH
+    certificateAuthority: CAUCE_SOCRATES_CA_PATH
+  process: {executablePathEnv: CAUCE_SOCRATES_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/socrates

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/release-candidate.schema.json",
+  "title": "Cauce V3 release-candidate gate separation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "sourceDigest", "generatedAt", "candidateStatus", "fleet", "gates", "evidence"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "suite": { "const": "cauce-v3-release-candidate" },
+    "sourceDigest": { "$ref": "#/$defs/digest" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "candidateStatus": { "const": "code-runtime-passed-release-host-blocked" },
+    "fleet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifests", "packagedAdapters"],
+      "properties": {
+        "manifests": { "const": 12 },
+        "packagedAdapters": { "const": 5 }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codeRuntime", "releaseHost"],
+      "properties": {
+        "codeRuntime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "criticalSkipped", "checks"],
+          "properties": {
+            "status": { "const": "passed" },
+            "criticalSkipped": { "const": 0 },
+            "checks": {
+              "type": "array",
+              "minItems": 7,
+              "items": { "$ref": "#/$defs/check" }
+            }
+          }
+        },
+        "releaseHost": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason", "prerequisites"],
+          "properties": {
+            "status": { "const": "blocked" },
+            "reason": { "type": "string", "minLength": 1 },
+            "prerequisites": {
+              "type": "array",
+              "minItems": 6,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "status", "description"],
+                "properties": {
+                  "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$" },
+                  "status": { "const": "required-external" },
+                  "description": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "path", "sha256", "sourceDigest"],
+        "properties": {
+          "kind": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$" },
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "sourceDigest": { "$ref": "#/$defs/digest" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "evidenceKind"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "const": "passed" },
+        "evidenceKind": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$" }
+      }
+    }
+  }
+}

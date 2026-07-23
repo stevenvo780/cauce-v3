@@ -1,0 +1,4 @@
+{"type":"step_start","sessionID":"ses_opencode_1177"}
+{"type":"text","sessionID":"ses_opencode_1177","part":{"type":"text","text":"{\"reply\":\"OpenCode 1.17.7 captured\",\"messages\":[],"}}
+{"type":"text","sessionID":"ses_opencode_1177","part":{"type":"text","text":"\"status\":\"done\",\"retryable\":false,\"artifacts\":[]}"}}
+{"type":"step_finish","sessionID":"ses_opencode_1177"}

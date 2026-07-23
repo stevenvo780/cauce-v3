@@ -1,0 +1,461 @@
+name: ${COMPOSE_PROJECT_NAME:-cauce-v3-prod}
+
+x-runtime-service: &runtime-service
+  image: ${CAUCE_RUNTIME_IMAGE:?set an immutable CAUCE_RUNTIME_IMAGE digest}
+  user: "1000:1000"
+  restart: always
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  stop_grace_period: 45s
+  entrypoint: ["/app/deploy/runtime-entrypoint.sh"]
+
+x-runtime-secrets: &runtime-secrets
+  - source: database_url
+    target: database_url
+    uid: "1000"
+    gid: "1000"
+    mode: 0400
+  - source: postgres_ca
+    target: postgres_ca
+    uid: "1000"
+    gid: "1000"
+    mode: 0444
+
+services:
+  migrator:
+    <<: *runtime-service
+    restart: "no"
+    command: ["node", "deploy/migrate.mjs"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      NODE_ENV: production
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/secrets/postgres_ca
+    secrets: *runtime-secrets
+    networks: [backend]
+
+  gateway:
+    <<: *runtime-service
+    command: ["node", "services/gateway/dist/main.js"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      NODE_ENV: production
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/secrets/postgres_ca
+      CAUCE_DEV_AUTH: "0"
+      CAUCE_AUTH_PROVIDER: ${CAUCE_AUTH_PROVIDER:?select oidc, mtls, or token-file}
+      CAUCE_OIDC_ISSUER: ${CAUCE_OIDC_ISSUER:-}
+      CAUCE_OIDC_AUDIENCE: ${CAUCE_OIDC_AUDIENCE:-}
+      CAUCE_OIDC_JWKS_URL: ${CAUCE_OIDC_JWKS_URL:-}
+      CAUCE_OIDC_AUTHORIZATION_URL: ${CAUCE_OIDC_AUTHORIZATION_URL:-}
+      CAUCE_OIDC_TOKEN_URL: ${CAUCE_OIDC_TOKEN_URL:-}
+      CAUCE_OIDC_CLIENT_ID: ${CAUCE_OIDC_CLIENT_ID:-}
+      CAUCE_OIDC_REDIRECT_URI: ${CAUCE_OIDC_REDIRECT_URI:-}
+      CAUCE_OIDC_POST_LOGIN_PATH: ${CAUCE_OIDC_POST_LOGIN_PATH:-/}
+      CAUCE_OIDC_SESSION_KEY_FILE: /run/secrets/gateway_oidc_session_key
+      CAUCE_OIDC_CLIENT_SECRET_FILE: ${CAUCE_OIDC_CLIENT_SECRET_CONTAINER_FILE:-}
+      CAUCE_TOKEN_HASH_FILE: /run/secrets/gateway_token_hashes
+      CAUCE_MTLS_IDENTITY_FILE: /run/secrets/gateway_mtls_identities
+      CAUCE_TLS_CERT_FILE: /run/secrets/gateway_tls_cert
+      CAUCE_TLS_KEY_FILE: /run/secrets/gateway_tls_key
+      CAUCE_TLS_CLIENT_CA_FILE: /run/secrets/gateway_client_ca
+      CAUCE_HEALTH_PORT: "8081"
+      CAUCE_CONSOLE_ORIGINS: ${CAUCE_CONSOLE_ORIGINS:?set exact HTTPS console origins}
+      CAUCE_REQUIRE_ACK_CLAIMS: "1"
+      CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
+      NODE_EXTRA_CA_CERTS: /run/secrets/gateway_tls_ca
+      PORT: "8443"
+    secrets:
+      - source: database_url
+        target: database_url
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: postgres_ca
+        target: postgres_ca
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: gateway_tls_cert
+        target: gateway_tls_cert
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: gateway_tls_key
+        target: gateway_tls_key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: gateway_tls_ca
+        target: gateway_tls_ca
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: gateway_client_ca
+        target: gateway_client_ca
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: gateway_token_hashes
+        target: gateway_token_hashes
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: gateway_mtls_identities
+        target: gateway_mtls_identities
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: gateway_oidc_session_key
+        target: gateway_oidc_session_key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: gateway_oidc_client_secret
+        target: gateway_oidc_client_secret
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+    ports:
+      - "${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}:${GATEWAY_TLS_PORT:-8443}:8443"
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8081/health/ready", "ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [edge, backend]
+
+  dispatcher:
+    <<: *runtime-service
+    command: ["node", "services/dispatcher/dist/main.js"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      NODE_ENV: production
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/secrets/postgres_ca
+      PORT: "8082"
+      DISPATCHER_POLL_MS: ${DISPATCHER_POLL_MS:-100}
+      CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
+      ACK_TIMEOUT_MS: ${ACK_TIMEOUT_MS:-600000}
+      INTERACTIVE_BURST: ${INTERACTIVE_BURST:-3}
+    secrets: *runtime-secrets
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8082/health/ready", "ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  outbox-metrics:
+    <<: *runtime-service
+    command: ["node", "deploy/outbox-metrics.mjs"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      NODE_ENV: production
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/secrets/postgres_ca
+      PORT: "8084"
+    secrets: *runtime-secrets
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8084/health/ready", "ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  relay-worker:
+    <<: *runtime-service
+    profiles: [origin-relay]
+    command: ["node", "services/relay-worker/dist/main.js"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      NODE_ENV: production
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/secrets/postgres_ca
+      PORT: "8083"
+      CAUCE_WEBHOOK_PROVIDER_MODULE: file:///run/secrets/relay_provider_module
+      CAUCE_RELAY_ALLOWED_ORIGINS: ${CAUCE_RELAY_ALLOWED_ORIGINS:-}
+      CAUCE_RELAY_ADAPTERS: ${CAUCE_RELAY_ADAPTERS:-}
+    secrets:
+      - source: database_url
+        target: database_url
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: postgres_ca
+        target: postgres_ca
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: relay_provider_module
+        target: relay_provider_module
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8083/health/ready", "ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  telegram-bridge:
+    <<: *runtime-service
+    profiles: [telegram]
+    command: ["node", "services/telegram-bridge/dist/main.js"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      NODE_ENV: production
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/secrets/postgres_ca
+      PORT: "8086"
+      CAUCE_TELEGRAM_CONFIG_FILE: /run/cauce-telegram/config.json
+      CAUCE_TELEGRAM_ALIASES: ${CAUCE_TELEGRAM_ALIASES:-}
+    secrets: *runtime-secrets
+    volumes:
+      - type: bind
+        source: ${CAUCE_TELEGRAM_RUNTIME_DIR:-/dev/null}
+        target: /run/cauce-telegram
+        read_only: true
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8086/health/ready", "ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  shadow-router:
+    <<: *runtime-service
+    profiles: [shadow]
+    command: ["node", "services/shadow-router/dist/main.js"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      NODE_ENV: production
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/secrets/postgres_ca
+      SHADOW_ROUTER_MODE: ${SHADOW_ROUTER_MODE:-shadow}
+      SHADOW_ROUTER_TENANTS: ${SHADOW_ROUTER_TENANTS:-}
+      SHADOW_ROUTER_SOCKET: /run/cauce-shadow/router/router.sock
+      SHADOW_ROUTER_V2_SOCKET: /run/cauce-shadow/v2/ingress.sock
+      SHADOW_ROUTER_V3_SOCKET: /run/cauce-shadow/v3/ingress.sock
+      SHADOW_ROUTER_CUTOVER_DIRECTION: ${SHADOW_ROUTER_CUTOVER_DIRECTION:-}
+      SHADOW_ROUTER_ENABLE_CUTOVER: ${SHADOW_ROUTER_ENABLE_CUTOVER:-}
+    secrets: *runtime-secrets
+    volumes:
+      - type: bind
+        source: ${CAUCE_SHADOW_ROUTER_SOCKET_DIR:-/dev/null}
+        target: /run/cauce-shadow/router
+      - type: bind
+        source: ${CAUCE_SHADOW_V2_SOCKET_DIR:-/dev/null}
+        target: /run/cauce-shadow/v2
+        read_only: true
+      - type: bind
+        source: ${CAUCE_SHADOW_V3_SOCKET_DIR:-/dev/null}
+        target: /run/cauce-shadow/v3
+        read_only: true
+    healthcheck:
+      test: ["CMD", "node", "deploy/unix-readiness-probe.mjs", "/run/cauce-shadow/router/router.sock", "/health/ready", "ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  shadow-guard:
+    <<: *runtime-service
+    profiles: [shadow]
+    command: ["node", "deploy/shadow-guard.mjs"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      NODE_ENV: production
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/secrets/postgres_ca
+      PORT: "8085"
+      CAUCE_SHADOW_MAX_SIDE_EFFECTS: "0"
+    secrets: *runtime-secrets
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8085/health/ready", "ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  console:
+    image: ${CAUCE_CONSOLE_IMAGE:?set an immutable CAUCE_CONSOLE_IMAGE digest}
+    user: "101:101"
+    restart: always
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /var/cache/nginx:rw,noexec,nosuid,size=32m
+      - /var/run:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}:${CONSOLE_TLS_PORT:-8444}:8444"
+    secrets:
+      - source: console_tls_cert
+        target: console_tls_cert
+        uid: "101"
+        gid: "101"
+        mode: 0444
+      - source: console_tls_key
+        target: console_tls_key
+        uid: "101"
+        gid: "101"
+        mode: 0400
+      - source: console_tls_ca
+        target: console_tls_ca
+        uid: "101"
+        gid: "101"
+        mode: 0444
+      - source: gateway_tls_ca
+        target: gateway_tls_ca
+        uid: "101"
+        gid: "101"
+        mode: 0444
+      - source: console_gateway_client_cert
+        target: console_gateway_client_cert
+        uid: "101"
+        gid: "101"
+        mode: 0444
+      - source: console_gateway_client_key
+        target: console_gateway_client_key
+        uid: "101"
+        gid: "101"
+        mode: 0400
+    healthcheck:
+      test: ["CMD-SHELL", "SSL_CERT_FILE=/run/secrets/console_tls_ca wget -q -O /dev/null https://console:8444/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [edge]
+
+  otel-collector:
+    profiles: [observability]
+    image: ${CAUCE_OTEL_IMAGE:?set an immutable CAUCE_OTEL_IMAGE digest}
+    user: "10001:10001"
+    restart: always
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ../ops/observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otelcol-contrib/config.yaml"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks: [backend]
+
+  prometheus:
+    profiles: [observability]
+    image: ${CAUCE_PROMETHEUS_IMAGE:?set an immutable CAUCE_PROMETHEUS_IMAGE digest}
+    user: "65534:65534"
+    restart: always
+    command: ["--config.file=/etc/prometheus/prometheus.yaml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ../ops/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ../ops/observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - prometheus_data:/prometheus
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+    depends_on:
+      dispatcher:
+        condition: service_healthy
+      outbox-metrics:
+        condition: service_healthy
+    networks: [backend]
+
+secrets:
+  database_url:
+    file: ${CAUCE_DATABASE_URL_SECRET_PATH:?set CAUCE_DATABASE_URL_SECRET_PATH}
+  postgres_ca:
+    file: ${CAUCE_POSTGRES_CA_PATH:?set CAUCE_POSTGRES_CA_PATH}
+  gateway_tls_cert:
+    file: ${CAUCE_GATEWAY_TLS_CERT_PATH:?set CAUCE_GATEWAY_TLS_CERT_PATH}
+  gateway_tls_key:
+    file: ${CAUCE_GATEWAY_TLS_KEY_PATH:?set CAUCE_GATEWAY_TLS_KEY_PATH}
+  gateway_tls_ca:
+    file: ${CAUCE_GATEWAY_TLS_CA_PATH:?set CAUCE_GATEWAY_TLS_CA_PATH}
+  gateway_client_ca:
+    file: ${CAUCE_GATEWAY_CLIENT_CA_PATH:-/dev/null}
+  gateway_token_hashes:
+    file: ${CAUCE_GATEWAY_TOKEN_HASHES_PATH:-/dev/null}
+  gateway_mtls_identities:
+    file: ${CAUCE_GATEWAY_MTLS_IDENTITIES_PATH:-/dev/null}
+  gateway_oidc_session_key:
+    file: ${CAUCE_GATEWAY_OIDC_SESSION_KEY_PATH:-/dev/null}
+  gateway_oidc_client_secret:
+    file: ${CAUCE_GATEWAY_OIDC_CLIENT_SECRET_PATH:-/dev/null}
+  console_tls_cert:
+    file: ${CAUCE_CONSOLE_TLS_CERT_PATH:?set CAUCE_CONSOLE_TLS_CERT_PATH}
+  console_tls_key:
+    file: ${CAUCE_CONSOLE_TLS_KEY_PATH:?set CAUCE_CONSOLE_TLS_KEY_PATH}
+  console_tls_ca:
+    file: ${CAUCE_CONSOLE_TLS_CA_PATH:?set CAUCE_CONSOLE_TLS_CA_PATH}
+  console_gateway_client_cert:
+    file: ${CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH:?set CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH}
+  console_gateway_client_key:
+    file: ${CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH:?set CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH}
+  relay_provider_module:
+    file: ${CAUCE_RELAY_PROVIDER_MODULE_PATH:-/dev/null}
+
+volumes:
+  prometheus_data:
+
+networks:
+  edge:
+    driver: bridge
+  backend:
+    driver: bridge

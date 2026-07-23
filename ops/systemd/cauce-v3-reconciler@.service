@@ -1,0 +1,23 @@
+[Unit]
+Description=Cauce V3 read-only ACK/DLQ/outbox reconciler (%i)
+ConditionPathExists=/etc/cauce-v3/guards/%i.enabled
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=cauce-v3
+Group=cauce-v3
+EnvironmentFile=/etc/cauce-v3/aliases/%i.env
+ExecStart=/opt/cauce-v3/ops/scripts/guard-check.sh reconciler %i
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

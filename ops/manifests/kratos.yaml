@@ -1,0 +1,18 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: kratos
+spec:
+  tenant: Miguel
+  room: grp.miguel
+  alias: kratos
+  harness: claude
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_KRATOS_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_KRATOS_TOKEN_PATH
+    clientCertificate: CAUCE_KRATOS_CERT_PATH
+    clientKey: CAUCE_KRATOS_KEY_PATH
+    certificateAuthority: CAUCE_KRATOS_CA_PATH
+  process: {executablePathEnv: CAUCE_KRATOS_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/kratos

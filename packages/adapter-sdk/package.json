@@ -1,0 +1,44 @@
+{
+  "name": "@cauce/adapter-sdk",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Durable Cauce V3 adapters and harness doubles",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./bridge/hermes-stdin-bridge.py": "./dist/bridge/hermes-stdin-bridge.py",
+    "./bridge/openclaw-stdin-bridge.mjs": "./dist/bridge/openclaw-stdin-bridge.mjs"
+  },
+  "files": ["dist/src", "dist/bridge", "manifests", "docs", "README.md"],
+  "bin": {
+    "cauce-adapter-hermes": "./dist/src/bin/hermes.js",
+    "cauce-adapter-opencode": "./dist/src/bin/opencode.js",
+    "cauce-adapter-claude": "./dist/src/bin/claude.js",
+    "cauce-adapter-codex": "./dist/src/bin/codex.js",
+    "cauce-adapter-openclaw": "./dist/src/bin/openclaw.js",
+    "cauce-adapter-fake": "./dist/src/bin/fake.js",
+    "cauce-fake-harness": "./dist/src/bin/fake-harness.js"
+  },
+  "scripts": {
+    "clean": "node --eval \"import('node:fs/promises').then(fs => Promise.all(['dist','.test-state'].map(path => fs.rm(path,{recursive:true,force:true}))))\"",
+    "lint": "tsc --noEmit && node --check bridge/openclaw-stdin-bridge.mjs && python3 -c \"import ast,pathlib; ast.parse(pathlib.Path('bridge/hermes-stdin-bridge.py').read_text(encoding='utf-8'))\"",
+    "typecheck": "tsc --noEmit",
+    "build": "pnpm clean && tsc && node scripts/copy-bridges.mjs && node scripts/chmod-bins.mjs",
+    "smoke:package": "node scripts/package-smoke.mjs",
+    "test": "pnpm --filter @cauce/protocol build && pnpm build && node --test --test-concurrency=1 dist/test/*.test.js"
+  },
+  "dependencies": {
+    "@cauce/protocol": "workspace:*",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.15",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.8.3"
+  },
+  "license": "UNLICENSED"
+}

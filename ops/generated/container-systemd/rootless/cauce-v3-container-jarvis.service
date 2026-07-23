@@ -1,0 +1,32 @@
+[Unit]
+Description=Cauce V3 rootless container adapter jarvis (claw/openclaw)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/.config/cauce-v3/container-aliases/jarvis.env
+StartLimitIntervalSec=300s
+StartLimitBurst=10
+
+[Service]
+Type=simple
+UMask=0077
+Environment=CAUCE_CONTAINER_OPS_ROOT=%h/.local/share/cauce-v3/ops
+Environment=CAUCE_CONTAINER_CONFIG_ROOT=%h/.config/cauce-v3/container-aliases
+Environment=CAUCE_CONTAINER_PKI_ROOT=%h/.config/cauce-v3/container-pki
+Environment=CAUCE_CONTAINER_BUNDLE_ROOT=%h/.local/share/cauce-v3-adapter
+Environment=CAUCE_CONTAINER_LOCK_ROOT=%t/cauce-v3
+ExecStart=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh start jarvis
+ExecStop=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop jarvis
+Restart=always
+RestartSec=5s
+RestartPreventExitStatus=2 73 78
+TimeoutStopSec=45s
+KillMode=control-group
+StandardInput=null
+NoNewPrivileges=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target

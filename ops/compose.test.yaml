@@ -1,0 +1,108 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cauce_test
+      POSTGRES_USER: cauce_test
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cauce_test -d cauce_test && test \"$$(psql -U cauce_test -d cauce_test -Atqc 'SELECT 1')\" = 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks: [testnet]
+
+  migrator:
+    image: cauce-v3-test-runtime:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: runtime
+    environment:
+      DATABASE_URL: postgresql://cauce_test@postgres:5432/cauce_test
+      NODE_ENV: test
+    restart: "no"
+    command: ["node", "deploy/migrate.mjs"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [testnet]
+
+  gateway:
+    image: cauce-v3-test-runtime:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: runtime
+    restart: unless-stopped
+    command: ["node", "services/gateway/dist/main.js"]
+    environment:
+      DATABASE_URL: postgresql://cauce_test@postgres:5432/cauce_test
+      NODE_ENV: test
+      CAUCE_DEV_AUTH: "1"
+      CAUCE_ACK_DEADLINE_MS: "50"
+      PORT: "8080"
+    ports: ["127.0.0.1:${CAUCE_TEST_GATEWAY_PORT:-18080}:8080"]
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8080/health/ready", "ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [testnet]
+
+  dispatcher:
+    image: cauce-v3-test-runtime:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: runtime
+    restart: unless-stopped
+    command: ["node", "services/dispatcher/dist/main.js"]
+    environment:
+      DATABASE_URL: postgresql://cauce_test@postgres:5432/cauce_test
+      NODE_ENV: test
+      PORT: "8082"
+      DISPATCHER_POLL_MS: "20"
+      CAUCE_ACK_DEADLINE_MS: "50"
+      ACK_TIMEOUT_MS: "50"
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8082/health/ready", "ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [testnet]
+
+  e2e:
+    image: cauce-v3-test-qa:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: qa-runtime
+    command: ["node", "ops/harness/runner.mjs", "--live", "--artifact-dir", "/work/artifacts/test-compose-protocol-double"]
+    environment:
+      CAUCE_BASE_URL: http://gateway:8080
+      CAUCE_WS_URL: ws://gateway:8080/v3/ws
+      CAUCE_PRESENCE_LEASE_MS: "500"
+      CAUCE_RETRY_TIMEOUT_MS: "15000"
+      CAUCE_FAULT_MODE: none
+    volumes:
+      - ./artifacts:/work/artifacts
+    depends_on:
+      gateway:
+        condition: service_healthy
+      dispatcher:
+        condition: service_healthy
+    networks: [testnet]
+
+networks:
+  testnet:
+    internal: true

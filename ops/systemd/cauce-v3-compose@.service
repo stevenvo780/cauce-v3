@@ -1,0 +1,25 @@
+[Unit]
+Description=Cauce V3 Docker Compose stack (%i)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/etc/cauce-v3/ops.env
+WorkingDirectory=/opt/cauce-v3/ops
+ExecStartPre=/bin/sh -c 'test "%i" != prod || /opt/cauce-v3/ops/scripts/release-gate.sh'
+ExecStart=/opt/cauce-v3/ops/scripts/compose.sh %i up -d --wait
+ExecReload=/bin/sh -c 'test "%i" != prod || /opt/cauce-v3/ops/scripts/release-gate.sh'
+ExecReload=/opt/cauce-v3/ops/scripts/compose.sh %i up -d --wait
+ExecStop=/opt/cauce-v3/ops/scripts/compose.sh %i down
+TimeoutStartSec=300
+TimeoutStopSec=180
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/cauce-v3/ops/artifacts /opt/cauce-v3/ops/backups
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

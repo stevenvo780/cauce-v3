@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "aliases": {
+    "argos": {
+      "tenant": "Steven",
+      "room": "grp.steven",
+      "container": "ctrl-infra",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/argos",
+      "harness": "hermes"
+    },
+    "dedalo": {
+      "tenant": "Pablo",
+      "room": "grp.pablo",
+      "container": "ws-pablo-dev",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/workspace/.cauce-v3/dedalo",
+      "harness": "codex"
+    },
+    "hegel": {
+      "tenant": "Jhon",
+      "room": "grp.jhon",
+      "container": "agv2-jhon-hegel-oc",
+      "user": "claw",
+      "home": "/home/claw",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/hegel",
+      "harness": "openclaw"
+    },
+    "janus": {
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "claw-miguel",
+      "user": "claw",
+      "home": "/home/claw",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/janus",
+      "harness": "openclaw"
+    },
+    "jarvis": {
+      "tenant": "Steven",
+      "room": "grp.steven",
+      "container": "claw",
+      "user": "claw",
+      "home": "/home/claw",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/jarvis",
+      "harness": "openclaw"
+    },
+    "kant": {
+      "tenant": "Steven",
+      "room": "grp.steven",
+      "container": "ctrl-infra",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/kant",
+      "harness": "opencode"
+    },
+    "kratos": {
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "ws-humanizar",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/kratos",
+      "harness": "claude"
+    },
+    "midas": {
+      "tenant": "Pablo",
+      "room": "grp.pablo",
+      "container": "agv2-pablo-marcas-oc",
+      "user": "claw",
+      "home": "/home/claw",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/midas",
+      "harness": "openclaw"
+    },
+    "salva": {
+      "tenant": "Isa",
+      "room": "grp.isa",
+      "container": "ws-isa",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/salva",
+      "harness": "claude"
+    },
+    "seneca": {
+      "tenant": "Pablo",
+      "room": "grp.pablo",
+      "container": "agv2-pablo-personal-oc",
+      "user": "claw",
+      "home": "/home/claw",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/seneca",
+      "harness": "openclaw"
+    },
+    "socrates": {
+      "tenant": "Steven",
+      "room": "grp.steven",
+      "container": "ws-prizma",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
+      "harness": "claude"
+    },
+    "vulcano": {
+      "tenant": "Pablo",
+      "room": "grp.pablo",
+      "container": "ws-pablo",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/workspace/.cauce-v3/vulcano",
+      "harness": "claude"
+    }
+  }
+}

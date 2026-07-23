@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/build-evidence.schema.json",
+  "title": "Cauce V3 immutable release build evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "evidenceClass",
+    "mechanism",
+    "imageDigest",
+    "sourceDigest",
+    "operationsDigest",
+    "timestamps",
+    "dockerfileSha256",
+    "runtime",
+    "console"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "evidenceClass": { "const": "release-build" },
+    "mechanism": { "const": "docker-build-final-image" },
+    "imageDigest": { "$ref": "#/$defs/digest" },
+    "sourceDigest": { "$ref": "#/$defs/digest" },
+    "operationsDigest": { "$ref": "#/$defs/digest" },
+    "timestamps": { "$ref": "#/$defs/timestamps" },
+    "dockerfileSha256": { "$ref": "#/$defs/digest" },
+    "runtime": { "$ref": "#/$defs/image" },
+    "console": { "$ref": "#/$defs/image" }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAt", "finishedAt"],
+      "properties": {
+        "startedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "imageId", "imageDigest"],
+      "properties": {
+        "tag": { "type": "string", "minLength": 1 },
+        "imageId": { "$ref": "#/$defs/digest" },
+        "imageDigest": { "$ref": "#/$defs/digest" }
+      }
+    }
+  }
+}

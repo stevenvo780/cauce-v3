@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/gate-snapshot.schema.json",
+  "title": "Cauce V3 cutover gate snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "alias", "capturedAt", "v2", "v3", "drain", "acks", "queues", "roundTrip"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "alias": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "v2": { "$ref": "#/$defs/consumerState" },
+    "v3": { "$ref": "#/$defs/consumerState" },
+    "drain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["inflight", "unsettledDeliveries"],
+      "properties": {
+        "inflight": { "$ref": "#/$defs/nonNegative" },
+        "unsettledDeliveries": { "$ref": "#/$defs/nonNegative" }
+      }
+    },
+    "acks": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pending", "invalid", "staleAccepted"],
+      "properties": {
+        "pending": { "$ref": "#/$defs/nonNegative" },
+        "invalid": { "$ref": "#/$defs/nonNegative" },
+        "staleAccepted": { "$ref": "#/$defs/nonNegative" }
+      }
+    },
+    "queues": {
+      "type": "object", "additionalProperties": false,
+      "required": ["wakePending", "outboxPending", "relayPending", "dlqOpen"],
+      "properties": {
+        "wakePending": { "$ref": "#/$defs/nonNegative" },
+        "outboxPending": { "$ref": "#/$defs/nonNegative" },
+        "relayPending": { "$ref": "#/$defs/nonNegative" },
+        "dlqOpen": { "$ref": "#/$defs/nonNegative" }
+      }
+    },
+    "roundTrip": { "enum": ["passed", "failed", "not-run"] }
+  },
+  "$defs": {
+    "nonNegative": { "type": "integer", "minimum": 0 },
+    "consumerState": {
+      "type": "object", "additionalProperties": false,
+      "required": ["consumers", "pollers", "leaseOwners"],
+      "properties": {
+        "consumers": { "$ref": "#/$defs/nonNegative" },
+        "pollers": { "$ref": "#/$defs/nonNegative" },
+        "leaseOwners": { "$ref": "#/$defs/nonNegative" }
+      }
+    }
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/test-evidence.schema.json",
+  "title": "Cauce V3 runtime evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "suite",
+    "mode",
+    "evidenceClass",
+    "mechanism",
+    "imageDigest",
+    "sourceDigest",
+    "timestamps",
+    "deployment",
+    "summary",
+    "tests"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 3 },
+    "suite": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "mode": { "enum": ["compose-authentic", "runtime-authentic"] },
+    "evidenceClass": { "enum": ["compose-authentic", "runtime-authentic"] },
+    "mechanism": { "enum": ["docker-compose-final-binaries", "docker-run-final-binaries"] },
+    "imageDigest": { "$ref": "#/$defs/digest" },
+    "sourceDigest": { "$ref": "#/$defs/digest" },
+    "timestamps": { "$ref": "#/$defs/timestamps" },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["services"],
+      "properties": {
+        "services": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "imageDigest"],
+            "properties": {
+              "name": {
+                "enum": ["gateway", "dispatcher", "relay-worker", "telegram-bridge", "shadow-router"]
+              },
+              "imageDigest": { "$ref": "#/$defs/digest" }
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tests",
+        "passed",
+        "failed",
+        "skipped",
+        "criticalSkipped",
+        "real",
+        "authentic",
+        "protocolDouble"
+      ],
+      "properties": {
+        "tests": { "$ref": "#/$defs/nonNegative" },
+        "passed": { "$ref": "#/$defs/nonNegative" },
+        "failed": { "$ref": "#/$defs/nonNegative" },
+        "skipped": { "$ref": "#/$defs/nonNegative" },
+        "criticalSkipped": { "$ref": "#/$defs/nonNegative" },
+        "real": { "$ref": "#/$defs/nonNegative" },
+        "authentic": { "$ref": "#/$defs/nonNegative" },
+        "protocolDouble": { "$ref": "#/$defs/nonNegative" }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/test" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "mode": { "const": "compose-authentic" } } },
+      "then": {
+        "properties": {
+          "evidenceClass": { "const": "compose-authentic" },
+          "mechanism": { "const": "docker-compose-final-binaries" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "mode": { "const": "runtime-authentic" } } },
+      "then": {
+        "properties": {
+          "evidenceClass": { "const": "runtime-authentic" },
+          "mechanism": { "const": "docker-run-final-binaries" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "nonNegative": { "type": "integer", "minimum": 0 },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAt", "finishedAt"],
+      "properties": {
+        "startedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status",
+        "critical",
+        "evidenceClass",
+        "mechanism",
+        "imageDigest",
+        "sourceDigest",
+        "timestamps",
+        "durationMs"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "status": { "enum": ["passed", "failed", "skipped"] },
+        "critical": { "type": "boolean" },
+        "evidenceClass": {
+          "enum": ["compose-authentic", "runtime-authentic", "protocol-double"]
+        },
+        "mechanism": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,127}$" },
+        "imageDigest": { "$ref": "#/$defs/digest" },
+        "sourceDigest": { "$ref": "#/$defs/digest" },
+        "timestamps": { "$ref": "#/$defs/timestamps" },
+        "durationMs": { "$ref": "#/$defs/nonNegative" },
+        "error": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    }
+  }
+}

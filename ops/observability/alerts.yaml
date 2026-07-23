@@ -1,0 +1,144 @@
+groups:
+  - name: cauce-v3-dispatcher-availability
+    rules:
+      - alert: CauceDispatcherDown
+        expr: up{job="cauce-dispatcher"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dispatcher metrics endpoint is unavailable"
+      - alert: CauceDispatcherDatabaseMetricsMissing
+        expr: cauce_dispatcher_metrics_query_success == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dispatcher cannot collect exact PostgreSQL gauges"
+
+  - name: cauce-v3-queues
+    rules:
+      - alert: CauceDeliveryDlqGrowing
+        expr: sum(delta(cauce_dispatcher_dlq_depth{target="delivery"}[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Delivery dead letters increased"
+      - alert: CauceJobDlqGrowing
+        expr: sum(delta(cauce_dispatcher_dlq_depth{target="job"}[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Job dead letters increased"
+      - alert: CauceDeliveryRetryBacklog
+        expr: sum by (lane) (cauce_dispatcher_delivery_queue_depth{status="retry"}) > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Delivery retry backlog is elevated in lane {{ $labels.lane }}"
+      - alert: CauceInteractiveDeliveryStalled
+        expr: max(cauce_dispatcher_delivery_oldest_seconds{lane="interactive",status=~"pending|retry"}) > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Interactive delivery queue is not progressing"
+      - alert: CauceBatchDeliveryStalled
+        expr: max(cauce_dispatcher_delivery_oldest_seconds{lane="batch",status=~"pending|retry"}) > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Batch delivery queue is not progressing"
+      - alert: CauceJobLaneStalled
+        expr: max by (lane) (cauce_dispatcher_job_oldest_seconds{status="queued"}) > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Job lane {{ $labels.lane }} is stalled"
+      - alert: CauceUnknownJobKinds
+        expr: increase(cauce_dispatcher_jobs_processed_total{result="unknown_kind"}[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unregistered job kinds were rejected into DLQ"
+
+  - name: cauce-v3-leases-and-relay
+    rules:
+      - alert: CauceConsumerLeaseChurn
+        expr: changes(cauce_dispatcher_consumer_leases_active[10m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consumer lease population is churning"
+      - alert: CauceOriginRelayFailed
+        expr: sum by (lane) (cauce_dispatcher_origin_relay_depth{status="failed"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Failed origin relays exist in lane {{ $labels.lane }}"
+      - alert: CauceOriginRelayStalled
+        expr: max by (lane) (cauce_dispatcher_origin_relay_oldest_seconds{status=~"pending|processing|failed"}) > 300
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Origin relay egress is stalled in lane {{ $labels.lane }}"
+      - alert: CauceOriginRelayDead
+        expr: sum(cauce_dispatcher_origin_relay_depth{status="dead"}) > 0 or increase(cauce_origin_relay_results_total{result="dead"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Origin relay events reached terminal DLQ"
+
+  - name: cauce-v3-wake-outbox
+    rules:
+      - alert: CauceOutboxMetricsDown
+        expr: up{job="cauce-outbox"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Exact wake/outbox metrics endpoint is unavailable"
+      - alert: CauceOutboxDatabaseMetricsMissing
+        expr: cauce_outbox_query_success == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox exporter cannot collect exact PostgreSQL gauges"
+      - alert: CauceWakeOutboxStalled
+        expr: max(cauce_outbox_oldest_seconds{kind="wake",status=~"pending|processing|failed"}) > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Adapter wake outbox is stalled"
+      - alert: CauceWakeOutboxFailed
+        expr: sum(cauce_outbox_depth{kind="wake",status="failed"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Failed adapter wake rows are waiting for retry"
+      - alert: CauceOriginOutboxStalled
+        expr: max(cauce_outbox_oldest_seconds{kind="origin_relay",status=~"pending|processing|failed"}) > 300
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Origin relay outbox is stalled"
+      - alert: CauceOutboxDeadLettersOpen
+        expr: sum by (kind) (cauce_outbox_dead_letters_open) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Open {{ $labels.kind }} outbox dead letters exist"

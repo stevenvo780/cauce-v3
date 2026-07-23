@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "harness": "hermes",
+  "adapter_executable": "cauce-adapter-hermes",
+  "harness_executable": "python3 dist/bridge/hermes-stdin-bridge.py",
+  "invocation": {
+    "prompt_transport": "stdin",
+    "output_dialect": "hermes-stdin-bridge-envelope",
+    "native_entrypoint": "hermes_cli.oneshot.run_oneshot",
+    "operational_model_env": "HERMES_INFERENCE_MODEL",
+    "session_mapping": "none",
+    "session_scope": "not applicable (stateless harness)"
+  },
+  "capabilities": {
+    "protocol_version": "3.0",
+    "harness": "hermes",
+    "structured_output": true,
+    "stdin_prompt": true,
+    "durable_inbox": true,
+    "durable_outbox": true,
+    "idempotent_delivery": true,
+    "heartbeat": true,
+    "cancellation": "process_group",
+    "fencing_epoch": true,
+    "origin_relay": true,
+    "attempt_scoped_delivery": true,
+    "event_id_correlation": true,
+    "claim_token_correlation": true,
+    "authenticated_session_scope": true,
+    "persistent_sessions": false
+  }
+}

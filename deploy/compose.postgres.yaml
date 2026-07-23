@@ -1,0 +1,72 @@
+# Optional production overlay for a self-managed PostgreSQL with real TLS.
+# The base production compose defaults to an external managed DATABASE_URL secret.
+services:
+  postgres:
+    image: ${CAUCE_POSTGRES_IMAGE:?set an immutable CAUCE_POSTGRES_IMAGE digest}
+    restart: always
+    entrypoint: ["/opt/cauce/postgres-tls-entrypoint.sh"]
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/cauce-pg/server.crt
+      - -c
+      - ssl_key_file=/run/cauce-pg/server.key
+      - -c
+      - ssl_ca_file=/run/cauce-pg/ca.crt
+      - -c
+      - password_encryption=scram-sha-256
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    secrets:
+      - source: postgres_password
+        target: postgres_password
+        mode: 0400
+      - source: postgres_server_cert
+        target: postgres_server_cert
+        mode: 0444
+      - source: postgres_server_key
+        target: postgres_server_key
+        mode: 0400
+      - source: postgres_ca
+        target: postgres_ca
+        mode: 0444
+    volumes:
+      - cauce_pgdata:/var/lib/postgresql/data
+      - ./postgres-tls-entrypoint.sh:/opt/cauce/postgres-tls-entrypoint.sh:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /run/postgresql:rw,noexec,nosuid,size=8m
+      - /run/cauce-pg:rw,noexec,nosuid,mode=0700,size=8m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=$$(cat /run/secrets/postgres_password) psql 'host=postgres port=5432 dbname='\"$$POSTGRES_DB\"' user='\"$$POSTGRES_USER\"' sslmode=verify-full sslrootcert=/run/secrets/postgres_ca' -Atqc 'SELECT 1' | grep -qx 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks: [backend]
+
+  migrator:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+secrets:
+  postgres_password:
+    file: ${CAUCE_POSTGRES_PASSWORD_PATH:?set CAUCE_POSTGRES_PASSWORD_PATH}
+  postgres_server_cert:
+    file: ${CAUCE_POSTGRES_SERVER_CERT_PATH:?set CAUCE_POSTGRES_SERVER_CERT_PATH}
+  postgres_server_key:
+    file: ${CAUCE_POSTGRES_SERVER_KEY_PATH:?set CAUCE_POSTGRES_SERVER_KEY_PATH}
+
+volumes:
+  cauce_pgdata:

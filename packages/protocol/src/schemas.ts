@@ -1,0 +1,260 @@
+import { z } from 'zod';
+
+export const PROTOCOL_VERSION = '3.0' as const;
+
+/** Tenant identifiers are provisioned in PostgreSQL; the wire contract only constrains their shape. */
+export const TenantSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/);
+export const AliasSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+export const MessageIdSchema = z.uuid();
+export const RequestIdSchema = z.uuid();
+export const DeliveryIdSchema = z.uuid();
+export const EventIdSchema = z.uuid();
+export const ClaimTokenSchema = z.uuid();
+export const TraceIdSchema = z.string().min(1).max(256);
+export const AckStatusSchema = z.enum(['accepted', 'started', 'done', 'failed']);
+export const DeliveryStateSchema = z.enum([
+  'pending', 'leased', 'accepted', 'started', 'done', 'failed', 'retry', 'dead'
+]);
+export const LaneSchema = z.enum(['interactive', 'batch']);
+
+export const CorrelationSchema = z.object({
+  request_id: RequestIdSchema,
+  message_id: MessageIdSchema,
+  delivery_id: DeliveryIdSchema.optional(),
+  trace_id: TraceIdSchema
+}).strict();
+
+export const RelayHopSchema = z.object({
+  tenant_id: TenantSchema,
+  alias: AliasSchema,
+  adapter: z.string().min(1).max(64).optional(),
+  relayed_at: z.iso.datetime({ offset: true })
+}).strict();
+
+/** Immutable return route. It is copied to messages and terminal outbox events. */
+export const OriginSchema = z.object({
+  adapter: z.string().min(1).max(64),
+  channel: z.string().min(1).max(128),
+  conversation_id: z.string().min(1).max(256),
+  external_message_id: z.string().min(1).max(256).optional(),
+  relay: z.array(RelayHopSchema).max(32).default([]),
+  metadata: z.record(z.string(), z.unknown()).default({})
+}).strict();
+
+/** Authentication facts supplied by a trusted gateway, never by a public publish payload. */
+export const AuthenticatedContextSchema = z.object({
+  session_id: z.string().min(1).max(256),
+  channel: z.string().min(1).max(128),
+  origin: OriginSchema.optional()
+}).strict();
+
+export const RecipientSchema = z.object({
+  tenant_id: TenantSchema,
+  alias: AliasSchema
+}).strict();
+
+/** Internal authenticated publish command. Identity and origin are populated by the gateway. */
+export const PublishMessageSchema = z.object({
+  version: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
+  request_id: RequestIdSchema,
+  trace_id: TraceIdSchema,
+  tenant_id: TenantSchema,
+  room_id: z.string().min(1).max(128),
+  actor_alias: AliasSchema,
+  recipients: z.array(RecipientSchema).max(100),
+  body: z.record(z.string(), z.unknown()),
+  idempotency_key: z.string().min(1).max(200),
+  origin: OriginSchema.optional(),
+  session_id: z.string().min(1).max(256).optional(),
+  channel: z.string().min(1).max(128).optional(),
+  authenticated_context: AuthenticatedContextSchema.optional(),
+  lane: LaneSchema.default('interactive'),
+  priority: z.number().int().min(-100).max(100).default(0)
+}).strict();
+
+/** Public HTTP/console payload. It deliberately has no actor, tenant, session, channel or origin fields. */
+export const AuthenticatedPublishSchema = z.object({
+  room_id: z.string().min(1).max(128),
+  recipients: z.array(RecipientSchema).max(100),
+  body: z.record(z.string(), z.unknown()),
+  idempotency_key: z.string().min(1).max(200),
+  lane: LaneSchema.default('interactive'),
+  priority: z.number().int().min(-100).max(100).default(0)
+}).strict();
+
+export const CreateJobSchema = z.object({
+  lane: LaneSchema,
+  priority: z.number().int().min(-100).max(100),
+  kind: z.string().min(1).max(80),
+  payload: z.record(z.string(), z.unknown())
+}).strict();
+
+const ConfigActionSchema = z.enum(['create', 'update', 'delete']);
+const ConfigRevisionSchema = z.number().int().nonnegative();
+const OptionalLabelSchema = z.string().trim().min(1).max(128).nullable().optional();
+
+export const TenantConfigMutationSchema = z.object({
+  resource: z.literal('tenant'), action: ConfigActionSchema, id: TenantSchema,
+  value: z.object({ display_name: OptionalLabelSchema, is_hub: z.boolean().optional(), enabled: z.boolean().optional() }).strict().optional()
+}).strict();
+export const RoomConfigMutationSchema = z.object({
+  resource: z.literal('room'), action: ConfigActionSchema, tenant_id: TenantSchema,
+  id: z.string().min(1).max(128),
+  value: z.object({ display_name: OptionalLabelSchema, enabled: z.boolean().optional() }).strict().optional()
+}).strict();
+export const MembershipConfigMutationSchema = z.object({
+  resource: z.literal('membership'), action: ConfigActionSchema, tenant_id: TenantSchema,
+  room_id: z.string().min(1).max(128), alias: AliasSchema,
+  value: z.object({ role: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(), enabled: z.boolean().optional() }).strict().optional()
+}).strict();
+export const AclEdgeConfigMutationSchema = z.object({
+  resource: z.literal('acl_edge'), action: ConfigActionSchema,
+  from_tenant: TenantSchema, to_tenant: TenantSchema,
+  value: z.object({
+    enabled: z.boolean().optional(), allow_route: z.boolean().optional(),
+    allow_read: z.boolean().optional(), allow_control: z.boolean().optional()
+  }).strict().optional()
+}).strict();
+export const HarnessConfigMutationSchema = z.object({
+  resource: z.literal('harness'), action: ConfigActionSchema,
+  id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+  value: z.object({
+    display_name: z.string().trim().min(1).max(128).optional(),
+    command: z.string().min(1).max(512).nullable().optional(),
+    capabilities: z.array(z.string().min(1).max(80)).max(100).optional(), enabled: z.boolean().optional()
+  }).strict().optional()
+}).strict();
+export const RolePolicyConfigMutationSchema = z.object({
+  resource: z.literal('role_policy'), action: ConfigActionSchema,
+  role: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+  value: z.object({
+    allow_route: z.boolean().optional(), allow_read: z.boolean().optional(), allow_control: z.boolean().optional()
+  }).strict().optional()
+}).strict();
+
+export const ConfigMutationSchema = z.discriminatedUnion('resource', [
+  TenantConfigMutationSchema, RoomConfigMutationSchema, MembershipConfigMutationSchema,
+  AclEdgeConfigMutationSchema, HarnessConfigMutationSchema, RolePolicyConfigMutationSchema
+]);
+export const ConfigChangeRequestSchema = z.object({
+  dry_run: z.boolean().default(true), expected_revision: ConfigRevisionSchema.optional(), mutation: ConfigMutationSchema
+}).strict();
+export const ConfigRollbackRequestSchema = z.object({
+  dry_run: z.boolean().default(true), expected_revision: ConfigRevisionSchema.optional()
+}).strict();
+
+export const PublishResultSchema = z.object({
+  message_id: MessageIdSchema,
+  delivery_ids: z.array(DeliveryIdSchema),
+  duplicate: z.boolean(),
+  request_id: RequestIdSchema,
+  trace_id: TraceIdSchema
+}).strict();
+
+export const BaseAckSchema = z.object({
+  version: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
+  status: AckStatusSchema,
+  instance_id: z.string().min(1).max(128),
+  epoch: z.number().int().positive(),
+  retryable: z.boolean().default(false),
+  error: z.string().max(2_000).optional(),
+  result: z.record(z.string(), z.unknown()).optional()
+}).strict();
+
+/** Every delivery ACK is fenced by the exact claim and delivery attempt. */
+export const AckSchema = BaseAckSchema.extend({
+  event_id: EventIdSchema,
+  claim_token: ClaimTokenSchema,
+  attempt: z.number().int().positive()
+}).strict();
+export const ClaimedAckSchema = AckSchema;
+
+export const HelloSchema = z.object({
+  type: z.literal('hello'),
+  version: z.literal(PROTOCOL_VERSION),
+  tenant_id: TenantSchema,
+  alias: AliasSchema,
+  instance_id: z.string().min(1).max(128),
+  capabilities: z.array(z.string().min(1).max(80)).max(100)
+}).strict();
+
+export const HeartbeatSchema = z.object({
+  type: z.literal('heartbeat'),
+  instance_id: z.string().min(1).max(128),
+  epoch: z.number().int().positive()
+}).strict();
+
+export const QueryDeliveriesSchema = z.object({
+  instance_id: z.string().min(1).max(128),
+  epoch: z.number().int().positive(),
+  limit: z.number().int().min(1).max(100).default(20)
+}).strict();
+
+export const WsAckSchema = AckSchema.extend({
+  type: z.literal('ack'),
+  delivery_id: DeliveryIdSchema
+}).strict();
+
+export const HttpAckSchema = AckSchema.extend({
+  delivery_id: DeliveryIdSchema
+}).strict();
+
+export const DeliveryEnvelopeSchema = z.object({
+  type: z.literal('delivery'),
+  version: z.literal(PROTOCOL_VERSION),
+  event_id: EventIdSchema,
+  delivery_id: DeliveryIdSchema,
+  message_id: MessageIdSchema,
+  request_id: RequestIdSchema,
+  trace_id: TraceIdSchema,
+  epoch: z.number().int().positive(),
+  attempt: z.number().int().positive(),
+  claim_token: ClaimTokenSchema,
+  ack_deadline_at: z.iso.datetime({ offset: true }),
+  tenant_id: TenantSchema,
+  room_id: z.string().min(1).max(128),
+  actor_alias: AliasSchema,
+  recipient_alias: AliasSchema,
+  body: z.record(z.string(), z.unknown()),
+  origin: OriginSchema.optional(),
+  authenticated_context: AuthenticatedContextSchema.optional()
+}).strict();
+
+export const WsInboundSchema = z.discriminatedUnion('type', [HelloSchema, HeartbeatSchema, WsAckSchema]);
+
+export const WsOutboundSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('hello_ack'), version: z.literal(PROTOCOL_VERSION),
+    epoch: z.number().int().positive(), lease_expires_at: z.iso.datetime({ offset: true })
+  }).strict(),
+  z.object({
+    type: z.literal('takeover_rejected'), reason: z.string(), active_instance_id: z.string(),
+    lease_expires_at: z.iso.datetime({ offset: true })
+  }).strict(),
+  z.object({ type: z.literal('heartbeat_ack'), lease_expires_at: z.iso.datetime({ offset: true }) }).strict(),
+  z.object({ type: z.literal('wake'), alias: AliasSchema, reason: z.literal('delivery_available') }).strict(),
+  DeliveryEnvelopeSchema,
+  z.object({
+    type: z.literal('ack_result'), event_id: EventIdSchema, delivery_id: DeliveryIdSchema,
+    attempt: z.number().int().positive(), claim_token: ClaimTokenSchema,
+    status: DeliveryStateSchema, applied: z.boolean()
+  }).strict(),
+  z.object({ type: z.literal('error'), code: z.string(), message: z.string() }).strict()
+]);
+
+export type Tenant = z.infer<typeof TenantSchema>;
+export type PublishMessage = z.infer<typeof PublishMessageSchema>;
+export type AuthenticatedPublish = z.infer<typeof AuthenticatedPublishSchema>;
+export type PublishResult = z.infer<typeof PublishResultSchema>;
+export type Ack = z.infer<typeof AckSchema>;
+export type ClaimedAck = Ack;
+export type Hello = z.infer<typeof HelloSchema>;
+export type Origin = z.infer<typeof OriginSchema>;
+export type AuthenticatedContext = z.infer<typeof AuthenticatedContextSchema>;
+export type Lane = z.infer<typeof LaneSchema>;
+export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
+export type DeliveryEnvelope = z.infer<typeof DeliveryEnvelopeSchema>;
+export type ConfigMutation = z.infer<typeof ConfigMutationSchema>;
+export type ConfigChangeRequest = z.infer<typeof ConfigChangeRequestSchema>;
+export type WsInbound = z.infer<typeof WsInboundSchema>;
+export type WsOutbound = z.infer<typeof WsOutboundSchema>;

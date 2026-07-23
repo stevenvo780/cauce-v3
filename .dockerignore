@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+dist
+**/dist
+coverage
+**/coverage
+.test-state
+**/.test-state
+ops/artifacts
+ops/backups
+.git
+.serena
+*.log
+.env*

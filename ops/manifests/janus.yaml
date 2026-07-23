@@ -1,0 +1,18 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: janus
+spec:
+  tenant: Miguel
+  room: grp.miguel
+  alias: janus
+  harness: openclaw
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_JANUS_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_JANUS_TOKEN_PATH
+    clientCertificate: CAUCE_JANUS_CERT_PATH
+    clientKey: CAUCE_JANUS_KEY_PATH
+    certificateAuthority: CAUCE_JANUS_CA_PATH
+  process: {executablePathEnv: CAUCE_JANUS_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/janus

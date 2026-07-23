@@ -1,0 +1,18 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: midas
+spec:
+  tenant: Pablo
+  room: grp.pablo
+  alias: midas
+  harness: openclaw
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_MIDAS_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_MIDAS_TOKEN_PATH
+    clientCertificate: CAUCE_MIDAS_CERT_PATH
+    clientKey: CAUCE_MIDAS_KEY_PATH
+    certificateAuthority: CAUCE_MIDAS_CA_PATH
+  process: {executablePathEnv: CAUCE_MIDAS_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/midas

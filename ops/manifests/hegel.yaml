@@ -1,0 +1,18 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: hegel
+spec:
+  tenant: Jhon
+  room: grp.jhon
+  alias: hegel
+  harness: openclaw
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_HEGEL_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_HEGEL_TOKEN_PATH
+    clientCertificate: CAUCE_HEGEL_CERT_PATH
+    clientKey: CAUCE_HEGEL_KEY_PATH
+    certificateAuthority: CAUCE_HEGEL_CA_PATH
+  process: {executablePathEnv: CAUCE_HEGEL_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/hegel

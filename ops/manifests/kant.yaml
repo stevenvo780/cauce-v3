@@ -1,0 +1,18 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: kant
+spec:
+  tenant: Steven
+  room: grp.steven
+  alias: kant
+  harness: opencode
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_KANT_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_KANT_TOKEN_PATH
+    clientCertificate: CAUCE_KANT_CERT_PATH
+    clientKey: CAUCE_KANT_KEY_PATH
+    certificateAuthority: CAUCE_KANT_CA_PATH
+  process: {executablePathEnv: CAUCE_KANT_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/kant

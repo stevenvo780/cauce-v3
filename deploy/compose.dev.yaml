@@ -1,0 +1,234 @@
+name: ${COMPOSE_PROJECT_NAME:-cauce-v3-dev}
+
+x-dev-runtime: &dev-runtime
+  image: ${CAUCE_RUNTIME_IMAGE:-cauce-v3-runtime:dev}
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+    target: runtime
+  user: "1000:1000"
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  stop_grace_period: 30s
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the private dev env}
+    volumes:
+      - cauce_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" && test \"$$(psql -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -Atqc 'SELECT 1')\" = 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks: [backend]
+    stop_grace_period: 30s
+
+  migrator:
+    <<: *dev-runtime
+    restart: "no"
+    command: ["node", "deploy/migrate.mjs"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the private dev env}
+      NODE_ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+
+  gateway:
+    <<: *dev-runtime
+    command: ["node", "services/gateway/dist/main.js"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the private dev env}
+      NODE_ENV: development
+      CAUCE_DEV_AUTH: "1"
+      CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
+      PORT: "8080"
+    ports: ["${CAUCE_DEV_BIND_IP:-127.0.0.1}:${GATEWAY_PORT:-8080}:8080"]
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8080/health/ready", "ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [edge, backend]
+
+  dispatcher:
+    <<: *dev-runtime
+    command: ["node", "services/dispatcher/dist/main.js"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the private dev env}
+      NODE_ENV: development
+      PORT: "8082"
+      DISPATCHER_POLL_MS: ${DISPATCHER_POLL_MS:-100}
+      CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
+      ACK_TIMEOUT_MS: ${ACK_TIMEOUT_MS:-600000}
+      INTERACTIVE_BURST: ${INTERACTIVE_BURST:-3}
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8082/health/ready", "ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  console:
+    image: ${CAUCE_CONSOLE_IMAGE:-cauce-v3-console:dev}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: console-dev
+      args:
+        VITE_CAUCE_API_BASE: ""
+        VITE_CAUCE_DEV_AUTH: "1"
+        VITE_CAUCE_DEV_TENANT: ${CAUCE_CONSOLE_TENANT:-Steven}
+        VITE_CAUCE_DEV_ALIAS: ${CAUCE_CONSOLE_ALIAS:-kant}
+    user: "101:101"
+    restart: unless-stopped
+    ports: ["${CAUCE_DEV_BIND_IP:-127.0.0.1}:${CONSOLE_PORT:-8081}:8080"]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [edge]
+    read_only: true
+    tmpfs: [/tmp, /var/cache/nginx, /var/run]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  fake-isa:
+    <<: *dev-runtime
+    command: ["node", "packages/adapter-sdk/dist/src/bin/fake.js"]
+    environment:
+      CAUCE_TENANT: Isa
+      CAUCE_ALIAS: salva
+      CAUCE_INSTANCE_ID: compose-dev-fake-isa
+      CAUCE_STATE_DIR: /var/lib/cauce-adapter
+      CAUCE_RELAY_URL: ws://gateway:8080/v3/ws
+      CAUCE_ENVIRONMENT: development
+      CAUCE_DEV_AUTH: "1"
+      CAUCE_HARNESS_COMMAND: /app/packages/adapter-sdk/dist/src/bin/fake-harness.js
+    volumes: [fake_isa_state:/var/lib/cauce-adapter]
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/lib/cauce-adapter/fencing.json && kill -0 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [backend]
+
+  fake-jhon:
+    <<: *dev-runtime
+    command: ["node", "packages/adapter-sdk/dist/src/bin/fake.js"]
+    environment:
+      CAUCE_TENANT: Jhon
+      CAUCE_ALIAS: hegel
+      CAUCE_INSTANCE_ID: compose-dev-fake-jhon
+      CAUCE_STATE_DIR: /var/lib/cauce-adapter
+      CAUCE_RELAY_URL: ws://gateway:8080/v3/ws
+      CAUCE_ENVIRONMENT: development
+      CAUCE_DEV_AUTH: "1"
+      CAUCE_HARNESS_COMMAND: /app/packages/adapter-sdk/dist/src/bin/fake-harness.js
+    volumes: [fake_jhon_state:/var/lib/cauce-adapter]
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/lib/cauce-adapter/fencing.json && kill -0 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [backend]
+
+  telegram-bridge:
+    <<: *dev-runtime
+    profiles: [telegram]
+    command: ["node", "services/telegram-bridge/dist/main.js"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the private dev env}
+      NODE_ENV: development
+      CAUCE_TELEGRAM_CONFIG_FILE: /run/cauce-telegram/config.json
+      CAUCE_TELEGRAM_ALIASES: ${CAUCE_TELEGRAM_ALIASES:-}
+      PORT: "8086"
+    volumes:
+      - type: bind
+        source: ${CAUCE_TELEGRAM_RUNTIME_DIR:-/dev/null}
+        target: /run/cauce-telegram
+        read_only: true
+    healthcheck:
+      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8086/health/ready", "ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  shadow-router:
+    <<: *dev-runtime
+    profiles: [shadow]
+    command: ["node", "services/shadow-router/dist/main.js"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the private dev env}
+      NODE_ENV: development
+      SHADOW_ROUTER_MODE: ${SHADOW_ROUTER_MODE:-shadow}
+      SHADOW_ROUTER_TENANTS: ${SHADOW_ROUTER_TENANTS:-Steven}
+      SHADOW_ROUTER_SOCKET: /run/cauce-shadow/router/router.sock
+      SHADOW_ROUTER_V2_SOCKET: /run/cauce-shadow/v2/ingress.sock
+      SHADOW_ROUTER_V3_SOCKET: /run/cauce-shadow/v3/ingress.sock
+      SHADOW_ROUTER_CUTOVER_DIRECTION: ${SHADOW_ROUTER_CUTOVER_DIRECTION:-}
+      SHADOW_ROUTER_ENABLE_CUTOVER: ${SHADOW_ROUTER_ENABLE_CUTOVER:-}
+    volumes:
+      - type: bind
+        source: ${CAUCE_SHADOW_ROUTER_SOCKET_DIR:-/dev/null}
+        target: /run/cauce-shadow/router
+      - type: bind
+        source: ${CAUCE_SHADOW_V2_SOCKET_DIR:-/dev/null}
+        target: /run/cauce-shadow/v2
+        read_only: true
+      - type: bind
+        source: ${CAUCE_SHADOW_V3_SOCKET_DIR:-/dev/null}
+        target: /run/cauce-shadow/v3
+        read_only: true
+    healthcheck:
+      test: ["CMD", "node", "deploy/unix-readiness-probe.mjs", "/run/cauce-shadow/router/router.sock", "/health/ready", "ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks: [backend]
+
+volumes:
+  cauce_pgdata:
+  fake_isa_state:
+  fake_jhon_state:
+
+networks:
+  edge:
+  backend:
+    internal: true

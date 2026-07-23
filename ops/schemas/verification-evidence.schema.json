@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/verification-evidence.schema.json",
+  "title": "Cauce V3 reproducible code verification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "sourceDigest", "timestamps", "summary", "commands"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "suite": { "const": "cauce-v3-verification-three-rounds" },
+    "sourceDigest": { "$ref": "#/$defs/digest" },
+    "timestamps": { "$ref": "#/$defs/timestamps" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commands", "passed", "failed", "skipped", "criticalSkipped", "testRounds"],
+      "properties": {
+        "commands": { "type": "integer", "minimum": 1 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "const": 0 },
+        "criticalSkipped": { "const": 0 },
+        "testRounds": { "const": 3 }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "argv", "critical", "status", "exitCode", "timestamps", "durationMs"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$" },
+          "argv": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+          "critical": { "const": true },
+          "status": { "enum": ["passed", "failed"] },
+          "exitCode": { "type": "integer" },
+          "timestamps": { "$ref": "#/$defs/timestamps" },
+          "durationMs": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAt", "finishedAt"],
+      "properties": {
+        "startedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Cauce V3 health probe (%i)
+After=cauce-v3-compose@%i.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/cauce-v3/ops.env
+WorkingDirectory=/opt/cauce-v3/ops
+ExecStart=/opt/cauce-v3/ops/scripts/stack-health.sh %i
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true

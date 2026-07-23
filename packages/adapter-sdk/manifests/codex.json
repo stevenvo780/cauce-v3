@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "harness": "codex",
+  "adapter_executable": "cauce-adapter-codex",
+  "harness_executable": "codex",
+  "invocation": {
+    "prompt_transport": "stdin",
+    "fixed_args": ["exec", "--skip-git-repo-check", "--json", "-"],
+    "output_dialect": "codex-jsonl",
+    "session_mapping": "observed thread id then exec resume",
+    "session_scope": "authenticated tenant+actor+origin channel/session/conversation"
+  },
+  "capabilities": {
+    "protocol_version": "3.0",
+    "harness": "codex",
+    "structured_output": true,
+    "stdin_prompt": true,
+    "durable_inbox": true,
+    "durable_outbox": true,
+    "idempotent_delivery": true,
+    "heartbeat": true,
+    "cancellation": "process_group",
+    "fencing_epoch": true,
+    "origin_relay": true,
+    "attempt_scoped_delivery": true,
+    "event_id_correlation": true,
+    "claim_token_correlation": true,
+    "authenticated_session_scope": true,
+    "persistent_sessions": true
+  }
+}

@@ -1,0 +1,6 @@
+config/*.env
+artifacts/*
+!artifacts/.gitkeep
+backups/*
+!backups/.gitkeep
+*.local

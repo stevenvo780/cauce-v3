@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/alias-manifest.schema.json",
+  "title": "Cauce V3 alias runtime manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "cauce.io/v3" },
+    "kind": { "const": "AliasRuntime" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": { "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tenant", "room", "alias", "harness", "origin", "relay", "secretPathEnv", "process", "stateDirectory"],
+      "properties": {
+        "tenant": { "enum": ["Steven", "Miguel", "Isa", "Jhon", "Pablo"] },
+        "room": { "enum": ["grp.steven", "grp.miguel", "grp.isa", "grp.jhon", "grp.pablo"] },
+        "alias": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "harness": { "enum": ["openclaw", "opencode", "claude", "hermes", "codex"] },
+        "origin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transport"],
+          "properties": { "transport": { "const": "telegram" } }
+        },
+        "relay": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["urlPathEnv", "requiredScheme"],
+          "properties": {
+            "urlPathEnv": { "$ref": "#/$defs/envName" },
+            "requiredScheme": { "const": "wss" }
+          }
+        },
+        "secretPathEnv": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["token", "clientCertificate", "clientKey", "certificateAuthority"],
+          "properties": {
+            "token": { "$ref": "#/$defs/envName" },
+            "clientCertificate": { "$ref": "#/$defs/envName" },
+            "clientKey": { "$ref": "#/$defs/envName" },
+            "certificateAuthority": { "$ref": "#/$defs/envName" }
+          }
+        },
+        "process": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["executablePathEnv"],
+          "properties": {
+            "executablePathEnv": { "$ref": "#/$defs/envName" },
+            "operationalModelEnv": { "const": "HERMES_INFERENCE_MODEL" }
+          }
+        },
+        "stateDirectory": { "type": "string", "pattern": "^/var/lib/cauce-v3/aliases/[a-z][a-z0-9-]*$" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["harness"],
+            "properties": { "harness": { "const": "hermes" } }
+          },
+          "then": {
+            "properties": { "process": { "required": ["operationalModelEnv"] } }
+          },
+          "else": {
+            "properties": { "process": { "not": { "required": ["operationalModelEnv"] } } }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "envName": { "type": "string", "pattern": "^CAUCE_[A-Z0-9_]+_(?:PATH|URL)$" }
+  }
+}

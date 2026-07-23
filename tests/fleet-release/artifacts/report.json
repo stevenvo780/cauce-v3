@@ -1,0 +1,328 @@
+{
+  "schemaVersion": 1,
+  "suite": "cauce-v3-fleet-release",
+  "mode": "real-gateway-packaged-adapters-with-harness-doubles",
+  "sourceDigest": "sha256:8ef4a424741917171f43cfcbb984d7474a486dca7c554df59b87dea791ea1db3",
+  "evidenceClasses": {
+    "gateway": "gateway-authentic",
+    "persistence": "postgres-authentic",
+    "adapter": "adapter-authentic",
+    "harness": "harness-double"
+  },
+  "startedAt": "2026-07-22T21:34:16.199Z",
+  "finishedAt": "2026-07-22T21:34:24.129Z",
+  "manifestMatrix": {
+    "aliases": 12,
+    "harnessCounts": {
+      "openclaw": 5,
+      "claude": 4,
+      "hermes": 1,
+      "codex": 1,
+      "opencode": 1
+    },
+    "manifestsSha256": "38b886cb7b03f6a7f2ff9e49e50137a97a733920de719438e6594ff80781e710"
+  },
+  "adapterBinaries": [
+    {
+      "harness": "claude",
+      "packageBin": "cauce-adapter-claude",
+      "path": "packages/adapter-sdk/dist/src/bin/claude.js",
+      "sha256": "4f1ae7b70e6a315b713f07ba573236fe267193cad4bc0406a75c981f382f6e9d"
+    },
+    {
+      "harness": "codex",
+      "packageBin": "cauce-adapter-codex",
+      "path": "packages/adapter-sdk/dist/src/bin/codex.js",
+      "sha256": "246e6d41d23367a5e408de35ea6b805ce77a4bf6453965a0a9634b13ab838e1c"
+    },
+    {
+      "harness": "hermes",
+      "packageBin": "cauce-adapter-hermes",
+      "path": "packages/adapter-sdk/dist/src/bin/hermes.js",
+      "sha256": "23e3435bd9acbfda6681340f9db04c03f37a32c802c055086fbd73e2f78ef277"
+    },
+    {
+      "harness": "openclaw",
+      "packageBin": "cauce-adapter-openclaw",
+      "path": "packages/adapter-sdk/dist/src/bin/openclaw.js",
+      "sha256": "61c37c68f43794507ef9ffcd4698351178ed96c495136dd5a7b705503499b35a"
+    },
+    {
+      "harness": "opencode",
+      "packageBin": "cauce-adapter-opencode",
+      "path": "packages/adapter-sdk/dist/src/bin/opencode.js",
+      "sha256": "3f48c620b7682c2b99db2af506812a722f112d92b022e73ce168854cdafa344d"
+    }
+  ],
+  "summary": {
+    "aliases": 12,
+    "passed": 12,
+    "failed": 0
+  },
+  "aliases": [
+    {
+      "alias": "argos",
+      "tenant": "Steven",
+      "harness": "hermes",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "executable"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "stateless-validated",
+      "adapterBinarySha256": "23e3435bd9acbfda6681340f9db04c03f37a32c802c055086fbd73e2f78ef277",
+      "deliveryId": "5ffa27cf-46ee-466c-b1d9-1dc277691321"
+    },
+    {
+      "alias": "dedalo",
+      "tenant": "Pablo",
+      "harness": "codex",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "executable"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "246e6d41d23367a5e408de35ea6b805ce77a4bf6453965a0a9634b13ab838e1c",
+      "deliveryId": "563dd2b2-fdf2-42f3-8aa2-caed206e2ea0"
+    },
+    {
+      "alias": "hegel",
+      "tenant": "Jhon",
+      "harness": "openclaw",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "api"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "61c37c68f43794507ef9ffcd4698351178ed96c495136dd5a7b705503499b35a",
+      "deliveryId": "94388787-6da1-44f9-843f-e17bb51213a5"
+    },
+    {
+      "alias": "janus",
+      "tenant": "Miguel",
+      "harness": "openclaw",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "api"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "61c37c68f43794507ef9ffcd4698351178ed96c495136dd5a7b705503499b35a",
+      "deliveryId": "d42c2eeb-a648-437d-9e20-2f81aac4abb5"
+    },
+    {
+      "alias": "jarvis",
+      "tenant": "Steven",
+      "harness": "openclaw",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "api"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "61c37c68f43794507ef9ffcd4698351178ed96c495136dd5a7b705503499b35a",
+      "deliveryId": "32e30127-2e65-40fb-bece-e1527c6633f2"
+    },
+    {
+      "alias": "kant",
+      "tenant": "Steven",
+      "harness": "opencode",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "executable"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "3f48c620b7682c2b99db2af506812a722f112d92b022e73ce168854cdafa344d",
+      "deliveryId": "a3521f3c-b96f-4388-b3cd-44f6d9ee2cf4"
+    },
+    {
+      "alias": "kratos",
+      "tenant": "Miguel",
+      "harness": "claude",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "executable"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "4f1ae7b70e6a315b713f07ba573236fe267193cad4bc0406a75c981f382f6e9d",
+      "deliveryId": "5b65f21c-f9c6-404a-a431-0b4479610b91"
+    },
+    {
+      "alias": "midas",
+      "tenant": "Pablo",
+      "harness": "openclaw",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "api"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "61c37c68f43794507ef9ffcd4698351178ed96c495136dd5a7b705503499b35a",
+      "deliveryId": "b13d6e91-ca30-4bbc-a22b-946abde34d7e"
+    },
+    {
+      "alias": "salva",
+      "tenant": "Isa",
+      "harness": "claude",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "executable"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "4f1ae7b70e6a315b713f07ba573236fe267193cad4bc0406a75c981f382f6e9d",
+      "deliveryId": "15899aa8-60b8-4e91-84c5-61ab808ee82b"
+    },
+    {
+      "alias": "seneca",
+      "tenant": "Pablo",
+      "harness": "openclaw",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "api"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "61c37c68f43794507ef9ffcd4698351178ed96c495136dd5a7b705503499b35a",
+      "deliveryId": "fca46ca5-c4bc-44c9-8805-0d2b8cc46317"
+    },
+    {
+      "alias": "socrates",
+      "tenant": "Steven",
+      "harness": "claude",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "executable"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "4f1ae7b70e6a315b713f07ba573236fe267193cad4bc0406a75c981f382f6e9d",
+      "deliveryId": "7da98f7e-bfaf-4a9d-9988-f8b662c6353f"
+    },
+    {
+      "alias": "vulcano",
+      "tenant": "Pablo",
+      "harness": "claude",
+      "status": "passed",
+      "evidence": {
+        "adapter": "adapter-authentic",
+        "harness": "harness-double",
+        "harnessDoubleKind": "executable"
+      },
+      "checks": {
+        "hello": true,
+        "lease": true,
+        "ack": true,
+        "retry": true,
+        "session": true,
+        "relay": true
+      },
+      "sessionMode": "persistent-resume",
+      "adapterBinarySha256": "4f1ae7b70e6a315b713f07ba573236fe267193cad4bc0406a75c981f382f6e9d",
+      "deliveryId": "5a982e57-b574-4c62-aa26-2655008d2a33"
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+interface RuntimePackageSmokeModule {
+  validateRuntimeBridges: (options: { hermesBridge: string; openClawBridge: string }) => Promise<void>;
+}
+
+const smokeModuleUrl = new URL('../../deploy/runtime-package-smoke.mjs', import.meta.url).href;
+const { validateRuntimeBridges } = await import(/* @vite-ignore */ smokeModuleUrl) as unknown as RuntimePackageSmokeModule;
+
+const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));
+const dockerfilePath = join(repositoryRoot, 'deploy', 'Dockerfile');
+const sourceBridgeDirectory = join(repositoryRoot, 'packages', 'adapter-sdk', 'bridge');
+
+describe('runtime bridge packaging smoke', () => {
+  let directory: string;
+  let hermesBridge: string;
+  let openClawBridge: string;
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'cauce-runtime-bridge-test-'));
+    const bridgeDirectory = join(directory, 'dist', 'bridge');
+    await mkdir(bridgeDirectory, { recursive: true });
+    hermesBridge = join(bridgeDirectory, 'hermes-stdin-bridge.py');
+    openClawBridge = join(bridgeDirectory, 'openclaw-stdin-bridge.mjs');
+    await Promise.all([
+      copyFile(join(sourceBridgeDirectory, 'hermes-stdin-bridge.py'), hermesBridge),
+      copyFile(join(sourceBridgeDirectory, 'openclaw-stdin-bridge.mjs'), openClawBridge),
+    ]);
+    await Promise.all([chmod(hermesBridge, 0o555), chmod(openClawBridge, 0o555)]);
+  });
+
+  afterEach(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it('launches both executable bridges against isolated fixtures', async () => {
+    await expect(validateRuntimeBridges({ hermesBridge, openClawBridge })).resolves.toBeUndefined();
+  });
+
+  it('fails when either packaged bridge is missing', async () => {
+    await rm(openClawBridge);
+    await expect(validateRuntimeBridges({ hermesBridge, openClawBridge }))
+      .rejects.toThrow(/OpenClaw runtime bridge is missing or not executable/u);
+  });
+
+  it('fails when a packaged bridge does not have runtime mode 0555', async () => {
+    await chmod(hermesBridge, 0o755);
+    await expect(validateRuntimeBridges({ hermesBridge, openClawBridge }))
+      .rejects.toThrow(/Hermes runtime bridge must have mode 0555/u);
+  });
+
+  it('copies the built bridge directory into the image before the build-time smoke', async () => {
+    const dockerfile = await readFile(dockerfilePath, 'utf8');
+    const bridgeCopy = 'COPY --from=build --chown=node:node --chmod=0555 /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge';
+    const copyIndex = dockerfile.indexOf(bridgeCopy);
+    const userIndex = dockerfile.indexOf('USER node');
+    const smokeIndex = dockerfile.indexOf('RUN node deploy/runtime-package-smoke.mjs');
+
+    expect(dockerfile).toContain('apk add --no-cache python3');
+    expect(copyIndex).toBeGreaterThan(-1);
+    expect(userIndex).toBeGreaterThan(copyIndex);
+    expect(smokeIndex).toBeGreaterThan(userIndex);
+  });
+});

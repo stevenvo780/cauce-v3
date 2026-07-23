@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "harness": "fake",
+  "adapter_executable": "cauce-adapter-fake",
+  "harness_executable": "cauce-fake-harness",
+  "invocation": {
+    "prompt_transport": "stdin",
+    "output_dialect": "cauce-structured-json",
+    "session_mapping": "generated --session id",
+    "session_scope": "authenticated tenant+actor+origin channel/session/conversation"
+  },
+  "capabilities": {
+    "protocol_version": "3.0",
+    "harness": "fake",
+    "structured_output": true,
+    "stdin_prompt": true,
+    "durable_inbox": true,
+    "durable_outbox": true,
+    "idempotent_delivery": true,
+    "heartbeat": true,
+    "cancellation": "process_group",
+    "fencing_epoch": true,
+    "origin_relay": true,
+    "attempt_scoped_delivery": true,
+    "event_id_correlation": true,
+    "claim_token_correlation": true,
+    "authenticated_session_scope": true,
+    "persistent_sessions": true
+  }
+}

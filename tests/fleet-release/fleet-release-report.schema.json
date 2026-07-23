@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/fleet-release-report.schema.json",
+  "title": "Cauce V3 packaged adapter fleet release evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "mode", "sourceDigest", "evidenceClasses", "startedAt", "finishedAt", "manifestMatrix", "adapterBinaries", "summary", "aliases"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "suite": { "const": "cauce-v3-fleet-release" },
+    "mode": { "const": "real-gateway-packaged-adapters-with-harness-doubles" },
+    "sourceDigest": { "$ref": "#/$defs/digest" },
+    "evidenceClasses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gateway", "persistence", "adapter", "harness"],
+      "properties": {
+        "gateway": { "const": "gateway-authentic" },
+        "persistence": { "const": "postgres-authentic" },
+        "adapter": { "const": "adapter-authentic" },
+        "harness": { "const": "harness-double" }
+      }
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" },
+    "manifestMatrix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aliases", "harnessCounts", "manifestsSha256"],
+      "properties": {
+        "aliases": { "const": 12 },
+        "harnessCounts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["openclaw", "claude", "hermes", "codex", "opencode"],
+          "properties": {
+            "openclaw": { "const": 5 },
+            "claude": { "const": 4 },
+            "hermes": { "const": 1 },
+            "codex": { "const": 1 },
+            "opencode": { "const": 1 }
+          }
+        },
+        "manifestsSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "adapterBinaries": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["harness", "packageBin", "path", "sha256"],
+        "properties": {
+          "harness": { "$ref": "#/$defs/harness" },
+          "packageBin": { "type": "string", "pattern": "^cauce-adapter-(openclaw|claude|hermes|codex|opencode)$" },
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aliases", "passed", "failed"],
+      "properties": {
+        "aliases": { "const": 12 },
+        "passed": { "type": "integer", "minimum": 0, "maximum": 12 },
+        "failed": { "type": "integer", "minimum": 0, "maximum": 12 }
+      }
+    },
+    "aliases": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "items": { "$ref": "#/$defs/aliasResult" }
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "harness": { "enum": ["openclaw", "claude", "hermes", "codex", "opencode"] },
+    "aliasResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alias", "tenant", "harness", "status", "evidence", "checks", "sessionMode", "adapterBinarySha256"],
+      "properties": {
+        "alias": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+        "tenant": { "type": "string", "minLength": 1 },
+        "harness": { "$ref": "#/$defs/harness" },
+        "status": { "enum": ["passed", "failed"] },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adapter", "harness", "harnessDoubleKind"],
+          "properties": {
+            "adapter": { "const": "adapter-authentic" },
+            "harness": { "const": "harness-double" },
+            "harnessDoubleKind": { "enum": ["executable", "api"] }
+          }
+        },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hello", "lease", "ack", "retry", "session", "relay"],
+          "properties": {
+            "hello": { "type": "boolean" },
+            "lease": { "type": "boolean" },
+            "ack": { "type": "boolean" },
+            "retry": { "type": "boolean" },
+            "session": { "type": "boolean" },
+            "relay": { "type": "boolean" }
+          }
+        },
+        "sessionMode": { "enum": ["persistent-resume", "stateless-validated"] },
+        "adapterBinarySha256": { "$ref": "#/$defs/sha256" },
+        "deliveryId": { "type": "string", "format": "uuid" },
+        "error": { "type": "string" }
+      }
+    }
+  }
+}
