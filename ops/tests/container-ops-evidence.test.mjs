@@ -17,10 +17,12 @@ const covered = new Set(list.stdout.trim().split("\n"));
 for (const required of [
   "container-runtime/cauce-container-runtime.py",
   "scripts/container-adapter-supervisor.sh",
+  "scripts/alias-runner.sh",
   "scripts/cutover.sh",
   "scripts/cutover-rollback.sh",
   "scripts/rollback.sh",
   "tests/container-supervisor.test.mjs",
+  "tests/alias-runner.test.mjs",
   "tests/container-cutover.test.mjs",
   "tests/container-ops-evidence.test.mjs",
   "tests/fake-docker.mjs",

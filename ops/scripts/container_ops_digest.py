@@ -10,6 +10,7 @@ import sys
 STATIC_INPUTS = (
     "container-aliases.json",
     "scripts/container-adapter-supervisor.sh",
+    "scripts/alias-runner.sh",
     "container-runtime/cauce-container-runtime.py",
     "scripts/container_alias_lib.py",
     "scripts/container-alias-query.py",
@@ -26,6 +27,7 @@ STATIC_INPUTS = (
     # Critical adversarial suites and their fakes: a change to the supervisor/lifecycle
     # behaviour that is not matched by its regression tests must move this digest.
     "tests/container-supervisor.test.mjs",
+    "tests/alias-runner.test.mjs",
     "tests/container-release-pin.test.mjs",
     "tests/container-cutover.test.mjs",
     "tests/container-ops-evidence.test.mjs",

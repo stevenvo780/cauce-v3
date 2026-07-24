@@ -46,8 +46,17 @@ export interface SessionRecord {
   readonly initialized: boolean;
 }
 
+export interface ProcessedFaninReply {
+  readonly tenantId: string;
+  readonly alias: string;
+  readonly reply: string;
+}
+
 export const CANONICAL_OPEN_CODE_SESSION_FILE = "canonical-opencode-session.json";
 export const MAX_SESSIONS_FILE_BYTES = 1024 * 1024;
+export const MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS = 24 * 60 * 60 * 1_000;
+const DELEGATION_CONTEXT_PRUNE_RETRY_MS = 60_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 /** Directory fsync is optional only when the filesystem explicitly reports it unsupported. */
 export const UNSUPPORTED_DIRECTORY_FSYNC_CODES = ["EINVAL", "ENOTSUP", "EOPNOTSUPP"] as const;
@@ -662,6 +671,16 @@ function deliveryFingerprint(delivery: Delivery): string {
     .digest("hex");
 }
 
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function visibleText(value: unknown): value is string {
+  return typeof value === "string" && /[\p{L}\p{N}\p{P}\p{S}]/u.test(value);
+}
+
 async function prepareStateDirectory(directory: string): Promise<void> {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const handle = await open(
@@ -692,6 +711,7 @@ export class DurableStore {
   private tail: Promise<void> = Promise.resolve();
   private canonicalOpenCodeScopeKey: string | undefined;
   private canonicalOpenCodeReconciled = false;
+  private delegationContextPruneTimer: ReturnType<typeof setTimeout> | undefined;
 
   private constructor(
     private readonly directory: string,
@@ -713,6 +733,7 @@ export class DurableStore {
         : readSessionsSecure(store.path("sessions.json")),
       readJson(store.path("fencing.json"), EMPTY_FENCING),
     ]);
+    await store.pruneExpiredDelegationContexts();
     return store;
   }
 
@@ -722,6 +743,75 @@ export class DurableStore {
 
   private atomicWrite(name: string, value: unknown): Promise<void> {
     return atomicWrite(this.path(name), value, this.directoryFsync);
+  }
+
+  private withoutExpiredDelegationContexts(nowMs: number): InboxFile {
+    let changed = false;
+    const deliveries: Record<string, InboxRecord> = { ...this.inbox.deliveries };
+    for (const [deliveryId, record] of Object.entries(deliveries)) {
+      if (record.request === undefined || (record.state !== "done" && record.state !== "failed")) continue;
+      const updatedAtMs = Date.parse(record.updated_at);
+      if (Number.isFinite(updatedAtMs)
+        && nowMs - updatedAtMs < MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS) continue;
+      const withoutRequest = { ...record };
+      delete withoutRequest.request;
+      deliveries[deliveryId] = withoutRequest;
+      changed = true;
+    }
+    return changed ? { version: 1, deliveries } : this.inbox;
+  }
+
+  private scheduleDelegationContextPrune(
+    nowMs = Date.now(),
+    minimumDelayMs = 0,
+  ): void {
+    if (this.delegationContextPruneTimer !== undefined) {
+      clearTimeout(this.delegationContextPruneTimer);
+      this.delegationContextPruneTimer = undefined;
+    }
+    let nextExpiryMs = Number.POSITIVE_INFINITY;
+    for (const record of Object.values(this.inbox.deliveries)) {
+      if (record.request === undefined || (record.state !== "done" && record.state !== "failed")) continue;
+      const updatedAtMs = Date.parse(record.updated_at);
+      nextExpiryMs = Math.min(
+        nextExpiryMs,
+        Number.isFinite(updatedAtMs)
+          ? updatedAtMs + MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS
+          : nowMs,
+      );
+    }
+    if (!Number.isFinite(nextExpiryMs)) return;
+    const delayMs = Math.min(
+      MAX_TIMER_DELAY_MS,
+      Math.max(1, minimumDelayMs, Math.ceil(nextExpiryMs - nowMs)),
+    );
+    this.delegationContextPruneTimer = setTimeout(() => {
+      this.delegationContextPruneTimer = undefined;
+      void this.pruneExpiredDelegationContexts().catch(() => {
+        this.scheduleDelegationContextPrune(Date.now(), DELEGATION_CONTEXT_PRUNE_RETRY_MS);
+      });
+    }, delayMs);
+    this.delegationContextPruneTimer.unref();
+  }
+
+  async pruneExpiredDelegationContexts(nowMs = Date.now()): Promise<number> {
+    if (!Number.isFinite(nowMs)) throw new RangeError("Delegation context prune time must be finite");
+    return this.serialized(async () => {
+      const nextInbox = this.withoutExpiredDelegationContexts(nowMs);
+      if (nextInbox === this.inbox) {
+        this.scheduleDelegationContextPrune();
+        return 0;
+      }
+      const removed = Object.keys(this.inbox.deliveries)
+        .filter((deliveryId) =>
+          this.inbox.deliveries[deliveryId]?.request !== undefined
+          && nextInbox.deliveries[deliveryId]?.request === undefined)
+        .length;
+      await this.atomicWrite("inbox.json", nextInbox);
+      this.inbox = nextInbox;
+      this.scheduleDelegationContextPrune();
+      return removed;
+    });
   }
 
   private async serialized<T>(operation: () => Promise<T>): Promise<T> {
@@ -797,11 +887,14 @@ export class DurableStore {
         request: delivery,
         updated_at: occurredAt,
       };
-      this.inbox = {
+      const baseInbox = this.withoutExpiredDelegationContexts(Date.now());
+      const nextInbox: InboxFile = {
         version: 1,
-        deliveries: { ...this.inbox.deliveries, [delivery.delivery_id]: record },
+        deliveries: { ...baseInbox.deliveries, [delivery.delivery_id]: record },
       };
-      await this.atomicWrite("inbox.json", this.inbox);
+      await this.atomicWrite("inbox.json", nextInbox);
+      this.inbox = nextInbox;
+      this.scheduleDelegationContextPrune();
       return { acceptance: existing === undefined ? "created" : "retry", record: clone(record) };
     });
   }
@@ -809,6 +902,107 @@ export class DurableStore {
   getDelivery(deliveryId: string): InboxRecord | undefined {
     const record = this.inbox.deliveries[deliveryId];
     return record === undefined ? undefined : clone(record);
+  }
+
+  private faninRoot(delivery: Delivery): InboxRecord | undefined {
+    if (delivery.body.type !== "agent.fanin") return undefined;
+    const correlation = objectRecord(delivery.body.correlation);
+    const rootMessageId = typeof correlation?.root_message_id === "string"
+      ? correlation.root_message_id
+      : undefined;
+    const rootDeliveryId = typeof correlation?.root_delivery_id === "string"
+      ? correlation.root_delivery_id
+      : undefined;
+    if (rootMessageId === undefined || rootDeliveryId === undefined) return undefined;
+    const root = this.inbox.deliveries[rootDeliveryId];
+    if (
+      root?.state !== "done"
+      || root.request === undefined
+      || root.output === undefined
+      || root.request.message_id !== rootMessageId
+      || root.request.trace_id !== delivery.trace_id
+      || root.request.recipient_alias !== delivery.recipient_alias
+      || root.output.messages.length === 0
+    ) {
+      return undefined;
+    }
+    return root;
+  }
+
+  private continuationBelongsToRoot(delivery: Delivery, rootDeliveryId: string): boolean {
+    const seen = new Set<string>();
+    let response: Delivery | undefined = delivery;
+    for (let depth = 0; response !== undefined && depth < 16; depth += 1) {
+      const source = this.continuationSource(response);
+      if (source === undefined || seen.has(source.delivery_id)) return false;
+      if (source.delivery_id === rootDeliveryId) return true;
+      seen.add(source.delivery_id);
+      response = source.request?.body.type === "agent.response" ? source.request : undefined;
+    }
+    return false;
+  }
+
+  /**
+   * Resolves an authenticated agent.response back to the exact local delivery
+   * that created its delegated branch. The local terminal output is part of
+   * the proof: a wire correlation alone can never recover retained context.
+   */
+  continuationSource(delivery: Delivery): InboxRecord | undefined {
+    if (delivery.body.type !== "agent.response") return undefined;
+    const correlation = objectRecord(delivery.body.correlation);
+    const sourceDeliveryId = typeof correlation?.response_to_delivery_id === "string"
+      ? correlation.response_to_delivery_id
+      : undefined;
+    if (sourceDeliveryId === undefined) return undefined;
+    const source = this.inbox.deliveries[sourceDeliveryId];
+    if (
+      source?.state !== "done"
+      || source.request === undefined
+      || source.output === undefined
+      || source.request.trace_id !== delivery.trace_id
+      || source.request.recipient_alias !== delivery.recipient_alias
+      || !source.output.messages.some((message) => message.to === delivery.actor_alias)
+    ) {
+      return undefined;
+    }
+    return clone(source);
+  }
+
+  /**
+   * Returns every terminal visible reply produced locally while processing
+   * correlated child responses for this fan-in root. Branch text from the wire
+   * is deliberately not consulted here.
+   */
+  processedRepliesForFanin(delivery: Delivery): readonly ProcessedFaninReply[] {
+    const root = this.faninRoot(delivery);
+    if (root?.request === undefined) return [];
+    const correlation = objectRecord(delivery.body.correlation);
+    const rootMessageId = correlation?.root_message_id;
+    const rootDeliveryId = root.delivery_id;
+
+    return Object.values(this.inbox.deliveries)
+      .filter((record) => {
+        const request = record.request;
+        const responseCorrelation = objectRecord(request?.body.correlation);
+        return record.state === "done"
+          && request?.body.type === "agent.response"
+          && request.trace_id === delivery.trace_id
+          && request.recipient_alias === delivery.recipient_alias
+          && responseCorrelation?.root_message_id === rootMessageId
+          && responseCorrelation?.root_delivery_id === rootDeliveryId
+          && this.continuationBelongsToRoot(request, rootDeliveryId)
+          && record.output?.messages.length === 0
+          && visibleText(record.output?.reply);
+      })
+      .sort((left, right) =>
+        (left.request?.tenant_id ?? "").localeCompare(right.request?.tenant_id ?? "")
+        || (left.request?.actor_alias ?? "").localeCompare(right.request?.actor_alias ?? "")
+        || left.delivery_id.localeCompare(right.delivery_id))
+      .map((record) => ({
+        tenantId: record.request!.tenant_id,
+        alias: record.request!.actor_alias,
+        reply: record.output!.reply!.trim(),
+      }));
   }
 
   pendingDeliveries(): readonly InboxRecord[] {
@@ -855,11 +1049,34 @@ export class DurableStore {
         ...(details.error === undefined ? {} : { error: details.error }),
         updated_at: occurredAt,
       };
-      this.inbox = {
-        version: 1,
-        deliveries: { ...this.inbox.deliveries, [deliveryId]: next },
+      const deliveries: Record<string, InboxRecord> = {
+        ...this.inbox.deliveries,
+        [deliveryId]: next,
       };
-      await this.atomicWrite("inbox.json", this.inbox);
+      if (state === "done" && existing.request?.body.type === "agent.fanin") {
+        const root = this.faninRoot(existing.request);
+        if (root !== undefined) {
+          for (const [candidateId, candidate] of Object.entries(deliveries)) {
+            const request = candidate.request;
+            if (request === undefined
+              || (candidate.state !== "done" && candidate.state !== "failed")) continue;
+            const belongsToRoot = request.delivery_id === root.delivery_id
+              || (request.body.type === "agent.response"
+                && this.continuationBelongsToRoot(request, root.delivery_id));
+            if (!belongsToRoot) continue;
+            const withoutRequest = { ...candidate };
+            delete withoutRequest.request;
+            deliveries[candidateId] = withoutRequest;
+          }
+        }
+      }
+      const nextInbox: InboxFile = {
+        version: 1,
+        deliveries,
+      };
+      await this.atomicWrite("inbox.json", nextInbox);
+      this.inbox = nextInbox;
+      this.scheduleDelegationContextPrune();
       return clone(next);
     });
   }

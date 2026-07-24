@@ -42,6 +42,7 @@ done
 (cd "$ROOT/generated/container-systemd" && sha256sum -c SHA256SUMS >/dev/null)
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/container_ops_digest.py" --check
 node "$ROOT/tests/container-supervisor.test.mjs"
+node "$ROOT/tests/alias-runner.test.mjs"
 node "$ROOT/tests/container-cutover.test.mjs"
 node "$ROOT/tests/container-ops-evidence.test.mjs"
 for dir in compose-authentic release; do "$ROOT/scripts/verify-manifest.sh" "$ROOT/artifacts/$dir"; done

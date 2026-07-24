@@ -225,7 +225,20 @@ type. The synthesizer itself has no network or filesystem operations. Nested
 `untrusted_text` is copied as data, never executed or interpreted as
 instructions, every response requires canonical `tenant_id` and `alias`, and
 the final visible reply attributes it as `tenant_id/alias` within a 64 KiB
-UTF-8 bound.
+UTF-8 bound. When this adapter already processed correlated child responses,
+their terminal local replies are rendered in a separately budgeted attributed
+section; the raw Store responses remain visible in their own section. Each
+entry receives a deterministic byte share and an explicit truncation marker,
+so a large local reply cannot hide another branch.
+
+For an authenticated `agent.response`, the SDK recovers the original request
+only when local durable state proves the exact delegation lineage
+(`source.output.messages -> actor_alias`, trace, recipient and root
+correlation). Stateless harnesses therefore receive both the authoritative
+original task and the returned child text marked as untrusted evidence.
+Retained lineage requests are removed atomically when fan-in completes and are
+also pruned by an unreferenced timer after 24 hours, including while the
+adapter is otherwise idle.
 
 `agent.message`, `agent.response` and `agent.fanin` are reserved internal body
 types. Store is the provenance trust boundary that must reject these types on
