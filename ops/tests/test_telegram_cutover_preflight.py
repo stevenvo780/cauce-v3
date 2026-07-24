@@ -3,8 +3,8 @@
 
 Builds a hermetic runtime directory (config.json + token + marker) under a temp dir
 that stands in for the host side of the compose bind mount, then asserts the preflight
-passes on a correct layout and fails closed on each activation hazard: missing/insecure
-token, wrong marker content, unsafe marker mode, sentinel allowlists, an alias absent
+passes on a correct layout and fails closed on each activation hazard: missing, empty or
+insecure token, wrong marker content, unsafe marker mode, sentinel allowlists, an alias absent
 from config, and token/marker paths outside the mount.
 
 Runs standalone (`python3 ops/tests/test_telegram_cutover_preflight.py`) or under pytest.
@@ -17,6 +17,7 @@ import os
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 OPS_DIR = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = OPS_DIR / "scripts"
@@ -34,7 +35,7 @@ pre = _load("telegram_cutover_preflight", "telegram-cutover-preflight.py")
 gen = _load("generate_telegram_config", "generate-telegram-config.py")
 
 FLEET = {
-    "kant": {"tenant": "Steven", "room": "grp.steven", "harness": "opencode"},
+    "kant": {"tenant": "Steven", "room": "grp.steven", "harness": "codex"},
     "argos": {"tenant": "Steven", "room": "grp.steven", "harness": "hermes"},
 }
 MOUNT = "/run/cauce-telegram"
@@ -96,6 +97,24 @@ class PreflightTests(unittest.TestCase):
         report = self._run()
         self.assertFalse(report["ok"])
         self.assertTrue(any("token file missing" in f for f in report["aliases"][0]["findings"]))
+
+    def test_empty_token_fails_without_reading_token_contents(self) -> None:
+        token_path = self.tmp / "kant.token"
+        token_path.write_bytes(b"")
+        os.chmod(token_path, 0o600)
+        original_read_text = pathlib.Path.read_text
+
+        def reject_token_read(path: pathlib.Path, *args, **kwargs):
+            if path == token_path:
+                raise AssertionError("preflight must not read token contents")
+            return original_read_text(path, *args, **kwargs)
+
+        with mock.patch.object(pathlib.Path, "read_text", reject_token_read):
+            report = self._run()
+
+        self.assertFalse(report["ok"])
+        findings = report["aliases"][0]["findings"]
+        self.assertTrue(any("token file is empty" in finding for finding in findings))
 
     def test_token_wrong_mode_fails(self) -> None:
         os.chmod(self.tmp / "kant.token", 0o644)

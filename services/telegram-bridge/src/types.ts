@@ -35,10 +35,21 @@ export interface TelegramSendResult {
   message_id: string;
 }
 
+export const TELEGRAM_ACTIVITY_REACTIONS = ['👀', '🤔', '👍', '👎'] as const;
+export type TelegramReactionEmoji = typeof TELEGRAM_ACTIVITY_REACTIONS[number];
+export type TelegramChatAction = 'typing';
+
 export interface TelegramApi {
   getIdentity(): Promise<TelegramIdentity>;
   getUpdates(offset: number, timeoutSeconds: number): Promise<TelegramUpdate[]>;
   sendText(chatId: string, text: string): Promise<TelegramSendResult>;
+  setMessageReaction(
+    chatId: string,
+    messageId: string,
+    reaction: TelegramReactionEmoji,
+    signal?: AbortSignal
+  ): Promise<void>;
+  sendChatAction(chatId: string, action: TelegramChatAction, signal?: AbortSignal): Promise<void>;
 }
 
 export interface BridgeRecipient {

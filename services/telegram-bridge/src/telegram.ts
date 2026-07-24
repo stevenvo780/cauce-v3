@@ -1,5 +1,7 @@
+import { TELEGRAM_ACTIVITY_REACTIONS } from './types.js';
 import type {
-  TelegramApi, TelegramIdentity, TelegramMessage, TelegramSendResult, TelegramUpdate
+  TelegramApi, TelegramChatAction, TelegramIdentity, TelegramMessage, TelegramReactionEmoji,
+  TelegramSendResult, TelegramUpdate
 } from './types.js';
 
 interface TelegramResponse<T> {
@@ -9,6 +11,8 @@ interface TelegramResponse<T> {
   error_code?: number;
   parameters?: { retry_after?: number };
 }
+
+const ACTIVITY_REACTIONS = new Set<string>(TELEGRAM_ACTIVITY_REACTIONS);
 
 export class TelegramApiError extends Error {
   constructor(
@@ -39,6 +43,17 @@ function safeInteger(value: unknown, name: string): number {
   return Number(value);
 }
 
+export function validTelegramChatId(value: string): boolean {
+  if (!/^-?[1-9][0-9]{0,19}$/.test(value)) return false;
+  const parsed = BigInt(value);
+  return parsed >= -9_223_372_036_854_775_808n && parsed <= 9_223_372_036_854_775_807n;
+}
+
+export function validTelegramMessageId(value: string): boolean {
+  if (!/^[1-9][0-9]{0,15}$/.test(value)) return false;
+  return Number.isSafeInteger(Number(value));
+}
+
 function parseUpdate(value: unknown): TelegramUpdate {
   const row = record(value);
   const update: TelegramUpdate = { update_id: safeInteger(row.update_id, 'update_id') };
@@ -60,15 +75,22 @@ export class TelegramHttpClient implements TelegramApi {
     this.requestTimeoutMs = options.requestTimeoutMs ?? 65_000;
   }
 
-  private async call<T>(method: string, body: Record<string, unknown>): Promise<T> {
+  private async call<T>(
+    method: string,
+    body: Record<string, unknown>,
+    externalSignal?: AbortSignal
+  ): Promise<T> {
     let response: Response;
     try {
+      const timeoutSignal = AbortSignal.timeout(this.requestTimeoutMs);
       response = await this.fetcher(`${this.endpoint}/${method}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
         redirect: 'error',
-        signal: AbortSignal.timeout(this.requestTimeoutMs)
+        signal: externalSignal === undefined
+          ? timeoutSignal
+          : AbortSignal.any([externalSignal, timeoutSignal])
       });
     } catch {
       throw new TelegramApiError('Telegram request outcome is unknown', false, undefined, false);
@@ -121,7 +143,7 @@ export class TelegramHttpClient implements TelegramApi {
   }
 
   async sendText(chatId: string, text: string): Promise<TelegramSendResult> {
-    if (!/^-?[1-9][0-9]{0,19}$/.test(chatId)) throw new TelegramApiError('invalid Telegram destination', false);
+    if (!validTelegramChatId(chatId)) throw new TelegramApiError('invalid Telegram destination', false);
     if (text.length === 0 || [...text].length > 4_096) throw new TelegramApiError('Telegram text exceeds safe limit', false);
     const raw = await this.call<unknown>('sendMessage', {
       chat_id: chatId,
@@ -139,5 +161,53 @@ export class TelegramHttpClient implements TelegramApi {
       throw new TelegramApiError('Telegram accepted sendMessage with an invalid message id', false, undefined, false);
     }
     return { message_id: String(messageId) };
+  }
+
+  async setMessageReaction(
+    chatId: string,
+    messageId: string,
+    reaction: TelegramReactionEmoji,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (!validTelegramChatId(chatId)) throw new TelegramApiError('invalid Telegram reaction destination', false);
+    if (!validTelegramMessageId(messageId)) throw new TelegramApiError('invalid Telegram reaction message id', false);
+    if (!ACTIVITY_REACTIONS.has(reaction)) {
+      throw new TelegramApiError('invalid Telegram reaction', false);
+    }
+    const result = await this.call<unknown>('setMessageReaction', {
+      chat_id: chatId,
+      message_id: Number(messageId),
+      reaction: [{ type: 'emoji', emoji: reaction }],
+      is_big: false
+    }, signal);
+    if (result !== true) {
+      throw new TelegramApiError(
+        'Telegram accepted setMessageReaction with an invalid result',
+        false,
+        undefined,
+        false
+      );
+    }
+  }
+
+  async sendChatAction(
+    chatId: string,
+    action: TelegramChatAction,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (!validTelegramChatId(chatId)) throw new TelegramApiError('invalid Telegram chat action destination', false);
+    if (action !== 'typing') throw new TelegramApiError('invalid Telegram chat action', false);
+    const result = await this.call<unknown>('sendChatAction', {
+      chat_id: chatId,
+      action
+    }, signal);
+    if (result !== true) {
+      throw new TelegramApiError(
+        'Telegram accepted sendChatAction with an invalid result',
+        false,
+        undefined,
+        false
+      );
+    }
   }
 }

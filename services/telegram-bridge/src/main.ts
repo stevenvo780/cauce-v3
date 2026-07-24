@@ -1,4 +1,5 @@
 import { CauceRepository, createPool } from '@cauce/store';
+import { TelegramActivityIndicator } from './activity.js';
 import { assertV2PollerDisabled, loadTelegramBridgeConfig, readTelegramToken } from './config.js';
 import { TelegramEgressWorker } from './egress.js';
 import { startTelegramHealthServer, TelegramBridgeMetrics } from './health.js';
@@ -34,6 +35,7 @@ const repository = new PostgresTelegramBridgeRepository(pool);
 const ingress = new StoreTelegramIngress(new CauceRepository(pool));
 const metrics = new TelegramBridgeMetrics();
 const controller = new AbortController();
+const activity = new TelegramActivityIndicator();
 let started = 0;
 const health = startTelegramHealthServer(positivePort(process.env.PORT), pool, metrics, () => started);
 
@@ -54,6 +56,7 @@ try {
       api,
       repository,
       ingress,
+      activity,
       onMetric: (metric) => metrics.increment(metric)
     }));
     started += 1;
@@ -62,6 +65,7 @@ try {
     repository,
     aliases,
     apis,
+    activity,
     onMetric: (metric) => metrics.increment(metric)
   });
   const stop = (): void => controller.abort();
@@ -70,6 +74,7 @@ try {
   await Promise.all([...pollers.map((poller) => poller.run(controller.signal)), egress.run(controller.signal)]);
 } finally {
   controller.abort();
+  activity.stop();
   await new Promise<void>((resolve) => health.close(() => resolve()));
   await pool.end();
 }

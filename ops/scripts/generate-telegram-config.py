@@ -16,7 +16,7 @@ Mapping (per alias):
   v2_shutdown_marker_file <- PLACEHOLDER  {runtime-dir}/{alias}.disabled (container-internal path)
   allowed_user_ids        <- --allowlist-file / --allow-user-id, else a sentinel placeholder
   allowed_chat_ids        <- --allowlist-file / --allow-chat-id, else a sentinel placeholder
-  recipients              <- per --recipients policy (default: the alias itself)
+  recipients              <- exactly the alias itself
   poll_timeout_seconds    <- --poll-timeout-seconds (default 25)
   poll_lease_ms           <- --poll-lease-ms (default 60000)
 
@@ -28,10 +28,10 @@ to /run/cauce-telegram/<alias>.{token,disabled}. Override with --runtime-dir (or
 finer --token-dir/--marker-dir) only if you also mount those directories.
 
 RECIPIENTS (gap G2): a human DMs the <alias> bot expecting <alias> to answer, so the
-default `self` policy routes each alias's ingress to its own harness. This avoids the
-prior `peers` policy (which excluded self and, in a multi-agent room, delivered a DM
-to every OTHER agent, producing duplicate replies through the receiving bot). Use
---recipients room|peers only for a deliberate broadcast/legacy topology.
+only supported policy routes each alias's ingress to its own harness. Delegation and
+fan-out happen afterward through durable Cauce V3 `messages`, where completion can be
+correlated before one final Telegram response. Legacy room/peers ingress fan-out is
+rejected because it cannot provide one deterministic activity/result state.
 
 ALLOWLISTS (gap G3): the schema's `idList` REQUIRES a non-empty array, so a literally
 empty allowlist cannot validate. With no operational IDs supplied the allowlists
@@ -81,7 +81,7 @@ DEFAULT_RUNTIME_DIR = "/run/cauce-telegram"
 DEFAULT_POLL_TIMEOUT_SECONDS = 25
 DEFAULT_POLL_LEASE_MS = 60_000
 DEFAULT_RECIPIENTS_POLICY = "self"
-RECIPIENTS_POLICIES = ("self", "room", "peers")
+RECIPIENTS_POLICIES = ("self",)
 
 # Deterministic key order for each emitted alias object.
 ALIAS_FIELD_ORDER = (
@@ -225,29 +225,11 @@ def default_options() -> dict[str, Any]:
 
 
 def _recipients_for(alias: str, fleet: dict[str, dict[str, str]], policy: str) -> list[dict[str, str]]:
-    """Resolve the recipient list per policy (the schema requires >= 1 recipient).
-
-    self  : the alias itself — a human DMs the <alias> bot and <alias> answers (default).
-    room  : every member of the same (tenant, room), sorted, including self (broadcast;
-            every recipient's terminal ACK relays a reply through the receiving bot).
-    peers : same (tenant, room) peers EXCLUDING self, sorted; a singleton room falls back
-            to the alias itself (legacy topology).
-    """
+    """Return the sole ingress recipient accepted by the runtime bridge."""
     tenant = fleet[alias]["tenant"]
-    room = fleet[alias]["room"]
-    if policy == "self":
-        return [{"tenant_id": tenant, "alias": alias}]
-    members = sorted(
-        other for other, meta in fleet.items() if meta["tenant"] == tenant and meta["room"] == room
-    )
-    if policy == "room":
-        chosen = members
-    elif policy == "peers":
-        peers = [other for other in members if other != alias]
-        chosen = peers if peers else [alias]
-    else:
+    if policy != "self":
         raise GeneratorError(f"unknown recipients policy: {policy!r}")
-    return [{"tenant_id": tenant, "alias": peer} for peer in chosen]
+    return [{"tenant_id": tenant, "alias": alias}]
 
 
 def build_alias_config(alias: str, fleet: dict[str, dict[str, str]], options: dict[str, Any]) -> dict[str, Any]:
@@ -359,6 +341,9 @@ def validate_config(config: Any) -> dict[str, Any]:
                 raise GeneratorError("each recipient must be an object")
             _check_text(recipient.get("tenant_id"), "recipient.tenant_id", TENANT_RE, 64)
             _check_text(recipient.get("alias"), "recipient.alias", ALIAS_RE, 64)
+        expected_recipient = [{"tenant_id": row["tenant_id"], "alias": row["alias"]}]
+        if recipients != expected_recipient:
+            raise GeneratorError("Telegram ingress requires exactly one self recipient")
         poll_timeout = row.get("poll_timeout_seconds")
         poll_lease = row.get("poll_lease_ms")
         _check_int(poll_timeout, 1, 50, "poll_timeout_seconds")
@@ -419,7 +404,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--recipients",
         choices=RECIPIENTS_POLICIES,
         default=DEFAULT_RECIPIENTS_POLICY,
-        help="recipient routing policy (default self: the DM'd alias answers)",
+        help="ingress recipient policy (only self is supported)",
     )
     parser.add_argument("--poll-timeout-seconds", type=int, default=DEFAULT_POLL_TIMEOUT_SECONDS)
     parser.add_argument("--poll-lease-ms", type=int, default=DEFAULT_POLL_LEASE_MS)

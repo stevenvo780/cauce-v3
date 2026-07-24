@@ -4,6 +4,7 @@ import type {
   BridgeMetric, PollLease, TelegramAliasConfig, TelegramApi, TelegramCursorRepository,
   TelegramFile, TelegramIngress, TelegramMessage, TelegramUpdate
 } from './types.js';
+import type { TelegramActivity } from './activity.js';
 import { TelegramApiError } from './telegram.js';
 
 export interface TelegramPollerOptions {
@@ -12,6 +13,7 @@ export interface TelegramPollerOptions {
   api: TelegramApi;
   repository: TelegramCursorRepository;
   ingress: TelegramIngress;
+  activity?: TelegramActivity;
   ownerId?: string;
   onMetric?: (metric: BridgeMetric) => void;
 }
@@ -86,6 +88,7 @@ export class TelegramPoller {
   private readonly api: TelegramApi;
   private readonly repository: TelegramCursorRepository;
   private readonly ingress: TelegramIngress;
+  private readonly activity: TelegramActivity | undefined;
   private readonly ownerId: string;
   private readonly onMetric: (metric: BridgeMetric) => void;
   private currentLease: PollLease | undefined;
@@ -96,6 +99,7 @@ export class TelegramPoller {
     this.api = options.api;
     this.repository = options.repository;
     this.ingress = options.ingress;
+    this.activity = options.activity;
     this.ownerId = options.ownerId ?? `telegram-poller:${randomUUID()}`;
     this.onMetric = options.onMetric ?? (() => undefined);
   }
@@ -127,6 +131,7 @@ export class TelegramPoller {
       relay: [],
       metadata: {
         bridge_alias: this.config.alias,
+        bridge_tenant: this.config.tenant_id,
         chat_type: safeText(accepted.message.chat.type, 32) ?? 'unknown'
       }
     };
@@ -141,6 +146,18 @@ export class TelegramPoller {
       origin,
       session_id: session(this.botId, accepted.chatId, accepted.userId)
     });
+    if (!result.duplicate) {
+      try {
+        this.activity?.begin({
+          alias: this.config.alias,
+          api: this.api,
+          chatId: accepted.chatId,
+          messageId: String(accepted.message.message_id)
+        });
+      } catch {
+        // Telegram activity is visual only; durable ingress publication already won.
+      }
+    }
     this.onMetric(result.duplicate ? 'updates_duplicate' : 'updates_allowed');
     await this.repository.advanceCursor(current, update.update_id + 1);
   }

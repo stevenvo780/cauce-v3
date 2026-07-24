@@ -15,8 +15,9 @@ while silently dropping every human message or refusing to poll:
   * token_file / v2_shutdown_marker_file are not under the compose mount
     (deploy/compose.yaml binds CAUCE_TELEGRAM_RUNTIME_DIR -> /run/cauce-telegram, ro),
     so the container could never open them.
-  * the host token file is missing, a symlink, not mode 0600, or not owned by the
-    service uid (config.ts readTelegramToken). Its CONTENTS are never read.
+  * the host token file is missing, empty, a symlink, not mode 0600, or not owned
+    by the service uid (config.ts readTelegramToken). Its CONTENTS are never read;
+    non-emptiness is checked only from lstat metadata.
   * the host marker file is missing, a symlink, group/other-writable, or its content
     is not exactly `v2-poller-disabled:<alias>` (config.ts assertV2PollerDisabled).
   * the allowlists are still the generator's shared sentinel placeholders, which the
@@ -84,11 +85,14 @@ def _check_token(host_path: pathlib.Path, expected_uid: int, findings: list[str]
     if not stat.S_ISREG(info.st_mode):
         findings.append(f"token file must be a regular file: {host_path}")
         return
+    if info.st_size <= 0:
+        findings.append(f"token file is empty (st_size must be > 0): {host_path}")
     if stat.S_IMODE(info.st_mode) != TOKEN_MODE:
         findings.append(f"token file mode must be 0600, found {oct(stat.S_IMODE(info.st_mode))}: {host_path}")
     if expected_uid >= 0 and info.st_uid != expected_uid:
         findings.append(f"token file must be owned by uid {expected_uid}, found {info.st_uid}: {host_path}")
-    # Contents are never read: 0600 + ownership are the only host-observable guarantees.
+    # Secret-free by construction: size/mode/owner come from lstat; token bytes
+    # are never opened or read by this preflight.
 
 
 def _check_marker(host_path: pathlib.Path, alias: str, findings: list[str]) -> None:

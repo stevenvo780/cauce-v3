@@ -1,3 +1,4 @@
+export * from './activity.js';
 export * from './config.js';
 export * from './egress.js';
 export * from './health.js';

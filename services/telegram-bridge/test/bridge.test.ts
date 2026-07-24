@@ -1,6 +1,8 @@
 import type { Origin } from '@cauce/protocol';
 import { describe, expect, it } from 'vitest';
-import { EgressCrash, TelegramEgressWorker } from '../src/egress.js';
+import { TelegramActivityIndicator } from '../src/activity.js';
+import { parseTelegramBridgeConfig } from '../src/config.js';
+import { EgressCrash, TelegramEgressWorker, telegramTextChunks } from '../src/egress.js';
 import { TelegramPoller } from '../src/poller.js';
 import { TelegramApiError, TelegramHttpClient } from '../src/telegram.js';
 import type {
@@ -20,7 +22,7 @@ function config(overrides: Partial<TelegramAliasConfig> = {}): TelegramAliasConf
     v2_shutdown_marker_file: '/synthetic/marker',
     allowed_user_ids: ['101'],
     allowed_chat_ids: ['201'],
-    recipients: [{ tenant_id: TENANT, alias: 'argos' }],
+    recipients: [{ tenant_id: TENANT, alias: 'kant' }],
     poll_timeout_seconds: 1,
     poll_lease_ms: 60_000,
     ...overrides
@@ -78,6 +80,8 @@ class MemoryCursorRepository implements TelegramCursorRepository {
 class FakeTelegram implements TelegramApi {
   offsets: number[] = [];
   sends: Array<{ chat: string; text: string }> = [];
+  reactions: Array<{ chat: string; message: string; reaction: string }> = [];
+  actions: Array<{ chat: string; action: string }> = [];
 
   constructor(readonly updates: TelegramUpdate[] = []) {}
 
@@ -91,6 +95,30 @@ class FakeTelegram implements TelegramApi {
   async sendText(chatId: string, text: string): Promise<TelegramSendResult> {
     this.sends.push({ chat: chatId, text });
     return { message_id: String(this.sends.length) };
+  }
+
+  async setMessageReaction(chatId: string, messageId: string, reaction: '👀' | '🤔' | '👍' | '👎'): Promise<void> {
+    this.reactions.push({ chat: chatId, message: messageId, reaction });
+  }
+
+  async sendChatAction(chatId: string, action: 'typing'): Promise<void> {
+    this.actions.push({ chat: chatId, action });
+  }
+}
+
+class FailingActivityTelegram extends FakeTelegram {
+  override async setMessageReaction(): Promise<void> {
+    throw new Error('reaction unavailable');
+  }
+
+  override async sendChatAction(): Promise<void> {
+    throw new Error('typing unavailable');
+  }
+}
+
+class RejectingSendTelegram extends FakeTelegram {
+  override async sendText(): Promise<TelegramSendResult> {
+    throw new TelegramApiError('message rejected', false, undefined, true);
   }
 }
 
@@ -112,6 +140,7 @@ function relay(overrides: Partial<TelegramOriginRelay> = {}): TelegramOriginRela
     adapter: 'telegram',
     channel: 'telegram',
     conversation_id: '201',
+    external_message_id: '301',
     relay: [],
     metadata: { bridge_alias: 'kant' }
   };
@@ -127,6 +156,103 @@ function relay(overrides: Partial<TelegramOriginRelay> = {}): TelegramOriginRela
     ...overrides
   };
 }
+
+describe('Telegram single-recipient configuration', () => {
+  it('accepts only the bot alias itself as the sole ingress recipient', () => {
+    expect(parseTelegramBridgeConfig({ aliases: [config()] }).aliases[0]?.recipients)
+      .toEqual([{ tenant_id: TENANT, alias: 'kant' }]);
+
+    expect(() => parseTelegramBridgeConfig({
+      aliases: [config({ recipients: [{ tenant_id: TENANT, alias: 'argos' }] })]
+    })).toThrow('Telegram ingress requires exactly one self recipient');
+    expect(() => parseTelegramBridgeConfig({
+      aliases: [config({
+        recipients: [
+          { tenant_id: TENANT, alias: 'kant' },
+          { tenant_id: TENANT, alias: 'argos' }
+        ]
+      })]
+    })).toThrow('Telegram ingress requires exactly one self recipient');
+  });
+});
+
+describe('Telegram egress text extraction', () => {
+  it('uses the exact AdapterClient StructuredOutput reply and preserves sanitizing and chunking', () => {
+    const reply = ` \u0000${'a'.repeat(4_096)}b\u0000 `;
+
+    expect(telegramTextChunks({
+      result: {
+        output: {
+          reply,
+          messages: [{ to: 'argos', body: 'relay-only content' }],
+          status: 'done',
+          retryable: false,
+          artifacts: []
+        }
+      }
+    })).toEqual(['a'.repeat(4_096), 'b']);
+  });
+
+  it('accepts result.reply before legacy result text fields', () => {
+    expect(telegramTextChunks({
+      result: { reply: 'structured reply', text: 'legacy reply' }
+    })).toEqual(['structured reply']);
+  });
+
+  it('keeps the textual fallback for an empty StructuredOutput reply, except when an error is present', () => {
+    const emptyOutput = {
+      reply: '',
+      messages: [],
+      status: 'done',
+      retryable: false,
+      artifacts: []
+    };
+
+    expect(telegramTextChunks({ result: { output: emptyOutput } }))
+      .toEqual(['La solicitud finalizó sin contenido textual.']);
+    expect(telegramTextChunks({ result: { output: emptyOutput }, error: 'adapter failed' }))
+      .toEqual(['Error: adapter failed']);
+    expect(telegramTextChunks({
+      result: { output: { ...emptyOutput, reply: ' \u0000 ' } }, error: 'adapter failed'
+    })).toEqual(['Error: adapter failed']);
+  });
+
+  it('does not treat zero-width, combining-mark-only, or control-only replies as visible Telegram content', () => {
+    expect(telegramTextChunks({
+      result: { output: { reply: '\u200B\u2060\u0000' } },
+      error: 'MISSING_FINAL_REPLY'
+    })).toEqual(['Error: MISSING_FINAL_REPLY']);
+    expect(telegramTextChunks({
+      result: { output: { reply: '\u200B\u2060\u0000' } }
+    })).toEqual(['La solicitud finalizó sin contenido textual.']);
+    for (const reply of ['\u034F', '\uFE0F', '\u0301', '\u20DD']) {
+      expect(telegramTextChunks({ result: { output: { reply } } }))
+        .toEqual(['La solicitud finalizó sin contenido textual.']);
+    }
+    expect(telegramTextChunks({
+      result: { output: { reply: 'a\u0301' } }
+    })).toEqual(['a\u0301']);
+  });
+
+  it('preserves result.text compatibility and never derives text from messages or tool payloads', () => {
+    expect(telegramTextChunks({ result: { text: 'legacy reply' } })).toEqual(['legacy reply']);
+    expect(telegramTextChunks({
+      result: { output: { reply: { text: 'not a string' } }, reply: 42, text: 'legacy reply' }
+    })).toEqual(['legacy reply']);
+    expect(telegramTextChunks({
+      result: {
+        output: {
+          reply: null,
+          messages: [{ to: 'argos', body: 'must not be sent to Telegram' }],
+          status: 'done',
+          retryable: false,
+          artifacts: []
+        },
+        tool: { content: 'must not be sent to Telegram' }
+      }
+    })).toEqual(['La solicitud finalizó sin contenido textual.']);
+  });
+});
 
 class MemoryEgressRepository implements TelegramEgressRepository {
   readonly effects = new Map<string, TelegramEffect>();
@@ -235,19 +361,30 @@ describe('Telegram durable polling', () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DeduplicatingIngress();
     const api = new FakeTelegram([update(5), update(5)]);
+    const activity = new TelegramActivityIndicator();
     const metrics: string[] = [];
     const poller = new TelegramPoller({
       config: config(), botId: '900001', api, repository, ingress, ownerId: 'one',
+      activity,
       onMetric: (metric) => metrics.push(metric)
     });
 
     await poller.runOnce();
+    await activity.whenIdle();
 
     expect(ingress.effects.size).toBe(1);
     expect(ingress.calls).toHaveLength(2);
     expect(repository.next).toBe(6);
     expect(metrics).toContain('updates_duplicate');
-    expect(ingress.calls[0]?.origin).toMatchObject({ channel: 'telegram', conversation_id: '201' });
+    expect(ingress.calls[0]?.origin).toMatchObject({
+      channel: 'telegram',
+      conversation_id: '201',
+      external_message_id: '105',
+      metadata: { bridge_alias: 'kant', bridge_tenant: TENANT }
+    });
+    expect(api.reactions.map((entry) => entry.reaction)).toEqual(['👀', '🤔']);
+    expect(api.actions).toEqual([{ chat: '201', action: 'typing' }]);
+    activity.stop();
   });
 
   it('resumes from the persisted cursor after restart', async () => {
@@ -264,6 +401,25 @@ describe('Telegram durable polling', () => {
 
     expect(restartedApi.offsets).toEqual([10]);
     expect(ingress.effects.size).toBe(1);
+  });
+
+  it('does not restart visual activity for an already-published duplicate after restart', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    ingress.effects.add('900001:15');
+    const api = new FakeTelegram([update(15)]);
+    const activity = new TelegramActivityIndicator();
+
+    await new TelegramPoller({
+      config: config(), botId: '900001', api, repository, ingress, activity
+    }).runOnce();
+    await activity.whenIdle();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(repository.next).toBe(16);
+    expect(api.reactions).toHaveLength(0);
+    expect(api.actions).toHaveLength(0);
+    activity.stop();
   });
 
   it('fences a competing poller for the same bot', async () => {
@@ -292,9 +448,113 @@ describe('Telegram durable polling', () => {
     expect(ingress.calls).toHaveLength(0);
     expect(repository.next).toBe(4);
   });
+
+  it('keeps publication and cursor advancement durable when every visual API call fails', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const api = new FailingActivityTelegram([update(12)]);
+    const activity = new TelegramActivityIndicator({
+      typingIntervalMs: 5_000,
+      maxLifetimeMs: 60_000
+    });
+
+    await new TelegramPoller({
+      config: config(), botId: '900001', api, repository, ingress, activity
+    }).runOnce();
+    await activity.whenIdle();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(repository.next).toBe(13);
+    activity.stop();
+  });
 });
 
 describe('Telegram fenced egress', () => {
+  it('sends the reply from a realistic AdapterClient ACK payload', async () => {
+    const api = new FakeTelegram();
+    const repository = new MemoryEgressRepository(relay({
+      payload: {
+        result: {
+          output: {
+            reply: 'adapter reply',
+            messages: [{ to: 'argos', body: 'relay-only content' }],
+            status: 'done',
+            retryable: false,
+            artifacts: []
+          }
+        }
+      }
+    }));
+
+    await new TelegramEgressWorker({
+      repository, aliases: [config()], apis: new Map([['kant', api]])
+    }).runOnce();
+
+    expect(api.sends).toEqual([{ chat: '201', text: 'adapter reply' }]);
+    expect(repository.acknowledgements.at(-1)).toMatchObject({ status: 'sent', effect_count: 1 });
+  });
+
+  it('keeps a sent ACK when terminal reaction delivery fails', async () => {
+    const api = new FailingActivityTelegram();
+    const activity = new TelegramActivityIndicator();
+    const repository = new MemoryEgressRepository(relay({
+      payload: { outcome: 'done', result: { text: 'durable response' } }
+    }));
+
+    await new TelegramEgressWorker({
+      repository,
+      aliases: [config()],
+      apis: new Map([['kant', api]]),
+      activity
+    }).runOnce();
+    await activity.whenIdle();
+
+    expect(api.sends).toEqual([{ chat: '201', text: 'durable response' }]);
+    expect(repository.acknowledgements.at(-1)).toMatchObject({ status: 'sent', effect_count: 1 });
+    activity.stop();
+  });
+
+  it.each(['failed', 'dead'] as const)(
+    'marks an agent %s outcome as failed only after its response is durably relayed',
+    async (outcome) => {
+      const api = new FakeTelegram();
+      const activity = new TelegramActivityIndicator();
+      const repository = new MemoryEgressRepository(relay({
+        payload: { outcome, error: `${outcome} result` }
+      }));
+
+      await new TelegramEgressWorker({
+        repository,
+        aliases: [config()],
+        apis: new Map([['kant', api]]),
+        activity
+      }).runOnce();
+      await activity.whenIdle();
+
+      expect(repository.acknowledgements.at(-1)?.status).toBe('sent');
+      expect(api.reactions.at(-1)).toEqual({ chat: '201', message: '301', reaction: '👎' });
+      activity.stop();
+    }
+  );
+
+  it('marks a durable egress dead-letter with a failure reaction', async () => {
+    const api = new RejectingSendTelegram();
+    const activity = new TelegramActivityIndicator();
+    const repository = new MemoryEgressRepository(relay());
+
+    await new TelegramEgressWorker({
+      repository,
+      aliases: [config()],
+      apis: new Map([['kant', api]]),
+      activity
+    }).runOnce();
+    await activity.whenIdle();
+
+    expect(repository.acknowledgements.at(-1)?.status).toBe('dead');
+    expect(api.reactions.at(-1)).toEqual({ chat: '201', message: '301', reaction: '👎' });
+    activity.stop();
+  });
+
   it('honors fake Telegram HTTP 429 retry_after', async () => {
     const client = new TelegramHttpClient({
       token: '123456:abcdefghijklmnopqrstuvwxyz_ABCDE',
@@ -400,6 +660,8 @@ describe('Telegram fenced egress', () => {
     const api: TelegramApi = {
       getIdentity: async () => ({ id: '900001' }),
       getUpdates: async () => [],
+      setMessageReaction: async () => undefined,
+      sendChatAction: async () => undefined,
       sendText: async () => {
         calls += 1;
         throw new EgressCrash('during_send');
@@ -461,6 +723,8 @@ describe('Telegram fenced egress', () => {
     const api: TelegramApi = {
       getIdentity: async () => ({ id: '900001' }),
       getUpdates: async () => [],
+      setMessageReaction: async () => undefined,
+      sendChatAction: async () => undefined,
       sendText: async () => {
         calls += 1;
         if (calls === 2) throw new TelegramApiError('network outcome unknown', false, undefined, false);

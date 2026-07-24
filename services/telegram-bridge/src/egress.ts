@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { TelegramActivity, TelegramActivityTarget, TelegramTerminalOutcome } from './activity.js';
 import type {
   BridgeMetric, TelegramAliasConfig, TelegramApi, TelegramEgressRepository,
   TelegramEffect, TelegramOriginRelay, TelegramOriginRelayAck
@@ -29,6 +30,7 @@ export interface TelegramEgressWorkerOptions {
   leaseMs?: number;
   baseRetryMs?: number;
   hooks?: TelegramEgressHooks;
+  activity?: TelegramActivity;
   onMetric?: (metric: BridgeMetric) => void;
 }
 
@@ -37,14 +39,22 @@ function object(value: unknown): Record<string, unknown> | undefined {
     ? value as Record<string, unknown> : undefined;
 }
 
+const VISIBLE_TEXT = /[\p{L}\p{N}\p{P}\p{S}]/u;
+
+function hasVisibleText(value: unknown): value is string {
+  return typeof value === 'string' && VISIBLE_TEXT.test(value);
+}
+
 function candidate(payload: Record<string, unknown>): string | undefined {
   const result = object(payload.result);
+  const output = object(result?.output);
   const values = [
+    output?.reply, result?.reply,
     result?.text, result?.content, result?.message,
     payload.text, payload.content, payload.message,
     typeof payload.error === 'string' ? `Error: ${payload.error}` : undefined
   ];
-  return values.find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  return values.find(hasVisibleText);
 }
 
 export function telegramTextChunks(payload: Record<string, unknown>): string[] {
@@ -60,6 +70,12 @@ export function telegramTextChunks(payload: Record<string, unknown>): string[] {
 function aliasFrom(event: TelegramOriginRelay): string | undefined {
   const value = event.origin.metadata.bridge_alias;
   return typeof value === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(value) ? value : undefined;
+}
+
+function relayOutcome(payload: Record<string, unknown>): TelegramTerminalOutcome {
+  if (payload.outcome === 'failed' || payload.outcome === 'dead') return payload.outcome;
+  if (payload.outcome === 'done') return 'done';
+  return typeof payload.error === 'string' && payload.error.length > 0 ? 'failed' : 'done';
 }
 
 function safeError(error: unknown): string {
@@ -96,6 +112,7 @@ export class TelegramEgressWorker {
   private readonly leaseMs: number;
   private readonly baseRetryMs: number;
   private readonly hooks: TelegramEgressHooks;
+  private readonly activity: TelegramActivity | undefined;
   private readonly onMetric: (metric: BridgeMetric) => void;
 
   constructor(options: TelegramEgressWorkerOptions) {
@@ -107,6 +124,7 @@ export class TelegramEgressWorker {
     this.leaseMs = options.leaseMs ?? 30_000;
     this.baseRetryMs = options.baseRetryMs ?? 500;
     this.hooks = options.hooks ?? {};
+    this.activity = options.activity;
     this.onMetric = options.onMetric ?? (() => undefined);
   }
 
@@ -117,12 +135,33 @@ export class TelegramEgressWorker {
     return { event_id: event.event_id, attempt: event.attempt, claim_token: event.claim_token, ...values };
   }
 
+  private finishActivity(
+    event: TelegramOriginRelay,
+    bridgeAlias: string,
+    api: TelegramApi,
+    outcome: TelegramTerminalOutcome
+  ): void {
+    const messageId = event.origin.external_message_id;
+    if (typeof messageId !== 'string') return;
+    const target: TelegramActivityTarget = {
+      alias: bridgeAlias,
+      api,
+      chatId: event.origin.conversation_id,
+      messageId
+    };
+    try {
+      this.activity?.finish(target, outcome);
+    } catch {
+      // Reactions are best-effort and must never change a durable relay ACK.
+    }
+  }
+
   private async process(event: TelegramOriginRelay): Promise<void> {
     const bridgeAlias = aliasFrom(event);
     const config = bridgeAlias ? this.aliases.get(bridgeAlias) : undefined;
     const api = bridgeAlias ? this.apis.get(bridgeAlias) : undefined;
     const chatId = event.origin.conversation_id;
-    if (!config || !api || config.tenant_id !== event.tenant_id || event.origin.channel !== 'telegram' ||
+    if (!bridgeAlias || !config || !api || config.tenant_id !== event.tenant_id || event.origin.channel !== 'telegram' ||
         !config.allowed_chat_ids.includes(chatId)) {
       await this.repository.ack(this.acknowledgement(event, {
         status: 'dead', error: 'Telegram origin is not authorized for this tenant and alias'
@@ -141,7 +180,7 @@ export class TelegramEgressWorker {
           effect_id: effectId,
           outbox_id: event.event_id,
           tenant_id: event.tenant_id,
-          bridge_alias: bridgeAlias!,
+          bridge_alias: bridgeAlias,
           chunk_index: index,
           chunk_count: chunks.length,
           payload_hash: payloadHash
@@ -208,10 +247,12 @@ export class TelegramEgressWorker {
       }
       if (blocked) {
         await this.repository.ack(this.acknowledgement(event, { status: 'dead', error: blocked }));
+        this.finishActivity(event, bridgeAlias, api, 'dead');
         this.onMetric('egress_dead');
         return;
       }
       await this.repository.ack(this.acknowledgement(event, { status: 'sent', effect_count: chunks.length }));
+      this.finishActivity(event, bridgeAlias, api, relayOutcome(event.payload));
       this.onMetric('egress_sent');
     } catch (error) {
       if (error instanceof EgressCrash) throw error;
@@ -227,6 +268,7 @@ export class TelegramEgressWorker {
         this.onMetric('egress_retry');
       } else {
         await this.repository.ack(this.acknowledgement(event, { status: 'dead', error: safeError(error) }));
+        this.finishActivity(event, bridgeAlias, api, 'dead');
         this.onMetric('egress_dead');
       }
     }

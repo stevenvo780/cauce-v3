@@ -126,10 +126,14 @@ python3 ops/scripts/telegram-cutover-preflight.py \
   --runtime-dir "$CAUCE_TELEGRAM_RUNTIME_DIR"
 ```
 
-Verifica (sin leer el token): config válido contra `config.ts`; alias presente; token y
-marcador **bajo el mount**; token regular/no-symlink/0600/uid 1000; marcador
-regular/no-symlink/sin write grupo-otros y contenido exacto; allowlists sin sentinela.
-Exit 0 = seguro encender. Cualquier `FAIL` ⇒ **no** encender.
+Verifica (sin leer el token): config válido contra `config.ts`; alias presente;
+token y marcador **bajo el mount**. Para el `token_file`: archivo regular, no
+symlink, modo `0600`, owner `uid 1000` y tamaño > 0 — **metadata del archivo**,
+**no** formato ni contenido del token. Para el marcador: archivo regular, no
+symlink, sin write de grupo/otros y contenido exacto `v2-poller-disabled:<alias>`.
+También verifica allowlists sin sentinela. Exit 0 = seguro encender. Cualquier
+`FAIL` ⇒ **no** encender. La validación de **pertenencia** del token la hace el
+bridge al arrancar contra `getMe`; el preflight no la hace.
 
 ### (e) Seleccionar el alias y recrear el bridge
 
@@ -166,7 +170,8 @@ Gates esperados en `cauce_telegram_bridge_events_total{result=...}`:
 - `updates_allowed` incrementa (si sube `updates_denied`, el allowlist no matchea al
   humano → corregí IDs en (a) y regenerá).
 - `egress_sent` incrementa y el humano recibe la respuesta.
-- `poll_fenced` estable/≈0 (no hay poller rival).
+- `poll_fenced` estable (ausencia de contención de lease **V3** sobre el mismo bot;
+  **no** prueba ausencia de poller V2 — esa se valida fuera del bridge).
 - **ACK gate:** `egress_ambiguous` = 0 y `egress_retry` no crece sostenido.
 - **DLQ gate:** `egress_dead` = 0 y sin filas nuevas del alias en `outbox_dead_letters`
   / `dead_letters`. Si hay `dead`/`ambiguous`, inspeccioná con `getEffect()` y resolvé
@@ -183,24 +188,28 @@ Con el humano avisado y tráfico en pausa para ese alias:
 1. **Drain:** dejá de enviar al bot y esperá a que las entregas y `origin_relay` del
    alias queden settled — sin inflight, sin ACK pendiente. Confirmá en `/metrics` que
    `egress_*` dejó de moverse y no hay `ambiguous`/`retry` colgados.
-2. **Sacar del bridge:** quitá el alias de `CAUCE_TELEGRAM_ALIASES` y recreá la única
-   instancia (esto detiene su poller y su egress). Si era el último, bajá el perfil:
+2. **Sacar del bridge:** quitá el alias del selector (`CAUCE_TELEGRAM_ALIASES`) y
+   **recreá la única instancia** para que la lista actualizada tome efecto:
 
-```sh
-export CAUCE_TELEGRAM_ALIASES="<resto-sin-$ALIAS>"   # vacío ⇒ ver nota
-docker compose -f deploy/compose.yaml --profile telegram up -d --force-recreate telegram-bridge
-# último alias: docker compose -f deploy/compose.yaml --profile telegram stop telegram-bridge
-```
+   ```sh
+   export CAUCE_TELEGRAM_ALIASES="<resto-sin-$ALIAS>"
+   docker compose -f deploy/compose.yaml --profile telegram up -d --force-recreate telegram-bridge
+   ```
 
-   Nota: `CAUCE_TELEGRAM_ALIASES` vacío selecciona **todos** los del config; para no
-   reactivar todo, dejá el config solo con los alias que siguen vivos, o detené el
-   servicio si no queda ninguno.
+   **Branch explícito para el último alias:** si era el único alias del selector,
+   **NO** se usa `CAUCE_TELEGRAM_ALIASES=""` ni se recrea con selector vacío — el
+   selector vacío activa **TODOS** los del config (ver §"Advertencias operativas"
+   punto 1). Se hace **STOP** explícito del perfil:
+
+   ```sh
+   docker compose -f deploy/compose.yaml --profile telegram stop telegram-bridge
+   ```
 3. **Quitar el marcador:** borralo para que V3 no pueda re-encender ese alias por error
    (arranca fail-closed sin marcador) y para no misrepresentar el estado:
 
-```sh
-rm -f "$CAUCE_TELEGRAM_RUNTIME_DIR/$ALIAS.disabled"
-```
+   ```sh
+   rm -f "$CAUCE_TELEGRAM_RUNTIME_DIR/$ALIAS.disabled"
+   ```
 
    El `token_file` podés retirarlo también si el rollback es definitivo (`rm -f
    "$CAUCE_TELEGRAM_RUNTIME_DIR/$ALIAS.token"`).
@@ -215,6 +224,169 @@ marcador se elimina entre ambos pasos.
 | Fase | Gate |
 |---|---|
 | Antes de (e) | Preflight PASS; V2 drenado y apagado (c); marcador correcto (d); consumer V3 del destinatario vivo |
-| Después de (e) | bridge `healthy`; exactamente un poller por bot; `poll_fenced`≈0 |
+| Después de (e) | bridge `healthy`; lease V3 única por bot (ver §"Un solo bridge, un solo poller"); `poll_fenced` estable — **no** es prueba de ausencia de V2 (ver §"Advertencias operativas" punto 6) |
 | (f) round-trip | `updates_allowed`↑, `egress_sent`↑; ACK gate (`ambiguous`=0), DLQ gate (`dead`=0, DLQ sin filas nuevas) |
 | Rollback | drain settled → sacar del bridge → quitar marcador → reactivar V2; nunca doble poller |
+
+## Advertencias operativas (duras)
+
+Incumplirlas cambia el resultado del cutover. Esta sección las reúne en una sola
+lista de referencia rápida; el detalle canónico está en el cuerpo del runbook.
+
+1. **Selector vacío activa todos.** `CAUCE_TELEGRAM_ALIASES=""` **no** significa
+   "apagar"; significa "seleccionar todos los alias del config". **Nunca** se
+   recrea el bridge con selector vacío para "apagarlo" — para apagar se hace
+   **STOP** explícito del perfil `telegram` (ver §"Rollback por alias" branch
+   último alias).
+2. **Selector siempre acumulativo.** Crecer el conjunto = sumar al string y
+   recrear la única instancia (`CAUCE_TELEGRAM_ALIASES="a,b,c"`). Reducir =
+   recrear con la lista restante; reducir a cero = STOP (no recreate vacío).
+3. **Una sola instancia de bridge.** El egress reclama TODOS los `origin_relay`
+   con adapter `telegram`; una segunda instancia con subconjunto distinto
+   mataría (a `dead`/DLQ) los relays de los alias que no sirve. Cambiar el
+   conjunto de alias = **recrear la única instancia** (no sumar réplicas).
+4. **Esperar dos ventanas de lease** (`poll_lease_ms`, default 60 s) antes de
+   sumar más alias o tráfico. Cortar ventanas induce flicker en `poll_fenced`.
+5. **No doble polling.** Cada bot es leído por **un** `getUpdates`. V3 ya tiene
+   lease V3 cercada por el ID real del bot (`getMe`); V2 no la comparte → V2
+   **debe** estar drenado y apagado para el alias antes de encender V3, y
+   viceversa en rollback. Dos instancias V3 también colisionan.
+6. **`poll_fenced` estable no prueba ausencia de V2.** Sólo prueba ausencia de
+   contención de lease V3 sobre el mismo bot. La ausencia de poller V2 se
+   valida en el lado V2: settings anti-Telegram en launchers (e.g.
+   `channels.telegram.enabled=false`), telemetría V2 propia o ausencia del
+   proceso. El caso **Janus 2026-07-23** (ver handoff
+   `../../../docs/handoffs/HANDOFF-CAUCE-V3-TELEGRAM-CUTOVER-2026-07-23.md` §8)
+   ilustra este modo de falla: `poll_fenced` estable y, sin embargo, el
+   launcher conservaba `channels.telegram.enabled=true`.
+7. **Preflight valida sólo metadata, no formato/contenido.** El preflight
+   secret-free verifica metadata del `*.token` (archivo regular, no symlink,
+   modo `0600`, ownership `uid 1000`, presencia bajo el mount, tamaño > 0).
+   **No** lee ni valida el contenido del token, su formato ni su firma. La
+   validación de pertenencia la hace el bridge al arrancar contra `getMe`.
+8. **No leer el token.** El token se mueve con mecanismo de secretos, encapsulado,
+   archivo regular `0600` dueño uid 1000 bajo el mount. **Nunca** `cat`, `echo`,
+   pegar, ni delegar a un subagente. El preflight valida sin leerlo.
+9. **No registrar MCP global Clawbus.** Un segundo cliente MCP global Clawbus con
+   el mismo alias abre una segunda conexión al bus → respuestas perdidas y
+   `clawbus_ask timed out`. Los `cc_connector` headless deben mantener su socket
+   único; los launchers por identidad fijan settings anti-Telegram para evitar
+   re-introducir el bug. El bridge V3 **no** depende del MCP Clawbus y no debe
+   compartir socket con él.
+
+## Estado live verificado 2026-07-23
+
+> **Nota (2026-07-23):** Snapshot de evidencia live validada por MAIN. **No** se
+> ejecuta SSH ni se leen tokens / sesiones / credenciales / `.env`. El detalle
+> completo, incluyendo el incidente Janus y su remediación, está en
+> `../../../docs/handoffs/HANDOFF-CAUCE-V3-TELEGRAM-CUTOVER-2026-07-23.md`.
+
+- **Bridge productivo único:** `cauce-v3-prod-telegram-bridge-1`, `healthy`,
+  `RestartCount=0`, readiness aliases expuestos = **12**.
+- **Selector acumulativo activo** sobre los 12 manifest: `kant, argos, dedalo,
+  jarvis, janus, midas, seneca, hegel, socrates, kratos, salva, vulcano`. El
+  selector es siempre **acumulativo** (crece = sumar y recreate; reduce = recreate
+  con lista restante; cero = STOP explícito del perfil, **nunca** recreate vacío).
+- **Preflight secret-free PASS** sobre los 12 alias (reportado). La imagen
+  productiva remota no incluye `ops/scripts/`, por lo que el live se ejecutó
+  como **chequeos inline reportados** — **sin artefacto reproducible
+  capturado** (los reports fueron efímeros en la sesión de MAIN). El source
+  canónico (`../../ops/scripts/telegram-cutover-preflight.py`) **sí** contiene
+  el script y es **reproducible** desde el repo, pero **no se corrió** contra
+  el bundle remoto. Cada chequeo valida **sólo metadata** (archivo regular,
+  no symlink, modo `0600`, ownership `uid 1000`, presencia bajo el mount,
+  **`st_size > 0`** vía `stat`/`Path.stat` — **sin `read`/`open`** del
+  contenido): no formato, contenido ni firma del token; la pertenencia la
+  hace el bridge al arrancar contra `getMe`. El source canónico **exige
+  `st_size > 0` sin leer el token** — esa garantía ya está vigente en el
+  script versionado, **no** es un cambio pendiente; los chequeos live
+  reportados reflejan la misma regla como metadata, sin abrir el archivo.
+- **Métricas agregadas** (sin labels de tenant/alias/bot) sobre `/metrics` del
+  bridge:
+
+  Snapshots cronológicos de `poll_fenced` (semántica: **sólo ausencia de
+  contención de lease V3** — dos pollers V3 no co-existen, lease cercada por
+  el ID real del bot vía `getMe`; **no prueba ausencia de V2**, esa se hace
+  en el lado V2):
+
+  | Snapshot | Fecha | Lectura | Estado |
+  |---|---|---|---|
+  | **S1 (histórico)** | 2026-07-23 (corte inicial) | `poll_fenced` = 949, **estable 949→949** | valor base post-force-recreate del contenedor; remanente de contention tracking previo, no conflicto V3 activo |
+  | **S2 (post-rollout, histórico)** | 2026-07-23 (post-rollout, sin hora específica — sólo fecha) | `poll_fenced` = 980, **estable 980→980** entre dos lecturas | sin incremento sostenido; sólo ausencia de contención de lease V3; mismo bot no tiene dos pollers V3 activos |
+  | **S3 (cierre técnico, vigente al cierre del runbook)** | 2026-07-23 (post-reinicios, sin hora específica — sólo fecha) | `poll_fenced` = 986, **estable 986→986** en ventana 30 s | sin incremento sostenido en la ventana de cierre técnico; sólo ausencia de contención de lease V3 — **S3 es cierre técnico, no un valor fijo futuro**: durante pruebas humanas el contador puede avanzar como en S1→S2→S3 (mismo mecanismo: detecciones discretas entre lecturas, no contención viva) |
+
+  > **Nota (2026-07-23):** Los tres snapshots son **lecturas del mismo contador
+  > acumulativo** entre dos ventanas de lease. Las diferencias 949 → 980 →
+  > 986 reflejan nuevas detecciones de contención V3 (lease reclamada por
+  > otro proceso) entre el corte inicial, el post-rollout y el cierre
+  > técnico post-reinicios — **NO** indican contención viva (que sería
+  > sostenido, no puntos discretos). Si en una lectura posterior el valor
+  > crece de forma sostenida entre dos ventanas consecutivas, **sí** hay
+  > contención V3 — abrir investigación con `alias-cutover.md`. Los snapshots
+  > S1 y S2 se conservan como referencia temporal; el snapshot S3 es **el
+  > cierre técnico de este runbook**, no una cota superior: las pruebas
+  > humanas en curso (validación per-alias por Steven, ver §Pendientes
+  > reales) pueden seguir avanzando el contador como en S1→S2→S3, sin que
+  > ello indique contención.
+
+  Resto de series al **cierre técnico (S3)** (single point in time, mismo
+  bridge — **contadores acumulativos que pueden avanzar durante las pruebas
+  humanas en curso**, son la foto del cierre, no una cota):
+
+  | Serie | Valor al cierre | Lectura | Notas |
+  |---|---|---|---|
+  | `updates_allowed` | **9** | 9 DMs humanos admitidos en lo que va del corte | acumulativo; sigue creciendo con cada DM autorizado en pruebas humanas |
+  | `updates_denied` | **1** | **1 update rechazado por allowlist** — NO es error de entrega ni DLQ; es un update del lado ingreso que el filtro `user_id`/`chat_id` no aceptó. **Sin atribución por alias**: el bridge publica agregados sin labels, así que `updates_denied=1` cuenta *un* rechazo de allowlist sin identificar a qué alias correspondió. Acumulativo: si una prueba humana manda desde un `user_id` no permitido, sube |  |
+  | `updates_duplicate` | **0** | ingress sin duplicados (re-ingress por reintento del cliente) | acumulativo |
+  | `egress_sent` | **9** | 9 respuestas egresadas; 1:1 con `updates_allowed` al cierre (sin perder ninguna) | acumulativo |
+  | `retry` | **0** | egress sin reintentos sostenidos | acumulativo |
+  | `dead` | **0** | DLQ cerrada para este bridge | acumulativo |
+  | `ambiguous` | **0** | ACK gate limpio (sin respuestas 2xx ilegibles / timeouts / 429→prepared) | acumulativo |
+
+- **V2 Telegram = 0** sobre los 4 pendientes iniciales (`socrates`, `kratos`,
+  `salva`, `vulcano`) tras un ciclo de watchdog y reselección de workers en el
+  host `kratos`. tmux presente para los cuatro; ningún poller V2 quedó sobre los
+  4 pendientes.
+- **Topología Clawbus:** `socrates`=connector, `kratos`=native, `salva`=native,
+  `vulcano`=connector (los 4 pendientes); `janus`=connector (`clawbus-oc`,
+  post-remediación 2026-07-23); `kant` aparte (cc_connector + canal propio).
+  MCP global Clawbus ausente en todos los launchers.
+- **Runtime persistente** bajo `/datos/agent-v2/clawbus-runtime`; el wrapper
+  `/datos/agent-v2/bin/ensure-cc-connectors.sh` apunta al bundle;
+  `ensure-ut-workers.sh` y `ut-workers.tsv` apuntan a
+  `/home/dev/.local/bin/<alias>`.
+
+### Incidente y remediación 2026-07-23 — Janus
+
+`janus` mantenía `channels.telegram.enabled=true` en su launcher OpenClaw
+mientras V3 ya estaba activo sobre los 12 alias — riesgo de doble polling que
+`poll_fenced` no detectaba. Remediación oficial vía CLI:
+
+```sh
+openclaw config set channels.telegram.enabled false --strict-json
+```
+
+Validación post: `openclaw config validate` PASS, hot reload
+`configured=true,running=false`, **sin restart**, gateway healthy, `clawbus-oc`
+connector Janus = **1**. Detalle completo e implicaciones operativas en
+`../../../docs/handoffs/HANDOFF-CAUCE-V3-TELEGRAM-CUTOVER-2026-07-23.md` §8.
+
+### Pendientes reales
+
+- **Validación humana por alias** la está haciendo Steven en vivo. Es la única
+  prueba que admite el release porque el bridge publica métricas **agregadas sin
+  labels por alias** → `updates_allowed++` no atribuye el DM a un alias concreto.
+  Sin esa confirmación explícita, la suite no acredita release del bridge para
+  cada alias — incluye **Janus** post-remediación.
+- **Métricas sin labels** se conservan a propósito (privacidad): para distinguir
+  round-trip por alias hace falta el round-trip humano explícito.
+- **`poll_fenced` estable no es, por sí solo, prueba de ausencia de V2.** El
+  caso Janus lo demuestra. El valor de cierre técnico **S3 = 986→986** en
+  ventana 30 s sólo refleja ausencia de contención de lease V3; el contador
+  puede seguir avanzando durante las pruebas humanas con el mismo patrón
+  (detecciones discretas entre lecturas, no contención viva).
+- **Contadores acumulativos al cierre técnico (S3):** `updates_allowed=9`,
+  `updates_denied=1` (allowlist, no error de entrega, sin atribución por
+  alias), `updates_duplicate=0`, `egress_sent=9`, `retry=0`, `dead=0`,
+  `ambiguous=0`. Estos son **la foto del cierre**, no una cota: cada DM
+  autorizado en una prueba humana los mueve, y eso es esperado.

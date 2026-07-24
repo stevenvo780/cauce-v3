@@ -41,9 +41,11 @@ el orden operativo anterior es obligatorio.
 `token_file` y `v2_shutdown_marker_file` deben vivir **bajo el mismo directorio que
 `config.json`**: Compose monta `CAUCE_TELEGRAM_RUNTIME_DIR` (host) en
 `/run/cauce-telegram` (contenedor, read-only) y lee `config.json` desde ahí, de modo
-que rutas fuera de ese mount no serían visibles para el proceso. `recipients` enruta
-el DM humano: por defecto el propio alias lo atiende (una respuesta por su bot).
-`ops/scripts/generate-telegram-config.py` produce estos paths y política por defecto;
+que rutas fuera de ese mount no serían visibles para el proceso. `recipients` debe
+contener exactamente al propio alias. Delegaciones y fan-out se realizan después con
+`StructuredOutput.messages` de Cauce V3; el bridge rechaza el fan-out directo de
+ingress porque no puede representar un único estado terminal de Telegram.
+`ops/scripts/generate-telegram-config.py` produce estos paths y esta política;
 `ops/scripts/telegram-cutover-preflight.py` los verifica sin leer el token.
 
 `CAUCE_TELEGRAM_ALIASES` permite seleccionar una lista separada por comas; solo los
@@ -60,6 +62,11 @@ El origen, la sesión, conversación y mensaje externo se derivan exclusivamente
 update recibido. Updates denegados avanzan el cursor pero nunca ingresan a Cauce.
 Los reintentos de ingress usan una clave estable, por lo que reiniciar antes de
 persistir el cursor no duplica el mensaje.
+
+Como señal visual best-effort, el bridge reacciona 👀 al aceptar un update, cambia a
+🤔 y renueva `typing` mientras la entrega sigue activa, y finaliza con 👍 o 👎. Un
+fallo de estas llamadas visuales nunca altera la publicación, el ACK ni el relay
+durable.
 
 ## Semántica de egress
 

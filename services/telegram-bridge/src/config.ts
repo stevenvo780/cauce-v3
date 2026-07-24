@@ -52,6 +52,12 @@ function aliasConfig(value: unknown): TelegramAliasConfig {
     throw new Error('recipients must be a non-empty array');
   }
   const recipients = row.recipients.map(recipient);
+  const soleRecipient = recipients[0];
+  if (recipients.length !== 1 ||
+      soleRecipient?.tenant_id !== tenant ||
+      soleRecipient.alias !== alias) {
+    throw new Error('Telegram ingress requires exactly one self recipient');
+  }
   const pollTimeoutSeconds = positiveInteger(row.poll_timeout_seconds, 25, 1, 50, 'poll_timeout_seconds');
   const pollLeaseMs = positiveInteger(row.poll_lease_ms, 60_000, 10_000, 300_000, 'poll_lease_ms');
   if (pollLeaseMs < pollTimeoutSeconds * 1_000 + 5_000) {

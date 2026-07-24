@@ -4,7 +4,7 @@
 Validates that the generated Telegram bridge config matches the shape enforced by
 services/telegram-bridge/src/config.ts, covering the subset (canary) path, the
 unknown-alias failure, the runtime-dir path defaults (which must match the compose
-mount), the recipient routing policies, and the ids-only allowlist file. Core tests
+mount), the single self-recipient invariant, and the ids-only allowlist file. Core tests
 use a hermetic synthetic fleet (independent of the live manifests, which other
 branches may be editing); a final block runs the real CLI end-to-end against the
 checked-in 12-alias source of truth.
@@ -25,10 +25,10 @@ import unittest
 OPS_DIR = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = OPS_DIR / "scripts" / "generate-telegram-config.py"
 
-# A synthetic fleet: one multi-member room (Steven/grp.steven) plus a singleton
-# room (Jhon/grp.jhon) to exercise the peer mapping and the self-fallback.
+# A synthetic fleet with multi-member and singleton rooms. Telegram ingress still
+# routes each bot only to itself; room fan-out belongs to durable Cauce V3 messages.
 SYNTHETIC_FLEET = {
-    "kant": {"tenant": "Steven", "room": "grp.steven", "harness": "opencode"},
+    "kant": {"tenant": "Steven", "room": "grp.steven", "harness": "codex"},
     "argos": {"tenant": "Steven", "room": "grp.steven", "harness": "hermes"},
     "jarvis": {"tenant": "Steven", "room": "grp.steven", "harness": "openclaw"},
     "hegel": {"tenant": "Jhon", "room": "grp.jhon", "harness": "openclaw"},
@@ -114,26 +114,10 @@ class RecipientsPolicyTests(unittest.TestCase):
         self.assertEqual(config["kant"]["recipients"], [{"tenant_id": "Steven", "alias": "kant"}])
         self.assertEqual(config["hegel"]["recipients"], [{"tenant_id": "Jhon", "alias": "hegel"}])
 
-    def test_room_policy_includes_self_sorted(self) -> None:
-        config = self._by_alias("room")
-        self.assertEqual(
-            config["kant"]["recipients"],
-            [
-                {"tenant_id": "Steven", "alias": "argos"},
-                {"tenant_id": "Steven", "alias": "jarvis"},
-                {"tenant_id": "Steven", "alias": "kant"},
-            ],
-        )
-        self.assertEqual(config["hegel"]["recipients"], [{"tenant_id": "Jhon", "alias": "hegel"}])
-
-    def test_peers_policy_excludes_self_with_singleton_fallback(self) -> None:
-        config = self._by_alias("peers")
-        self.assertEqual(
-            config["kant"]["recipients"],
-            [{"tenant_id": "Steven", "alias": "argos"}, {"tenant_id": "Steven", "alias": "jarvis"}],
-        )
-        # Singleton room delivers to itself (schema requires >= 1 recipient).
-        self.assertEqual(config["hegel"]["recipients"], [{"tenant_id": "Jhon", "alias": "hegel"}])
+    def test_room_and_peers_policies_are_rejected(self) -> None:
+        for policy in ("room", "peers"):
+            with self.subTest(policy=policy), self.assertRaises(gen.GeneratorError):
+                self._by_alias(policy)
 
     def test_unknown_policy_raises(self) -> None:
         options = gen.default_options()

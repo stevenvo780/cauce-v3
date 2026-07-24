@@ -21,7 +21,7 @@ const alias: TelegramAliasConfig = {
   v2_shutdown_marker_file: '/synthetic/marker',
   allowed_user_ids: ['101'],
   allowed_chat_ids: ['201'],
-  recipients: [{ tenant_id: 'Steven', alias: 'argos' }],
+  recipients: [{ tenant_id: 'Steven', alias: 'kant' }],
   poll_timeout_seconds: 1,
   poll_lease_ms: 60_000
 };
@@ -31,6 +31,8 @@ class RecordingTelegram implements TelegramApi {
 
   async getIdentity(): Promise<{ id: string }> { return { id: '900001' }; }
   async getUpdates(): Promise<TelegramUpdate[]> { return []; }
+  async setMessageReaction(): Promise<void> {}
+  async sendChatAction(): Promise<void> {}
   async sendText(chatId: string, text: string): Promise<TelegramSendResult> {
     this.sends.push({ chat: chatId, text });
     return { message_id: String(this.sends.length) };
