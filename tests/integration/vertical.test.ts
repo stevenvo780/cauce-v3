@@ -230,7 +230,7 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     expect(await ackAndWait(consumer, redelivery, 'done')).toMatchObject({ status: 'done' });
   });
 
-  it('keeps a fixed 10-minute claim deadline across started heartbeats and reaps only stale work', async () => {
+  it('renews a started delivery lease and reaps it only after the renewed deadline expires', async () => {
     const consumer = harness('Isa', 'salva', 'slow-task-consumer');
     await consumer.connect(wsUrl);
     await publish(message());
@@ -240,17 +240,32 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
 
     expect(await ackAndWait(consumer, delivery, 'accepted')).toMatchObject({ status: 'accepted', applied: true });
     expect(await ackAndWait(consumer, delivery, 'started')).toMatchObject({ status: 'started', applied: true });
-    expect(await ackAndWait(consumer, delivery, 'started')).toMatchObject({ status: 'started', applied: false });
-    const afterStarted = await pool.query<{ ack_deadline_at: Date; status: string }>(
-      'SELECT ack_deadline_at,status FROM deliveries WHERE id=$1', [delivery.delivery_id]
+    await pool.query(
+      `UPDATE deliveries
+       SET ack_deadline_at=now()+interval '1 minute',
+           claim_expires_at=now()+interval '1 minute'
+       WHERE id=$1`,
+      [delivery.delivery_id]
     );
-    expect(afterStarted.rows[0]?.ack_deadline_at.getTime()).toBe(initialDeadline);
+    expect(await ackAndWait(consumer, delivery, 'started')).toMatchObject({ status: 'started', applied: true });
+    const afterStarted = await pool.query<{
+      ack_deadline_at: Date; claim_expires_at: Date; status: string; last_ack_rank: number;
+    }>(
+      'SELECT ack_deadline_at,claim_expires_at,status,last_ack_rank FROM deliveries WHERE id=$1',
+      [delivery.delivery_id]
+    );
+    expect(afterStarted.rows[0]).toMatchObject({ status: 'started', last_ack_rank: 2 });
+    expect(afterStarted.rows[0]!.ack_deadline_at.getTime() - Date.now()).toBeGreaterThan(9 * 60_000);
+    expect(Math.abs(
+      afterStarted.rows[0]!.ack_deadline_at.getTime()
+      - afterStarted.rows[0]!.claim_expires_at.getTime()
+    )).toBeLessThanOrEqual(5);
 
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       vi.setSystemTime(new Date(Date.now() + 120_000));
       // Simulate the database-side claimed-at clock moving with the two-minute task.
-      // Reaping must still use the immutable ten-minute claim deadline.
+      // Reaping must use the renewed ten-minute delivery lease.
       await pool.query(
         `UPDATE deliveries SET claimed_at=claimed_at-interval '2 minutes' WHERE id=$1`,
         [delivery.delivery_id]

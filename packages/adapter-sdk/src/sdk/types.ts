@@ -34,6 +34,7 @@ export interface AdapterCapabilities {
   readonly loopback_api?: true;
   readonly stable_alias_sessions?: true;
   readonly api_cancellation?: 'abort_signal';
+  readonly renewable_delivery_claims_v1?: true;
 }
 
 export type RelayOrigin = Origin;
@@ -96,6 +97,7 @@ export interface AckResultFrame {
   readonly claim_token: string;
   readonly status: DeliveryState;
   readonly applied: boolean;
+  readonly receipt?: 'applied' | 'duplicate' | 'superseded' | 'ownership_lost';
 }
 
 /** Every ACK is scoped to one delivery attempt and one opaque claim. */
@@ -140,6 +142,8 @@ export interface DeliveryEvent {
   readonly occurred_at: string;
   readonly origin?: Origin;
   readonly duplicate?: boolean;
+  /** Local-only marker; the transport maps it to a normal `started` ACK. */
+  readonly claim_renewal?: true;
   readonly output?: StructuredOutput;
   readonly error?: AdapterErrorPayload;
 }

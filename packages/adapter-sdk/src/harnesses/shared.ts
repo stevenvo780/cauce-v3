@@ -40,6 +40,7 @@ export function capabilities(
     claim_token_correlation: true,
     authenticated_session_scope: true,
     routing_targets_v1: true,
+    renewable_delivery_claims_v1: true,
     persistent_sessions: persistentSessions,
     ...additions,
   };

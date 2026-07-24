@@ -12,14 +12,14 @@ expected_state="/var/lib/cauce-v3/aliases/$alias_name"
 [[ ${CAUCE_STATE_DIR:-} == "$expected_state" && -d $expected_state ]] || { printf 'alias state directory is unavailable\n' >&2; exit 2; }
 command -v flock >/dev/null 2>&1 || { printf 'flock is required for the local consumer guard\n' >&2; exit 127; }
 
-default_timeout_ms=${CAUCE_DEFAULT_TIMEOUT_MS-540000}
-[[ $default_timeout_ms =~ ^[0-9]{1,7}$ ]] || {
-  printf 'CAUCE_DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 540000\n' >&2
+default_timeout_ms=${CAUCE_DEFAULT_TIMEOUT_MS-86400000}
+[[ $default_timeout_ms =~ ^[0-9]{1,9}$ ]] || {
+  printf 'CAUCE_DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 604800000\n' >&2
   exit 2
 }
 normalized_timeout_ms=$((10#$default_timeout_ms))
-(( normalized_timeout_ms >= 60000 && normalized_timeout_ms <= 540000 )) || {
-  printf 'CAUCE_DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 540000\n' >&2
+(( normalized_timeout_ms >= 60000 && normalized_timeout_ms <= 604800000 )) || {
+  printf 'CAUCE_DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 604800000\n' >&2
   exit 2
 }
 export CAUCE_DEFAULT_TIMEOUT_MS="$default_timeout_ms"

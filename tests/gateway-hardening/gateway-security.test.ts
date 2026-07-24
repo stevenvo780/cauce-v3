@@ -46,6 +46,33 @@ describe('gateway hardening facades and RBAC', () => {
     expect(repository.claimDeliveries).toHaveBeenCalledWith(
       'Pablo', 'midas', 'http-deadline-consumer', 7, 4, 600_000
     );
+
+    const ack = {
+      version: '3.0',
+      event_id: ids.event,
+      status: 'started',
+      instance_id: 'http-deadline-consumer',
+      epoch: 7,
+      attempt: 1,
+      claim_token: ids.claim
+    };
+    expect((await app.inject({
+      method: 'POST',
+      url: `/v3/deliveries/${ids.delivery}/ack`,
+      payload: ack
+    })).statusCode).toBe(200);
+    expect((await app.inject({
+      method: 'POST',
+      url: '/v3/ack',
+      payload: { delivery_id: ids.deliveryTwo, ...ack, event_id: ids.eventTwo }
+    })).statusCode).toBe(200);
+    expect(repository.ackDelivery).toHaveBeenNthCalledWith(
+      1, ids.delivery, 'Pablo', 'midas', { ...ack, retryable: false }, 600_000
+    );
+    expect(repository.ackDelivery).toHaveBeenNthCalledWith(
+      2, ids.deliveryTwo, 'Pablo', 'midas',
+      { ...ack, event_id: ids.eventTwo, retryable: false }, 600_000
+    );
   });
 
   it('does not expose Steven-to-Isa traffic to Pablo', async () => {

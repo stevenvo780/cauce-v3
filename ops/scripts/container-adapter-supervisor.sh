@@ -170,11 +170,11 @@ validate_config_values() {
     [[ ${CONFIG[MOUNT_NAME]} =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || die 'MOUNT_NAME is invalid'
   fi
   if [[ -v CONFIG[DEFAULT_TIMEOUT_MS] ]]; then
-    [[ ${CONFIG[DEFAULT_TIMEOUT_MS]} =~ ^[0-9]{1,7}$ ]] \
-      || die 'DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 540000'
+    [[ ${CONFIG[DEFAULT_TIMEOUT_MS]} =~ ^[0-9]{1,9}$ ]] \
+      || die 'DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 604800000'
     default_timeout_ms=$((10#${CONFIG[DEFAULT_TIMEOUT_MS]}))
-    (( default_timeout_ms >= 60000 && default_timeout_ms <= 540000 )) \
-      || die 'DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 540000'
+    (( default_timeout_ms >= 60000 && default_timeout_ms <= 604800000 )) \
+      || die 'DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 604800000'
   fi
   validate_relay_url "${CONFIG[RELAY_URL]}"
   if [[ $harness == hermes ]]; then
@@ -481,7 +481,7 @@ deploy_pki() {
 }
 
 start_adapter() {
-  local lock_file runtime_path
+  local lock_file runtime_path effective_default_timeout_ms
   command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
   command -v flock >/dev/null 2>&1 || die 'flock is unavailable' 127
   load_config
@@ -508,6 +508,11 @@ start_adapter() {
   deploy_bundle
   deploy_pki
   runtime_path="$container_home/.local/bin:$container_home/.npm-global/bin:$container_home/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  if [[ -v CONFIG[DEFAULT_TIMEOUT_MS] ]]; then
+    effective_default_timeout_ms=${CONFIG[DEFAULT_TIMEOUT_MS]}
+  else
+    effective_default_timeout_ms=86400000
+  fi
   environment=(
     "HOME=$container_home" "USER=$container_user" "LOGNAME=$container_user" "PATH=$runtime_path"
     'LANG=C.UTF-8' 'LC_ALL=C.UTF-8' 'NODE_ENV=production' 'CAUCE_ENVIRONMENT=production'
@@ -516,7 +521,7 @@ start_adapter() {
     "CAUCE_CONTROL_DIR=$control_dir"
     "CAUCE_CONTAINER_ID=$container_id" "CAUCE_CONTAINER_GENERATION=$container_generation"
     "CAUCE_RELAY_URL=${CONFIG[RELAY_URL]}"
-    "CAUCE_DEFAULT_TIMEOUT_MS=${CONFIG[DEFAULT_TIMEOUT_MS]:-540000}"
+    "CAUCE_DEFAULT_TIMEOUT_MS=$effective_default_timeout_ms"
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"
   )
   if [[ $bearer_token_present == true ]]; then environment+=("CAUCE_TOKEN_FILE=$secret_directory/token"); fi

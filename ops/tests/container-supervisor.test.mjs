@@ -446,13 +446,13 @@ try {
   assert(final.argv.includes("--control-dir") && final.argv.includes("/run/cauce-v3-supervisor/kant"));
   assert(final.argv.includes("--runtime-uid") && final.argv.includes("--runtime-gid"));
   assert(final.argv.includes("CAUCE_CONTROL_DIR=/run/cauce-v3-supervisor/kant"));
-  assert(final.argv.includes("CAUCE_DEFAULT_TIMEOUT_MS=540000"),
-    "an omitted DEFAULT_TIMEOUT_MS must reserve one minute of the 10-minute ACK claim");
+  assert(final.argv.includes("CAUCE_DEFAULT_TIMEOUT_MS=86400000"),
+    "an omitted DEFAULT_TIMEOUT_MS must use the renewable 24-hour agentic default");
   result = runSupervisor("stop", "kant", statePath);
   assert.equal(result.status, 0, `mTLS-only kant stop must succeed: ${result.stderr}`);
   process.stdout.write("mTLS-only kant: start and stop passed without bearer token\n");
 
-  // Adapter execution defaults to ten minutes, accepts a bounded per-alias override, and rejects
+  // Adapter execution defaults to 24 hours, accepts a bounded per-alias override, and rejects
   // every malformed/ambiguous value before Docker. The effective value is explicitly carried
   // through the clean `env -i` boundary so no host environment can silently select another timeout.
   await writeConfig("kant", [], { DEFAULT_TIMEOUT_MS: "480000" });
@@ -468,7 +468,7 @@ try {
     ["empty", [], { DEFAULT_TIMEOUT_MS: "" }, /config value is empty: DEFAULT_TIMEOUT_MS/u],
     ["non-numeric", [], { DEFAULT_TIMEOUT_MS: "480000ms" }, /DEFAULT_TIMEOUT_MS must be a decimal integer/u],
     ["below minimum", [], { DEFAULT_TIMEOUT_MS: "59999" }, /DEFAULT_TIMEOUT_MS must be a decimal integer/u],
-    ["above maximum", [], { DEFAULT_TIMEOUT_MS: "540001" }, /DEFAULT_TIMEOUT_MS must be a decimal integer/u],
+    ["above maximum", [], { DEFAULT_TIMEOUT_MS: "604800001" }, /DEFAULT_TIMEOUT_MS must be a decimal integer/u],
     ["duplicate", ["DEFAULT_TIMEOUT_MS=420000"], { DEFAULT_TIMEOUT_MS: "480000" },
       /config key is duplicated: DEFAULT_TIMEOUT_MS/u],
   ]) {
@@ -480,7 +480,7 @@ try {
     assert.equal((await records()).length, 0, `${name} DEFAULT_TIMEOUT_MS must fail before Docker`);
   }
   await writeConfig("kant");
-  process.stdout.write("default timeout: 540000 default and 480000 override exported; invalid values rejected before Docker\n");
+  process.stdout.write("default timeout: 86400000 default and 480000 override exported; invalid values rejected before Docker\n");
 
   // ---- Bundle layout regression guard: mini-monorepo vs legacy root layout. ----
   // The real production bundle ships adapters at packages/adapter-sdk/dist/src/bin/<harness>.js;
@@ -540,6 +540,8 @@ try {
   assert(jarvisFinal?.argv.includes("CAUCE_TOKEN_FILE=/opt/cauce-v3-secrets/jarvis/token"),
     "bearer-enabled alias must export its copied CAUCE_TOKEN_FILE path");
   assert(jarvisFinal?.argv.includes("CAUCE_OPENCLAW_TOKEN_FILE=/opt/cauce-v3-secrets/jarvis/openclaw-token"));
+  assert(jarvisFinal?.argv.includes("CAUCE_DEFAULT_TIMEOUT_MS=86400000"),
+    "OpenClaw agentic work defaults to 24 hours while its central claim is renewed");
   assert.equal(jarvisFinal?.argv.some((value) => value.includes("FAKE_OPENCLAW_TOKEN")), false);
 
   // OpenClaw CLI transport with a GLOBAL dist dir: openclaw can be installed system-wide, so

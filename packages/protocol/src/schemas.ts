@@ -287,7 +287,8 @@ export const WsOutboundSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('ack_result'), event_id: EventIdSchema, delivery_id: DeliveryIdSchema,
     attempt: z.number().int().positive(), claim_token: ClaimTokenSchema,
-    status: DeliveryStateSchema, applied: z.boolean()
+    status: DeliveryStateSchema, applied: z.boolean(),
+    receipt: z.enum(['applied', 'duplicate', 'superseded', 'ownership_lost']).optional()
   }).strict(),
   z.object({ type: z.literal('error'), code: z.string(), message: z.string() }).strict()
 ]);

@@ -111,7 +111,12 @@ export function fakeRepository(): GatewayRepository {
     heartbeat: vi.fn(async () => new Date(Date.now() + 60_000).toISOString()),
     releaseLease: vi.fn(async () => undefined),
     claimDeliveries: vi.fn(async () => []),
-    ackDelivery: vi.fn(async (deliveryId: string) => ({ delivery_id: deliveryId, status: 'done' as const, applied: true })),
+    ackDelivery: vi.fn(async (deliveryId: string) => ({
+      delivery_id: deliveryId,
+      status: 'done' as const,
+      applied: true,
+      receipt: 'applied' as const,
+    })),
     claimOutbox: vi.fn(async () => []),
     completeOutbox: vi.fn(async () => true),
     retryOutbox: vi.fn(async () => 'retry' as const)

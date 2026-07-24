@@ -86,8 +86,8 @@ printf '%s\\n' "\${CAUCE_DEFAULT_TIMEOUT_MS:?}" >"\${CAUCE_TEST_CAPTURE:?}"
 
   let result = run(undefined);
   assert.equal(result.status, 0, `default timeout must execute: ${result.stderr}`);
-  assert.equal((await readFile(capture, "utf8")).trim(), "540000",
-    "an omitted timeout must export the safe 540000 ms default");
+  assert.equal((await readFile(capture, "utf8")).trim(), "86400000",
+    "an omitted timeout must export the renewable 24-hour agentic default");
 
   await unlink(capture);
   result = run("480000");
@@ -99,19 +99,19 @@ printf '%s\\n' "\${CAUCE_DEFAULT_TIMEOUT_MS:?}" >"\${CAUCE_TEST_CAPTURE:?}"
     ["empty", ""],
     ["non-numeric", "480000ms"],
     ["below minimum", "59999"],
-    ["above maximum", "540001"],
+    ["above maximum", "604800001"],
   ]) {
     await unlink(capture);
     result = run(timeout);
     assert.notEqual(result.status, 0, `${name} timeout must fail`);
-    assert.match(result.stderr, /CAUCE_DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 540000/u);
+    assert.match(result.stderr, /CAUCE_DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 604800000/u);
     await assert.rejects(readFile(capture), { code: "ENOENT" },
       `${name} timeout must fail before the executable runs`);
     await writeFile(capture, "sentinel\n", { mode: 0o600 });
   }
 
   process.stdout.write(
-    "alias runner timeout: 540000 default and valid override exported; malformed and out-of-range values rejected before exec\n",
+    "alias runner timeout: 86400000 default and valid override exported; malformed and out-of-range values rejected before exec\n",
   );
 } finally {
   await rm(temporary, { recursive: true, force: true });

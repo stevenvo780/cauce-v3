@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import type { HarnessId } from "../sdk/types.js";
 
 type RuntimeEnvironment = "production" | "development" | "test";
+const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 
 export interface CliRuntimeConfig {
   readonly tenant: string;
@@ -52,6 +53,10 @@ function positiveInteger(value: unknown, context: string, fallback: number): num
     throw new Error(`${context} must be a positive integer`);
   }
   return value;
+}
+
+function defaultTimeoutMs(): number {
+  return DEFAULT_AGENTIC_TIMEOUT_MS;
 }
 
 function environment(value: unknown): RuntimeEnvironment {
@@ -160,7 +165,11 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
     relayUrl: string(entry.relay_url, "relay_url"),
     environment: runtimeEnvironment,
     heartbeatMs: positiveInteger(entry.heartbeat_ms, "heartbeat_ms", 15_000),
-    defaultTimeoutMs: positiveInteger(entry.default_timeout_ms, "default_timeout_ms", 5 * 60_000),
+    defaultTimeoutMs: positiveInteger(
+      entry.default_timeout_ms,
+      "default_timeout_ms",
+      defaultTimeoutMs(),
+    ),
     ...(bearerTokenFile === undefined ? {} : { bearerTokenFile }),
     ...(mutualTls === undefined ? {} : { mutualTls }),
     developmentIdentity,
@@ -239,7 +248,10 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     relayUrl: requiredEnvironment("CAUCE_RELAY_URL"),
     environment: runtimeEnvironment,
     heartbeatMs: environmentInteger("CAUCE_HEARTBEAT_MS", 15_000),
-    defaultTimeoutMs: environmentInteger("CAUCE_DEFAULT_TIMEOUT_MS", 5 * 60_000),
+    defaultTimeoutMs: environmentInteger(
+      "CAUCE_DEFAULT_TIMEOUT_MS",
+      defaultTimeoutMs(),
+    ),
     ...(process.env.CAUCE_TOKEN_FILE === undefined ? {} : { bearerTokenFile: resolve(process.env.CAUCE_TOKEN_FILE) }),
     ...(tlsValues[0] === undefined ? {} : {
       mutualTls: {

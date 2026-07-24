@@ -26,6 +26,10 @@ export interface AdapterClientOptions {
   readonly onError?: (code: string) => void;
   /** Runs under the stable-alias lease before the first transport connection. */
   readonly onLeaseAcquired?: () => Promise<void>;
+  /** Test/diagnostic override; production derives renewal cadence from the delivery claim. */
+  readonly claimRenewalMs?: number;
+  /** Test/diagnostic override; production derives the watchdog from the delivery claim. */
+  readonly claimWatchdogMs?: number;
 }
 
 function validateIdentity(config: AdapterConfig): void {
@@ -53,6 +57,7 @@ export function capabilityStrings(capabilities: AdapterCapabilities): string[] {
     'claim-token-correlation',
     'authenticated-session-scope',
     ...(capabilities.routing_targets_v1 ? ['routing_targets_v1'] : []),
+    ...(capabilities.renewable_delivery_claims_v1 ? ['renewable_delivery_claims_v1'] : []),
     ...(capabilities.persistent_sessions ? ['persistent-sessions'] : []),
     ...(capabilities.loopback_api === true ? ['loopback-api'] : []),
     ...(capabilities.stable_alias_sessions === true ? ['stable-alias-sessions'] : []),
@@ -94,6 +99,8 @@ export class AdapterClient {
       ...(options.config.defaultTimeoutMs === undefined
         ? {}
         : { defaultTimeoutMs: options.config.defaultTimeoutMs }),
+      ...(options.claimRenewalMs === undefined ? {} : { claimRenewalMs: options.claimRenewalMs }),
+      ...(options.claimWatchdogMs === undefined ? {} : { claimWatchdogMs: options.claimWatchdogMs }),
       clock: this.clock,
     });
   }
@@ -187,14 +194,29 @@ export class AdapterClient {
           this.onError(error instanceof AdapterError ? error.code : 'DELIVERY_FAILED');
         });
         return;
-      case 'ack_result':
-        await this.store.acknowledge({
+      case 'ack_result': {
+        const correlation = {
           event_id: frame.event_id,
           delivery_id: frame.delivery_id,
           attempt: frame.attempt,
           claim_token: frame.claim_token,
-        });
+        };
+        const pending = this.store.pendingEvents().find((event) => (
+          event.event_id === correlation.event_id
+          && event.delivery_id === correlation.delivery_id
+          && event.attempt === correlation.attempt
+          && event.claim_token === correlation.claim_token
+        ));
+        const acknowledged = await this.store.acknowledge(correlation);
+        if (acknowledged && pending?.claim_renewal === true) {
+          if (frame.applied === true || frame.receipt === 'duplicate') {
+            this.engine.confirmClaim(frame.delivery_id, frame.attempt, frame.claim_token);
+          } else {
+            this.engine.loseClaim(frame.delivery_id, frame.attempt, frame.claim_token);
+          }
+        }
         return;
+      }
       case 'error':
         if (frame.code === 'fenced') throw new AdapterError('FENCED', frame.message, true);
         return;

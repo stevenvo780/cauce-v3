@@ -56,7 +56,12 @@ describe('gateway WebSocket ACK correlation', () => {
     vi.mocked(repository.claimDeliveries).mockResolvedValueOnce(claims).mockResolvedValue([]);
     vi.mocked(repository.ackDelivery).mockImplementation(async (deliveryId) => {
       await new Promise((resolve) => setTimeout(resolve, 5));
-      return { delivery_id: deliveryId, status: 'done', applied: true };
+      return {
+        delivery_id: deliveryId,
+        status: 'done',
+        applied: true,
+        receipt: 'applied',
+      };
     });
     const app = await buildGateway({
       pool: fakePool(),
@@ -80,9 +85,17 @@ describe('gateway WebSocket ACK correlation', () => {
     });
     socket.send(JSON.stringify({
       type: 'hello', version: '3.0', tenant_id: 'Pablo', alias: 'midas',
-      instance_id: 'serial-consumer', capabilities: ['acks.v3']
+      instance_id: 'serial-consumer', capabilities: ['acks.v3', 'renewable_delivery_claims_v1']
     }));
     expect(await nextFrame()).toMatchObject({ type: 'hello_ack', epoch: 1 });
+    expect(repository.acquireLease).toHaveBeenCalledWith(
+      'Pablo',
+      'midas',
+      'serial-consumer',
+      ['acks.v3', 'renewable_delivery_claims_v1'],
+      30_000,
+      { resume: true, resumeWindowMs: 600_000 }
+    );
     const delivered = [await nextFrame(), await nextFrame()];
     expect(delivered.map((item) => item.delivery_id)).toEqual([ids.delivery, ids.deliveryTwo]);
 
@@ -97,14 +110,303 @@ describe('gateway WebSocket ACK correlation', () => {
     const results = [await nextFrame(), await nextFrame()];
 
     expect(results).toEqual([
-      expect.objectContaining({ type: 'ack_result', delivery_id: ids.deliveryTwo, event_id: ids.eventTwo, claim_token: ids.claimTwo }),
-      expect.objectContaining({ type: 'ack_result', delivery_id: ids.delivery, event_id: ids.event, claim_token: ids.claim })
+      expect.objectContaining({
+        type: 'ack_result',
+        delivery_id: ids.deliveryTwo,
+        event_id: ids.eventTwo,
+        claim_token: ids.claimTwo,
+        receipt: 'applied'
+      }),
+      expect.objectContaining({
+        type: 'ack_result',
+        delivery_id: ids.delivery,
+        event_id: ids.event,
+        claim_token: ids.claim,
+        receipt: 'applied'
+      })
     ]);
     expect(vi.mocked(repository.ackDelivery).mock.calls.map((call) => call[0]))
       .toEqual([ids.deliveryTwo, ids.delivery]);
+    expect(vi.mocked(repository.ackDelivery).mock.calls.map((call) => call[4]))
+      .toEqual([600_000, 600_000]);
     expect(repository.claimDeliveries).toHaveBeenCalledWith(
       'Pablo', 'midas', 'serial-consumer', 1, undefined, 600_000
     );
+  });
+
+  it('keeps renewable leases across transient closes while preserving legacy release behavior', async () => {
+    const repository = fakeRepository();
+    const app = await buildGateway({
+      pool: fakePool(),
+      repository,
+      authProvider: DevOnlyAuthProvider.forTests(),
+      deliveryWakeSubscriber: noDeliveryWakes,
+      ackDeadlineMs: 600_000,
+      outboxPollMs: 60_000
+    });
+    apps.push(app);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const port = (app.server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+      headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
+    });
+    sockets.push(socket);
+    const nextFrame = frameReader(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    socket.send(JSON.stringify({
+      type: 'hello', version: '3.0', tenant_id: 'Pablo', alias: 'midas',
+      instance_id: 'durable-consumer', capabilities: ['acks.v3', 'renewable_delivery_claims_v1']
+    }));
+    expect(await nextFrame()).toMatchObject({ type: 'hello_ack', epoch: 1 });
+
+    const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+    socket.close(1000, 'transient disconnect');
+    await closed;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(repository.releaseLease).not.toHaveBeenCalled();
+
+    const legacySocket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+      headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
+    });
+    sockets.push(legacySocket);
+    const nextLegacyFrame = frameReader(legacySocket);
+    await new Promise<void>((resolve, reject) => {
+      legacySocket.once('open', resolve);
+      legacySocket.once('error', reject);
+    });
+    legacySocket.send(JSON.stringify({
+      type: 'hello', version: '3.0', tenant_id: 'Pablo', alias: 'midas',
+      instance_id: 'legacy-consumer', capabilities: ['acks.v3']
+    }));
+    expect(await nextLegacyFrame()).toMatchObject({ type: 'hello_ack', epoch: 1 });
+    const legacyClosed = new Promise<void>((resolve) => legacySocket.once('close', () => resolve()));
+    legacySocket.close(1000, 'legacy disconnect');
+    await legacyClosed;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(repository.releaseLease).toHaveBeenCalledWith(
+      'Pablo', 'midas', 'legacy-consumer', 1
+    );
+  });
+
+  it('waits for an in-flight legacy ACK before releasing its lease on close', async () => {
+    const repository = fakeRepository();
+    const claim: DeliveryClaimRecord = {
+      type: 'delivery',
+      delivery_id: ids.delivery,
+      event_id: ids.delivery,
+      attempt: 1,
+      claim_token: ids.claim,
+      version: '3.0',
+      message_id: ids.message,
+      request_id: ids.request,
+      trace_id: 'trace-legacy-close-race',
+      epoch: 1,
+      ack_deadline_at: new Date(Date.now() + 30_000).toISOString(),
+      tenant_id: 'Steven',
+      room_id: 'grp.steven',
+      actor_alias: 'kant',
+      recipient_alias: 'midas',
+      body: { text: 'legacy close race' }
+    };
+    vi.mocked(repository.claimDeliveries).mockResolvedValueOnce([claim]).mockResolvedValue([]);
+    let markAckEntered!: () => void;
+    const ackEntered = new Promise<void>((resolve) => {
+      markAckEntered = resolve;
+    });
+    let finishAck!: () => void;
+    const ackGate = new Promise<void>((resolve) => {
+      finishAck = resolve;
+    });
+    vi.mocked(repository.ackDelivery).mockImplementation(async (deliveryId) => {
+      markAckEntered();
+      await ackGate;
+      return {
+        delivery_id: deliveryId,
+        status: 'done',
+        applied: true,
+        receipt: 'applied'
+      };
+    });
+    const app = await buildGateway({
+      pool: fakePool(),
+      repository,
+      authProvider: DevOnlyAuthProvider.forTests(),
+      deliveryWakeSubscriber: noDeliveryWakes,
+      ackDeadlineMs: 600_000,
+      outboxPollMs: 60_000
+    });
+    apps.push(app);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const port = (app.server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+      headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
+    });
+    sockets.push(socket);
+    const nextFrame = frameReader(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    socket.send(JSON.stringify({
+      type: 'hello',
+      version: '3.0',
+      tenant_id: 'Pablo',
+      alias: 'midas',
+      instance_id: 'legacy-consumer',
+      capabilities: ['acks.v3']
+    }));
+    expect(await nextFrame()).toMatchObject({ type: 'hello_ack', epoch: 1 });
+    expect(await nextFrame()).toMatchObject({
+      type: 'delivery',
+      delivery_id: ids.delivery,
+      attempt: 1,
+      claim_token: ids.claim
+    });
+
+    socket.send(JSON.stringify({
+      type: 'ack',
+      version: '3.0',
+      event_id: ids.event,
+      delivery_id: ids.delivery,
+      attempt: 1,
+      claim_token: ids.claim,
+      status: 'done',
+      instance_id: 'legacy-consumer',
+      epoch: 1
+    }));
+    await ackEntered;
+    const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+    socket.close(1000, 'legacy disconnect');
+    await closed;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    try {
+      expect(repository.releaseLease).not.toHaveBeenCalled();
+    } finally {
+      finishAck();
+    }
+    await vi.waitFor(() => {
+      expect(repository.releaseLease).toHaveBeenCalledTimes(1);
+      expect(repository.releaseLease).toHaveBeenCalledWith(
+        'Pablo', 'midas', 'legacy-consumer', 1
+      );
+    });
+  });
+
+  it('replays an exact renewal after reconnect while fencing an unknown legacy claim', async () => {
+    const repository = fakeRepository();
+    vi.mocked(repository.ackDelivery).mockImplementation(async (deliveryId) => ({
+      delivery_id: deliveryId,
+      status: 'started',
+      applied: true,
+      receipt: 'applied'
+    }));
+    const app = await buildGateway({
+      pool: fakePool(),
+      repository,
+      authProvider: DevOnlyAuthProvider.forTests(),
+      deliveryWakeSubscriber: noDeliveryWakes,
+      ackDeadlineMs: 600_000,
+      outboxPollMs: 60_000
+    });
+    apps.push(app);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const port = (app.server.address() as AddressInfo).port;
+
+    const connect = async (capabilities: string[]): Promise<{
+      socket: WebSocket;
+      nextFrame: () => Promise<Record<string, unknown>>;
+    }> => {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+        headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
+      });
+      sockets.push(socket);
+      const nextFrame = frameReader(socket);
+      await new Promise<void>((resolve, reject) => {
+        socket.once('open', resolve);
+        socket.once('error', reject);
+      });
+      socket.send(JSON.stringify({
+        type: 'hello',
+        version: '3.0',
+        tenant_id: 'Pablo',
+        alias: 'midas',
+        instance_id: 'durable-consumer',
+        capabilities
+      }));
+      expect(await nextFrame()).toMatchObject({ type: 'hello_ack', epoch: 1 });
+      return { socket, nextFrame };
+    };
+    const disconnect = async (socket: WebSocket): Promise<void> => {
+      const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      socket.close(1000, 'transient disconnect');
+      await closed;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    };
+
+    const initial = await connect(['acks.v3', 'renewable_delivery_claims_v1']);
+    await disconnect(initial.socket);
+
+    const resumed = await connect(['acks.v3', 'renewable_delivery_claims_v1']);
+    resumed.socket.send(JSON.stringify({
+      type: 'ack',
+      version: '3.0',
+      event_id: ids.event,
+      delivery_id: ids.delivery,
+      attempt: 1,
+      claim_token: ids.claim,
+      status: 'started',
+      instance_id: 'durable-consumer',
+      epoch: 1
+    }));
+    expect(await resumed.nextFrame()).toEqual({
+      type: 'ack_result',
+      event_id: ids.event,
+      delivery_id: ids.delivery,
+      attempt: 1,
+      claim_token: ids.claim,
+      status: 'started',
+      applied: true,
+      receipt: 'applied'
+    });
+    expect(repository.ackDelivery).toHaveBeenCalledWith(
+      ids.delivery,
+      'Pablo',
+      'midas',
+      expect.objectContaining({
+        event_id: ids.event,
+        attempt: 1,
+        claim_token: ids.claim,
+        status: 'started',
+        instance_id: 'durable-consumer',
+        epoch: 1
+      }),
+      600_000
+    );
+    await disconnect(resumed.socket);
+
+    const legacy = await connect(['acks.v3']);
+    const legacyClosed = new Promise<{ code: number; reason: string }>((resolve) => {
+      legacy.socket.once('close', (code, reason) => resolve({ code, reason: reason.toString('utf8') }));
+    });
+    legacy.socket.send(JSON.stringify({
+      type: 'ack',
+      version: '3.0',
+      event_id: ids.eventTwo,
+      delivery_id: ids.deliveryTwo,
+      attempt: 1,
+      claim_token: ids.claimTwo,
+      status: 'started',
+      instance_id: 'durable-consumer',
+      epoch: 1
+    }));
+    expect(await legacy.nextFrame()).toMatchObject({ type: 'error', code: 'fenced' });
+    await expect(legacyClosed).resolves.toEqual({ code: 4401, reason: 'fenced' });
+    expect(repository.ackDelivery).toHaveBeenCalledTimes(1);
   });
 
   it('correlates an ACK from an older epoch of the same instance without fencing the live session', async () => {

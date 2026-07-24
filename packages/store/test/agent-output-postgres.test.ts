@@ -2523,8 +2523,8 @@ describe('transactional StructuredOutput.messages materialization', () => {
         )
       ]);
       expect(results).toEqual([
-        { delivery_id: first.delivery_id, status: 'done', applied: true },
-        { delivery_id: second.delivery_id, status: 'done', applied: true }
+        { delivery_id: first.delivery_id, status: 'done', applied: true, receipt: 'applied' },
+        { delivery_id: second.delivery_id, status: 'done', applied: true, receipt: 'applied' }
       ]);
 
       const relays = (await pool.query<{ idempotency_key: string; delivery_id: string }>(

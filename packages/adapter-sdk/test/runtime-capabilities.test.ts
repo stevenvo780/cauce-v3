@@ -11,6 +11,16 @@ test("every bundled adapter advertises routing_targets_v1 before receiving trust
   }
 });
 
+test("every bundled adapter advertises renewable delivery claims", () => {
+  for (const definition of Object.values(HARNESS_DEFINITIONS)) {
+    assert.equal(definition.capabilities.renewable_delivery_claims_v1, true);
+    assert.equal(
+      capabilityStrings(definition.capabilities).includes("renewable_delivery_claims_v1"),
+      true,
+    );
+  }
+});
+
 test("OpenClaw CLI advertises stable sessions without API-only capabilities", () => {
   const definition = runtimeHarnessDefinition("openclaw", openClawDefinition, "cli");
   const advertised = capabilityStrings(definition.capabilities);

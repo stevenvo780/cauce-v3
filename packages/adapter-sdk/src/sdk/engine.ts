@@ -20,12 +20,18 @@ export type EventPublisher = (event: DeliveryEvent) => Promise<void>;
 
 const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
 const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
+const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
+const MAX_AGENT_EXECUTION_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
 
 export interface AdapterEngineOptions {
   readonly store: DurableStore;
   readonly harness: HarnessAdapter;
   readonly publish: EventPublisher;
   readonly defaultTimeoutMs?: number;
+  /** Test/diagnostic override; production derives renewal cadence from the authenticated claim. */
+  readonly claimRenewalMs?: number;
+  /** Test/diagnostic override; production derives the fail-closed watchdog from the claim. */
+  readonly claimWatchdogMs?: number;
   readonly clock?: Clock;
 }
 
@@ -34,6 +40,8 @@ export class AdapterEngine {
   private readonly harness: HarnessAdapter;
   private readonly publishEvent: EventPublisher;
   private readonly defaultTimeoutMs: number;
+  private readonly claimRenewalMs: number | undefined;
+  private readonly claimWatchdogMs: number | undefined;
   private readonly clock: Clock;
   private readonly tasks = new Map<string, {
     readonly attempt: number;
@@ -41,13 +49,33 @@ export class AdapterEngine {
     readonly promise: Promise<void>;
   }>();
   private readonly controllers = new Map<string, AbortController>();
+  private readonly claimMonitors = new Map<string, {
+    readonly attempt: number;
+    readonly claimToken: string;
+    readonly confirm: () => void;
+  }>();
   private readonly fenced = new Set<string>();
 
   constructor(options: AdapterEngineOptions) {
     this.store = options.store;
     this.harness = options.harness;
     this.publishEvent = options.publish;
-    this.defaultTimeoutMs = options.defaultTimeoutMs ?? 5 * 60_000;
+    this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_AGENTIC_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.defaultTimeoutMs)
+      || this.defaultTimeoutMs <= 0
+      || this.defaultTimeoutMs > MAX_AGENT_EXECUTION_TIMEOUT_MS) {
+      throw new RangeError("defaultTimeoutMs must be between 1 and 604800000");
+    }
+    this.claimRenewalMs = options.claimRenewalMs;
+    if (this.claimRenewalMs !== undefined
+      && (!Number.isSafeInteger(this.claimRenewalMs) || this.claimRenewalMs <= 0)) {
+      throw new RangeError("claimRenewalMs must be a positive integer");
+    }
+    this.claimWatchdogMs = options.claimWatchdogMs;
+    if (this.claimWatchdogMs !== undefined
+      && (!Number.isSafeInteger(this.claimWatchdogMs) || this.claimWatchdogMs <= 0)) {
+      throw new RangeError("claimWatchdogMs must be a positive integer");
+    }
     this.clock = options.clock ?? systemClock;
   }
 
@@ -86,6 +114,7 @@ export class AdapterEngine {
       if (this.tasks.get(delivery.delivery_id)?.promise === task) {
         this.tasks.delete(delivery.delivery_id);
         this.controllers.delete(delivery.delivery_id);
+        this.claimMonitors.delete(delivery.delivery_id);
         this.fenced.delete(delivery.delivery_id);
       }
     });
@@ -100,6 +129,31 @@ export class AdapterEngine {
   async cancel(cancel: CancelDelivery): Promise<void> {
     if (cancel.epoch !== this.store.epoch) return;
     this.controllers.get(cancel.delivery_id)?.abort(new AdapterError("CANCELLED", "Cancelled by relay", false));
+  }
+
+  loseClaim(
+    deliveryId: string,
+    attempt: number,
+    claimToken: string,
+  ): void {
+    const active = this.tasks.get(deliveryId);
+    if (active?.attempt !== attempt || active.claimToken !== claimToken) return;
+    this.fenced.add(deliveryId);
+    this.controllers.get(deliveryId)?.abort(new AdapterError(
+      "CLAIM_OWNERSHIP_LOST",
+      "Gateway rejected the delivery lease renewal; execution ownership was lost",
+      false,
+    ));
+  }
+
+  confirmClaim(
+    deliveryId: string,
+    attempt: number,
+    claimToken: string,
+  ): void {
+    const monitor = this.claimMonitors.get(deliveryId);
+    if (monitor?.attempt !== attempt || monitor.claimToken !== claimToken) return;
+    monitor.confirm();
   }
 
   async recover(): Promise<void> {
@@ -181,97 +235,192 @@ export class AdapterEngine {
 
     const controller = new AbortController();
     this.controllers.set(delivery.delivery_id, controller);
-    const claimBudgetTimer = setTimeout(() => {
+    const started = await this.store.transition(delivery.delivery_id, "started", this.clock.now().toISOString(), {
+      retainRequest: true,
+      attempt: delivery.attempt,
+      claimToken: delivery.claim_token,
+    });
+    await this.emit("started", started);
+    const stopClaimRenewal = this.startClaimRenewal(
+      started,
+      this.claimRenewalMs ?? executionBudget.claimRenewalMs,
+      this.claimWatchdogMs ?? executionBudget.claimWatchdogMs,
+      controller,
+    );
+
+    const messageType = typeof delivery.body.type === "string"
+      ? delivery.body.type
+      : "request";
+    let output: StructuredOutput | undefined;
+    let executionFailure: unknown;
+    try {
+      const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
+      const requestContext = {
+        self_alias: delivery.recipient_alias,
+        sender_alias: delivery.actor_alias,
+        tenant_id: delivery.tenant_id,
+        room_id: delivery.room_id,
+        channel: delivery.authenticated_context?.channel
+          ?? delivery.origin?.channel
+          ?? "cauce",
+        agent_message: messageType === "agent.message"
+          || messageType === "agent.response"
+          || messageType === "agent.fanin",
+        message_type: messageType,
+        routing_targets: routingTargetsFromDelivery(delivery),
+      };
+      const processedReplies = messageType === "agent.fanin"
+        ? this.store.processedRepliesForFanin(delivery)
+        : [];
+      output = messageType === "agent.fanin"
+        ? validateDeliveryOutput(synthesizeFaninOutput(
+            delivery.body,
+            processedReplies.length === 0 ? {} : { processedReplies },
+          ), {
+            messageType,
+            senderAlias: requestContext.sender_alias,
+            selfAlias: requestContext.self_alias,
+            routingTargets: requestContext.routing_targets,
+          })
+        : await this.harness.execute({
+            prompt: promptForDelivery(delivery, this.store),
+            context: requestContext,
+            ...session,
+            ...(reservation === undefined ? {} : { sessionReservation: reservation }),
+            ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
+            timeoutMs: executionBudget.harnessTimeoutMs,
+            signal: controller.signal,
+          });
+      if (controller.signal.aborted) {
+        throw controller.signal.reason instanceof Error
+          ? controller.signal.reason
+          : new AdapterError("CANCELLED", "Harness execution was cancelled", false);
+      }
+    } catch (error) {
+      executionFailure = error;
+    } finally {
+      await stopClaimRenewal();
+    }
+
+    if (executionFailure !== undefined) {
+      const executionError = asAdapterError(executionFailure);
+      const preserveAmbiguousExecution = !executionError.retryable
+        && isAmbiguousAckErrorCode(executionError.code);
+      const normalized = this.fenced.has(delivery.delivery_id) && !preserveAmbiguousExecution
+        ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
+        : executionError;
+      await this.finishError(started, normalized);
+      return;
+    }
+    if (output === undefined) {
+      await this.finishError(
+        started,
+        new AdapterError("HARNESS_EMPTY_RESULT", "Harness completed without a result", false),
+      );
+      return;
+    }
+
+    if (output.status === "failed") {
+      const error = new AdapterError("HARNESS_REPORTED_FAILURE", output.reply ?? "Harness reported failure", output.retryable);
+      await this.finishError(started, error, output);
+      return;
+    }
+
+    const done = await this.store.transition(delivery.delivery_id, "done", this.clock.now().toISOString(), {
+      output,
+      retainRequest: output.messages.length > 0
+        || (messageType === "agent.response" && this.store.continuationSource(delivery) !== undefined),
+      attempt: delivery.attempt,
+      claimToken: delivery.claim_token,
+    });
+    await this.emit("done", done, { output });
+  }
+
+  /**
+   * A delivery claim is a short renewable lease, not the agent's wall-clock
+   * execution deadline. Renewal events are durable locally before transport;
+   * an offline socket can therefore flush them after reconnect.
+   */
+  private startClaimRenewal(
+    record: InboxRecord,
+    intervalMs: number,
+    watchdogMs: number,
+    controller: AbortController,
+  ): () => Promise<void> {
+    let stopped = false;
+    let tail = Promise.resolve();
+    const abortForUnconfirmedClaim = (): void => {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      this.fenced.add(record.delivery_id);
       controller.abort(new AdapterError(
-        "ACK_DEADLINE_BUDGET_EXHAUSTED",
-        "Delivery claim has too little time remaining for safe harness completion",
+        "CLAIM_RENEWAL_UNCONFIRMED",
+        "Delivery lease renewal was not confirmed before the ownership deadline",
         true,
       ));
-    }, executionBudget.claimBudgetMs);
-    claimBudgetTimer.unref();
-    try {
-      const started = await this.store.transition(delivery.delivery_id, "started", this.clock.now().toISOString(), {
-        retainRequest: true,
-        attempt: delivery.attempt,
-        claimToken: delivery.claim_token,
-      });
-      await this.emit("started", started);
-
-      const messageType = typeof delivery.body.type === "string"
-        ? delivery.body.type
-        : "request";
-      let output: StructuredOutput;
-      try {
-        const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
-        const requestContext = {
-          self_alias: delivery.recipient_alias,
-          sender_alias: delivery.actor_alias,
-          tenant_id: delivery.tenant_id,
-          room_id: delivery.room_id,
-          channel: delivery.authenticated_context?.channel
-            ?? delivery.origin?.channel
-            ?? "cauce",
-          agent_message: messageType === "agent.message"
-            || messageType === "agent.response"
-            || messageType === "agent.fanin",
-          message_type: messageType,
-          routing_targets: routingTargetsFromDelivery(delivery),
-        };
-        const processedReplies = messageType === "agent.fanin"
-          ? this.store.processedRepliesForFanin(delivery)
-          : [];
-        output = messageType === "agent.fanin"
-          ? validateDeliveryOutput(synthesizeFaninOutput(
-              delivery.body,
-              processedReplies.length === 0 ? {} : { processedReplies },
-            ), {
-              messageType,
-              senderAlias: requestContext.sender_alias,
-              selfAlias: requestContext.self_alias,
-              routingTargets: requestContext.routing_targets,
-            })
-          : await this.harness.execute({
-              prompt: promptForDelivery(delivery, this.store),
-              context: requestContext,
-              ...session,
-              ...(reservation === undefined ? {} : { sessionReservation: reservation }),
-              ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
-              timeoutMs: executionBudget.harnessTimeoutMs,
-              signal: controller.signal,
-            });
-        if (controller.signal.aborted) {
-          throw controller.signal.reason instanceof Error
-            ? controller.signal.reason
-            : new AdapterError("CANCELLED", "Harness execution was cancelled", false);
-        }
-      } catch (error) {
-        const executionError = asAdapterError(error);
-        const preserveAmbiguousExecution = !executionError.retryable
-          && isAmbiguousAckErrorCode(executionError.code);
-        const normalized = this.fenced.has(delivery.delivery_id) && !preserveAmbiguousExecution
-          ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
-          : executionError;
-        await this.finishError(started, normalized);
-        return;
+    };
+    let watchdog = setTimeout(abortForUnconfirmedClaim, watchdogMs);
+    watchdog.unref();
+    const confirm = (): void => {
+      if (stopped) return;
+      clearTimeout(watchdog);
+      watchdog = setTimeout(abortForUnconfirmedClaim, watchdogMs);
+      watchdog.unref();
+    };
+    const timer = setInterval(() => {
+      if (stopped) return;
+      tail = tail
+        .catch(() => undefined)
+        .then(async () => {
+          if (stopped) return;
+          try {
+            await this.emitClaimRenewal(record);
+          } catch {
+            stopped = true;
+            clearInterval(timer);
+            controller.abort(new AdapterError(
+              "CLAIM_RENEWAL_PERSISTENCE_FAILED",
+              "Delivery lease renewal could not be persisted locally",
+              false,
+            ));
+          }
+        });
+    }, intervalMs);
+    timer.unref();
+    this.claimMonitors.set(record.delivery_id, {
+      attempt: record.attempt,
+      claimToken: record.claim_token,
+      confirm,
+    });
+    return async () => {
+      stopped = true;
+      clearInterval(timer);
+      clearTimeout(watchdog);
+      const monitor = this.claimMonitors.get(record.delivery_id);
+      if (monitor?.attempt === record.attempt && monitor.claimToken === record.claim_token) {
+        this.claimMonitors.delete(record.delivery_id);
       }
+      await tail.catch(() => undefined);
+    };
+  }
 
-      if (output.status === "failed") {
-        const error = new AdapterError("HARNESS_REPORTED_FAILURE", output.reply ?? "Harness reported failure", output.retryable);
-        await this.finishError(started, error, output);
-        return;
-      }
-
-      const done = await this.store.transition(delivery.delivery_id, "done", this.clock.now().toISOString(), {
-        output,
-        retainRequest: output.messages.length > 0
-          || (messageType === "agent.response" && this.store.continuationSource(delivery) !== undefined),
-        attempt: delivery.attempt,
-        claimToken: delivery.claim_token,
-      });
-      await this.emit("done", done, { output });
-    } finally {
-      clearTimeout(claimBudgetTimer);
-    }
+  private async emitClaimRenewal(record: InboxRecord): Promise<void> {
+    const event: DeliveryEvent = {
+      event_id: randomUUID(),
+      delivery_id: record.delivery_id,
+      attempt: record.attempt,
+      claim_token: record.claim_token,
+      epoch: this.store.epoch,
+      phase: "started",
+      occurred_at: this.clock.now().toISOString(),
+      claim_renewal: true,
+      ...(record.origin === undefined ? {} : { origin: record.origin }),
+    };
+    // A renewal must reach stable local storage before it can be treated as
+    // recoverable transport work. Only the send itself is best-effort.
+    await this.store.enqueue(event);
+    await this.publishEvent(event).catch(() => undefined);
   }
 
   private async finishError(
@@ -411,18 +560,30 @@ function sessionFromDelivery(delivery: Delivery): { sessionKey?: string } {
 
 function timeoutFromBody(body: Record<string, unknown>, fallback: number): number {
   const value = body.timeout_ms;
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+  if (value === undefined) return fallback;
+  if (typeof value !== "number"
+    || !Number.isSafeInteger(value)
+    || value <= 0
+    || value > MAX_AGENT_EXECUTION_TIMEOUT_MS) {
+    throw new AdapterError(
+      "INVALID_TIMEOUT",
+      "body.timeout_ms must be an integer between 1 and 604800000",
+      false,
+    );
+  }
+  return value;
 }
 
 interface ExecutionBudget {
   readonly harnessTimeoutMs: number;
-  readonly claimBudgetMs: number;
+  readonly claimRenewalMs: number;
+  readonly claimWatchdogMs: number;
 }
 
 /**
- * Reserve enough of the immutable ACK claim for process termination, durable
- * state and the terminal ACK. The body can shorten execution, never extend it
- * beyond the delivery's authenticated deadline.
+ * Validate that the first claim has enough room to start safely, then derive a
+ * bounded renewal cadence. The short claim fences ownership; it is deliberately
+ * independent from the harness wall-clock timeout.
  */
 function executionBudgetFor(
   delivery: Delivery,
@@ -459,8 +620,9 @@ function executionBudgetFor(
   }
 
   return {
-    harnessTimeoutMs: Math.min(requestedTimeoutMs, claimBudgetMs),
-    claimBudgetMs,
+    harnessTimeoutMs: requestedTimeoutMs,
+    claimRenewalMs: Math.max(100, Math.min(60_000, Math.floor(claimBudgetMs / 3))),
+    claimWatchdogMs: claimBudgetMs,
   };
 }
 

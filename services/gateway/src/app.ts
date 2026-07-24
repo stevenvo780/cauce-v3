@@ -84,7 +84,14 @@ export interface GatewayRepository {
   applyConfigurationChange(actorTenant: Tenant, actorAlias: string, mutation: ConfigMutation, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
   rollbackConfiguration(actorTenant: Tenant, actorAlias: string, revisionId: number, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
   getMessage(messageId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  acquireLease(tenantId: Tenant, alias: string, instanceId: string, capabilities: string[], ttlMs: number): Promise<LeaseResult>;
+  acquireLease(
+    tenantId: Tenant,
+    alias: string,
+    instanceId: string,
+    capabilities: string[],
+    ttlMs: number,
+    options?: { resume?: boolean; resumeWindowMs?: number },
+  ): Promise<LeaseResult>;
   heartbeat(tenantId: Tenant, alias: string, instanceId: string, epoch: number, ttlMs: number): Promise<string>;
   releaseLease(tenantId: Tenant, alias: string, instanceId: string, epoch: number): Promise<void>;
   claimDeliveries(
@@ -95,7 +102,13 @@ export interface GatewayRepository {
     limit?: number,
     ackDeadlineMs?: number,
   ): Promise<DeliveryClaimRecord[]>;
-  ackDelivery(deliveryId: string, tenantId: Tenant, alias: string, ack: GatewayAck): Promise<AckResult>;
+  ackDelivery(
+    deliveryId: string,
+    tenantId: Tenant,
+    alias: string,
+    ack: GatewayAck,
+    ackDeadlineMs?: number,
+  ): Promise<AckResult>;
   claimOutbox(kind: 'wake', worker: string, limit?: number, leaseMs?: number): Promise<OutboxLeaseEvent[]>;
   ackOutbox?(ack: OutboxLeaseAck): Promise<unknown>;
   completeOutbox?(id: string, worker: string, claimToken: string): Promise<boolean>;
@@ -127,8 +140,12 @@ interface Session {
   instanceId: string;
   epoch: number;
   draining: boolean;
+  renewableDeliveryClaims: boolean;
   claims: Map<string, Pick<GatewayAck, 'attempt' | 'claim_token'>>;
+  recentClaims: Map<string, Pick<GatewayAck, 'attempt' | 'claim_token'>>;
 }
+
+const MAX_RECENT_SESSION_CLAIMS = 1_024;
 
 function sessionKey(tenantId: Tenant, alias: string): string {
   return `${tenantId}:${alias}`;
@@ -505,7 +522,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
       const ack = parseAck(request.body);
-      const result = await repository.ackDelivery(request.params.deliveryId, actor.tenant_id, actor.alias, ack);
+      const result = await repository.ackDelivery(
+        request.params.deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs
+      );
       return { ...result, event_id: ack.event_id, attempt: ack.attempt, claim_token: ack.claim_token };
     } catch (error) {
       replyError(reply, error);
@@ -522,7 +541,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const { delivery_id: deliveryValue, ...ackValue } = request.body as Record<string, unknown>;
       const deliveryId = DeliveryIdSchema.parse(deliveryValue);
       const ack = parseAck(ackValue);
-      const result = await repository.ackDelivery(deliveryId, actor.tenant_id, actor.alias, ack);
+      const result = await repository.ackDelivery(
+        deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs
+      );
       return { ...result, event_id: ack.event_id, attempt: ack.attempt, claim_token: ack.claim_token };
     } catch (error) {
       replyError(reply, error);
@@ -538,6 +559,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       )).map(normalizeDeliveryClaim);
       for (const delivery of deliveries) {
         const claim = claimFromDelivery(delivery);
+        session.recentClaims.delete(delivery.delivery_id);
         session.claims.set(delivery.delivery_id, claim);
         send(session.socket, delivery);
       }
@@ -571,8 +593,16 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
             if (actor.tenant_id !== hello.tenant_id || actor.alias !== hello.alias) {
               throw new StoreError('forbidden', 'authenticated identity does not match hello');
             }
+            const renewableDeliveryClaims = hello.capabilities.includes('renewable_delivery_claims_v1');
             const lease = await repository.acquireLease(
-              hello.tenant_id, hello.alias, hello.instance_id, hello.capabilities, leaseTtlMs
+              hello.tenant_id,
+              hello.alias,
+              hello.instance_id,
+              hello.capabilities,
+              leaseTtlMs,
+              renewableDeliveryClaims
+                ? { resume: true, resumeWindowMs: ackDeadlineMs }
+                : {}
             );
             if (!lease.acquired || !lease.epoch) {
               send(socket, {
@@ -588,7 +618,12 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
             const previous = sessions.get(key);
             current = {
               socket, tenantId: hello.tenant_id, alias: hello.alias,
-              instanceId: hello.instance_id, epoch: lease.epoch, draining: false, claims: new Map()
+              instanceId: hello.instance_id,
+              epoch: lease.epoch,
+              draining: false,
+              renewableDeliveryClaims,
+              claims: new Map(),
+              recentClaims: new Map()
             };
             sessions.set(key, current);
             if (previous && previous.socket !== socket) previous.socket.close(4401, 'superseded by newer epoch');
@@ -640,16 +675,42 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           if (incoming.epoch > current.epoch) {
             throw new StoreError('fenced', 'ACK identity does not match socket lease');
           }
-          assertAckClaim(incoming, current.claims.get(deliveryId));
-          const result = await repository.ackDelivery(deliveryId, current.tenantId, current.alias, incoming);
+          const sessionClaim = current.claims.get(deliveryId)
+            ?? current.recentClaims.get(deliveryId);
+          if (sessionClaim !== undefined) {
+            assertAckClaim(incoming, sessionClaim);
+          } else if (!current.renewableDeliveryClaims) {
+            throw new StoreError('fenced', 'ACK has no claim in the live socket session');
+          }
+          // A renewable client can resume the same fenced DB lease after a
+          // socket or gateway restart. In that case the in-memory claim map is
+          // intentionally empty; repository.ackDelivery remains authoritative
+          // for delivery id, attempt, token, instance, epoch and deadline.
+          const result = await repository.ackDelivery(
+            deliveryId, current.tenantId, current.alias, incoming, ackDeadlineMs
+          );
+          const { receipt, ...legacyResult } = result;
           send(socket, {
             type: 'ack_result',
-            ...result,
+            ...legacyResult,
             event_id: incoming.event_id,
             attempt: incoming.attempt,
-            claim_token: incoming.claim_token
+            claim_token: incoming.claim_token,
+            ...(current.renewableDeliveryClaims ? { receipt } : {})
           });
-          if (['done', 'failed', 'dead'].includes(result.status)) current.claims.delete(deliveryId);
+          if (['done', 'failed', 'dead'].includes(result.status)) {
+            const completedClaim = current.claims.get(deliveryId);
+            current.claims.delete(deliveryId);
+            if (completedClaim !== undefined) {
+              current.recentClaims.delete(deliveryId);
+              current.recentClaims.set(deliveryId, completedClaim);
+              while (current.recentClaims.size > MAX_RECENT_SESSION_CLAIMS) {
+                const oldest = current.recentClaims.keys().next().value;
+                if (oldest === undefined) break;
+                current.recentClaims.delete(oldest);
+              }
+            }
+          }
           if (result.status === 'retry') await drain(current);
         } catch (error) {
           const code = error instanceof StoreError ? error.code : 'invalid_frame';
@@ -665,9 +726,20 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       if (!closing) return;
       const key = sessionKey(closing.tenantId, closing.alias);
       if (sessions.get(key)?.socket === socket) sessions.delete(key);
-      void frameQueue.finally(async () => {
-        await repository.releaseLease(closing.tenantId, closing.alias, closing.instanceId, closing.epoch);
-      }).catch((error: unknown) => app.log.error(error));
+      // Keep the DB lease and epoch until heartbeat expiry. The same stable
+      // instance can resume it within the delivery claim window, so a transient
+      // socket or gateway restart does not abort a multi-hour harness.
+      if (!closing.renewableDeliveryClaims) {
+        const pendingFrames = frameQueue;
+        void pendingFrames.finally(async () => {
+          await repository.releaseLease(
+            closing.tenantId,
+            closing.alias,
+            closing.instanceId,
+            closing.epoch
+          );
+        }).catch((error: unknown) => app.log.error(error));
+      }
     });
   });
 

@@ -96,7 +96,69 @@ describe('adversarial PostgreSQL store hardening', () => {
     expect(takeover).toMatchObject({ acquired: true, epoch: 2 });
   });
 
-  it('requires the exact delivery token/attempt and never extends ACK deadline on heartbeat', async () => {
+  it('resumes the same stable instance and epoch only inside the configured window', async () => {
+    const instanceId = 'stable-resume-worker';
+    const initial = await repository.acquireLease(
+      'Isa', 'salva', instanceId, ['initial-capability'], 10_000
+    );
+    expect(initial).toMatchObject({ acquired: true, epoch: 1 });
+
+    const liveResume = await repository.acquireLease(
+      'Isa', 'salva', instanceId, ['renewable_delivery_claims_v1'], 10_000, {
+        resume: true,
+        resumeWindowMs: 60_000
+      }
+    );
+    expect(liveResume).toMatchObject({ acquired: true, epoch: initial.epoch });
+
+    await pool.query(
+      `UPDATE connection_leases
+       SET lease_until=now()-interval '5 seconds'
+       WHERE tenant_id='Isa' AND alias='salva'`
+    );
+    const recentExpiredResume = await repository.acquireLease(
+      'Isa', 'salva', instanceId, ['renewable_delivery_claims_v1'], 10_000, {
+        resume: true,
+        resumeWindowMs: 60_000
+      }
+    );
+    expect(recentExpiredResume).toMatchObject({ acquired: true, epoch: initial.epoch });
+
+    const resumedRow = await pool.query<{
+      instance_id: string;
+      epoch: string;
+      capabilities: string[];
+      live: boolean;
+    }>(
+      `SELECT instance_id,epoch,capabilities,(lease_until > now()) AS live
+       FROM connection_leases
+       WHERE tenant_id='Isa' AND alias='salva'`
+    );
+    expect(resumedRow.rows[0]).toMatchObject({
+      instance_id: instanceId,
+      epoch: String(initial.epoch),
+      capabilities: ['renewable_delivery_claims_v1'],
+      live: true
+    });
+
+    await pool.query(
+      `UPDATE connection_leases
+       SET lease_until=now()-interval '2 minutes'
+       WHERE tenant_id='Isa' AND alias='salva'`
+    );
+    const outsideWindow = await repository.acquireLease(
+      'Isa', 'salva', instanceId, ['renewable_delivery_claims_v1'], 10_000, {
+        resume: true,
+        resumeWindowMs: 60_000
+      }
+    );
+    expect(outsideWindow).toMatchObject({
+      acquired: true,
+      epoch: initial.epoch! + 1
+    });
+  });
+
+  it('renews only a live, exactly fenced started claim with a new ACK event', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'delivery-worker', [], 10_000);
     const published = await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
@@ -121,17 +183,171 @@ describe('adversarial PostgreSQL store hardening', () => {
     );
     expect(after.rows[0]!.ack_deadline_at.getTime()).toBe(before.rows[0]!.ack_deadline_at.getTime());
 
-    await pool.query(`UPDATE deliveries SET ack_deadline_at=now()-interval '1 millisecond' WHERE id=$1`, [
-      delivery!.delivery_id
-    ]);
-    const late = await repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', status: 'done', instance_id: 'delivery-worker', epoch: lease.epoch!,
-      event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt, retryable: false
+    await expect(repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
+      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: lease.epoch!,
+      event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt,
+      retryable: false, result: { progress: 'initial' }
+    }, 5_000)).resolves.toMatchObject({ applied: true, status: 'started' });
+
+    await pool.query(
+      `UPDATE deliveries
+       SET ack_deadline_at=now()+interval '1 second',
+           claim_expires_at=now()+interval '1 second'
+       WHERE id=$1`,
+      [delivery!.delivery_id]
+    );
+    const renewalEventId = randomUUID();
+    await expect(repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
+      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: lease.epoch!,
+      event_id: renewalEventId, claim_token: delivery!.claim_token, attempt: delivery!.attempt,
+      retryable: false, result: { progress: 'heartbeat-only' }
+    }, 5_000)).resolves.toMatchObject({ applied: true, status: 'started' });
+    const renewed = await pool.query<{
+      ack_deadline_at: Date;
+      claim_expires_at: Date;
+      last_ack_rank: number;
+      result: Record<string, unknown>;
+    }>(
+      `SELECT ack_deadline_at,claim_expires_at,last_ack_rank,result
+       FROM deliveries WHERE id=$1`,
+      [delivery!.delivery_id]
+    );
+    expect(renewed.rows[0]).toMatchObject({
+      last_ack_rank: 2,
+      result: { progress: 'initial' }
     });
-    expect(late).toMatchObject({ applied: false, status: 'leased' });
+    expect(renewed.rows[0]!.ack_deadline_at.getTime() - Date.now()).toBeGreaterThan(4_000);
+    expect(Math.abs(
+      renewed.rows[0]!.ack_deadline_at.getTime()
+      - renewed.rows[0]!.claim_expires_at.getTime()
+    )).toBeLessThanOrEqual(5);
+
+    await expect(repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
+      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: lease.epoch!,
+      event_id: renewalEventId, claim_token: delivery!.claim_token, attempt: delivery!.attempt,
+      retryable: false
+    }, 60_000)).resolves.toMatchObject({
+      applied: true,
+      status: 'started',
+      receipt: 'duplicate'
+    });
+    const afterDuplicate = await pool.query<{ ack_deadline_at: Date }>(
+      'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+    );
+    expect(afterDuplicate.rows[0]!.ack_deadline_at.getTime())
+      .toBeGreaterThan(renewed.rows[0]!.ack_deadline_at.getTime());
+
+    await expect(repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
+      version: '3.0', status: 'started', instance_id: 'other-worker', epoch: lease.epoch!,
+      event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt,
+      retryable: false
+    }, 60_000)).rejects.toMatchObject({ code: 'fenced' });
+    const afterFenced = await pool.query<{ ack_deadline_at: Date }>(
+      'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+    );
+    expect(afterFenced.rows[0]!.ack_deadline_at.getTime())
+      .toBe(afterDuplicate.rows[0]!.ack_deadline_at.getTime());
+
+    await pool.query(
+      `UPDATE deliveries
+       SET ack_deadline_at=now()-interval '1 millisecond',
+           claim_expires_at=now()-interval '1 millisecond'
+       WHERE id=$1`,
+      [
+      delivery!.delivery_id
+      ]
+    );
+    const late = await repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
+      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: lease.epoch!,
+      event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt,
+      retryable: false
+    }, 60_000);
+    expect(late).toMatchObject({ applied: false, status: 'started' });
+    const expired = await pool.query<{ ack_deadline_at: Date; claim_expires_at: Date }>(
+      'SELECT ack_deadline_at,claim_expires_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+    );
+    expect(expired.rows[0]!.ack_deadline_at.getTime()).toBeLessThan(Date.now());
+    expect(expired.rows[0]!.claim_expires_at.getTime()).toBeLessThan(Date.now());
     expect((await pool.query('SELECT 1 FROM delivery_acks WHERE delivery_id=$1 AND NOT applied', [
       delivery!.delivery_id
     ])).rowCount).toBe(2);
+  });
+
+  it('preserves ownership_lost when replaying a rejected renewal event', async () => {
+    const lease = await repository.acquireLease(
+      'Isa', 'salva', 'renewal-replay-worker', [], 60_000
+    );
+    await repository.publish(command());
+    const [delivery] = await repository.claimDeliveries(
+      'Isa', 'salva', 'renewal-replay-worker', lease.epoch!, 1, 30_000
+    );
+    if (!delivery) throw new Error('expected a renewal replay delivery');
+
+    await expect(repository.ackDelivery(delivery.delivery_id, 'Isa', 'salva', {
+      version: '3.0',
+      status: 'started',
+      instance_id: 'renewal-replay-worker',
+      epoch: lease.epoch!,
+      event_id: randomUUID(),
+      claim_token: delivery.claim_token,
+      attempt: delivery.attempt,
+      retryable: false
+    }, 30_000)).resolves.toMatchObject({ applied: true, receipt: 'applied' });
+
+    const appliedRenewal = AckSchema.parse({
+      version: '3.0',
+      status: 'started',
+      instance_id: 'renewal-replay-worker',
+      epoch: lease.epoch!,
+      event_id: randomUUID(),
+      claim_token: delivery.claim_token,
+      attempt: delivery.attempt,
+      retryable: false
+    });
+    await expect(repository.ackDelivery(
+      delivery.delivery_id, 'Isa', 'salva', appliedRenewal, 30_000
+    )).resolves.toMatchObject({ applied: true, receipt: 'applied' });
+    await expect(repository.ackDelivery(
+      delivery.delivery_id, 'Isa', 'salva', appliedRenewal, 30_000
+    )).resolves.toMatchObject({ applied: true, receipt: 'duplicate' });
+
+    await repository.publish(command());
+    const [otherDelivery] = await repository.claimDeliveries(
+      'Isa', 'salva', 'renewal-replay-worker', lease.epoch!, 1, 30_000
+    );
+    if (!otherDelivery) throw new Error('expected a collision test delivery');
+    await expect(repository.ackDelivery(otherDelivery.delivery_id, 'Isa', 'salva', {
+      ...appliedRenewal,
+      claim_token: otherDelivery.claim_token,
+      attempt: otherDelivery.attempt
+    }, 30_000)).resolves.toMatchObject({
+      applied: false,
+      receipt: 'ownership_lost'
+    });
+
+    await pool.query(
+      `UPDATE deliveries
+       SET ack_deadline_at=now()-interval '1 second',
+           claim_expires_at=now()-interval '1 second'
+       WHERE id=$1`,
+      [delivery.delivery_id]
+    );
+    const rejectedRenewal = AckSchema.parse({
+      version: '3.0',
+      status: 'started',
+      instance_id: 'renewal-replay-worker',
+      epoch: lease.epoch!,
+      event_id: randomUUID(),
+      claim_token: delivery.claim_token,
+      attempt: delivery.attempt,
+      retryable: false
+    });
+    await expect(repository.ackDelivery(
+      delivery.delivery_id, 'Isa', 'salva', rejectedRenewal, 30_000
+    )).resolves.toMatchObject({ applied: false, receipt: 'ownership_lost' });
+    await expect(repository.ackDelivery(
+      delivery.delivery_id, 'Isa', 'salva', rejectedRenewal, 30_000
+    )).resolves.toMatchObject({ applied: false, receipt: 'ownership_lost' });
   });
 
   it('never retries an allowlisted ambiguity even when a direct store caller marks it retryable', async () => {
@@ -157,7 +373,8 @@ describe('adversarial PostgreSQL store hardening', () => {
     })).resolves.toEqual({
       delivery_id: delivery.delivery_id,
       status: 'dead',
-      applied: true
+      applied: true,
+      receipt: 'applied'
     });
 
     expect((await pool.query<{

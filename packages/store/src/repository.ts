@@ -61,6 +61,7 @@ export interface AckResult {
   delivery_id: string;
   status: DeliveryState;
   applied: boolean;
+  receipt: 'applied' | 'duplicate' | 'superseded' | 'ownership_lost';
 }
 
 /** Store claim record; event_id is the immutable ACK correlation id for this delivery. */
@@ -111,6 +112,10 @@ export interface JobClaim extends Record<string, unknown> {
 export interface LeaseAcquireOptions {
   /** Explicitly fence a still-live consumer. Omit for the default no-takeover behavior. */
   takeover?: boolean;
+  /** Resume the same stable instance/epoch after a transport interruption. */
+  resume?: boolean;
+  /** Maximum age of the previous lease for a same-instance resume. */
+  resumeWindowMs?: number;
 }
 
 export type OutboxRetryResult = 'retry' | 'dead' | 'fenced';
@@ -567,6 +572,10 @@ export class CauceRepository {
     options: LeaseAcquireOptions = {}
   ): Promise<LeaseResult> {
     if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new StoreError('conflict', 'lease TTL must be positive');
+    const resumeWindowMs = options.resumeWindowMs ?? ttlMs;
+    if (!Number.isSafeInteger(resumeWindowMs) || resumeWindowMs <= 0) {
+      throw new StoreError('conflict', 'lease resume window must be a positive integer');
+    }
     return withTransaction(this.pool, async (client) => {
       await this.assertRuntimeRoute(client, tenantId, alias);
       // A missing row cannot be protected by SELECT ... FOR UPDATE. The keyed transaction
@@ -574,11 +583,34 @@ export class CauceRepository {
       await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [
         `connection-lease:${tenantId}:${alias}`
       ]);
-      const current = await client.query<{ instance_id: string; epoch: string; lease_until: Date; live: boolean }>(
-        `SELECT instance_id,epoch,lease_until,(lease_until > now()) AS live
-         FROM connection_leases WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [tenantId, alias]
+      const current = await client.query<{
+        instance_id: string;
+        epoch: string;
+        lease_until: Date;
+        live: boolean;
+        resumable: boolean;
+      }>(
+        `SELECT instance_id,epoch,lease_until,(lease_until > now()) AS live,
+                (instance_id=$3 AND lease_until > now()-$4*interval '1 millisecond') AS resumable
+         FROM connection_leases WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
+        [tenantId, alias, instanceId, resumeWindowMs]
       );
       const active = current.rows[0];
+      if (options.resume === true && active?.resumable) {
+        const resumed = await client.query<{ lease_until: Date }>(
+          `UPDATE connection_leases
+           SET capabilities=$5::jsonb,lease_until=now()+$6*interval '1 millisecond',
+               last_heartbeat_at=now()
+           WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4
+           RETURNING lease_until`,
+          [tenantId, alias, instanceId, Number(active.epoch), JSON.stringify(capabilities), ttlMs]
+        );
+        return {
+          acquired: true,
+          epoch: Number(active.epoch),
+          lease_expires_at: resumed.rows[0]!.lease_until.toISOString()
+        };
+      }
       if (active?.live && options.takeover !== true) {
         return {
           acquired: false,
@@ -802,9 +834,18 @@ export class CauceRepository {
     });
   }
 
-  async ackDelivery(deliveryId: string, tenantId: Tenant, alias: string, ack: Ack): Promise<AckResult> {
+  async ackDelivery(
+    deliveryId: string,
+    tenantId: Tenant,
+    alias: string,
+    ack: Ack,
+    ackDeadlineMs = 30_000
+  ): Promise<AckResult> {
     if (!ack.claim_token || !ack.attempt) {
       throw new StoreError('fenced', 'ACK requires claim_token and positive attempt');
+    }
+    if (!Number.isSafeInteger(ackDeadlineMs) || ackDeadlineMs <= 0) {
+      throw new StoreError('conflict', 'ACK deadline must be a positive integer');
     }
     return withTransaction(this.pool, async (client) => {
       await this.assertRuntimeRoute(client, tenantId, alias);
@@ -823,11 +864,47 @@ export class CauceRepository {
       const safeAckResult = postgresJsonSafe(ack.result) as Record<string, unknown> | undefined;
       const outputs = agentOutputEntries(safeAckResult);
       const persistedResult = sanitizedAckResult(safeAckResult);
-      const repeated = await client.query(
-        `SELECT 1 FROM delivery_acks WHERE event_id=$1 LIMIT 1`, [ack.event_id]
+      const repeated = await client.query<{
+        delivery_id: string;
+        status: Ack['status'];
+        instance_id: string;
+        epoch: string;
+        claim_token: string;
+        attempt: number;
+        applied: boolean;
+      }>(
+        `SELECT delivery_id,status,instance_id,epoch,claim_token,attempt,applied
+         FROM delivery_acks WHERE event_id=$1 LIMIT 1`,
+        [ack.event_id]
       );
-      if (repeated.rowCount) {
-        return { delivery_id: deliveryId, status: row.status, applied: false };
+      const repeatedAck = repeated.rows[0];
+      if (repeatedAck) {
+        const exactEvent = repeatedAck.delivery_id === deliveryId
+          && repeatedAck.status === ack.status
+          && repeatedAck.instance_id === ack.instance_id
+          && Number(repeatedAck.epoch) === ack.epoch
+          && repeatedAck.claim_token === ack.claim_token
+          && repeatedAck.attempt === ack.attempt;
+        if (!exactEvent || !repeatedAck.applied) {
+          return {
+            delivery_id: deliveryId,
+            status: row.status,
+            applied: false,
+            receipt: 'ownership_lost',
+          };
+        }
+        // A terminal or accepted replay is idempotently complete. A repeated
+        // started event is handled below only while the exact claim and
+        // connection lease remain live, because the client may use that
+        // receipt as fresh proof of ownership.
+        if (ack.status !== 'started') {
+          return {
+            delivery_id: deliveryId,
+            status: row.status,
+            applied: false,
+            receipt: 'duplicate',
+          };
+        }
       }
       if (row.claim_token === ack.claim_token && row.attempt === ack.attempt &&
           (row.consumer_instance_id !== ack.instance_id || Number(row.consumer_epoch) !== ack.epoch)) {
@@ -838,8 +915,13 @@ export class CauceRepository {
         && row.claim_live
         && ['leased', 'accepted', 'started'].includes(row.status);
       if (!exactClaim) {
-        await this.insertAck(client, row, ack, false, persistedResult);
-        return { delivery_id: deliveryId, status: row.status, applied: false };
+        if (!repeatedAck) await this.insertAck(client, row, ack, false, persistedResult);
+        return {
+          delivery_id: deliveryId,
+          status: row.status,
+          applied: false,
+          receipt: 'ownership_lost',
+        };
       }
       const lease = await client.query(
         `SELECT 1 FROM connection_leases WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3
@@ -849,12 +931,53 @@ export class CauceRepository {
         || row.consumer_instance_id !== ack.instance_id
         || Number(row.consumer_epoch) !== ack.epoch) {
         await this.insertAck(client, row, ack, false, persistedResult);
-        return { delivery_id: deliveryId, status: row.status, applied: false };
+        return {
+          delivery_id: deliveryId,
+          status: row.status,
+          applied: false,
+          receipt: 'ownership_lost',
+        };
       }
       const rank = ackRank(ack.status);
+      if (ack.status === 'started' && row.status === 'started') {
+        await client.query(
+          `UPDATE deliveries
+           SET ack_deadline_at=now()+$2*interval '1 millisecond',
+               claim_expires_at=now()+$2*interval '1 millisecond',
+               updated_at=now()
+           WHERE id=$1`,
+          [deliveryId, ackDeadlineMs]
+        );
+        if (!repeatedAck) await this.insertAck(client, row, ack, true, persistedResult);
+        await client.query(
+          `INSERT INTO audit_events(
+             tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+           ) VALUES($1,$2,'delivery.ack','allow',$3,$4,$5,$6,$7::jsonb)`,
+          [tenantId, alias, row.request_id, row.message_id, deliveryId, row.trace_id,
+            JSON.stringify({
+              ack: ack.status,
+              resulting_status: row.status,
+              epoch: ack.epoch,
+              attempt: ack.attempt,
+              lease_renewed: true,
+              ...(repeatedAck ? { duplicate_replay: true } : {})
+            })]
+        );
+        return {
+          delivery_id: deliveryId,
+          status: 'started',
+          applied: true,
+          receipt: repeatedAck ? 'duplicate' : 'applied',
+        };
+      }
       if (terminal(row.status) || rank <= row.last_ack_rank) {
         await this.insertAck(client, row, ack, false, persistedResult);
-        return { delivery_id: deliveryId, status: row.status, applied: false };
+        return {
+          delivery_id: deliveryId,
+          status: row.status,
+          applied: false,
+          receipt: terminal(row.status) ? 'ownership_lost' : 'superseded',
+        };
       }
 
       let nextStatus: DeliveryState = ack.status;
@@ -967,7 +1090,12 @@ export class CauceRepository {
              ...(ambiguousExecution ? { ambiguous_execution: true } : {})
            })]
       );
-      return { delivery_id: deliveryId, status: nextStatus, applied: true };
+      return {
+        delivery_id: deliveryId,
+        status: nextStatus,
+        applied: true,
+        receipt: 'applied',
+      };
     });
   }
 

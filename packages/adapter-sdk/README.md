@@ -172,16 +172,18 @@ not a provider or model value. Set it in the private runtime environment.
 ## Body mapping
 
 A canonical delivery executes `body.prompt` or `body.text`; positive
-`body.timeout_ms` can shorten the harness deadline but can never extend it
-beyond the authenticated delivery's fixed `ack_deadline_at`. The engine keeps
-an adaptive 10% completion margin, capped at 30 seconds, for process
-termination, durable state and the terminal ACK; this budget also covers time
-spent waiting for a serialized native session. `body.session_key` is never
-trusted or used. Persistent-session scope is namespaced and derived only from
-authenticated envelope facts: tenant, authenticated actor, origin channel,
-session and conversation. The normalized prompt includes trusted origin
-context. Structured output is placed under ACK `result.output`; origin relay
-remains server-side from the message's authenticated origin.
+`body.timeout_ms` selects the harness wall-clock deadline independently from
+the short authenticated claim. Before dispatch, the engine verifies that the
+initial claim has enough room to start safely. While work is active (including
+time waiting for a serialized native session), it persists and emits fresh
+`started` ACK events; the gateway renews only a live, exactly fenced claim.
+Bundled agentic harnesses default to 24 hours. `body.session_key` is never
+trusted or used. Persistent-session scope
+is namespaced and derived only from authenticated envelope facts: tenant,
+authenticated actor, origin channel, session and conversation. The normalized
+prompt includes trusted origin context. Structured output is placed under ACK
+`result.output`; origin relay remains server-side from the message's
+authenticated origin.
 
 The normalized prompt also includes the trusted top-level `routing_targets`
 inventory. Models must not recall aliases from conversation history. A request
