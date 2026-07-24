@@ -58,13 +58,24 @@ function candidate(payload: Record<string, unknown>): string | undefined {
 }
 
 export function telegramTextChunks(payload: Record<string, unknown>): string[] {
-  const source = (candidate(payload) ?? 'La solicitud finalizó sin contenido textual.').split('\u0000').join('').trim();
+  if (isMissingFinalReply(payload)) return [];
+  const value = candidate(payload);
+  if (value === undefined) return [];
+  const source = value.split('\u0000').join('').trim();
   const characters = [...source].slice(0, 65_536);
   const chunks: string[] = [];
   for (let index = 0; index < characters.length; index += 4_096) {
     chunks.push(characters.slice(index, index + 4_096).join(''));
   }
-  return chunks.length === 0 ? ['La solicitud finalizó sin contenido textual.'] : chunks;
+  return chunks;
+}
+
+function isInterimAcknowledgement(payload: Record<string, unknown>): boolean {
+  return payload.relay_kind === 'ack' && payload.terminal === false;
+}
+
+function isMissingFinalReply(payload: Record<string, unknown>): boolean {
+  return payload.error_code === 'MISSING_FINAL_REPLY';
 }
 
 function aliasFrom(event: TelegramOriginRelay): string | undefined {
@@ -161,6 +172,7 @@ export class TelegramEgressWorker {
     const config = bridgeAlias ? this.aliases.get(bridgeAlias) : undefined;
     const api = bridgeAlias ? this.apis.get(bridgeAlias) : undefined;
     const chatId = event.origin.conversation_id;
+    const interimAcknowledgement = isInterimAcknowledgement(event.payload);
     if (!bridgeAlias || !config || !api || config.tenant_id !== event.tenant_id || event.origin.channel !== 'telegram' ||
         !config.allowed_chat_ids.includes(chatId)) {
       await this.repository.ack(this.acknowledgement(event, {
@@ -172,6 +184,13 @@ export class TelegramEgressWorker {
 
     try {
       const chunks = telegramTextChunks(event.payload);
+      if (chunks.length === 0 || (!interimAcknowledgement && isMissingFinalReply(event.payload))) {
+        const diagnostic = 'Telegram relay has no visible final reply; no message was sent';
+        await this.repository.ack(this.acknowledgement(event, { status: 'dead', error: diagnostic }));
+        if (!interimAcknowledgement) this.finishActivity(event, bridgeAlias, api, 'failed');
+        this.onMetric('egress_dead');
+        return;
+      }
       let blocked: string | undefined;
       for (const [index, text] of chunks.entries()) {
         const payloadHash = createHash('sha256').update(text).digest('hex');
@@ -247,12 +266,14 @@ export class TelegramEgressWorker {
       }
       if (blocked) {
         await this.repository.ack(this.acknowledgement(event, { status: 'dead', error: blocked }));
-        this.finishActivity(event, bridgeAlias, api, 'dead');
+        if (!interimAcknowledgement) this.finishActivity(event, bridgeAlias, api, 'dead');
         this.onMetric('egress_dead');
         return;
       }
       await this.repository.ack(this.acknowledgement(event, { status: 'sent', effect_count: chunks.length }));
-      this.finishActivity(event, bridgeAlias, api, relayOutcome(event.payload));
+      if (!interimAcknowledgement) {
+        this.finishActivity(event, bridgeAlias, api, relayOutcome(event.payload));
+      }
       this.onMetric('egress_sent');
     } catch (error) {
       if (error instanceof EgressCrash) throw error;
@@ -268,7 +289,7 @@ export class TelegramEgressWorker {
         this.onMetric('egress_retry');
       } else {
         await this.repository.ack(this.acknowledgement(event, { status: 'dead', error: safeError(error) }));
-        this.finishActivity(event, bridgeAlias, api, 'dead');
+        if (!interimAcknowledgement) this.finishActivity(event, bridgeAlias, api, 'dead');
         this.onMetric('egress_dead');
       }
     }

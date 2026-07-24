@@ -199,7 +199,7 @@ describe('Telegram egress text extraction', () => {
     })).toEqual(['structured reply']);
   });
 
-  it('keeps the textual fallback for an empty StructuredOutput reply, except when an error is present', () => {
+  it('returns no chunks for an empty StructuredOutput reply, while preserving an explicit error', () => {
     const emptyOutput = {
       reply: '',
       messages: [],
@@ -209,7 +209,7 @@ describe('Telegram egress text extraction', () => {
     };
 
     expect(telegramTextChunks({ result: { output: emptyOutput } }))
-      .toEqual(['La solicitud finalizó sin contenido textual.']);
+      .toEqual([]);
     expect(telegramTextChunks({ result: { output: emptyOutput }, error: 'adapter failed' }))
       .toEqual(['Error: adapter failed']);
     expect(telegramTextChunks({
@@ -223,11 +223,16 @@ describe('Telegram egress text extraction', () => {
       error: 'MISSING_FINAL_REPLY'
     })).toEqual(['Error: MISSING_FINAL_REPLY']);
     expect(telegramTextChunks({
+      result: { output: { reply: '\u200B\u2060\u0000' } },
+      error: 'Successful origin relay requires a non-empty final reply',
+      error_code: 'MISSING_FINAL_REPLY'
+    })).toEqual([]);
+    expect(telegramTextChunks({
       result: { output: { reply: '\u200B\u2060\u0000' } }
-    })).toEqual(['La solicitud finalizó sin contenido textual.']);
+    })).toEqual([]);
     for (const reply of ['\u034F', '\uFE0F', '\u0301', '\u20DD']) {
       expect(telegramTextChunks({ result: { output: { reply } } }))
-        .toEqual(['La solicitud finalizó sin contenido textual.']);
+        .toEqual([]);
     }
     expect(telegramTextChunks({
       result: { output: { reply: 'a\u0301' } }
@@ -250,7 +255,7 @@ describe('Telegram egress text extraction', () => {
         },
         tool: { content: 'must not be sent to Telegram' }
       }
-    })).toEqual(['La solicitud finalizó sin contenido textual.']);
+    })).toEqual([]);
   });
 });
 
@@ -470,6 +475,100 @@ describe('Telegram durable polling', () => {
 });
 
 describe('Telegram fenced egress', () => {
+  it('sends an interim relay ACK without finishing the original Telegram activity', async () => {
+    const api = new FakeTelegram();
+    const finishes: Array<{ outcome: string }> = [];
+    const repository = new MemoryEgressRepository(relay({
+      payload: {
+        relay_kind: 'ack',
+        terminal: false,
+        outcome: 'ack',
+        result: {
+          output: {
+            reply: 'Recibido; estoy trabajando en ello.',
+            messages: [],
+            status: 'done',
+            retryable: false,
+            artifacts: []
+          }
+        }
+      }
+    }));
+
+    await new TelegramEgressWorker({
+      repository,
+      aliases: [config()],
+      apis: new Map([['kant', api]]),
+      activity: {
+        begin: () => undefined,
+        finish: (_target, outcome) => finishes.push({ outcome }),
+        stop: () => undefined
+      }
+    }).runOnce();
+
+    expect(api.sends).toEqual([{
+      chat: '201',
+      text: 'Recibido; estoy trabajando en ello.'
+    }]);
+    expect(repository.acknowledgements.at(-1)).toMatchObject({
+      status: 'sent',
+      effect_count: 1
+    });
+    expect(finishes).toEqual([]);
+
+    repository.outboxState = 'failed';
+    await new TelegramEgressWorker({
+      repository, aliases: [config()], apis: new Map([['kant', api]])
+    }).runOnce();
+    expect(api.sends).toHaveLength(1);
+    expect(repository.acknowledgements.at(-1)).toMatchObject({
+      status: 'sent',
+      effect_count: 1
+    });
+  });
+
+  it('dead-letters a final relay without visible text and never sends a fallback', async () => {
+    const api = new FakeTelegram();
+    const finishes: Array<{ outcome: string }> = [];
+    const repository = new MemoryEgressRepository(relay({
+      payload: {
+        outcome: 'failed',
+        error: 'Successful origin relay requires a non-empty final reply',
+        error_code: 'MISSING_FINAL_REPLY',
+        result: {
+          output: {
+            reply: null,
+            messages: [],
+            status: 'done',
+            retryable: false,
+            artifacts: []
+          }
+        }
+      }
+    }));
+
+    await new TelegramEgressWorker({
+      repository,
+      aliases: [config()],
+      apis: new Map([['kant', api]]),
+      activity: {
+        begin: () => undefined,
+        finish: (_target, outcome) => finishes.push({ outcome }),
+        stop: () => undefined
+      }
+    }).runOnce();
+
+    expect(api.sends).toEqual([]);
+    expect(repository.effects.size).toBe(0);
+    expect(repository.acknowledgements).toEqual([
+      expect.objectContaining({
+        status: 'dead',
+        error: 'Telegram relay has no visible final reply; no message was sent'
+      })
+    ]);
+    expect(finishes).toEqual([{ outcome: 'failed' }]);
+  });
+
   it('sends the reply from a realistic AdapterClient ACK payload', async () => {
     const api = new FakeTelegram();
     const repository = new MemoryEgressRepository(relay({

@@ -5,6 +5,7 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import { PostgresTelegramBridgeRepository } from '../../../services/telegram-bridge/src/repository.js';
 
 let database: TestDatabase;
 let pool: DatabasePool;
@@ -89,6 +90,103 @@ async function claimFanin(
   return fanin;
 }
 
+async function seedTelegramAckAndFinal(
+  finalStatus: 'pending' | 'processing' | 'sent' | 'dead'
+): Promise<{
+  ackId: string;
+  finalId: string;
+  messageId: string;
+  deliveryId: string;
+}> {
+  const input = command({
+    actor_alias: 'argos',
+    recipients: [{ tenant_id: 'Steven', alias: 'argos' }],
+    authenticated_context: {
+      session_id: `telegram-order-${finalStatus}`,
+      channel: 'telegram',
+      origin: {
+        adapter: 'telegram',
+        channel: 'telegram',
+        conversation_id: `telegram-order-${finalStatus}`,
+        external_message_id: `telegram-order-${finalStatus}`,
+        relay: [],
+        metadata: { bridge_alias: 'argos', bridge_tenant: 'Steven' }
+      }
+    }
+  });
+  const published = await repository.publish(input);
+  const deliveryId = published.delivery_ids[0];
+  if (!deliveryId) throw new Error('expected a Telegram root delivery');
+  const acknowledgement = await pool.query<{ id: string }>(
+    `SELECT id FROM adapter_outbox WHERE idempotency_key=$1`,
+    [`relay-ack:${published.message_id}`]
+  );
+  const ackId = acknowledgement.rows[0]?.id;
+  if (!ackId) throw new Error('expected a Telegram acceptance ACK');
+  const final = await pool.query<{ id: string }>(
+    `INSERT INTO adapter_outbox(
+       tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,
+       origin,payload,status,claimed_at,claim_expires_at,sent_at,dead_at
+     ) VALUES(
+       'Steven','telegram','origin_relay',$1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,
+       CASE WHEN $8='processing' THEN now() ELSE NULL END,
+       CASE WHEN $8='processing' THEN now()+interval '1 minute' ELSE NULL END,
+       CASE WHEN $8='sent' THEN now() ELSE NULL END,
+       CASE WHEN $8='dead' THEN now() ELSE NULL END
+     ) RETURNING id`,
+    [
+      `relay-root:${published.message_id}`,
+      input.request_id,
+      published.message_id,
+      deliveryId,
+      input.trace_id,
+      JSON.stringify(input.authenticated_context!.origin),
+      JSON.stringify({
+        outcome: 'done',
+        result: { output: { reply: 'final', messages: [] } },
+        correlation: {
+          request_id: input.request_id,
+          message_id: published.message_id,
+          delivery_id: deliveryId,
+          trace_id: input.trace_id,
+          root_message_id: published.message_id
+        }
+      }),
+      finalStatus
+    ]
+  );
+  const finalId = final.rows[0]?.id;
+  if (!finalId) throw new Error('expected a correlated final relay');
+  return { ackId, finalId, messageId: published.message_id, deliveryId };
+}
+
+async function deadTelegramAckEffect(ackId: string): Promise<{
+  bridge: PostgresTelegramBridgeRepository;
+  effectId: string;
+  payloadHash: string;
+}> {
+  const bridge = new PostgresTelegramBridgeRepository(pool);
+  const effectId = `${ackId}:0`;
+  const payloadHash = 'a'.repeat(64);
+  await bridge.prepareEffect({
+    effect_id: effectId,
+    outbox_id: ackId,
+    tenant_id: 'Steven',
+    bridge_alias: 'argos',
+    chunk_index: 0,
+    chunk_count: 1,
+    payload_hash: payloadHash
+  });
+  await bridge.markEffectDead(effectId, payloadHash, 'operator review required');
+  await pool.query(
+    `UPDATE adapter_outbox SET status='dead',dead_at=now(),
+       last_error='operator review required',claim_expires_at=NULL
+     WHERE id=$1`,
+    [ackId]
+  );
+  return { bridge, effectId, payloadHash };
+}
+
 beforeAll(async () => {
   database = await startTestDatabase();
   pool = database.pool;
@@ -112,6 +210,239 @@ afterAll(async () => {
 });
 
 describe('transactional StructuredOutput.messages materialization', () => {
+  it('creates exactly one transactional Telegram ACK across publish replay', async () => {
+    const input = command({
+      authenticated_context: {
+        session_id: 'telegram-ack-session',
+        channel: 'telegram',
+        origin: {
+          adapter: 'telegram',
+          channel: 'telegram',
+          conversation_id: 'telegram-ack-chat',
+          external_message_id: 'telegram-ack-message',
+          relay: [],
+          metadata: { bridge_alias: 'argos', bridge_tenant: 'Steven' }
+        }
+      }
+    });
+
+    const first = await repository.publish(input);
+    const replay = await repository.publish(input);
+
+    expect(first.duplicate).toBe(false);
+    expect(replay).toMatchObject({
+      message_id: first.message_id,
+      delivery_ids: first.delivery_ids,
+      duplicate: true
+    });
+    expect((await pool.query<{
+      idempotency_key: string;
+      delivery_id: string | null;
+      relay_kind: string;
+      terminal: boolean;
+      outcome: string;
+      reply: string;
+      root_message_id: string;
+    }>(
+      `SELECT idempotency_key,delivery_id,payload->>'relay_kind' AS relay_kind,
+              (payload->>'terminal')::boolean AS terminal,payload->>'outcome' AS outcome,
+              payload#>>'{result,output,reply}' AS reply,
+              payload#>>'{correlation,root_message_id}' AS root_message_id
+       FROM adapter_outbox
+       WHERE kind='origin_relay' AND idempotency_key=$1`,
+      [`relay-ack:${first.message_id}`]
+    )).rows).toEqual([{
+      idempotency_key: `relay-ack:${first.message_id}`,
+      delivery_id: first.delivery_ids[0],
+      relay_kind: 'ack',
+      terminal: false,
+      outcome: 'ack',
+      reply: 'Recibido; estoy trabajando en ello.',
+      root_message_id: first.message_id
+    }]);
+  });
+
+  it.each([
+    {
+      name: 'bare untrusted origin',
+      provenance: {
+        origin: {
+          adapter: 'telegram',
+          channel: 'telegram',
+          conversation_id: 'bare-origin-chat',
+          relay: [],
+          metadata: { bridge_alias: 'argos', bridge_tenant: 'Steven' }
+        }
+      }
+    },
+    {
+      name: 'non-Telegram authenticated channel',
+      provenance: {
+        authenticated_context: {
+          session_id: 'discord-auth-session',
+          channel: 'discord',
+          origin: {
+            adapter: 'telegram',
+            channel: 'telegram',
+            conversation_id: 'discord-auth-chat',
+            relay: [],
+            metadata: { bridge_alias: 'argos', bridge_tenant: 'Steven' }
+          }
+        }
+      }
+    },
+    {
+      name: 'non-Telegram authenticated origin channel',
+      provenance: {
+        authenticated_context: {
+          session_id: 'wrong-origin-channel-session',
+          channel: 'telegram',
+          origin: {
+            adapter: 'telegram',
+            channel: 'discord',
+            conversation_id: 'wrong-origin-channel-chat',
+            relay: [],
+            metadata: { bridge_alias: 'argos', bridge_tenant: 'Steven' }
+          }
+        }
+      }
+    },
+    {
+      name: 'non-Telegram authenticated origin adapter',
+      provenance: {
+        authenticated_context: {
+          session_id: 'wrong-origin-adapter-session',
+          channel: 'telegram',
+          origin: {
+            adapter: 'discord',
+            channel: 'telegram',
+            conversation_id: 'wrong-origin-adapter-chat',
+            relay: [],
+            metadata: { bridge_alias: 'argos', bridge_tenant: 'Steven' }
+          }
+        }
+      }
+    }
+  ])('does not create a Telegram ACK from $name', async ({ provenance }) => {
+    const published = await repository.publish(command(provenance));
+    expect((await pool.query(
+      `SELECT 1 FROM adapter_outbox
+       WHERE kind='origin_relay' AND idempotency_key=$1`,
+      [`relay-ack:${published.message_id}`]
+    )).rowCount).toBe(0);
+  });
+
+  it('supersedes an unclaimed ACK as soon as its correlated final is processing', async () => {
+    const seeded = await seedTelegramAckAndFinal('processing');
+
+    expect(await repository.claimOutbox(
+      'origin_relay', 'processing-final-order', 10, 30_000, 'telegram'
+    )).toEqual([]);
+    expect((await pool.query<{ status: string; last_error: string }>(
+      `SELECT status,last_error FROM adapter_outbox WHERE id=$1`,
+      [seeded.ackId]
+    )).rows).toEqual([{
+      status: 'dead',
+      last_error: 'Telegram acceptance ACK was superseded by a claimed or terminal final relay'
+    }]);
+    expect((await pool.query(
+      `SELECT 1 FROM outbox_dead_letters WHERE outbox_id=$1 AND resolved_at IS NULL`,
+      [seeded.ackId]
+    )).rowCount).toBe(1);
+  });
+
+  it.each(['sent', 'dead'] as const)(
+    'tombstones an expired processing ACK when its correlated final is %s',
+    async (finalStatus) => {
+      const seeded = await seedTelegramAckAndFinal(finalStatus);
+      await pool.query(
+        `UPDATE adapter_outbox SET status='processing',attempts=1,claimed_by='expired-ack',
+           claim_token=$2,claimed_at=now()-interval '2 minutes',
+           claim_expires_at=now()-interval '1 minute'
+         WHERE id=$1`,
+        [seeded.ackId, randomUUID()]
+      );
+
+      expect(await repository.claimOutbox(
+        'origin_relay', `expired-ack-${finalStatus}`, 10, 30_000, 'telegram'
+      )).toEqual([]);
+      expect((await pool.query<{ status: string; last_error: string }>(
+        `SELECT status,last_error FROM adapter_outbox WHERE id=$1`,
+        [seeded.ackId]
+      )).rows).toEqual([{
+        status: 'dead',
+        last_error: 'Telegram acceptance ACK was superseded by a claimed or terminal final relay'
+      }]);
+      expect((await pool.query(
+        `SELECT 1 FROM outbox_dead_letters WHERE outbox_id=$1 AND resolved_at IS NULL`,
+        [seeded.ackId]
+      )).rowCount).toBe(1);
+    }
+  );
+
+  it.each(['processing', 'sent', 'dead'] as const)(
+    'rejects manual ACK replay when its correlated final is %s',
+    async (finalStatus) => {
+      const seeded = await seedTelegramAckAndFinal(finalStatus);
+      const replay = await deadTelegramAckEffect(seeded.ackId);
+
+      await expect(replay.bridge.manualReplayEffect(
+        replay.effectId, replay.payloadHash, `review ${finalStatus}`
+      )).rejects.toThrow(
+        'Telegram acceptance ACK replay is forbidden after its final relay was claimed or completed'
+      );
+      expect(await replay.bridge.getEffect(replay.effectId)).toMatchObject({
+        state: 'dead',
+        replay_count: 0
+      });
+      expect((await pool.query<{ status: string }>(
+        `SELECT status FROM adapter_outbox WHERE id=$1`,
+        [seeded.ackId]
+      )).rows).toEqual([{ status: 'dead' }]);
+    }
+  );
+
+  it('serializes manual ACK replay against a concurrent final claim', async () => {
+    const seeded = await seedTelegramAckAndFinal('pending');
+    const replay = await deadTelegramAckEffect(seeded.ackId);
+
+    const [manualResult, claimResult] = await Promise.allSettled([
+      replay.bridge.manualReplayEffect(
+        replay.effectId, replay.payloadHash, 'concurrent operator review'
+      ),
+      repository.claimOutbox(
+        'origin_relay', 'concurrent-final-claim', 1, 30_000, 'telegram'
+      )
+    ]);
+    const replayed = manualResult.status === 'fulfilled';
+    const claims = claimResult.status === 'fulfilled' ? claimResult.value : [];
+    const finalClaims = claims.filter((event) => event.event_id === seeded.finalId);
+
+    expect(replayed && finalClaims.length > 0).toBe(false);
+    expect(replayed || finalClaims.length === 1).toBe(true);
+    if (replayed) {
+      expect(finalClaims).toEqual([]);
+      expect(claims.every((event) => event.event_id === seeded.ackId)).toBe(true);
+      expect((await pool.query<{ status: string }>(
+        `SELECT status FROM adapter_outbox WHERE id=$1`,
+        [seeded.ackId]
+      )).rows[0]?.status).toMatch(/failed|processing/);
+    } else {
+      expect(finalClaims).toHaveLength(1);
+      expect(finalClaims[0]?.event_id).toBe(seeded.finalId);
+      expect(manualResult.status).toBe('rejected');
+      const rejection = manualResult.status === 'rejected'
+        ? manualResult.reason as unknown
+        : undefined;
+      expect(rejection).toBeInstanceOf(Error);
+      if (rejection instanceof Error) {
+        expect(rejection.message).toBe(
+          'Telegram acceptance ACK replay is forbidden after its final relay was claimed or completed'
+        );
+      }
+    }
+  });
+
   it('creates a same-tenant message and delivery from the authenticated consumer identity', async () => {
     const { delivery, epoch } = await claim(command({
       authenticated_context: {
@@ -482,11 +813,13 @@ describe('transactional StructuredOutput.messages materialization', () => {
     expect(await repository.claimDeliveries(
       'Steven', 'jarvis', 'revoked-return-jarvis', root.epoch, 1, 30_000
     )).toEqual([]);
-    expect((await pool.query(
-      `SELECT 1 FROM adapter_outbox
+    expect((await pool.query<{ idempotency_key: string }>(
+      `SELECT idempotency_key FROM adapter_outbox
        WHERE kind='origin_relay' AND trace_id=$1`,
       [root.delivery.trace_id]
-    )).rowCount).toBe(0);
+    )).rows).toEqual([{
+      idempotency_key: `relay-ack:${root.delivery.message_id}`
+    }]);
     expect((await pool.query<{ metadata: Record<string, unknown> }>(
       `SELECT metadata FROM audit_events
        WHERE action='agent_output.response' AND decision='deny' AND delivery_id=$1`,
@@ -581,10 +914,13 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'kant',
       terminalAck(kantResponse, 'nested-kant', kantLease.epoch!, [])
     );
-    expect((await pool.query(
-      `SELECT 1 FROM adapter_outbox WHERE kind='origin_relay' AND trace_id=$1`,
+    expect((await pool.query<{ idempotency_key: string }>(
+      `SELECT idempotency_key FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1`,
       [root.delivery.trace_id]
-    )).rowCount).toBe(0);
+    )).rows).toEqual([{
+      idempotency_key: `relay-ack:${root.delivery.message_id}`
+    }]);
 
     const [rootResponse] = await repository.claimDeliveries(
       'Steven', 'argos', 'nested-argos', root.epoch, 1, 30_000
@@ -617,9 +953,20 @@ describe('transactional StructuredOutput.messages materialization', () => {
       terminalAck(fanin, 'nested-argos', root.epoch, [])
     );
     expect((await pool.query(
-      `SELECT delivery_id FROM adapter_outbox WHERE kind='origin_relay' AND trace_id=$1`,
+      `SELECT idempotency_key,delivery_id FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1
+       ORDER BY idempotency_key`,
       [root.delivery.trace_id]
-    )).rows).toEqual([{ delivery_id: fanin.delivery_id }]);
+    )).rows).toEqual([
+      {
+        idempotency_key: `relay-ack:${root.delivery.message_id}`,
+        delivery_id: root.delivery.delivery_id
+      },
+      {
+        idempotency_key: `relay-root:${root.delivery.message_id}`,
+        delivery_id: fanin.delivery_id
+      }
+    ]);
   });
 
   it.each([
@@ -1256,8 +1603,23 @@ describe('transactional StructuredOutput.messages materialization', () => {
       terminalAck(root.delivery, 'fanout-source', root.epoch, [
         { to: 'kant', body: 'fanout one' },
         { to: 'socrates', body: 'fanout two' }
-      ])
+      ], randomUUID(), null)
     );
+    expect((await pool.query<{
+      idempotency_key: string;
+      relay_kind: string | null;
+      outcome: string;
+    }>(
+      `SELECT idempotency_key,payload->>'relay_kind' AS relay_kind,payload->>'outcome' AS outcome
+       FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1
+       ORDER BY idempotency_key`,
+      [root.delivery.trace_id]
+    )).rows).toEqual([{
+      idempotency_key: `relay-ack:${root.delivery.message_id}`,
+      relay_kind: 'ack',
+      outcome: 'ack'
+    }]);
 
     for (const alias of ['kant', 'socrates']) {
       const instanceId = `fanout-${alias}`;
@@ -1295,10 +1657,13 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'argos',
       terminalAck(second, 'fanout-source', root.epoch, [], randomUUID(), 'second response processed')
     );
-    expect((await pool.query(
-      `SELECT 1 FROM adapter_outbox WHERE kind='origin_relay' AND trace_id=$1`,
+    expect((await pool.query<{ idempotency_key: string }>(
+      `SELECT idempotency_key FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1`,
       [root.delivery.trace_id]
-    )).rowCount).toBe(0);
+    )).rows).toEqual([{
+      idempotency_key: `relay-ack:${root.delivery.message_id}`
+    }]);
     await repository.ackDelivery(
       first.delivery_id,
       'Steven',
@@ -1335,9 +1700,74 @@ describe('transactional StructuredOutput.messages materialization', () => {
       terminalAck(fanin, 'fanout-source', root.epoch, [], randomUUID(), 'deterministic final')
     );
     expect((await pool.query(
-      `SELECT delivery_id FROM adapter_outbox WHERE kind='origin_relay' AND trace_id=$1`,
+      `SELECT idempotency_key,delivery_id,payload->>'relay_kind' AS relay_kind,
+              payload->>'outcome' AS outcome
+       FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1
+       ORDER BY idempotency_key`,
       [root.delivery.trace_id]
-    )).rows).toEqual([{ delivery_id: fanin.delivery_id }]);
+    )).rows).toEqual([
+      {
+        idempotency_key: `relay-ack:${root.delivery.message_id}`,
+        delivery_id: root.delivery.delivery_id,
+        relay_kind: 'ack',
+        outcome: 'ack'
+      },
+      {
+        idempotency_key: `relay-root:${root.delivery.message_id}`,
+        delivery_id: fanin.delivery_id,
+        relay_kind: null,
+        outcome: 'done'
+      }
+    ]);
+
+    const racedClaims = await Promise.all([
+      repository.claimOutbox('origin_relay', 'telegram-order-worker-a', 2, 30_000, 'telegram'),
+      repository.claimOutbox('origin_relay', 'telegram-order-worker-b', 2, 30_000, 'telegram')
+    ]);
+    const [ackClaim] = racedClaims.flat();
+    expect(racedClaims.flat()).toHaveLength(1);
+    expect(ackClaim).toMatchObject({
+      delivery_id: root.delivery.delivery_id,
+      payload: { relay_kind: 'ack', terminal: false }
+    });
+    expect((await pool.query<{ status: string }>(
+      `SELECT status FROM adapter_outbox WHERE idempotency_key=$1`,
+      [`relay-root:${root.delivery.message_id}`]
+    )).rows).toEqual([{ status: 'pending' }]);
+    await expect(repository.ackOutbox({
+      event_id: ackClaim!.event_id,
+      attempt: ackClaim!.attempt,
+      claim_token: ackClaim!.claim_token,
+      status: 'sent'
+    })).resolves.toEqual({ status: 'sent', applied: true });
+
+    const [finalClaim] = await repository.claimOutbox(
+      'origin_relay', 'telegram-order-final', 1, 30_000, 'telegram'
+    );
+    expect(finalClaim?.payload).toMatchObject({ outcome: 'done' });
+    await expect(repository.ackOutbox({
+      event_id: finalClaim!.event_id,
+      attempt: finalClaim!.attempt,
+      claim_token: finalClaim!.claim_token,
+      status: 'sent'
+    })).resolves.toEqual({ status: 'sent', applied: true });
+
+    await pool.query(
+      `UPDATE adapter_outbox SET status='pending',sent_at=NULL,available_at=now()
+       WHERE id=$1`,
+      [ackClaim!.event_id]
+    );
+    expect(await repository.claimOutbox(
+      'origin_relay', 'telegram-order-late-ack', 1, 30_000, 'telegram'
+    )).toEqual([]);
+    expect((await pool.query<{ status: string; last_error: string }>(
+      `SELECT status,last_error FROM adapter_outbox WHERE id=$1`,
+      [ackClaim!.event_id]
+    )).rows).toEqual([{
+      status: 'dead',
+      last_error: 'Telegram acceptance ACK was superseded by a claimed or terminal final relay'
+    }]);
   });
 
   it('bounds the durable fan-in aggregate and records response truncation', async () => {
@@ -1511,23 +1941,35 @@ describe('transactional StructuredOutput.messages materialization', () => {
       error_code: 'LEGACY_FAILED'
     });
     expect((await pool.query<{
+      idempotency_key: string;
       outcome: string;
-      error: string;
-      error_code: string;
+      error: string | null;
+      error_code: string | null;
       result_reply: string | null;
     }>(
-      `SELECT payload->>'outcome' AS outcome,payload->>'error' AS error,
+      `SELECT idempotency_key,payload->>'outcome' AS outcome,payload->>'error' AS error,
               payload->>'error_code' AS error_code,
               payload#>>'{result,output,reply}' AS result_reply
        FROM adapter_outbox
-       WHERE kind='origin_relay' AND delivery_id=$1`,
+       WHERE kind='origin_relay' AND delivery_id=$1
+       ORDER BY idempotency_key`,
       [delivery.delivery_id]
-    )).rows).toEqual([{
-      outcome: 'failed',
-      error: 'LEGACY_FAILED',
-      error_code: 'LEGACY_FAILED',
-      result_reply: null
-    }]);
+    )).rows).toEqual([
+      {
+        idempotency_key: `relay-ack:${delivery.message_id}`,
+        outcome: 'ack',
+        error: null,
+        error_code: null,
+        result_reply: 'Recibido; estoy trabajando en ello.'
+      },
+      {
+        idempotency_key: `relay:${delivery.delivery_id}`,
+        outcome: 'failed',
+        error: 'LEGACY_FAILED',
+        error_code: 'LEGACY_FAILED',
+        result_reply: null
+      }
+    ]);
   });
 
   it('emits exactly one origin relay when fan-out response ACKs finish concurrently', async () => {
@@ -1624,13 +2066,16 @@ describe('transactional StructuredOutput.messages materialization', () => {
         { delivery_id: second.delivery_id, status: 'done', applied: true }
       ]);
 
-      const relays = (await pool.query<{ delivery_id: string }>(
-        `SELECT delivery_id
+      const relays = (await pool.query<{ idempotency_key: string; delivery_id: string }>(
+        `SELECT idempotency_key,delivery_id
          FROM adapter_outbox
          WHERE kind='origin_relay' AND trace_id=$1`,
         [root.delivery.trace_id]
       )).rows;
-      expect(relays).toHaveLength(0);
+      expect(relays).toEqual([{
+        idempotency_key: `relay-ack:${root.delivery.message_id}`,
+        delivery_id: root.delivery.delivery_id
+      }]);
       expect((await pool.query(
         `SELECT 1 FROM adapter_outbox
          WHERE adapter='gateway' AND idempotency_key=$1`,
@@ -1645,12 +2090,22 @@ describe('transactional StructuredOutput.messages materialization', () => {
         'argos',
         terminalAck(fanin, 'concurrent-fanout-source', root.epoch, [])
       );
-      expect((await pool.query<{ delivery_id: string }>(
-        `SELECT delivery_id
+      expect((await pool.query<{ idempotency_key: string; delivery_id: string }>(
+        `SELECT idempotency_key,delivery_id
          FROM adapter_outbox
-         WHERE kind='origin_relay' AND trace_id=$1`,
+         WHERE kind='origin_relay' AND trace_id=$1
+         ORDER BY idempotency_key`,
         [root.delivery.trace_id]
-      )).rows).toEqual([{ delivery_id: fanin.delivery_id }]);
+      )).rows).toEqual([
+        {
+          idempotency_key: `relay-ack:${root.delivery.message_id}`,
+          delivery_id: root.delivery.delivery_id
+        },
+        {
+          idempotency_key: `relay-root:${root.delivery.message_id}`,
+          delivery_id: fanin.delivery_id
+        }
+      ]);
     } finally {
       await pool.query(`
         DROP TRIGGER IF EXISTS test_delay_concurrent_agent_response_ack ON deliveries;

@@ -354,11 +354,63 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
       if (row.state !== 'ambiguous' && row.state !== 'dead') {
         throw new Error('Only an ambiguous or dead Telegram effect can be manually replayed');
       }
-      const outbox = await client.query<{ status: string }>(
-        `SELECT status FROM adapter_outbox WHERE id=$1 FOR UPDATE`, [row.outbox_id]
+      const outboxIdentity = await client.query<{
+        acknowledgement: boolean;
+        root_message_id: string | null;
+      }>(
+        `SELECT payload->>'relay_kind'='ack' AS acknowledgement,
+                COALESCE(
+                  payload#>>'{correlation,root_message_id}',
+                  payload#>>'{correlation,message_id}'
+                ) AS root_message_id
+         FROM adapter_outbox WHERE id=$1`,
+        [row.outbox_id]
       );
-      if (outbox.rows[0]?.status !== 'dead') {
+      const identity = outboxIdentity.rows[0];
+      if (identity?.acknowledgement && identity.root_message_id) {
+        await client.query(
+          `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
+          [`telegram-origin-relay:${identity.root_message_id}`]
+        );
+      }
+      const outbox = await client.query<{ status: string; acknowledgement: boolean }>(
+        `SELECT status,payload->>'relay_kind'='ack' AS acknowledgement
+         FROM adapter_outbox WHERE id=$1 FOR UPDATE`,
+        [row.outbox_id]
+      );
+      const outboxRow = outbox.rows[0];
+      if (outboxRow?.status !== 'dead') {
         throw new Error('Telegram manual replay requires a dead outbox event');
+      }
+      if (outboxRow.acknowledgement) {
+        // Lock every correlated final, including pending ones, so a concurrent
+        // final claim cannot cross the replay transition.
+        const correlatedFinals = await client.query<{ status: string }>(
+          `SELECT final.status
+           FROM adapter_outbox final
+           JOIN adapter_outbox acknowledgement ON acknowledgement.id=$1
+           WHERE final.tenant_id=acknowledgement.tenant_id
+             AND final.adapter=acknowledgement.adapter
+             AND final.kind=acknowledgement.kind
+             AND final.id<>acknowledgement.id
+             AND final.payload->>'relay_kind' IS DISTINCT FROM 'ack'
+             AND COALESCE(
+               final.payload#>>'{correlation,root_message_id}',
+               final.payload#>>'{correlation,message_id}'
+             )=COALESCE(
+               acknowledgement.payload#>>'{correlation,root_message_id}',
+               acknowledgement.payload#>>'{correlation,message_id}'
+             )
+           FOR UPDATE OF final`,
+          [row.outbox_id]
+        );
+        if (correlatedFinals.rows.some(
+          (final) => final.status === 'processing' || final.status === 'sent' || final.status === 'dead'
+        )) {
+          throw new Error(
+            'Telegram acceptance ACK replay is forbidden after its final relay was claimed or completed'
+          );
+        }
       }
       await client.query(
         `UPDATE telegram_egress_effects SET
