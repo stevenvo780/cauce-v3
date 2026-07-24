@@ -6,7 +6,7 @@ spec:
   tenant: Steven
   room: grp.steven
   alias: socrates
-  harness: claude
+  harness: codex
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_SOCRATES_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

@@ -110,7 +110,7 @@ load_config() {
     [[ -n $value ]] || die "container alias config value is empty: $key"
     [[ ! -v "CONFIG[$key]" ]] || die "container alias config key is duplicated: $key"
     case "$key" in
-      BUNDLE_CURRENT|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW) ;;
+      BUNDLE_RELEASE|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW) ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
       OPENCLAW_TRANSPORT|OPENCLAW_API_URL|OPENCLAW_TOKEN_FILE|OPENCLAW_AGENT_TARGET|OPENCLAW_DIST_DIR)
         [[ $harness == openclaw ]] || die "config key is not allowed for $harness: $key"
@@ -119,7 +119,7 @@ load_config() {
     esac
     CONFIG[$key]=$value
   done < "$config_file"
-  for key in BUNDLE_CURRENT BUNDLE_SHA256 PKI_DIR RELAY_URL EXPECTED_IMAGE_ID; do
+  for key in BUNDLE_RELEASE BUNDLE_SHA256 PKI_DIR RELAY_URL EXPECTED_IMAGE_ID; do
     [[ -v "CONFIG[$key]" ]] || die "container alias config is missing: $key"
   done
   validate_config_values
@@ -136,10 +136,10 @@ validate_relay_url() {
 }
 
 validate_config_values() {
-  local expected_bundle="$BUNDLE_ROOT/current" expected_pki="$PKI_ROOT/$alias_name" api_authority api_port
-  valid_absolute_path "${CONFIG[BUNDLE_CURRENT]}" || die 'BUNDLE_CURRENT path is invalid'
+  local expected_pki="$PKI_ROOT/$alias_name" api_authority api_port
   valid_absolute_path "${CONFIG[PKI_DIR]}" || die 'PKI_DIR path is invalid'
-  [[ ${CONFIG[BUNDLE_CURRENT]} == "$expected_bundle" ]] || die 'BUNDLE_CURRENT is outside its allowlisted path'
+  [[ ${CONFIG[BUNDLE_RELEASE]} =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ \
+    && ${CONFIG[BUNDLE_RELEASE]} != current ]] || die 'BUNDLE_RELEASE name is invalid'
   [[ ${CONFIG[PKI_DIR]} == "$expected_pki" ]] || die 'PKI_DIR is outside its alias-scoped path'
   [[ ${CONFIG[BUNDLE_SHA256]} =~ ^sha256:[a-f0-9]{64}$ ]] || die 'BUNDLE_SHA256 must be an exact sha256 digest'
   [[ ${CONFIG[EXPECTED_IMAGE_ID]} =~ ^sha256:[a-f0-9]{64}$ ]] || die 'EXPECTED_IMAGE_ID must be an exact image ID'
@@ -218,15 +218,13 @@ bundle_release=''
 bundle_digest=''
 bearer_token_present=false
 validate_bundle() {
-  local current=${CONFIG[BUNDLE_CURRENT]} owner mode numeric adapter invalid link resolved calculated
+  local owner mode numeric adapter invalid link resolved calculated
   [[ -x $RUNTIME_HELPER_SOURCE && -f $RUNTIME_HELPER_SOURCE ]] || die 'container runtime helper is unavailable'
-  [[ -L $current ]] || die 'BUNDLE_CURRENT must be an immutable current symlink'
-  owner=$(stat -c '%u' "$current") || die 'cannot inspect BUNDLE_CURRENT'
-  [[ $owner == "$(safe_owner_uid)" ]] || die 'BUNDLE_CURRENT must have the required owner'
-  bundle_source=$(readlink -f "$current") || die 'BUNDLE_CURRENT target is unavailable'
-  [[ -d $bundle_source && ! -L $bundle_source && ${bundle_source%/*} == "$BUNDLE_ROOT/releases" ]] || die 'BUNDLE_CURRENT must resolve to one direct release directory'
-  bundle_release=${bundle_source##*/}
-  [[ $bundle_release =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ && $bundle_release != current ]] || die 'bundle release name is invalid'
+  assert_secure_directory "$BUNDLE_ROOT" 'bundle root'
+  assert_secure_directory "$BUNDLE_ROOT/releases" 'bundle releases directory'
+  bundle_release=${CONFIG[BUNDLE_RELEASE]}
+  bundle_source="$BUNDLE_ROOT/releases/$bundle_release"
+  [[ -d $bundle_source && ! -L $bundle_source ]] || die 'BUNDLE_RELEASE must name one direct non-symlink release directory'
   owner=$(stat -c '%u' "$bundle_source") || die 'cannot inspect bundle release'
   mode=$(stat -c '%a' "$bundle_source") || die 'cannot inspect bundle release'
   numeric=$((8#$mode))
@@ -244,7 +242,7 @@ validate_bundle() {
   adapter="$bundle_source/packages/adapter-sdk/dist/src/bin/$harness.js"
   [[ -f $adapter && ! -L $adapter && -x $adapter ]] || die 'bundle does not contain the assigned executable adapter'
   calculated=$(PYTHONDONTWRITEBYTECODE=1 python3 "$RUNTIME_HELPER_SOURCE" bundle-digest "$bundle_source") || die 'cannot calculate bundle digest'
-  [[ $calculated == "${CONFIG[BUNDLE_SHA256]}" ]] || die 'configured bundle digest differs from immutable current release'
+  [[ $calculated == "${CONFIG[BUNDLE_SHA256]}" ]] || die 'configured bundle digest differs from pinned immutable release'
   bundle_digest=$calculated
 }
 
@@ -453,7 +451,6 @@ deploy_bundle() {
   docker_id_mutate --user 0 chown -R 0:0 "$stage"
   docker_id_mutate --user 0 rm -rf "$release"
   docker_id_mutate --user 0 mv "$stage" "$release"
-  docker_id_mutate --user 0 ln -sfn "releases/$bundle_release" "$instance_root/current"
   active=$(docker_id_exec --user "$container_uid:$container_gid" /usr/bin/python3 "$control_helper" bundle-digest "$release")
   [[ $active == "$bundle_digest" ]] || die 'copied active bundle digest differs' 78
   adapter_in_container="$release/packages/adapter-sdk/dist/src/bin/$harness.js"

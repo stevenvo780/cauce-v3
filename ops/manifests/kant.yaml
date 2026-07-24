@@ -6,7 +6,7 @@ spec:
   tenant: Steven
   room: grp.steven
   alias: kant
-  harness: opencode
+  harness: codex
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_KANT_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

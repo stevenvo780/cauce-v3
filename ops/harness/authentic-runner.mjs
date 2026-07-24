@@ -143,7 +143,7 @@ class MtlsWsClient {
       type: 'hello',
       version: '3.0',
       tenant_id: 'Steven',
-      alias: 'kant',
+      alias: 'jarvis',
       instance_id: this.instanceId,
       capabilities: ['runtime-authentic', 'acks.v3'],
     });
@@ -207,7 +207,7 @@ class MtlsWsClient {
 async function publishWebhookMessage() {
   const response = await gatewayRequest('POST', '/v3/messages', {
     room_id: 'grp.steven',
-    recipients: [{ tenant_id: 'Steven', alias: 'kant' }],
+    recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
     body: { text: 'runtime authentic webhook effect' },
     idempotency_key: `authentic-${crypto.randomUUID()}`,
     lane: 'interactive',

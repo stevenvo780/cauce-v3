@@ -52,6 +52,10 @@ class ExecutableIdentityMismatch(PermanentError):
     """The adapter lineage is proven, but its live executable changed."""
 
 
+class AdapterExitedBeforeIdentity(RuntimeError):
+    """The successfully exec'd adapter exited before identity sampling stabilized."""
+
+
 class DirectoryAccessError(PermanentError):
     """A lifecycle directory exists but cannot be traversed safely."""
 
@@ -530,13 +534,20 @@ def starting_executable_identity(requested_path: str) -> dict[str, Any]:
     }
 
 
-def wait_for_exec(pid: int, requested_path: str, timeout: float = 3.0) -> dict[str, Any]:
+def wait_for_exec(tree: "PinnedLeaderTree", requested_path: str, timeout: float = 3.0) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
+    pid = tree.leader_pid
     canonical = os.path.realpath(requested_path).encode("utf-8")
     last_error: Exception | None = None
     previous: dict[str, Any] | None = None
     stable = 0
     while time.monotonic() < deadline:
+        # Refresh while the exact leader is still pinned. If the adapter exits,
+        # its Popen status is propagated by run_adapter rather than being
+        # misclassified as a permanent executable-identity timeout.
+        tree.refresh()
+        if not tree.leader_is_live():
+            raise AdapterExitedBeforeIdentity
         try:
             raw = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")
             if canonical in raw:
@@ -550,6 +561,8 @@ def wait_for_exec(pid: int, requested_path: str, timeout: float = 3.0) -> dict[s
                     stable = 0
         except (FileNotFoundError, ProcessLookupError, PermissionError, OSError) as error:
             last_error = error
+            if not tree.leader_is_live():
+                raise AdapterExitedBeforeIdentity from error
         time.sleep(0.05)
     raise PermanentError("adapter did not establish its executable identity") from last_error
 
@@ -815,6 +828,52 @@ def pin_verified_controller(document: dict[str, Any]) -> int:
 def require_current_generation(document: dict[str, Any], container_id: str, generation: str) -> None:
     if document["containerId"] != container_id or document["containerGeneration"] != generation:
         raise PermanentError("lifecycle metadata belongs to another container generation; no signal was sent")
+
+
+def stale_generation_is_quiescent(
+    control_fd: int,
+    document: dict[str, Any],
+    alias: str,
+    state_directory: str,
+    container_id: str,
+    generation: str,
+    *,
+    probe_lock: bool,
+) -> bool:
+    """Prove that metadata from a prior container generation is inert.
+
+    Container restarts preserve the writable layer on some Docker hosts, so a
+    root-owned lifecycle document under ``/run`` may outlive the PID namespace.
+    Such metadata must never authorize a signal in the replacement generation,
+    but it must not permanently block a clean restart either.
+
+    Returns ``False`` for current-generation metadata.  For stale metadata it
+    fails closed if either generation still has an identifiable controller or
+    adapter process, otherwise returns ``True`` without deleting or signalling
+    anything.  The run path owns the lifecycle lock and performs the eventual
+    durable metadata cleanup.
+    """
+    if document["containerId"] == container_id and document["containerGeneration"] == generation:
+        return False
+    if document["alias"] != alias or document["stateDirectory"] != state_directory:
+        raise PermanentError("lifecycle metadata alias/state mismatch was preserved")
+    if probe_lock and lock_is_held(control_fd):
+        raise PermanentError("a lifecycle controller holds the lock for stale generation metadata")
+    if controller_is_live(document):
+        raise PermanentError("a prior container generation still has a live lifecycle controller")
+    excluded = {os.getpid()}
+    prior = alias_generation_pids(
+        alias,
+        document["containerGeneration"],
+        state_directory,
+        exclude=excluded,
+    )
+    if prior:
+        raise PermanentError("a prior container generation still has live alias processes")
+    current = alias_generation_pids(alias, generation, state_directory, exclude=excluded)
+    if current:
+        raise PermanentError("the current container generation has untracked alias processes")
+    return True
 
 
 def reap_children() -> None:
@@ -1196,6 +1255,17 @@ def startup_metadata(control_fd: int, alias: str, state_directory: str, containe
         return
     if document["alias"] != alias or document["stateDirectory"] != state_directory:
         raise PermanentError("lifecycle metadata alias/state mismatch was preserved")
+    if stale_generation_is_quiescent(
+        control_fd,
+        document,
+        alias,
+        state_directory,
+        container_id,
+        generation,
+        probe_lock=False,
+    ):
+        remove_metadata(control_fd)
+        return
     if document["phase"] == "running":
         if pid_exists(document["pid"]):
             try:
@@ -1316,7 +1386,7 @@ def run_adapter(args: argparse.Namespace) -> int:
                 signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=False)
                 wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
                 raise PermanentError("adapter launch was cancelled before metadata publication")
-            executable = wait_for_exec(process.pid, args.command[0])
+            executable = wait_for_exec(process_tree, args.command[0])
             details = proc_stat(process.pid)
             if details["pgid"] != process.pid or details["sid"] != process.pid:
                 raise PermanentError("adapter did not start in a dedicated process session")
@@ -1332,6 +1402,15 @@ def run_adapter(args: argparse.Namespace) -> int:
             validate_metadata(running_document)
             verify_adapter(running_document, args.alias, args.state)
             atomic_metadata(control_fd, running_document)
+        except AdapterExitedBeforeIdentity:
+            # Popen returned only after the requested executable was launched,
+            # so a child exit here is an adapter outcome, not proof of invalid
+            # identity. Preserve its real status (remapping reserved supervisor
+            # codes) and tear down only descendants pinned while the leader lived.
+            status = wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
+            signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=True)
+            remove_metadata(control_fd)
+            return remap_child_exit(status)
         except BaseException:
             signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=False)
             try:
@@ -1382,6 +1461,19 @@ def stop_adapter(args: argparse.Namespace) -> None:
             if alias_generation_pids(args.alias, args.generation, args.state, exclude={os.getpid()}):
                 raise PermanentError("untracked processes still carry this alias generation; nothing was signalled")
             return
+        if stale_generation_is_quiescent(
+            control_fd,
+            document,
+            args.alias,
+            args.state,
+            args.container_id,
+            args.generation,
+            probe_lock=True,
+        ):
+            # Pre-start stop deliberately leaves stale metadata in place.  The
+            # subsequent run command owns the lifecycle lock and removes it
+            # durably before publishing the replacement generation.
+            return
         require_current_generation(document, args.container_id, args.generation)
         if document["phase"] == "running":
             terminate_from_metadata(
@@ -1429,12 +1521,21 @@ def assert_stopped(args: argparse.Namespace) -> None:
         if control_fd is not None:
             document, _ = read_metadata(control_fd)
             if document is not None:
-                require_current_generation(document, args.container_id, args.generation)
-                if document["phase"] == "running" and pid_exists(document["pid"]):
-                    raise PermanentError("adapter lifecycle metadata still identifies a live PID")
-                if controller_is_live(document):
-                    raise PermanentError("a lifecycle controller is still starting for this alias")
-                raise PermanentError("adapter lifecycle metadata remains; stopped state is not proven")
+                if not stale_generation_is_quiescent(
+                    control_fd,
+                    document,
+                    args.alias,
+                    args.state,
+                    args.container_id,
+                    args.generation,
+                    probe_lock=True,
+                ):
+                    require_current_generation(document, args.container_id, args.generation)
+                    if document["phase"] == "running" and pid_exists(document["pid"]):
+                        raise PermanentError("adapter lifecycle metadata still identifies a live PID")
+                    if controller_is_live(document):
+                        raise PermanentError("a lifecycle controller is still starting for this alias")
+                    raise PermanentError("adapter lifecycle metadata remains; stopped state is not proven")
             if lock_is_held(control_fd):
                 raise PermanentError("a lifecycle controller holds the lock; stopped state is not proven")
         stragglers = alias_generation_pids(args.alias, args.generation, args.state, exclude={os.getpid()})

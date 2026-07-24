@@ -15,12 +15,12 @@ EXPECTED = {
     "hegel": ("Jhon", "grp.jhon", "openclaw"),
     "janus": ("Miguel", "grp.miguel", "openclaw"),
     "jarvis": ("Steven", "grp.steven", "openclaw"),
-    "kant": ("Steven", "grp.steven", "opencode"),
-    "kratos": ("Miguel", "grp.miguel", "claude"),
+    "kant": ("Steven", "grp.steven", "codex"),
+    "kratos": ("Miguel", "grp.miguel", "codex"),
     "midas": ("Pablo", "grp.pablo", "openclaw"),
-    "salva": ("Isa", "grp.isa", "claude"),
+    "salva": ("Isa", "grp.isa", "codex"),
     "seneca": ("Pablo", "grp.pablo", "openclaw"),
-    "socrates": ("Steven", "grp.steven", "claude"),
+    "socrates": ("Steven", "grp.steven", "codex"),
     "vulcano": ("Pablo", "grp.pablo", "claude"),
 }
 ENV_RE = re.compile(r"^CAUCE_[A-Z0-9_]+_(?:PATH|URL)$")

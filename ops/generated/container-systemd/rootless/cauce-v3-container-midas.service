@@ -19,6 +19,7 @@ ExecStop=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh st
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78
+RestartForceExitStatus=70
 TimeoutStopSec=45s
 KillMode=control-group
 StandardInput=null

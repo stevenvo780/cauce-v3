@@ -53,7 +53,7 @@
       "user": "dev",
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/kant",
-      "harness": "opencode"
+      "harness": "codex"
     },
     "kratos": {
       "tenant": "Miguel",
@@ -62,7 +62,7 @@
       "user": "dev",
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/kratos",
-      "harness": "claude"
+      "harness": "codex"
     },
     "midas": {
       "tenant": "Pablo",
@@ -80,7 +80,7 @@
       "user": "dev",
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/salva",
-      "harness": "claude"
+      "harness": "codex"
     },
     "seneca": {
       "tenant": "Pablo",
@@ -98,7 +98,7 @@
       "user": "dev",
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
-      "harness": "claude"
+      "harness": "codex"
     },
     "vulcano": {
       "tenant": "Pablo",

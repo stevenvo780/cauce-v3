@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 container adapter kant (ctrl-infra/opencode)
+Description=Cauce V3 container adapter kant (ctrl-infra/codex)
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
@@ -17,6 +17,7 @@ ExecStop=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop kant
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78
+RestartForceExitStatus=70
 TimeoutStopSec=45s
 KillMode=control-group
 StandardInput=null

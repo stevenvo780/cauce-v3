@@ -15,6 +15,7 @@ STATIC_INPUTS = (
     "scripts/container-alias-query.py",
     "scripts/validate-container-mount.py",
     "scripts/generate-container-units.py",
+    "scripts/pin-container-release.py",
     "scripts/container_ops_digest.py",
     "scripts/cutover.sh",
     "scripts/cutover-rollback.sh",
@@ -25,6 +26,7 @@ STATIC_INPUTS = (
     # Critical adversarial suites and their fakes: a change to the supervisor/lifecycle
     # behaviour that is not matched by its regression tests must move this digest.
     "tests/container-supervisor.test.mjs",
+    "tests/container-release-pin.test.mjs",
     "tests/container-cutover.test.mjs",
     "tests/container-ops-evidence.test.mjs",
     "tests/fake-docker.mjs",

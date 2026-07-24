@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 alias consumer socrates (Steven/claude)
+Description=Cauce V3 alias consumer socrates (Steven/codex)
 After=network-online.target cauce-v3-compose@prod.service
 Wants=network-online.target
 ConditionPathExists=/etc/cauce-v3/aliases/socrates.env
@@ -14,7 +14,7 @@ UMask=0077
 Environment=CAUCE_ALIAS=socrates
 Environment=CAUCE_TENANT=Steven
 Environment=CAUCE_ROOM=grp.steven
-Environment=CAUCE_HARNESS=claude
+Environment=CAUCE_HARNESS=codex
 Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
 Environment=CAUCE_INSTANCE_ID=systemd-socrates

@@ -43,12 +43,11 @@ if args.rootless:
     unit_lock_root = args.lock_root or "%t/cauce-v3"
     example_config_root = args.config_root or f"{home}/.config/cauce-v3/container-aliases"
     example_pki_root = args.pki_root or f"{home}/.config/cauce-v3/container-pki"
-    example_bundle_root = args.bundle_root or f"{home}/.local/share/cauce-v3-adapter"
 else:
     install_prefix = args.install_prefix or "/opt/cauce-v3"
     unit_config_root = example_config_root = args.config_root or "/etc/cauce-v3/container-aliases"
     unit_pki_root = example_pki_root = args.pki_root or "/etc/cauce-v3/container-pki"
-    unit_bundle_root = example_bundle_root = args.bundle_root or "/opt/cauce-v3-adapter"
+    unit_bundle_root = args.bundle_root or "/opt/cauce-v3-adapter"
     unit_lock_root = args.lock_root or "/run/lock"
 
 
@@ -87,6 +86,7 @@ ExecStop=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop {alias}
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78
+RestartForceExitStatus=70
 TimeoutStopSec=45s
 KillMode=control-group
 StandardInput=null
@@ -137,6 +137,7 @@ ExecStop={install_prefix}/ops/scripts/container-adapter-supervisor.sh stop {alia
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78
+RestartForceExitStatus=70
 TimeoutStopSec=45s
 KillMode=control-group
 StandardInput=null
@@ -161,8 +162,9 @@ def example(alias: str, entry: dict[str, str]) -> str:
     lines = [
         f"# Install as {example_config_root}/{alias}.env, {owner}, mode 0600.",
         f"# Values are non-secret; PKI files live below the {pki_owner} PKI_DIR.",
-        "# Required keys: BUNDLE_CURRENT, BUNDLE_SHA256, PKI_DIR, RELAY_URL, EXPECTED_IMAGE_ID.",
-        f"BUNDLE_CURRENT={example_bundle_root}/current",
+        "# Required keys: BUNDLE_RELEASE, BUNDLE_SHA256, PKI_DIR, RELAY_URL, EXPECTED_IMAGE_ID.",
+        "# Pin each alias independently; never point configs at a shared mutable current symlink.",
+        "BUNDLE_RELEASE=REPLACE_WITH_IMMUTABLE_RELEASE_NAME",
         "BUNDLE_SHA256=sha256:REPLACE_WITH_64_LOWERCASE_HEX",
         f"PKI_DIR={example_pki_root}/{alias}",
         "RELAY_URL=wss://gateway.example.invalid/v3/ws",

@@ -6,7 +6,7 @@ spec:
   tenant: Isa
   room: grp.isa
   alias: salva
-  harness: claude
+  harness: codex
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_SALVA_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

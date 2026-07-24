@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 
 const argv = process.argv.slice(2);
 const statePath = process.env.FAKE_DOCKER_STATE;
@@ -99,8 +100,40 @@ if (command === "test") {
 if (command === "/usr/bin/python3" && commandArgs.includes("bundle-digest")) {
   process.stdout.write(`${state.bundleDigest}\n`);
 }
-if (command === "/usr/bin/python3" && commandArgs.includes("stop")) process.exit(state.stopExit ?? 0);
+if (command === "/usr/bin/python3" && commandArgs.includes("stop")) {
+  if (state.runtimeStopFixture) {
+    const actionIndex = commandArgs.indexOf("stop");
+    const lifecycleArgs = commandArgs.slice(actionIndex);
+    const replaceValue = (name, value) => {
+      const index = lifecycleArgs.indexOf(name);
+      if (index >= 0) lifecycleArgs[index + 1] = value;
+    };
+    replaceValue("--state", state.runtimeStopFixture.state);
+    replaceValue("--control-dir", state.runtimeStopFixture.control);
+    const delegated = spawnSync(
+      "python3",
+      [state.runtimeStopFixture.helper, ...lifecycleArgs],
+      { encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" } },
+    );
+    if (delegated.stderr) process.stderr.write(delegated.stderr);
+    process.exit(delegated.status ?? 125);
+  }
+  process.exit(state.stopExit ?? 0);
+}
 if (command === "/usr/bin/python3" && commandArgs.includes("check")) process.exit(state.checkExit ?? 0);
+if ((command === "/usr/bin/env" || commandArgs.includes("/usr/bin/env")) && state.finalGate) {
+  const started = Date.now();
+  let released = false;
+  while (!released && Date.now() - started < 15000) {
+    try {
+      await readFile(state.finalGate);
+      released = true;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  if (!released) process.exit(124);
+}
 if ((command === "/usr/bin/env" || commandArgs.includes("/usr/bin/env")) && Number(state.finalDelayMs ?? 0) > 0) {
   await new Promise((resolve) => setTimeout(resolve, Number(state.finalDelayMs)));
 }

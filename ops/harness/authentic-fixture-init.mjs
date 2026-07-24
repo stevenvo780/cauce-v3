@@ -98,7 +98,7 @@ const identities = {
     certificate_sha256: fingerprint,
     principal: {
       tenant_id: 'Steven',
-      alias: 'kant',
+      alias: 'jarvis',
       session_id: 'compose-authentic-mtls',
       channel: 'https',
       roles: ['operator'],
@@ -127,7 +127,7 @@ const telegramConfig = {
     v2_shutdown_marker_file: '/fixtures/v2.marker',
     allowed_user_ids: ['1001'],
     allowed_chat_ids: ['2001'],
-    recipients: [{ tenant_id: 'Steven', alias: 'kant' }],
+    recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
     poll_timeout_seconds: 1,
     poll_lease_ms: 10000,
   }],

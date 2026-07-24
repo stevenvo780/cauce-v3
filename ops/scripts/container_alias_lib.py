@@ -13,12 +13,12 @@ EXPECTED = {
     "hegel": ("Jhon", "grp.jhon", "agv2-jhon-hegel-oc", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/hegel", "openclaw"),
     "janus": ("Miguel", "grp.miguel", "claw-miguel", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/janus", "openclaw"),
     "jarvis": ("Steven", "grp.steven", "claw", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/jarvis", "openclaw"),
-    "kant": ("Steven", "grp.steven", "ctrl-infra", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/kant", "opencode"),
-    "kratos": ("Miguel", "grp.miguel", "ws-humanizar", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/kratos", "claude"),
+    "kant": ("Steven", "grp.steven", "ctrl-infra", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/kant", "codex"),
+    "kratos": ("Miguel", "grp.miguel", "ws-humanizar", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/kratos", "codex"),
     "midas": ("Pablo", "grp.pablo", "agv2-pablo-marcas-oc", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/midas", "openclaw"),
-    "salva": ("Isa", "grp.isa", "ws-isa", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/salva", "claude"),
+    "salva": ("Isa", "grp.isa", "ws-isa", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/salva", "codex"),
     "seneca": ("Pablo", "grp.pablo", "agv2-pablo-personal-oc", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/seneca", "openclaw"),
-    "socrates": ("Steven", "grp.steven", "ws-prizma", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/socrates", "claude"),
+    "socrates": ("Steven", "grp.steven", "ws-prizma", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/socrates", "codex"),
     "vulcano": ("Pablo", "grp.pablo", "ws-pablo", "dev", "/home/dev", "/workspace/.cauce-v3/vulcano", "claude"),
 }
 FIELDS = ("tenant", "room", "container", "user", "home", "stateDirectory", "harness")

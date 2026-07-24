@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter kratos (ws-humanizar/claude)
+Description=Cauce V3 rootless container adapter kratos (ws-humanizar/codex)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/kratos.env
@@ -19,6 +19,7 @@ ExecStop=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh st
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78
+RestartForceExitStatus=70
 TimeoutStopSec=45s
 KillMode=control-group
 StandardInput=null

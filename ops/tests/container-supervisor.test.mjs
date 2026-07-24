@@ -17,6 +17,7 @@ const temporary = await mkdtemp(path.join(os.tmpdir(), "cauce-container-supervis
 const configRoot = path.join(temporary, "config");
 const bundleRoot = path.join(temporary, "bundle");
 const release = path.join(bundleRoot, "releases/release-1");
+const release2 = path.join(bundleRoot, "releases/release-2");
 const pkiRoot = path.join(temporary, "pki");
 const mountSourceRoot = path.join(temporary, "persistent");
 const lockRoot = path.join(temporary, "locks");
@@ -42,6 +43,7 @@ const aliasMount = {
   jarvis: "/home/claw/.openclaw",
 };
 let bundleDigest;
+let bundleDigest2;
 const cleanupGroups = [];
 const cleanupProcesses = [];
 const privilegedChildren = [];
@@ -60,7 +62,7 @@ function bundleDigestFor(pathname) {
 
 async function writeConfig(alias, extra = [], overrides = {}, omit = []) {
   const values = {
-    BUNDLE_CURRENT: `${bundleRoot}/current`,
+    BUNDLE_RELEASE: "release-1",
     BUNDLE_SHA256: bundleDigest,
     PKI_DIR: `${pkiRoot}/${alias}`,
     RELAY_URL: "wss://gateway.example.invalid/v3/ws",
@@ -199,6 +201,26 @@ async function waitForLog(predicate, timeoutMs = 5000) {
   throw new Error("timed out waiting for fake Docker invocation");
 }
 
+async function waitForLogOrExit(child, predicate, timeoutMs = 15000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (predicate(await records())) return;
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`supervisor exited before fake Docker barrier: status=${child.exitCode} signal=${child.signalCode}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("timed out waiting for live supervisor at fake Docker barrier");
+}
+
+async function waitForChildExit(child) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return { status: child.exitCode, signalName: child.signalCode };
+  }
+  return new Promise((resolve) => child.once("exit",
+    (status, signalName) => resolve({ status, signalName })));
+}
+
 function processAlive(pid) {
   // A zombie is terminated (awaiting reaping) and counts as gone. This matters here
   // because the sandbox PID 1 is not a reaping init and stop runs synchronously.
@@ -319,6 +341,14 @@ async function immutableFixture() {
     "releases/release-1/packages",
     "releases/release-1",
   ]) await chmod(path.join(bundleRoot, directory), 0o555);
+  for (const directory of [
+    "releases/release-2/packages/adapter-sdk/dist/src/bin",
+    "releases/release-2/packages/adapter-sdk/dist/src",
+    "releases/release-2/packages/adapter-sdk/dist",
+    "releases/release-2/packages/adapter-sdk",
+    "releases/release-2/packages",
+    "releases/release-2",
+  ]) await chmod(path.join(bundleRoot, directory), 0o555);
 }
 
 async function writableFixture() {
@@ -329,20 +359,29 @@ async function writableFixture() {
     "releases/release-1/packages/adapter-sdk/dist",
     "releases/release-1/packages/adapter-sdk/dist/src",
     "releases/release-1/packages/adapter-sdk/dist/src/bin",
+    "releases/release-2",
+    "releases/release-2/packages",
+    "releases/release-2/packages/adapter-sdk",
+    "releases/release-2/packages/adapter-sdk/dist",
+    "releases/release-2/packages/adapter-sdk/dist/src",
+    "releases/release-2/packages/adapter-sdk/dist/src/bin",
   ]) await chmod(path.join(bundleRoot, directory), 0o755).catch(() => undefined);
 }
 
 try {
-  await Promise.all([configRoot, path.join(release, "packages/adapter-sdk/dist/src/bin"), pkiRoot, mountSourceRoot, lockRoot, binRoot]
+  await Promise.all([configRoot, path.join(release, "packages/adapter-sdk/dist/src/bin"),
+    path.join(release2, "packages/adapter-sdk/dist/src/bin"), pkiRoot, mountSourceRoot, lockRoot, binRoot]
     .map((directory) => mkdir(directory, { recursive: true, mode: 0o700 })));
   await chmod(configRoot, 0o700);
   await chmod(lockRoot, 0o700);
-  for (const harness of ["opencode", "hermes", "openclaw"]) {
+  for (const harness of ["codex", "opencode", "hermes", "openclaw"]) {
     await executable(path.join(release, `packages/adapter-sdk/dist/src/bin/${harness}.js`), "#!/usr/bin/env node\n");
   }
+  await executable(path.join(release2, "packages/adapter-sdk/dist/src/bin/hermes.js"),
+    "#!/usr/bin/env node\n// independently pinned release-2\n");
   await immutableFixture();
   bundleDigest = bundleDigestFor(release);
-  await symlink("releases/release-1", path.join(bundleRoot, "current"));
+  bundleDigest2 = bundleDigestFor(release2);
   await copyFile(fakeDockerSource, path.join(binRoot, "docker"));
   await chmod(path.join(binRoot, "docker"), 0o755);
   for (const alias of ["kant", "argos", "jarvis"]) {
@@ -365,6 +404,17 @@ try {
   let result = runSupervisor("start", "kant", statePath);
   assert.notEqual(result.status, 0);
   assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
+
+  // The alias pin selects one direct release directory; a symlink alias is never accepted.
+  await symlink("release-1", path.join(bundleRoot, "releases/release-link"));
+  await writeConfig("kant", [], { BUNDLE_RELEASE: "release-link" });
+  await clearLog();
+  result = runSupervisor("start", "kant", await dockerState("kant"));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /non-symlink release directory/u);
+  assert.equal((await records()).length, 0, "release symlink must fail before Docker");
+  await rm(path.join(bundleRoot, "releases/release-link"));
+  await writeConfig("kant");
 
   // Full start: full ID only after discovery, structured mount, digest, safe state helper and path-only secrets.
   await clearLog();
@@ -422,7 +472,7 @@ try {
   const legacyRoot = path.join(temporary, "bundle-legacy-layout");
   const legacyRelease = path.join(legacyRoot, "releases/release-legacy");
   await mkdir(path.join(legacyRelease, "dist/src/bin"), { recursive: true, mode: 0o700 });
-  await executable(path.join(legacyRelease, "dist/src/bin/opencode.js"), "#!/usr/bin/env node\n");
+  await executable(path.join(legacyRelease, "dist/src/bin/codex.js"), "#!/usr/bin/env node\n");
   for (const directory of [
     "releases/release-legacy/dist/src/bin",
     "releases/release-legacy/dist/src",
@@ -430,10 +480,9 @@ try {
     "releases/release-legacy",
   ]) await chmod(path.join(legacyRoot, directory), 0o555);
   const legacyDigest = bundleDigestFor(legacyRelease);
-  await symlink("releases/release-legacy", path.join(legacyRoot, "current"));
   await clearLog();
   const legacyConfig = {
-    BUNDLE_CURRENT: `${legacyRoot}/current`,
+    BUNDLE_RELEASE: "release-legacy",
     BUNDLE_SHA256: legacyDigest,
     PKI_DIR: `${pkiRoot}/kant`,
     RELAY_URL: "wss://gateway.example.invalid/v3/ws",
@@ -502,6 +551,28 @@ try {
   assert(argosFinal?.argv.includes("HERMES_INFERENCE_MODEL=approved/model-v1"));
   assert(!argosFinal?.argv.some((value) => value.startsWith("CAUCE_HERMES_PYTHON=")),
     "without HERMES_PYTHON the supervisor must not export CAUCE_HERMES_PYTHON (behaviour unchanged)");
+
+  // Each alias consumes its exact BUNDLE_RELEASE pin.  A canary pin for argos must copy and
+  // execute release-2 directly, without consulting or changing a shared host `current` pointer.
+  await writeConfig("argos", ["HERMES_HOME=/home/dev/.hermes", "HERMES_INFERENCE_MODEL=approved/model-v1"], {
+    BUNDLE_RELEASE: "release-2",
+    BUNDLE_SHA256: bundleDigest2,
+  });
+  await clearLog();
+  result = runSupervisor("start", "argos", await dockerState("argos", { bundleDigest: bundleDigest2 }));
+  assert.equal(result.status, 0, `independently pinned release-2 must start: ${result.stderr}`);
+  calls = await records();
+  assert(calls.some(({ argv }) => argv[0] === "cp" && argv[1] === `${release2}/.`),
+    "supervisor must copy the alias-pinned release directory");
+  assert.equal(calls.some(({ argv }) => argv[0] === "cp" && argv[1] === `${release}/.`), false,
+    "supervisor must not fall back to another alias release");
+  const pinnedArgosFinal = calls.find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=argos"));
+  assert(pinnedArgosFinal?.argv.includes("/opt/cauce-v3-adapter/argos/releases/release-2"));
+  assert(pinnedArgosFinal?.argv.includes(bundleDigest2));
+  assert.equal(calls.some(({ argv }) => argv.includes("ln") && argv.some((value) => value.includes("current"))), false,
+    "supervisor must not create a mutable current symlink");
+  await writeConfig("argos", ["HERMES_HOME=/home/dev/.hermes", "HERMES_INFERENCE_MODEL=approved/model-v1"]);
+  process.stdout.write("per-alias release pin: argos release-2 selected directly without a current symlink\n");
 
   // Hermes profile home: argos loads its identity from a .hermes profile subdirectory. A canonical
   // path below .hermes/ (here .hermes/profiles/argos) is accepted and exported verbatim.
@@ -616,7 +687,7 @@ try {
   result = runSupervisor("start", "kant;bad", await dockerState("kant"));
   assert.notEqual(result.status, 0);
   assert.equal((await records()).length, 0);
-  await writeFile(path.join(configRoot, "kant.env"), `BUNDLE_CURRENT=${bundleRoot}/../escape\nEVIL=$(touch /tmp/pwned)\n`);
+  await writeFile(path.join(configRoot, "kant.env"), "BUNDLE_RELEASE=../escape\nEVIL=$(touch /tmp/pwned)\n");
   await chmod(path.join(configRoot, "kant.env"), 0o600);
   await clearLog();
   result = runSupervisor("start", "kant", await dockerState("kant"));
@@ -687,12 +758,17 @@ try {
 
   // Host flock prevents duplicate docker-exec owners.
   await clearLog();
-  statePath = await dockerState("kant", { finalDelayMs: 750 });
+  const flockGate = path.join(temporary, `flock-owner-${Math.random().toString(16).slice(2)}.gate`);
+  statePath = await dockerState("kant", { finalGate: flockGate });
   const firstOwner = spawn(supervisor, ["start", "kant"], { stdio: "ignore", env: environment(statePath) });
-  await waitForLog((entries) => entries.some(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant")));
+  await waitForLogOrExit(firstOwner,
+    (entries) => entries.some(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant")));
   result = runSupervisor("start", "kant", statePath);
   assert.equal(result.status, 73);
-  await new Promise((resolve) => firstOwner.once("exit", resolve));
+  await writeFile(flockGate, "release\n");
+  const firstOwnerExit = await waitForChildExit(firstOwner);
+  assert.equal(firstOwnerExit.status, 0,
+    `the explicit flock test owner must exit cleanly after its barrier: ${JSON.stringify(firstOwnerExit)}`);
 
   // Root state preparation never follows a leaf or parent symlink and leaves targets untouched.
   const safeRoot = path.join(temporary, "safe-state");
@@ -728,6 +804,11 @@ time.sleep(60)
 `);
   const simple = path.join(lifecycleBundle, "simple.py");
   await executable(simple, "#!/usr/bin/env python3\nimport time\ntime.sleep(60)\n");
+  const earlyExit = path.join(lifecycleBundle, "early-exit.py");
+  await executable(earlyExit, "#!/usr/bin/env python3\nimport sys,time\ntime.sleep(0.03)\nsys.exit(78)\n");
+  const invalidIdentity = path.join(lifecycleBundle, "invalid-identity.py");
+  await executable(invalidIdentity,
+    "#!/usr/bin/env python3\nimport os\nos.execv('/bin/sleep', ['/bin/sleep', '60'])\n");
   const reexec = path.join(lifecycleBundle, "reexec.py");
   await executable(reexec, `#!/usr/bin/env python3
 import os, sys, time
@@ -753,6 +834,38 @@ time.sleep(60)
   const lifecycleState = path.join(temporary, "lifecycle-state");
   const lifecycleControl = await makeControl("lifecycle");
   await mkdir(lifecycleState, { mode: 0o700 });
+
+  // A child may fail transiently after successful exec but before the controller
+  // samples two stable identity snapshots. Propagate its outcome through the
+  // restartable adapter code instead of stranding systemd on permanent exit 78.
+  const earlyExitState = path.join(temporary, "early-exit-state");
+  const earlyExitControl = await makeControl("early-exit");
+  await mkdir(earlyExitState, { mode: 0o700 });
+  result = spawnSync("python3", runArgs(earlyExitState, earlyExitControl, earlyExit), {
+    encoding: "utf8",
+    env: lifecycleEnv(earlyExitState, earlyExitControl, lifecycleGeneration),
+  });
+  assert.equal(result.status, 70,
+    `reserved early adapter exit must remap to the restartable code: ${result.stdout} ${result.stderr}`);
+  assert.doesNotMatch(result.stderr, /did not establish its executable identity/u);
+  await assert.rejects(lstat(path.join(earlyExitControl, metadataName)),
+    "early child exit must clean starting metadata before systemd retries");
+
+  // A live process that replaced the requested command before identity was
+  // established is still a permanent mismatch and must not enter a retry loop.
+  const invalidIdentityState = path.join(temporary, "invalid-identity-state");
+  const invalidIdentityControl = await makeControl("invalid-identity");
+  await mkdir(invalidIdentityState, { mode: 0o700 });
+  result = spawnSync("python3", runArgs(invalidIdentityState, invalidIdentityControl, invalidIdentity), {
+    encoding: "utf8",
+    env: lifecycleEnv(invalidIdentityState, invalidIdentityControl, lifecycleGeneration),
+    timeout: 10_000,
+  });
+  assert.equal(result.status, 78,
+    `live invalid executable identity must remain permanent: ${result.stdout} ${result.stderr}`);
+  assert.match(result.stderr, /did not establish its executable identity/u);
+  process.stdout.write("early child exit: restartable 70; live invalid identity: permanent 78\n");
+
   const unrelated = spawn("/bin/sleep", ["60"], { stdio: "ignore", detached: true });
   cleanupGroups.push(unrelated.pid);
   let managed = await startManaged(lifecycleState, lifecycleControl, resistant, [childPidFile]);
@@ -1049,9 +1162,46 @@ time.sleep(60)
   });
   assert.equal(sameGeneration.status, 78);
   assert.equal(await readFile(managed.metadata, "utf8"), `${JSON.stringify(staleDocument)}\n`);
+  const stalePreStartStop = stopManaged(staleState, staleControl, replacementGeneration);
+  assert.equal(stalePreStartStop.status, 0,
+    `pre-start stop must tolerate quiescent metadata from a prior container generation: ${stalePreStartStop.stderr}`);
+  assert.equal(await readFile(managed.metadata, "utf8"), `${JSON.stringify(staleDocument)}\n`,
+    "pre-start stop leaves stale metadata for the lock-owning run path to clean");
+  const staleReplacementProof = spawnSync(
+    "python3",
+    lifecycleArgs("stopped", staleState, staleControl, replacementGeneration),
+    { encoding: "utf8" },
+  );
+  assert.equal(staleReplacementProof.status, 0,
+    `replacement generation must be provably stopped despite stale metadata: ${staleReplacementProof.stderr}`);
   managed = await startManaged(staleState, staleControl, simple, [], replacementGeneration);
   assert.equal(managed.document.containerGeneration, replacementGeneration);
   assert.equal(stopManaged(staleState, staleControl, replacementGeneration).status, 0);
+  process.stdout.write("same-container restart: stale generation stop/stopped passed and run replaced metadata safely\n");
+
+  // Exercise that same stale-generation contract through the host supervisor, not only by
+  // calling the lifecycle helper directly.  Fake Docker delegates the pre-deploy `stop` to the
+  // real helper while keeping all other container operations observable.  An inert metadata
+  // document from the prior generation must not strand the unit before its guarded final exec.
+  await writeFile(managed.metadata, `${JSON.stringify(staleDocument)}\n`);
+  await writeConfig("kant");
+  await clearLog();
+  statePath = await dockerState("kant", {
+    runtimeStopFixture: {
+      helper: runtimeHelper,
+      state: staleState,
+      control: staleControl,
+    },
+  });
+  result = runSupervisor("start", "kant", statePath);
+  assert.equal(result.status, 0,
+    `supervisor restart must tolerate inert prior-generation metadata: ${result.stderr}`);
+  calls = await records();
+  assert(calls.some(({ argv }) => argv.includes("stop") && argv.includes("--generation")),
+    "supervisor must ask the real lifecycle helper to stop the prior generation");
+  assert(calls.some(({ argv }) => argv.includes("guard-exec") && argv.includes("CAUCE_ALIAS=kant")),
+    "supervisor must reach the guarded adapter exec after stale-generation stop");
+  process.stdout.write("host supervisor restart: inert prior-generation metadata reached guarded exec\n");
 
   // ---- No published leader => a metadata-based stop NEVER signals the controller. ----
   async function startGated(phase, marker, executablePath, generation = lifecycleGeneration) {
