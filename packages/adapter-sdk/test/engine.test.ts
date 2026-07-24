@@ -515,6 +515,9 @@ test("agent-output delivery is identified as a real internal agent message", asy
   assert.match(prompt, /"routing_targets":\[\]/u);
   assert.match(prompt, /Never use legacy enviar_al_bus/u);
   assert.match(prompt, /answer its sender with "reply"/u);
+  assert.match(prompt, /Filesystem paths are local to each alias container/u);
+  assert.match(prompt, /resolve the intended repository under your own current workspace/u);
+  assert.match(prompt, /Do not rewrite the recipient path from your local mount/u);
   assert.match(prompt, /"@all" is a reserved durable target/u);
 });
 

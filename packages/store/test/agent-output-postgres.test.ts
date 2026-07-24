@@ -196,6 +196,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query(`
+    DELETE FROM memberships WHERE tenant_id='Pablo' AND alias='kant';
     UPDATE acl_edges SET enabled=true,allow_route=true,allow_read=true,allow_control=true;
     UPDATE tenants SET enabled=true;
     UPDATE rooms SET enabled=true;
@@ -766,7 +767,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
     }]);
   });
 
-  it('denies a child return when its reverse ACL is revoked without bypassing to Telegram', async () => {
+  it('diagnoses a denied child return through fan-in without bypassing directly to Telegram', async () => {
     const origin = {
       adapter: 'telegram',
       channel: 'telegram',
@@ -810,9 +811,6 @@ describe('transactional StructuredOutput.messages materialization', () => {
       terminalAck(child, 'revoked-return-seneca', senecaLease.epoch!, [])
     );
 
-    expect(await repository.claimDeliveries(
-      'Steven', 'jarvis', 'revoked-return-jarvis', root.epoch, 1, 30_000
-    )).toEqual([]);
     expect((await pool.query<{ idempotency_key: string }>(
       `SELECT idempotency_key FROM adapter_outbox
        WHERE kind='origin_relay' AND trace_id=$1`,
@@ -829,6 +827,50 @@ describe('transactional StructuredOutput.messages materialization', () => {
       target_tenant: 'Steven',
       target_alias: 'jarvis'
     });
+    const fanin = await claimFanin(
+      'Steven', 'jarvis', 'revoked-return-jarvis', root.epoch
+    );
+    const faninData = fanin.body.fanin_data_v1 as {
+      responses: Array<{ alias: string; untrusted_text: string }>;
+    };
+    expect(fanin.body).toMatchObject({
+      type: 'agent.fanin',
+      expected: 1,
+      completed: 1,
+      correlation: { root_message_id: root.delivery.message_id }
+    });
+    expect(faninData.responses).toHaveLength(1);
+    expect(faninData.responses[0]).toMatchObject({ alias: 'seneca' });
+    expect(faninData.responses[0]?.untrusted_text)
+      .toContain('Agent response denied: reverse_acl_unavailable');
+    await repository.ackDelivery(
+      fanin.delivery_id,
+      'Steven',
+      'jarvis',
+      terminalAck(
+        fanin,
+        'revoked-return-jarvis',
+        root.epoch,
+        [],
+        randomUUID(),
+        'Jarvis reports the denied child return'
+      )
+    );
+    expect((await pool.query<{ idempotency_key: string; delivery_id: string }>(
+      `SELECT idempotency_key,delivery_id FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1
+       ORDER BY idempotency_key`,
+      [root.delivery.trace_id]
+    )).rows).toEqual([
+      {
+        idempotency_key: `relay-ack:${root.delivery.message_id}`,
+        delivery_id: root.delivery.delivery_id
+      },
+      {
+        idempotency_key: `relay-root:${root.delivery.message_id}`,
+        delivery_id: fanin.delivery_id
+      }
+    ]);
   });
 
   it('returns a nested delegation through every source agent before the final origin relay', async () => {
@@ -870,21 +912,15 @@ describe('transactional StructuredOutput.messages materialization', () => {
         { to: 'socrates', body: 'nested leaf request' }
       ])
     );
-    const [initialKantResponse] = await repository.claimDeliveries(
+    expect(await repository.claimDeliveries(
       'Steven', 'argos', 'nested-argos', root.epoch, 1, 30_000
-    );
-    if (!initialKantResponse) throw new Error('expected the middle agent initial result at the root');
-    expect(initialKantResponse.body).toMatchObject({
-      type: 'agent.response',
-      from_alias: 'kant',
-      correlation: { parent_delivery_id: kantRequest.delivery_id }
-    });
-    await repository.ackDelivery(
-      initialKantResponse.delivery_id,
-      'Steven',
-      'argos',
-      terminalAck(initialKantResponse, 'nested-argos', root.epoch, [])
-    );
+    )).toEqual([]);
+    expect((await pool.query(
+      `SELECT 1 FROM audit_events
+       WHERE action='agent_output.response' AND decision='allow'
+         AND actor_alias='kant' AND trace_id=$1`,
+      [root.delivery.trace_id]
+    )).rowCount).toBe(0);
 
     const socratesLease = await repository.acquireLease(
       'Steven', 'socrates', 'nested-socrates', [], 30_000
@@ -912,7 +948,14 @@ describe('transactional StructuredOutput.messages materialization', () => {
       kantResponse.delivery_id,
       'Steven',
       'kant',
-      terminalAck(kantResponse, 'nested-kant', kantLease.epoch!, [])
+      terminalAck(
+        kantResponse,
+        'nested-kant',
+        kantLease.epoch!,
+        [],
+        randomUUID(),
+        'Kant reviewed the Socrates result'
+      )
     );
     expect((await pool.query<{ idempotency_key: string }>(
       `SELECT idempotency_key FROM adapter_outbox
@@ -928,11 +971,38 @@ describe('transactional StructuredOutput.messages materialization', () => {
     if (!rootResponse) throw new Error('expected the nested result to return to the root agent');
     expect(rootResponse.body).toMatchObject({
       type: 'agent.response',
+      text: 'Kant reviewed the Socrates result',
       from_alias: 'kant',
       correlation: {
         response_to_delivery_id: root.delivery.delivery_id
       }
     });
+    expect((await pool.query<{
+      child_delivery_id: string;
+      continuation_delivery_id: string;
+      source_delivery_id: string;
+      target_tenant: string;
+      target_alias: string;
+      outcome: string;
+    }>(
+      `SELECT metadata->>'child_delivery_id' AS child_delivery_id,
+              metadata->>'continuation_delivery_id' AS continuation_delivery_id,
+              metadata->>'source_delivery_id' AS source_delivery_id,
+              metadata->>'target_tenant' AS target_tenant,
+              metadata->>'target_alias' AS target_alias,
+              metadata->>'outcome' AS outcome
+       FROM audit_events
+       WHERE action='agent_output.response' AND decision='allow'
+         AND actor_alias='kant' AND trace_id=$1`,
+      [root.delivery.trace_id]
+    )).rows).toEqual([{
+      child_delivery_id: kantRequest.delivery_id,
+      continuation_delivery_id: kantResponse.delivery_id,
+      source_delivery_id: root.delivery.delivery_id,
+      target_tenant: 'Steven',
+      target_alias: 'argos',
+      outcome: 'done'
+    }]);
     await repository.ackDelivery(
       rootResponse.delivery_id,
       'Steven',
@@ -953,6 +1023,206 @@ describe('transactional StructuredOutput.messages materialization', () => {
       terminalAck(fanin, 'nested-argos', root.epoch, [])
     );
     expect((await pool.query(
+      `SELECT idempotency_key,delivery_id FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1
+       ORDER BY idempotency_key`,
+      [root.delivery.trace_id]
+    )).rows).toEqual([
+      {
+        idempotency_key: `relay-ack:${root.delivery.message_id}`,
+        delivery_id: root.delivery.delivery_id
+      },
+      {
+        idempotency_key: `relay-root:${root.delivery.message_id}`,
+        delivery_id: fanin.delivery_id
+      }
+    ]);
+  });
+
+  it('diagnoses a nested continuation denied after reverse ACL revocation without blocking fan-in', async () => {
+    await pool.query(`
+      UPDATE memberships
+      SET enabled=false
+      WHERE tenant_id='Steven' AND alias='kant';
+      INSERT INTO memberships(tenant_id,room_id,alias,role)
+      VALUES('Pablo','grp.pablo','kant','agent')
+      ON CONFLICT(tenant_id,room_id,alias)
+      DO UPDATE SET enabled=true,role=EXCLUDED.role;
+    `);
+    const origin = {
+      adapter: 'telegram',
+      channel: 'telegram',
+      conversation_id: 'nested-denied-chat',
+      relay: [],
+      metadata: { bridge_alias: 'argos', bridge_tenant: 'Steven' }
+    };
+    const root = await claim(command({
+      actor_alias: 'argos',
+      recipients: [{ tenant_id: 'Steven', alias: 'argos' }],
+      authenticated_context: {
+        session_id: 'nested-denied-session',
+        channel: 'telegram',
+        origin
+      }
+    }), 'Steven', 'argos', 'nested-denied-argos');
+    await repository.ackDelivery(
+      root.delivery.delivery_id,
+      'Steven',
+      'argos',
+      terminalAck(root.delivery, 'nested-denied-argos', root.epoch, [
+        { to: 'kant', body: 'ask socrates across the tenant boundary' }
+      ])
+    );
+
+    const kantLease = await repository.acquireLease(
+      'Pablo', 'kant', 'nested-denied-kant', [], 30_000
+    );
+    const [kantRequest] = await repository.claimDeliveries(
+      'Pablo', 'kant', 'nested-denied-kant', kantLease.epoch!, 1, 30_000
+    );
+    if (!kantRequest) throw new Error('expected the remote nested Kant request');
+    await repository.ackDelivery(
+      kantRequest.delivery_id,
+      'Pablo',
+      'kant',
+      terminalAck(kantRequest, 'nested-denied-kant', kantLease.epoch!, [
+        { to: 'socrates', body: 'nested leaf request before reverse ACL revocation' }
+      ])
+    );
+
+    const socratesLease = await repository.acquireLease(
+      'Steven', 'socrates', 'nested-denied-socrates', [], 30_000
+    );
+    const [leaf] = await repository.claimDeliveries(
+      'Steven', 'socrates', 'nested-denied-socrates', socratesLease.epoch!, 1, 30_000
+    );
+    if (!leaf) throw new Error('expected the nested Socrates leaf request');
+    await repository.ackDelivery(
+      leaf.delivery_id,
+      'Steven',
+      'socrates',
+      terminalAck(
+        leaf,
+        'nested-denied-socrates',
+        socratesLease.epoch!,
+        [],
+        randomUUID(),
+        'Socrates completed the nested work'
+      )
+    );
+
+    const [kantResponse] = await repository.claimDeliveries(
+      'Pablo', 'kant', 'nested-denied-kant', kantLease.epoch!, 1, 30_000
+    );
+    if (!kantResponse) throw new Error('expected the Socrates continuation at Kant');
+    expect(kantResponse.body).toMatchObject({
+      type: 'agent.response',
+      text: 'Socrates completed the nested work',
+      from_alias: 'socrates'
+    });
+    await pool.query(
+      `UPDATE acl_edges SET allow_route=false
+       WHERE from_tenant='Pablo' AND to_tenant='Steven'`
+    );
+    await repository.ackDelivery(
+      kantResponse.delivery_id,
+      'Pablo',
+      'kant',
+      terminalAck(
+        kantResponse,
+        'nested-denied-kant',
+        kantLease.epoch!,
+        [],
+        randomUUID(),
+        'Kant reviewed the nested work'
+      )
+    );
+
+    expect((await pool.query<{
+      child_delivery_id: string;
+      continuation_delivery_id: string;
+      reason: string;
+      target_tenant: string;
+      target_alias: string;
+    }>(
+      `SELECT metadata->>'child_delivery_id' AS child_delivery_id,
+              metadata->>'continuation_delivery_id' AS continuation_delivery_id,
+              metadata->>'reason' AS reason,
+              metadata->>'target_tenant' AS target_tenant,
+              metadata->>'target_alias' AS target_alias
+       FROM audit_events
+       WHERE action='agent_output.response' AND decision='deny'
+         AND delivery_id=$1`,
+      [kantResponse.delivery_id]
+    )).rows).toEqual([{
+      child_delivery_id: kantRequest.delivery_id,
+      continuation_delivery_id: kantResponse.delivery_id,
+      reason: 'reverse_acl_unavailable',
+      target_tenant: 'Steven',
+      target_alias: 'argos'
+    }]);
+    expect((await pool.query<{ idempotency_key: string }>(
+      `SELECT idempotency_key FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1`,
+      [root.delivery.trace_id]
+    )).rows).toEqual([{
+      idempotency_key: `relay-ack:${root.delivery.message_id}`
+    }]);
+
+    const fanin = await claimFanin(
+      'Steven', 'argos', 'nested-denied-argos', root.epoch
+    );
+    const faninData = fanin.body.fanin_data_v1 as {
+      responses: Array<{ alias: string; delivery_id: string; untrusted_text: string }>;
+    };
+    expect(fanin.body).toMatchObject({
+      type: 'agent.fanin',
+      expected: 2,
+      completed: 2,
+      correlation: { root_message_id: root.delivery.message_id }
+    });
+    const kantFaninResponse = faninData.responses.find(
+      (response) => response.alias === 'kant'
+    );
+    const socratesFaninResponse = faninData.responses.find(
+      (response) => response.alias === 'socrates'
+    );
+    expect(kantFaninResponse).toMatchObject({
+      alias: 'kant',
+      delivery_id: kantRequest.delivery_id
+    });
+    expect(kantFaninResponse?.untrusted_text)
+      .toContain('Agent response denied: reverse_acl_unavailable');
+    expect(socratesFaninResponse).toMatchObject({
+      alias: 'socrates',
+      delivery_id: leaf.delivery_id,
+      untrusted_text: 'Socrates completed the nested work'
+    });
+    expect((await pool.query<{ idempotency_key: string }>(
+      `SELECT idempotency_key FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1`,
+      [root.delivery.trace_id]
+    )).rows).toEqual([{
+      idempotency_key: `relay-ack:${root.delivery.message_id}`
+    }]);
+
+    await repository.ackDelivery(
+      fanin.delivery_id,
+      'Steven',
+      'argos',
+      terminalAck(
+        fanin,
+        'nested-denied-argos',
+        root.epoch,
+        [],
+        randomUUID(),
+        'Argos reports the nested authorization denial'
+      )
+    );
+    expect((await pool.query<{
+      idempotency_key: string;
+      delivery_id: string;
+    }>(
       `SELECT idempotency_key,delivery_id FROM adapter_outbox
        WHERE kind='origin_relay' AND trace_id=$1
        ORDER BY idempotency_key`,
@@ -1580,6 +1850,197 @@ describe('transactional StructuredOutput.messages materialization', () => {
       recipient_alias: 'argos',
       body: { type: 'agent.response', from_alias: 'kant' }
     });
+  });
+
+  it('waits for the valid branch when sibling outputs are rejected', async () => {
+    const root = await claim(command({
+      authenticated_context: {
+        session_id: 'mixed-output-session',
+        channel: 'telegram',
+        origin: {
+          adapter: 'telegram',
+          channel: 'telegram',
+          conversation_id: 'mixed-output-chat',
+          relay: [],
+          metadata: { bridge_alias: 'argos', bridge_tenant: 'Steven' }
+        }
+      }
+    }), 'Steven', 'argos', 'mixed-output-source');
+    await repository.ackDelivery(
+      root.delivery.delivery_id,
+      'Steven',
+      'argos',
+      terminalAck(root.delivery, 'mixed-output-source', root.epoch, [
+        { to: 'kant', body: 'the one valid branch' },
+        { to: 'INVALID ALIAS', body: 'must be rejected' }
+      ], randomUUID(), null)
+    );
+    expect((await pool.query(
+      `SELECT output_index,status,rejection_code
+       FROM agent_output_materializations ORDER BY output_index`
+    )).rows).toEqual([
+      { output_index: 0, status: 'materialized', rejection_code: null },
+      { output_index: 1, status: 'rejected', rejection_code: 'unroutable_alias' }
+    ]);
+    expect((await pool.query<{ idempotency_key: string }>(
+      `SELECT idempotency_key FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1`,
+      [root.delivery.trace_id]
+    )).rows).toEqual([{
+      idempotency_key: `relay-ack:${root.delivery.message_id}`
+    }]);
+    expect((await pool.query(
+      `SELECT 1 FROM adapter_outbox
+       WHERE adapter='gateway' AND idempotency_key=$1`,
+      [`agent-fanin:${root.delivery.message_id}`]
+    )).rowCount).toBe(0);
+
+    const kantLease = await repository.acquireLease(
+      'Steven', 'kant', 'mixed-output-kant', [], 30_000
+    );
+    const [child] = await repository.claimDeliveries(
+      'Steven', 'kant', 'mixed-output-kant', kantLease.epoch!, 1, 30_000
+    );
+    if (!child) throw new Error('expected the valid mixed-output branch');
+    await repository.ackDelivery(
+      child.delivery_id,
+      'Steven',
+      'kant',
+      terminalAck(
+        child,
+        'mixed-output-kant',
+        kantLease.epoch!,
+        [],
+        randomUUID(),
+        'the valid branch completed'
+      )
+    );
+    const [response] = await repository.claimDeliveries(
+      'Steven', 'argos', 'mixed-output-source', root.epoch, 1, 30_000
+    );
+    if (!response) throw new Error('expected the valid branch response');
+    expect((await pool.query(
+      `SELECT 1 FROM adapter_outbox
+       WHERE adapter='gateway' AND idempotency_key=$1`,
+      [`agent-fanin:${root.delivery.message_id}`]
+    )).rowCount).toBe(0);
+    await repository.ackDelivery(
+      response.delivery_id,
+      'Steven',
+      'argos',
+      terminalAck(
+        response,
+        'mixed-output-source',
+        root.epoch,
+        [],
+        randomUUID(),
+        'Argos processed the valid branch'
+      )
+    );
+
+    const fanin = await claimFanin(
+      'Steven', 'argos', 'mixed-output-source', root.epoch
+    );
+    const faninData = fanin.body.fanin_data_v1 as {
+      responses: Array<{ alias: string; untrusted_text: string }>;
+    };
+    expect(fanin.body).toMatchObject({
+      type: 'agent.fanin',
+      expected: 1,
+      completed: 1
+    });
+    expect(faninData.responses).toEqual([
+      expect.objectContaining({
+        alias: 'kant',
+        untrusted_text: 'the valid branch completed'
+      })
+    ]);
+    await repository.ackDelivery(
+      fanin.delivery_id,
+      'Steven',
+      'argos',
+      terminalAck(
+        fanin,
+        'mixed-output-source',
+        root.epoch,
+        [],
+        randomUUID(),
+        'Mixed output final'
+      )
+    );
+    expect((await pool.query<{ idempotency_key: string }>(
+      `SELECT idempotency_key FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1
+       ORDER BY idempotency_key`,
+      [root.delivery.trace_id]
+    )).rows).toEqual([
+      { idempotency_key: `relay-ack:${root.delivery.message_id}` },
+      { idempotency_key: `relay-root:${root.delivery.message_id}` }
+    ]);
+  });
+
+  it('relays directly when every output is rejected without creating a phantom fan-in', async () => {
+    const root = await claim(command({
+      authenticated_context: {
+        session_id: 'rejected-output-session',
+        channel: 'telegram',
+        origin: {
+          adapter: 'telegram',
+          channel: 'telegram',
+          conversation_id: 'rejected-output-chat',
+          relay: [],
+          metadata: { bridge_alias: 'argos', bridge_tenant: 'Steven' }
+        }
+      }
+    }), 'Steven', 'argos', 'rejected-output-source');
+    await repository.ackDelivery(
+      root.delivery.delivery_id,
+      'Steven',
+      'argos',
+      terminalAck(root.delivery, 'rejected-output-source', root.epoch, [
+        { to: 'INVALID ALIAS', body: 'first rejected output' },
+        { to: 'also invalid!', body: 'second rejected output' }
+      ], randomUUID(), 'No valid delegates; returning directly')
+    );
+
+    expect((await pool.query(
+      `SELECT output_index,status,rejection_code
+       FROM agent_output_materializations ORDER BY output_index`
+    )).rows).toEqual([
+      { output_index: 0, status: 'rejected', rejection_code: 'unroutable_alias' },
+      { output_index: 1, status: 'rejected', rejection_code: 'unroutable_alias' }
+    ]);
+    expect((await pool.query(
+      `SELECT 1 FROM messages WHERE body->>'type'='agent.fanin'`
+    )).rowCount).toBe(0);
+    expect((await pool.query(
+      `SELECT 1 FROM adapter_outbox
+       WHERE adapter='gateway' AND idempotency_key=$1`,
+      [`agent-fanin:${root.delivery.message_id}`]
+    )).rowCount).toBe(0);
+    expect((await pool.query<{
+      idempotency_key: string;
+      delivery_id: string;
+      reply: string | null;
+    }>(
+      `SELECT idempotency_key,delivery_id,
+              payload#>>'{result,output,reply}' AS reply
+       FROM adapter_outbox
+       WHERE kind='origin_relay' AND trace_id=$1
+       ORDER BY idempotency_key`,
+      [root.delivery.trace_id]
+    )).rows).toEqual([
+      {
+        idempotency_key: `relay-ack:${root.delivery.message_id}`,
+        delivery_id: root.delivery.delivery_id,
+        reply: 'Recibido; estoy trabajando en ello.'
+      },
+      {
+        idempotency_key: `relay:${root.delivery.delivery_id}`,
+        delivery_id: root.delivery.delivery_id,
+        reply: 'No valid delegates; returning directly'
+      }
+    ]);
   });
 
   it('waits for every fan-out response before relaying the final source-agent turn', async () => {

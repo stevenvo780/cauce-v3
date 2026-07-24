@@ -191,7 +191,7 @@ interface RoutingTarget {
   online: boolean;
 }
 
-type AgentResponseDisposition = 'not_child' | 'returned' | 'denied';
+type AgentResponseDisposition = 'not_child' | 'returned' | 'denied' | 'deferred';
 
 interface AgentFaninDisposition {
   hasFanout: boolean;
@@ -923,18 +923,26 @@ export class CauceRepository {
       }
       await this.insertAck(client, row, ack, true, persistedResult);
       if (terminal(nextStatus)) {
+        let materializedOutputs = 0;
         if (nextStatus === 'done' && row.body.type !== 'agent.fanin') {
-          await this.materializeAgentOutputs(client, row, ack, outputs);
+          materializedOutputs = await this.materializeAgentOutputs(client, row, ack, outputs);
         }
-        const responseDisposition = await this.materializeAgentResponse(
-          client,
-          row,
-          ack.attempt,
-          nextStatus,
-          persistedResult,
-          terminalError,
-          terminalErrorCode
-        );
+        // A child that successfully delegated work is not terminal from its
+        // parent's perspective. Returning its empty/intermediate ACK here lets
+        // the parent close before the delegated descendants finish. The later
+        // authenticated agent.response continuation is the logical terminal
+        // turn and is the only response that may flow back to the parent.
+        const responseDisposition: AgentResponseDisposition = materializedOutputs > 0
+          ? 'deferred'
+          : await this.materializeAgentResponse(
+              client,
+              row,
+              ack.attempt,
+              nextStatus,
+              persistedResult,
+              terminalError,
+              terminalErrorCode
+            );
         const rootMessageId = this.rootMessageId(row);
         const fanin = await this.materializeAgentFanin(client, rootMessageId);
         if (responseDisposition === 'not_child'
@@ -1332,7 +1340,7 @@ export class CauceRepository {
     const childRoomId = sourceMembership.rows[0]?.room_id;
     if (!childRoomId) {
       await this.insertAgentResponseDenial(
-        client, row, relationship, 'source_membership_unavailable'
+        client, row, relationship, responseToDeliveryId, 'source_membership_unavailable'
       );
       return 'denied';
     }
@@ -1350,7 +1358,7 @@ export class CauceRepository {
     );
     if (targetMembership.rowCount !== 1) {
       await this.insertAgentResponseDenial(
-        client, row, relationship, 'target_membership_unavailable'
+        client, row, relationship, responseToDeliveryId, 'target_membership_unavailable'
       );
       return 'denied';
     }
@@ -1368,7 +1376,7 @@ export class CauceRepository {
       );
       if (reverseEdge.rowCount !== 1) {
         await this.insertAgentResponseDenial(
-          client, row, relationship, 'reverse_acl_unavailable'
+          client, row, relationship, responseToDeliveryId, 'reverse_acl_unavailable'
         );
         return 'denied';
       }
@@ -1448,7 +1456,11 @@ export class CauceRepository {
         responseDeliveryId,
         row.trace_id,
         JSON.stringify({
-          child_delivery_id: row.id,
+          // A continuation delivery completes the original delegated child,
+          // not the synthetic agent.response delivery that resumed it. This
+          // keeps fan-in accounting attached to the logical branch.
+          child_delivery_id: responseToDeliveryId ?? row.id,
+          ...(responseToDeliveryId === null ? {} : { continuation_delivery_id: row.id }),
           child_attempt: attempt,
           source_delivery_id: relationship.source_delivery_id,
           target_tenant: relationship.source_tenant,
@@ -1472,6 +1484,7 @@ export class CauceRepository {
       source_tenant: Tenant;
       source_alias: string;
     },
+    responseToDeliveryId: string | null,
     reason: 'source_membership_unavailable' | 'target_membership_unavailable' | 'reverse_acl_unavailable'
   ): Promise<void> {
     await client.query(
@@ -1487,6 +1500,8 @@ export class CauceRepository {
         row.trace_id,
         JSON.stringify({
           reason,
+          child_delivery_id: responseToDeliveryId ?? row.id,
+          ...(responseToDeliveryId === null ? {} : { continuation_delivery_id: row.id }),
           source_delivery_id: relationship.source_delivery_id,
           target_tenant: relationship.source_tenant,
           target_alias: relationship.source_alias
@@ -1606,13 +1621,21 @@ export class CauceRepository {
        FROM agent_output_materializations materialization
        JOIN deliveries child ON child.id=materialization.produced_delivery_id
        LEFT JOIN LATERAL (
-         SELECT response.body->>'text' AS response_text
+         SELECT CASE
+                  WHEN response_audit.decision='deny'
+                    THEN 'Agent response denied: '
+                      || COALESCE(response_audit.metadata->>'reason','authorization_unavailable')
+                  ELSE response.body->>'text'
+                END AS response_text
          FROM audit_events response_audit
-         JOIN messages response ON response.id=response_audit.message_id
+         LEFT JOIN messages response ON response.id=response_audit.message_id
          WHERE response_audit.action='agent_output.response'
-           AND response_audit.decision='allow'
+           AND response_audit.decision IN ('allow','deny')
            AND response_audit.metadata->>'child_delivery_id'=child.id::text
-           AND response.body->>'type'='agent.response'
+           AND (
+             response_audit.decision='deny'
+             OR response.body->>'type'='agent.response'
+           )
          ORDER BY response_audit.id
          LIMIT 1
        ) returned ON true
