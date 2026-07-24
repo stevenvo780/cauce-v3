@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isAmbiguousAckErrorCode } from "@cauce/protocol";
 import type { InboxRecord } from "./durable-store.js";
 import { DurableStore } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
-import type { HarnessAdapter } from "../harnesses/shared.js";
+import type { HarnessAdapter, HarnessSessionReservation } from "../harnesses/shared.js";
 import type {
   CancelDelivery,
   Clock,
@@ -12,6 +13,8 @@ import type {
   StructuredOutput,
 } from "./types.js";
 import { systemClock } from "./backoff.js";
+import { synthesizeFaninOutput } from "./fanin-synthesizer.js";
+import { validateDeliveryOutput } from "./output-parser.js";
 
 export type EventPublisher = (event: DeliveryEvent) => Promise<void>;
 
@@ -72,7 +75,10 @@ export class AdapterEngine {
       }
       return Promise.resolve();
     }
-    const execution = this.runDelivery(delivery);
+    const fanin = delivery.body.type === "agent.fanin";
+    const session = fanin ? {} : sessionFromDelivery(delivery);
+    const reservation = fanin ? undefined : this.harness.reserveSession(session.sessionKey);
+    const execution = this.runDelivery(delivery, session, reservation);
     const task = execution.finally(() => {
       if (this.tasks.get(delivery.delivery_id)?.promise === task) {
         this.tasks.delete(delivery.delivery_id);
@@ -97,7 +103,11 @@ export class AdapterEngine {
     for (const record of this.store.pendingDeliveries()) {
       if (this.tasks.has(record.delivery_id)) continue;
       if (record.state === "started") {
-        const error = new AdapterError("INTERRUPTED", "Previous harness process was interrupted", true);
+        const error = new AdapterError(
+          "INTERRUPTED_AMBIGUOUS",
+          "Previous harness process was interrupted after execution began; completion state is unknown",
+          false,
+        );
         await this.finishError(record, error);
       } else if (record.request !== undefined) {
         await this.handleDelivery(record.request);
@@ -111,7 +121,23 @@ export class AdapterEngine {
     }
   }
 
-  private async runDelivery(delivery: Delivery): Promise<void> {
+  private async runDelivery(
+    delivery: Delivery,
+    session: { sessionKey?: string },
+    reservation: HarnessSessionReservation | undefined,
+  ): Promise<void> {
+    try {
+      await this.runReservedDelivery(delivery, session, reservation);
+    } finally {
+      reservation?.release();
+    }
+  }
+
+  private async runReservedDelivery(
+    delivery: Delivery,
+    session: { sessionKey?: string },
+    reservation: HarnessSessionReservation | undefined,
+  ): Promise<void> {
     const occurredAt = this.clock.now().toISOString();
     const accepted = await this.store.accept(delivery, occurredAt);
     if (accepted.acceptance === "stale" || accepted.acceptance === "blocked") return;
@@ -120,7 +146,11 @@ export class AdapterEngine {
       if (accepted.record.state === "started") {
         await this.finishError(
           accepted.record,
-          new AdapterError("INTERRUPTED", "In-flight delivery cannot be executed twice", true),
+          new AdapterError(
+            "INTERRUPTED_AMBIGUOUS",
+            "In-flight delivery was interrupted after execution began and cannot be executed twice",
+            false,
+          ),
         );
         return;
       }
@@ -146,22 +176,51 @@ export class AdapterEngine {
     let output: StructuredOutput;
     try {
       const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
-      output = await this.harness.execute({
-        prompt: promptFromBody(delivery.body),
-        ...sessionFromDelivery(delivery),
-        ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
-        timeoutMs: timeoutFromBody(delivery.body, this.defaultTimeoutMs),
-        signal: controller.signal,
-      });
+      const messageType = typeof delivery.body.type === "string"
+        ? delivery.body.type
+        : "request";
+      const requestContext = {
+        self_alias: delivery.recipient_alias,
+        sender_alias: delivery.actor_alias,
+        tenant_id: delivery.tenant_id,
+        room_id: delivery.room_id,
+        channel: delivery.authenticated_context?.channel
+          ?? delivery.origin?.channel
+          ?? "cauce",
+        agent_message: messageType === "agent.message"
+          || messageType === "agent.response"
+          || messageType === "agent.fanin",
+        message_type: messageType,
+        routing_targets: routingTargetsFromDelivery(delivery),
+      };
+      output = messageType === "agent.fanin"
+        ? validateDeliveryOutput(synthesizeFaninOutput(delivery.body), {
+            messageType,
+            senderAlias: requestContext.sender_alias,
+            selfAlias: requestContext.self_alias,
+            routingTargets: requestContext.routing_targets,
+          })
+        : await this.harness.execute({
+            prompt: promptFromBody(delivery.body),
+            context: requestContext,
+            ...session,
+            ...(reservation === undefined ? {} : { sessionReservation: reservation }),
+            ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
+            timeoutMs: timeoutFromBody(delivery.body, this.defaultTimeoutMs),
+            signal: controller.signal,
+          });
       if (controller.signal.aborted) {
         throw controller.signal.reason instanceof Error
           ? controller.signal.reason
           : new AdapterError("CANCELLED", "Harness execution was cancelled", false);
       }
     } catch (error) {
-      const normalized = this.fenced.has(delivery.delivery_id)
+      const executionError = asAdapterError(error);
+      const preserveAmbiguousExecution = !executionError.retryable
+        && isAmbiguousAckErrorCode(executionError.code);
+      const normalized = this.fenced.has(delivery.delivery_id) && !preserveAmbiguousExecution
         ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
-        : asAdapterError(error);
+        : executionError;
       await this.finishError(started, normalized);
       return;
     }
@@ -261,10 +320,13 @@ function sessionFromDelivery(delivery: Delivery): { sessionKey?: string } {
   const sessionId = context?.session_id ?? origin?.conversation_id;
   const conversationId = origin?.conversation_id;
   if (origin === undefined || channel === undefined || sessionId === undefined || conversationId === undefined) return {};
+  const bridgeTenant = typeof origin.metadata.bridge_tenant === "string"
+    ? origin.metadata.bridge_tenant
+    : delivery.tenant_id;
   const scope = JSON.stringify({
     namespace: "cauce-authenticated-session-v1",
-    tenant_id: delivery.tenant_id,
-    actor_alias: delivery.actor_alias,
+    tenant_id: bridgeTenant,
+    recipient_alias: delivery.recipient_alias,
     origin: {
       adapter: origin.adapter,
       channel,
@@ -278,4 +340,34 @@ function sessionFromDelivery(delivery: Delivery): { sessionKey?: string } {
 function timeoutFromBody(body: Record<string, unknown>, fallback: number): number {
   const value = body.timeout_ms;
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function routingTargetsFromDelivery(delivery: Delivery): readonly {
+  readonly tenant_id: string;
+  readonly alias: string;
+  readonly online: boolean;
+}[] {
+  const forwardCompatible = delivery as Delivery & {
+    readonly routing_targets?: unknown;
+    readonly available_recipients?: unknown;
+  };
+  const candidate = forwardCompatible.routing_targets ?? forwardCompatible.available_recipients;
+  if (!Array.isArray(candidate)) return [];
+
+  const unique = new Map<string, { tenant_id: string; alias: string; online: boolean }>();
+  for (const value of candidate) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const target = value as Record<string, unknown>;
+    if (typeof target.tenant_id !== "string" || target.tenant_id.trim().length === 0) continue;
+    if (typeof target.alias !== "string" || target.alias.trim().length === 0) continue;
+    if (typeof target.online !== "boolean") continue;
+    const normalized = {
+      tenant_id: target.tenant_id,
+      alias: target.alias,
+      online: target.online,
+    };
+    unique.set(`${normalized.tenant_id}\u0000${normalized.alias}`, normalized);
+  }
+  return [...unique.values()].sort((left, right) =>
+    left.tenant_id.localeCompare(right.tenant_id) || left.alias.localeCompare(right.alias));
 }

@@ -25,11 +25,50 @@ function commandOverride(
   };
 }
 
+/**
+ * Narrows the packaged OpenClaw capabilities to the transport that will
+ * actually execute this adapter instance. An omitted transport is CLI.
+ */
+export function runtimeHarnessDefinition(
+  harnessId: HarnessId,
+  definition: HarnessDefinition,
+  openClawTransport: "cli" | "api" | undefined,
+): HarnessDefinition {
+  if (harnessId !== "openclaw") return definition;
+  if (openClawTransport === "api") {
+    return {
+      ...definition,
+      capabilities: {
+        ...definition.capabilities,
+        loopback_api: true,
+        api_cancellation: "abort_signal",
+      },
+    };
+  }
+
+  const {
+    loopback_api: _loopbackApi,
+    api_cancellation: _apiCancellation,
+    ...cliCapabilities
+  } = definition.capabilities;
+  void _loopbackApi;
+  void _apiCancellation;
+  return { ...definition, capabilities: cliCapabilities };
+}
+
 export async function runCli(harnessId: HarnessId): Promise<void> {
   const runtime = await loadCliRuntimeConfig(harnessId);
   const tenantId = TenantSchema.parse(runtime.tenant);
-  const definition = harnessDefinition(harnessId);
-  const store = await DurableStore.open(runtime.stateDirectory);
+  const definition = runtimeHarnessDefinition(
+    harnessId,
+    harnessDefinition(harnessId),
+    runtime.openClaw?.transport,
+  );
+  const canonicalOpenCodeSession = harnessId === "opencode" && runtime.alias === "kant";
+  const store = await DurableStore.open(
+    runtime.stateDirectory,
+    canonicalOpenCodeSession ? { deferSessions: true } : {},
+  );
   const runner = harnessId === "openclaw" && runtime.openClaw?.transport === "api"
     ? new OpenClawApiRunner({
       endpoint: runtime.openClaw.apiUrl!,
@@ -43,6 +82,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     runner,
     store,
     sessionNamespace: runtime.alias,
+    ...(canonicalOpenCodeSession ? { canonicalOpenCodeSession: true } : {}),
     ...(harnessId === "openclaw" ? { fallbackSessionKey: "alias-default" } : {}),
     ...(override === undefined ? {} : { commandOverride: override }),
   });
@@ -65,6 +105,9 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     }),
     store,
     harness,
+    ...(canonicalOpenCodeSession
+      ? { onLeaseAcquired: () => store.reconcileCanonicalOpenCodeSession().then(() => undefined) }
+      : {}),
     onError: (code) => process.stderr.write(`${code}: adapter retry\n`),
   });
 

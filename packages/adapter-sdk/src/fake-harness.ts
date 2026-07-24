@@ -18,7 +18,7 @@ export interface AdapterConsumer {
   ack(
     delivery: Pick<DeliveryEnvelope, 'event_id' | 'delivery_id' | 'attempt' | 'claim_token'>,
     status: Ack['status'],
-    detail?: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'result'>>,
+    detail?: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result'>>,
   ): void;
   close(): Promise<void>;
 }
@@ -87,7 +87,7 @@ export class FakeHarness extends EventEmitter implements AdapterConsumer {
   ack(
     delivery: Pick<DeliveryEnvelope, 'event_id' | 'delivery_id' | 'attempt' | 'claim_token'>,
     status: Ack['status'],
-    detail: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'result'>> = {},
+    detail: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result'>> = {},
   ): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('harness is disconnected');
     this.socket.send(JSON.stringify({
@@ -96,6 +96,7 @@ export class FakeHarness extends EventEmitter implements AdapterConsumer {
       instance_id: this.identity.instance_id, epoch: this.epoch,
       retryable: detail.retryable ?? false,
       ...(detail.error ? { error: detail.error } : {}),
+      ...(detail.error_code ? { error_code: detail.error_code } : {}),
       ...(detail.result ? { result: detail.result } : {})
     }));
   }

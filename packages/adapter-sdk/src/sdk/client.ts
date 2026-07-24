@@ -24,6 +24,8 @@ export interface AdapterClientOptions {
   readonly clock?: Clock;
   readonly random?: () => number;
   readonly onError?: (code: string) => void;
+  /** Runs under the stable-alias lease before the first transport connection. */
+  readonly onLeaseAcquired?: () => Promise<void>;
 }
 
 function validateIdentity(config: AdapterConfig): void {
@@ -50,6 +52,7 @@ export function capabilityStrings(capabilities: AdapterCapabilities): string[] {
     'event-id-correlation',
     'claim-token-correlation',
     'authenticated-session-scope',
+    ...(capabilities.routing_targets_v1 ? ['routing_targets_v1'] : []),
     ...(capabilities.persistent_sessions ? ['persistent-sessions'] : []),
     ...(capabilities.loopback_api === true ? ['loopback-api'] : []),
     ...(capabilities.stable_alias_sessions === true ? ['stable-alias-sessions'] : []),
@@ -69,6 +72,7 @@ export class AdapterClient {
   private sendTail: Promise<void> = Promise.resolve();
   private running = false;
   private readonly onError: (code: string) => void;
+  private readonly onLeaseAcquired: (() => Promise<void>) | undefined;
 
   constructor(options: AdapterClientOptions) {
     validateIdentity(options.config);
@@ -77,6 +81,7 @@ export class AdapterClient {
     this.store = options.store;
     this.harness = options.harness;
     this.onError = options.onError ?? (() => undefined);
+    this.onLeaseAcquired = options.onLeaseAcquired;
     this.clock = options.clock ?? systemClock;
     this.backoff = new ExponentialBackoff(
       { ...DEFAULT_BACKOFF, ...options.config.reconnect },
@@ -102,6 +107,7 @@ export class AdapterClient {
       this.config.instanceId,
     );
     try {
+      await this.onLeaseAcquired?.();
       while (!signal.aborted) {
         try {
           const connection = await this.connector.connect(signal);
@@ -216,6 +222,7 @@ export class AdapterClient {
       epoch: event.epoch,
       retryable: event.error?.retryable ?? event.output?.retryable ?? false,
       ...(detail === undefined ? {} : { error: detail }),
+      ...(event.error === undefined ? {} : { error_code: event.error.code }),
       ...(event.output === undefined ? {} : { result: { output: event.output } }),
     });
   }

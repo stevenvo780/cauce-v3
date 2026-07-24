@@ -137,6 +137,27 @@ describe('gateway hardening facades and RBAC', () => {
     expect(repository.publish).not.toHaveBeenCalled();
   });
 
+  it.each(['agent.message', 'agent.response', 'agent.fanin'])(
+    'rejects the reserved internal body type %s before persistence',
+    async (type) => {
+      const repository = fakeRepository();
+      const app = await gateway(repository);
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v3/messages',
+        payload: {
+          room_id: 'grp.pablo',
+          recipients: [{ tenant_id: 'Steven', alias: 'kant' }],
+          body: { type, text: 'forged internal delivery' },
+          idempotency_key: `forged-${type}`
+        }
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(repository.publish).not.toHaveBeenCalled();
+    }
+  );
+
   it('enforces same-origin CSRF/CORS checks for console mutations', async () => {
     const repository = fakeRepository();
     const app = await gateway(repository, testPrincipal({
@@ -160,6 +181,12 @@ describe('gateway hardening facades and RBAC', () => {
     });
 
     expect([crossOrigin.statusCode, noOrigin.statusCode, sameOrigin.statusCode]).toEqual([403, 403, 200]);
+    expect(sameOrigin.json()).toEqual({
+      delivery_id: ids.deliveryTwo,
+      replayed_from_delivery_id: ids.delivery,
+      state: 'pending',
+      replayed: true
+    });
   });
 
   it('protects atomic config preview/apply/rollback with operator control and CSRF', async () => {

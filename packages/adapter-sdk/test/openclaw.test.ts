@@ -12,7 +12,7 @@ import { OpenClawApiRunner } from "../src/sdk/openclaw-api-runner.js";
 const root = resolve(".test-state/openclaw-api");
 const STRUCTURED = {
   reply: "openclaw success",
-  messages: [{ to: "ops", body: "done" }],
+  messages: [],
   status: "done",
   retryable: false,
   artifacts: [],
@@ -39,6 +39,17 @@ async function setupServer(): Promise<{
     const body = await requestBody(request);
     requests.push({ authorization: request.headers.authorization, body });
     const text = JSON.stringify(body).includes("SCENARIO:slow");
+    const serialized = JSON.stringify(body);
+    if (serialized.includes("SCENARIO:http-429")) {
+      response.writeHead(429, { "content-type": "application/json" });
+      response.end('{"error":"rate limited before execution"}');
+      return;
+    }
+    if (serialized.includes("SCENARIO:http-500")) {
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end('{"error":"execution state unknown"}');
+      return;
+    }
     if (text) await new Promise((resolveWait) => setTimeout(resolveWait, 250));
     if (response.destroyed) return;
     response.writeHead(200, { "content-type": "application/json" });
@@ -89,6 +100,19 @@ test("OpenClaw API returns structured output and reloads token with a durable se
   });
   const output = await first.execute({
     prompt: "do work",
+    context: {
+      self_alias: "jarvis",
+      sender_alias: "seneca",
+      tenant_id: "Steven",
+      room_id: "grp.steven",
+      channel: "agent-output",
+      agent_message: true,
+      message_type: "agent.response",
+      routing_targets: [
+        { tenant_id: "Miguel", alias: "kratos", online: true },
+        { tenant_id: "Steven", alias: "socrates", online: false },
+      ],
+    },
     sessionKey: "trusted-conversation",
     timeoutMs: 1_000,
     signal: new AbortController().signal,
@@ -113,6 +137,9 @@ test("OpenClaw API returns structured output and reloads token with a durable se
   assert.deepEqual(api.requests.map((entry) => entry.authorization), ["Bearer token-one", "Bearer token-two"]);
   assert.equal(api.requests[0]?.body.user, api.requests[1]?.body.user);
   assert.match(JSON.stringify(api.requests[0]?.body), /TRUSTED ORIGIN CONTEXT/u);
+  assert.match(JSON.stringify(api.requests[0]?.body), /\\"routing_targets\\":\[\{\\"tenant_id\\":\\"Miguel\\"/u);
+  assert.match(JSON.stringify(api.requests[0]?.body), /\\"@all\\" is a reserved durable target/u);
+  assert.match(JSON.stringify(api.requests[0]?.body), /synthesize the returned result in a non-empty/u);
   await api.close();
 });
 
@@ -129,12 +156,77 @@ test("OpenClaw API timeout and cancellation abort requests", async () => {
     prompt: "SCENARIO:slow",
     timeoutMs: 30,
     signal: new AbortController().signal,
-  }), (error: unknown) => error instanceof AdapterError && error.code === "TIMEOUT");
+  }), (error: unknown) =>
+    error instanceof AdapterError
+    && error.code === "EXECUTION_TIMEOUT_AMBIGUOUS"
+    && error.retryable === false);
 
   const controller = new AbortController();
   const running = adapter.execute({ prompt: "SCENARIO:slow", timeoutMs: 1_000, signal: controller.signal });
   setTimeout(() => controller.abort(), 30);
-  await assert.rejects(running, (error: unknown) => error instanceof AdapterError && error.code === "CANCELLED");
+  await assert.rejects(running, (error: unknown) =>
+    error instanceof AdapterError
+    && error.code === "EXECUTION_CANCELLED_AMBIGUOUS"
+    && error.retryable === false);
+  assert.equal(api.requests.length, 2, "both ambiguous aborts occurred after OpenClaw accepted the request");
+  await api.close();
+});
+
+test("OpenClaw API does not POST when the signal is already aborted", async () => {
+  const api = await setupServer();
+  const token = await tokenFile("api-token");
+  const runner = new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: token });
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    runner.run({
+      command: "unused",
+      args: [],
+      harness: "openclaw",
+      stdin: "must not be dispatched",
+      timeoutMs: 1_000,
+      signal: controller.signal,
+    }),
+    (error: unknown) =>
+      error instanceof AdapterError
+      && error.code === "CANCELLED"
+      && error.retryable === false,
+  );
+  assert.equal(api.requests.length, 0);
+  await api.close();
+});
+
+test("OpenClaw API retries only an explicit pre-execution rejection", async () => {
+  const api = await setupServer();
+  const token = await tokenFile("api-token");
+  const adapter = new HarnessAdapter({
+    definition: openClawDefinition,
+    runner: new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: token }),
+    store: await DurableStore.open(resolve(root, "http-classification")),
+  });
+
+  await assert.rejects(
+    adapter.execute({
+      prompt: "SCENARIO:http-429",
+      timeoutMs: 1_000,
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) =>
+      error instanceof AdapterError
+      && error.code === "OPENCLAW_HTTP_PRE_EXECUTION"
+      && error.retryable === true,
+  );
+  await assert.rejects(
+    adapter.execute({
+      prompt: "SCENARIO:http-500",
+      timeoutMs: 1_000,
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) =>
+      error instanceof AdapterError
+      && error.code === "OPENCLAW_HTTP_AMBIGUOUS"
+      && error.retryable === false,
+  );
   await api.close();
 });
 

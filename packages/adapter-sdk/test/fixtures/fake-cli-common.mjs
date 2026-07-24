@@ -17,7 +17,7 @@ export async function runFakeCli(dialect) {
   const isFailure = prompt.includes("SCENARIO:fail") || isRetry;
   const output = {
     reply: isFailure ? `${dialect} failure` : `${dialect} success`,
-    messages: isFailure ? [] : [{ to: "ops", body: `${dialect} relayed` }],
+    messages: [],
     status: isFailure ? "failed" : "done",
     retryable: isRetry,
     artifacts: isFailure ? [] : [{ name: "report", uri: "memory://report" }],
@@ -28,9 +28,15 @@ export async function runFakeCli(dialect) {
       process.stdout.write(`${JSON.stringify({ output, session_id: "hermes-native" })}\n`);
       break;
     case "opencode":
-      process.stdout.write(`${JSON.stringify({ type: "step_start", sessionID: "opencode-native", part: { type: "step-start" } })}\n`);
-      process.stdout.write(`${JSON.stringify({ type: "text", sessionID: "opencode-native", part: { type: "text", text: JSON.stringify(output) } })}\n`);
-      process.stdout.write(`${JSON.stringify({ type: "step_finish", sessionID: "opencode-native", part: { type: "step-finish" } })}\n`);
+      {
+        const sessionID = prompt.includes("SCENARIO:invalid-session")
+          ? "invalid-native-id"
+          : "ses_opencode_native";
+        const session = prompt.includes("SCENARIO:no-session") ? {} : { sessionID };
+        process.stdout.write(`${JSON.stringify({ type: "step_start", ...session, part: { type: "step-start" } })}\n`);
+        process.stdout.write(`${JSON.stringify({ type: "text", ...session, part: { type: "text", text: JSON.stringify(output) } })}\n`);
+        process.stdout.write(`${JSON.stringify({ type: "step_finish", ...session, part: { type: "step-finish" } })}\n`);
+      }
       break;
     case "claude":
       process.stdout.write(

@@ -82,6 +82,11 @@ export class SpawnCommandRunner {
         new ProcessExecutionError("PROMPT_IN_ARGV", "Harness prompt must never be present in argv", false),
       );
     }
+    if (request.signal.aborted) {
+      return Promise.reject(
+        new ProcessExecutionError("CANCELLED", "Harness process was cancelled before spawn", false),
+      );
+    }
 
     return new Promise<CommandRunResult>((resolve, reject) => {
       let child: ChildProcessWithoutNullStreams;
@@ -95,7 +100,15 @@ export class SpawnCommandRunner {
           stdio: ["pipe", "pipe", "pipe"],
         });
       } catch (error) {
-        reject(error);
+        if (error instanceof ProcessExecutionError) {
+          reject(error);
+          return;
+        }
+        reject(new ProcessExecutionError(
+          "SPAWN_FAILED",
+          "Harness process could not be started",
+          true,
+        ));
         return;
       }
 
@@ -154,7 +167,11 @@ export class SpawnCommandRunner {
         request.signal.removeEventListener("abort", onAbort);
         this.logger({ event: "exit", harness: request.harness, exitCode, timedOut, cancelled });
         if (outputExceeded) {
-          reject(new ProcessExecutionError("OUTPUT_LIMIT", "Harness output exceeded the configured limit", true));
+          reject(new ProcessExecutionError(
+            "OUTPUT_LIMIT_AMBIGUOUS",
+            "Harness output exceeded the configured limit after execution began",
+            false,
+          ));
           return;
         }
         resolve({

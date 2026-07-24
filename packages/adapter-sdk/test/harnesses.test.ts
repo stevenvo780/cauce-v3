@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
-import { DurableStore } from "../src/sdk/durable-store.js";
+import { CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore } from "../src/sdk/durable-store.js";
 import { AdapterError } from "../src/sdk/errors.js";
 import { SpawnCommandRunner } from "../src/sdk/process-runner.js";
 import type {
@@ -17,6 +17,7 @@ import { HARNESS_DEFINITIONS, HarnessAdapter } from "../src/harnesses/index.js";
 
 const stateRoot = resolve(".test-state");
 const definitions = Object.values(HARNESS_DEFINITIONS);
+const canonicalScope = `auth-v1:${"A".repeat(43)}`;
 
 function fixture(definition: HarnessDefinition): string {
   return resolve(`test/fixtures/fake-${definition.id}.mjs`);
@@ -26,6 +27,15 @@ async function freshStore(name: string): Promise<DurableStore> {
   const directory = resolve(stateRoot, name);
   await rm(directory, { recursive: true, force: true });
   return DurableStore.open(directory);
+}
+
+async function optionalFile(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 class RecordingRunner implements CommandRunner {
@@ -57,9 +67,13 @@ for (const definition of definitions) {
       if (scenario === "timeout" || scenario === "malformed") {
         await assert.rejects(
           adapter.execute(request),
-          (error: unknown) =>
-            error instanceof AdapterError &&
-            error.code === (scenario === "timeout" ? "TIMEOUT" : "MALFORMED_OUTPUT"),
+          (error: unknown) => {
+            if (!(error instanceof AdapterError)) return false;
+            assert.equal(error.retryable, false);
+            return error.code === (
+              scenario === "timeout" ? "EXECUTION_TIMEOUT_AMBIGUOUS" : "MALFORMED_OUTPUT"
+            );
+          },
         );
         return;
       }
@@ -68,7 +82,7 @@ for (const definition of definitions) {
       if (scenario === "success") {
         assert.equal(output.status, "done");
         assert.equal(output.retryable, false);
-        assert.equal(output.messages[0]?.to, "ops");
+        assert.deepEqual(output.messages, []);
       } else {
         assert.equal(output.status, "failed");
         assert.equal(output.retryable, scenario === "retry");
@@ -76,6 +90,93 @@ for (const definition of definitions) {
     });
   }
 }
+
+test("all harness adapters reject direct fan-in before provider or session access", async () => {
+  for (const definition of definitions) {
+    let runnerCalls = 0;
+    const runner: CommandRunner = {
+      run: async () => {
+        runnerCalls += 1;
+        throw new Error("provider runner must not be called for fan-in");
+      },
+    };
+    const storeName = `direct-fanin-${definition.id}`;
+    const store = await freshStore(storeName);
+    const sessionsPath = resolve(stateRoot, storeName, "sessions.json");
+    const sessionsBefore = await optionalFile(sessionsPath);
+    const adapter = new HarnessAdapter({ definition, runner, store });
+
+    await assert.rejects(
+      adapter.execute({
+        prompt: "untrusted aggregate",
+        context: {
+          self_alias: "jarvis",
+          sender_alias: "cauce",
+          tenant_id: "Steven",
+          room_id: "grp.steven",
+          channel: "cauce",
+          agent_message: true,
+          message_type: "agent.fanin",
+          routing_targets: [],
+        },
+        sessionKey: "must-not-be-resolved",
+        timeoutMs: 2_000,
+        signal: new AbortController().signal,
+      }),
+      (error: unknown) =>
+        error instanceof AdapterError
+        && error.code === "FANIN_HARNESS_EXECUTION_FORBIDDEN"
+        && error.retryable === false,
+    );
+
+    assert.equal(runnerCalls, 0, `${definition.id} provider runner was called`);
+    assert.equal(
+      await optionalFile(sessionsPath),
+      sessionsBefore,
+      `${definition.id} session state changed`,
+    );
+  }
+});
+
+test("process exit after execution begins is ambiguous and non-retryable", async () => {
+  for (const [name, stdout] of [
+    ["unstructured", "not-json"],
+    ["structured-success", JSON.stringify({
+      reply: "unsafe success",
+      messages: [],
+      status: "done",
+      retryable: false,
+      artifacts: [],
+    })],
+  ] as const) {
+    const runner: CommandRunner = {
+      run: async () => ({
+        stdout,
+        stderr: "",
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        cancelled: false,
+      }),
+    };
+    const adapter = new HarnessAdapter({
+      definition: HARNESS_DEFINITIONS.fake,
+      runner,
+      store: await freshStore(`process-exit-${name}`),
+    });
+    await assert.rejects(
+      adapter.execute({
+        prompt: "execute once",
+        timeoutMs: 2_000,
+        signal: new AbortController().signal,
+      }),
+      (error: unknown) =>
+        error instanceof AdapterError
+        && error.code === "PROCESS_EXIT_AMBIGUOUS"
+        && error.retryable === false,
+    );
+  }
+});
 
 test("prompt secrets are confined to stdin and omitted from safe logs for every adapter", async () => {
   const secret = "TOP-SECRET-PROMPT-71d626";
@@ -142,6 +243,182 @@ test("persistent session mappings survive adapter reconstruction where supported
     if (definition.id === "claude") assert.ok(secondArgs.includes("--resume"));
     if (definition.id === "codex") assert.ok(secondArgs.includes("resume"));
   }
+});
+
+test("OpenCode starts without a session, stores the observed ID, then resumes it", async () => {
+  const definition = HARNESS_DEFINITIONS.opencode;
+  const store = await freshStore("opencode-observed-session");
+  const runner = new RecordingRunner(new SpawnCommandRunner());
+  const adapter = new HarnessAdapter({
+    definition,
+    runner,
+    store,
+    commandOverride: { command: process.execPath, prefixArgs: [fixture(definition)] },
+  });
+  const request = {
+    prompt: "SCENARIO:success",
+    sessionKey: "conversation-observed",
+    timeoutMs: 2_000,
+    signal: new AbortController().signal,
+  };
+
+  await adapter.execute(request);
+  assert.deepEqual(runner.requests[0]?.args, [
+    fixture(definition),
+    "run",
+    "--format",
+    "json",
+    "--attach",
+    "http://127.0.0.1:4097",
+    "--dir",
+    "/workspace/kant",
+  ]);
+  assert.deepEqual(store.getSession("opencode:conversation-observed"), {
+    native_id: "ses_opencode_native",
+    initialized: true,
+  });
+
+  await adapter.execute(request);
+  assert.deepEqual(runner.requests[1]?.args, [
+    fixture(definition),
+    "run",
+    "--format",
+    "json",
+    "--attach",
+    "http://127.0.0.1:4097",
+    "--dir",
+    "/workspace/kant",
+    "--session",
+    "ses_opencode_native",
+  ]);
+});
+
+test("Kant OpenCode persists its mapping before publishing a sticky canonical pointer", async () => {
+  const definition = HARNESS_DEFINITIONS.opencode;
+  const directoryName = "opencode-canonical-session";
+  const directory = resolve(stateRoot, directoryName);
+  const store = await freshStore(directoryName);
+  await store.reconcileCanonicalOpenCodeSession();
+  const adapter = new HarnessAdapter({
+    definition,
+    runner: new SpawnCommandRunner(),
+    store,
+    sessionNamespace: "kant",
+    canonicalOpenCodeSession: true,
+    commandOverride: { command: process.execPath, prefixArgs: [fixture(definition)] },
+  });
+
+  await adapter.execute({
+    prompt: "SCENARIO:success",
+    sessionKey: canonicalScope,
+    timeoutMs: 2_000,
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(store.getSession(`opencode:kant:${canonicalScope}`), {
+    native_id: "ses_opencode_native",
+    initialized: true,
+  });
+  const firstPointer = JSON.parse(
+    await readFile(resolve(directory, CANONICAL_OPEN_CODE_SESSION_FILE), "utf8"),
+  ) as Record<string, unknown>;
+  assert.deepEqual(firstPointer, {
+    version: 1,
+    state: "active",
+    alias: "kant",
+    harness: "opencode",
+    scope_key: canonicalScope,
+    session_id: "ses_opencode_native",
+  });
+
+  const otherScope = `auth-v1:${"B".repeat(43)}`;
+  await adapter.execute({
+    prompt: "SCENARIO:success",
+    sessionKey: otherScope,
+    timeoutMs: 2_000,
+    signal: new AbortController().signal,
+  });
+  const stickyPointer = JSON.parse(
+    await readFile(resolve(directory, CANONICAL_OPEN_CODE_SESSION_FILE), "utf8"),
+  ) as Record<string, unknown>;
+  assert.equal(stickyPointer.scope_key, canonicalScope);
+});
+
+test("Kant OpenCode never publishes nonzero, malformed, missing or invalid native sessions", async () => {
+  const definition = HARNESS_DEFINITIONS.opencode;
+  for (const scenario of ["fail", "malformed", "no-session", "invalid-session"] as const) {
+    const directoryName = `opencode-canonical-reject-${scenario}`;
+    const directory = resolve(stateRoot, directoryName);
+    const store = await freshStore(directoryName);
+    await store.reconcileCanonicalOpenCodeSession();
+    const adapter = new HarnessAdapter({
+      definition,
+      runner: new SpawnCommandRunner(),
+      store,
+      sessionNamespace: "kant",
+      canonicalOpenCodeSession: true,
+      commandOverride: { command: process.execPath, prefixArgs: [fixture(definition)] },
+    });
+    const execution = adapter.execute({
+      prompt: `SCENARIO:${scenario}`,
+      sessionKey: canonicalScope,
+      timeoutMs: 2_000,
+      signal: new AbortController().signal,
+    });
+    if (scenario === "malformed") await assert.rejects(execution, AdapterError);
+    else await execution;
+
+    assert.equal(store.getSession(`opencode:kant:${canonicalScope}`), undefined);
+    const current = JSON.parse(
+      await readFile(resolve(directory, CANONICAL_OPEN_CODE_SESSION_FILE), "utf8"),
+    ) as Record<string, unknown>;
+    assert.equal(current.state, "unavailable");
+    assert.equal(current.reason, "missing");
+  }
+});
+
+test("Kant OpenCode repairs one invalid legacy mapping without resuming it", async () => {
+  const definition = HARNESS_DEFINITIONS.opencode;
+  const directoryName = "opencode-canonical-repair-invalid";
+  const directory = resolve(stateRoot, directoryName);
+  const store = await freshStore(directoryName);
+  await store.setSession(`opencode:kant:${canonicalScope}`, {
+    native_id: "legacy-generated-uuid",
+    initialized: true,
+  });
+  assert.equal((await store.reconcileCanonicalOpenCodeSession()).state, "unavailable");
+  const runner = new RecordingRunner(new SpawnCommandRunner());
+  const adapter = new HarnessAdapter({
+    definition,
+    runner,
+    store,
+    sessionNamespace: "kant",
+    canonicalOpenCodeSession: true,
+    commandOverride: { command: process.execPath, prefixArgs: [fixture(definition)] },
+  });
+
+  await adapter.execute({
+    prompt: "SCENARIO:success",
+    sessionKey: canonicalScope,
+    timeoutMs: 2_000,
+    signal: new AbortController().signal,
+  });
+  assert.equal(runner.requests[0]?.args.includes("--session"), false);
+  assert.equal(store.getSession(`opencode:kant:${canonicalScope}`)?.native_id, "ses_opencode_native");
+  const repaired = JSON.parse(
+    await readFile(resolve(directory, CANONICAL_OPEN_CODE_SESSION_FILE), "utf8"),
+  ) as Record<string, unknown>;
+  assert.equal(repaired.state, "active");
+  assert.equal(repaired.session_id, "ses_opencode_native");
+});
+
+test("canonical OpenCode publication cannot be enabled for another alias", async () => {
+  assert.throws(() => new HarnessAdapter({
+    definition: HARNESS_DEFINITIONS.opencode,
+    runner: new SpawnCommandRunner(),
+    store: {} as DurableStore,
+    sessionNamespace: "other",
+    canonicalOpenCodeSession: true,
+  }), /restricted to alias 'kant'/u);
 });
 
 test("Hermes remains explicitly stateless", async () => {

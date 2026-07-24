@@ -29,6 +29,7 @@ export interface AdapterCapabilities {
   readonly event_id_correlation: true;
   readonly claim_token_correlation: true;
   readonly authenticated_session_scope: true;
+  readonly routing_targets_v1: true;
   readonly persistent_sessions: boolean;
   readonly loopback_api?: true;
   readonly stable_alias_sessions?: true;
@@ -110,6 +111,7 @@ export interface DeliveryAckFrame {
   readonly epoch: number;
   readonly retryable: boolean;
   readonly error?: string;
+  readonly error_code?: string;
   readonly result?: Readonly<Record<string, unknown>>;
 }
 

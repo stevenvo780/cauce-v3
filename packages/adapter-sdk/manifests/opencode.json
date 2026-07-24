@@ -7,8 +7,26 @@
     "prompt_transport": "stdin",
     "output_dialect": "opencode-jsonl",
     "final_event": "text.part.text between step_start and step_finish",
-    "session_mapping": "generated --session id",
-    "session_scope": "authenticated tenant+actor+origin channel/session/conversation"
+    "server_attach_url": "http://127.0.0.1:4097",
+    "working_directory": "/workspace/kant",
+    "startup_health_url": "http://127.0.0.1:4097/global/health",
+    "startup_dependency": "controlled rollout verifies healthy persistent Kant server before adapter start",
+    "session_mapping": "observed sessionID; --session id on resume",
+    "session_scope": "authenticated tenant+actor+origin channel/session/conversation",
+    "canonical_session_pointer": {
+      "enabled_alias": "kant",
+      "path": "$CAUCE_STATE_DIR/canonical-opencode-session.json",
+      "contract_version": 1,
+      "states": ["active", "unavailable"],
+      "active_fields": ["version", "state", "alias", "harness", "scope_key", "session_id"],
+      "unavailable_reasons": ["missing", "ambiguous", "invalid"],
+      "permissions": {"directory": "0700", "file": "0600"},
+      "sessions_file_security": "bounded 1 MiB O_NOFOLLOW/O_NONBLOCK open, fstat owner/mode/type/size/stability, duplicate-free strict schema; reloaded under consumer lease",
+      "directory_fsync_unsupported_codes": ["EINVAL", "ENOTSUP", "EOPNOTSUPP"],
+      "atomic_write_recovery": "same-directory copied 0600 backup published after fsync; startup restores uncommitted backup, keeps committed target, removes incomplete staging/orphan temp, rejects ambiguity",
+      "privacy": "scope_key is an authenticated-scope hash; prompts and chat/user/message identifiers are forbidden",
+      "selection": "sticky first durable initialized scope; startup requires exactly one valid mapping"
+    }
   },
   "capabilities": {
     "protocol_version": "3.0",
@@ -26,6 +44,7 @@
     "event_id_correlation": true,
     "claim_token_correlation": true,
     "authenticated_session_scope": true,
+    "routing_targets_v1": true,
     "persistent_sessions": true
   }
 }

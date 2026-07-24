@@ -1,14 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
-  chmod,
   mkdir,
   open,
   readFile,
+  readdir,
   rename,
   stat,
   unlink,
-  writeFile,
   type FileHandle,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -47,6 +46,40 @@ export interface SessionRecord {
   readonly initialized: boolean;
 }
 
+export const CANONICAL_OPEN_CODE_SESSION_FILE = "canonical-opencode-session.json";
+export const MAX_SESSIONS_FILE_BYTES = 1024 * 1024;
+
+/** Directory fsync is optional only when the filesystem explicitly reports it unsupported. */
+export const UNSUPPORTED_DIRECTORY_FSYNC_CODES = ["EINVAL", "ENOTSUP", "EOPNOTSUPP"] as const;
+type UnsupportedDirectoryFsyncCode = typeof UNSUPPORTED_DIRECTORY_FSYNC_CODES[number];
+export type DirectoryFsync = (directory: FileHandle) => Promise<void>;
+
+export interface DurableStoreOpenOptions {
+  /** Kant/OpenCode reloads sessions under its acquired stable-alias lease. */
+  readonly deferSessions?: boolean;
+  /** Deterministic fault injection for durability tests; production omits it. */
+  readonly directoryFsync?: DirectoryFsync;
+}
+
+export type CanonicalOpenCodeSessionPointer =
+  | {
+      readonly version: 1;
+      readonly state: "active";
+      readonly alias: "kant";
+      readonly harness: "opencode";
+      readonly scope_key: string;
+      readonly session_id: string;
+    }
+  | {
+      readonly version: 1;
+      readonly state: "unavailable";
+      readonly alias: "kant";
+      readonly harness: "opencode";
+      readonly scope_key: null;
+      readonly session_id: null;
+      readonly reason: "missing" | "ambiguous" | "invalid";
+    };
+
 interface SessionsFile {
   readonly version: 1;
   readonly sessions: Record<string, SessionRecord>;
@@ -70,6 +103,7 @@ const EMPTY_INBOX: InboxFile = { version: 1, deliveries: {} };
 const EMPTY_OUTBOX: OutboxFile = { version: 1, pending: [] };
 const EMPTY_SESSIONS: SessionsFile = { version: 1, sessions: {} };
 const EMPTY_FENCING: FencingFile = { version: 1, epoch: 0 };
+const O_CLOEXEC = Number((fsConstants as unknown as Record<string, unknown>).O_CLOEXEC ?? 0);
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -84,28 +118,528 @@ async function readJson<T>(path: string, fallback: T): Promise<T> {
   }
 }
 
-async function atomicWrite(path: string, value: unknown): Promise<void> {
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  const data = `${JSON.stringify(value)}\n`;
-  await writeFile(temporary, data, { encoding: "utf8", mode: 0o600, flag: "wx" });
-  const handle = await open(temporary, "r");
+function isUnsupportedDirectoryFsync(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code as UnsupportedDirectoryFsyncCode | undefined;
+  return code !== undefined && (UNSUPPORTED_DIRECTORY_FSYNC_CODES as readonly string[]).includes(code);
+}
+
+async function defaultDirectoryFsync(directory: FileHandle): Promise<void> {
   try {
-    await handle.sync();
+    await directory.sync();
+  } catch (error) {
+    if (isUnsupportedDirectoryFsync(error)) return;
+    throw error;
+  }
+}
+
+async function copyRollbackFile(sourcePath: string, backupPath: string): Promise<boolean> {
+  let source: FileHandle;
+  try {
+    source = await open(
+      sourcePath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK | O_CLOEXEC,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  let backup: FileHandle | undefined;
+  let backupExists = false;
+  try {
+    const before = await source.stat();
+    const euid = process.geteuid?.();
+    if (euid === undefined || !before.isFile() || before.uid !== euid
+      || (before.mode & 0o777) !== 0o600 || before.nlink !== 1) {
+      throw new Error("Atomic write target failed secure backup validation");
+    }
+    backup = await open(backupPath, "wx", 0o600);
+    backupExists = true;
+    await backup.chmod(0o600);
+    const buffer = Buffer.alloc(64 * 1024);
+    let sourcePosition = 0;
+    while (true) {
+      const { bytesRead } = await source.read(buffer, 0, buffer.length, sourcePosition);
+      if (bytesRead === 0) break;
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await backup.write(buffer, written, bytesRead - written, sourcePosition + written);
+        if (result.bytesWritten <= 0) throw new Error("Atomic rollback backup write made no progress");
+        written += result.bytesWritten;
+      }
+      sourcePosition += bytesRead;
+    }
+    const after = await source.stat();
+    if (after.size !== before.size || sourcePosition !== before.size
+      || after.dev !== before.dev || after.ino !== before.ino
+      || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
+      throw new Error("Atomic write target changed while creating rollback backup");
+    }
+    await backup.sync();
+    return true;
+  } catch (error) {
+    await backup?.close().catch(() => undefined);
+    backup = undefined;
+    if (backupExists) await unlink(backupPath).catch(() => undefined);
+    throw error;
+  } finally {
+    await backup?.close().catch(() => undefined);
+    await source.close().catch(() => undefined);
+  }
+}
+
+async function atomicWrite(
+  path: string,
+  value: unknown,
+  directoryFsync: DirectoryFsync = defaultDirectoryFsync,
+): Promise<void> {
+  const transaction = randomUUID();
+  const temporary = `${path}.${transaction}.atomic-tmp`;
+  const rollbackStaging = `${path}.${transaction}.atomic-backup-tmp`;
+  const rollback = `${path}.${transaction}.atomic-backup`;
+  const committedBackup = `${path}.${transaction}.atomic-committed`;
+  const data = `${JSON.stringify(value)}\n`;
+  let temporaryExists = false;
+  let rollbackStagingExists = false;
+  let rollbackExists = false;
+  let committedBackupExists = false;
+  let replacementVisible = false;
+  let committed = false;
+  let directory: FileHandle | undefined;
+  try {
+    const handle = await open(temporary, "wx", 0o600);
+    temporaryExists = true;
+    try {
+      await handle.chmod(0o600);
+      await handle.writeFile(data, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+
+    directory = await open(
+      dirname(path),
+      fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW | O_CLOEXEC,
+    );
+    rollbackStagingExists = await copyRollbackFile(path, rollbackStaging);
+    if (rollbackStagingExists) {
+      await rename(rollbackStaging, rollback);
+      rollbackStagingExists = false;
+      rollbackExists = true;
+    }
+
+    // Persist the copied rollback image before the visible atomic rename.
+    await directoryFsync(directory);
+    await rename(temporary, path);
+    temporaryExists = false;
+    replacementVisible = true;
+    try {
+      await directoryFsync(directory);
+      committed = true;
+    } catch (commitError) {
+      let rollbackError: unknown;
+      try {
+        if (rollbackExists) {
+          await rename(rollback, path);
+          rollbackExists = false;
+        } else {
+          await unlink(path);
+        }
+        replacementVisible = false;
+        await directoryFsync(directory);
+      } catch (error) {
+        rollbackError = error;
+      }
+      if (rollbackError !== undefined) {
+        throw new AggregateError(
+          [commitError, rollbackError],
+          "Directory fsync failed and the atomic write rollback could not be durably confirmed",
+        );
+      }
+      throw commitError;
+    }
+
+    if (rollbackExists) {
+      try {
+        await rename(rollback, committedBackup);
+        rollbackExists = false;
+        committedBackupExists = true;
+        await directoryFsync(directory);
+      } catch (finalizeError) {
+        let rollbackError: unknown;
+        try {
+          const availableBackup = committedBackupExists ? committedBackup : rollback;
+          await rename(availableBackup, path);
+          committedBackupExists = false;
+          rollbackExists = false;
+          replacementVisible = false;
+          committed = false;
+          await directoryFsync(directory);
+        } catch (error) {
+          rollbackError = error;
+        }
+        if (rollbackError !== undefined) {
+          throw new AggregateError(
+            [finalizeError, rollbackError],
+            "Atomic write commit marker failed and rollback could not be durably confirmed",
+          );
+        }
+        throw finalizeError;
+      }
+    }
+  } finally {
+    await directory?.close().catch(() => undefined);
+    if (temporaryExists) await unlink(temporary).catch(() => undefined);
+    if (rollbackStagingExists) await unlink(rollbackStaging).catch(() => undefined);
+    if (rollbackExists && !replacementVisible) {
+      await unlink(rollback).catch(() => undefined);
+    }
+    if (committedBackupExists && committed) await unlink(committedBackup).catch(() => undefined);
+  }
+}
+
+const ATOMIC_STATE_FILES = [
+  "inbox.json",
+  "outbox.json",
+  "sessions.json",
+  "fencing.json",
+  CANONICAL_OPEN_CODE_SESSION_FILE,
+] as const;
+type AtomicStateFile = typeof ATOMIC_STATE_FILES[number];
+type AtomicArtifactKind = "tmp" | "backup-tmp" | "backup" | "committed";
+
+class AtomicRecoveryError extends Error {
+  readonly code = "ATOMIC_RECOVERY_AMBIGUOUS";
+
+  constructor(readonly target: AtomicStateFile) {
+    super(`Atomic recovery is ambiguous for ${target}`);
+    this.name = "AtomicRecoveryError";
+  }
+}
+
+async function validateAtomicRecoveryFile(path: string): Promise<void> {
+  const handle = await open(
+    path,
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK | O_CLOEXEC,
+  );
+  try {
+    const metadata = await handle.stat();
+    const euid = process.geteuid?.();
+    if (euid === undefined || !metadata.isFile() || metadata.uid !== euid
+      || (metadata.mode & 0o777) !== 0o600 || metadata.nlink !== 1) {
+      throw new Error("Atomic recovery artifact failed secure validation");
+    }
   } finally {
     await handle.close();
   }
-  await rename(temporary, path);
-  await chmod(path, 0o600);
-  try {
-    const directory = await open(dirname(path), fsConstants.O_RDONLY);
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close();
+}
+
+async function recoverAtomicArtifacts(
+  directoryPath: string,
+  targets: readonly AtomicStateFile[],
+  directoryFsync: DirectoryFsync,
+): Promise<void> {
+  const targetSet = new Set<string>(targets);
+  const groups = new Map<AtomicStateFile, Map<string, Set<AtomicArtifactKind>>>();
+  const entries = await readdir(directoryPath);
+  const targetPattern = "(inbox\\.json|outbox\\.json|sessions\\.json|fencing\\.json|canonical-opencode-session\\.json)";
+  const currentPattern = new RegExp(
+    `^${targetPattern}\\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.atomic-(tmp|backup-tmp|backup|committed)$`,
+    "u",
+  );
+  const legacyPattern = new RegExp(
+    `^${targetPattern}\\.[0-9]+\\.[0-9a-f-]{36}\\.(?:tmp|rollback)$`,
+    "u",
+  );
+
+  for (const entry of entries) {
+    const legacy = legacyPattern.exec(entry);
+    if (legacy !== null && targetSet.has(legacy[1]!)) {
+      throw new AtomicRecoveryError(legacy[1] as AtomicStateFile);
     }
-  } catch {
-    // Some portable filesystems do not permit directory fsync; the atomic rename still applies.
+    const match = currentPattern.exec(entry);
+    if (match === null) {
+      const target = targets.find((candidate) => entry.startsWith(`${candidate}.`) && entry.includes(".atomic-"));
+      if (target !== undefined) throw new AtomicRecoveryError(target);
+      continue;
+    }
+    const target = match[1] as AtomicStateFile;
+    if (!targetSet.has(target)) continue;
+    const transaction = match[2]!;
+    const kind = match[3] as AtomicArtifactKind;
+    const transactions = groups.get(target) ?? new Map<string, Set<AtomicArtifactKind>>();
+    const kinds = transactions.get(transaction) ?? new Set<AtomicArtifactKind>();
+    kinds.add(kind);
+    transactions.set(transaction, kinds);
+    groups.set(target, transactions);
   }
+
+  if (groups.size === 0) return;
+  const directory = await open(
+    directoryPath,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW | O_CLOEXEC,
+  );
+  try {
+    for (const [target, transactions] of groups) {
+      const artifacts: Array<{ transaction: string; kind: AtomicArtifactKind; path: string }> = [];
+      for (const [transaction, kinds] of transactions) {
+        if ((kinds.has("backup") && kinds.has("committed"))
+          || (kinds.has("backup-tmp") && (kinds.has("backup") || kinds.has("committed")))) {
+          throw new AtomicRecoveryError(target);
+        }
+        for (const kind of kinds) {
+          const path = join(directoryPath, `${target}.${transaction}.atomic-${kind}`);
+          await validateAtomicRecoveryFile(path);
+          artifacts.push({ transaction, kind, path });
+        }
+      }
+      const backups = artifacts.filter((artifact) => artifact.kind === "backup");
+      if (backups.length > 1) throw new AtomicRecoveryError(target);
+      const targetPath = join(directoryPath, target);
+      if (backups.length === 1) {
+        await rename(backups[0]!.path, targetPath);
+        await directoryFsync(directory);
+      } else if (artifacts.some((artifact) => artifact.kind === "committed")) {
+        await validateAtomicRecoveryFile(targetPath).catch(() => {
+          throw new AtomicRecoveryError(target);
+        });
+      }
+      for (const artifact of artifacts) {
+        if (backups.length === 1 && artifact.path === backups[0]!.path) continue;
+        await unlink(artifact.path).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        });
+      }
+      await directoryFsync(directory);
+    }
+  } finally {
+    await directory.close().catch(() => undefined);
+  }
+}
+
+class InvalidSessionsFileError extends Error {
+  readonly code = "INVALID_SESSIONS_FILE";
+
+  constructor() {
+    super("sessions.json failed secure validation");
+    this.name = "InvalidSessionsFileError";
+  }
+}
+
+function invalidSessionsFile(): never {
+  throw new InvalidSessionsFileError();
+}
+
+function rejectDuplicateJsonKeys(text: string): void {
+  let offset = 0;
+  const whitespace = (): void => {
+    while (/\s/u.test(text[offset] ?? "")) offset += 1;
+  };
+  const string = (): string => {
+    if (text[offset] !== '"') invalidSessionsFile();
+    const start = offset;
+    offset += 1;
+    while (offset < text.length) {
+      if (text[offset] === "\\") {
+        offset += 2;
+        continue;
+      }
+      if (text[offset] === '"') {
+        offset += 1;
+        try {
+          return JSON.parse(text.slice(start, offset)) as string;
+        } catch {
+          invalidSessionsFile();
+        }
+      }
+      offset += 1;
+    }
+    invalidSessionsFile();
+  };
+  const value = (): void => {
+    whitespace();
+    if (text[offset] === "{") {
+      offset += 1;
+      whitespace();
+      const keys = new Set<string>();
+      if (text[offset] === "}") {
+        offset += 1;
+        return;
+      }
+      while (offset < text.length) {
+        const key = string();
+        if (keys.has(key)) invalidSessionsFile();
+        keys.add(key);
+        whitespace();
+        if (text[offset] !== ":") invalidSessionsFile();
+        offset += 1;
+        value();
+        whitespace();
+        if (text[offset] === "}") {
+          offset += 1;
+          return;
+        }
+        if (text[offset] !== ",") invalidSessionsFile();
+        offset += 1;
+        whitespace();
+      }
+      invalidSessionsFile();
+    }
+    if (text[offset] === "[") {
+      offset += 1;
+      whitespace();
+      if (text[offset] === "]") {
+        offset += 1;
+        return;
+      }
+      while (offset < text.length) {
+        value();
+        whitespace();
+        if (text[offset] === "]") {
+          offset += 1;
+          return;
+        }
+        if (text[offset] !== ",") invalidSessionsFile();
+        offset += 1;
+      }
+      invalidSessionsFile();
+    }
+    if (text[offset] === '"') {
+      string();
+      return;
+    }
+    const start = offset;
+    while (offset < text.length && !/[\s,}\]]/u.test(text[offset]!)) offset += 1;
+    if (offset === start) invalidSessionsFile();
+  };
+  value();
+  whitespace();
+  if (offset !== text.length) invalidSessionsFile();
+}
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
+}
+
+function validateSessionsFile(value: unknown): SessionsFile {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) invalidSessionsFile();
+  const root = value as Record<string, unknown>;
+  if (!exactKeys(root, ["version", "sessions"]) || root.version !== 1
+    || typeof root.sessions !== "object" || root.sessions === null || Array.isArray(root.sessions)) {
+    invalidSessionsFile();
+  }
+  const entries = Object.entries(root.sessions as Record<string, unknown>);
+  if (entries.length > 4096) invalidSessionsFile();
+  const sessions = Object.create(null) as Record<string, SessionRecord>;
+  for (const [key, valueRecord] of entries) {
+    if (!/^(?:hermes|opencode|claude|codex|openclaw|fake):[A-Za-z0-9._:-]{1,500}$/u.test(key)
+      || typeof valueRecord !== "object"
+      || valueRecord === null
+      || Array.isArray(valueRecord)) invalidSessionsFile();
+    const record = valueRecord as Record<string, unknown>;
+    if (!exactKeys(record, ["native_id", "initialized"])
+      || typeof record.native_id !== "string"
+      || !/^[A-Za-z0-9._:-]{1,512}$/u.test(record.native_id)
+      || typeof record.initialized !== "boolean") invalidSessionsFile();
+    sessions[key] = { native_id: record.native_id, initialized: record.initialized };
+  }
+  return { version: 1, sessions };
+}
+
+async function readSessionsSecure(path: string): Promise<SessionsFile> {
+  let handle: FileHandle;
+  try {
+    handle = await open(
+      path,
+      fsConstants.O_RDONLY
+        | O_CLOEXEC
+        | fsConstants.O_NOFOLLOW
+        | fsConstants.O_NONBLOCK,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return clone(EMPTY_SESSIONS);
+    throw new InvalidSessionsFileError();
+  }
+  try {
+    const before = await handle.stat();
+    const euid = process.geteuid?.();
+    if (euid === undefined
+      || !before.isFile()
+      || before.uid !== euid
+      || (before.mode & 0o777) !== 0o600
+      || before.nlink !== 1
+      || before.size <= 0
+      || before.size > MAX_SESSIONS_FILE_BYTES) invalidSessionsFile();
+
+    const buffer = Buffer.alloc(MAX_SESSIONS_FILE_BYTES + 1);
+    let length = 0;
+    while (length <= MAX_SESSIONS_FILE_BYTES) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        length,
+        MAX_SESSIONS_FILE_BYTES + 1 - length,
+        null,
+      );
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    const after = await handle.stat();
+    if (length > MAX_SESSIONS_FILE_BYTES
+      || length !== before.size
+      || after.size !== before.size
+      || after.dev !== before.dev
+      || after.ino !== before.ino
+      || after.mtimeMs !== before.mtimeMs
+      || after.ctimeMs !== before.ctimeMs) invalidSessionsFile();
+
+    const text = buffer.subarray(0, length).toString("utf8");
+    rejectDuplicateJsonKeys(text);
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(text) as unknown;
+    } catch {
+      invalidSessionsFile();
+    }
+    return validateSessionsFile(decoded);
+  } catch (error) {
+    if (error instanceof InvalidSessionsFileError) throw error;
+    throw new InvalidSessionsFileError();
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+export function isCanonicalOpenCodeScopeKey(value: string): boolean {
+  return /^auth-v1:[A-Za-z0-9_-]{43}$/u.test(value);
+}
+
+export function isCanonicalOpenCodeSessionId(value: string): boolean {
+  return /^ses_[A-Za-z0-9_-]{4,124}$/u.test(value);
+}
+
+function unavailableCanonicalOpenCodeSession(
+  reason: "missing" | "ambiguous" | "invalid",
+): CanonicalOpenCodeSessionPointer {
+  return {
+    version: 1,
+    state: "unavailable",
+    alias: "kant",
+    harness: "opencode",
+    scope_key: null,
+    session_id: null,
+    reason,
+  };
+}
+
+function activeCanonicalOpenCodeSession(scopeKey: string, sessionId: string): CanonicalOpenCodeSessionPointer {
+  return {
+    version: 1,
+    state: "active",
+    alias: "kant",
+    harness: "opencode",
+    scope_key: scopeKey,
+    session_id: sessionId,
+  };
 }
 
 function deliveryFingerprint(delivery: Delivery): string {
@@ -128,6 +662,24 @@ function deliveryFingerprint(delivery: Delivery): string {
     .digest("hex");
 }
 
+async function prepareStateDirectory(directory: string): Promise<void> {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const handle = await open(
+    directory,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW | O_CLOEXEC,
+  );
+  try {
+    const metadata = await handle.stat();
+    const euid = process.geteuid?.();
+    if (euid === undefined || !metadata.isDirectory() || metadata.uid !== euid) {
+      throw new Error("Durable state directory failed secure validation");
+    }
+    await handle.chmod(0o700);
+  } finally {
+    await handle.close();
+  }
+}
+
 /**
  * Durable, process-serialized inbox/outbox/session state.
  * Files and directories are owner-only; no prompt or harness output is logged.
@@ -138,17 +690,27 @@ export class DurableStore {
   private sessions: SessionsFile = clone(EMPTY_SESSIONS);
   private fencing: FencingFile = clone(EMPTY_FENCING);
   private tail: Promise<void> = Promise.resolve();
+  private canonicalOpenCodeScopeKey: string | undefined;
+  private canonicalOpenCodeReconciled = false;
 
-  private constructor(private readonly directory: string) {}
+  private constructor(
+    private readonly directory: string,
+    private readonly directoryFsync: DirectoryFsync,
+  ) {}
 
-  static async open(directory: string): Promise<DurableStore> {
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await chmod(directory, 0o700);
-    const store = new DurableStore(directory);
+  static async open(directory: string, options: DurableStoreOpenOptions = {}): Promise<DurableStore> {
+    await prepareStateDirectory(directory);
+    const store = new DurableStore(directory, options.directoryFsync ?? defaultDirectoryFsync);
+    const startupRecoveryTargets: readonly AtomicStateFile[] = options.deferSessions === true
+      ? ["inbox.json", "outbox.json", "fencing.json"]
+      : ATOMIC_STATE_FILES;
+    await recoverAtomicArtifacts(directory, startupRecoveryTargets, store.directoryFsync);
     [store.inbox, store.outbox, store.sessions, store.fencing] = await Promise.all([
       readJson(store.path("inbox.json"), EMPTY_INBOX),
       readJson(store.path("outbox.json"), EMPTY_OUTBOX),
-      readJson(store.path("sessions.json"), EMPTY_SESSIONS),
+      options.deferSessions === true
+        ? Promise.resolve(clone(EMPTY_SESSIONS))
+        : readSessionsSecure(store.path("sessions.json")),
       readJson(store.path("fencing.json"), EMPTY_FENCING),
     ]);
     return store;
@@ -156,6 +718,10 @@ export class DurableStore {
 
   private path(name: string): string {
     return join(this.directory, name);
+  }
+
+  private atomicWrite(name: string, value: unknown): Promise<void> {
+    return atomicWrite(this.path(name), value, this.directoryFsync);
   }
 
   private async serialized<T>(operation: () => Promise<T>): Promise<T> {
@@ -184,7 +750,7 @@ export class DurableStore {
       }
       if (epoch === this.fencing.epoch) return "same";
       this.fencing = { version: 1, epoch };
-      await atomicWrite(this.path("fencing.json"), this.fencing);
+      await this.atomicWrite("fencing.json", this.fencing);
       return "advanced";
     });
   }
@@ -235,7 +801,7 @@ export class DurableStore {
         version: 1,
         deliveries: { ...this.inbox.deliveries, [delivery.delivery_id]: record },
       };
-      await atomicWrite(this.path("inbox.json"), this.inbox);
+      await this.atomicWrite("inbox.json", this.inbox);
       return { acceptance: existing === undefined ? "created" : "retry", record: clone(record) };
     });
   }
@@ -293,7 +859,7 @@ export class DurableStore {
         version: 1,
         deliveries: { ...this.inbox.deliveries, [deliveryId]: next },
       };
-      await atomicWrite(this.path("inbox.json"), this.inbox);
+      await this.atomicWrite("inbox.json", this.inbox);
       return clone(next);
     });
   }
@@ -302,7 +868,7 @@ export class DurableStore {
     await this.serialized(async () => {
       if (this.outbox.pending.some((candidate) => candidate.event_id === event.event_id)) return;
       this.outbox = { version: 1, pending: [...this.outbox.pending, event] };
-      await atomicWrite(this.path("outbox.json"), this.outbox);
+      await this.atomicWrite("outbox.json", this.outbox);
     });
   }
 
@@ -315,7 +881,7 @@ export class DurableStore {
       const pending = this.outbox.pending.filter((event) => !sameCorrelation(event, correlation));
       if (pending.length === this.outbox.pending.length) return false;
       this.outbox = { version: 1, pending };
-      await atomicWrite(this.path("outbox.json"), this.outbox);
+      await this.atomicWrite("outbox.json", this.outbox);
       return true;
     });
   }
@@ -335,12 +901,130 @@ export class DurableStore {
 
   async setSession(key: string, record: SessionRecord): Promise<void> {
     await this.serialized(async () => {
-      this.sessions = {
+      this.sessions = validateSessionsFile({
         version: 1,
         sessions: { ...this.sessions.sessions, [key]: record },
-      };
-      await atomicWrite(this.path("sessions.json"), this.sessions);
+      });
+      await this.atomicWrite("sessions.json", this.sessions);
     });
+  }
+
+  /**
+   * Rebuild the non-sensitive Kant/OpenCode pointer from durable mappings.
+   * This is deliberately opt-in so no other alias or harness publishes it.
+   */
+  async reconcileCanonicalOpenCodeSession(): Promise<CanonicalOpenCodeSessionPointer> {
+    return this.serialized(async () => {
+      try {
+        // Runtime calls this only from AdapterClient.onLeaseAcquired, replacing
+        // the pre-lease snapshot and removing the load/reconcile TOCTOU.
+        await recoverAtomicArtifacts(
+          this.directory,
+          ["sessions.json", CANONICAL_OPEN_CODE_SESSION_FILE],
+          this.directoryFsync,
+        );
+        this.sessions = await readSessionsSecure(this.path("sessions.json"));
+      } catch (error) {
+        this.canonicalOpenCodeScopeKey = undefined;
+        this.canonicalOpenCodeReconciled = false;
+        if (error instanceof AtomicRecoveryError
+          && error.target === CANONICAL_OPEN_CODE_SESSION_FILE) throw error;
+        await this.atomicWrite(
+          CANONICAL_OPEN_CODE_SESSION_FILE,
+          unavailableCanonicalOpenCodeSession("invalid"),
+        );
+        throw error;
+      }
+      const mappings = this.canonicalOpenCodeMappings();
+      this.canonicalOpenCodeScopeKey = undefined;
+      let pointer: CanonicalOpenCodeSessionPointer;
+      if (mappings.length === 0) {
+        pointer = unavailableCanonicalOpenCodeSession("missing");
+      } else if (mappings.length > 1) {
+        pointer = unavailableCanonicalOpenCodeSession("ambiguous");
+      } else {
+        const mapping = mappings[0]!;
+        if (!isCanonicalOpenCodeScopeKey(mapping.scopeKey)
+          || !isCanonicalOpenCodeSessionId(mapping.sessionId)) {
+          pointer = unavailableCanonicalOpenCodeSession("invalid");
+        } else {
+          this.canonicalOpenCodeScopeKey = mapping.scopeKey;
+          pointer = activeCanonicalOpenCodeSession(mapping.scopeKey, mapping.sessionId);
+        }
+      }
+      await this.atomicWrite(CANONICAL_OPEN_CODE_SESSION_FILE, pointer);
+      this.canonicalOpenCodeReconciled = true;
+      return clone(pointer);
+    });
+  }
+
+  /** Persist the mapping first, then atomically publish/refresh the sticky pointer. */
+  async setCanonicalOpenCodeSession(scopeKey: string, sessionId: string): Promise<boolean> {
+    if (!isCanonicalOpenCodeScopeKey(scopeKey) || !isCanonicalOpenCodeSessionId(sessionId)) return false;
+    return this.serialized(async () => {
+      if (!this.canonicalOpenCodeReconciled) {
+        throw new Error("Canonical OpenCode session must be reconciled before publication");
+      }
+      const key = `opencode:kant:${scopeKey}`;
+      this.sessions = {
+        version: 1,
+        sessions: {
+          ...this.sessions.sessions,
+          [key]: { native_id: sessionId, initialized: true },
+        },
+      };
+      // This fsync+rename completes before the pointer can name the session.
+      await this.atomicWrite("sessions.json", this.sessions);
+
+      if (this.canonicalOpenCodeScopeKey === undefined) {
+        const mappings = this.canonicalOpenCodeMappings();
+        if (mappings.length !== 1) {
+          const reason = mappings.length > 1 ? "ambiguous" : "invalid";
+          await this.atomicWrite(
+            CANONICAL_OPEN_CODE_SESSION_FILE,
+            unavailableCanonicalOpenCodeSession(reason),
+          );
+          return false;
+        }
+        const mapping = mappings[0]!;
+        if (mapping.scopeKey !== scopeKey
+          || !isCanonicalOpenCodeScopeKey(mapping.scopeKey)
+          || !isCanonicalOpenCodeSessionId(mapping.sessionId)) {
+          await this.atomicWrite(
+            CANONICAL_OPEN_CODE_SESSION_FILE,
+            unavailableCanonicalOpenCodeSession("invalid"),
+          );
+          return false;
+        }
+        this.canonicalOpenCodeScopeKey = scopeKey;
+      }
+
+      if (this.canonicalOpenCodeScopeKey !== scopeKey) return false;
+      await this.atomicWrite(
+        CANONICAL_OPEN_CODE_SESSION_FILE,
+        activeCanonicalOpenCodeSession(scopeKey, sessionId),
+      );
+      return true;
+    });
+  }
+
+  private canonicalOpenCodeMappings(): Array<{ scopeKey: string; sessionId: string }> {
+    const prefix = "opencode:kant:";
+    const mappings: Array<{ scopeKey: string; sessionId: string }> = [];
+    for (const [key, record] of Object.entries(this.sessions.sessions)) {
+      const candidate = record as unknown;
+      if (!key.startsWith(prefix)
+        || typeof candidate !== "object"
+        || candidate === null
+        || Array.isArray(candidate)) continue;
+      const fields = candidate as Record<string, unknown>;
+      if (fields.initialized !== true) continue;
+      mappings.push({
+        scopeKey: key.slice(prefix.length),
+        sessionId: typeof fields.native_id === "string" ? fields.native_id : "",
+      });
+    }
+    return mappings;
   }
 }
 

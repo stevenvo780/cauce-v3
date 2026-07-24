@@ -75,7 +75,12 @@ export function fakeRepository(): GatewayRepository {
     topology: vi.fn(async () => ({ tenants: [], acl_edges: [] })),
     listMessages: vi.fn(async () => ({ items: [], next_cursor: null })),
     queueSnapshot: vi.fn(async () => ({ pending: 0, retrying: 0, dead: 0, items: [] })),
-    replayDelivery: vi.fn(async (deliveryId: string) => ({ delivery_id: deliveryId, state: 'retry', replayed: true })),
+    replayDelivery: vi.fn(async (deliveryId: string) => ({
+      delivery_id: ids.deliveryTwo,
+      replayed_from_delivery_id: deliveryId,
+      state: 'pending',
+      replayed: true
+    })),
     listJobs: vi.fn(async () => ({ items: [] })),
     enqueueJob: vi.fn(async () => 'job-1'),
     listAdapters: vi.fn(async () => ({ items: [] })),

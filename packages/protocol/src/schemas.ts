@@ -12,6 +12,24 @@ export const EventIdSchema = z.uuid();
 export const ClaimTokenSchema = z.uuid();
 export const TraceIdSchema = z.string().min(1).max(256);
 export const AckStatusSchema = z.enum(['accepted', 'started', 'done', 'failed']);
+export const AckErrorCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/);
+export const AMBIGUOUS_ACK_ERROR_CODES = [
+  'EXECUTION_TIMEOUT_AMBIGUOUS',
+  'EXECUTION_CANCELLED_AMBIGUOUS',
+  'OUTPUT_LIMIT_AMBIGUOUS',
+  'PROCESS_EXIT_AMBIGUOUS',
+  'OPENCLAW_OUTPUT_LIMIT_AMBIGUOUS',
+  'OPENCLAW_HTTP_AMBIGUOUS',
+  'OPENCLAW_API_AMBIGUOUS',
+  'INTERRUPTED_AMBIGUOUS'
+] as const;
+export const AmbiguousAckErrorCodeSchema = z.enum(AMBIGUOUS_ACK_ERROR_CODES);
+export type AmbiguousAckErrorCode = z.infer<typeof AmbiguousAckErrorCodeSchema>;
+
+export function isAmbiguousAckErrorCode(code: unknown): code is AmbiguousAckErrorCode {
+  return AmbiguousAckErrorCodeSchema.safeParse(code).success;
+}
+
 export const DeliveryStateSchema = z.enum([
   'pending', 'leased', 'accepted', 'started', 'done', 'failed', 'retry', 'dead'
 ]);
@@ -53,6 +71,11 @@ export const RecipientSchema = z.object({
   alias: AliasSchema
 }).strict();
 
+/** Trusted routing inventory derived by the store for the current delivery consumer. */
+export const RoutingTargetSchema = RecipientSchema.extend({
+  online: z.boolean()
+}).strict();
+
 /** Internal authenticated publish command. Identity and origin are populated by the gateway. */
 export const PublishMessageSchema = z.object({
   version: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
@@ -72,11 +95,28 @@ export const PublishMessageSchema = z.object({
   priority: z.number().int().min(-100).max(100).default(0)
 }).strict();
 
+const ReservedInternalMessageTypes = new Set([
+  'agent.message',
+  'agent.response',
+  'agent.fanin'
+]);
+const AuthenticatedPublishBodySchema = z.record(z.string(), z.unknown()).superRefine(
+  (body, context) => {
+    if (typeof body.type === 'string' && ReservedInternalMessageTypes.has(body.type)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['type'],
+        message: 'reserved internal message types cannot be published by clients'
+      });
+    }
+  }
+);
+
 /** Public HTTP/console payload. It deliberately has no actor, tenant, session, channel or origin fields. */
 export const AuthenticatedPublishSchema = z.object({
   room_id: z.string().min(1).max(128),
   recipients: z.array(RecipientSchema).max(100),
-  body: z.record(z.string(), z.unknown()),
+  body: AuthenticatedPublishBodySchema,
   idempotency_key: z.string().min(1).max(200),
   lane: LaneSchema.default('interactive'),
   priority: z.number().int().min(-100).max(100).default(0)
@@ -158,11 +198,20 @@ export const BaseAckSchema = z.object({
   epoch: z.number().int().positive(),
   retryable: z.boolean().default(false),
   error: z.string().max(2_000).optional(),
+  error_code: AckErrorCodeSchema.optional(),
   result: z.record(z.string(), z.unknown()).optional()
-}).strict();
+}).strict().superRefine((ack, context) => {
+  if (ack.retryable && isAmbiguousAckErrorCode(ack.error_code)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['retryable'],
+      message: 'Ambiguous ACK errors must not be retryable'
+    });
+  }
+});
 
 /** Every delivery ACK is fenced by the exact claim and delivery attempt. */
-export const AckSchema = BaseAckSchema.extend({
+export const AckSchema = BaseAckSchema.safeExtend({
   event_id: EventIdSchema,
   claim_token: ClaimTokenSchema,
   attempt: z.number().int().positive()
@@ -190,12 +239,12 @@ export const QueryDeliveriesSchema = z.object({
   limit: z.number().int().min(1).max(100).default(20)
 }).strict();
 
-export const WsAckSchema = AckSchema.extend({
+export const WsAckSchema = AckSchema.safeExtend({
   type: z.literal('ack'),
   delivery_id: DeliveryIdSchema
 }).strict();
 
-export const HttpAckSchema = AckSchema.extend({
+export const HttpAckSchema = AckSchema.safeExtend({
   delivery_id: DeliveryIdSchema
 }).strict();
 
@@ -217,7 +266,8 @@ export const DeliveryEnvelopeSchema = z.object({
   recipient_alias: AliasSchema,
   body: z.record(z.string(), z.unknown()),
   origin: OriginSchema.optional(),
-  authenticated_context: AuthenticatedContextSchema.optional()
+  authenticated_context: AuthenticatedContextSchema.optional(),
+  routing_targets: z.array(RoutingTargetSchema).max(100).optional()
 }).strict();
 
 export const WsInboundSchema = z.discriminatedUnion('type', [HelloSchema, HeartbeatSchema, WsAckSchema]);
@@ -251,6 +301,7 @@ export type ClaimedAck = Ack;
 export type Hello = z.infer<typeof HelloSchema>;
 export type Origin = z.infer<typeof OriginSchema>;
 export type AuthenticatedContext = z.infer<typeof AuthenticatedContextSchema>;
+export type RoutingTarget = z.infer<typeof RoutingTargetSchema>;
 export type Lane = z.infer<typeof LaneSchema>;
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 export type DeliveryEnvelope = z.infer<typeof DeliveryEnvelopeSchema>;

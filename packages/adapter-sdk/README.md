@@ -102,6 +102,61 @@ observed returning 404. A legacy configuration has this shape:
 
 API URLs are restricted to loopback HTTP(S), the exact `/v1/chat/completions` path, no redirects and no URL credentials/query/fragment. The `0600` bearer token reloads per request. A durable native session ID is sent as OpenAI `user`; cancellation and timeout abort HTTP. API mode requires both `api_url` and `token_file` paths.
 
+### Historical OpenCode compatibility for Kant
+
+Kant has used the Codex harness in the live fleet since the 2026-07-23 cutover.
+The OpenCode adapter remains packaged only for rollback compatibility. Its
+historical persistent-server invocation is:
+`opencode run --format json --attach http://127.0.0.1:4097 --dir /workspace/kant`.
+The first delivery omits `--session`, observes the native `sessionID` in OpenCode
+1.17.7 JSONL, and persists it; later deliveries append `--session <observed-id>`.
+The server lifecycle remains external to the SDK. Do not start or probe it on
+the live Codex path; those steps apply only after a successful CAS rollback to
+the historical Kant release.
+
+Only the exact pair `harness=opencode`, `alias=kant` publishes
+`$CAUCE_STATE_DIR/canonical-opencode-session.json`. The version-1 document is
+owner-only (`0600` in the SDK's `0700` state directory) and contains only
+`version`, `state`, `alias`, `harness`, `scope_key`, `session_id`, plus `reason`
+when unavailable. `scope_key` is the existing `auth-v1:` SHA-256 scope token;
+raw prompt, chat, user and message identifiers are never copied into the file.
+An active document requires a native ID matching
+`ses_[A-Za-z0-9_-]{4,124}`. The mapping
+`opencode:kant:<scope_key>` is fsynced and atomically renamed before the pointer
+is atomically published.
+
+At adapter startup, zero initialized mappings produces
+`state=unavailable, reason=missing`; one valid mapping produces `state=active`;
+more than one produces `state=unavailable, reason=ambiguous`. One malformed
+mapping produces `reason=invalid`. A missing or stale pointer is reconstructed
+only from exactly one valid initialized mapping. During one process lifetime the
+first successfully persisted scope is sticky: that scope refreshes the pointer,
+while a later scope can persist its own mapping but cannot replace it. Non-zero
+execution, malformed output, missing native ID or an invalid native ID never
+publishes an active pointer.
+
+For this exact Kant/OpenCode path, the initial `DurableStore.open()` defers
+`sessions.json`; `AdapterClient` acquires the stable-alias lease and only then
+reloads and reconciles it. The reload opens the leaf with
+`O_NOFOLLOW|O_NONBLOCK`, uses descriptor metadata (`fstat`) to require a regular,
+single-link, current-owner `0600` file no larger than 1 MiB, detects concurrent
+changes, rejects duplicate JSON keys and validates an exact bounded schema. A
+missing file is the valid zero-mapping state. Any malformed/schema/permission/
+type/size failure first atomically replaces a stale pointer with
+`unavailable/invalid`, then aborts adapter startup before transport connect.
+
+Every durable rename fsyncs its directory. Only the explicit unsupported
+filesystem codes `EINVAL`, `ENOTSUP` and `EOPNOTSUPP` are tolerated; `EIO` and
+all other errors propagate. Before replacing an existing target, the writer
+creates a separate owner-only `0600` backup in the same directory, copies the
+prior bytes without changing the target's link count, and fsyncs both backup and
+directory before publishing the backup name. A post-rename fsync failure atomically restores that copied backup (or
+removes a first publication) and fsyncs the rollback before the error escapes.
+After a successful target fsync the backup is renamed to a committed marker;
+startup restores an uncommitted backup, keeps the target for a committed marker,
+removes incomplete backup staging and orphan pre-rename temporaries, and rejects
+ambiguous/legacy artifacts.
+
 ### Hermes
 
 Hermes 0.19 has no JSON/stdin one-shot CLI. The default command is the current
@@ -117,6 +172,58 @@ not a provider or model value. Set it in the private runtime environment.
 ## Body mapping
 
 A canonical delivery executes `body.prompt` or `body.text`; positive `body.timeout_ms` controls the harness deadline. `body.session_key` is never trusted or used. Persistent-session scope is namespaced and derived only from authenticated envelope facts: tenant, authenticated actor, origin channel, session and conversation. The normalized prompt includes trusted origin context. Structured output is placed under ACK `result.output`; origin relay remains server-side from the message's authenticated origin.
+
+The normalized prompt also includes the trusted top-level `routing_targets`
+inventory. Models must not recall aliases from conversation history. A request
+for all other agents is represented by one durable message to the reserved
+`@all` target; the store expands it to the online routable peers other than the
+current alias. Every bundled adapter announces `routing_targets_v1` in its
+hello capabilities so a rolling gateway sends the optional inventory only to
+compatible leases.
+
+For internal `agent.message` and `agent.response` deliveries, `reply` is the
+return path to the sender and `messages` contains only genuinely new
+delegations to other targets. The SDK rejects any message addressed back to the
+sender. A successful result without delegations requires a non-empty `reply`;
+`reply:null` remains valid while at least one new message is emitted.
+`agent.fanin` is terminal aggregation: it requires one non-empty synthesized
+reply and forbids another delegation round, including on failed outputs.
+
+Direct delegation targets must be canonical aliases that map to exactly one
+online entry in the trusted inventory; self, sender, offline, unknown and
+cross-tenant ambiguous aliases fail closed. The reserved `@all` target must be
+the only message, is permitted only for non-internal requests, and requires at
+least one online peer. Failed outputs cannot contain messages because the store
+does not materialize them.
+
+Replies and message bodies must contain a Unicode-visible code point: strings
+made only of Unicode `White_Space`, format controls (`Cf`), control characters
+(`Cc`, including NUL), non-spacing marks (`Mn`) or enclosing marks (`Me`) are
+rejected. Plain-text fallback applies the same rule without changing the 64 KiB
+byte limit.
+
+Each relayed message body is limited to 64 KiB of UTF-8, all unexpanded bodies
+in one result are limited to 256 KiB, and one `@all` expansion is limited to
+512 KiB across its online recipients. A result may contain at most 100
+messages.
+
+An `agent.fanin` delivery ignores `body.text` and requires the structured object
+`body.fanin_data_v1` with schema `cauce.agent_fanin_data.v1`. The SDK renders
+the ordered attributed responses with a pure deterministic synthesizer and
+never invokes a provider harness, tool or native session for this delivery
+type. The synthesizer itself has no network or filesystem operations. Nested
+`untrusted_text` is copied as data, never executed or interpreted as
+instructions, every response requires canonical `tenant_id` and `alias`, and
+the final visible reply attributes it as `tenant_id/alias` within a 64 KiB
+UTF-8 bound.
+
+`agent.message`, `agent.response` and `agent.fanin` are reserved internal body
+types. Store is the provenance trust boundary that must reject these types on
+public publish and create them only from durable materialization state. The SDK
+intentionally does not treat body-controlled markers such as
+`fanin_data_v1.trust` as authentication; once Store emits a claimed fan-in, the
+SDK still validates its complete renderable shape before deterministic
+synthesis.
 
 The package tests use executable doubles for all six definitions plus a fake OpenClaw loopback API. They cover success, failure, retries, lifecycle/ACK correlation, stale claims, malformed output, timeout, cancellation, process-tree cleanup, durable recovery/redelivery, origin context, authenticated alias/session isolation, credential permissions/redaction/rotation, WSS enforcement and manifest parity. A real smoke is limited to `openclaw --version`/`--help` when installed; tests never submit a real prompt.
 

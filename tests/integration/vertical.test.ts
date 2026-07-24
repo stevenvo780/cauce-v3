@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeHarness } from '@cauce/adapter-sdk';
-import type { DeliveryEnvelope } from '@cauce/protocol';
+import type { Ack, DeliveryEnvelope } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
@@ -74,7 +74,12 @@ async function publish(input: TestPublish): Promise<{ response: Response; body: 
   return { response, body: await response.json() as Published | Record<string, unknown> };
 }
 
-async function ackAndWait(client: FakeHarness, delivery: DeliveryEnvelope, status: 'accepted' | 'started' | 'done' | 'failed', detail: { retryable?: boolean; error?: string; result?: Record<string, unknown> } = {}) {
+async function ackAndWait(
+  client: FakeHarness,
+  delivery: DeliveryEnvelope,
+  status: Ack['status'],
+  detail: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result'>> = {}
+) {
   client.ack(delivery, status, detail);
   return client.waitFor((frame) => frame.type === 'ack_result' && frame.delivery_id === delivery.delivery_id);
 }
@@ -324,16 +329,30 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
       origin: { adapter: 'telegram', channel: 'dm', conversation_id: 'chat-7', external_message_id: 'tg-9' }
     }));
     const delivery = await consumer.nextDelivery();
-    await ackAndWait(consumer, delivery, 'done', { result: { text: 'respuesta' } });
+    await ackAndWait(consumer, delivery, 'done', {
+      result: {
+        output: {
+          reply: 'respuesta',
+          messages: [],
+          status: 'done',
+          retryable: false,
+          artifacts: []
+        }
+      }
+    });
     const outbox = await repository.listOutbox('origin_relay');
     expect(outbox).toHaveLength(1);
     expect(outbox[0]).toMatchObject({
       adapter: 'dev-auth', message_id: (sent.body as Published).message_id,
       delivery_id: delivery.delivery_id,
-      payload: { outcome: 'done', correlation: {
-        request_id: delivery.request_id, message_id: delivery.message_id,
-        delivery_id: delivery.delivery_id, trace_id: delivery.trace_id
-      } }
+      payload: {
+        outcome: 'done',
+        result: { output: { reply: 'respuesta', messages: [] } },
+        correlation: {
+          request_id: delivery.request_id, message_id: delivery.message_id,
+          delivery_id: delivery.delivery_id, trace_id: delivery.trace_id
+        }
+      }
     });
   });
 
@@ -354,6 +373,149 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
       .toMatchObject({ status: 'dead' });
     const dead = await pool.query<{ delivery_id: string; attempts: number }>('SELECT delivery_id,attempts FROM dead_letters');
     expect(dead.rows).toEqual([{ delivery_id: first.delivery_id, attempts: 3 }]);
+  });
+
+  it('dead-letters an ambiguous execution ACK and permits exactly one manual replay clone', async () => {
+    const consumer = harness('Isa', 'salva', 'ambiguous-consumer');
+    await consumer.connect(wsUrl);
+    const sent = await publish(message());
+    expect(sent.response.status).toBe(202);
+    const original = await consumer.nextDelivery();
+    const eventId = randomUUID();
+    const detail = {
+      event_id: eventId,
+      retryable: false,
+      error: 'execution may have completed before timeout',
+      error_code: 'EXECUTION_TIMEOUT_AMBIGUOUS',
+      result: {
+        output: {
+          reply: 'ambiguous output must not route',
+          messages: [{ to: 'kant', body: 'must never materialize' }],
+          status: 'failed',
+          retryable: false,
+          artifacts: []
+        }
+      }
+    } as const;
+
+    expect(await ackAndWait(consumer, original, 'failed', detail)).toMatchObject({
+      delivery_id: original.delivery_id,
+      status: 'dead',
+      applied: true
+    });
+    expect(await ackAndWait(consumer, original, 'failed', detail)).toMatchObject({
+      delivery_id: original.delivery_id,
+      status: 'dead',
+      applied: false
+    });
+
+    expect((await pool.query<{
+      delivery_id: string;
+      attempts: number;
+      reason: string;
+      payload: Record<string, unknown>;
+    }>(
+      `SELECT delivery_id,attempts,reason,payload
+       FROM dead_letters WHERE delivery_id=$1 AND resolved_at IS NULL`,
+      [original.delivery_id]
+    )).rows[0]).toMatchObject({
+      delivery_id: original.delivery_id,
+      attempts: 1,
+      reason: detail.error,
+      payload: { text: 'vertical slice' }
+    });
+    expect((await pool.query<{ payload: Record<string, unknown>; applied: boolean }>(
+      `SELECT payload,applied FROM delivery_acks WHERE event_id=$1`,
+      [eventId]
+    )).rows[0]).toMatchObject({
+      applied: true,
+      payload: {
+        retryable: false,
+        error: detail.error,
+        error_code: detail.error_code
+      }
+    });
+    expect((await pool.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM audit_events
+       WHERE action='delivery.ack' AND delivery_id=$1 ORDER BY id DESC LIMIT 1`,
+      [original.delivery_id]
+    )).rows[0]?.metadata).toMatchObject({
+      resulting_status: 'dead',
+      error_code: detail.error_code,
+      ambiguous_execution: true
+    });
+    expect((await pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM adapter_outbox
+       WHERE kind='origin_relay' AND delivery_id=$1`,
+      [original.delivery_id]
+    )).rows[0]?.payload).toMatchObject({
+      outcome: 'dead',
+      error_code: detail.error_code
+    });
+    expect((await pool.query(
+      `SELECT 1 FROM agent_output_materializations WHERE source_delivery_id=$1`,
+      [original.delivery_id]
+    )).rowCount).toBe(0);
+    expect((await pool.query(
+      `SELECT 1 FROM messages WHERE trace_id=$1`,
+      [(sent.body as Published).trace_id]
+    )).rowCount).toBe(1);
+
+    const replayUrl = `${httpUrl}/v3/console/deliveries/${original.delivery_id}/replay`;
+    const replayHeaders = {
+      origin: httpUrl,
+      'x-cauce-tenant': 'Steven',
+      'x-cauce-alias': 'kant'
+    };
+    const replayResponses = await Promise.all([
+      fetch(replayUrl, { method: 'POST', headers: replayHeaders }),
+      fetch(replayUrl, { method: 'POST', headers: replayHeaders })
+    ]);
+    expect(replayResponses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const replayResponse = replayResponses.find((response) => response.status === 200);
+    if (!replayResponse) throw new Error('expected one successful manual replay');
+    const replay = await replayResponse.json() as {
+      delivery_id: string;
+      replayed_from_delivery_id: string;
+      state: string;
+      replayed: boolean;
+    };
+    expect(replay).toMatchObject({
+      replayed_from_delivery_id: original.delivery_id,
+      state: 'pending',
+      replayed: true
+    });
+    expect(replay.delivery_id).not.toBe(original.delivery_id);
+    const replayedDelivery = await consumer.nextDelivery();
+    expect(replayedDelivery).toMatchObject({
+      delivery_id: replay.delivery_id,
+      attempt: 1
+    });
+    expect(replayedDelivery.message_id).not.toBe(original.message_id);
+    expect((await pool.query(
+      `SELECT 1 FROM messages WHERE trace_id=$1`,
+      [(sent.body as Published).trace_id]
+    )).rowCount).toBe(2);
+    expect((await pool.query(
+      `SELECT 1 FROM dead_letters WHERE delivery_id=$1 AND resolved_at IS NOT NULL`,
+      [original.delivery_id]
+    )).rowCount).toBe(1);
+  });
+
+  it('rejects an invented ambiguous suffix and keeps the failure out of the DLQ', async () => {
+    const consumer = harness('Isa', 'salva', 'ordinary-failure-consumer');
+    await consumer.connect(wsUrl);
+    await publish(message());
+    const delivery = await consumer.nextDelivery();
+    expect(await ackAndWait(consumer, delivery, 'failed', {
+      retryable: false,
+      error: 'deterministic execution failure',
+      error_code: 'CLIENT_INVENTED_AMBIGUOUS'
+    })).toMatchObject({ status: 'failed', applied: true });
+    expect((await pool.query(
+      `SELECT 1 FROM dead_letters WHERE delivery_id=$1`,
+      [delivery.delivery_id]
+    )).rowCount).toBe(0);
   });
 
   it('claims PostgreSQL jobs with bounded interactive/batch lane fairness', async () => {

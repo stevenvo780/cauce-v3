@@ -83,3 +83,63 @@ test("request.env rejects every secret-like key", async () => {
     );
   }
 });
+
+test("spawn failure remains an unequivocally pre-execution retryable error", async () => {
+  const runner = new SpawnCommandRunner();
+  await assert.rejects(
+    runner.run({
+      command: "__cauce_missing_executable__",
+      args: [],
+      harness: "fake",
+      stdin: "",
+      timeoutMs: 2_000,
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) =>
+      error instanceof ProcessExecutionError
+      && error.code === "SPAWN_FAILED"
+      && error.retryable === true,
+  );
+});
+
+test("an already-aborted signal never spawns a process and remains non-ambiguous", async () => {
+  const events: string[] = [];
+  const runner = new SpawnCommandRunner({
+    logger: (entry) => events.push(entry.event),
+  });
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    runner.run({
+      command: "__must_not_be_spawned__",
+      args: [],
+      harness: "fake",
+      stdin: "",
+      timeoutMs: 2_000,
+      signal: controller.signal,
+    }),
+    (error: unknown) =>
+      error instanceof ProcessExecutionError
+      && error.code === "CANCELLED"
+      && error.retryable === false,
+  );
+  assert.deepEqual(events, []);
+});
+
+test("output limit after spawn is explicitly ambiguous and non-retryable", async () => {
+  const runner = new SpawnCommandRunner({ maxOutputBytes: 16, killGraceMs: 10 });
+  await assert.rejects(
+    runner.run({
+      command: process.execPath,
+      args: ["--eval", "process.stdout.write('x'.repeat(4096));setTimeout(()=>{},1000)"],
+      harness: "fake",
+      stdin: "",
+      timeoutMs: 2_000,
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) =>
+      error instanceof ProcessExecutionError
+      && error.code === "OUTPUT_LIMIT_AMBIGUOUS"
+      && error.retryable === false,
+  );
+});

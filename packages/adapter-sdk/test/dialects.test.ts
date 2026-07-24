@@ -12,12 +12,40 @@ import {
   parseOpenCodeOutput,
 } from "../src/sdk/output-parser.js";
 import { codexDefinition } from "../src/harnesses/codex.js";
+import {
+  OPEN_CODE_KANT_ATTACH_URL,
+  OPEN_CODE_KANT_WORKING_DIRECTORY,
+  openCodeDefinition,
+} from "../src/harnesses/opencode.js";
 
 test("OpenCode 1.17.7 captured JSONL accumulates part.text and observes sessionID", async () => {
   const capture = await readFile(resolve("test/fixtures/dialects/opencode-1.17.7.jsonl"), "utf8");
   const parsed = parseOpenCodeOutput(capture);
   assert.equal(parsed.output.reply, "OpenCode 1.17.7 captured");
   assert.equal(parsed.nativeSessionId, "ses_opencode_1177");
+  assert.equal(openCodeDefinition.sessionStrategy.kind, "observed");
+  assert.deepEqual(
+    [...openCodeDefinition.baseArgs, ...openCodeDefinition.sessionArgs({ resume: false })],
+    [
+      "run",
+      "--format",
+      "json",
+      "--attach",
+      "http://127.0.0.1:4097",
+      "--dir",
+      "/workspace/kant",
+    ],
+  );
+  assert.equal(OPEN_CODE_KANT_ATTACH_URL, "http://127.0.0.1:4097");
+  assert.equal(OPEN_CODE_KANT_WORKING_DIRECTORY, "/workspace/kant");
+  assert.deepEqual(
+    openCodeDefinition.sessionArgs({ sessionId: "stale-generated-id", resume: false }),
+    [],
+  );
+  assert.deepEqual(
+    openCodeDefinition.sessionArgs({ sessionId: parsed.nativeSessionId, resume: true }),
+    ["--session", "ses_opencode_1177"],
+  );
 });
 
 test("Codex 0.144.6 captured JSONL parses agent_message and thread id", async () => {
@@ -102,8 +130,8 @@ test("OpenClaw bounds result/output wrapper traversal", () => {
   assert.throws(() => parseOpenClawOutput(JSON.stringify(nested)), /nesting limit/u);
 });
 
-test("plain fallback rejects empty, oversized and object-like malformed output", () => {
-  assert.throws(() => parseFinalText("  ", "test final"), /empty/u);
+test("plain fallback rejects non-visible, oversized and object-like malformed output", () => {
+  assert.throws(() => parseFinalText("  ", "test final"), /visible text/u);
   assert.throws(() => parseFinalText("x".repeat(MAX_FINAL_TEXT_BYTES + 1), "test final"), /limit/u);
   assert.throws(() => parseFinalText('{"reply":"truncated"', "test final"), /malformed JSON object/u);
   assert.throws(

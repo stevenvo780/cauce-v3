@@ -45,7 +45,11 @@ async function boundedResponse(response: Response, limit: number): Promise<strin
     bytes += next.value.byteLength;
     if (bytes > limit) {
       await reader.cancel().catch(() => undefined);
-      throw new ProcessExecutionError("OUTPUT_LIMIT", "OpenClaw API output exceeded the configured limit", true);
+      throw new ProcessExecutionError(
+        "OPENCLAW_OUTPUT_LIMIT_AMBIGUOUS",
+        "OpenClaw API output exceeded the configured limit after dispatch",
+        false,
+      );
     }
     chunks.push(next.value);
   }
@@ -85,13 +89,14 @@ export class OpenClawApiRunner implements CommandRunner {
     if (request.timeoutMs <= 0 || !Number.isFinite(request.timeoutMs)) {
       throw new ProcessExecutionError("INVALID_TIMEOUT", "Timeout must be positive", false);
     }
-    if (request.signal.aborted) return this.abortedResult(false);
+    if (request.signal.aborted) throw this.cancelledBeforeDispatch();
 
     const token = await readBearerTokenFile(this.tokenFile);
-    if (request.signal.aborted) return this.abortedResult(false);
+    if (request.signal.aborted) throw this.cancelledBeforeDispatch();
     const controller = new AbortController();
     let timedOut = false;
     let cancelled = false;
+    let dispatched = false;
     const onAbort = (): void => {
       cancelled = true;
       controller.abort();
@@ -104,6 +109,7 @@ export class OpenClawApiRunner implements CommandRunner {
     timeout.unref();
 
     try {
+      dispatched = true;
       const response = await fetch(this.endpoint, {
         method: "POST",
         redirect: "error",
@@ -121,8 +127,21 @@ export class OpenClawApiRunner implements CommandRunner {
       });
       const stdout = await boundedResponse(response, this.maxOutputBytes);
       if (!response.ok) {
-        const retryable = response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500;
-        throw new ProcessExecutionError("OPENCLAW_HTTP", "OpenClaw API rejected the request", retryable);
+        if (response.status === 425 || response.status === 429) {
+          throw new ProcessExecutionError(
+            "OPENCLAW_HTTP_PRE_EXECUTION",
+            "OpenClaw API rejected the request before execution",
+            true,
+          );
+        }
+        const ambiguous = response.status === 408 || response.status >= 500;
+        throw new ProcessExecutionError(
+          ambiguous ? "OPENCLAW_HTTP_AMBIGUOUS" : "OPENCLAW_HTTP",
+          ambiguous
+            ? "OpenClaw API failed after request dispatch; execution state is unknown"
+            : "OpenClaw API rejected the request",
+          false,
+        );
       }
       return {
         stdout,
@@ -133,9 +152,16 @@ export class OpenClawApiRunner implements CommandRunner {
         cancelled: false,
       };
     } catch (error) {
-      if (timedOut || cancelled) return this.abortedResult(timedOut);
+      if (timedOut || cancelled) {
+        if (!dispatched) throw this.cancelledBeforeDispatch();
+        return this.abortedResult(timedOut);
+      }
       if (error instanceof ProcessExecutionError) throw error;
-      throw new ProcessExecutionError("OPENCLAW_API_FAILED", "OpenClaw API request failed", true);
+      throw new ProcessExecutionError(
+        "OPENCLAW_API_AMBIGUOUS",
+        "OpenClaw API transport failed after request dispatch; execution state is unknown",
+        false,
+      );
     } finally {
       clearTimeout(timeout);
       request.signal.removeEventListener("abort", onAbort);
@@ -151,5 +177,13 @@ export class OpenClawApiRunner implements CommandRunner {
       timedOut,
       cancelled: !timedOut,
     };
+  }
+
+  private cancelledBeforeDispatch(): ProcessExecutionError {
+    return new ProcessExecutionError(
+      "CANCELLED",
+      "OpenClaw API request was cancelled before dispatch",
+      false,
+    );
   }
 }

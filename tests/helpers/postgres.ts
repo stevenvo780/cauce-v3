@@ -8,6 +8,24 @@ export interface TestDatabase {
   url: string;
 }
 
+async function waitForDatabase(pool: DatabasePool): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    try {
+      await pool.query('SELECT 1');
+      return;
+    } catch (error) {
+      lastError = error;
+      const code = error && typeof error === 'object' && 'code' in error
+        ? String(error.code)
+        : '';
+      if (!['ECONNREFUSED', 'ECONNRESET', '57P03', '08006'].includes(code)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, attempt * 50)));
+    }
+  }
+  throw lastError;
+}
+
 export async function startTestDatabase(): Promise<TestDatabase> {
   const password = randomUUID();
   const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
@@ -33,6 +51,9 @@ export async function startTestDatabase(): Promise<TestDatabase> {
   const url = `postgresql://cauce_test:${encodeURIComponent(password)}@${host}:${port}/cauce_test`;
   const pool = createPool(url);
   try {
+    // A healthy container can become visible a few milliseconds before its
+    // address is routable on an existing shared Docker network.
+    await waitForDatabase(pool);
     await applyMigrations(pool);
     return { container, pool, url };
   } catch (error) {

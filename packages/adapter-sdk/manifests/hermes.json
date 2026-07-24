@@ -27,6 +27,7 @@
     "event_id_correlation": true,
     "claim_token_correlation": true,
     "authenticated_session_scope": true,
+    "routing_targets_v1": true,
     "persistent_sessions": false
   }
 }

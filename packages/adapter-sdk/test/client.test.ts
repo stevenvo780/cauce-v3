@@ -103,7 +103,7 @@ class ScriptedConnector implements ConsumerConnector {
 async function makeClient(
   name: string,
   connector: ConsumerConnector,
-  options: { heartbeatMs?: number; epoch?: number } = {},
+  options: { heartbeatMs?: number; epoch?: number; onLeaseAcquired?: () => Promise<void> } = {},
 ): Promise<{ client: AdapterClient; store: DurableStore; directory: string }> {
   const directory = resolve(root, name);
   await rm(directory, { recursive: true, force: true });
@@ -125,6 +125,7 @@ async function makeClient(
       connector,
       store,
       harness,
+      ...(options.onLeaseAcquired === undefined ? {} : { onLeaseAcquired: options.onLeaseAcquired }),
     }),
   };
 }
@@ -136,6 +137,35 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<v
     await new Promise((resolveWait) => setTimeout(resolveWait, 2));
   }
 }
+
+test("startup initialization runs under the stable-alias lease before connect", async () => {
+  const name = "lease-initialization";
+  const directory = resolve(root, name);
+  const alias = "agent_lease_initialization";
+  const connection = new FakeConnection(1);
+  const order: string[] = [];
+  const connector: ConsumerConnector = {
+    connect: async () => {
+      order.push("connect");
+      return connection;
+    },
+  };
+  const { client } = await makeClient(name, connector, {
+    onLeaseAcquired: async () => {
+      order.push("initialize");
+      await assert.rejects(
+        ConsumerLease.acquire(directory, alias, "competing-instance"),
+        /already owns stable alias/u,
+      );
+    },
+  });
+  const stop = new AbortController();
+  const running = client.run(stop.signal);
+  await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
+  assert.deepEqual(order, ["initialize", "connect"]);
+  stop.abort();
+  await running;
+});
 
 test("connect retries with backoff then sends hello on one consumer connection", async () => {
   const connection = new FakeConnection(1);
@@ -194,6 +224,39 @@ test("pending durable outbox is replayed after hello_ack", async () => {
     assert.equal(ack.event_id, event.event_id);
     assert.equal(ack.attempt, event.attempt);
     assert.equal(ack.claim_token, event.claim_token);
+  }
+  stop.abort();
+  await running;
+});
+
+test("structured adapter errors are propagated on the ACK without changing retryability", async () => {
+  const connection = new FakeConnection(1);
+  const connector = new ScriptedConnector(connection);
+  const context = await makeClient("structured-error-code", connector);
+  const event: DeliveryEvent = {
+    event_id: "50000000-0000-4000-8000-000000000004",
+    delivery_id: "20000000-0000-4000-8000-000000000004",
+    attempt: 1,
+    claim_token: "20000000-0000-4000-8000-000000000004",
+    epoch: 1,
+    phase: "failed",
+    occurred_at: new Date(0).toISOString(),
+    error: {
+      code: "EXECUTION_TIMEOUT_AMBIGUOUS",
+      message: "execution may have completed before timeout",
+      retryable: false,
+    },
+  };
+  await context.store.enqueue(event);
+  const stop = new AbortController();
+  const running = context.client.run(stop.signal);
+  await waitUntil(() => connection.sent.some((frame) => frame.type === "ack"));
+  const ack = connection.sent.find((frame) => frame.type === "ack");
+  assert.equal(ack?.type, "ack");
+  if (ack?.type === "ack") {
+    assert.equal(ack.error_code, event.error?.code);
+    assert.equal(ack.error, event.error?.message);
+    assert.equal(ack.retryable, false);
   }
   stop.abort();
   await running;

@@ -25,7 +25,7 @@
     "test:unit": "pnpm prepare:runtime && vitest run tests/unit && pnpm --filter @cauce/adapter-sdk test && pnpm --filter @cauce/console test",
     "test:services": "pnpm prepare:runtime && pnpm --filter @cauce/gateway test && pnpm --filter @cauce/dispatcher test && pnpm --filter @cauce/shadow-router test && pnpm --filter @cauce/telegram-bridge test",
     "test:gateway-hardening": "pnpm prepare:runtime && vitest run tests/gateway-hardening --testTimeout=120000",
-    "test:store-hardening": "pnpm prepare:runtime && ./scripts/test.sh tests/store-hardening --testTimeout=180000",
+    "test:store-hardening": "pnpm prepare:runtime && ./scripts/test.sh tests/store-hardening packages/store/test --testTimeout=180000",
     "test:integration": "pnpm prepare:runtime && ./scripts/test.sh tests/integration --testTimeout=120000",
     "test:e2e": "pnpm prepare:runtime && pnpm build:adapter && ./scripts/test.sh tests/e2e --testTimeout=180000",
     "test:fleet-release": "pnpm prepare:runtime && pnpm build:adapter && ./scripts/test.sh tests/fleet-release --testTimeout=120000 && python3 ops/scripts/validate-fleet-release-evidence.py",

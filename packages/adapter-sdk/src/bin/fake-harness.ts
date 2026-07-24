@@ -12,7 +12,7 @@ if (prompt.includes("SCENARIO:timeout")) {
   process.stdout.write(
     `${JSON.stringify({
       reply: failed ? "fake failure" : "fake reply",
-      messages: failed ? [] : [{ to: "audit", body: "fake completed" }],
+      messages: [],
       status: failed ? "failed" : "done",
       retryable: prompt.includes("SCENARIO:retry"),
       artifacts: [],

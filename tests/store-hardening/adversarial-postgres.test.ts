@@ -134,6 +134,69 @@ describe('adversarial PostgreSQL store hardening', () => {
     ])).rowCount).toBe(2);
   });
 
+  it('never retries an allowlisted ambiguity even when a direct store caller marks it retryable', async () => {
+    const lease = await repository.acquireLease('Isa', 'salva', 'ambiguous-worker', [], 10_000);
+    const published = await repository.publish(command());
+    const [delivery] = await repository.claimDeliveries(
+      'Isa', 'salva', 'ambiguous-worker', lease.epoch!, 1, 5_000
+    );
+    if (!delivery) throw new Error('expected an ambiguity test delivery');
+    const eventId = randomUUID();
+
+    await expect(repository.ackDelivery(delivery.delivery_id, 'Isa', 'salva', {
+      version: '3.0',
+      status: 'failed',
+      instance_id: 'ambiguous-worker',
+      epoch: lease.epoch!,
+      event_id: eventId,
+      claim_token: delivery.claim_token,
+      attempt: delivery.attempt,
+      retryable: true,
+      error: 'execution may have completed before the transport failed',
+      error_code: 'EXECUTION_TIMEOUT_AMBIGUOUS'
+    })).resolves.toEqual({
+      delivery_id: delivery.delivery_id,
+      status: 'dead',
+      applied: true
+    });
+
+    expect((await pool.query<{
+      status: string; last_ack_rank: number; terminal: boolean;
+    }>(
+      `SELECT status,last_ack_rank,terminal_at IS NOT NULL AS terminal
+       FROM deliveries WHERE id=$1`,
+      [delivery.delivery_id]
+    )).rows[0]).toEqual({ status: 'dead', last_ack_rank: 3, terminal: true });
+    expect((await pool.query<{ status: string; applied: boolean; payload: Record<string, unknown> }>(
+      `SELECT status,applied,payload FROM delivery_acks WHERE event_id=$1`,
+      [eventId]
+    )).rows[0]).toEqual({
+      status: 'failed',
+      applied: true,
+      payload: {
+        retryable: true,
+        error: 'execution may have completed before the transport failed',
+        error_code: 'EXECUTION_TIMEOUT_AMBIGUOUS'
+      }
+    });
+    expect((await pool.query(
+      `SELECT 1 FROM dead_letters WHERE delivery_id=$1 AND resolved_at IS NULL`,
+      [delivery.delivery_id]
+    )).rowCount).toBe(1);
+    expect((await pool.query(
+      `SELECT 1 FROM adapter_outbox WHERE delivery_id=$1 AND idempotency_key LIKE 'wake-retry:%'`,
+      [delivery.delivery_id]
+    )).rowCount).toBe(0);
+    expect((await pool.query(
+      `SELECT 1 FROM audit_events
+       WHERE action='delivery.ack' AND delivery_id=$1
+         AND metadata->>'resulting_status'='dead'
+         AND metadata->>'ambiguous_execution'='true'`,
+      [delivery.delivery_id]
+    )).rowCount).toBe(1);
+    expect(published.delivery_ids).toContain(delivery.delivery_id);
+  });
+
   it('cuts an open runtime lease when route permission is revoked', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'revoked-worker', [], 10_000);
     await repository.publish(command());
