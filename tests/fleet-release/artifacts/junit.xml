@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="cauce-v3-fleet-release" tests="12" failures="0" skipped="0" timestamp="2026-07-22T21:34:16.199Z">
-  <properties><property name="sourceDigest" value="sha256:8ef4a424741917171f43cfcbb984d7474a486dca7c554df59b87dea791ea1db3"/></properties>
+<testsuite name="cauce-v3-fleet-release" tests="12" failures="0" skipped="0" timestamp="2026-07-24T01:07:47.939Z">
+  <properties><property name="sourceDigest" value="sha256:47d21b7353e4543060a645784ae09a75d282048a2352509213699dbc13f5e59b"/></properties>
   <testcase classname="cauce.fleet-release.hermes" name="argos"></testcase>
   <testcase classname="cauce.fleet-release.codex" name="dedalo"></testcase>
   <testcase classname="cauce.fleet-release.openclaw" name="hegel"></testcase>
   <testcase classname="cauce.fleet-release.openclaw" name="janus"></testcase>
   <testcase classname="cauce.fleet-release.openclaw" name="jarvis"></testcase>
-  <testcase classname="cauce.fleet-release.opencode" name="kant"></testcase>
-  <testcase classname="cauce.fleet-release.claude" name="kratos"></testcase>
+  <testcase classname="cauce.fleet-release.codex" name="kant"></testcase>
+  <testcase classname="cauce.fleet-release.codex" name="kratos"></testcase>
   <testcase classname="cauce.fleet-release.openclaw" name="midas"></testcase>
-  <testcase classname="cauce.fleet-release.claude" name="salva"></testcase>
+  <testcase classname="cauce.fleet-release.codex" name="salva"></testcase>
   <testcase classname="cauce.fleet-release.openclaw" name="seneca"></testcase>
-  <testcase classname="cauce.fleet-release.claude" name="socrates"></testcase>
+  <testcase classname="cauce.fleet-release.codex" name="socrates"></testcase>
   <testcase classname="cauce.fleet-release.claude" name="vulcano"></testcase>
 </testsuite>

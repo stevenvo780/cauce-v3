@@ -3,7 +3,7 @@
 This suite reads `ops/manifests/*.yaml` without modifying them and fails unless the fleet is exactly:
 
 - 12 aliases
-- 5 OpenClaw, 4 Claude, 1 Hermes, 1 Codex, 1 OpenCode
+- 5 OpenClaw, 1 Claude, 1 Hermes, 5 Codex, 0 OpenCode
 
 ## Full matrix
 

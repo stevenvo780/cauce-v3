@@ -5,10 +5,10 @@ import path from 'node:path';
 export const EXPECTED_ALIAS_COUNT = 12;
 export const EXPECTED_HARNESS_COUNTS = Object.freeze({
   openclaw: 5,
-  claude: 4,
+  claude: 1,
   hermes: 1,
-  codex: 1,
-  opencode: 1,
+  codex: 5,
+  opencode: 0,
 });
 export const HARNESS_IDS = Object.freeze(Object.keys(EXPECTED_HARNESS_COUNTS));
 

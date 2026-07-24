@@ -39,9 +39,11 @@ await appendFile(path.join(logDirectory, `${alias}.jsonl`), `${JSON.stringify({
   args,
 })}\n`, { mode: 0o600 });
 
+// The non-empty reply exercises the origin relay. A synthetic delegation would
+// need a trusted online target and would create extra fleet deliveries.
 const output = {
   reply: firstAttempt ? `${harness} planned retry` : `${harness} completed`,
-  messages: firstAttempt ? [] : [{ to: 'fleet-release', body: `${alias} relay` }],
+  messages: [],
   status: firstAttempt ? 'failed' : 'done',
   retryable: firstAttempt,
   artifacts: [],
@@ -52,7 +54,7 @@ switch (harness) {
     process.stdout.write(`${JSON.stringify({ output, session_id: `hermes-stateless-${alias}` })}\n`);
     break;
   case 'opencode':
-    process.stdout.write(`${JSON.stringify({ type: 'session', id: `opencode-observed-${alias}` })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: 'session', id: `ses_opencode_observed_${alias}` })}\n`);
     process.stdout.write(`${JSON.stringify({ type: 'result', output })}\n`);
     break;
   case 'claude':

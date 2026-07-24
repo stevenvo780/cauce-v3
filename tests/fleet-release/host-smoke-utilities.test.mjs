@@ -36,14 +36,14 @@ function evidence(host, manifests) {
 }
 
 describe('host-aware harness smoke utilities', () => {
-  it('requires the exact 12-alias 5/4/1/1/1 manifest matrix', async () => {
+  it('requires the exact 12-alias 5/1/1/5/0 manifest matrix', async () => {
     const manifests = await readFleetManifests(manifestDirectory);
     expect(validateFleetMatrix(manifests).counts).toEqual({
       openclaw: 5,
-      claude: 4,
+      claude: 1,
       hermes: 1,
-      codex: 1,
-      opencode: 1,
+      codex: 5,
+      opencode: 0,
     });
     expect(() => validateFleetMatrix(manifests.slice(1))).toThrow(/exactly 12/u);
   });
@@ -105,20 +105,20 @@ describe('host-aware harness smoke utilities', () => {
   it('runs version/help with an isolated environment and records only bounded digests', async () => {
     const directory = await mkdtemp(path.resolve('tests/fleet-release/.host-smoke-test-'));
     temporaryDirectories.push(directory);
-    const executable = path.join(directory, 'opencode-fixture');
+    const executable = path.join(directory, 'codex-fixture');
     await writeFile(executable, '#!/bin/sh\n[ "$1" = "--version" ] && printf "fixture 1\\n" && exit 0\n[ "$1" = "--help" ] && printf "fixture help\\n" && exit 0\nexit 2\n');
     await chmod(executable, 0o700);
     const report = await runHostSmoke({
       host: 'test-host',
       manifestPaths: [path.join(manifestDirectory, 'kant.yaml')],
-      commands: { opencode: executable },
+      commands: { codex: executable },
       searchPath: '/usr/bin:/bin',
       evidenceClass: 'harness-double',
       sourceDigest,
     });
     expect(report.summary).toEqual({ checks: 1, passed: 1, failed: 0 });
     expect(report.checks[0]).toMatchObject({
-      harness: 'opencode',
+      harness: 'codex',
       status: 'passed',
       evidenceClass: 'harness-double',
     });

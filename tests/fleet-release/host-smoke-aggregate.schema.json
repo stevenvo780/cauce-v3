@@ -23,10 +23,10 @@
           "required": ["openclaw", "claude", "hermes", "codex", "opencode"],
           "properties": {
             "openclaw": { "const": 5 },
-            "claude": { "const": 4 },
+            "claude": { "const": 1 },
             "hermes": { "const": 1 },
-            "codex": { "const": 1 },
-            "opencode": { "const": 1 }
+            "codex": { "const": 5 },
+            "opencode": { "const": 0 }
           }
         },
         "openClawEvidenceHosts": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },

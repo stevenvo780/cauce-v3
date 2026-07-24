@@ -131,9 +131,11 @@ async function startOpenClawDouble(): Promise<OpenClawDouble> {
       prior.push({ alias, user, model, invocation });
       invocations.set(alias, prior);
       const failed = invocation === 1;
+      // The reply itself exercises origin relay; no invented delegation target
+      // belongs in this fleet fixture.
       const output = {
         reply: failed ? 'openclaw planned retry' : 'openclaw completed',
-        messages: failed ? [] : [{ to: 'fleet-release', body: `${alias} relay` }],
+        messages: [],
         status: failed ? 'failed' : 'done',
         retryable: failed,
         artifacts: [],
@@ -313,9 +315,8 @@ async function validateSession(manifest: AliasManifest, openClaw: OpenClawDouble
     expect(session).toBeTruthy();
     expect(argumentAfter(second, '--resume')).toBe(session);
   } else if (manifest.harness === 'opencode') {
-    const session = argumentAfter(first, '--session');
-    expect(session).toBeTruthy();
-    expect(argumentAfter(second, '--session')).toBe(session);
+    expect(argumentAfter(first, '--session')).toBeUndefined();
+    expect(argumentAfter(second, '--session')).toBe(`ses_opencode_observed_${manifest.alias}`);
   } else if (manifest.harness === 'codex') {
     expect(second).toContain('resume');
     expect(second).toContain(`codex-native-${manifest.alias}`);
