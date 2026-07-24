@@ -110,7 +110,7 @@ load_config() {
     [[ -n $value ]] || die "container alias config value is empty: $key"
     [[ ! -v "CONFIG[$key]" ]] || die "container alias config key is duplicated: $key"
     case "$key" in
-      BUNDLE_RELEASE|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW) ;;
+      BUNDLE_RELEASE|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW|DEFAULT_TIMEOUT_MS) ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
       OPENCLAW_TRANSPORT|OPENCLAW_API_URL|OPENCLAW_TOKEN_FILE|OPENCLAW_AGENT_TARGET|OPENCLAW_DIST_DIR)
         [[ $harness == openclaw ]] || die "config key is not allowed for $harness: $key"
@@ -136,7 +136,7 @@ validate_relay_url() {
 }
 
 validate_config_values() {
-  local expected_pki="$PKI_ROOT/$alias_name" api_authority api_port
+  local expected_pki="$PKI_ROOT/$alias_name" api_authority api_port default_timeout_ms
   valid_absolute_path "${CONFIG[PKI_DIR]}" || die 'PKI_DIR path is invalid'
   [[ ${CONFIG[BUNDLE_RELEASE]} =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ \
     && ${CONFIG[BUNDLE_RELEASE]} != current ]] || die 'BUNDLE_RELEASE name is invalid'
@@ -168,6 +168,13 @@ validate_config_values() {
   if [[ -v CONFIG[MOUNT_NAME] ]]; then
     [[ ${CONFIG[MOUNT_TYPE]:-} == volume ]] || die 'MOUNT_NAME is only valid together with MOUNT_TYPE=volume'
     [[ ${CONFIG[MOUNT_NAME]} =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || die 'MOUNT_NAME is invalid'
+  fi
+  if [[ -v CONFIG[DEFAULT_TIMEOUT_MS] ]]; then
+    [[ ${CONFIG[DEFAULT_TIMEOUT_MS]} =~ ^[0-9]{1,7}$ ]] \
+      || die 'DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 540000'
+    default_timeout_ms=$((10#${CONFIG[DEFAULT_TIMEOUT_MS]}))
+    (( default_timeout_ms >= 60000 && default_timeout_ms <= 540000 )) \
+      || die 'DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 540000'
   fi
   validate_relay_url "${CONFIG[RELAY_URL]}"
   if [[ $harness == hermes ]]; then
@@ -509,6 +516,7 @@ start_adapter() {
     "CAUCE_CONTROL_DIR=$control_dir"
     "CAUCE_CONTAINER_ID=$container_id" "CAUCE_CONTAINER_GENERATION=$container_generation"
     "CAUCE_RELAY_URL=${CONFIG[RELAY_URL]}"
+    "CAUCE_DEFAULT_TIMEOUT_MS=${CONFIG[DEFAULT_TIMEOUT_MS]:-540000}"
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"
   )
   if [[ $bearer_token_present == true ]]; then environment+=("CAUCE_TOKEN_FILE=$secret_directory/token"); fi

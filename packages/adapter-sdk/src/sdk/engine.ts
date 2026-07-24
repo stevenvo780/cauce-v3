@@ -18,6 +18,9 @@ import { validateDeliveryOutput } from "./output-parser.js";
 
 export type EventPublisher = (event: DeliveryEvent) => Promise<void>;
 
+const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
+const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
+
 export interface AdapterEngineOptions {
   readonly store: DurableStore;
   readonly harness: HarnessAdapter;
@@ -164,79 +167,103 @@ export class AdapterEngine {
       return;
     }
 
+    let executionBudget: ExecutionBudget;
+    try {
+      executionBudget = executionBudgetFor(
+        delivery,
+        timeoutFromBody(delivery.body, this.defaultTimeoutMs),
+        this.clock.now(),
+      );
+    } catch (error) {
+      await this.finishError(accepted.record, asAdapterError(error));
+      return;
+    }
+
     const controller = new AbortController();
     this.controllers.set(delivery.delivery_id, controller);
-    const started = await this.store.transition(delivery.delivery_id, "started", this.clock.now().toISOString(), {
-      retainRequest: true,
-      attempt: delivery.attempt,
-      claimToken: delivery.claim_token,
-    });
-    await this.emit("started", started);
-
-    let output: StructuredOutput;
+    const claimBudgetTimer = setTimeout(() => {
+      controller.abort(new AdapterError(
+        "ACK_DEADLINE_BUDGET_EXHAUSTED",
+        "Delivery claim has too little time remaining for safe harness completion",
+        true,
+      ));
+    }, executionBudget.claimBudgetMs);
+    claimBudgetTimer.unref();
     try {
-      const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
-      const messageType = typeof delivery.body.type === "string"
-        ? delivery.body.type
-        : "request";
-      const requestContext = {
-        self_alias: delivery.recipient_alias,
-        sender_alias: delivery.actor_alias,
-        tenant_id: delivery.tenant_id,
-        room_id: delivery.room_id,
-        channel: delivery.authenticated_context?.channel
-          ?? delivery.origin?.channel
-          ?? "cauce",
-        agent_message: messageType === "agent.message"
-          || messageType === "agent.response"
-          || messageType === "agent.fanin",
-        message_type: messageType,
-        routing_targets: routingTargetsFromDelivery(delivery),
-      };
-      output = messageType === "agent.fanin"
-        ? validateDeliveryOutput(synthesizeFaninOutput(delivery.body), {
-            messageType,
-            senderAlias: requestContext.sender_alias,
-            selfAlias: requestContext.self_alias,
-            routingTargets: requestContext.routing_targets,
-          })
-        : await this.harness.execute({
-            prompt: promptFromBody(delivery.body),
-            context: requestContext,
-            ...session,
-            ...(reservation === undefined ? {} : { sessionReservation: reservation }),
-            ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
-            timeoutMs: timeoutFromBody(delivery.body, this.defaultTimeoutMs),
-            signal: controller.signal,
-          });
-      if (controller.signal.aborted) {
-        throw controller.signal.reason instanceof Error
-          ? controller.signal.reason
-          : new AdapterError("CANCELLED", "Harness execution was cancelled", false);
+      const started = await this.store.transition(delivery.delivery_id, "started", this.clock.now().toISOString(), {
+        retainRequest: true,
+        attempt: delivery.attempt,
+        claimToken: delivery.claim_token,
+      });
+      await this.emit("started", started);
+
+      let output: StructuredOutput;
+      try {
+        const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
+        const messageType = typeof delivery.body.type === "string"
+          ? delivery.body.type
+          : "request";
+        const requestContext = {
+          self_alias: delivery.recipient_alias,
+          sender_alias: delivery.actor_alias,
+          tenant_id: delivery.tenant_id,
+          room_id: delivery.room_id,
+          channel: delivery.authenticated_context?.channel
+            ?? delivery.origin?.channel
+            ?? "cauce",
+          agent_message: messageType === "agent.message"
+            || messageType === "agent.response"
+            || messageType === "agent.fanin",
+          message_type: messageType,
+          routing_targets: routingTargetsFromDelivery(delivery),
+        };
+        output = messageType === "agent.fanin"
+          ? validateDeliveryOutput(synthesizeFaninOutput(delivery.body), {
+              messageType,
+              senderAlias: requestContext.sender_alias,
+              selfAlias: requestContext.self_alias,
+              routingTargets: requestContext.routing_targets,
+            })
+          : await this.harness.execute({
+              prompt: promptFromBody(delivery.body),
+              context: requestContext,
+              ...session,
+              ...(reservation === undefined ? {} : { sessionReservation: reservation }),
+              ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
+              timeoutMs: executionBudget.harnessTimeoutMs,
+              signal: controller.signal,
+            });
+        if (controller.signal.aborted) {
+          throw controller.signal.reason instanceof Error
+            ? controller.signal.reason
+            : new AdapterError("CANCELLED", "Harness execution was cancelled", false);
+        }
+      } catch (error) {
+        const executionError = asAdapterError(error);
+        const preserveAmbiguousExecution = !executionError.retryable
+          && isAmbiguousAckErrorCode(executionError.code);
+        const normalized = this.fenced.has(delivery.delivery_id) && !preserveAmbiguousExecution
+          ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
+          : executionError;
+        await this.finishError(started, normalized);
+        return;
       }
-    } catch (error) {
-      const executionError = asAdapterError(error);
-      const preserveAmbiguousExecution = !executionError.retryable
-        && isAmbiguousAckErrorCode(executionError.code);
-      const normalized = this.fenced.has(delivery.delivery_id) && !preserveAmbiguousExecution
-        ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
-        : executionError;
-      await this.finishError(started, normalized);
-      return;
-    }
 
-    if (output.status === "failed") {
-      const error = new AdapterError("HARNESS_REPORTED_FAILURE", output.reply ?? "Harness reported failure", output.retryable);
-      await this.finishError(started, error, output);
-      return;
-    }
+      if (output.status === "failed") {
+        const error = new AdapterError("HARNESS_REPORTED_FAILURE", output.reply ?? "Harness reported failure", output.retryable);
+        await this.finishError(started, error, output);
+        return;
+      }
 
-    const done = await this.store.transition(delivery.delivery_id, "done", this.clock.now().toISOString(), {
-      output,
-      attempt: delivery.attempt,
-      claimToken: delivery.claim_token,
-    });
-    await this.emit("done", done, { output });
+      const done = await this.store.transition(delivery.delivery_id, "done", this.clock.now().toISOString(), {
+        output,
+        attempt: delivery.attempt,
+        claimToken: delivery.claim_token,
+      });
+      await this.emit("done", done, { output });
+    } finally {
+      clearTimeout(claimBudgetTimer);
+    }
   }
 
   private async finishError(
@@ -340,6 +367,56 @@ function sessionFromDelivery(delivery: Delivery): { sessionKey?: string } {
 function timeoutFromBody(body: Record<string, unknown>, fallback: number): number {
   const value = body.timeout_ms;
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+interface ExecutionBudget {
+  readonly harnessTimeoutMs: number;
+  readonly claimBudgetMs: number;
+}
+
+/**
+ * Reserve enough of the immutable ACK claim for process termination, durable
+ * state and the terminal ACK. The body can shorten execution, never extend it
+ * beyond the delivery's authenticated deadline.
+ */
+function executionBudgetFor(
+  delivery: Delivery,
+  requestedTimeoutMs: number,
+  now: Date,
+): ExecutionBudget {
+  const deadlineMs = Date.parse(delivery.ack_deadline_at);
+  const nowMs = now.getTime();
+  if (
+    !Number.isSafeInteger(requestedTimeoutMs)
+    || requestedTimeoutMs <= 0
+    || !Number.isFinite(deadlineMs)
+    || !Number.isFinite(nowMs)
+  ) {
+    throw new AdapterError(
+      "ACK_DEADLINE_INVALID",
+      "Delivery execution budget is invalid",
+      false,
+    );
+  }
+
+  const remainingMs = Math.floor(deadlineMs - nowMs);
+  const completionMarginMs = Math.min(
+    MAX_ACK_COMPLETION_MARGIN_MS,
+    Math.max(MIN_ACK_COMPLETION_MARGIN_MS, Math.floor(remainingMs / 10)),
+  );
+  const claimBudgetMs = remainingMs - completionMarginMs;
+  if (claimBudgetMs <= 0) {
+    throw new AdapterError(
+      "ACK_DEADLINE_BUDGET_EXHAUSTED",
+      "Delivery claim has too little time remaining for safe harness completion",
+      true,
+    );
+  }
+
+  return {
+    harnessTimeoutMs: Math.min(requestedTimeoutMs, claimBudgetMs),
+    claimBudgetMs,
+  };
 }
 
 function routingTargetsFromDelivery(delivery: Delivery): readonly {

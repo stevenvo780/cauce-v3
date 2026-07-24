@@ -192,15 +192,6 @@ async function waitForMetadataPhase(pathname, phase, timeoutMs = 5000) {
   throw new Error(`timed out waiting for lifecycle phase ${phase}`);
 }
 
-async function waitForLog(predicate, timeoutMs = 5000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    if (predicate(await records())) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("timed out waiting for fake Docker invocation");
-}
-
 async function waitForLogOrExit(child, predicate, timeoutMs = 15000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -455,9 +446,41 @@ try {
   assert(final.argv.includes("--control-dir") && final.argv.includes("/run/cauce-v3-supervisor/kant"));
   assert(final.argv.includes("--runtime-uid") && final.argv.includes("--runtime-gid"));
   assert(final.argv.includes("CAUCE_CONTROL_DIR=/run/cauce-v3-supervisor/kant"));
+  assert(final.argv.includes("CAUCE_DEFAULT_TIMEOUT_MS=540000"),
+    "an omitted DEFAULT_TIMEOUT_MS must reserve one minute of the 10-minute ACK claim");
   result = runSupervisor("stop", "kant", statePath);
   assert.equal(result.status, 0, `mTLS-only kant stop must succeed: ${result.stderr}`);
   process.stdout.write("mTLS-only kant: start and stop passed without bearer token\n");
+
+  // Adapter execution defaults to ten minutes, accepts a bounded per-alias override, and rejects
+  // every malformed/ambiguous value before Docker. The effective value is explicitly carried
+  // through the clean `env -i` boundary so no host environment can silently select another timeout.
+  await writeConfig("kant", [], { DEFAULT_TIMEOUT_MS: "480000" });
+  await clearLog();
+  result = runSupervisor("start", "kant", await dockerState("kant"));
+  assert.equal(result.status, 0, `valid DEFAULT_TIMEOUT_MS override must start: ${result.stderr}`);
+  const timeoutOverrideFinal = (await records())
+    .find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
+  assert(timeoutOverrideFinal?.argv.includes("CAUCE_DEFAULT_TIMEOUT_MS=480000"),
+    "a valid DEFAULT_TIMEOUT_MS override must be exported verbatim");
+
+  for (const [name, extra, override, expected] of [
+    ["empty", [], { DEFAULT_TIMEOUT_MS: "" }, /config value is empty: DEFAULT_TIMEOUT_MS/u],
+    ["non-numeric", [], { DEFAULT_TIMEOUT_MS: "480000ms" }, /DEFAULT_TIMEOUT_MS must be a decimal integer/u],
+    ["below minimum", [], { DEFAULT_TIMEOUT_MS: "59999" }, /DEFAULT_TIMEOUT_MS must be a decimal integer/u],
+    ["above maximum", [], { DEFAULT_TIMEOUT_MS: "540001" }, /DEFAULT_TIMEOUT_MS must be a decimal integer/u],
+    ["duplicate", ["DEFAULT_TIMEOUT_MS=420000"], { DEFAULT_TIMEOUT_MS: "480000" },
+      /config key is duplicated: DEFAULT_TIMEOUT_MS/u],
+  ]) {
+    await writeConfig("kant", extra, override);
+    await clearLog();
+    result = runSupervisor("start", "kant", await dockerState("kant"));
+    assert.notEqual(result.status, 0, `${name} DEFAULT_TIMEOUT_MS must fail`);
+    assert.match(result.stderr, expected);
+    assert.equal((await records()).length, 0, `${name} DEFAULT_TIMEOUT_MS must fail before Docker`);
+  }
+  await writeConfig("kant");
+  process.stdout.write("default timeout: 540000 default and 480000 override exported; invalid values rejected before Docker\n");
 
   // ---- Bundle layout regression guard: mini-monorepo vs legacy root layout. ----
   // The real production bundle ships adapters at packages/adapter-sdk/dist/src/bin/<harness>.js;

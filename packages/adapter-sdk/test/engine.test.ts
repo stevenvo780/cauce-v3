@@ -792,6 +792,160 @@ test("ambiguous execution timeout is terminal and a higher attempt is never run 
   assert.equal(store.getDelivery(first.delivery_id)?.state, "failed");
 });
 
+test("body timeout is capped below the authenticated ACK deadline", async () => {
+  const runner = new ControlledRunner();
+  const context = await setup("engine-ack-budget-cap", runner);
+  const ackDeadlineMs = Date.now() + 600_000;
+  const input: Delivery = {
+    ...delivery("ack-budget-cap"),
+    ack_deadline_at: new Date(ackDeadlineMs).toISOString(),
+    body: { prompt: "bounded work", timeout_ms: 1_800_000 },
+  };
+
+  await context.engine.handleDelivery(input);
+
+  const timeoutMs = runner.requests[0]?.timeoutMs;
+  assert.ok(timeoutMs !== undefined);
+  assert.ok(timeoutMs <= 570_000, "the 10-minute claim must keep a 30-second completion margin");
+  assert.ok(timeoutMs >= 568_000, "normal test overhead must not materially shrink the budget");
+  assert.ok(Date.now() + timeoutMs < ackDeadlineMs);
+  assert.equal(context.events.at(-1)?.phase, "done");
+});
+
+test("an exhausted ACK budget fails before starting a harness", async () => {
+  const runner = new ControlledRunner();
+  const context = await setup("engine-ack-budget-exhausted", runner);
+  const input: Delivery = {
+    ...delivery("ack-budget-exhausted"),
+    ack_deadline_at: new Date(Date.now() + 500).toISOString(),
+    body: { prompt: "must not start", timeout_ms: 60_000 },
+  };
+
+  await context.engine.handleDelivery(input);
+
+  assert.equal(runner.calls, 0);
+  assert.deepEqual(
+    context.events.map((event) => event.phase),
+    ["accepted", "failed"],
+  );
+  assert.equal(context.events.at(-1)?.error?.code, "ACK_DEADLINE_BUDGET_EXHAUSTED");
+  assert.equal(context.events.at(-1)?.error?.retryable, true);
+});
+
+test("claim-budget timers are cleared across persistence and publication faults", async () => {
+  const originalAbortController = globalThis.AbortController;
+  let budgetAborts = 0;
+  class TrackingAbortController extends originalAbortController {
+    override abort(reason?: unknown): void {
+      if (
+        reason instanceof Error &&
+        "code" in reason &&
+        reason.code === "ACK_DEADLINE_BUDGET_EXHAUSTED"
+      ) {
+        budgetAborts += 1;
+      }
+      super.abort(reason);
+    }
+  }
+  Object.defineProperty(globalThis, "AbortController", {
+    configurable: true,
+    writable: true,
+    value: TrackingAbortController,
+  });
+
+  try {
+    {
+      const context = await setup("engine-ack-budget-transition-fault");
+      const transition = context.store.transition.bind(context.store);
+      Object.defineProperty(context.store, "transition", {
+        configurable: true,
+        value: async (...args: Parameters<DurableStore["transition"]>) => {
+          if (args[1] === "started") throw new Error("injected transition failure");
+          return transition(...args);
+        },
+      });
+      await assert.rejects(
+        context.engine.handleDelivery({
+          ...delivery("ack-budget-transition-fault"),
+          ack_deadline_at: new Date(Date.now() + 1_300).toISOString(),
+        }),
+        /injected transition failure/u,
+      );
+    }
+
+    for (const phase of ["started", "done"] as const) {
+      const store = await storeFor(`engine-ack-budget-${phase}-publish-fault`);
+      const runner = new ControlledRunner();
+      const engine = new AdapterEngine({
+        store,
+        harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
+        publish: async (event) => {
+          if (event.phase === phase) {
+            throw new Error(`injected ${phase} publication failure`);
+          }
+        },
+      });
+      await engine.activateEpoch(1);
+      await assert.rejects(
+        engine.handleDelivery({
+          ...delivery(`ack-budget-${phase}-publish-fault`),
+          ack_deadline_at: new Date(Date.now() + 1_300).toISOString(),
+        }),
+        new RegExp(`injected ${phase} publication failure`, "u"),
+      );
+    }
+
+    // The referenced wait lets any leaked unref'ed claim timers fire.
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 400));
+    assert.equal(budgetAborts, 0);
+  } finally {
+    Object.defineProperty(globalThis, "AbortController", {
+      configurable: true,
+      writable: true,
+      value: originalAbortController,
+    });
+  }
+});
+
+test("the ACK budget also fences time spent waiting for a serialized session", async () => {
+  const context = await setupSessionConcurrency("engine-session-ack-budget");
+  const firstInput = delivery("session-ack-budget-a");
+  const secondInput: Delivery = {
+    ...delivery("session-ack-budget-b"),
+    ack_deadline_at: new Date(Date.now() + 1_200).toISOString(),
+    body: { prompt: "queued turn", timeout_ms: 60_000 },
+  };
+
+  const first = context.engine.handleDelivery(firstInput);
+  await context.runner.waitForCalls(1);
+  const second = context.engine.handleDelivery(secondInput);
+  // A real adapter has a live transport socket. Keep the isolated unit process
+  // referenced as well so the engine's defensive unref'ed deadline can fire.
+  const transportKeepAlive = setInterval(() => undefined, 100);
+  try {
+    await second;
+  } finally {
+    clearInterval(transportKeepAlive);
+  }
+
+  assert.equal(context.runner.requests.length, 1);
+  assert.equal(
+    context.store.getDelivery(secondInput.delivery_id)?.error?.code,
+    "ACK_DEADLINE_BUDGET_EXHAUSTED",
+  );
+  assert.equal(
+    context.store.getDelivery(secondInput.delivery_id)?.error?.retryable,
+    true,
+  );
+  assert.ok(
+    Date.parse(context.events.at(-1)?.occurred_at ?? "") <
+      Date.parse(secondInput.ack_deadline_at),
+  );
+
+  context.runner.releaseNext();
+  await first;
+});
+
 test("advancing the fencing epoch preserves post-dispatch cancellation ambiguity", async () => {
   const runner = new ControlledRunner();
   runner.blockUntilAbort = true;

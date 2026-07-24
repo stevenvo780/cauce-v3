@@ -41,6 +41,10 @@ El certificado del overlay debe tener SAN `postgres`; password/cert/key/CA se mo
 - Exposición host usa `CAUCE_PRIVATE_BIND_IP` (default `127.0.0.1`); un balanceador público es un cambio externo explícito.
 - Adapters no corren en el compose: se generan por alias, requieren WSS y secretos por PATH. Seguir `alias-cutover.md`.
 - Gateway y dispatcher reciben el mismo `CAUCE_ACK_DEADLINE_MS` (default productivo explícito: `600000`). `ACK_TIMEOUT_MS` debe ser igual o mayor; ambos procesos fallan al arrancar ante valores no enteros/positivos o si el dispatcher pudiera reintentar antes del deadline. Los ACK `started` no renuevan el deadline fijo del claim.
+- Los adapters limitan `body.timeout_ms` por el `ack_deadline_at` autenticado y
+  reservan margen para terminar el proceso y publicar el ACK. En los
+  supervisores de contenedor, `DEFAULT_TIMEOUT_MS` usa `540000` y no admite más
+  de `540000` mientras el claim productivo siga en `600000`.
 
 ### Relay, Telegram, shadow y observabilidad
 
