@@ -1,10 +1,83 @@
 # Handoff operativo — renovación durable del harness y ejercicio Prometeo
 
-Última actualización verificada: `2026-07-24T19:02:32Z`.
+Última actualización verificada: `2026-07-25T01:40:00Z`.
 
 Este documento es el punto de reanudación para otro harness. No asumir que una
 configuración escrita ya fue aplicada a los containers: contrastar siempre
 configuración deseada, imagen efectiva y estado de base de datos.
+
+## 0. ESTADO ACTUAL — el rollout de §7 y §8 YA SE EJECUTÓ
+
+Todo lo que las secciones 5 a 8 describen como pendiente está aplicado. Esas
+secciones quedan como registro histórico del intento con `44f4b41`; los digests,
+rutas y comandos que citan ya no son los vigentes. Lo vigente es esto:
+
+```text
+commit desplegado:      842d42bdd4027402a70d9aceeab32a11ee4f02c4
+sourceDigest:           sha256:5a6cd37595f124b3cf9d4049e3ed55e28c21f855da083ae23dbb3ba97ec1b898
+operationsDigest system:sha256:4ca79f32cb87c29087ff82aa75bbf5a68a4a9cf0aaafa563b247b9a9fbb69679
+
+runtime:  127.0.0.1:5000/cauce-v3-runtime@sha256:212684f1fd374262cbddb9b1035ec9f90c537f22f149ac47b53e18b87f3d1687
+console:  127.0.0.1:5000/cauce-v3-console@sha256:6567a7ffbd426e65c4f20a8013115fc6754b2f9615dfcd93cb2e7ed490b17c05
+
+ops rootless: ~/.local/share/cauce-v3/releases/ops-842d42bdd402  (rollback: ops-480a611f94b0)
+bundle:       bus-v3-20260725-renewal-842d42bdd402
+bundle sha:   sha256:b99891879c5bf736b886e12de91b48d8e04647813d167cf98186eda626946451
+```
+
+Verificado tras el rollout:
+
+- `release gate passed` con el candidato exacto, y preflight del override Telegram
+  con los tres composes rindiendo el mismo runtime.
+- gateway, dispatcher, outbox-metrics, telegram-bridge y console corren los
+  digests de arriba, `healthy`, `RestartCount=0`.
+- El split-brain de runtime se cerró: el hash del código de aplicación bajo `/app`
+  es idéntico en gateway y telegram-bridge.
+- Los 12 alias corren el bundle nuevo y **los 12 anuncian
+  `renewable_delivery_claims_v1`**, con exactamente una lease cada uno.
+- `CAUCE_DEFAULT_TIMEOUT_MS=86400000` efectivo dentro de los containers. Antes era
+  540000 en cuatro alias y 300000 en los otros ocho.
+
+Respaldos de este rollout, que no se deben sobrescribir:
+
+```text
+/opt/_archive/cauce-v3-releases/2026-07-25/pre-842d42bdd4027402a70d9aceeab32a11ee4f02c4
+/etc/cauce-v3/prod.env.pre-842d42bdd4027402a70d9aceeab32a11ee4f02c4
+/etc/cauce-v3/compose-overrides/telegram-bridge.active.yaml.pre-842d42bdd4027402a70d9aceeab32a11ee4f02c4
+/opt/cauce-v3.previous-842d42bdd4027402a70d9aceeab32a11ee4f02c4
+```
+
+### 0.1 Qué reparó el gate
+
+`9d36aa7` y `842d42b` corrigen dos fixtures que no podían expresar un contexto sin
+privilegios cuando el gate corre como root, sin relajar ningún rechazo productivo
+de UID/GID 0:
+
+- `container-supervisor.test.mjs` pasaba la identidad del propio proceso de test
+  como identidad de runtime del adapter; bajo root era 0 y `child_credentials()`
+  salía 78 antes del remapeo a 70.
+- `container-cutover.test.mjs` expresaba «lock dir del sistema inutilizable» con
+  modo `0555`, que root ignora por `CAP_DAC_OVERRIDE`, así que nunca tomaba el
+  fallback a `XDG_RUNTIME_DIR`.
+
+Ambas suites pasan ahora como usuario normal y como root real.
+
+### 0.2 Pendiente conocido, no bloqueante
+
+- `test-compose-authentic` es **flaky en el host de release**: sobre 4 corridas
+  fallaron dos casos distintos, siempre por timeout. El host tiene 2 CPUs y
+  `load average` ~5 con 21 containers. Cada caso pasó en al menos dos corridas y
+  la corrida usada como evidencia fue 6/6. Subir los timeouts de
+  `ops/harness/authentic-runner.mjs` o correr el gate en un host con más CPU.
+- El bundle sólo es reproducible entre máquinas si se extrae con `umask 000` y
+  `--same-permissions`: `bundle-digest` cubre los modos, y el umask 027 de kratos
+  deja los directorios en `550` en vez de `555`.
+- `pnpm deploy --prod --legacy` deja un symlink que escapa del bundle
+  (`node_modules/.pnpm/node_modules/@cauce/adapter-sdk` → el workspace). Hay que
+  borrarlo antes de calcular el digest o `bundle-digest` sale 78.
+- La consola no autentica al usuario: `apps/console/nginx.conf` no tiene
+  `ssl_verify_client`, así que cualquiera con ruta de red a `100.64.0.6:8444`
+  opera con el certificado de cliente de la propia consola.
 
 ## 1. Objetivo y flujo que debe demostrarse
 
