@@ -1,6 +1,52 @@
 # Handoff operativo — renovación durable del harness y ejercicio Prometeo
 
-Última actualización verificada: `2026-07-25T01:40:00Z`.
+Última actualización verificada: `2026-07-25T08:50:00Z`.
+
+> **AVISO — este documento quedó desactualizado dos veces.** Lo que la §0 declaraba
+> desplegado (`842d42b`) fue superado por `9dfb79d` y luego por `7d4c154`, sin que nadie
+> actualizara el texto. No confíes en el commit que diga: contrastá siempre contra
+> `docker inspect` de los containers vivos. El estado vigente está en la §0.0.
+
+## 0.0 ESTADO VIGENTE — 2026-07-25T08:50Z
+
+```text
+commit desplegado:  7d4c154f168f5910d8f08658409026c4f873d842
+sourceDigest:       sha256:ea660e0c4f7afc11826ee525a2cbb13b616cc61c850bc1d3572dde929f5050b2
+operationsDigest:   sha256:4ca79f32cb87c29087ff82aa75bbf5a68a4a9cf0aaafa563b247b9a9fbb69679
+
+runtime:  127.0.0.1:5000/cauce-v3-runtime@sha256:5072c97c93924756af384400b96e52982cb97a8625e84875894a3eaae93f5dd7
+console:  127.0.0.1:5000/cauce-v3-console@sha256:31557f3bf4f2d71cc677d3d21c4653b07f777b5eb431265fd3213b979c3a19c6
+
+rollback: /opt/cauce-v3.previous-7d4c154f168f5910d8f08658409026c4f873d842
+          /etc/cauce-v3/prod.env.pre-7d4c154f168f5910d8f08658409026c4f873d842
+          /etc/cauce-v3/compose-overrides/telegram-bridge.active.yaml.pre-7d4c154f...
+          /opt/_archive/cauce-v3-releases/2026-07-25/pre-7d4c154f...
+respaldo DB: /opt/_archive/cauce-v3-db-backups/cauce-20260725T083044Z.dump
+```
+
+Aporta visibilidad de cadena (migración 008) y egreso proactivo (009). `release gate
+passed` con el candidato exacto, preflight del override Telegram con los tres composes
+rindiendo el mismo runtime, migrador `exit=0`, los cinco servicios `healthy` con
+`RestartCount=0`, 12 leases de agente y 12 del bridge vivas.
+
+**El egreso proactivo está inerte por diseño y eso es correcto:** `allow_notify` nace en
+`false` para todo rol y `egress_destinations` está vacía. Ningún alias puede notificar
+hasta que exista una fila para su `(tenant, alias)`. Además `egress_contacts` **no tiene
+backfill**: se llena con cada ingreso autenticado de aquí en adelante, así que un destino
+con `require_prior_contact` se deniega hasta que esa persona vuelva a escribir. Sólo un
+destino de **grupo** puede eximir el contacto previo.
+
+**Sin verificar en producción:** el enrutado de grupos por mención, desplegado en
+`9dfb79d`. Al 2026-07-25 **todas** las conversaciones registradas son `private` — ningún
+bot recibió jamás un mensaje de grupo. Hace falta que un humano agregue un bot a un grupo
+real y escriba mencionándolo.
+
+**El gate depende de un host de 2 CPUs y eso lo vuelve una tirada de dados.** Ver
+`ops/harness/authentic-runner.mjs`: el presupuesto de frame subió a 60 s en `7d4c154`
+porque con 20 s fallaba al azar una u otra prueba de inyección de fallos. Verificado con
+una corrida de control del candidato entonces vivo en producción, que perdió 2 de 6 igual.
+Aun con 60 s hizo falta un segundo intento. Correrlo en una máquina con más CPU sigue
+siendo lo recomendado.
 
 Este documento es el punto de reanudación para otro harness. No asumir que una
 configuración escrita ya fue aplicada a los containers: contrastar siempre
