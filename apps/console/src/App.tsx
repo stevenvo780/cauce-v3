@@ -18,6 +18,7 @@ import {
 import { useEffect, useState, useSyncExternalStore, type ComponentType } from 'react';
 import { useApi } from './api/context';
 import type { ConsoleAuthState } from './api/types';
+import { FleetAgentDetailPage } from './features/fleet/FleetAgentDetailPage';
 import { FleetPage } from './features/fleet/FleetPage';
 import { TopologyPage } from './features/topology/TopologyPage';
 import { MessagesPage } from './features/messages/MessagesPage';
@@ -51,9 +52,31 @@ const routes: Route[] = [
   { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, component: TerminalPage },
 ];
 
-function currentRoute(): string {
-  const value = window.location.hash.replace(/^#\/?/, '').split('/')[0];
-  return routes.some((route) => route.id === value) ? value : 'fleet';
+interface RouteMatch {
+  id: string;
+  /** Segmentos posteriores al id de ruta, ej. `#/fleet/:tenant/:alias` → ['tenant', 'alias']. */
+  params: string[];
+}
+
+/** Snapshot crudo para useSyncExternalStore: debe ser un primitivo estable, no un objeto recién creado. */
+function currentPath(): string {
+  return window.location.hash.replace(/^#\/?/, '');
+}
+
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+function matchRoute(path: string): RouteMatch {
+  const segments = path.split('/').filter(Boolean).map(decodeSegment);
+  const id = segments[0] ?? '';
+  return routes.some((route) => route.id === id)
+    ? { id, params: segments.slice(1) }
+    : { id: 'fleet', params: [] };
 }
 
 function subscribe(callback: () => void): () => void {
@@ -93,9 +116,14 @@ function AuthStatus() {
 }
 
 export function App() {
-  const routeId = useSyncExternalStore(subscribe, currentRoute, () => 'fleet');
+  const path = useSyncExternalStore(subscribe, currentPath, () => 'fleet');
+  const { id: routeId, params } = matchRoute(path);
   const route = routes.find((candidate) => candidate.id === routeId) ?? routes[0];
   const Page = route.component;
+  // Único sub-detalle soportado hoy: #/fleet/:tenant/:alias reutiliza el workspace de terminal, no FleetPage.
+  const fleetAgentTarget = routeId === 'fleet' && params.length >= 2
+    ? { tenantId: params[0], alias: params[1] }
+    : undefined;
 
   return (
     <div className="app-shell">
@@ -134,7 +162,9 @@ export function App() {
           </div>
         </header>
         <main id="main-content" tabIndex={-1}>
-          <Page />
+          {fleetAgentTarget
+            ? <FleetAgentDetailPage tenantId={fleetAgentTarget.tenantId} alias={fleetAgentTarget.alias} />
+            : <Page />}
         </main>
       </div>
     </div>

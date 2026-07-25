@@ -8,6 +8,8 @@ import {
   Time, Unknown
 } from '../../components/ui';
 import { permissionState } from '../../lib';
+import { describeConfigError, type ConfigChangeOutcome } from './config-change';
+import { SpaceWizard } from './SpaceWizard';
 
 const templates: Record<ConfigResource, ConfigMutation> = {
   tenant: { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },
@@ -44,9 +46,17 @@ export function ConfigPage() {
   const [action, setAction] = useState<ConfigAction>('create');
   const [editor, setEditor] = useState(() => mutationText('acl_edge', 'create'));
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string>();
+  const [notice, setNotice] = useState<{ text: string; tone: 'success' | 'error' }>();
   const [preview, setPreview] = useState<string>();
+  const [chainedRevision, setChainedRevision] = useState<number>();
   const canWrite = permissionState(access.data, 'config.write') === 'allowed';
+  const snapshotRevision = typeof config.data?.revision === 'number' ? config.data.revision : undefined;
+  // El wizard encadena mutaciones y la recarga del snapshot es asíncrona: hasta que ésta alcanza
+  // la revisión que devolvió el último apply, esa revisión es la única esperada verdadera.
+  const expectedRevision = chainedRevision !== undefined
+    && (snapshotRevision === undefined || snapshotRevision < chainedRevision)
+    ? chainedRevision
+    : snapshotRevision;
   const groups = useMemo(() => [
     ['Tenants', config.data?.tenants], ['Rooms', config.data?.rooms],
     ['Memberships / agents', config.data?.memberships], ['Directed ACL', config.data?.acl_edges],
@@ -60,30 +70,54 @@ export function ConfigPage() {
     setPreview(undefined);
   }
 
-  async function submit(event: SyntheticEvent, dryRun: boolean) {
-    event.preventDefault();
-    if (!canWrite) {
-      setNotice('Cambio bloqueado: permiso RBAC DENY o UNKNOWN.');
-      return;
-    }
+  /** Único camino de escritura: lo comparten el editor crudo y el wizard guiado. */
+  async function change(mutation: ConfigMutation, dryRun: boolean): Promise<ConfigChangeOutcome> {
+    if (!canWrite) return { ok: false, conflict: false, message: 'Cambio bloqueado: permiso RBAC DENY o UNKNOWN.' };
     setBusy(true);
-    setNotice(undefined);
     try {
-      const result = await api.changeConfiguration(parseMutation(editor), {
+      const result = await api.changeConfiguration(mutation, {
         dryRun,
-        ...(typeof config.data?.revision === 'number' ? { expectedRevision: config.data.revision } : {}),
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
       });
-      if (dryRun) setPreview(JSON.stringify(result, null, 2));
-      else {
-        setPreview(undefined);
-        setNotice(`Cambio atómico aplicado en revisión ${result.revision ?? 'UNKNOWN'}: ${result.summary ?? 'UNKNOWN'}`);
+      if (!dryRun) {
+        if (typeof result.revision === 'number') setChainedRevision(result.revision);
         config.reload();
       }
+      return { ok: true, result };
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Cambio rechazado: UNKNOWN');
+      const described = describeConfigError(error, 'Cambio rechazado: UNKNOWN');
+      if (described.conflict) {
+        setChainedRevision(undefined);
+        config.reload();
+      }
+      return { ok: false, ...described };
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submit(event: SyntheticEvent, dryRun: boolean) {
+    event.preventDefault();
+    setNotice(undefined);
+    let mutation: ConfigMutation;
+    try {
+      mutation = parseMutation(editor);
+    } catch (error) {
+      setNotice({ text: error instanceof Error ? error.message : 'Mutación rechazada: UNKNOWN', tone: 'error' });
+      return;
+    }
+    const outcome = await change(mutation, dryRun);
+    if (!outcome.ok) {
+      if (outcome.conflict) setPreview(undefined);
+      setNotice({ text: outcome.message, tone: 'error' });
+      return;
+    }
+    if (dryRun) {
+      setPreview(JSON.stringify(outcome.result, null, 2));
+      return;
+    }
+    setPreview(undefined);
+    setNotice({ text: `Cambio atómico aplicado en revisión ${outcome.result.revision ?? 'UNKNOWN'}: ${outcome.result.summary ?? 'UNKNOWN'}`, tone: 'success' });
   }
 
   async function rollback(revisionId: string, dryRun: boolean) {
@@ -93,16 +127,23 @@ export function ConfigPage() {
     try {
       const result = await api.rollbackConfiguration(revisionId, {
         dryRun,
-        ...(typeof config.data?.revision === 'number' ? { expectedRevision: config.data.revision } : {}),
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
       });
       if (dryRun) setPreview(JSON.stringify(result, null, 2));
       else {
         setPreview(undefined);
-        setNotice(`Rollback atómico aplicado: revisión ${result.revision ?? 'UNKNOWN'}`);
+        if (typeof result.revision === 'number') setChainedRevision(result.revision);
+        setNotice({ text: `Rollback atómico aplicado: revisión ${result.revision ?? 'UNKNOWN'}`, tone: 'success' });
         config.reload();
       }
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Rollback rechazado: UNKNOWN');
+      const described = describeConfigError(error, 'Rollback rechazado: UNKNOWN');
+      if (described.conflict) {
+        setChainedRevision(undefined);
+        setPreview(undefined);
+        config.reload();
+      }
+      setNotice({ text: described.message, tone: 'error' });
     } finally {
       setBusy(false);
     }
@@ -114,7 +155,8 @@ export function ConfigPage() {
   return <>
     <PageHeader eyebrow="Atomic control plane" title="Configuración & rollback" description="CRUD server-side con preview transaccional, revisión optimista, default-deny y auditoría durable." actions={<RefreshButton onClick={config.reload} loading={config.loading} />} />
     <PermissionBadge access={access.data} permission="config.write" />
-    <Panel title="Mutation editor" subtitle={`Revisión esperada: ${config.data?.revision ?? 'UNKNOWN'}`}>
+    <SpaceWizard canWrite={canWrite} busy={busy} onChange={change} />
+    <Panel title="Mutation editor" subtitle={`Revisión esperada: ${expectedRevision ?? 'UNKNOWN'}`}>
       <form className="config-form" onSubmit={(event) => void submit(event, false)}>
         <label>Resource<select value={resource} onChange={(event) => selectTemplate(event.target.value as ConfigResource, action)}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
         <label>Action<select value={action} onChange={(event) => selectTemplate(resource, event.target.value as ConfigAction)}><option>create</option><option>update</option><option>delete</option></select></label>
@@ -125,7 +167,7 @@ export function ConfigPage() {
         </div>
       </form>
       {preview ? <pre className="config-preview" aria-label="Resultado de preview">{preview}</pre> : null}
-      {notice ? <p className="notice" role="status">{notice}</p> : null}
+      {notice ? <p className={notice.tone === 'error' ? 'notice error' : 'notice success'} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p> : null}
     </Panel>
     <div className="config-grid">
       {groups.map(([title, rows]) => <Panel key={title} title={title} subtitle="Datos efectivos del servidor">
