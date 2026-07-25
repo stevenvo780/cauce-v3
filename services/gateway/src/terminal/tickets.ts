@@ -1,0 +1,175 @@
+import { createHash, createHmac, hkdfSync, timingSafeEqual } from 'node:crypto';
+import { isTerminalMode, type TerminalMode } from './types.js';
+
+/**
+ * PTY attach ticket. Frozen wire contract shared by three implementations: this gateway,
+ * terminal-relay (TypeScript) and the pty-agent (Python). Golden vectors live in
+ * terminal.tickets.test.ts and in tests/terminal-pty; do not change salt, info, key order
+ * or the base64url alphabet without regenerating every implementation.
+ *
+ *   k_alias = HKDF-SHA256(ikm=master, salt='cauce-v3/pty-ticket/v1', info='pty:<tenant>:<alias>', L=32)
+ *   ticket  = 'v1.' + b64url(payload) + '.' + b64url(HMAC-SHA256(k_alias, ascii('v1.' + b64url(payload))))
+ *
+ * Per-alias derivation is what makes a ticket useless against another agent: the pty-agent
+ * inside the container only ever holds its own k_alias.
+ */
+
+export const TICKET_VERSION = 'v1';
+export const TICKET_HKDF_SALT = 'cauce-v3/pty-ticket/v1';
+
+export interface TicketTarget {
+  readonly tenant: string;
+  readonly alias: string;
+  readonly container: string;
+  readonly generation: string;
+  readonly image: string;
+  readonly uid: number;
+  readonly user: string;
+}
+
+export interface TicketPayload {
+  readonly v: 1;
+  readonly sid: string;
+  readonly op: string;
+  readonly sub: string;
+  readonly tgt: TicketTarget;
+  readonly mode: TerminalMode;
+  readonly iat: number;
+  readonly exp: number;
+}
+
+export type TicketFailure = 'malformed' | 'signature_invalid' | 'expired';
+
+export class TicketError extends Error {
+  constructor(readonly reason: TicketFailure, message: string) {
+    super(message);
+    this.name = 'TicketError';
+  }
+}
+
+function base64url(value: Buffer): string {
+  return value.toString('base64').replace(/=+$/, '').replaceAll('+', '-').replaceAll('/', '_');
+}
+
+function fromBase64url(value: string): Buffer {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new TicketError('malformed', 'ticket segment is not base64url');
+  return Buffer.from(value.replaceAll('-', '+').replaceAll('_', '/'), 'base64');
+}
+
+/** Per-alias key. The master secret never leaves the gateway process. */
+export function deriveAliasKey(master: Buffer, tenantId: string, alias: string): Buffer {
+  if (master.byteLength !== 32) throw new Error('terminal ticket master key must be 32 bytes');
+  return Buffer.from(hkdfSync(
+    'sha256',
+    master,
+    Buffer.from(TICKET_HKDF_SALT, 'utf8'),
+    Buffer.from(`pty:${tenantId}:${alias}`, 'utf8'),
+    32
+  ));
+}
+
+/**
+ * Canonical serialization. The key order below IS the contract: rebuilding the literal here
+ * means a caller cannot break interoperability by assembling the payload in another order.
+ */
+function canonicalPayload(payload: TicketPayload): string {
+  return JSON.stringify({
+    v: 1,
+    sid: payload.sid,
+    op: payload.op,
+    sub: payload.sub,
+    tgt: {
+      tenant: payload.tgt.tenant,
+      alias: payload.tgt.alias,
+      container: payload.tgt.container,
+      generation: payload.tgt.generation,
+      image: payload.tgt.image,
+      uid: payload.tgt.uid,
+      user: payload.tgt.user
+    },
+    mode: payload.mode,
+    iat: payload.iat,
+    exp: payload.exp
+  });
+}
+
+export function issueTicket(payload: TicketPayload, key: Buffer): string {
+  const encoded = base64url(Buffer.from(canonicalPayload(payload), 'utf8'));
+  const signingInput = `${TICKET_VERSION}.${encoded}`;
+  const signature = createHmac('sha256', key).update(Buffer.from(signingInput, 'ascii')).digest();
+  return `${signingInput}.${base64url(signature)}`;
+}
+
+function decodePayload(value: Buffer): TicketPayload {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(value.toString('utf8'));
+  } catch {
+    throw new TicketError('malformed', 'ticket payload is not JSON');
+  }
+  if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) {
+    throw new TicketError('malformed', 'ticket payload is not an object');
+  }
+  const record = decoded as Record<string, unknown>;
+  const target = record.tgt;
+  if (record.v !== 1 || typeof record.sid !== 'string' || typeof record.op !== 'string' ||
+      typeof record.sub !== 'string' || !isTerminalMode(record.mode) ||
+      typeof record.iat !== 'number' || typeof record.exp !== 'number' ||
+      target === null || typeof target !== 'object' || Array.isArray(target)) {
+    throw new TicketError('malformed', 'ticket payload claims are invalid');
+  }
+  const tgt = target as Record<string, unknown>;
+  if (typeof tgt.tenant !== 'string' || typeof tgt.alias !== 'string' || typeof tgt.container !== 'string' ||
+      typeof tgt.generation !== 'string' || typeof tgt.image !== 'string' ||
+      typeof tgt.uid !== 'number' || typeof tgt.user !== 'string') {
+    throw new TicketError('malformed', 'ticket target claims are invalid');
+  }
+  return {
+    v: 1,
+    sid: record.sid,
+    op: record.op,
+    sub: record.sub,
+    tgt: {
+      tenant: tgt.tenant, alias: tgt.alias, container: tgt.container, generation: tgt.generation,
+      image: tgt.image, uid: tgt.uid, user: tgt.user
+    },
+    mode: record.mode,
+    iat: record.iat,
+    exp: record.exp
+  };
+}
+
+/**
+ * Verifies signature first, then expiry. `nowSeconds` is injectable so the tests can pin the
+ * clock; production callers pass nothing and get the wall clock.
+ */
+export function parseAndVerify(
+  ticket: string,
+  key: Buffer,
+  nowSeconds: number = Math.floor(Date.now() / 1_000)
+): TicketPayload {
+  const parts = ticket.split('.');
+  if (parts.length !== 3 || parts[0] !== TICKET_VERSION) {
+    throw new TicketError('malformed', 'ticket is not a v1 ticket');
+  }
+  const [, encodedPayload, encodedSignature] = parts as [string, string, string];
+  const signature = fromBase64url(encodedSignature);
+  const expected = createHmac('sha256', key)
+    .update(Buffer.from(`${TICKET_VERSION}.${encodedPayload}`, 'ascii')).digest();
+  if (signature.byteLength !== expected.byteLength || !timingSafeEqual(signature, expected)) {
+    throw new TicketError('signature_invalid', 'ticket signature does not verify for this alias key');
+  }
+  const payload = decodePayload(fromBase64url(encodedPayload));
+  if (payload.exp <= nowSeconds) throw new TicketError('expired', 'ticket is expired');
+  return payload;
+}
+
+/** Full digest of the emitted ticket; only this is stored, never the ticket. */
+export function ticketSha256(ticket: string): Buffer {
+  return createHash('sha256').update(ticket, 'utf8').digest();
+}
+
+/** Truncated digest for logs and audit metadata. */
+export function ticketDigest(ticket: string): string {
+  return ticketSha256(ticket).toString('hex').slice(0, 16);
+}
