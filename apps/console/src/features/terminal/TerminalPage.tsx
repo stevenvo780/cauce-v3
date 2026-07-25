@@ -4,9 +4,11 @@ import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Badge, PageHeader } from '../../components/ui';
 import { permissionState } from '../../lib';
-import { buildFleetAgents } from './fleet';
+import { listTerminalTargets } from './api';
+import { buildFleetAgents, countOnlinePtyTargets } from './fleet';
 import { OperatorWorkspace } from './OperatorWorkspace';
 import { ultimateTerminalGate } from './plugin';
+import './terminal-panel.css';
 
 function useRefreshInterval(reload: () => void, milliseconds: number, loading: boolean) {
   useEffect(() => {
@@ -23,9 +25,11 @@ export function TerminalPage() {
   const adapters = useResource('ultimate-terminal-adapters', () => api.listAdapters());
   const access = useResource('ultimate-terminal-access', () => api.getConsoleAccess());
   const capability = useResource('ultimate-terminal-capability', () => api.getTerminalCapability());
+  const targets = useResource('ultimate-terminal-targets', () => listTerminalTargets());
 
   useRefreshInterval(status.reload, 5_000, status.loading);
   useRefreshInterval(adapters.reload, 15_000, adapters.loading);
+  useRefreshInterval(targets.reload, 15_000, targets.loading);
   useRefreshInterval(topology.reload, 30_000, topology.loading);
   useRefreshInterval(access.reload, 30_000, access.loading);
   useRefreshInterval(capability.reload, 30_000, capability.loading);
@@ -35,8 +39,10 @@ export function TerminalPage() {
   const healthyAdapters = (adapters.data?.items ?? []).filter((adapter) => adapter.state === 'available').length;
   const verifiedAccess = access.error ? undefined : access.data;
   const verifiedCapability = capability.error ? undefined : capability.data;
+  const verifiedTargets = targets.error ? undefined : targets.data;
   const connectState = permissionState(verifiedAccess, 'ultimate-terminal.connect');
   const ptyEnabled = ultimateTerminalGate(verifiedCapability, verifiedAccess).enabled;
+  const ptyOnline = countOnlinePtyTargets(verifiedTargets?.items);
   const fleetLoading = (status.loading && !status.data) || (topology.loading && !topology.data);
   const fleetError = status.error ?? topology.error;
   const fleetLabel = fleetLoading
@@ -50,6 +56,7 @@ export function TerminalPage() {
     adapters.error ? `Adapters: ${adapters.error.message}` : undefined,
     access.error ? `RBAC: ${access.error.message}` : undefined,
     capability.error ? `PTY: ${capability.error.message}` : undefined,
+    targets.error ? `Targets PTY: ${targets.error.message}` : undefined,
   ].filter((value): value is string => Boolean(value));
 
   function refreshAll() {
@@ -58,6 +65,7 @@ export function TerminalPage() {
     adapters.reload();
     access.reload();
     capability.reload();
+    targets.reload();
   }
 
   return (
@@ -74,6 +82,7 @@ export function TerminalPage() {
         <article><span className="overview-icon"><RadioTower size={17} aria-hidden="true" /></span><div><small>Adapters available</small><strong>{adapters.data?.items ? `${healthyAdapters} / ${adapters.data.items.length}` : 'UNKNOWN'}</strong></div><Badge tone={healthyAdapters ? 'info' : 'unknown'}>SERVER</Badge></article>
         <article><span className="overview-icon"><ShieldCheck size={17} aria-hidden="true" /></span><div><small>Terminal access</small><strong>{connectState.toUpperCase()}</strong></div><Badge tone={connectState === 'allowed' ? 'online' : connectState === 'denied' ? 'danger' : 'unknown'}>RBAC</Badge></article>
         <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Interactive channel</small><strong>{ptyEnabled ? 'PTY + FEED' : 'DURABLE FEED'}</strong></div><Badge tone={ptyEnabled ? 'online' : 'info'}>CLIENT</Badge></article>
+        <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Alias con PTY online</small><strong>{ptyOnline === undefined ? 'UNKNOWN' : `${ptyOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={ptyOnline ? 'online' : ptyOnline === 0 ? 'warning' : 'unknown'}>TARGETS</Badge></article>
       </div>
 
       {failures.length ? (
@@ -90,6 +99,7 @@ export function TerminalPage() {
         access={verifiedAccess}
         topologyAccess={topology.error ? undefined : topology.data}
         terminalCapability={verifiedCapability}
+        terminalTargets={verifiedTargets}
         fleetLoading={fleetLoading}
         fleetError={fleetError}
       />

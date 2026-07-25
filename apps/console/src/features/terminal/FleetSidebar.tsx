@@ -1,8 +1,9 @@
-import { Bot, ChevronRight, Filter, Radio, Search, Wifi, WifiOff } from 'lucide-react';
+import { Bot, ChevronRight, Filter, Radio, Search, TerminalSquare, Wifi, WifiOff } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { AdapterView } from '../../api/types';
 import { Badge, EmptyState, LoadingState, Time } from '../../components/ui';
-import { adapterSummary, filterFleetAgents, type FleetAgent } from './fleet';
+import type { TerminalTargetsSnapshot } from './api';
+import { adapterSummary, filterFleetAgents, resolveTerminalTarget, TERMINAL_ACCESS_LABELS, type FleetAgent } from './fleet';
 
 interface FleetSidebarProps {
   agents: FleetAgent[];
@@ -11,13 +12,15 @@ interface FleetSidebarProps {
   onOpenAgent: (agent: FleetAgent) => void;
   loading: boolean;
   error?: Error;
+  /** Optional: absent inventory renders every alias as an explicit UNKNOWN, never as a spinner. */
+  targets?: TerminalTargetsSnapshot;
 }
 
 function agentTone(state: FleetAgent['leaseState']): 'online' | 'offline' | 'unknown' {
   return state === 'online' ? 'online' : state === 'expired' ? 'offline' : 'unknown';
 }
 
-export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loading, error }: FleetSidebarProps) {
+export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loading, error, targets }: FleetSidebarProps) {
   const [tenantId, setTenantId] = useState('all');
   const [roomId, setRoomId] = useState('all');
   const [query, setQuery] = useState('');
@@ -81,6 +84,7 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
             : visible.length === 0 ? <EmptyState>No hay agentes que coincidan con los filtros.</EmptyState> : visible.map((agent) => {
           const expiry = agent.presence?.lease_expires_at ?? agent.presence?.lease_until;
           const capabilities = agent.presence?.capabilities ?? [];
+          const pty = resolveTerminalTarget(targets?.items, agent);
           return (
             <button
               className="terminal-agent"
@@ -89,7 +93,7 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
               key={agent.id}
               type="button"
               onClick={() => onOpenAgent(agent)}
-              aria-label={`Abrir sesión con ${agent.alias}, ${agent.tenantId}, ${agent.leaseState}`}
+              aria-label={`Abrir sesión con ${agent.alias}, ${agent.tenantId}, ${agent.leaseState}, PTY: ${TERMINAL_ACCESS_LABELS[pty.status]}`}
             >
               <span className={`agent-presence ${agent.leaseState}`} aria-hidden="true">
                 {agent.leaseState === 'online' ? <Wifi size={15} /> : <WifiOff size={15} />}
@@ -101,6 +105,9 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
                   <span>epoch {agent.presence?.epoch ?? 'UNKNOWN'}</span>
                 </span>
                 <span className="agent-expiry">Lease <Time value={expiry} /></span>
+                <span className="agent-pty-state" data-status={pty.status} title={pty.reason}>
+                  <TerminalSquare size={12} aria-hidden="true" /> {TERMINAL_ACCESS_LABELS[pty.status]}
+                </span>
                 <span className="agent-capabilities">
                   {capabilities.length ? capabilities.slice(0, 2).map((capability) => <span className="chip" key={capability}>{capability}</span>) : <span className="unknown">CAPS UNKNOWN</span>}
                   {capabilities.length > 2 ? <span className="chip">+{capabilities.length - 2}</span> : null}

@@ -142,3 +142,33 @@ export function transcriptForSession(page: MessagePage | undefined, session: Ope
 export function sessionDeliveries(items: TranscriptItem[]): DeliveryView[] {
   return items.flatMap((item) => item.delivery ? [item.delivery] : []);
 }
+
+/** A PTY grant is worthless without a written justification: it is what lands in the audit row. */
+export const PTY_REASON_MIN_LENGTH = 8;
+export const PTY_REASON_MAX_LENGTH = 280;
+
+/** Returns the operator-facing problem with a justification, or undefined when it is acceptable. */
+export function ptyReasonProblem(reason: string): string | undefined {
+  const text = reason.trim();
+  if (text.length < PTY_REASON_MIN_LENGTH) {
+    return `El motivo necesita al menos ${PTY_REASON_MIN_LENGTH} caracteres (lleva ${text.length}).`;
+  }
+  if (text.length > PTY_REASON_MAX_LENGTH) {
+    return `El motivo no puede pasar de ${PTY_REASON_MAX_LENGTH} caracteres (lleva ${text.length}).`;
+  }
+  return undefined;
+}
+
+/** Whole seconds left on the grant. UNKNOWN expiry yields undefined, never a fake countdown. */
+export function ptySecondsLeft(expiresAt: string | null | undefined, now = Date.now()): number | undefined {
+  if (typeof expiresAt !== 'string' || !expiresAt.trim()) return undefined;
+  const expiry = Date.parse(expiresAt);
+  if (Number.isNaN(expiry)) return undefined;
+  return Math.max(0, Math.floor((expiry - now) / 1000));
+}
+
+export function formatCountdown(seconds: number | undefined): string {
+  if (seconds === undefined) return 'UNKNOWN';
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+}

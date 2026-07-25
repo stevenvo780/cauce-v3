@@ -1,0 +1,92 @@
+/*
+ * Terminal panel styles. Everything new for the PTY channel lives here, never in styles.css,
+ * and reuses the tokens and the shell of the existing panel so it stays one single app.
+ */
+
+/* Off-screen home for terminals whose panel is hidden. Kept rendered so the node survives. */
+.pty-detached-holder { position: absolute; top: 0; left: -10000px; width: 900px; height: 480px; overflow: hidden; visibility: hidden; pointer-events: none; }
+
+/* The overview grew a fifth card (PTY targets). */
+.ultimate-terminal-page .terminal-overview { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
+/* Per-agent PTY state in the fleet list: always a word, never a bare grey dot. */
+.agent-pty-state { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--faint); font-size: .55rem; font-weight: 700; letter-spacing: .04em; }
+.agent-pty-state[data-status="allowed"] { border-color: #2b685b; background: var(--mint-dim); color: var(--mint); }
+.agent-pty-state[data-status="denied"] { border-color: #6d3038; background: var(--red-dim); color: var(--red); }
+.agent-pty-state[data-status="offline"] { border-color: #725622; background: var(--amber-dim); color: var(--amber); }
+.agent-pty-state[data-status="not_installed"], .agent-pty-state[data-status="unknown"] { border-color: var(--border-strong); background: var(--surface-2); }
+
+/* Channel authority, spelled out above the session. The motive is visible, not only a title. */
+.terminal-channel-state { display: flex; align-items: center; gap: 7px; margin: 0; padding: 7px 12px; border-bottom: 1px solid var(--border); background: #0b1320; color: var(--muted); font-size: .62rem; }
+.terminal-channel-state strong { flex: none; padding: 2px 7px; border-radius: 999px; background: var(--surface-3); color: var(--terminal-soft); font-size: .56rem; letter-spacing: .06em; text-transform: uppercase; }
+.terminal-channel-state span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.terminal-channel-state[data-status="allowed"] { color: var(--mint); }
+.terminal-channel-state[data-status="allowed"] strong { background: var(--mint-dim); color: var(--mint); }
+.terminal-channel-state[data-status="denied"], .terminal-channel-state[data-status="blocked"] { color: var(--red); }
+.terminal-channel-state[data-status="denied"] strong, .terminal-channel-state[data-status="blocked"] strong { background: var(--red-dim); color: var(--red); }
+.terminal-channel-state[data-status="offline"] { color: var(--amber); }
+.terminal-channel-state[data-status="offline"] strong { background: var(--amber-dim); color: var(--amber); }
+
+/* Permanent bar over the terminal: alias, container, user, mode, countdown, hard close. */
+.pty-session-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 8px; padding: 8px 11px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--terminal-raised); color: var(--muted); font-size: .63rem; }
+.pty-session-bar > span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.pty-bar-alias { color: var(--mint); }
+.pty-bar-alias strong { color: var(--text); font-size: .72rem; }
+.pty-bar-countdown strong { color: var(--terminal-soft); font-variant-numeric: tabular-nums; }
+.pty-bar-countdown[data-expiring="true"] { color: var(--amber); }
+.pty-bar-countdown[data-expiring="true"] strong { color: var(--amber); }
+.pty-bar-close { margin-left: auto; }
+
+/* Channel surface. */
+.pty-mount { min-height: 120px; }
+.pty-render-error { margin: 0; padding: 7px 12px; border-bottom: 1px solid var(--border); background: var(--amber-dim); color: var(--amber); font-size: .62rem; }
+.pty-notices { display: grid; gap: 3px; margin: 0; padding: 7px 12px; border-bottom: 1px solid var(--border); list-style: none; font-size: .62rem; }
+.pty-notices li { color: var(--muted); }
+.pty-notices li[data-level="warn"] { color: var(--amber); }
+.pty-notices li[data-level="error"] { color: var(--red); }
+.pty-reconnect-note { margin: 0; padding: 9px 12px; border-top: 1px solid var(--border); color: var(--faint); font-size: .61rem; line-height: 1.55; }
+.pty-status button { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Consent dialog: the blast radius has to be read before a shell exists. */
+.pty-dialog-backdrop { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(3 6 12 / 72%); }
+.pty-dialog { width: min(560px, 100%); max-height: 90vh; overflow-y: auto; padding: 20px; border: 1px solid var(--border-strong); border-radius: 15px; background: var(--surface); box-shadow: var(--shadow); }
+.pty-dialog header { margin-bottom: 14px; }
+.pty-dialog h2 { margin: 3px 0 0; font-size: 1.1rem; }
+.pty-dialog-facts { display: grid; gap: 7px; margin: 0 0 13px; }
+.pty-dialog-facts div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px; padding-bottom: 7px; border-bottom: 1px solid var(--border); }
+.pty-dialog-facts dt { display: inline-flex; align-items: center; gap: 5px; color: var(--faint); font-size: .62rem; }
+.pty-dialog-facts dd { margin: 0; overflow-wrap: anywhere; font-size: .68rem; }
+.pty-dialog-shared { display: flex; align-items: start; gap: 8px; margin: 0 0 13px; padding: 11px 12px; border: 1px solid #6d3038; border-radius: 10px; background: var(--red-dim); color: var(--red); font-size: .7rem; line-height: 1.55; }
+.pty-dialog-shared strong { color: var(--text); }
+.pty-dialog-solo { margin: 0 0 13px; color: var(--faint); font-size: .66rem; }
+.pty-dialog-reason { display: block; color: var(--faint); font-size: .6rem; letter-spacing: .05em; text-transform: uppercase; }
+.pty-dialog-reason textarea { min-height: 78px; width: 100%; margin-top: 6px; padding: 9px 10px; border: 1px solid #2a4565; border-radius: 9px; background: #070d16; color: var(--text); font-family: "SFMono-Regular", Consolas, monospace; font-size: .74rem; text-transform: none; letter-spacing: normal; resize: vertical; }
+.pty-dialog-reason textarea:focus { border-color: var(--blue); }
+.pty-dialog-hint { margin: 6px 0 0; color: var(--faint); font-size: .61rem; }
+.pty-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+@media (max-width: 1100px) {
+  .ultimate-terminal-page .terminal-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .ultimate-terminal-page .terminal-overview { grid-template-columns: 1fr 1fr; }
+  .terminal-channel-state { align-items: start; flex-direction: column; gap: 4px; }
+  .pty-session-bar { font-size: .6rem; }
+  .pty-bar-close { width: 100%; margin-left: 0; justify-content: center; }
+  .pty-dialog-facts div { grid-template-columns: 1fr; gap: 2px; }
+}
+
+@media (max-width: 460px) {
+  .ultimate-terminal-page .terminal-overview { grid-template-columns: 1fr; }
+  .pty-dialog { padding: 15px; }
+  .pty-dialog-actions { flex-direction: column-reverse; }
+  .pty-dialog-actions .button { width: 100%; justify-content: center; }
+}
+
+@media (prefers-color-scheme: light) {
+  .terminal-channel-state, .pty-session-bar, .pty-dialog { background: #f8fafc; }
+  .agent-pty-state[data-status="not_installed"], .agent-pty-state[data-status="unknown"] { background: #eef2f7; }
+  .pty-dialog-reason textarea { background: #ffffff; }
+  .pty-dialog-backdrop { background: rgb(23 35 51 / 45%); }
+}

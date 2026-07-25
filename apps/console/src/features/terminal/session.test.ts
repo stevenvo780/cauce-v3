@@ -1,5 +1,12 @@
 import type { FleetAgent } from './fleet';
-import { operatorRouteForAgent, transcriptForSession, type OperatorSession } from './session';
+import {
+  formatCountdown,
+  operatorRouteForAgent,
+  ptyReasonProblem,
+  ptySecondsLeft,
+  transcriptForSession,
+  type OperatorSession,
+} from './session';
 
 function agent(tenantId: string, alias: string): FleetAgent {
   return {
@@ -65,4 +72,24 @@ it('projects a recipient transcript across server-authorized rooms', () => {
     ['input', 'input'],
     ['output', 'output'],
   ]);
+});
+
+it('demands a hand-written justification between 8 and 280 characters', () => {
+  expect(ptyReasonProblem('')).toMatch(/al menos 8/);
+  expect(ptyReasonProblem('corto')).toMatch(/al menos 8/);
+  // Whitespace is not a justification: it is trimmed before counting.
+  expect(ptyReasonProblem('        ')).toMatch(/al menos 8/);
+  expect(ptyReasonProblem('revisar el bucle de argos')).toBeUndefined();
+  expect(ptyReasonProblem('x'.repeat(281))).toMatch(/no puede pasar de 280/);
+});
+
+it('counts down to the grant expiry and shows UNKNOWN instead of a fake clock', () => {
+  const now = Date.parse('2026-07-25T12:00:00.000Z');
+  expect(ptySecondsLeft('2026-07-25T12:00:30.000Z', now)).toBe(30);
+  expect(ptySecondsLeft('2026-07-25T11:59:00.000Z', now)).toBe(0);
+  expect(ptySecondsLeft(undefined, now)).toBeUndefined();
+  expect(ptySecondsLeft('no es una fecha', now)).toBeUndefined();
+  expect(formatCountdown(ptySecondsLeft(null, now))).toBe('UNKNOWN');
+  expect(formatCountdown(95)).toBe('1:35');
+  expect(formatCountdown(5)).toBe('0:05');
 });
