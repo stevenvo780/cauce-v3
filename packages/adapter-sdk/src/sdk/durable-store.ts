@@ -50,6 +50,14 @@ export interface ProcessedFaninReply {
   readonly tenantId: string;
   readonly alias: string;
   readonly reply: string;
+  /** Local terminal transition time; the newest one is this coordinator's own synthesis. */
+  readonly updatedAt: string;
+  /**
+   * Delegated branch this reply closed, as the store wrote it into the agent.response
+   * correlation. Two branches delegated to the same alias are distinct here, which a
+   * tenant/alias key cannot express.
+   */
+  readonly childDeliveryId?: string;
 }
 
 export const CANONICAL_OPEN_CODE_SESSION_FILE = "canonical-opencode-session.json";
@@ -994,15 +1002,23 @@ export class DurableStore {
           && record.output?.messages.length === 0
           && visibleText(record.output?.reply);
       })
+      // Newest first: the coordinator's last completed turn is its actual synthesis, and
+      // tenant/alias/delivery ordering says nothing about which reply that is.
       .sort((left, right) =>
-        (left.request?.tenant_id ?? "").localeCompare(right.request?.tenant_id ?? "")
-        || (left.request?.actor_alias ?? "").localeCompare(right.request?.actor_alias ?? "")
-        || left.delivery_id.localeCompare(right.delivery_id))
-      .map((record) => ({
-        tenantId: record.request!.tenant_id,
-        alias: record.request!.actor_alias,
-        reply: record.output!.reply!.trim(),
-      }));
+        right.updated_at.localeCompare(left.updated_at)
+        || right.delivery_id.localeCompare(left.delivery_id))
+      .map((record) => {
+        const childDeliveryId = objectRecord(record.request!.body.correlation)?.child_delivery_id;
+        return {
+          tenantId: record.request!.tenant_id,
+          alias: record.request!.actor_alias,
+          reply: record.output!.reply!.trim(),
+          updatedAt: record.updated_at,
+          ...(typeof childDeliveryId === "string" && childDeliveryId.length > 0
+            ? { childDeliveryId }
+            : {}),
+        };
+      });
   }
 
   pendingDeliveries(): readonly InboxRecord[] {

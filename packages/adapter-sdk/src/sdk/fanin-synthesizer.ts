@@ -13,18 +13,22 @@ interface AttributedText {
   readonly tenantId: string;
   readonly alias: string;
   readonly text: string;
+  readonly deliveryId?: string;
 }
 
 export interface FaninSynthesisOptions {
   /**
    * Validated terminal replies produced by this same local adapter while
    * processing correlated child responses. They never come from
-   * fanin_data_v1.
+   * fanin_data_v1. Callers supply them newest first; `updatedAt` is used to
+   * re-establish that order defensively.
    */
   readonly processedReplies?: readonly {
     readonly tenantId: string;
     readonly alias: string;
     readonly reply: string;
+    readonly updatedAt?: string;
+    readonly childDeliveryId?: string;
   }[];
 }
 
@@ -161,6 +165,9 @@ export function synthesizeFaninOutput(
       tenantId: response.tenant_id,
       alias: response.alias,
       text,
+      ...(typeof response.delivery_id === "string" && response.delivery_id.length > 0
+        ? { deliveryId: response.delivery_id }
+        : {}),
     });
   }
 
@@ -178,11 +185,18 @@ export function synthesizeFaninOutput(
       TENANT_PATTERN.test(candidate.tenantId)
       && ALIAS_PATTERN.test(candidate.alias)
       && hasVisibleText(candidate.reply))
-    .map((candidate) => ({
+    .map((candidate, order) => ({
       tenantId: candidate.tenantId,
       alias: candidate.alias,
       text: candidate.reply.trim(),
-    }));
+      updatedAt: candidate.updatedAt ?? "",
+      order,
+      ...(typeof candidate.childDeliveryId === "string" && candidate.childDeliveryId.length > 0
+        ? { childDeliveryId: candidate.childDeliveryId }
+        : {}),
+    }))
+    .sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt) || left.order - right.order);
   if (processedReplies.length === 0) {
     return {
       reply: renderAttributedSection(
@@ -199,30 +213,116 @@ export function synthesizeFaninOutput(
     };
   }
 
-  const separator = "\n\n";
-  const availableBytes = MAX_FINAL_TEXT_BYTES - Buffer.byteLength(separator, "utf8");
-  const processedBudget = Math.floor(availableBytes / 2);
-  const evidenceBudget = availableBytes - processedBudget;
-  const processedHeading = processedReplies.length === 1
-    ? "Locally processed branch reply (1):"
-    : `Locally processed branch replies (${processedReplies.length}):`;
-  const processed = renderAttributedSection(
-    processedHeading,
-    processedReplies,
-    processedBudget,
-    "No locally processed replies were available.",
-    "processed branch",
-  );
-  const evidence = renderAttributedSection(
-    heading,
-    responses,
-    evidenceBudget,
-    "No branch responses were available.",
-    "raw branch",
-  );
+  // The newest locally processed reply leads the synthesis: it is the last turn this
+  // adapter completed for the chain, so it reads as the answer instead of as one more row
+  // of a dump. It is emitted verbatim — unquoted and unescaped — because it was produced by
+  // this adapter, not read off the wire; quoting it would collapse a multi-paragraph reply
+  // into a single escaped line. Every other locally processed reply still has to appear:
+  // with a stateless harness the leading turn never saw the sibling branches, so dropping
+  // them would destroy terminal local reviews that only exist here.
+  const primary = processedReplies[0]!;
+  const others = processedReplies.slice(1);
+  // Coverage is keyed by the branch delivery id the store itself stamped on each
+  // agent.response. A tenant/alias key would collapse two branches delegated to the same
+  // alias and silently drop the evidence of the one that was never synthesized locally.
+  // A branch that cannot be proven covered always keeps its raw evidence.
+  const covered = new Set(processedReplies
+    .map((reply) => reply.childDeliveryId)
+    .filter((value): value is string => value !== undefined));
+  const uncovered = responses.filter((response) =>
+    response.deliveryId === undefined || !covered.has(response.deliveryId));
+  const footer = `[${processedReplies.length} locally synthesized branch `
+    + `${processedReplies.length === 1 ? "reply" : "replies"}; `
+    + `${responses.length} branch ${responses.length === 1 ? "response" : "responses"} `
+    + `in this chain; ${uncovered.length} without local synthesis]`;
 
+  const sections: {
+    readonly heading: string;
+    readonly entries: readonly AttributedText[];
+    readonly emptyText: string;
+    readonly entryKind: string;
+  }[] = [];
+  if (others.length > 0) {
+    sections.push({
+      heading: others.length === 1
+        ? "Other locally processed branch reply (1):"
+        : `Other locally processed branch replies (${others.length}):`,
+      entries: others,
+      emptyText: "No other locally processed replies were available.",
+      entryKind: "processed branch",
+    });
+  }
+  if (uncovered.length > 0) {
+    sections.push({
+      heading: uncovered.length === 1
+        ? "Branch without local synthesis (1):"
+        : `Branches without local synthesis (${uncovered.length}):`,
+      entries: uncovered,
+      emptyText: "No branch responses were available.",
+      entryKind: "raw branch",
+    });
+  }
+
+  const separator = "\n\n";
+  const separatorBytes = Buffer.byteLength(separator, "utf8");
+  const footerBytes = Buffer.byteLength(footer, "utf8");
+  const availableBytes = MAX_FINAL_TEXT_BYTES
+    - footerBytes
+    - separatorBytes * (sections.length + 1);
+  if (availableBytes <= 0) {
+    return {
+      reply: boundedUtf8(primary.text, MAX_FINAL_TEXT_BYTES),
+      messages: [],
+      status: "done",
+      retryable: false,
+      artifacts: [],
+    };
+  }
+  if (sections.length === 0) {
+    return {
+      reply: boundedUtf8(
+        `${boundedUtf8(primary.text, availableBytes)}${separator}${footer}`,
+        MAX_FINAL_TEXT_BYTES,
+      ),
+      messages: [],
+      status: "done",
+      retryable: false,
+      artifacts: [],
+    };
+  }
+  // Every section keeps a reserved floor so that near the byte limit it can still emit its
+  // heading and its `[n … omitted for byte limit]` record: a section that were squeezed to
+  // zero would drop branches with nothing left to prove they existed. The lead reply gets
+  // the remainder, and the two sides trade their unused slack in both directions.
+  const sectionFloor = Math.floor(availableBytes / (sections.length + 2));
+  const primaryDemand = Math.min(
+    Buffer.byteLength(primary.text, "utf8"),
+    availableBytes - sectionFloor * sections.length,
+  );
+  const sectionSlack = availableBytes - sectionFloor * sections.length - primaryDemand;
+  const sectionBonus = Math.floor(Math.max(0, sectionSlack) / sections.length);
+  let sectionRemainder = Math.max(0, sectionSlack) % sections.length;
+  const rendered = sections.map((section) => {
+    const budget = sectionFloor + sectionBonus + (sectionRemainder > 0 ? 1 : 0);
+    sectionRemainder = Math.max(0, sectionRemainder - 1);
+    return renderAttributedSection(
+      section.heading,
+      section.entries,
+      budget,
+      section.emptyText,
+      section.entryKind,
+    );
+  });
+  const renderedBytes = rendered.reduce(
+    (total, section) => total + Buffer.byteLength(section, "utf8"),
+    0,
+  );
+  const primaryBudget = Math.max(0, availableBytes - renderedBytes);
   return {
-    reply: boundedUtf8(`${processed}${separator}${evidence}`, MAX_FINAL_TEXT_BYTES),
+    reply: boundedUtf8(
+      [boundedUtf8(primary.text, primaryBudget), ...rendered, footer].join(separator),
+      MAX_FINAL_TEXT_BYTES,
+    ),
     messages: [],
     status: "done",
     retryable: false,

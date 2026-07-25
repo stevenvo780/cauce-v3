@@ -80,6 +80,7 @@ export interface GatewayRepository {
   listAdapters(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listOriginRelays(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listAudit(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  agentChain(traceId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   getConfiguration(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   applyConfigurationChange(actorTenant: Tenant, actorAlias: string, mutation: ConfigMutation, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
   rollbackConfiguration(actorTenant: Tenant, actorAlias: string, revisionId: number, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
@@ -395,6 +396,18 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const actor = await principal(request, options.authProvider);
       requireOperatorPermission(actor, 'read');
       return sameTenantRows(await repository.listAudit(actor.tenant_id, actor.alias), actor);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  // Follow one delegation chain live, by trace id. The response is a graph, not a row list:
+  // the store already applied per-node default-deny visibility, so no facade runs here.
+  // sameTenantRows would both empty this payload (it has no `items`) and erase the
+  // cross-tenant edges the endpoint exists to show.
+  app.get<{ Params: { traceId: string } }>('/v3/console/chains/:traceId', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requireOperatorPermission(actor, 'read');
+      return await repository.agentChain(request.params.traceId, actor.tenant_id, actor.alias);
     } catch (error) { replyError(reply, error); }
   });
 

@@ -676,17 +676,21 @@ test("a stateless continuation receives the original task and its processed repl
   await context.engine.handleDelivery(fanin);
 
   assert.equal(runner.calls, 2);
+  const faninReply = context.events.at(-1)?.output?.reply ?? "";
+  // The local synthesis leads verbatim: it is this adapter's own terminal reply, so it is
+  // neither quoted nor escaped, and it is what a human reads first on the origin channel.
   assert.match(
-    context.events.at(-1)?.output?.reply ?? "",
-    /^Locally processed branch reply \(1\):/u,
+    faninReply,
+    /^REVIEW=PASS; Argos independently inspected the implementation\.\n/u,
+  );
+  assert.match(faninReply, /^Branch without local synthesis \(1\):$/mu);
+  assert.match(
+    faninReply,
+    /^Steven\/socrates: "raw Socrates result must not replace Argos review"$/mu,
   );
   assert.match(
-    context.events.at(-1)?.output?.reply ?? "",
-    /REVIEW=PASS; Argos independently inspected the implementation\./u,
-  );
-  assert.match(
-    context.events.at(-1)?.output?.reply ?? "",
-    /raw Socrates result must not replace Argos review/u,
+    faninReply,
+    /\[1 locally synthesized branch reply; 1 branch response in this chain; 1 without local synthesis\]$/u,
   );
   assert.equal(context.store.getDelivery(rootDelivery.delivery_id)?.request, undefined);
   assert.equal(context.store.getDelivery(response.delivery_id)?.request, undefined);
@@ -831,11 +835,19 @@ test("nested continuations preserve every terminal local review and raw fan-in b
   await context.engine.handleDelivery(fanin);
 
   const reply = context.events.at(-1)?.output?.reply ?? "";
-  assert.match(reply, /Steven\/plato: "ARGOS_PLATO_NESTED_REVIEW=PASS"/u);
-  assert.match(reply, /Steven\/seneca: "ARGOS_SENECA_REVIEW=PASS"/u);
-  assert.match(reply, /Steven\/socrates: "raw Socrates branch"/u);
-  assert.match(reply, /Steven\/seneca: "raw Seneca branch"/u);
+  // The newest terminal local review leads verbatim; every older one still has to survive,
+  // because a stateless continuation never saw its sibling branches.
+  assert.match(reply, /^ARGOS_PLATO_NESTED_REVIEW=PASS\n/u);
+  assert.match(reply, /^Other locally processed branch reply \(1\):$/mu);
+  assert.match(reply, /^Steven\/seneca: "ARGOS_SENECA_REVIEW=PASS"$/mu);
+  assert.match(reply, /^Branches without local synthesis \(2\):$/mu);
+  assert.match(reply, /^Steven\/socrates: "raw Socrates branch"$/mu);
+  assert.match(reply, /^Steven\/seneca: "raw Seneca branch"$/mu);
   assert.doesNotMatch(reply, /Socrates implementation result/u);
+  assert.match(
+    reply,
+    /\[2 locally synthesized branch replies; 2 branch responses in this chain; 2 without local synthesis\]$/u,
+  );
   assert.equal(runner.calls, 4);
   for (const id of [
     rootDelivery.delivery_id,

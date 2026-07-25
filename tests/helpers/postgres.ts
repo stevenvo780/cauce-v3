@@ -66,12 +66,15 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
+      // agent_chain_progress has no foreign key by design, so CASCADE cannot reach it.
       await pool.query(`TRUNCATE TABLE
         gateway_oidc_sessions,telegram_egress_effects,channel_bridge_cursors,channel_bridge_leases,
         shadow_compare_verdicts,shadow_human_reply_guards,shadow_router_mappings,shadow_router_inbox,
         audit_events,dead_letters,jobs,adapter_outbox,adapter_inbox,delivery_acks,
-        deliveries,idempotency_keys,messages,connection_leases
+        deliveries,idempotency_keys,messages,connection_leases,agent_chain_progress
         RESTART IDENTITY CASCADE`);
+      await pool.query(`UPDATE agent_chain_policies
+        SET progress_relay_enabled=false,progress_relay_max_events=12,cycle_cut_enabled=false`);
       return;
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;

@@ -1,0 +1,109 @@
+# Cauce V3 — new exact PostgreSQL-polled metrics, "agent health" angle.
+#
+# Purpose: the 18 existing rules in ops/observability/alerts.yaml only look at queue depth and the
+# age of NON-terminal items (pending/retry/leased/accepted/started). They cannot see: (a) how a
+# TERMINATED delivery ended (success vs failure, and why), (b) per-alias connection churn (only an
+# aggregate leases-active count exists today), (c) the realized end-to-end latency of completed work.
+# That is exactly why they missed: 12% non-successful deliveries concentrated on a few aliases,
+# 29 deadline timeouts, and janus's 8 SIGKILL restarts (invisible inside a stable system-wide total).
+#
+# Style: hand-rolled Prometheus text exposition (no prom-client), same pattern already used by
+# services/dispatcher/src/metrics.ts and deploy/outbox-metrics.mjs — exact gauges/counters recomputed
+# by SQL on every /metrics scrape, not accumulated in process memory (so they survive dispatcher
+# restarts, unlike cauce_dispatcher_jobs_processed_total, which IS an in-memory Map and resets on
+# every dispatcher restart today).
+#
+# Label policy (hard constraint already established in metrics.ts: "No tenant or payload labels."):
+#   - `alias`  : OK. Small, fixed roster (~12 AI-agent role names, e.g. "janus", "kant"). Not a
+#                person's identity.
+#   - `harness`: OK. Derived by joining `agents(tenant_id, alias, harness_id)`. Functionally
+#                dependent on `alias`, so it adds zero extra cardinality, just a convenient grouping key.
+#   - `lane`   : OK. Two fixed values (interactive|batch), already used throughout the existing metrics.
+#   - `tenant_id` : FORBIDDEN. Real tenant IDs are human names (Steven, Isa, Jhon, Pablo, Miguel).
+#   - `last_error` / raw error text: FORBIDDEN as a label (unbounded cardinality, and it is delivery
+#                content). Only a small closed `reason`/`kind` taxonomy derived FROM it may be a label.
+#
+# Suggested implementation site: extend services/dispatcher/src/metrics.ts DispatcherMetrics.render()
+# with one more Promise.all query per metric below, following the same appendMatrix/appendLaneGauge
+# helper style already in that file. Not implemented here — this is the metric design/spec only.
+
+# ---------------------------------------------------------------------------------------------------
+# Metric 1 of 5 — terminal delivery outcomes per alias (answers: "tasa de éxito por alias")
+# ---------------------------------------------------------------------------------------------------
+# HELP cauce_dispatcher_delivery_terminal_total Deliveries that reached a terminal state, by alias/harness/lane/status. Rows are never deleted, so this is monotonic and safe for increase()/rate().
+# TYPE cauce_dispatcher_delivery_terminal_total counter
+# Labels: alias, harness, lane, status ∈ {done, failed, dead}
+# SQL (conceptual):
+#   SELECT a.alias, a.harness_id AS harness, m.lane, d.status, count(*) AS value
+#   FROM deliveries d
+#   JOIN messages m ON m.id = d.message_id
+#   JOIN agents a ON a.tenant_id = d.recipient_tenant AND a.alias = d.recipient_alias
+#   WHERE d.status IN ('done','failed','dead')
+#   GROUP BY a.alias, a.harness_id, m.lane, d.status
+cauce_dispatcher_delivery_terminal_total{alias="janus",harness="openclaw",lane="interactive",status="done"} 118
+cauce_dispatcher_delivery_terminal_total{alias="janus",harness="openclaw",lane="interactive",status="failed"} 9
+cauce_dispatcher_delivery_terminal_total{alias="janus",harness="openclaw",lane="interactive",status="dead"} 4
+
+# ---------------------------------------------------------------------------------------------------
+# Metric 2 of 5 — deadline timeouts, split by which deadline fired (answers: "timeouts de harness")
+# ---------------------------------------------------------------------------------------------------
+# HELP cauce_dispatcher_delivery_timeout_total Deliveries whose terminal failure was a deadline timeout, by alias/harness/lane/kind. `harness_wallclock` = the harness process itself exceeded its execution timeout (result.code=EXECUTION_TIMEOUT_AMBIGUOUS, engine.ts / process-runner.ts). `ack_deadline` = the dispatcher's stale-claim reaper fired because the consumer never confirmed the delivery lease/ACK in time (last_error LIKE 'ACK timeout%', repository.ts retryStaleDeliveries). Never exposes raw error text.
+# TYPE cauce_dispatcher_delivery_timeout_total counter
+# Labels: alias, harness, lane, kind ∈ {harness_wallclock, ack_deadline}
+# SQL (conceptual):
+#   SELECT a.alias, a.harness_id AS harness, m.lane,
+#     CASE
+#       WHEN d.result->>'code' = 'EXECUTION_TIMEOUT_AMBIGUOUS' THEN 'harness_wallclock'
+#       WHEN d.last_error LIKE 'ACK timeout%' THEN 'ack_deadline'
+#     END AS kind,
+#     count(*) AS value
+#   FROM deliveries d
+#   JOIN messages m ON m.id = d.message_id
+#   JOIN agents a ON a.tenant_id = d.recipient_tenant AND a.alias = d.recipient_alias
+#   WHERE d.status IN ('failed','dead')
+#     AND (d.result->>'code' = 'EXECUTION_TIMEOUT_AMBIGUOUS' OR d.last_error LIKE 'ACK timeout%')
+#   GROUP BY a.alias, a.harness_id, m.lane, kind
+cauce_dispatcher_delivery_timeout_total{alias="janus",harness="openclaw",lane="interactive",kind="harness_wallclock"} 5
+cauce_dispatcher_delivery_timeout_total{alias="janus",harness="openclaw",lane="interactive",kind="ack_deadline"} 24
+
+# ---------------------------------------------------------------------------------------------------
+# Metric 3 of 5 — per-alias connection epoch (answers: "churn de epoch/lease")
+# ---------------------------------------------------------------------------------------------------
+# HELP cauce_dispatcher_connection_lease_epoch Current fencing epoch of the live connection_leases row for this alias. Bumps by exactly 1 every time a consumer reconnects WITHOUT resuming its previous lease (crash, SIGKILL, resume-window expiry) — see packages/store/src/repository.ts acquireLease(). A graceful reconnect inside the resume window does NOT bump it. Use changes() over this per-alias gauge to catch one alias crash-looping even while the system-wide active-lease count (cauce_dispatcher_consumer_leases_active) looks stable.
+# TYPE cauce_dispatcher_connection_lease_epoch gauge
+# Labels: alias, harness
+# SQL (conceptual):
+#   SELECT a.alias, a.harness_id AS harness, l.epoch AS value
+#   FROM connection_leases l
+#   JOIN agents a ON a.tenant_id = l.tenant_id AND a.alias = l.alias
+cauce_dispatcher_connection_lease_epoch{alias="janus",harness="openclaw"} 47
+
+# ---------------------------------------------------------------------------------------------------
+# Metric 4 of 5 — realized end-to-end latency per lane (answers: "latencia extremo a extremo por lane")
+# ---------------------------------------------------------------------------------------------------
+# HELP cauce_dispatcher_delivery_latency_seconds End-to-end latency (terminal_at - created_at) of deliveries that finished inside the trailing sampling window, by lane and quantile. Complements the existing *_oldest_seconds gauges, which only measure the age of work that has NOT finished yet — this measures the realized latency of work that DID finish, so a lane can be silently getting slower (rising p95) while every oldest_seconds gauge still reads near zero.
+# TYPE cauce_dispatcher_delivery_latency_seconds gauge
+# Labels: lane ∈ {interactive, batch}, quantile ∈ {"0.5", "0.95", "0.99"}
+# Sampling window is per-lane because batch has far lower completion volume than interactive:
+# interactive -> trailing 15 minutes, batch -> trailing 60 minutes. Recomputed fresh every scrape,
+# same pattern as the existing *_oldest_seconds gauges.
+# SQL (conceptual, one query per lane with its own window):
+#   SELECT
+#     percentile_cont(0.5)  WITHIN GROUP (ORDER BY extract(epoch FROM terminal_at - created_at)) AS p50,
+#     percentile_cont(0.95) WITHIN GROUP (ORDER BY extract(epoch FROM terminal_at - created_at)) AS p95,
+#     percentile_cont(0.99) WITHIN GROUP (ORDER BY extract(epoch FROM terminal_at - created_at)) AS p99
+#   FROM deliveries d JOIN messages m ON m.id = d.message_id
+#   WHERE m.lane = $1 AND d.terminal_at > now() - $2::interval
+cauce_dispatcher_delivery_latency_seconds{lane="interactive",quantile="0.5"} 4.2
+cauce_dispatcher_delivery_latency_seconds{lane="interactive",quantile="0.95"} 38.1
+cauce_dispatcher_delivery_latency_seconds{lane="interactive",quantile="0.99"} 95.0
+cauce_dispatcher_delivery_latency_seconds{lane="batch",quantile="0.95"} 611.0
+
+# ---------------------------------------------------------------------------------------------------
+# Metric 5 of 5 — sample count backing metric 4 (required companion, not a separate incident class)
+# ---------------------------------------------------------------------------------------------------
+# HELP cauce_dispatcher_delivery_latency_sample_count Number of deliveries the corresponding cauce_dispatcher_delivery_latency_seconds percentile was computed over, in the same trailing window. Required because percentile_cont over a near-empty window (quiet batch lane at 3am) is noisy or NULL; alert rules on latency MUST gate on this being above a minimum sample size, exactly like the divide-by-near-zero guard used on the alias failure-rate alerts below.
+# TYPE cauce_dispatcher_delivery_latency_sample_count gauge
+# Labels: lane
+cauce_dispatcher_delivery_latency_sample_count{lane="interactive"} 212
+cauce_dispatcher_delivery_latency_sample_count{lane="batch"} 6

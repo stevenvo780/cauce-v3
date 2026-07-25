@@ -177,6 +177,79 @@ const reservedInternalMessageTypes = new Set([
 const aliasPattern = /^[a-z][a-z0-9_-]{0,63}$/u;
 const tenantPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const maxVisitedPathEntries = agentOutputHopBudget;
+const maxProgressSummaryBytes = 1_024;
+const progressRelayCappedText =
+  'La cadena sigue en curso; dejo de enviar avances y aviso cuando termine.';
+
+/** Durable rejection domain; migration 008 widens the CHECK with exactly these values. */
+export type AgentOutputRejectionCode =
+  | 'invalid_output'
+  | 'unroutable_alias'
+  | 'ambiguous_alias'
+  | 'hop_budget_exhausted'
+  | 'cycle_detected';
+
+export type AgentChainProgressStage = 'delegated' | 'returned' | 'denied' | 'capped';
+
+interface ChainPolicy {
+  progressRelayEnabled: boolean;
+  progressRelayMaxEvents: number;
+  cycleCutEnabled: boolean;
+  /** False until migration 008 lands, which keeps ACKs working during a partial deploy. */
+  visitedPathAvailable: boolean;
+}
+
+const disabledChainPolicy: ChainPolicy = {
+  progressRelayEnabled: false,
+  progressRelayMaxEvents: 0,
+  cycleCutEnabled: false,
+  visitedPathAvailable: false
+};
+
+/**
+ * A hop budget is only trusted when it is a safe positive integer, and it is always
+ * saturated at the durable ceiling. A zero would violate CHECK (hop_budget > 0) and abort
+ * the whole ACK transaction, and an inflated one would propagate hop after hop.
+ */
+function safeHopBudget(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
+    ? Math.min(value, agentOutputHopBudget)
+    : agentOutputHopBudget;
+}
+
+/** Hop counts saturate at the budget, so `inherited + 1` can never overflow an integer column. */
+function safeHopCount(value: unknown, budget: number): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? Math.min(value, budget)
+    : 0;
+}
+
+function chainNode(tenant: Tenant, alias: string): string {
+  return `${tenant}/${alias}`;
+}
+
+/** Stable, non-reversible handle for a chain endpoint the reader may not identify. */
+function opaqueNodeId(deliveryId: string): string {
+  return createHash('sha256').update(`chain-node:${deliveryId}`).digest('hex').slice(0, 16);
+}
+
+/** Only canonical `tenant/alias` entries survive; the column is store-written, never client input. */
+function sanitizedVisitedPath(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const path: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string' || path.includes(entry)) continue;
+    const separator = entry.indexOf('/');
+    if (separator < 0) continue;
+    const tenant = entry.slice(0, separator);
+    const alias = entry.slice(separator + 1);
+    if (!tenantPattern.test(tenant) || !aliasPattern.test(alias)) continue;
+    path.push(entry);
+    if (path.length === maxVisitedPathEntries) break;
+  }
+  return path;
+}
 
 interface AgentOutputEntry {
   index: number;
@@ -194,6 +267,13 @@ interface RoutingTarget {
   tenant_id: Tenant;
   alias: string;
   online: boolean;
+}
+
+interface AgentOutputLineage {
+  hop_count: number | null;
+  hop_budget: number | null;
+  correlation: Record<string, unknown> | null;
+  visited_path: string[] | null;
 }
 
 type AgentResponseDisposition = 'not_child' | 'returned' | 'denied' | 'deferred';
@@ -1046,9 +1126,10 @@ export class CauceRepository {
       }
       await this.insertAck(client, row, ack, true, persistedResult);
       if (terminal(nextStatus)) {
+        const policy = await this.loadChainPolicy(client);
         let materializedOutputs = 0;
         if (nextStatus === 'done' && row.body.type !== 'agent.fanin') {
-          materializedOutputs = await this.materializeAgentOutputs(client, row, ack, outputs);
+          materializedOutputs = await this.materializeAgentOutputs(client, row, ack, outputs, policy);
         }
         // A child that successfully delegated work is not terminal from its
         // parent's perspective. Returning its empty/intermediate ACK here lets
@@ -1062,6 +1143,7 @@ export class CauceRepository {
               row,
               ack.attempt,
               nextStatus,
+              policy,
               persistedResult,
               terminalError,
               terminalErrorCode
@@ -1099,11 +1181,89 @@ export class CauceRepository {
     });
   }
 
+  /**
+   * Reads the versioned chain policy without ever aborting the caller's transaction.
+   * A missing table or column is a legitimate state during a partial deploy, and a
+   * `42P01`/`42703` inside the ACK transaction would poison every later statement, so the
+   * catalog is probed first with a query that cannot fail.
+   */
+  private async loadChainPolicy(client: DatabaseClient): Promise<ChainPolicy> {
+    const schema = await client.query<{ policies_present: boolean; visited_path_present: boolean }>(
+      `SELECT to_regclass('public.agent_chain_policies') IS NOT NULL AS policies_present,
+              EXISTS (
+                SELECT 1 FROM pg_attribute attribute
+                WHERE attribute.attrelid=to_regclass('public.agent_output_materializations')
+                  AND attribute.attname='visited_path' AND NOT attribute.attisdropped
+              ) AS visited_path_present`
+    );
+    const visitedPathAvailable = schema.rows[0]?.visited_path_present === true;
+    if (schema.rows[0]?.policies_present !== true) {
+      return { ...disabledChainPolicy, visitedPathAvailable };
+    }
+    const policy = await client.query<{
+      progress_relay_enabled: boolean;
+      progress_relay_max_events: number;
+      cycle_cut_enabled: boolean;
+    }>(
+      `SELECT progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled
+       FROM agent_chain_policies WHERE id='default'`
+    );
+    const row = policy.rows[0];
+    if (!row) return { ...disabledChainPolicy, visitedPathAvailable };
+    return {
+      progressRelayEnabled: row.progress_relay_enabled === true,
+      progressRelayMaxEvents: Number.isSafeInteger(row.progress_relay_max_events)
+        ? row.progress_relay_max_events
+        : 0,
+      cycleCutEnabled: row.cycle_cut_enabled === true && visitedPathAvailable,
+      visitedPathAvailable
+    };
+  }
+
+  /**
+   * Resolves the branch that opened this coordinator turn when the delivery being ACKed is
+   * an authenticated agent.response continuation. The store proved that correlation with an
+   * audit row when it created the response, so the delegation path keeps growing across
+   * continuations instead of restarting at every hop.
+   */
+  private async continuationBranchMaterialization(
+    client: DatabaseClient,
+    row: DeliveryRow,
+    visitedPathAvailable: boolean
+  ): Promise<AgentOutputLineage | undefined> {
+    if (row.body.type !== 'agent.response') return undefined;
+    const correlation = objectRecord(row.body.correlation);
+    const claimed = typeof correlation?.response_to_delivery_id === 'string'
+      && uuidPattern.test(correlation.response_to_delivery_id)
+      ? correlation.response_to_delivery_id
+      : undefined;
+    if (claimed === undefined) return undefined;
+    const trusted = await client.query(
+      `SELECT 1 FROM audit_events
+       WHERE message_id=$1 AND delivery_id=$2
+         AND action='agent_output.response' AND decision='allow'
+       LIMIT 1 FOR SHARE`,
+      [row.message_id, row.id]
+    );
+    if (trusted.rowCount !== 1) return undefined;
+    const parent = await client.query<AgentOutputLineage>(
+      `SELECT materialization.hop_count,materialization.hop_budget,materialization.correlation,
+              ${visitedPathAvailable ? 'materialization.visited_path' : `'{}'::text[] AS visited_path`}
+       FROM agent_output_materializations materialization
+       WHERE materialization.produced_delivery_id=$1 AND materialization.status='materialized'
+       LIMIT 1
+       FOR SHARE OF materialization`,
+      [claimed]
+    );
+    return parent.rows[0];
+  }
+
   private async materializeAgentOutputs(
     client: DatabaseClient,
     row: DeliveryRow,
     ack: Ack,
-    outputs: AgentOutputEntry[]
+    outputs: AgentOutputEntry[],
+    policy: ChainPolicy
   ): Promise<number> {
     if (outputs.length === 0) return 0;
 
@@ -1123,12 +1283,7 @@ export class CauceRepository {
       throw new StoreError('invalid_actor', 'delivery consumer has no source room for agent output');
     }
 
-    const parent = await client.query<{
-      hop_count: number | null;
-      hop_budget: number | null;
-      correlation: Record<string, unknown> | null;
-      cycle_detected: boolean;
-    }>(
+    const parent = await client.query<AgentOutputLineage & { cycle_detected: boolean }>(
       `WITH RECURSIVE message_lineage(message_id,depth,path,cycle_detected) AS (
          SELECT $1::uuid,0,ARRAY[$1::uuid],false
          UNION ALL
@@ -1147,44 +1302,71 @@ export class CauceRepository {
          ) replay ON true
          WHERE NOT lineage.cycle_detected
        ), parent AS (
-         SELECT materialization.hop_count,materialization.hop_budget,materialization.correlation
+         SELECT materialization.hop_count,materialization.hop_budget,materialization.correlation,
+                ${policy.visitedPathAvailable
+                  ? 'materialization.visited_path'
+                  : `'{}'::text[] AS visited_path`}
          FROM message_lineage lineage
          JOIN agent_output_materializations materialization
            ON materialization.produced_message_id=lineage.message_id
          ORDER BY lineage.depth LIMIT 1
        )
-       SELECT parent.hop_count,parent.hop_budget,parent.correlation,
+       SELECT parent.hop_count,parent.hop_budget,parent.correlation,parent.visited_path,
               EXISTS(SELECT 1 FROM message_lineage WHERE cycle_detected) AS cycle_detected
        FROM (SELECT true) guard LEFT JOIN parent ON true`,
       [row.message_id]
     );
-    const parentMaterialization = parent.rows[0];
-    if (parentMaterialization?.cycle_detected) {
+    if (parent.rows[0]?.cycle_detected) {
       throw new StoreError('conflict', 'replay lineage cycle detected');
     }
-    const bodyCorrelation = objectRecord(row.body.correlation);
-    const inheritedHopCount = parentMaterialization?.hop_count
-      ?? (typeof bodyCorrelation?.hop_count === 'number' ? bodyCorrelation.hop_count : 0);
-    const inheritedHopBudget = parentMaterialization?.hop_budget
-      ?? (typeof bodyCorrelation?.hop_budget === 'number' ? bodyCorrelation.hop_budget : agentOutputHopBudget);
+    const parentMaterialization = parent.rows[0]?.hop_count === null || parent.rows[0] === undefined
+      ? await this.continuationBranchMaterialization(client, row, policy.visitedPathAvailable)
+      : parent.rows[0];
+    // Provenance rule: a correlation carried by the body is authoritative only for the
+    // reserved internal types, which no client can publish (see publish() and
+    // AuthenticatedPublishBodySchema). Any other body is a client-controlled surface, so a
+    // publisher can no longer graft its delegations onto another chain's root, poison the
+    // hop budget, or abort the ACK transaction with a non-integer hop count.
+    const bodyCorrelation = typeof row.body.type === 'string'
+      && reservedInternalMessageTypes.has(row.body.type)
+      ? objectRecord(row.body.correlation)
+      : undefined;
+    const hopBudget = safeHopBudget(parentMaterialization?.hop_budget ?? bodyCorrelation?.hop_budget);
+    const inheritedHopCount = safeHopCount(
+      parentMaterialization?.hop_count ?? bodyCorrelation?.hop_count,
+      hopBudget
+    );
     const hopCount = inheritedHopCount + 1;
-    const hopBudget = inheritedHopBudget;
     const parentCorrelation = objectRecord(parentMaterialization?.correlation) ?? bodyCorrelation;
     const rootRequestId = typeof parentCorrelation?.root_request_id === 'string'
+      && uuidPattern.test(parentCorrelation.root_request_id)
       ? parentCorrelation.root_request_id
       : row.request_id;
     const rootMessageId = typeof parentCorrelation?.root_message_id === 'string'
+      && uuidPattern.test(parentCorrelation.root_message_id)
       ? parentCorrelation.root_message_id
       : row.message_id;
     const rootDeliveryId = typeof parentCorrelation?.root_delivery_id === 'string'
       && uuidPattern.test(parentCorrelation.root_delivery_id)
       ? parentCorrelation.root_delivery_id
       : row.id;
+    // The delegation path is rebuilt from the parent materialization only, and the current
+    // consumer is appended server-side. Nothing here is readable from any client-writable
+    // field, so a publisher cannot seed it to censor a legitimate delegation.
+    const visitedPath = sanitizedVisitedPath([
+      ...sanitizedVisitedPath(parentMaterialization?.visited_path),
+      chainNode(row.recipient_tenant, row.recipient_alias)
+    ]);
 
+    const internalAgentDelivery = typeof row.body.type === 'string'
+      && reservedInternalMessageTypes.has(row.body.type);
     const hasAllDirective = outputs.some((output) => output.target === '@all');
     let expandedOutputs: ResolvedAgentOutputEntry[];
-    if (hasAllDirective && (outputs.length !== 1 || outputs[0]?.target !== '@all'
-      || outputs[0].rejection !== undefined)) {
+    // @all on an internal turn was only ever forbidden client-side by the SDK output parser,
+    // so an adapter rolled back to an older build could fan a delegated turn out to every
+    // online peer. The prohibition now also exists server-side, before any expansion.
+    if (hasAllDirective && (internalAgentDelivery || outputs.length !== 1
+      || outputs[0]?.target !== '@all' || outputs[0].rejection !== undefined)) {
       expandedOutputs = outputs.map((output) => ({
         ...output,
         rejection: 'invalid_output'
@@ -1222,6 +1404,7 @@ export class CauceRepository {
     }
 
     let materialized = 0;
+    const materializedTargets: string[] = [];
     for (const output of expandedOutputs) {
       const requestId = agentOutputRequestId(row.id, ack.attempt, output.index);
       const targetRefHash = sha256(output.targetRef ?? output.target);
@@ -1249,9 +1432,6 @@ export class CauceRepository {
       const rejection = output.rejection;
       const targetAlias = typeof output.target === 'string' ? output.target : undefined;
       const body = typeof output.body === 'string' ? output.body : undefined;
-      const internalAgentDelivery = row.body.type === 'agent.message'
-        || row.body.type === 'agent.response'
-        || row.body.type === 'agent.fanin';
       if (!rejection && (!targetAlias || !aliasPattern.test(targetAlias))) {
         await this.insertAgentOutputRejection(
           client, row, ack, output.index, requestId, targetRefHash, bodyHash,
@@ -1323,6 +1503,16 @@ export class CauceRepository {
         continue;
       }
       const targetTenant = allowedTargets[0]!;
+      // The only point where the destination pair is both resolved and authorized. A cycle
+      // is a durable rejection, never an exception: when every output of an ACK is rejected
+      // the agent simply relays its own reply upwards, which is an already covered path.
+      if (policy.cycleCutEnabled && visitedPath.includes(chainNode(targetTenant, targetAlias))) {
+        await this.insertAgentOutputRejection(
+          client, row, ack, output.index, requestId, targetRefHash, bodyHash,
+          hopCount, hopBudget, correlation, 'cycle_detected'
+        );
+        continue;
+      }
 
       const message = await client.query<{ id: string }>(
         `INSERT INTO messages(
@@ -1367,11 +1557,14 @@ export class CauceRepository {
            source_delivery_id,source_attempt,output_index,source_message_id,source_tenant,source_alias,
            target_tenant,target_alias,target_ref_hash,body_hash,status,produced_message_id,
            produced_delivery_id,request_id,trace_id,hop_count,hop_budget,correlation
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'materialized',$11,$12,$13,$14,$15,$16,$17::jsonb)`,
+           ${policy.visitedPathAvailable ? ',visited_path' : ''}
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'materialized',$11,$12,$13,$14,$15,$16,$17::jsonb
+           ${policy.visitedPathAvailable ? ',$18::text[]' : ''})`,
         [
           row.id, ack.attempt, output.index, row.message_id, row.recipient_tenant, row.recipient_alias,
           targetTenant, targetAlias, targetRefHash, bodyHash, messageId, producedDeliveryId,
-          requestId, row.trace_id, hopCount, hopBudget, JSON.stringify(correlation)
+          requestId, row.trace_id, hopCount, hopBudget, JSON.stringify(correlation),
+          ...(policy.visitedPathAvailable ? [visitedPath] : [])
         ]
       );
       await client.query(
@@ -1396,6 +1589,16 @@ export class CauceRepository {
         JSON.stringify({ tenant_id: targetTenant, alias: targetAlias })
       ]);
       materialized += 1;
+      materializedTargets.push(chainNode(targetTenant, targetAlias));
+    }
+    // Rendered here because hop_count, hop_budget and the accepted destinations only exist
+    // as locals of this method; the relay helper never re-derives them.
+    if (materialized > 0) {
+      await this.insertProgressRelay(
+        client, row, ack.attempt, policy, rootMessageId, 'delegated',
+        `${row.recipient_alias} delegó en ${materializedTargets.join(', ')}`
+        + ` (hop ${hopCount}/${hopBudget}).`
+      );
     }
     return materialized;
   }
@@ -1405,6 +1608,7 @@ export class CauceRepository {
     row: DeliveryRow,
     attempt: number,
     outcome: DeliveryState,
+    policy: ChainPolicy,
     result: Record<string, unknown> | undefined,
     error?: string,
     errorCode?: string
@@ -1428,6 +1632,7 @@ export class CauceRepository {
     const responseToDeliveryId = trustedResponse ? claimedResponseToDeliveryId : null;
     const parent = await client.query<{
       source_delivery_id: string;
+      source_attempt: number;
       source_message_id: string;
       source_tenant: Tenant;
       source_alias: string;
@@ -1435,7 +1640,8 @@ export class CauceRepository {
       hop_budget: number;
       correlation: Record<string, unknown>;
     }>(
-      `SELECT materialization.source_delivery_id,materialization.source_message_id,
+      `SELECT materialization.source_delivery_id,materialization.source_attempt,
+              materialization.source_message_id,
               materialization.source_tenant,materialization.source_alias,
               materialization.hop_count,materialization.hop_budget,materialization.correlation
        FROM agent_output_materializations materialization
@@ -1468,7 +1674,7 @@ export class CauceRepository {
     const childRoomId = sourceMembership.rows[0]?.room_id;
     if (!childRoomId) {
       await this.insertAgentResponseDenial(
-        client, row, relationship, responseToDeliveryId, 'source_membership_unavailable'
+        client, row, relationship, responseToDeliveryId, 'source_membership_unavailable', policy
       );
       return 'denied';
     }
@@ -1486,7 +1692,7 @@ export class CauceRepository {
     );
     if (targetMembership.rowCount !== 1) {
       await this.insertAgentResponseDenial(
-        client, row, relationship, responseToDeliveryId, 'target_membership_unavailable'
+        client, row, relationship, responseToDeliveryId, 'target_membership_unavailable', policy
       );
       return 'denied';
     }
@@ -1504,13 +1710,17 @@ export class CauceRepository {
       );
       if (reverseEdge.rowCount !== 1) {
         await this.insertAgentResponseDenial(
-          client, row, relationship, responseToDeliveryId, 'reverse_acl_unavailable'
+          client, row, relationship, responseToDeliveryId, 'reverse_acl_unavailable', policy
         );
         return 'denied';
       }
     }
 
     const requestId = agentResponseRequestId(row.id, attempt);
+    // Same server-derived value as the audit below: the delegated branch this reply closes.
+    // The coordinator needs it to tell two branches delegated to the same alias apart when
+    // it decides which raw branch evidence its own synthesis already covers.
+    const childDeliveryId = responseToDeliveryId ?? row.id;
     const correlation = {
       ...relationship.correlation,
       parent_request_id: row.request_id,
@@ -1519,6 +1729,7 @@ export class CauceRepository {
       parent_attempt: attempt,
       response_to_delivery_id: relationship.source_delivery_id,
       response_to_message_id: relationship.source_message_id,
+      child_delivery_id: childDeliveryId,
       hop_count: relationship.hop_count,
       hop_budget: relationship.hop_budget
     };
@@ -1587,7 +1798,7 @@ export class CauceRepository {
           // A continuation delivery completes the original delegated child,
           // not the synthetic agent.response delivery that resumed it. This
           // keeps fan-in accounting attached to the logical branch.
-          child_delivery_id: responseToDeliveryId ?? row.id,
+          child_delivery_id: childDeliveryId,
           ...(responseToDeliveryId === null ? {} : { continuation_delivery_id: row.id }),
           child_attempt: attempt,
           source_delivery_id: relationship.source_delivery_id,
@@ -1601,7 +1812,32 @@ export class CauceRepository {
       'cauce_delivery_wake',
       JSON.stringify({ tenant_id: relationship.source_tenant, alias: relationship.source_alias })
     ]);
+    // A branch that returns while every sibling is already terminal is immediately followed
+    // by the fan-in or the final relay, so announcing it would only add a message the
+    // supersede machinery is about to kill.
+    const siblings = await client.query<{ open: string }>(
+      `SELECT count(*) FILTER (WHERE child.status NOT IN ('done','failed','dead'))::text AS open
+       FROM agent_output_materializations materialization
+       JOIN deliveries child ON child.id=materialization.produced_delivery_id
+       WHERE materialization.source_delivery_id=$1 AND materialization.source_attempt=$2
+         AND materialization.status='materialized'`,
+      [relationship.source_delivery_id, relationship.source_attempt]
+    );
+    const openSiblings = Number(siblings.rows[0]?.open ?? 0);
+    if (openSiblings > 0) {
+      await this.insertProgressRelay(
+        client, row, attempt, policy, this.relationshipRoot(relationship), 'returned',
+        `${row.recipient_alias} respondió a ${relationship.source_alias};`
+        + ` quedan ${openSiblings} rama(s) en curso.`
+      );
+    }
     return 'returned';
+  }
+
+  /** Root of a branch as the store itself wrote it into the materialization correlation. */
+  private relationshipRoot(relationship: { correlation: Record<string, unknown> }): string | undefined {
+    const root = relationship.correlation.root_message_id;
+    return typeof root === 'string' && uuidPattern.test(root) ? root : undefined;
   }
 
   private async insertAgentResponseDenial(
@@ -1611,9 +1847,11 @@ export class CauceRepository {
       source_delivery_id: string;
       source_tenant: Tenant;
       source_alias: string;
+      correlation: Record<string, unknown>;
     },
     responseToDeliveryId: string | null,
-    reason: 'source_membership_unavailable' | 'target_membership_unavailable' | 'reverse_acl_unavailable'
+    reason: 'source_membership_unavailable' | 'target_membership_unavailable' | 'reverse_acl_unavailable',
+    policy: ChainPolicy
   ): Promise<void> {
     await client.query(
       `INSERT INTO audit_events(
@@ -1636,10 +1874,102 @@ export class CauceRepository {
         })
       ]
     );
+    await this.insertProgressRelay(
+      client, row, row.attempt, policy, this.relationshipRoot(relationship), 'denied',
+      `${row.recipient_alias} no pudo devolver su respuesta a ${relationship.source_alias}: ${reason}.`
+    );
+  }
+
+  /**
+   * Interim chain progress for a Telegram origin. It deliberately reuses the acceptance-ACK
+   * shape (`relay_kind:'ack'` with `terminal:false`) that the bridge already implements, so
+   * an older bridge sends the text, keeps the working reaction open and never treats it as a
+   * final relay. There is therefore no store/bridge deployment order.
+   *
+   * The per-root budget is reserved under a row lock inside the caller's ACK transaction, so
+   * concurrent siblings of the same chain serialize on it; the counter only advances when the
+   * relay row is actually inserted, which makes an ACK replay a no-op.
+   */
+  private async insertProgressRelay(
+    client: DatabaseClient,
+    row: DeliveryRow,
+    attempt: number,
+    policy: ChainPolicy,
+    rootMessageId: string | undefined,
+    stage: Exclude<AgentChainProgressStage, 'capped'>,
+    summary: string
+  ): Promise<void> {
+    if (!policy.progressRelayEnabled || policy.progressRelayMaxEvents < 1) return;
+    if (!row.origin || row.origin.adapter !== 'telegram') return;
+    if (rootMessageId === undefined || !visibleText(summary)) return;
+    await client.query(
+      `INSERT INTO agent_chain_progress(root_message_id) VALUES($1)
+       ON CONFLICT(root_message_id) DO NOTHING`,
+      [rootMessageId]
+    );
+    const reserved = await client.query<{ emitted: number }>(
+      `SELECT emitted FROM agent_chain_progress WHERE root_message_id=$1 FOR UPDATE`,
+      [rootMessageId]
+    );
+    const emitted = reserved.rows[0]?.emitted;
+    if (emitted === undefined || emitted >= policy.progressRelayMaxEvents) return;
+    // The cap notice consumes the last slot exactly once, so it can never push the chain
+    // one message past its budget the way a self-counted notice would.
+    const capped = emitted === policy.progressRelayMaxEvents - 1;
+    const relayStage: AgentChainProgressStage = capped ? 'capped' : stage;
+    const idempotencyKey = capped
+      ? `relay-progress-capped:${rootMessageId}`
+      : `relay-progress:${row.id}:${attempt}:${stage}`;
+    const text = capped
+      ? progressRelayCappedText
+      : truncateUtf8(summary, maxProgressSummaryBytes).value;
+    const inserted = await client.query(
+      `INSERT INTO adapter_outbox(
+         tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload
+       ) VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
+       ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING
+       RETURNING id`,
+      [
+        originRelayTenant(row), row.origin.adapter, idempotencyKey, row.request_id, row.message_id,
+        row.id, row.trace_id, JSON.stringify(row.origin),
+        JSON.stringify({
+          relay_kind: 'ack',
+          terminal: false,
+          outcome: 'ack',
+          progress_stage: relayStage,
+          result: {
+            output: {
+              reply: text,
+              messages: [],
+              status: 'done',
+              retryable: false,
+              artifacts: []
+            }
+          },
+          correlation: {
+            request_id: row.request_id,
+            message_id: row.message_id,
+            trace_id: row.trace_id,
+            root_message_id: rootMessageId
+          }
+        })
+      ]
+    );
+    if (inserted.rowCount !== 1) return;
+    await client.query(
+      `UPDATE agent_chain_progress SET emitted=emitted+1 WHERE root_message_id=$1`,
+      [rootMessageId]
+    );
   }
 
   private rootMessageId(row: DeliveryRow): string | undefined {
-    const correlation = objectRecord(row.body.correlation);
+    // Same provenance rule as the correlation inheritance: only a reserved internal body,
+    // which no client can publish, may name a chain root. Otherwise a publisher could point
+    // at another chain's root, take its fan-in advisory lock and suppress its own relay.
+    const correlation = typeof row.body.type === 'string'
+      && reservedInternalMessageTypes.has(row.body.type)
+      ? objectRecord(row.body.correlation)
+      : undefined;
     const correlatedRoot = typeof correlation?.root_message_id === 'string'
       ? correlation.root_message_id
       : undefined;
@@ -1924,7 +2254,7 @@ export class CauceRepository {
     hopCount: number,
     hopBudget: number,
     correlation: Record<string, unknown>,
-    rejectionCode: 'invalid_output' | 'unroutable_alias' | 'ambiguous_alias' | 'hop_budget_exhausted'
+    rejectionCode: AgentOutputRejectionCode
   ): Promise<void> {
     await client.query(
       `INSERT INTO agent_output_materializations(
@@ -2041,6 +2371,7 @@ export class CauceRepository {
                                   d.claimed_at+$1*interval '1 millisecond') <= now())
          ORDER BY d.claimed_at FOR UPDATE OF d SKIP LOCKED LIMIT $2`, [staleMs, limit]
       );
+      const policy = await this.loadChainPolicy(client);
       let retried = 0;
       let dead = 0;
       for (const row of rows.rows) {
@@ -2059,6 +2390,7 @@ export class CauceRepository {
             row,
             row.attempt,
             'dead',
+            policy,
             undefined,
             'ACK timeout: max attempts exhausted'
           );
@@ -3211,6 +3543,233 @@ export class CauceRepository {
        ) ORDER BY outbox.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
     );
     return { items: result.rows };
+  }
+
+  /**
+   * Live delegation topology of one trace: who delegated to whom, in what state each branch
+   * is, and what actually reached the origin channel.
+   *
+   * Visibility is decided here, per node, and never by a caller-side facade: a chain is
+   * intrinsically cross-tenant, so a same-tenant row filter would silently erase exactly the
+   * edges this read-model exists to show, and a caller-side filter over a graph payload is
+   * how cross-tenant leaks happen. A node is visible under the same default-deny rule as
+   * getMessage (room membership inside the actor tenant, or participation plus an
+   * allow_read ACL edge). An edge survives when at least one of its endpoints is visible;
+   * the other endpoint is then reduced to an opaque, stable node id so the shape of the
+   * chain stays readable without disclosing a foreign tenant, alias or delivery id.
+   */
+  async agentChain(
+    traceId: string,
+    actorTenant: Tenant,
+    actorAlias: string,
+    limit = 500
+  ): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    if (typeof traceId !== 'string' || traceId.length < 1 || traceId.length > 256) {
+      throw new StoreError('not_found', 'trace id is invalid');
+    }
+    const bounded = Math.min(Math.max(Number.isSafeInteger(limit) ? limit : 500, 1), 1_000);
+    const visible = (message: string): string => `(
+      EXISTS (SELECT 1 FROM memberships member
+              WHERE member.tenant_id=$2 AND member.room_id=${message}.room_id
+                AND member.alias=$3 AND member.enabled AND ${message}.tenant_id=$2)
+      OR (EXISTS (SELECT 1 FROM deliveries participant
+                  WHERE participant.message_id=${message}.id
+                    AND participant.recipient_tenant=$2 AND participant.recipient_alias=$3)
+          AND (${message}.tenant_id=$2 OR EXISTS (
+            SELECT 1 FROM acl_edges edge
+            WHERE edge.from_tenant=$2 AND edge.to_tenant=${message}.tenant_id
+              AND edge.enabled AND edge.allow_read)))
+    )`;
+    const [edges, branches, relays] = await Promise.all([
+      this.pool.query<{
+        source_delivery_id: string;
+        source_attempt: number;
+        output_index: number;
+        source_tenant: Tenant;
+        source_alias: string;
+        target_tenant: Tenant | null;
+        target_alias: string | null;
+        produced_delivery_id: string | null;
+        status: string;
+        rejection_code: string | null;
+        hop_count: number;
+        hop_budget: number;
+        visited_depth: number;
+        root_message_id: string | null;
+        created_at: Date;
+        source_status: DeliveryState;
+        target_status: DeliveryState | null;
+        target_attempt: number | null;
+        target_terminal_at: Date | null;
+        source_visible: boolean;
+        target_visible: boolean;
+      }>(
+        `SELECT materialization.source_delivery_id,materialization.source_attempt,
+                materialization.output_index,materialization.source_tenant,
+                materialization.source_alias,materialization.target_tenant,
+                materialization.target_alias,materialization.produced_delivery_id,
+                materialization.status,materialization.rejection_code,
+                materialization.hop_count,materialization.hop_budget,
+                coalesce(array_length(materialization.visited_path,1),0) AS visited_depth,
+                materialization.correlation->>'root_message_id' AS root_message_id,
+                materialization.created_at,
+                source_delivery.status AS source_status,
+                child.status AS target_status,child.attempt AS target_attempt,
+                child.terminal_at AS target_terminal_at,
+                ${visible('source_message')} AS source_visible,
+                CASE WHEN produced_message.id IS NULL THEN false
+                     ELSE ${visible('produced_message')} END AS target_visible
+         FROM agent_output_materializations materialization
+         JOIN messages source_message ON source_message.id=materialization.source_message_id
+         JOIN deliveries source_delivery ON source_delivery.id=materialization.source_delivery_id
+         LEFT JOIN deliveries child ON child.id=materialization.produced_delivery_id
+         LEFT JOIN messages produced_message ON produced_message.id=materialization.produced_message_id
+         WHERE materialization.trace_id=$1
+         ORDER BY materialization.hop_count,materialization.created_at,materialization.output_index
+         LIMIT $4`,
+        [traceId, actorTenant, actorAlias, bounded]
+      ),
+      this.pool.query<{
+        child_delivery_id: string | null;
+        decision: string;
+        reason: string | null;
+        outcome: string | null;
+      }>(
+        `SELECT metadata->>'child_delivery_id' AS child_delivery_id,decision,
+                metadata->>'reason' AS reason,metadata->>'outcome' AS outcome
+         FROM audit_events
+         WHERE trace_id=$1 AND action='agent_output.response' AND decision IN ('allow','deny')
+         ORDER BY id LIMIT $2`,
+        [traceId, bounded * 2]
+      ),
+      this.pool.query<Record<string, unknown>>(
+        `SELECT outbox.id,outbox.tenant_id,outbox.adapter,outbox.status,outbox.attempts,
+                outbox.created_at,outbox.sent_at,outbox.dead_at,
+                outbox.payload->>'relay_kind' AS relay_kind,
+                outbox.payload->>'progress_stage' AS progress_stage,
+                outbox.payload->>'terminal'='true' AS interim,
+                outbox.payload->>'outcome' AS outcome,
+                outbox.payload->>'error_code' AS error_code,
+                left(outbox.payload#>>'{result,output,reply}',500) AS reply
+         FROM adapter_outbox outbox
+         JOIN messages message ON message.id=outbox.message_id
+         WHERE outbox.kind='origin_relay' AND outbox.trace_id=$1 AND ${visible('message')}
+         ORDER BY outbox.created_at LIMIT $4`,
+        [traceId, actorTenant, actorAlias, bounded]
+      )
+    ]);
+
+    const branchByDelivery = new Map<string, { decision: string; reason: string | null; outcome: string | null }>();
+    for (const branch of branches.rows) {
+      if (branch.child_delivery_id && !branchByDelivery.has(branch.child_delivery_id)) {
+        branchByDelivery.set(branch.child_delivery_id, {
+          decision: branch.decision,
+          reason: branch.reason,
+          outcome: branch.outcome
+        });
+      }
+    }
+    const nodes = new Map<string, {
+      tenant_id: Tenant; alias: string; hop_count: number;
+      delegated: number; received: number; open_branches: number;
+    }>();
+    const upsertNode = (tenant: Tenant, alias: string, hopCount: number): {
+      tenant_id: Tenant; alias: string; hop_count: number;
+      delegated: number; received: number; open_branches: number;
+    } => {
+      const key = chainNode(tenant, alias);
+      const existing = nodes.get(key);
+      if (existing) {
+        existing.hop_count = Math.min(existing.hop_count, hopCount);
+        return existing;
+      }
+      const created = {
+        tenant_id: tenant, alias, hop_count: hopCount,
+        delegated: 0, received: 0, open_branches: 0
+      };
+      nodes.set(key, created);
+      return created;
+    };
+
+    let redactedEndpoints = 0;
+    const visibleEdges = edges.rows.filter((edge) => edge.source_visible || edge.target_visible);
+    const renderedEdges = visibleEdges.map((edge) => {
+      const branch = edge.produced_delivery_id
+        ? branchByDelivery.get(edge.produced_delivery_id)
+        : undefined;
+      const open = edge.status === 'materialized'
+        && edge.target_status !== null && !terminal(edge.target_status);
+      if (edge.source_visible) {
+        const node = upsertNode(edge.source_tenant, edge.source_alias, Math.max(0, edge.hop_count - 1));
+        node.delegated += 1;
+      } else {
+        redactedEndpoints += 1;
+      }
+      if (edge.target_visible && edge.target_tenant && edge.target_alias) {
+        const node = upsertNode(edge.target_tenant, edge.target_alias, edge.hop_count);
+        node.received += 1;
+        if (open) node.open_branches += 1;
+      } else if (edge.status === 'materialized') {
+        redactedEndpoints += 1;
+      }
+      return {
+        source: edge.source_visible
+          ? {
+            tenant_id: edge.source_tenant,
+            alias: edge.source_alias,
+            delivery_id: edge.source_delivery_id,
+            attempt: edge.source_attempt,
+            status: edge.source_status
+          }
+          : { redacted: true, node_id: opaqueNodeId(edge.source_delivery_id) },
+        target: edge.status !== 'materialized' || edge.produced_delivery_id === null
+          ? null
+          : edge.target_visible
+            ? {
+              tenant_id: edge.target_tenant,
+              alias: edge.target_alias,
+              delivery_id: edge.produced_delivery_id,
+              attempt: edge.target_attempt,
+              status: edge.target_status,
+              terminal_at: edge.target_terminal_at
+            }
+            : { redacted: true, node_id: opaqueNodeId(edge.produced_delivery_id) },
+        output_index: edge.output_index,
+        state: edge.status,
+        rejection_code: edge.rejection_code,
+        hop_count: edge.hop_count,
+        hop_budget: edge.hop_budget,
+        visited_depth: edge.visited_depth,
+        open,
+        response: branch === undefined
+          ? null
+          : { decision: branch.decision, reason: branch.reason, outcome: branch.outcome },
+        root_message_id: edge.source_visible ? edge.root_message_id : null,
+        created_at: edge.created_at
+      };
+    });
+
+    if (renderedEdges.length === 0 && relays.rows.length === 0) {
+      throw new StoreError('not_found', 'agent chain not found or not visible');
+    }
+    return {
+      trace_id: traceId,
+      observed_at: new Date().toISOString(),
+      truncated: edges.rows.length === bounded,
+      nodes: [...nodes.values()].sort((left, right) =>
+        left.hop_count - right.hop_count
+        || chainNode(left.tenant_id, left.alias).localeCompare(chainNode(right.tenant_id, right.alias))),
+      edges: renderedEdges,
+      origin_relays: relays.rows,
+      counters: {
+        edges: renderedEdges.length,
+        hidden_edges: edges.rows.length - renderedEdges.length,
+        redacted_endpoints: redactedEndpoints,
+        open_branches: renderedEdges.filter((edge) => edge.open).length,
+        rejected_branches: renderedEdges.filter((edge) => edge.state === 'rejected').length
+      }
+    };
   }
 
   async listAudit(actorTenant: Tenant, actorAlias: string, limit = 200): Promise<Record<string, unknown>> {
