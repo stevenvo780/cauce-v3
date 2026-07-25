@@ -100,7 +100,7 @@ export class ConfigurationRepository {
     const hub = await withTransaction(this.pool, (client) => this.assertControl(client, actorTenant, actorAlias));
     const scope = hub ? null : actorTenant;
     const [
-      revision, tenants, rooms, memberships, edges, harnesses, policies, chainPolicies, destinations, revisions
+      revision, tenants, rooms, memberships, edges, harnesses, policies, destinations, chainPolicies, revisions
     ] = await Promise.all([
         this.pool.query<{ revision: string }>('SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions'),
         this.pool.query<Record<string, unknown>>(
