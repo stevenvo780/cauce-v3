@@ -10,6 +10,15 @@
       "stateDirectory": "/home/dev/.local/state/cauce-v3/argos",
       "harness": "hermes"
     },
+    "atlas": {
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "ws-humanizar",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/atlas",
+      "harness": "codex"
+    },
     "dedalo": {
       "tenant": "Pablo",
       "room": "grp.pablo",
@@ -27,6 +36,15 @@
       "home": "/home/claw",
       "stateDirectory": "/home/claw/.openclaw/cauce-v3/hegel",
       "harness": "openclaw"
+    },
+    "iza": {
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "ws-humanizar",
+      "user": "dev",
+      "home": "/home/dev",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/iza",
+      "harness": "hermes"
     },
     "janus": {
       "tenant": "Miguel",
@@ -62,7 +80,7 @@
       "user": "dev",
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/kratos",
-      "harness": "codex"
+      "harness": "claude"
     },
     "midas": {
       "tenant": "Pablo",

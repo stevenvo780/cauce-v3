@@ -145,8 +145,8 @@ if compose:
     passing_summary(compose, "compose-authentic", require_critical=True)
 passing_summary(runtime, "runtime-authentic", require_critical=True)
 passing_summary(mock, "mock-contract")
-if fleet.get("summary") != {"aliases": 12, "passed": 12, "failed": 0}:
-    ERRORS.append("fleet-release exact 12-alias matrix did not pass")
+if fleet.get("summary") != {"aliases": 14, "passed": 14, "failed": 0}:
+    ERRORS.append("fleet-release exact 14-alias matrix did not pass")
 if len(fleet.get("adapterBinaries", [])) != 5:
     ERRORS.append("fleet-release does not bind exactly five packaged adapters")
 if compose and (compose.get("mode") != "compose-authentic" or compose.get("mechanism") != "docker-compose-final-binaries"):
@@ -182,8 +182,8 @@ else:
 
 unit_directory = OPS / "generated" / "systemd"
 units = sorted(unit_directory.glob("cauce-v3-alias-*.service"))
-if len(units) != 12:
-    ERRORS.append(f"generated systemd fleet has {len(units)} units instead of 12")
+if len(units) != 14:
+    ERRORS.append(f"generated systemd fleet has {len(units)} units instead of 14")
 verify_sha_directory(unit_directory, {path.name for path in units})
 
 if ERRORS:
@@ -216,11 +216,11 @@ evidence = [
 checks = [
     {"name": "frozen install, lint, global typecheck and build", "status": "passed", "evidenceKind": "verification-three-rounds"},
     {"name": "all standard suites passed three rounds without skips", "status": "passed", "evidenceKind": "verification-three-rounds"},
-    {"name": "12 manifests and five packaged adapters passed fleet release", "status": "passed", "evidenceKind": "fleet-release"},
+    {"name": "14 manifests and five packaged adapters passed fleet release", "status": "passed", "evidenceKind": "fleet-release"},
     {"name": "Testcontainers real QA and restart durability passed", "status": "passed", "evidenceKind": "testcontainers-real"},
     {"name": "mock contract evidence remained separate", "status": "passed", "evidenceKind": "mock-contract"},
     {"name": "five final services passed docker-run authentic fallback", "status": "passed", "evidenceKind": "runtime-authentic"},
-    {"name": "12 generated units passed exact SHA verification", "status": "passed", "evidenceKind": "systemd-manifest"},
+    {"name": "14 generated units passed exact SHA verification", "status": "passed", "evidenceKind": "systemd-manifest"},
 ]
 prerequisites = [
     {
@@ -265,7 +265,7 @@ report = {
     "sourceDigest": source_digest,
     "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
     "candidateStatus": "code-runtime-passed-release-host-blocked",
-    "fleet": {"manifests": 12, "packagedAdapters": 5},
+    "fleet": {"manifests": 14, "packagedAdapters": 5},
     "gates": {
         "codeRuntime": {"status": "passed", "criticalSkipped": 0, "checks": checks},
         "releaseHost": {

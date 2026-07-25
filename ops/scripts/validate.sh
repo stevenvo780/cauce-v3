@@ -30,7 +30,7 @@ tmp_units=$(mktemp -d)
 tmp_container_units=$(mktemp -d)
 trap 'rm -rf "$tmp_units" "$tmp_container_units"' EXIT
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-units.py" --output "$tmp_units" >/dev/null
-[[ $(printf '%s\n' "$tmp_units"/cauce-v3-alias-*.service | wc -l) -eq 12 ]] || { printf 'unit generator did not emit exactly 12 units\n' >&2; exit 1; }
+[[ $(printf '%s\n' "$tmp_units"/cauce-v3-alias-*.service | wc -l) -eq 14 ]] || { printf 'unit generator did not emit exactly 14 units\n' >&2; exit 1; }
 (cd "$tmp_units" && sha256sum -c SHA256SUMS >/dev/null)
 for unit in "$tmp_units"/cauce-v3-alias-*.service "$tmp_units/SHA256SUMS"; do
   cmp -s "$unit" "$ROOT/generated/systemd/$(basename "$unit")" || {
@@ -43,8 +43,8 @@ done
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-container-units.py" --output "$tmp_container_units" >/dev/null
 container_units=("$tmp_container_units"/cauce-v3-container-*.service)
 container_configs=("$tmp_container_units"/configs/*.env.example)
-[[ ${#container_units[@]} -eq 12 && ${#container_configs[@]} -eq 12 ]] || {
-  printf 'container unit generator did not emit exactly 12 units/configs\n' >&2
+[[ ${#container_units[@]} -eq 14 && ${#container_configs[@]} -eq 14 ]] || {
+  printf 'container unit generator did not emit exactly 14 units/configs\n' >&2
   exit 1
 }
 (cd "$tmp_container_units" && sha256sum -c SHA256SUMS >/dev/null)

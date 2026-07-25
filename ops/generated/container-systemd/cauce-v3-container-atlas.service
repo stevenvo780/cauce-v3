@@ -1,9 +1,9 @@
 [Unit]
-Description=Cauce V3 container adapter kratos (ws-humanizar/claude)
+Description=Cauce V3 container adapter atlas (ws-humanizar/codex)
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
-ConditionPathExists=/etc/cauce-v3/container-aliases/kratos.env
+ConditionPathExists=/etc/cauce-v3/container-aliases/atlas.env
 StartLimitIntervalSec=300s
 StartLimitBurst=10
 
@@ -12,8 +12,8 @@ Type=simple
 User=root
 Group=root
 UMask=0077
-ExecStart=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh start kratos
-ExecStop=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop kratos
+ExecStart=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh start atlas
+ExecStop=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop atlas
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78

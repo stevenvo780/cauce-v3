@@ -9,12 +9,14 @@ from typing import Any
 
 EXPECTED = {
     "argos": ("Steven", "grp.steven", "ctrl-infra", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/argos", "hermes"),
+    "atlas": ("Miguel", "grp.miguel", "ws-humanizar", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/atlas", "codex"),
     "dedalo": ("Pablo", "grp.pablo", "ws-pablo-dev", "dev", "/home/dev", "/workspace/.cauce-v3/dedalo", "codex"),
     "hegel": ("Jhon", "grp.jhon", "agv2-jhon-hegel-oc", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/hegel", "openclaw"),
+    "iza": ("Miguel", "grp.miguel", "ws-humanizar", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/iza", "hermes"),
     "janus": ("Miguel", "grp.miguel", "claw-miguel", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/janus", "openclaw"),
     "jarvis": ("Steven", "grp.steven", "claw", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/jarvis", "openclaw"),
     "kant": ("Steven", "grp.steven", "ctrl-infra", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/kant", "codex"),
-    "kratos": ("Miguel", "grp.miguel", "ws-humanizar", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/kratos", "codex"),
+    "kratos": ("Miguel", "grp.miguel", "ws-humanizar", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/kratos", "claude"),
     "midas": ("Pablo", "grp.pablo", "agv2-pablo-marcas-oc", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/midas", "openclaw"),
     "salva": ("Isa", "grp.isa", "ws-isa", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/salva", "codex"),
     "seneca": ("Pablo", "grp.pablo", "agv2-pablo-personal-oc", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/seneca", "openclaw"),

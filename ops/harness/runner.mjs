@@ -187,7 +187,7 @@ async function waitUntil(operation, timeoutMs = wsTimeoutMs) {
 }
 
 const tests = [
-  ['12 aliases and four harness kinds over real WS', async () => {
+  ['14 aliases and four harness kinds over real WS', async () => {
     const clients = await Promise.all(allIdentities.map(async (entry, index) => {
       const client = new WsClient(entry, harnessKinds[index % harnessKinds.length]);
       await client.connect();
