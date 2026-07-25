@@ -1647,3 +1647,39 @@ test("authenticated session keys include attempt number to isolate retries", asy
   // Different attempts should use different session IDs (isolated by v2 namespace including attempt)
   assert.notEqual(session1, session2, "attempts 1 and 2 must have different session IDs due to attempt scoping in v2");
 });
+
+test("un mensaje con solo adjuntos llega al harness en vez de morir sin respuesta", async () => {
+  const context = await setup("engine-media-only");
+  const input: Delivery = {
+    ...delivery("media-only-photo"),
+    body: {
+      type: "telegram.message",
+      chat_type: "private",
+      media: [
+        { kind: "photo", file_id: "AgACAgEAAxk", file_size: 137933 },
+        { kind: "photo", file_id: "AgACAgEAAxl", file_size: 141151 },
+      ],
+    },
+  };
+  await context.engine.handleDelivery(input);
+
+  // Lo que importa: el harness SE INVOCA. Antes esto reventaba con INVALID_DELIVERY y la
+  // persona que mandaba la foto no recibia absolutamente nada.
+  assert.equal(context.runner.requests.length, 1);
+  assert.notEqual(context.events.at(-1)?.error?.code, "INVALID_DELIVERY");
+
+  const enviado = context.runner.requests[0]?.stdin ?? "";
+  assert.match(enviado, /2 adjuntos de tipo photo/u);
+  assert.match(enviado, /No podés ver ni abrir el contenido/u);
+});
+
+test("un cuerpo realmente vacio sigue siendo rechazado", async () => {
+  const context = await setup("engine-body-empty");
+  const input: Delivery = {
+    ...delivery("body-empty"),
+    body: { type: "telegram.message", chat_type: "private" },
+  };
+  await context.engine.handleDelivery(input);
+  assert.equal(context.runner.requests.length, 0);
+  assert.equal(context.events.at(-1)?.error?.code, "INVALID_DELIVERY");
+});

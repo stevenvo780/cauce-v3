@@ -559,12 +559,46 @@ export class AdapterEngine {
   }
 }
 
+/**
+ * Un mensaje de Telegram con solo una foto, un audio o un documento no trae `text` ni
+ * `prompt`. Antes eso reventaba con INVALID_DELIVERY no reintentable, así que la persona
+ * mandaba una imagen y **no recibía absolutamente nada**: ni respuesta ni error. Verificado
+ * el 2026-07-25, con un usuario mandándole seis fotos seguidas a salva justo después de que
+ * el agente le dijera que le mandara archivos.
+ *
+ * Describir el adjunto no es procesarlo. El agente sigue sin poder ver la imagen, pero ahora
+ * sabe que llegó y puede decirlo, que es infinitamente mejor que el silencio.
+ */
+function describeMedia(body: Record<string, unknown>): string | undefined {
+  const media = body.media;
+  if (!Array.isArray(media) || media.length === 0) return undefined;
+
+  const kinds = new Map<string, number>();
+  for (const item of media) {
+    const kind = typeof item === "object" && item !== null && typeof (item as { kind?: unknown }).kind === "string"
+      ? (item as { kind: string }).kind
+      : "archivo";
+    kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+  }
+
+  const detalle = [...kinds.entries()]
+    .map(([kind, count]) => (count === 1 ? `un adjunto de tipo ${kind}` : `${count} adjuntos de tipo ${kind}`))
+    .join(" y ");
+
+  return `El usuario envió ${detalle}, sin texto acompañante. No podés ver ni abrir el contenido del `
+    + `adjunto: sólo sabés que llegó y de qué tipo es. Respondé reconociendo lo que envió y pedile `
+    + `que describa en palabras lo que necesita, o explicale que todavía no podés procesar ese tipo `
+    + `de archivo. No inventes lo que el adjunto pueda contener.`;
+}
+
 function promptFromBody(body: Record<string, unknown>): string {
   const value = typeof body.prompt === "string" ? body.prompt : body.text;
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new AdapterError("INVALID_DELIVERY", "Delivery body requires a non-empty prompt or text", false);
-  }
-  return value;
+  if (typeof value === "string" && value.trim().length > 0) return value;
+
+  const media = describeMedia(body);
+  if (media !== undefined) return media;
+
+  throw new AdapterError("INVALID_DELIVERY", "Delivery body requires a non-empty prompt or text", false);
 }
 
 function originalDelegatedPrompt(delivery: Delivery, store: DurableStore): string | undefined {
