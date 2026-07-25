@@ -1383,7 +1383,7 @@ def run_adapter(args: argparse.Namespace) -> int:
             # Phase "post-child": the child exists but metadata is still "starting".
             phase_gate("post-child", should_stop)
             if termination_requested:
-                signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=False)
+                signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=True)
                 wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
                 raise PermanentError("adapter launch was cancelled before metadata publication")
             executable = wait_for_exec(process_tree, args.command[0])
@@ -1412,7 +1412,7 @@ def run_adapter(args: argparse.Namespace) -> int:
             remove_metadata(control_fd)
             return remap_child_exit(status)
         except BaseException:
-            signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=False)
+            signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=True)
             try:
                 wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
             except subprocess.TimeoutExpired:
