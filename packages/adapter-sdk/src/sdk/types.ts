@@ -193,6 +193,7 @@ export interface ConsumerConnector {
 export interface AdapterConfig {
   readonly tenantId: DeliveryEnvelope['tenant_id'];
   readonly alias: string;
+  readonly ownRoom?: string;
   readonly instanceId: string;
   readonly stateDirectory: string;
   readonly heartbeatMs?: number;

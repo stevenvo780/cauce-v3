@@ -90,6 +90,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     config: {
       tenantId,
       alias: runtime.alias,
+      ownRoom: runtime.room,
       instanceId: runtime.instanceId,
       stateDirectory: runtime.stateDirectory,
       heartbeatMs: runtime.heartbeatMs,

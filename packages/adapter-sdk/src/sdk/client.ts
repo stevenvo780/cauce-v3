@@ -101,6 +101,8 @@ export class AdapterClient {
       harness: this.harness,
       publish: (event) => this.sendEvent(event),
       logger: this.logger,
+      ...(options.config.tenantId === undefined ? {} : { ownTenantId: options.config.tenantId }),
+      ...(options.config.ownRoom === undefined ? {} : { ownRoom: options.config.ownRoom }),
       ...(options.config.defaultTimeoutMs === undefined
         ? {}
         : { defaultTimeoutMs: options.config.defaultTimeoutMs }),

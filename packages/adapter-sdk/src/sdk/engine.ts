@@ -35,6 +35,8 @@ export interface AdapterEngineOptions {
   readonly harness: HarnessAdapter;
   readonly publish: EventPublisher;
   readonly logger?: AdapterLogger;
+  readonly ownTenantId?: string;
+  readonly ownRoom?: string;
   readonly defaultTimeoutMs?: number;
   /** Test/diagnostic override; production derives renewal cadence from the authenticated claim. */
   readonly claimRenewalMs?: number;
@@ -50,6 +52,8 @@ export class AdapterEngine {
   private readonly harness: HarnessAdapter;
   private readonly publishEvent: EventPublisher;
   private readonly logger: AdapterLogger;
+  private readonly ownTenantId: string | undefined;
+  private readonly ownRoom: string | undefined;
   private readonly defaultTimeoutMs: number;
   private readonly claimRenewalMs: number | undefined;
   private readonly claimWatchdogMs: number | undefined;
@@ -73,6 +77,8 @@ export class AdapterEngine {
     this.harness = options.harness;
     this.publishEvent = options.publish;
     this.logger = options.logger ?? (() => undefined);
+    this.ownTenantId = options.ownTenantId;
+    this.ownRoom = options.ownRoom;
     this.getAgentChain = options.getAgentChain;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_AGENTIC_TIMEOUT_MS;
     if (!Number.isSafeInteger(this.defaultTimeoutMs)
@@ -282,8 +288,8 @@ export class AdapterEngine {
       const requestContext = {
         self_alias: delivery.recipient_alias,
         sender_alias: delivery.actor_alias,
-        tenant_id: delivery.tenant_id,
-        room_id: delivery.room_id,
+        tenant_id: this.ownTenantId ?? delivery.tenant_id,
+        room_id: this.ownRoom ?? delivery.room_id,
         channel: delivery.authenticated_context?.channel
           ?? delivery.origin?.channel
           ?? "cauce",

@@ -7,6 +7,7 @@ const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 
 export interface CliRuntimeConfig {
   readonly tenant: string;
+  readonly room: string;
   readonly alias: string;
   readonly instanceId: string;
   readonly stateDirectory: string;
@@ -159,6 +160,7 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
   const openClawSettings = openClaw(base, entry.openclaw, harnessId);
   return {
     tenant: string(entry.tenant, "tenant"),
+    room: entry.room === undefined ? string(entry.tenant, "tenant") : string(entry.room, "room"),
     alias,
     instanceId: string(entry.instance_id, "instance_id"),
     stateDirectory: resolve(base, string(entry.state_directory, "state_directory")),
@@ -242,6 +244,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
   }
   return {
     tenant: requiredEnvironment("CAUCE_TENANT"),
+    room: requiredEnvironment("CAUCE_ROOM"),
     alias: aliasOverride ?? requiredEnvironment("CAUCE_ALIAS"),
     instanceId: requiredEnvironment("CAUCE_INSTANCE_ID"),
     stateDirectory: resolve(requiredEnvironment("CAUCE_STATE_DIR")),
