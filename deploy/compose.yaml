@@ -60,8 +60,10 @@ services:
       CAUCE_OIDC_POST_LOGIN_PATH: ${CAUCE_OIDC_POST_LOGIN_PATH:-/}
       CAUCE_OIDC_SESSION_KEY_FILE: /run/secrets/gateway_oidc_session_key
       CAUCE_OIDC_CLIENT_SECRET_FILE: ${CAUCE_OIDC_CLIENT_SECRET_CONTAINER_FILE:-}
-      CAUCE_TOKEN_HASH_FILE: /run/secrets/gateway_token_hashes
-      CAUCE_MTLS_IDENTITY_FILE: /run/secrets/gateway_mtls_identities
+      # Identity registries are re-read on every request, so they must resolve through the
+      # directory bind below and never through a single-file secret mount. See the volumes block.
+      CAUCE_TOKEN_HASH_FILE: /run/cauce-identities/token_hashes.json
+      CAUCE_MTLS_IDENTITY_FILE: /run/cauce-identities/mtls_identities.json
       CAUCE_TLS_CERT_FILE: /run/secrets/gateway_tls_cert
       CAUCE_TLS_KEY_FILE: /run/secrets/gateway_tls_key
       CAUCE_TLS_CLIENT_CA_FILE: /run/secrets/gateway_client_ca
@@ -102,16 +104,6 @@ services:
         uid: "1000"
         gid: "1000"
         mode: 0444
-      - source: gateway_token_hashes
-        target: gateway_token_hashes
-        uid: "1000"
-        gid: "1000"
-        mode: 0400
-      - source: gateway_mtls_identities
-        target: gateway_mtls_identities
-        uid: "1000"
-        gid: "1000"
-        mode: 0400
       - source: gateway_oidc_session_key
         target: gateway_oidc_session_key
         uid: "1000"
@@ -122,6 +114,23 @@ services:
         uid: "1000"
         gid: "1000"
         mode: 0400
+    volumes:
+      # Compose file secrets are single-file bind mounts, and a single-file bind pins the inode it
+      # was created from. mtls_identities.json and token_hashes.json are the only secrets the
+      # gateway re-reads on every request, and both are rotated by atomic rename, which allocates a
+      # NEW inode: mounted as files the container would keep serving the pre-rotation registry
+      # forever, so neither an alta nor a revocation would ever reach the gateway. Mounting the
+      # parent directory makes the rename visible because each read re-resolves the name.
+      # This directory must hold ONLY those two registries: everything inside it is readable by the
+      # gateway. Do not mount /etc/cauce-v3/secrets itself (that would newly expose the relay
+      # provider module, the PostgreSQL password and any future secret) and do not leave rotation
+      # backups inside it (keep them outside the mount).
+      - type: bind
+        source: ${CAUCE_GATEWAY_IDENTITY_DIR:?set CAUCE_GATEWAY_IDENTITY_DIR to the directory that holds mtls_identities.json and token_hashes.json}
+        target: /run/cauce-identities
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}:${GATEWAY_TLS_PORT:-8443}:8443"
     healthcheck:
@@ -430,10 +439,9 @@ secrets:
     file: ${CAUCE_GATEWAY_TLS_CA_PATH:?set CAUCE_GATEWAY_TLS_CA_PATH}
   gateway_client_ca:
     file: ${CAUCE_GATEWAY_CLIENT_CA_PATH:-/dev/null}
-  gateway_token_hashes:
-    file: ${CAUCE_GATEWAY_TOKEN_HASHES_PATH:-/dev/null}
-  gateway_mtls_identities:
-    file: ${CAUCE_GATEWAY_MTLS_IDENTITIES_PATH:-/dev/null}
+  # gateway_token_hashes / gateway_mtls_identities intentionally have no secret definition: they are
+  # rotated by atomic rename and must be reached through the CAUCE_GATEWAY_IDENTITY_DIR bind on the
+  # gateway service, never as single-file secret mounts.
   gateway_oidc_session_key:
     file: ${CAUCE_GATEWAY_OIDC_SESSION_KEY_PATH:-/dev/null}
   gateway_oidc_client_secret:

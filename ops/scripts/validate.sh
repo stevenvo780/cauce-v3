@@ -84,6 +84,13 @@ required = {
     'production includes identity-free shadow router': 'services/shadow-router/dist/main.js' in prod,
     'production PostgreSQL policy must be verify-full': 'PGSSLMODE: verify-full' in prod and 'sslmode=require' not in prod,
     'gateway health port must be explicit': 'CAUCE_HEALTH_PORT: "8081"' in prod,
+    'per-request identity registries must be reached through a directory bind, never a file secret': all((
+        'CAUCE_MTLS_IDENTITY_FILE: /run/cauce-identities/' in prod,
+        'CAUCE_TOKEN_HASH_FILE: /run/cauce-identities/' in prod,
+        'target: /run/cauce-identities' in prod,
+        'source: gateway_mtls_identities' not in prod,
+        'source: gateway_token_hashes' not in prod,
+    )),
     'production compose must wire the complete OIDC BFF': all(value in prod for value in ('CAUCE_OIDC_AUTHORIZATION_URL', 'CAUCE_OIDC_TOKEN_URL', 'CAUCE_OIDC_CLIENT_ID', 'CAUCE_OIDC_REDIRECT_URI', 'gateway_oidc_session_key')),
     'authentic compose must run every final service': all(f'  {name}:' in authentic for name in ('gateway', 'dispatcher', 'relay-worker', 'telegram-bridge', 'shadow-router')),
     'authentic compose must use one final runtime image': authentic.count('<<: *final-runtime') == 6,
@@ -104,7 +111,7 @@ if docker compose version >/dev/null 2>&1; then
   export CAUCE_AUTH_PROVIDER=oidc CAUCE_CONSOLE_ORIGINS=https://console.invalid
   export CAUCE_DATABASE_URL_SECRET_PATH=/dev/null CAUCE_POSTGRES_CA_PATH=/dev/null
   export CAUCE_GATEWAY_TLS_CERT_PATH=/dev/null CAUCE_GATEWAY_TLS_KEY_PATH=/dev/null CAUCE_GATEWAY_TLS_CA_PATH=/dev/null CAUCE_GATEWAY_CLIENT_CA_PATH=/dev/null
-  export CAUCE_GATEWAY_TOKEN_HASHES_PATH=/dev/null CAUCE_GATEWAY_MTLS_IDENTITIES_PATH=/dev/null
+  export CAUCE_GATEWAY_IDENTITY_DIR=/tmp/cauce-validation-identities
   export CAUCE_GATEWAY_OIDC_SESSION_KEY_PATH=/dev/null CAUCE_GATEWAY_OIDC_CLIENT_SECRET_PATH=/dev/null
   export CAUCE_CONSOLE_TLS_CERT_PATH=/dev/null CAUCE_CONSOLE_TLS_KEY_PATH=/dev/null CAUCE_CONSOLE_TLS_CA_PATH=/dev/null
   export CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH=/dev/null CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH=/dev/null

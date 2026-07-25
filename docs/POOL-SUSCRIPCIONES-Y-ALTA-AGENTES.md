@@ -396,8 +396,14 @@ ON CONFLICT (tenant_id, alias) DO NOTHING;
    `ca.crt` `0600` emitidos por la CA operativa (sin script en este repo — brecha documental real,
    no hay automatización de emisión de certs acá).
 2. Dos entradas nuevas en `CAUCE_MTLS_IDENTITY_FILE` (fuera de repo, formato documentado en
-   `ops/runbooks/authentication.md:19`): `{"certificate_sha256": "...", "principal": {"tenant_id":
+   `ops/runbooks/authentication.md:63`): `{"certificate_sha256": "...", "principal": {"tenant_id":
    "Miguel", "alias": "iza"|"atlas", "channel": "adapter", "roles": [...]}}`.
+   Publicar por rename atómico y **verificar que el gateway lo vea**: el registro se alcanza por el
+   directorio montado `CAUCE_GATEWAY_IDENTITY_DIR` → `/run/cauce-identities`, y si alguna vez vuelve
+   a montarse como archivo suelto el rename queda pinneado al inodo viejo y el alta no llega (falla
+   como `mTLS certificate is not provisioned`, que el SDK enmascara como `FRAME_BEFORE_HELLO`).
+   Comparar inodo/tamaño/mtime/conteo host vs. contenedor según
+   `ops/runbooks/authentication.md` § "Montaje de los registros".
 3. Bots Telegram nuevos vía BotFather (manual) + tokens `0600`, luego regenerar:
    `python3 ops/scripts/generate-telegram-config.py`.
 4. `~/.config/cauce-v3/container-aliases/{iza,atlas}.env` desde los `.env.example` regenerados en
