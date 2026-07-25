@@ -158,7 +158,13 @@ class MtlsWsClient {
     this.socket.send(JSON.stringify(value));
   }
 
-  async next(predicate, timeoutMs = 20_000) {
+  // The fault-injection cases kill the gateway or PostgreSQL outright and then wait
+  // for the system to reconverge. What they assert is that the effect survives, never
+  // that it arrives quickly, so the budget has to cover a cold reconnect on a busy
+  // release host -- 20s was tight enough there that either fault case failed at random.
+  // Raising it cannot turn a real failure into a pass: no caller catches this timeout,
+  // so a longer wait only removes premature aborts.
+  async next(predicate, timeoutMs = 60_000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const index = this.frames.findIndex(predicate);
@@ -190,8 +196,10 @@ class MtlsWsClient {
     const first = await this.next((value) => value.type === 'ack_result' && value.delivery_id === delivery.delivery_id);
     this.send({ ...frame, event_id: crypto.randomUUID() });
     const duplicate = await this.next((value) => value.type === 'ack_result' && value.delivery_id === delivery.delivery_id);
-    assert.equal(first.applied, true);
-    assert.equal(duplicate.applied, false);
+    // The receipt is the only thing that distinguishes a genuine durability defect from
+    // a claim this harness lost to timing, and a bare `false !== true` hides it.
+    assert.equal(first.applied, true, `first ACK was not applied: receipt=${first.receipt}`);
+    assert.equal(duplicate.applied, false, `replayed ACK was applied twice: receipt=${duplicate.receipt}`);
   }
 
   terminate() { this.socket?.terminate(); }
