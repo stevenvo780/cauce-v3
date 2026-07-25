@@ -1,0 +1,246 @@
+#!/usr/bin/env node
+
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  TextContent,
+} from '@modelcontextprotocol/sdk/types.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { createPool } from '@cauce/store';
+import { FleetReadModel } from './fleet-read-model.js';
+
+const tenantId = process.env.CAUCE_TENANT_ID;
+if (!tenantId) {
+  console.error('Error: CAUCE_TENANT_ID environment variable is required');
+  process.exit(1);
+}
+
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  console.error('Error: DATABASE_URL environment variable is required');
+  process.exit(1);
+}
+
+// These are guaranteed by the checks above, but TypeScript needs reassurance
+const ensuredTenantId: string = tenantId;
+const ensuredDatabaseUrl: string = databaseUrl;
+
+let pool: ReturnType<typeof createPool> | undefined;
+let fleetModel: FleetReadModel | undefined;
+
+const server = new Server(
+  {
+    name: 'mcp-fleet-monitor',
+    version: '1.0.0',
+  },
+  {
+    capabilities: {
+      tools: {},
+    },
+  }
+);
+
+// Tool descriptions
+const TOOLS = [
+  {
+    name: 'estado_flota',
+    description:
+      'Get the current state of all aliases in the fleet, including lease status, harness status, and last activity',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        alias: {
+          type: 'string',
+          description: 'Optional: filter by specific alias',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'entregas',
+    description:
+      'List deliveries filtered by alias and/or status (claimed, acked, dead)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        alias: {
+          type: 'string',
+          description: 'Optional: filter by recipient alias',
+        },
+        estado: {
+          type: 'string',
+          enum: ['claimed', 'acked', 'dead'],
+          description: 'Optional: filter by delivery status',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results (default 100, max 1000)',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'cadena',
+    description:
+      'Get the delegation chain (A → B → C) for a given trace ID or root message ID',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        trace_id: {
+          type: 'string',
+          description: 'Trace ID to follow',
+        },
+        mensaje_id_raiz: {
+          type: 'string',
+          description: 'Alternative: root message ID',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'dead_letters',
+    description:
+      'Get dead/stuck messages grouped by cause, with counts and recent examples',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'salud',
+    description: 'One-line fleet health summary suitable for chat',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+];
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: TOOLS,
+}));
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (!fleetModel) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: 'Error: fleet model not initialized',
+        } as TextContent,
+      ],
+      isError: true,
+    };
+  }
+
+  const toolName = request.params.name;
+  const args = (request.params.arguments || {}) as Record<string, unknown>;
+
+  try {
+    let result: unknown;
+
+    const aliasArg = typeof args.alias === 'string' ? args.alias : undefined;
+    const estadoArg = typeof args.estado === 'string' ? args.estado : undefined;
+    const limitArg = typeof args.limit === 'number' ? args.limit : undefined;
+    const traceIdArg = typeof args.trace_id === 'string' ? args.trace_id : undefined;
+    const msgIdArg = typeof args.mensaje_id_raiz === 'string' ? args.mensaje_id_raiz : undefined;
+
+    switch (toolName) {
+      case 'estado_flota':
+        result = await fleetModel.estadoFlota(aliasArg);
+        break;
+      case 'entregas':
+        result = await fleetModel.entregas(aliasArg, estadoArg, limitArg);
+        break;
+      case 'cadena':
+        result = await fleetModel.cadena(traceIdArg, msgIdArg);
+        break;
+      case 'dead_letters':
+        result = await fleetModel.deadLetters();
+        break;
+      case 'salud':
+        result = await fleetModel.salud();
+        break;
+      default:
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Unknown tool: ${toolName}`,
+            } as TextContent,
+          ],
+          isError: true,
+        };
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(result, null, 2),
+        } as TextContent,
+      ],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Error executing ${toolName}: ${message}`,
+        } as TextContent,
+      ],
+      isError: true,
+    };
+  }
+});
+
+async function main() {
+  const transport = new StdioServerTransport();
+
+  try {
+    pool = createPool(ensuredDatabaseUrl);
+    fleetModel = new FleetReadModel(pool, ensuredTenantId);
+
+    // Test the connection
+    const testResult = await pool.query('SELECT 1');
+    if (!testResult.rows.length) {
+      throw new Error('Database connection test failed');
+    }
+
+    console.error('[mcp-fleet-monitor] Connected to database');
+    console.error(`[mcp-fleet-monitor] Tenant: ${tenantId}`);
+    console.error('[mcp-fleet-monitor] Connecting stdio transport...');
+
+    await server.connect(transport);
+    console.error('[mcp-fleet-monitor] Server running on stdio');
+  } catch (error) {
+    console.error('[mcp-fleet-monitor] Fatal error:', error);
+    process.exit(1);
+  }
+}
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+  console.error('[mcp-fleet-monitor] Shutting down...');
+  if (pool) {
+    await pool.end();
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.error('[mcp-fleet-monitor] Shutting down...');
+  if (pool) {
+    await pool.end();
+  }
+  process.exit(0);
+});
+
+main().catch(console.error);

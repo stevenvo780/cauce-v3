@@ -1,0 +1,406 @@
+import type { DatabasePool } from '@cauce/store';
+
+interface AliasState {
+  alias: string;
+  lease_alive: boolean;
+  active_instance_id?: string;
+  lease_expires_at?: string;
+  epoch?: number;
+  last_activity?: string;
+  available: boolean;
+}
+
+// Explicitly match the response structure
+interface EstadoFlotaResult {
+  data: Array<{
+    alias: string;
+    lease_alive: boolean;
+    active_instance_id?: string;
+    lease_expires_at?: string;
+    epoch?: number;
+    last_activity?: string;
+    available: boolean;
+  }>;
+  available: boolean;
+}
+
+interface DeliveryRecord {
+  id: string;
+  message_id: string;
+  recipient_alias: string;
+  status: string;
+  attempt: number;
+  max_attempts: number;
+  created_at: string;
+  root_message_id?: string;
+  available: boolean;
+}
+
+interface EntregasResult {
+  data: Array<{
+    id: string;
+    message_id: string;
+    recipient_alias: string;
+    status: string;
+    attempt: number;
+    max_attempts: number;
+    created_at: string;
+    root_message_id?: string;
+    available: boolean;
+  }>;
+  available: boolean;
+}
+
+interface ChainNode {
+  hop: number;
+  source_alias?: string;
+  source_tenant?: string;
+  target_alias?: string;
+  target_tenant?: string;
+  status: string;
+  created_at: string;
+  rejection_code?: string;
+}
+
+interface CadenaResult {
+  data: ChainNode[];
+  available: boolean;
+  trace_id?: string;
+}
+
+interface DeadLetterGroup {
+  cause: string;
+  count: number;
+  recent_examples: Array<{
+    delivery_id: string;
+    alias: string;
+    created_at: string;
+    rejection_code?: string;
+  }>;
+}
+
+interface HealthSummary {
+  summary: string;
+  timestamp: string;
+}
+
+export class FleetReadModel {
+  constructor(
+    private pool: DatabasePool,
+    private tenantId: string
+  ) {}
+
+  async estadoFlota(alias?: string): Promise<EstadoFlotaResult> {
+    try {
+      // Get all aliases from deliveries and leases
+      const result = await this.pool.query<{
+        alias: string;
+        active_instance_id: string | null;
+        lease_expires_at: Date | null;
+        epoch: number | null;
+        last_activity: Date | null;
+      }>(
+        `
+        WITH all_aliases AS (
+          SELECT DISTINCT recipient_alias as alias FROM deliveries
+          WHERE recipient_tenant = $1
+          UNION
+          SELECT alias FROM leases
+          WHERE tenant_id = $1
+        )
+        SELECT
+          aa.alias,
+          l.active_instance_id,
+          l.lease_expires_at,
+          l.epoch,
+          MAX(m.created_at) as last_activity
+        FROM all_aliases aa
+        LEFT JOIN leases l ON l.alias = aa.alias AND l.tenant_id = $1
+        LEFT JOIN deliveries d ON d.recipient_alias = aa.alias AND d.recipient_tenant = $1
+        LEFT JOIN messages m ON m.id = d.message_id
+        WHERE $2::text IS NULL OR aa.alias = $2
+        GROUP BY aa.alias, l.active_instance_id, l.lease_expires_at, l.epoch
+        ORDER BY aa.alias
+        `,
+        [this.tenantId, alias || null]
+      );
+
+      const mappedData = result.rows.map((row) => {
+        const obj: AliasState = {
+          alias: row.alias,
+          lease_alive: row.lease_expires_at ? new Date(row.lease_expires_at) > new Date() : false,
+          available: true,
+        };
+        if (row.active_instance_id) obj.active_instance_id = row.active_instance_id;
+        if (row.lease_expires_at) obj.lease_expires_at = row.lease_expires_at.toISOString();
+        if (row.epoch) obj.epoch = row.epoch;
+        if (row.last_activity) obj.last_activity = row.last_activity.toISOString();
+        return obj;
+      });
+
+      return { data: mappedData, available: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        data: [],
+        available: false,
+      };
+    }
+  }
+
+  async entregas(
+    alias?: string,
+    estado?: string,
+    limit = 100
+  ): Promise<EntregasResult> {
+    try {
+      const bounded = Math.min(Math.max(Number.isInteger(limit) ? limit : 100, 1), 1000);
+
+      const result = await this.pool.query<{
+        id: string;
+        message_id: string;
+        recipient_alias: string;
+        status: string;
+        attempt: number;
+        max_attempts: number;
+        created_at: Date;
+        root_message_id: string | null;
+      }>(
+        `
+        SELECT
+          d.id,
+          d.message_id,
+          d.recipient_alias,
+          d.status,
+          d.attempt,
+          d.max_attempts,
+          d.created_at,
+          (m.correlation->>'root_message_id')::text as root_message_id
+        FROM deliveries d
+        LEFT JOIN messages m ON m.id = d.message_id
+        WHERE d.recipient_tenant = $1
+          AND ($2::text IS NULL OR d.recipient_alias = $2)
+          AND ($3::text IS NULL OR d.status = $3)
+        ORDER BY d.created_at DESC
+        LIMIT $4
+        `,
+        [this.tenantId, alias || null, estado || null, bounded]
+      );
+
+      const mappedData = result.rows.map((row) => {
+        const obj: DeliveryRecord = {
+          id: row.id,
+          message_id: row.message_id,
+          recipient_alias: row.recipient_alias,
+          status: row.status,
+          attempt: row.attempt,
+          max_attempts: row.max_attempts,
+          created_at: row.created_at.toISOString(),
+          available: true,
+        };
+        if (row.root_message_id) obj.root_message_id = row.root_message_id;
+        return obj;
+      });
+
+      return { data: mappedData, available: true };
+    } catch (error) {
+      return { data: [], available: false };
+    }
+  }
+
+  async cadena(traceId?: string, rootMessageId?: string): Promise<CadenaResult> {
+
+    try {
+      if (!traceId && !rootMessageId) {
+        return { data: [], available: false };
+      }
+
+      const effectiveTraceId = traceId;
+      if (!effectiveTraceId) {
+        return { data: [], available: false };
+      }
+
+      const result = await this.pool.query<{
+        hop_count: number;
+        source_alias: string | null;
+        source_tenant: string | null;
+        target_alias: string | null;
+        target_tenant: string | null;
+        status: string;
+        created_at: Date;
+        rejection_code: string | null;
+      }>(
+        `
+        SELECT
+          aom.hop_count,
+          aom.source_alias,
+          aom.source_tenant,
+          aom.target_alias,
+          aom.target_tenant,
+          aom.status,
+          aom.created_at,
+          aom.rejection_code
+        FROM agent_output_materializations aom
+        WHERE aom.trace_id = $1
+        ORDER BY aom.hop_count, aom.created_at
+        LIMIT 500
+        `,
+        [effectiveTraceId]
+      );
+
+      const mappedData = result.rows.map((row, idx) => {
+        const node: ChainNode = {
+          hop: idx,
+          status: row.status,
+          created_at: row.created_at.toISOString(),
+        };
+        if (row.source_alias) node.source_alias = row.source_alias;
+        if (row.source_tenant) node.source_tenant = row.source_tenant;
+        if (row.target_alias) node.target_alias = row.target_alias;
+        if (row.target_tenant) node.target_tenant = row.target_tenant;
+        if (row.rejection_code) node.rejection_code = row.rejection_code;
+        return node;
+      });
+
+      return { data: mappedData, available: true, trace_id: effectiveTraceId };
+    } catch (error) {
+      return { data: [], available: false };
+    }
+  }
+
+  async deadLetters(): Promise<{ data: DeadLetterGroup[]; available: boolean }> {
+    try {
+      const result = await this.pool.query<{
+        rejection_code: string | null;
+        count: number;
+      }>(
+        `
+        SELECT
+          aom.rejection_code,
+          COUNT(*) as count
+        FROM agent_output_materializations aom
+        WHERE aom.rejection_code IS NOT NULL
+          AND aom.source_tenant = $1
+        GROUP BY aom.rejection_code
+        ORDER BY count DESC
+        `,
+        [this.tenantId]
+      );
+
+      const groups: DeadLetterGroup[] = [];
+
+      for (const row of result.rows) {
+        const cause = row.rejection_code || 'unknown';
+
+        // Get recent examples
+        const examples = await this.pool.query<{
+          id: string;
+          recipient_alias: string;
+          created_at: Date;
+          rejection_code: string | null;
+        }>(
+          `
+          SELECT
+            aom.produced_delivery_id as id,
+            aom.target_alias as recipient_alias,
+            aom.created_at,
+            aom.rejection_code
+          FROM agent_output_materializations aom
+          WHERE aom.source_tenant = $1
+            AND aom.rejection_code = $2
+          ORDER BY aom.created_at DESC
+          LIMIT 3
+          `,
+          [this.tenantId, row.rejection_code]
+        );
+
+        const mappedExamples = examples.rows.map((ex) => {
+          const example: {
+            delivery_id: string;
+            alias: string;
+            created_at: string;
+            rejection_code?: string;
+          } = {
+            delivery_id: ex.id || 'unavailable',
+            alias: ex.recipient_alias || 'unknown',
+            created_at: ex.created_at.toISOString(),
+          };
+          if (ex.rejection_code) example.rejection_code = ex.rejection_code;
+          return example;
+        });
+
+        groups.push({
+          cause,
+          count: row.count,
+          recent_examples: mappedExamples,
+        });
+      }
+
+      return { data: groups, available: true };
+    } catch (error) {
+      return { data: [], available: false };
+    }
+  }
+
+  async salud(): Promise<HealthSummary> {
+    try {
+      // Count live leases
+      const leaseResult = await this.pool.query<{ live: number; total: number }>(
+        `
+        SELECT
+          COUNT(*) FILTER (WHERE lease_expires_at > now()) as live,
+          COUNT(*) as total
+        FROM leases
+        WHERE tenant_id = $1
+        `,
+        [this.tenantId]
+      );
+
+      const live = leaseResult.rows[0]?.live || 0;
+      const total = leaseResult.rows[0]?.total || 0;
+
+      // Count deliveries by status
+      const deliveriesResult = await this.pool.query<{
+        status: string;
+        count: number;
+      }>(
+        `
+        SELECT status, COUNT(*) as count
+        FROM deliveries
+        WHERE recipient_tenant = $1
+        GROUP BY status
+        `,
+        [this.tenantId]
+      );
+
+      const deliveriesByStatus: Record<string, number> = {};
+      for (const row of deliveriesResult.rows) {
+        deliveriesByStatus[row.status] = row.count;
+      }
+
+      const acked = deliveriesByStatus['acked'] || 0;
+      const totalDeliveries = Object.values(deliveriesByStatus).reduce((a, b) => a + b, 0);
+      const okRate = totalDeliveries > 0 ? Math.round((acked / totalDeliveries) * 100) : 0;
+
+      const status =
+        live >= total && okRate > 90
+          ? 'healthy'
+          : live >= total * 0.5 && okRate > 70
+            ? 'degraded'
+            : 'critical';
+
+      const summary =
+        `Flota: ${total} alias, ${live} vivos (${status}), ${okRate}% entregas OK`;
+
+      return {
+        summary,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      return {
+        summary: 'Flota: status unavailable',
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+}
