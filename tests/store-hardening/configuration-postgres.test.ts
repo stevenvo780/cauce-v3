@@ -26,7 +26,9 @@ beforeEach(async () => {
     DELETE FROM tenants WHERE id='Acme';
     DELETE FROM harness_definitions WHERE id='custom';
     DELETE FROM role_policies WHERE role='observer';
+    DELETE FROM egress_destinations;
     UPDATE acl_edges SET enabled=true,allow_route=true,allow_read=true,allow_control=true;
+    UPDATE memberships SET role='agent' WHERE tenant_id='Pablo' AND alias='midas';
   `);
 });
 
@@ -112,6 +114,99 @@ describe('atomic configuration CRUD and rollback', () => {
       .toEqual({ allow_route: false });
     expect((await pool.query(`SELECT rolled_back_revision_id::int AS source FROM config_revisions WHERE id=4`)).rows[0])
       .toEqual({ source: 3 });
+  });
+
+  it('versions the proactive egress allowlist and restores every limit on rollback', async () => {
+    const destination: ConfigMutation = {
+      resource: 'egress_destination', action: 'create',
+      tenant_id: 'Steven', alias: 'argos', handle: 'steven.dm',
+      value: {
+        conversation_id: '-1001234567890', conversation_kind: 'group',
+        allow_kinds: ['task_complete', 'alert'], require_prior_contact: true,
+        max_per_hour: 2, max_per_day: 8, max_per_root: 1
+      }
+    };
+    const preview = await repository.applyConfigurationChange('Steven', 'kant', destination, true, 0);
+    expect(preview).toMatchObject({ applied: false, dry_run: true });
+    expect((await pool.query(`SELECT 1 FROM egress_destinations`)).rowCount).toBe(0);
+
+    const created = await repository.applyConfigurationChange('Steven', 'kant', destination, false, 0);
+    expect(created.applied).toBe(true);
+    expect(created.inverse_mutation).toMatchObject({
+      resource: 'egress_destination', action: 'delete', tenant_id: 'Steven', alias: 'argos', handle: 'steven.dm'
+    });
+
+    const relaxed = await repository.applyConfigurationChange('Steven', 'kant', {
+      resource: 'egress_destination', action: 'update',
+      tenant_id: 'Steven', alias: 'argos', handle: 'steven.dm',
+      value: { max_per_hour: 60 }
+    }, false, created.revision);
+    expect(relaxed.inverse_mutation).toMatchObject({ value: { max_per_hour: 2, max_per_day: 8 } });
+    expect((await pool.query<{ max_per_hour: number }>(
+      `SELECT max_per_hour FROM egress_destinations`
+    )).rows[0]?.max_per_hour).toBe(60);
+
+    await repository.rollbackConfiguration('Steven', 'kant', relaxed.revision, false, relaxed.revision);
+    const restored = await pool.query<{ max_per_hour: number; allow_kinds: string[] }>(
+      `SELECT max_per_hour,allow_kinds FROM egress_destinations`
+    );
+    expect(restored.rows[0]?.max_per_hour).toBe(2);
+    expect(restored.rows[0]?.allow_kinds).toEqual(['task_complete', 'alert']);
+
+    const snapshot = await repository.getConfiguration('Steven', 'kant');
+    expect(snapshot.egress_destinations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ handle: 'steven.dm', alias: 'argos' })
+    ]));
+
+    // Rolling back the create must remove the destination entirely.
+    await repository.rollbackConfiguration('Steven', 'kant', created.revision, false);
+    expect((await pool.query(`SELECT 1 FROM egress_destinations`)).rowCount).toBe(0);
+  });
+
+  it('keeps cold contact on a group a hub-only decision', async () => {
+    await pool.query(`UPDATE memberships SET role='operator' WHERE tenant_id='Pablo' AND alias='midas'`);
+    const coldGroup: ConfigMutation = {
+      resource: 'egress_destination', action: 'create',
+      tenant_id: 'Pablo', alias: 'midas', handle: 'ops.group',
+      value: {
+        conversation_id: '-1005550000001', conversation_kind: 'group',
+        allow_kinds: ['digest'], require_prior_contact: false
+      }
+    };
+    await expect(repository.applyConfigurationChange('Pablo', 'midas', coldGroup, false, 0))
+      .rejects.toMatchObject({ code: 'forbidden' });
+
+    // The same tenant operator may still create a normal, contact-gated destination.
+    const allowed = await repository.applyConfigurationChange('Pablo', 'midas', {
+      ...coldGroup, value: { ...coldGroup.value, require_prior_contact: true }
+    }, false, 0);
+    expect(allowed.applied).toBe(true);
+
+    // And never one in another tenant.
+    await expect(repository.applyConfigurationChange('Pablo', 'midas', {
+      resource: 'egress_destination', action: 'create',
+      tenant_id: 'Steven', alias: 'argos', handle: 'x',
+      value: { conversation_id: '-1005550000002', conversation_kind: 'group', allow_kinds: ['digest'] }
+    }, false, allowed.revision)).rejects.toMatchObject({ code: 'forbidden' });
+  });
+
+  it('carries allow_notify through the role policy lifecycle', async () => {
+    const created = await repository.applyConfigurationChange('Steven', 'kant', {
+      resource: 'role_policy', action: 'create', role: 'observer',
+      value: { allow_read: true, allow_notify: true }
+    }, false, 0);
+    expect((await pool.query<{ allow_notify: boolean }>(
+      `SELECT allow_notify FROM role_policies WHERE role='observer'`
+    )).rows[0]?.allow_notify).toBe(true);
+
+    const revoked = await repository.applyConfigurationChange('Steven', 'kant', {
+      resource: 'role_policy', action: 'update', role: 'observer', value: { allow_notify: false }
+    }, false, created.revision);
+    expect(revoked.inverse_mutation).toMatchObject({ value: { allow_notify: true } });
+    await repository.rollbackConfiguration('Steven', 'kant', revoked.revision, false);
+    expect((await pool.query<{ allow_notify: boolean }>(
+      `SELECT allow_notify FROM role_policies WHERE role='observer'`
+    )).rows[0]?.allow_notify).toBe(true);
   });
 
   it('prevents membership deletion while a delivery is active', async () => {

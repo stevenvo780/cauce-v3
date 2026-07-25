@@ -1,6 +1,9 @@
-import { createHash } from 'node:crypto';
-import type { Ack, ConfigMutation, DeliveryEnvelope, DeliveryState, Origin, PublishMessage, Tenant } from '@cauce/protocol';
-import { isAmbiguousAckErrorCode, PROTOCOL_VERSION } from '@cauce/protocol';
+import { createHash, randomUUID } from 'node:crypto';
+import type {
+  Ack, ConfigMutation, DeliveryEnvelope, DeliveryState, NotifyRequest, Origin,
+  PublishMessage, Tenant
+} from '@cauce/protocol';
+import { isAmbiguousAckErrorCode, NOTIFY_KINDS, PROTOCOL_VERSION } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 import {
@@ -13,6 +16,14 @@ export class StoreError extends Error {
   constructor(public readonly code: StoreErrorCode, message: string) {
     super(message);
     this.name = 'StoreError';
+  }
+}
+
+/** Carries a dry-run verdict out of a transaction that must be rolled back. */
+class NotificationPreview extends Error {
+  constructor(readonly verdict: NotificationVerdict) {
+    super('proactive egress preview rollback');
+    this.name = 'NotificationPreview';
   }
 }
 
@@ -172,8 +183,14 @@ const telegramRelayAcknowledgement = 'Recibido; estoy trabajando en ello.';
 const reservedInternalMessageTypes = new Set([
   'agent.message',
   'agent.response',
-  'agent.fanin'
+  'agent.fanin',
+  'agent.notify'
 ]);
+const maxNotifyDirectives = 4;
+const maxNotifyBodyBytes = 4 * 1024;
+const maxNotifyAggregateBytes = 8 * 1024;
+const notifyKinds = new Set<string>(NOTIFY_KINDS);
+const handlePattern = /^[a-z][a-z0-9_.-]{0,63}$/u;
 const aliasPattern = /^[a-z][a-z0-9_-]{0,63}$/u;
 const tenantPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -194,6 +211,72 @@ interface RoutingTarget {
   tenant_id: Tenant;
   alias: string;
   online: boolean;
+}
+
+/** Every reason a proactive egress can be refused. Refusals are durable rows, never exceptions. */
+export type NotifyDenialCode =
+  | 'notify_permission_denied'
+  | 'unknown_destination'
+  | 'destination_disabled'
+  | 'kind_not_allowed'
+  | 'cold_contact'
+  | 'rate_limited'
+  | 'root_quota_exhausted'
+  | 'quiet_hours'
+  | 'invalid_output'
+  | 'body_too_large'
+  | 'ambiguous_execution';
+
+export interface NotificationVerdict {
+  notification_id: string;
+  decision: 'allowed' | 'denied';
+  denial_code?: NotifyDenialCode;
+  message_id?: string;
+  outbox_id?: string;
+  duplicate: boolean;
+  dry_run: boolean;
+}
+
+interface AgentNotifyEntry {
+  index: number;
+  handle: string;
+  kind: string;
+  body: string;
+  forcedDenial?: NotifyDenialCode;
+}
+
+interface NotificationRequest extends AgentNotifyEntry {
+  idempotencyKey: string;
+}
+
+interface NotificationContext {
+  tenant: Tenant;
+  alias: string;
+  source: 'agent_output' | 'http' | 'job';
+  requestId: string;
+  traceId: string;
+  sourceDeliveryId?: string;
+  sourceAttempt?: number;
+  sourceMessageId?: string;
+  sourceRootMessageId?: string;
+}
+
+interface EgressDestinationRow {
+  adapter: string;
+  channel: string;
+  conversation_id: string;
+  conversation_kind: string;
+  allow_kinds: string[];
+  require_prior_contact: boolean;
+  contact_ttl_days: number;
+  min_interval_seconds: number;
+  max_per_hour: number;
+  max_per_day: number;
+  max_per_root: number;
+  quiet_hours_start: number | null;
+  quiet_hours_end: number | null;
+  quiet_hours_tz: string;
+  enabled: boolean;
 }
 
 type AgentResponseDisposition = 'not_child' | 'returned' | 'denied' | 'deferred';
@@ -261,11 +344,75 @@ function agentOutputEntries(result: Record<string, unknown> | undefined): AgentO
     : entries;
 }
 
+function conversationKind(chatType: unknown): 'dm' | 'group' | 'unknown' {
+  if (chatType === 'private') return 'dm';
+  if (chatType === 'group' || chatType === 'supergroup' || chatType === 'channel') return 'group';
+  return 'unknown';
+}
+
+/** A rejected directive still needs a bounded handle for its durable denial row. */
+function boundedHandle(value: unknown): string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 64 ? value : 'invalid';
+}
+
+/**
+ * The store never trusts the adapter's own validation: an ACK arrives over
+ * HTTP/WS and can come from an old or adversarial adapter. Same discipline as
+ * agentOutputEntries, with limits an order of magnitude smaller because a
+ * notification is read by a human, not by another agent.
+ */
+function agentNotifyEntries(result: Record<string, unknown> | undefined): AgentNotifyEntry[] {
+  const output = objectRecord(result?.output);
+  if (!output || output.notify === undefined) return [];
+  const invalid = (index: number, handle: unknown, kind: unknown): AgentNotifyEntry => ({
+    index,
+    handle: boundedHandle(handle),
+    kind: typeof kind === 'string' && notifyKinds.has(kind) ? kind : 'alert',
+    body: '',
+    forcedDenial: 'invalid_output'
+  });
+  if (!Array.isArray(output.notify)) return [invalid(0, undefined, undefined)];
+  // One bounded denial row records the whole over-limit batch; fanning it out
+  // would let a malformed output write as many rows as it asked for.
+  if (output.notify.length > maxNotifyDirectives) return [invalid(0, undefined, undefined)];
+  const entries = output.notify.map((value, index): AgentNotifyEntry => {
+    const entry = objectRecord(value);
+    if (!entry || typeof entry.to !== 'string' || !handlePattern.test(entry.to)
+      || typeof entry.kind !== 'string' || !notifyKinds.has(entry.kind)
+      || typeof entry.body !== 'string' || !visibleText(entry.body)) {
+      return invalid(index, entry?.to, entry?.kind);
+    }
+    if (Buffer.byteLength(entry.body, 'utf8') > maxNotifyBodyBytes) {
+      return { index, handle: entry.to, kind: entry.kind, body: '', forcedDenial: 'body_too_large' };
+    }
+    return { index, handle: entry.to, kind: entry.kind, body: entry.body };
+  });
+  const aggregateBytes = entries.reduce(
+    (total, entry) => total + Buffer.byteLength(entry.body, 'utf8'),
+    0
+  );
+  return aggregateBytes > maxNotifyAggregateBytes
+    ? entries.map((entry) => ({ ...entry, body: '', forcedDenial: 'body_too_large' as const }))
+    : entries;
+}
+
 /** Bodies and destinations become real messages or hashed rejections, never ACK/relay payload residue. */
 function sanitizedAckResult(result: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   const output = objectRecord(result?.output);
-  if (!result || !output || !Object.prototype.hasOwnProperty.call(output, 'messages')) return result;
-  return { ...result, output: { ...output, messages: [] } };
+  if (!result || !output) return result;
+  const hasMessages = Object.prototype.hasOwnProperty.call(output, 'messages');
+  const hasNotify = Object.prototype.hasOwnProperty.call(output, 'notify');
+  if (!hasMessages && !hasNotify) return result;
+  // Absence is preserved on purpose: injecting a key an output never had would
+  // change the bytes persisted in delivery_acks.payload and in the relay payload.
+  return {
+    ...result,
+    output: {
+      ...output,
+      ...(hasMessages ? { messages: [] } : {}),
+      ...(hasNotify ? { notify: [] } : {})
+    }
+  };
 }
 
 function relaySafeResult(
@@ -285,6 +432,22 @@ function sha256(value: unknown): string {
 function agentOutputRequestId(deliveryId: string, attempt: number, outputIndex: number): string {
   const bytes = Buffer.from(
     createHash('sha256').update(`agent-output:${deliveryId}:${attempt}:${outputIndex}`).digest('hex').slice(0, 32),
+    'hex'
+  );
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * messages_request_actor_idx is UNIQUE(tenant_id, actor_alias, request_id), so a
+ * derived request_id keeps a re-ACK of the same attempt from ever producing a
+ * second notification message even if the first idempotency layer were bypassed.
+ */
+function agentNotifyRequestId(deliveryId: string, attempt: number, notifyIndex: number): string {
+  const bytes = Buffer.from(
+    createHash('sha256').update(`agent-notify:${deliveryId}:${attempt}:${notifyIndex}`).digest('hex').slice(0, 32),
     'hex'
   );
   bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
@@ -467,6 +630,27 @@ export class CauceRepository {
         && authenticatedOrigin?.adapter === 'telegram'
         && authenticatedOrigin.channel === 'telegram';
       if (authenticatedTelegramIngress && authenticatedOrigin) {
+        // The only authenticated point where the system learns that a human
+        // spoke to this alias. It shares the ingress transaction, so "prior
+        // contact" is exactly "a durable inbound message exists". The session is
+        // stored hashed, never the raw Telegram user id.
+        await client.query(
+          `INSERT INTO egress_contacts(
+             tenant_id,alias,adapter,conversation_id,conversation_kind,last_session_hash
+           ) VALUES($1,$2,'telegram',$3,$4,$5)
+           ON CONFLICT(tenant_id,alias,adapter,conversation_id) DO UPDATE SET
+             last_inbound_at=now(),
+             inbound_count=egress_contacts.inbound_count+1,
+             conversation_kind=EXCLUDED.conversation_kind,
+             last_session_hash=EXCLUDED.last_session_hash`,
+          [
+            input.tenant_id,
+            input.actor_alias,
+            authenticatedOrigin.conversation_id,
+            conversationKind(authenticatedOrigin.metadata.chat_type),
+            authenticated?.session_id === undefined ? null : sha256(authenticated.session_id)
+          ]
+        );
         await client.query(
           `INSERT INTO adapter_outbox(
              tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload
@@ -863,6 +1047,7 @@ export class CauceRepository {
       if (!row) throw new StoreError('not_found', 'delivery not found for consumer');
       const safeAckResult = postgresJsonSafe(ack.result) as Record<string, unknown> | undefined;
       const outputs = agentOutputEntries(safeAckResult);
+      const notifications = agentNotifyEntries(safeAckResult);
       const persistedResult = sanitizedAckResult(safeAckResult);
       const repeated = await client.query<{
         delivery_id: string;
@@ -1045,7 +1230,13 @@ export class CauceRepository {
         );
       }
       await this.insertAck(client, row, ack, true, persistedResult);
+      let notified = { allowed: 0, denied: 0, errors: 0 };
       if (terminal(nextStatus)) {
+        // Proactive egress is a side effect of a terminal turn, not a delegation.
+        // The count deliberately stays out of the response disposition below.
+        notified = await this.materializeAgentNotifications(
+          client, row, ack, notifications, ambiguousExecution
+        );
         let materializedOutputs = 0;
         if (nextStatus === 'done' && row.body.type !== 'agent.fanin') {
           materializedOutputs = await this.materializeAgentOutputs(client, row, ack, outputs);
@@ -1087,7 +1278,14 @@ export class CauceRepository {
              epoch: ack.epoch,
              attempt: ack.attempt,
              ...(terminalErrorCode === undefined ? {} : { error_code: terminalErrorCode }),
-             ...(ambiguousExecution ? { ambiguous_execution: true } : {})
+             ...(ambiguousExecution ? { ambiguous_execution: true } : {}),
+             ...(notified.allowed + notified.denied + notified.errors === 0
+               ? {}
+               : {
+                 notifications_allowed: notified.allowed,
+                 notifications_denied: notified.denied,
+                 notifications_failed: notified.errors
+               })
            })]
       );
       return {
@@ -1981,6 +2179,459 @@ export class CauceRepository {
     );
   }
 
+  /**
+   * The single authorization engine for proactive egress. Both surfaces (the
+   * in-band `notify[]` of an agent ACK and POST /v3/egress/notifications) go
+   * through here, so there is exactly one place where the answer to "may this
+   * alias write to this human right now" is decided.
+   *
+   * Every step is default-deny and every refusal becomes a durable
+   * `egress_notifications` row plus an audit event. It never throws for a policy
+   * decision: a disabled destination must not be able to abort the ACK of a real
+   * delivery.
+   */
+  private async authorizeAndEmitNotification(
+    client: DatabaseClient,
+    context: NotificationContext,
+    request: NotificationRequest
+  ): Promise<NotificationVerdict> {
+    const bodyBytes = Buffer.byteLength(request.body, 'utf8');
+    const bodyHash = sha256(request.body);
+    const deny = async (code: NotifyDenialCode): Promise<NotificationVerdict> => {
+      const inserted = await client.query<{ id: string }>(
+        `INSERT INTO egress_notifications(
+           tenant_id,alias,handle,adapter,kind,source,idempotency_key,decision,denial_code,
+           body_hash,body_bytes,source_delivery_id,source_attempt,notify_index,
+           source_message_id,source_root_message_id,request_id,trace_id,correlation
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,'denied',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
+         RETURNING id`,
+        [
+          context.tenant, context.alias, request.handle, 'telegram', request.kind, context.source,
+          request.idempotencyKey, code, bodyHash, bodyBytes,
+          context.sourceDeliveryId ?? null, context.sourceAttempt ?? null,
+          context.source === 'agent_output' ? request.index : null,
+          context.sourceMessageId ?? null, context.sourceRootMessageId ?? null,
+          context.requestId, context.traceId,
+          JSON.stringify({ source: context.source, notify_index: request.index })
+        ]
+      );
+      const notificationId = inserted.rows[0]!.id;
+      await client.query(
+        `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,request_id,trace_id,metadata)
+         VALUES($1,$2,'egress.notify','deny',$3,$4,$5::jsonb)`,
+        [context.tenant, context.alias, context.requestId, context.traceId,
+          JSON.stringify({
+            notification_id: notificationId, handle: request.handle, kind: request.kind,
+            denial_code: code, source: context.source, body_bytes: bodyBytes
+          })]
+      );
+      return { notification_id: notificationId, decision: 'denied', denial_code: code, duplicate: false, dry_run: false };
+    };
+
+    // 1. Serialize on the idempotency key first, then on the destination. Both
+    //    keys are taken in a fixed order and callers iterate handles sorted, so
+    //    concurrent notifications cannot build a lock cycle.
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+      [`egress-notify:${context.tenant}:${context.alias}:${request.idempotencyKey}`]);
+    const replay = await client.query<{
+      id: string; decision: 'allowed' | 'denied'; denial_code: NotifyDenialCode | null;
+      produced_message_id: string | null; produced_outbox_id: string | null;
+    }>(
+      `SELECT id,decision,denial_code,produced_message_id,produced_outbox_id
+       FROM egress_notifications WHERE tenant_id=$1 AND alias=$2 AND idempotency_key=$3`,
+      [context.tenant, context.alias, request.idempotencyKey]
+    );
+    const previous = replay.rows[0];
+    if (previous) {
+      return {
+        notification_id: previous.id,
+        decision: previous.decision,
+        ...(previous.denial_code === null ? {} : { denial_code: previous.denial_code }),
+        ...(previous.produced_message_id === null ? {} : { message_id: previous.produced_message_id }),
+        ...(previous.produced_outbox_id === null ? {} : { outbox_id: previous.produced_outbox_id }),
+        duplicate: true,
+        dry_run: false
+      };
+    }
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+      [`egress-notify-destination:${context.tenant}:${context.alias}:${request.handle}`]);
+
+    if (request.forcedDenial) return deny(request.forcedDenial);
+
+    // 2. Role gate and source room in one query. An alias with no enabled
+    //    membership carrying allow_notify has no way to emit anything, and the
+    //    room it is a member of is the room the notification message lives in.
+    const permitted = await client.query<{ room_id: string }>(
+      `SELECT membership.room_id
+       FROM memberships membership
+       JOIN role_policies policy ON policy.role=membership.role
+       JOIN tenants tenant ON tenant.id=membership.tenant_id
+       JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
+       WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
+         AND tenant.enabled AND room.enabled AND policy.allow_notify
+       ORDER BY membership.room_id LIMIT 1`,
+      [context.tenant, context.alias]
+    );
+    const sourceRoomId = permitted.rows[0]?.room_id;
+    if (!sourceRoomId) return deny('notify_permission_denied');
+
+    // 3. The allowlist. Zero rows means default-deny, which is the state the
+    //    migration leaves the system in.
+    const destinations = await client.query<EgressDestinationRow>(
+      `SELECT adapter,channel,conversation_id,conversation_kind,allow_kinds,require_prior_contact,
+              contact_ttl_days,min_interval_seconds,max_per_hour,max_per_day,max_per_root,
+              quiet_hours_start,quiet_hours_end,quiet_hours_tz,enabled
+       FROM egress_destinations WHERE tenant_id=$1 AND alias=$2 AND handle=$3 FOR SHARE`,
+      [context.tenant, context.alias, request.handle]
+    );
+    const destination = destinations.rows[0];
+    if (!destination) return deny('unknown_destination');
+    if (!destination.enabled) return deny('destination_disabled');
+    if (!destination.allow_kinds.includes(request.kind)) return deny('kind_not_allowed');
+
+    // 4. No cold contact. A destination that requires prior contact needs a real
+    //    authenticated inbound message from that conversation to this alias,
+    //    inside the configured freshness window.
+    if (destination.require_prior_contact) {
+      const contact = await client.query(
+        `SELECT 1 FROM egress_contacts
+         WHERE tenant_id=$1 AND alias=$2 AND adapter=$3 AND conversation_id=$4
+           AND inbound_count>=1
+           AND last_inbound_at > clock_timestamp() - ($5::int * interval '1 day')`,
+        [context.tenant, context.alias, destination.adapter, destination.conversation_id,
+          destination.contact_ttl_days]
+      );
+      if (contact.rowCount !== 1) return deny('cold_contact');
+    }
+
+    // 5. Sliding windows, computed with clock_timestamp() so a long transaction
+    //    cannot back-date its own notification out of the window.
+    const windows = await client.query<{ last_hour: string; last_day: string; last_at: Date | null }>(
+      `SELECT count(*) FILTER (WHERE created_at > clock_timestamp() - interval '1 hour') AS last_hour,
+              count(*) FILTER (WHERE created_at > clock_timestamp() - interval '1 day') AS last_day,
+              max(created_at) AS last_at
+       FROM egress_notifications
+       WHERE tenant_id=$1 AND alias=$2 AND handle=$3 AND decision='allowed'`,
+      [context.tenant, context.alias, request.handle]
+    );
+    const usage = windows.rows[0];
+    if (usage) {
+      if (Number(usage.last_hour) >= destination.max_per_hour) return deny('rate_limited');
+      if (Number(usage.last_day) >= destination.max_per_day) return deny('rate_limited');
+      if (usage.last_at !== null && destination.min_interval_seconds > 0) {
+        const elapsedMs = Date.now() - usage.last_at.getTime();
+        if (elapsedMs < destination.min_interval_seconds * 1_000) return deny('rate_limited');
+      }
+    }
+
+    // 6. Per-chain quota. The chain is source_root_message_id; root_message_id is
+    //    the notification's own message id and is unique per row, so counting on
+    //    it would silently disable this limit.
+    if (context.sourceRootMessageId !== undefined) {
+      const chain = await client.query<{ used: string }>(
+        `SELECT count(*) AS used FROM egress_notifications
+         WHERE decision='allowed' AND source_root_message_id=$1`,
+        [context.sourceRootMessageId]
+      );
+      if (Number(chain.rows[0]?.used ?? 0) >= destination.max_per_root) return deny('root_quota_exhausted');
+    }
+
+    // 7. Quiet hours. An unknown timezone falls back to UTC instead of raising,
+    //    because raising here would abort the ACK transaction.
+    if (destination.quiet_hours_start !== null && destination.quiet_hours_end !== null
+      && destination.quiet_hours_start !== destination.quiet_hours_end) {
+      const local = await client.query<{ hour: number }>(
+        `SELECT extract(hour FROM clock_timestamp() AT TIME ZONE coalesce(
+           (SELECT name FROM pg_timezone_names WHERE name=$1 LIMIT 1),'UTC'
+         ))::int AS hour`,
+        [destination.quiet_hours_tz]
+      );
+      const hour = local.rows[0]?.hour ?? 0;
+      const start = destination.quiet_hours_start;
+      const end = destination.quiet_hours_end;
+      const quiet = start < end ? hour >= start && hour < end : hour >= start || hour < end;
+      if (quiet) return deny('quiet_hours');
+    }
+
+    const notificationMessage = await client.query<{ id: string }>(
+      `INSERT INTO messages(
+         request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
+         auth_session_id,auth_channel
+       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,'interactive',0,$8,$9) RETURNING id`,
+      [
+        context.requestId, context.traceId, context.tenant, sourceRoomId, context.alias,
+        JSON.stringify({
+          type: 'agent.notify',
+          text: request.body,
+          notify_kind: request.kind,
+          destination_handle: request.handle,
+          from_alias: context.alias,
+          correlation: {
+            source: context.source,
+            ...(context.sourceDeliveryId === undefined ? {} : { source_delivery_id: context.sourceDeliveryId }),
+            ...(context.sourceMessageId === undefined ? {} : { source_message_id: context.sourceMessageId }),
+            ...(context.sourceRootMessageId === undefined
+              ? {}
+              : { source_root_message_id: context.sourceRootMessageId }),
+            trace_id: context.traceId
+          }
+        }),
+        JSON.stringify(this.notificationOrigin(context, destination)),
+        `egress-notify:${context.tenant}:${context.alias}:${request.idempotencyKey}`,
+        destination.channel
+      ]
+    );
+    const notificationMessageId = notificationMessage.rows[0]!.id;
+
+    // The relay's own correlation root is the notification message itself, never
+    // the chain it came from. Reusing the inbound root would make claimOutbox's
+    // supersession CTE kill the pending 'Recibido' acknowledgement of that
+    // conversation. The originating chain travels in source_correlation.
+    const relayPayload = {
+      relay_kind: 'notify',
+      terminal: true,
+      outcome: 'done',
+      kind: request.kind,
+      result: {
+        output: {
+          reply: request.body,
+          messages: [],
+          status: 'done',
+          retryable: false,
+          artifacts: []
+        }
+      },
+      correlation: {
+        request_id: context.requestId,
+        message_id: notificationMessageId,
+        trace_id: context.traceId,
+        root_message_id: notificationMessageId
+      },
+      source_correlation: {
+        source: context.source,
+        ...(context.sourceDeliveryId === undefined ? {} : { source_delivery_id: context.sourceDeliveryId }),
+        ...(context.sourceMessageId === undefined ? {} : { source_message_id: context.sourceMessageId }),
+        ...(context.sourceRootMessageId === undefined
+          ? {}
+          : { source_root_message_id: context.sourceRootMessageId }),
+        ...(context.sourceAttempt === undefined ? {} : { source_attempt: context.sourceAttempt })
+      }
+    };
+    // No ON CONFLICT clause: the idempotency key carries a fresh notification id,
+    // so a conflict is impossible, and swallowing one would leave
+    // produced_outbox_id NULL and abort the whole transaction on the CHECK.
+    const notificationId = randomUUID();
+    const outbox = await client.query<{ id: string }>(
+      `INSERT INTO adapter_outbox(
+         tenant_id,adapter,kind,idempotency_key,request_id,message_id,trace_id,origin,payload
+       ) VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7::jsonb,$8::jsonb) RETURNING id`,
+      [
+        context.tenant, destination.adapter, `notify:${notificationId}`, context.requestId,
+        notificationMessageId, context.traceId,
+        JSON.stringify(this.notificationOrigin(context, destination)),
+        JSON.stringify(relayPayload)
+      ]
+    );
+    const outboxId = outbox.rows[0]!.id;
+    const stored = await client.query<{ id: string }>(
+      `INSERT INTO egress_notifications(
+         id,tenant_id,alias,handle,adapter,conversation_id,kind,source,idempotency_key,decision,
+         body_hash,body_bytes,source_delivery_id,source_attempt,notify_index,
+         source_message_id,source_root_message_id,produced_message_id,produced_outbox_id,
+         root_message_id,request_id,trace_id,correlation
+       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'allowed',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::jsonb)
+       RETURNING id`,
+      [
+        notificationId, context.tenant, context.alias, request.handle, destination.adapter,
+        destination.conversation_id, request.kind, context.source, request.idempotencyKey,
+        bodyHash, bodyBytes,
+        context.sourceDeliveryId ?? null, context.sourceAttempt ?? null,
+        context.source === 'agent_output' ? request.index : null,
+        context.sourceMessageId ?? null, context.sourceRootMessageId ?? null,
+        notificationMessageId, outboxId, notificationMessageId,
+        context.requestId, context.traceId,
+        JSON.stringify({ source: context.source, notify_index: request.index })
+      ]
+    );
+    await client.query(
+      `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,request_id,message_id,trace_id,metadata)
+       VALUES($1,$2,'egress.notify','allow',$3,$4,$5,$6::jsonb)`,
+      [context.tenant, context.alias, context.requestId, notificationMessageId, context.traceId,
+        JSON.stringify({
+          notification_id: notificationId, handle: request.handle, kind: request.kind,
+          source: context.source, adapter: destination.adapter, body_bytes: bodyBytes
+        })]
+    );
+    return {
+      notification_id: stored.rows[0]!.id,
+      decision: 'allowed',
+      message_id: notificationMessageId,
+      outbox_id: outboxId,
+      duplicate: false,
+      dry_run: false
+    };
+  }
+
+  /**
+   * Synthetic return route. It carries no external_message_id on purpose: a
+   * proactive relay does not answer an inbound message, so the bridge must not
+   * try to place a reaction on some arbitrary message id of that chat.
+   */
+  private notificationOrigin(
+    context: NotificationContext,
+    destination: EgressDestinationRow
+  ): Origin {
+    return {
+      adapter: destination.adapter,
+      channel: destination.channel,
+      conversation_id: destination.conversation_id,
+      relay: [],
+      metadata: {
+        bridge_alias: context.alias,
+        bridge_tenant: context.tenant,
+        chat_type: destination.conversation_kind,
+        proactive: true
+      }
+    };
+  }
+
+  /**
+   * In-band proactive egress from an agent ACK. Runs inside the ACK transaction
+   * so either the delivery finished and the notification exists, or neither did.
+   *
+   * Two invariants make this safe to call on the hot path:
+   *  - it returns a count that the caller must NOT feed into the delegation
+   *    disposition; a notification is a side effect, never a child of the
+   *    delegation tree, and counting it would leave the parent waiting forever.
+   *  - each entry is fenced by a SAVEPOINT, so no unexpected database error from
+   *    the notification path can abort the ACK of a real delivery.
+   */
+  private async materializeAgentNotifications(
+    client: DatabaseClient,
+    row: DeliveryRow,
+    ack: Ack,
+    entries: AgentNotifyEntry[],
+    ambiguousExecution: boolean
+  ): Promise<{ allowed: number; denied: number; errors: number }> {
+    const result = { allowed: 0, denied: 0, errors: 0 };
+    if (entries.length === 0) return result;
+    const ordered = [...entries].sort((left, right) =>
+      left.handle === right.handle ? left.index - right.index : left.handle.localeCompare(right.handle));
+    for (const entry of ordered) {
+      const context: NotificationContext = {
+        tenant: row.recipient_tenant,
+        alias: row.recipient_alias,
+        source: 'agent_output',
+        requestId: agentNotifyRequestId(row.id, ack.attempt, entry.index),
+        traceId: row.trace_id,
+        sourceDeliveryId: row.id,
+        sourceAttempt: ack.attempt,
+        sourceMessageId: row.message_id,
+        ...(this.rootMessageId(row) === undefined ? {} : { sourceRootMessageId: this.rootMessageId(row)! })
+      };
+      const request: NotificationRequest = {
+        ...entry,
+        // An ambiguous execution is a state where the system does not know
+        // whether the work happened. It must never become a message to a human
+        // claiming it did.
+        ...(ambiguousExecution ? { forcedDenial: 'ambiguous_execution' as const } : {}),
+        idempotencyKey: `agent:${row.id}:${ack.attempt}:${entry.index}`
+      };
+      await client.query('SAVEPOINT cauce_notify');
+      try {
+        const verdict = await this.authorizeAndEmitNotification(client, context, request);
+        await client.query('RELEASE SAVEPOINT cauce_notify');
+        if (verdict.duplicate) continue;
+        if (verdict.decision === 'allowed') result.allowed += 1;
+        else result.denied += 1;
+      } catch {
+        await client.query('ROLLBACK TO SAVEPOINT cauce_notify');
+        await client.query('RELEASE SAVEPOINT cauce_notify');
+        result.errors += 1;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Out-of-band proactive egress for crons, jobs and the console. It shares the
+   * whole authorization engine with the in-band path; only the idempotency key
+   * namespace and the correlation differ.
+   */
+  async enqueueNotification(
+    actorTenant: Tenant,
+    actorAlias: string,
+    input: NotifyRequest,
+    source: 'http' | 'job' = 'http'
+  ): Promise<NotificationVerdict> {
+    if (!handlePattern.test(input.destination)) {
+      throw new StoreError('not_found', 'notification destination handle is invalid');
+    }
+    if (!notifyKinds.has(input.kind)) throw new StoreError('conflict', 'notification kind is invalid');
+    const bodyDenial = Buffer.byteLength(input.body, 'utf8') > maxNotifyBodyBytes
+      ? 'body_too_large' as const
+      : visibleText(input.body).length === 0 ? 'invalid_output' as const : undefined;
+    const context: NotificationContext = {
+      tenant: actorTenant,
+      alias: actorAlias,
+      source,
+      requestId: randomUUID(),
+      traceId: `trace-${randomUUID()}`
+    };
+    const request: NotificationRequest = {
+      index: 0,
+      handle: input.destination,
+      kind: input.kind,
+      body: bodyDenial === undefined ? input.body : '',
+      ...(bodyDenial === undefined ? {} : { forcedDenial: bodyDenial }),
+      idempotencyKey: `${source}:${input.idempotency_key}`
+    };
+    try {
+      return await withTransaction(this.pool, async (client) => {
+        const verdict = await this.authorizeAndEmitNotification(client, context, request);
+        // A preview must be able to prove a destination works without writing to
+        // a human. Same rollback contract as the configuration dry run.
+        if (input.dry_run) throw new NotificationPreview({ ...verdict, dry_run: true });
+        return verdict;
+      });
+    } catch (error) {
+      if (error instanceof NotificationPreview) return error.verdict;
+      throw error;
+    }
+  }
+
+  /**
+   * Denied notifications have no produced message and no outbox row, so the
+   * visibility filter of listOriginRelays (which joins messages through the
+   * outbox) would discard exactly the rows an operator needs to see. Visibility
+   * is derived from the emitting (tenant, alias) against memberships instead.
+   */
+  async listNotifications(actorTenant: Tenant, actorAlias: string, limit = 200): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    const result = await this.pool.query<Record<string, unknown>>(
+      `SELECT notification.id,notification.tenant_id,notification.alias,notification.handle,
+              notification.adapter,notification.conversation_id,notification.kind,notification.source,
+              notification.decision,notification.denial_code,notification.body_bytes,
+              notification.source_delivery_id,notification.source_root_message_id,
+              notification.produced_message_id,notification.produced_outbox_id,
+              notification.request_id,notification.trace_id,notification.created_at,
+              outbox.status AS relay_status,outbox.attempts AS relay_attempts,outbox.sent_at AS relay_sent_at
+       FROM egress_notifications notification
+       LEFT JOIN adapter_outbox outbox ON outbox.id=notification.produced_outbox_id
+       WHERE notification.tenant_id=$1 AND (
+         notification.alias=$2
+         OR EXISTS (
+           SELECT 1 FROM memberships viewer
+           JOIN memberships emitter ON emitter.tenant_id=viewer.tenant_id AND emitter.room_id=viewer.room_id
+           WHERE viewer.tenant_id=$1 AND viewer.alias=$2 AND viewer.enabled
+             AND emitter.alias=notification.alias AND emitter.enabled
+         )
+       ) ORDER BY notification.created_at DESC LIMIT $3`,
+      [actorTenant, actorAlias, limit]
+    );
+    return { items: result.rows };
+  }
+
   private async insertOriginRelay(
     client: DatabaseClient,
     row: DeliveryRow,
@@ -2683,8 +3334,14 @@ export class CauceRepository {
     if (result.rowCount !== 1) throw new StoreError('invalid_actor', 'authenticated principal is not enabled');
   }
 
-  async assertPermission(tenantId: Tenant, alias: string, permission: 'route' | 'read' | 'control'): Promise<void> {
-    const column = permission === 'route' ? 'allow_route' : permission === 'read' ? 'allow_read' : 'allow_control';
+  async assertPermission(
+    tenantId: Tenant, alias: string, permission: 'route' | 'read' | 'control' | 'notify'
+  ): Promise<void> {
+    const column = permission === 'route'
+      ? 'allow_route'
+      : permission === 'read'
+        ? 'allow_read'
+        : permission === 'control' ? 'allow_control' : 'allow_notify';
     const result = await this.pool.query(
       `SELECT 1 FROM memberships membership
        JOIN role_policies role ON role.role=membership.role
@@ -2697,14 +3354,15 @@ export class CauceRepository {
   }
 
   async principalAccess(tenantId: Tenant, alias: string): Promise<{
-    roles: string[]; permissions: Array<'route' | 'read' | 'control'>;
+    roles: string[]; permissions: Array<'route' | 'read' | 'control' | 'notify'>;
   }> {
     const result = await this.pool.query<{
       roles: string[]; allow_route: boolean; allow_read: boolean; allow_control: boolean;
+      allow_notify: boolean;
     }>(
       `SELECT array_agg(DISTINCT membership.role ORDER BY membership.role) AS roles,
               bool_or(role.allow_route) AS allow_route,bool_or(role.allow_read) AS allow_read,
-              bool_or(role.allow_control) AS allow_control
+              bool_or(role.allow_control) AS allow_control,bool_or(role.allow_notify) AS allow_notify
        FROM memberships membership JOIN role_policies role ON role.role=membership.role
        JOIN tenants tenant ON tenant.id=membership.tenant_id
        JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
@@ -2718,7 +3376,8 @@ export class CauceRepository {
       permissions: [
         ...(row.allow_route ? ['route' as const] : []),
         ...(row.allow_read ? ['read' as const] : []),
-        ...(row.allow_control ? ['control' as const] : [])
+        ...(row.allow_control ? ['control' as const] : []),
+        ...(row.allow_notify ? ['notify' as const] : [])
       ]
     };
   }

@@ -6,13 +6,14 @@ import { WebSocket, type RawData } from 'ws';
 import {
   AuthenticatedPublishSchema, ClaimedAckSchema, ConfigChangeRequestSchema, ConfigRollbackRequestSchema,
   CreateJobSchema, DeliveryIdSchema, HeartbeatSchema, HelloSchema,
-  PROTOCOL_VERSION,
+  NotifyRequestSchema, PROTOCOL_VERSION,
   QueryDeliveriesSchema, TenantSchema,
-  type ClaimedAck, type ConfigMutation, type DeliveryEnvelope, type Hello, type Tenant
+  type ClaimedAck, type ConfigMutation, type DeliveryEnvelope, type Hello, type NotifyRequest, type Tenant
 } from '@cauce/protocol';
 import {
   CauceRepository, StoreError, subscribeDeliveryWakes,
-  type AckResult, type DatabasePool, type LeaseResult, type OutboxEvent, type PublishResult
+  type AckResult, type DatabasePool, type LeaseResult, type NotificationVerdict, type OutboxEvent,
+  type PublishResult
 } from '@cauce/store';
 import {
   AuthError, AuthorizationError, MtlsAuthProvider, requireOperatorPermission, requirePermission, validatePrincipal,
@@ -67,8 +68,8 @@ export interface OutboxLeaseAck {
 export interface GatewayRepository {
   publish(input: TrustedPublishCommand): Promise<PublishResult>;
   assertPrincipal(tenantId: Tenant, alias: string): Promise<void>;
-  assertPermission(tenantId: Tenant, alias: string, permission: 'route' | 'read' | 'control'): Promise<void>;
-  principalAccess(tenantId: Tenant, alias: string): Promise<{ roles: string[]; permissions: Array<'route' | 'read' | 'control'> }>;
+  assertPermission(tenantId: Tenant, alias: string, permission: 'route' | 'read' | 'control' | 'notify'): Promise<void>;
+  principalAccess(tenantId: Tenant, alias: string): Promise<{ roles: string[]; permissions: Array<'route' | 'read' | 'control' | 'notify'> }>;
   status(actorTenant: Tenant, actorAlias: string): Promise<Record<string, number>>;
   listPresence(actorTenant: Tenant, actorAlias: string): Promise<Array<Record<string, unknown>>>;
   topology(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
@@ -79,6 +80,8 @@ export interface GatewayRepository {
   enqueueJob(tenantId: Tenant, lane: 'interactive' | 'batch', priority: number, kind: string, payload: Record<string, unknown>): Promise<string>;
   listAdapters(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listOriginRelays(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  enqueueNotification(actorTenant: Tenant, actorAlias: string, input: NotifyRequest): Promise<NotificationVerdict>;
+  listNotifications(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listAudit(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   getConfiguration(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   applyConfigurationChange(actorTenant: Tenant, actorAlias: string, mutation: ConfigMutation, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
@@ -279,6 +282,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const effectivePermissions = actor.permissions.filter((permission) => databaseAccess.permissions.includes(permission));
       const permissions = [
         ...(effectivePermissions.includes('route') ? ['message.publish'] : []),
+        ...(effectivePermissions.includes('notify') ? ['message.notify'] : []),
         ...(effectiveRoles.includes('operator') && effectivePermissions.includes('control')
           ? ['delivery.replay', 'job.create', 'config.write', 'config.rollback'] : []),
         ...(options.terminalCapability?.available === true && effectiveRoles.includes('operator') && effectivePermissions.includes('control')
@@ -318,6 +322,29 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   };
   app.post('/v3/messages', publishHandler);
   app.post('/v3/publish', publishHandler);
+
+  // Proactive egress. POST /v3/messages deliberately cannot express a channel
+  // destination and must stay that way; this is the only surface that can, and
+  // the only destination it accepts is a handle already on the allowlist.
+  app.post('/v3/egress/notifications', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requirePermission(actor, 'notify');
+      const command = NotifyRequestSchema.parse(request.body);
+      const verdict = await repository.enqueueNotification(actor.tenant_id, actor.alias, command);
+      if (verdict.decision === 'denied') {
+        return reply.code(403).send({
+          error: 'forbidden',
+          message: 'proactive egress was denied by policy',
+          notification_id: verdict.notification_id,
+          denial_code: verdict.denial_code,
+          dry_run: verdict.dry_run,
+          duplicate: verdict.duplicate
+        });
+      }
+      return reply.code(202).send(verdict);
+    } catch (error) { replyError(reply, error); }
+  });
 
   app.get('/v3/console/topology', async (request, reply) => {
     try {
@@ -387,6 +414,14 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
       return visibleOriginRelays(await repository.listOriginRelays(actor.tenant_id, actor.alias), actor);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  app.get('/v3/console/egress/notifications', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requirePermission(actor, 'read');
+      return sameTenantRows(await repository.listNotifications(actor.tenant_id, actor.alias), actor);
     } catch (error) { replyError(reply, error); }
   });
 

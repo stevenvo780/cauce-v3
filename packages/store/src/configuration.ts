@@ -33,6 +33,42 @@ interface RevisionRow {
 
 const activeDeliveryStates = "('pending','retry','leased','accepted','started')";
 
+interface DestinationRow {
+  adapter: string;
+  channel: string;
+  conversation_id: string;
+  conversation_kind: 'dm' | 'group';
+  display_label: string | null;
+  allow_kinds: string[];
+  require_prior_contact: boolean;
+  contact_ttl_days: number;
+  min_interval_seconds: number;
+  max_per_hour: number;
+  max_per_day: number;
+  max_per_root: number;
+  quiet_hours_start: number | null;
+  quiet_hours_end: number | null;
+  quiet_hours_tz: string;
+  enabled: boolean;
+}
+
+const destinationColumns = `adapter,channel,conversation_id,conversation_kind,display_label,allow_kinds,
+  require_prior_contact,contact_ttl_days,min_interval_seconds,max_per_hour,max_per_day,max_per_root,
+  quiet_hours_start,quiet_hours_end,quiet_hours_tz,enabled`;
+
+/** The exact prior state, so a rollback restores every limit rather than a default. */
+function destinationValue(row: DestinationRow): Record<string, unknown> {
+  return {
+    adapter: row.adapter, channel: row.channel, conversation_id: row.conversation_id,
+    conversation_kind: row.conversation_kind, display_label: row.display_label,
+    allow_kinds: row.allow_kinds, require_prior_contact: row.require_prior_contact,
+    contact_ttl_days: row.contact_ttl_days, min_interval_seconds: row.min_interval_seconds,
+    max_per_hour: row.max_per_hour, max_per_day: row.max_per_day, max_per_root: row.max_per_root,
+    quiet_hours_start: row.quiet_hours_start, quiet_hours_end: row.quiet_hours_end,
+    quiet_hours_tz: row.quiet_hours_tz, enabled: row.enabled
+  };
+}
+
 class RollbackResult<T> extends Error {
   constructor(readonly result: T) {
     super('configuration preview rollback');
@@ -63,7 +99,9 @@ export class ConfigurationRepository {
   async get(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
     const hub = await withTransaction(this.pool, (client) => this.assertControl(client, actorTenant, actorAlias));
     const scope = hub ? null : actorTenant;
-    const [revision, tenants, rooms, memberships, edges, harnesses, policies, revisions] = await Promise.all([
+    const [
+      revision, tenants, rooms, memberships, edges, harnesses, policies, destinations, revisions
+    ] = await Promise.all([
         this.pool.query<{ revision: string }>('SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions'),
         this.pool.query<Record<string, unknown>>(
           `SELECT id,display_name,is_hub,enabled,created_at FROM tenants
@@ -86,7 +124,15 @@ export class ConfigurationRepository {
            FROM harness_definitions ORDER BY id`
         ),
         this.pool.query<Record<string, unknown>>(
-          `SELECT role,allow_route,allow_read,allow_control,created_at FROM role_policies ORDER BY role`
+          `SELECT role,allow_route,allow_read,allow_control,allow_notify,created_at FROM role_policies ORDER BY role`
+        ),
+        this.pool.query<Record<string, unknown>>(
+          `SELECT tenant_id,alias,handle,adapter,channel,conversation_id,conversation_kind,display_label,
+                  allow_kinds,require_prior_contact,contact_ttl_days,min_interval_seconds,max_per_hour,
+                  max_per_day,max_per_root,quiet_hours_start,quiet_hours_end,quiet_hours_tz,enabled,
+                  created_at,updated_at
+           FROM egress_destinations WHERE $1::text IS NULL OR tenant_id=$1
+           ORDER BY tenant_id,alias,handle`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT id::text,actor_tenant,actor_alias,operation,summary,rolled_back_revision_id::text,created_at
@@ -97,6 +143,7 @@ export class ConfigurationRepository {
       revision: Number(revision.rows[0]?.revision ?? 0), observed_at: new Date().toISOString(),
       tenants: tenants.rows, rooms: rooms.rows, memberships: memberships.rows,
       acl_edges: edges.rows, harness_definitions: harnesses.rows, role_policies: policies.rows,
+      egress_destinations: destinations.rows,
       revisions: revisions.rows
     };
   }
@@ -214,8 +261,14 @@ export class ConfigurationRepository {
   }
 
   private authorizeMutation(mutation: ConfigMutation, actorTenant: Tenant, hub: boolean): void {
+    // Waiving prior contact means writing to a group nobody in it ever addressed.
+    // That is a hub-only decision even for a destination inside the actor tenant.
+    if (mutation.resource === 'egress_destination' && !hub && mutation.value?.require_prior_contact === false) {
+      throw new ConfigurationError('forbidden', 'waiving prior contact on an egress destination requires the hub');
+    }
     if (hub) return;
-    if (mutation.resource === 'room' || mutation.resource === 'membership') {
+    if (mutation.resource === 'room' || mutation.resource === 'membership'
+      || mutation.resource === 'egress_destination') {
       if (mutation.tenant_id === actorTenant) return;
     } else if (mutation.resource === 'acl_edge') {
       if (mutation.from_tenant === actorTenant) return;
@@ -244,6 +297,7 @@ export class ConfigurationRepository {
     if (mutation.resource === 'membership') return this.membership(client, mutation);
     if (mutation.resource === 'acl_edge') return this.edge(client, mutation);
     if (mutation.resource === 'harness') return this.harness(client, mutation);
+    if (mutation.resource === 'egress_destination') return this.destination(client, mutation);
     return this.policy(client, mutation);
   }
 
@@ -459,33 +513,122 @@ export class ConfigurationRepository {
     client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'role_policy' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const selected = await client.query<{
-      allow_route: boolean; allow_read: boolean; allow_control: boolean;
-    }>('SELECT allow_route,allow_read,allow_control FROM role_policies WHERE role=$1 FOR UPDATE', [mutation.role]);
+      allow_route: boolean; allow_read: boolean; allow_control: boolean; allow_notify: boolean;
+    }>('SELECT allow_route,allow_read,allow_control,allow_notify FROM role_policies WHERE role=$1 FOR UPDATE', [mutation.role]);
     const old = selected.rows[0];
     if (mutation.action === 'create') {
       if (old) throw new ConfigurationError('conflict', 'role policy already exists');
       const value = valueRequired(mutation);
       await client.query(
-        `INSERT INTO role_policies(role,allow_route,allow_read,allow_control) VALUES($1,$2,$3,$4)`,
-        [mutation.role, value.allow_route ?? false, value.allow_read ?? false, value.allow_control ?? false]
+        `INSERT INTO role_policies(role,allow_route,allow_read,allow_control,allow_notify) VALUES($1,$2,$3,$4,$5)`,
+        [mutation.role, value.allow_route ?? false, value.allow_read ?? false, value.allow_control ?? false,
+          value.allow_notify ?? false]
       );
       return { inverse: { resource: 'role_policy', action: 'delete', role: mutation.role }, summary: `create role policy ${mutation.role} default-deny` };
     }
     if (!old) throw new ConfigurationError('not_found', 'role policy was not found');
-    const oldValue = { allow_route: old.allow_route, allow_read: old.allow_read, allow_control: old.allow_control };
+    const oldValue = {
+      allow_route: old.allow_route, allow_read: old.allow_read,
+      allow_control: old.allow_control, allow_notify: old.allow_notify
+    };
     if (mutation.action === 'delete') {
       await client.query('DELETE FROM role_policies WHERE role=$1', [mutation.role]);
       return { inverse: { resource: 'role_policy', action: 'create', role: mutation.role, value: oldValue }, summary: `delete role policy ${mutation.role}` };
     }
     const value = valueRequired(mutation);
     await client.query(
-      `UPDATE role_policies SET allow_route=$2,allow_read=$3,allow_control=$4 WHERE role=$1`,
+      `UPDATE role_policies SET allow_route=$2,allow_read=$3,allow_control=$4,allow_notify=$5 WHERE role=$1`,
       [mutation.role,
         has(value, 'allow_route') ? value.allow_route : old.allow_route,
         has(value, 'allow_read') ? value.allow_read : old.allow_read,
-        has(value, 'allow_control') ? value.allow_control : old.allow_control]
+        has(value, 'allow_control') ? value.allow_control : old.allow_control,
+        has(value, 'allow_notify') ? value.allow_notify : old.allow_notify]
     );
     return { inverse: { resource: 'role_policy', action: 'update', role: mutation.role, value: oldValue }, summary: `update role policy ${mutation.role}` };
+  }
+
+  /**
+   * The proactive-egress allowlist. It lives in config_revisions like every other
+   * ACL surface, so creating a destination has a preview, optimistic concurrency,
+   * an audit event and an exact inverse operation for rollback.
+   */
+  private async destination(
+    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'egress_destination' }>
+  ): Promise<{ inverse: ConfigMutation; summary: string }> {
+    const key = `${mutation.tenant_id}/${mutation.alias}/${mutation.handle}`;
+    const selected = await client.query<DestinationRow>(
+      `SELECT ${destinationColumns} FROM egress_destinations
+       WHERE tenant_id=$1 AND alias=$2 AND handle=$3 FOR UPDATE`,
+      [mutation.tenant_id, mutation.alias, mutation.handle]
+    );
+    const old = selected.rows[0];
+    const identity = {
+      resource: 'egress_destination' as const, tenant_id: mutation.tenant_id,
+      alias: mutation.alias, handle: mutation.handle
+    };
+    if (mutation.action === 'create') {
+      if (old) throw new ConfigurationError('conflict', 'egress destination already exists');
+      const value = valueRequired(mutation);
+      if (typeof value.conversation_id !== 'string') {
+        throw new ConfigurationError('conflict', 'egress destination conversation_id is required');
+      }
+      if (value.conversation_kind !== 'dm' && value.conversation_kind !== 'group') {
+        throw new ConfigurationError('conflict', 'egress destination conversation_kind is required');
+      }
+      if (!Array.isArray(value.allow_kinds) || value.allow_kinds.length === 0) {
+        throw new ConfigurationError('conflict', 'egress destination allow_kinds is required');
+      }
+      await client.query(
+        `INSERT INTO egress_destinations(
+           tenant_id,alias,handle,adapter,channel,conversation_id,conversation_kind,display_label,
+           allow_kinds,require_prior_contact,contact_ttl_days,min_interval_seconds,max_per_hour,
+           max_per_day,max_per_root,quiet_hours_start,quiet_hours_end,quiet_hours_tz,enabled
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+        [mutation.tenant_id, mutation.alias, mutation.handle,
+          value.adapter ?? 'telegram', value.channel ?? 'telegram',
+          value.conversation_id, value.conversation_kind, value.display_label ?? null,
+          value.allow_kinds, value.require_prior_contact ?? true,
+          value.contact_ttl_days ?? 30, value.min_interval_seconds ?? 300,
+          value.max_per_hour ?? 2, value.max_per_day ?? 8, value.max_per_root ?? 1,
+          value.quiet_hours_start ?? null, value.quiet_hours_end ?? null,
+          value.quiet_hours_tz ?? 'UTC', value.enabled ?? true]
+      );
+      return {
+        inverse: { ...identity, action: 'delete' },
+        summary: `create egress destination ${key}`
+      };
+    }
+    if (!old) throw new ConfigurationError('not_found', 'egress destination was not found');
+    const oldValue = destinationValue(old);
+    if (mutation.action === 'delete') {
+      await client.query(
+        'DELETE FROM egress_destinations WHERE tenant_id=$1 AND alias=$2 AND handle=$3',
+        [mutation.tenant_id, mutation.alias, mutation.handle]
+      );
+      return {
+        inverse: { ...identity, action: 'create', value: oldValue },
+        summary: `delete egress destination ${key}`
+      };
+    }
+    const value = valueRequired(mutation);
+    const next = (field: keyof DestinationRow): unknown => has(value, field) ? value[field] : old[field];
+    await client.query(
+      `UPDATE egress_destinations SET adapter=$4,channel=$5,conversation_id=$6,conversation_kind=$7,
+         display_label=$8,allow_kinds=$9,require_prior_contact=$10,contact_ttl_days=$11,
+         min_interval_seconds=$12,max_per_hour=$13,max_per_day=$14,max_per_root=$15,
+         quiet_hours_start=$16,quiet_hours_end=$17,quiet_hours_tz=$18,enabled=$19
+       WHERE tenant_id=$1 AND alias=$2 AND handle=$3`,
+      [mutation.tenant_id, mutation.alias, mutation.handle,
+        next('adapter'), next('channel'), next('conversation_id'), next('conversation_kind'),
+        next('display_label'), next('allow_kinds'), next('require_prior_contact'),
+        next('contact_ttl_days'), next('min_interval_seconds'), next('max_per_hour'),
+        next('max_per_day'), next('max_per_root'), next('quiet_hours_start'),
+        next('quiet_hours_end'), next('quiet_hours_tz'), next('enabled')]
+    );
+    return {
+      inverse: { ...identity, action: 'update', value: oldValue },
+      summary: `update egress destination ${key}`
+    };
   }
 
   private async audit(

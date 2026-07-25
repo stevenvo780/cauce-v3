@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAX_EXPANDED_RELAY_AGGREGATE_BYTES,
+  MAX_NOTIFY_BODY_BYTES,
+  MAX_NOTIFY_DIRECTIVES,
   MAX_RELAY_AGGREGATE_BYTES,
   MAX_RELAY_BODY_BYTES,
   MAX_RELAY_MESSAGES,
@@ -522,4 +524,97 @@ test("delegation target syntax accepts only a canonical alias or exact @all", ()
       /canonical lowercase alias or reserved target/u,
     );
   }
+});
+
+test("legacy five-key output normalizes notify to an empty list", () => {
+  const legacy = validateStructuredOutput(output("done", false));
+  assert.deepEqual(legacy.notify, []);
+  assert.deepEqual(
+    parseDirectOutput(JSON.stringify(output("done", false))).output.notify,
+    [],
+  );
+});
+
+test("accepts a well formed notify directive", () => {
+  const parsed = validateStructuredOutput({
+    ...output("done", false),
+    notify: [{ to: "steven.dm", kind: "task_complete", body: "la tarea terminó" }],
+  });
+  assert.deepEqual(parsed.notify, [
+    { to: "steven.dm", body: "la tarea terminó", kind: "task_complete" },
+  ]);
+});
+
+test("rejects malformed notify directives", () => {
+  const cases: Array<[unknown, RegExp]> = [
+    ["not-an-array", /'notify' must be an array/u],
+    [[{ to: "Steven.DM", kind: "alert", body: "x" }], /canonical destination handle/u],
+    [[{ to: "steven.dm", kind: "gossip", body: "x" }], /notify\[0\]\.kind must be one of/u],
+    [[{ to: "steven.dm", kind: "alert", body: " " }], /must contain visible text/u],
+    [
+      [{ to: "steven.dm", kind: "alert", body: "x".repeat(MAX_NOTIFY_BODY_BYTES + 1) }],
+      /UTF-8 byte limit/u,
+    ],
+    [
+      Array.from({ length: MAX_NOTIFY_DIRECTIVES + 1 }, () => ({
+        to: "steven.dm", kind: "alert", body: "x",
+      })),
+      /exceeded the 4 directive limit/u,
+    ],
+  ];
+  for (const [notify, pattern] of cases) {
+    assert.throws(
+      () => validateStructuredOutput({ ...output("done", false), notify }),
+      pattern,
+    );
+  }
+});
+
+test("notify bodies are bounded in aggregate", () => {
+  const body = "x".repeat(MAX_NOTIFY_BODY_BYTES);
+  assert.throws(
+    () => validateStructuredOutput({
+      ...output("done", false),
+      notify: Array.from({ length: 3 }, () => ({ to: "steven.dm", kind: "digest", body })),
+    }),
+    /aggregate UTF-8 byte limit/u,
+  );
+});
+
+test("notify never satisfies the final reply requirement", () => {
+  const notifyOnly = validateStructuredOutput({
+    reply: null,
+    messages: [],
+    notify: [{ to: "steven.dm", kind: "task_complete", body: "avisé a Steven" }],
+    status: "done",
+    retryable: false,
+    artifacts: [],
+  });
+  assert.throws(
+    () => validateDeliveryOutput(notifyOnly),
+    isContractError("MISSING_FINAL_REPLY"),
+  );
+});
+
+test("a failed output may notify even though it may not delegate", () => {
+  const failed = validateStructuredOutput({
+    reply: "la tarea larga falló",
+    messages: [],
+    notify: [{ to: "steven.dm", kind: "alert", body: "falló el build nocturno" }],
+    status: "failed",
+    retryable: false,
+    artifacts: [],
+  });
+  assert.equal(validateDeliveryOutput(failed), failed);
+
+  assert.throws(
+    () => validateDeliveryOutput(validateStructuredOutput({
+      reply: "falló",
+      messages: [{ to: "socrates", body: "seguí vos" }],
+      status: "failed",
+      retryable: false,
+      artifacts: [],
+    })),
+    isContractError("FAILED_OUTPUT_MESSAGES_FORBIDDEN"),
+  );
 });

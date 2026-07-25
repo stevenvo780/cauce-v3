@@ -193,6 +193,7 @@ export function synthesizeFaninOutput(
         "raw branch",
       ),
       messages: [],
+      notify: [],
       status: "done",
       retryable: false,
       artifacts: [],
@@ -224,6 +225,7 @@ export function synthesizeFaninOutput(
   return {
     reply: boundedUtf8(`${processed}${separator}${evidence}`, MAX_FINAL_TEXT_BYTES),
     messages: [],
+    notify: [],
     status: "done",
     retryable: false,
     artifacts: [],

@@ -13,7 +13,9 @@ export const ids = {
   claim: '40000000-0000-4000-8000-000000000001',
   claimTwo: '40000000-0000-4000-8000-000000000002',
   event: '50000000-0000-4000-8000-000000000001',
-  eventTwo: '50000000-0000-4000-8000-000000000002'
+  eventTwo: '50000000-0000-4000-8000-000000000002',
+  notification: '60000000-0000-4000-8000-000000000001',
+  outbox: '70000000-0000-4000-8000-000000000001'
 } as const;
 
 export function testPrincipal(overrides: Partial<Principal> = {}): Principal {
@@ -85,6 +87,15 @@ export function fakeRepository(): GatewayRepository {
     enqueueJob: vi.fn(async () => 'job-1'),
     listAdapters: vi.fn(async () => ({ items: [] })),
     listOriginRelays: vi.fn(async () => ({ items: [] })),
+    enqueueNotification: vi.fn(async () => ({
+      notification_id: ids.notification,
+      decision: 'allowed' as const,
+      message_id: ids.message,
+      outbox_id: ids.outbox,
+      duplicate: false,
+      dry_run: false
+    })),
+    listNotifications: vi.fn(async () => ({ items: [] })),
     listAudit: vi.fn(async () => ({ items: [] })),
     getConfiguration: vi.fn(async () => ({ revision: 0, tenants: [], rooms: [], memberships: [], acl_edges: [] })),
     applyConfigurationChange: vi.fn(async (

@@ -53,9 +53,23 @@ export interface OutputArtifact {
 
 export type StructuredStatus = 'done' | 'failed';
 
+export type NotifyKind = 'task_complete' | 'decision_request' | 'digest' | 'alert';
+
+/**
+ * Proactive egress directive. `to` is a logical handle an operator put on the
+ * allowlist, never a chat id: the harness cannot name a destination the store
+ * has not already authorized for this alias.
+ */
+export interface NotifyDirective {
+  readonly to: string;
+  readonly body: string;
+  readonly kind: NotifyKind;
+}
+
 export interface StructuredOutput {
   readonly reply: string | null;
   readonly messages: readonly RelayMessage[];
+  readonly notify: readonly NotifyDirective[];
   readonly status: StructuredStatus;
   readonly retryable: boolean;
   readonly artifacts: readonly OutputArtifact[];
