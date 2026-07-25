@@ -54,7 +54,26 @@ services:
       NODE_ENV: development
       CAUCE_DEV_AUTH: "1"
       CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
+      CAUCE_TERMINAL_ENABLED: ${CAUCE_TERMINAL_ENABLED:-1}
+      CAUCE_TERMINAL_WS_PATH: ${CAUCE_TERMINAL_WS_PATH:-/v3/console/terminal/ws}
+      CAUCE_TERMINAL_GRANTS_FILE: /run/cauce-terminal/grants.json
+      # Dev no tiene bloque `secrets:`; la clave de tickets y el token compartido
+      # viven en el mismo directorio de trabajo, nunca en el repo.
+      CAUCE_TERMINAL_TICKET_KEY_FILE: /run/cauce-terminal/ticket.key
+      CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/cauce-terminal/relay.token
+      CAUCE_TERMINAL_TICKET_TTL_SECONDS: "30"
+      CAUCE_TERMINAL_SESSION_TTL_SECONDS: "900"
+      CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR: "2"
+      CAUCE_TERMINAL_OPERATOR_HEADER: x-cauce-operator
+      CAUCE_TERMINAL_OPERATORS: ${CAUCE_TERMINAL_OPERATORS:-}
       PORT: "8080"
+    volumes:
+      # Directorio, no archivo: `grants.json` se rota por rename atómico. Ver el
+      # comentario largo en deploy/compose.yaml.
+      - type: bind
+        source: ${CAUCE_TERMINAL_CONFIG_DIR:-/dev/null}
+        target: /run/cauce-terminal
+        read_only: true
     ports: ["${CAUCE_DEV_BIND_IP:-127.0.0.1}:${GATEWAY_PORT:-8080}:8080"]
     healthcheck:
       test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8080/health/ready", "ready"]
@@ -88,6 +107,40 @@ services:
       migrator:
         condition: service_completed_successfully
     networks: [backend]
+
+  terminal-relay:
+    <<: *dev-runtime
+    command: ["node", "services/terminal-relay/dist/main.js"]
+    environment:
+      NODE_ENV: development
+      CAUCE_DEV_AUTH: "1"
+      # Dev corre en claro en las dos piernas: sin TLS server, sin mTLS de
+      # consola y sin CA de agentes. Producción sí exige los tres.
+      CAUCE_TERMINAL_RELAY_BROWSER_PORT: "8446"
+      CAUCE_TERMINAL_RELAY_AGENT_PORT: "8445"
+      CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: /run/cauce-terminal/pty_agent_identities.json
+      CAUCE_TERMINAL_GATEWAY_URL: http://gateway:8080
+      CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/cauce-terminal/relay.token
+      CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS: "600"
+      CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC: "262144"
+      CAUCE_TERMINAL_SCROLLBACK_BYTES: "20480"
+      CAUCE_TERMINAL_MAX_SESSIONS: "16"
+      CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS: "30"
+      CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS: "90"
+    volumes:
+      - type: bind
+        source: ${CAUCE_TERMINAL_CONFIG_DIR:-/dev/null}
+        target: /run/cauce-terminal
+        read_only: true
+    ports:
+      # En dev se publican las dos piernas: la de agentes para correr el agente
+      # PTY fuera del compose y la del navegador para probarla sin la consola.
+      - "${CAUCE_DEV_BIND_IP:-127.0.0.1}:${TERMINAL_RELAY_AGENT_PORT:-8445}:8445"
+      - "${CAUCE_DEV_BIND_IP:-127.0.0.1}:${TERMINAL_RELAY_BROWSER_PORT:-8446}:8446"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [edge]
 
   console:
     image: ${CAUCE_CONSOLE_IMAGE:-cauce-v3-console:dev}
