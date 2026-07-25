@@ -1,5 +1,6 @@
 import type { AdapterView, PresenceLease, SystemStatus, TopologySnapshot } from '../../api/types';
 import { leaseExpiry, leaseState, type LeaseState } from '../../lib';
+import type { TerminalTarget } from './api';
 
 export interface FleetAgent {
   id: string;
@@ -115,9 +116,68 @@ export function adapterSummary(adapters: AdapterView[]): { healthy: number; tota
   };
 }
 
+/**
+ * Legacy single-target check against the capability's `target_label`. Kept for the capability
+ * card; per-destination authority now comes from the targets inventory below.
+ */
 export function terminalTargetMatchesAgent(targetLabel: unknown, agent: FleetAgent): boolean {
   if (typeof targetLabel !== 'string' || !targetLabel.trim()) return false;
   const target = normalized(targetLabel);
   return target === normalized(`${agent.tenantId}:${agent.alias}`)
     || target === normalized(agent.id);
+}
+
+/** Explicit PTY states. There is no implicit "available": absent data is UNKNOWN. */
+export type TerminalAccessStatus = 'allowed' | 'denied' | 'offline' | 'not_installed' | 'unknown';
+
+export interface TerminalTargetResolution {
+  status: TerminalAccessStatus;
+  /** Always populated: every disabled control must be able to say why. */
+  reason: string;
+  target?: TerminalTarget;
+}
+
+export const TERMINAL_ACCESS_LABELS: Readonly<Record<TerminalAccessStatus, string>> = {
+  allowed: 'PTY online',
+  denied: 'Sin autoridad',
+  offline: 'Agente PTY offline',
+  not_installed: 'Agente PTY no instalado',
+  unknown: 'PTY desconocido',
+};
+
+/** Resolves a destination by exact tenant:alias identity; a bare alias never matches. */
+export function terminalTargetForAgent(targets: TerminalTarget[] | null | undefined, agent: FleetAgent): TerminalTarget | undefined {
+  return (targets ?? []).find((target) => fleetAgentId(target.tenant_id, target.alias) === agent.id);
+}
+
+/**
+ * Per-destination gate. The server's `authorized` flag is the authority; the client only
+ * translates it, and every path that is not an explicit allow stays closed with its motive.
+ */
+export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefined, agent: FleetAgent): TerminalTargetResolution {
+  if (!targets) {
+    return { status: 'unknown', reason: 'El gateway no publicó el inventario de targets PTY; estado UNKNOWN.' };
+  }
+  const target = terminalTargetForAgent(targets, agent);
+  if (!target) {
+    return { status: 'unknown', reason: `El servidor no declaró un target PTY para ${agent.tenantId}:${agent.alias}.` };
+  }
+  if (!target.authorized) return { status: 'denied', reason: target.reason, target };
+  if (target.pty_state === 'not_installed') {
+    return { status: 'not_installed', reason: target.reason, target };
+  }
+  if (target.pty_state === 'agent_offline') {
+    return {
+      status: 'offline',
+      reason: `${target.reason} Última presencia: ${target.last_seen ?? 'UNKNOWN'}.`,
+      target,
+    };
+  }
+  if (target.pty_state === 'online') return { status: 'allowed', reason: target.reason, target };
+  return { status: 'unknown', reason: `Estado PTY UNKNOWN para ${agent.alias}. ${target.reason}`, target };
+}
+
+/** How many destinations the server reports as reachable. UNKNOWN inventory stays UNKNOWN. */
+export function countOnlinePtyTargets(targets: TerminalTarget[] | null | undefined): number | undefined {
+  return targets ? targets.filter((target) => target.authorized && target.pty_state === 'online').length : undefined;
 }

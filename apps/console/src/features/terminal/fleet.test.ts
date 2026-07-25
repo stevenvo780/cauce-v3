@@ -1,4 +1,20 @@
-import { buildFleetAgents, filterFleetAgents, terminalTargetMatchesAgent } from './fleet';
+import type { TerminalTarget } from './api';
+import {
+  buildFleetAgents,
+  countOnlinePtyTargets,
+  resolveTerminalTarget,
+  terminalTargetForAgent,
+  terminalTargetMatchesAgent,
+  filterFleetAgents,
+} from './fleet';
+
+function target(overrides: Partial<TerminalTarget> & Pick<TerminalTarget, 'tenant_id' | 'alias'>): TerminalTarget {
+  return {
+    container: 'claw', runtime_user: 'claw', harness: 'claude-code', shares_container_with: [],
+    modes: ['shell'], pty_state: 'online', last_seen: null, authorized: true, reason: 'Autorizado por el servidor.',
+    ...overrides,
+  };
+}
 
 it('builds the fleet from server topology and merges authoritative lease observations', () => {
   const future = new Date(Date.now() + 60_000).toISOString();
@@ -29,6 +45,52 @@ it('fails closed when a PTY target is not an exact agent identity', () => {
   expect(terminalTargetMatchesAgent('shell for kant', agent)).toBe(false);
   expect(terminalTargetMatchesAgent(7, agent)).toBe(false);
   expect(terminalTargetMatchesAgent(undefined, agent)).toBe(false);
+});
+
+it('resolves PTY authority per destination from the server inventory', () => {
+  const agents = buildFleetAgents({ presence: [
+    { tenant_id: 'Steven', alias: 'jarvis' },
+    { tenant_id: 'Steven', alias: 'argos' },
+    { tenant_id: 'Isa', alias: 'salva' },
+    { tenant_id: 'Pablo', alias: 'midas' },
+    { tenant_id: 'Jhon', alias: 'hegel' },
+  ] });
+  const find = (alias: string) => agents.find((agent) => agent.alias === alias)!;
+  const targets = [
+    target({ tenant_id: 'Steven', alias: 'jarvis' }),
+    target({ tenant_id: 'Steven', alias: 'argos', pty_state: 'not_installed', reason: 'El agente PTY no está instalado en ctrl-infra.' }),
+    target({ tenant_id: 'Isa', alias: 'salva', authorized: false, reason: 'attribution_required: falta identidad por persona.' }),
+    target({ tenant_id: 'Pablo', alias: 'midas', pty_state: 'agent_offline', last_seen: '2026-07-24T10:00:00.000Z', reason: 'El agente no está conectado.' }),
+  ];
+
+  expect(resolveTerminalTarget(targets, find('jarvis'))).toMatchObject({ status: 'allowed' });
+  expect(resolveTerminalTarget(targets, find('argos'))).toMatchObject({ status: 'not_installed' });
+  // Denial wins over any state: an unauthorised destination is never shown as merely offline.
+  expect(resolveTerminalTarget(targets, find('salva'))).toMatchObject({ status: 'denied', reason: expect.stringContaining('attribution_required') });
+  expect(resolveTerminalTarget(targets, find('midas')).reason).toContain('2026-07-24T10:00:00.000Z');
+  // An alias the server never mentioned is UNKNOWN, not implicitly denied nor implicitly allowed.
+  expect(resolveTerminalTarget(targets, find('hegel'))).toMatchObject({ status: 'unknown' });
+  expect(countOnlinePtyTargets(targets)).toBe(1);
+});
+
+it('treats an absent inventory as UNKNOWN and authorises nothing', () => {
+  const [agent] = buildFleetAgents({ presence: [{ tenant_id: 'Steven', alias: 'jarvis' }] });
+  expect(resolveTerminalTarget(undefined, agent)).toMatchObject({ status: 'unknown' });
+  expect(resolveTerminalTarget(null, agent).reason).toMatch(/UNKNOWN/);
+  expect(countOnlinePtyTargets(null)).toBeUndefined();
+  expect(countOnlinePtyTargets([])).toBe(0);
+});
+
+it('matches a target by exact tenant and alias, never by alias alone', () => {
+  const agents = buildFleetAgents({ presence: [
+    { tenant_id: 'Steven', alias: 'kant' },
+    { tenant_id: 'Miguel', alias: 'kant' },
+  ] });
+  const targets = [target({ tenant_id: 'Miguel', alias: 'kant', container: 'ws-miguel' })];
+
+  expect(terminalTargetForAgent(targets, agents.find((agent) => agent.tenantId === 'Miguel')!)?.container).toBe('ws-miguel');
+  expect(terminalTargetForAgent(targets, agents.find((agent) => agent.tenantId === 'Steven')!)).toBeUndefined();
+  expect(resolveTerminalTarget(targets, agents.find((agent) => agent.tenantId === 'Steven')!).status).toBe('unknown');
 });
 
 it('never resolves a duplicated alias without its tenant', () => {

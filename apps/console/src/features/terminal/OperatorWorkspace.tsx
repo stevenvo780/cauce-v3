@@ -1,18 +1,23 @@
-import { lazy, Suspense, useEffect, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent } from 'react';
 import {
   Activity,
+  AlertTriangle,
   Bot,
   Braces,
   ChevronDown,
   CircleOff,
   Clock3,
+  Container,
   LockKeyhole,
   MessageSquareText,
   Plus,
+  PowerOff,
   RefreshCw,
   Send,
   ShieldCheck,
   TerminalSquare,
+  Timer,
+  UserCog,
   X,
 } from 'lucide-react';
 import { useApi } from '../../api/context';
@@ -22,13 +27,33 @@ import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components
 import { compactId, createId, permissionState } from '../../lib';
 import { AckInspector } from './AckInspector';
 import { FleetSidebar } from './FleetSidebar';
+import {
+  createTerminalSession,
+  deleteTerminalSession,
+  type TerminalSessionGrant,
+  type TerminalTargetsSnapshot,
+} from './api';
 import type { FleetAgent } from './fleet';
-import { terminalTargetMatchesAgent } from './fleet';
-import { ultimateTerminalGate } from './plugin';
-import { operatorRouteForAgent, sessionDeliveries, transcriptForSession, type OperatorSession } from './session';
+import { TERMINAL_ACCESS_LABELS, terminalTargetForAgent, type TerminalTargetResolution } from './fleet';
+import { closePtySession, readPtySession, subscribePtySession } from './pty-session';
+import { terminalChannelGate } from './plugin';
+import {
+  formatCountdown,
+  operatorRouteForAgent,
+  ptyReasonProblem,
+  ptySecondsLeft,
+  PTY_REASON_MAX_LENGTH,
+  sessionDeliveries,
+  transcriptForSession,
+  type OperatorSession,
+} from './session';
 import { TerminalTranscript } from './TerminalTranscript';
 
 const PtyTerminal = lazy(() => import('./PtyTerminal'));
+
+/** Geometry declared when asking for the grant; the real size is renegotiated on `ready`. */
+const DEFAULT_COLS = 80;
+const DEFAULT_ROWS = 24;
 
 interface OperatorWorkspaceProps {
   agents: FleetAgent[];
@@ -36,6 +61,8 @@ interface OperatorWorkspaceProps {
   access?: ConsoleAccess;
   topologyAccess?: TopologySnapshot;
   terminalCapability?: TerminalCapability;
+  /** Optional: without the server inventory every destination stays UNKNOWN and PTY is closed. */
+  terminalTargets?: TerminalTargetsSnapshot;
   fleetLoading: boolean;
   fleetError?: Error;
 }
@@ -106,6 +133,123 @@ function SessionTabs({ sessions, activeId, onActivate, onClose }: {
   );
 }
 
+/**
+ * Consent dialog. It exists to make the blast radius impossible to miss: a shell in a shared
+ * container is not "the terminal of one alias", it is the home where several agents live.
+ * The justification is mandatory and free-form; there is no default and no autocomplete.
+ */
+function PtySessionDialog({ agent, resolution, pending, error, onCancel, onConfirm }: {
+  agent: FleetAgent;
+  resolution: TerminalTargetResolution;
+  pending: boolean;
+  error?: string;
+  onCancel: () => void;
+  onConfirm: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const target = resolution.target;
+  const problem = ptyReasonProblem(reason);
+  const shared = target?.shares_container_with ?? [];
+
+  useEffect(() => { reasonRef.current?.focus(); }, []);
+
+  return (
+    <div className="pty-dialog-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === 'Escape') onCancel(); }}>
+      <div className="pty-dialog" role="dialog" aria-modal="true" aria-labelledby="pty-dialog-title" aria-describedby="pty-dialog-scope">
+        <header>
+          <p className="eyebrow">Sesión interactiva</p>
+          <h2 id="pty-dialog-title">Abrir PTY en {agent.alias}</h2>
+        </header>
+
+        <dl className="pty-dialog-facts" id="pty-dialog-scope">
+          <div><dt><Container size={13} aria-hidden="true" /> Contenedor</dt><dd className="mono"><Unknown value={target?.container} /></dd></div>
+          <div><dt><UserCog size={13} aria-hidden="true" /> Usuario destino</dt><dd className="mono"><Unknown value={target?.runtime_user} /></dd></div>
+          <div><dt><TerminalSquare size={13} aria-hidden="true" /> Modo</dt><dd className="mono">{target?.modes[0] ?? 'shell'}</dd></div>
+        </dl>
+
+        {shared.length ? (
+          <p className="pty-dialog-shared" role="alert">
+            <AlertTriangle size={15} aria-hidden="true" />
+            <span>
+              Este contenedor lo comparten <strong>{shared.join(', ')}</strong>. Una shell acá no es “la terminal de {agent.alias}”:
+              es acceso al home donde conviven {[agent.alias, ...shared].join(', ')}.
+            </span>
+          </p>
+        ) : (
+          <p className="pty-dialog-solo">El servidor no reporta otros agentes en este contenedor.</p>
+        )}
+
+        <label className="pty-dialog-reason" htmlFor="pty-dialog-reason">
+          Motivo de la sesión (queda en la auditoría)
+          <textarea
+            id="pty-dialog-reason"
+            ref={reasonRef}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={3}
+            maxLength={PTY_REASON_MAX_LENGTH}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Escribí por qué necesitás esta shell…"
+            aria-describedby="pty-dialog-reason-hint"
+          />
+        </label>
+        <p className="pty-dialog-hint" id="pty-dialog-reason-hint">{problem ?? `Motivo válido · ${reason.trim().length}/${PTY_REASON_MAX_LENGTH}`}</p>
+
+        {error ? <p className="notice error" role="alert">{error}</p> : null}
+
+        <div className="pty-dialog-actions">
+          <button className="button secondary" type="button" onClick={onCancel} disabled={pending}>Cancelar</button>
+          <button
+            className="button primary"
+            type="button"
+            disabled={Boolean(problem) || pending}
+            title={problem}
+            onClick={() => onConfirm(reason.trim())}
+          >
+            <TerminalSquare size={15} aria-hidden="true" /> {pending ? 'Solicitando…' : 'Abrir sesión PTY'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Permanent header over the terminal: who, where, as whom, and how long is left.
+ *
+ * `expires_at` is the deadline of the single-use TICKET, not of the shell. Once the relay
+ * accepts the attach the ticket is spent, so the countdown is replaced by that fact instead of
+ * being left frozen at 0:00 over a perfectly healthy session.
+ */
+function PtySessionBar({ agent, grant, secondsLeft, ticketConsumed, closing, onClose }: {
+  agent: FleetAgent;
+  grant: TerminalSessionGrant;
+  secondsLeft?: number;
+  ticketConsumed: boolean;
+  closing: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div className="pty-session-bar" aria-label="Sesión PTY activa">
+      <span className="pty-bar-alias"><TerminalSquare size={14} aria-hidden="true" /> <strong>{agent.alias}</strong></span>
+      <span><Container size={13} aria-hidden="true" /> <span className="mono"><Unknown value={grant.target.container} /></span></span>
+      <span><UserCog size={13} aria-hidden="true" /> <span className="mono"><Unknown value={grant.target.runtime_user} /></span></span>
+      <span><Braces size={13} aria-hidden="true" /> <span className="mono">{grant.target.mode}</span></span>
+      <span className="pty-bar-countdown" data-expiring={!ticketConsumed && secondsLeft !== undefined && secondsLeft <= 10 ? 'true' : undefined}>
+        <Timer size={13} aria-hidden="true" />
+        {ticketConsumed
+          ? <>Ticket consumido · <strong>sesión activa</strong></>
+          : <>Ticket vence en <strong>{formatCountdown(secondsLeft)}</strong></>}
+      </span>
+      <button className="button small secondary pty-bar-close" type="button" onClick={onClose} disabled={closing}>
+        <PowerOff size={13} aria-hidden="true" /> {closing ? 'Cerrando…' : 'Cerrar sesión'}
+      </button>
+    </div>
+  );
+}
+
 function AdapterInspector({ adapters, access, capability }: { adapters: AdapterView[]; access?: ConsoleAccess; capability?: TerminalCapability }) {
   return (
     <>
@@ -137,13 +281,13 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
           <div><dt>Target</dt><dd><Unknown value={capability?.target_label} /></dd></div>
           <div><dt>Endpoint</dt><dd className="mono"><Unknown value={capability?.websocket_path} /></dd></div>
         </dl>
-        <p className="inspector-footnote">Solo se habilita si el target declarado coincide exactamente con el agente activo.</p>
+        <p className="inspector-footnote">La autoridad por destino la da el servidor en cada target, no este resumen.</p>
       </section>
     </>
   );
 }
 
-function SessionStage({ sessions, activeId, agents, adapters, access, topologyAccess, capability, onActivate, onClose, onUpdate }: {
+function SessionStage({ sessions, activeId, agents, adapters, access, topologyAccess, capability, targets, grants, closedChannels, onActivate, onClose, onUpdate, onGrant, onChannelClosed, onReleaseChannel }: {
   sessions: OperatorSession[];
   activeId?: string;
   agents: FleetAgent[];
@@ -151,9 +295,15 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
   access?: ConsoleAccess;
   topologyAccess?: TopologySnapshot;
   capability?: TerminalCapability;
+  targets?: TerminalTargetsSnapshot;
+  grants: Record<string, TerminalSessionGrant>;
+  closedChannels: Record<string, true>;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
   onUpdate: (session: OperatorSession) => void;
+  onGrant: (sessionId: string, grant: TerminalSessionGrant) => void;
+  onChannelClosed: (sessionId: string) => void;
+  onReleaseChannel: (sessionId: string) => Promise<void>;
 }) {
   const api = useApi();
   const messages = useResource('terminal-message-feed', () => api.listMessages());
@@ -161,16 +311,40 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
   const [selectedDeliveries, setSelectedDeliveries] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string }>();
-
-  useEffect(() => {
-    if (messages.loading) return;
-    const interval = window.setInterval(messages.reload, 2_500);
-    return () => window.clearInterval(interval);
-  }, [messages.loading, messages.reload]);
+  const [dialogFor, setDialogFor] = useState<string>();
+  const [requesting, setRequesting] = useState(false);
+  const [requestError, setRequestError] = useState<string>();
+  const [closingChannel, setClosingChannel] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   const storedSession = sessions.find((session) => session.id === activeId);
   const currentAgent = storedSession ? agents.find((agent) => agent.id === storedSession.agent.id) ?? storedSession.agent : undefined;
   const session = storedSession && currentAgent ? { ...storedSession, agent: currentAgent } : undefined;
+  const grant = session ? grants[session.id] : undefined;
+  // An open PTY carries its own live stream: the 2.5 s message polling is redundant there.
+  const ptyChannelLive = Boolean(session && session.mode === 'pty' && grant && !closedChannels[session.id]);
+
+  const channelSessionId = grant?.session_id;
+  const subscribeChannel = useCallback(
+    (listener: () => void) => channelSessionId ? subscribePtySession(channelSessionId, listener) : () => undefined,
+    [channelSessionId],
+  );
+  const readChannel = useCallback(() => channelSessionId ? readPtySession(channelSessionId) : undefined, [channelSessionId]);
+  const channelView = useSyncExternalStore(subscribeChannel, readChannel);
+
+  useEffect(() => {
+    if (messages.loading || ptyChannelLive) return;
+    const interval = window.setInterval(messages.reload, 2_500);
+    return () => window.clearInterval(interval);
+  }, [messages.loading, messages.reload, ptyChannelLive]);
+
+  useEffect(() => {
+    // Only the ticket window needs a clock; once it is spent the countdown has nothing to say.
+    if (!ptyChannelLive || channelView?.state === 'open') return;
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [channelView?.state, ptyChannelLive]);
+
   const transcript = session ? transcriptForSession(messages.data, session) : [];
   const deliveries = sessionDeliveries(transcript);
   const selectedId = session ? selectedDeliveries[session.id] : undefined;
@@ -182,8 +356,9 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
     : '';
   const roomEnabled = route?.membership === true && Boolean(sourceRoomId);
   const canRoute = route?.allowed === true && roomEnabled;
-  const ptyGate = ultimateTerminalGate(capability, access);
-  const ptyMatches = session ? terminalTargetMatchesAgent(capability?.target_label, session.agent) : false;
+  const channel = session ? terminalChannelGate(capability, access, targets, session.agent) : undefined;
+  const channelLabel = channel && channel.status !== 'blocked' ? TERMINAL_ACCESS_LABELS[channel.status] : 'PTY no habilitado';
+  const channelTarget = session ? terminalTargetForAgent(targets?.items, session.agent) : undefined;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -222,6 +397,48 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
     messages.reload();
   }
 
+  /** Requests the single-use ticket and only then opens the socket. */
+  async function requestChannel(reason: string) {
+    if (!session || !channel?.enabled) return;
+    setRequesting(true);
+    setRequestError(undefined);
+    try {
+      const issued = await createTerminalSession({
+        tenant_id: session.agent.tenantId,
+        alias: session.agent.alias,
+        mode: channelTarget?.modes[0] ?? 'shell',
+        reason,
+        cols: DEFAULT_COLS,
+        rows: DEFAULT_ROWS,
+      });
+      onGrant(session.id, issued);
+      onUpdate({ ...session, mode: 'pty' });
+      setDialogFor(undefined);
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : 'El servidor rechazó la sesión PTY.');
+    } finally {
+      setRequesting(false);
+    }
+  }
+
+  async function releaseChannel() {
+    if (!session) return;
+    setClosingChannel(true);
+    try {
+      await onReleaseChannel(session.id);
+      onUpdate({ ...session, mode: 'transcript' });
+    } finally {
+      setClosingChannel(false);
+    }
+  }
+
+  function selectPtyMode() {
+    if (!session || !channel?.enabled) return;
+    // A live grant just re-shows the terminal; a new channel always goes through the dialog.
+    if (grants[session.id] && !closedChannels[session.id]) onUpdate({ ...session, mode: 'pty' });
+    else { setRequestError(undefined); setDialogFor(session.id); }
+  }
+
   return (
     <div className="terminal-stage">
       <SessionTabs sessions={sessions} activeId={activeId} onActivate={onActivate} onClose={onClose} />
@@ -249,25 +466,53 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
                  </label>
                  <div className="terminal-mode-switch" aria-label="Canal de sesión">
                    <button type="button" aria-pressed={session.mode === 'transcript'} data-active={session.mode === 'transcript' || undefined} onClick={() => onUpdate({ ...session, mode: 'transcript' })}><MessageSquareText size={14} aria-hidden="true" /> Feed</button>
-                   <button type="button" aria-pressed={session.mode === 'pty'} data-active={session.mode === 'pty' || undefined} disabled={!ptyGate.enabled || !ptyMatches} onClick={() => onUpdate({ ...session, mode: 'pty' })} title={!ptyGate.enabled ? ptyGate.reason : !ptyMatches ? 'El target PTY no coincide con este agente' : undefined}><TerminalSquare size={14} aria-hidden="true" /> PTY</button>
+                   <button
+                     type="button"
+                     aria-pressed={session.mode === 'pty'}
+                     data-active={session.mode === 'pty' || undefined}
+                     disabled={!channel?.enabled}
+                     onClick={selectPtyMode}
+                     title={channel?.reason}
+                   ><TerminalSquare size={14} aria-hidden="true" /> PTY</button>
                 </div>
               </div>
             </header>
 
+            <p className="terminal-channel-state" data-status={channel?.status ?? 'blocked'}>
+              <ShieldCheck size={13} aria-hidden="true" />
+              <strong>{channelLabel}</strong>
+              <span>{channel?.reason ?? 'Canal PTY UNKNOWN.'}</span>
+            </p>
+
             <div className="terminal-connection-bar" role="status">
-              <span className={`connection-dot ${messages.error ? 'error' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
-              <strong>{messages.error ? 'FEED DEGRADADO' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
-              <span>{messages.error?.message ?? 'deliveries + ACK cada 2.5 s'}</span>
+              <span className={`connection-dot ${messages.error ? 'error' : ptyChannelLive ? 'open' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
+              <strong>{messages.error ? 'FEED DEGRADADO' : ptyChannelLive ? 'POLLING EN PAUSA' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
+              <span>{messages.error?.message ?? (ptyChannelLive ? 'el canal PTY es la fuente en vivo de esta sesión' : 'deliveries + ACK cada 2.5 s')}</span>
               <button type="button" onClick={messages.reload} disabled={messages.loading}><RefreshCw size={13} aria-hidden="true" /> Sincronizar</button>
             </div>
 
             {session.mode === 'pty' ? (
-               ptyGate.enabled && ptyMatches && ptyGate.websocketPath ? (
+               channel?.enabled && grant && channel.websocketPath ? (
                  <div className="terminal-pty-pane">
-                   <div className="terminal-pty-warning"><TerminalSquare size={15} aria-hidden="true" /> Canal PTY server-declared para <strong>{capability?.target_label}</strong>. La UI solo transporta bytes.</div>
-                   <Suspense fallback={<LoadingState label="Cargando Xterm…" />}><PtyTerminal websocketPath={ptyGate.websocketPath} /></Suspense>
+                   <PtySessionBar
+                     agent={session.agent}
+                     grant={grant}
+                     secondsLeft={ptySecondsLeft(grant.expires_at, now)}
+                     ticketConsumed={channelView?.state === 'open'}
+                     closing={closingChannel}
+                     onClose={() => void releaseChannel()}
+                   />
+                   <Suspense fallback={<LoadingState label="Cargando Xterm…" />}>
+                     <PtyTerminal
+                       websocketPath={grant.websocket_path || channel.websocketPath}
+                       sessionId={grant.session_id}
+                       ticket={grant.ticket}
+                       onClosed={() => onChannelClosed(session.id)}
+                       onRequestNewSession={() => { void onReleaseChannel(session.id).then(() => { setRequestError(undefined); setDialogFor(session.id); }); }}
+                     />
+                   </Suspense>
                 </div>
-              ) : <div className="terminal-channel-unavailable"><CircleOff aria-hidden="true" /><h3>PTY no vinculado a este agente</h3><p>{ptyGate.reason}</p></div>
+              ) : <div className="terminal-channel-unavailable"><CircleOff aria-hidden="true" /><h3>{channelLabel}</h3><p>{channel?.reason ?? 'Canal PTY UNKNOWN.'}</p></div>
             ) : (
               <>
                 {messages.loading && !messages.data ? <LoadingState label="Abriendo feed durable de mensajes…" /> : (
@@ -322,13 +567,26 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
       )}
       <footer className="terminal-doctrine"><ShieldCheck size={14} aria-hidden="true" /> Cliente de transporte: no crea workers remotos, no ejecuta adapters y no persiste sesiones.</footer>
       <div className="terminal-adapter-mobile"><AdapterInspector adapters={adapters} access={access} capability={capability} /></div>
+      {session && dialogFor === session.id && channel?.enabled ? (
+        <PtySessionDialog
+          agent={session.agent}
+          resolution={{ status: channel.status === 'blocked' ? 'unknown' : channel.status, reason: channel.reason, target: channelTarget }}
+          pending={requesting}
+          error={requestError}
+          onCancel={() => setDialogFor(undefined)}
+          onConfirm={(reason) => void requestChannel(reason)}
+        />
+      ) : null}
     </div>
   );
 }
 
-export function OperatorWorkspace({ agents, adapters, access, topologyAccess, terminalCapability, fleetLoading, fleetError }: OperatorWorkspaceProps) {
+export function OperatorWorkspace({ agents, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError }: OperatorWorkspaceProps) {
   const [sessions, setSessions] = useState<OperatorSession[]>([]);
   const [activeId, setActiveId] = useState<string>();
+  // Tickets and grants live in memory only, keyed by UI session; never persisted.
+  const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
+  const [closedChannels, setClosedChannels] = useState<Record<string, true>>({});
   const liveSessions = sessions.map((session) => ({
     ...session,
     agent: agents.find((agent) => agent.id === session.agent.id) ?? session.agent,
@@ -347,9 +605,33 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
     setActiveId(id);
   }
 
+  /** Releases the grant server-side (DELETE) and then tears the local terminal down. */
+  async function releaseChannel(id: string) {
+    const grant = grants[id];
+    if (!grant) return;
+    try {
+      await deleteTerminalSession(grant.session_id);
+    } catch {
+      // The socket still has to go: a client-side failure must not leave a shell attached here.
+    } finally {
+      closePtySession(grant.session_id);
+      setGrants((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setClosedChannels((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+    }
+  }
+
   function closeSession(id: string) {
     const index = sessions.findIndex((session) => session.id === id);
     const next = sessions.filter((session) => session.id !== id);
+    void releaseChannel(id);
     setSessions(next);
     if (activeId === id) setActiveId(next[Math.min(index, next.length - 1)]?.id);
   }
@@ -360,7 +642,15 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
 
   return (
     <div className="ultimate-terminal-shell">
-      <FleetSidebar agents={agents} adapters={adapters} activeAgentId={activeSession?.agent.id} onOpenAgent={openAgent} loading={fleetLoading} error={fleetError} />
+      <FleetSidebar
+        agents={agents}
+        adapters={adapters}
+        activeAgentId={activeSession?.agent.id}
+        onOpenAgent={openAgent}
+        loading={fleetLoading}
+        error={fleetError}
+        targets={terminalTargets}
+      />
       <SessionStage
         sessions={liveSessions}
         activeId={activeId}
@@ -369,9 +659,15 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
         access={access}
         topologyAccess={topologyAccess}
         capability={terminalCapability}
+        targets={terminalTargets}
+        grants={grants}
+        closedChannels={closedChannels}
         onActivate={setActiveId}
         onClose={closeSession}
         onUpdate={updateSession}
+        onGrant={(id, grant) => setGrants((current) => ({ ...current, [id]: grant }))}
+        onChannelClosed={(id) => setClosedChannels((current) => ({ ...current, [id]: true }))}
+        onReleaseChannel={releaseChannel}
       />
       <aside className="terminal-control-inspector" aria-label="Estado del control plane">
         <AdapterInspector adapters={adapters} access={access} capability={terminalCapability} />

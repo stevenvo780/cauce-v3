@@ -1,5 +1,7 @@
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
 import { permissionState } from '../../lib';
+import type { TerminalTargetsSnapshot } from './api';
+import { resolveTerminalTarget, type FleetAgent, type TerminalAccessStatus } from './fleet';
 
 export const ULTIMATE_TERMINAL_PLUGIN_ID = 'ultimate-terminal.client';
 export const ULTIMATE_TERMINAL_CAPABILITY = 'terminal.pty.client';
@@ -42,4 +44,41 @@ export function ultimateTerminalGate(capability: TerminalCapability | undefined,
   if (!capability.capabilities.includes(ULTIMATE_TERMINAL_CAPABILITY)) return { enabled: false, reason: 'Capability terminal.pty.client ausente.' };
   if (!sameOriginWebsocketPath(capability.websocket_path)) return { enabled: false, reason: 'Endpoint WebSocket inválido o no same-origin.' };
   return { enabled: true, reason: 'Capability y permiso verificados por servidor.', websocketPath: capability.websocket_path };
+}
+
+/** `blocked` means the plugin gate itself is closed, before any destination is even considered. */
+export interface TerminalChannelGate {
+  enabled: boolean;
+  status: TerminalAccessStatus | 'blocked';
+  reason: string;
+  websocketPath?: string;
+}
+
+/**
+ * Full gate for one destination: the plugin gate (RBAC + capability + same-origin endpoint)
+ * AND the server's per-target authority. Both must be explicit allows; the client only paints
+ * grey buttons, the real authority is always the server's, re-checked on every session request.
+ */
+export function terminalChannelGate(
+  capability: TerminalCapability | undefined,
+  access: ConsoleAccess | undefined,
+  targets: TerminalTargetsSnapshot | undefined,
+  agent: FleetAgent,
+): TerminalChannelGate {
+  const gate = ultimateTerminalGate(capability, access);
+  if (!gate.enabled) return { enabled: false, status: 'blocked', reason: gate.reason };
+
+  // The inventory may publish its own endpoint; it is held to the same same-origin rule.
+  const declared = targets?.websocket_path ?? gate.websocketPath;
+  if (!sameOriginWebsocketPath(declared)) {
+    return { enabled: false, status: 'blocked', reason: 'Endpoint WebSocket inválido o no same-origin.' };
+  }
+
+  const resolution = resolveTerminalTarget(targets?.items, agent);
+  return {
+    enabled: resolution.status === 'allowed',
+    status: resolution.status,
+    reason: resolution.reason,
+    websocketPath: declared,
+  };
 }
