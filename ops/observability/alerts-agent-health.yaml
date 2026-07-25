@@ -67,7 +67,7 @@ groups:
           summary: "Alias {{ $labels.alias }} hit {{ $labels.kind }} timeouts repeatedly within 15 minutes"
 
       - alert: CauceDeliveryTimeoutAccumulating
-        expr: sum by (alias, kind) (increase(cauce_dispatcher_delivery_timeout_total[24h])) >= 8
+        expr: sum by (alias, kind) (increase(cauce_dispatcher_delivery_timeout_total[24h])) >= 5
         for: 10m
         labels:
           severity: warning
@@ -77,20 +77,36 @@ groups:
   - name: cauce-v3-agent-health-connection-churn
     rules:
       - alert: CauceAliasEpochChurnWarning
-        expr: changes(cauce_dispatcher_connection_lease_epoch[1h]) > 1
+        expr: changes(cauce_dispatcher_connection_lease_epoch[1h]) >= 3
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Alias {{ $labels.alias }} reconnected without resuming its session more than once in an hour"
+          summary: "Alias {{ $labels.alias }} reconnected without resuming its session 3+ times in an hour"
 
       - alert: CauceAliasEpochChurnCritical
         expr: changes(cauce_dispatcher_connection_lease_epoch[20m]) >= 3
-        for: 0m
+        for: 2m
         labels:
           severity: critical
         annotations:
           summary: "Alias {{ $labels.alias }} is crash-looping: 3+ forced reconnects within 20 minutes"
+
+      - alert: CauceAliasOffline
+        expr: cauce_dispatcher_connection_lease_online == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alias {{ $labels.alias }} has no live connection lease"
+
+      - alert: CauceAliasOfflineLong
+        expr: cauce_dispatcher_connection_lease_online == 0
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Alias {{ $labels.alias }} has been offline for 30+ minutes"
 
   - name: cauce-v3-agent-health-latency
     rules:
