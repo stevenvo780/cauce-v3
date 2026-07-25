@@ -436,39 +436,58 @@ describe('proactive egress rate limits', () => {
     await grantNotifyRole('argos');
     await createDestination({ max_per_root: 1 });
     await seedPriorContact();
-    const chainRoot = randomUUID();
-    const bodies = [0, 1].map(() => ({
-      type: 'chain.step',
-      text: 'chain step',
-      correlation: { root_message_id: chainRoot }
-    }));
 
-    const lease = await repository.acquireLease('Steven', 'argos', 'argos-1', [], 30_000);
-    const outcomes: Array<string | null> = [];
-    for (const [index, body] of bodies.entries()) {
-      await repository.publish(command({ body, idempotency_key: `chain-${index}` }));
+    // The chain must be built the way the runtime builds one: the root is a
+    // normal client publish and every later hop is a server-materialized
+    // `agent.message` carrying the inherited correlation. A client cannot
+    // declare `correlation.root_message_id` itself -- `rootMessageId()` only
+    // honours it on reserved internal types, which `publish` rejects -- so a
+    // fabricated chain would exercise nothing. The relay hops go through
+    // socrates and jarvis because an agent may not address itself, nor reply
+    // to the actor of an internal delivery, so argos cannot loop back alone.
+    // One lease per alias, held for the whole chain: re-acquiring would fence
+    // the previous epoch and the next claim would be rejected.
+    const leases = new Map<string, number>();
+    const step = async (alias: string, result: Record<string, unknown>): Promise<string | null> => {
+      const instance = `${alias}-1`;
+      if (!leases.has(alias)) {
+        const lease = await repository.acquireLease('Steven', alias, instance, [], 30_000);
+        leases.set(alias, lease.epoch!);
+      }
       const [delivery] = await repository.claimDeliveries(
-        'Steven', 'argos', 'argos-1', lease.epoch!, 1, 30_000
+        'Steven', alias, instance, leases.get(alias)!, 1, 30_000
       );
-      expect(delivery).toBeDefined();
+      expect(delivery, `${alias} should have a pending delivery`).toBeDefined();
       await repository.ackDelivery(
-        delivery!.delivery_id, 'Steven', 'argos',
-        ackWith(delivery!, 'argos-1', lease.epoch!, notifyOutput([
-          { to: 'steven.dm', kind: 'decision_request', body: `paso ${index}` }
-        ]))
+        delivery!.delivery_id, 'Steven', alias,
+        ackWith(delivery!, instance, leases.get(alias)!, result)
       );
       const rows = await notifications();
-      outcomes.push(rows[rows.length - 1]?.denial_code ?? null);
-    }
+      return rows[rows.length - 1]?.denial_code ?? null;
+    };
+    const notify = (body: string): unknown[] =>
+      [{ to: 'steven.dm', kind: 'decision_request', body }];
+
+    const root = await repository.publish(command({ idempotency_key: 'chain-root' }));
+
+    // Hop 1: the root delivery notifies and hands the chain on.
+    const firstOutcome = await step('argos', notifyOutput(notify('paso 0'), {
+      messages: [{ to: 'socrates', body: 'sigue la cadena' }]
+    }));
+    await step('socrates', notifyOutput([], { messages: [{ to: 'jarvis', body: 'sigue' }] }));
+    await step('jarvis', notifyOutput([], { messages: [{ to: 'argos', body: 'cierra' }] }));
+
+    // Hop 4: a distinct delivery to argos, same chain root.
+    const secondOutcome = await step('argos', notifyOutput(notify('paso 1')));
 
     // Both notifications belong to the same conversation chain, so the second
     // must exhaust the per-chain quota rather than slip through on the
     // notification's own (always unique) root_message_id.
-    expect(await notifications()).toHaveLength(2);
-    expect(outcomes[0]).toBeNull();
-    expect(outcomes[1]).toBe('root_quota_exhausted');
     const rows = await notifications();
-    expect(rows.every((row) => row.source_root_message_id === chainRoot)).toBe(true);
+    expect(rows).toHaveLength(2);
+    expect(firstOutcome).toBeNull();
+    expect(secondOutcome).toBe('root_quota_exhausted');
+    expect(rows.every((row) => row.source_root_message_id === root.message_id)).toBe(true);
   });
 
   it('denies a notification inside the quiet hours window', async () => {
