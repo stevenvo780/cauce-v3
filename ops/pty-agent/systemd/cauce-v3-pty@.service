@@ -1,0 +1,36 @@
+[Unit]
+Description=Cauce V3 PTY agent for %i (outbound channel to the terminal relay on agora)
+Documentation=file:%h/.local/share/cauce-v3/ops/pty-agent/README.md
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/.config/cauce-v3/pty/%i.env
+# Deliberately NOT Requires=/After= cauce-v3-container-%i.service. The terminal is the tool an
+# operator reaches for precisely when the adapter is dead (argos is stuck in a CONNECTION_ZODERROR
+# loop right now), so the two units are siblings and neither drags the other.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+UMask=0077
+Environment=CAUCE_PTY_OPS_ROOT=%h/.local/share/cauce-v3/ops
+Environment=CAUCE_PTY_CONFIG_ROOT=%h/.config/cauce-v3/pty
+Environment=CAUCE_PTY_PKI_ROOT=%h/.config/cauce-v3/pty-pki
+Environment=CAUCE_PTY_LOCK_ROOT=%t/cauce-v3
+ExecStart=%h/.local/share/cauce-v3/ops/pty-agent/cauce-pty-launcher.sh %i
+Restart=always
+RestartSec=5
+# 2 (bad config) and 78 (root runtime identity / unusable bundle) are permanent: restarting cannot
+# fix them and a hot loop would only hide the fault. 73 (another launcher holds the alias lock) is
+# deliberately NOT here, because that one is transient and must be retried.
+RestartPreventExitStatus=2 78
+TimeoutStopSec=30s
+KillMode=control-group
+StandardInput=null
+NoNewPrivileges=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target
