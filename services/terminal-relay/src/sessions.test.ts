@@ -1,0 +1,396 @@
+import { describe, expect, it } from 'vitest';
+import type { WebSocket } from 'ws';
+import type { AgentConnection, AgentSessionHandlers } from './agent-leg.js';
+import type {
+  AgentPresence, AuthzOutcome, ConsumeOutcome, SessionCloseReport, TerminalGatewayClient,
+  TerminalMode, TerminalSessionGrant
+} from './gateway-client.js';
+import { CLOSE_CODES, SessionManager, parseClientMessage, type SessionLimits } from './sessions.js';
+
+const SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const OTHER_SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff';
+
+type Listener = (...args: readonly never[]) => void;
+
+/** Minimal `ws` stand-in: records what the browser would have received, in order and by kind. */
+class FakeBrowserSocket {
+  readyState = 1;
+  bufferedAmount = 0;
+  readonly text: string[] = [];
+  readonly binary: Buffer[] = [];
+  readonly closes: { code: number; reason: string }[] = [];
+  private readonly listeners = new Map<string, Listener[]>();
+
+  send(data: string | Buffer, options?: { binary?: boolean }): void {
+    if (typeof data === 'string' && options?.binary !== true) {
+      this.text.push(data);
+      return;
+    }
+    this.binary.push(Buffer.from(data));
+  }
+
+  close(code = 1000, reason = ''): void {
+    if (this.readyState === 3) return;
+    this.readyState = 3;
+    this.closes.push({ code, reason });
+    this.emit('close');
+  }
+
+  terminate(): void {
+    this.close();
+  }
+
+  on(event: string, listener: Listener): this {
+    this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
+    return this;
+  }
+
+  once(event: string, listener: Listener): this {
+    return this.on(event, listener);
+  }
+
+  off(event: string, listener: Listener): this {
+    this.listeners.set(event, (this.listeners.get(event) ?? []).filter((entry) => entry !== listener));
+    return this;
+  }
+
+  emit(event: string, ...args: readonly never[]): void {
+    for (const listener of [...(this.listeners.get(event) ?? [])]) listener(...args);
+  }
+
+  /** Types a line the way the console would. */
+  type(text: string): void {
+    this.emit('message', ...([Buffer.from(JSON.stringify({ type: 'input', data: text })), false] as never[]));
+  }
+
+  raw(payload: string, binary = false): void {
+    this.emit('message', ...([Buffer.from(payload), binary] as never[]));
+  }
+
+  asWebSocket(): WebSocket {
+    return this as unknown as WebSocket;
+  }
+
+  json(index: number): Record<string, unknown> {
+    return JSON.parse(this.text[index] ?? '{}') as Record<string, unknown>;
+  }
+}
+
+class FakeAgentConnection {
+  alive = true;
+  paused = false;
+  handlers: AgentSessionHandlers | undefined;
+  readonly opens: { sessionId: string; ticket: string; mode: TerminalMode }[] = [];
+  readonly stdin: Buffer[] = [];
+  readonly resizes: { cols: number; rows: number }[] = [];
+  readonly closes: { sessionId: string; reason: string }[] = [];
+
+  attachSession(sessionId: string, handlers: AgentSessionHandlers): void {
+    void sessionId;
+    this.handlers = handlers;
+  }
+
+  detachSession(sessionId: string): void {
+    void sessionId;
+    this.handlers = undefined;
+  }
+
+  sendOpen(sessionId: string, ticket: string, mode: TerminalMode): void {
+    this.opens.push({ sessionId, ticket, mode });
+  }
+
+  sendStdin(sessionId: string, data: Buffer): void {
+    void sessionId;
+    this.stdin.push(data);
+  }
+
+  sendResize(sessionId: string, cols: number, rows: number): void {
+    void sessionId;
+    this.resizes.push({ cols, rows });
+  }
+
+  sendClose(sessionId: string, reason: string): void {
+    this.closes.push({ sessionId, reason });
+  }
+
+  pauseOutput(): void {
+    this.paused = true;
+  }
+
+  resumeOutput(): void {
+    this.paused = false;
+  }
+
+  asAgent(): AgentConnection {
+    return this as unknown as AgentConnection;
+  }
+}
+
+class FakeGateway implements TerminalGatewayClient {
+  authz: AuthzOutcome = 'allow';
+  readonly closeReports: { sessionId: string; report: SessionCloseReport }[] = [];
+
+  async consumeTicket(): Promise<ConsumeOutcome> {
+    return { status: 'unavailable' };
+  }
+
+  async authorizeSession(): Promise<AuthzOutcome> {
+    return this.authz;
+  }
+
+  async reportClose(sessionId: string, report: SessionCloseReport): Promise<void> {
+    this.closeReports.push({ sessionId, report });
+  }
+
+  async publishPresence(agents: readonly AgentPresence[]): Promise<void> {
+    void agents;
+  }
+}
+
+function grant(overrides: Partial<TerminalSessionGrant> = {}): TerminalSessionGrant {
+  return {
+    tenant_id: 'Steven',
+    alias: 'jarvis',
+    mode: 'shell',
+    cols: 80,
+    rows: 24,
+    operator_id: 'steven',
+    container: 'claw',
+    runtime_user: 'claw',
+    session_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    ...overrides
+  };
+}
+
+function limits(overrides: Partial<SessionLimits> = {}): SessionLimits {
+  return {
+    idleTimeoutMs: 60_000,
+    outputRateBytesPerSec: 262_144,
+    scrollbackBytes: 64,
+    maxSessions: 2,
+    authzIntervalMs: 60_000,
+    authzGraceMs: 60_000,
+    openTimeoutMs: 500,
+    outputWindowMs: 10,
+    ...overrides
+  };
+}
+
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('condition was never met');
+    await wait(5);
+  }
+}
+
+interface OpenedSession {
+  readonly manager: SessionManager;
+  readonly socket: FakeBrowserSocket;
+  readonly agent: FakeAgentConnection;
+  readonly gateway: FakeGateway;
+}
+
+async function openSession(
+  overrides: Partial<SessionLimits> = {},
+  grantOverrides: Partial<TerminalSessionGrant> = {},
+  sessionId = SESSION_ID,
+  reuse?: { manager: SessionManager; gateway: FakeGateway }
+): Promise<OpenedSession> {
+  const gateway = reuse?.gateway ?? new FakeGateway();
+  const manager = reuse?.manager ?? new SessionManager({ gateway, limits: limits(overrides) });
+  const socket = new FakeBrowserSocket();
+  const agent = new FakeAgentConnection();
+  const opening = manager.open({
+    socket: socket.asWebSocket(),
+    sessionId,
+    ticket: 'ticket-under-test',
+    grant: grant(grantOverrides),
+    agent: agent.asAgent(),
+    cols: 120,
+    rows: 40
+  });
+  await waitFor(() => agent.opens.length === 1 || socket.closes.length > 0);
+  agent.handlers?.onOpenOk(4242);
+  await opening;
+  return { manager, socket, agent, gateway };
+}
+
+describe('client frames', () => {
+  it('accepts only the three control frames and rejects binary input', () => {
+    expect(parseClientMessage(Buffer.from('{"type":"input","data":"ls"}'), false)).toEqual({ type: 'input', data: 'ls' });
+    expect(parseClientMessage(Buffer.from('{"type":"resize","cols":100,"rows":30}'), false))
+      .toEqual({ type: 'resize', cols: 100, rows: 30 });
+    expect(parseClientMessage(Buffer.from('{"type":"ping"}'), false)).toEqual({ type: 'ping' });
+    expect(parseClientMessage(Buffer.from('{"type":"exec","cmd":"rm"}'), false)).toBeUndefined();
+    expect(parseClientMessage(Buffer.from('{"type":"resize","cols":4,"rows":30}'), false)).toBeUndefined();
+    expect(parseClientMessage(Buffer.from([0x01, 0x02]), true)).toBeUndefined();
+  });
+});
+
+describe('terminal sessions', () => {
+  it('announces ready as text, streams PTY output as binary and coalesces typing', async () => {
+    const { socket, agent } = await openSession();
+    expect(socket.json(0)).toMatchObject({
+      type: 'ready', session_id: SESSION_ID, alias: 'jarvis', tenant_id: 'Steven', container: 'claw',
+      runtime_user: 'claw', mode: 'shell'
+    });
+    expect(agent.opens[0]).toMatchObject({ sessionId: SESSION_ID, ticket: 'ticket-under-test', mode: 'shell' });
+
+    agent.handlers?.onStdout(Buffer.from('claw@jarvis:~$ '));
+    expect(socket.binary).toHaveLength(1);
+    expect(socket.binary[0]?.toString()).toBe('claw@jarvis:~$ ');
+    expect(socket.text).toHaveLength(1);
+
+    socket.type('l');
+    socket.type('s');
+    socket.type('\r');
+    await wait(40);
+    expect(agent.stdin).toHaveLength(1);
+    expect(agent.stdin[0]?.toString()).toBe('ls\r');
+  });
+
+  it('holds what is typed while the agent is still opening the PTY', async () => {
+    const gateway = new FakeGateway();
+    const manager = new SessionManager({ gateway, limits: limits() });
+    const socket = new FakeBrowserSocket();
+    const agent = new FakeAgentConnection();
+    const opening = manager.open({
+      socket: socket.asWebSocket(),
+      sessionId: SESSION_ID,
+      ticket: 'ticket-under-test',
+      grant: grant(),
+      agent: agent.asAgent(),
+      cols: 120,
+      rows: 40
+    });
+    await waitFor(() => agent.opens.length === 1);
+    socket.type('whoami\r');
+    expect(agent.stdin).toHaveLength(0);
+    agent.handlers?.onOpenOk(4242);
+    await opening;
+    await wait(30);
+    expect(agent.stdin[0]?.toString()).toBe('whoami\r');
+  });
+
+  it('forwards resize and ignores ping without touching the agent', async () => {
+    const { socket, agent } = await openSession();
+    socket.raw('{"type":"resize","cols":100,"rows":30}');
+    socket.raw('{"type":"ping"}');
+    expect(agent.resizes).toEqual([{ cols: 100, rows: 30 }]);
+  });
+
+  it('closes with 4400 when the client sends an unknown frame type', async () => {
+    const { socket } = await openSession();
+    socket.raw('{"type":"exec","cmd":"whoami"}');
+    expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.protocol_error, reason: 'protocol_error' });
+  });
+
+  it('closes with 4403 as soon as the gateway revokes the session', async () => {
+    const { socket, gateway } = await openSession({ authzIntervalMs: 15 });
+    gateway.authz = 'revoked';
+    await waitFor(() => socket.closes.length > 0);
+    expect(socket.closes[0]?.code).toBe(CLOSE_CODES.revoked);
+    expect(socket.json(1)).toMatchObject({ type: 'closed', reason: 'revoked' });
+    expect(gateway.closeReports[0]?.report.reason).toBe('revoked');
+  });
+
+  it('fails closed when the gateway stays unreachable past the grace window', async () => {
+    const { socket, gateway } = await openSession({ authzIntervalMs: 15, authzGraceMs: 40 });
+    gateway.authz = 'unreachable';
+    await waitFor(() => socket.closes.length > 0);
+    expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.revoked, reason: 'authz_unreachable' });
+  });
+
+  it('keeps the session while the gateway is unreachable inside the grace window', async () => {
+    const { socket, gateway } = await openSession({ authzIntervalMs: 10, authzGraceMs: 5_000 });
+    gateway.authz = 'unreachable';
+    await wait(60);
+    expect(socket.closes).toHaveLength(0);
+  });
+
+  it('warns and then closes with 4413 when output floods for five windows', async () => {
+    const { socket, agent } = await openSession({ outputWindowMs: 10, outputRateBytesPerSec: 1_000 });
+    const flood = setInterval(() => agent.handlers?.onStdout(Buffer.alloc(4_096, 0x41)), 5);
+    try {
+      await waitFor(() => socket.text.some((frame) => frame.includes('"notice"')));
+      const notice = JSON.parse(socket.text.find((frame) => frame.includes('"notice"')) ?? '{}') as Record<string, unknown>;
+      expect(notice).toMatchObject({ type: 'notice', level: 'warn' });
+      await waitFor(() => socket.closes.length > 0);
+      expect(socket.closes[0]?.code).toBe(CLOSE_CODES.output_flood);
+    } finally {
+      clearInterval(flood);
+    }
+  });
+
+  it('closes with 4408 when the browser stops typing', async () => {
+    const { socket } = await openSession({ idleTimeoutMs: 30 });
+    await waitFor(() => socket.closes.length > 0);
+    expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.idle_timeout, reason: 'idle_timeout' });
+  });
+
+  it('closes with 4423 when the granted TTL runs out', async () => {
+    const { socket } = await openSession({}, { session_expires_at: new Date(Date.now() + 40).toISOString() });
+    await waitFor(() => socket.closes.length > 0);
+    expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.ttl_expired, reason: 'ttl_expired' });
+  });
+
+  it('pauses the agent when the browser stops draining and resumes after it catches up', async () => {
+    const { socket, agent } = await openSession();
+    socket.bufferedAmount = 8 * 1024 * 1024;
+    agent.handlers?.onStdout(Buffer.from('x'));
+    expect(agent.paused).toBe(true);
+    socket.bufferedAmount = 0;
+    await waitFor(() => !agent.paused);
+  });
+
+  it('reports counters and reason to the gateway when the agent exits', async () => {
+    const { socket, agent, gateway } = await openSession();
+    socket.type('exit\r');
+    await wait(30);
+    agent.handlers?.onStdout(Buffer.from('logout\r\n'));
+    agent.handlers?.onClosed({ exit_code: 0, signal: null, reason: 'agent_closed' });
+    await waitFor(() => gateway.closeReports.length > 0);
+    expect(gateway.closeReports[0]?.report).toEqual({
+      reason: 'agent_closed', exit_code: 0, bytes_in: 5, bytes_out: 8
+    });
+    expect(socket.closes[0]?.code).toBe(CLOSE_CODES.normal);
+  });
+
+  it('refuses a second terminal for the same container and honours the session cap', async () => {
+    const first = await openSession();
+    const conflicting = new FakeBrowserSocket();
+    await first.manager.open({
+      socket: conflicting.asWebSocket(),
+      sessionId: OTHER_SESSION_ID,
+      ticket: 'second-ticket',
+      grant: grant(),
+      agent: new FakeAgentConnection().asAgent(),
+      cols: 80,
+      rows: 24
+    });
+    expect(conflicting.closes[0]).toEqual({ code: CLOSE_CODES.session_conflict, reason: 'session_conflict' });
+  });
+
+  it('replays the scrollback when the same session id reattaches with a new ticket', async () => {
+    const first = await openSession({ scrollbackBytes: 16 });
+    first.agent.handlers?.onStdout(Buffer.from('0123456789'));
+    first.agent.handlers?.onStdout(Buffer.from('abcdefghij'));
+    first.socket.close(1000, 'browser_closed');
+    await waitFor(() => first.gateway.closeReports.length > 0);
+
+    const second = await openSession({}, {}, SESSION_ID, { manager: first.manager, gateway: first.gateway });
+    await waitFor(() => second.socket.binary.length > 0);
+    // The oldest bytes are dropped: only the last `scrollbackBytes` survive the reattach.
+    expect(second.socket.binary[0]?.toString()).toBe('456789abcdefghij');
+    expect(second.socket.json(1)).toMatchObject({ type: 'notice', level: 'info' });
+  });
+
+  it('closes with 4404 when the agent connection dies underneath the session', async () => {
+    const { socket, agent } = await openSession();
+    agent.handlers?.onAgentGone('agent_disconnected');
+    expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.agent_offline, reason: 'agent_disconnected' });
+  });
+});
