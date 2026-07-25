@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
-  chmod, copyFile, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile,
+  chmod, chown, copyFile, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile,
 } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import os from "node:os";
@@ -257,8 +257,24 @@ const lifecycleContainerId = "b".repeat(64);
 const lifecycleGeneration = "c".repeat(64);
 const replacementGeneration = "d".repeat(64);
 
-const runtimeUid = String(process.getuid());
-const runtimeGid = String(process.getgid());
+// The adapter always runs under a non-root identity, so the fixture must request one
+// too. An unprivileged run can only request its own identity; a root run (the release
+// gate) must name a real unprivileged account, because child_credentials() rejects 0.
+const runningAsRoot = process.getuid() === 0;
+const testIdentity = (() => {
+  if (!runningAsRoot) return { uid: process.getuid(), gid: process.getgid() };
+  const uid = Number(process.env.CAUCE_CONTAINER_TEST_RUNTIME_UID ?? 65534);
+  const gid = Number(process.env.CAUCE_CONTAINER_TEST_RUNTIME_GID ?? 65534);
+  assert.ok(Number.isInteger(uid) && uid > 0 && Number.isInteger(gid) && gid > 0,
+    "a root fixture run needs a non-root CAUCE_CONTAINER_TEST_RUNTIME_UID/GID pair");
+  return { uid, gid };
+})();
+const runtimeUid = String(testIdentity.uid);
+const runtimeGid = String(testIdentity.gid);
+// Under root the mkdtemp fixture root is root-owned 0700, so the dropped adapter child
+// could neither traverse it nor write its PID files. Hand that single directory to the
+// same unprivileged identity: root keeps full access and no mode is widened for anyone.
+if (runningAsRoot) await chown(temporary, testIdentity.uid, testIdentity.gid);
 const metadataName = "cauce-v3-adapter.json";
 const lockName = "cauce-v3-adapter.lock";
 
@@ -1145,7 +1161,11 @@ time.sleep(60)
   const inaccessibleControl = await makeControl("inaccessible-control");
   await mkdir(inaccessibleState, { mode: 0o700 });
   const inaccessibleManaged = await startManaged(inaccessibleState, inaccessibleControl, simple);
-  await chmod(inaccessibleControl, 0o000);
+  // Root bypasses DAC, so mode 0000 denies nothing to a root controller. The equivalent
+  // fail-closed refusal there is a control dir that is no longer owned by the controller
+  // (exactly the adapter-UID-owned control plane the runtime must reject).
+  if (runningAsRoot) await chown(inaccessibleControl, testIdentity.uid, testIdentity.gid);
+  else await chmod(inaccessibleControl, 0o000);
   try {
     const deniedStop = stopManaged(inaccessibleState, inaccessibleControl);
     assert.equal(deniedStop.status, 78, deniedStop.stderr);
@@ -1155,7 +1175,8 @@ time.sleep(60)
     assert.doesNotMatch(deniedStopped.stderr, /Traceback/);
     assert.equal(processAlive(inaccessibleManaged.document.pid), true);
   } finally {
-    await chmod(inaccessibleControl, 0o700);
+    if (runningAsRoot) await chown(inaccessibleControl, 0, 0);
+    else await chmod(inaccessibleControl, 0o700);
   }
   assert.equal(stopManaged(inaccessibleState, inaccessibleControl).status, 0);
   await waitProcessGone(inaccessibleManaged.document.pid);
