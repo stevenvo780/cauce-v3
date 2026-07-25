@@ -20,14 +20,45 @@ es el problema.** La prueba directa es esta, y distingue los dos casos en un seg
 docker exec <contenedor> unshare --user --map-root-user true
 ```
 
-Falla con `Operation not permitted` donde el perfil bloquea, funciona donde no.
+Falla con `Operation not permitted` donde el perfil bloquea, funciona donde no. Pero esa prueba sólo
+cubre el primer obstáculo; la prueba que vale es correr el bwrap que embarca codex, que vive en
+`/usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-resources/bwrap`:
+
+```sh
+docker run --rm -v <ruta-al-bwrap>:/bwrap:ro --security-opt seccomp=<perfil> <imagen> \
+  /bwrap --unshare-user --dev-bind / / /bin/sh -c 'printf %s <nonce> | sha256sum'
+```
+
+Eso se puede hacer en un contenedor descartable, **sin tocar el contenedor del agente**.
 
 ## Por qué NO usar `seccomp=unconfined`
 
-Porque apaga el filtro de llamadas al sistema **entero** para habilitar una sola. Este perfil consigue
-lo mismo conservando todo lo demás: `defaultAction` sigue en `SCMP_ACT_ERRNO`, el resto de las reglas
-es idéntico al perfil por defecto, y **no habilita ni una llamada nueva** — sólo le quita la condición
-de exigir `CAP_SYS_ADMIN` a cuatro que ya figuraban.
+Porque apaga el filtro de llamadas al sistema **entero** para habilitar un puñado. Este perfil consigue
+lo mismo conservando todo lo demás: `defaultAction` sigue en `SCMP_ACT_ERRNO` y el resto de las reglas
+es idéntico al perfil por defecto.
+
+De las siete llamadas que habilita, **seis ya figuraban** en el perfil por defecto
+(`clone`, `clone3`, `unshare`, `setns`, `mount`, `umount2`): sólo se les quita la condición de exigir
+`CAP_SYS_ADMIN`. Y ahí está el detalle que cuesta caro: **esa condición se evalúa al GENERAR el
+filtro, no en tiempo de ejecución**. Como los contenedores de agentes corren sin `CAP_SYS_ADMIN`, esas
+reglas se descartan enteras y las llamadas terminan cayendo en el `defaultAction` (`ERRNO`). Que el
+proceso gane `CAP_SYS_ADMIN` *dentro* del userns nuevo no cambia nada: seccomp ya decidió antes.
+
+`pivot_root` es la **única llamada realmente nueva** (no estaba en el perfil por defecto en ninguna
+forma).
+
+### No alcanza con habilitar sólo los namespaces
+
+Una versión anterior de este perfil habilitaba únicamente `clone`/`clone3`/`unshare`/`setns`. Eso
+hace desaparecer el mensaje de arriba y **da la falsa impresión de estar arreglado**, pero bwrap
+muere un paso después, montando su sandbox:
+
+```
+bwrap: Failed to make / slave: Operation not permitted
+```
+
+Es `mount(MS_REC|MS_SLAVE)` rebotando contra el mismo filtro. Por eso la verificación no puede
+quedarse en `unshare --user`: hay que correr el bwrap real.
 
 ## Cómo se aplica
 

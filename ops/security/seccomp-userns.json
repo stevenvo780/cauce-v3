@@ -60,11 +60,14 @@
         "clone",
         "clone3",
         "unshare",
-        "setns"
+        "setns",
+        "mount",
+        "umount2",
+        "pivot_root"
       ],
       "action": "SCMP_ACT_ALLOW",
       "args": [],
-      "comment": "Cauce V3: bwrap necesita crear namespaces de usuario; el resto del perfil no se toca",
+      "comment": "Cauce V3: bwrap necesita crear el userns Y montar su sandbox dentro. clone/clone3/unshare/setns/mount/umount2 ya figuraban en el perfil por defecto pero condicionados a CAP_SYS_ADMIN, condicion que se evalua al GENERAR el filtro: como los contenedores de agentes corren sin esa capacidad, esas reglas se descartan y las llamadas caen en el defaultAction (ERRNO). pivot_root es la unica llamada realmente nueva. El resto del perfil no se toca.",
       "includes": {},
       "excludes": {}
     },
