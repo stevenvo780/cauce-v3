@@ -80,7 +80,7 @@
       "user": "dev",
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/kratos",
-      "harness": "claude"
+      "harness": "codex"
     },
     "midas": {
       "tenant": "Pablo",

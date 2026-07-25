@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 container adapter kratos (ws-humanizar/claude)
+Description=Cauce V3 container adapter kratos (ws-humanizar/codex)
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target

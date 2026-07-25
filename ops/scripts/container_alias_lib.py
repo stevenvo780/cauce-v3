@@ -16,7 +16,7 @@ EXPECTED = {
     "janus": ("Miguel", "grp.miguel", "claw-miguel", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/janus", "openclaw"),
     "jarvis": ("Steven", "grp.steven", "claw", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/jarvis", "openclaw"),
     "kant": ("Steven", "grp.steven", "ctrl-infra", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/kant", "codex"),
-    "kratos": ("Miguel", "grp.miguel", "ws-humanizar", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/kratos", "claude"),
+    "kratos": ("Miguel", "grp.miguel", "ws-humanizar", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/kratos", "codex"),
     "midas": ("Pablo", "grp.pablo", "agv2-pablo-marcas-oc", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/midas", "openclaw"),
     "salva": ("Isa", "grp.isa", "ws-isa", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/salva", "codex"),
     "seneca": ("Pablo", "grp.pablo", "agv2-pablo-personal-oc", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/seneca", "openclaw"),

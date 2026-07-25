@@ -18,7 +18,7 @@ EXPECTED = {
     "janus": ("Miguel", "grp.miguel", "openclaw"),
     "jarvis": ("Steven", "grp.steven", "openclaw"),
     "kant": ("Steven", "grp.steven", "codex"),
-    "kratos": ("Miguel", "grp.miguel", "claude"),
+    "kratos": ("Miguel", "grp.miguel", "codex"),
     "midas": ("Pablo", "grp.pablo", "openclaw"),
     "salva": ("Isa", "grp.isa", "codex"),
     "seneca": ("Pablo", "grp.pablo", "openclaw"),
