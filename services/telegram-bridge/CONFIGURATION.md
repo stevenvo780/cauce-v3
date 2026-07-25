@@ -48,6 +48,99 @@ ingress porque no puede representar un único estado terminal de Telegram.
 `ops/scripts/generate-telegram-config.py` produce estos paths y esta política;
 `ops/scripts/telegram-cutover-preflight.py` los verifica sin leer el token.
 
+### Ruteo por menciones en grupos (`chats[]` / `bot_username`)
+
+Estas dos claves son **opcionales y van juntas**. Ninguna existe en la config viva de
+producción hoy, y esa ausencia es una señal semántica, no un descuido:
+
+| Estado del alias                    | Comportamiento en TODOS sus grupos |
+|--------------------------------------|-------------------------------------|
+| `chats` **ausente**                  | `legacy`: cada grupo listado en `allowed_chat_ids` sigue publicando exactamente como hoy, sin resolver menciones, sin `thread_id`, sin bloque de contexto no confiable. Es lo que hace seguro desplegar el código ANTES de instalar la config nueva. |
+| `chats: []` (presente y vacío)       | `scoped`, default-deny: **ningún** grupo de ese alias publica salvo que tenga una entrada `chats[]`. |
+| `chats: [{...}, ...]`                | `scoped`: cada `chat_id` listado se sirve según su entrada; cualquier otro grupo del alias (incluso si está en `allowed_chat_ids`) queda mudo. |
+
+`bot_username` es **obligatorio para todo alias que declare `chats`** (aunque sea
+`[]`): sin él, los demás bots de la flota no pueden reconocer una mención hacia ese
+alias y lo silencian por error. Un alias que nunca declara `chats` puede omitir
+`bot_username` sin problema.
+
+Forma de una entrada `chats[]`:
+
+```json
+{
+  "chat_id": "-5044661837",
+  "mode": "mention",
+  "allowed_user_ids": ["111", "222"],
+  "default_alias": "kant",
+  "session_scope": "user",
+  "reply_to_origin": true,
+  "threads": [
+    { "thread_id": "42", "mode": "always" }
+  ]
+}
+```
+
+- `chat_id`: siempre **negativo** (los grupos/supergrupos de Telegram nunca tienen id
+  positivo) y debe figurar también en el `allowed_chat_ids` del alias.
+- `mode`: `mention` (default, responde solo si lo mencionan/citan) | `always` (host
+  ambiente: responde también los mensajes sin destinatario) | `off` (no participa; sus
+  respuestas se marcan `dead` en egress).
+- `allowed_user_ids`: opcional; si está presente debe ser **subconjunto** del
+  `allowed_user_ids` del alias. Ausente = hereda la lista del alias completo — no hay
+  default-deny de usuario dentro de un chat ya admitido, solo de chat.
+- `default_alias`: solo puede nombrarse **a sí mismo** (el alias que declara la
+  entrada); cualquier otro valor es un error de config. `null` limpia un host heredado
+  de una entrada `threads[]`.
+- `session_scope`: `user` (default, igual a la sesión legacy) | `chat` | `thread`.
+- `reply_to_origin`: si el primer chunk de la respuesta cita el mensaje original
+  (`reply_to_message_id`). Default `true`.
+- `threads[]`: overrides por tema (`is_topic_message`); mismo esquema salvo `chat_id`.
+
+**Tabla de precedencia** que aplica el resolver (`services/telegram-bridge/src/addressing.ts`,
+primera regla que aplica gana):
+
+| # | Condición | Resultado |
+|---|-----------|-----------|
+| P0.a | sin autor válido | deniega |
+| P0.b | chat privado (DM) | permite — semántica legacy intacta, sin política |
+| P0.b2 | grupo + alias sin `chats` declarado | permite — modo `legacy`, sin cambios |
+| P0.c | `sender_chat` (admin anónimo/canal) | deniega |
+| P0.d | autor es bot / `via_bot` | deniega (anti-eco) |
+| P0.e | grupo sin entrada `chats[]` para ese alias | deniega (`chat_not_configured`) |
+| P0.f | usuario fuera del allowlist del chat | deniega |
+| P1 | `mode: "off"` | deniega |
+| P2 | el propio alias es mencionado o citado en un `/command` | **permite** |
+| P3 | se mencionó a OTRO alias que sirve este chat | deniega (supresión de eco) |
+| P4 | el mensaje abre con una mención ajena a la flota | deniega |
+| P5 | responde a un mensaje que este bot envió | **permite** |
+| P6 | responde a un mensaje de otro bot de la flota | deniega |
+| P7 | `mode: "always"` | **permite** (host ambiente) |
+| P8 | `/comando` sin `@sufijo` y este alias es `default_alias` | **permite** |
+| P9 | este alias es el `default_alias` del chat/tema | **permite** |
+| P10 | ninguna regla anterior aplica | deniega |
+
+La supresión en P3 solo se aplica contra los alias que efectivamente **participan**
+de ese chat (`chatParticipants`, calculado desde el archivo completo), no contra los
+12 alias de la flota: mencionar a un alias ausente del grupo cae a P4/P7-P9 en vez de
+silenciar a todos.
+
+Generación y validación de estas claves están centralizadas en
+`ops/scripts/generate-telegram-config.py --groups-file <archivo>`, que espera:
+
+```json
+{
+  "bot_usernames": { "kant": "kant_cauce_bot" },
+  "aliases": { "kant": { "chats": [ { "chat_id": "-5044661837", "mode": "always" } ] } }
+}
+```
+
+Un alias ausente de `aliases` en ese archivo no recibe la clave `chats` en la salida
+(ruteo legacy). `validate_config()` en ese mismo script replica
+`parseTelegramBridgeConfig`, incluidas las reglas cruzadas entre alias
+(`assertFleetUsernames`, `assertSingleAmbientHost`): un `chats.json` que dejaría a
+dos alias como host ambiente del mismo chat, o que declare `chats` sin
+`bot_username`, se rechaza antes de escribir el archivo.
+
 `CAUCE_TELEGRAM_ALIASES` permite seleccionar una lista separada por comas; solo los
 alias seleccionados exigen su `token_file` y marcador, lo que habilita un encendido
 incremental. También se requieren `DATABASE_URL` y la migración `005_channel_bridges.sql`.

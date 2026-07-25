@@ -52,8 +52,13 @@ class ShapeTests(unittest.TestCase):
         gen.validate_config(config)  # explicit, also proves the schema replication passes
         aliases = config["aliases"]
         self.assertEqual([row["alias"] for row in aliases], ["argos", "hegel", "jarvis", "kant"])
+        expected_order = tuple(key for key in gen.ALIAS_FIELD_ORDER if key not in gen.OPTIONAL_ALIAS_FIELDS)
         for row in aliases:
-            self.assertEqual(tuple(row.keys()), gen.ALIAS_FIELD_ORDER)
+            # bot_username/chats are optional (only emitted when --groups-file supplies them);
+            # this fixture supplies no groups file, so neither key should appear.
+            self.assertEqual(tuple(row.keys()), expected_order)
+            self.assertNotIn("bot_username", row)
+            self.assertNotIn("chats", row)
             self.assertEqual(row["tenant_id"], SYNTHETIC_FLEET[row["alias"]]["tenant"])
             self.assertEqual(row["room_id"], SYNTHETIC_FLEET[row["alias"]]["room"])
             self.assertEqual(row["poll_timeout_seconds"], gen.DEFAULT_POLL_TIMEOUT_SECONDS)
@@ -193,6 +198,160 @@ class AllowlistFileTests(unittest.TestCase):
     def test_rejects_unknown_top_level_key(self) -> None:
         with self.assertRaises(gen.GeneratorError):
             self._options_with({"bots": {"kant": {"user_ids": ["11"], "chat_ids": ["-22"]}}})
+
+
+class GroupsFileTests(unittest.TestCase):
+    """--groups-file: chats[]/bot_username emission and the cross-alias invariants.
+
+    kant/argos/jarvis share room grp.steven in SYNTHETIC_FLEET, so they double as a
+    realistic "shared group" fixture without inventing a second fleet.
+    """
+
+    def _options_with(self, document: dict, allowed_chat_ids: list[str] | None = None) -> dict:
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(document, handle)
+            path = pathlib.Path(handle.name)
+        self.addCleanup(path.unlink)
+        options = gen.default_options()
+        options["groups"] = gen.load_groups_file(path)
+        if allowed_chat_ids is not None:
+            options["allowed_chat_ids"] = allowed_chat_ids
+        return options
+
+    def test_alias_absent_from_groups_file_keeps_legacy_routing(self) -> None:
+        # config.ts groupRouting(): the ABSENCE of `chats` is the signal. An alias missing
+        # from the groups file must not gain the key at all, which is what keeps a
+        # code-before-config rollout from muting a live group.
+        chat_id = "-5044661837"
+        options = self._options_with({
+            "bot_usernames": {"kant": "kant_cauce_bot"},
+            "aliases": {"kant": {"chats": [{"chat_id": chat_id}]}},
+        }, allowed_chat_ids=[chat_id])
+        config = {row["alias"]: row for row in gen.build_config(SYNTHETIC_FLEET, None, options)["aliases"]}
+        self.assertIn("chats", config["kant"])
+        self.assertEqual(config["kant"]["bot_username"], "kant_cauce_bot")
+        self.assertNotIn("chats", config["argos"])
+        self.assertNotIn("bot_username", config["argos"])
+
+    def test_shared_group_validates_with_one_ambient_host(self) -> None:
+        # kant and argos both serve the same chat: kant is the ambient host (mode always +
+        # default_alias), argos answers only mentions. Mirrors config.ts effectiveChatPolicy
+        # merge semantics and is exactly the "shared group" scenario gap #1 requires.
+        chat_id = "-5044661837"
+        options = self._options_with({
+            "bot_usernames": {"kant": "kant_cauce_bot", "argos": "argos_cauce_bot"},
+            "aliases": {
+                "kant": {"chats": [{"chat_id": chat_id, "mode": "always", "default_alias": "kant"}]},
+                "argos": {"chats": [{"chat_id": chat_id, "mode": "mention"}]},
+            },
+        }, allowed_chat_ids=[chat_id])
+        config = gen.build_config(SYNTHETIC_FLEET, None, options)  # raises on any schema violation
+        gen.validate_config(config)  # explicit re-check, mirrors the bridge's own boot-time gate
+        by_alias = {row["alias"]: row for row in config["aliases"]}
+        # session_scope/reply_to_origin are omitted here exactly as they were omitted from
+        # the groups-file input: the bridge's own parser (config.ts chatPolicy()) fills the
+        # 'user'/true defaults at load time, so the generator does not need to inject them.
+        self.assertEqual(by_alias["kant"]["chats"], [{
+            "chat_id": chat_id, "mode": "always", "default_alias": "kant", "threads": [],
+        }])
+        self.assertEqual(by_alias["argos"]["chats"][0]["mode"], "mention")
+        self.assertNotIn("default_alias", by_alias["argos"]["chats"][0])
+        # jarvis shares the room but not this chat entry: legacy routing, untouched.
+        self.assertNotIn("chats", by_alias["jarvis"])
+
+    def test_two_ambient_hosts_in_same_chat_rejected(self) -> None:
+        # config.ts assertSingleAmbientHost: two aliases eligible to answer an unaddressed
+        # message in the same (chat, thread) means every silent message wakes both — the
+        # exact "every bot answers everything" bug the whole feature exists to remove.
+        chat_id = "-5044661837"
+        options = self._options_with({
+            "bot_usernames": {"kant": "kant_cauce_bot", "argos": "argos_cauce_bot"},
+            "aliases": {
+                "kant": {"chats": [{"chat_id": chat_id, "mode": "always"}]},
+                "argos": {"chats": [{"chat_id": chat_id, "mode": "always"}]},
+            },
+        }, allowed_chat_ids=[chat_id])
+        with self.assertRaises(gen.GeneratorError):
+            gen.build_config(SYNTHETIC_FLEET, None, options)
+
+    def test_chats_without_bot_username_rejected(self) -> None:
+        # config.ts assertFleetUsernames: an alias that declares chats needs a handle, or
+        # P3 echo suppression can never name it.
+        chat_id = "-5044661837"
+        options = self._options_with({
+            "bot_usernames": {},
+            "aliases": {"kant": {"chats": [{"chat_id": chat_id}]}},
+        }, allowed_chat_ids=[chat_id])
+        with self.assertRaises(gen.GeneratorError):
+            gen.build_config(SYNTHETIC_FLEET, None, options)
+
+    def test_chat_id_must_be_listed_in_allowed_chat_ids(self) -> None:
+        options = self._options_with({
+            "bot_usernames": {"kant": "kant_cauce_bot"},
+            "aliases": {"kant": {"chats": [{"chat_id": "-999"}]}},
+        })  # allowed_chat_ids left at the default sentinel, which does not include -999
+        with self.assertRaises(gen.GeneratorError):
+            gen.build_config(SYNTHETIC_FLEET, None, options)
+
+    def test_positive_chat_id_rejected(self) -> None:
+        # Telegram group/supergroup ids are always negative; a positive one would name a
+        # private chat, which ingress answers before ever consulting a policy.
+        with self.assertRaises(gen.GeneratorError):
+            self._options_with({
+                "bot_usernames": {"kant": "kant_cauce_bot"},
+                "aliases": {"kant": {"chats": [{"chat_id": "555"}]}},
+            })
+
+    def test_default_alias_naming_another_alias_rejected(self) -> None:
+        chat_id = "-5044661837"
+        with self.assertRaises(gen.GeneratorError):
+            self._options_with({
+                "bot_usernames": {"kant": "kant_cauce_bot"},
+                "aliases": {"kant": {"chats": [{"chat_id": chat_id, "default_alias": "argos"}]}},
+            })
+
+    def test_rejects_inline_token_key(self) -> None:
+        with self.assertRaises(gen.GeneratorError):
+            self._options_with({"aliases": {"kant": {"chats": [], "token": "x"}}})
+
+    def test_rejects_unknown_top_level_key(self) -> None:
+        with self.assertRaises(gen.GeneratorError):
+            self._options_with({"bots": {}})
+
+    def test_cli_groups_file_flag_emits_chats_and_bot_username(self) -> None:
+        chat_id = "-5044661837"
+        document = {
+            "bot_usernames": {"kant": "kant_cauce_bot"},
+            "aliases": {"kant": {"chats": [{"chat_id": chat_id, "mode": "always"}]}},
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(document, handle)
+            path = pathlib.Path(handle.name)
+        self.addCleanup(path.unlink)
+        result = subprocess.run(
+            [
+                sys.executable, str(SCRIPT), "--aliases", "kant",
+                "--groups-file", str(path), "--allow-chat-id", chat_id,
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        row = json.loads(result.stdout)["aliases"][0]
+        self.assertEqual(row["bot_username"], "kant_cauce_bot")
+        self.assertEqual(row["chats"][0]["chat_id"], chat_id)
+
+    def test_cli_without_groups_file_omits_chats_for_every_alias(self) -> None:
+        # Regenerating without --groups-file must restore legacy routing everywhere, never
+        # emit an empty `chats` list (which would be default-deny, not legacy).
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--no-cross-check"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = json.loads(result.stdout)
+        for row in config["aliases"]:
+            self.assertNotIn("chats", row)
+            self.assertNotIn("bot_username", row)
 
 
 class SelectionTests(unittest.TestCase):

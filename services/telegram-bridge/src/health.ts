@@ -2,8 +2,21 @@ import { createServer, type Server } from 'node:http';
 import type { DatabasePool } from '@cauce/store';
 import type { BridgeMetric } from './types.js';
 
+// `updates_denied` keeps its original meaning (hard ACL denial) so its time series stays
+// comparable; ordinary group suppression gets its own counters instead of inflating it.
+//
+// The split matters because none of these counters carry labels: without it, the healthy
+// "a peer was named, stay quiet" path (`updates_echo_suppressed`) is indistinguishable from the
+// two that mean the deployment is wrong — a group that has no config yet
+// (`updates_chat_denied`) and a mention nobody in the room can serve
+// (`updates_mention_unserved`). `group_config_degraded` counts boot-time group config problems
+// that were downgraded from fatal so the DMs keep running.
 const METRICS: readonly BridgeMetric[] = [
   'updates_allowed', 'updates_denied', 'updates_duplicate', 'poll_fenced',
+  'updates_unaddressed', 'updates_echo_suppressed', 'updates_mention_unserved',
+  'updates_suppressed_bot', 'updates_via_bot',
+  'updates_chat_denied', 'updates_chat_disabled', 'updates_conflict',
+  'group_config_degraded',
   'egress_sent', 'egress_retry', 'egress_dead', 'egress_ambiguous'
 ];
 
