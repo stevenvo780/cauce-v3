@@ -13,6 +13,7 @@ COPY services/dispatcher/package.json services/dispatcher/tsconfig.json ./servic
 COPY services/relay-worker/package.json ./services/relay-worker/
 COPY services/shadow-router/package.json ./services/shadow-router/
 COPY services/telegram-bridge/package.json ./services/telegram-bridge/
+COPY services/terminal-relay/package.json ./services/terminal-relay/
 COPY apps/console/package.json apps/console/tsconfig*.json ./apps/console/
 RUN pnpm install --frozen-lockfile
 
@@ -42,6 +43,7 @@ COPY services/dispatcher/package.json ./services/dispatcher/
 COPY services/relay-worker/package.json ./services/relay-worker/
 COPY services/shadow-router/package.json ./services/shadow-router/
 COPY services/telegram-bridge/package.json ./services/telegram-bridge/
+COPY services/terminal-relay/package.json ./services/terminal-relay/
 RUN pnpm --filter @cauce/protocol \
   --filter @cauce/store \
   --filter @cauce/adapter-sdk \
@@ -50,6 +52,7 @@ RUN pnpm --filter @cauce/protocol \
   --filter @cauce/relay-worker \
   --filter @cauce/shadow-router \
   --filter @cauce/telegram-bridge \
+  --filter @cauce/terminal-relay \
   install --prod --frozen-lockfile --ignore-scripts
 
 FROM ${CAUCE_NODE_BASE} AS runtime
@@ -66,6 +69,7 @@ COPY --from=build --chown=node:node /app/dist/services/dispatcher/src ./services
 COPY --from=build --chown=node:node /app/dist/services/relay-worker/src ./services/relay-worker/dist
 COPY --from=build --chown=node:node /app/dist/services/shadow-router/src ./services/shadow-router/dist
 COPY --from=build --chown=node:node /app/dist/services/telegram-bridge/src ./services/telegram-bridge/dist
+COPY --from=build --chown=node:node /app/dist/services/terminal-relay/src ./services/terminal-relay/dist
 COPY --from=build --chown=node:node /app/dist/packages/store/src ./packages/store/dist
 COPY --from=build --chown=node:node /app/packages/store/migrations ./packages/store/migrations
 COPY --from=build --chown=node:node /app/packages/protocol/dist ./packages/protocol/dist
@@ -78,7 +82,7 @@ RUN chmod 0555 ./deploy/runtime-entrypoint.sh
 USER node
 RUN node deploy/runtime-package-smoke.mjs
 STOPSIGNAL SIGTERM
-EXPOSE 8080 8082 8083 8084 8085 8086 8443
+EXPOSE 8080 8082 8083 8084 8085 8086 8443 8445 8446
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=5 \
   CMD ["node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8081/health/ready", "ready"]
 CMD ["node", "services/gateway/dist/main.js"]

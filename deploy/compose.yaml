@@ -69,6 +69,16 @@ services:
       CAUCE_CONSOLE_ORIGINS: ${CAUCE_CONSOLE_ORIGINS:?set exact HTTPS console origins}
       CAUCE_REQUIRE_ACK_CLAIMS: "1"
       CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
+      CAUCE_TERMINAL_ENABLED: ${CAUCE_TERMINAL_ENABLED:-0}
+      CAUCE_TERMINAL_WS_PATH: ${CAUCE_TERMINAL_WS_PATH:-/v3/console/terminal/ws}
+      CAUCE_TERMINAL_TICKET_KEY_FILE: /run/secrets/terminal_ticket_key
+      CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/secrets/terminal_relay_token
+      CAUCE_TERMINAL_GRANTS_FILE: /run/cauce-terminal/grants.json
+      CAUCE_TERMINAL_TICKET_TTL_SECONDS: "30"
+      CAUCE_TERMINAL_SESSION_TTL_SECONDS: "900"
+      CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR: "2"
+      CAUCE_TERMINAL_OPERATOR_HEADER: x-cauce-operator
+      CAUCE_TERMINAL_OPERATORS: ${CAUCE_TERMINAL_OPERATORS:-}
       NODE_EXTRA_CA_CERTS: /run/secrets/gateway_tls_ca
       PORT: "8443"
     secrets:
@@ -122,6 +132,27 @@ services:
         uid: "1000"
         gid: "1000"
         mode: 0400
+      - source: terminal_ticket_key
+        target: terminal_ticket_key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: terminal_relay_token
+        target: terminal_relay_token
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+    volumes:
+      # Bind de DIRECTORIO, no secret de archivo, por el mismo motivo que el
+      # directorio de identidades: `grants.json` se rota por rename atómico y el
+      # rename crea un inodo nuevo. Un secret/bind de archivo deja al gateway
+      # leyendo el inodo viejo para siempre, así que una revocación no llegaría
+      # jamás. Montado el directorio, el gateway relee la ruta en cada request y
+      # ve la fila nueva sin reiniciar nada.
+      - type: bind
+        source: ${CAUCE_TERMINAL_CONFIG_DIR:-/dev/null}
+        target: /run/cauce-terminal
+        read_only: true
     ports:
       - "${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}:${GATEWAY_TLS_PORT:-8443}:8443"
     healthcheck:
@@ -134,6 +165,71 @@ services:
       migrator:
         condition: service_completed_successfully
     networks: [edge, backend]
+
+  terminal-relay:
+    <<: *runtime-service
+    command: ["node", "services/terminal-relay/dist/main.js"]
+    environment:
+      NODE_ENV: production
+      CAUCE_TERMINAL_RELAY_BROWSER_PORT: "8446"
+      CAUCE_TERMINAL_RELAY_AGENT_PORT: "8445"
+      CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: /run/secrets/terminal_relay_tls_cert
+      CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: /run/secrets/terminal_relay_tls_key
+      CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: /run/secrets/gateway_client_ca
+      CAUCE_TERMINAL_RELAY_CONSOLE_CN: ${CAUCE_TERMINAL_CONSOLE_CN:-console}
+      CAUCE_TERMINAL_RELAY_AGENT_CA_FILE: /run/secrets/gateway_client_ca
+      CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: /run/cauce-terminal/pty_agent_identities.json
+      CAUCE_TERMINAL_GATEWAY_URL: https://gateway:8443
+      CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/secrets/terminal_relay_token
+      CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS: "600"
+      CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC: "262144"
+      CAUCE_TERMINAL_SCROLLBACK_BYTES: "20480"
+      CAUCE_TERMINAL_MAX_SESSIONS: "16"
+      CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS: "30"
+      CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS: "90"
+      NODE_EXTRA_CA_CERTS: /run/secrets/gateway_tls_ca
+    secrets:
+      - source: terminal_relay_tls_cert
+        target: terminal_relay_tls_cert
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: terminal_relay_tls_key
+        target: terminal_relay_tls_key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: terminal_relay_token
+        target: terminal_relay_token
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: gateway_client_ca
+        target: gateway_client_ca
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: gateway_tls_ca
+        target: gateway_tls_ca
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+    volumes:
+      # Mismo directorio que el gateway: acá vive `pty_agent_identities.json` y
+      # también se rota por rename atómico. Ver el comentario del bind en gateway.
+      - type: bind
+        source: ${CAUCE_TERMINAL_CONFIG_DIR:-/dev/null}
+        target: /run/cauce-terminal
+        read_only: true
+    ports:
+      # Solo la pierna de agentes se publica al host: los agentes PTY viven en
+      # kratos y entran por el tailnet. La pierna del navegador (8446) queda
+      # interna y solo la alcanza el nginx de la consola por la red `edge`.
+      - "${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}:${TERMINAL_RELAY_AGENT_PORT:-8445}:8445"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [edge]
 
   dispatcher:
     <<: *runtime-service
@@ -450,6 +546,17 @@ secrets:
     file: ${CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH:?set CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH}
   relay_provider_module:
     file: ${CAUCE_RELAY_PROVIDER_MODULE_PATH:-/dev/null}
+  # El canal PTY es opt-in: sin aprovisionar apuntan a /dev/null y el stack
+  # sigue levantando; el gateway queda con CAUCE_TERMINAL_ENABLED=0 y el relay
+  # falla cerrado sin certificado.
+  terminal_relay_tls_cert:
+    file: ${CAUCE_TERMINAL_RELAY_TLS_CERT_PATH:-/dev/null}
+  terminal_relay_tls_key:
+    file: ${CAUCE_TERMINAL_RELAY_TLS_KEY_PATH:-/dev/null}
+  terminal_relay_token:
+    file: ${CAUCE_TERMINAL_RELAY_TOKEN_PATH:-/dev/null}
+  terminal_ticket_key:
+    file: ${CAUCE_TERMINAL_TICKET_KEY_PATH:-/dev/null}
 
 volumes:
   prometheus_data:
