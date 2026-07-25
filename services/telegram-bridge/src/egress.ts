@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { TelegramActivity, TelegramActivityTarget, TelegramTerminalOutcome } from './activity.js';
+import { effectiveChatPolicy, groupRouting } from './config.js';
 import type {
   BridgeMetric, TelegramAliasConfig, TelegramApi, TelegramEgressRepository,
-  TelegramEffect, TelegramOriginRelay, TelegramOriginRelayAck
+  TelegramEffect, TelegramOriginRelay, TelegramOriginRelayAck, TelegramSendOptions
 } from './types.js';
-import { TelegramApiError } from './telegram.js';
+import { TelegramApiError, validTelegramMessageId } from './telegram.js';
 
 export class EgressCrash extends Error {
   constructor(readonly point: 'before_begin' | 'before_send' | 'during_send' | 'after_send' | 'after_complete') {
@@ -81,6 +82,47 @@ function isMissingFinalReply(payload: Record<string, unknown>): boolean {
 function aliasFrom(event: TelegramOriginRelay): string | undefined {
   const value = event.origin.metadata.bridge_alias;
   return typeof value === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(value) ? value : undefined;
+}
+
+function originThreadId(event: TelegramOriginRelay): string {
+  const value = event.origin.metadata.thread_id;
+  return typeof value === 'string' && validTelegramMessageId(value) ? value : '0';
+}
+
+/**
+ * Egress side of the default-deny rule, symmetric with ingress P0.e.
+ *
+ * A group chat (negative Telegram id) must have an explicit `chats[]` entry that is not `off`
+ * before the bridge writes into it — but ONLY once the alias has opted into group routing by
+ * declaring `chats` at all. An alias still on `legacy` routing keeps the pre-routing rule (the
+ * alias-wide `allowed_chat_ids` check alone), which is what stops a code-before-config rollout
+ * from ACKing already-generated answers as `dead`: the ingress side would have published them, so
+ * denying them here would strand a real reply that the human never sees.
+ */
+function egressAuthorized(config: TelegramAliasConfig, chatId: string, threadId: string): boolean {
+  const policy = effectiveChatPolicy(config, chatId, threadId);
+  if (policy !== undefined) return policy.mode !== 'off';
+  return groupRouting(config) === 'legacy' || !chatId.startsWith('-');
+}
+
+/**
+ * Reply/topic hints for one chunk. Only chunk 0 quotes the original message so a long answer does
+ * not produce N stacked replies. Both ids are validated again by the transport, which drops an
+ * invalid hint instead of failing the send.
+ */
+function threadOptions(
+  event: TelegramOriginRelay,
+  index: number,
+  threadId: string,
+  replyToOrigin: boolean
+): TelegramSendOptions | undefined {
+  const replyTo = index === 0 && replyToOrigin ? event.origin.external_message_id : undefined;
+  const options: TelegramSendOptions = {
+    ...(threadId === '0' ? {} : { message_thread_id: threadId }),
+    ...(typeof replyTo === 'string' && validTelegramMessageId(replyTo)
+      ? { reply_to_message_id: replyTo } : {})
+  };
+  return Object.keys(options).length === 0 ? undefined : options;
 }
 
 function relayOutcome(payload: Record<string, unknown>): TelegramTerminalOutcome {
@@ -173,8 +215,9 @@ export class TelegramEgressWorker {
     const api = bridgeAlias ? this.apis.get(bridgeAlias) : undefined;
     const chatId = event.origin.conversation_id;
     const interimAcknowledgement = isInterimAcknowledgement(event.payload);
+    const threadId = originThreadId(event);
     if (!bridgeAlias || !config || !api || config.tenant_id !== event.tenant_id || event.origin.channel !== 'telegram' ||
-        !config.allowed_chat_ids.includes(chatId)) {
+        !config.allowed_chat_ids.includes(chatId) || !egressAuthorized(config, chatId, threadId)) {
       await this.repository.ack(this.acknowledgement(event, {
         status: 'dead', error: 'Telegram origin is not authorized for this tenant and alias'
       }));
@@ -232,7 +275,13 @@ export class TelegramEgressWorker {
         }
         let remotelyAccepted = false;
         try {
-          const sent = await api.sendText(chatId, text);
+          const replyToOrigin = effectiveChatPolicy(config, chatId, threadId)?.reply_to_origin ?? false;
+          const options = threadOptions(event, index, threadId, replyToOrigin);
+          // Omit the argument entirely when there is nothing to thread, so any existing
+          // two-parameter TelegramApi implementation keeps behaving exactly as before.
+          const sent = options === undefined
+            ? await api.sendText(chatId, text)
+            : await api.sendText(chatId, text, options);
           remotelyAccepted = true;
           await this.hooks.afterSend?.(effectId);
           await this.repository.completeEffect(effectId, payloadHash, sent.message_id);

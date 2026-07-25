@@ -1,7 +1,7 @@
 import { TELEGRAM_ACTIVITY_REACTIONS } from './types.js';
 import type {
   TelegramApi, TelegramChatAction, TelegramIdentity, TelegramMessage, TelegramReactionEmoji,
-  TelegramSendResult, TelegramUpdate
+  TelegramSendOptions, TelegramSendResult, TelegramUpdate
 } from './types.js';
 
 interface TelegramResponse<T> {
@@ -142,13 +142,23 @@ export class TelegramHttpClient implements TelegramApi {
     return result.map(parseUpdate).sort((left, right) => left.update_id - right.update_id);
   }
 
-  async sendText(chatId: string, text: string): Promise<TelegramSendResult> {
+  async sendText(chatId: string, text: string, options?: TelegramSendOptions): Promise<TelegramSendResult> {
     if (!validTelegramChatId(chatId)) throw new TelegramApiError('invalid Telegram destination', false);
     if (text.length === 0 || [...text].length > 4_096) throw new TelegramApiError('Telegram text exceeds safe limit', false);
+    // `external_message_id` is a free string of up to 256 chars read back from durable outbox
+    // rows, so it can be old or foreign. A malformed id must never turn a perfectly sendable
+    // reply into a 400 (and therefore a dead effect): drop the hint and send the message loose.
+    const threadId = options?.message_thread_id;
+    const replyTo = options?.reply_to_message_id;
     const raw = await this.call<unknown>('sendMessage', {
       chat_id: chatId,
       text,
-      disable_web_page_preview: true
+      disable_web_page_preview: true,
+      ...(threadId !== undefined && validTelegramMessageId(threadId)
+        ? { message_thread_id: Number(threadId) } : {}),
+      ...(replyTo !== undefined && validTelegramMessageId(replyTo)
+        // allow_sending_without_reply keeps a deleted original from making the chunk dead forever.
+        ? { reply_parameters: { message_id: Number(replyTo), allow_sending_without_reply: true } } : {})
     });
     let result: Record<string, unknown>;
     try {

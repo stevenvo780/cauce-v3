@@ -21,6 +21,7 @@ const alias: TelegramAliasConfig = {
   v2_shutdown_marker_file: '/synthetic/marker',
   allowed_user_ids: ['101'],
   allowed_chat_ids: ['201'],
+  chats: [],
   recipients: [{ tenant_id: 'Steven', alias: 'kant' }],
   poll_timeout_seconds: 1,
   poll_lease_ms: 60_000

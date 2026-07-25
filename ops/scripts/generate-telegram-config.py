@@ -14,11 +14,25 @@ Mapping (per alias):
   room_id                 <- fleet room     (container-aliases.json / manifest spec.room)
   token_file              <- PLACEHOLDER  {runtime-dir}/{alias}.token   (container-internal path)
   v2_shutdown_marker_file <- PLACEHOLDER  {runtime-dir}/{alias}.disabled (container-internal path)
+  bot_username            <- --groups-file (omitted when unknown)
   allowed_user_ids        <- --allowlist-file / --allow-user-id, else a sentinel placeholder
   allowed_chat_ids        <- --allowlist-file / --allow-chat-id, else a sentinel placeholder
+  chats                   <- --groups-file (KEY OMITTED unless the alias appears there)
   recipients              <- exactly the alias itself
   poll_timeout_seconds    <- --poll-timeout-seconds (default 25)
   poll_lease_ms           <- --poll-lease-ms (default 60000)
+
+GROUP ROUTING (gap G4): a bot only knows whether a group message is meant for it if
+the config says who serves that chat. `chats[]` carries that, and `bot_username`
+carries the handle each bot answers to. Both are emitted ONLY from --groups-file.
+
+The `chats` key is omitted entirely for any alias absent from that file, and the
+omission is load-bearing, not cosmetic: the bridge reads an ABSENT `chats` as "this
+alias never opted into group routing" and keeps the pre-routing behaviour for every
+chat in allowed_chat_ids. An alias with `"chats": []` has explicitly opted into
+default-deny and goes mute in every group. So regenerating without --groups-file is
+safe (it restores legacy routing) while emitting an empty list would silence the
+fleet — which is exactly the failure this generator must be incapable of producing.
 
 RUNTIME PATHS (gap G1): deploy/compose.yaml bind-mounts CAUCE_TELEGRAM_RUNTIME_DIR
 (host) onto /run/cauce-telegram (container, read-only) and reads config.json from
@@ -50,6 +64,7 @@ carries IDs only and rejects any inline token key.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import pathlib
@@ -67,6 +82,32 @@ TENANT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")  # @cauce/protocol Tena
 ROOM_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")         # config.ts room_id
 ID_RE = re.compile(r"^-?[1-9][0-9]{0,19}$")               # config.ts idList entries
 NON_WHITESPACE_RE = re.compile(r"^\S+$")                  # config.ts text() pattern used by absolutePath
+USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")  # config.ts bot_username
+GROUP_CHAT_ID_RE = re.compile(r"^-[1-9][0-9]{0,19}$")     # config.ts chats[].chat_id (groups are negative)
+THREAD_ID_RE = re.compile(r"^[1-9][0-9]{0,15}$")          # config.ts threads[].thread_id
+
+CHAT_MODES = ("mention", "always", "off")                 # config.ts CHAT_MODES
+SESSION_SCOPES = ("user", "chat", "thread")               # config.ts SESSION_SCOPES
+MAX_CHATS = 200
+MAX_THREADS = 200
+
+CHAT_FIELD_ORDER = (
+    "chat_id",
+    "mode",
+    "allowed_user_ids",
+    "default_alias",
+    "session_scope",
+    "reply_to_origin",
+    "threads",
+)
+THREAD_FIELD_ORDER = (
+    "thread_id",
+    "mode",
+    "allowed_user_ids",
+    "default_alias",
+    "session_scope",
+    "reply_to_origin",
+)
 
 # Placeholder allowlist sentinels — NOT secrets and NOT real Telegram IDs. They are
 # identical across every alias on purpose, so they read as obvious placeholders and so
@@ -83,19 +124,23 @@ DEFAULT_POLL_LEASE_MS = 60_000
 DEFAULT_RECIPIENTS_POLICY = "self"
 RECIPIENTS_POLICIES = ("self",)
 
-# Deterministic key order for each emitted alias object.
+# Deterministic key order for each emitted alias object. `bot_username` and `chats`
+# are OPTIONAL: they appear only when --groups-file supplies them (see GROUP ROUTING).
 ALIAS_FIELD_ORDER = (
     "alias",
     "tenant_id",
     "room_id",
     "token_file",
     "v2_shutdown_marker_file",
+    "bot_username",
     "allowed_user_ids",
     "allowed_chat_ids",
+    "chats",
     "recipients",
     "poll_timeout_seconds",
     "poll_lease_ms",
 )
+OPTIONAL_ALIAS_FIELDS = ("bot_username", "chats")
 
 
 class GeneratorError(ValueError):
@@ -209,6 +254,111 @@ def _resolve_allowlist(alias: str, tenant: str, options: dict[str, Any]) -> tupl
     return list(options["allowed_user_ids"]), list(options["allowed_chat_ids"])
 
 
+# ------------------------------------------------------------------------ groups file
+def _ordered(row: dict[str, Any], order: tuple[str, ...]) -> dict[str, Any]:
+    """Re-key a dict into the deterministic emission order, dropping absent keys."""
+    return {key: row[key] for key in order if key in row}
+
+
+def _check_group_thread(entry: Any, owner: str, label: str) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        raise GeneratorError(f"{label} must be an object")
+    unknown = set(entry) - set(THREAD_FIELD_ORDER)
+    if unknown:
+        raise GeneratorError(f"{label} has unexpected keys: {sorted(unknown)}")
+    thread: dict[str, Any] = {"thread_id": entry.get("thread_id")}
+    _check_text(thread["thread_id"], f"{label}.thread_id", THREAD_ID_RE, 16)
+    for key in ("mode", "allowed_user_ids", "default_alias", "session_scope", "reply_to_origin"):
+        if key in entry:
+            thread[key] = entry[key]
+    _validate_thread_policy(thread, owner, None, label)
+    return _ordered(thread, THREAD_FIELD_ORDER)
+
+
+def _check_group_chat(entry: Any, owner: str, label: str) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        raise GeneratorError(f"{label} must be an object")
+    unknown = set(entry) - set(CHAT_FIELD_ORDER)
+    if unknown:
+        raise GeneratorError(f"{label} has unexpected keys: {sorted(unknown)}")
+    chat: dict[str, Any] = {"chat_id": entry.get("chat_id")}
+    _check_text(chat["chat_id"], f"{label}.chat_id", GROUP_CHAT_ID_RE, 20)
+    for key in ("mode", "allowed_user_ids", "default_alias", "session_scope", "reply_to_origin"):
+        if key in entry:
+            chat[key] = entry[key]
+    # Validate eagerly, the same fields `_validate_thread_policy` checks for a thread
+    # override. The `allowed_user_ids` subset-of-alias-wide check and the `chat_id in
+    # allowed_chat_ids` check are deferred to `validate_config()`, the only place that also
+    # has the alias-wide allowlist in scope; everything checkable from the groups file alone
+    # is rejected here instead of being silently passed through to that later, less precise
+    # error.
+    mode = chat.get("mode")
+    if mode is not None:
+        _check_enum(mode, CHAT_MODES, f"{label}.mode")
+    if "allowed_user_ids" in chat:
+        _check_id_list(chat["allowed_user_ids"], f"{label}.allowed_user_ids")
+    if "default_alias" in chat:
+        _check_default_alias(chat["default_alias"], owner, f"{label}.default_alias")
+    if "session_scope" in chat:
+        _check_enum(chat["session_scope"], SESSION_SCOPES, f"{label}.session_scope")
+    if "reply_to_origin" in chat:
+        _check_bool(chat["reply_to_origin"], f"{label}.reply_to_origin")
+    if mode == "off" and isinstance(chat.get("default_alias"), str):
+        raise GeneratorError(f"{label}.default_alias cannot be set while mode is off")
+    threads = entry.get("threads", [])
+    if not isinstance(threads, list):
+        raise GeneratorError(f"{label}.threads must be an array")
+    chat["threads"] = [
+        _check_group_thread(thread, owner, f"{label}.threads[{index}]")
+        for index, thread in enumerate(threads)
+    ]
+    return _ordered(chat, CHAT_FIELD_ORDER)
+
+
+def load_groups_file(path: pathlib.Path) -> dict[str, Any]:
+    """Parse the group-routing file: {"bot_usernames": {...}, "aliases": {alias: {"chats": [...]}}}.
+
+    Carries no secrets (handles and Telegram ids only). An alias absent from `aliases`
+    gets NO `chats` key at all, which is what keeps its groups on legacy routing.
+    """
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GeneratorError(f"cannot read groups file {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise GeneratorError("groups file must be a JSON object")
+    unknown = set(document) - {"bot_usernames", "aliases"}
+    if unknown:
+        raise GeneratorError(f"groups file has unexpected top-level keys: {sorted(unknown)}")
+    usernames: dict[str, str] = {}
+    for alias, handle in (document.get("bot_usernames") or {}).items():
+        if not ALIAS_RE.fullmatch(str(alias)):
+            raise GeneratorError(f"groups file has an invalid alias key: {alias!r}")
+        _check_text(handle, f"bot_usernames.{alias}", USERNAME_RE, 32)
+        usernames[str(alias)] = handle
+    by_alias: dict[str, dict[str, Any]] = {}
+    for alias, entry in (document.get("aliases") or {}).items():
+        if not ALIAS_RE.fullmatch(str(alias)):
+            raise GeneratorError(f"groups file has an invalid alias key: {alias!r}")
+        if not isinstance(entry, dict):
+            raise GeneratorError(f"groups.aliases.{alias} must be an object")
+        if "token" in entry or "bot_token" in entry:
+            raise GeneratorError(f"groups.aliases.{alias} must not carry token material")
+        unknown = set(entry) - {"chats"}
+        if unknown:
+            raise GeneratorError(f"groups.aliases.{alias} has unexpected keys: {sorted(unknown)}")
+        chats = entry.get("chats", [])
+        if not isinstance(chats, list) or not (0 <= len(chats) <= MAX_CHATS):
+            raise GeneratorError(f"groups.aliases.{alias}.chats must be an array of at most {MAX_CHATS}")
+        by_alias[str(alias)] = {
+            "chats": [
+                _check_group_chat(chat, str(alias), f"groups.aliases.{alias}.chats[{index}]")
+                for index, chat in enumerate(chats)
+            ]
+        }
+    return {"bot_usernames": usernames, "aliases": by_alias}
+
+
 # ----------------------------------------------------------------------------- build
 def default_options() -> dict[str, Any]:
     return {
@@ -219,6 +369,7 @@ def default_options() -> dict[str, Any]:
         "allowed_user_ids": [PLACEHOLDER_USER_ID],
         "allowed_chat_ids": [PLACEHOLDER_CHAT_ID],
         "allowlist": {"aliases": {}, "tenants": {}},
+        "groups": {"bot_usernames": {}, "aliases": {}},
         "poll_timeout_seconds": DEFAULT_POLL_TIMEOUT_SECONDS,
         "poll_lease_ms": DEFAULT_POLL_LEASE_MS,
     }
@@ -237,6 +388,7 @@ def build_alias_config(alias: str, fleet: dict[str, dict[str, str]], options: di
     token_dir = str(options["token_dir"]).rstrip("/")
     marker_dir = str(options["marker_dir"]).rstrip("/")
     allowed_user_ids, allowed_chat_ids = _resolve_allowlist(alias, meta["tenant"], options)
+    groups = options.get("groups") or {}
     row = {
         "alias": alias,
         "tenant_id": meta["tenant"],
@@ -249,8 +401,15 @@ def build_alias_config(alias: str, fleet: dict[str, dict[str, str]], options: di
         "poll_timeout_seconds": options["poll_timeout_seconds"],
         "poll_lease_ms": options["poll_lease_ms"],
     }
-    # Enforce the deterministic key order.
-    return {key: row[key] for key in ALIAS_FIELD_ORDER}
+    username = (groups.get("bot_usernames") or {}).get(alias)
+    if username is not None:
+        row["bot_username"] = username
+    entry = (groups.get("aliases") or {}).get(alias)
+    if entry is not None:
+        # Present (even empty) = this alias opts into default-deny group routing. Absent = legacy.
+        row["chats"] = copy.deepcopy(entry["chats"])
+    # Enforce the deterministic key order, dropping the optional keys that were not supplied.
+    return _ordered(row, ALIAS_FIELD_ORDER)
 
 
 def resolve_selection(fleet: dict[str, dict[str, str]], selected: list[str] | None) -> list[str]:
@@ -312,8 +471,184 @@ def _check_int(value: Any, minimum: int, maximum: int, name: str) -> None:
         raise GeneratorError(f"{name} is invalid: {value!r}")
 
 
+def _check_bool(value: Any, name: str) -> None:
+    if not isinstance(value, bool):
+        raise GeneratorError(f"{name} must be a boolean: {value!r}")
+
+
+def _check_enum(value: Any, allowed: tuple[str, ...], name: str) -> None:
+    if value not in allowed:
+        raise GeneratorError(f"{name} is invalid: {value!r}")
+
+
+def _check_default_alias(value: Any, owner: str, name: str) -> None:
+    """config.ts defaultAlias(): null clears the host, a string MUST name the owning alias.
+
+    A `default_alias` pointing at somebody else is silently inert in the resolver (P9 compares it
+    against `self.alias`), so the group would go mute with no error anywhere. Reject it here.
+    """
+    if value is None:
+        return
+    _check_text(value, name, ALIAS_RE, 64)
+    if value != owner:
+        raise GeneratorError(f"{name} must name the alias that declares it ({owner!r}): {value!r}")
+
+
+def _check_narrowed_user_ids(value: Any, parent: list[str], name: str) -> None:
+    """config.ts narrowedUserIds(): a per-chat/per-thread list must be a SUBSET of its parent."""
+    _check_id_list(value, name)
+    for entry in value:
+        if entry not in parent:
+            raise GeneratorError(f"{name} must be a subset of the parent allowed_user_ids: {entry!r}")
+
+
+def _validate_thread_policy(
+    thread: dict[str, Any],
+    owner: str,
+    parent_user_ids: list[str] | None,
+    label: str,
+) -> None:
+    """config.ts threadPolicy(). `parent_user_ids` is None when only the shape can be checked."""
+    _check_text(thread.get("thread_id"), f"{label}.thread_id", THREAD_ID_RE, 16)
+    mode = thread.get("mode")
+    if mode is not None:
+        _check_enum(mode, CHAT_MODES, f"{label}.mode")
+    if "allowed_user_ids" in thread:
+        if parent_user_ids is None:
+            _check_id_list(thread["allowed_user_ids"], f"{label}.allowed_user_ids")
+        else:
+            _check_narrowed_user_ids(thread["allowed_user_ids"], parent_user_ids, f"{label}.allowed_user_ids")
+    if "default_alias" in thread:
+        _check_default_alias(thread["default_alias"], owner, f"{label}.default_alias")
+    if "session_scope" in thread:
+        _check_enum(thread["session_scope"], SESSION_SCOPES, f"{label}.session_scope")
+    if "reply_to_origin" in thread:
+        _check_bool(thread["reply_to_origin"], f"{label}.reply_to_origin")
+    if mode == "off" and isinstance(thread.get("default_alias"), str):
+        raise GeneratorError(f"{label}.default_alias cannot be set while mode is off")
+
+
+def _validate_chat_policy(
+    chat: Any,
+    owner: str,
+    alias_user_ids: list[str],
+    allowed_chat_ids: list[str],
+    label: str,
+) -> None:
+    """config.ts chatPolicy()."""
+    if not isinstance(chat, dict):
+        raise GeneratorError(f"{label} must be an object")
+    unknown = set(chat) - set(CHAT_FIELD_ORDER)
+    if unknown:
+        raise GeneratorError(f"{label} has unexpected keys: {sorted(unknown)}")
+    chat_id = chat.get("chat_id")
+    # Groups and supergroups always have a negative id. A positive one would name a private chat,
+    # which ingress answers before consulting any policy while egress still honours it.
+    _check_text(chat_id, f"{label}.chat_id", GROUP_CHAT_ID_RE, 20)
+    if chat_id not in allowed_chat_ids:
+        raise GeneratorError(f"{label}.chat_id must be listed in allowed_chat_ids: {chat_id!r}")
+    mode = chat.get("mode", "mention")
+    _check_enum(mode, CHAT_MODES, f"{label}.mode")
+    chat_user_ids = alias_user_ids
+    if "allowed_user_ids" in chat:
+        _check_narrowed_user_ids(chat["allowed_user_ids"], alias_user_ids, f"{label}.allowed_user_ids")
+        chat_user_ids = list(chat["allowed_user_ids"])
+    if "default_alias" in chat:
+        _check_default_alias(chat["default_alias"], owner, f"{label}.default_alias")
+    if "session_scope" in chat:
+        _check_enum(chat["session_scope"], SESSION_SCOPES, f"{label}.session_scope")
+    if "reply_to_origin" in chat:
+        _check_bool(chat["reply_to_origin"], f"{label}.reply_to_origin")
+    if mode == "off" and isinstance(chat.get("default_alias"), str):
+        raise GeneratorError(f"{label}.default_alias cannot be set while mode is off")
+    threads = chat.get("threads", [])
+    if not isinstance(threads, list) or len(threads) > MAX_THREADS:
+        raise GeneratorError(f"{label}.threads must be an array of at most {MAX_THREADS}")
+    for index, thread in enumerate(threads):
+        if not isinstance(thread, dict):
+            raise GeneratorError(f"{label}.threads[{index}] must be an object")
+        unknown = set(thread) - set(THREAD_FIELD_ORDER)
+        if unknown:
+            raise GeneratorError(f"{label}.threads[{index}] has unexpected keys: {sorted(unknown)}")
+        _validate_thread_policy(thread, owner, chat_user_ids, f"{label}.threads[{index}]")
+    thread_ids = [thread["thread_id"] for thread in threads]
+    if len(set(thread_ids)) != len(thread_ids):
+        raise GeneratorError(f"{label}.threads contains duplicate thread_id")
+
+
+def _effective_chat_policy(row: dict[str, Any], chat_id: str, thread_id: str) -> dict[str, Any] | None:
+    """config.ts effectiveChatPolicy(): merge the chat entry with its thread override."""
+    chat = next((entry for entry in row.get("chats") or [] if entry["chat_id"] == chat_id), None)
+    if chat is None:
+        return None
+    thread = None
+    if thread_id != "0":
+        thread = next((entry for entry in chat.get("threads") or [] if entry["thread_id"] == thread_id), None)
+    host = thread["default_alias"] if thread is not None and "default_alias" in thread else chat.get("default_alias")
+    mode = chat.get("mode", "mention")
+    if thread is not None and "mode" in thread:
+        mode = thread["mode"]
+    return {"mode": mode, "default_alias": host}
+
+
+def _declared_scopes(aliases: list[dict[str, Any]]) -> dict[str, set[str]]:
+    scopes: dict[str, set[str]] = {}
+    for row in aliases:
+        for chat in row.get("chats") or []:
+            threads = scopes.setdefault(chat["chat_id"], {"0"})
+            for thread in chat.get("threads") or []:
+                threads.add(thread["thread_id"])
+    return scopes
+
+
+def _check_single_ambient_host(aliases: list[dict[str, Any]]) -> None:
+    """config.ts assertSingleAmbientHost(): at most one alias may answer unaddressed messages.
+
+    Two ambient-eligible aliases in the same (chat, thread) means every message that names nobody
+    wakes both of them, which is the "every bot answers everything" bug this whole feature removes.
+    Evaluated across the WHOLE file, so a `mode:"always"` in one alias colliding with another
+    alias's `default_alias` — including on a thread only the other alias declares — is caught.
+    """
+    for chat_id, threads in _declared_scopes(aliases).items():
+        for thread_id in sorted(threads):
+            hosts = []
+            for row in aliases:
+                policy = _effective_chat_policy(row, chat_id, thread_id)
+                if policy is None or policy["mode"] == "off":
+                    continue
+                if policy["mode"] == "always" or policy["default_alias"] == row["alias"]:
+                    hosts.append(row["alias"])
+            if len(hosts) > 1:
+                raise GeneratorError(
+                    f"at most one alias may answer unaddressed messages in chat {chat_id} "
+                    f"thread {thread_id}: {sorted(hosts)}"
+                )
+
+
+def _check_fleet_usernames(aliases: list[dict[str, Any]]) -> None:
+    """config.ts assertFleetUsernames(): every alias that declares chats needs a unique handle."""
+    seen: set[str] = set()
+    for row in aliases:
+        username = row.get("bot_username")
+        if username is None:
+            if len(row.get("chats") or []) > 0:
+                raise GeneratorError(f"{row['alias']} must declare bot_username because it declares chats")
+            continue
+        _check_text(username, "bot_username", USERNAME_RE, 32)
+        lowered = username.lower()
+        if lowered in seen:
+            raise GeneratorError(f"bot_username values must be unique: {username!r}")
+        seen.add(lowered)
+
+
 def validate_config(config: Any) -> dict[str, Any]:
-    """Replicate parseTelegramBridgeConfig (services/telegram-bridge/src/config.ts)."""
+    """Replicate parseTelegramBridgeConfig (services/telegram-bridge/src/config.ts).
+
+    Kept an exact mirror on purpose: this is the only gate between an operator's edit and a fleet
+    of twelve bots reading the file at boot. Anything the bridge rejects must be rejected here, and
+    the cross-alias rules (`assertFleetUsernames`, `assertSingleAmbientHost`) matter most, because
+    those are the ones a per-alias review cannot catch.
+    """
     if not isinstance(config, dict) or not isinstance(config.get("aliases"), list):
         raise GeneratorError("config must be an object with an 'aliases' array")
     aliases = config["aliases"]
@@ -331,8 +666,25 @@ def validate_config(config: Any) -> dict[str, Any]:
         _check_text(row.get("room_id"), "room_id", ROOM_RE, 128)
         _check_absolute(row.get("token_file"), "token_file")
         _check_absolute(row.get("v2_shutdown_marker_file"), "v2_shutdown_marker_file")
+        if "bot_username" in row:
+            _check_text(row["bot_username"], "bot_username", USERNAME_RE, 32)
         _check_id_list(row.get("allowed_user_ids"), "allowed_user_ids")
         _check_id_list(row.get("allowed_chat_ids"), "allowed_chat_ids")
+        if "chats" in row:
+            chats = row["chats"]
+            if not isinstance(chats, list) or len(chats) > MAX_CHATS:
+                raise GeneratorError(f"chats must be an array of at most {MAX_CHATS} entries")
+            for index, chat in enumerate(chats):
+                _validate_chat_policy(
+                    chat,
+                    row["alias"],
+                    list(row["allowed_user_ids"]),
+                    list(row["allowed_chat_ids"]),
+                    f"{row['alias']}.chats[{index}]",
+                )
+            chat_ids = [chat["chat_id"] for chat in chats]
+            if len(set(chat_ids)) != len(chat_ids):
+                raise GeneratorError(f"{row['alias']}.chats contains duplicate chat_id")
         recipients = row.get("recipients")
         if not isinstance(recipients, list) or not (1 <= len(recipients) <= 100):
             raise GeneratorError("recipients must be a non-empty array of at most 100 entries")
@@ -356,6 +708,11 @@ def validate_config(config: Any) -> dict[str, Any]:
         raise GeneratorError("alias names must be unique")
     if len(set(pairs)) != len(pairs):
         raise GeneratorError("tenant/alias pairs must be unique")
+    # Cross-alias invariants (config.ts assertFleetUsernames / assertSingleAmbientHost). These
+    # cannot be checked per-alias above: a shared chat where two aliases are each individually
+    # valid can still be invalid together (two ambient hosts, or a participant with no handle).
+    _check_fleet_usernames(aliases)
+    _check_single_ambient_host(aliases)
     return config
 
 
@@ -427,6 +784,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         metavar="ID",
         help="global operational Telegram chat id (repeatable); overridden per alias by --allowlist-file",
     )
+    parser.add_argument(
+        "--groups-file",
+        type=pathlib.Path,
+        help="ids-only JSON {'bot_usernames':{alias:handle},'aliases':{alias:{'chats':[...]}}} "
+        "(no tokens); an alias absent from 'aliases' keeps legacy group routing",
+    )
     parser.add_argument("--no-cross-check", action="store_true", help="skip ops/manifests/*.yaml cross-check")
     parser.add_argument("--indent", type=int, default=2)
     return parser.parse_args(argv)
@@ -439,6 +802,9 @@ def main(argv: list[str] | None = None) -> int:
         allowlist = {"aliases": {}, "tenants": {}}
         if args.allowlist_file is not None:
             allowlist = load_allowlist_file(args.allowlist_file)
+        groups = {"bot_usernames": {}, "aliases": {}}
+        if args.groups_file is not None:
+            groups = load_groups_file(args.groups_file)
         options = {
             "runtime_dir": args.runtime_dir,
             "token_dir": args.token_dir or args.runtime_dir,
@@ -447,6 +813,7 @@ def main(argv: list[str] | None = None) -> int:
             "allowed_user_ids": args.allow_user_ids or [PLACEHOLDER_USER_ID],
             "allowed_chat_ids": args.allow_chat_ids or [PLACEHOLDER_CHAT_ID],
             "allowlist": allowlist,
+            "groups": groups,
             "poll_timeout_seconds": args.poll_timeout_seconds,
             "poll_lease_ms": args.poll_lease_ms,
         }
