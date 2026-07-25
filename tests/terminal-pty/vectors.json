@@ -1,0 +1,468 @@
+{
+  "contract": "cauce-v3/pty-wire/v1",
+  "frozen": true,
+  "note": "Golden interoperability vectors for the Cauce V3 PTY channel. The gateway (TypeScript), the terminal-relay (TypeScript) and the pty-agent (Python 3 stdlib) must all reproduce these byte for byte. Do not 'recompute a better value': a mismatch is a protocol divergence, not a stale fixture.",
+  "master_key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "hkdf": {
+    "hash": "sha256",
+    "salt_utf8": "cauce-v3/pty-ticket/v1",
+    "info_template": "pty:<tenant>:<alias>",
+    "length": 32
+  },
+  "framing": {
+    "header": "[tag:1][length:4 big-endian uint32][payload]",
+    "max_payload": 65536,
+    "session_id_bytes": 36,
+    "tags": {
+      "AGENT_HELLO": 1, "HELLO_ACK": 2, "OPEN": 16, "OPEN_OK": 17, "OPEN_ERR": 18,
+      "STDIN": 32, "STDOUT": 33, "RESIZE": 34, "CLOSE": 48, "CLOSED": 49,
+      "PING": 64, "PONG": 65
+    }
+  },
+  "ws_close_codes": {
+    "protocol_error": 4400,
+    "ticket_invalid": 4401,
+    "revoked": 4403,
+    "agent_offline": 4404,
+    "idle_timeout": 4408,
+    "session_conflict": 4409,
+    "output_flood": 4413,
+    "ttl_expired": 4423,
+    "internal_error": 1011
+  },
+  "keys": {
+    "Steven:jarvis": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+    "Steven:kant": "c13362c6964d27b97b5af6d39b1f296b45256ada814babf03d49f7b115f49f3d",
+    "Miguel:kratos": "38343b3ec054f31888da2867c237bc2d7743054dd24a7839f32c2f61409b37b5"
+  },
+  "cases": [
+    {
+      "name": "hkdf/steven-jarvis-golden",
+      "kind": "derive_alias_key",
+      "must_fail": false,
+      "input": { "master_key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", "tenant": "Steven", "alias": "jarvis" },
+      "expected": { "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa" }
+    },
+    {
+      "name": "hkdf/steven-kant",
+      "kind": "derive_alias_key",
+      "must_fail": false,
+      "input": { "master_key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", "tenant": "Steven", "alias": "kant" },
+      "expected": { "alias_key_hex": "c13362c6964d27b97b5af6d39b1f296b45256ada814babf03d49f7b115f49f3d" }
+    },
+    {
+      "name": "hkdf/miguel-kratos-is-a-different-key",
+      "kind": "derive_alias_key",
+      "must_fail": false,
+      "input": { "master_key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", "tenant": "Miguel", "alias": "kratos" },
+      "expected": { "alias_key_hex": "38343b3ec054f31888da2867c237bc2d7743054dd24a7839f32c2f61409b37b5" }
+    },
+    {
+      "name": "hkdf/master-key-must-be-32-bytes",
+      "kind": "derive_alias_key",
+      "must_fail": true,
+      "input": { "master_key_b64": "AAECAwQFBgcICQoLDA0ODw==", "tenant": "Steven", "alias": "jarvis" },
+      "expected": { "reason": "bad_master_key" }
+    },
+    {
+      "name": "ticket/canonical-payload-key-order",
+      "kind": "canonical_payload",
+      "must_fail": false,
+      "input": {
+        "payload": {
+          "v": 1,
+          "sid": "11111111-2222-3333-4444-555555555555",
+          "op": "unattributed:console-basic-auth",
+          "sub": "Steven:kant",
+          "tgt": { "tenant": "Steven", "alias": "jarvis", "container": "claw", "generation": "gen-1", "image": "sha256:deadbeef", "uid": 1000, "user": "claw" },
+          "mode": "shell",
+          "iat": 1750000000,
+          "exp": 1750000030
+        }
+      },
+      "expected": {
+        "payload_json": "{\"v\":1,\"sid\":\"11111111-2222-3333-4444-555555555555\",\"op\":\"unattributed:console-basic-auth\",\"sub\":\"Steven:kant\",\"tgt\":{\"tenant\":\"Steven\",\"alias\":\"jarvis\",\"container\":\"claw\",\"generation\":\"gen-1\",\"image\":\"sha256:deadbeef\",\"uid\":1000,\"user\":\"claw\"},\"mode\":\"shell\",\"iat\":1750000000,\"exp\":1750000030}"
+      }
+    },
+    {
+      "name": "ticket/canonical-payload-rejects-unknown-key",
+      "kind": "canonical_payload",
+      "must_fail": true,
+      "input": {
+        "payload": {
+          "v": 1,
+          "sid": "11111111-2222-3333-4444-555555555555",
+          "op": "unattributed:console-basic-auth",
+          "sub": "Steven:kant",
+          "tgt": { "tenant": "Steven", "alias": "jarvis", "container": "claw", "generation": "gen-1", "image": "sha256:deadbeef", "uid": 1000, "user": "claw" },
+          "mode": "shell",
+          "iat": 1750000000,
+          "exp": 1750000030,
+          "scope": "admin"
+        }
+      },
+      "expected": { "reason": "unknown_payload_key" }
+    },
+    {
+      "name": "ticket/mint-golden-steven-jarvis-shell",
+      "kind": "mint_ticket",
+      "must_fail": false,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "payload": {
+          "v": 1,
+          "sid": "11111111-2222-3333-4444-555555555555",
+          "op": "unattributed:console-basic-auth",
+          "sub": "Steven:kant",
+          "tgt": { "tenant": "Steven", "alias": "jarvis", "container": "claw", "generation": "gen-1", "image": "sha256:deadbeef", "uid": 1000, "user": "claw" },
+          "mode": "shell",
+          "iat": 1750000000,
+          "exp": 1750000030
+        }
+      },
+      "expected": {
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY"
+      }
+    },
+    {
+      "name": "ticket/mint-is-key-bound-same-payload-other-alias-key",
+      "kind": "mint_ticket",
+      "must_fail": false,
+      "input": {
+        "alias_key_hex": "c13362c6964d27b97b5af6d39b1f296b45256ada814babf03d49f7b115f49f3d",
+        "payload": {
+          "v": 1,
+          "sid": "11111111-2222-3333-4444-555555555555",
+          "op": "unattributed:console-basic-auth",
+          "sub": "Steven:kant",
+          "tgt": { "tenant": "Steven", "alias": "jarvis", "container": "claw", "generation": "gen-1", "image": "sha256:deadbeef", "uid": 1000, "user": "claw" },
+          "mode": "shell",
+          "iat": 1750000000,
+          "exp": 1750000030
+        }
+      },
+      "expected": {
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.JYEJFp4RFVLLBtmjTXMVAuto6w6WGKk2HMNMCX7xUIo"
+      }
+    },
+    {
+      "name": "ticket/verify-golden-inside-the-window",
+      "kind": "verify_ticket",
+      "must_fail": false,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY",
+        "options": { "now": 1750000015, "session_id": "11111111-2222-3333-4444-555555555555", "tenant": "Steven", "alias": "jarvis", "container_id": "claw", "generation": "gen-1", "modes": ["shell", "readonly"] }
+      },
+      "expected": { "ok": true, "sid": "11111111-2222-3333-4444-555555555555", "alias": "jarvis", "uid": 1000, "user": "claw", "mode": "shell" }
+    },
+    {
+      "name": "ticket/verify-exactly-at-exp-is-still-valid",
+      "kind": "verify_ticket",
+      "must_fail": false,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY",
+        "options": { "now": 1750000030, "alias": "jarvis" }
+      },
+      "expected": { "ok": true, "sid": "11111111-2222-3333-4444-555555555555", "alias": "jarvis", "uid": 1000, "user": "claw", "mode": "shell" }
+    },
+    {
+      "name": "ticket/verify-one-second-past-exp-is-ttl-expired",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY",
+        "options": { "now": 1750000031, "alias": "jarvis" }
+      },
+      "expected": { "ok": false, "reason": "ticket_expired", "ws_close_code": 4423 }
+    },
+    {
+      "name": "ticket/verify-already-expired-ticket",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzQ5OTk5OTAwLCJleHAiOjE3NDk5OTk5NjB9.BBG_C9V7oWjmUv6oiKuWqN0whH7o_cCjqUM3hZglBfE",
+        "options": { "now": 1750000000, "alias": "jarvis" }
+      },
+      "expected": { "ok": false, "reason": "ticket_expired", "ws_close_code": 4423 }
+    },
+    {
+      "name": "ticket/verify-not-yet-valid",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwNjAwLCJleHAiOjE3NTAwMDA2NjB9.4wWUPRzNc2k8qsuYnt6-tOTDueewwmxs5IA93aIBP80",
+        "options": { "now": 1750000000, "alias": "jarvis" }
+      },
+      "expected": { "ok": false, "reason": "ticket_not_yet_valid", "ws_close_code": 4401 }
+    },
+    {
+      "name": "ticket/verify-signature-with-one-flipped-bit",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.0n4UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY",
+        "options": { "now": 1750000015, "alias": "jarvis" }
+      },
+      "expected": { "ok": false, "reason": "bad_signature", "ws_close_code": 4401 }
+    },
+    {
+      "name": "ticket/verify-payload-tampered-to-uid-zero-keeping-the-signature",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY",
+        "options": { "now": 1750000015, "alias": "jarvis" }
+      },
+      "expected": { "ok": false, "reason": "bad_signature", "ws_close_code": 4401 }
+    },
+    {
+      "name": "ticket/verify-minted-with-another-alias-key",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.JYEJFp4RFVLLBtmjTXMVAuto6w6WGKk2HMNMCX7xUIo",
+        "options": { "now": 1750000015, "alias": "jarvis" }
+      },
+      "expected": { "ok": false, "reason": "bad_signature", "ws_close_code": 4401 }
+    },
+    {
+      "name": "ticket/verify-valid-signature-but-target-is-another-alias",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "c13362c6964d27b97b5af6d39b1f296b45256ada814babf03d49f7b115f49f3d",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImthbnQiLCJjb250YWluZXIiOiJjbGF3IiwiZ2VuZXJhdGlvbiI6Imdlbi0xIiwiaW1hZ2UiOiJzaGEyNTY6ZGVhZGJlZWYiLCJ1aWQiOjEwMDAsInVzZXIiOiJjbGF3In0sIm1vZGUiOiJzaGVsbCIsImlhdCI6MTc1MDAwMDAwMCwiZXhwIjoxNzUwMDAwMDMwfQ.7i9FKjjeCfd-13p6KZZMQF5Og3L1r1rzUu5l1jl6S-g",
+        "options": { "now": 1750000015, "tenant": "Steven", "alias": "jarvis" }
+      },
+      "expected": { "ok": false, "reason": "alias_mismatch", "ws_close_code": 4401 }
+    },
+    {
+      "name": "ticket/verify-cross-tenant-target-is-rejected-by-the-agent",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "38343b3ec054f31888da2867c237bc2d7743054dd24a7839f32c2f61409b37b5",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJNaWd1ZWwiLCJhbGlhcyI6ImtyYXRvcyIsImNvbnRhaW5lciI6ImtyYXRvcy1jdHIiLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.SuOhb_FNFc9IO4G_sEO9X3MmI3C7JHg7iXqKhbmh1_g",
+        "options": { "now": 1750000015, "tenant": "Steven", "alias": "jarvis" }
+      },
+      "expected": { "ok": false, "reason": "tenant_mismatch", "ws_close_code": 4401 }
+    },
+    {
+      "name": "ticket/verify-session-id-must-match-the-open-frame",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY",
+        "options": { "now": 1750000015, "session_id": "99999999-8888-7777-6666-555555555555", "alias": "jarvis" }
+      },
+      "expected": { "ok": false, "reason": "sid_mismatch", "ws_close_code": 4401 }
+    },
+    {
+      "name": "ticket/verify-mode-not-offered-by-the-agent",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY",
+        "options": { "now": 1750000015, "alias": "jarvis", "modes": ["readonly"] }
+      },
+      "expected": { "ok": false, "reason": "mode_not_allowed", "ws_close_code": 4401 }
+    },
+    {
+      "name": "ticket/verify-target-uid-zero-is-signed-but-the-agent-still-refuses-root",
+      "kind": "verify_ticket",
+      "must_fail": false,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MCwidXNlciI6InJvb3QifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.YGTvoEWY-rEYhVK7riTDfPsnhYb9ZfCmBqdOVU7dH_w",
+        "options": { "now": 1750000015, "alias": "jarvis" }
+      },
+      "expected": { "ok": true, "sid": "11111111-2222-3333-4444-555555555555", "alias": "jarvis", "uid": 0, "user": "root", "mode": "shell", "agent_must_refuse": "runs_as_root" }
+    },
+    {
+      "name": "ticket/verify-rejects-a-padded-base64url-segment",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxfQ==.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY",
+        "options": { "now": 1750000015 }
+      },
+      "expected": { "ok": false, "reason": "bad_b64", "ws_close_code": 4401 }
+    },
+    {
+      "name": "ticket/verify-rejects-a-two-part-ticket",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v1.eyJ2IjoxfQ",
+        "options": { "now": 1750000015 }
+      },
+      "expected": { "ok": false, "reason": "malformed", "ws_close_code": 4401 }
+    },
+    {
+      "name": "ticket/verify-rejects-a-future-envelope-version",
+      "kind": "verify_ticket",
+      "must_fail": true,
+      "input": {
+        "alias_key_hex": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
+        "ticket": "v2.eyJ2IjoxfQ.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY",
+        "options": { "now": 1750000015 }
+      },
+      "expected": { "ok": false, "reason": "unsupported_version", "ws_close_code": 4401 }
+    },
+    {
+      "name": "frame/stdout-hi-golden",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": { "tag": "STDOUT", "payload": { "type": "data", "session_id": "11111111-2222-3333-4444-555555555555", "data_utf8": "hi" } },
+      "expected": { "frame_hex": "210000002631313131313131312d323232322d333333332d343434342d3535353535353535353535356869" }
+    },
+    {
+      "name": "frame/ping-is-empty",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": { "tag": "PING", "payload": { "type": "empty" } },
+      "expected": { "frame_hex": "4000000000" }
+    },
+    {
+      "name": "frame/pong-is-empty",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": { "tag": "PONG", "payload": { "type": "empty" } },
+      "expected": { "frame_hex": "4100000000" }
+    },
+    {
+      "name": "frame/stdin-with-no-bytes-is-still-a-valid-data-frame",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": { "tag": "STDIN", "payload": { "type": "data", "session_id": "11111111-2222-3333-4444-555555555555", "data_hex": "" } },
+      "expected": { "frame_hex": "200000002431313131313131312d323232322d333333332d343434342d353535353535353535353535" }
+    },
+    {
+      "name": "frame/stdin-carries-control-bytes-and-utf8-verbatim",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": { "tag": "STDIN", "payload": { "type": "data", "session_id": "11111111-2222-3333-4444-555555555555", "data_hex": "03c3b10d0a" } },
+      "expected": { "frame_hex": "200000002931313131313131312d323232322d333333332d343434342d35353535353535353535353503c3b10d0a" }
+    },
+    {
+      "name": "frame/open-ok-json",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": { "tag": "OPEN_OK", "payload": { "type": "json", "value": { "session_id": "11111111-2222-3333-4444-555555555555", "pid": 4242 } } },
+      "expected": { "frame_hex": "11000000407b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22706964223a343234327d" }
+    },
+    {
+      "name": "frame/resize-json",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": { "tag": "RESIZE", "payload": { "type": "json", "value": { "session_id": "11111111-2222-3333-4444-555555555555", "cols": 200, "rows": 50 } } },
+      "expected": { "frame_hex": "220000004a7b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22636f6c73223a3230302c22726f7773223a35307d" }
+    },
+    {
+      "name": "frame/closed-json-carries-exit-code-and-signal",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": { "tag": "CLOSED", "payload": { "type": "json", "value": { "session_id": "11111111-2222-3333-4444-555555555555", "exit_code": 0, "signal": null, "reason": "client_close" } } },
+      "expected": { "frame_hex": "31000000697b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22657869745f636f6465223a302c227369676e616c223a6e756c6c2c22726561736f6e223a22636c69656e745f636c6f7365227d" }
+    },
+    {
+      "name": "frame/maximum-payload-of-65536-bytes",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": { "tag": "STDOUT", "payload": { "type": "data", "session_id": "11111111-2222-3333-4444-555555555555", "fill": { "byte": 65, "count": 65500 } } },
+      "expected": {
+        "frame_length": 65541,
+        "header_hex": "2100010000",
+        "frame_sha256": "7c20626c894f2a46cead5875fa3a2106956052697692dbf93608a36a479bf116"
+      }
+    },
+    {
+      "name": "frame/one-byte-over-the-maximum-cannot-be-encoded",
+      "kind": "encode_frame",
+      "must_fail": true,
+      "input": { "tag": "STDOUT", "payload": { "type": "data", "session_id": "11111111-2222-3333-4444-555555555555", "fill": { "byte": 65, "count": 65501 } } },
+      "expected": { "reason": "frame_too_large" }
+    },
+    {
+      "name": "decode/stdout-hi-golden",
+      "kind": "decode_frame",
+      "must_fail": false,
+      "input": { "frame_hex": "210000002631313131313131312d323232322d333333332d343434342d3535353535353535353535356869" },
+      "expected": { "tag": "STDOUT", "known": true, "session_id": "11111111-2222-3333-4444-555555555555", "data_utf8": "hi" }
+    },
+    {
+      "name": "decode/zero-length-ping",
+      "kind": "decode_frame",
+      "must_fail": false,
+      "input": { "frame_hex": "4000000000" },
+      "expected": { "tag": "PING", "known": true, "payload_hex": "" }
+    },
+    {
+      "name": "decode/unknown-tag-is-structurally-valid-and-must-close-as-protocol-error",
+      "kind": "decode_frame",
+      "must_fail": false,
+      "input": { "frame_hex": "7f000000027b7d" },
+      "expected": { "tag": 127, "known": false, "payload_hex": "7b7d", "action": "protocol_error", "ws_close_code": 4400 }
+    },
+    {
+      "name": "decode/data-payload-shorter-than-a-session-id",
+      "kind": "decode_frame",
+      "must_fail": true,
+      "input": { "frame_hex": "21000000053132333435" },
+      "expected": { "reason": "bad_data_frame" }
+    },
+    {
+      "name": "decode/announced-length-over-the-maximum-is-rejected-on-the-header-alone",
+      "kind": "decode_frame",
+      "must_fail": true,
+      "input": { "frame_hex": "2100010001" },
+      "expected": { "reason": "frame_too_large" }
+    },
+    {
+      "name": "stream/golden-frame-split-into-one-byte-chunks",
+      "kind": "decode_stream",
+      "must_fail": false,
+      "input": { "stream_hex": "210000002631313131313131312d323232322d333333332d343434342d3535353535353535353535356869", "chunk_size": 1 },
+      "expected": { "frames": [{ "tag": "STDOUT", "session_id": "11111111-2222-3333-4444-555555555555", "data_utf8": "hi" }], "pending": 0 }
+    },
+    {
+      "name": "stream/header-split-across-two-reads",
+      "kind": "decode_stream",
+      "must_fail": false,
+      "input": { "stream_hex": "210000002631313131313131312d323232322d333333332d343434342d3535353535353535353535356869", "chunk_size": 3 },
+      "expected": { "frames": [{ "tag": "STDOUT", "session_id": "11111111-2222-3333-4444-555555555555", "data_utf8": "hi" }], "pending": 0 }
+    },
+    {
+      "name": "stream/two-frames-and-a-partial-third-in-a-single-read",
+      "kind": "decode_stream",
+      "must_fail": false,
+      "input": { "stream_hex": "4000000000210000002631313131313131312d323232322d333333332d343434342d3535353535353535353535356f6b410000", "chunk_size": 0 },
+      "expected": {
+        "frames": [
+          { "tag": "PING", "payload_hex": "" },
+          { "tag": "STDOUT", "session_id": "11111111-2222-3333-4444-555555555555", "data_utf8": "ok" }
+        ],
+        "pending": 3
+      }
+    },
+    {
+      "name": "stream/oversized-header-inside-a-stream-aborts-the-connection",
+      "kind": "decode_stream",
+      "must_fail": true,
+      "input": { "stream_hex": "40000000002100010001", "chunk_size": 1 },
+      "expected": { "reason": "frame_too_large" }
+    }
+  ]
+}
