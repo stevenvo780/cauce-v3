@@ -1,4 +1,5 @@
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { App } from './App';
 import { renderWithApi } from './test/render';
@@ -47,4 +48,32 @@ it('ignores extra pathname segments on non-fleet routes and keeps rendering the 
   renderWithApi(<App />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Ultimate Terminal' })).toBeInTheDocument();
+});
+
+it('navega dentro de la aplicación sin recargar la página al hacer clic en el menú', async () => {
+  window.history.pushState({}, '', '/fleet');
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+
+  await screen.findByRole('heading', { level: 1, name: /fleet & presencia/i });
+  await user.click(screen.getByRole('link', { name: /^cuentas de ia$/i }));
+
+  // Si el enlace no interceptara el clic, jsdom no cambiaría la ruta y seguiríamos en Fleet:
+  // el router escucha popstate, y pushState no lo dispara solo.
+  expect(window.location.pathname).toBe('/accounts');
+  expect(await screen.findByRole('heading', { level: 1, name: /cuentas de ia/i })).toBeInTheDocument();
+});
+
+it('deja pasar ctrl+clic al navegador para poder abrir en otra pestaña', async () => {
+  window.history.pushState({}, '', '/fleet');
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+
+  await screen.findByRole('heading', { level: 1, name: /fleet & presencia/i });
+  await user.keyboard('{Control>}');
+  await user.click(screen.getByRole('link', { name: /^cuentas de ia$/i }));
+  await user.keyboard('{/Control}');
+
+  // Con modificador el clic es del navegador, no nuestro: la ruta no debe moverse.
+  expect(window.location.pathname).toBe('/fleet');
 });

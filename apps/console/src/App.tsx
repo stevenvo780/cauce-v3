@@ -34,6 +34,7 @@ import { ConfigPage } from './features/config/ConfigPage';
 import { AccountsPage } from './features/accounts/AccountsPage';
 import { AssignmentMatrixPage } from './features/accounts/AssignmentMatrixPage';
 import { ObservabilityPage } from './features/observability/ObservabilityPage';
+import { onNavClick } from './navigation';
 
 interface Route {
   id: string;
@@ -145,7 +146,11 @@ export function App() {
               const Icon = item.icon;
               return (
                 <li key={item.id}>
-                  <a href={`/${item.id}`} aria-current={route.id === item.id ? 'page' : undefined}>
+                  <a
+                    href={`/${item.id}`}
+                    onClick={(event) => onNavClick(event, `/${item.id}`)}
+                    aria-current={route.id === item.id ? 'page' : undefined}
+                  >
                     <Icon size={18} aria-hidden={true} />
                     <span>{item.label}</span>
                   </a>

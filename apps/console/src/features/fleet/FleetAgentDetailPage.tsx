@@ -1,6 +1,7 @@
 import { ArrowLeft } from 'lucide-react';
 import { useMemo } from 'react';
 import { useApi } from '../../api/context';
+import { onNavClick } from '../../navigation';
 import { useResource } from '../../api/use-resource';
 import { EmptyState, ErrorState, LoadingState, PageHeader, RefreshButton } from '../../components/ui';
 // Regla del encargo: la lógica de fleet/leases vive en features/terminal; se reutiliza, no se duplica.
@@ -45,7 +46,11 @@ export function FleetAgentDetailPage({ tenantId, alias }: FleetAgentDetailPagePr
 
   return (
     <div className="ultimate-terminal-page">
-      <a className="button small secondary" href="/fleet"><ArrowLeft size={14} aria-hidden="true" /> Volver a Fleet</a>
+      <a
+        className="button small secondary"
+        href="/fleet"
+        onClick={(event) => onNavClick(event, '/fleet')}
+      ><ArrowLeft size={14} aria-hidden="true" /> Volver a Fleet</a>
       {fleetLoading ? <LoadingState label={`Cargando detalle de ${alias}…`} /> : fleetError && !agent ? (
         <ErrorState error={fleetError} onRetry={refreshAll} />
       ) : (
