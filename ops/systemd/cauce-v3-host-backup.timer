@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Cauce V3 + ut-nexus backup
+
+[Timer]
+OnCalendar=*-*-* 03:10:00 UTC
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

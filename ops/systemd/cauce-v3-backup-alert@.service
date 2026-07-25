@@ -1,0 +1,10 @@
+[Unit]
+Description=Loud alert: %i failed
+# Instantiated via OnFailure=cauce-v3-backup-alert@%n.service from
+# cauce-v3-host-backup.service and cauce-v3-host-backup-monitor.service.
+# Deliberately dumb and dependency-free (just syslog) so it cannot itself
+# fail to fire for the same reason the backup failed (network, docker, NAS).
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/logger -p daemon.crit -t cauce-v3-backup -- "UNIT FAILED: %i -- run: journalctl -u %i -p err ; cat /var/log/cauce-v3-backup/status.json"

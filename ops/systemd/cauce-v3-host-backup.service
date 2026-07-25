@@ -1,0 +1,15 @@
+[Unit]
+Description=Cauce V3 + ut-nexus backup (Postgres dump, SQLite online backup, off-host copy to nass-stev)
+Documentation=file:/opt/cauce-v3/ops/runbooks/backup-restore.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+OnFailure=cauce-v3-backup-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cauce-v3-host-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=20m

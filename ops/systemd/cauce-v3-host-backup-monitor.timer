@@ -1,0 +1,10 @@
+[Unit]
+Description=Check every 6h that the Cauce V3 host backup ran and succeeded recently
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:45:00 UTC
+Persistent=true
+RandomizedDelaySec=3m
+
+[Install]
+WantedBy=timers.target
