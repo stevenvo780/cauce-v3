@@ -5,6 +5,11 @@ global:
     service: cauce-v3
     environment: cauce-v3
 
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [alertmanager:9093]
+
 rule_files:
   - /etc/prometheus/alerts.yaml
 

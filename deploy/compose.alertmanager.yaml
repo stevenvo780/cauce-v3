@@ -1,0 +1,43 @@
+# Additive overlay: adds Alertmanager to the cauce-v3-prod stack.
+# Mirrors the hardening of the prometheus service (non-root, read-only rootfs,
+# no-new-privileges, all caps dropped, digest-pinned image).
+#
+# Apply together with the base files, never alone:
+#   docker compose -f compose.yaml -f compose.postgres.yaml -f compose.alertmanager.yaml ...
+
+services:
+  alertmanager:
+    profiles: [observability]
+    image: ${CAUCE_ALERTMANAGER_IMAGE:?set an immutable CAUCE_ALERTMANAGER_IMAGE digest}
+    user: "65534:65534"
+    restart: always
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yaml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ../ops/observability/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml:ro
+      - alertmanager_data:/alertmanager
+    secrets:
+      - source: alertmanager_telegram_token
+        target: alertmanager_telegram_token
+        uid: "65534"
+        gid: "65534"
+        mode: 0400
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+    networks: [backend]
+
+secrets:
+  alertmanager_telegram_token:
+    file: ${CAUCE_ALERTMANAGER_TELEGRAM_TOKEN_PATH:?set CAUCE_ALERTMANAGER_TELEGRAM_TOKEN_PATH}
+
+volumes:
+  alertmanager_data:

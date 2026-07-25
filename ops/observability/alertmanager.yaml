@@ -1,0 +1,55 @@
+# Alertmanager for cauce-v3 prod.
+# Delivery path is deliberately INDEPENDENT of the cauce pipeline: Alertmanager talks
+# straight to api.telegram.org. Routing alerts through the cauce telegram-bridge would
+# be circular -- most of these alerts fire precisely when the dispatcher/outbox is stuck.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: telegram-steven
+  # Alerts of the same name collapse into one message (e.g. one message for all lanes).
+  group_by: ['alertname']
+  group_wait: 30s
+  group_interval: 5m
+  # Warnings get re-sent twice a day so a standing problem cannot go quiet for days.
+  repeat_interval: 12h
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: telegram-steven
+      group_wait: 10s
+      group_interval: 5m
+      # Criticals nag every hour until resolved or silenced.
+      repeat_interval: 1h
+
+inhibit_rules:
+  # If the outbox exporter itself is down/blind, every outbox-derived alert is noise.
+  - source_matchers:
+      - alertname=~"CauceOutboxMetricsDown|CauceOutboxDatabaseMetricsMissing"
+    target_matchers:
+      - alertname=~"CauceWakeOutboxStalled|CauceWakeOutboxFailed|CauceOriginOutboxStalled|CauceOutboxDeadLettersOpen"
+  # Same for the dispatcher exporter and everything derived from it.
+  - source_matchers:
+      - alertname=~"CauceDispatcherDown|CauceDispatcherDatabaseMetricsMissing"
+    target_matchers:
+      - alertname=~"CauceDeliveryDlqGrowing|CauceJobDlqGrowing|CauceDeliveryRetryBacklog|CauceInteractiveDeliveryStalled|CauceBatchDeliveryStalled|CauceJobLaneStalled|CauceUnknownJobKinds|CauceConsumerLeaseChurn|CauceOriginRelayFailed|CauceOriginRelayStalled|CauceOriginRelayDead"
+
+receivers:
+  - name: telegram-steven
+    telegram_configs:
+      - bot_token_file: /run/secrets/alertmanager_telegram_token
+        # Steven's private Telegram chat.
+        chat_id: 6979524541
+        # Plain text on purpose: alert summaries may contain < > &, and with parse_mode
+        # HTML/Markdown Telegram would reject the message with HTTP 400.
+        parse_mode: ''
+        send_resolved: true
+        message: |-
+          {{ if eq .Status "firing" }}[FIRING {{ .Alerts.Firing | len }}]{{ else }}[RESOLVED]{{ end }} cauce-v3 / {{ .CommonLabels.alertname }}
+          {{ range .Alerts }}
+          {{ .Labels.severity | toUpper }} {{ .Labels.alertname }}{{ with .Labels.kind }} kind={{ . }}{{ end }}{{ with .Labels.lane }} lane={{ . }}{{ end }}
+          {{ .Annotations.summary }}
+          desde {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+          {{ end }}
+          ver: ssh agora-storage 'docker exec cauce-v3-prod-prometheus-1 wget -qO- http://127.0.0.1:9090/api/v1/alerts'
