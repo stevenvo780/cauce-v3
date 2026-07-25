@@ -77,8 +77,16 @@ try {
   await mkdir(bin, { recursive: true });
   await mkdir(lockDir, { recursive: true });
   await mkdir(xdgRuntime, { recursive: true });
-  await mkdir(unwritableSystemLock, { recursive: true, mode: 0o555 });
-  await chmod(unwritableSystemLock, 0o555);
+  // The fallback case needs a system lock dir the cutover cannot use. A 0555 directory
+  // expresses that for a normal user, but root bypasses DAC, so bash's -w still reports it
+  // as writable and the fallback is never taken. Release hosts run this gate as root, so
+  // deny it there by making the path not a directory at all, which no uid can override.
+  if (typeof process.getuid === "function" && process.getuid() === 0) {
+    await writeFile(unwritableSystemLock, "", { mode: 0o444 });
+  } else {
+    await mkdir(unwritableSystemLock, { recursive: true, mode: 0o555 });
+    await chmod(unwritableSystemLock, 0o555);
+  }
   await mkdir(snapshots, { recursive: true });
   await copyFile(path.join(ops, "tests/fake-systemctl.mjs"), path.join(bin, "systemctl"));
   await copyFile(path.join(ops, "tests/fake-container-supervisor.mjs"), fakeSupervisor);
