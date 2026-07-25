@@ -86,6 +86,8 @@ export function fakeRepository(): GatewayRepository {
     listJobs: vi.fn(async () => ({ items: [] })),
     enqueueJob: vi.fn(async () => 'job-1'),
     listAdapters: vi.fn(async () => ({ items: [] })),
+    listAgents: vi.fn(async () => ({ items: [] })),
+    getAgent: vi.fn(async () => undefined),
     listOriginRelays: vi.fn(async () => ({ items: [] })),
     enqueueNotification: vi.fn(async () => ({
       notification_id: ids.notification,

@@ -117,6 +117,47 @@ describe('gateway hardening facades and RBAC', () => {
     expect(repository.replayDelivery).not.toHaveBeenCalled();
   });
 
+  it('requires operator for the agent registry reads', async () => {
+    const repository = fakeRepository();
+    const app = await gateway(repository, testPrincipal({
+      roles: roles('agent'), permissions: grants('route', 'read', 'control')
+    }));
+
+    const [agents, agent] = await Promise.all([
+      app.inject({ method: 'GET', url: '/v3/console/agents' }),
+      app.inject({ method: 'GET', url: '/v3/console/agents/midas' })
+    ]);
+
+    expect([agents.statusCode, agent.statusCode]).toEqual([403, 403]);
+    expect(repository.listAgents).not.toHaveBeenCalled();
+    expect(repository.getAgent).not.toHaveBeenCalled();
+  });
+
+  it('serves the agent registry reads for an operator', async () => {
+    const repository = fakeRepository();
+    vi.mocked(repository.getAgent).mockImplementation(async (alias) =>
+      alias === 'midas' ? { tenant_id: 'Pablo', alias: 'midas', deployment_status: 'disabled' } : undefined
+    );
+    const app = await gateway(repository, testPrincipal({
+      roles: roles('operator'), permissions: grants('route', 'read', 'control')
+    }));
+
+    const agents = await app.inject({ method: 'GET', url: '/v3/console/agents' });
+    expect(agents.statusCode).toBe(200);
+    expect(repository.listAgents).toHaveBeenCalledWith('Pablo', 'midas');
+
+    const agent = await app.inject({ method: 'GET', url: '/v3/console/agents/midas' });
+    expect(agent.statusCode).toBe(200);
+    expect(agent.json()).toMatchObject({ tenant_id: 'Pablo', alias: 'midas' });
+    expect(repository.getAgent).toHaveBeenCalledWith('midas', 'Pablo', 'midas');
+
+    const missing = await app.inject({ method: 'GET', url: '/v3/console/agents/ghost' });
+    expect(missing.statusCode).toBe(404);
+
+    const malformed = await app.inject({ method: 'GET', url: '/v3/console/agents/NotAnAlias' });
+    expect(malformed.statusCode).toBe(400);
+  });
+
   it('keeps route, read, and control permissions separate', async () => {
     const repository = fakeRepository();
     const readOnly = await gateway(repository, testPrincipal({ permissions: grants('read') }));

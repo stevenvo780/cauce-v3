@@ -4,7 +4,7 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { WebSocket, type RawData } from 'ws';
 import {
-  AuthenticatedPublishSchema, ClaimedAckSchema, ConfigChangeRequestSchema, ConfigRollbackRequestSchema,
+  AliasSchema, AuthenticatedPublishSchema, ClaimedAckSchema, ConfigChangeRequestSchema, ConfigRollbackRequestSchema,
   CreateJobSchema, DeliveryIdSchema, HeartbeatSchema, HelloSchema,
   NotifyRequestSchema, PROTOCOL_VERSION,
   QueryDeliveriesSchema, TenantSchema,
@@ -79,6 +79,8 @@ export interface GatewayRepository {
   listJobs(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   enqueueJob(tenantId: Tenant, lane: 'interactive' | 'batch', priority: number, kind: string, payload: Record<string, unknown>): Promise<string>;
   listAdapters(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  listAgents(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  getAgent(alias: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown> | undefined>;
   listOriginRelays(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   enqueueNotification(actorTenant: Tenant, actorAlias: string, input: NotifyRequest): Promise<NotificationVerdict>;
   listNotifications(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
@@ -407,6 +409,28 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
       return await repository.listAdapters(actor.tenant_id, actor.alias);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  // The registry is intrinsically cross-tenant (an agent may borrow a pooled account paid by
+  // another tenant), so no sameTenantRows facade runs here: the store already applied the
+  // visibility rule and redacted the payer's account identity.
+  app.get('/v3/console/agents', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requireOperatorPermission(actor, 'read');
+      return await repository.listAgents(actor.tenant_id, actor.alias);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  app.get<{ Params: { alias: string } }>('/v3/console/agents/:alias', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requireOperatorPermission(actor, 'read');
+      const alias = AliasSchema.parse(request.params.alias);
+      const agent = await repository.getAgent(alias, actor.tenant_id, actor.alias);
+      if (!agent) throw new StoreError('not_found', 'agent not found or not visible');
+      return agent;
     } catch (error) { replyError(reply, error); }
   });
 

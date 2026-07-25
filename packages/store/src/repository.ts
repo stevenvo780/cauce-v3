@@ -606,6 +606,16 @@ function originRelayTenant(row: Pick<DeliveryRow, 'tenant_id' | 'origin'>): Tena
     : row.tenant_id;
 }
 
+/** Deployment status derived from registry + presence only; no host-side reporter exists yet
+ *  (see docs/adr/006-agent-registry-and-deferred-execution.md), so this never claims more than
+ *  Postgres actually knows. */
+function agentDeploymentStatus(row: Record<string, unknown>): string {
+  if (row.enabled !== true) return 'disabled';
+  if (row.online === true) return 'online';
+  if (row.online === false) return 'offline';
+  return 'unknown';
+}
+
 export class CauceRepository {
   constructor(private readonly pool: DatabasePool) {}
 
@@ -4177,6 +4187,85 @@ export class CauceRepository {
         detail: row.online === true ? 'active lease' : 'expired lease'
       }))]
     };
+  }
+
+  /** Control-plane fleet listing: agents filtered exactly the way every other read endpoint
+   *  filters — own tenant plus any tenant the actor has an allow_read ACL edge into (see
+   *  topology()). Deployment status is registry+presence only; kratos execution state
+   *  (systemd/docker) has no reporter yet, see docs/adr/006-agent-registry-and-deferred-execution.md. */
+  async listAgents(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    const result = await this.pool.query<Record<string, unknown>>(
+      `SELECT a.tenant_id,a.alias,a.harness_id,h.display_name AS harness_label,a.display_name,
+              a.enabled,a.container_name,a.runtime_user,a.home_directory,a.state_directory,
+              a.created_at,a.updated_at,
+              lease.online,lease.last_heartbeat_at,
+              COALESCE(routing.fallback_accounts,0) AS fallback_account_count,
+              COALESCE(routing.borrowed_accounts,0) AS borrowed_account_count
+       FROM agents a
+       LEFT JOIN harness_definitions h ON h.id=a.harness_id
+       LEFT JOIN LATERAL (
+         SELECT (l.lease_until>now()) AS online, l.last_heartbeat_at
+         FROM connection_leases l WHERE l.tenant_id=a.tenant_id AND l.alias=a.alias
+       ) lease ON true
+       LEFT JOIN LATERAL (
+         SELECT count(*)::int AS fallback_accounts,
+                count(*) FILTER (WHERE ceiling.account_payer_tenant<>a.tenant_id)::int AS borrowed_accounts
+         FROM agent_account_bindings b
+         JOIN alias_routing_ceiling ceiling ON ceiling.tenant_id=b.tenant_id
+           AND ceiling.alias=b.agent_alias AND ceiling.account_id=b.account_id
+         WHERE b.tenant_id=a.tenant_id AND b.agent_alias=a.alias AND b.enabled
+       ) routing ON true
+       WHERE a.tenant_id=$1 OR EXISTS (
+         SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1 AND edge.to_tenant=a.tenant_id
+           AND edge.enabled AND edge.allow_read
+       )
+       ORDER BY a.tenant_id,a.alias`, [actorTenant]
+    );
+    return { items: result.rows.map((row) => ({ ...row, deployment_status: agentDeploymentStatus(row) })) };
+  }
+
+  /** Single-agent detail: same visibility rule as listAgents, plus the ordered fallback accounts
+   *  this alias may be routed to. external_account_id is disclosed only for accounts the actor's
+   *  own tenant pays for: a borrowed pool account shows who pays, which provider and the label,
+   *  never the payer's account identity. Returns undefined rather than throwing so the route can
+   *  answer a uniform 404 whether the alias is unknown or simply not visible to this actor. */
+  async getAgent(alias: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown> | undefined> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    const agentResult = await this.pool.query<Record<string, unknown>>(
+      `SELECT a.tenant_id,a.alias,a.harness_id,h.display_name AS harness_label,a.display_name,
+              a.enabled,a.container_name,a.runtime_user,a.home_directory,a.state_directory,
+              a.created_at,a.updated_at,
+              lease.online,lease.last_heartbeat_at,lease.instance_id
+       FROM agents a
+       LEFT JOIN harness_definitions h ON h.id=a.harness_id
+       LEFT JOIN LATERAL (
+         SELECT (l.lease_until>now()) AS online, l.last_heartbeat_at, l.instance_id
+         FROM connection_leases l WHERE l.tenant_id=a.tenant_id AND l.alias=a.alias
+       ) lease ON true
+       WHERE a.alias=$1 AND (a.tenant_id=$2 OR EXISTS (
+         SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$2 AND edge.to_tenant=a.tenant_id
+           AND edge.enabled AND edge.allow_read
+       ))
+       ORDER BY a.tenant_id LIMIT 1`, [alias, actorTenant]
+    );
+    const agent = agentResult.rows[0];
+    if (!agent) return undefined;
+    const routing = await this.pool.query<Record<string, unknown>>(
+      `SELECT ceiling.account_id,ceiling.account_payer_tenant,
+              (ceiling.account_payer_tenant<>ceiling.tenant_id) AS borrowed,
+              b.priority,COALESCE(b.enabled,false) AS enabled,
+              p.provider,p.label,p.shared_with_pool,p.enabled AS account_enabled,
+              CASE WHEN p.payer_tenant_id=$3 THEN p.external_account_id END AS external_account_id
+       FROM alias_routing_ceiling ceiling
+       JOIN provider_accounts p ON p.id=ceiling.account_id
+       LEFT JOIN agent_account_bindings b ON b.tenant_id=ceiling.tenant_id
+         AND b.agent_alias=ceiling.alias AND b.account_id=ceiling.account_id
+       WHERE ceiling.tenant_id=$1 AND ceiling.alias=$2
+       ORDER BY b.priority NULLS LAST,ceiling.account_id`,
+      [agent.tenant_id, agent.alias, actorTenant]
+    );
+    return { ...agent, deployment_status: agentDeploymentStatus(agent), routing_accounts: routing.rows };
   }
 
   async listOriginRelays(actorTenant: Tenant, actorAlias: string, limit = 200): Promise<Record<string, unknown>> {

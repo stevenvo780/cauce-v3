@@ -79,7 +79,11 @@ function has(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function valueRequired(mutation: ConfigMutation): Record<string, unknown> {
+/** alias_routing_ceiling is excluded because it carries no mutable state at all: it is granted
+ *  and revoked, so there is never a value to require. */
+type ValuedConfigMutation = Exclude<ConfigMutation, { resource: 'alias_routing_ceiling' }>;
+
+function valueRequired(mutation: ValuedConfigMutation): Record<string, unknown> {
   if (mutation.action === 'delete') return {};
   if (!mutation.value) throw new ConfigurationError('conflict', `${mutation.resource} ${mutation.action} requires value`);
   return mutation.value;
@@ -100,7 +104,8 @@ export class ConfigurationRepository {
     const hub = await withTransaction(this.pool, (client) => this.assertControl(client, actorTenant, actorAlias));
     const scope = hub ? null : actorTenant;
     const [
-      revision, tenants, rooms, memberships, edges, harnesses, policies, destinations, chainPolicies, revisions
+      revision, tenants, rooms, memberships, edges, harnesses, policies, destinations, chainPolicies,
+      agents, providerAccounts, routingCeiling, agentAccountBindings, revisions
     ] = await Promise.all([
         this.pool.query<{ revision: string }>('SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions'),
         this.pool.query<Record<string, unknown>>(
@@ -139,6 +144,35 @@ export class ConfigurationRepository {
            FROM agent_chain_policies ORDER BY id`
         ),
         this.pool.query<Record<string, unknown>>(
+          `SELECT tenant_id,alias,harness_id,display_name,enabled,
+                  container_name,runtime_user,home_directory,state_directory,created_at,updated_at
+           FROM agents WHERE $1::text IS NULL OR tenant_id=$1 ORDER BY tenant_id,alias`, [scope]
+        ),
+        // credential_ref never leaves the database, not even for its payer: it is a locator, not a
+        // secret, but rendering a listing has never needed it. A borrowing tenant additionally
+        // sees only the shape of a pooled account (who pays, which provider, its label);
+        // external_account_id and credential_ref_kind describe the payer's own credential
+        // material and stay behind the payer scope.
+        this.pool.query<Record<string, unknown>>(
+          `SELECT id,provider,payer_tenant_id,label,shared_with_pool,enabled,created_at,updated_at,
+                  CASE WHEN $1::text IS NULL OR payer_tenant_id=$1 THEN external_account_id END AS external_account_id,
+                  CASE WHEN $1::text IS NULL OR payer_tenant_id=$1 THEN credential_ref_kind END AS credential_ref_kind
+           FROM provider_accounts
+           WHERE $1::text IS NULL OR payer_tenant_id=$1 OR shared_with_pool
+           ORDER BY id`, [scope]
+        ),
+        this.pool.query<Record<string, unknown>>(
+          `SELECT tenant_id,alias,account_id,account_payer_tenant,created_by_tenant,created_at
+           FROM alias_routing_ceiling
+           WHERE $1::text IS NULL OR tenant_id=$1 OR account_payer_tenant=$1
+           ORDER BY tenant_id,alias,account_id`, [scope]
+        ),
+        this.pool.query<Record<string, unknown>>(
+          `SELECT tenant_id,agent_alias,account_id,priority,enabled,created_at,updated_at
+           FROM agent_account_bindings WHERE $1::text IS NULL OR tenant_id=$1
+           ORDER BY tenant_id,agent_alias,priority,account_id`, [scope]
+        ),
+        this.pool.query<Record<string, unknown>>(
           `SELECT id::text,actor_tenant,actor_alias,operation,summary,rolled_back_revision_id::text,created_at
            FROM config_revisions WHERE $1::text IS NULL OR actor_tenant=$1 ORDER BY id DESC LIMIT 100`, [scope]
         )
@@ -149,6 +183,8 @@ export class ConfigurationRepository {
       acl_edges: edges.rows, harness_definitions: harnesses.rows, role_policies: policies.rows,
       chain_policies: chainPolicies.rows,
       egress_destinations: destinations.rows,
+      agents: agents.rows, provider_accounts: providerAccounts.rows,
+      alias_routing_ceiling: routingCeiling.rows, agent_account_bindings: agentAccountBindings.rows,
       revisions: revisions.rows
     };
   }
@@ -272,6 +308,10 @@ export class ConfigurationRepository {
       throw new ConfigurationError('forbidden', 'waiving prior contact on an egress destination requires the hub');
     }
     if (hub) return;
+    // The registry resources (agent, provider_account, alias_routing_ceiling,
+    // agent_account_binding) are absent from this list on purpose: lending a subscription is a
+    // decision about somebody else's money, so it stays hub-only by the default-deny fall-through
+    // below rather than by a rule a future edit could soften.
     if (mutation.resource === 'room' || mutation.resource === 'membership'
       || mutation.resource === 'egress_destination') {
       if (mutation.tenant_id === actorTenant) return;
@@ -304,6 +344,10 @@ export class ConfigurationRepository {
     if (mutation.resource === 'harness') return this.harness(client, mutation);
     if (mutation.resource === 'chain_policy') return this.chainPolicy(client, mutation);
     if (mutation.resource === 'egress_destination') return this.destination(client, mutation);
+    if (mutation.resource === 'agent') return this.agent(client, mutation);
+    if (mutation.resource === 'provider_account') return this.providerAccount(client, mutation);
+    if (mutation.resource === 'alias_routing_ceiling') return this.routingCeiling(client, mutation);
+    if (mutation.resource === 'agent_account_binding') return this.agentAccountBinding(client, mutation);
     return this.policy(client, mutation);
   }
 
@@ -673,6 +717,250 @@ export class ConfigurationRepository {
     return {
       inverse: { ...identity, action: 'update', value: oldValue },
       summary: `update egress destination ${key}`
+    };
+  }
+
+  private async agent(
+    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'agent' }>
+  ): Promise<{ inverse: ConfigMutation; summary: string }> {
+    const key = `${mutation.tenant_id}/${mutation.alias}`;
+    const selected = await client.query<{
+      harness_id: string | null; display_name: string | null; enabled: boolean;
+      container_name: string | null; runtime_user: string | null;
+      home_directory: string | null; state_directory: string | null;
+    }>(
+      `SELECT harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory
+       FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [mutation.tenant_id, mutation.alias]
+    );
+    const old = selected.rows[0];
+    if (mutation.action === 'create') {
+      if (old) throw new ConfigurationError('conflict', 'agent already exists');
+      const value = valueRequired(mutation);
+      await client.query(
+        `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [mutation.tenant_id, mutation.alias, value.harness_id ?? null, value.display_name ?? null,
+          value.enabled ?? false, value.container_name ?? null, value.runtime_user ?? null,
+          value.home_directory ?? null, value.state_directory ?? null]
+      );
+      return {
+        inverse: { resource: 'agent', action: 'delete', tenant_id: mutation.tenant_id, alias: mutation.alias },
+        summary: `create agent ${key}`
+      };
+    }
+    if (!old) throw new ConfigurationError('not_found', 'agent was not found');
+    const oldValue = { ...old };
+    if (mutation.action === 'delete') {
+      const active = await client.query(
+        `SELECT 1 FROM deliveries d JOIN messages m ON m.id=d.message_id
+         WHERE d.status IN ${activeDeliveryStates} AND (
+           (d.recipient_tenant=$1 AND d.recipient_alias=$2) OR (m.tenant_id=$1 AND m.actor_alias=$2)
+         ) LIMIT 1`, [mutation.tenant_id, mutation.alias]
+      );
+      const liveLease = await client.query(
+        `SELECT 1 FROM connection_leases WHERE tenant_id=$1 AND alias=$2 AND lease_until>now() LIMIT 1`,
+        [mutation.tenant_id, mutation.alias]
+      );
+      if (active.rowCount || liveLease.rowCount) {
+        throw new ConfigurationError('conflict', 'agent has active deliveries or a live lease');
+      }
+      await client.query('DELETE FROM agents WHERE tenant_id=$1 AND alias=$2', [mutation.tenant_id, mutation.alias]);
+      return {
+        inverse: { resource: 'agent', action: 'create', tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue },
+        summary: `delete agent ${key}`
+      };
+    }
+    const value = valueRequired(mutation);
+    const next = {
+      harness_id: has(value, 'harness_id') ? value.harness_id as string | null : old.harness_id,
+      display_name: has(value, 'display_name') ? value.display_name as string | null : old.display_name,
+      enabled: has(value, 'enabled') ? value.enabled as boolean : old.enabled,
+      container_name: has(value, 'container_name') ? value.container_name as string | null : old.container_name,
+      runtime_user: has(value, 'runtime_user') ? value.runtime_user as string | null : old.runtime_user,
+      home_directory: has(value, 'home_directory') ? value.home_directory as string | null : old.home_directory,
+      state_directory: has(value, 'state_directory') ? value.state_directory as string | null : old.state_directory
+    };
+    await client.query(
+      `UPDATE agents SET harness_id=$3,display_name=$4,enabled=$5,container_name=$6,runtime_user=$7,
+         home_directory=$8,state_directory=$9,updated_at=now() WHERE tenant_id=$1 AND alias=$2`,
+      [mutation.tenant_id, mutation.alias, next.harness_id, next.display_name, next.enabled,
+        next.container_name, next.runtime_user, next.home_directory, next.state_directory]
+    );
+    return {
+      inverse: { resource: 'agent', action: 'update', tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue },
+      summary: `update agent ${key}`
+    };
+  }
+
+  /**
+   * A provider subscription. Identity, payer and credential locator are immutable: an account id
+   * is referenced from alias_routing_ceiling, so silently repointing it at another subscription
+   * would retroactively change what every existing loan means. Only the label, the pool
+   * publication and the enabled flag can move.
+   */
+  private async providerAccount(
+    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'provider_account' }>
+  ): Promise<{ inverse: ConfigMutation; summary: string }> {
+    const selected = await client.query<{
+      provider: string; external_account_id: string; payer_tenant_id: Tenant; label: string | null;
+      credential_ref_kind: 'env_path' | 'file' | 'secret_manager'; credential_ref: string;
+      shared_with_pool: boolean; enabled: boolean;
+    }>(
+      `SELECT provider,external_account_id,payer_tenant_id,label,credential_ref_kind,credential_ref,
+              shared_with_pool,enabled
+       FROM provider_accounts WHERE id=$1 FOR UPDATE`, [mutation.id]
+    );
+    const old = selected.rows[0];
+    if (mutation.action === 'create') {
+      if (old) throw new ConfigurationError('conflict', 'provider account already exists');
+      const value = valueRequired(mutation);
+      if (typeof value.provider !== 'string' || typeof value.external_account_id !== 'string' ||
+          typeof value.payer_tenant_id !== 'string' || typeof value.credential_ref_kind !== 'string' ||
+          typeof value.credential_ref !== 'string') {
+        throw new ConfigurationError(
+          'conflict',
+          'provider_account create requires provider, external_account_id, payer_tenant_id, credential_ref_kind and credential_ref'
+        );
+      }
+      await client.query(
+        `INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,label,
+           credential_ref_kind,credential_ref,shared_with_pool,enabled)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [mutation.id, value.provider, value.external_account_id, value.payer_tenant_id,
+          value.label ?? null, value.credential_ref_kind, value.credential_ref,
+          value.shared_with_pool ?? false, value.enabled ?? false]
+      );
+      return {
+        inverse: { resource: 'provider_account', action: 'delete', id: mutation.id },
+        summary: `create provider account ${mutation.id} paid by ${String(value.payer_tenant_id)}`
+      };
+    }
+    if (!old) throw new ConfigurationError('not_found', 'provider account was not found');
+    const oldValue = { ...old };
+    if (mutation.action === 'delete') {
+      // No explicit guard: alias_routing_ceiling holds a plain foreign key into this table, so
+      // Postgres already refuses (23503) to delete an account any alias may still be routed to.
+      await client.query('DELETE FROM provider_accounts WHERE id=$1', [mutation.id]);
+      return {
+        inverse: { resource: 'provider_account', action: 'create', id: mutation.id, value: oldValue },
+        summary: `delete provider account ${mutation.id}`
+      };
+    }
+    const value = valueRequired(mutation);
+    if (has(value, 'provider') || has(value, 'external_account_id') || has(value, 'payer_tenant_id') ||
+        has(value, 'credential_ref_kind') || has(value, 'credential_ref')) {
+      throw new ConfigurationError(
+        'conflict', 'provider_account identity and credential rotation require delete and create, not update'
+      );
+    }
+    const next = {
+      label: has(value, 'label') ? value.label as string | null : old.label,
+      // Withdrawing an account from the pool while another tenant is still routed to it raises
+      // 23503 from alias_routing_ceiling_borrow_requires_pool; databaseError() maps it to conflict.
+      shared_with_pool: has(value, 'shared_with_pool') ? value.shared_with_pool as boolean : old.shared_with_pool,
+      enabled: has(value, 'enabled') ? value.enabled as boolean : old.enabled
+    };
+    await client.query(
+      `UPDATE provider_accounts SET label=$2,shared_with_pool=$3,enabled=$4,updated_at=now() WHERE id=$1`,
+      [mutation.id, next.label, next.shared_with_pool, next.enabled]
+    );
+    return {
+      inverse: {
+        resource: 'provider_account', action: 'update', id: mutation.id,
+        value: {
+          label: oldValue.label, shared_with_pool: oldValue.shared_with_pool, enabled: oldValue.enabled
+        }
+      },
+      summary: `update provider account ${mutation.id}`
+    };
+  }
+
+  /** Granting or revoking an account for one alias. The payer mirror is read from
+   *  provider_accounts here rather than accepted from the caller, so the row Postgres validates
+   *  against the borrow guard is always the real payer. */
+  private async routingCeiling(
+    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'alias_routing_ceiling' }>
+  ): Promise<{ inverse: ConfigMutation; summary: string }> {
+    const identity = {
+      resource: 'alias_routing_ceiling', tenant_id: mutation.tenant_id,
+      alias: mutation.alias, account_id: mutation.account_id
+    } as const;
+    const key = `${mutation.tenant_id}/${mutation.alias} -> ${mutation.account_id}`;
+    const selected = await client.query(
+      `SELECT 1 FROM alias_routing_ceiling WHERE tenant_id=$1 AND alias=$2 AND account_id=$3 FOR UPDATE`,
+      [mutation.tenant_id, mutation.alias, mutation.account_id]
+    );
+    if (mutation.action === 'create') {
+      if (selected.rowCount) throw new ConfigurationError('conflict', 'routing ceiling entry already exists');
+      const account = await client.query<{ payer_tenant_id: Tenant }>(
+        'SELECT payer_tenant_id FROM provider_accounts WHERE id=$1 FOR SHARE', [mutation.account_id]
+      );
+      const payer = account.rows[0]?.payer_tenant_id;
+      if (!payer) throw new ConfigurationError('not_found', 'provider account was not found');
+      await client.query(
+        `INSERT INTO alias_routing_ceiling(tenant_id,alias,account_id,account_payer_tenant,created_by_tenant)
+         VALUES($1,$2,$3,$4,$5)`,
+        [mutation.tenant_id, mutation.alias, mutation.account_id, payer, mutation.tenant_id]
+      );
+      return { inverse: { ...identity, action: 'delete' }, summary: `grant routing ceiling ${key}` };
+    }
+    if (!selected.rowCount) throw new ConfigurationError('not_found', 'routing ceiling entry was not found');
+    // agent_account_bindings cascades: revoking the ceiling withdraws the routing in one step.
+    await client.query(
+      'DELETE FROM alias_routing_ceiling WHERE tenant_id=$1 AND alias=$2 AND account_id=$3',
+      [mutation.tenant_id, mutation.alias, mutation.account_id]
+    );
+    return { inverse: { ...identity, action: 'create' }, summary: `revoke routing ceiling ${key}` };
+  }
+
+  private async agentAccountBinding(
+    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'agent_account_binding' }>
+  ): Promise<{ inverse: ConfigMutation; summary: string }> {
+    const identity = {
+      resource: 'agent_account_binding', tenant_id: mutation.tenant_id,
+      agent_alias: mutation.agent_alias, account_id: mutation.account_id
+    } as const;
+    const key = `${mutation.tenant_id}/${mutation.agent_alias} -> ${mutation.account_id}`;
+    const selected = await client.query<{ priority: number; enabled: boolean }>(
+      `SELECT priority,enabled FROM agent_account_bindings
+       WHERE tenant_id=$1 AND agent_alias=$2 AND account_id=$3 FOR UPDATE`,
+      [mutation.tenant_id, mutation.agent_alias, mutation.account_id]
+    );
+    const old = selected.rows[0];
+    if (mutation.action === 'create') {
+      if (old) throw new ConfigurationError('conflict', 'agent account binding already exists');
+      const value = valueRequired(mutation);
+      await client.query(
+        `INSERT INTO agent_account_bindings(tenant_id,agent_alias,account_id,priority,enabled)
+         VALUES($1,$2,$3,$4,$5)`,
+        [mutation.tenant_id, mutation.agent_alias, mutation.account_id,
+          value.priority ?? 100, value.enabled ?? false]
+      );
+      return { inverse: { ...identity, action: 'delete' }, summary: `create agent account binding ${key}` };
+    }
+    if (!old) throw new ConfigurationError('not_found', 'agent account binding was not found');
+    const oldValue = { priority: old.priority, enabled: old.enabled };
+    if (mutation.action === 'delete') {
+      await client.query(
+        'DELETE FROM agent_account_bindings WHERE tenant_id=$1 AND agent_alias=$2 AND account_id=$3',
+        [mutation.tenant_id, mutation.agent_alias, mutation.account_id]
+      );
+      return {
+        inverse: { ...identity, action: 'create', value: oldValue },
+        summary: `delete agent account binding ${key}`
+      };
+    }
+    const value = valueRequired(mutation);
+    await client.query(
+      `UPDATE agent_account_bindings SET priority=$4,enabled=$5,updated_at=now()
+       WHERE tenant_id=$1 AND agent_alias=$2 AND account_id=$3`,
+      [mutation.tenant_id, mutation.agent_alias, mutation.account_id,
+        has(value, 'priority') ? value.priority as number : old.priority,
+        has(value, 'enabled') ? value.enabled as boolean : old.enabled]
+    );
+    return {
+      inverse: { ...identity, action: 'update', value: oldValue },
+      summary: `update agent account binding ${key}`
     };
   }
 

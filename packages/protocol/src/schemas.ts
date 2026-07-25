@@ -230,10 +230,68 @@ export const ChainPolicyConfigMutationSchema = z.object({
   }).strict().optional()
 }).strict();
 
+const AccountIdSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+
+/** The runtime/harness binding for an alias. Placement fields travel together (see the
+ *  migration's agents_placement_atomic CHECK): partial placement is rejected by Postgres. */
+export const AgentConfigMutationSchema = z.object({
+  resource: z.literal('agent'), action: ConfigActionSchema,
+  tenant_id: TenantSchema, alias: AliasSchema,
+  value: z.object({
+    harness_id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).nullable().optional(),
+    display_name: OptionalLabelSchema,
+    enabled: z.boolean().optional(),
+    container_name: z.string().trim().min(1).max(256).nullable().optional(),
+    runtime_user: z.string().trim().min(1).max(64).nullable().optional(),
+    home_directory: z.string().trim().min(1).max(512).nullable().optional(),
+    state_directory: z.string().trim().min(1).max(512).nullable().optional()
+  }).strict().optional()
+}).strict();
+
+/**
+ * A provider subscription. The id is global — an account is not owned by the tenant that uses
+ * it, it is PAID FOR by payer_tenant_id and lent to whoever the hub puts it in front of.
+ * credential_ref is a locator (env var name, file path, secret-manager path), never the secret
+ * itself; provider, external_account_id, payer_tenant_id and the credential locator are
+ * immutable after create, so rotation is delete+create (enforced in configuration.ts).
+ */
+export const ProviderAccountConfigMutationSchema = z.object({
+  resource: z.literal('provider_account'), action: ConfigActionSchema, id: AccountIdSchema,
+  value: z.object({
+    provider: z.string().regex(/^[a-z][a-z0-9_.-]{0,63}$/).optional(),
+    external_account_id: z.string().trim().min(1).max(256).optional(),
+    payer_tenant_id: TenantSchema.optional(),
+    label: OptionalLabelSchema,
+    credential_ref_kind: z.enum(['env_path', 'file', 'secret_manager']).optional(),
+    credential_ref: z.string().min(1).max(1024).optional(),
+    shared_with_pool: z.boolean().optional(),
+    enabled: z.boolean().optional()
+  }).strict().optional()
+}).strict();
+
+/** The exhaustive set of accounts an alias may ever be routed to. It carries no mutable state,
+ *  so it is granted and revoked, never updated. */
+export const AliasRoutingCeilingConfigMutationSchema = z.object({
+  resource: z.literal('alias_routing_ceiling'), action: z.enum(['create', 'delete']),
+  tenant_id: TenantSchema, alias: AliasSchema, account_id: AccountIdSchema
+}).strict();
+
+/** Fallback order within the ceiling; lower priority is tried first. There is no 'main' entry
+ *  here by design — see the migration and ADR-006. */
+export const AgentAccountBindingConfigMutationSchema = z.object({
+  resource: z.literal('agent_account_binding'), action: ConfigActionSchema,
+  tenant_id: TenantSchema, agent_alias: AliasSchema, account_id: AccountIdSchema,
+  value: z.object({
+    priority: z.number().int().min(0).max(32_767).optional(), enabled: z.boolean().optional()
+  }).strict().optional()
+}).strict();
+
 export const ConfigMutationSchema = z.discriminatedUnion('resource', [
   TenantConfigMutationSchema, RoomConfigMutationSchema, MembershipConfigMutationSchema,
   AclEdgeConfigMutationSchema, HarnessConfigMutationSchema, RolePolicyConfigMutationSchema,
-  ChainPolicyConfigMutationSchema, EgressDestinationConfigMutationSchema
+  ChainPolicyConfigMutationSchema, EgressDestinationConfigMutationSchema,
+  AgentConfigMutationSchema, ProviderAccountConfigMutationSchema,
+  AliasRoutingCeilingConfigMutationSchema, AgentAccountBindingConfigMutationSchema
 ]);
 export const ConfigChangeRequestSchema = z.object({
   dry_run: z.boolean().default(true), expected_revision: ConfigRevisionSchema.optional(), mutation: ConfigMutationSchema
