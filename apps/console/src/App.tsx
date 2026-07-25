@@ -66,7 +66,7 @@ interface RouteMatch {
 
 /** Snapshot crudo para useSyncExternalStore: debe ser un primitivo estable, no un objeto recién creado. */
 function currentPath(): string {
-  return window.location.hash.replace(/^#\/?/, '');
+  return window.location.pathname.replace(/^\//, '');
 }
 
 function decodeSegment(segment: string): string {
@@ -86,8 +86,8 @@ function matchRoute(path: string): RouteMatch {
 }
 
 function subscribe(callback: () => void): () => void {
-  window.addEventListener('hashchange', callback);
-  return () => window.removeEventListener('hashchange', callback);
+  window.addEventListener('popstate', callback);
+  return () => window.removeEventListener('popstate', callback);
 }
 
 function AuthStatus() {
@@ -126,7 +126,7 @@ export function App() {
   const { id: routeId, params } = matchRoute(path);
   const route = routes.find((candidate) => candidate.id === routeId) ?? routes[0];
   const Page = route.component;
-  // Único sub-detalle soportado hoy: #/fleet/:tenant/:alias reutiliza el workspace de terminal, no FleetPage.
+  // Único sub-detalle soportado hoy: /fleet/:tenant/:alias reutiliza el workspace de terminal, no FleetPage.
   const fleetAgentTarget = routeId === 'fleet' && params.length >= 2
     ? { tenantId: params[0], alias: params[1] }
     : undefined;
@@ -145,7 +145,7 @@ export function App() {
               const Icon = item.icon;
               return (
                 <li key={item.id}>
-                  <a href={`#/${item.id}`} aria-current={route.id === item.id ? 'page' : undefined}>
+                  <a href={`/${item.id}`} aria-current={route.id === item.id ? 'page' : undefined}>
                     <Icon size={18} aria-hidden={true} />
                     <span>{item.label}</span>
                   </a>

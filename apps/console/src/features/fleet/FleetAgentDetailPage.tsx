@@ -13,7 +13,7 @@ interface FleetAgentDetailPageProps {
 }
 
 /**
- * Detalle de un bot en #/fleet/:tenant/:alias. No construye una vista propia de
+ * Detalle de un bot en /fleet/:tenant/:alias. No construye una vista propia de
  * sesión/ACK/PTY: delega en OperatorWorkspace (Terminal), acotado a un único agente,
  * para reusar exactamente el mismo AckInspector, PtyTerminal y ultimateTerminalGate
  * ya verificados en Ultimate Terminal.
@@ -45,7 +45,7 @@ export function FleetAgentDetailPage({ tenantId, alias }: FleetAgentDetailPagePr
 
   return (
     <div className="ultimate-terminal-page">
-      <a className="button small secondary" href="#/fleet"><ArrowLeft size={14} aria-hidden="true" /> Volver a Fleet</a>
+      <a className="button small secondary" href="/fleet"><ArrowLeft size={14} aria-hidden="true" /> Volver a Fleet</a>
       {fleetLoading ? <LoadingState label={`Cargando detalle de ${alias}…`} /> : fleetError && !agent ? (
         <ErrorState error={fleetError} onRetry={refreshAll} />
       ) : (

@@ -5,7 +5,7 @@ import { renderWithApi } from './test/render';
 import { server } from './mocks/server';
 
 it('provides basic accessible landmarks and identity guidance', async () => {
-  window.location.hash = '#/fleet';
+  window.history.pushState({}, '', '/fleet');
   renderWithApi(<App />);
   expect(screen.getByRole('navigation', { name: /principal/i })).toBeInTheDocument();
   expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
@@ -26,24 +26,24 @@ it('shows the server-side login entry point when no BFF session exists', async (
   );
 });
 
-it('routes #/fleet/:tenant/:alias to the bot detail instead of the fleet list', async () => {
-  window.location.hash = '#/fleet/Steven/kant';
+it('routes /fleet/:tenant/:alias to the bot detail instead of the fleet list', async () => {
+  window.history.pushState({}, '', '/fleet/Steven/kant');
   renderWithApi(<App />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'kant' })).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: /volver a fleet/i })).toHaveAttribute('href', '#/fleet');
+  expect(screen.getByRole('link', { name: /volver a fleet/i })).toHaveAttribute('href', '/fleet');
   expect(screen.getByRole('link', { name: /^fleet$/i })).toHaveAttribute('aria-current', 'page');
 });
 
-it('falls back to Fleet for an unknown route id even with extra hash segments', async () => {
-  window.location.hash = '#/unknown/nested/segment';
+it('falls back to Fleet for an unknown route id even with extra pathname segments', async () => {
+  window.history.pushState({}, '', '/unknown/nested/segment');
   renderWithApi(<App />);
 
   expect(await screen.findByRole('heading', { level: 1, name: /fleet & presencia/i })).toBeInTheDocument();
 });
 
-it('ignores extra hash segments on non-fleet routes and keeps rendering the existing page', async () => {
-  window.location.hash = '#/terminal/unused/segment';
+it('ignores extra pathname segments on non-fleet routes and keeps rendering the existing page', async () => {
+  window.history.pushState({}, '', '/terminal/unused/segment');
   renderWithApi(<App />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Ultimate Terminal' })).toBeInTheDocument();

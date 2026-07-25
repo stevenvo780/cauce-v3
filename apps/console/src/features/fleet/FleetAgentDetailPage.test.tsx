@@ -8,7 +8,7 @@ it('resolves tenant + alias into a single agent and reuses the terminal workspac
   renderWithApi(<FleetAgentDetailPage tenantId="Steven" alias="kant" />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'kant' })).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: /volver a fleet/i })).toHaveAttribute('href', '#/fleet');
+  expect(screen.getByRole('link', { name: /volver a fleet/i })).toHaveAttribute('href', '/fleet');
   expect(await screen.findByText('1 agentes')).toBeInTheDocument();
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con kant/i }));

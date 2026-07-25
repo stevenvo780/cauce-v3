@@ -39,17 +39,18 @@ const borrowedAccount = {
   updated_at: '2026-07-20T10:00:00.000Z',
 };
 
-it('queda enrutada en #/accounts y #/assignments sin desplazar a las pantallas existentes', async () => {
-  window.location.hash = '#/accounts';
+it('queda enrutada en /accounts y /assignments sin desplazar a las pantallas existentes', async () => {
+  window.history.pushState({}, '', '/accounts');
   renderWithApi(<App />);
   expect(await screen.findByRole('heading', { level: 1, name: /cuentas de ia/i })).toBeInTheDocument();
 
-  window.location.hash = '#/assignments';
+  window.history.pushState({}, '', '/assignments');
+  window.dispatchEvent(new PopStateEvent('popstate'));
   expect(await screen.findByRole('heading', { level: 1, name: /matriz agente × cuenta/i })).toBeInTheDocument();
 
-  window.location.hash = '#/config';
+  window.history.pushState({}, '', '/config');
+  window.dispatchEvent(new PopStateEvent('popstate'));
   expect(await screen.findByRole('heading', { level: 1, name: /configuración/i })).toBeInTheDocument();
-  window.location.hash = '';
 });
 
 it('lista el inventario con pagador, publicación al pool y estado', async () => {
