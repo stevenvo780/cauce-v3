@@ -86,6 +86,9 @@ export function fakeRepository(): GatewayRepository {
     listAdapters: vi.fn(async () => ({ items: [] })),
     listOriginRelays: vi.fn(async () => ({ items: [] })),
     listAudit: vi.fn(async () => ({ items: [] })),
+    agentChain: vi.fn(async (traceId: string) => ({
+      trace_id: traceId, nodes: [], edges: [], origin_relays: []
+    })),
     getConfiguration: vi.fn(async () => ({ revision: 0, tenants: [], rooms: [], memberships: [], acl_edges: [] })),
     applyConfigurationChange: vi.fn(async (
       _tenant: Tenant, _alias: string, mutation: ConfigMutation, dryRun: boolean

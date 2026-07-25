@@ -63,7 +63,9 @@ export class ConfigurationRepository {
   async get(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
     const hub = await withTransaction(this.pool, (client) => this.assertControl(client, actorTenant, actorAlias));
     const scope = hub ? null : actorTenant;
-    const [revision, tenants, rooms, memberships, edges, harnesses, policies, revisions] = await Promise.all([
+    const [
+      revision, tenants, rooms, memberships, edges, harnesses, policies, chainPolicies, revisions
+    ] = await Promise.all([
         this.pool.query<{ revision: string }>('SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions'),
         this.pool.query<Record<string, unknown>>(
           `SELECT id,display_name,is_hub,enabled,created_at FROM tenants
@@ -89,6 +91,10 @@ export class ConfigurationRepository {
           `SELECT role,allow_route,allow_read,allow_control,created_at FROM role_policies ORDER BY role`
         ),
         this.pool.query<Record<string, unknown>>(
+          `SELECT id,progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled,updated_at
+           FROM agent_chain_policies ORDER BY id`
+        ),
+        this.pool.query<Record<string, unknown>>(
           `SELECT id::text,actor_tenant,actor_alias,operation,summary,rolled_back_revision_id::text,created_at
            FROM config_revisions WHERE $1::text IS NULL OR actor_tenant=$1 ORDER BY id DESC LIMIT 100`, [scope]
         )
@@ -97,7 +103,7 @@ export class ConfigurationRepository {
       revision: Number(revision.rows[0]?.revision ?? 0), observed_at: new Date().toISOString(),
       tenants: tenants.rows, rooms: rooms.rows, memberships: memberships.rows,
       acl_edges: edges.rows, harness_definitions: harnesses.rows, role_policies: policies.rows,
-      revisions: revisions.rows
+      chain_policies: chainPolicies.rows, revisions: revisions.rows
     };
   }
 
@@ -244,7 +250,47 @@ export class ConfigurationRepository {
     if (mutation.resource === 'membership') return this.membership(client, mutation);
     if (mutation.resource === 'acl_edge') return this.edge(client, mutation);
     if (mutation.resource === 'harness') return this.harness(client, mutation);
+    if (mutation.resource === 'chain_policy') return this.chainPolicy(client, mutation);
     return this.policy(client, mutation);
+  }
+
+  private async chainPolicy(
+    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'chain_policy' }>
+  ): Promise<{ inverse: ConfigMutation; summary: string }> {
+    const selected = await client.query<{
+      progress_relay_enabled: boolean; progress_relay_max_events: number; cycle_cut_enabled: boolean;
+    }>(
+      `SELECT progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled
+       FROM agent_chain_policies WHERE id=$1 FOR UPDATE`, [mutation.id]
+    );
+    const old = selected.rows[0];
+    if (!old) throw new ConfigurationError('not_found', 'chain policy was not found');
+    const value = valueRequired(mutation);
+    const next = {
+      progress_relay_enabled: has(value, 'progress_relay_enabled')
+        ? value.progress_relay_enabled as boolean : old.progress_relay_enabled,
+      progress_relay_max_events: has(value, 'progress_relay_max_events')
+        ? value.progress_relay_max_events as number : old.progress_relay_max_events,
+      cycle_cut_enabled: has(value, 'cycle_cut_enabled')
+        ? value.cycle_cut_enabled as boolean : old.cycle_cut_enabled
+    };
+    await client.query(
+      `UPDATE agent_chain_policies
+       SET progress_relay_enabled=$2,progress_relay_max_events=$3,cycle_cut_enabled=$4,updated_at=now()
+       WHERE id=$1`,
+      [mutation.id, next.progress_relay_enabled, next.progress_relay_max_events, next.cycle_cut_enabled]
+    );
+    return {
+      inverse: {
+        resource: 'chain_policy', action: 'update', id: mutation.id,
+        value: {
+          progress_relay_enabled: old.progress_relay_enabled,
+          progress_relay_max_events: old.progress_relay_max_events,
+          cycle_cut_enabled: old.cycle_cut_enabled
+        }
+      },
+      summary: `update chain policy ${mutation.id}`
+    };
   }
 
   private async tenant(

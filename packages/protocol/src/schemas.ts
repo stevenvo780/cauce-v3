@@ -172,9 +172,24 @@ export const RolePolicyConfigMutationSchema = z.object({
   }).strict().optional()
 }).strict();
 
+/**
+ * Chain visibility policy. It is a hub-only singleton: the store reads it once per
+ * terminal ACK, so it inherits optimistic revision locking, preview, audit and rollback
+ * instead of living in an environment variable or in raw SQL.
+ */
+export const ChainPolicyConfigMutationSchema = z.object({
+  resource: z.literal('chain_policy'), action: z.literal('update'), id: z.literal('default'),
+  value: z.object({
+    progress_relay_enabled: z.boolean().optional(),
+    progress_relay_max_events: z.number().int().min(1).max(64).optional(),
+    cycle_cut_enabled: z.boolean().optional()
+  }).strict().optional()
+}).strict();
+
 export const ConfigMutationSchema = z.discriminatedUnion('resource', [
   TenantConfigMutationSchema, RoomConfigMutationSchema, MembershipConfigMutationSchema,
-  AclEdgeConfigMutationSchema, HarnessConfigMutationSchema, RolePolicyConfigMutationSchema
+  AclEdgeConfigMutationSchema, HarnessConfigMutationSchema, RolePolicyConfigMutationSchema,
+  ChainPolicyConfigMutationSchema
 ]);
 export const ConfigChangeRequestSchema = z.object({
   dry_run: z.boolean().default(true), expected_revision: ConfigRevisionSchema.optional(), mutation: ConfigMutationSchema
