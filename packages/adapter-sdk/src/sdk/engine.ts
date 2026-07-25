@@ -5,6 +5,7 @@ import { DurableStore } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
 import type { HarnessAdapter, HarnessSessionReservation } from "../harnesses/shared.js";
 import type {
+  AdapterLogger,
   CancelDelivery,
   Clock,
   Delivery,
@@ -33,6 +34,7 @@ export interface AdapterEngineOptions {
   readonly store: DurableStore;
   readonly harness: HarnessAdapter;
   readonly publish: EventPublisher;
+  readonly logger?: AdapterLogger;
   readonly defaultTimeoutMs?: number;
   /** Test/diagnostic override; production derives renewal cadence from the authenticated claim. */
   readonly claimRenewalMs?: number;
@@ -47,6 +49,7 @@ export class AdapterEngine {
   private readonly store: DurableStore;
   private readonly harness: HarnessAdapter;
   private readonly publishEvent: EventPublisher;
+  private readonly logger: AdapterLogger;
   private readonly defaultTimeoutMs: number;
   private readonly claimRenewalMs: number | undefined;
   private readonly claimWatchdogMs: number | undefined;
@@ -69,6 +72,7 @@ export class AdapterEngine {
     this.store = options.store;
     this.harness = options.harness;
     this.publishEvent = options.publish;
+    this.logger = options.logger ?? (() => undefined);
     this.getAgentChain = options.getAgentChain;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_AGENTIC_TIMEOUT_MS;
     if (!Number.isSafeInteger(this.defaultTimeoutMs)
@@ -119,6 +123,16 @@ export class AdapterEngine {
     const fanin = delivery.body.type === "agent.fanin";
     const session = fanin ? {} : sessionFromDelivery(delivery);
     const reservation = fanin ? undefined : this.harness.reserveSession(session.sessionKey);
+
+    this.logger({
+      event: 'delivery_start',
+      delivery_id: delivery.delivery_id,
+      alias: delivery.recipient_alias,
+      attempt: delivery.attempt,
+      claim_token: delivery.claim_token,
+      timestamp: this.clock.now().toISOString(),
+    });
+
     const execution = this.runDelivery(delivery, session, reservation);
     const task = execution.finally(() => {
       if (this.tasks.get(delivery.delivery_id)?.promise === task) {
@@ -418,6 +432,11 @@ export class AdapterEngine {
   }
 
   private async emitClaimRenewal(record: InboxRecord): Promise<void> {
+    // Generate progress summary based on time elapsed since delivery started
+    const elapsedMs = this.clock.now().getTime() - new Date(record.updated_at).getTime();
+    const elapsedSecs = Math.floor(elapsedMs / 1000);
+    const progressSummary = `En ejecución, ${elapsedSecs}s transcurridos.`;
+
     const event: DeliveryEvent = {
       event_id: randomUUID(),
       delivery_id: record.delivery_id,
@@ -427,6 +446,7 @@ export class AdapterEngine {
       phase: "started",
       occurred_at: this.clock.now().toISOString(),
       claim_renewal: true,
+      progress_summary: progressSummary,
       ...(record.origin === undefined ? {} : { origin: record.origin }),
     };
     // A renewal must reach stable local storage before it can be treated as
@@ -564,6 +584,28 @@ export class AdapterEngine {
       ...(additions.output === undefined ? {} : { output: additions.output }),
       ...(additions.error === undefined ? {} : { error: additions.error }),
     };
+
+    // Log state transition
+    this.logger({
+      event: 'delivery_state',
+      delivery_id: record.delivery_id,
+      phase,
+      timestamp: this.clock.now().toISOString(),
+    });
+
+    // Log delivery completion if it's a terminal state
+    if (phase === 'done' || phase === 'failed') {
+      const logEntry: Parameters<AdapterLogger>[0] = {
+        event: 'delivery_end',
+        delivery_id: record.delivery_id,
+        phase,
+        timestamp: this.clock.now().toISOString(),
+      };
+      if (additions.error?.code) logEntry.error_code = additions.error.code;
+      if (additions.error?.message) logEntry.error_message = additions.error.message;
+      this.logger(logEntry);
+    }
+
     await this.store.enqueue(event);
     await this.publishEvent(event);
   }

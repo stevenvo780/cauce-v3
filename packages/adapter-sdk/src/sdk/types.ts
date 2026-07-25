@@ -174,6 +174,8 @@ export interface DeliveryEvent {
   readonly claim_renewal?: true;
   readonly output?: StructuredOutput;
   readonly error?: AdapterErrorPayload;
+  /** Progress summary for claim renewal heartbeats; feeds the store relay. */
+  readonly progress_summary?: string;
 }
 
 export interface ConsumerConnection {
@@ -243,6 +245,22 @@ export interface SafeRunnerLog {
 }
 
 export type SafeRunnerLogger = (entry: SafeRunnerLog) => void;
+
+/** Adapter operational event logger (observability). Optional; graceful degradation if not provided. */
+export interface AdapterLog {
+  event: 'delivery_start' | 'delivery_state' | 'delivery_end' | 'claim_renewal_start' | 'claim_renewal_end' | 'connection_error';
+  timestamp?: string; // ISO8601, optional for convenience
+  delivery_id?: string;
+  phase?: DeliveryPhase;
+  alias?: string;
+  attempt?: number;
+  claim_token?: string;
+  error_code?: string;
+  error_message?: string;
+  reason?: string; // for connection errors
+}
+
+export type AdapterLogger = (entry: AdapterLog) => void;
 
 export interface HarnessExecutionContext {
   readonly sessionId?: string;

@@ -276,18 +276,28 @@ export class HarnessAdapter {
       parsed = this.definition.parse(result.stdout);
     } catch (error) {
       if (result.exitCode !== 0) {
+        // Extract real cause from stderr, sanitized to avoid leaking secrets
+        const causeDetail = sanitizeProcessOutput(result.stderr, 100);
+        const message = causeDetail
+          ? `Harness exited with code ${result.exitCode} without structured output: ${causeDetail}`
+          : "Harness exited after execution began without structured output; completion state is unknown";
         throw new ProcessExecutionError(
           "PROCESS_EXIT_AMBIGUOUS",
-          "Harness exited after execution began without structured output; completion state is unknown",
+          message,
           false,
         );
       }
       throw error;
     }
     if (result.exitCode !== 0 && parsed.output.status !== "failed") {
+      // Extract real cause from stderr
+      const causeDetail = sanitizeProcessOutput(result.stderr, 100);
+      const message = causeDetail
+        ? `Harness exited with code ${result.exitCode}: ${causeDetail}`
+        : "Harness exited with a non-zero status after execution began; completion state is unknown";
       throw new ProcessExecutionError(
         "PROCESS_EXIT_AMBIGUOUS",
-        "Harness exited with a non-zero status after execution began; completion state is unknown",
+        message,
         false,
       );
     }
@@ -407,4 +417,27 @@ function abortReason(signal: AbortSignal): Error {
 export function executionError(error: unknown): AdapterError {
   if (error instanceof AdapterError) return error;
   return new AdapterError("EXECUTION_FAILED", "Harness execution failed", true);
+}
+
+/**
+ * Sanitize process output by removing secret-like patterns and truncating.
+ * Patterns removed: API keys, tokens, passwords, OAuth credentials, bearer tokens.
+ */
+function sanitizeProcessOutput(stderr: string, maxLengthBytes: number): string {
+  if (!stderr || stderr.trim().length === 0) return "";
+
+  // Remove common secret patterns while preserving line breaks for readability
+  let sanitized = stderr
+    .replace(/\b(?:api[_-]?key|api[_-]?secret|secret|password|passwd|token|bearer|authorization|x-api-key)\s*[:=]\s*[^\s]+/gi, "[REDACTED]")
+    .replace(/\b(?:oauth|refresh|access)\s*[_]?token\s*[:=]\s*[^\s]+/gi, "[REDACTED]")
+    .replace(/\b(?:aws_access_key_id|aws_secret_access_key)\s*[:=]\s*[^\s]+/gi, "[REDACTED]");
+
+  // Truncate to first few lines or max bytes, whichever comes first
+  const lines = sanitized.split("\n");
+  const firstLines = lines.slice(0, 3).join("\n");
+
+  if (firstLines.length > maxLengthBytes) {
+    return firstLines.substring(0, maxLengthBytes) + "...";
+  }
+  return firstLines;
 }

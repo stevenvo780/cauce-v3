@@ -7,6 +7,7 @@ import type { HarnessAdapter } from '../harnesses/shared.js';
 import type {
   AdapterCapabilities,
   AdapterConfig,
+  AdapterLogger,
   ClientFrame,
   Clock,
   ConsumerConnection,
@@ -24,6 +25,7 @@ export interface AdapterClientOptions {
   readonly clock?: Clock;
   readonly random?: () => number;
   readonly onError?: (code: string) => void;
+  readonly logger?: AdapterLogger;
   /** Runs under the stable-alias lease before the first transport connection. */
   readonly onLeaseAcquired?: () => Promise<void>;
   /** Test/diagnostic override; production derives renewal cadence from the delivery claim. */
@@ -73,6 +75,7 @@ export class AdapterClient {
   private readonly clock: Clock;
   private readonly backoff: ExponentialBackoff;
   private readonly engine: AdapterEngine;
+  private readonly logger: AdapterLogger;
   private activeConnection: ConsumerConnection | undefined;
   private sendTail: Promise<void> = Promise.resolve();
   private running = false;
@@ -86,6 +89,7 @@ export class AdapterClient {
     this.store = options.store;
     this.harness = options.harness;
     this.onError = options.onError ?? (() => undefined);
+    this.logger = options.logger ?? (() => undefined);
     this.onLeaseAcquired = options.onLeaseAcquired;
     this.clock = options.clock ?? systemClock;
     this.backoff = new ExponentialBackoff(
@@ -96,6 +100,7 @@ export class AdapterClient {
       store: this.store,
       harness: this.harness,
       publish: (event) => this.sendEvent(event),
+      logger: this.logger,
       ...(options.config.defaultTimeoutMs === undefined
         ? {}
         : { defaultTimeoutMs: options.config.defaultTimeoutMs }),
@@ -140,7 +145,14 @@ export class AdapterClient {
         } catch (error) {
           if (signal.aborted) break;
           if (error instanceof AdapterError && !error.retryable) throw error;
-          this.onError(connectionErrorCode(error));
+          const errorCode = connectionErrorCode(error);
+          this.onError(errorCode);
+          this.logger({
+            event: 'connection_error',
+            timestamp: this.clock.now().toISOString(),
+            reason: errorCode,
+            error_message: error instanceof Error ? error.message : String(error),
+          });
         } finally {
           const connection = this.activeConnection;
           this.activeConnection = undefined;
