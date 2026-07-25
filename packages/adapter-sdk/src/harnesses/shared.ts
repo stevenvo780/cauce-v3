@@ -70,9 +70,12 @@ function protocolPrompt(
 ): string {
   return [
     "Return exactly one structured result with this JSON shape:",
-    '{"reply":string|null,"messages":[{"to":string,"body":string}],"status":"done"|"failed","retryable":boolean,"artifacts":[{"name":string,"uri":string,"media_type"?:string,"sha256"?:string}]}',
+    '{"reply":string|null,"messages":[{"to":string,"body":string}],"status":"done"|"failed","retryable":boolean,"artifacts":[{"name":string,"uri":string,"media_type"?:string,"sha256"?:string}],"tools"?:[{"id":string,"name":string,"arguments":object}]}',
     "Do not wrap the result in Markdown.",
     "Protocol invariants:",
+    '- Optional "tools" array allows you to request information: [{"id":"<unique-id>","name":"get_agent_chain_status","arguments":{"trace_id":"<trace-id>"}}].',
+    '- Use get_agent_chain_status to inspect the delegation chain status when you need to know the state of delegated work.',
+    '- The response will include a "tools" array with matching id and a "result" field containing chain status or error.',
     '- "messages" is the only Cauce V3 mechanism that durably sends work to another agent.',
     '- If you claim that you contacted, asked, notified, or delegated to an agent, include the real send in "messages".',
     '- Never use legacy enviar_al_bus, busx, or /tmp/clawbus-outbox paths; they are not connected to Cauce V3.',

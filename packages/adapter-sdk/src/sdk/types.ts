@@ -66,6 +66,19 @@ export interface NotifyDirective {
   readonly kind: NotifyKind;
 }
 
+export interface ToolRequest {
+  readonly id: string;
+  readonly name: string;
+  readonly arguments: Record<string, unknown>;
+}
+
+export interface ToolResponse {
+  readonly id: string;
+  readonly name: string;
+  readonly result: Record<string, unknown> | string | null;
+  readonly error?: string;
+}
+
 export interface StructuredOutput {
   readonly reply: string | null;
   readonly messages: readonly RelayMessage[];
@@ -73,6 +86,7 @@ export interface StructuredOutput {
   readonly status: StructuredStatus;
   readonly retryable: boolean;
   readonly artifacts: readonly OutputArtifact[];
+  readonly tools?: readonly (ToolRequest | ToolResponse)[];
 }
 
 /** Trusted session facts copied into a delivery by the authenticated gateway. */
