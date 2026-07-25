@@ -673,9 +673,10 @@ function sessionFromDelivery(delivery: Delivery): { sessionKey?: string } {
     ? origin.metadata.bridge_tenant
     : delivery.tenant_id;
   const scope = JSON.stringify({
-    namespace: "cauce-authenticated-session-v1",
+    namespace: "cauce-authenticated-session-v2",
     tenant_id: bridgeTenant,
     recipient_alias: delivery.recipient_alias,
+    attempt: delivery.attempt,
     origin: {
       adapter: origin.adapter,
       channel,
@@ -683,7 +684,7 @@ function sessionFromDelivery(delivery: Delivery): { sessionKey?: string } {
       conversation_id: conversationId,
     },
   });
-  return { sessionKey: `auth-v1:${createHash("sha256").update(scope).digest("base64url")}` };
+  return { sessionKey: `auth-v2:${createHash("sha256").update(scope).digest("base64url")}` };
 }
 
 function timeoutFromBody(body: Record<string, unknown>, fallback: number): number {

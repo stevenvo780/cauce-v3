@@ -1612,3 +1612,38 @@ test("stale claim token neither executes nor acknowledges the current event", as
   await context.engine.handleDelivery(delivery("stale-claim", 1, 1, claimToken(1, 1)));
   assert.equal(context.runner.calls, 1);
 });
+
+test("authenticated session keys include attempt number to isolate retries", async () => {
+  const runner = new ControlledRunner();
+  runner.stdout = JSON.stringify({
+    reply: "attempt 1 failed",
+    messages: [],
+    status: "failed",
+    retryable: true,
+    artifacts: [],
+  });
+  const context = await setup("engine-session-attempt-v2", runner);
+  const attempt1 = delivery("session-attempt-v2", 1, 1);
+  const attempt2 = delivery("session-attempt-v2", 1, 2);
+
+  // Send first attempt (will fail with retryable=true)
+  await context.engine.handleDelivery(attempt1);
+  assert.equal(runner.calls, 1, "first attempt should execute");
+  const session1 = context.runner.requests[0]?.args.at(-1);
+  assert.ok(session1, "session 1 should exist");
+
+  // Switch runner to return success for attempt 2
+  runner.stdout = SUCCESS;
+
+  // Send second attempt of same delivery
+  await context.engine.handleDelivery(attempt2);
+  assert.ok(
+    runner.calls >= 2,
+    `expected second attempt to execute; got ${runner.calls} calls`,
+  );
+  const session2 = context.runner.requests[1]?.args.at(-1);
+  assert.ok(session2, "session 2 should exist");
+
+  // Different attempts should use different session IDs (isolated by v2 namespace including attempt)
+  assert.notEqual(session1, session2, "attempts 1 and 2 must have different session IDs due to attempt scoping in v2");
+});
