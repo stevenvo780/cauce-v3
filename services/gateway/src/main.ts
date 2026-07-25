@@ -8,6 +8,8 @@ import {
 } from './auth.js';
 import { buildLoopbackHealthProbe } from './health.js';
 import { OidcBffAuthProvider, PostgresOidcSessionStore } from './oidc-bff.js';
+import { loadTerminalConfig, terminalCapabilityAnnouncement } from './terminal/config.js';
+import { registerTerminalControlPlane } from './terminal/plugin.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
@@ -124,6 +126,9 @@ const authProvider = await configuredAuthProvider(pool);
 const mtls = authProvider instanceof MtlsAuthProvider;
 const isolatedHealth = mtls || process.env.NODE_ENV === 'production';
 const https = await configuredHttps(authProvider);
+// --- PTY control plane (module M1-gateway-control-plane) -------------------------------
+// Undefined unless CAUCE_TERMINAL_ENABLED=1; in that case the gateway boots exactly as today.
+const terminal = await loadTerminalConfig();
 const app = await buildGateway({
   pool,
   authProvider,
@@ -132,8 +137,17 @@ const app = await buildGateway({
   requireAckClaims: process.env.CAUCE_REQUIRE_ACK_CLAIMS !== '0',
   exposeHealthRoutes: !isolatedHealth,
   ...(consoleOrigins === undefined ? {} : { consoleOrigins }),
+  // Announcing the capability is what makes /v3/console/access emit `ultimate-terminal.connect`
+  // and /v3/console/terminal/capability stop answering 501.
+  ...(terminal === undefined ? {} : { terminalCapability: terminalCapabilityAnnouncement(terminal) }),
   ...(https === undefined ? {} : { https })
 });
+// The routes live in a plugin registered after buildGateway so they inherit the console
+// security hook, the Origin allowlist and the websocket support app.ts already installed.
+if (terminal !== undefined) {
+  await app.register(registerTerminalControlPlane, { pool, authProvider, config: terminal });
+}
+// --- end PTY control plane -------------------------------------------------------------
 const health = isolatedHealth ? await buildLoopbackHealthProbe({
   pool,
   logger: true,
