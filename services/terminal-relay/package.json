@@ -1,0 +1,14 @@
+{
+  "name": "@cauce/terminal-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/main.ts",
+  "scripts": {
+    "test": "vitest run src/*.test.ts",
+    "typecheck": "tsc --noEmit -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
