@@ -1207,3 +1207,84 @@ describe('Telegram group egress', () => {
     expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', arity: 2 }]);
   });
 });
+
+function proactiveRelay(overrides: Partial<Origin> = {}): TelegramOriginRelay {
+  const origin: Origin = {
+    adapter: 'telegram',
+    channel: 'telegram',
+    conversation_id: '201',
+    relay: [],
+    metadata: { bridge_alias: 'kant', bridge_tenant: TENANT, chat_type: 'group', proactive: true },
+    ...overrides
+  };
+  return relay({
+    origin,
+    payload: {
+      relay_kind: 'notify',
+      terminal: true,
+      outcome: 'done',
+      kind: 'task_complete',
+      result: {
+        output: {
+          reply: 'terminé la tarea larga',
+          messages: [],
+          status: 'done',
+          retryable: false,
+          artifacts: []
+        }
+      },
+      correlation: {
+        request_id: '33333333-3333-4333-8333-333333333333',
+        message_id: '44444444-4444-4444-8444-444444444444',
+        trace_id: 'trace-notify',
+        root_message_id: '44444444-4444-4444-8444-444444444444'
+      }
+    }
+  });
+}
+
+describe('Telegram proactive egress', () => {
+  it('delivers a proactive relay without touching the inbound activity reaction', async () => {
+    const api = new FakeTelegram();
+    const finishes: Array<{ outcome: string }> = [];
+    const repository = new MemoryEgressRepository(proactiveRelay());
+
+    await new TelegramEgressWorker({
+      repository,
+      aliases: [config()],
+      apis: new Map([['kant', api]]),
+      activity: {
+        begin: () => undefined,
+        finish: (_target, outcome) => finishes.push({ outcome }),
+        stop: () => undefined
+      }
+    }).runOnce();
+
+    expect(api.sends).toEqual([{ chat: '201', text: 'terminé la tarea larga', arity: 2 }]);
+    expect(repository.acknowledgements.at(-1)).toMatchObject({ status: 'sent' });
+    // No inbound message exists, so no reaction may be placed on one.
+    expect(finishes).toEqual([]);
+  });
+
+  it('dead-letters a proactive relay that claims to answer an inbound message', async () => {
+    const api = new FakeTelegram();
+    const repository = new MemoryEgressRepository(proactiveRelay({ external_message_id: '301' }));
+    await new TelegramEgressWorker({
+      repository, aliases: [config()], apis: new Map([['kant', api]])
+    }).runOnce();
+
+    expect(api.sends).toHaveLength(0);
+    expect(repository.acknowledgements[0]?.status).toBe('dead');
+  });
+
+  it('keeps allowed_chat_ids as an independent second key', async () => {
+    const api = new FakeTelegram();
+    const repository = new MemoryEgressRepository(proactiveRelay({ conversation_id: '999' }));
+    await new TelegramEgressWorker({
+      repository, aliases: [config()], apis: new Map([['kant', api]])
+    }).runOnce();
+
+    expect(api.sends).toHaveLength(0);
+    expect(repository.acknowledgements[0]?.status).toBe('dead');
+  });
+});

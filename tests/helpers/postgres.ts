@@ -70,6 +70,7 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
       await pool.query(`TRUNCATE TABLE
         gateway_oidc_sessions,telegram_egress_effects,channel_bridge_cursors,channel_bridge_leases,
         shadow_compare_verdicts,shadow_human_reply_guards,shadow_router_mappings,shadow_router_inbox,
+        egress_notifications,egress_destinations,egress_contacts,
         audit_events,dead_letters,jobs,adapter_outbox,adapter_inbox,delivery_acks,
         deliveries,idempotency_keys,messages,connection_leases,agent_chain_progress
         RESTART IDENTITY CASCADE`);

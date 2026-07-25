@@ -60,6 +60,7 @@ function delivery(id: string): Delivery {
 const delegatedOutput: StructuredOutput = {
   reply: null,
   messages: [{ to: "socrates", body: "implement the bounded fix" }],
+  notify: [],
   status: "done",
   retryable: false,
   artifacts: [],
@@ -68,6 +69,7 @@ const delegatedOutput: StructuredOutput = {
 const completedOutput: StructuredOutput = {
   reply: "REVIEW=PASS",
   messages: [],
+  notify: [],
   status: "done",
   retryable: false,
   artifacts: [],

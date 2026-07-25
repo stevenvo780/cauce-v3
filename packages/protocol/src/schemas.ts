@@ -98,7 +98,8 @@ export const PublishMessageSchema = z.object({
 const ReservedInternalMessageTypes = new Set([
   'agent.message',
   'agent.response',
-  'agent.fanin'
+  'agent.fanin',
+  'agent.notify'
 ]);
 const AuthenticatedPublishBodySchema = z.record(z.string(), z.unknown()).superRefine(
   (body, context) => {
@@ -120,6 +121,25 @@ export const AuthenticatedPublishSchema = z.object({
   idempotency_key: z.string().min(1).max(200),
   lane: LaneSchema.default('interactive'),
   priority: z.number().int().min(-100).max(100).default(0)
+}).strict();
+
+/** Proactive egress. An agent never names a chat: it names a logical handle an operator created. */
+export const NOTIFY_KINDS = ['task_complete', 'decision_request', 'digest', 'alert'] as const;
+export const NotifyKindSchema = z.enum(NOTIFY_KINDS);
+export const EgressHandleSchema = z.string().regex(/^[a-z][a-z0-9_.-]{0,63}$/);
+export const MAX_NOTIFY_BODY_BYTES = 4_096;
+
+/**
+ * Public proactive-egress payload. Like AuthenticatedPublishSchema it deliberately
+ * has no actor, tenant, session, channel, origin or conversation_id: the only
+ * destination a caller can express is a handle that is already on the allowlist.
+ */
+export const NotifyRequestSchema = z.object({
+  destination: EgressHandleSchema,
+  kind: NotifyKindSchema,
+  body: z.string().min(1).max(MAX_NOTIFY_BODY_BYTES),
+  idempotency_key: z.string().min(1).max(200),
+  dry_run: z.boolean().default(false)
 }).strict();
 
 export const CreateJobSchema = z.object({
@@ -168,7 +188,31 @@ export const RolePolicyConfigMutationSchema = z.object({
   resource: z.literal('role_policy'), action: ConfigActionSchema,
   role: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
   value: z.object({
-    allow_route: z.boolean().optional(), allow_read: z.boolean().optional(), allow_control: z.boolean().optional()
+    allow_route: z.boolean().optional(), allow_read: z.boolean().optional(),
+    allow_control: z.boolean().optional(), allow_notify: z.boolean().optional()
+  }).strict().optional()
+}).strict();
+/** The proactive-egress allowlist is versioned configuration, not runtime data. */
+export const EgressDestinationConfigMutationSchema = z.object({
+  resource: z.literal('egress_destination'), action: ConfigActionSchema,
+  tenant_id: TenantSchema, alias: AliasSchema, handle: EgressHandleSchema,
+  value: z.object({
+    adapter: z.literal('telegram').optional(),
+    channel: z.string().min(1).max(128).optional(),
+    conversation_id: z.string().regex(/^-?[1-9][0-9]{0,19}$/).optional(),
+    conversation_kind: z.enum(['dm', 'group']).optional(),
+    display_label: OptionalLabelSchema,
+    allow_kinds: z.array(NotifyKindSchema).min(1).max(4).optional(),
+    require_prior_contact: z.boolean().optional(),
+    contact_ttl_days: z.number().int().min(1).max(3650).optional(),
+    min_interval_seconds: z.number().int().min(0).max(86_400).optional(),
+    max_per_hour: z.number().int().min(0).max(60).optional(),
+    max_per_day: z.number().int().min(0).max(500).optional(),
+    max_per_root: z.number().int().min(0).max(20).optional(),
+    quiet_hours_start: z.number().int().min(0).max(23).nullable().optional(),
+    quiet_hours_end: z.number().int().min(0).max(23).nullable().optional(),
+    quiet_hours_tz: z.string().min(1).max(64).optional(),
+    enabled: z.boolean().optional()
   }).strict().optional()
 }).strict();
 
@@ -189,7 +233,7 @@ export const ChainPolicyConfigMutationSchema = z.object({
 export const ConfigMutationSchema = z.discriminatedUnion('resource', [
   TenantConfigMutationSchema, RoomConfigMutationSchema, MembershipConfigMutationSchema,
   AclEdgeConfigMutationSchema, HarnessConfigMutationSchema, RolePolicyConfigMutationSchema,
-  ChainPolicyConfigMutationSchema
+  ChainPolicyConfigMutationSchema, EgressDestinationConfigMutationSchema
 ]);
 export const ConfigChangeRequestSchema = z.object({
   dry_run: z.boolean().default(true), expected_revision: ConfigRevisionSchema.optional(), mutation: ConfigMutationSchema
@@ -322,6 +366,8 @@ export type Lane = z.infer<typeof LaneSchema>;
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 export type DeliveryEnvelope = z.infer<typeof DeliveryEnvelopeSchema>;
 export type ConfigMutation = z.infer<typeof ConfigMutationSchema>;
+export type NotifyKind = z.infer<typeof NotifyKindSchema>;
+export type NotifyRequest = z.infer<typeof NotifyRequestSchema>;
 export type ConfigChangeRequest = z.infer<typeof ConfigChangeRequestSchema>;
 export type WsInbound = z.infer<typeof WsInboundSchema>;
 export type WsOutbound = z.infer<typeof WsOutboundSchema>;

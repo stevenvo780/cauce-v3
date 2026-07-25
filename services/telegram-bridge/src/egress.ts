@@ -216,8 +216,16 @@ export class TelegramEgressWorker {
     const chatId = event.origin.conversation_id;
     const interimAcknowledgement = isInterimAcknowledgement(event.payload);
     const threadId = originThreadId(event);
+    // A proactive relay does not answer an inbound message. If one ever claimed
+    // to, finishActivity would place a reaction on an arbitrary message id of
+    // that chat. allowed_chat_ids remains the independent second key: a
+    // destination approved in the database still cannot reach a chat this bridge
+    // was not configured for.
+    const forgedProactiveReply = event.payload.relay_kind === 'notify'
+      && event.origin.external_message_id !== undefined;
     if (!bridgeAlias || !config || !api || config.tenant_id !== event.tenant_id || event.origin.channel !== 'telegram' ||
-        !config.allowed_chat_ids.includes(chatId) || !egressAuthorized(config, chatId, threadId)) {
+        !config.allowed_chat_ids.includes(chatId) || !egressAuthorized(config, chatId, threadId)
+        || forgedProactiveReply) {
       await this.repository.ack(this.acknowledgement(event, {
         status: 'dead', error: 'Telegram origin is not authorized for this tenant and alias'
       }));

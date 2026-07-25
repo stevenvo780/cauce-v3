@@ -74,6 +74,7 @@ test("plain final text falls back safely for every native harness dialect", () =
   assert.deepEqual(cases.map(({ output }) => output), ["Hermes", "OpenCode", "Claude", "Codex", "OpenClaw"].map((name) => ({
     reply: `${name} plain`,
     messages: [],
+    notify: [],
     status: "done",
     retryable: false,
     artifacts: [],
@@ -84,6 +85,7 @@ test("OpenClaw unwraps the live bridge envelope and never exposes metadata", () 
   const payload = {
     reply: "payload reply",
     messages: [],
+    notify: [],
     status: "done",
     retryable: false,
     artifacts: [],

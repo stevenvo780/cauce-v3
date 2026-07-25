@@ -9,7 +9,7 @@ import type { Hello, Origin, Tenant } from '@cauce/protocol';
 import { AliasSchema, OriginSchema, TenantSchema } from '@cauce/protocol';
 
 export type PrincipalRole = 'agent' | 'operator' | 'adapter';
-export type PrincipalPermission = 'route' | 'read' | 'control';
+export type PrincipalPermission = 'route' | 'read' | 'control' | 'notify';
 
 /** Values in this context are authenticated server-side authority, not request metadata. */
 export interface Principal {
@@ -59,7 +59,7 @@ function nonEmptyString(value: unknown, name: string, max = 512): string {
 }
 
 const roles = new Set<PrincipalRole>(['agent', 'operator', 'adapter']);
-const permissions = new Set<PrincipalPermission>(['route', 'read', 'control']);
+const permissions = new Set<PrincipalPermission>(['route', 'read', 'control', 'notify']);
 
 function stringSet<T extends string>(value: unknown, allowed: ReadonlySet<T>, name: string): T[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !allowed.has(item as T))) {

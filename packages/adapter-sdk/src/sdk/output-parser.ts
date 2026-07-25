@@ -1,5 +1,7 @@
 import { AdapterError, MalformedOutputError } from "./errors.js";
 import type {
+  NotifyDirective,
+  NotifyKind,
   OutputArtifact,
   ParsedHarnessOutput,
   RelayMessage,
@@ -27,8 +29,19 @@ export const MAX_RELAY_BODY_BYTES = 64 * 1024;
 export const MAX_RELAY_AGGREGATE_BYTES = 256 * 1024;
 export const MAX_EXPANDED_RELAY_AGGREGATE_BYTES = 512 * 1024;
 export const MAX_RELAY_MESSAGES = 100;
+/** Proactive egress reaches a human, so its limits are an order of magnitude tighter. */
+export const MAX_NOTIFY_DIRECTIVES = 4;
+export const MAX_NOTIFY_BODY_BYTES = 4 * 1024;
+export const MAX_NOTIFY_AGGREGATE_BYTES = 8 * 1024;
+export const NOTIFY_KINDS: readonly NotifyKind[] = [
+  "task_complete",
+  "decision_request",
+  "digest",
+  "alert",
+];
 const MAX_OPENCLAW_UNWRAP_DEPTH = 8;
 const CANONICAL_MESSAGE_TARGET = /^(?:@all|[a-z][a-z0-9_-]{0,63})$/u;
+const CANONICAL_NOTIFY_HANDLE = /^[a-z][a-z0-9_.-]{0,63}$/u;
 const INVISIBLE_TEXT = /[\p{White_Space}\p{Cf}\p{Cc}\p{Mn}\p{Me}]/gu;
 const LEADING_INVISIBLE_TEXT = /^[\p{White_Space}\p{Cf}\p{Cc}\p{Mn}\p{Me}]+/u;
 
@@ -88,6 +101,46 @@ function parseMessages(value: unknown): readonly RelayMessage[] {
   });
 }
 
+/**
+ * `notify` is deliberately absent from requiredKeys(): every live agent emits the
+ * five mandatory keys and must keep validating unchanged. An output without it
+ * normalizes to an empty list, which produces exactly zero rows downstream.
+ */
+function parseNotify(value: unknown): readonly NotifyDirective[] {
+  if (!Array.isArray(value)) {
+    throw new MalformedOutputError("'notify' must be an array");
+  }
+  if (value.length > MAX_NOTIFY_DIRECTIVES) {
+    throw new MalformedOutputError(`'notify' exceeded the ${MAX_NOTIFY_DIRECTIVES} directive limit`);
+  }
+  let aggregateBodyBytes = 0;
+  return value.map((entry, index) => {
+    if (!isObject(entry) || typeof entry.to !== "string" || typeof entry.body !== "string") {
+      throw new MalformedOutputError(`notify[${index}] must contain string 'to' and 'body'`);
+    }
+    if (!CANONICAL_NOTIFY_HANDLE.test(entry.to)) {
+      throw new MalformedOutputError(`notify[${index}].to must be a canonical destination handle`);
+    }
+    if (typeof entry.kind !== "string" || !NOTIFY_KINDS.includes(entry.kind as NotifyKind)) {
+      throw new MalformedOutputError(
+        `notify[${index}].kind must be one of ${NOTIFY_KINDS.join(", ")}`,
+      );
+    }
+    if (!hasVisibleText(entry.body)) {
+      throw new MalformedOutputError(`notify[${index}].body must contain visible text`);
+    }
+    const bodyBytes = Buffer.byteLength(entry.body, "utf8");
+    if (bodyBytes > MAX_NOTIFY_BODY_BYTES) {
+      throw new MalformedOutputError(`notify[${index}].body exceeded the UTF-8 byte limit`);
+    }
+    aggregateBodyBytes += bodyBytes;
+    if (aggregateBodyBytes > MAX_NOTIFY_AGGREGATE_BYTES) {
+      throw new MalformedOutputError("'notify' bodies exceeded the aggregate UTF-8 byte limit");
+    }
+    return { to: entry.to, body: entry.body, kind: entry.kind as NotifyKind };
+  });
+}
+
 function parseArtifacts(value: unknown): readonly OutputArtifact[] {
   if (!Array.isArray(value)) {
     throw new MalformedOutputError("'artifacts' must be an array");
@@ -128,6 +181,7 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
   return {
     reply: value.reply,
     messages: parseMessages(value.messages),
+    notify: value.notify === undefined ? [] : parseNotify(value.notify),
     status: value.status,
     // `retryable` has no meaning after a successful terminal result. Native
     // models occasionally emit the redundant contradictory pair
@@ -154,6 +208,8 @@ export function validateDeliveryOutput(
       false,
     );
   }
+  // `notify` is intentionally NOT covered by this rule: telling a human that a
+  // long task failed is the single most valuable proactive message there is.
   if (output.status === "failed" && output.messages.length > 0) {
     throw new AdapterError(
       "FAILED_OUTPUT_MESSAGES_FORBIDDEN",
@@ -177,6 +233,8 @@ export function validateDeliveryOutput(
 
   if (output.status !== "done") return output;
 
+  // A notification is a side effect, never the result of the delivery: an agent
+  // cannot replace its answer to the caller with a DM to a human.
   if (output.reply === null && output.messages.length === 0) {
     throw new AdapterError(
       "MISSING_FINAL_REPLY",
@@ -305,6 +363,7 @@ function fallbackTextOutput(text: string, context: string): StructuredOutput {
   return {
     reply,
     messages: [],
+    notify: [],
     status: "done",
     retryable: false,
     artifacts: [],
