@@ -17,7 +17,9 @@ import type {
   DeliveryEvent,
 } from "../src/sdk/types.js";
 
-const root = resolve(".test-state-observability");
+// Under `.test-state/`, which is the ignored path every other suite uses; the old
+// sibling directory was not covered by .gitignore and showed up as untracked noise.
+const root = resolve(".test-state/observability");
 
 async function storeFor(name: string): Promise<DurableStore> {
   const directory = resolve(root, name);
@@ -93,6 +95,38 @@ class MockRunner implements CommandRunner {
   }
 }
 
+/** Holds the harness open so the engine's claim-renewal timer actually fires. */
+class BlockingRunner implements CommandRunner {
+  private release_ = (): void => undefined;
+  private readonly gate = new Promise<void>((resolve) => {
+    this.release_ = resolve;
+  });
+
+  release(): void {
+    this.release_();
+  }
+
+  async run(_request: CommandRunRequest): Promise<CommandRunResult> {
+    await this.gate;
+    return {
+      stdout: SUCCESS,
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      cancelled: false,
+    };
+  }
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("condition was not met before the deadline");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 test("delivery_start and delivery_state events are emitted", async () => {
   const store = await storeFor("observability-delivery-events");
   const runner = new MockRunner();
@@ -139,9 +173,33 @@ test("delivery_start and delivery_state events are emitted", async () => {
   assert.equal(endLog.phase, "done");
 });
 
-test("progress_summary is generated in claim renewals", async () => {
-  const store = await storeFor("observability-progress");
-  const runner = new MockRunner();
+/**
+ * Every field a `DeliveryEvent` carries has to be read by `AdapterClient.sendEvent`,
+ * which is the only place an event becomes a wire frame. A field no branch there
+ * consumes is written by the engine and then silently dropped, so it looks implemented
+ * from inside the adapter while reaching nothing outside it. `progress_summary` was
+ * exactly that, which is why this asserts the field set rather than any one payload.
+ */
+const WIRE_MAPPED_EVENT_FIELDS = new Set<string>([
+  "event_id",
+  "delivery_id",
+  "attempt",
+  "claim_token",
+  "epoch",
+  "phase",
+  "occurred_at",
+  "output",
+  "error",
+  // Local-only, but genuinely read by the client: `duplicate` gates store bookkeeping
+  // and `claim_renewal` decides whether an ack_result confirms or loses the claim.
+  "duplicate",
+  "claim_renewal",
+  "origin",
+]);
+
+test("a claim renewal carries no field the wire mapping drops", async () => {
+  const store = await storeFor("observability-renewal-fields");
+  const runner = new BlockingRunner();
   const harness = new HarnessAdapter({
     definition: fakeDefinition,
     runner,
@@ -156,38 +214,28 @@ test("progress_summary is generated in claim renewals", async () => {
       events.push(event);
       return Promise.resolve();
     },
+    claimRenewalMs: 20,
   });
 
-  const del = delivery("delivery-2");
   await store.activateEpoch(1);
-
-  // Create an accepted record to test claim renewal
-  const accepted = await store.accept(del, new Date().toISOString());
-  if (accepted.acceptance === "created") {
-    // Mark as started to enable claim renewal simulation
-    const started = await store.transition(del.delivery_id, "started", new Date().toISOString(), {
-      retainRequest: true,
-      attempt: del.attempt,
-      claimToken: del.claim_token,
-    });
-
-    // Manually emit a claim renewal event (simulating heartbeat)
-    const renewalEvent: DeliveryEvent = {
-      event_id: "renewal-event-1",
-      delivery_id: started.delivery_id,
-      attempt: started.attempt,
-      claim_token: started.claim_token,
-      epoch: store.epoch,
-      phase: "started",
-      occurred_at: new Date().toISOString(),
-      claim_renewal: true,
-      progress_summary: "En ejecución, 5s transcurridos.",
-    };
-
-    // Verify progress_summary field exists
-    assert(renewalEvent.progress_summary, "progress_summary should be present in renewal event");
-    assert(renewalEvent.progress_summary.includes("En ejecución"), "progress_summary should describe current execution state");
+  const running = engine.handleDelivery(delivery("delivery-2"));
+  try {
+    await waitFor(() => events.some((event) => event.claim_renewal === true));
+  } finally {
+    runner.release();
+    await running;
   }
+
+  const renewal = events.find((event) => event.claim_renewal === true);
+  assert(renewal, "the engine should emit at least one claim renewal");
+  assert.equal(renewal.phase, "started");
+
+  const dropped = Object.keys(renewal).filter((field) => !WIRE_MAPPED_EVENT_FIELDS.has(field));
+  assert.deepEqual(
+    dropped,
+    [],
+    `claim renewal carries field(s) no wire mapping reads: ${dropped.join(", ")}`,
+  );
 });
 
 test("logger is optional (graceful degradation)", async () => {

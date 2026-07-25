@@ -41,6 +41,18 @@ const server = new Server(
   }
 );
 
+/** Mirrors the deliveries.status CHECK constraint in packages/store/migrations/001_initial.sql. */
+const DELIVERY_STATUSES = [
+  'pending',
+  'leased',
+  'accepted',
+  'started',
+  'done',
+  'failed',
+  'retry',
+  'dead',
+] as const;
+
 // Tool descriptions
 const TOOLS = [
   {
@@ -61,7 +73,7 @@ const TOOLS = [
   {
     name: 'entregas',
     description:
-      'List deliveries filtered by alias and/or status (claimed, acked, dead)',
+      'List deliveries filtered by alias and/or status',
     inputSchema: {
       type: 'object',
       properties: {
@@ -71,7 +83,10 @@ const TOOLS = [
         },
         estado: {
           type: 'string',
-          enum: ['claimed', 'acked', 'dead'],
+          // Exactly the deliveries.status CHECK constraint in migration 001. The
+          // advertised list used to be claimed/acked/dead, none of which except `dead`
+          // is a real status, so filtering by the documented values matched nothing.
+          enum: DELIVERY_STATUSES,
           description: 'Optional: filter by delivery status',
         },
         limit: {
@@ -212,6 +227,19 @@ async function main() {
     const testResult = await pool.query('SELECT 1');
     if (!testResult.rows.length) {
       throw new Error('Database connection test failed');
+    }
+
+    // Every tool filters on this value against `connection_leases.tenant_id` and
+    // `deliveries.recipient_tenant`, so a tenant that does not exist is not an empty
+    // fleet: it is a misconfiguration that would answer every question with "nothing
+    // here" and never say why. Room ids like `grp.steven` are the usual mistake.
+    const known = await pool.query<{ id: string }>('SELECT id FROM tenants ORDER BY id');
+    if (!known.rows.some((row) => row.id === ensuredTenantId)) {
+      throw new Error(
+        `CAUCE_TENANT_ID '${ensuredTenantId}' is not a known tenant. `
+        + `Expected one of: ${known.rows.map((row) => row.id).join(', ')}. `
+        + 'This must be a tenant id, not a room id.'
+      );
     }
 
     console.error('[mcp-fleet-monitor] Connected to database');

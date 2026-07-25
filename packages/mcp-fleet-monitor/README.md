@@ -18,7 +18,7 @@ Exposes 5 tools for fleet introspection:
 
 - Node.js >= 22
 - PostgreSQL connection (DATABASE_URL)
-- CAUCE_TENANT_ID (e.g., "grp.steven")
+- CAUCE_TENANT_ID (a tenant id such as "Steven", never a room id like "grp.steven")
 
 ### Setup
 
@@ -34,7 +34,7 @@ pnpm -F @cauce/mcp-fleet-monitor build
 
 ```bash
 export DATABASE_URL="postgresql://user:pass@localhost:5432/cauce"
-export CAUCE_TENANT_ID="grp.steven"
+export CAUCE_TENANT_ID="Steven"
 node packages/mcp-fleet-monitor/dist/server.js
 ```
 
@@ -58,7 +58,7 @@ Add this to your MCP config (typically `~/.claude/mcp.json` or via Claude Code s
       "args": ["<path>/packages/mcp-fleet-monitor/dist/server.js"],
       "env": {
         "DATABASE_URL": "postgresql://...",
-        "CAUCE_TENANT_ID": "grp.steven"
+        "CAUCE_TENANT_ID": "Steven"
       }
     }
   }
@@ -125,9 +125,9 @@ cadena(trace_id="abc123def456")
       {
         "hop": 0,
         "source_alias": "jarvis",
-        "source_tenant": "grp.steven",
+        "source_tenant": "Steven",
         "target_alias": "atlas",
-        "target_tenant": "grp.steven",
+        "target_tenant": "Steven",
         "status": "delegated",
         "created_at": "2026-07-25T13:00:00Z"
       },
@@ -199,7 +199,7 @@ Ensure the environment variable is exported before starting the server.
 Check that the PostgreSQL connection is valid and the database exists.
 
 ### "CAUCE_TENANT_ID not set"
-Specify the tenant ID (e.g., "grp.steven") to scope queries.
+Specify the tenant ID (e.g., "Steven") to scope queries. It must be a tenant, not a room id such as "grp.steven"; the server now refuses to start on an unknown tenant.
 
 ### No data returned
 Verify that the tenant ID matches the data in your database, and that the leases/deliveries tables contain records for that tenant.

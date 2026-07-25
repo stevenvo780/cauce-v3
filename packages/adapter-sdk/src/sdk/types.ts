@@ -66,19 +66,6 @@ export interface NotifyDirective {
   readonly kind: NotifyKind;
 }
 
-export interface ToolRequest {
-  readonly id: string;
-  readonly name: string;
-  readonly arguments: Record<string, unknown>;
-}
-
-export interface ToolResponse {
-  readonly id: string;
-  readonly name: string;
-  readonly result: Record<string, unknown> | string | null;
-  readonly error?: string;
-}
-
 export interface StructuredOutput {
   readonly reply: string | null;
   readonly messages: readonly RelayMessage[];
@@ -86,7 +73,6 @@ export interface StructuredOutput {
   readonly status: StructuredStatus;
   readonly retryable: boolean;
   readonly artifacts: readonly OutputArtifact[];
-  readonly tools?: readonly (ToolRequest | ToolResponse)[];
 }
 
 /** Trusted session facts copied into a delivery by the authenticated gateway. */
@@ -174,8 +160,6 @@ export interface DeliveryEvent {
   readonly claim_renewal?: true;
   readonly output?: StructuredOutput;
   readonly error?: AdapterErrorPayload;
-  /** Progress summary for claim renewal heartbeats; feeds the store relay. */
-  readonly progress_summary?: string;
 }
 
 export interface ConsumerConnection {
@@ -247,18 +231,32 @@ export interface SafeRunnerLog {
 
 export type SafeRunnerLogger = (entry: SafeRunnerLog) => void;
 
-/** Adapter operational event logger (observability). Optional; graceful degradation if not provided. */
+/**
+ * Adapter operational event logger (observability). Optional; graceful degradation if
+ * not provided.
+ *
+ * There is deliberately no `claim_token` field. The claim token is the capability that
+ * authorizes ACKing a delivery, and these entries land in the unit journal, so carrying
+ * one here would put a live credential in a log an operator reads and pastes around.
+ * A delivery_id plus attempt identifies the same work without granting anything.
+ */
 export interface AdapterLog {
-  event: 'delivery_start' | 'delivery_state' | 'delivery_end' | 'claim_renewal_start' | 'claim_renewal_end' | 'connection_error';
+  event:
+    | 'delivery_start'
+    | 'delivery_state'
+    | 'delivery_end'
+    | 'claim_renewal_start'
+    | 'claim_renewal_end'
+    | 'connection_error';
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;
   alias?: string;
   attempt?: number;
-  claim_token?: string;
   error_code?: string;
   error_message?: string;
-  reason?: string; // for connection errors
+  /** Connection failure code, or why a claim renewal ended. */
+  reason?: string;
 }
 
 export type AdapterLogger = (entry: AdapterLog) => void;

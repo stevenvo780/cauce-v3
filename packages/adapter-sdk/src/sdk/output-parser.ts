@@ -6,8 +6,6 @@ import type {
   ParsedHarnessOutput,
   RelayMessage,
   StructuredOutput,
-  ToolRequest,
-  ToolResponse,
 } from "./types.js";
 
 type JsonObject = Record<string, unknown>;
@@ -166,42 +164,6 @@ function parseArtifacts(value: unknown): readonly OutputArtifact[] {
   });
 }
 
-function parseTools(value: unknown): readonly (ToolRequest | ToolResponse)[] {
-  if (!Array.isArray(value)) {
-    throw new MalformedOutputError("'tools' must be an array");
-  }
-  return value.map((entry, index) => {
-    if (!isObject(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") {
-      throw new MalformedOutputError(`tools[${index}] must contain string 'id' and 'name'`);
-    }
-    if ("result" in entry || "error" in entry) {
-      const entryData = entry as Record<string, unknown>;
-      const result = entryData.result ?? null;
-      const response: ToolResponse = {
-        id: entry.id,
-        name: entry.name,
-        result: typeof result === "string" || isObject(result) ? result : (result as Record<string, unknown>),
-        ...(entryData.error !== undefined ? { error: entryData.error as string } : {}),
-      };
-      return response;
-    } else if ("arguments" in entry) {
-      if (!isObject(entry.arguments)) {
-        throw new MalformedOutputError(`tools[${index}].arguments must be an object`);
-      }
-      const request: ToolRequest = {
-        id: entry.id,
-        name: entry.name,
-        arguments: entry.arguments as Record<string, unknown>,
-      };
-      return request;
-    } else {
-      throw new MalformedOutputError(
-        `tools[${index}] must have either 'arguments' (request) or 'result'/'error' (response)`
-      );
-    }
-  });
-}
-
 export function validateStructuredOutput(value: unknown): StructuredOutput {
   if (!isObject(value)) {
     throw new MalformedOutputError("Structured output must be a JSON object");
@@ -227,7 +189,6 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
     // re-executing or weakening validation of the field's type.
     retryable: value.status === "done" ? false : value.retryable,
     artifacts: parseArtifacts(value.artifacts),
-    ...(value.tools === undefined ? {} : { tools: parseTools(value.tools) }),
   };
 }
 

@@ -14,7 +14,7 @@ pnpm -F @cauce/mcp-fleet-monitor build
 
 ```bash
 export DATABASE_URL="postgresql://cauce:password@localhost:5432/cauce"
-export CAUCE_TENANT_ID="grp.steven"
+export CAUCE_TENANT_ID="Steven"
 ```
 
 ## Running the Server
@@ -29,7 +29,7 @@ The server will start and output logs to stderr:
 
 ```
 [mcp-fleet-monitor] Connected to database
-[mcp-fleet-monitor] Tenant: grp.steven
+[mcp-fleet-monitor] Tenant: Steven
 [mcp-fleet-monitor] Connecting stdio transport...
 [mcp-fleet-monitor] Server running on stdio
 ```
@@ -64,7 +64,7 @@ Add to your MCP config (e.g., `~/.claude/mcp.json`):
       "args": ["/path/to/packages/mcp-fleet-monitor/dist/src/server.js"],
       "env": {
         "DATABASE_URL": "postgresql://...",
-        "CAUCE_TENANT_ID": "grp.steven"
+        "CAUCE_TENANT_ID": "Steven"
       }
     }
   }
@@ -164,9 +164,9 @@ cadena(trace_id="some-trace-id")
     {
       "hop": 0,
       "source_alias": "jarvis",
-      "source_tenant": "grp.steven",
+      "source_tenant": "Steven",
       "target_alias": "atlas",
-      "target_tenant": "grp.steven",
+      "target_tenant": "Steven",
       "status": "delegated",
       "created_at": "2026-07-25T13:00:00.000Z"
     }

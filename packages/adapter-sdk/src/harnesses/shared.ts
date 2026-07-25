@@ -63,6 +63,19 @@ export interface HarnessRoutingTarget {
   readonly online: boolean;
 }
 
+/**
+ * The structured result deliberately declares no tool-call affordance. Anything this
+ * prompt advertises, the adapter must be able to execute on the spot; the adapter runs
+ * beside its harness and reaches the store only through the gateway socket, so it can
+ * answer no question that needs a database read. Advertising one anyway is worse than
+ * silence: the agent believes it holds a capability, spends a turn calling it and gets
+ * "unknown tool" back.
+ *
+ * Read-only fleet and delegation-chain introspection is served instead by the
+ * `@cauce/mcp-fleet-monitor` MCP server (`cadena`, `estado_flota`, `entregas`,
+ * `dead_letters`, `salud`), which holds a pool and resolves visibility per node against
+ * the caller's own tenant. Add capabilities there, not here.
+ */
 function protocolPrompt(
   prompt: string,
   origin: RelayOrigin | undefined,
@@ -70,12 +83,9 @@ function protocolPrompt(
 ): string {
   return [
     "Return exactly one structured result with this JSON shape:",
-    '{"reply":string|null,"messages":[{"to":string,"body":string}],"status":"done"|"failed","retryable":boolean,"artifacts":[{"name":string,"uri":string,"media_type"?:string,"sha256"?:string}],"tools"?:[{"id":string,"name":string,"arguments":object}]}',
+    '{"reply":string|null,"messages":[{"to":string,"body":string}],"status":"done"|"failed","retryable":boolean,"artifacts":[{"name":string,"uri":string,"media_type"?:string,"sha256"?:string}]}',
     "Do not wrap the result in Markdown.",
     "Protocol invariants:",
-    '- Optional "tools" array allows you to request information: [{"id":"<unique-id>","name":"get_agent_chain_status","arguments":{"trace_id":"<trace-id>"}}].',
-    '- Use get_agent_chain_status to inspect the delegation chain status when you need to know the state of delegated work.',
-    '- The response will include a "tools" array with matching id and a "result" field containing chain status or error.',
     '- "messages" is the only Cauce V3 mechanism that durably sends work to another agent.',
     '- If you claim that you contacted, asked, notified, or delegated to an agent, include the real send in "messages".',
     '- Never use legacy enviar_al_bus, busx, or /tmp/clawbus-outbox paths; they are not connected to Cauce V3.',
@@ -427,7 +437,7 @@ function sanitizeProcessOutput(stderr: string, maxLengthBytes: number): string {
   if (!stderr || stderr.trim().length === 0) return "";
 
   // Remove common secret patterns while preserving line breaks for readability
-  let sanitized = stderr
+  const sanitized = stderr
     .replace(/\b(?:api[_-]?key|api[_-]?secret|secret|password|passwd|token|bearer|authorization|x-api-key)\s*[:=]\s*[^\s]+/gi, "[REDACTED]")
     .replace(/\b(?:oauth|refresh|access)\s*[_]?token\s*[:=]\s*[^\s]+/gi, "[REDACTED]")
     .replace(/\b(?:aws_access_key_id|aws_secret_access_key)\s*[:=]\s*[^\s]+/gi, "[REDACTED]");

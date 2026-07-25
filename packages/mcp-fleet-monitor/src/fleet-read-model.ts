@@ -97,7 +97,8 @@ export class FleetReadModel {
         alias: string;
         active_instance_id: string | null;
         lease_expires_at: Date | null;
-        epoch: number | null;
+        // bigint: node-postgres hands these back as strings.
+        epoch: string | null;
         last_activity: Date | null;
       }>(
         `
@@ -105,21 +106,21 @@ export class FleetReadModel {
           SELECT DISTINCT recipient_alias as alias FROM deliveries
           WHERE recipient_tenant = $1
           UNION
-          SELECT alias FROM leases
+          SELECT alias FROM connection_leases
           WHERE tenant_id = $1
         )
         SELECT
           aa.alias,
-          l.active_instance_id,
-          l.lease_expires_at,
+          l.instance_id as active_instance_id,
+          l.lease_until as lease_expires_at,
           l.epoch,
           MAX(m.created_at) as last_activity
         FROM all_aliases aa
-        LEFT JOIN leases l ON l.alias = aa.alias AND l.tenant_id = $1
+        LEFT JOIN connection_leases l ON l.alias = aa.alias AND l.tenant_id = $1
         LEFT JOIN deliveries d ON d.recipient_alias = aa.alias AND d.recipient_tenant = $1
         LEFT JOIN messages m ON m.id = d.message_id
         WHERE $2::text IS NULL OR aa.alias = $2
-        GROUP BY aa.alias, l.active_instance_id, l.lease_expires_at, l.epoch
+        GROUP BY aa.alias, l.instance_id, l.lease_until, l.epoch
         ORDER BY aa.alias
         `,
         [this.tenantId, alias || null]
@@ -133,18 +134,14 @@ export class FleetReadModel {
         };
         if (row.active_instance_id) obj.active_instance_id = row.active_instance_id;
         if (row.lease_expires_at) obj.lease_expires_at = row.lease_expires_at.toISOString();
-        if (row.epoch) obj.epoch = row.epoch;
+        if (row.epoch !== null) obj.epoch = Number(row.epoch);
         if (row.last_activity) obj.last_activity = row.last_activity.toISOString();
         return obj;
       });
 
       return { data: mappedData, available: true };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return {
-        data: [],
-        available: false,
-      };
+      throw queryFailure('estado_flota', error);
     }
   }
 
@@ -175,7 +172,7 @@ export class FleetReadModel {
           d.attempt,
           d.max_attempts,
           d.created_at,
-          (m.correlation->>'root_message_id')::text as root_message_id
+          (m.body->'correlation'->>'root_message_id')::text as root_message_id
         FROM deliveries d
         LEFT JOIN messages m ON m.id = d.message_id
         WHERE d.recipient_tenant = $1
@@ -204,7 +201,7 @@ export class FleetReadModel {
 
       return { data: mappedData, available: true };
     } catch (error) {
-      return { data: [], available: false };
+      throw queryFailure('entregas', error);
     }
   }
 
@@ -264,7 +261,7 @@ export class FleetReadModel {
 
       return { data: mappedData, available: true, trace_id: effectiveTraceId };
     } catch (error) {
-      return { data: [], available: false };
+      throw queryFailure('cadena', error);
     }
   }
 
@@ -338,31 +335,33 @@ export class FleetReadModel {
 
       return { data: groups, available: true };
     } catch (error) {
-      return { data: [], available: false };
+      throw queryFailure('dead_letters', error);
     }
   }
 
   async salud(): Promise<HealthSummary> {
     try {
       // Count live leases
-      const leaseResult = await this.pool.query<{ live: number; total: number }>(
+      const leaseResult = await this.pool.query<{ live: string; total: string }>(
         `
         SELECT
-          COUNT(*) FILTER (WHERE lease_expires_at > now()) as live,
+          COUNT(*) FILTER (WHERE lease_until > now()) as live,
           COUNT(*) as total
-        FROM leases
+        FROM connection_leases
         WHERE tenant_id = $1
         `,
         [this.tenantId]
       );
 
-      const live = leaseResult.rows[0]?.live || 0;
-      const total = leaseResult.rows[0]?.total || 0;
+      // node-postgres returns bigint counts as strings; comparing them raw made
+      // `live >= total` a lexicographic test ("9" >= "10") instead of a numeric one.
+      const live = Number(leaseResult.rows[0]?.live ?? 0);
+      const total = Number(leaseResult.rows[0]?.total ?? 0);
 
       // Count deliveries by status
       const deliveriesResult = await this.pool.query<{
         status: string;
-        count: number;
+        count: string;
       }>(
         `
         SELECT status, COUNT(*) as count
@@ -375,7 +374,7 @@ export class FleetReadModel {
 
       const deliveriesByStatus: Record<string, number> = {};
       for (const row of deliveriesResult.rows) {
-        deliveriesByStatus[row.status] = row.count;
+        deliveriesByStatus[row.status] = Number(row.count);
       }
 
       const acked = deliveriesByStatus['acked'] || 0;
@@ -397,10 +396,22 @@ export class FleetReadModel {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      return {
-        summary: 'Flota: status unavailable',
-        timestamp: new Date().toISOString(),
-      };
+      throw queryFailure('salud', error);
     }
   }
+}
+
+/**
+ * A read model that cannot run its query has to say so out loud.
+ *
+ * Every one of these handlers used to swallow the failure and return an empty payload
+ * with `available:false`, which is indistinguishable from a genuinely idle fleet. That
+ * is how `estado_flota` and `salud` sat broken against a table name that does not exist
+ * (`leases`; the real one is `connection_leases`) while still answering every call
+ * successfully. The server's CallTool handler turns this into an MCP `isError` response,
+ * so the operator sees the cause instead of a confident empty answer.
+ */
+function queryFailure(tool: string, error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`${tool} read model query failed: ${message}`);
 }

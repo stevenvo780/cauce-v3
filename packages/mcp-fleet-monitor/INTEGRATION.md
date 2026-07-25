@@ -39,7 +39,7 @@ packages/mcp-fleet-monitor/dist/src/server.js
 
 ```bash
 export DATABASE_URL="postgresql://cauce:password@localhost:5432/cauce"
-export CAUCE_TENANT_ID="grp.steven"  # Adjust for your tenant
+export CAUCE_TENANT_ID="Steven"  # Adjust for your tenant
 ```
 
 3. **Test the server**:
@@ -48,7 +48,7 @@ export CAUCE_TENANT_ID="grp.steven"  # Adjust for your tenant
 node packages/mcp-fleet-monitor/dist/src/server.js
 # Output:
 # [mcp-fleet-monitor] Connected to database
-# [mcp-fleet-monitor] Tenant: grp.steven
+# [mcp-fleet-monitor] Tenant: Steven
 # [mcp-fleet-monitor] Connecting stdio transport...
 # [mcp-fleet-monitor] Server running on stdio
 ```
@@ -69,7 +69,7 @@ Add to your Claude Code MCP servers config (typically `~/.claude/mcp.json` or vi
       "args": ["/absolute/path/to/packages/mcp-fleet-monitor/dist/src/server.js"],
       "env": {
         "DATABASE_URL": "postgresql://cauce:password@localhost:5432/cauce",
-        "CAUCE_TENANT_ID": "grp.steven"
+        "CAUCE_TENANT_ID": "Steven"
       }
     }
   }
@@ -89,7 +89,7 @@ cat > ~/.claude/mcp.json << 'EOF'
       "args": ["/path/to/packages/mcp-fleet-monitor/dist/src/server.js"],
       "env": {
         "DATABASE_URL": "postgresql://...",
-        "CAUCE_TENANT_ID": "grp.steven"
+        "CAUCE_TENANT_ID": "Steven"
       }
     }
   }
@@ -109,7 +109,7 @@ Then restart Claude Code for the config to take effect.
    - **Arguments**: `/path/to/packages/mcp-fleet-monitor/dist/src/server.js`
    - **Environment**:
      - `DATABASE_URL=postgresql://...`
-     - `CAUCE_TENANT_ID=grp.steven`
+     - `CAUCE_TENANT_ID=Steven`
 
 Claude will automatically load the server on connection.
 
@@ -316,7 +316,7 @@ psql $DATABASE_URL
 
 **Solution**:
 1. Verify tenant ID is correct: `echo $CAUCE_TENANT_ID`
-2. Check database has data: `psql $DATABASE_URL -c "SELECT COUNT(*) FROM leases WHERE tenant_id = 'grp.steven';"`
+2. Check database has data: `psql $DATABASE_URL -c "SELECT COUNT(*) FROM connection_leases WHERE tenant_id = 'Steven';"`
 
 ### MCP client doesn't see the server
 

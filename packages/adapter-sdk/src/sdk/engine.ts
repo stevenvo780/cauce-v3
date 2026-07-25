@@ -12,8 +12,6 @@ import type {
   DeliveryEvent,
   DeliveryPhase,
   StructuredOutput,
-  ToolRequest,
-  ToolResponse,
 } from "./types.js";
 import { systemClock } from "./backoff.js";
 import { synthesizeFaninOutput } from "./fanin-synthesizer.js";
@@ -25,10 +23,6 @@ const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
 const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
 const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 const MAX_AGENT_EXECUTION_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
-
-export interface GetAgentChainHandler {
-  (traceId: string): Promise<Record<string, unknown> | undefined>;
-}
 
 export interface AdapterEngineOptions {
   readonly store: DurableStore;
@@ -43,8 +37,6 @@ export interface AdapterEngineOptions {
   /** Test/diagnostic override; production derives the fail-closed watchdog from the claim. */
   readonly claimWatchdogMs?: number;
   readonly clock?: Clock;
-  /** Handler for get_agent_chain_status tool requests. */
-  readonly getAgentChain?: GetAgentChainHandler;
 }
 
 export class AdapterEngine {
@@ -58,7 +50,6 @@ export class AdapterEngine {
   private readonly claimRenewalMs: number | undefined;
   private readonly claimWatchdogMs: number | undefined;
   private readonly clock: Clock;
-  private readonly getAgentChain: GetAgentChainHandler | undefined;
   private readonly tasks = new Map<string, {
     readonly attempt: number;
     readonly claimToken: string;
@@ -79,7 +70,6 @@ export class AdapterEngine {
     this.logger = options.logger ?? (() => undefined);
     this.ownTenantId = options.ownTenantId;
     this.ownRoom = options.ownRoom;
-    this.getAgentChain = options.getAgentChain;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_AGENTIC_TIMEOUT_MS;
     if (!Number.isSafeInteger(this.defaultTimeoutMs)
       || this.defaultTimeoutMs <= 0
@@ -135,7 +125,6 @@ export class AdapterEngine {
       delivery_id: delivery.delivery_id,
       alias: delivery.recipient_alias,
       attempt: delivery.attempt,
-      claim_token: delivery.claim_token,
       timestamp: this.clock.now().toISOString(),
     });
 
@@ -168,6 +157,13 @@ export class AdapterEngine {
   ): void {
     const active = this.tasks.get(deliveryId);
     if (active?.attempt !== attempt || active.claimToken !== claimToken) return;
+    this.logger({
+      event: "claim_renewal_end",
+      delivery_id: deliveryId,
+      attempt,
+      timestamp: this.clock.now().toISOString(),
+      reason: "ownership_lost",
+    });
     this.fenced.add(deliveryId);
     this.controllers.get(deliveryId)?.abort(new AdapterError(
       "CLAIM_OWNERSHIP_LOST",
@@ -183,6 +179,13 @@ export class AdapterEngine {
   ): void {
     const monitor = this.claimMonitors.get(deliveryId);
     if (monitor?.attempt !== attempt || monitor.claimToken !== claimToken) return;
+    this.logger({
+      event: "claim_renewal_end",
+      delivery_id: deliveryId,
+      attempt,
+      timestamp: this.clock.now().toISOString(),
+      reason: "confirmed",
+    });
     monitor.confirm();
   }
 
@@ -326,8 +329,6 @@ export class AdapterEngine {
           ? controller.signal.reason
           : new AdapterError("CANCELLED", "Harness execution was cancelled", false);
       }
-
-      output = await this.processToolRequests(output, delivery);
     } catch (error) {
       executionFailure = error;
     } finally {
@@ -437,12 +438,15 @@ export class AdapterEngine {
     };
   }
 
+  /**
+   * A renewal deliberately carries no progress text. The chain progress an operator
+   * sees on the origin channel is composed store-side by `insertProgressRelay`, from
+   * the delivery row it is already holding under lock inside the ACK transaction, and
+   * `AckSchema` has no field an adapter could use to supply its own. Attaching a
+   * summary here would produce a value that is dropped in `AdapterClient.sendEvent`
+   * and never reaches the wire, so it is left out rather than declared and ignored.
+   */
   private async emitClaimRenewal(record: InboxRecord): Promise<void> {
-    // Generate progress summary based on time elapsed since delivery started
-    const elapsedMs = this.clock.now().getTime() - new Date(record.updated_at).getTime();
-    const elapsedSecs = Math.floor(elapsedMs / 1000);
-    const progressSummary = `En ejecución, ${elapsedSecs}s transcurridos.`;
-
     const event: DeliveryEvent = {
       event_id: randomUUID(),
       delivery_id: record.delivery_id,
@@ -452,9 +456,15 @@ export class AdapterEngine {
       phase: "started",
       occurred_at: this.clock.now().toISOString(),
       claim_renewal: true,
-      progress_summary: progressSummary,
       ...(record.origin === undefined ? {} : { origin: record.origin }),
     };
+    this.logger({
+      event: "claim_renewal_start",
+      delivery_id: record.delivery_id,
+      attempt: record.attempt,
+      phase: "started",
+      timestamp: event.occurred_at,
+    });
     // A renewal must reach stable local storage before it can be treated as
     // recoverable transport work. Only the send itself is best-effort.
     await this.store.enqueue(event);
@@ -477,74 +487,6 @@ export class AdapterEngine {
       error: payload,
       ...(output === undefined ? {} : { output }),
     });
-  }
-
-  private async processToolRequests(
-    output: StructuredOutput,
-    delivery: Delivery,
-  ): Promise<StructuredOutput> {
-    if (!output.tools || output.tools.length === 0) {
-      return output;
-    }
-
-    const toolResponses: (ToolRequest | ToolResponse)[] = [];
-    for (const item of output.tools) {
-      if ("result" in item || "error" in item) {
-        // Already a response, pass through
-        toolResponses.push(item);
-        continue;
-      }
-      // It's a request, process it
-      const request = item as ToolRequest;
-      if (request.name === "get_agent_chain_status") {
-        if (!this.getAgentChain) {
-          toolResponses.push({
-            id: request.id,
-            name: request.name,
-            result: null,
-            error: "get_agent_chain_status tool is not available",
-          });
-          continue;
-        }
-        try {
-          const traceId = request.arguments.trace_id as string | undefined;
-          if (!traceId || typeof traceId !== "string") {
-            toolResponses.push({
-              id: request.id,
-              name: request.name,
-              result: null,
-              error: "trace_id argument is required and must be a string",
-            });
-            continue;
-          }
-          const chainStatus = await this.getAgentChain(traceId);
-          toolResponses.push({
-            id: request.id,
-            name: request.name,
-            result: chainStatus ?? { status: "unknown", message: "trace not found" },
-          });
-        } catch (error) {
-          toolResponses.push({
-            id: request.id,
-            name: request.name,
-            result: null,
-            error: error instanceof Error ? error.message : "Unknown error",
-          });
-        }
-      } else {
-        toolResponses.push({
-          id: request.id,
-          name: request.name,
-          result: null,
-          error: `Unknown tool: ${request.name}`,
-        });
-      }
-    }
-
-    return {
-      ...output,
-      tools: toolResponses.length > 0 ? (toolResponses as readonly (ToolRequest | ToolResponse)[]) : undefined,
-    } as StructuredOutput;
   }
 
   private async replayPending(record: InboxRecord): Promise<void> {

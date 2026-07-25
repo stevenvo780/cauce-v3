@@ -5,7 +5,13 @@ import { WebSocketConsumerConnector } from "../sdk/websocket-transport.js";
 import { OpenClawApiRunner } from "../sdk/openclaw-api-runner.js";
 import { HarnessAdapter } from "../harnesses/shared.js";
 import { harnessDefinition } from "../harnesses/index.js";
-import type { HarnessCommandOverride, HarnessDefinition, HarnessId } from "../sdk/types.js";
+import type {
+  AdapterLog,
+  AdapterLogger,
+  HarnessCommandOverride,
+  HarnessDefinition,
+  HarnessId,
+} from "../sdk/types.js";
 import { TenantSchema } from "@cauce/protocol";
 import { loadCliRuntimeConfig } from "./config.js";
 
@@ -54,6 +60,32 @@ export function runtimeHarnessDefinition(
   void _loopbackApi;
   void _apiCancellation;
   return { ...definition, capabilities: cliCapabilities };
+}
+
+/**
+ * Structured operational log, one JSON object per line on stderr, which is where the
+ * unit journal already collects the adapter's `onError` retry lines.
+ *
+ * This exists wired rather than optional on purpose. An adapter whose harness has a bad
+ * credential still holds its lease and still answers `auth status`, so the only signal
+ * that separates a working alias from a dead one is the cadence of its `started` ACKs —
+ * the `claim_renewal_start` entries below. Leaving the logger defaulted to a no-op in
+ * production is what made that cadence invisible.
+ */
+function operationalLogger(alias: string): AdapterLogger {
+  return (entry: AdapterLog): void => {
+    const line: Record<string, unknown> = {
+      ts: entry.timestamp ?? new Date().toISOString(),
+      alias: entry.alias ?? alias,
+      ...entry,
+    };
+    delete line.timestamp;
+    try {
+      process.stderr.write(`${JSON.stringify(line)}\n`);
+    } catch {
+      // Observability must never be able to take the delivery loop down.
+    }
+  };
 }
 
 export async function runCli(harnessId: HarnessId): Promise<void> {
@@ -110,6 +142,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       ? { onLeaseAcquired: () => store.reconcileCanonicalOpenCodeSession().then(() => undefined) }
       : {}),
     onError: (code) => process.stderr.write(`${code}: adapter retry\n`),
+    logger: operationalLogger(runtime.alias),
   });
 
   const shutdown = new AbortController();

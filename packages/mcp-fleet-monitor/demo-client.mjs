@@ -6,7 +6,7 @@
  *
  * Usage:
  *   export DATABASE_URL="..."
- *   export CAUCE_TENANT_ID="grp.steven"
+ *   export CAUCE_TENANT_ID="Steven"
  *   node demo-client.mjs
  */
 
