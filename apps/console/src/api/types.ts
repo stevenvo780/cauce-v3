@@ -244,9 +244,17 @@ export interface TerminalCapability {
 }
 
 export type ConfigResource = 'tenant' | 'room' | 'membership' | 'acl_edge' | 'harness' | 'role_policy';
+/**
+ * Recursos del registro de agentes y del pool de suscripciones (migración
+ * `packages/store/migrations/010_agent_account_registry.sql`). Son hub-only: `authorizeMutation`
+ * no los agregó a la lista de self-service, así que un tenant no-hub recibe 403.
+ */
+export type RegistryConfigResource =
+  | 'agent' | 'provider_account' | 'alias_routing_ceiling' | 'agent_account_binding';
+export type AnyConfigResource = ConfigResource | RegistryConfigResource;
 export type ConfigAction = 'create' | 'update' | 'delete';
 export type ConfigMutation = Record<string, unknown> & {
-  resource: ConfigResource;
+  resource: AnyConfigResource;
   action: ConfigAction;
 };
 
@@ -269,6 +277,17 @@ export interface ConfigurationSnapshot {
   acl_edges?: Array<Record<string, unknown>> | null;
   harness_definitions?: Array<Record<string, unknown>> | null;
   role_policies?: Array<Record<string, unknown>> | null;
+  /**
+   * Registro de agentes y pool de cuentas. Las cuatro claves son opcionales a propósito: un
+   * gateway anterior a la migración 010 no las publica, y eso NO es lo mismo que una lista vacía.
+   * La UI distingue "clave ausente" (dato no disponible) de "lista vacía" (cero filas conocidas).
+   */
+  agents?: Array<Record<string, unknown>> | null;
+  /** `credential_ref` nunca viaja acá; `external_account_id` y `credential_ref_kind` los anula el
+   *  servidor para una cuenta que paga otro tenant. */
+  provider_accounts?: Array<Record<string, unknown>> | null;
+  alias_routing_ceiling?: Array<Record<string, unknown>> | null;
+  agent_account_bindings?: Array<Record<string, unknown>> | null;
   revisions?: ConfigRevision[] | null;
 }
 

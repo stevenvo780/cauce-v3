@@ -1,5 +1,8 @@
 import { delay, http, HttpResponse } from 'msw';
-import { adapters, audit, mockJobs, mockMessages, mockQueues, mockStatus, originRelays, topology } from './data';
+import {
+  adapters, agentAccountBindings, audit, mockJobs, mockMessages, mockQueues, mockStatus,
+  originRelays, providerAccounts, registryAgents, routingCeiling, topology,
+} from './data';
 
 export const handlers = [
   http.get('*/v3/auth/session', () => HttpResponse.json({
@@ -37,6 +40,8 @@ export const handlers = [
     revision: 1, observed_at: new Date().toISOString(), tenants: topology.tenants, rooms: [],
     memberships: [], acl_edges: topology.acl_edges, harness_definitions: adapters.items,
     role_policies: [{ role: 'operator', allow_route: true, allow_read: true, allow_control: true }],
+    agents: registryAgents, provider_accounts: providerAccounts,
+    alias_routing_ceiling: routingCeiling, agent_account_bindings: agentAccountBindings,
     revisions: []
   })),
   http.post('*/v3/console/config/changes', async ({ request }) => {

@@ -102,6 +102,37 @@ export const audit: AuditPage = { items: [
   { event_id: 'aud-1001', at: '2026-07-22T16:08:07.000Z', tenant_id: 'Pablo', actor_alias: null, action: 'delivery.ack', decision: 'allow', request_id: null, trace_id: 'trace-ack-81', summary: 'ACK terminal done aplicado en epoch 4' },
 ] };
 
+/**
+ * Registro de agentes y pool de suscripciones, con la MISMA forma que devuelve
+ * `GET /v3/console/config` (packages/store/src/configuration.ts): `credential_ref` no aparece nunca,
+ * y en una cuenta que paga otro tenant el servidor anula `external_account_id` y
+ * `credential_ref_kind` — acá se mantienen como `null` explícitos, no como claves ausentes.
+ */
+export const registryAgents: Array<Record<string, unknown>> = [
+  { tenant_id: 'Steven', alias: 'kant', harness_id: 'claude-code', display_name: 'Kant', enabled: true, container_name: 'ws-kant', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/var/lib/kant', created_at: '2026-07-20T10:00:00.000Z', updated_at: '2026-07-22T10:00:00.000Z' },
+  { tenant_id: 'Miguel', alias: 'iza', harness_id: 'hermes', display_name: 'Iza', enabled: false, container_name: 'ws-humanizar', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/var/lib/iza', created_at: '2026-07-23T10:00:00.000Z', updated_at: '2026-07-23T10:00:00.000Z' },
+  { tenant_id: 'Pablo', alias: 'midas', harness_id: 'openclaw', display_name: null, enabled: true, container_name: 'ws-midas', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/var/lib/midas', created_at: '2026-07-19T10:00:00.000Z', updated_at: '2026-07-21T10:00:00.000Z' },
+];
+
+export const providerAccounts: Array<Record<string, unknown>> = [
+  { id: 'codex-steven', provider: 'codex', payer_tenant_id: 'Steven', label: 'Codex del hub', shared_with_pool: true, enabled: true, external_account_id: 'org-steven-9f21', credential_ref_kind: 'env_path', created_at: '2026-07-18T10:00:00.000Z', updated_at: '2026-07-22T10:00:00.000Z' },
+  { id: 'gemini-steven', provider: 'gemini', payer_tenant_id: 'Steven', label: 'Antigravity', shared_with_pool: false, enabled: true, external_account_id: 'antigravity-4410', credential_ref_kind: 'file', created_at: '2026-07-18T11:00:00.000Z', updated_at: '2026-07-18T11:00:00.000Z' },
+  // Cuenta de otro pagador: el servidor anuló los dos campos del pagador.
+  { id: 'minimax-pablo', provider: 'minimax', payer_tenant_id: 'Pablo', label: 'MiniMax de Pablo', shared_with_pool: true, enabled: true, external_account_id: null, credential_ref_kind: null, created_at: '2026-07-17T10:00:00.000Z', updated_at: '2026-07-20T10:00:00.000Z' },
+];
+
+export const routingCeiling: Array<Record<string, unknown>> = [
+  { tenant_id: 'Steven', alias: 'kant', account_id: 'codex-steven', account_payer_tenant: 'Steven', created_by_tenant: 'Steven', created_at: '2026-07-20T12:00:00.000Z' },
+  { tenant_id: 'Steven', alias: 'kant', account_id: 'minimax-pablo', account_payer_tenant: 'Pablo', created_by_tenant: 'Steven', created_at: '2026-07-20T12:05:00.000Z' },
+  { tenant_id: 'Miguel', alias: 'iza', account_id: 'codex-steven', account_payer_tenant: 'Steven', created_by_tenant: 'Miguel', created_at: '2026-07-23T12:00:00.000Z' },
+];
+
+export const agentAccountBindings: Array<Record<string, unknown>> = [
+  { tenant_id: 'Steven', agent_alias: 'kant', account_id: 'codex-steven', priority: 10, enabled: true, created_at: '2026-07-20T12:01:00.000Z', updated_at: '2026-07-20T12:01:00.000Z' },
+  { tenant_id: 'Steven', agent_alias: 'kant', account_id: 'minimax-pablo', priority: 50, enabled: true, created_at: '2026-07-20T12:06:00.000Z', updated_at: '2026-07-20T12:06:00.000Z' },
+  { tenant_id: 'Miguel', agent_alias: 'iza', account_id: 'codex-steven', priority: 100, enabled: false, created_at: '2026-07-23T12:01:00.000Z', updated_at: '2026-07-23T12:01:00.000Z' },
+];
+
 export const originRelays: OriginRelayPage = { items: [
   { id: 'relay-1', tenant_id: 'Steven', adapter: 'telegram', delivery_id: '4b981ddd-f311-494e-887c-83fd5e11be90', status: 'sent', attempts: 1, created_at: iso(-50_000), sent_at: iso(-49_000) },
   { id: 'relay-2', tenant_id: 'Steven', adapter: 'telegram', delivery_id: 'fdca3315-aa17-409e-827a-065d5780243e', status: 'failed', attempts: 3, created_at: iso(-180_000), sent_at: null },

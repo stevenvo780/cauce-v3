@@ -2,7 +2,9 @@ import {
   Activity,
   Bot,
   Boxes,
+  CreditCard,
   GitFork,
+  Grid3x3,
   History,
   Settings2,
   ListRestart,
@@ -29,6 +31,8 @@ import { AuditPage } from './features/audit/AuditPage';
 import { TerminalPage } from './features/terminal/TerminalPage';
 import { RelaysPage } from './features/relays/RelaysPage';
 import { ConfigPage } from './features/config/ConfigPage';
+import { AccountsPage } from './features/accounts/AccountsPage';
+import { AssignmentMatrixPage } from './features/accounts/AssignmentMatrixPage';
 import { ObservabilityPage } from './features/observability/ObservabilityPage';
 
 interface Route {
@@ -48,6 +52,8 @@ const routes: Route[] = [
   { id: 'relays', label: 'Origin relays', icon: SendToBack, component: RelaysPage },
   { id: 'audit', label: 'Audit', icon: History, component: AuditPage },
   { id: 'observability', label: 'Observability', icon: Gauge, component: ObservabilityPage },
+  { id: 'accounts', label: 'Cuentas de IA', icon: CreditCard, component: AccountsPage },
+  { id: 'assignments', label: 'Matriz agente × cuenta', icon: Grid3x3, component: AssignmentMatrixPage },
   { id: 'config', label: 'Configuration', icon: Settings2, component: ConfigPage },
   { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, component: TerminalPage },
 ];

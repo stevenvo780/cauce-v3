@@ -231,7 +231,9 @@ export class AdapterClient {
   }
 
   private sendEvent(event: DeliveryEvent): Promise<void> {
-    const detail = event.error?.message ?? (event.output?.status === 'failed' ? event.output.reply ?? undefined : undefined);
+    const detail = clampAckDetail(
+      event.error?.message ?? (event.output?.status === 'failed' ? event.output.reply ?? undefined : undefined),
+    );
     return this.send({
       type: 'ack',
       version: PROTOCOL_VERSION,
@@ -283,6 +285,26 @@ export class AdapterClient {
       );
     }
   }
+}
+
+/**
+ * `BaseAckSchema.error` is capped at 2000 characters and every client frame is
+ * schema-checked before it reaches the socket. An over-long harness failure
+ * message therefore used to throw a ZodError inside `send()`, tearing down the
+ * connection; because the offending event stays at the head of the outbox, the
+ * next `flushOutbox()` replayed it and killed the new connection too, so the
+ * adapter reconnect-looped forever and could never report or receive anything.
+ *
+ * Truncating here is lossless for the operator: the untruncated text is always
+ * carried in `result.output`, which the schema leaves unbounded.
+ */
+const MAX_ACK_ERROR_DETAIL = 2_000;
+const ACK_DETAIL_TRUNCATION_SUFFIX = '… [truncated]';
+
+export function clampAckDetail(detail: string | undefined): string | undefined {
+  if (detail === undefined || detail.length <= MAX_ACK_ERROR_DETAIL) return detail;
+  return detail.slice(0, MAX_ACK_ERROR_DETAIL - ACK_DETAIL_TRUNCATION_SUFFIX.length)
+    + ACK_DETAIL_TRUNCATION_SUFFIX;
 }
 
 function connectionErrorCode(error: unknown): string {

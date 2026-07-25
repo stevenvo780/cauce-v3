@@ -2374,6 +2374,27 @@ export class CauceRepository {
     }
 
     const requestId = agentFaninRequestId(rootMessageId);
+    // The fan-in message is authored by the coordinator (recipient_tenant/recipient_alias),
+    // so its room must be one the coordinator actually belongs to. Reusing the root
+    // message's room is only correct while both live in the same tenant; across tenants
+    // (tenant_id, room_id, actor_alias) has no membership row and the insert used to
+    // violate messages_tenant_id_room_id_actor_alias_fkey, aborting the dispatcher tick
+    // that materializes it — which stalls every stale-delivery retry, not just this one.
+    // Resolve the room the same way materializeAgentResponse does.
+    const faninMembership = await client.query<{ room_id: string }>(
+      `SELECT membership.room_id
+       FROM memberships membership
+       JOIN role_policies policy ON policy.role=membership.role
+       JOIN tenants tenant ON tenant.id=membership.tenant_id
+       JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
+       WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
+         AND tenant.enabled AND room.enabled AND policy.allow_route
+       ORDER BY (membership.room_id=$3) DESC, membership.room_id LIMIT 1
+       FOR SHARE OF membership,policy,tenant,room`,
+      [rootRow.recipient_tenant, rootRow.recipient_alias, rootRow.room_id]
+    );
+    const faninRoomId = faninMembership.rows[0]?.room_id;
+    if (!faninRoomId) return { hasFanout: true, scheduled: false };
     const message = await client.query<{ id: string }>(
       `INSERT INTO messages(
          request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
@@ -2384,7 +2405,7 @@ export class CauceRepository {
         requestId,
         rootRow.trace_id,
         rootRow.recipient_tenant,
-        rootRow.room_id,
+        faninRoomId,
         rootRow.recipient_alias,
         JSON.stringify(faninBodyPayload),
         rootRow.origin ? JSON.stringify(rootRow.origin) : null,
