@@ -232,6 +232,20 @@ export interface SafeRunnerLog {
 export type SafeRunnerLogger = (entry: SafeRunnerLog) => void;
 
 /**
+ * One field a schema rejected. Deliberately path-first and value-free: the operator
+ * needs to know *which* field of the frame was refused and by which constraint, and
+ * frame bodies carry message text that must never reach the unit journal.
+ */
+export interface FrameValidationIssue {
+  /** Dotted/bracketed path of the rejected field, e.g. `error` or `result.output.reply`. */
+  readonly path: string;
+  /** Validator code, e.g. `too_big`, `invalid_type`, `unrecognized_keys`. */
+  readonly code: string;
+  /** Constraint text from the validator. Never the rejected value. */
+  readonly message?: string;
+}
+
+/**
  * Adapter operational event logger (observability). Optional; graceful degradation if
  * not provided.
  *
@@ -239,6 +253,8 @@ export type SafeRunnerLogger = (entry: SafeRunnerLog) => void;
  * authorizes ACKing a delivery, and these entries land in the unit journal, so carrying
  * one here would put a live credential in a log an operator reads and pastes around.
  * A delivery_id plus attempt identifies the same work without granting anything.
+ * `claim_token_fingerprint` exists for the one case that needs to be correlated with
+ * the gateway's view of a claim, and it is a truncated digest, not the capability.
  */
 export interface AdapterLog {
   event:
@@ -247,7 +263,8 @@ export interface AdapterLog {
     | 'delivery_end'
     | 'claim_renewal_start'
     | 'claim_renewal_end'
-    | 'connection_error';
+    | 'connection_error'
+    | 'outbound_frame_invalid';
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;
@@ -257,6 +274,12 @@ export interface AdapterLog {
   error_message?: string;
   /** Connection failure code, or why a claim renewal ended. */
   reason?: string;
+  /** Discriminator of the offending frame (`ack`, `hello`, `heartbeat`); never its body. */
+  frame_type?: string;
+  /** Fields a schema rejected. Set on `outbound_frame_invalid`. */
+  issues?: readonly FrameValidationIssue[];
+  /** Truncated SHA-256 of a claim token. Never the token itself; see the note above. */
+  claim_token_fingerprint?: string;
 }
 
 export type AdapterLogger = (entry: AdapterLog) => void;

@@ -118,6 +118,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     ...(harnessId === "openclaw" ? { fallbackSessionKey: "alias-default" } : {}),
     ...(override === undefined ? {} : { commandOverride: override }),
   });
+  const logger = operationalLogger(runtime.alias);
   const client = new AdapterClient({
     config: {
       tenantId,
@@ -130,6 +131,8 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     },
     connector: new WebSocketConsumerConnector(runtime.relayUrl, {
       environment: runtime.environment,
+      alias: runtime.alias,
+      logger,
       ...(runtime.bearerTokenFile === undefined ? {} : { bearerTokenFile: runtime.bearerTokenFile }),
       ...(runtime.mutualTls === undefined ? {} : { mutualTls: runtime.mutualTls }),
       ...(runtime.developmentIdentity
@@ -142,7 +145,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       ? { onLeaseAcquired: () => store.reconcileCanonicalOpenCodeSession().then(() => undefined) }
       : {}),
     onError: (code) => process.stderr.write(`${code}: adapter retry\n`),
-    logger: operationalLogger(runtime.alias),
+    logger,
   });
 
   const shutdown = new AbortController();

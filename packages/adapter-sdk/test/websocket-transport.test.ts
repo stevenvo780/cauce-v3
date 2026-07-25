@@ -4,8 +4,10 @@ import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { WebSocketServer } from "ws";
+import { PROTOCOL_VERSION } from "@cauce/protocol";
 import { SecureFileError } from "../src/sdk/secure-files.js";
 import { WebSocketConsumerConnector } from "../src/sdk/websocket-transport.js";
+import type { AdapterLog, ClientFrame } from "../src/sdk/types.js";
 
 const root = resolve(".test-state/websocket-auth");
 
@@ -89,6 +91,82 @@ test("credential errors enforce 0600 and never expose bearer contents", async ()
     bearerTokenFile: resolve(root, "missing.token"),
   });
   await assert.rejects(missing.connect(new AbortController().signal), /could not be loaded/u);
+});
+
+/**
+ * The argos failure mode: an ACK whose `error` detail overflows the 2000-character cap
+ * is refused by the outbound schema, never reaches the socket, stays at the head of the
+ * durable outbox and kills every following connection. The throw is what the client
+ * already reacts to; before this test the operator got a reconnect loop and nothing else.
+ */
+test("an outbound frame the schema refuses is logged with the rejected field path", async () => {
+  const claimToken = "20000000-0000-4000-8000-000000000003";
+  const sensitive = "saldo-cuenta-77213 ";
+  const frame = {
+    type: "ack",
+    version: PROTOCOL_VERSION,
+    event_id: "30000000-0000-4000-8000-000000000001",
+    delivery_id: "40000000-0000-4000-8000-000000000002",
+    attempt: 3,
+    claim_token: claimToken,
+    status: "failed",
+    instance_id: "argos-1",
+    epoch: 7,
+    retryable: false,
+    error: sensitive.repeat(200),
+  } satisfies ClientFrame;
+
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const accepted = once(server, "connection");
+  const entries: AdapterLog[] = [];
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${address.port}`, {
+    environment: "test",
+    alias: "argos",
+    logger: (entry) => { entries.push(entry); },
+  });
+  const connection = await connector.connect(new AbortController().signal);
+  const [serverSocket] = await accepted as [import("ws").WebSocket];
+  const delivered: string[] = [];
+  serverSocket.on("message", (data: Buffer) => { delivered.push(data.toString("utf8")); });
+
+  // Behaviour is unchanged: the failure still propagates to the caller.
+  await assert.rejects(connection.send(frame), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    return true;
+  });
+
+  assert.equal(entries.length, 1);
+  const entry = entries[0]!;
+  assert.equal(entry.event, "outbound_frame_invalid");
+  assert.equal(entry.error_code, "OUTBOUND_FRAME_SCHEMA");
+  assert.equal(entry.frame_type, "ack");
+  assert.equal(entry.alias, "argos");
+  assert.equal(entry.delivery_id, "40000000-0000-4000-8000-000000000002");
+  assert.equal(entry.attempt, 3);
+  assert.deepEqual(entry.issues?.map((issue) => issue.path), ["error"]);
+  assert.equal(entry.issues?.[0]?.code, "too_big");
+  assert.match(String(entry.claim_token_fingerprint), /^sha256:[0-9a-f]{12}$/u);
+  assert.ok(typeof entry.timestamp === "string" && !Number.isNaN(Date.parse(entry.timestamp)));
+
+  // Neither the message content nor the claim capability may reach the journal.
+  const serialized = JSON.stringify(entries);
+  assert.doesNotMatch(serialized, new RegExp(sensitive, "u"));
+  assert.doesNotMatch(serialized, new RegExp(claimToken, "u"));
+  assert.ok(serialized.length < 1_000);
+
+  // The happy path still encodes and still logs nothing. Frames are ordered on the
+  // socket, so once the heartbeat lands, the refused ACK provably never went out.
+  const received = once(serverSocket, "message");
+  await connection.send({ type: "heartbeat", instance_id: "argos-1", epoch: 7 });
+  await received;
+  assert.equal(entries.length, 1);
+  assert.deepEqual(delivered.map((raw) => JSON.parse(raw).type), ["heartbeat"]);
+
+  await connection.close();
+  await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 });
 
 test("mTLS requires complete valid owner-only material and wss", async () => {

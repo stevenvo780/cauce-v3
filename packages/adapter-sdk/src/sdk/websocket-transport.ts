@@ -1,13 +1,25 @@
+import { createHash } from 'node:crypto';
 import { createSecureContext } from 'node:tls';
 import WebSocket, { type ClientOptions } from 'ws';
 import { WsInboundSchema, WsOutboundSchema, type Tenant } from '@cauce/protocol';
 import { readBearerTokenFile, readOwnerOnlyFile, SecureFileError } from './secure-files.js';
 import type {
+  AdapterLog,
+  AdapterLogger,
   ClientFrame,
   ConsumerConnection,
   ConsumerConnector,
+  FrameValidationIssue,
   ServerFrame,
 } from './types.js';
+
+/** Correlation the connection needs to describe a rejected frame. Logging only. */
+interface OutboundDiagnostics {
+  readonly logger: AdapterLogger;
+  readonly alias?: string;
+}
+
+const SILENT_DIAGNOSTICS: OutboundDiagnostics = { logger: () => undefined };
 
 class AsyncFrameQueue implements AsyncIterable<ServerFrame> {
   private readonly values: ServerFrame[] = [];
@@ -56,7 +68,10 @@ class WebSocketConsumerConnection implements ConsumerConnection {
   readonly ephemeral = false as const;
   private readonly queue = new AsyncFrameQueue();
 
-  constructor(private readonly socket: WebSocket) {
+  constructor(
+    private readonly socket: WebSocket,
+    private readonly diagnostics: OutboundDiagnostics = SILENT_DIAGNOSTICS,
+  ) {
     socket.on('message', (data, isBinary) => {
       if (isBinary) {
         this.queue.fail(new Error('Binary gateway frames are not supported'));
@@ -74,13 +89,58 @@ class WebSocketConsumerConnection implements ConsumerConnection {
 
   async send(frame: ClientFrame): Promise<void> {
     if (this.socket.readyState !== WebSocket.OPEN) throw new Error('WebSocket consumer is not open');
-    const encoded = JSON.stringify(encodeClientFrame(frame));
+    const encoded = this.encodeOutbound(frame);
     await new Promise<void>((resolve, reject) => {
       this.socket.send(encoded, (error) => {
         if (error == null) resolve();
         else reject(error);
       });
     });
+  }
+
+  /**
+   * A frame the outbound schema refuses never reaches the socket, and the caller
+   * replays it from the durable outbox on the next connection, so a single bad frame
+   * reconnect-loops the adapter forever. That loop used to be completely silent: the
+   * ZodError went up through `send()` and was collapsed into a generic retry code.
+   *
+   * The throw is preserved exactly as it was — this only makes the failure legible
+   * before it propagates.
+   */
+  private encodeOutbound(frame: ClientFrame): string {
+    try {
+      return JSON.stringify(encodeClientFrame(frame));
+    } catch (error) {
+      this.reportInvalidFrame(frame, error);
+      throw error;
+    }
+  }
+
+  private reportInvalidFrame(frame: ClientFrame, error: unknown): void {
+    const issues = frameValidationIssues(error);
+    const deliveryId = stringField(frame, 'delivery_id');
+    const attempt = numberField(frame, 'attempt');
+    const alias = this.diagnostics.alias;
+    const fingerprint = claimTokenFingerprint(frame);
+    const entry: AdapterLog = {
+      event: 'outbound_frame_invalid',
+      timestamp: new Date().toISOString(),
+      frame_type: stringField(frame, 'type') ?? 'unknown',
+      error_code: issues.length > 0 ? 'OUTBOUND_FRAME_SCHEMA' : 'OUTBOUND_FRAME_ENCODE',
+      error_message: issues.length > 0
+        ? 'Outbound frame rejected by the Cauce V3 schema'
+        : encodeFailureMessage(error),
+      issues,
+      ...(alias === undefined ? {} : { alias }),
+      ...(deliveryId === undefined ? {} : { delivery_id: deliveryId }),
+      ...(attempt === undefined ? {} : { attempt }),
+      ...(fingerprint === undefined ? {} : { claim_token_fingerprint: fingerprint }),
+    };
+    try {
+      this.diagnostics.logger(entry);
+    } catch {
+      // Observability must never replace the failure it is describing.
+    }
   }
 
   frames(): AsyncIterable<ServerFrame> {
@@ -110,6 +170,75 @@ function encodeClientFrame(frame: ClientFrame): ClientFrame {
   return WsInboundSchema.parse(frame) as ClientFrame;
 }
 
+/** Enough to name every offending field of a real frame without becoming a dump. */
+const MAX_LOGGED_ISSUES = 10;
+const MAX_ISSUE_MESSAGE = 200;
+const CLAIM_FINGERPRINT_LENGTH = 12;
+
+function stringField(frame: ClientFrame, key: string): string | undefined {
+  const value = (frame as Record<string, unknown>)[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function numberField(frame: ClientFrame, key: string): number | undefined {
+  const value = (frame as Record<string, unknown>)[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Correlates a rejected frame with the gateway's view of the same claim without
+ * putting the claim on disk. Truncated because this is a correlation handle, not a
+ * proof of possession: nobody should be able to replay it.
+ */
+function claimTokenFingerprint(frame: ClientFrame): string | undefined {
+  const token = stringField(frame, 'claim_token');
+  if (token === undefined) return undefined;
+  return `sha256:${createHash('sha256').update(token).digest('hex').slice(0, CLAIM_FINGERPRINT_LENGTH)}`;
+}
+
+function issuePath(path: unknown): string {
+  if (!Array.isArray(path) || path.length === 0) return '<root>';
+  return path.reduce<string>((rendered, segment) => {
+    if (typeof segment === 'number') return `${rendered}[${segment}]`;
+    const key = String(segment);
+    return rendered.length === 0 ? key : `${rendered}.${key}`;
+  }, '');
+}
+
+/**
+ * Structurally detects a validator error instead of importing Zod: the SDK depends on
+ * `@cauce/protocol`, not on the validator it happens to be built with.
+ *
+ * Only `path`, `code` and `message` are copied. The issue objects themselves carry the
+ * rejected `input`, and for an ACK that input is the harness reply — spreading an issue
+ * into a log line would leak exactly the message content this instrumentation must not
+ * touch.
+ */
+function frameValidationIssues(error: unknown): FrameValidationIssue[] {
+  if (typeof error !== 'object' || error === null) return [];
+  const issues = (error as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) return [];
+  return issues.slice(0, MAX_LOGGED_ISSUES).map((issue: unknown): FrameValidationIssue => {
+    const raw = (typeof issue === 'object' && issue !== null ? issue : {}) as {
+      path?: unknown;
+      code?: unknown;
+      message?: unknown;
+    };
+    const message = typeof raw.message === 'string' ? raw.message.slice(0, MAX_ISSUE_MESSAGE) : undefined;
+    return {
+      path: issuePath(raw.path),
+      code: typeof raw.code === 'string' ? raw.code : 'unknown',
+      ...(message === undefined ? {} : { message }),
+    };
+  });
+}
+
+/** Non-schema encode failures (a cyclic body, a BigInt) still deserve a name. */
+function encodeFailureMessage(error: unknown): string {
+  if (!(error instanceof Error)) return `Outbound frame could not be encoded (${typeof error})`;
+  return `Outbound frame could not be encoded: ${error.name}`;
+}
+
 export interface WebSocketConnectorOptions {
   /** Defaults to production so insecure ws:// must be explicitly opted into. */
   environment?: 'production' | 'development' | 'test';
@@ -123,11 +252,16 @@ export interface WebSocketConnectorOptions {
   };
   /** Explicitly test/development-only identity headers; never enable in production. */
   developmentIdentity?: { tenant_id: Tenant; alias: string };
+  /** Correlation for transport diagnostics only; it is never put on the wire from here. */
+  alias?: string;
+  /** Receives `outbound_frame_invalid` entries. Defaults to a no-op. */
+  logger?: AdapterLogger;
 }
 
 export class WebSocketConsumerConnector implements ConsumerConnector {
   private readonly url: string;
   private readonly environment: NonNullable<WebSocketConnectorOptions['environment']>;
+  private readonly diagnostics: OutboundDiagnostics;
 
   constructor(endpoint: string, private readonly options: WebSocketConnectorOptions = {}) {
     let parsed: URL;
@@ -157,6 +291,11 @@ export class WebSocketConsumerConnector implements ConsumerConnector {
       throw new Error('mTLS requires cert, key and CA file paths');
     }
     this.url = parsed.toString();
+    const alias = options.alias ?? options.developmentIdentity?.alias;
+    this.diagnostics = {
+      logger: options.logger ?? (() => undefined),
+      ...(alias === undefined ? {} : { alias }),
+    };
   }
 
   async connect(signal: AbortSignal): Promise<ConsumerConnection> {
@@ -176,7 +315,7 @@ export class WebSocketConsumerConnector implements ConsumerConnector {
       socket.once('open', () => {
         signal.removeEventListener('abort', abort);
         socket.removeListener('error', fail);
-        resolve(new WebSocketConsumerConnection(socket));
+        resolve(new WebSocketConsumerConnection(socket, this.diagnostics));
       });
       socket.once('error', fail);
       signal.addEventListener('abort', abort, { once: true });
