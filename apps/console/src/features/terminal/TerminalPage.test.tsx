@@ -68,3 +68,21 @@ it('publishes cross-tenant from the operator source room and blocks destinations
   expect(await screen.findByRole('textbox', { name: /entrada para salva/i })).toBeDisabled();
   expect(screen.getByText(/ACL Steven → Isa no concede route \+ control/i)).toBeInTheDocument();
 });
+
+it('derives the operator ACL from /v3/console/topology and never calls a route the gateway does not serve', async () => {
+  const user = userEvent.setup();
+  let phantomCalls = 0;
+  // Reproduces production: the gateway only registers /v3/console/topology.
+  server.use(http.get('*/v3/console/topology/access', () => {
+    phantomCalls += 1;
+    return HttpResponse.json({ error: 'not_found', message: 'Route GET:/v3/console/topology/access not found' }, { status: 404 });
+  }));
+  renderWithApi(<TerminalPage />);
+
+  await user.click(await screen.findByRole('button', { name: /abrir sesión con kant/i }));
+  const input = await screen.findByRole('textbox', { name: /entrada para kant/i });
+  await waitFor(() => expect(input).toBeEnabled());
+  expect(phantomCalls).toBe(0);
+  expect(screen.queryByText(/Topología de acceso del tenant operador UNKNOWN/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/ACL del operador/i)).not.toBeInTheDocument();
+});

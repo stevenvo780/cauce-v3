@@ -20,7 +20,6 @@ export function TerminalPage() {
   const api = useApi();
   const status = useResource('ultimate-terminal-status', () => api.getStatus());
   const topology = useResource('ultimate-terminal-topology', () => api.getTopology());
-  const topologyAccess = useResource('ultimate-terminal-topology-access', () => api.getTopologyAccess());
   const adapters = useResource('ultimate-terminal-adapters', () => api.listAdapters());
   const access = useResource('ultimate-terminal-access', () => api.getConsoleAccess());
   const capability = useResource('ultimate-terminal-capability', () => api.getTerminalCapability());
@@ -28,7 +27,6 @@ export function TerminalPage() {
   useRefreshInterval(status.reload, 5_000, status.loading);
   useRefreshInterval(adapters.reload, 15_000, adapters.loading);
   useRefreshInterval(topology.reload, 30_000, topology.loading);
-  useRefreshInterval(topologyAccess.reload, 30_000, topologyAccess.loading);
   useRefreshInterval(access.reload, 30_000, access.loading);
   useRefreshInterval(capability.reload, 30_000, capability.loading);
 
@@ -49,7 +47,6 @@ export function TerminalPage() {
   const failures = [
     status.error ? `Presence: ${status.error.message}` : undefined,
     topology.error ? `Rooms: ${topology.error.message}` : undefined,
-    topologyAccess.error ? `ACL del operador: ${topologyAccess.error.message}` : undefined,
     adapters.error ? `Adapters: ${adapters.error.message}` : undefined,
     access.error ? `RBAC: ${access.error.message}` : undefined,
     capability.error ? `PTY: ${capability.error.message}` : undefined,
@@ -58,7 +55,6 @@ export function TerminalPage() {
   function refreshAll() {
     status.reload();
     topology.reload();
-    topologyAccess.reload();
     adapters.reload();
     access.reload();
     capability.reload();
@@ -92,7 +88,7 @@ export function TerminalPage() {
         agents={agents}
         adapters={adapters.data?.items ?? []}
         access={verifiedAccess}
-        topologyAccess={topologyAccess.error ? undefined : topologyAccess.data}
+        topologyAccess={topology.error ? undefined : topology.data}
         terminalCapability={verifiedCapability}
         fleetLoading={fleetLoading}
         fleetError={fleetError}

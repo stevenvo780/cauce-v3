@@ -20,7 +20,6 @@ export const handlers = [
     permissions: ['message.publish', 'delivery.replay', 'job.create', 'config.write', 'config.rollback', 'ultimate-terminal.connect'],
   })),
   http.get('*/v3/console/topology', () => HttpResponse.json(topology)),
-  http.get('*/v3/console/topology/access', () => HttpResponse.json(topology)),
   http.get('*/v3/console/messages', () => HttpResponse.json(mockMessages())),
   http.post('*/v3/console/messages', async ({ request }) => {
     const input = await request.json() as { body?: { text?: string } };

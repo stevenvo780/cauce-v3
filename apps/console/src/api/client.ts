@@ -160,13 +160,13 @@ export class CauceApi {
     }
   }
 
+  /**
+   * Actor-scoped topology: the gateway already filters tenants/rooms/ACL edges by the
+   * authenticated principal, so this single snapshot also derives source rooms and
+   * routable destinations. There is no separate /topology/access endpoint.
+   */
   getTopology(): Promise<TopologySnapshot> {
     return this.request('/v3/console/topology');
-  }
-
-  /** Actor-scoped topology used to derive source rooms and routable destinations. */
-  getTopologyAccess(): Promise<TopologySnapshot> {
-    return this.request('/v3/console/topology/access');
   }
 
   listMessages(): Promise<MessagePage> {
