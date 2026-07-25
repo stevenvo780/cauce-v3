@@ -274,6 +274,7 @@ export function synthesizeFaninOutput(
     return {
       reply: boundedUtf8(primary.text, MAX_FINAL_TEXT_BYTES),
       messages: [],
+      notify: [],
       status: "done",
       retryable: false,
       artifacts: [],
@@ -286,6 +287,7 @@ export function synthesizeFaninOutput(
         MAX_FINAL_TEXT_BYTES,
       ),
       messages: [],
+      notify: [],
       status: "done",
       retryable: false,
       artifacts: [],
