@@ -1,0 +1,18 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: atlas
+spec:
+  tenant: Miguel
+  room: grp.miguel
+  alias: atlas
+  harness: codex
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_ATLAS_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_ATLAS_TOKEN_PATH
+    clientCertificate: CAUCE_ATLAS_CERT_PATH
+    clientKey: CAUCE_ATLAS_KEY_PATH
+    certificateAuthority: CAUCE_ATLAS_CA_PATH
+  process: {executablePathEnv: CAUCE_ATLAS_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/atlas

@@ -1,8 +1,8 @@
 [Unit]
-Description=Cauce V3 alias consumer kratos (Miguel/claude)
+Description=Cauce V3 alias consumer iza (Miguel/hermes)
 After=network-online.target cauce-v3-compose@prod.service
 Wants=network-online.target
-ConditionPathExists=/etc/cauce-v3/aliases/kratos.env
+ConditionPathExists=/etc/cauce-v3/aliases/iza.env
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 
@@ -11,27 +11,28 @@ Type=simple
 User=cauce-v3
 Group=cauce-v3
 UMask=0077
-Environment=CAUCE_ALIAS=kratos
+Environment=CAUCE_ALIAS=iza
 Environment=CAUCE_TENANT=Miguel
 Environment=CAUCE_ROOM=grp.miguel
-Environment=CAUCE_HARNESS=claude
+Environment=CAUCE_HARNESS=hermes
 Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
-Environment=CAUCE_INSTANCE_ID=systemd-kratos
-Environment=CAUCE_STATE_DIR=/var/lib/cauce-v3/aliases/kratos
-Environment=CAUCE_RELAY_URL_ENV=CAUCE_KRATOS_RELAY_URL
-Environment=CAUCE_TOKEN_PATH_ENV=CAUCE_KRATOS_TOKEN_PATH
-Environment=CAUCE_CERT_PATH_ENV=CAUCE_KRATOS_CERT_PATH
-Environment=CAUCE_KEY_PATH_ENV=CAUCE_KRATOS_KEY_PATH
-Environment=CAUCE_CA_PATH_ENV=CAUCE_KRATOS_CA_PATH
-Environment=CAUCE_EXEC_PATH_ENV=CAUCE_KRATOS_EXEC_PATH
-EnvironmentFile=/etc/cauce-v3/aliases/kratos.env
-ExecStart=/opt/cauce-v3/ops/scripts/alias-runner.sh kratos
+Environment=CAUCE_INSTANCE_ID=systemd-iza
+Environment=CAUCE_STATE_DIR=/var/lib/cauce-v3/aliases/iza
+Environment=CAUCE_RELAY_URL_ENV=CAUCE_IZA_RELAY_URL
+Environment=CAUCE_TOKEN_PATH_ENV=CAUCE_IZA_TOKEN_PATH
+Environment=CAUCE_CERT_PATH_ENV=CAUCE_IZA_CERT_PATH
+Environment=CAUCE_KEY_PATH_ENV=CAUCE_IZA_KEY_PATH
+Environment=CAUCE_CA_PATH_ENV=CAUCE_IZA_CA_PATH
+Environment=CAUCE_EXEC_PATH_ENV=CAUCE_IZA_EXEC_PATH
+Environment=CAUCE_OPERATIONAL_MODEL_ENV=HERMES_INFERENCE_MODEL
+EnvironmentFile=/etc/cauce-v3/aliases/iza.env
+ExecStart=/opt/cauce-v3/ops/scripts/alias-runner.sh iza
 Restart=always
 RestartSec=5s
 TimeoutStopSec=90s
 KillMode=mixed
-StateDirectory=cauce-v3/aliases/kratos
+StateDirectory=cauce-v3/aliases/iza
 StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
@@ -52,7 +53,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 ReadOnlyPaths=/opt/cauce-v3
-ReadWritePaths=/var/lib/cauce-v3/aliases/kratos
+ReadWritePaths=/var/lib/cauce-v3/aliases/iza
 
 [Install]
 WantedBy=multi-user.target

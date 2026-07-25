@@ -206,7 +206,7 @@ async function main() {
           assert.equal(presence.data.harnessKind, kind);
         }
       }
-      assert.equal(clients.length, 12);
+      assert.equal(clients.length, 14);
       assert.deepEqual(new Set(kinds), new Set(['Hermes', 'OpenCode', 'ClaudeCode', 'Codex']));
       await Promise.all(clients.map((client) => client.close()));
     }],

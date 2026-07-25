@@ -1,0 +1,20 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: iza
+spec:
+  tenant: Miguel
+  room: grp.miguel
+  alias: iza
+  harness: hermes
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_IZA_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_IZA_TOKEN_PATH
+    clientCertificate: CAUCE_IZA_CERT_PATH
+    clientKey: CAUCE_IZA_KEY_PATH
+    certificateAuthority: CAUCE_IZA_CA_PATH
+  process:
+    executablePathEnv: CAUCE_IZA_EXEC_PATH
+    operationalModelEnv: HERMES_INFERENCE_MODEL
+  stateDirectory: /var/lib/cauce-v3/aliases/iza

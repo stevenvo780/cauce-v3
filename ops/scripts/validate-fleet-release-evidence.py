@@ -47,9 +47,9 @@ current_source = subprocess.run(
 ).stdout.strip()
 if report["sourceDigest"] != current_source:
     fail("sourceDigest does not match current final-image sources")
-if report["summary"] != {"aliases": 12, "passed": 12, "failed": 0}:
-    fail("the exact 12-alias matrix did not pass")
-if len({item["alias"] for item in report["aliases"]}) != 12:
+if report["summary"] != {"aliases": 14, "passed": 14, "failed": 0}:
+    fail("the exact 14-alias matrix did not pass")
+if len({item["alias"] for item in report["aliases"]}) != 14:
     fail("alias results are not unique")
 if any(item["status"] != "passed" or not all(item["checks"].values()) for item in report["aliases"]):
     fail("an alias has a failed required check")
@@ -60,7 +60,7 @@ for path in sorted((ROOT / "ops" / "manifests").glob("*.yaml")):
     manifest_lines.append(f"{digest(path)}  {alias}")
 manifest_digest = hashlib.sha256("\n".join(manifest_lines).encode()).hexdigest()
 if report["manifestMatrix"]["manifestsSha256"] != manifest_digest:
-    fail("manifest matrix digest does not match the 12 current manifests")
+    fail("manifest matrix digest does not match the 14 current manifests")
 
 for binary in report["adapterBinaries"]:
     path = ROOT / binary["path"]
@@ -87,4 +87,4 @@ for line in lines:
 if observed_names != expected_names:
     fail("SHA256SUMS does not cover the exact fleet artifact set")
 
-print("fleet-release evidence passed: 12 manifests, 5 packaged adapters, source/SHA bound")
+print("fleet-release evidence passed: 14 manifests, 5 packaged adapters, source/SHA bound")

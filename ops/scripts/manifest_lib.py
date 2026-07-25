@@ -11,12 +11,14 @@ from jsonschema import Draft202012Validator
 
 EXPECTED = {
     "argos": ("Steven", "grp.steven", "hermes"),
+    "atlas": ("Miguel", "grp.miguel", "codex"),
     "dedalo": ("Pablo", "grp.pablo", "codex"),
     "hegel": ("Jhon", "grp.jhon", "openclaw"),
+    "iza": ("Miguel", "grp.miguel", "hermes"),
     "janus": ("Miguel", "grp.miguel", "openclaw"),
     "jarvis": ("Steven", "grp.steven", "openclaw"),
     "kant": ("Steven", "grp.steven", "codex"),
-    "kratos": ("Miguel", "grp.miguel", "codex"),
+    "kratos": ("Miguel", "grp.miguel", "claude"),
     "midas": ("Pablo", "grp.pablo", "openclaw"),
     "salva": ("Isa", "grp.isa", "codex"),
     "seneca": ("Pablo", "grp.pablo", "openclaw"),
@@ -66,7 +68,7 @@ def validate_manifest(data: Any, source: pathlib.Path) -> dict[str, Any]:
     if metadata["name"] != alias or source.stem != alias:
         raise ManifestError(f"{source}: filename, metadata.name and spec.alias must match")
     if alias not in EXPECTED:
-        raise ManifestError(f"{source}: alias is not in the 12-member fleet")
+        raise ManifestError(f"{source}: alias is not in the 14-member fleet")
     tenant, room, harness = EXPECTED[alias]
     if (spec["tenant"], spec["room"], spec["harness"]) != (tenant, room, harness):
         raise ManifestError(f"{source}: tenant/room/harness differs from the fleet assignment")
