@@ -1867,18 +1867,29 @@ export class CauceRepository {
     const relationship = parent.rows[0];
     if (!relationship) return 'not_child';
 
-    const sourceMembership = await client.query<{ room_id: string }>(
-      `SELECT membership.room_id
+    // The response must be materialized in the correct room of the recipient agent,
+    // NOT in the room of the message sender (which may be cross-tenant).
+    // Verify the recipient has exactly one enabled membership to avoid cross-tenant routing errors.
+    const sourceMembership = await client.query<{ room_id: string; count: string }>(
+      `SELECT membership.room_id, COUNT(*) OVER () AS count
        FROM memberships membership
        JOIN role_policies policy ON policy.role=membership.role
        JOIN tenants tenant ON tenant.id=membership.tenant_id
        JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
        WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
          AND tenant.enabled AND room.enabled AND policy.allow_route
-       ORDER BY membership.room_id LIMIT 1
        FOR SHARE OF membership,policy,tenant,room`,
       [row.recipient_tenant, row.recipient_alias]
     );
+    const membershipCount = parseInt(sourceMembership.rows[0]?.count ?? '0', 10);
+    if (membershipCount !== 1) {
+      // Zero memberships means recipient is disabled/deleted; >1 means ambiguous identity.
+      // Reject materialization to avoid silent cross-tenant routing errors.
+      await this.insertAgentResponseDenial(
+        client, row, relationship, responseToDeliveryId, 'source_membership_unavailable', policy
+      );
+      return 'denied';
+    }
     const childRoomId = sourceMembership.rows[0]?.room_id;
     if (!childRoomId) {
       await this.insertAgentResponseDenial(
@@ -3067,15 +3078,30 @@ export class CauceRepository {
              VALUES($1,$2,'ACK timeout: max attempts exhausted',$3::jsonb,$4)
              ON CONFLICT(delivery_id) DO NOTHING`, [row.id, row.recipient_tenant, JSON.stringify(row.body), row.attempt]
           );
-          const responseDisposition = await this.materializeAgentResponse(
-            client,
-            row,
-            row.attempt,
-            'dead',
-            policy,
-            undefined,
-            'ACK timeout: max attempts exhausted'
-          );
+          let responseDisposition: AgentResponseDisposition = 'not_child';
+          try {
+            responseDisposition = await this.materializeAgentResponse(
+              client,
+              row,
+              row.attempt,
+              'dead',
+              policy,
+              undefined,
+              'ACK timeout: max attempts exhausted'
+            );
+          } catch (error) {
+            // Delivery already transitioned to dead above (line 3072-3080).
+            // If materialization fails (e.g., recipient membership issue in cross-tenant case),
+            // log and continue. This prevents a single bad delivery from crashing the entire
+            // reaper tick, which would block cleanup of all other alias deliveries.
+            console.error(JSON.stringify({
+              event: 'materialization_failed_in_reaper',
+              delivery_id: row.id,
+              recipient_alias: row.recipient_alias,
+              recipient_tenant: row.recipient_tenant,
+              error: error instanceof Error ? error.message : String(error)
+            }));
+          }
           const fanin = await this.materializeAgentFanin(client, this.rootMessageId(row));
           if (responseDisposition === 'not_child'
             && (row.body.type === 'agent.fanin' || !fanin.hasFanout)) {
