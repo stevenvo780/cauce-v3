@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
-  chmod, copyFile, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile,
+  chmod, chown, copyFile, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile,
 } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import os from "node:os";
@@ -13,6 +13,25 @@ const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const supervisor = path.join(ops, "scripts/container-adapter-supervisor.sh");
 const runtimeHelper = path.join(ops, "container-runtime/cauce-container-runtime.py");
 const fakeDockerSource = path.join(ops, "tests/fake-docker.mjs");
+// The lifecycle half of this suite is an UNPRIVILEGED-controller suite: the helper refuses
+// to change identity when it is not root, and refuses a root adapter when it is, so a root
+// controller can never satisfy the fixture. Release hosts run the gate as root, so drop the
+// whole test process to a deterministic non-root identity before any fixture exists. Never
+// relax the runtime's own UID/GID 0 rejection to make this pass instead.
+const droppedFromRoot = typeof process.getuid === "function" && process.getuid() === 0;
+if (droppedFromRoot) {
+  const testUid = Number.parseInt(process.env.CAUCE_TEST_RUNTIME_UID ?? process.env.SUDO_UID ?? "65534", 10);
+  const testGid = Number.parseInt(process.env.CAUCE_TEST_RUNTIME_GID ?? process.env.SUDO_GID ?? "65534", 10);
+  assert(Number.isInteger(testUid) && testUid > 0 && Number.isInteger(testGid) && testGid > 0,
+    "the container supervisor suite requires a non-root test identity");
+  process.setgid(testGid);
+  process.setgroups([testGid]);
+  process.setuid(testUid);
+  assert.equal(process.getuid(), testUid, "the supervisor suite must run under the requested non-root identity");
+  assert.notEqual(process.getuid(), 0, "the supervisor suite must never run as root");
+  process.stdout.write(`dropped the supervisor suite to the non-root test identity ${testUid}:${testGid}\n`);
+}
+
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cauce-container-supervisor-"));
 const configRoot = path.join(temporary, "config");
 const bundleRoot = path.join(temporary, "bundle");
@@ -257,8 +276,24 @@ const lifecycleContainerId = "b".repeat(64);
 const lifecycleGeneration = "c".repeat(64);
 const replacementGeneration = "d".repeat(64);
 
-const runtimeUid = String(process.getuid());
-const runtimeGid = String(process.getgid());
+// The adapter always runs under a non-root identity, so the fixture must request one
+// too. An unprivileged run can only request its own identity; a root run (the release
+// gate) must name a real unprivileged account, because child_credentials() rejects 0.
+const runningAsRoot = process.getuid() === 0;
+const testIdentity = (() => {
+  if (!runningAsRoot) return { uid: process.getuid(), gid: process.getgid() };
+  const uid = Number(process.env.CAUCE_CONTAINER_TEST_RUNTIME_UID ?? 65534);
+  const gid = Number(process.env.CAUCE_CONTAINER_TEST_RUNTIME_GID ?? 65534);
+  assert.ok(Number.isInteger(uid) && uid > 0 && Number.isInteger(gid) && gid > 0,
+    "a root fixture run needs a non-root CAUCE_CONTAINER_TEST_RUNTIME_UID/GID pair");
+  return { uid, gid };
+})();
+const runtimeUid = String(testIdentity.uid);
+const runtimeGid = String(testIdentity.gid);
+// Under root the mkdtemp fixture root is root-owned 0700, so the dropped adapter child
+// could neither traverse it nor write its PID files. Hand that single directory to the
+// same unprivileged identity: root keeps full access and no mode is widened for anyone.
+if (runningAsRoot) await chown(temporary, testIdentity.uid, testIdentity.gid);
 const metadataName = "cauce-v3-adapter.json";
 const lockName = "cauce-v3-adapter.lock";
 
@@ -1387,6 +1422,14 @@ time.sleep(60)
       "--container-id", lifecycleContainerId, "--generation", lifecycleGeneration, "--term-seconds", "1", "--kill-seconds", "2"]);
     assert.equal(rootStop.status, 0, `the root-owned stop must succeed: ${rootStop.stderr}`);
     process.stdout.write("privileged root-owned control-plane reproductions passed\n");
+  } else if (droppedFromRoot) {
+    // Do not let the root release host silently buy a green gate with less coverage than a
+    // developer machine gets. Name what was not exercised and how to exercise it.
+    process.stdout.write(
+      "WARNING: privileged root-owned control-plane reproductions were NOT exercised: this run "
+      + "started as root and dropped its own privileges, so passwordless sudo is unavailable. "
+      + "Run this suite from a non-root account that has passwordless sudo for root and #65534 "
+      + "to cover root-owned metadata/lock tamper resistance.\n");
   } else {
     process.stdout.write("skipping privileged reproductions: passwordless sudo for root and #65534 is unavailable\n");
   }
