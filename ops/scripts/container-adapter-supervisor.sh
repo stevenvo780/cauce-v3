@@ -32,6 +32,11 @@ CONTROL_ROOT=/run/cauce-v3-supervisor
 WAIT_SECONDS=60
 DOCKER_CALL_TIMEOUT=${CAUCE_CONTAINER_DOCKER_TIMEOUT:-30}
 
+# Claude Code version requirement for claude harness adapters.
+# This version MUST be installed in the container image beforehand.
+# To update the fleet: upgrade this constant and rebuild container images.
+CLAUDE_CODE_REQUIRED_VERSION="2.1.218"
+
 die() {
   printf '%s\n' "$1" >&2
   exit "${2:-2}"
@@ -441,6 +446,41 @@ prepare_state_securely() {
     --mount "$discovered_mount_destination" --state "$state_directory" --uid "$container_uid" --gid "$container_gid"
 }
 
+ensure_claude_binary() {
+  # For claude harness adapters: verify the claude-code binary version matches the required
+  # pinned version. This does NOT install; installation must be pre-built into the container.
+  # Fail loudly if version is wrong to prevent silent misconfiguration.
+  if [[ $harness == claude ]]; then
+    docker_id_exec --user "$container_user" bash -c '
+      set -euo pipefail
+      home_dir="'"$container_home"'"
+      required_ver="'"$CLAUDE_CODE_REQUIRED_VERSION"'"
+
+      # Check if claude binary exists at the expected location
+      # resolve_claude_bin looks in ~/.local/bin first, then ~/.npm-global
+      claude_bin=""
+      [[ -x "$home_dir/.local/bin/claude" ]] && claude_bin="$home_dir/.local/bin/claude"
+      [[ -z "$claude_bin" && -x "$home_dir/.npm-global/node_modules/@anthropic-ai/claude-code/bin/claude.exe" ]] && \
+        claude_bin="$home_dir/.npm-global/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+
+      if [[ -z "$claude_bin" ]]; then
+        echo "FATAL: claude binary not found; required version $required_ver"
+        exit 78
+      fi
+
+      # Extract version from binary output (--version returns "X.Y.Z ...")
+      actual_ver=$("$claude_bin" --version 2>&1 | head -1 | grep -oE "^[0-9]+\.[0-9]+\.[0-9]+" || echo "unknown")
+
+      if [[ "$actual_ver" != "$required_ver" ]]; then
+        echo "FATAL: claude version mismatch: expected $required_ver but got $actual_ver from $claude_bin"
+        exit 78
+      fi
+
+      exit 0
+    ' || die "claude binary verification failed for $alias_name harness=claude; see log above"
+  fi
+}
+
 stop_existing() {
   # Runs as root against the root-owned control directory; the fail-closed stop
   # proves absence when there is nothing to stop.
@@ -507,6 +547,7 @@ start_adapter() {
   stop_existing
   deploy_bundle
   deploy_pki
+  ensure_claude_binary
   runtime_path="$container_home/.local/bin:$container_home/.npm-global/bin:$container_home/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   if [[ -v CONFIG[DEFAULT_TIMEOUT_MS] ]]; then
     effective_default_timeout_ms=${CONFIG[DEFAULT_TIMEOUT_MS]}
