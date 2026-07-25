@@ -565,7 +565,7 @@ describe('terminal relay circuit', () => {
     const agent = await FakePtyAgent.connect(harness.agentPort, {
       cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
     }, {
-      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: 7, image_id: 'sha256:abc',
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
       runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell']
     });
     await waitFor(() => agent.helloAck !== undefined);
@@ -665,7 +665,7 @@ describe('terminal relay circuit', () => {
     const agent = await FakePtyAgent.connect(harness.agentPort, {
       cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
     }, {
-      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: 7, image_id: 'sha256:abc',
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
       runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell']
     });
     await waitFor(() => harness.leg.lookup('Steven', 'jarvis') !== undefined);
@@ -686,7 +686,7 @@ describe('terminal relay circuit', () => {
     await FakePtyAgent.connect(harness.agentPort, {
       cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
     }, {
-      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: 7, image_id: 'sha256:abc',
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
       runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell']
     });
     await waitFor(() => harness.leg.lookup('Steven', 'jarvis') !== undefined);
@@ -704,7 +704,7 @@ describe('terminal relay circuit', () => {
     const agent = await FakePtyAgent.connect(harness.agentPort, {
       cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
     }, {
-      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: 7, image_id: 'sha256:abc',
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
       runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell']
     });
     await waitFor(() => harness.leg.lookup('Steven', 'jarvis') !== undefined);
@@ -727,7 +727,7 @@ describe('terminal relay circuit', () => {
     const intruder = await FakePtyAgent.connect(harness.agentPort, {
       cert: TEST_INTRUDER_CERTIFICATE, key: TEST_INTRUDER_PRIVATE_KEY
     }, {
-      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: 7, image_id: 'sha256:abc',
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
       runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell']
     });
     await wait(150);
@@ -741,7 +741,7 @@ describe('terminal relay circuit', () => {
     const agent = await FakePtyAgent.connect(harness.agentPort, {
       cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
     }, {
-      v: 1, tenant_id: 'Miguel', alias: 'kratos', container_id: 'claw', generation: 7, image_id: 'sha256:abc',
+      v: 1, tenant_id: 'Miguel', alias: 'kratos', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
       runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell']
     });
     await waitFor(() => agent.helloAck !== undefined);
@@ -761,7 +761,7 @@ describe('terminal relay circuit', () => {
     const expired = await FakePtyAgent.connect(harness.agentPort, {
       cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
     }, {
-      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: 7, image_id: 'sha256:abc',
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
       runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell']
     });
     await wait(150);
@@ -779,7 +779,7 @@ describe('terminal relay circuit', () => {
   it('replaces a superseded agent connection instead of keeping two', async () => {
     const harness = await startHarness();
     const hello = {
-      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: 7, image_id: 'sha256:abc',
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
       runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell']
     };
     const first = await FakePtyAgent.connect(harness.agentPort, {
@@ -788,9 +788,9 @@ describe('terminal relay circuit', () => {
     await waitFor(() => first.helloAck !== undefined);
     const second = await FakePtyAgent.connect(harness.agentPort, {
       cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
-    }, { ...hello, generation: 8 });
+    }, { ...hello, generation: '9f21a70b4c5d6e7f8091a2b3c4d5e6f7' });
     await waitFor(() => second.helloAck !== undefined);
     await waitFor(() => harness.leg.presence().length === 1);
-    expect(harness.leg.presence()[0]).toMatchObject({ generation: 8 });
+    expect(harness.leg.presence()[0]).toMatchObject({ generation: '9f21a70b4c5d6e7f8091a2b3c4d5e6f7' });
   });
 });

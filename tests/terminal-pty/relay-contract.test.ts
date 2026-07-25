@@ -12,7 +12,10 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { X509Certificate } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { createServer, type TLSSocket, type Server as TlsServer } from 'node:tls';
@@ -518,8 +521,20 @@ async function runAgentProcess(script: string, environment: Record<string, strin
 
 // --- End to end against the real terminal-relay -----------------------------------------
 //
-// The relay is module M4 of this refactor. Until it is merged there is nothing to talk to,
-// so the suite says so out loud rather than passing on an empty circuit.
+// This block drives the REAL services/terminal-relay process. It was written before that
+// module existed, against a guessed environment contract; the integration reconciled it with
+// what the relay actually reads (services/terminal-relay/src/config.ts) and with the mutual
+// TLS both of its listeners demand:
+//
+//   * ONE env prefix, `CAUCE_TERMINAL_RELAY_*` for transport and `CAUCE_TERMINAL_*` for the
+//     bounds, with the browser port named BROWSER_PORT (not WS_PORT) and the gateway bearer
+//     read from a FILE, never from the environment.
+//   * The authz interval and grace are expressed in SECONDS and floor at 1, so the revocation
+//     and fail-closed cases are given seconds, not milliseconds, to land.
+//   * Both legs require a client certificate. The console leg additionally pins the CN and the
+//     agent leg pins the certificate fingerprint against a registry file. The self-signed
+//     fixture doubles as its own CA, as the console client cert and as the agent client cert,
+//     which is what makes a single throwaway PEM enough here.
 
 interface RelayLocation {
   entry: string;
@@ -564,39 +579,69 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
   let process_: ChildProcess | null = null;
   let wsPort = 0;
   let agentPort = 0;
+  let relayDirectory = '';
+  let tokenFile = '';
+  let registryFile = '';
+  let agentFingerprint = '';
   const sockets: WebSocket[] = [];
 
-  /** Env contract expected from services/terminal-relay; documented in the README. */
+  /**
+   * Environment contract of services/terminal-relay/src/config.ts, verbatim. The token and the
+   * agent registry are FILES because the relay re-reads both on every use: that is what makes a
+   * rotated token and a revoked agent take effect without a restart.
+   */
   async function startRelay(overrides: Record<string, string> = {}): Promise<void> {
     if (!relay) return;
     wsPort = 18_700 + Math.floor(Math.random() * 200);
     agentPort = wsPort + 1_000;
+    writeFileSync(tokenFile, `${gateway.token}\n`);
+    writeFileSync(registryFile, JSON.stringify({
+      version: 1,
+      agents: [{
+        fingerprint_sha256: agentFingerprint,
+        tenant_id: TENANT,
+        alias: ALIAS,
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      }],
+    }));
     process_ = spawn(relay.command, relay.args, {
       cwd: fileURLToPath(repoRoot),
       env: {
         ...process.env,
-        CAUCE_TERMINAL_RELAY_WS_PORT: String(wsPort),
+        CAUCE_TERMINAL_RELAY_BROWSER_PORT: String(wsPort),
         CAUCE_TERMINAL_RELAY_AGENT_PORT: String(agentPort),
-        CAUCE_TERMINAL_RELAY_AGENT_TLS_CERT: tls.cert_path,
-        CAUCE_TERMINAL_RELAY_AGENT_TLS_KEY: tls.key_path,
-        CAUCE_TERMINAL_RELAY_GATEWAY_URL: gateway.url,
-        CAUCE_TERMINAL_RELAY_GATEWAY_TOKEN: gateway.token,
-        CAUCE_TERMINAL_RELAY_GATEWAY_CA: gateway.ca_path ?? '',
-        CAUCE_TERMINAL_RELAY_OUTPUT_LIMIT_BYTES: '262144',
-        CAUCE_TERMINAL_RELAY_GATEWAY_GRACE_MS: '500',
-        CAUCE_TERMINAL_RELAY_AUTHZ_INTERVAL_MS: '200',
+        CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: tls.cert_path,
+        CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: tls.key_path,
+        // The fixture is self-signed, so it is simultaneously the server cert, the trust
+        // anchor for the console client cert and the trust anchor for the agent client cert.
+        CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: tls.cert_path,
+        CAUCE_TERMINAL_RELAY_AGENT_CA_FILE: tls.cert_path,
+        CAUCE_TERMINAL_RELAY_CONSOLE_CN: 'localhost',
+        CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: registryFile,
+        CAUCE_TERMINAL_GATEWAY_URL: gateway.url,
+        CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile,
+        // Node verifies the fake gateway's self-signed cert through the process trust store.
+        ...(gateway.ca_path ? { NODE_EXTRA_CA_CERTS: gateway.ca_path } : {}),
+        CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC: '65536',
+        CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS: '1',
+        CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS: '1',
         ...overrides,
       },
       stdio: ['ignore', 'inherit', 'inherit'],
     });
-    await waitForPort(wsPort);
+    await waitForPort(wsPort, tls);
   }
 
   async function attachAgent(): Promise<FakeAgentHandle> {
     const handle = startFakeAgent({
       host: '127.0.0.1', port: agentPort, ca: tls.cert, servername: 'localhost',
+      // The agent leg is mutual TLS: without a client certificate the handshake never completes.
+      cert: tls.cert, key: tls.key,
       tenant: TENANT, alias: ALIAS, alias_key: aliasKey, container_id: CONTAINER,
       generation: GENERATION, image_id: IMAGE, runtime_user: 'claw', runtime_uid: 1000,
+      // `shell`/`harness` is the whole mode vocabulary of the gateway, the relay and the Python
+      // agent; announcing anything else makes the relay reject the hello outright.
+      modes: ['shell'],
       flood_bytes: 2 * 1024 * 1024,
     });
     await handle.ready;
@@ -605,12 +650,19 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
   }
 
   function openBrowserSocket(): WebSocket {
-    const socket = new WebSocket(`ws://127.0.0.1:${wsPort}/v3/console/terminal/ws`);
+    const socket = new WebSocket(`wss://127.0.0.1:${wsPort}/v3/console/terminal/ws`,
+      consoleClientOptions(tls));
     sockets.push(socket);
     return socket;
   }
 
   beforeAll(async () => {
+    relayDirectory = mkdtempSync(path.join(tmpdir(), 'cauce-pty-relay-'));
+    tokenFile = path.join(relayDirectory, 'relay_token');
+    registryFile = path.join(relayDirectory, 'pty_agent_identities.json');
+    // The relay admits an agent by certificate fingerprint, so the registry has to name the
+    // exact certificate the fake agent will present.
+    agentFingerprint = new X509Certificate(tls.cert).fingerprint256;
     gateway = await startFakeGateway({ master_key_b64: MASTER_KEY_B64, relay_token: RELAY_TOKEN });
     await startRelay();
   });
@@ -620,6 +672,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     agent?.destroy();
     process_?.kill('SIGTERM');
     await gateway.close();
+    if (relayDirectory) rmSync(relayDirectory, { recursive: true, force: true });
   });
 
   it('attaches with a valid ticket, says ready and echoes bytes back', async () => {
@@ -637,10 +690,26 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     expect(stream.outputFramesWereAllBinary()).toBe(true);
   });
 
-  it('closes with 4401 when the first frame carries no ticket', async () => {
+  it('closes with 4400 when the attach frame carries no ticket at all', async () => {
     const socket = openBrowserSocket();
     await once(socket, 'open');
     socket.send(JSON.stringify({ type: 'attach', session_id: randomUUID(), cols: 80, rows: 24 }));
+    // An attach WITHOUT a ticket field is a malformed frame, not a bad credential: the relay
+    // never gets as far as asking the gateway, so it is 4400 and not 4401. 4401 is reserved for
+    // a ticket that was actually presented and refused at consume time, which the next case
+    // covers; conflating the two would tell an operator "your permission expired" when what
+    // really happened is that the console spoke the protocol wrong.
+    expect(await closeCode(socket)).toBe(CLOSE_CODE.protocol_error);
+  });
+
+  it('closes with 4401 when a ticket is presented and the gateway refuses it', async () => {
+    const socket = openBrowserSocket();
+    await once(socket, 'open');
+    const payload = ticketPayload();
+    // Signed with the wrong alias key: well-formed frame, refused credential.
+    socket.send(JSON.stringify({
+      type: 'attach', session_id: payload.sid, ticket: mintTicket(otherAliasKey, payload), cols: 80, rows: 24,
+    }));
     expect(await closeCode(socket)).toBe(CLOSE_CODE.ticket_invalid);
   });
 
@@ -697,10 +766,29 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     await once(socket, 'open');
     socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, ticket: mintTicket(aliasKey, payload), cols: 80, rows: 24 }));
     await stream.nextControl();
-    socket.send(JSON.stringify({ type: 'input', data: 'flood\r' }));
-    expect(await closeCode(socket, 30_000)).toBe(CLOSE_CODE.output_flood);
+    // The guard is deliberately about a SUSTAINED storm, not a single burst: `ls -R` of a big
+    // directory has to survive with at most a warning, so the relay only closes after five
+    // consecutive one-second windows over the limit. Driving it therefore means flooding
+    // repeatedly, not once — a single burst here used to hang the test for its whole timeout.
+    const storm = setInterval(() => {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: 'input', data: 'flood\r' }));
+    }, 250);
+    try {
+      expect(await closeCode(socket, 30_000)).toBe(CLOSE_CODE.output_flood);
+    } finally {
+      clearInterval(storm);
+    }
   });
 });
+
+/**
+ * `ws` forwards unknown options straight to tls.connect but does not type `servername`, so the
+ * cast is the whole reason this helper exists. Keeping it in one place means the console leg and
+ * the readiness probe cannot drift apart in how they authenticate.
+ */
+function consoleClientOptions(material: SelfSignedCert): Record<string, unknown> {
+  return { cert: material.cert, key: material.key, ca: material.cert, servername: 'localhost' };
+}
 
 function once(socket: WebSocket, event: 'open'): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -772,11 +860,16 @@ function collect(socket: WebSocket): BrowserStream {
   };
 }
 
-async function waitForPort(port: number, timeoutMs = 20_000): Promise<void> {
+/**
+ * Probes the browser leg the way the console nginx does: TLS with a client certificate. A plain
+ * TCP probe would report the port up before the mutual-TLS listener could actually admit anyone.
+ */
+async function waitForPort(port: number, material: SelfSignedCert, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const reachable = await new Promise<boolean>((resolve) => {
-      const probe = new WebSocket(`ws://127.0.0.1:${port}/v3/console/terminal/ws`);
+      const probe = new WebSocket(`wss://127.0.0.1:${port}/v3/console/terminal/ws`,
+        consoleClientOptions(material));
       probe.once('open', () => { probe.close(); resolve(true); });
       probe.once('error', () => resolve(false));
     });

@@ -46,6 +46,8 @@ export async function startFakeGateway(options = {}) {
   const token = options.relay_token ?? 'harness-relay-token';
   const operatorTenant = options.operator_tenant ?? 'Steven';
   const clockSkewSec = options.clock_skew_sec ?? 2;
+  /** How long the shell may live once the ticket is consumed; the ticket TTL is a separate, shorter clock. */
+  const sessionTtlSec = options.session_ttl_sec ?? 3600;
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
 
   // grants.json semantics: a map of "<tenant>:<alias>" the operator is allowed to reach.
@@ -192,6 +194,10 @@ export async function startFakeGateway(options = {}) {
       expires_at: payload.exp,
       consumed_at: now(),
       ticket_fp: fingerprint(ticket),
+      // Geometry belongs to the session the operator asked for; the real gateway stores it at
+      // request time and hands it back at consume so the relay can size the PTY on OPEN.
+      cols: Number.isInteger(body.cols) ? body.cols : 80,
+      rows: Number.isInteger(body.rows) ? body.rows : 24,
       revoked_at: null,
       closed_at: null,
     };
@@ -207,8 +213,23 @@ export async function startFakeGateway(options = {}) {
       timer.unref?.();
       timers.push(timer);
     }
+    // FLAT body, field for field as services/gateway/src/terminal/plugin.ts answers it. It used
+    // to be nested under `session` with `container_id` and no cols/rows/operator_id, which the
+    // relay's `parseSessionGrant` rejects wholesale: the grant was dropped and every attach died
+    // with 1011 instead of opening a shell. `session` is still echoed alongside so the harness's
+    // own gateway tests keep asserting the container identity they were written against.
     reply(response, 200, {
       ok: true,
+      tenant_id: session.tenant_id,
+      alias: session.alias,
+      mode: session.mode,
+      cols: session.cols,
+      rows: session.rows,
+      operator_id: session.operation,
+      container: session.container_id,
+      runtime_user: session.runtime_user,
+      expires_at: new Date(session.expires_at * 1000).toISOString(),
+      session_expires_at: new Date((session.expires_at + sessionTtlSec) * 1000).toISOString(),
       session: {
         session_id: sessionId, tenant_id: session.tenant_id, alias: session.alias,
         container_id: session.container_id, generation: session.generation,

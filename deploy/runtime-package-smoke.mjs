@@ -17,6 +17,7 @@ const runtimePackages = [
   ['relay-worker', '../services/relay-worker/package.json'],
   ['shadow-router', '../services/shadow-router/package.json'],
   ['telegram-bridge', '../services/telegram-bridge/package.json'],
+  ['terminal-relay', '../services/terminal-relay/package.json'],
 ];
 
 const runtimeModules = [
@@ -30,6 +31,16 @@ const runtimeModules = [
   ['shadow-router', '../services/shadow-router/dist/index.js'],
   ['telegram-bridge', '../services/telegram-bridge/dist/index.js'],
   ['outbox metrics', './outbox-metrics.mjs', 'startOutboxMetrics'],
+];
+
+/**
+ * Entrypoints that must be PRESENT in the image but must never be imported by this smoke test:
+ * they are processes, not libraries. `terminal-relay/dist/main.js` binds two TLS listeners and
+ * exits 78 under a root euid the moment it is evaluated, so importing it here would either hang
+ * the release gate or fail it for reasons that have nothing to do with packaging.
+ */
+const runtimeEntrypoints = [
+  ['terminal-relay', '../services/terminal-relay/dist/main.js'],
 ];
 
 const adapterBins = [
@@ -195,6 +206,17 @@ export async function validateRuntimePackage() {
       }
     } catch (error) {
       throw new Error(`${name} runtime module failed validation`, { cause: error });
+    }
+  }
+
+  for (const [name, relativeEntrypoint] of runtimeEntrypoints) {
+    const entrypoint = new URL(relativeEntrypoint, import.meta.url);
+    try {
+      await access(entrypoint, constants.R_OK);
+      const metadata = await stat(entrypoint);
+      if (!metadata.isFile() || metadata.size === 0) throw new Error('entrypoint is not a non-empty file');
+    } catch (error) {
+      throw new Error(`${name} runtime entrypoint failed validation`, { cause: error });
     }
   }
 

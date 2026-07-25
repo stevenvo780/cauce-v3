@@ -32,7 +32,8 @@ export interface AgentHello {
   readonly tenant_id: string;
   readonly alias: string;
   readonly container_id: string;
-  readonly generation: number;
+  /** Opaque 32-hex container generation from the launcher; a STRING, never a counter. */
+  readonly generation: string;
   readonly image_id: string;
   readonly runtime_user: string;
   readonly runtime_uid: number;
@@ -134,7 +135,7 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
   const runtimeUser = stringField(source, 'runtime_user');
   const harness = stringField(source, 'harness');
   const agentVersion = stringField(source, 'agent_version');
-  const generation = integerField(source, 'generation');
+  const generation = stringField(source, 'generation');
   const runtimeUid = integerField(source, 'runtime_uid');
   const modes = modesField(source);
   if (!tenantId || !alias || !containerId || !imageId || !runtimeUser || !harness || !agentVersion) return undefined;
@@ -205,7 +206,7 @@ export class AgentConnection {
       harness: this.hello.harness,
       agent_version: this.hello.agent_version,
       modes: this.hello.modes,
-      connected_at: this.connectedAt.toISOString()
+      connected_since: this.connectedAt.toISOString()
     };
   }
 

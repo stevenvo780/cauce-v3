@@ -40,14 +40,20 @@ export interface AgentPresence {
   readonly tenant_id: string;
   readonly alias: string;
   readonly container_id: string;
-  readonly generation: number;
+  /**
+   * Opaque container generation: the 32 hex chars of sha256(Id|StartedAt|RestartCount) that the
+   * pty-agent launcher publishes. It is a STRING, not a counter — the gateway stores it in a
+   * `text` column, the ticket signs it byte for byte and the agent compares it literally.
+   */
+  readonly generation: string;
   readonly image_id: string;
   readonly runtime_user: string;
   readonly runtime_uid: number;
   readonly harness: string;
   readonly agent_version: string;
   readonly modes: readonly TerminalMode[];
-  readonly connected_at: string;
+  /** Field name is the gateway's: `parseAgentPresence` rejects the record without it. */
+  readonly connected_since: string;
 }
 
 export interface TerminalGatewayClient {
