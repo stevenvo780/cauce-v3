@@ -110,16 +110,28 @@ services:
 
   terminal-relay:
     <<: *dev-runtime
+    # Opt-in igual que en producción. Este bloque se escribió antes que el servicio y asumía un
+    # "modo claro" de dev que el relay NO tiene: las dos piernas exigen TLS con certificado de
+    # cliente sin excepción, y `CAUCE_TERMINAL_GATEWAY_URL` se rechaza si no es HTTPS. Levantar
+    # el stack de dev sin material TLS dejaba al relay en un bucle de reinicio, así que ahora hay
+    # que pedirlo a propósito y darle certificados (pueden ser autofirmados de usar y tirar).
+    profiles: [terminal]
     command: ["node", "services/terminal-relay/dist/main.js"]
     environment:
       NODE_ENV: development
       CAUCE_DEV_AUTH: "1"
-      # Dev corre en claro en las dos piernas: sin TLS server, sin mTLS de
-      # consola y sin CA de agentes. Producción sí exige los tres.
       CAUCE_TERMINAL_RELAY_BROWSER_PORT: "8446"
       CAUCE_TERMINAL_RELAY_AGENT_PORT: "8445"
       CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: /run/cauce-terminal/pty_agent_identities.json
-      CAUCE_TERMINAL_GATEWAY_URL: http://gateway:8080
+      # Los cuatro son obligatorios: sin ellos el proceso no arranca. En dev pueden apuntar a un
+      # certificado autofirmado que haga de servidor y de CA de las dos piernas a la vez.
+      CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: /run/cauce-terminal/relay.crt
+      CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: /run/cauce-terminal/relay.key
+      CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: /run/cauce-terminal/relay.crt
+      CAUCE_TERMINAL_RELAY_AGENT_CA_FILE: /run/cauce-terminal/relay.crt
+      CAUCE_TERMINAL_RELAY_CONSOLE_CN: ${CAUCE_TERMINAL_CONSOLE_CN:-localhost}
+      # HTTPS obligatorio: `gatewayUrl()` rechaza cualquier otro esquema.
+      CAUCE_TERMINAL_GATEWAY_URL: https://gateway:8443
       CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/cauce-terminal/relay.token
       CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS: "600"
       CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC: "262144"

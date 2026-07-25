@@ -176,6 +176,14 @@ services:
 
   terminal-relay:
     <<: *runtime-service
+    # Opt-in, like every other optional subsystem in this file (origin-relay, telegram, shadow,
+    # observability). Without the profile the relay would start on EVERY production stack, and
+    # on a stack where the PTY channel is not provisioned its five secrets all default to
+    # /dev/null: it would read an empty certificate, fail to bind its TLS listener and, with
+    # `restart: always`, crash-loop forever next to a gateway that is not even offering the
+    # capability. The profile also keeps the two halves honest — the relay only runs where
+    # CAUCE_TERMINAL_ENABLED=1 has been paired with real key material.
+    profiles: [terminal]
     command: ["node", "services/terminal-relay/dist/main.js"]
     environment:
       NODE_ENV: production
