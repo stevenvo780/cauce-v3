@@ -155,10 +155,14 @@ describe('terminal configuration', () => {
 });
 
 describe('fleet placement and container cohorts', () => {
-  it('covers the fourteen fleet aliases with their tenant and runtime user', () => {
-    expect(Object.keys(FLEET_PLACEMENTS)).toHaveLength(14);
+  it('covers the fifteen fleet aliases with their tenant and runtime user', () => {
+    expect(Object.keys(FLEET_PLACEMENTS)).toHaveLength(15);
     expect(fleetPlacement('jarvis')).toEqual({ tenant_id: 'Steven', container: 'claw', runtime_user: 'claw' });
     expect(fleetPlacement('salva')).toEqual({ tenant_id: 'Isa', container: 'ws-isa', runtime_user: 'dev' });
+    // zeus orchestrates the fleet from its own container; leaving it out made it the only alias
+    // the console could never reach, however the grants file was written.
+    expect(fleetPlacement('zeus')).toEqual({ tenant_id: 'Steven', container: 'ws-zeus', runtime_user: 'dev' });
+    expect(containerCohort('zeus')).toEqual(['zeus']);
     expect(fleetPlacement('nonexistent')).toBeUndefined();
     // Prototype keys must never resolve to a placement.
     expect(fleetPlacement('constructor')).toBeUndefined();
