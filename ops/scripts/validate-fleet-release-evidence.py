@@ -39,14 +39,19 @@ if errors:
         for error in errors
     ))
 
+# The fleet matrix drives the real gateway, the real store and the packaged adapters against
+# harness doubles. Nothing in it touches apps/console, so it is bound to the runtime domain only:
+# a console edit must not invalidate a 14-alias fleet run. See ops/scripts/source-digest.py.
 current_source = subprocess.run(
-    [sys.executable, str(ROOT / "ops" / "scripts" / "source-digest.py")],
+    [sys.executable, str(ROOT / "ops" / "scripts" / "source-digest.py"), "--domain", "runtime"],
     check=True,
     capture_output=True,
     text=True,
 ).stdout.strip()
 if report["sourceDigest"] != current_source:
-    fail("sourceDigest does not match current final-image sources")
+    fail("sourceDigest does not match current runtime-domain sources")
+if report["sourceDigestDomain"] != "runtime":
+    fail("fleet evidence must declare the runtime source domain")
 if report["summary"] != {"aliases": 14, "passed": 14, "failed": 0}:
     fail("the exact 14-alias matrix did not pass")
 if len({item["alias"] for item in report["aliases"]}) != 14:

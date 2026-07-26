@@ -207,7 +207,11 @@ if ! docker exec "$prefix-gateway" node deploy/readiness-probe.mjs http://127.0.
 fi
 
 image_digest=$(docker image inspect --format '{{.Id}}' "$runtime_image")
-source_digest=$(python3 "$OPS/scripts/source-digest.py")
+# Same domain binding as the Compose-authentic path: runtime sources plus the harness that drives
+# the faults. apps/console is outside the runtime domain because it cannot reach the runtime image
+# (see ops/scripts/source-digest.py).
+source_digest=$(python3 "$OPS/scripts/source-digest.py" --domain runtime)
+harness_digest=$(python3 "$OPS/scripts/source-digest.py" --domain harness)
 deployment="$state/deployment.json"
 rows="$state/deployment.tsv"
 : >"$rows"
@@ -233,6 +237,7 @@ if ((bind_runtime == 1)); then
     -v "$app_volume:/app:ro" -v "$fixture_volume:/fixtures:ro" -v /var/run/docker.sock:/var/run/docker.sock \
     -e PATH=/app/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     -e CAUCE_AUTHENTIC_MODE=runtime-authentic -e CAUCE_IMAGE_DIGEST="$image_digest" -e CAUCE_SOURCE_DIGEST="$source_digest" \
+    -e CAUCE_HARNESS_DIGEST="$harness_digest" \
     -e CAUCE_DEPLOYMENT_EVIDENCE_FILE=/fixtures/deployment.json -e CAUCE_GATEWAY_HOST=gateway -e CAUCE_GATEWAY_PORT=8443 \
     -e CAUCE_EXTERNAL_CONTROL_HOST=fake-external -e CAUCE_EXTERNAL_CONTROL_PORT=9080 \
     -e CAUCE_UNIX_CONTROL_HOST=unix-target -e CAUCE_UNIX_CONTROL_PORT=9081 -e CAUCE_FIXTURE_DIR_HOST=/fixtures \
@@ -247,6 +252,7 @@ if ((bind_runtime == 1)); then
   ((runner_status == 0)) || exit "$runner_status"
 else
   CAUCE_AUTHENTIC_MODE=runtime-authentic CAUCE_IMAGE_DIGEST="$image_digest" CAUCE_SOURCE_DIGEST="$source_digest" \
+  CAUCE_HARNESS_DIGEST="$harness_digest" \
   CAUCE_DEPLOYMENT_EVIDENCE_FILE="$deployment" CAUCE_GATEWAY_PORT="$gateway_port" CAUCE_EXTERNAL_CONTROL_PORT="$control_port" \
   CAUCE_UNIX_CONTROL_PORT="$unix_control_port" CAUCE_FIXTURE_DIR_HOST="$state/fixtures" CAUCE_FAULT_DRIVER=docker-run \
   CAUCE_FAULT_CONFIRM=ephemeral-only CAUCE_RUNTIME_PREFIX="$prefix" \

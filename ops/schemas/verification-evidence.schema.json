@@ -2,13 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cauce.invalid/schemas/verification-evidence.schema.json",
   "title": "Cauce V3 reproducible code verification",
+  "description": "Bound to the FULL source domain, unlike runtime fault evidence. `pnpm lint | typecheck | build | test` really does exercise every domain: lint:console, typecheck:console and build:console run the console, the console vitest project runs under test:unit, tests/gateway-hardening/console-api-contract.test.ts reads apps/console sources, and ops:validate exercises the harness. Narrowing this artifact to the runtime domain would be the 'covers less' failure: evidence that does not prove what it claims.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "suite", "sourceDigest", "timestamps", "summary", "commands"],
+  "required": ["schemaVersion", "suite", "sourceDigest", "sourceDigestDomain", "timestamps", "summary", "commands"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "suite": { "const": "cauce-v3-verification-three-rounds" },
     "sourceDigest": { "$ref": "#/$defs/digest" },
+    "sourceDigestDomain": { "const": "full" },
     "timestamps": { "$ref": "#/$defs/timestamps" },
     "summary": {
       "type": "object",

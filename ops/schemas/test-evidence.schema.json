@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cauce.invalid/schemas/test-evidence.schema.json",
   "title": "Cauce V3 runtime evidence",
+  "description": "schemaVersion 4 declares which source domains a fault-injection run actually depends on. sourceDigest is now the runtime domain only -- apps/console cannot reach the runtime image, so console edits no longer invalidate this evidence (see ops/scripts/source-digest.py). harnessDigest closes the opposite hole: the runner, the fake external world, the authentic Compose topology and the fault drivers decide what this evidence reports, so the artifact is bound to them too.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,19 +13,23 @@
     "mechanism",
     "imageDigest",
     "sourceDigest",
+    "sourceDigestDomain",
+    "harnessDigest",
     "timestamps",
     "deployment",
     "summary",
     "tests"
   ],
   "properties": {
-    "schemaVersion": { "const": 3 },
+    "schemaVersion": { "const": 4 },
     "suite": { "type": "string", "minLength": 1, "maxLength": 128 },
     "mode": { "enum": ["compose-authentic", "runtime-authentic"] },
     "evidenceClass": { "enum": ["compose-authentic", "runtime-authentic"] },
     "mechanism": { "enum": ["docker-compose-final-binaries", "docker-run-final-binaries"] },
     "imageDigest": { "$ref": "#/$defs/digest" },
     "sourceDigest": { "$ref": "#/$defs/digest" },
+    "sourceDigestDomain": { "const": "runtime" },
+    "harnessDigest": { "$ref": "#/$defs/digest" },
     "timestamps": { "$ref": "#/$defs/timestamps" },
     "deployment": {
       "type": "object",

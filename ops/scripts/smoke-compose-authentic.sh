@@ -72,7 +72,12 @@ node "$OPS/harness/authentic-fixture-init.mjs" >/dev/null
 
 "$OPS/scripts/compose.sh" authentic up -d --no-build --wait
 image_digest=$(docker image inspect --format '{{.Id}}' "$runtime_image")
-source_digest=$(python3 "$OPS/scripts/source-digest.py")
+# Fault-injection evidence depends on the runtime domain (what the five final services are built
+# from) and on the harness domain (what drives and observes the faults). It does NOT depend on
+# apps/console: no console file reaches the runtime image, so a console edit used to invalidate this
+# very expensive artifact for no reason. Details in ops/scripts/source-digest.py.
+source_digest=$(python3 "$OPS/scripts/source-digest.py" --domain runtime)
+harness_digest=$(python3 "$OPS/scripts/source-digest.py" --domain harness)
 deployment="$state/deployment.json"
 services=(gateway dispatcher relay-worker telegram-bridge shadow-router)
 rows="$state/deployment.tsv"
@@ -96,6 +101,7 @@ PY
 CAUCE_AUTHENTIC_MODE=compose-authentic \
 CAUCE_IMAGE_DIGEST="$image_digest" \
 CAUCE_SOURCE_DIGEST="$source_digest" \
+CAUCE_HARNESS_DIGEST="$harness_digest" \
 CAUCE_DEPLOYMENT_EVIDENCE_FILE="$deployment" \
 CAUCE_GATEWAY_PORT="$CAUCE_AUTHENTIC_GATEWAY_PORT" \
 CAUCE_EXTERNAL_CONTROL_PORT="$CAUCE_AUTHENTIC_CONTROL_PORT" \

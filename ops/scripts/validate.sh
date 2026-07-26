@@ -62,6 +62,10 @@ node "$ROOT/tests/alias-runner.test.mjs"
 node "$ROOT/tests/container-release-pin.test.mjs"
 node "$ROOT/tests/container-cutover.test.mjs"
 node "$ROOT/tests/container-ops-evidence.test.mjs"
+# Guards the source-digest domain split: proves the runtime domain still covers everything that
+# reaches the runtime image and that apps/console is the only thing it drops. Removing a family from
+# a digest LOOSENS the gate, so the narrowing has to be pinned by a test.
+node "$ROOT/tests/source-digest-domains.test.mjs"
 
 python3 - "$PROJECT" <<'PY'
 import pathlib, sys

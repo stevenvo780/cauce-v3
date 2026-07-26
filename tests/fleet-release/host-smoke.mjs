@@ -18,8 +18,12 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+// Host smoke probes authentic harness CLIs against the fleet manifests. It never touches the
+// console, so it binds to the runtime domain (see ops/scripts/source-digest.py).
+const SOURCE_DIGEST_DOMAIN = 'runtime';
+
 async function currentSourceDigest() {
-  const { stdout } = await execFileAsync('python3', [path.join(repositoryRoot, 'ops/scripts/source-digest.py')], {
+  const { stdout } = await execFileAsync('python3', [path.join(repositoryRoot, 'ops/scripts/source-digest.py'), '--domain', SOURCE_DIGEST_DOMAIN], {
     cwd: repositoryRoot,
     encoding: 'utf8',
   });
@@ -151,6 +155,7 @@ export async function runHostSmoke({
     schemaVersion: 1,
     suite: 'cauce-v3-host-harness-smoke',
     sourceDigest: boundSourceDigest,
+    sourceDigestDomain: SOURCE_DIGEST_DOMAIN,
     host,
     scope: 'authentic --version/--help only; no prompt, model execution, inherited auth, or session access',
     startedAt: startedAt.toISOString(),

@@ -124,17 +124,24 @@ const schemaCheck = spawnSync("python3", ["-c", [
   "schema = json.load(open(sys.argv[1]))",
   "v = Draft202012Validator(schema)",
   "digest = 'sha256:' + '0'*64",
+  "other = 'sha256:' + '1'*64",
   "base = {",
-  "  'schemaVersion':2,'evidenceClass':'release-build','mechanism':'docker-build-final-image',",
-  "  'imageDigest':digest,'sourceDigest':digest,'operationsDigest':digest,",
+  // schemaVersion 3 splits the single whole-tree sourceDigest into per-image source domains, so a
+  // console edit no longer invalidates runtime evidence. Each image entry carries its own domain.
+  "  'schemaVersion':3,'evidenceClass':'release-build','mechanism':'docker-build-final-image',",
+  "  'imageDigest':digest,'sourceDigest':digest,'sourceDigestDomain':'runtime','operationsDigest':digest,",
   "  'timestamps':{'startedAt':'2026-01-01T00:00:00Z','finishedAt':'2026-01-01T00:01:00Z'},",
   "  'dockerfileSha256':digest,",
-  "  'runtime':{'tag':'r','imageId':digest,'imageDigest':digest},",
-  "  'console':{'tag':'c','imageId':digest,'imageDigest':digest},",
+  "  'runtime':{'tag':'r','imageId':digest,'imageDigest':digest,'sourceDigest':digest,'sourceDigestDomain':'runtime'},",
+  "  'console':{'tag':'c','imageId':digest,'imageDigest':digest,'sourceDigest':other,'sourceDigestDomain':'console'},",
   "}",
   "assert v.is_valid(base), 'complete evidence must validate'",
   "missing = {k:val for k,val in base.items() if k!='operationsDigest'}",
   "assert not v.is_valid(missing), 'evidence missing operationsDigest must be rejected'",
+  "undeclared = {k:val for k,val in base.items() if k!='sourceDigestDomain'}",
+  "assert not v.is_valid(undeclared), 'evidence that does not declare its source domain must be rejected'",
+  "unbound = json.loads(json.dumps(base)); del unbound['console']['sourceDigest']",
+  "assert not v.is_valid(unbound), 'the console image must carry its own source digest'",
   "print('schema-enforced')",
 ].join("\n"), path.join(ops, "schemas/build-evidence.schema.json")], { encoding: "utf8" });
 assert.equal(schemaCheck.status, 0, `${schemaCheck.stdout} ${schemaCheck.stderr}`);

@@ -3,11 +3,12 @@
   "$id": "https://cauce.invalid/schemas/host-smoke-evidence.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "suite", "sourceDigest", "host", "scope", "startedAt", "finishedAt", "manifests", "summary", "checks"],
+  "required": ["schemaVersion", "suite", "sourceDigest", "sourceDigestDomain", "host", "scope", "startedAt", "finishedAt", "manifests", "summary", "checks"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "suite": { "const": "cauce-v3-host-harness-smoke" },
     "sourceDigest": { "$ref": "#/$defs/digest" },
+    "sourceDigestDomain": { "const": "runtime" },
     "host": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
     "scope": { "type": "string", "minLength": 1 },
     "startedAt": { "type": "string", "format": "date-time" },

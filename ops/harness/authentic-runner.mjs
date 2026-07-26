@@ -19,7 +19,14 @@ if (!['compose-authentic', 'runtime-authentic'].includes(mode)) throw new Error(
 const evidenceClass = mode;
 const suiteMechanism = mode === 'compose-authentic' ? 'docker-compose-final-binaries' : 'docker-run-final-binaries';
 const imageDigest = digest(required('CAUCE_IMAGE_DIGEST'));
+// Two domains back this evidence. CAUCE_SOURCE_DIGEST is the `runtime` domain: the sources the five
+// final services are built from. apps/console is deliberately NOT in it -- nothing under apps/console
+// reaches the runtime image, so console edits used to invalidate this artifact for no causal reason
+// and that pressure is what produced hand-edited evidence. CAUCE_HARNESS_DIGEST is the `harness`
+// domain: this runner, the fake external world, the authentic Compose topology and the fault
+// drivers, i.e. everything that decides what the run below reports. See ops/scripts/source-digest.py.
 const sourceDigest = digest(required('CAUCE_SOURCE_DIGEST'));
+const harnessDigest = digest(required('CAUCE_HARNESS_DIGEST'));
 const gatewayHost = process.env.CAUCE_GATEWAY_HOST || '127.0.0.1';
 const gatewayPort = positivePort(required('CAUCE_GATEWAY_PORT'));
 const externalControlHost = process.env.CAUCE_EXTERNAL_CONTROL_HOST || '127.0.0.1';
@@ -352,13 +359,15 @@ async function main() {
     }
   }
   const report = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     suite: 'cauce-v3-final-binaries-e2e',
     mode,
     evidenceClass,
     mechanism: suiteMechanism,
     imageDigest,
     sourceDigest,
+    sourceDigestDomain: 'runtime',
+    harnessDigest,
     timestamps: { startedAt: suiteStarted.toISOString(), finishedAt: new Date().toISOString() },
     deployment,
     summary: {

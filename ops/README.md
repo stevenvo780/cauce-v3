@@ -44,7 +44,7 @@ make manifests
 
 Los env privados `/etc/cauce-v3/aliases/<alias>.env` resuelven los placeholders. `alias-runner.sh` exige WSS, archivos legibles, wrapper absoluto y `flock` exclusivo. Ver `runbooks/alias-cutover.md`; generar unidades no inicia consumers.
 
-Para ejecutar el adapter dentro del container existente se usa una familia separada: config no secreta root-owned en `/etc/cauce-v3/container-aliases/<alias>.env`, PKI root-owned por alias y `container-adapter-supervisor.sh`. Cada config fija directamente `BUNDLE_RELEASE` + `BUNDLE_SHA256`; no hay symlink global `current`, así que canary y rollback son independientes por alias mediante `pin-container-release.py` con CAS. El supervisor valida ID/generación, image/label, mount JSON exacto y digest activo antes de lanzar una sesión/PGID dedicada; limpia el entorno con `env -i` e inyecta solo valores no secretos y paths `*_FILE`. `OPERATIONS.sha256` cubre scripts/helper/mapping/units/examples aunque `source-digest.py` excluya `ops`. Ver `runbooks/container-adapters.md`.
+Para ejecutar el adapter dentro del container existente se usa una familia separada: config no secreta root-owned en `/etc/cauce-v3/container-aliases/<alias>.env`, PKI root-owned por alias y `container-adapter-supervisor.sh`. Cada config fija directamente `BUNDLE_RELEASE` + `BUNDLE_SHA256`; no hay symlink global `current`, así que canary y rollback son independientes por alias mediante `pin-container-release.py` con CAS. El supervisor valida ID/generación, image/label, mount JSON exacto y digest activo antes de lanzar una sesión/PGID dedicada; limpia el entorno con `env -i` e inyecta solo valores no secretos y paths `*_FILE`. `OPERATIONS.sha256` cubre scripts/helper/mapping/units/examples; los dominios `runtime`/`console` de `source-digest.py` siguen excluyendo `ops` (el harness authentic tiene su propio dominio, ver más abajo). Ver `runbooks/container-adapters.md`.
 
 ## QA y evidencia
 
@@ -58,6 +58,37 @@ make test-runtime-authentic # fallback docker-run; nunca habilita release
 pnpm verify:three-rounds     # frozen/lint/typecheck/build + 3 rondas + fleet/Testcontainers/mock
 pnpm evidence:release-candidate
 ```
+
+### Dominios de `source-digest.py`
+
+Cada evidencia se ata al digest de **exactamente** lo que puede cambiar su resultado. Cubrir de más
+invalida evidencia cara sin causa y empuja a falsificarla; cubrir de menos produce evidencia que no
+prueba lo que dice. `source-digest.py --domain <dominio>` emite:
+
+| Dominio | Cubre | Respalda |
+|---------|-------|----------|
+| `runtime` | manifiestos raíz + `packages/` + `services/` + `deploy/` | build de la imagen runtime, `compose-authentic`, `runtime-authentic`, fleet-release, host-smoke |
+| `console` | manifiestos raíz + `apps/console/` + `deploy/` | solo la entrada `console` de `build.json` |
+| `harness` | `ops/harness/`, `ops/compose.authentic.yaml`, drivers de fallo y los dos smoke | `harnessDigest` de la evidencia authentic |
+| `full` | unión de los tres; **default** si nadie declara dominio | `verify:three-rounds` y `release-candidate` |
+
+`apps/console` **no** está en `runtime`: no hay camino causal desde la consola hasta la imagen
+runtime (el stage `runtime` del Dockerfile nunca copia consola, `production-dependencies` excluye
+`@cauce/console`, `tsconfig.build.json` no compila consola y la consola no importa `@cauce/*`). El
+grafo de dependencias sigue cubierto porque `pnpm-lock.yaml` y `pnpm-workspace.yaml` permanecen en
+`runtime`. Consecuencia práctica: **un cambio de consola ya no invalida la evidencia de inyección de
+fallos**; solo obliga a rehacer las imágenes con `make release-build`, que es barato. El validador lo
+dice explícitamente en el mensaje de error para que nadie edite el artefacto a mano.
+
+En sentido inverso, `harnessDigest` cierra el agujero opuesto: antes todo `ops/` quedaba fuera de
+todo digest, así que el runner y los drivers de fallo podían debilitarse sin mover nada que el gate
+mirara. `ops/tests/source-digest-domains.test.mjs` fija la forma del recorte (que lo único que
+`runtime` deja afuera sea `apps/console`) y corre dentro de `make validate`, `make release-gate` y
+`pnpm verify:three-rounds`.
+
+Un fallo de `gateway-process-kill` o `postgres-container-kill` **no** es señal de fraude: son
+sensibles a CPU y flakean en hosts cargados (comprobado con corrida de control). El remedio legítimo
+es volver a correr la suite; el gate nombra el mecanismo y lo aclara en el mensaje.
 
 Las clases no se mezclan: `protocol-double` nunca incrementa contadores
 `real`/`authentic`, y `smoke-cli` no acredita ejecución de prompts. Unitarios y

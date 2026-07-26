@@ -4,12 +4,13 @@
   "title": "Cauce V3 packaged adapter fleet release evidence",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "suite", "mode", "sourceDigest", "evidenceClasses", "startedAt", "finishedAt", "manifestMatrix", "adapterBinaries", "summary", "aliases"],
+  "required": ["schemaVersion", "suite", "mode", "sourceDigest", "sourceDigestDomain", "evidenceClasses", "startedAt", "finishedAt", "manifestMatrix", "adapterBinaries", "summary", "aliases"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "suite": { "const": "cauce-v3-fleet-release" },
     "mode": { "const": "real-gateway-packaged-adapters-with-harness-doubles" },
     "sourceDigest": { "$ref": "#/$defs/digest" },
+    "sourceDigestDomain": { "const": "runtime" },
     "evidenceClasses": {
       "type": "object",
       "additionalProperties": false,

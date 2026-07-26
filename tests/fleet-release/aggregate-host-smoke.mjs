@@ -10,8 +10,12 @@ import { readAliasManifest, validateFleetMatrix } from './manifest-matrix.mjs';
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
+// Aggregates per-host smoke evidence, which is itself runtime-domain bound, so this artifact uses
+// the same domain (see ops/scripts/source-digest.py).
+const SOURCE_DIGEST_DOMAIN = 'runtime';
+
 async function currentSourceDigest() {
-  const { stdout } = await execFileAsync('python3', [path.join(repositoryRoot, 'ops/scripts/source-digest.py')], {
+  const { stdout } = await execFileAsync('python3', [path.join(repositoryRoot, 'ops/scripts/source-digest.py'), '--domain', SOURCE_DIGEST_DOMAIN], {
     cwd: repositoryRoot,
     encoding: 'utf8',
   });
@@ -125,6 +129,7 @@ export async function aggregateHostEvidence({
     schemaVersion: 1,
     suite: 'cauce-v3-host-smoke-aggregate',
     sourceDigest: boundSourceDigest,
+    sourceDigestDomain: SOURCE_DIGEST_DOMAIN,
     controlPlaneHost: inventory.controlPlaneHost,
     policy: 'OpenClaw evidence is required only on hosts assigned OpenClaw manifests',
     finishedAt: now.toISOString(),

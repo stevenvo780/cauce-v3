@@ -85,8 +85,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// The fleet matrix exercises the real gateway, the real store and the packaged adapters. Nothing in
+// it reads or renders apps/console, so it binds to the runtime domain: a console edit must not
+// invalidate a 14-alias run. ops/scripts/source-digest.py documents the domains.
+const SOURCE_DIGEST_DOMAIN = 'runtime';
+
 async function currentSourceDigest(): Promise<string> {
-  const { stdout } = await execFileAsync('python3', [path.join(repositoryRoot, 'ops/scripts/source-digest.py')], {
+  const { stdout } = await execFileAsync('python3', [path.join(repositoryRoot, 'ops/scripts/source-digest.py'), '--domain', SOURCE_DIGEST_DOMAIN], {
     cwd: repositoryRoot,
     encoding: 'utf8'
   });
@@ -423,6 +428,7 @@ async function writeArtifacts(
     suite: 'cauce-v3-fleet-release',
     mode: 'real-gateway-packaged-adapters-with-harness-doubles',
     sourceDigest,
+    sourceDigestDomain: SOURCE_DIGEST_DOMAIN,
     evidenceClasses: {
       gateway: 'gateway-authentic',
       persistence: 'postgres-authentic',

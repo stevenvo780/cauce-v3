@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cauce.invalid/schemas/build-evidence.schema.json",
   "title": "Cauce V3 immutable release build evidence",
+  "description": "schemaVersion 3 splits the single whole-tree sourceDigest into per-image source domains. The runtime and console images are built from different source families, so each image entry declares the digest of the domain it was actually built from. See ops/scripts/source-digest.py for why the domains exist and why apps/console is not part of the runtime domain.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,6 +11,7 @@
     "mechanism",
     "imageDigest",
     "sourceDigest",
+    "sourceDigestDomain",
     "operationsDigest",
     "timestamps",
     "dockerfileSha256",
@@ -17,16 +19,20 @@
     "console"
   ],
   "properties": {
-    "schemaVersion": { "const": 2 },
+    "schemaVersion": { "const": 3 },
     "evidenceClass": { "const": "release-build" },
     "mechanism": { "const": "docker-build-final-image" },
     "imageDigest": { "$ref": "#/$defs/digest" },
-    "sourceDigest": { "$ref": "#/$defs/digest" },
+    "sourceDigest": {
+      "$ref": "#/$defs/digest",
+      "description": "Digest of the runtime source domain. Top-level because every cross-artifact check in the release gate compares runtime evidence against this value."
+    },
+    "sourceDigestDomain": { "const": "runtime" },
     "operationsDigest": { "$ref": "#/$defs/digest" },
     "timestamps": { "$ref": "#/$defs/timestamps" },
     "dockerfileSha256": { "$ref": "#/$defs/digest" },
-    "runtime": { "$ref": "#/$defs/image" },
-    "console": { "$ref": "#/$defs/image" }
+    "runtime": { "$ref": "#/$defs/runtimeImage" },
+    "console": { "$ref": "#/$defs/consoleImage" }
   },
   "$defs": {
     "digest": {
@@ -42,14 +48,28 @@
         "finishedAt": { "type": "string", "format": "date-time" }
       }
     },
-    "image": {
+    "runtimeImage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tag", "imageId", "imageDigest"],
+      "required": ["tag", "imageId", "imageDigest", "sourceDigest", "sourceDigestDomain"],
       "properties": {
         "tag": { "type": "string", "minLength": 1 },
         "imageId": { "$ref": "#/$defs/digest" },
-        "imageDigest": { "$ref": "#/$defs/digest" }
+        "imageDigest": { "$ref": "#/$defs/digest" },
+        "sourceDigest": { "$ref": "#/$defs/digest" },
+        "sourceDigestDomain": { "const": "runtime" }
+      }
+    },
+    "consoleImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "imageId", "imageDigest", "sourceDigest", "sourceDigestDomain"],
+      "properties": {
+        "tag": { "type": "string", "minLength": 1 },
+        "imageId": { "$ref": "#/$defs/digest" },
+        "imageDigest": { "$ref": "#/$defs/digest" },
+        "sourceDigest": { "$ref": "#/$defs/digest" },
+        "sourceDigestDomain": { "const": "console" }
       }
     }
   }

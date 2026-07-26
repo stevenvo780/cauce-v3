@@ -3,11 +3,12 @@
   "$id": "https://cauce.invalid/schemas/host-smoke-aggregate.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "suite", "sourceDigest", "controlPlaneHost", "policy", "finishedAt", "fleet", "summary", "hosts", "violations"],
+  "required": ["schemaVersion", "suite", "sourceDigest", "sourceDigestDomain", "controlPlaneHost", "policy", "finishedAt", "fleet", "summary", "hosts", "violations"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "suite": { "const": "cauce-v3-host-smoke-aggregate" },
     "sourceDigest": { "$ref": "#/$defs/digest" },
+    "sourceDigestDomain": { "const": "runtime" },
     "controlPlaneHost": { "type": "string", "minLength": 1 },
     "policy": { "const": "OpenClaw evidence is required only on hosts assigned OpenClaw manifests" },
     "finishedAt": { "type": "string", "format": "date-time" },

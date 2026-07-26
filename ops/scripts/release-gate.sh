@@ -45,6 +45,7 @@ node "$ROOT/tests/container-supervisor.test.mjs"
 node "$ROOT/tests/alias-runner.test.mjs"
 node "$ROOT/tests/container-cutover.test.mjs"
 node "$ROOT/tests/container-ops-evidence.test.mjs"
+node "$ROOT/tests/source-digest-domains.test.mjs"
 for dir in compose-authentic release; do "$ROOT/scripts/verify-manifest.sh" "$ROOT/artifacts/$dir"; done
 python3 "$ROOT/scripts/validate-release-evidence.py"
 runtime_id=$(docker image inspect --format '{{.Id}}' "$CAUCE_RUNTIME_IMAGE") || { printf 'release gate failed: runtime digest is not present locally\n' >&2; exit 1; }

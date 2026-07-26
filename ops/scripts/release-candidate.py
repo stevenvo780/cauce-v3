@@ -75,12 +75,46 @@ def passing_summary(report: dict, label: str, require_critical: bool = False) ->
         ERRORS.append(f"{label} has critical skips")
 
 
-source_digest = subprocess.run(
-    [sys.executable, str(OPS / "scripts" / "source-digest.py")],
-    check=True,
-    capture_output=True,
-    text=True,
-).stdout.strip()
+def source_digest_for(domain: str) -> str:
+    return subprocess.run(
+        [sys.executable, str(OPS / "scripts" / "source-digest.py"), "--domain", domain],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+# Every artifact is compared against the domain that can actually change its result, not against one
+# whole-tree digest. Binding runtime fault evidence to apps/console was pure over-coverage: the
+# evidence is expensive to regenerate, the console cannot influence it, and the predictable outcome
+# was hand-edited evidence. ops/scripts/source-digest.py justifies each domain boundary.
+SOURCE_DIGESTS = {domain: source_digest_for(domain) for domain in ("runtime", "console", "harness", "full")}
+runtime_source_digest = SOURCE_DIGESTS["runtime"]
+full_source_digest = SOURCE_DIGESTS["full"]
+# Artifact kind -> the domain whose digest that artifact must carry.
+#
+# Narrowing an artifact from `full` to a specific domain LOOSENS its binding, so a kind only appears
+# with a narrow domain when the causal boundary was actually established. Anything whose boundary has
+# not been worked out stays on `full`, the strictest option.
+EVIDENCE_DOMAINS = {
+    # Three rounds of install/lint/typecheck/build/test really do cover every domain, including
+    # lint:console, build:console and tests/gateway-hardening/console-api-contract.test.ts.
+    "verification-three-rounds": "full",
+    # Fault injection against the five final binaries, and the build that produced them: no file
+    # under apps/console can reach the runtime image, so these carry the runtime domain.
+    "runtime-authentic": "runtime",
+    "compose-authentic": "runtime",
+    "release-build": "runtime",
+    # Real gateway, real store, packaged adapters, harness doubles. No console involvement.
+    "fleet-release": "runtime",
+    "testcontainers-real": "runtime",
+    "testcontainers-restarts": "runtime",
+    # Deliberately left on `full`. The protocol-double contract run and the generated systemd unit
+    # manifest are both cheap to regenerate, and neither has had its causal boundary analysed, so
+    # they keep the widest binding rather than gaining an unjustified exclusion.
+    "mock-contract": "full",
+    "systemd-manifest": "full",
+}
 
 verification_dir = OPS / "artifacts" / "verification"
 build_dir = OPS / "artifacts" / "release"
@@ -113,15 +147,33 @@ verify_sha_directory(runtime_dir, {"report.json", "junit.xml"})
 verify_sha_directory(mock_dir, {"report.json", "junit.xml"})
 verify_sha_directory(fleet_dir, {"report.json", "junit.xml", "binaries.sha256"})
 
-for label, report in (
-    ("verification", verification),
-    ("runtime-authentic", runtime),
-    ("fleet-release", fleet),
+for label, report, domain in (
+    ("verification", verification, "full"),
+    ("runtime-authentic", runtime, "runtime"),
+    ("fleet-release", fleet, "runtime"),
 ):
-    if report.get("sourceDigest") != source_digest:
-        ERRORS.append(f"{label} sourceDigest differs from current final-image sources")
-if build and build.get("sourceDigest") != source_digest:
-    ERRORS.append("build sourceDigest differs from current final-image sources")
+    if report.get("sourceDigest") != SOURCE_DIGESTS[domain]:
+        ERRORS.append(f"{label} sourceDigest differs from the current {domain}-domain sources")
+    if report.get("sourceDigestDomain") != domain:
+        ERRORS.append(f"{label} must declare the {domain} source domain")
+if compose:
+    if compose.get("sourceDigest") != runtime_source_digest:
+        ERRORS.append("compose-authentic sourceDigest differs from the current runtime-domain sources")
+    if compose.get("sourceDigestDomain") != "runtime":
+        ERRORS.append("compose-authentic must declare the runtime source domain")
+# Authentic evidence is only meaningful when it is also bound to the apparatus that produced it.
+for label, report in (("runtime-authentic", runtime), ("compose-authentic", compose if compose else None)):
+    if report is None:
+        continue
+    if report.get("harnessDigest") != SOURCE_DIGESTS["harness"]:
+        ERRORS.append(f"{label} harnessDigest differs from the current authentic harness")
+if build:
+    if build.get("sourceDigest") != runtime_source_digest:
+        ERRORS.append("build sourceDigest differs from the current runtime-domain sources")
+    if build.get("sourceDigestDomain") != "runtime":
+        ERRORS.append("build must declare the runtime source domain")
+    if build.get("console", {}).get("sourceDigest") != SOURCE_DIGESTS["console"]:
+        ERRORS.append("build console sourceDigest differs from the current console-domain sources")
 
 final_services = {"gateway", "dispatcher", "relay-worker", "telegram-bridge", "shadow-router"}
 runtime_reports = [("runtime-authentic", runtime)]
@@ -135,7 +187,7 @@ for label, report in runtime_reports:
     if any(item.get("imageDigest") != image_digest for item in services):
         ERRORS.append(f"{label} deployed services do not share report.imageDigest")
     tests = report.get("tests", [])
-    if any(item.get("sourceDigest") != source_digest or item.get("imageDigest") != image_digest for item in tests):
+    if any(item.get("sourceDigest") != runtime_source_digest or item.get("imageDigest") != image_digest for item in tests):
         ERRORS.append(f"{label} test evidence is not source/image digest bound")
     if any(item.get("critical") is not True or item.get("status") != "passed" for item in tests):
         ERRORS.append(f"{label} has a non-passing critical test")
@@ -204,12 +256,22 @@ if build:
     evidence_paths.append(("release-build", build_dir / "build.json"))
 if compose:
     evidence_paths.append(("compose-authentic", compose_dir / "report.json"))
+# A new evidence kind must declare its domain explicitly; defaulting silently is how an artifact
+# would end up carrying a digest that has nothing to do with what it measures.
+undeclared = sorted({kind for kind, _ in evidence_paths} - set(EVIDENCE_DOMAINS))
+if undeclared:
+    for kind in undeclared:
+        print(f"release candidate failed: evidence kind '{kind}' does not declare a source domain", file=sys.stderr)
+    raise SystemExit(1)
 evidence = [
     {
         "kind": kind,
         "path": path.relative_to(ROOT).as_posix(),
         "sha256": sha256(path),
-        "sourceDigest": source_digest,
+        # Each artifact records the digest of ITS domain, so a reader can tell what a given piece of
+        # evidence actually depended on instead of assuming it depended on the whole tree.
+        "sourceDigest": SOURCE_DIGESTS[EVIDENCE_DOMAINS[kind]],
+        "sourceDigestDomain": EVIDENCE_DOMAINS[kind],
     }
     for kind, path in evidence_paths
 ]
@@ -262,7 +324,10 @@ prerequisites = [
 report = {
     "schemaVersion": 1,
     "suite": "cauce-v3-release-candidate",
-    "sourceDigest": source_digest,
+    # The candidate aggregates artifacts from every domain, so its own binding is the union.
+    "sourceDigest": full_source_digest,
+    "sourceDigestDomain": "full",
+    "sourceDigests": SOURCE_DIGESTS,
     "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
     "candidateStatus": "code-runtime-passed-release-host-blocked",
     "fleet": {"manifests": 14, "packagedAdapters": 5},
@@ -284,12 +349,14 @@ if validation:
     raise SystemExit(1)
 
 OUTPUT.mkdir(parents=True, exist_ok=True)
-source_text = f"{source_digest}\n"
+source_text = "".join(f"{domain} {value}\n" for domain, value in SOURCE_DIGESTS.items())
 json_text = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
 junit_text = "\n".join((
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<testsuite name="cauce-v3-release-candidate" tests="2" failures="0" skipped="0">',
-    f'  <properties><property name="sourceDigest" value="{source_digest}"/><property name="releaseHostGate" value="blocked"/></properties>',
+    f'  <properties><property name="sourceDigest" value="{full_source_digest}"/>'
+    f'<property name="runtimeSourceDigest" value="{runtime_source_digest}"/>'
+    f'<property name="releaseHostGate" value="blocked"/></properties>',
     '  <testcase classname="cauce.release" name="code-runtime-gate"/>',
     '  <testcase classname="cauce.release" name="release-host-prerequisites-explicit"/>',
     '</testsuite>',

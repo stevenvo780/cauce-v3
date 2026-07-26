@@ -23,6 +23,9 @@ const commands = [
   { name: 'fleet-release', argv: ['pnpm', 'test:fleet-release'] },
   { name: 'testcontainers-qa', argv: ['pnpm', 'qa:testcontainers'] },
   { name: 'mock-contract-separated', argv: ['pnpm', 'qa:contract'] },
+  // Guards the domain split itself: proves the runtime domain still covers everything that reaches
+  // the runtime image and that the ONLY thing it drops is apps/console.
+  { name: 'source-digest-domains', argv: ['node', 'ops/tests/source-digest-domains.test.mjs'] },
   {
     name: 'ops-static-validation',
     argv: ['pnpm', 'ops:validate'],
@@ -40,11 +43,19 @@ const commands = [
   },
 ];
 
+// Three-round verification is the one artifact that legitimately depends on EVERY domain: the
+// command list below runs lint:console, typecheck:console and build:console, the console vitest
+// project, tests/gateway-hardening/console-api-contract.test.ts (which reads apps/console sources)
+// and ops:validate (which exercises the harness). Narrowing this to the runtime domain would make
+// the evidence claim more than it proves. ops/scripts/source-digest.py explains the domains.
+const SOURCE_DIGEST_DOMAIN = 'full';
+
 async function sourceDigest() {
-  const { stdout } = await execFileAsync('python3', [path.join(root, 'ops/scripts/source-digest.py')], {
-    cwd: root,
-    encoding: 'utf8',
-  });
+  const { stdout } = await execFileAsync(
+    'python3',
+    [path.join(root, 'ops/scripts/source-digest.py'), '--domain', SOURCE_DIGEST_DOMAIN],
+    { cwd: root, encoding: 'utf8' },
+  );
   const value = stdout.trim();
   if (!/^sha256:[a-f0-9]{64}$/u.test(value)) throw new Error('source digest script returned an invalid digest');
   return value;
@@ -93,7 +104,7 @@ if (finalDigest !== initialDigest) {
   const now = new Date().toISOString();
   results.push({
     name: 'source-digest-stability',
-    argv: ['python3', 'ops/scripts/source-digest.py'],
+    argv: ['python3', 'ops/scripts/source-digest.py', '--domain', SOURCE_DIGEST_DOMAIN],
     critical: true,
     status: 'failed',
     exitCode: 1,
@@ -107,6 +118,7 @@ const report = {
   schemaVersion: 1,
   suite: 'cauce-v3-verification-three-rounds',
   sourceDigest: finalDigest,
+  sourceDigestDomain: SOURCE_DIGEST_DOMAIN,
   timestamps: { startedAt: suiteStarted.toISOString(), finishedAt: new Date().toISOString() },
   summary: {
     commands: results.length,
