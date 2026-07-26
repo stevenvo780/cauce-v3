@@ -1870,8 +1870,13 @@ export class CauceRepository {
     // The response must be materialized in the correct room of the recipient agent,
     // NOT in the room of the message sender (which may be cross-tenant).
     // Verify the recipient has exactly one enabled membership to avoid cross-tenant routing errors.
-    const sourceMembership = await client.query<{ room_id: string; count: string }>(
-      `SELECT membership.room_id, COUNT(*) OVER () AS count
+    // PostgreSQL rechaza FOR SHARE junto a una funcion de ventana: "FOR SHARE is not allowed
+    // with window functions". Con COUNT(*) OVER () esta consulta abortaba la transaccion del
+    // reaper en CADA tick (99.241 fallos en 24 h el 2026-07-26, flota entera sin timeouts ni DLQ).
+    // El conteo que hace falta es exactamente el numero de filas, asi que se cuenta con rowCount
+    // y el bloqueo FOR SHARE se conserva intacto.
+    const sourceMembership = await client.query<{ room_id: string }>(
+      `SELECT membership.room_id
        FROM memberships membership
        JOIN role_policies policy ON policy.role=membership.role
        JOIN tenants tenant ON tenant.id=membership.tenant_id
@@ -1881,7 +1886,7 @@ export class CauceRepository {
        FOR SHARE OF membership,policy,tenant,room`,
       [row.recipient_tenant, row.recipient_alias]
     );
-    const membershipCount = parseInt(sourceMembership.rows[0]?.count ?? '0', 10);
+    const membershipCount = sourceMembership.rowCount ?? 0;
     if (membershipCount !== 1) {
       // Zero memberships means recipient is disabled/deleted; >1 means ambiguous identity.
       // Reject materialization to avoid silent cross-tenant routing errors.
