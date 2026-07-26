@@ -40,6 +40,11 @@ export const handlers = [
     revision: 1, observed_at: new Date().toISOString(), tenants: topology.tenants, rooms: [],
     memberships: [], acl_edges: topology.acl_edges, harness_definitions: adapters.items,
     role_policies: [{ role: 'operator', allow_route: true, allow_read: true, allow_control: true }],
+    chain_policies: [{ id: 'default', progress_relay_enabled: true, progress_relay_max_events: 8, cycle_cut_enabled: true }],
+    egress_destinations: [{
+      tenant_id: 'Miguel', alias: 'janus', handle: 'steven_dm', adapter: 'telegram', channel: 'telegram',
+      conversation_kind: 'dm', allow_kinds: ['task_complete'], require_prior_contact: true, enabled: true
+    }],
     agents: registryAgents, provider_accounts: providerAccounts,
     alias_routing_ceiling: routingCeiling, agent_account_bindings: agentAccountBindings,
     revisions: []

@@ -80,6 +80,56 @@ it('distingue el 409 por revisión vencida y pide volver a previsualizar', async
   expect(screen.queryByLabelText(/resultado de preview/i)).not.toBeInTheDocument();
 });
 
+it('muestra las colecciones que el servidor publica más allá de las seis históricas', async () => {
+  renderWithApi(<ConfigPage />);
+
+  // Las dos que la lista fija de ConfigPage dejaba invisibles aunque el snapshot las trae.
+  expect(await screen.findByRole('heading', { name: /chain visibility policy/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /proactive egress allowlist/i })).toBeInTheDocument();
+  expect(screen.getByText(/"cycle_cut_enabled":true/)).toBeInTheDocument();
+  expect(screen.getByText(/steven_dm/)).toBeInTheDocument();
+});
+
+it('no confunde una clave que el gateway no publica con una colección vacía', async () => {
+  server.use(http.get('*/v3/console/config', () => HttpResponse.json({
+    revision: 1, observed_at: new Date().toISOString(), tenants: [], revisions: [],
+  })));
+  renderWithApi(<ConfigPage />);
+
+  const tenants = (await screen.findByRole('heading', { name: 'Tenants' })).closest('section');
+  expect(tenants).toHaveTextContent(/sin registros/i);
+  const chain = screen.getByRole('heading', { name: /chain visibility policy/i }).closest('section');
+  expect(chain).toHaveTextContent(/no publica esta colección/i);
+});
+
+it('acepta en el editor los recursos que el servidor acepta y la lista fija rechazaba', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+
+  await user.selectOptions(screen.getByLabelText('Resource'), 'chain_policy');
+  // `chain_policy` es un singleton que sólo admite update: la UI no debe ofrecer create ni delete.
+  expect(Array.from(screen.getByLabelText('Action').querySelectorAll('option')).map((o) => o.value))
+    .toEqual(['update']);
+  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
+  await screen.findByLabelText(/resultado de preview/i);
+  expect(changes.at(-1)?.mutation).toMatchObject({ resource: 'chain_policy', action: 'update', id: 'default' });
+
+  await user.selectOptions(screen.getByLabelText('Resource'), 'egress_destination');
+  // La acción elegida sobrevive al cambio de recurso mientras siga siendo válida, y el recurso
+  // vuelve a ofrecer las tres porque no es un singleton.
+  expect(Array.from(screen.getByLabelText('Action').querySelectorAll('option')).map((o) => o.value))
+    .toEqual(['create', 'update', 'delete']);
+  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
+  await screen.findByLabelText(/resultado de preview/i);
+  expect(changes.at(-1)?.mutation).toMatchObject({
+    resource: 'egress_destination', action: 'update', tenant_id: 'Acme', alias: 'agent', handle: 'owner_dm',
+  });
+  expect(screen.queryByText(/resource no reconocido/i)).not.toBeInTheDocument();
+});
+
 it('no convierte los demás 409 en el mensaje de revisión ni los vuelve genéricos', async () => {
   server.use(http.post('http://localhost/v3/console/config/changes', () => HttpResponse.json(
     { error: 'conflict', message: 'ACL edge already exists' },

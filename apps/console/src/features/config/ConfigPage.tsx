@@ -1,13 +1,14 @@
 import { RotateCcw, Save, SearchCheck } from 'lucide-react';
 import { useMemo, useState, type SyntheticEvent } from 'react';
 import { useApi } from '../../api/context';
-import type { ConfigAction, ConfigMutation, ConfigResource } from '../../api/types';
+import type { AnyConfigResource, ConfigAction, ConfigMutation, ConfigResource } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import {
   Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel, PermissionBadge, RefreshButton,
   Time, Unknown
 } from '../../components/ui';
 import { permissionState } from '../../lib';
+import { configCollections } from './collections';
 import { describeConfigError, type ConfigChangeOutcome } from './config-change';
 import { SpaceWizard } from './SpaceWizard';
 
@@ -18,7 +19,42 @@ const templates: Record<ConfigResource, ConfigMutation> = {
   acl_edge: { resource: 'acl_edge', action: 'create', from_tenant: 'Acme', to_tenant: 'Steven', value: { enabled: true, allow_route: false, allow_read: false, allow_control: false } },
   harness: { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', command: null, capabilities: [], enabled: true } },
   role_policy: { resource: 'role_policy', action: 'create', role: 'observer', value: { allow_route: false, allow_read: false, allow_control: false } },
+  chain_policy: { resource: 'chain_policy', action: 'update', id: 'default', value: { progress_relay_enabled: true, progress_relay_max_events: 8, cycle_cut_enabled: true } },
+  egress_destination: {
+    resource: 'egress_destination', action: 'create', tenant_id: 'Acme', alias: 'agent', handle: 'owner_dm',
+    value: {
+      adapter: 'telegram', channel: 'telegram', conversation_id: '123456789', conversation_kind: 'dm',
+      display_label: 'DM del dueño', allow_kinds: ['task_complete'], require_prior_contact: true,
+      contact_ttl_days: 30, min_interval_seconds: 300, max_per_hour: 2, max_per_day: 8, max_per_root: 1,
+      enabled: true
+    }
+  },
 };
+
+/**
+ * `chain_policy` es un singleton: `ChainPolicyConfigMutationSchema` sólo acepta `update` sobre el id
+ * `default`. Ofrecer create/delete sería mandar al operador a un 400 seguro.
+ */
+const actionsByResource: Partial<Record<ConfigResource, readonly ConfigAction[]>> = {
+  chain_policy: ['update'],
+};
+const allActions: readonly ConfigAction[] = ['create', 'update', 'delete'];
+
+function actionsFor(resource: ConfigResource): readonly ConfigAction[] {
+  return actionsByResource[resource] ?? allActions;
+}
+
+/**
+ * Todo lo que `ConfigMutationSchema` acepta en el servidor, incluidos los recursos del registro que
+ * tienen su propia pantalla. La consola no debe ser un segundo allowlist que se queda atrás del
+ * protocolo: acá sólo se descarta lo que el servidor rechazaría igual, y la autoridad sigue siendo
+ * el zod del gateway más el RBAC de `authorizeMutation`.
+ */
+const RESOURCES: readonly AnyConfigResource[] = [
+  'tenant', 'room', 'membership', 'acl_edge', 'harness', 'role_policy',
+  'chain_policy', 'egress_destination',
+  'agent', 'provider_account', 'alias_routing_ceiling', 'agent_account_binding',
+];
 
 function mutationText(resource: ConfigResource, action: ConfigAction): string {
   const mutation = structuredClone(templates[resource]);
@@ -31,10 +67,10 @@ function parseMutation(text: string): ConfigMutation {
   const value: unknown = JSON.parse(text);
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('La mutación debe ser un objeto JSON.');
   const mutation = value as Partial<ConfigMutation>;
-  if (!['tenant', 'room', 'membership', 'acl_edge', 'harness', 'role_policy'].includes(String(mutation.resource))) {
+  if (!RESOURCES.includes(String(mutation.resource) as AnyConfigResource)) {
     throw new Error('resource no reconocido.');
   }
-  if (!['create', 'update', 'delete'].includes(String(mutation.action))) throw new Error('action no reconocida.');
+  if (!allActions.includes(String(mutation.action) as ConfigAction)) throw new Error('action no reconocida.');
   return mutation as ConfigMutation;
 }
 
@@ -57,16 +93,16 @@ export function ConfigPage() {
     && (snapshotRevision === undefined || snapshotRevision < chainedRevision)
     ? chainedRevision
     : snapshotRevision;
-  const groups = useMemo(() => [
-    ['Tenants', config.data?.tenants], ['Rooms', config.data?.rooms],
-    ['Memberships / agents', config.data?.memberships], ['Directed ACL', config.data?.acl_edges],
-    ['Harness definitions', config.data?.harness_definitions], ['Route/read/control policies', config.data?.role_policies]
-  ] as const, [config.data]);
+  const groups = useMemo(() => configCollections(config.data), [config.data]);
 
   function selectTemplate(nextResource: ConfigResource, nextAction: ConfigAction) {
+    // Cambiar de recurso puede dejar la acción fuera de lo que ese recurso admite (chain_policy
+    // sólo acepta update): se cae a la primera acción válida en vez de armar una mutación imposible.
+    const actions = actionsFor(nextResource);
+    const validAction = actions.includes(nextAction) ? nextAction : actions[0];
     setResource(nextResource);
-    setAction(nextAction);
-    setEditor(mutationText(nextResource, nextAction));
+    setAction(validAction);
+    setEditor(mutationText(nextResource, validAction));
     setPreview(undefined);
   }
 
@@ -159,7 +195,7 @@ export function ConfigPage() {
     <Panel title="Mutation editor" subtitle={`Revisión esperada: ${expectedRevision ?? 'UNKNOWN'}`}>
       <form className="config-form" onSubmit={(event) => void submit(event, false)}>
         <label>Resource<select value={resource} onChange={(event) => selectTemplate(event.target.value as ConfigResource, action)}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Action<select value={action} onChange={(event) => selectTemplate(resource, event.target.value as ConfigAction)}><option>create</option><option>update</option><option>delete</option></select></label>
+        <label>Action<select value={action} onChange={(event) => selectTemplate(resource, event.target.value as ConfigAction)}>{actionsFor(resource).map((item) => <option key={item}>{item}</option>)}</select></label>
         <label className="config-json">Mutación JSON<textarea aria-label="Mutación JSON" rows={12} value={editor} onChange={(event) => setEditor(event.target.value)} spellCheck={false} /></label>
         <div className="config-actions">
           <button className="button secondary" type="button" disabled={!canWrite || busy} onClick={(event) => void submit(event, true)}><SearchCheck size={16} />Preview / dry-run</button>
@@ -170,8 +206,10 @@ export function ConfigPage() {
       {notice ? <p className={notice.tone === 'error' ? 'notice error' : 'notice success'} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p> : null}
     </Panel>
     <div className="config-grid">
-      {groups.map(([title, rows]) => <Panel key={title} title={title} subtitle="Datos efectivos del servidor">
-        {!rows?.length ? <EmptyState>UNKNOWN / sin registros.</EmptyState> : <ul className="config-records">{rows.map((row, index) => <li key={String(row.id ?? row.alias ?? row.role ?? index)}><code>{JSON.stringify(row)}</code></li>)}</ul>}
+      {groups.map(({ key, title, rows }) => <Panel key={key} title={title} subtitle="Datos efectivos del servidor">
+        {!rows ? <EmptyState>UNKNOWN: este gateway no publica esta colección ({key}).</EmptyState>
+          : !rows.length ? <EmptyState>Sin registros.</EmptyState>
+            : <ul className="config-records">{rows.map((row, index) => <li key={String(row.id ?? row.alias ?? row.role ?? index)}><code>{JSON.stringify(row)}</code></li>)}</ul>}
       </Panel>)}
     </div>
     <Panel title="Audit trail de configuración" subtitle="Rollback crea una nueva revisión; el historial nunca se reescribe.">
