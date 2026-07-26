@@ -569,18 +569,22 @@ class PtyAgent:
             session_id, data = decode_data(payload)
             self._on_stdin(session_id, data)
             return
+        if tag == TAG_PING:
+            # Answered even before the ack: the relay's keepalive timer is global and must not be
+            # able to make a perfectly healthy agent look silent.
+            #
+            # PING and PONG are EMPTY control frames. The relay writes `encodeFrame(FRAME_TAGS.PING)`
+            # with no payload and ignores whatever a PONG carries, so decoding the payload as JSON
+            # here killed every healthy connection ten seconds after the hello was accepted.
+            self.last_ping = time.monotonic()
+            self._queue(encode_frame(TAG_PONG, b""))
+            return
         document = self._json(payload)
         if tag == TAG_HELLO_ACK:
             if not document.get("ok", False):
                 raise ProtocolError(f"relay refused the hello: {document.get('reason', 'unknown')}")
             self.acknowledged = True
             log(f"relay accepted alias={self.bundle['alias']} modes={','.join(self.modes)}")
-            return
-        if tag == TAG_PING:
-            # Answered even before the ack: the relay's keepalive timer is global and must not be
-            # able to make a perfectly healthy agent look silent.
-            self.last_ping = time.monotonic()
-            self._queue(encode_json(TAG_PONG, {"t": document.get("t", 0)}))
             return
         if not self.acknowledged:
             raise ProtocolError("relay sent traffic before the hello was acknowledged")
