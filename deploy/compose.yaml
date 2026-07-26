@@ -197,6 +197,14 @@ services:
       CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: /run/cauce-terminal/pty_agent_identities.json
       CAUCE_TERMINAL_GATEWAY_URL: https://gateway:8443
       CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/secrets/terminal_relay_token
+      # Identidad de cliente hacia el gateway. Con CAUCE_AUTH_PROVIDER=mtls el gateway pide
+      # certificado en el handshake a TODO el que se conecte, también en /v3/terminal/relay/*, que
+      # además se autentica con el token de arriba. Sin esto la presencia y la revalidación de
+      # autorización mueren con "tlsv13 alert certificate required" y cada terminal se corta al
+      # vencer la gracia. Se reusa el par de la consola: ya es un principal válido para el gateway
+      # y no agrega PKI nueva que rotar.
+      CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE: /run/secrets/console_gateway_client_cert
+      CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE: /run/secrets/console_gateway_client_key
       CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS: "600"
       CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC: "262144"
       CAUCE_TERMINAL_SCROLLBACK_BYTES: "20480"
@@ -217,6 +225,16 @@ services:
         mode: 0400
       - source: terminal_relay_token
         target: terminal_relay_token
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: console_gateway_client_cert
+        target: console_gateway_client_cert
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: console_gateway_client_key
+        target: console_gateway_client_key
         uid: "1000"
         gid: "1000"
         mode: 0400

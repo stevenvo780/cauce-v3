@@ -74,6 +74,13 @@ export interface HttpsTerminalGatewayClientOptions {
   readonly timeoutMs?: number;
   /** Optional PEM bundle for gateways issued by a private CA; otherwise the system store. */
   readonly ca?: Buffer;
+  /**
+   * Identidad de cliente para el handshake TLS. Un gateway en modo mTLS pide certificado a todo el
+   * que se conecta, incluidas las rutas /v3/terminal/relay/* que ya se autentican con el token
+   * compartido: sin certificado el handshake muere antes de que el token llegue a leerse.
+   */
+  readonly clientCert?: Buffer;
+  readonly clientKey?: Buffer;
 }
 
 function stringField(source: Record<string, unknown>, name: string): string | undefined {
@@ -127,12 +134,16 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
   private readonly tokenFile: string;
   private readonly timeoutMs: number;
   private readonly ca: Buffer | undefined;
+  private readonly clientCert: Buffer | undefined;
+  private readonly clientKey: Buffer | undefined;
 
   constructor(options: HttpsTerminalGatewayClientOptions) {
     this.gatewayUrl = options.gatewayUrl;
     this.tokenFile = options.tokenFile;
     this.timeoutMs = options.timeoutMs ?? 5_000;
     this.ca = options.ca;
+    this.clientCert = options.clientCert;
+    this.clientKey = options.clientKey;
   }
 
   async consumeTicket(sessionId: string, ticket: string): Promise<ConsumeOutcome> {
@@ -209,7 +220,10 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
           accept: 'application/json',
           ...(payload === undefined ? {} : { 'content-type': 'application/json', 'content-length': payload.byteLength })
         },
-        ...(this.ca === undefined ? {} : { ca: this.ca })
+        ...(this.ca === undefined ? {} : { ca: this.ca }),
+        ...(this.clientCert === undefined || this.clientKey === undefined
+          ? {}
+          : { cert: this.clientCert, key: this.clientKey })
       }, (response) => {
         const chunks: Buffer[] = [];
         response.on('data', (chunk: Buffer) => {
