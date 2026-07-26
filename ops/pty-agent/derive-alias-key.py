@@ -39,12 +39,20 @@ def alias_key(master: bytes, tenant: str, alias: str) -> bytes:
     return hkdf_sha256(master, TICKET_SALT, info)
 
 
-def decode_master(body: str) -> bytes:
+def decode_master(body: bytes | str) -> bytes:
     """The master key lives ONLY in agora. It is decoded here, used, and never copied anywhere.
 
     Hex is probed first: 64 hex characters are also valid base64, so probing base64 first would
     silently turn a hex master into 48 unrelated bytes.
     """
+    # El runbook genera la maestra con `openssl rand -out ... 32`, que son 32 bytes CRUDOS, y el
+    # gateway los acepta tal cual (readTicketKey admite raw 32, hex o base64). Esta herramienta sólo
+    # aceptaba texto, así que seguir el runbook al pie de la letra terminaba en UnicodeDecodeError.
+    # Se aceptan las mismas tres formas que el gateway, para que no haya dos verdades.
+    if isinstance(body, bytes):
+        if len(body) == 32:
+            return body
+        body = body.decode('utf-8', errors='strict')
     text = body.strip()
     if HEX_MASTER_RE.fullmatch(text):
         material = bytes.fromhex(text)
@@ -76,7 +84,7 @@ def main(argv: list[str]) -> int:
             raise SystemExit(f"environment variable is empty or unset: {args.master_env}")
         master = decode_master(value)
     else:
-        master = decode_master(args.master_file.read_text(encoding="utf-8"))
+        master = decode_master(args.master_file.read_bytes())
     try:
         derived = alias_key(master, args.tenant, args.alias)
     except ValueError as error:
