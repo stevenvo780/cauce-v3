@@ -169,6 +169,19 @@ function terminal(status: string): boolean {
   return status === 'done' || status === 'failed' || status === 'dead';
 }
 
+/**
+ * Espera entre reintentos por garra vencida: 30 s, 60 s, 120 s… con techo de 5 minutos.
+ *
+ * Es más larga que la de un fallo declarado (que llega a 60 s) a propósito. Un fallo declarado
+ * significa que el agente contestó y falló: reintentar rápido es razonable. Una garra vencida
+ * significa lo contrario — el agente no dijo nada durante todo el plazo — y el trabajo agéntico
+ * tarda lo que tarda. Volver a despachar de inmediato apila una segunda corrida sobre la primera,
+ * que puede seguir viva, y empeora justo la saturación que causó el silencio.
+ */
+export function timeoutRetryBackoffSeconds(attempt: number): number {
+  return Math.min(300, 30 * 2 ** Math.max(0, attempt - 1));
+}
+
 const agentOutputHopBudget = 16;
 const maxAgentOutputMessages = 100;
 const maxAgentOutputBodyBytes = 64 * 1024;
@@ -3117,10 +3130,19 @@ export class CauceRepository {
           }
           dead += 1;
         } else {
+          // Espera antes de reintentar, igual que la rama de fallo declarado por el agente.
+          // Sin esto el reintento salía con available_at=now(): una garra vencida volvía a
+          // despacharse en el mismo instante, y como el harness anterior podía seguir vivo, el
+          // agente terminaba con dos corridas del mismo trabajo compitiendo por la misma CPU —
+          // lo que hace más probable el siguiente latido perdido. Un plazo vencido es señal de
+          // que el destino está saturado o mudo, así que la respuesta correcta es esperar, no
+          // insistir de inmediato.
+          const backoffSeconds = timeoutRetryBackoffSeconds(row.attempt);
           await client.query(
             `UPDATE deliveries SET status='retry',last_ack_rank=0,claimed_at=NULL,claim_expires_at=NULL,
               ack_deadline_at=NULL,claim_token=NULL,consumer_instance_id=NULL,consumer_epoch=NULL,
-              available_at=now(),last_error='ACK timeout',updated_at=now() WHERE id=$1`, [row.id]
+              available_at=now()+$2*interval '1 second',last_error='ACK timeout',updated_at=now()
+             WHERE id=$1`, [row.id, backoffSeconds]
           );
           await client.query(
             `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
