@@ -1870,18 +1870,24 @@ export class CauceRepository {
     // The response must be materialized in the correct room of the recipient agent,
     // NOT in the room of the message sender (which may be cross-tenant).
     // Verify the recipient has exactly one enabled membership to avoid cross-tenant routing errors.
-    const sourceMembership = await client.query<{ room_id: string; count: string }>(
-      `SELECT membership.room_id, COUNT(*) OVER () AS count
+    // La cardinalidad se cuenta con rowCount, NUNCA con una función de ventana: PostgreSQL rechaza
+    // `COUNT(*) OVER ()` junto a `FOR SHARE` con "FOR SHARE is not allowed with window functions",
+    // y como el rechazo es de parseo la consulta fallaba SIEMPRE que este camino se ejecutaba. Eso
+    // abortaba la transacción del tick y detenía el reaper: 99.241 fallos en 24 h y 46 entregas
+    // atascadas en `started` el 2026-07-26. El alcance del lock es el mismo que antes.
+    const sourceMembership = await client.query<{ room_id: string }>(
+      `SELECT membership.room_id
        FROM memberships membership
        JOIN role_policies policy ON policy.role=membership.role
        JOIN tenants tenant ON tenant.id=membership.tenant_id
        JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
        WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
          AND tenant.enabled AND room.enabled AND policy.allow_route
+       ORDER BY membership.room_id
        FOR SHARE OF membership,policy,tenant,room`,
       [row.recipient_tenant, row.recipient_alias]
     );
-    const membershipCount = parseInt(sourceMembership.rows[0]?.count ?? '0', 10);
+    const membershipCount = sourceMembership.rowCount ?? sourceMembership.rows.length;
     if (membershipCount !== 1) {
       // Zero memberships means recipient is disabled/deleted; >1 means ambiguous identity.
       // Reject materialization to avoid silent cross-tenant routing errors.
