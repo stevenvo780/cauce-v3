@@ -304,6 +304,31 @@ describe('Telegram egress text extraction', () => {
       }
     })).toEqual([]);
   });
+
+  it('never publishes a serialized StructuredOutput envelope: unwraps its reply, or sends nothing', () => {
+    const envelope = JSON.stringify({
+      reply: 'texto humano', messages: [], status: 'done', retryable: false, artifacts: []
+    });
+
+    // Un arnés que no produce salida estructurada deja el sobre entero como texto plano.
+    // Publicarlo tal cual es lo que el operador ve como "JSON en el chat".
+    expect(telegramTextChunks({ result: { text: envelope } })).toEqual(['texto humano']);
+    expect(telegramTextChunks({ result: { output: { reply: envelope } } })).toEqual(['texto humano']);
+
+    // Sobre sin texto humano utilizable: no se publica nada, en vez del JSON crudo.
+    expect(telegramTextChunks({
+      result: { text: JSON.stringify({ reply: '', messages: [], status: 'done', retryable: false, artifacts: [] }) }
+    })).toEqual([]);
+
+    // Con valla markdown alrededor, que es como suele llegar.
+    expect(telegramTextChunks({ result: { text: '```json\n' + envelope + '\n```' } }))
+      .toEqual(['texto humano']);
+
+    // Un JSON que NO es un sobre del contrato se sigue tratando como texto: no inventamos reglas.
+    expect(telegramTextChunks({ result: { text: '{"foo":1}' } })).toEqual(['{"foo":1}']);
+    // Y el texto humano que casualmente empieza con llave tampoco se toca.
+    expect(telegramTextChunks({ result: { text: '{no es json' } })).toEqual(['{no es json']);
+  });
 });
 
 class MemoryEgressRepository implements TelegramEgressRepository {

@@ -46,6 +46,34 @@ function hasVisibleText(value: unknown): value is string {
   return typeof value === 'string' && VISIBLE_TEXT.test(value);
 }
 
+const MARKDOWN_FENCE = /^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/;
+
+/**
+ * Cuando un arnés no entrega salida estructurada, el sobre del contrato llega como texto
+ * plano y acaba publicado entero en el chat. Aquí lo desempaquetamos: del sobre solo sale
+ * su `reply`, y si no tiene texto humano no sale nada. Un JSON que no es un sobre del
+ * contrato se sigue tratando como texto, para no inventar reglas sobre payloads ajenos.
+ */
+function unwrapEnvelope(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('```')) return value;
+  const fenced = MARKDOWN_FENCE.exec(trimmed);
+  const source = (fenced?.[1] ?? trimmed).trim();
+  if (!source.startsWith('{')) return value;
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(source);
+  } catch {
+    return value;
+  }
+  const envelope = object(decoded);
+  // `reply` sola no basta: cualquier objeto podría tenerla. Exigimos al menos otro campo
+  // del contrato para no confundir un payload ajeno con un sobre nuestro.
+  if (!envelope || !('reply' in envelope)) return value;
+  if (!('status' in envelope) && !('messages' in envelope) && !('artifacts' in envelope)) return value;
+  return hasVisibleText(envelope.reply) ? envelope.reply : undefined;
+}
+
 function candidate(payload: Record<string, unknown>): string | undefined {
   const result = object(payload.result);
   const output = object(result?.output);
@@ -55,7 +83,12 @@ function candidate(payload: Record<string, unknown>): string | undefined {
     payload.text, payload.content, payload.message,
     typeof payload.error === 'string' ? `Error: ${payload.error}` : undefined
   ];
-  return values.find(hasVisibleText);
+  for (const value of values) {
+    if (!hasVisibleText(value)) continue;
+    const unwrapped = unwrapEnvelope(value);
+    if (hasVisibleText(unwrapped)) return unwrapped;
+  }
+  return undefined;
 }
 
 export function telegramTextChunks(payload: Record<string, unknown>): string[] {
