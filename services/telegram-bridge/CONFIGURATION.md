@@ -156,10 +156,83 @@ update recibido. Updates denegados avanzan el cursor pero nunca ingresan a Cauce
 Los reintentos de ingress usan una clave estable, por lo que reiniciar antes de
 persistir el cursor no duplica el mensaje.
 
+## Imágenes y documentos entrantes
+
+Para `photo` y `document`, el bridge resuelve `file_id` con `getFile` y descarga por el
+endpoint autenticado de archivos de Telegram. El token sigue existiendo solo en
+`token_file`: no se agrega a bodies, errores, métricas ni logs. Antes de publicar se
+validan nombre, ruta remota, tamaño declarado/real, extensión, MIME y firma del
+contenido. Se admiten:
+
+- JPEG (`.jpg`/`.jpeg`), PNG y WebP;
+- PDF, TXT UTF-8 sin NUL y DOCX con estructura OOXML reconocible.
+
+El límite es **10.000.000 bytes por mensaje** y se procesa el tamaño mayor de
+`photo[]` o el único `document`. Un tipo, nombre o tamaño rechazado se convierte en un
+mensaje útil para el usuario y el cursor avanza; fallos transitorios de Telegram se
+reintentan sin avanzar el cursor. No hay variables nuevas de configuración.
+
+El contenido validado viaja en el delivery autenticado y el adapter lo materializa en
+un directorio privado de `/tmp` con archivos `0600`. El prompt recibe nombre, MIME,
+tamaño, SHA-256 y una ruta local accesible para las herramientas del harness. El
+directorio se elimina al terminar, fallar o cancelar la ejecución; nunca se imprime el
+contenido ni el token en logs.
+
+El binario codificado forma parte del body durable de Cauce: queda sujeto a la misma
+retención, controles de acceso y backups que los mensajes. El cleanup anterior elimina
+la copia temporal del harness, no el registro durable. Antes de habilitar adjuntos con
+datos sensibles, la política de retención de mensajes debe estar aprobada para ese
+tenant.
+
 Como señal visual best-effort, el bridge reacciona 👀 al aceptar un update, cambia a
 🤔 y renueva `typing` mientras la entrega sigue activa, y finaliza con 👍 o 👎. Un
 fallo de estas llamadas visuales nunca altera la publicación, el ACK ni el relay
 durable.
+
+## Notas de voz entrantes
+
+Una nota de voz llegaba al agente como un cuerpo sin `text` y sin `prompt`: sólo metadata en
+`media[]` con un `file_id` que ningún harness sabe abrir. El agente recibía un mensaje vacío y
+contestaba a ciegas. Steven mandó tres audios el 2026-07-26 y ninguno se ejecutó.
+
+El puente ahora descarga el audio (`voice`, `audio` o `video_note`), lo transcribe contra un
+servicio compatible con la API de OpenAI y pone el texto donde el harness lo lee.
+
+| Variable | Obligatoria | Efecto |
+|---|---|---|
+| `CAUCE_TELEGRAM_TRANSCRIPTION_URL` | no | Origen del servicio, con la ruta base: `http://host:8000/v1`. **Ausente = transcripción apagada** y el puente se comporta como antes, avisando en cada audio que no pudo escucharlo. |
+| `CAUCE_TELEGRAM_TRANSCRIPTION_MODEL` | sí, si hay URL | Identificador del modelo de STT. |
+| `CAUCE_TELEGRAM_TRANSCRIPTION_LANGUAGE` | no | Por defecto `es`. |
+| `CAUCE_TELEGRAM_TRANSCRIPTION_TIMEOUT_SECONDS` | no | Por defecto 120, entre 1 y 900. |
+| `CAUCE_TELEGRAM_TRANSCRIPTION_API_KEY` | no | Por defecto `sk-local`. El servicio interno no autentica, pero la API lo exige sintácticamente. |
+
+La configuración se valida **al arrancar**, no en el primer audio: una URL mal escrita mata el
+proceso en el arranque en vez de descubrirse cuando alguien manda una nota de voz. El arranque deja
+una línea `telegram_transcription_config` en el log diciendo si quedó activa.
+
+En producción apunta a `claw-audio` (speaches sobre CUDA, en kratos), publicado en el tailnet por
+el contenedor `cauce-audio-forward` en `100.64.0.1:8010`.
+
+### Qué se manda y qué se guarda
+
+- El audio **no viaja al bus**: se descarga, se transcribe y se descarta. Una nota de voz de 3 MB
+  serían 4 MB de base64 en cada fila de `messages`, y ningún harness sabe escuchar un `.ogg`.
+- El techo es de 25 MB, más alto que el de los adjuntos inline (10 MB) justamente porque lo único
+  que sobrevive son caracteres.
+- El formato se deduce de los bytes (Ogg, WAV, FLAC, MP3, ISO-BMFF, WebM); el nombre que declara
+  quien envía se descarta entero.
+- El texto llega al agente en `body.prompt`, precedido de `[nota de voz transcrita]`. La etiqueta
+  no es decorativa: sin ella, un nombre propio que la GPU oyó mal se lee como si el humano lo
+  hubiera escrito así, y el agente lo repite con una seguridad que el texto no tiene.
+- `body.voice_v1` guarda el registro fiel para el operador: `kind`, `duration` y la transcripción,
+  o el error si no se pudo.
+- Un epígrafe (`caption`) se conserva y va antes de la transcripción.
+
+### Falla abierta
+
+Si el servicio no responde, responde error o devuelve vacío, el mensaje **igual llega**: el agente
+recibe una explicación en castellano pidiéndole que se lo diga al usuario y le pida el texto. Un
+audio sin transcribir es un problema; un mensaje perdido en silencio, como pasó el 26, es peor.
 
 ## Semántica de egress
 

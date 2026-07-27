@@ -5,6 +5,22 @@ export interface TelegramFile {
   file_unique_id?: string;
   file_size?: number;
   mime_type?: string;
+  file_name?: string;
+  /** Segundos. Sólo lo mandan voice/audio/video/video_note. */
+  duration?: number;
+}
+
+export interface TelegramRemoteFile extends TelegramFile {
+  file_path: string;
+}
+
+export interface PreparedTelegramAttachment {
+  kind: 'image' | 'document';
+  name: string;
+  mime_type: string;
+  file_size: number;
+  sha256: string;
+  content_base64: string;
 }
 
 /**
@@ -56,6 +72,7 @@ export interface TelegramMessage {
   audio?: TelegramFile;
   video?: TelegramFile;
   voice?: TelegramFile;
+  video_note?: TelegramFile;
   animation?: TelegramFile;
 }
 
@@ -90,6 +107,8 @@ export interface TelegramSendOptions {
 export interface TelegramApi {
   getIdentity(): Promise<TelegramIdentity>;
   getUpdates(offset: number, timeoutSeconds: number): Promise<TelegramUpdate[]>;
+  getFile(fileId: string): Promise<TelegramRemoteFile>;
+  downloadFile(filePath: string, maxBytes: number): Promise<Buffer>;
   sendText(chatId: string, text: string, options?: TelegramSendOptions): Promise<TelegramSendResult>;
   setMessageReaction(
     chatId: string,

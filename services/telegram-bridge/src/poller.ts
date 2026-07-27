@@ -11,6 +11,11 @@ import type {
 } from './types.js';
 import type { TelegramActivity } from './activity.js';
 import { TelegramApiError } from './telegram.js';
+import { prepareTelegramAttachments, prepareTelegramVoice } from './attachments.js';
+import type { transcribeAudio, TranscriptionConfig } from './transcription.js';
+
+/** Punto de inyección para las pruebas; en producción siempre es el cliente HTTP real. */
+type Transcriber = typeof transcribeAudio;
 
 export interface TelegramPollerOptions {
   config: TelegramAliasConfig;
@@ -33,6 +38,11 @@ export interface TelegramPollerOptions {
   participants?: (chatId: string, threadId: string) => ReadonlySet<string>;
   /** Structured audit sink for suppressed group updates. Defaults to a stderr JSON line. */
   onSuppressed?: (record: SuppressedUpdate) => void;
+  /**
+   * Servicio de transcripción para las notas de voz. Sin esto el puente sigue funcionando: los
+   * audios llegan como hasta ahora, con su metadata y un aviso de que no se pudieron escuchar.
+   */
+  transcription?: TranscriptionConfig;
 }
 
 /**
@@ -195,15 +205,47 @@ function groupPrompt(text: string, untrusted: Record<string, unknown> | undefine
   ].join('\n');
 }
 
-function normalizedBody(
+async function normalizedBody(
   message: TelegramMessage,
   updateId: number,
-  context?: GroupBodyContext
-): Record<string, unknown> {
-  const attachments = media(message);
+  api: TelegramApi,
+  context?: GroupBodyContext,
+  transcription?: TranscriptionConfig,
+  transcriber?: Transcriber
+): Promise<Record<string, unknown>> {
+  const prepared = await prepareTelegramAttachments(message, api);
+  const voice = transcriber === undefined
+    ? await prepareTelegramVoice(message, api, transcription)
+    : await prepareTelegramVoice(message, api, transcription, transcriber);
+  const legacyAttachments = media(message).filter((entry) => entry.kind !== 'photo' && entry.kind !== 'document');
   const text = safeText(message.text, 4_096);
   const caption = safeText(message.caption, 1_024);
-  const request = text ?? caption;
+  const typed = text ?? caption;
+  /**
+   * La transcripción va etiquetada.
+   *
+   * El agente tiene que saber que eso no se tecleó: salió de un reconocedor de voz y puede traer
+   * nombres propios mal oídos. Sin la etiqueta, un error de la GPU se lee como si el humano lo
+   * hubiera escrito así, y el agente lo cita de vuelta con una seguridad que el texto no tiene.
+   */
+  const spoken = voice.transcript === undefined
+    ? undefined
+    : `[nota de voz transcrita] ${voice.transcript}`;
+  const request = typed === undefined
+    ? spoken
+    : spoken === undefined ? typed : `${typed}\n\n${spoken}`;
+  const problems = [
+    ...(prepared.errors.length === 0
+      ? [] : [`No pude procesar el adjunto: ${prepared.errors.join('; ')}. Explicá este error al usuario y pedile un archivo compatible.`]),
+    ...(voice.error === undefined
+      ? [] : [`${voice.error} Decíselo al usuario y pedile que lo escriba o lo mande de nuevo.`])
+  ];
+  const attachmentError = problems.length === 0 ? undefined : problems.join('\n\n');
+  const effectiveRequest = attachmentError === undefined
+    ? request
+    : request === undefined
+      ? attachmentError
+      : `${request}\n\n${attachmentError}`;
   return {
     type: 'telegram.message',
     update_id: updateId,
@@ -213,12 +255,19 @@ function normalizedBody(
     ...(context === undefined ? {} : {
       ...(context.threadId === '0' ? {} : { thread_id: context.threadId }),
       addressed_by: context.bucket,
-      ...(context.untrusted === undefined || request === undefined
-        ? {} : { prompt: groupPrompt(request, context.untrusted) })
+      ...(effectiveRequest === undefined
+        ? {} : { prompt: groupPrompt(effectiveRequest, context.untrusted) })
     }),
     ...(text === undefined ? {} : { text }),
     ...(caption === undefined ? {} : { caption }),
-    ...(attachments.length === 0 ? {} : { media: attachments })
+    ...(prepared.media.length === 0 ? {} : { attachments_v1: prepared.media }),
+    ...(legacyAttachments.length === 0 ? {} : { media: legacyAttachments }),
+    ...(prepared.errors.length === 0 ? {} : { attachment_errors: prepared.errors }),
+    // Registro fiel de lo que pasó con el audio, para el operador en la consola: el prompt de
+    // arriba es lo que leyó el agente, esto es de dónde salió.
+    ...(voice.kind === undefined ? {} : { voice_v1: voice }),
+    ...(context !== undefined || (attachmentError === undefined && spoken === undefined)
+      ? {} : { prompt: effectiveRequest })
   };
 }
 
@@ -302,6 +351,7 @@ export class TelegramPoller {
   private readonly self: AddressingSelf;
   private readonly participants: ((chatId: string, threadId: string) => ReadonlySet<string>) | undefined;
   private readonly onSuppressed: (record: SuppressedUpdate) => void;
+  private readonly transcription: TranscriptionConfig | undefined;
   private currentLease: PollLease | undefined;
 
   constructor(options: TelegramPollerOptions) {
@@ -326,6 +376,7 @@ export class TelegramPoller {
     };
     this.participants = options.participants;
     this.onSuppressed = options.onSuppressed ?? logSuppressedUpdate;
+    this.transcription = options.transcription;
   }
 
   /**
@@ -470,9 +521,15 @@ export class TelegramPoller {
         alias: this.config.alias,
         room_id: this.config.room_id,
         recipients: this.config.recipients,
-        body: normalizedBody(message, update.update_id, group
-          ? { threadId, bucket: decision.bucket, untrusted: this.untrustedContext(message) }
-          : undefined),
+        body: await normalizedBody(
+          message,
+          update.update_id,
+          this.api,
+          group
+            ? { threadId, bucket: decision.bucket, untrusted: this.untrustedContext(message) }
+            : undefined,
+          this.transcription
+        ),
         origin,
         session_id: session(scope, this.botId, chatId, userId, threadId)
       });

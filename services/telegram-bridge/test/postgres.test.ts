@@ -32,6 +32,8 @@ class RecordingTelegram implements TelegramApi {
 
   async getIdentity(): Promise<{ id: string }> { return { id: '900001' }; }
   async getUpdates(): Promise<TelegramUpdate[]> { return []; }
+  async getFile(): Promise<never> { throw new Error('no file fixture'); }
+  async downloadFile(): Promise<never> { throw new Error('no file fixture'); }
   async setMessageReaction(): Promise<void> {}
   async sendChatAction(): Promise<void> {}
   async sendText(chatId: string, text: string): Promise<TelegramSendResult> {
