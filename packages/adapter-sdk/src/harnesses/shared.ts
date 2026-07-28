@@ -330,17 +330,17 @@ export class HarnessAdapter {
         false,
       );
     }
-    if (result.cancelled) {
+    // El motivo del aborto se propaga en el MENSAJE, no en el código, y eso es deliberado.
+    // `EXECUTION_CANCELLED_AMBIGUOUS` es de los códigos que `isAmbiguousAckErrorCode` protege,
+    // y esa protección es la que impide que `AdapterEngine` reetiquete como FENCED-reintentable
+    // una entrega que ya se ejecutó. Devolver acá el código crudo del motivo (STALE_EPOCH,
+    // CLAIM_OWNERSHIP_LOST) sacaría a la entrega de esa lista y la mandaría a reintentar
+    // trabajo YA PAGADO: exactamente la multiplicación de entregas del incidente. La
+    // ambigüedad del estado es real; lo que faltaba era decir POR QUÉ se cortó.
+    if (result.cancelled || request.signal.aborted) {
       throw new ProcessExecutionError(
         "EXECUTION_CANCELLED_AMBIGUOUS",
-        "Harness transport was cancelled after dispatch; completion state is unknown and requires manual replay",
-        false,
-      );
-    }
-    if (request.signal.aborted) {
-      throw new ProcessExecutionError(
-        "EXECUTION_CANCELLED_AMBIGUOUS",
-        "Harness transport was cancelled after dispatch; completion state is unknown and requires manual replay",
+        cancellationMessage(request.signal),
         false,
       );
     }
@@ -351,7 +351,7 @@ export class HarnessAdapter {
     } catch (error) {
       if (result.exitCode !== 0) {
         // Extract real cause from stderr, sanitized to avoid leaking secrets
-        const causeDetail = sanitizeProcessOutput(result.stderr, 100);
+        const causeDetail = sanitizeProcessOutput(result.stderr);
         const message = causeDetail
           ? `Harness exited with code ${result.exitCode} without structured output: ${causeDetail}`
           : "Harness exited after execution began without structured output; completion state is unknown";
@@ -365,7 +365,7 @@ export class HarnessAdapter {
     }
     if (result.exitCode !== 0 && parsed.output.status !== "failed") {
       // Extract real cause from stderr
-      const causeDetail = sanitizeProcessOutput(result.stderr, 100);
+      const causeDetail = sanitizeProcessOutput(result.stderr);
       const message = causeDetail
         ? `Harness exited with code ${result.exitCode}: ${causeDetail}`
         : "Harness exited with a non-zero status after execution began; completion state is unknown";
@@ -510,9 +510,52 @@ async function waitForSessionTurn(previous: Promise<void>, signal: AbortSignal):
 }
 
 function abortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof AdapterError
-    ? signal.reason
-    : new ProcessExecutionError("CANCELLED", "Harness execution was cancelled", false);
+  if (signal.reason instanceof AdapterError) return signal.reason;
+  const detail = describeAbortReason(signal);
+  return new ProcessExecutionError(
+    "CANCELLED",
+    detail === ""
+      ? "Harness execution was cancelled"
+      : `Harness execution was cancelled (${detail})`,
+    false,
+  );
+}
+
+/**
+ * Por qué se abortó ESTA ejecución, en texto, para que llegue a `last_error`.
+ *
+ * Quien aborta siempre pone un motivo (`controller.abort(new AdapterError(...))` en
+ * `AdapterEngine`: STALE_EPOCH, SHUTDOWN, CANCELLED, CLAIM_RENEWAL_UNCONFIRMED,
+ * CLAIM_OWNERSHIP_LOST, CLAIM_RENEWAL_PERSISTENCE_FAILED). Ese motivo se tiraba y quedaba
+ * una frase igual para los cinco casos, así que "Harness transport was cancelled after
+ * dispatch" —28 veces en 24 h el 2026-07-27, en ráfagas simultáneas multi-alias— no permitía
+ * distinguir un apagado ordenado de una pérdida de garra en el gateway. Son incidentes
+ * distintos con dueños distintos.
+ *
+ * Un `AbortSignal` abortado sin motivo explícito trae igual un `DOMException` "AbortError",
+ * que sigue siendo más señal que la cadena vacía.
+ */
+function describeAbortReason(signal: AbortSignal): string {
+  if (!signal.aborted) return "";
+  const reason: unknown = signal.reason;
+  if (reason === undefined || reason === null) return "";
+  const raw = reason instanceof AdapterError
+    ? `${reason.code}: ${reason.message}`
+    : reason instanceof Error
+      ? `${reason.name}: ${reason.message}`
+      : typeof reason === "string"
+        ? reason
+        : "";
+  // El motivo lo redacta el propio SDK, pero pasa por el mismo filtro que stderr porque
+  // `last_error` viaja al gateway y de ahí a la consola: nada llega ahí sin sanear.
+  return sanitizeProcessOutput(raw, ABORT_REASON_DETAIL_BUDGET);
+}
+
+function cancellationMessage(signal: AbortSignal): string {
+  const detail = describeAbortReason(signal);
+  return detail === ""
+    ? "Harness transport was cancelled after dispatch; completion state is unknown and requires manual replay"
+    : `Harness transport was cancelled after dispatch (${detail}); completion state is unknown and requires manual replay`;
 }
 
 export function executionError(error: unknown): AdapterError {
@@ -521,24 +564,73 @@ export function executionError(error: unknown): AdapterError {
 }
 
 /**
+ * Cuánto stderr se conserva como causa de un fallo del harness.
+ *
+ * El techo real está en el protocolo, no acá: `BaseAckSchema.error` corta en 2000 caracteres
+ * y `clampAckDetail` (sdk/client.ts) ya recorta sin romper la conexión. 1200 deja lugar para
+ * el prefijo del mensaje y sigue holgado bajo ese tope.
+ *
+ * El valor anterior era 100. No alcanzaba ni para una causa de dos líneas: el 2026-07-27 un
+ * adaptador murió con `Error loading config.toml: unknown variant \`writes\`, expected one
+ * of...` y el recorte se comió justo la línea siguiente, la única que nombraba la clave
+ * culpable. El diagnóstico costó horas por 100 bytes.
+ */
+const STDERR_DETAIL_BUDGET = 1_200;
+
+/** Los motivos de aborto los redacta el SDK y son de una línea; no necesitan el presupuesto grande. */
+const ABORT_REASON_DETAIL_BUDGET = 300;
+
+/**
+ * Qué fracción del presupuesto se gasta en el principio del texto. El resto va al final.
+ *
+ * No es simetría por gusto: en un stderr largo el principio trae el encabezado del error y el
+ * FINAL trae la causa raíz —la última línea de un stack, el "caused by", el hint del parser—.
+ * Recortar sólo por la cabeza tira sistemáticamente la mitad que sirve.
+ */
+const STDERR_HEAD_SHARE = 0.6;
+
+/**
  * Sanitize process output by removing secret-like patterns and truncating.
  * Patterns removed: API keys, tokens, passwords, OAuth credentials, bearer tokens.
+ *
+ * La redacción corre ANTES del recorte, así que ampliar el presupuesto no amplía la
+ * superficie de fuga: un secreto que caiga en la cola ya viene reemplazado por [REDACTED].
  */
-function sanitizeProcessOutput(stderr: string, maxLengthBytes: number): string {
+function sanitizeProcessOutput(stderr: string, maxLengthBytes: number = STDERR_DETAIL_BUDGET): string {
   if (!stderr || stderr.trim().length === 0) return "";
 
   // Remove common secret patterns while preserving line breaks for readability
   const sanitized = stderr
     .replace(/\b(?:api[_-]?key|api[_-]?secret|secret|password|passwd|token|bearer|authorization|x-api-key)\s*[:=]\s*[^\s]+/gi, "[REDACTED]")
     .replace(/\b(?:oauth|refresh|access)\s*[_]?token\s*[:=]\s*[^\s]+/gi, "[REDACTED]")
-    .replace(/\b(?:aws_access_key_id|aws_secret_access_key)\s*[:=]\s*[^\s]+/gi, "[REDACTED]");
+    .replace(/\b(?:aws_access_key_id|aws_secret_access_key)\s*[:=]\s*[^\s]+/gi, "[REDACTED]")
+    .trim();
 
-  // Truncate to first few lines or max bytes, whichever comes first
-  const lines = sanitized.split("\n");
-  const firstLines = lines.slice(0, 3).join("\n");
+  return clampPreservingTail(sanitized, maxLengthBytes);
+}
 
-  if (firstLines.length > maxLengthBytes) {
-    return firstLines.substring(0, maxLengthBytes) + "...";
-  }
-  return firstLines;
+/**
+ * Recorte "primeros N … [k omitidos] … últimos M", que conserva las dos puntas del texto.
+ *
+ * El marcador se dimensiona con `text.length` —cota superior de los dígitos que puede tener
+ * el conteo real de omitidos—, así que el marcador definitivo nunca es más largo que el
+ * provisional y el resultado jamás excede `maxLengthBytes`.
+ */
+function clampPreservingTail(text: string, maxLengthBytes: number): string {
+  if (text.length <= maxLengthBytes) return text;
+
+  const provisionalMarker = truncationMarker(text.length);
+  const available = Math.max(2, maxLengthBytes - provisionalMarker.length);
+  const headLength = Math.max(1, Math.floor(available * STDERR_HEAD_SHARE));
+  const tailLength = Math.max(1, available - headLength);
+  const omitted = text.length - headLength - tailLength;
+  if (omitted <= 0) return text;
+
+  return text.slice(0, headLength)
+    + truncationMarker(omitted)
+    + text.slice(text.length - tailLength);
+}
+
+function truncationMarker(omitted: number): string {
+  return `\n… [${omitted} caracteres omitidos] …\n`;
 }
