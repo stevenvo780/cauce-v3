@@ -1,7 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { createPool, type DatabasePool } from '@cauce/store';
 import { buildGateway } from './app.js';
-import { configuredAckDeadlineMs, configuredDeliveryAdmission } from './config.js';
+import {
+  configuredAckDeadlineMs, configuredDeliveryAdmission, configuredDeliveryLeaseCap,
+} from './config.js';
 import {
   DevOnlyAuthProvider, HashedMtlsIdentityFileProvider, HashedTokenFileAuthProvider,
   MtlsAuthProvider, type AuthProvider
@@ -15,6 +17,8 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
 assertPostgresTls(databaseUrl);
 const ackDeadlineMs = configuredAckDeadlineMs();
+// Mismo bloque de entorno que el dispatcher: ver `configuredDeliveryLeaseCap`.
+const deliveryLeaseCap = configuredDeliveryLeaseCap();
 // Se lee al arrancar a propósito: una configuración de admisión inválida tiene que impedir el
 // boot, no descubrirse recién cuando un agente se conecta y no recibe nada.
 const admission = configuredDeliveryAdmission();
@@ -137,6 +141,7 @@ const app = await buildGateway({
   authProvider,
   logger: true,
   ackDeadlineMs,
+  deliveryLeaseCap,
   admission,
   requireAckClaims: process.env.CAUCE_REQUIRE_ACK_CLAIMS !== '0',
   exposeHealthRoutes: !isolatedHealth,

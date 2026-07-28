@@ -1,3 +1,7 @@
+import {
+  DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
+} from '@cauce/store';
+
 export const DEFAULT_ACK_DEADLINE_MS = 30_000;
 
 export function validateAckDeadlineMs(value: number): number {
@@ -13,6 +17,38 @@ export function configuredAckDeadlineMs(
   return validateAckDeadlineMs(Number(
     environment.CAUCE_ACK_DEADLINE_MS ?? DEFAULT_ACK_DEADLINE_MS,
   ));
+}
+
+/**
+ * Techo de vida total de un intento, leído con los MISMOS nombres de variable que el
+ * dispatcher. Que los dos servicios lean la misma configuración no es cosmético: el gateway es
+ * quien escribe el plazo en cada renovación y el dispatcher quien recoge lo que lo superó. Si
+ * el gateway tuviera un techo más alto, seguiría renovando entregas que el reaper ya considera
+ * vencidas por techo; si lo tuviera más bajo, congelaría plazos que el reaper todavía no está
+ * dispuesto a matar y la entrega moriría por "ACK timeout" genérico — justo la confusión que
+ * este guarda existe para evitar. Se despliegan con el mismo bloque de entorno.
+ */
+export function configuredDeliveryLeaseCap(
+  environment: NodeJS.ProcessEnv = process.env,
+): { leaseCapMs: number; leaseCapGraceMs: number } {
+  const leaseCapMs = Number(
+    environment.CAUCE_DELIVERY_LEASE_CAP_MS ?? DEFAULT_DELIVERY_LEASE_CAP_MS,
+  );
+  if (!Number.isSafeInteger(leaseCapMs) || leaseCapMs <= 0) {
+    throw new Error('CAUCE_DELIVERY_LEASE_CAP_MS must be a positive integer');
+  }
+  const leaseCapGraceMs = Number(
+    environment.CAUCE_DELIVERY_LEASE_CAP_GRACE_MS ?? DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS,
+  );
+  if (!Number.isSafeInteger(leaseCapGraceMs) || leaseCapGraceMs <= 0) {
+    throw new Error('CAUCE_DELIVERY_LEASE_CAP_GRACE_MS must be a positive integer');
+  }
+  if (leaseCapMs < configuredAckDeadlineMs(environment)) {
+    throw new Error(
+      'CAUCE_DELIVERY_LEASE_CAP_MS must be equal to or greater than CAUCE_ACK_DEADLINE_MS',
+    );
+  }
+  return { leaseCapMs, leaseCapGraceMs };
 }
 
 /**

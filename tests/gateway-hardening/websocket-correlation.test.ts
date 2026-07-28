@@ -313,6 +313,7 @@ describe('gateway WebSocket ACK correlation', () => {
       authProvider: DevOnlyAuthProvider.forTests(),
       deliveryWakeSubscriber: noDeliveryWakes,
       ackDeadlineMs: 600_000,
+      deliveryLeaseCap: { leaseCapMs: 7_200_000, leaseCapGraceMs: 600_000 },
       outboxPollMs: 60_000
     });
     apps.push(app);
@@ -387,7 +388,10 @@ describe('gateway WebSocket ACK correlation', () => {
         instance_id: 'durable-consumer',
         epoch: 1
       }),
-      600_000
+      600_000,
+      // Una renovacion tras reconectar tiene que llevar el techo igual que la primera: es
+      // justo el camino por el que una entrega se volvia inmortal.
+      { leaseCapMs: 7_200_000, leaseCapGraceMs: 600_000 }
     );
     await disconnect(resumed.socket);
 

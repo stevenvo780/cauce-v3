@@ -13,8 +13,8 @@ import {
 } from '@cauce/protocol';
 import {
   CauceRepository, StoreError, subscribeDeliveryWakes,
-  type AckResult, type DatabasePool, type LeaseResult, type NotificationVerdict, type OutboxEvent,
-  type PublishResult, type QuotaSampleIngestResult
+  type AckResult, type DatabasePool, type DeliveryLeaseCap, type LeaseResult,
+  type NotificationVerdict, type OutboxEvent, type PublishResult, type QuotaSampleIngestResult
 } from '@cauce/store';
 import {
   AuthError, AuthorizationError, MtlsAuthProvider, requireOperatorPermission, requirePermission, validatePrincipal,
@@ -135,6 +135,7 @@ export interface GatewayRepository {
     alias: string,
     ack: GatewayAck,
     ackDeadlineMs?: number,
+    leaseCap?: DeliveryLeaseCap,
   ): Promise<AckResult>;
   claimOutbox(kind: 'wake', worker: string, limit?: number, leaseMs?: number): Promise<OutboxLeaseEvent[]>;
   ackOutbox?(ack: OutboxLeaseAck): Promise<unknown>;
@@ -149,6 +150,13 @@ export interface GatewayOptions {
   deliveryWakeSubscriber?: typeof subscribeDeliveryWakes;
   leaseTtlMs?: number;
   ackDeadlineMs?: number;
+  /**
+   * Techo de vida total de un intento. El gateway lo necesita porque es quien ESCRIBE el plazo
+   * en cada renovacion: sin el, `ackDelivery` seguiria empujando `ack_deadline_at` 30 min hacia
+   * adelante indefinidamente y el techo solo existiria en el reaper, o sea un tick tarde y con
+   * dos filas de observabilidad escritas por cada latido de un harness ya colgado.
+   */
+  deliveryLeaseCap?: DeliveryLeaseCap;
   /** Control de admisión por sesión. Ver `DeliveryAdmissionConfig` y `drain()`. */
   admission?: DeliveryAdmissionConfig;
   outboxPollMs?: number;
@@ -349,6 +357,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     throw new Error('development/test AuthProvider is forbidden in production');
   }
   const ackDeadlineMs = validateAckDeadlineMs(options.ackDeadlineMs ?? DEFAULT_ACK_DEADLINE_MS);
+  const deliveryLeaseCap = options.deliveryLeaseCap ?? {};
   const admission = validateDeliveryAdmission(options.admission ?? {
     maxInflightDeliveries: DEFAULT_MAX_INFLIGHT_DELIVERIES,
     humanReservedDeliveries: DEFAULT_HUMAN_RESERVED_DELIVERIES
@@ -791,7 +800,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       requirePermission(actor, 'route');
       const ack = parseAck(request.body);
       const result = await repository.ackDelivery(
-        request.params.deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs
+        request.params.deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs,
+        deliveryLeaseCap
       );
       return { ...result, event_id: ack.event_id, attempt: ack.attempt, claim_token: ack.claim_token };
     } catch (error) {
@@ -810,7 +820,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const deliveryId = DeliveryIdSchema.parse(deliveryValue);
       const ack = parseAck(ackValue);
       const result = await repository.ackDelivery(
-        deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs
+        deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs, deliveryLeaseCap
       );
       return { ...result, event_id: ack.event_id, attempt: ack.attempt, claim_token: ack.claim_token };
     } catch (error) {
@@ -1063,7 +1073,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           // intentionally empty; repository.ackDelivery remains authoritative
           // for delivery id, attempt, token, instance, epoch and deadline.
           const result = await repository.ackDelivery(
-            deliveryId, current.tenantId, current.alias, incoming, ackDeadlineMs
+            deliveryId, current.tenantId, current.alias, incoming, ackDeadlineMs,
+            deliveryLeaseCap
           );
           const { receipt, ...legacyResult } = result;
           send(socket, {

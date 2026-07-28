@@ -135,7 +135,51 @@ export const AttachmentsV1Schema = z.array(AttachmentContentSchema)
     }
   });
 
+/**
+ * Techo absoluto de `body.timeout_ms`: 7 días. Es el MISMO número que
+ * `MAX_AGENT_EXECUTION_TIMEOUT_MS` de packages/adapter-sdk, y tiene que seguir siéndolo: el SDK
+ * ya rechazaba con `INVALID_TIMEOUT` cualquier valor fuera de rango, pero lo hacía DESPUÉS de
+ * reclamar la entrega y en un error NO reintentable, o sea que un dedazo del publicador se
+ * pagaba como una entrega muerta en vez de como un 400 en la puerta.
+ */
+export const MAX_MESSAGE_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * Presupuesto de reloj de pared que el publicador le da a ESTE mensaje, en milisegundos.
+ *
+ * Existía de facto —el SDK lee `body.timeout_ms` desde siempre— pero no estaba en ningún
+ * esquema, así que nadie lo validaba, nadie lo documentaba y en la práctica ningún mensaje lo
+ * traía: todos caían en el default de 24 h del harness. Declararlo acá lo vuelve parte del
+ * contrato y, sobre todo, lo vuelve legible para el STORE, que es quien tiene que decidir
+ * cuánto tiempo puede una entrega seguir renovando su garra (ver `deliveryLeaseCapMs`).
+ */
+export const MessageTimeoutMsSchema = z.number().int().positive().max(MAX_MESSAGE_TIMEOUT_MS);
+
+/**
+ * Lee `body.timeout_ms` con la MISMA regla que el esquema, sin lanzar.
+ *
+ * Devuelve `undefined` tanto para "no lo trae" como para "trae basura". Es deliberado: esta
+ * función la usan el store y el reaper sobre filas que YA están en la base, incluidas las que
+ * se insertaron antes de que el esquema existiera. Ahí "no sé" tiene que caer del lado del
+ * default configurado, no del lado de romper el barrido de garras vencidas por una fila vieja.
+ */
+export function messageTimeoutMs(body: unknown): number | undefined {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
+  const parsed = MessageTimeoutMsSchema.safeParse((body as Record<string, unknown>).timeout_ms);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export const MessageBodySchema = z.record(z.string(), z.unknown()).superRefine((body, context) => {
+  if (body.timeout_ms !== undefined) {
+    const timeout = MessageTimeoutMsSchema.safeParse(body.timeout_ms);
+    if (!timeout.success) {
+      context.addIssue({
+        code: 'custom',
+        path: ['timeout_ms'],
+        message: `body.timeout_ms must be an integer between 1 and ${MAX_MESSAGE_TIMEOUT_MS}`
+      });
+    }
+  }
   if (body.attachments_v1 === undefined) return;
   const parsed = AttachmentsV1Schema.safeParse(body.attachments_v1);
   if (parsed.success) return;

@@ -1,5 +1,21 @@
+import {
+  DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS, DEFAULT_RETENTION_ACK_MS,
+  DEFAULT_RETENTION_ACK_RENEWAL_MS, DEFAULT_RETENTION_AUDIT_MS, DEFAULT_RETENTION_AUDIT_RENEWAL_MS,
+  DEFAULT_RETENTION_BATCH,
+} from '@cauce/store';
+
 export const DEFAULT_ACK_DEADLINE_MS = 30_000;
 export const DEFAULT_ACK_TIMEOUT_MS = 30_000;
+
+/**
+ * Cada cuánto se poda la observabilidad. 5 min y no cada tick (250 ms): el barrido es
+ * mantenimiento, no camino caliente, y a 250 ms serían 345.600 DELETE por día para recuperar el
+ * mismo espacio que 288.
+ *
+ * `CAUCE_RETENTION_INTERVAL_MS=0` lo APAGA. Es la única variable de este parche que acepta cero,
+ * y es la palanca de emergencia: deja de borrar sin revertir el esquema ni redesplegar código.
+ */
+export const DEFAULT_RETENTION_INTERVAL_MS = 5 * 60_000;
 
 export interface DispatcherConfig {
   pollMs: number;
@@ -14,12 +30,29 @@ export interface DispatcherConfig {
    * desperdicio medido el 2026-07-27 en los agentes con harness codex.
    */
   retryStartedDeliveries: boolean;
+  /** Techo de vida total de un intento. Ver `DEFAULT_DELIVERY_LEASE_CAP_MS` en el store. */
+  leaseCapMs: number;
+  leaseCapGraceMs: number;
+  retentionIntervalMs: number;
+  retentionAckRenewalMs: number;
+  retentionAckMs: number;
+  retentionAuditRenewalMs: number;
+  retentionAuditMs: number;
+  retentionBatch: number;
 }
 
 function positiveInteger(environment: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const parsed = Number(environment[name] ?? fallback);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function nonNegativeInteger(environment: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const parsed = Number(environment[name] ?? fallback);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative integer`);
   }
   return parsed;
 }
@@ -34,6 +67,36 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
   if (ackTimeoutMs < ackDeadlineMs) {
     throw new Error('ACK_TIMEOUT_MS must be equal to or greater than CAUCE_ACK_DEADLINE_MS');
   }
+  const leaseCapMs = positiveInteger(
+    environment, 'CAUCE_DELIVERY_LEASE_CAP_MS', DEFAULT_DELIVERY_LEASE_CAP_MS,
+  );
+  // Un techo por debajo del plazo de ACK mataría TODA entrega antes de su primera renovación:
+  // el arranque le pondría el plazo en now()+30min, el LEAST lo recortaría al techo ya vencido y
+  // el reaper la declararía muerta por techo en el tick siguiente. La flota entera dejaría de
+  // trabajar y el síntoma —"todo muere por techo agotado"— parecería un bug del guarda nuevo.
+  // Falla al arrancar, que es donde se ve.
+  if (leaseCapMs < ackDeadlineMs) {
+    throw new Error(
+      'CAUCE_DELIVERY_LEASE_CAP_MS must be equal to or greater than CAUCE_ACK_DEADLINE_MS',
+    );
+  }
+  const retentionAckRenewalMs = positiveInteger(
+    environment, 'CAUCE_RETENTION_ACK_RENEWAL_MS', DEFAULT_RETENTION_ACK_RENEWAL_MS,
+  );
+  const retentionAckMs = positiveInteger(
+    environment, 'CAUCE_RETENTION_ACK_MS', DEFAULT_RETENTION_ACK_MS,
+  );
+  const retentionAuditRenewalMs = positiveInteger(
+    environment, 'CAUCE_RETENTION_AUDIT_RENEWAL_MS', DEFAULT_RETENTION_AUDIT_RENEWAL_MS,
+  );
+  const retentionAuditMs = positiveInteger(
+    environment, 'CAUCE_RETENTION_AUDIT_MS', DEFAULT_RETENTION_AUDIT_MS,
+  );
+  if (retentionAckRenewalMs > retentionAckMs || retentionAuditRenewalMs > retentionAuditMs) {
+    throw new Error(
+      'renewal retention windows must be shorter than or equal to the general retention windows',
+    );
+  }
   return {
     pollMs: positiveInteger(environment, 'DISPATCHER_POLL_MS', 250),
     ackDeadlineMs,
@@ -43,5 +106,19 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
     // Sólo el '1' explícito la prende. Cualquier otra cosa (vacío, '0', basura) deja el
     // comportamiento seguro, que es el que ahorra cuota.
     retryStartedDeliveries: environment.CAUCE_RETRY_STARTED_DELIVERIES === '1',
+    leaseCapMs,
+    leaseCapGraceMs: positiveInteger(
+      environment, 'CAUCE_DELIVERY_LEASE_CAP_GRACE_MS', DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS,
+    ),
+    retentionIntervalMs: nonNegativeInteger(
+      environment, 'CAUCE_RETENTION_INTERVAL_MS', DEFAULT_RETENTION_INTERVAL_MS,
+    ),
+    retentionAckRenewalMs,
+    retentionAckMs,
+    retentionAuditRenewalMs,
+    retentionAuditMs,
+    retentionBatch: positiveInteger(
+      environment, 'CAUCE_RETENTION_BATCH', DEFAULT_RETENTION_BATCH,
+    ),
   };
 }
