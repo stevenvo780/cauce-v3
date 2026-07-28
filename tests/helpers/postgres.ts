@@ -67,6 +67,7 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
       // agent_chain_progress has no foreign key by design, so CASCADE cannot reach it.
+      // agent_failure_notices and its event ledger are in the same situation (migration 014).
       await pool.query(`TRUNCATE TABLE
         gateway_oidc_sessions,telegram_egress_effects,channel_bridge_cursors,channel_bridge_leases,
         shadow_compare_verdicts,shadow_human_reply_guards,shadow_router_mappings,shadow_router_inbox,
@@ -74,10 +75,15 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
         agent_account_bindings,agents,provider_accounts,
         audit_events,dead_letters,jobs,adapter_outbox,adapter_inbox,delivery_acks,
         delivery_lane_fairness,job_lane_fairness,
-        deliveries,idempotency_keys,messages,connection_leases,agent_chain_progress
+        deliveries,idempotency_keys,messages,connection_leases,agent_chain_progress,
+        agent_failure_notice_events,agent_failure_notices
         RESTART IDENTITY CASCADE`);
+      // Same reason the relay flags are pinned here: every suite that does not opt in must see
+      // the pre-014 behaviour, so an unrelated test never fails because a sibling failure got
+      // coalesced. The suites that exercise the coalescer turn it on themselves.
       await pool.query(`UPDATE agent_chain_policies
-        SET progress_relay_enabled=false,progress_relay_max_events=12,cycle_cut_enabled=false`);
+        SET progress_relay_enabled=false,progress_relay_max_events=12,cycle_cut_enabled=false,
+            failure_coalesce_enabled=false,failure_coalesce_window_seconds=900`);
       return;
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
