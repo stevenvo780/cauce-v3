@@ -32,6 +32,10 @@ describe('gateway hardening facades and RBAC', () => {
       authProvider: new FixedAuthProvider(testPrincipal()),
       deliveryWakeSubscriber: noDeliveryWakes,
       ackDeadlineMs: 600_000,
+      // El techo de vida viaja por el mismo camino que el plazo: el gateway es quien congela
+      // `ack_deadline_at` cuando una renovacion se pasaria del techo, asi que si no llegara
+      // hasta el store, un harness colgado seguiria renovando entre tick y tick del reaper.
+      deliveryLeaseCap: { leaseCapMs: 7_200_000, leaseCapGraceMs: 600_000 },
       outboxPollMs: 60_000
     });
     apps.push(app);
@@ -69,12 +73,13 @@ describe('gateway hardening facades and RBAC', () => {
       url: '/v3/ack',
       payload: { delivery_id: ids.deliveryTwo, ...ack, event_id: ids.eventTwo }
     })).statusCode).toBe(200);
+    const leaseCap = { leaseCapMs: 7_200_000, leaseCapGraceMs: 600_000 };
     expect(repository.ackDelivery).toHaveBeenNthCalledWith(
-      1, ids.delivery, 'Pablo', 'midas', { ...ack, retryable: false }, 600_000
+      1, ids.delivery, 'Pablo', 'midas', { ...ack, retryable: false }, 600_000, leaseCap
     );
     expect(repository.ackDelivery).toHaveBeenNthCalledWith(
       2, ids.deliveryTwo, 'Pablo', 'midas',
-      { ...ack, event_id: ids.eventTwo, retryable: false }, 600_000
+      { ...ack, event_id: ids.eventTwo, retryable: false }, 600_000, leaseCap
     );
   });
 
