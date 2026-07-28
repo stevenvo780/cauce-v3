@@ -14,6 +14,7 @@ const dispatcher = tlsPolicy.ok ? runDispatcher(pool, {
   pollMs: config.pollMs,
   staleAckMs: config.ackTimeoutMs,
   interactiveBurst: config.interactiveBurst,
+  retryStartedDeliveries: config.retryStartedDeliveries,
   jobLeaseMs: config.jobLeaseMs,
   handlers: createDefaultJobHandlerRegistry(pool),
   metrics,

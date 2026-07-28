@@ -8,7 +8,7 @@ import { TelegramApiError, TelegramHttpClient } from '../src/telegram.js';
 import type {
   PollLease, TelegramAliasConfig, TelegramApi, TelegramCursorRepository, TelegramEffect,
   TelegramEffectInput, TelegramEgressRepository, TelegramEntity, TelegramIngress, TelegramIngressMessage,
-  TelegramOriginRelay, TelegramOriginRelayAck, TelegramSendOptions, TelegramSendResult, TelegramUpdate
+  TelegramOriginRelay, TelegramOriginRelayAck, TelegramRemoteFile, TelegramSendOptions, TelegramSendResult, TelegramUpdate
 } from '../src/types.js';
 
 const TENANT = 'Steven';
@@ -124,6 +124,8 @@ class FakeTelegram implements TelegramApi {
   sends: Array<{ chat: string; text: string; options?: TelegramSendOptions; arity: number }> = [];
   reactions: Array<{ chat: string; message: string; reaction: string }> = [];
   actions: Array<{ chat: string; action: string }> = [];
+  files = new Map<string, TelegramRemoteFile>();
+  filePayloads = new Map<string, Buffer>();
 
   constructor(readonly updates: TelegramUpdate[] = []) {}
 
@@ -132,6 +134,17 @@ class FakeTelegram implements TelegramApi {
   async getUpdates(offset: number): Promise<TelegramUpdate[]> {
     this.offsets.push(offset);
     return this.updates.filter((entry) => entry.update_id >= offset);
+  }
+
+  async getFile(fileId: string): Promise<TelegramRemoteFile> {
+    const file = this.files.get(fileId);
+    if (!file) throw new Error('no file fixture');
+    return file;
+  }
+  async downloadFile(path: string): Promise<Buffer> {
+    const payload = this.filePayloads.get(path);
+    if (!payload) throw new Error('no file fixture');
+    return payload;
   }
 
   async sendText(chatId: string, text: string, options?: TelegramSendOptions): Promise<TelegramSendResult> {
@@ -409,6 +422,61 @@ class MemoryEgressRepository implements TelegramEgressRepository {
 }
 
 describe('Telegram durable polling', () => {
+  it('downloads a Telegram photo before publishing it to the addressed agent', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const photo = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+    const api = new FakeTelegram([{
+      update_id: 4,
+      message: {
+        message_id: 104,
+        from: { id: 101 },
+        chat: { id: 201, type: 'private' },
+        photo: [{ file_id: 'photo-id', file_size: photo.length }]
+      }
+    }]);
+    api.files.set('photo-id', {
+      file_id: 'photo-id', file_path: 'photos/photo-id.jpg', file_size: photo.length
+    });
+    api.filePayloads.set('photos/photo-id.jpg', photo);
+
+    await new TelegramPoller({
+      config: config(), botId: '900001', api, repository, ingress
+    }).runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.body.attachments_v1).toEqual([expect.objectContaining({
+      kind: 'image', name: 'photo-id.jpg', mime_type: 'image/jpeg', file_size: photo.length,
+      content_base64: photo.toString('base64')
+    })]);
+    expect(repository.next).toBe(5);
+  });
+
+  it('keeps an attachment rejection visible even when the document has a caption', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const api = new FakeTelegram([{
+      update_id: 6,
+      message: {
+        message_id: 106,
+        from: { id: 101 },
+        chat: { id: 201, type: 'private' },
+        caption: 'analizá esto',
+        document: {
+          file_id: 'oversized', file_name: 'informe.pdf', mime_type: 'application/pdf', file_size: 10_000_001
+        }
+      }
+    }]);
+
+    await new TelegramPoller({
+      config: config(), botId: '900001', api, repository, ingress
+    }).runOnce();
+
+    expect(ingress.calls[0]?.body.prompt).toMatch(/analizá esto[\s\S]*excede el límite de 10 MB/u);
+    expect(ingress.calls[0]?.body.media).toBeUndefined();
+    expect(repository.next).toBe(7);
+  });
+
   it('deduplicates repeated updates through a stable ingress key and advances the cursor', async () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DeduplicatingIngress();
@@ -705,7 +773,8 @@ describe('Telegram fenced egress', () => {
     expect(api.sends).toEqual([{
       chat: '201',
       text: 'Recibido; estoy trabajando en ello.',
-      arity: 2
+      options: { parse_mode: 'html' },
+      arity: 3
     }]);
     expect(repository.acknowledgements.at(-1)).toMatchObject({
       status: 'sent',
@@ -786,7 +855,7 @@ describe('Telegram fenced egress', () => {
       repository, aliases: [config()], apis: new Map([['kant', api]])
     }).runOnce();
 
-    expect(api.sends).toEqual([{ chat: '201', text: 'adapter reply', arity: 2 }]);
+    expect(api.sends).toEqual([{ chat: '201', text: 'adapter reply', options: { parse_mode: 'html' }, arity: 3 }]);
     expect(repository.acknowledgements.at(-1)).toMatchObject({ status: 'sent', effect_count: 1 });
   });
 
@@ -805,7 +874,7 @@ describe('Telegram fenced egress', () => {
     }).runOnce();
     await activity.whenIdle();
 
-    expect(api.sends).toEqual([{ chat: '201', text: 'durable response', arity: 2 }]);
+    expect(api.sends).toEqual([{ chat: '201', text: 'durable response', options: { parse_mode: 'html' }, arity: 3 }]);
     expect(repository.acknowledgements.at(-1)).toMatchObject({ status: 'sent', effect_count: 1 });
     activity.stop();
   });
@@ -956,6 +1025,8 @@ describe('Telegram fenced egress', () => {
     const api: TelegramApi = {
       getIdentity: async () => ({ id: '900001' }),
       getUpdates: async () => [],
+      getFile: async () => { throw new Error('no file fixture'); },
+      downloadFile: async () => { throw new Error('no file fixture'); },
       setMessageReaction: async () => undefined,
       sendChatAction: async () => undefined,
       sendText: async () => {
@@ -1019,6 +1090,8 @@ describe('Telegram fenced egress', () => {
     const api: TelegramApi = {
       getIdentity: async () => ({ id: '900001' }),
       getUpdates: async () => [],
+      getFile: async () => { throw new Error('no file fixture'); },
+      downloadFile: async () => { throw new Error('no file fixture'); },
       setMessageReaction: async () => undefined,
       sendChatAction: async () => undefined,
       sendText: async () => {
@@ -1158,7 +1231,7 @@ describe('Telegram group egress', () => {
       apis: new Map([['kant', api]])
     }).runOnce();
 
-    expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', arity: 2 }]);
+    expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', options: { parse_mode: 'html' }, arity: 3 }]);
     expect(repository.acknowledgements.at(-1)?.status).toBe('sent');
   });
 
@@ -1185,8 +1258,8 @@ describe('Telegram group egress', () => {
     }).runOnce();
 
     expect(api.sends).toHaveLength(2);
-    expect(api.sends[0]?.options).toEqual({ message_thread_id: '42', reply_to_message_id: '301' });
-    expect(api.sends[1]?.options).toEqual({ message_thread_id: '42' });
+    expect(api.sends[0]?.options).toEqual({ message_thread_id: '42', reply_to_message_id: '301', parse_mode: 'html' });
+    expect(api.sends[1]?.options).toEqual({ message_thread_id: '42', parse_mode: 'html' });
   });
 
   it('omits reply_to_message_id when the chat policy has reply_to_origin: false', async () => {
@@ -1204,7 +1277,7 @@ describe('Telegram group egress', () => {
       apis: new Map([['kant', api]])
     }).runOnce();
 
-    expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', arity: 2 }]);
+    expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', options: { parse_mode: 'html' }, arity: 3 }]);
   });
 });
 
@@ -1260,7 +1333,7 @@ describe('Telegram proactive egress', () => {
       }
     }).runOnce();
 
-    expect(api.sends).toEqual([{ chat: '201', text: 'terminé la tarea larga', arity: 2 }]);
+    expect(api.sends).toEqual([{ chat: '201', text: 'terminé la tarea larga', options: { parse_mode: 'html' }, arity: 3 }]);
     expect(repository.acknowledgements.at(-1)).toMatchObject({ status: 'sent' });
     // No inbound message exists, so no reaction may be placed on one.
     expect(finishes).toEqual([]);

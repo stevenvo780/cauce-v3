@@ -375,10 +375,34 @@ function fallbackTextOutput(text: string, context: string): StructuredOutput {
  * Accept that as a safe reply, but never downgrade an attempted JSON object into
  * plain text: malformed or schema-invalid objects remain hard failures.
  */
+/**
+ * Desenvuelve la valla de código con la que un modelo suele rodear su JSON.
+ *
+ * Un LLM al que le pedís un objeto JSON te lo devuelve envuelto en ```json … ``` con muchísima
+ * frecuencia: es lo que hace un modelo bien educado cuando cree que le hablás a un humano. El
+ * parser no lo contemplaba, así que `JSON.parse` fallaba, el texto no empezaba con `{` y la salida
+ * entera caía al fallback de texto plano: el usuario recibía por Telegram el volcado crudo
+ * `{"reply":"…","messages":[],"status":"done"}` en vez de la respuesta. Medido el 2026-07-27: 7
+ * mensajes así en 12 h, y es la misma causa de los 32 "contained a malformed JSON object" de la
+ * semana, donde la valla además escondía un objeto realmente truncado.
+ *
+ * Se desenvuelve SÓLO si adentro hay algo con forma de objeto o arreglo. Una respuesta legítima
+ * que empieza con un bloque de código —alguien que contesta con un fragmento de programa— no tiene
+ * `{` ni `[` como primer carácter útil, así que sigue tratándose como texto y no se la reinterpreta.
+ */
+const CODE_FENCE = /^```[A-Za-z0-9_-]*\r?\n([\s\S]*?)\r?\n?```$/u;
+
+function unwrapCodeFence(candidate: string): string {
+  const match = CODE_FENCE.exec(candidate);
+  if (match === null) return candidate;
+  const inner = (match[1] ?? "").trim();
+  return inner.startsWith("{") || inner.startsWith("[") ? inner : candidate;
+}
+
 export function parseFinalText(text: string, context: string): StructuredOutput {
   const trimmed = text.trim();
   if (!hasVisibleText(trimmed)) throw new MalformedOutputError(`${context} did not contain visible text`);
-  const jsonCandidate = trimmed.replace(LEADING_INVISIBLE_TEXT, "");
+  const jsonCandidate = unwrapCodeFence(trimmed.replace(LEADING_INVISIBLE_TEXT, ""));
 
   let decoded: unknown;
   try {

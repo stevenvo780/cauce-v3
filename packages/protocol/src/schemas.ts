@@ -76,6 +76,74 @@ export const RoutingTargetSchema = RecipientSchema.extend({
   online: z.boolean()
 }).strict();
 
+export const MAX_ATTACHMENT_BYTES = 10_000_000;
+export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
+export const MAX_ATTACHMENTS_TOTAL_BYTES = 10_000_000;
+export const ATTACHMENT_MIME_TYPES = [
+  'image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+] as const;
+
+function hasUnsafeAttachmentCodePoint(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0)!;
+    return code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
+      (code >= 0x200b && code <= 0x200f) || (code >= 0x2028 && code <= 0x202e) ||
+      (code >= 0x2060 && code <= 0x206f) || code === 0xfeff || (code >= 0xfff9 && code <= 0xfffb);
+  });
+}
+
+const AttachmentNameSchema = z.string().min(1).max(255).superRefine((name, context) => {
+  if (name === '.' || name === '..' || name.includes('/') || name.includes('\\') ||
+      hasUnsafeAttachmentCodePoint(name)) {
+    context.addIssue({ code: 'custom', message: 'attachment name is unsafe' });
+  }
+});
+
+export const AttachmentContentSchema = z.object({
+  kind: z.enum(['image', 'document']),
+  name: AttachmentNameSchema,
+  mime_type: z.enum(ATTACHMENT_MIME_TYPES),
+  file_size: z.number().int().positive().max(MAX_ATTACHMENT_BYTES),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  content_base64: z.string().max(Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4)
+    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u)
+}).strict().superRefine((attachment, context) => {
+  const extension = attachment.name.toLowerCase().match(/\.[^.]+$/u)?.[0];
+  const expected = new Map<string, readonly [string, 'image' | 'document']>([
+    ['image/jpeg', ['.jpg', 'image']], ['image/png', ['.png', 'image']],
+    ['image/webp', ['.webp', 'image']], ['application/pdf', ['.pdf', 'document']],
+    ['text/plain', ['.txt', 'document']],
+    ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', ['.docx', 'document']]
+  ]).get(attachment.mime_type);
+  if (expected === undefined || extension !== expected[0] || attachment.kind !== expected[1]) {
+    context.addIssue({ code: 'custom', message: 'attachment kind, MIME and extension do not agree' });
+  }
+  const padding = attachment.content_base64.endsWith('==') ? 2 : attachment.content_base64.endsWith('=') ? 1 : 0;
+  const decodedSize = attachment.content_base64.length / 4 * 3 - padding;
+  if (decodedSize !== attachment.file_size) {
+    context.addIssue({ code: 'custom', path: ['file_size'], message: 'attachment encoded size does not agree' });
+  }
+});
+
+export const AttachmentsV1Schema = z.array(AttachmentContentSchema)
+  .min(1)
+  .max(MAX_ATTACHMENTS_PER_MESSAGE)
+  .superRefine((attachments, context) => {
+    if (attachments.reduce((total, attachment) => total + attachment.file_size, 0) > MAX_ATTACHMENTS_TOTAL_BYTES) {
+      context.addIssue({ code: 'custom', message: 'aggregate attachment size exceeds limit' });
+    }
+  });
+
+export const MessageBodySchema = z.record(z.string(), z.unknown()).superRefine((body, context) => {
+  if (body.attachments_v1 === undefined) return;
+  const parsed = AttachmentsV1Schema.safeParse(body.attachments_v1);
+  if (parsed.success) return;
+  for (const issue of parsed.error.issues) {
+    context.addIssue({ ...issue, path: ['attachments_v1', ...issue.path] });
+  }
+});
+
 /** Internal authenticated publish command. Identity and origin are populated by the gateway. */
 export const PublishMessageSchema = z.object({
   version: z.literal(PROTOCOL_VERSION).default(PROTOCOL_VERSION),
@@ -85,7 +153,7 @@ export const PublishMessageSchema = z.object({
   room_id: z.string().min(1).max(128),
   actor_alias: AliasSchema,
   recipients: z.array(RecipientSchema).max(100),
-  body: z.record(z.string(), z.unknown()),
+  body: MessageBodySchema,
   idempotency_key: z.string().min(1).max(200),
   origin: OriginSchema.optional(),
   session_id: z.string().min(1).max(256).optional(),
@@ -95,13 +163,75 @@ export const PublishMessageSchema = z.object({
   priority: z.number().int().min(-100).max(100).default(0)
 }).strict();
 
-const ReservedInternalMessageTypes = new Set([
+/**
+ * Los tres `body.type` que el store escribe cuando un agente le habla a otro:
+ * `materializeAgentOutputs` (delegación), `materializeAgentResponse` (retorno al padre) y
+ * `materializeAgentFanin` (síntesis). Son los únicos tipos que pueden aparecer en una fila de
+ * `deliveries` nacida de otro agente, y por eso son la marca durable que separa tráfico
+ * agente-a-agente de tráfico humano.
+ *
+ * Por qué esta marca y no `origin.adapter`: el `origin` se copia byte a byte en cada salto,
+ * así que una cadena de cinco agentes nacida en Telegram sigue diciendo `adapter:'telegram'`
+ * en el salto cinco — medido el 2026-07-27, 2.374 de 2.429 entregas de 12 h decían 'telegram'.
+ * `body.type` se reescribe en CADA salto: dice qué es ESTA entrega, no de dónde desciende.
+ * Y como cada fila lo tiene desde que se insertó, el histórico se clasifica solo: no hay
+ * backfill, ni migración, ni categoría "mensaje viejo sin marca".
+ */
+export const AGENT_TO_AGENT_MESSAGE_TYPES = [
   'agent.message',
   'agent.response',
-  'agent.fanin',
+  'agent.fanin'
+] as const;
+
+/**
+ * `agent.notify` es egress proactivo hacia un handle externo: va a `adapter_outbox` y nunca a
+ * `deliveries`, así que no participa del reparto de cupo. Sigue reservado igual porque la
+ * protección anti-suplantación de abajo tiene que cubrirlo.
+ */
+export const RESERVED_INTERNAL_MESSAGE_TYPES = [
+  ...AGENT_TO_AGENT_MESSAGE_TYPES,
   'agent.notify'
-]);
-const AuthenticatedPublishBodySchema = z.record(z.string(), z.unknown()).superRefine(
+] as const;
+
+const ReservedInternalMessageTypes = new Set<string>(RESERVED_INTERNAL_MESSAGE_TYPES);
+const AgentToAgentMessageTypes = new Set<string>(AGENT_TO_AGENT_MESSAGE_TYPES);
+
+/**
+ * Falla hacia "humano" a propósito. Un `body.type` desconocido (un adapter que todavía no
+ * existe, un cuerpo sin `type`, lo que mande la consola) se clasifica como humano: en el peor
+ * caso le damos prioridad a algo que no la necesitaba, que es infinitamente preferible a dejar
+ * a una persona esperando 114 minutos detrás de la cola de agentes.
+ *
+ * LÍMITE CONOCIDO, y hay que decirlo porque la versión anterior de este comentario afirmaba lo
+ * contrario: la señal **es falsificable hacia arriba**. `AuthenticatedPublishBodySchema` sólo
+ * prohíbe que un publish declare uno de los tipos reservados; no exige que un agente marque los
+ * suyos. Un agente autenticado con permiso 'route' puede hacer POST /v3/messages con
+ * `{"text":"..."}` sin `type` y esta función lo va a leer como humano, colándose en el cupo
+ * reservado del destinatario.
+ *
+ * No se puede arreglar hoy derivando la clase del actor autenticado, que sería lo correcto:
+ * (a) el telegram-bridge publica con `actor_alias` igual al alias del PROPIO agente
+ *     (services/telegram-bridge/src/poller.ts pasa `alias: this.config.alias`), así que el actor
+ *     de un mensaje humano y el de un mensaje de agente son literalmente el mismo string;
+ * (b) `/v3/messages`, `/v3/publish` y `/v3/console/messages` comparten un único `publishHandler`
+ *     y un único schema, así que tampoco la superficie discrimina;
+ * (c) los roles del registro de identidades no sirven: en la flota real los agentes están
+ *     configurados como `operator` (ver ops/runbooks/authentication.md, identidad de `kant`).
+ * Clasificar por actor con esos datos rompería en la dirección PELIGROSA — mandar humanos al
+ * carril de agentes — que es exactamente el defecto que este parche existe para arreglar.
+ *
+ * El radio de daño del abuso está acotado a propósito: quien falsifica gana como mucho
+ * `CAUCE_HUMAN_RESERVED_DELIVERIES` lugares en la admisión de su destinatario, no puede
+ * cancelar ni interrumpir nada, sigue alternando con el humano real por el contador de ráfaga,
+ * y paga la corrida con su propia cuota. Ver services/gateway/CONFIGURATION.md.
+ */
+export function isAgentToAgentBody(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return false;
+  const type = (body as Record<string, unknown>).type;
+  return typeof type === 'string' && AgentToAgentMessageTypes.has(type);
+}
+
+const AuthenticatedPublishBodySchema = MessageBodySchema.superRefine(
   (body, context) => {
     if (typeof body.type === 'string' && ReservedInternalMessageTypes.has(body.type)) {
       context.addIssue({
@@ -148,6 +278,102 @@ export const CreateJobSchema = z.object({
   kind: z.string().min(1).max(80),
   payload: z.record(z.string(), z.unknown())
 }).strict();
+
+// ---------------------------------------------------------------------------
+// Quota ingestion: POST /v3/quotas/samples. Wire contract for the out-of-band
+// quota collector (get_ai_quotas) that runs on kratos and inside agent
+// containers, well away from the gateway. Deliberately shaped like
+// NotifyRequestSchema, not AuthenticatedPublishSchema: no tenant/actor/session
+// field exists here because the collector's identity comes from its mTLS
+// certificate, never from the body -- a machine caller cannot claim to be
+// publishing on behalf of a tenant it does not authenticate as.
+// ---------------------------------------------------------------------------
+export const QuotaHostSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/);
+export const QuotaProviderNameSchema = z.string().regex(/^[a-z][a-z0-9_.-]{0,63}$/);
+export const QuotaGroupKeySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
+export const QuotaWindowKeySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
+export const QuotaStatusSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/);
+export const QuotaAccountIdSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+
+/**
+ * MAJOR schema versions this gateway knows how to interpret. get_ai_quotas reports
+ * schemaVersion 2 today (see docs handed to the collector implementer). A future
+ * incompatible reshape bumps this number, and an unknown value MUST be rejected
+ * with 422 rather than mapped field-by-field: a misread window that claims 0%
+ * remaining is what triggers the auto-pause of a real, paying subscription.
+ */
+export const SUPPORTED_QUOTA_SCHEMA_VERSIONS = [1, 2] as const;
+
+export const QuotaWindowSampleSchema = z.object({
+  // Normalized upstream by the collector: group_key = window.limitId ?? 'default',
+  // window_key = window.key. The gateway trusts this split rather than recomputing
+  // it, because the collector is the only component that saw the raw CLI output.
+  group_key: QuotaGroupKeySchema,
+  window_key: QuotaWindowKeySchema,
+  label: z.string().min(1).max(64).nullable().optional(),
+  used_percent: z.number().min(0).max(100).nullable().optional(),
+  remaining_percent: z.number().min(0).max(100).nullable().optional(),
+  used_units: z.number().int().nonnegative().nullable().optional(),
+  limit_units: z.number().int().positive().nullable().optional(),
+  window_minutes: z.number().int().positive().nullable().optional(),
+  // Absolute instant, not a resetInSeconds delta: a relative countdown goes stale
+  // the moment it is persisted and would mislead every later read of the history.
+  reset_at: z.iso.datetime({ offset: true }).nullable().optional(),
+  status: QuotaStatusSchema.nullable().optional(),
+  family: z.string().min(1).max(64).nullable().optional(),
+  model: z.string().min(1).max(128).nullable().optional(),
+  // The subscription this window draws from, when the collector knows it. Absent
+  // or unknown to the registry is not an error: the sample is still stored, with
+  // account_id nulled server-side and surfaced under unbound_groups[].
+  account_id: QuotaAccountIdSchema.nullable().optional(),
+  binding_note: z.string().min(1).max(128).nullable().optional()
+}).strict().refine(
+  (window) => window.used_percent != null || window.remaining_percent != null || window.used_units != null,
+  { message: 'a window sample needs at least one of used_percent, remaining_percent or used_units' }
+);
+
+export const QuotaProviderReportSchema = z.object({
+  provider: QuotaProviderNameSchema,
+  // ok=false with zero windows is information ("the CLI stopped answering"), not
+  // absence of information ("the provider was not used") -- the two are opposite
+  // diagnoses and this shape is what keeps them distinguishable.
+  ok: z.boolean(),
+  available: z.boolean().default(false),
+  kind: z.string().min(1).max(64).nullable().optional(),
+  source: z.string().min(1).max(64).nullable().optional(),
+  plan: z.string().min(1).max(64).nullable().optional(),
+  note: z.string().max(512).nullable().optional(),
+  effective_remaining_percent: z.number().min(0).max(100).nullable().optional(),
+  observed_at: z.iso.datetime({ offset: true }).nullable().optional(),
+  available_groups: z.array(z.string().min(1).max(128)).max(64).default([]),
+  limiting_groups: z.array(z.string().min(1).max(128)).max(64).default([]),
+  windows: z.array(QuotaWindowSampleSchema).max(64).default([])
+}).strict();
+
+export const MAX_QUOTA_WINDOWS_PER_COLLECTION = 512;
+
+export const QuotaSampleRequestSchema = z.object({
+  host: QuotaHostSchema,
+  captured_at: z.iso.datetime({ offset: true }),
+  schema_version: z.number().int().min(1).max(999),
+  app_version: z.string().min(1).max(64).nullable().optional(),
+  providers: z.array(QuotaProviderReportSchema).max(32).default([])
+}).strict().superRefine((sample, context) => {
+  const totalWindows = sample.providers.reduce((count, provider) => count + provider.windows.length, 0);
+  if (totalWindows > MAX_QUOTA_WINDOWS_PER_COLLECTION) {
+    context.addIssue({
+      code: 'custom',
+      message: `a collection cannot report more than ${MAX_QUOTA_WINDOWS_PER_COLLECTION} windows in total`
+    });
+  }
+  const seenProviders = new Set<string>();
+  for (const provider of sample.providers) {
+    if (seenProviders.has(provider.provider)) {
+      context.addIssue({ code: 'custom', message: `duplicate provider report in one collection: ${provider.provider}` });
+    }
+    seenProviders.add(provider.provider);
+  }
+});
 
 const ConfigActionSchema = z.enum(['create', 'update', 'delete']);
 const ConfigRevisionSchema = z.number().int().nonnegative();
@@ -314,6 +540,20 @@ export const BaseAckSchema = z.object({
   instance_id: z.string().min(1).max(128),
   epoch: z.number().int().positive(),
   retryable: z.boolean().default(false),
+  /**
+   * "El harness EMPEZÓ a ejecutar de verdad", no "la entrega fue admitida".
+   *
+   * Hace falta porque el ACK `started` NO prueba ejecución: el SDK lo emite en
+   * `handleDelivery` antes de llamar al harness, y entre medio la entrega puede quedarse
+   * minutos esperando el candado de sesión sin gastar un centavo. El reaper usaba esa señal
+   * para decidir si una garra vencida ya se había pagado; con `started` a secas mandaba a
+   * `dead` trabajo que nunca corrió — trabajo del usuario perdido para siempre.
+   *
+   * OPCIONAL a propósito. Un adaptador viejo nunca la manda y el sistema tiene que seguir
+   * funcionando: sin la marca, el reaper vuelve al reintento de siempre. El error cae del lado
+   * caro (pagar dos veces) y nunca del lado que pierde trabajo.
+   */
+  execution_started: z.boolean().optional(),
   error: z.string().max(2_000).optional(),
   error_code: AckErrorCodeSchema.optional(),
   result: z.record(z.string(), z.unknown()).optional()
@@ -381,7 +621,7 @@ export const DeliveryEnvelopeSchema = z.object({
   room_id: z.string().min(1).max(128),
   actor_alias: AliasSchema,
   recipient_alias: AliasSchema,
-  body: z.record(z.string(), z.unknown()),
+  body: MessageBodySchema,
   origin: OriginSchema.optional(),
   authenticated_context: AuthenticatedContextSchema.optional(),
   routing_targets: z.array(RoutingTargetSchema).max(100).optional()
@@ -420,6 +660,7 @@ export type Hello = z.infer<typeof HelloSchema>;
 export type Origin = z.infer<typeof OriginSchema>;
 export type AuthenticatedContext = z.infer<typeof AuthenticatedContextSchema>;
 export type RoutingTarget = z.infer<typeof RoutingTargetSchema>;
+export type AttachmentContent = z.infer<typeof AttachmentContentSchema>;
 export type Lane = z.infer<typeof LaneSchema>;
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 export type DeliveryEnvelope = z.infer<typeof DeliveryEnvelopeSchema>;
@@ -429,3 +670,6 @@ export type NotifyRequest = z.infer<typeof NotifyRequestSchema>;
 export type ConfigChangeRequest = z.infer<typeof ConfigChangeRequestSchema>;
 export type WsInbound = z.infer<typeof WsInboundSchema>;
 export type WsOutbound = z.infer<typeof WsOutboundSchema>;
+export type QuotaWindowSample = z.infer<typeof QuotaWindowSampleSchema>;
+export type QuotaProviderReport = z.infer<typeof QuotaProviderReportSchema>;
+export type QuotaSampleRequest = z.infer<typeof QuotaSampleRequestSchema>;

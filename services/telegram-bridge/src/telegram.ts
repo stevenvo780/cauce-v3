@@ -1,7 +1,7 @@
 import { TELEGRAM_ACTIVITY_REACTIONS } from './types.js';
 import type {
   TelegramApi, TelegramChatAction, TelegramIdentity, TelegramMessage, TelegramReactionEmoji,
-  TelegramSendOptions, TelegramSendResult, TelegramUpdate
+  TelegramRemoteFile, TelegramSendOptions, TelegramSendResult, TelegramUpdate
 } from './types.js';
 
 interface TelegramResponse<T> {
@@ -142,6 +142,80 @@ export class TelegramHttpClient implements TelegramApi {
     return result.map(parseUpdate).sort((left, right) => left.update_id - right.update_id);
   }
 
+  async getFile(fileId: string): Promise<TelegramRemoteFile> {
+    if (fileId.length < 1 || fileId.length > 512) throw new TelegramApiError('invalid Telegram file id', false);
+    let raw: unknown;
+    try {
+      raw = await this.call<unknown>('getFile', { file_id: fileId });
+    } catch (error) {
+      // Unlike sendMessage, getFile is read-only: an unknown transport outcome is always safe to retry.
+      if (error instanceof TelegramApiError && !error.outcomeKnown) {
+        throw new TelegramApiError('Telegram getFile request failed', true);
+      }
+      throw error;
+    }
+    const result = record(raw);
+    if (typeof result.file_id !== 'string' || typeof result.file_path !== 'string') {
+      throw new TelegramApiError('Telegram returned invalid file metadata', true);
+    }
+    const fileSize = result.file_size;
+    if (fileSize !== undefined && (!Number.isSafeInteger(fileSize) || Number(fileSize) < 0)) {
+      throw new TelegramApiError('Telegram returned invalid file size', true);
+    }
+    return {
+      file_id: result.file_id,
+      file_path: result.file_path,
+      ...(typeof result.file_unique_id === 'string' ? { file_unique_id: result.file_unique_id } : {}),
+      ...(fileSize === undefined ? {} : { file_size: Number(fileSize) })
+    };
+  }
+
+  async downloadFile(filePath: string, maxBytes: number): Promise<Buffer> {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new TelegramApiError('invalid download limit', false);
+    if (filePath.length < 1 || filePath.length > 1_024 || filePath.startsWith('/') ||
+        filePath.includes('\\') || filePath.split('/').includes('..') || !/^[A-Za-z0-9._/-]+$/u.test(filePath)) {
+      throw new TelegramApiError('invalid Telegram file path', false);
+    }
+    let response: Response;
+    try {
+      response = await this.fetcher(`${this.endpoint.replace('/bot', '/file/bot')}/${filePath}`, {
+        method: 'GET', redirect: 'error', signal: AbortSignal.timeout(this.requestTimeoutMs)
+      });
+    } catch {
+      throw new TelegramApiError('Telegram file download failed', true);
+    }
+    if (!response.ok) {
+      throw new TelegramApiError(
+        `Telegram file download returned ${response.status}`,
+        response.status === 429 || response.status >= 500
+      );
+    }
+    const declaredLength = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+      throw new TelegramApiError('Telegram file exceeds configured limit', false);
+    }
+    if (response.body === null) throw new TelegramApiError('Telegram file response had no body', true);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        total += chunk.value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel();
+          throw new TelegramApiError('Telegram file exceeds configured limit', false);
+        }
+        chunks.push(Buffer.from(chunk.value));
+      }
+    } catch (error) {
+      if (error instanceof TelegramApiError) throw error;
+      throw new TelegramApiError('Telegram file download was interrupted', true);
+    }
+    return Buffer.concat(chunks, total);
+  }
+
   async sendText(chatId: string, text: string, options?: TelegramSendOptions): Promise<TelegramSendResult> {
     if (!validTelegramChatId(chatId)) throw new TelegramApiError('invalid Telegram destination', false);
     if (text.length === 0 || [...text].length > 4_096) throw new TelegramApiError('Telegram text exceeds safe limit', false);
@@ -154,6 +228,9 @@ export class TelegramHttpClient implements TelegramApi {
       chat_id: chatId,
       text,
       disable_web_page_preview: true,
+      // Sin parse_mode Telegram muestra el marcado crudo (`##`, `**`, las vallas de código) en
+      // medio del texto, que es como llegaban los informes de la flota hasta el 2026-07-27.
+      ...(options?.parse_mode === 'html' ? { parse_mode: 'HTML' } : {}),
       ...(threadId !== undefined && validTelegramMessageId(threadId)
         ? { message_thread_id: Number(threadId) } : {}),
       ...(replyTo !== undefined && validTelegramMessageId(replyTo)

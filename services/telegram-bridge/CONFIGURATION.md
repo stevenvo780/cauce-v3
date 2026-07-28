@@ -156,6 +156,34 @@ update recibido. Updates denegados avanzan el cursor pero nunca ingresan a Cauce
 Los reintentos de ingress usan una clave estable, por lo que reiniciar antes de
 persistir el cursor no duplica el mensaje.
 
+## Imágenes y documentos entrantes
+
+Para `photo` y `document`, el bridge resuelve `file_id` con `getFile` y descarga por el
+endpoint autenticado de archivos de Telegram. El token sigue existiendo solo en
+`token_file`: no se agrega a bodies, errores, métricas ni logs. Antes de publicar se
+validan nombre, ruta remota, tamaño declarado/real, extensión, MIME y firma del
+contenido. Se admiten:
+
+- JPEG (`.jpg`/`.jpeg`), PNG y WebP;
+- PDF, TXT UTF-8 sin NUL y DOCX con estructura OOXML reconocible.
+
+El límite es **10.000.000 bytes por mensaje** y se procesa el tamaño mayor de
+`photo[]` o el único `document`. Un tipo, nombre o tamaño rechazado se convierte en un
+mensaje útil para el usuario y el cursor avanza; fallos transitorios de Telegram se
+reintentan sin avanzar el cursor. No hay variables nuevas de configuración.
+
+El contenido validado viaja en el delivery autenticado y el adapter lo materializa en
+un directorio privado de `/tmp` con archivos `0600`. El prompt recibe nombre, MIME,
+tamaño, SHA-256 y una ruta local accesible para las herramientas del harness. El
+directorio se elimina al terminar, fallar o cancelar la ejecución; nunca se imprime el
+contenido ni el token en logs.
+
+El binario codificado forma parte del body durable de Cauce: queda sujeto a la misma
+retención, controles de acceso y backups que los mensajes. El cleanup anterior elimina
+la copia temporal del harness, no el registro durable. Antes de habilitar adjuntos con
+datos sensibles, la política de retención de mensajes debe estar aprobada para ese
+tenant.
+
 Como señal visual best-effort, el bridge reacciona 👀 al aceptar un update, cambia a
 🤔 y renueva `typing` mientras la entrega sigue activa, y finaliza con 👍 o 👎. Un
 fallo de estas llamadas visuales nunca altera la publicación, el ACK ni el relay

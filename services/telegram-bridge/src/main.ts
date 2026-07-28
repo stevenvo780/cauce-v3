@@ -10,6 +10,7 @@ import { StoreTelegramIngress } from './ingress.js';
 import { TelegramPoller } from './poller.js';
 import { PostgresTelegramBridgeRepository } from './repository.js';
 import { TelegramHttpClient } from './telegram.js';
+import { transcriptionConfig } from './transcription.js';
 import type { TelegramAliasConfig, TelegramApi } from './types.js';
 
 function required(name: string): string {
@@ -32,6 +33,18 @@ function selected(configs: readonly TelegramAliasConfig[]): TelegramAliasConfig[
   if (result.length !== names.size || result.length === 0) throw new Error('CAUCE_TELEGRAM_ALIASES contains an unknown alias');
   return result;
 }
+
+/**
+ * Se lee ANTES de abrir el pool: una URL mal escrita mata el proceso en el arranque en vez de
+ * descubrirse recién cuando alguien manda una nota de voz. Ausente = transcripción apagada, que es
+ * el comportamiento que el puente tuvo siempre.
+ */
+const transcription = transcriptionConfig();
+console.error(JSON.stringify({
+  event: 'telegram_transcription_config',
+  enabled: transcription !== undefined,
+  ...(transcription === undefined ? {} : { model: transcription.model, language: transcription.language })
+}));
 
 const pool = createPool(required('DATABASE_URL'));
 const repository = new PostgresTelegramBridgeRepository(pool);
@@ -104,6 +117,7 @@ try {
     fleet,
     participants: (chatId, threadId) => chatParticipants(config, chatId, threadId),
     ...(usernames.has(alias.alias) ? { botUsername: usernames.get(alias.alias) as string } : {}),
+    ...(transcription === undefined ? {} : { transcription }),
     onMetric: (metric) => metrics.increment(metric)
   }));
   const egress = new TelegramEgressWorker({

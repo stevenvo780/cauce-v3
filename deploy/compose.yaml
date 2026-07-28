@@ -71,10 +71,15 @@ services:
       CAUCE_CONSOLE_ORIGINS: ${CAUCE_CONSOLE_ORIGINS:?set exact HTTPS console origins}
       CAUCE_REQUIRE_ACK_CLAIMS: "1"
       CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
+      CAUCE_MEDIA_DIR: /run/cauce-media
+      CAUCE_MEDIA_MAX_BYTES: ${CAUCE_MEDIA_MAX_BYTES:-20971520}
+      CAUCE_MEDIA_SWEEP_SECONDS: ${CAUCE_MEDIA_SWEEP_SECONDS:-60}
       CAUCE_TERMINAL_ENABLED: ${CAUCE_TERMINAL_ENABLED:-0}
       CAUCE_TERMINAL_WS_PATH: ${CAUCE_TERMINAL_WS_PATH:-/v3/console/terminal/ws}
       CAUCE_TERMINAL_TICKET_KEY_FILE: /run/secrets/terminal_ticket_key
       CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/secrets/terminal_relay_token
+      CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE: /run/secrets/terminal_gateway_client_cert
+      CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE: /run/secrets/terminal_gateway_client_key
       CAUCE_TERMINAL_GRANTS_FILE: /run/cauce-terminal/grants.json
       CAUCE_TERMINAL_TICKET_TTL_SECONDS: "30"
       CAUCE_TERMINAL_SESSION_TTL_SECONDS: "900"
@@ -161,6 +166,12 @@ services:
         source: ${CAUCE_TERMINAL_CONFIG_DIR:-/dev/null}
         target: /run/cauce-terminal
         read_only: true
+      # Temporary Telegram bytes only. Provision 0700, uid/gid 1000; never place secrets here.
+      - type: bind
+        source: ${CAUCE_MEDIA_RUNTIME_DIR:?set a private 0700 temporary media directory}
+        target: /run/cauce-media
+        bind:
+          create_host_path: false
     ports:
       - "${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}:${GATEWAY_TLS_PORT:-8443}:8443"
     healthcheck:
@@ -217,6 +228,16 @@ services:
         mode: 0400
       - source: terminal_relay_token
         target: terminal_relay_token
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: terminal_gateway_client_cert
+        target: terminal_gateway_client_cert
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: terminal_gateway_client_key
+        target: terminal_gateway_client_key
         uid: "1000"
         gid: "1000"
         mode: 0400
@@ -345,12 +366,21 @@ services:
       PORT: "8086"
       CAUCE_TELEGRAM_CONFIG_FILE: /run/cauce-telegram/config.json
       CAUCE_TELEGRAM_ALIASES: ${CAUCE_TELEGRAM_ALIASES:-}
+      CAUCE_TELEGRAM_MEDIA_DIR: /run/cauce-media
+      CAUCE_TELEGRAM_MEDIA_MAX_BYTES: ${CAUCE_MEDIA_MAX_BYTES:-20971520}
+      CAUCE_TELEGRAM_MEDIA_TTL_SECONDS: ${CAUCE_MEDIA_TTL_SECONDS:-600}
+      CAUCE_TELEGRAM_MEDIA_SWEEP_SECONDS: ${CAUCE_MEDIA_SWEEP_SECONDS:-60}
     secrets: *runtime-secrets
     volumes:
       - type: bind
         source: ${CAUCE_TELEGRAM_RUNTIME_DIR:-/dev/null}
         target: /run/cauce-telegram
         read_only: true
+      - type: bind
+        source: ${CAUCE_MEDIA_RUNTIME_DIR:?set a private 0700 temporary media directory}
+        target: /run/cauce-media
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8086/health/ready", "ready"]
       interval: 15s
@@ -564,6 +594,10 @@ secrets:
   # El canal PTY es opt-in: sin aprovisionar apuntan a /dev/null y el stack
   # sigue levantando; el gateway queda con CAUCE_TERMINAL_ENABLED=0 y el relay
   # falla cerrado sin certificado.
+  terminal_gateway_client_cert:
+    file: ${CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH:-/dev/null}
+  terminal_gateway_client_key:
+    file: ${CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_PATH:-/dev/null}
   terminal_relay_tls_cert:
     file: ${CAUCE_TERMINAL_RELAY_TLS_CERT_PATH:-/dev/null}
   terminal_relay_tls_key:

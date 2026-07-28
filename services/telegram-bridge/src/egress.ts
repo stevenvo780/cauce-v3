@@ -3,9 +3,11 @@ import type { TelegramActivity, TelegramActivityTarget, TelegramTerminalOutcome 
 import { effectiveChatPolicy, groupRouting } from './config.js';
 import type {
   BridgeMetric, TelegramAliasConfig, TelegramApi, TelegramEgressRepository,
-  TelegramEffect, TelegramOriginRelay, TelegramOriginRelayAck, TelegramSendOptions
+  TelegramEffect, TelegramOriginRelay, TelegramOriginRelayAck, TelegramSendOptions,
+  TelegramSendResult
 } from './types.js';
 import { TelegramApiError, validTelegramMessageId } from './telegram.js';
+import { markdownToPlainText, markdownToTelegramHtml } from './markdown.js';
 
 export class EgressCrash extends Error {
   constructor(readonly point: 'before_begin' | 'before_send' | 'during_send' | 'after_send' | 'after_complete') {
@@ -46,6 +48,77 @@ function hasVisibleText(value: unknown): value is string {
   return typeof value === 'string' && VISIBLE_TEXT.test(value);
 }
 
+/**
+ * Red de seguridad contra el volcado de la salida estructurada al humano.
+ *
+ * Un harness que devuelve `{"reply":"…","messages":[],"status":"done"}` como TEXTO —envuelto en
+ * una valla ```json, o precedido de prosa— se cuela por el parser del adapter-SDK y termina
+ * publicado tal cual. Lo que el humano recibe entonces es el volcado crudo del protocolo en vez
+ * de la respuesta. Medido el 2026-07-27 sobre 7 días: 86 mensajes así, 7 agentes, dos harness
+ * distintos (openclaw 79, claude 7), con la prosa+objeto como forma dominante (77 de 86).
+ *
+ * El arreglo de fondo va en el parser del SDK, pero esa corrección viaja en el bundle de los
+ * adaptadores y depende de que los 14 estén al día. Esto de acá es distinto y complementario: es
+ * el ÚLTIMO punto por el que pasa todo lo que sale hacia una persona, sin importar el agente ni
+ * el harness. Mientras exista un solo adaptador viejo, esta red sigue haciendo falta.
+ *
+ * Deliberadamente conservador: sólo desarma el sobre cuando el objeto tiene la forma EXACTA del
+ * contrato (un `reply` más algún otro campo del protocolo) y ocupa el final del mensaje. Un texto
+ * que simplemente CITA un JSON —alguien explicando un payload— no cumple las dos condiciones y se
+ * publica intacto. Ante la duda, no se toca: publicar de más es feo, tragarse una respuesta es peor.
+ */
+const ENVELOPE_KEYS = ['status', 'messages', 'artifacts', 'retryable'];
+
+function balancedObjectAt(text: string, start: number): string | undefined {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') inString = true;
+    else if (character === '{') depth += 1;
+    else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return undefined;
+}
+
+export function unwrapStructuredEnvelope(value: string): string {
+  // Se quita la valla de código antes de buscar: es la envoltura más común alrededor del objeto.
+  const bare = value.trim().replace(/^```[A-Za-z0-9_-]*\r?\n/u, '').replace(/\r?\n?```$/u, '').trim();
+  const opening = bare.indexOf('{');
+  if (opening === -1) return value;
+
+  const candidateObject = balancedObjectAt(bare, opening);
+  if (candidateObject === undefined) return value;
+  // El objeto tiene que cerrar el mensaje: si después queda contenido real, esto no es un sobre.
+  if (bare.slice(opening + candidateObject.length).trim().length > 0) return value;
+
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(candidateObject);
+  } catch {
+    return value;
+  }
+  const envelope = object(decoded);
+  if (envelope === undefined || !('reply' in envelope)) return value;
+  if (!ENVELOPE_KEYS.some((key) => key in envelope)) return value;
+
+  // `reply` es lo que el agente quiso decir. Cuando viene vacío —pasa cuando el modelo escribió su
+  // mensaje como prosa y dejó el campo en null— vale la prosa que quedó delante del objeto.
+  if (hasVisibleText(envelope.reply)) return envelope.reply;
+  const prose = bare.slice(0, opening).trim();
+  return hasVisibleText(prose) ? prose : value;
+}
+
 function candidate(payload: Record<string, unknown>): string | undefined {
   const result = object(payload.result);
   const output = object(result?.output);
@@ -55,7 +128,8 @@ function candidate(payload: Record<string, unknown>): string | undefined {
     payload.text, payload.content, payload.message,
     typeof payload.error === 'string' ? `Error: ${payload.error}` : undefined
   ];
-  return values.find(hasVisibleText);
+  const chosen = values.find(hasVisibleText);
+  return chosen === undefined ? undefined : unwrapStructuredEnvelope(chosen);
 }
 
 export function telegramTextChunks(payload: Record<string, unknown>): string[] {
@@ -181,6 +255,44 @@ export class TelegramEgressWorker {
     this.onMetric = options.onMetric ?? (() => undefined);
   }
 
+  /**
+   * Envía el texto con formato, y si Telegram lo rechaza vuelve a intentar en plano.
+   *
+   * Los agentes escriben markdown —encabezados, negritas, tablas, bloques de código— y el puente
+   * lo mandaba sin `parse_mode`, así que Telegram lo mostraba literal: el informe llegaba al
+   * teléfono con `##` y `**` sueltos por todos lados. Convertirlo a HTML lo hace legible.
+   *
+   * El reintento en plano es la parte que importa: si la conversión produjera HTML que Telegram
+   * no acepta, el mensaje se perdería por un problema de FORMATO, que es exactamente el peor
+   * final posible. Un 400 de parseo no es reintentable en el sentido del outbox (reenviar lo
+   * mismo daría el mismo 400), pero sí lo es enviando otra cosa: el mismo contenido sin etiquetas.
+   * Así el humano siempre recibe su respuesta, en el peor caso sin adornos.
+   */
+  private async sendFormatted(
+    api: TelegramApi,
+    chatId: string,
+    text: string,
+    options: TelegramSendOptions | undefined
+  ): Promise<TelegramSendResult> {
+    const html = markdownToTelegramHtml(text);
+    const conFormato: TelegramSendOptions = { ...(options ?? {}), parse_mode: 'html' };
+    try {
+      return await api.sendText(chatId, html, conFormato);
+    } catch (error) {
+      if (error instanceof EgressCrash) throw error;
+      // Sólo se degrada ante un rechazo CONOCIDO del contenido: un fallo de red o un resultado
+      // ambiguo tiene que seguir su camino normal, o se duplicaría un mensaje ya entregado.
+      const rechazoDeFormato = error instanceof TelegramApiError
+        && error.outcomeKnown && !error.retryable;
+      if (!rechazoDeFormato) throw error;
+      this.onMetric('egress_format_downgraded');
+      const plano = markdownToPlainText(text);
+      return options === undefined
+        ? await api.sendText(chatId, plano)
+        : await api.sendText(chatId, plano, options);
+    }
+  }
+
   private acknowledgement(
     event: TelegramOriginRelay,
     values: Omit<TelegramOriginRelayAck, 'event_id' | 'attempt' | 'claim_token'>
@@ -287,9 +399,7 @@ export class TelegramEgressWorker {
           const options = threadOptions(event, index, threadId, replyToOrigin);
           // Omit the argument entirely when there is nothing to thread, so any existing
           // two-parameter TelegramApi implementation keeps behaving exactly as before.
-          const sent = options === undefined
-            ? await api.sendText(chatId, text)
-            : await api.sendText(chatId, text, options);
+          const sent = await this.sendFormatted(api, chatId, text, options);
           remotelyAccepted = true;
           await this.hooks.afterSend?.(effectId);
           await this.repository.completeEffect(effectId, payloadHash, sent.message_id);

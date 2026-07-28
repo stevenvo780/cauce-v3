@@ -15,6 +15,15 @@ export interface TerminalRelayConfig {
   readonly agentRegistryFile: string;
   readonly gatewayUrl: string;
   readonly tokenFile: string;
+  /**
+   * Identidad de cliente con la que el relay habla al gateway. El token compartido autentica en la
+   * capa de aplicación, pero un gateway con `CAUCE_AUTH_PROVIDER=mtls` exige certificado de cliente
+   * en el propio handshake TLS: sin esto, presencia y revalidación de autorización mueren con
+   * "tlsv13 alert certificate required" y toda sesión se corta al vencer la gracia. Opcional para
+   * no romper despliegues con otro proveedor de autenticación.
+   */
+  readonly gatewayClientCertFile: string | undefined;
+  readonly gatewayClientKeyFile: string | undefined;
   readonly idleTimeoutMs: number;
   readonly outputRateBytesPerSec: number;
   readonly scrollbackBytes: number;
@@ -75,6 +84,8 @@ export function loadRelayConfig(environment: NodeJS.ProcessEnv = process.env): T
     agentRegistryFile: environment.CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE ?? DEFAULT_AGENT_REGISTRY_FILE,
     gatewayUrl: gatewayUrl(environment),
     tokenFile: required(environment, 'CAUCE_TERMINAL_RELAY_TOKEN_FILE'),
+    gatewayClientCertFile: environment.CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE,
+    gatewayClientKeyFile: environment.CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE,
     idleTimeoutMs: positiveInteger(environment, 'CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS', 600) * 1_000,
     outputRateBytesPerSec: positiveInteger(environment, 'CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC', 262_144),
     scrollbackBytes: positiveInteger(environment, 'CAUCE_TERMINAL_SCROLLBACK_BYTES', 20_480),

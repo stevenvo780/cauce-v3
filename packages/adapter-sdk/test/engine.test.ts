@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import {
@@ -229,22 +230,38 @@ async function waitForStarted(store: DurableStore, deliveryId: string): Promise<
   await new Promise<void>((resolveWait) => setImmediate(resolveWait));
 }
 
+/**
+ * El segundo 'started' no es ruido: es la marca `execution_started`, y su POSICIÓN es todo el
+ * punto. Sale después de que el harness consiguió su turno de sesión y antes de invocarlo, o
+ * sea que separa "admitida y esperando el candado" de "arrancó y esto ya se está pagando". El
+ * primer 'started' no distingue esas dos cosas, y por eso el reaper que lo tomaba como prueba
+ * de ejecución mandaba a dead trabajo que nunca había corrido.
+ */
 test("accepted is durable and published before started and execution", async () => {
   const context = await setup("engine-order");
   let phasesAtRun: string[] = [];
+  let executionMarkedAtRun = 0;
   context.runner.onRun = () => {
     phasesAtRun = context.events.map((event) => event.phase);
+    executionMarkedAtRun = context.events.filter((event) => event.execution_started === true).length;
   };
   await context.engine.handleDelivery(delivery("order-1"));
-  assert.deepEqual(phasesAtRun, ["accepted", "started"]);
+  assert.deepEqual(phasesAtRun, ["accepted", "started", "started"]);
+  // La marca ya estaba emitida cuando el harness arrancó, no después: emitirla después dejaría
+  // una corrida que muere en el primer segundo indistinguible de una que nunca arrancó.
+  assert.equal(executionMarkedAtRun, 1);
   assert.deepEqual(
     context.events.map((event) => event.phase),
-    ["accepted", "started", "done"],
+    ["accepted", "started", "started", "done"],
+  );
+  assert.deepEqual(
+    context.events.map((event) => event.execution_started === true),
+    [false, false, true, false],
   );
   assert.equal(context.store.getDelivery("order-1")?.state, "done");
   assert.deepEqual(
     context.store.pendingEvents().map((event) => event.phase),
-    ["accepted", "started", "done"],
+    ["accepted", "started", "started", "done"],
   );
 });
 
@@ -330,6 +347,87 @@ test("concurrent deliveries for different authenticated sessions execute in para
   context.runner.releaseNext();
   context.runner.releaseNext();
   await Promise.all([first, second]);
+});
+
+/**
+ * EL escenario del dueño del sistema, tal como lo describió el revisor, y el motivo de todo el
+ * carril de agentes.
+ *
+ * jarvis (openclaw, sessionStrategy 'generated' ⇒ candado activo) atiende a su dueño en el chat
+ * C. La cadena delega y vuelve como `agent.response` HEREDANDO
+ * `origin={adapter:'telegram', conversation_id:C}`, así que antes le tocaba la MISMA clave de
+ * sesión: esa respuesta agarraba el candado de la conversación de la persona y lo retenía toda
+ * su corrida. Cuando el dueño escribía, su mensaje entraba rápido al gateway y se quedaba
+ * esperando ese candado. 114 minutos de mediana en midas, 235 en el peor caso.
+ *
+ * Lo que se afirma acá es exactamente lo que pidió el dueño: la tarea agente-a-agente NO se
+ * cancela ni se acorta —sigue bloqueada— y aun así el mensaje humano ejecuta.
+ */
+test("a human message executes while agent-to-agent work of the same conversation is still running", async () => {
+  const context = await setupSessionConcurrency("engine-human-lane-preemption");
+  const agentWork: Delivery = {
+    ...delivery("human-lane-agent-work"),
+    actor_alias: "kant",
+    body: { type: "agent.response", text: "kant volvió con el resultado" },
+  };
+  // Misma conversación, mismo origin, misma clave base: lo único que difiere es la clase.
+  const ownerMessage: Delivery = {
+    ...delivery("human-lane-owner-message"),
+    body: { prompt: "che, ¿qué estás haciendo?" },
+  };
+
+  const agent = context.engine.handleDelivery(agentWork);
+  await context.runner.waitForCalls(1);
+
+  const owner = context.engine.handleDelivery(ownerMessage);
+  // Sin carriles esto se colgaba acá para siempre: waitForCalls(2) no llegaba nunca hasta que
+  // la tarea del agente terminara.
+  await context.runner.waitForCalls(2);
+  assert.equal(context.runner.maxActive, 2);
+  assert.match(context.runner.requests[1]?.stdin ?? "", /qué estás haciendo/u);
+  // Sesiones nativas distintas: es el costo declarado del cambio (el agente pierde el hilo
+  // conversacional entre los dos carriles) y a la vez lo que hace posible la concurrencia.
+  assert.notEqual(
+    context.runner.requests[0]?.args.at(-1),
+    context.runner.requests[1]?.args.at(-1),
+  );
+
+  // El humano puede terminar primero sin que nadie haya tocado la tarea larga.
+  context.runner.releaseNext();
+  context.runner.releaseNext();
+  await Promise.all([agent, owner]);
+});
+
+/**
+ * El contracargo del test de arriba: separar carriles no puede volver concurrente lo que tiene
+ * que seguir serializado. Dos mensajes de la MISMA persona en la misma conversación siguen
+ * ejecutándose de a uno, o el harness se pisaría a sí mismo dentro de una conversación.
+ */
+test("two human messages of the same conversation stay serialized", async () => {
+  const context = await setupSessionConcurrency("engine-human-lane-serialized");
+  const first = context.engine.handleDelivery({
+    ...delivery("human-lane-first"),
+    body: { prompt: "primera pregunta" },
+  });
+  await context.runner.waitForCalls(1);
+  const second = context.engine.handleDelivery({
+    ...delivery("human-lane-second"),
+    body: { prompt: "segunda pregunta" },
+  });
+  await waitForStarted(context.store, "human-lane-second");
+
+  assert.equal(context.runner.requests.length, 1);
+  assert.equal(context.runner.maxActive, 1);
+
+  context.runner.releaseNext();
+  await context.runner.waitForCalls(2);
+  context.runner.releaseNext();
+  await Promise.all([first, second]);
+  assert.equal(context.runner.maxActive, 1);
+  assert.equal(
+    context.runner.requests[0]?.args.at(-1),
+    context.runner.requests[1]?.args.at(-1),
+  );
 });
 
 test("cancelling a queued session delivery skips execution without breaking the session queue", async () => {
@@ -1365,11 +1463,14 @@ test("outbox removes events only after relay ACK", async () => {
   const context = await setup("engine-ack");
   await context.engine.handleDelivery(delivery("ack-1"));
   const pending = context.store.pendingEvents();
-  assert.equal(pending.length, 3);
+  // accepted + started + started(execution_started) + done. El tercero es la marca de arranque
+  // real del harness, que es durable como cualquier otro evento: si el socket está caído cuando
+  // el harness arranca, se despacha al reconectar y la base igual se entera de que ya se pagó.
+  assert.equal(pending.length, 4);
   const first = pending[0];
   assert.ok(first);
   assert.equal(await context.store.acknowledge(first), true);
-  assert.equal(context.store.pendingEvents().length, 2);
+  assert.equal(context.store.pendingEvents().length, 3);
   assert.equal(await context.store.acknowledge({
     ...first,
     event_id: "00000000-0000-4000-8000-000000000000",
@@ -1523,12 +1624,21 @@ test("crash recovery marks started work ambiguous and blocks automatic redeliver
 test("out-of-order event receipts correlate by full event identity", async () => {
   const context = await setup("engine-event-correlation");
   await context.engine.handleDelivery(delivery("event-correlation"));
-  const [accepted, started, done] = context.store.pendingEvents();
-  assert.ok(accepted && started && done);
+  // El tercer evento es la marca `execution_started`; correlaciona por identidad completa como
+  // cualquier otro y no altera el orden de los demás.
+  const [accepted, started, executionStarted, done] = context.store.pendingEvents();
+  assert.ok(accepted && started && executionStarted && done);
+  assert.equal(executionStarted.execution_started, true);
   assert.equal(await context.store.acknowledge(done), true);
-  assert.deepEqual(context.store.pendingEvents().map((event) => event.event_id), [accepted.event_id, started.event_id]);
+  assert.deepEqual(
+    context.store.pendingEvents().map((event) => event.event_id),
+    [accepted.event_id, started.event_id, executionStarted.event_id],
+  );
   assert.equal(await context.store.acknowledge(accepted), true);
-  assert.deepEqual(context.store.pendingEvents().map((event) => event.event_id), [started.event_id]);
+  assert.deepEqual(
+    context.store.pendingEvents().map((event) => event.event_id),
+    [started.event_id, executionStarted.event_id],
+  );
 });
 
 test("same untrusted session label is isolated across authenticated tenants", async () => {
@@ -1547,7 +1657,20 @@ test("same untrusted session label is isolated across authenticated tenants", as
   assert.notEqual(firstSession, secondSession);
 });
 
-test("trusted bridge tenant keeps a cross-tenant agent response in the requester's session", async () => {
+/**
+ * CAMBIO DE CONTRATO DELIBERADO (2026-07-27). Antes esto exigía que una `agent.response`
+ * cross-tenant cayera en la MISMA sesión nativa que el pedido del humano. Esa igualdad era
+ * exactamente el bloqueo: el candado de sesión es FIFO estricta, así que la respuesta de la
+ * delegación se quedaba con la sesión de la conversación durante toda su corrida y el dueño
+ * esperaba detrás (114 min de mediana en midas). Ahora el tráfico agente-a-agente vive en un
+ * carril propio y los dos pueden correr a la vez.
+ *
+ * Lo que este test SIGUE protegiendo, que es la razón por la que existe: el alcance de la
+ * sesión lo gobierna el `bridge_tenant` de confianza y no el tenant de la entrega. Dos
+ * respuestas que llegan de tenants distintos sobre la misma conversación tienen que compartir
+ * sesión; lo único que cambió es cuál.
+ */
+test("trusted bridge tenant keeps cross-tenant agent responses in one shared agent-lane session", async () => {
   const context = await setup("engine-agent-response-session");
   const root = delivery("agent-response-session-a");
   const trustedOrigin = {
@@ -1577,10 +1700,26 @@ test("trusted bridge tenant keeps a cross-tenant agent response in the requester
       origin: trustedOrigin,
     },
   };
+  const otherTenantResponse: Delivery = {
+    ...response,
+    delivery_id: "agent-response-session-c",
+    event_id: "agent-response-session-c",
+    tenant_id: "Miguel",
+  };
 
   await context.engine.handleDelivery(request);
   await context.engine.handleDelivery(response);
-  assert.equal(context.runner.requests[0]?.args.at(-1), context.runner.requests[1]?.args.at(-1));
+  await context.engine.handleDelivery(otherTenantResponse);
+  const humanSession = context.runner.requests[0]?.args.at(-1);
+  const agentSession = context.runner.requests[1]?.args.at(-1);
+  const otherTenantSession = context.runner.requests[2]?.args.at(-1);
+  assert.ok(humanSession && agentSession && otherTenantSession);
+  // El carril de agentes NO es la sesión del humano: eso es lo que le devuelve disponibilidad
+  // al dueño sin cancelar la tarea larga.
+  assert.notEqual(agentSession, humanSession);
+  // Pero sigue siendo UNA sola sesión por conversación, derivada del bridge_tenant de
+  // confianza: el tenant de la entrega no la parte en dos.
+  assert.equal(otherTenantSession, agentSession);
   assert.match(context.runner.requests[1]?.stdin ?? "", /"message_type":"agent.response"/u);
   assert.match(context.runner.requests[1]?.stdin ?? "", /"sender_alias":"seneca"/u);
 });
@@ -1671,6 +1810,47 @@ test("un mensaje con solo adjuntos llega al harness en vez de morir sin respuest
   const enviado = context.runner.requests[0]?.stdin ?? "";
   assert.match(enviado, /2 adjuntos de tipo photo/u);
   assert.match(enviado, /No podés ver ni abrir el contenido/u);
+});
+
+test("materializa attachments_v1 para el harness, verifica contenido y limpia el temporal", async () => {
+  const payload = Buffer.from("%PDF-1.7\ncontenido de prueba", "utf8");
+  let materializedPath: string | undefined;
+  let materializedContents: Buffer | undefined;
+  class AttachmentRunner extends ControlledRunner {
+    override async run(request: CommandRunRequest): Promise<CommandRunResult> {
+      const pathMatch = request.stdin.match(/"local_path":"([^"]+)"/u);
+      assert.ok(pathMatch?.[1], "el prompt debe incluir una ruta local accesible");
+      materializedPath = pathMatch[1];
+      materializedContents = await readFile(materializedPath);
+      assert.match(request.stdin, /"name":"informe\.pdf"/u);
+      assert.match(request.stdin, /"mime_type":"application\/pdf"/u);
+      assert.match(request.stdin, /delivery_mode=filesystem_fallback/u);
+      return super.run(request);
+    }
+  }
+  const runner = new AttachmentRunner();
+  const context = await setup("engine-telegram-attachment", runner);
+  const input: Delivery = {
+    ...delivery("media-pdf"),
+    body: {
+      type: "telegram.message",
+      attachments_v1: [{
+        kind: "document",
+        name: "informe.pdf",
+        mime_type: "application/pdf",
+        file_size: payload.length,
+        sha256: createHash("sha256").update(payload).digest("hex"),
+        content_base64: payload.toString("base64"),
+      }],
+    },
+  };
+
+  await context.engine.handleDelivery(input);
+
+  assert.deepEqual(materializedContents, payload);
+  assert.ok(materializedPath);
+  await assert.rejects(access(materializedPath), { code: "ENOENT" });
+  assert.equal(context.events.at(-1)?.phase, "done");
 });
 
 test("un cuerpo realmente vacio sigue siendo rechazado", async () => {

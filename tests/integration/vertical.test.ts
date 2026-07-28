@@ -280,6 +280,13 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
            claim_expires_at=now()-interval '1 millisecond' WHERE id=$1`,
         [delivery.delivery_id]
       );
+      // Se reintenta, y tiene que ser así. Esta entrega ACKeó 'started' dos veces pero NINGUNO
+      // llevaba `execution_started`, o sea que no consta que el harness haya arrancado. Un
+      // 'started' a secas sólo dice "fue admitida": el SDK lo emite antes de pedir el turno de
+      // sesión, y una entrega puede quedarse ahí renovando minutos sin ejecutar nada. Tomarlo
+      // como prueba de ejecución era lo que mandaba a `dead` trabajo que jamás corrió.
+      // La retención para revisión manual se prueba, con la marca de verdad, en
+      // packages/store/test/delivery-admission-postgres.test.ts.
       expect(await repository.retryStaleDeliveries(120_000)).toEqual({ retried: 1, dead: 0 });
       expect((await pool.query<{ status: string; claim_token: string | null }>(
         'SELECT status,claim_token FROM deliveries WHERE id=$1', [delivery.delivery_id]

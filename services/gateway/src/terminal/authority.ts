@@ -26,6 +26,7 @@ export const FLEET_PLACEMENTS: Readonly<Record<string, FleetPlacement>> = Object
   jarvis: { tenant_id: 'Steven', container: 'claw', runtime_user: 'claw' },
   kant: { tenant_id: 'Steven', container: 'ctrl-infra', runtime_user: 'dev' },
   socrates: { tenant_id: 'Steven', container: 'ws-prizma', runtime_user: 'dev' },
+  zeus: { tenant_id: 'Steven', container: 'ws-zeus', runtime_user: 'dev' },
   atlas: { tenant_id: 'Miguel', container: 'ws-humanizar', runtime_user: 'dev' },
   iza: { tenant_id: 'Miguel', container: 'ws-humanizar', runtime_user: 'dev' },
   janus: { tenant_id: 'Miguel', container: 'claw-miguel', runtime_user: 'claw' },

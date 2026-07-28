@@ -102,6 +102,36 @@ export function fakeRepository(): GatewayRepository {
     agentChain: vi.fn(async (traceId: string) => ({
       trace_id: traceId, nodes: [], edges: [], origin_relays: []
     })),
+    fleetActivity: vi.fn(async () => ({
+      observed_at: new Date().toISOString(),
+      thresholds: {
+        saturation_in_flight: 8, stall_after_seconds: 300, ack_recent_seconds: 300,
+        ack_lookback_seconds: 3600, items_per_agent: 10
+      },
+      totals: {
+        agents: 0, in_flight: 0, queued: 0, retrying: 0, overdue_in_flight: 0,
+        by_state: { idle: 0, queued: 0, working: 0, saturated: 0, stalled: 0 },
+        flagged: {
+          saturated: 0, ack_stalled: 0, overdue_acks: 0, lease_expired: 0,
+          never_connected: 0, unregistered: 0, queued_without_consumer: 0
+        }
+      },
+      agents: []
+    })),
+    quotaSnapshot: vi.fn(async () => ({
+      observed_at: new Date().toISOString(),
+      thresholds: {
+        stale_after_seconds: 900, warn_remaining_percent: 25, critical_remaining_percent: 10,
+        history_window_seconds: 86400, history_bucket_seconds: 1800, history_max_points: 48
+      },
+      collectors: [], providers: [], unbound_groups: [], paused_accounts: []
+    })),
+    recordQuotaSample: vi.fn(async () => ({
+      collection_id: '80000000-0000-4000-8000-000000000001',
+      host: 'kratos', captured_at: new Date().toISOString(), duplicate: false,
+      accepted_providers: 0, accepted_windows: 0,
+      unbound_groups: [], paused_accounts: [], resumed_accounts: [], pruned_collections: 0
+    })),
     getConfiguration: vi.fn(async () => ({ revision: 0, tenants: [], rooms: [], memberships: [], acl_edges: [] })),
     applyConfigurationChange: vi.fn(async (
       _tenant: Tenant, _alias: string, mutation: ConfigMutation, dryRun: boolean

@@ -30,6 +30,9 @@ export interface AdapterCapabilities {
   readonly claim_token_correlation: true;
   readonly authenticated_session_scope: true;
   readonly routing_targets_v1: true;
+  readonly attachments_v1: true;
+  readonly native_image_input_v1?: true;
+  readonly native_document_input_v1?: true;
   readonly persistent_sessions: boolean;
   readonly loopback_api?: true;
   readonly stable_alias_sessions?: true;
@@ -158,6 +161,15 @@ export interface DeliveryEvent {
   readonly duplicate?: boolean;
   /** Local-only marker; the transport maps it to a normal `started` ACK. */
   readonly claim_renewal?: true;
+  /**
+   * "El harness EMPEZÓ a ejecutar", no "la entrega fue admitida". Se emite una vez por intento,
+   * después de obtener la reserva de sesión y justo antes de invocar al harness. El ACK
+   * `started` normal no sirve para esto: sale ANTES de todo eso, y el reaper que lo tomaba como
+   * prueba de ejecución mandaba a `dead` entregas que nunca habían corrido. A diferencia de
+   * `claim_renewal`, este campo SÍ viaja por el cable; es opcional en el protocolo y un gateway
+   * viejo simplemente lo ignora.
+   */
+  readonly execution_started?: true;
   readonly output?: StructuredOutput;
   readonly error?: AdapterErrorPayload;
 }
@@ -215,6 +227,15 @@ export interface CommandRunResult {
   readonly signal: NodeJS.Signals | null;
   readonly timedOut: boolean;
   readonly cancelled: boolean;
+}
+
+export interface HarnessAttachment {
+  readonly kind: 'image' | 'document';
+  readonly name: string;
+  readonly mimeType: string;
+  readonly path: string;
+  readonly size: number;
+  readonly sha256: string;
 }
 
 export interface CommandRunner {

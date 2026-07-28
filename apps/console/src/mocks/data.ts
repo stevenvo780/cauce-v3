@@ -1,15 +1,18 @@
 import type {
   AdapterPage,
   AuditPage,
+  FleetActivitySnapshot,
   JobPage,
   MessagePage,
   OriginRelayPage,
   QueueSnapshot,
+  QuotaSnapshot,
   SystemStatus,
   TopologySnapshot,
 } from '../api/types';
 
 const iso = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
+const secondsAgo = (seconds: number) => iso(-seconds * 1_000);
 
 export function mockStatus(): SystemStatus {
   return {
@@ -137,3 +140,249 @@ export const originRelays: OriginRelayPage = { items: [
   { id: 'relay-1', tenant_id: 'Steven', adapter: 'telegram', delivery_id: '4b981ddd-f311-494e-887c-83fd5e11be90', status: 'sent', attempts: 1, created_at: iso(-50_000), sent_at: iso(-49_000) },
   { id: 'relay-2', tenant_id: 'Steven', adapter: 'telegram', delivery_id: 'fdca3315-aa17-409e-827a-065d5780243e', status: 'failed', attempts: 3, created_at: iso(-180_000), sent_at: null },
 ] };
+
+/**
+ * GET /v3/console/activity. Cubre a propósito los casos que motivaron el panel y los que casi
+ * se esconden si no se los busca: un agente saturado sano (jarvis), el incidente real (midas:
+ * saturado + colgado + lease vencido + reintentando), un alias que nadie registró (atlas), y dos
+ * variantes del null en seconds_since_last_ack — inactivo-sin-historia (vulcano) vs. colgado con
+ * trabajo real pendiente (hegel) — porque son diagnósticos distintos y el mismo null los cubre a los dos.
+ */
+export function mockActivity(): FleetActivitySnapshot {
+  return {
+    observed_at: iso(0),
+    thresholds: {
+      saturation_in_flight: 8,
+      stall_after_seconds: 300,
+      ack_recent_seconds: 300,
+      ack_lookback_seconds: 3600,
+      items_per_agent: 10,
+    },
+    totals: {
+      agents: 7,
+      by_state: { idle: 2, queued: 1, working: 1, saturated: 1, stalled: 2 },
+      flagged: {
+        saturated: 2, ack_stalled: 2, overdue_acks: 1, lease_expired: 2,
+        never_connected: 1, unregistered: 1, queued_without_consumer: 1,
+      },
+      in_flight: 55,
+      queued: 20,
+      retrying: 3,
+      overdue_in_flight: 41,
+    },
+    agents: [
+      {
+        tenant_id: 'Steven', alias: 'kant', display_name: 'Kant', harness_id: 'claude-code',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'kant-7f21c0d4', epoch: 118, last_heartbeat_at: secondsAgo(6), lease_until: iso(24_000) },
+        work_state: 'working', flags: [],
+        in_flight: 3, started: 3, claimed_not_started: 0, queued: 1, queued_ready: 1, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: secondsAgo(259), oldest_in_flight_seconds: 259,
+        nearest_ack_deadline_at: iso(41_000), max_attempt: 1,
+        last_ack_at: secondsAgo(12), seconds_since_last_ack: 12, acks_recent: 9,
+        in_flight_items_truncated: false,
+        in_flight_items: [
+          { delivery_id: '3f1a9b6e-2c47-4a0e-9d33-0b5c8e71a204', message_id: '8c5d2f10-7b3a-4e91-8f2c-6a41d09be557', trace_id: 'trace-2b7e4c19', from_tenant: 'Steven', from_alias: 'zeus', lane: 'interactive', origin_adapter: 'bus', published_at: secondsAgo(261), status: 'started', attempt: 1, claimed_at: secondsAgo(259), ack_deadline_at: iso(41_000), seconds_in_flight: 259, last_ack_at: secondsAgo(12), last_ack_status: 'started' },
+          { delivery_id: 'aa02e7c5-91d6-4f38-b7e0-4c9a1d3f6b82', message_id: '1d94f7a2-3e58-4bb1-90c7-2f6e58a0dc39', trace_id: 'trace-9a1c33d7', from_tenant: 'Steven', from_alias: 'argos', lane: 'batch', origin_adapter: 'telegram', published_at: secondsAgo(180), status: 'started', attempt: 1, claimed_at: secondsAgo(178), ack_deadline_at: iso(120_000), seconds_in_flight: 178, last_ack_at: secondsAgo(30), last_ack_status: 'started' },
+          { delivery_id: '6b18d0f9-4a72-4ee3-8c15-9d20e7f3ab41', message_id: 'b7e30c48-16d2-4a97-bf05-8e1c4d9027aa', trace_id: 'trace-5f22e19b', from_tenant: 'Steven', from_alias: 'zeus', lane: 'interactive', origin_adapter: 'bus', published_at: secondsAgo(96), status: 'leased', attempt: 1, claimed_at: secondsAgo(94), ack_deadline_at: iso(206_000), seconds_in_flight: 94, last_ack_at: null, last_ack_status: null },
+        ],
+      },
+      {
+        tenant_id: 'Steven', alias: 'jarvis', display_name: 'Jarvis', harness_id: 'claude-code',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'jarvis-b711e2a0', epoch: 42, last_heartbeat_at: secondsAgo(3), lease_until: iso(27_000) },
+        // Saturado por volumen (>= 8 en vuelo) pero sano: acks_recent alto y ACK reciente. Distinto
+        // de midas, que además está colgado — el badge tiene que poder mostrar uno sin el otro.
+        work_state: 'saturated', flags: ['saturated'],
+        in_flight: 9, started: 9, claimed_not_started: 0, queued: 0, queued_ready: 0, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: secondsAgo(340), oldest_in_flight_seconds: 340,
+        nearest_ack_deadline_at: iso(15_000), max_attempt: 1,
+        last_ack_at: secondsAgo(20), seconds_since_last_ack: 20, acks_recent: 12,
+        in_flight_items_truncated: false,
+        in_flight_items: Array.from({ length: 9 }, (_unused, index) => ({
+          delivery_id: `9c9f9c9f-0000-4000-8000-00000000000${index}`,
+          message_id: `msg-jarvis-${index}`,
+          trace_id: `trace-jarvis-${index}`,
+          from_tenant: 'Steven', from_alias: 'kant', lane: 'batch' as const, origin_adapter: 'bus',
+          published_at: secondsAgo(340 - index * 10), status: 'started' as const, attempt: 1,
+          claimed_at: secondsAgo(338 - index * 10), ack_deadline_at: iso((15 + index * 10) * 1_000),
+          seconds_in_flight: 338 - index * 10, last_ack_at: secondsAgo(20), last_ack_status: 'started',
+        })),
+      },
+      {
+        // El incidente real: 41 en vuelo, 0 ACKs recientes, deadline vencido y lease caído. Este
+        // agente tiene que gritar desde la pantalla, no compartir fila con los sanos.
+        tenant_id: 'Pablo', alias: 'midas', display_name: null, harness_id: 'openclaw',
+        registered: true, agent_enabled: true,
+        presence: { online: false, instance_id: 'midas-0a44be91', epoch: 41, last_heartbeat_at: secondsAgo(1_400), lease_until: secondsAgo(1_370) },
+        work_state: 'stalled', flags: ['ack_stalled', 'saturated', 'overdue_acks', 'lease_expired'],
+        in_flight: 41, started: 39, claimed_not_started: 2, queued: 12, queued_ready: 12, retrying: 3, overdue_in_flight: 41,
+        oldest_claimed_at: secondsAgo(4_820), oldest_in_flight_seconds: 4_820,
+        nearest_ack_deadline_at: secondsAgo(4_520), max_attempt: 2,
+        last_ack_at: secondsAgo(1_268), seconds_since_last_ack: 1_268, acks_recent: 0,
+        in_flight_items_truncated: true,
+        in_flight_items: [
+          { delivery_id: 'c9d47a02-5e18-4b63-97f1-3a0e8c25db76', message_id: '42a1e6b8-0c7d-4f52-b839-5e60a71cf204', trace_id: 'trace-77c1e05a', from_tenant: 'Pablo', from_alias: 'dedalo', lane: 'batch', origin_adapter: 'bus', published_at: secondsAgo(4_822), status: 'started', attempt: 1, claimed_at: secondsAgo(4_820), ack_deadline_at: secondsAgo(4_520), seconds_in_flight: 4_820, last_ack_at: secondsAgo(4_760), last_ack_status: 'started' },
+          { delivery_id: '0e73b4f1-8a25-4d09-b6c3-71f0d5928ae4', message_id: '5c80917d-4e2b-41a6-9f38-b207ce4d1650', trace_id: 'trace-77c1e05a', from_tenant: 'Pablo', from_alias: 'dedalo', lane: 'batch', origin_adapter: 'bus', published_at: secondsAgo(4_710), status: 'leased', attempt: 2, claimed_at: secondsAgo(4_708), ack_deadline_at: secondsAgo(4_408), seconds_in_flight: 4_708, last_ack_at: null, last_ack_status: null },
+        ],
+      },
+      {
+        // Nadie lo dio de alta en el registro de agentes, pero tiene 8 mensajes esperando: es
+        // exactamente el caso que la UNION con deliveries/leases existe para no ocultar.
+        tenant_id: 'Miguel', alias: 'atlas', display_name: null, harness_id: null,
+        registered: false, agent_enabled: null,
+        presence: { online: false, instance_id: 'atlas-31c7f9a2', epoch: 9, last_heartbeat_at: secondsAgo(11_600), lease_until: secondsAgo(11_570) },
+        work_state: 'queued', flags: ['lease_expired', 'queued_without_consumer', 'unregistered'],
+        in_flight: 0, started: 0, claimed_not_started: 0, queued: 8, queued_ready: 8, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: null, oldest_in_flight_seconds: null, nearest_ack_deadline_at: null, max_attempt: null,
+        last_ack_at: null, seconds_since_last_ack: null, acks_recent: 0,
+        in_flight_items_truncated: false, in_flight_items: [],
+      },
+      {
+        tenant_id: 'Isa', alias: 'salva', display_name: 'Salva', harness_id: 'claude-code',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'salva-be104d77', epoch: 63, last_heartbeat_at: secondsAgo(2), lease_until: iso(28_000) },
+        work_state: 'idle', flags: [],
+        in_flight: 0, started: 0, claimed_not_started: 0, queued: 0, queued_ready: 0, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: null, oldest_in_flight_seconds: null, nearest_ack_deadline_at: null, max_attempt: null,
+        last_ack_at: secondsAgo(799), seconds_since_last_ack: 799, acks_recent: 0,
+        in_flight_items_truncated: false, in_flight_items: [],
+      },
+      {
+        // Registrado, presente, pero nunca tuvo un ACK aplicado dentro de la ventana de búsqueda:
+        // seconds_since_last_ack null en un agente SIN trabajo pendiente (a diferencia de hegel).
+        tenant_id: 'Pablo', alias: 'vulcano', display_name: 'Vulcano', harness_id: 'openclaw',
+        registered: true, agent_enabled: false,
+        presence: undefined,
+        work_state: 'idle', flags: ['never_connected'],
+        in_flight: 0, started: 0, claimed_not_started: 0, queued: 0, queued_ready: 0, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: null, oldest_in_flight_seconds: null, nearest_ack_deadline_at: null, max_attempt: null,
+        last_ack_at: null, seconds_since_last_ack: null, acks_recent: 0,
+        in_flight_items_truncated: false, in_flight_items: [],
+      },
+      {
+        // Colgado sin estar saturado: sólo 2 en vuelo, pero ninguna aplicó un ACK jamás dentro de
+        // la ventana. La precedencia stalled > saturated > working tiene que elegir COLGADO acá.
+        tenant_id: 'Jhon', alias: 'hegel', display_name: 'Hegel', harness_id: 'claude-code',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'hegel-122f9a10', epoch: 9, last_heartbeat_at: secondsAgo(5), lease_until: iso(25_000) },
+        work_state: 'stalled', flags: ['ack_stalled'],
+        in_flight: 2, started: 1, claimed_not_started: 1, queued: 0, queued_ready: 0, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: secondsAgo(610), oldest_in_flight_seconds: 610,
+        nearest_ack_deadline_at: secondsAgo(310), max_attempt: 1,
+        last_ack_at: null, seconds_since_last_ack: null, acks_recent: 0,
+        in_flight_items_truncated: false,
+        in_flight_items: [
+          { delivery_id: 'e1a2b3c4-d5e6-4f70-8091-a2b3c4d5e6f7', message_id: 'msg-hegel-1', trace_id: 'trace-hegel-1', from_tenant: 'Jhon', from_alias: 'hegel', lane: 'interactive', origin_adapter: 'bus', published_at: secondsAgo(612), status: 'started', attempt: 1, claimed_at: secondsAgo(610), ack_deadline_at: secondsAgo(310), seconds_in_flight: 610, last_ack_at: null, last_ack_status: null },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * GET /v3/console/quotas. Un host fresco (kratos) y uno viejo (ws-midas) para ejercitar
+ * collectors[].stale; codex con dos grupos (uno agotado y pausado, otro sin cuenta atada) porque
+ * es el caso que un solo número por proveedor esconde; antigravity con varias ventanas del mismo
+ * family para ejercitar el colapso; opencode con unidades absolutas además del porcentaje.
+ */
+export function mockQuotas(): QuotaSnapshot {
+  const bucket = (values: number[]) => ({
+    bucket_seconds: 1_800,
+    points: values.map((used_percent, index) => ({ at: iso((index - values.length) * 1_800_000), used_percent })),
+  });
+  return {
+    observed_at: iso(0),
+    thresholds: {
+      stale_after_seconds: 900,
+      warn_remaining_percent: 25,
+      critical_remaining_percent: 10,
+      history_window_seconds: 86_400,
+      history_bucket_seconds: 1_800,
+      history_max_points: 48,
+    },
+    collectors: [
+      { host: 'kratos', collector_tenant: 'Steven', collector_alias: 'quota-collector', captured_at: secondsAgo(702), received_at: secondsAgo(701), age_seconds: 701, stale: false, schema_version: 2, app_version: '0.12.0', provider_count: 4, window_count: 15 },
+      { host: 'ws-midas', collector_tenant: 'Pablo', collector_alias: 'quota-collector', captured_at: secondsAgo(5_400), received_at: secondsAgo(5_398), age_seconds: 5_398, stale: true, schema_version: 2, app_version: '0.11.4', provider_count: 2, window_count: 4 },
+    ],
+    providers: [
+      {
+        host: 'kratos', provider: 'claude', ok: true, available: true, kind: 'detected-percent', source: 'claude-cli', plan: null,
+        note: 'Claude /usage detectado desde el CLI.', effective_remaining_percent: 14, observed_at: secondsAgo(741), age_seconds: 741,
+        available_groups: [], limiting_groups: [], severity: 'warn',
+        groups: [{
+          group_key: 'default', limit_id: null, account_id: 'claude-steven-max', account_label: 'Claude Max (Steven)',
+          account_provider: 'claude', payer_tenant_id: 'Steven', paused_until: null, paused_reason: null,
+          min_remaining_percent: 14, severity: 'warn',
+          windows: [
+            { window_key: 'session', label: 'sesión', used_percent: 45, remaining_percent: 55, used_units: null, limit_units: null, window_minutes: null, reset_at: iso(3_469_000), reset_in_seconds: 3_469, status: null, family: null, model: null, severity: 'ok', history: bucket([0, 12, 29, 45]) },
+            { window_key: 'week_all', label: 'semana', used_percent: 86, remaining_percent: 14, used_units: null, limit_units: null, window_minutes: null, reset_at: iso(83_209_000), reset_in_seconds: 83_209, status: null, family: null, model: null, severity: 'warn', history: bucket([78, 80, 83, 86]) },
+            { window_key: 'week_fable', label: 'Fable', used_percent: 0, remaining_percent: 100, used_units: null, limit_units: null, window_minutes: null, reset_at: iso(83_269_000), reset_in_seconds: 83_269, status: null, family: null, model: null, severity: 'ok', history: bucket([0, 0]) },
+          ],
+        }],
+      },
+      {
+        host: 'kratos', provider: 'codex', ok: true, available: true, kind: 'detected-percent', source: 'codex-app-server', plan: 'pro',
+        note: 'Codex app-server (consulta oficial).', effective_remaining_percent: 100, observed_at: secondsAgo(703), age_seconds: 703,
+        available_groups: ['codex_bengalfox'], limiting_groups: ['codex'], severity: 'exhausted',
+        groups: [
+          {
+            group_key: 'codex', limit_id: 'codex', account_id: 'codex-pro-steven', account_label: 'Codex Pro (principal)',
+            account_provider: 'codex', payer_tenant_id: 'Steven', paused_until: iso(447_970_000), paused_reason: 'quota_exhausted:codex/codex/codex_primary_10080',
+            min_remaining_percent: 0, severity: 'exhausted',
+            windows: [
+              { window_key: 'codex_primary_10080', label: 'semana', used_percent: 100, remaining_percent: 0, used_units: null, limit_units: null, window_minutes: 10_080, reset_at: iso(447_970_000), reset_in_seconds: 447_970, status: 'rate-limited', family: null, model: null, severity: 'exhausted', history: bucket([94, 97, 100, 100]) },
+            ],
+          },
+          {
+            // Sin account_id: aparece también en unbound_groups[] más abajo. La UI no debe
+            // ocultar esta fila; sólo debe dejar en claro que no puede pausar nada.
+            group_key: 'codex_bengalfox', limit_id: 'codex_bengalfox', account_id: null, account_label: null,
+            account_provider: null, payer_tenant_id: null, paused_until: null, paused_reason: null,
+            min_remaining_percent: 100, severity: 'ok',
+            windows: [
+              { window_key: 'codex_bengalfox_primary_10080', label: 'semana', used_percent: 0, remaining_percent: 100, used_units: null, limit_units: null, window_minutes: 10_080, reset_at: iso(603_353_000), reset_in_seconds: 603_353, status: null, family: null, model: null, severity: 'ok', history: bucket([0, 0]) },
+            ],
+          },
+        ],
+      },
+      {
+        host: 'kratos', provider: 'antigravity', ok: true, available: true, kind: 'detected-percent', source: 'antigravity-api', plan: null,
+        note: 'Antigravity (API real). 8 ventanas con cuota, 3 Claude/GPT ofrecidas con cuota desconocida.', effective_remaining_percent: 100,
+        observed_at: secondsAgo(707), age_seconds: 707, available_groups: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview'], limiting_groups: [], severity: 'ok',
+        groups: [{
+          group_key: 'default', limit_id: null, account_id: 'antigravity-steven', account_label: 'Antigravity (Steven)',
+          account_provider: 'antigravity', payer_tenant_id: 'Steven', paused_until: null, paused_reason: null,
+          min_remaining_percent: 62, severity: 'warn',
+          // Ocho ventanas del mismo family: exactamente el caso que hay que colapsar en una fila
+          // y no ahogar con 8 filas la fila de claude/codex, que son las que realmente importan.
+          windows: [
+            { window_key: 'gemini-3.1-pro-preview', label: 'gemini-3.1-pro', used_percent: 0, remaining_percent: 100, used_units: null, limit_units: null, window_minutes: 1_440, reset_at: iso(85_693_000), reset_in_seconds: 85_693, status: null, family: 'gemini', model: 'gemini-3.1-pro-preview', severity: 'ok', history: bucket([0, 0]) },
+            { window_key: 'gemini-3-flash-preview', label: 'gemini-3-flash', used_percent: 38, remaining_percent: 62, used_units: null, limit_units: null, window_minutes: 1_440, reset_at: iso(85_693_000), reset_in_seconds: 85_693, status: null, family: 'gemini', model: 'gemini-3-flash-preview', severity: 'warn', history: bucket([10, 20, 30, 38]) },
+          ],
+        }],
+      },
+      {
+        host: 'kratos', provider: 'opencode', ok: true, available: true, kind: 'detected-percent', source: 'opencode-db', plan: null,
+        note: 'Estimado local (opencode.db). Para valores exactos ve a opencode.ai/auth.', effective_remaining_percent: 100,
+        observed_at: secondsAgo(717), age_seconds: 717, available_groups: [], limiting_groups: [], severity: 'ok',
+        groups: [{
+          group_key: 'default', limit_id: null, account_id: 'minimax-pool', account_label: 'MiniMax / OpenCode',
+          account_provider: 'opencode', payer_tenant_id: 'Steven', paused_until: null, paused_reason: null,
+          min_remaining_percent: 100, severity: 'ok',
+          windows: [
+            { window_key: '5h', label: '5 horas', used_percent: 0, remaining_percent: 100, used_units: 0, limit_units: 12, window_minutes: 300, reset_at: iso(17_283_000), reset_in_seconds: 17_283, status: null, family: null, model: null, severity: 'ok', history: bucket([0, 0]) },
+            { window_key: 'week', label: 'semanal', used_percent: 0, remaining_percent: 100, used_units: 0, limit_units: 30, window_minutes: 10_080, reset_at: iso(551_269_000), reset_in_seconds: 551_269, status: null, family: null, model: null, severity: 'ok', history: { bucket_seconds: 1_800, points: [] } },
+            { window_key: 'month', label: 'mensual', used_percent: 0, remaining_percent: 100, used_units: 0, limit_units: 60, window_minutes: 43_200, reset_at: iso(378_469_000), reset_in_seconds: 378_469, status: null, family: null, model: null, severity: 'ok', history: { bucket_seconds: 1_800, points: [] } },
+          ],
+        }],
+      },
+    ],
+    unbound_groups: [
+      { host: 'kratos', provider: 'codex', group_key: 'codex_bengalfox', window_count: 1, reason: 'no_account_id_supplied', detail: 'El recolector no mandó account_id para este grupo: la muestra se guarda pero no puede pausar ninguna suscripción.' },
+    ],
+    paused_accounts: [
+      { account_id: 'codex-pro-steven', provider: 'codex', label: 'Codex Pro (principal)', payer_tenant_id: 'Steven', paused_until: iso(447_970_000), paused_reason: 'quota_exhausted:codex/codex/codex_primary_10080', automatic: true },
+    ],
+  };
+}

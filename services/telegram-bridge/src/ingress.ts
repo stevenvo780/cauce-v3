@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { PROTOCOL_VERSION, type PublishMessage } from '@cauce/protocol';
+import { PROTOCOL_VERSION, PublishMessageSchema, type PublishMessage } from '@cauce/protocol';
 import type { CauceRepository } from '@cauce/store';
 import type { TelegramIngress, TelegramIngressMessage } from './types.js';
 
@@ -34,7 +34,7 @@ export class StoreTelegramIngress implements TelegramIngress {
         origin: message.origin
       }
     };
-    const result = await this.repository.publish(command);
+    const result = await this.repository.publish(PublishMessageSchema.parse(command));
     return { duplicate: result.duplicate };
   }
 }

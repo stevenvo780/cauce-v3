@@ -8,6 +8,7 @@ import {
 import type {
   AdapterCapabilities,
   CommandRunner,
+  HarnessAttachment,
   HarnessCommandOverride,
   HarnessDefinition,
   HarnessExecutionContext,
@@ -41,6 +42,8 @@ export function capabilities(
     authenticated_session_scope: true,
     routing_targets_v1: true,
     renewable_delivery_claims_v1: true,
+    attachments_v1: true,
+    ...(harness === "codex" ? { native_image_input_v1: true } : {}),
     persistent_sessions: persistentSessions,
     ...additions,
   };
@@ -137,10 +140,43 @@ export interface HarnessAdapterOptions {
   readonly canonicalOpenCodeSession?: boolean;
 }
 
+/**
+ * Los dos carriles de sesión de un mismo alias.
+ *
+ * `human` es la conversación de la persona; `agent` es el tráfico agente-a-agente que desciende
+ * de ella. Existen separados porque el candado de sesión es FIFO ESTRICTA y no se puede
+ * interrumpir la tarea en curso: mientras compartían carril, una delegación que volvía como
+ * `agent.response` tomaba el candado de la conversación del dueño y lo retenía toda la corrida
+ * —40 minutos en el caso que reportó el revisor—, y el mensaje siguiente de la persona esperaba
+ * detrás. Medido el 2026-07-27: midas, 114 minutos de MEDIANA para atender a su dueño.
+ *
+ * Una cola con prioridad NO alcanzaba para esto y por eso no se eligió: el que bloquea ya está
+ * EJECUTANDO, no encolado, y reordenar la cola no lo saca del medio. Lo único que devuelve la
+ * disponibilidad sin cancelar nada es que los dos puedan correr a la vez, y eso exige que sean
+ * dos sesiones distintas del harness.
+ */
+export type SessionLane = "human" | "agent";
+
+/**
+ * Sufijo del carril de agentes. Cambia la clave de sesión, o sea que el harness abre otra
+ * sesión nativa: es exactamente lo que da la concurrencia, y también el costo — ver
+ * `AdapterEngine.handleDelivery`.
+ *
+ * El juego de caracteres NO es libre: la clave termina como nombre de entrada en sessions.json
+ * y `validateSessionsFile` sólo acepta `[A-Za-z0-9._:-]`. Un sufijo con `#` hace que el archivo
+ * entero falle la validación segura y toda ejecución con sesión muera con
+ * INVALID_SESSIONS_FILE. El punto está permitido y no puede chocar con ninguna clave existente:
+ * las humanas son `auth-v2:<base64url>` (sin puntos) o el fallback `alias-default`.
+ */
+const AGENT_LANE_SUFFIX = ".agent-lane";
+
 export interface HarnessExecuteRequest {
   readonly prompt: string;
+  readonly attachments?: readonly HarnessAttachment[];
   readonly context?: HarnessRequestContext;
   readonly sessionKey?: string;
+  /** Carril de sesión. Ausente = `human`, que es el comportamiento de siempre. */
+  readonly sessionLane?: SessionLane;
   readonly sessionReservation?: HarnessSessionReservation;
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
@@ -205,10 +241,10 @@ export class HarnessAdapter {
         false,
       );
     }
-    const effectiveSessionKey = request.sessionKey ?? this.fallbackSessionKey;
+    const effectiveSessionKey = this.laneSessionKey(request.sessionKey, request.sessionLane);
     if (effectiveSessionKey !== undefined && this.definition.sessionStrategy.kind !== "none") {
       const key = this.sessionStoreKey(effectiveSessionKey);
-      const reservation = request.sessionReservation ?? this.reserveSession(effectiveSessionKey);
+      const reservation = request.sessionReservation ?? this.reserveResolved(effectiveSessionKey);
       if (reservation === undefined) throw new Error(`Missing session reservation for ${key}`);
       if (reservation.key !== key) {
         reservation.release();
@@ -224,11 +260,35 @@ export class HarnessAdapter {
     return this.executeUnlocked(request, effectiveSessionKey);
   }
 
-  reserveSession(sessionKey: string | undefined): HarnessSessionReservation | undefined {
-    const effectiveSessionKey = sessionKey ?? this.fallbackSessionKey;
+  /**
+   * Toma turno en el candado de una sesión. `lane` decide EN QUÉ candado: el carril de agentes
+   * usa otra clave de sesión, así que corre en paralelo al de la persona en vez de esperarlo.
+   *
+   * El fallback también lleva carril. Sin eso, openclaw —que tiene
+   * `fallbackSessionKey: "alias-default"`— seguiría metiendo en un único candado global toda
+   * entrega sin origen utilizable, humana o no.
+   */
+  reserveSession(
+    sessionKey: string | undefined,
+    lane: SessionLane = "human",
+  ): HarnessSessionReservation | undefined {
+    const effectiveSessionKey = this.laneSessionKey(sessionKey, lane);
     if (effectiveSessionKey === undefined || this.definition.sessionStrategy.kind === "none") {
       return undefined;
     }
+    return this.reserveResolved(effectiveSessionKey);
+  }
+
+  private laneSessionKey(
+    sessionKey: string | undefined,
+    lane: SessionLane = "human",
+  ): string | undefined {
+    const base = sessionKey ?? this.fallbackSessionKey;
+    if (base === undefined) return undefined;
+    return lane === "agent" ? `${base}${AGENT_LANE_SUFFIX}` : base;
+  }
+
+  private reserveResolved(effectiveSessionKey: string): HarnessSessionReservation {
     const key = this.sessionStoreKey(effectiveSessionKey);
     const previous = this.sessionLocks.get(key) ?? Promise.resolve();
     let release!: () => void;
@@ -250,10 +310,14 @@ export class HarnessAdapter {
     const session = await this.resolveSession(effectiveSessionKey);
     if (request.signal.aborted) throw abortReason(request.signal);
     const sessionContext: HarnessExecutionContext = session.context;
-    const invocation = this.invocation(sessionContext);
+    const attachmentPlan = planAttachments(this.definition.id, request.attachments ?? []);
+    const invocation = this.invocation(sessionContext, attachmentPlan.args);
+    const effectivePrompt = attachmentPlan.prompt.length === 0
+      ? request.prompt
+      : `${request.prompt}\n\n${attachmentPlan.prompt}`;
     const result = await this.runner.run({
       ...invocation,
-      stdin: protocolPrompt(request.prompt, request.origin, request.context),
+      stdin: protocolPrompt(effectivePrompt, request.origin, request.context),
       timeoutMs: request.timeoutMs,
       signal: request.signal,
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
@@ -348,16 +412,20 @@ export class HarnessAdapter {
     return output;
   }
 
-  private invocation(context: HarnessExecutionContext): {
+  private invocation(context: HarnessExecutionContext, attachmentArgs: readonly string[]): {
     command: string;
     args: readonly string[];
     harness: HarnessId;
   } {
     const prefix = this.commandOverride?.prefixArgs ?? [];
     const baseArgs = this.commandOverride?.baseArgs ?? this.definition.baseArgs;
+    const sessionArgs = this.definition.sessionArgs(context);
+    const args = this.definition.id === "codex"
+      ? [...prefix, ...baseArgs, ...attachmentArgs, ...sessionArgs]
+      : [...prefix, ...baseArgs, ...sessionArgs, ...attachmentArgs];
     return {
       command: this.commandOverride?.command ?? this.definition.command,
-      args: [...prefix, ...baseArgs, ...this.definition.sessionArgs(context)],
+      args,
       harness: this.definition.id,
     };
   }
@@ -396,6 +464,29 @@ export class HarnessAdapter {
     }
     return { context: { resume: false } };
   }
+}
+
+function planAttachments(
+  harness: HarnessId,
+  attachments: readonly HarnessAttachment[],
+): { args: readonly string[]; prompt: string } {
+  const args: string[] = [];
+  const lines: string[] = [];
+  for (const [index, attachment] of attachments.entries()) {
+    const native = harness === "codex" && attachment.kind === "image";
+    if (native) {
+      args.push(harness === "codex" ? "--image" : "--file", attachment.path);
+      lines.push(`attachment_${index + 1} delivery_mode=native metadata=${JSON.stringify({
+        name: attachment.name, mime_type: attachment.mimeType, size: attachment.size,
+        sha256: attachment.sha256,
+      })}`);
+    } else {
+      lines.push(`attachment_${index + 1} delivery_mode=filesystem_fallback; provider does not expose native ${attachment.mimeType} input; inspect this verified local file with available file/vision tools: ${JSON.stringify({
+        name: attachment.name, path: attachment.path, size: attachment.size, sha256: attachment.sha256,
+      })}`);
+    }
+  }
+  return { args, prompt: lines.join("\n") };
 }
 
 async function waitForSessionTurn(previous: Promise<void>, signal: AbortSignal): Promise<void> {

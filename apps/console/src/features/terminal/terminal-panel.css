@@ -9,6 +9,16 @@
 /* The overview grew a fifth card (PTY targets). */
 .ultimate-terminal-page .terminal-overview { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 
+/*
+ * The PTY relay is opt-in per stack (see 0a1d0e3): its absence is expected topology, not an
+ * incident, so it gets a calm, informational tone (`--blue`) instead of the amber "degraded"
+ * treatment reserved for genuinely unexpected failures.
+ */
+.terminal-relay-notice { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; padding: 11px 13px; border: 1px solid #1f4d78; border-radius: 10px; background: var(--blue-dim); color: var(--blue); }
+.terminal-relay-notice > div { flex: 1; }
+.terminal-relay-notice strong { display: block; color: var(--text); font-size: .78rem; }
+.terminal-relay-notice p { margin: 3px 0 0; font-size: .7rem; }
+
 /* Per-agent PTY state in the fleet list: always a word, never a bare grey dot. */
 .agent-pty-state { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--faint); font-size: .55rem; font-weight: 700; letter-spacing: .04em; }
 .agent-pty-state[data-status="allowed"] { border-color: #2b685b; background: var(--mint-dim); color: var(--mint); }
@@ -90,3 +100,148 @@
   .pty-dialog-reason textarea { background: #ffffff; }
   .pty-dialog-backdrop { background: rgb(23 35 51 / 45%); }
 }
+
+/* Grid layout and panel styles for Phase 1 terminal consolidation */
+.terminal-grid-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  background: var(--terminal-inset);
+}
+
+.terminal-grid-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 16px;
+  padding: 16px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+  height: 600px;
+  resize: horizontal;
+  min-width: 420px;
+  box-shadow: var(--shadow);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.terminal-panel[data-active="true"] {
+  border-color: var(--mint);
+  box-shadow: 0 0 0 1px var(--mint), var(--shadow);
+}
+
+.terminal-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #0d1624;
+}
+
+.terminal-panel-title-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.terminal-panel-title-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.terminal-panel[data-active="true"] .terminal-panel-title-btn {
+  color: var(--text);
+}
+
+.terminal-panel-title-btn span > strong {
+  display: block;
+  font-size: 0.74rem;
+  line-height: 1.2;
+}
+
+.terminal-panel-title-btn span > small {
+  display: block;
+  font-size: 0.58rem;
+  color: var(--faint);
+  line-height: 1.2;
+  margin-top: 1px;
+}
+
+.terminal-panel-close {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.terminal-panel-close:hover {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.terminal-panel-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.terminal-panel-body .terminal-active-grid {
+  height: 100%;
+  min-height: 0;
+}
+
+.terminal-panel-body .terminal-console {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.terminal-panel-body .terminal-transcript {
+  flex: 1;
+  min-height: 200px;
+  max-height: none;
+}
+
+.terminal-panel-body .terminal-active-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.terminal-panel-body .terminal-active-grid[data-show-inspector="true"] {
+  grid-template-columns: minmax(0, 1fr) 254px;
+}
+
+.terminal-panel-body .terminal-active-grid:not([data-show-inspector="true"]) .terminal-inspector {
+  display: none;
+}
+
+@media (prefers-color-scheme: light) {
+  .terminal-panel-header {
+    background: #edf2f7;
+  }
+}
+

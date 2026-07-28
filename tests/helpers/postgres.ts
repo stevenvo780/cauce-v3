@@ -73,6 +73,7 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
         egress_notifications,egress_destinations,egress_contacts,
         agent_account_bindings,agents,provider_accounts,
         audit_events,dead_letters,jobs,adapter_outbox,adapter_inbox,delivery_acks,
+        delivery_lane_fairness,job_lane_fairness,
         deliveries,idempotency_keys,messages,connection_leases,agent_chain_progress
         RESTART IDENTITY CASCADE`);
       await pool.query(`UPDATE agent_chain_policies

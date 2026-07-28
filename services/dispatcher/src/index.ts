@@ -8,6 +8,8 @@ export interface DispatcherOptions {
   staleAckMs?: number;
   interactiveBurst?: number;
   jobLeaseMs?: number;
+  /** Ver `DispatcherConfig.retryStartedDeliveries` y `CauceRepository.retryStaleDeliveries`. */
+  retryStartedDeliveries?: boolean;
   handlers?: JobHandlerRegistry;
   metrics?: DispatcherMetrics;
   onError?: (error: unknown) => void;
@@ -23,7 +25,9 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
     if (running) return;
     running = true;
     try {
-      await repository.retryStaleDeliveries(options.staleAckMs ?? 30_000);
+      await repository.retryStaleDeliveries(options.staleAckMs ?? 30_000, 100, {
+        retryStartedDeliveries: options.retryStartedDeliveries === true
+      });
       await repository.retryExpiredJobs();
       const jobs = await repository.claimFairJobs(
         worker, 1, options.jobLeaseMs ?? 30_000, options.interactiveBurst ?? 3, 'dispatcher'

@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { isAmbiguousAckErrorCode } from "@cauce/protocol";
+import { isAgentToAgentBody, isAmbiguousAckErrorCode } from "@cauce/protocol";
 import type { InboxRecord } from "./durable-store.js";
 import { DurableStore } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
-import type { HarnessAdapter, HarnessSessionReservation } from "../harnesses/shared.js";
+import type { HarnessAdapter, HarnessSessionReservation, SessionLane } from "../harnesses/shared.js";
 import type {
   AdapterLogger,
   CancelDelivery,
@@ -16,8 +16,16 @@ import type {
 import { systemClock } from "./backoff.js";
 import { synthesizeFaninOutput } from "./fanin-synthesizer.js";
 import { validateDeliveryOutput } from "./output-parser.js";
+import { materializeAttachments, type MaterializedAttachments } from "./attachments.js";
 
 export type EventPublisher = (event: DeliveryEvent) => Promise<void>;
+
+/**
+ * Lo que el engine le pasa al harness para ubicar la sesión: la clave derivada del origen y el
+ * carril. Se lleva tal cual al request de ejecución, así que las dos cosas que deciden qué
+ * candado y qué sesión nativa se usan viajan siempre juntas y no se pueden desincronizar.
+ */
+type HarnessSessionRequestScope = { sessionKey?: string; sessionLane?: SessionLane };
 
 const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
 const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
@@ -116,9 +124,43 @@ export class AdapterEngine {
       }
       return Promise.resolve();
     }
+    /**
+     * ACÁ se resuelve el reclamo del dueño del sistema: "estar SIEMPRE disponibles para
+     * responder", sin cancelar ni acortar la tarea en curso.
+     *
+     * El bloqueo real no estaba en el gateway sino en este candado. `reserveSession` es FIFO
+     * estricta por clave de sesión, y una entrega agente-a-agente HEREDA el `origin` de la
+     * persona que originó la cadena (mismo adapter, mismo conversation_id), así que
+     * `sessionFromDelivery` le daba la MISMA clave: la delegación que volvía tomaba el candado
+     * de la conversación del dueño y lo retenía toda su corrida. El mensaje del dueño entraba
+     * rápido al gateway y se quedaba esperando ahí. 114 minutos de mediana en midas.
+     *
+     * Alternativas evaluadas:
+     *  - Cola con prioridad en el candado: NO sirve. El que bloquea ya está ejecutando, no
+     *    encolado; reordenar la cola no lo saca del medio y el dueño sigue esperando los 40
+     *    minutos. Sólo ayudaría con dos o más ESPERANDO, que no es el caso que duele.
+     *  - Interrumpir la tarea larga: prohibido por el requisito ("si tardan, tardan, normal").
+     *  - Dos carriles de sesión: es lo único que da disponibilidad sin tocar la tarea en curso.
+     *
+     * COSTO, y es real: el carril de agentes abre otra sesión nativa del harness, así que el
+     * agente pierde el hilo conversacional entre lo que hizo para su dueño y lo que hace cuando
+     * vuelve una delegación. Se paga porque el SDK ya estaba preparado para eso: para una
+     * `agent.response`, `promptForDelivery` reconstruye el pedido original y lo manda explícito
+     * en el prompt (`cauce.agent_response_continuation.v1`), justamente porque nunca se dio por
+     * sentado que el harness se acordara. Y la respuesta le sigue llegando a la persona por el
+     * relay al origen. Lo que se pierde es contexto implícito; lo que se gana es que el dueño
+     * tenga a su asistente disponible siempre.
+     *
+     * Segundo costo: dos procesos de harness a la vez para un mismo alias. Ya pasaba entre
+     * conversaciones distintas, y ahora el control de admisión del gateway lo acota a
+     * `maxInflight + humanReserved` (4 por defecto) contra las 71 en vuelo del incidente.
+     */
     const fanin = delivery.body.type === "agent.fanin";
-    const session = fanin ? {} : sessionFromDelivery(delivery);
-    const reservation = fanin ? undefined : this.harness.reserveSession(session.sessionKey);
+    const lane: SessionLane = isAgentToAgentBody(delivery.body) ? "agent" : "human";
+    const session: HarnessSessionRequestScope = fanin
+      ? {}
+      : { ...sessionFromDelivery(delivery), sessionLane: lane };
+    const reservation = fanin ? undefined : this.harness.reserveSession(session.sessionKey, lane);
 
     this.logger({
       event: 'delivery_start',
@@ -213,7 +255,7 @@ export class AdapterEngine {
 
   private async runDelivery(
     delivery: Delivery,
-    session: { sessionKey?: string },
+    session: HarnessSessionRequestScope,
     reservation: HarnessSessionReservation | undefined,
   ): Promise<void> {
     try {
@@ -225,7 +267,7 @@ export class AdapterEngine {
 
   private async runReservedDelivery(
     delivery: Delivery,
-    session: { sessionKey?: string },
+    session: HarnessSessionRequestScope,
     reservation: HarnessSessionReservation | undefined,
   ): Promise<void> {
     const occurredAt = this.clock.now().toISOString();
@@ -286,6 +328,7 @@ export class AdapterEngine {
       : "request";
     let output: StructuredOutput | undefined;
     let executionFailure: unknown;
+    let attachments: MaterializedAttachments | undefined;
     try {
       const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
       const requestContext = {
@@ -305,25 +348,49 @@ export class AdapterEngine {
       const processedReplies = messageType === "agent.fanin"
         ? this.store.processedRepliesForFanin(delivery)
         : [];
-      output = messageType === "agent.fanin"
-        ? validateDeliveryOutput(synthesizeFaninOutput(
-            delivery.body,
-            processedReplies.length === 0 ? {} : { processedReplies },
-          ), {
-            messageType,
-            senderAlias: requestContext.sender_alias,
-            selfAlias: requestContext.self_alias,
-            routingTargets: requestContext.routing_targets,
-          })
-        : await this.harness.execute({
-            prompt: promptForDelivery(delivery, this.store),
-            context: requestContext,
-            ...session,
-            ...(reservation === undefined ? {} : { sessionReservation: reservation }),
-            ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
-            timeoutMs: executionBudget.harnessTimeoutMs,
-            signal: controller.signal,
-          });
+      if (messageType === "agent.fanin") {
+        // El fan-in no invoca harness: lo sintetiza el SDK, es determinístico y gratis.
+        // Por eso tampoco emite `execution_started`: reintentarlo no cuesta cuota, y marcarlo
+        // como "ya ejecutado" sólo lo mandaría a revisión manual sin motivo.
+        output = validateDeliveryOutput(synthesizeFaninOutput(
+          delivery.body,
+          processedReplies.length === 0 ? {} : { processedReplies },
+        ), {
+          messageType,
+          senderAlias: requestContext.sender_alias,
+          selfAlias: requestContext.self_alias,
+          routingTargets: requestContext.routing_targets,
+        });
+      } else {
+        const prompt = await (async () => {
+          attachments = await materializeAttachments(delivery.body);
+          const base = promptForDelivery(delivery, this.store);
+          return attachments === undefined ? base : `${base}\n\n${attachments.prompt}`;
+        })();
+        // Esperar el turno de sesión ACÁ, y no adentro de `harness.execute`, es lo que permite
+        // decir "arrancó de verdad". Hasta esta línea la entrega puede llevar minutos admitida,
+        // ACKeando 'started' y renovando cada 60 s, sin haber gastado un centavo. Ese ACK
+        // 'started' era el que el reaper tomaba como prueba de ejecución para NO reintentar, y
+        // por eso mandaba a dead trabajo que nunca había corrido.
+        //
+        // `wait` es idempotente: `harness.execute` vuelve a esperar la misma promesa, que para
+        // entonces ya está resuelta.
+        if (reservation !== undefined) await reservation.wait(controller.signal);
+        // Se emite como renovación de garra a propósito: reusa la confirmación de propiedad que
+        // ya existe, así que además funciona como último chequeo de "esto sigue siendo mío"
+        // justo antes de gastar plata. Si el gateway responde que no, `loseClaim` aborta.
+        await this.emitClaimRenewal(started, { executionStarted: true });
+        output = await this.harness.execute({
+          prompt,
+          ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
+          context: requestContext,
+          ...session,
+          ...(reservation === undefined ? {} : { sessionReservation: reservation }),
+          ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
+          timeoutMs: executionBudget.harnessTimeoutMs,
+          signal: controller.signal,
+        });
+      }
       if (controller.signal.aborted) {
         throw controller.signal.reason instanceof Error
           ? controller.signal.reason
@@ -333,6 +400,15 @@ export class AdapterEngine {
       executionFailure = error;
     } finally {
       await stopClaimRenewal();
+      try {
+        await attachments?.cleanup();
+      } catch {
+        executionFailure ??= new AdapterError(
+          "ATTACHMENT_CLEANUP_FAILED",
+          "Temporary attachment cleanup failed",
+          false,
+        );
+      }
     }
 
     if (executionFailure !== undefined) {
@@ -446,7 +522,10 @@ export class AdapterEngine {
    * summary here would produce a value that is dropped in `AdapterClient.sendEvent`
    * and never reaches the wire, so it is left out rather than declared and ignored.
    */
-  private async emitClaimRenewal(record: InboxRecord): Promise<void> {
+  private async emitClaimRenewal(
+    record: InboxRecord,
+    options: { readonly executionStarted?: boolean } = {},
+  ): Promise<void> {
     const event: DeliveryEvent = {
       event_id: randomUUID(),
       delivery_id: record.delivery_id,
@@ -456,6 +535,7 @@ export class AdapterEngine {
       phase: "started",
       occurred_at: this.clock.now().toISOString(),
       claim_renewal: true,
+      ...(options.executionStarted === true ? { execution_started: true } : {}),
       ...(record.origin === undefined ? {} : { origin: record.origin }),
     };
     this.logger({
@@ -570,7 +650,8 @@ export class AdapterEngine {
  * sabe que llegó y puede decirlo, que es infinitamente mejor que el silencio.
  */
 function describeMedia(body: Record<string, unknown>): string | undefined {
-  const media = body.media;
+  const verified = body.attachments_v1;
+  const media = Array.isArray(verified) && verified.length > 0 ? verified : body.media;
   if (!Array.isArray(media) || media.length === 0) return undefined;
 
   const kinds = new Map<string, number>();
@@ -585,6 +666,10 @@ function describeMedia(body: Record<string, unknown>): string | undefined {
     .map(([kind, count]) => (count === 1 ? `un adjunto de tipo ${kind}` : `${count} adjuntos de tipo ${kind}`))
     .join(" y ");
 
+  const downloadable = Array.isArray(verified) && verified.length > 0;
+  if (downloadable) {
+    return `El usuario envió ${detalle}, sin texto acompañante. Inspeccioná el adjunto local indicado abajo antes de responder.`;
+  }
   return `El usuario envió ${detalle}, sin texto acompañante. No podés ver ni abrir el contenido del `
     + `adjunto: sólo sabés que llegó y de qué tipo es. Respondé reconociendo lo que envió y pedile `
     + `que describa en palabras lo que necesita, o explicale que todavía no podés procesar ese tipo `
@@ -592,7 +677,11 @@ function describeMedia(body: Record<string, unknown>): string | undefined {
 }
 
 function promptFromBody(body: Record<string, unknown>): string {
-  const value = typeof body.prompt === "string" ? body.prompt : body.text;
+  const value = typeof body.prompt === "string"
+    ? body.prompt
+    : typeof body.text === "string"
+      ? body.text
+      : body.caption;
   if (typeof value === "string" && value.trim().length > 0) return value;
 
   const media = describeMedia(body);

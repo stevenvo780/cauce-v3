@@ -1,0 +1,10 @@
+{
+  "_comentario": "Instalar como /home/stev/.config/cauce-v3/quota-collector/account-bindings.json, modo 0600. Es el archivo de intencion del operador: mapea (provider, group_key) -> account_id de provider_accounts. El recolector es el UNICO componente que ve a la vez la sesion real del CLI y esta intencion; el gateway nunca la adivina. Un grupo sin entrada aca se publica igual, con account_id=null y una binding_note -- no se pierde el dato, aparece como 'sin atar' en el panel.",
+  "bindings": [
+    { "provider": "claude", "group_key": "default", "account_id": "claude-steven-max" },
+    { "provider": "codex", "group_key": "codex", "account_id": "codex-pro-steven" },
+    { "provider": "codex", "group_key": "codex_bengalfox", "account_id": "codex-bengalfox-steven" },
+    { "provider": "antigravity", "group_key": "default", "account_id": "antigravity-steven" },
+    { "provider": "opencode", "group_key": "default", "account_id": "minimax-pool" }
+  ]
+}

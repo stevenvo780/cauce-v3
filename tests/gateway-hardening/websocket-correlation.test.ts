@@ -129,8 +129,10 @@ describe('gateway WebSocket ACK correlation', () => {
       .toEqual([ids.deliveryTwo, ids.delivery]);
     expect(vi.mocked(repository.ackDelivery).mock.calls.map((call) => call[4]))
       .toEqual([600_000, 600_000]);
-    expect(repository.claimDeliveries).toHaveBeenCalledWith(
-      'Pablo', 'midas', 'serial-consumer', 1, undefined, 600_000
+    // Ya no se llama con `undefined` en la posición de `limit` (que se comía el default 20 del
+    // store): el primer drain de la sesión pide exactamente el presupuesto vacío.
+    expect(repository.claimDeliveries).toHaveBeenNthCalledWith(
+      1, 'Pablo', 'midas', 'serial-consumer', 1, 2, 600_000, undefined, { humanReservedLimit: 2 }
     );
   });
 

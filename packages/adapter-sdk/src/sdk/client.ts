@@ -259,6 +259,9 @@ export class AdapterClient {
       instance_id: this.config.instanceId,
       epoch: event.epoch,
       retryable: event.error?.retryable ?? event.output?.retryable ?? false,
+      // Campo opcional del protocolo: un gateway viejo lo ignora y el reaper se queda con el
+      // reintento de siempre, que es caro pero no pierde trabajo.
+      ...(event.execution_started === true ? { execution_started: true } : {}),
       ...(detail === undefined ? {} : { error: detail }),
       ...(event.error === undefined ? {} : { error_code: event.error.code }),
       ...(event.output === undefined ? {} : { result: { output: event.output } }),

@@ -1,0 +1,12 @@
+[Unit]
+Description=Corre el recolector de cuotas de IA cada 5 minutos
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=cauce-v3-quota-collector.service
+
+[Install]
+WantedBy=timers.target

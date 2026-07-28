@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   AckSchema, AMBIGUOUS_ACK_ERROR_CODES, AuthenticatedPublishSchema, DeliveryEnvelopeSchema,
-  isAmbiguousAckErrorCode, PublishMessageSchema
+  isAgentToAgentBody, isAmbiguousAckErrorCode, PublishMessageSchema
 } from '@cauce/protocol';
 
 describe('versioned protocol schemas', () => {
@@ -139,4 +139,102 @@ describe('versioned protocol schemas', () => {
       }).success).toBe(false);
     }
   );
+});
+
+/**
+ * La señal con la que el bus distingue "esto lo mandó una persona" de "esto es un salto de una
+ * cadena de agentes". No existía como concepto explícito y por eso el sistema no podía
+ * distinguirlos: medido el 2026-07-27, 2.374 de 2.429 entregas de 12 h decían
+ * `origin.adapter='telegram'` porque el origin se propaga sin tocarse en cada salto, y 2.374 de
+ * 2.429 viajaban en `lane='interactive'` por la misma razón. Ninguno de los dos discriminaba
+ * nada. `body.type`, en cambio, se reescribe en cada salto.
+ */
+describe('agent-to-agent message classification', () => {
+  it.each(['agent.message', 'agent.response', 'agent.fanin'])(
+    'classifies %s as agent-to-agent traffic',
+    (type) => {
+      expect(isAgentToAgentBody({ type, text: 'delegated work' })).toBe(true);
+    }
+  );
+
+  it('treats anything else as human or external traffic', () => {
+    // Telegram, la consola (que publica `{ text }` sin `type` en absoluto) y un adapter que
+    // todavía no existe: todos caen del lado seguro.
+    expect(isAgentToAgentBody({ type: 'telegram.message', text: 'hola' })).toBe(false);
+    expect(isAgentToAgentBody({ text: 'desde la consola' })).toBe(false);
+    expect(isAgentToAgentBody({ type: 'whatsapp.message', text: 'adapter futuro' })).toBe(false);
+    expect(isAgentToAgentBody({})).toBe(false);
+  });
+
+  it('never classifies a malformed body as agent-to-agent', () => {
+    // El fallback tiene que ser "humano": tratar como humano algo que no lo era cuesta un turno
+    // de cola; tratar como agente el mensaje de una persona costó 114 minutos de espera.
+    expect(isAgentToAgentBody(undefined)).toBe(false);
+    expect(isAgentToAgentBody(null)).toBe(false);
+    expect(isAgentToAgentBody('agent.message')).toBe(false);
+    expect(isAgentToAgentBody(['agent.message'])).toBe(false);
+    expect(isAgentToAgentBody({ type: 42 })).toBe(false);
+    // `agent.notify` está reservado, pero es egress hacia un handle externo: va a
+    // adapter_outbox y nunca a deliveries, así que no participa del reparto de cupo.
+    expect(isAgentToAgentBody({ type: 'agent.notify' })).toBe(false);
+  });
+
+  /**
+   * LÍMITE CONOCIDO, escrito como test para que nadie vuelva a documentar lo contrario: la
+   * señal es falsificable HACIA ARRIBA. El guard sólo prohíbe declarar un tipo reservado; no
+   * exige que un agente marque los suyos, así que un agente autenticado con permiso 'route'
+   * puede publicar `{text}` sin `type` y quedar clasificado como humano.
+   *
+   * No se cierra derivando la clase del actor porque el actor no discrimina: el telegram-bridge
+   * publica con `actor_alias` igual al alias del propio agente, y `/v3/messages` y
+   * `/v3/console/messages` comparten handler y schema. Cerrarlo con los datos de hoy rompería
+   * en la dirección peligrosa, mandando humanos al carril de agentes.
+   *
+   * Ver services/gateway/CONFIGURATION.md, sección "Límite conocido de la clasificación".
+   */
+  it('documents that an agent can publish an unmarked body and be read as human', () => {
+    const forged = {
+      room_id: 'grp.steven',
+      recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
+      body: { text: 'delegación disfrazada de mensaje de persona' },
+      idempotency_key: 'unmarked-agent-publish'
+    };
+    expect(AuthenticatedPublishSchema.safeParse(forged).success).toBe(true);
+    expect(isAgentToAgentBody(forged.body)).toBe(false);
+  });
+});
+
+/**
+ * El campo con el que un adaptador dice "el harness ARRANCÓ", que es distinto de "la entrega fue
+ * admitida". Tiene que ser OPCIONAL: los esquemas son `.strict()` y el adaptador valida cada
+ * frame, así que un campo obligatorio nuevo rompería en lock-step a toda la flota vieja.
+ */
+describe('optional execution-started ACK marker', () => {
+  const base = {
+    version: '3.0' as const,
+    event_id: '11111111-1111-4111-8111-111111111111',
+    claim_token: '22222222-2222-4222-8222-222222222222',
+    attempt: 1,
+    status: 'started' as const,
+    instance_id: 'consumer-1',
+    epoch: 1
+  };
+
+  it('accepts an ACK that carries the marker and one that omits it', () => {
+    const marked = AckSchema.safeParse({ ...base, execution_started: true });
+    expect(marked.success).toBe(true);
+    expect(marked.success && marked.data.execution_started).toBe(true);
+  });
+
+  it('leaves the marker undefined when an old adapter omits it, never assumed true', () => {
+    // "No consta" y "sí arrancó" tienen que ser distinguibles: si el ausente valiera `true`,
+    // el reaper daría por ejecutado todo lo que mande un adaptador viejo y perdería trabajo.
+    const bare = AckSchema.safeParse(base);
+    expect(bare.success).toBe(true);
+    expect(bare.success && bare.data.execution_started).toBeUndefined();
+  });
+
+  it('rejects a non-boolean marker', () => {
+    expect(AckSchema.safeParse({ ...base, execution_started: 'yes' }).success).toBe(false);
+  });
 });

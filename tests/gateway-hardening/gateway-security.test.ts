@@ -43,8 +43,11 @@ describe('gateway hardening facades and RBAC', () => {
     });
 
     expect(response.statusCode).toBe(200);
+    // El `limit: 4` del cliente ya no llega crudo al store: se reparte contra el presupuesto
+    // configurado (2 generales + 2 reservados para humanos). El POST era el otro lugar por el
+    // que se podía vaciar la cola de un agente sin techo.
     expect(repository.claimDeliveries).toHaveBeenCalledWith(
-      'Pablo', 'midas', 'http-deadline-consumer', 7, 4, 600_000
+      'Pablo', 'midas', 'http-deadline-consumer', 7, 2, 600_000, undefined, { humanReservedLimit: 2 }
     );
 
     const ack = {

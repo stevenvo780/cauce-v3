@@ -541,6 +541,47 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .terminal-degraded .button { width: 100%; }
 }
 
+/* ---------------------------------------------------------------------------------------------
+ * Activity & Quotas (GET /v3/console/activity, GET /v3/console/quotas). Todo definido en
+ * variables de tema existentes a propósito: no hace falta ningún override en el bloque
+ * prefers-color-scheme: light de más abajo.
+ */
+.auto-refresh-toggle { display: flex; align-items: center; gap: 8px; margin: -10px 0 20px; color: var(--muted); font-size: .78rem; }
+.auto-refresh-toggle input { width: auto; min-height: 0; margin: 0; }
+
+.row-toggle { display: grid; width: 26px; height: 26px; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); color: var(--muted); cursor: pointer; }
+.row-toggle:hover { color: var(--text); }
+tr.row-critical > td:first-child { box-shadow: inset 3px 0 var(--red); }
+tr.row-warning > td:first-child { box-shadow: inset 3px 0 var(--amber); }
+tr.row-critical { background: rgb(255 138 146 / 6%); }
+tr.row-warning { background: rgb(245 200 108 / 5%); }
+tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%); border-bottom: 1px solid rgb(34 50 76 / 65%); }
+.overdue-note { color: var(--red); font-weight: 700; }
+.flag-chip-list { margin-top: 6px; }
+.flag-chip-list .badge { min-height: 19px; padding: 2px 6px; font-size: .58rem; }
+.window-count-chip { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--faint); font-size: .62rem; }
+
+.sparkline { display: inline-flex; color: var(--blue); }
+.sparkline-empty { color: var(--faint); font-size: .68rem; }
+
+.quota-provider { margin-bottom: 20px; padding: 16px; border: 1px solid var(--border); border-radius: 13px; background: #0c1422; }
+.quota-provider:last-child { margin-bottom: 0; }
+.quota-provider[data-severity="critical"], .quota-provider[data-severity="exhausted"] { border-color: #74313c; }
+.quota-provider[data-severity="warn"] { border-color: #725622; }
+.quota-provider-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+.quota-provider-head h3 { margin: 0; font-size: .95rem; }
+.quota-provider-head p { margin: 4px 0 0; color: var(--muted); font-size: .74rem; }
+.quota-provider-head-right { display: flex; flex-direction: column; align-items: end; gap: 6px; }
+.quota-effective { color: var(--blue); font-size: .95rem; }
+.quota-groups-line { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 12px; color: var(--muted); font-size: .72rem; }
+.chip-list.inline { display: inline-flex; margin-left: 6px; }
+
+@media (max-width: 720px) {
+  .auto-refresh-toggle { margin-top: 4px; }
+  .quota-provider-head { flex-direction: column; }
+  .quota-provider-head-right { align-items: start; }
+}
+
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;

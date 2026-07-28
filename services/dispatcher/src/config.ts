@@ -7,6 +7,13 @@ export interface DispatcherConfig {
   ackTimeoutMs: number;
   interactiveBurst: number;
   jobLeaseMs: number;
+  /**
+   * Palanca de emergencia para volver al reaper viejo, que reintentaba a ciegas toda garra
+   * vencida. Apagada por defecto: reintentar una entrega que consta que YA había arrancado
+   * vuelve a pagar una corrida entera de un modelo de suscripción, y ese fue el 71% del
+   * desperdicio medido el 2026-07-27 en los agentes con harness codex.
+   */
+  retryStartedDeliveries: boolean;
 }
 
 function positiveInteger(environment: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -33,5 +40,8 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
     ackTimeoutMs,
     interactiveBurst: positiveInteger(environment, 'INTERACTIVE_BURST', 3),
     jobLeaseMs: positiveInteger(environment, 'JOB_LEASE_MS', 30_000),
+    // Sólo el '1' explícito la prende. Cualquier otra cosa (vacío, '0', basura) deja el
+    // comportamiento seguro, que es el que ahorra cuota.
+    retryStartedDeliveries: environment.CAUCE_RETRY_STARTED_DELIVERIES === '1',
   };
 }

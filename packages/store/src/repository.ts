@@ -1,16 +1,24 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type {
   Ack, ConfigMutation, DeliveryEnvelope, DeliveryState, NotifyRequest, Origin,
-  PublishMessage, Tenant
+  PublishMessage, QuotaSampleRequest, Tenant
 } from '@cauce/protocol';
-import { isAmbiguousAckErrorCode, NOTIFY_KINDS, PROTOCOL_VERSION } from '@cauce/protocol';
+import {
+  AGENT_TO_AGENT_MESSAGE_TYPES, isAmbiguousAckErrorCode, NOTIFY_KINDS, PROTOCOL_VERSION,
+  SUPPORTED_QUOTA_SCHEMA_VERSIONS
+} from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 import {
   ConfigurationError, ConfigurationRepository, type ConfigurationChangeResult
 } from './configuration.js';
+import {
+  agentWorkState, DEFAULT_FLEET_ACTIVITY_THRESHOLDS, FLEET_ACTIVITY_QUERY, FLEET_ACTIVITY_FLAGS,
+  FLEET_WORK_STATES, type FleetActivityFlag, type FleetWorkState
+} from './fleet-activity.js';
 
-export type StoreErrorCode = 'forbidden' | 'no_route' | 'conflict' | 'fenced' | 'not_found' | 'invalid_actor';
+export type StoreErrorCode =
+  'forbidden' | 'no_route' | 'conflict' | 'fenced' | 'not_found' | 'invalid_actor' | 'invalid_input';
 
 export class StoreError extends Error {
   constructor(public readonly code: StoreErrorCode, message: string) {
@@ -40,6 +48,63 @@ export interface LeaseResult {
   epoch?: number;
   lease_expires_at: string;
   active_instance_id?: string;
+}
+
+/**
+ * Control de admisión de `claimDeliveries`. Existe porque el gateway llamaba sin `limit` y se
+ * comía el default de 20: veinte entregas reclamadas en el mismo instante arrancan el plazo de
+ * ACK de 30 min TODAS JUNTAS, y las últimas del lote se mueren sin haber empezado. Medido el
+ * 2026-07-27: kratos llegó a 71 entregas en vuelo y 1.001 de los 1.622 errores de la semana
+ * fueron "ACK timeout".
+ */
+export interface DeliveryAdmission {
+  /**
+   * Cupo ADICIONAL al general que sólo puede ocupar una entrega originada por un humano.
+   * Es aditivo, no una porción: con el cupo general en cero, un mensaje de una persona sigue
+   * entrando por acá aunque el agente tenga una tarea de 40 minutos en curso.
+   */
+  readonly humanReservedLimit?: number;
+  /**
+   * Cuántos reclamos humanos seguidos antes de dejar pasar uno agente-a-agente. Evita que una
+   * ráfaga de mensajes humanos mate de hambre al trabajo entre agentes. Por defecto toma el
+   * mismo valor que `interactiveBurst` (3), que es el que ya usaba la alternancia de carriles.
+   */
+  readonly humanBurst?: number;
+}
+
+/**
+ * Una garra viva de un alias, tal como la ve la base. Es lo que el gateway usa para reconstruir
+ * su presupuesto de admisión cuando un adaptador reconecta. Ver `liveDeliveryClaims`.
+ */
+export interface LiveDeliveryClaim {
+  readonly delivery_id: string;
+  readonly attempt: number;
+  readonly claim_token: string;
+  readonly ack_deadline_at: string;
+  /** Clase de la entrega: decide qué cupo ocupa (general o reservado al humano). */
+  readonly agent_to_agent: boolean;
+}
+
+/** Política del reaper de garras vencidas. Ver `retryStaleDeliveries`. */
+export interface StaleDeliveryPolicy {
+  /**
+   * Vuelve al comportamiento viejo: reintentar aunque conste que la entrega ya había arrancado.
+   * Existe como palanca de emergencia, no como default. Prenderlo vuelve a pagar cada corrida
+   * dos veces.
+   */
+  readonly retryStartedDeliveries?: boolean;
+}
+
+/**
+ * Espaciado de reintentos por garra vencida: 30 s, 60 s, 120 s... con techo de 5 minutos.
+ * Es distinto (y más largo) que el backoff de un ACK 'failed' retryable, que arranca en 1 s:
+ * una garra vencida casi siempre significa que el consumidor está saturado o caído, y volver
+ * a ofrecerle la entrega en el tick siguiente —lo que hacía `available_at=now()`— es
+ * exactamente la realimentación positiva que describe el incidente: cada muerte generaba más
+ * carga, que generaba más muertes.
+ */
+export function timeoutRetryBackoffSeconds(attempt: number): number {
+  return Math.min(300, 30 * 2 ** Math.max(0, attempt - 1));
 }
 
 interface DeliveryRow {
@@ -186,6 +251,12 @@ const reservedInternalMessageTypes = new Set([
   'agent.fanin',
   'agent.notify'
 ]);
+/**
+ * Se pasa como `text[]` a las consultas de reclamo para que el predicado
+ * "esta entrega nació de otro agente" tenga UNA sola definición en todo el árbol
+ * (`AGENT_TO_AGENT_MESSAGE_TYPES` en @cauce/protocol) y no dos que se desincronizan.
+ */
+const agentToAgentMessageTypes: string[] = [...AGENT_TO_AGENT_MESSAGE_TYPES];
 const maxNotifyDirectives = 4;
 const maxNotifyBodyBytes = 4 * 1024;
 const maxNotifyAggregateBytes = 8 * 1024;
@@ -616,6 +687,202 @@ function agentDeploymentStatus(row: Record<string, unknown>): string {
   return 'unknown';
 }
 
+// ============================================================================================
+// Cuotas de suscripciones de IA (GET /v3/console/quotas, POST /v3/quotas/samples). Ver
+// packages/store/migrations/013_quota_observation.sql para el porqué de las cuatro tablas.
+// ============================================================================================
+
+export interface QuotaThresholds {
+  stale_after_seconds: number;
+  warn_remaining_percent: number;
+  critical_remaining_percent: number;
+  history_window_seconds: number;
+  history_bucket_seconds: number;
+  history_max_points: number;
+}
+
+export const DEFAULT_QUOTA_THRESHOLDS: QuotaThresholds = {
+  stale_after_seconds: 900,
+  warn_remaining_percent: 25,
+  critical_remaining_percent: 10,
+  history_window_seconds: 86_400,
+  history_bucket_seconds: 1_800,
+  history_max_points: 48
+};
+
+export interface QuotaSampleUnboundGroup {
+  host: string;
+  provider: string;
+  group_key: string;
+  window_count: number;
+  reason: 'no_account_id_supplied' | 'unknown_account_id';
+  detail: string;
+}
+export interface QuotaSamplePausedAccount {
+  account_id: string;
+  provider: string;
+  group_key: string;
+  window_key: string;
+  paused_until: string;
+}
+export interface QuotaSampleResumedAccount {
+  account_id: string;
+  provider: string;
+}
+export interface QuotaSampleIngestResult {
+  collection_id: string;
+  host: string;
+  captured_at: string;
+  duplicate: boolean;
+  accepted_providers: number;
+  accepted_windows: number;
+  unbound_groups: QuotaSampleUnboundGroup[];
+  paused_accounts: QuotaSamplePausedAccount[];
+  resumed_accounts: QuotaSampleResumedAccount[];
+  pruned_collections: number;
+}
+
+export type QuotaSeverity = 'unknown' | 'ok' | 'warn' | 'critical' | 'exhausted';
+
+/** Pura y testeable sin Postgres, mismo motivo que agentWorkState(): decide si el operador ve
+ *  "todo bien" o "se está por agotar", así que es la parte que necesita un test de verdad. */
+export function windowSeverity(
+  remainingPercent: number | null,
+  status: string | null,
+  thresholds: QuotaThresholds = DEFAULT_QUOTA_THRESHOLDS
+): QuotaSeverity {
+  if ((remainingPercent !== null && remainingPercent <= 0) || status === 'rate-limited') return 'exhausted';
+  if (remainingPercent === null) return 'unknown';
+  if (remainingPercent < thresholds.critical_remaining_percent) return 'critical';
+  if (remainingPercent < thresholds.warn_remaining_percent) return 'warn';
+  return 'ok';
+}
+
+const QUOTA_SEVERITY_RANK: Readonly<Record<QuotaSeverity, number>> = {
+  unknown: 0, ok: 1, warn: 2, critical: 3, exhausted: 4
+};
+
+/** Severidad de un grupo/proveedor = la peor entre sus partes: un sólo grupo agotado no puede
+ *  quedar escondido detrás de otros grupos sanos del mismo proveedor. */
+export function worstQuotaSeverity(severities: readonly QuotaSeverity[]): QuotaSeverity {
+  return severities.reduce<QuotaSeverity>(
+    (worst, severity) => (QUOTA_SEVERITY_RANK[severity] > QUOTA_SEVERITY_RANK[worst] ? severity : worst),
+    'unknown'
+  );
+}
+
+/** Marcador estable para poder reconstruir, en la LECTURA (quotaSnapshot), si una ventana quedó
+ *  sin atar porque el recolector no mandó account_id o porque mandó uno que no existe en
+ *  provider_accounts -- la tabla sólo guarda account_id NULL en los dos casos, así que el
+ *  binding_note es la única señal que sobrevive. Se antepone SIEMPRE, incluso si el recolector
+ *  ya traía su propia nota, para que una nota custom nunca pueda esconder el diagnóstico
+ *  "cuenta desconocida" detrás de un texto arbitrario. */
+const UNKNOWN_ACCOUNT_BINDING_PREFIX = 'cuenta desconocida: ';
+
+function unknownAccountBindingNote(accountId: string, collectorNote: string | null | undefined): string {
+  const marker = `${UNKNOWN_ACCOUNT_BINDING_PREFIX}${accountId}`;
+  return collectorNote ? `${marker} — ${collectorNote}` : marker;
+}
+
+interface QuotaCollectorRow {
+  host: string;
+  collector_tenant: Tenant;
+  collector_alias: string;
+  captured_at: Date;
+  received_at: Date;
+  schema_version: number;
+  app_version: string | null;
+  provider_count: number;
+  window_count: number;
+}
+interface QuotaProviderRow {
+  host: string;
+  provider: string;
+  ok: boolean;
+  available: boolean;
+  kind: string | null;
+  source: string | null;
+  plan: string | null;
+  note: string | null;
+  effective_remaining_percent: string | number | null;
+  observed_at: Date | null;
+  received_at: Date;
+  available_groups: string[];
+  limiting_groups: string[];
+}
+interface QuotaWindowStateRow {
+  host: string;
+  provider: string;
+  group_key: string;
+  window_key: string;
+  label: string | null;
+  used_percent: string | number | null;
+  remaining_percent: string | number | null;
+  used_units: string | number | null;
+  limit_units: string | number | null;
+  window_minutes: number | null;
+  reset_at: Date | null;
+  status: string | null;
+  family: string | null;
+  model: string | null;
+  account_id: string | null;
+  binding_note: string | null;
+  account_label: string | null;
+  account_provider: string | null;
+  payer_tenant_id: Tenant | null;
+  paused_until: Date | null;
+  paused_reason: string | null;
+}
+interface QuotaHistoryRow {
+  host: string;
+  provider: string;
+  group_key: string;
+  window_key: string;
+  bucket: Date;
+  used_percent: string | number | null;
+}
+interface QuotaPausedAccountRow {
+  account_id: string;
+  provider: string;
+  label: string | null;
+  payer_tenant_id: Tenant;
+  paused_until: Date;
+  paused_reason: string | null;
+}
+interface QuotaHistoryPoint {
+  at: string;
+  used_percent: number | null;
+}
+interface QuotaSnapshotWindow {
+  window_key: string;
+  label: string | null;
+  used_percent: number | null;
+  remaining_percent: number | null;
+  used_units: number | null;
+  limit_units: number | null;
+  window_minutes: number | null;
+  reset_at: string | null;
+  reset_in_seconds: number | null;
+  status: string | null;
+  family: string | null;
+  model: string | null;
+  severity: QuotaSeverity;
+  history: { bucket_seconds: number; points: QuotaHistoryPoint[] };
+}
+interface MutableQuotaSnapshotGroup {
+  group_key: string;
+  limit_id: string | null;
+  account_id: string | null;
+  account_label: string | null;
+  account_provider: string | null;
+  payer_tenant_id: Tenant | null;
+  paused_until: string | null;
+  paused_reason: string | null;
+  min_remaining_percent: number | null;
+  severity: QuotaSeverity;
+  windows: QuotaSnapshotWindow[];
+}
+
 export class CauceRepository {
   constructor(private readonly pool: DatabasePool) {}
 
@@ -992,6 +1259,23 @@ export class CauceRepository {
     return targets.rows;
   }
 
+  /**
+   * Reclama trabajo para un consumidor, respetando dos cupos separados.
+   *
+   * `limit` es el cupo general: lo puede ocupar cualquier entrega. `admission.humanReservedLimit`
+   * es un cupo ADICIONAL que sólo puede ocupar una entrega originada por un humano (o por
+   * cualquier cosa que no sea agente-a-agente; ver `isAgentToAgentBody`). Que sea aditivo y no
+   * una porción del general es todo el punto: si el gateway pide `limit=0` porque el agente ya
+   * tiene sus dos tareas largas en vuelo, un mensaje nuevo de una persona TODAVÍA entra por el
+   * cupo reservado, en el mismo tick, sin esperar a que la tarea de 40 minutos termine.
+   *
+   * El desempate lo sigue haciendo el mecanismo que ya existía (`delivery_lane_fairness`), sólo
+   * que su contador pasa a contar rachas de humano en vez de rachas de carril 'interactive'.
+   * Es literalmente la misma columna y el mismo default (3): después de 3 reclamos humanos
+   * seguidos deja pasar uno agente-a-agente, para que el trabajo entre agentes no se muera de
+   * hambre. Como reclamar es un UPDATE de una fila, ese "esperar un turno" cuesta milisegundos:
+   * el humano nunca queda detrás de la DURACIÓN de una tarea, sólo detrás de un reclamo.
+   */
   async claimDeliveries(
     tenantId: Tenant,
     alias: string,
@@ -999,9 +1283,13 @@ export class CauceRepository {
     epoch: number,
     limit = 20,
     ackDeadlineMs = 30_000,
-    interactiveBurst = 3
+    interactiveBurst = 3,
+    admission: DeliveryAdmission = {}
   ): Promise<ClaimedDeliveryEnvelope[]> {
-    if (limit < 1 || ackDeadlineMs <= 0 || interactiveBurst < 1) {
+    const humanReservedLimit = Math.trunc(admission.humanReservedLimit ?? 0);
+    const humanBurst = Math.trunc(admission.humanBurst ?? interactiveBurst);
+    if (limit < 0 || humanReservedLimit < 0 || limit + humanReservedLimit < 1
+      || ackDeadlineMs <= 0 || interactiveBurst < 1 || humanBurst < 1) {
       throw new StoreError('conflict', 'claim limits and deadlines must be positive');
     }
     return withTransaction(this.pool, async (client) => {
@@ -1025,37 +1313,47 @@ export class CauceRepository {
         `SELECT interactive_streak FROM delivery_lane_fairness
          WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [tenantId, alias]
       );
-      let interactiveStreak = fairness.rows[0]?.interactive_streak ?? 0;
+      // Misma columna de siempre; lo que cambió es qué cuenta. Antes contaba reclamos
+      // consecutivos del carril 'interactive'; ahora cuenta reclamos consecutivos de tráfico
+      // humano. El carril dejó de servir como partición porque se hereda literal en cada salto
+      // (row.lane en los tres materializeAgent*), así que una cadena de agentes entera viajaba
+      // en 'interactive' junto con los mensajes de las personas: 2.374 de 2.429 entregas.
+      let humanStreak = fairness.rows[0]?.interactive_streak ?? 0;
       const claimedRows: DeliveryRow[] = [];
+      // Cupo general (cualquier entrega) y cupo reservado (sólo humano). Se cuentan por
+      // separado y el humano gasta PRIMERO el reservado, para no comerse el cupo con el que
+      // el agente pipelinea su trabajo largo.
+      let generalRemaining = Math.min(limit, 100);
+      let humanReservedRemaining = Math.min(humanReservedLimit, 100);
+      const maxClaims = Math.min(generalRemaining + humanReservedRemaining, 100);
 
-      for (let index = 0; index < Math.min(limit, 100); index += 1) {
-        const availability = await client.query<{ interactive: boolean; batch: boolean }>(
-          `SELECT
-             EXISTS(SELECT 1 FROM deliveries d JOIN messages m ON m.id=d.message_id
-                    WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
-                      AND d.status IN ('pending','retry') AND d.available_at<=now()
-                      AND m.lane='interactive') AS interactive,
-             EXISTS(SELECT 1 FROM deliveries d JOIN messages m ON m.id=d.message_id
-                    WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
-                      AND d.status IN ('pending','retry') AND d.available_at<=now()
-                      AND m.lane='batch') AS batch`, [tenantId, alias]
-        );
-        const available = availability.rows[0];
-        if (!available || (!available.interactive && !available.batch)) break;
-        const lane: 'interactive' | 'batch' = available.batch
-          && (!available.interactive || interactiveStreak >= interactiveBurst) ? 'batch' : 'interactive';
+      /**
+       * Reclama exactamente una entrega de la clase pedida, o `undefined` si no hay ninguna
+       * disponible (o si otro worker se la llevó primero: SKIP LOCKED).
+       *
+       * El predicado de clase (`body->>'type'`) NO es indexable y no hay índice que lo vuelva
+       * indexable barato: vive en `messages` y el escaneo lo maneja `deliveries_claim_idx`, que
+       * ya es parcial sobre `status IN ('pending','retry')` y cubre (tenant, alias,
+       * available_at). Por eso el arreglo no fue agregar un índice sino dejar de preguntar dos
+       * veces: la versión anterior corría DOS `EXISTS` de sondeo por cada vuelta de cupo, sobre
+       * la cola entera del alias, antes de reclamar. Con colas de horas —que es lo que reporta
+       * el incidente— eso era el escaneo caro repetido 2·N veces. Ahora se intenta el reclamo
+       * directo, que usa el mismo índice y corta en LIMIT 1.
+       */
+      const claimOne = async (agentToAgent: boolean): Promise<DeliveryRow | undefined> => {
         const claimed = await client.query<DeliveryRow>(
           `WITH picked AS (
              SELECT d.id FROM deliveries d JOIN messages m ON m.id=d.message_id
              WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
-               AND d.status IN ('pending','retry') AND d.available_at<=now() AND m.lane=$5
-             ORDER BY m.priority DESC,d.available_at,d.created_at
+               AND d.status IN ('pending','retry') AND d.available_at<=now()
+               AND (COALESCE(m.body->>'type','') = ANY($5::text[]))=$7::boolean
+             ORDER BY (m.lane='interactive') DESC,m.priority DESC,d.available_at,d.created_at
              FOR UPDATE OF d SKIP LOCKED LIMIT 1
            ), updated AS (
              UPDATE deliveries d SET status='leased',attempt=d.attempt+1,claimed_at=now(),
                claim_token=gen_random_uuid(),ack_deadline_at=now()+$6*interval '1 millisecond',
                claim_expires_at=now()+$6*interval '1 millisecond',consumer_instance_id=$4,
-               consumer_epoch=$3,updated_at=now()
+               consumer_epoch=$3,execution_started_at=NULL,updated_at=now()
              FROM picked p WHERE d.id=p.id RETURNING d.*
            )
            SELECT u.id,u.message_id,u.recipient_tenant,u.recipient_alias,u.status,u.attempt,u.max_attempts,
@@ -1063,16 +1361,58 @@ export class CauceRepository {
                    m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
                    m.auth_session_id,m.auth_channel
            FROM updated u JOIN messages m ON m.id=u.message_id`,
-          [tenantId, alias, epoch, instanceId, lane, ackDeadlineMs]
+          [tenantId, alias, epoch, instanceId, agentToAgentMessageTypes, ackDeadlineMs, agentToAgent]
         );
-        const row = claimed.rows[0];
-        if (!row) continue;
+        return claimed.rows[0];
+      };
+
+      for (let index = 0; index < maxClaims; index += 1) {
+        const humanSlotFree = humanReservedRemaining > 0 || generalRemaining > 0;
+        const agentSlotFree = generalRemaining > 0;
+        if (!humanSlotFree && !agentSlotFree) break;
+        // El humano gana siempre, salvo que ya haya ganado `humanBurst` veces seguidas: ahí
+        // cede exactamente un turno para que el trabajo entre agentes no se muera de hambre.
+        const yieldTurn = humanSlotFree && agentSlotFree && humanStreak >= humanBurst;
+        // `agentToAgent=false` es la clase humana. Con el cupo general agotado y reserva libre
+        // sólo queda la humana; el caso simétrico no existe porque sin cupo general tampoco hay
+        // cupo humano general y ya habríamos cortado arriba.
+        const order: boolean[] = !agentSlotFree
+          ? [false]
+          : yieldTurn ? [true, false] : [false, true];
+
+        let row: DeliveryRow | undefined;
+        let claimedAgentToAgent = false;
+        let yieldedToNobody = false;
+        for (const agentToAgent of order) {
+          row = await claimOne(agentToAgent);
+          if (row !== undefined) {
+            claimedAgentToAgent = agentToAgent;
+            break;
+          }
+          // Cedimos el turno y no había nadie del otro lado esperándolo. La racha se reinicia
+          // acá mismo para no volver a pagar el intento fallido en cada vuelta siguiente.
+          if (agentToAgent && yieldTurn) yieldedToNobody = true;
+        }
+        // Ni una ni otra clase: o la cola está vacía o todo lo disponible está bloqueado por
+        // otro worker, que es lo mismo desde acá — ese trabajo ya lo está tomando alguien.
+        if (row === undefined) break;
+
         claimedRows.push(row);
-        interactiveStreak = lane === 'interactive' ? interactiveStreak + 1 : 0;
+        if (claimedAgentToAgent) {
+          generalRemaining -= 1;
+          humanStreak = 0;
+        } else {
+          if (humanReservedRemaining > 0) humanReservedRemaining -= 1;
+          else generalRemaining -= 1;
+          // Saturado en el umbral, igual que el scheduler de jobs: la columna es un contador
+          // durable y no tiene por qué crecer sin techo cuando un asistente recibe una ráfaga
+          // de mensajes de su dueño y no hay trabajo entre agentes que le dispute el turno.
+          humanStreak = yieldedToNobody ? 1 : Math.min(humanBurst, humanStreak + 1);
+        }
       }
       await client.query(
         `UPDATE delivery_lane_fairness SET interactive_streak=$3,updated_at=now()
-         WHERE tenant_id=$1 AND alias=$2`, [tenantId, alias, interactiveStreak]
+         WHERE tenant_id=$1 AND alias=$2`, [tenantId, alias, humanStreak]
       );
       const routingTargets = includeRoutingTargets
         ? await this.routingTargets(client, tenantId, alias)
@@ -1106,6 +1446,61 @@ export class CauceRepository {
         } : {})
       }));
     });
+  }
+
+  /**
+   * Las garras que HOY siguen ocupando la ventana de ACK de un alias, según la base.
+   *
+   * Existe porque el control de admisión del gateway vivía sólo en la RAM del socket: cada
+   * `hello` creaba un `claims: new Map()` vacío y con eso el cupo entero volvía a estar libre.
+   * Reproducido por el revisor: con el cupo en 1 y tres entregas encoladas, un adaptador que
+   * hace flapping se llevaba una entrega por reconexión. Peor todavía con
+   * `renewable_delivery_claims_v1`, cuya razón de ser es CONSERVAR el lease y la época entre
+   * reconexiones: ahí las garras viejas siguen vivas en la base y el gateway las olvidaba.
+   *
+   * Se consulta por (tenant, alias) y NO por (instance_id, época) a propósito. El recurso que se
+   * está racionando es "cuánto trabajo de este alias tiene el plazo de ACK corriendo", que es
+   * exactamente el número que explotó en el incidente (71 en vuelo). Una garra de una época
+   * anterior que todavía no venció ocupa esa ventana igual, aunque este socket no pueda ACKearla,
+   * y contarla es lo que evita que reconectar multiplique el cupo.
+   *
+   * Sin FOR UPDATE ni FOR SHARE: es una foto para decidir cuánto pedir, y el reclamo real vuelve
+   * a validar todo bajo lock. Tomar filas bajo lock acá sólo agregaría contención con el reaper.
+   */
+  async liveDeliveryClaims(
+    tenantId: Tenant,
+    alias: string,
+    limit = 256
+  ): Promise<LiveDeliveryClaim[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new StoreError('conflict', 'live claim limit must be a positive integer');
+    }
+    const rows = await this.pool.query<{
+      id: string;
+      attempt: number;
+      claim_token: string | null;
+      ack_deadline_at: Date | null;
+      agent_to_agent: boolean;
+    }>(
+      `SELECT d.id,d.attempt,d.claim_token,d.ack_deadline_at,
+              COALESCE(m.body->>'type','') = ANY($3::text[]) AS agent_to_agent
+       FROM deliveries d JOIN messages m ON m.id=d.message_id
+       WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
+         AND d.status IN ('leased','accepted','started')
+         AND d.ack_deadline_at IS NOT NULL AND d.ack_deadline_at>now()
+       ORDER BY d.ack_deadline_at LIMIT $4`,
+      [tenantId, alias, agentToAgentMessageTypes, limit]
+    );
+    return rows.rows
+      .filter((row): row is typeof row & { claim_token: string; ack_deadline_at: Date } =>
+        row.claim_token !== null && row.ack_deadline_at !== null)
+      .map((row) => ({
+        delivery_id: row.id,
+        attempt: row.attempt,
+        claim_token: row.claim_token,
+        ack_deadline_at: row.ack_deadline_at.toISOString(),
+        agent_to_agent: row.agent_to_agent === true
+      }));
   }
 
   async ackDelivery(
@@ -1214,14 +1609,21 @@ export class CauceRepository {
         };
       }
       const rank = ackRank(ack.status);
+      // "El harness arrancó de verdad". Se aplica en las dos ramas de 'started' (la primera y
+      // las renovaciones) porque un adaptador podría mandarla ya en la primera si algún día
+      // reserva el candado antes de ACKear. COALESCE: es el instante del PRIMER arranque del
+      // intento, no el de la última renovación.
+      const executionStarted = ack.status === 'started' && ack.execution_started === true;
       if (ack.status === 'started' && row.status === 'started') {
         await client.query(
           `UPDATE deliveries
            SET ack_deadline_at=now()+$2*interval '1 millisecond',
                claim_expires_at=now()+$2*interval '1 millisecond',
+               execution_started_at=CASE WHEN $3::boolean
+                 THEN COALESCE(execution_started_at,now()) ELSE execution_started_at END,
                updated_at=now()
            WHERE id=$1`,
-          [deliveryId, ackDeadlineMs]
+          [deliveryId, ackDeadlineMs, executionStarted]
         );
         if (!repeatedAck) await this.insertAck(client, row, ack, true, persistedResult);
         await client.query(
@@ -1235,6 +1637,7 @@ export class CauceRepository {
               epoch: ack.epoch,
               attempt: ack.attempt,
               lease_renewed: true,
+              ...(executionStarted ? { execution_started: true } : {}),
               ...(repeatedAck ? { duplicate_replay: true } : {})
             })]
         );
@@ -1287,18 +1690,31 @@ export class CauceRepository {
         }
       }
       const backoffSeconds = Math.min(60, 2 ** Math.max(0, row.attempt - 1));
+      // El PRIMER 'started' ahora también corre el plazo, igual que las renovaciones. Antes no
+      // lo movía y la base seguía contando desde el reclamo mientras el gateway, que sí lo
+      // corre al ver el ACK aplicado, creía el cupo vivo más tiempo del real: las dos vistas de
+      // la misma garra se iban separando por lo que hubiera tardado el arranque. Ahora el
+      // instante de referencia es el mismo hecho (el ACK aplicado) en los dos lados.
       await client.query(
          `UPDATE deliveries SET status=$2,last_ack_rank=$3,last_error=$4,result=$5::jsonb,
             available_at=CASE WHEN $2='retry' THEN now()+$6*interval '1 second' ELSE available_at END,
              claimed_at=CASE WHEN $2='retry' THEN NULL ELSE claimed_at END,
-             claim_expires_at=CASE WHEN $2='retry' THEN NULL ELSE claim_expires_at END,
-             ack_deadline_at=CASE WHEN $2='retry' THEN NULL ELSE ack_deadline_at END,
+             claim_expires_at=CASE WHEN $2='retry' THEN NULL
+                                   WHEN $2='started' THEN now()+$7*interval '1 millisecond'
+                                   ELSE claim_expires_at END,
+             ack_deadline_at=CASE WHEN $2='retry' THEN NULL
+                                  WHEN $2='started' THEN now()+$7*interval '1 millisecond'
+                                  ELSE ack_deadline_at END,
+             execution_started_at=CASE WHEN $2='retry' THEN NULL
+                                       WHEN $8::boolean THEN COALESCE(execution_started_at,now())
+                                       ELSE execution_started_at END,
              claim_token=CASE WHEN $2='retry' THEN NULL ELSE claim_token END,
              consumer_instance_id=CASE WHEN $2='retry' THEN NULL ELSE consumer_instance_id END,
             consumer_epoch=CASE WHEN $2='retry' THEN NULL ELSE consumer_epoch END,
             terminal_at=${terminalAt},updated_at=now() WHERE id=$1`,
         [deliveryId, nextStatus, nextRank, terminalError ?? null,
-          persistedResult ? JSON.stringify(persistedResult) : null, backoffSeconds]
+          persistedResult ? JSON.stringify(persistedResult) : null, backoffSeconds,
+          ackDeadlineMs, executionStarted]
       );
       if (nextStatus === 'retry') {
         await client.query(
@@ -1736,7 +2152,12 @@ export class CauceRepository {
             correlation
           }),
           row.origin ? JSON.stringify(row.origin) : null,
-          row.lane, row.priority,
+          // Deja de heredar `row.lane`. Heredarlo era lo que volvía inútil al carril como
+          // señal: un pedido de una persona nace 'interactive' y toda su descendencia
+          // agente-a-agente lo copiaba, así que la cola del asistente y la cola de trabajo
+          // eran la misma cola. Una delegación es trabajo de fondo por definición; el mensaje
+          // de la persona que la originó ya se atendió (o se está atendiendo) aparte.
+          'batch', row.priority,
           row.auth_session_id ?? `delivery:${row.id}:attempt:${ack.attempt}`,
           row.auth_channel ?? row.origin?.channel ?? 'agent-output'
         ]
@@ -1870,8 +2291,13 @@ export class CauceRepository {
     // The response must be materialized in the correct room of the recipient agent,
     // NOT in the room of the message sender (which may be cross-tenant).
     // Verify the recipient has exactly one enabled membership to avoid cross-tenant routing errors.
-    const sourceMembership = await client.query<{ room_id: string; count: string }>(
-      `SELECT membership.room_id, COUNT(*) OVER () AS count
+    // PostgreSQL rechaza FOR SHARE junto a una funcion de ventana: "FOR SHARE is not allowed
+    // with window functions". Con COUNT(*) OVER () esta consulta abortaba la transaccion del
+    // reaper en CADA tick (99.241 fallos en 24 h el 2026-07-26, flota entera sin timeouts ni DLQ).
+    // El conteo que hace falta es exactamente el numero de filas, asi que se cuenta con rowCount
+    // y el bloqueo FOR SHARE se conserva intacto.
+    const sourceMembership = await client.query<{ room_id: string }>(
+      `SELECT membership.room_id
        FROM memberships membership
        JOIN role_policies policy ON policy.role=membership.role
        JOIN tenants tenant ON tenant.id=membership.tenant_id
@@ -1881,7 +2307,7 @@ export class CauceRepository {
        FOR SHARE OF membership,policy,tenant,room`,
       [row.recipient_tenant, row.recipient_alias]
     );
-    const membershipCount = parseInt(sourceMembership.rows[0]?.count ?? '0', 10);
+    const membershipCount = sourceMembership.rowCount ?? 0;
     if (membershipCount !== 1) {
       // Zero memberships means recipient is disabled/deleted; >1 means ambiguous identity.
       // Reject materialization to avoid silent cross-tenant routing errors.
@@ -1972,7 +2398,9 @@ export class CauceRepository {
           correlation
         }),
         row.origin ? JSON.stringify(row.origin) : null,
-        row.lane,
+        // Mismo criterio que materializeAgentOutputs: el retorno de una delegación es tráfico
+        // entre agentes, no la conversación de la persona. Va al carril de fondo.
+        'batch',
         row.priority,
         row.auth_session_id ?? `delivery:${row.id}:attempt:${attempt}`,
         row.auth_channel ?? row.origin?.channel ?? 'agent-response'
@@ -2420,7 +2848,8 @@ export class CauceRepository {
         rootRow.recipient_alias,
         JSON.stringify(faninBodyPayload),
         rootRow.origin ? JSON.stringify(rootRow.origin) : null,
-        rootRow.lane,
+        // La síntesis de fan-in también es tráfico interno de la cadena.
+        'batch',
         rootRow.priority,
         rootRow.auth_session_id ?? `fanin:${rootMessageId}`,
         rootRow.auth_channel ?? rootRow.origin?.channel ?? 'agent-fanin'
@@ -3051,32 +3480,96 @@ export class CauceRepository {
     );
   }
 
-  async retryStaleDeliveries(staleMs: number, limit = 100): Promise<{ retried: number; dead: number }> {
+  /**
+   * Recolecta las garras vencidas. Distingue dos casos que antes se trataban igual y por eso
+   * el bus pagaba el trabajo dos veces:
+   *
+   *  (a) La entrega NO CONSTA que haya arrancado: `execution_started_at IS NULL`.
+   *      Reintentar es correcto: no hay evidencia de que se haya gastado nada.
+   *  (b) La entrega SÍ arrancó: el adaptador ACKeó `execution_started` y la base guardó el
+   *      instante. El agente estuvo trabajando, muy probablemente terminó, y lo único que se
+   *      perdió fue el ACK final. Reintentar acá significa volver a pagar una corrida entera de
+   *      un modelo de suscripción. Medido el 2026-07-27: en los agentes con harness codex, 2.240
+   *      corridas para 1.312 entregas — 71% de desperdicio — y eso agotó la cuota SEMANAL de una
+   *      cuenta ChatGPT Pro en 5 horas.
+   *
+   * La señal NO es el ACK 'started' a secas, y la diferencia no es teórica: la versión anterior
+   * de este método usaba `EXISTS(... status='started' AND applied)` con el argumento de que "un
+   * started prueba ejecución". Es falso. `AdapterEngine.handleDelivery` emite 'started' ANTES de
+   * llamar al harness, y entre medio la entrega puede quedarse esperando el candado de sesión —
+   * renovando cada 60 s— sin haber ejecutado nada. Con dos entregas de la misma conversación,
+   * la segunda emitía 'started', esperaba a la primera 40 minutos y, si vencía el plazo, era
+   * declarada "ya ejecutada" y mandada a dead: trabajo del usuario perdido sin haber corrido
+   * jamás. Por eso hizo falta una marca nueva, que el SDK emite DESPUÉS de obtener la reserva y
+   * justo antes de invocar al harness.
+   *
+   * El tratamiento de (b) es marcarla `dead` con un motivo propio y dejarla en `dead_letters`.
+   * Se eligió `dead` en vez de inventar un estado nuevo porque toda la maquinaria de revisión
+   * manual ya existe y apunta ahí: `replayDelivery` exige exactamente `status='dead'` + fila en
+   * `dead_letters`, la consola ya lista los dead letters, y `queueSnapshot` ya los cuenta.
+   * Un estado nuevo habría pedido migración, ampliar el CHECK de `deliveries.status` y tocar
+   * cada consumidor de ese enum, para terminar reimplementando el mismo botón de replay.
+   *
+   * Sigue avisando: materializa la respuesta al padre y el relay al origen igual que el camino
+   * `dead` de siempre, así el humano ve "esto quedó a medias" en vez de silencio, que es el
+   * otro reclamo del dueño del sistema.
+   *
+   * Un adaptador viejo que no emite la marca nunca cae en (b): se reintenta como siempre. Es la
+   * degradación correcta —cara, no destructiva— y hace que el despliegue no tenga que ser en
+   * lock-step con la flota.
+   *
+   * `policy.retryStartedDeliveries` restaura el comportamiento viejo (reintentar a ciegas) si
+   * alguna vez hiciera falta, sin redeploy de código.
+   */
+  async retryStaleDeliveries(
+    staleMs: number,
+    limit = 100,
+    policy: StaleDeliveryPolicy = {}
+  ): Promise<{ retried: number; dead: number }> {
+    const retryStartedDeliveries = policy.retryStartedDeliveries === true;
     return withTransaction(this.pool, async (client) => {
-      const rows = await client.query<DeliveryRow>(
+      // `execution_started` es una columna de la propia fila, no una subconsulta y muchísimo
+      // menos una función de ventana: este SELECT lleva `FOR UPDATE OF d` y PostgreSQL rechaza
+      // al PARSEAR cualquier consulta que combine FOR UPDATE/FOR SHARE con una función de
+      // ventana. Ya pasó una vez y dejó a la flota con los agentes vivos y las entregas muertas,
+      // porque el reaper fallaba entero en cada tick.
+      const rows = await client.query<DeliveryRow & { execution_started: boolean }>(
         `SELECT d.id,d.message_id,d.recipient_tenant,d.recipient_alias,d.status,d.attempt,d.max_attempts,
                 d.last_ack_rank,d.consumer_instance_id,d.consumer_epoch,d.claim_token,d.ack_deadline_at,
                  m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
-                 m.auth_session_id,m.auth_channel
+                 m.auth_session_id,m.auth_channel,
+                 (d.execution_started_at IS NOT NULL) AS execution_started
           FROM deliveries d JOIN messages m ON m.id=d.message_id
           WHERE d.status IN ('leased','accepted','started')
             AND ($1=0 OR COALESCE(d.ack_deadline_at,d.claim_expires_at,
                                   d.claimed_at+$1*interval '1 millisecond') <= now())
          ORDER BY d.claimed_at FOR UPDATE OF d SKIP LOCKED LIMIT $2`, [staleMs, limit]
       );
-      const policy = await this.loadChainPolicy(client);
+      const chainPolicy = await this.loadChainPolicy(client);
       let retried = 0;
       let dead = 0;
       for (const row of rows.rows) {
-        if (row.attempt >= row.max_attempts) {
+        // El adaptador confirmó que el harness ARRANCÓ: obtuvo la reserva de sesión y estaba a
+        // punto de invocarlo. Sólo con esa marca se retiene; "admitida y esperando el candado"
+        // no cuenta y se reintenta como siempre.
+        const heldForReview = row.execution_started && !retryStartedDeliveries;
+        const attemptsExhausted = row.attempt >= row.max_attempts;
+        if (attemptsExhausted || heldForReview) {
+          // Cuando arrancó, ese es el motivo que le sirve al operador: le dice que la corrida
+          // pudo haber terminado y que reencolar cuesta plata. El de intentos agotados es
+          // secundario.
+          const reason = heldForReview
+            ? 'ACK timeout: execution already started; held for manual replay'
+            : 'ACK timeout: max attempts exhausted';
           await client.query(
-            `UPDATE deliveries SET status='dead',terminal_at=now(),last_error='ACK timeout: max attempts exhausted',updated_at=now()
-             WHERE id=$1`, [row.id]
+            `UPDATE deliveries SET status='dead',terminal_at=now(),last_error=$2,updated_at=now()
+             WHERE id=$1`, [row.id, reason]
           );
           await client.query(
             `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
-             VALUES($1,$2,'ACK timeout: max attempts exhausted',$3::jsonb,$4)
-             ON CONFLICT(delivery_id) DO NOTHING`, [row.id, row.recipient_tenant, JSON.stringify(row.body), row.attempt]
+             VALUES($1,$2,$5,$3::jsonb,$4)
+             ON CONFLICT(delivery_id) DO NOTHING`,
+            [row.id, row.recipient_tenant, JSON.stringify(row.body), row.attempt, reason]
           );
           let responseDisposition: AgentResponseDisposition = 'not_child';
           try {
@@ -3085,12 +3578,12 @@ export class CauceRepository {
               row,
               row.attempt,
               'dead',
-              policy,
+              chainPolicy,
               undefined,
-              'ACK timeout: max attempts exhausted'
+              reason
             );
           } catch (error) {
-            // Delivery already transitioned to dead above (line 3072-3080).
+            // Delivery already transitioned to dead above.
             // If materialization fails (e.g., recipient membership issue in cross-tenant case),
             // log and continue. This prevents a single bad delivery from crashing the entire
             // reaper tick, which would block cleanup of all other alias deliveries.
@@ -3105,24 +3598,47 @@ export class CauceRepository {
           const fanin = await this.materializeAgentFanin(client, this.rootMessageId(row));
           if (responseDisposition === 'not_child'
             && (row.body.type === 'agent.fanin' || !fanin.hasFanout)) {
-            await this.insertOriginRelay(client, row, 'dead', {
-              error: 'ACK timeout: max attempts exhausted'
-            });
+            await this.insertOriginRelay(client, row, 'dead', { error: reason });
+          }
+          // Auditoría separada sólo para el caso nuevo: sin esto, "no se reintentó" y "se
+          // reintentó tres veces y murió" quedan indistinguibles en el histórico, y no hay
+          // forma de medir cuánta cuota ahorró el cambio.
+          if (heldForReview) {
+            await client.query(
+              `INSERT INTO audit_events(
+                 tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+               ) VALUES($1,$2,'delivery.ack_timeout','deny',$3,$4,$5,$6,$7::jsonb)`,
+              [row.recipient_tenant, row.recipient_alias, row.request_id, row.message_id, row.id,
+                row.trace_id, JSON.stringify({
+                  reason: 'execution_already_started',
+                  attempt: row.attempt,
+                  max_attempts: row.max_attempts,
+                  attempts_exhausted: attemptsExhausted,
+                  held_for_manual_replay: true
+                })]
+            );
           }
           dead += 1;
         } else {
+          // Reintento legítimo: nunca arrancó. Aun así se espacia, porque `available_at=now()`
+          // devolvía la entrega al mismo agente en el tick siguiente y realimentaba el mismo
+          // bucle que la mató.
+          const backoffSeconds = timeoutRetryBackoffSeconds(row.attempt);
           await client.query(
             `UPDATE deliveries SET status='retry',last_ack_rank=0,claimed_at=NULL,claim_expires_at=NULL,
               ack_deadline_at=NULL,claim_token=NULL,consumer_instance_id=NULL,consumer_epoch=NULL,
-              available_at=now(),last_error='ACK timeout',updated_at=now() WHERE id=$1`, [row.id]
+              execution_started_at=NULL,
+              available_at=now()+$2*interval '1 second',last_error='ACK timeout',updated_at=now()
+             WHERE id=$1`, [row.id, backoffSeconds]
           );
           await client.query(
-            `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
-             VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)
+            `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload,available_at)
+             VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,now()+$9*interval '1 second')
              ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
             [row.recipient_tenant, `wake-timeout:${row.id}:${row.attempt}`, row.request_id, row.message_id,
               row.id, row.trace_id, row.origin ? JSON.stringify(row.origin) : null,
-              JSON.stringify({ recipient_alias: row.recipient_alias, reason: 'delivery_available' })]
+              JSON.stringify({ recipient_alias: row.recipient_alias, reason: 'delivery_available' }),
+              backoffSeconds]
           );
           retried += 1;
         }
@@ -4587,5 +5103,553 @@ export class CauceRepository {
        ORDER BY audit.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
     );
     return { items: result.rows };
+  }
+
+  /**
+   * Actividad en vuelo de toda la flota visible para el actor, agregada por alias. Es la mitad
+   * "qué está trabajando cada agente ahora" del panel pedido; la otra mitad (consumo de cuota)
+   * vive en quotaSnapshot() con su propio observed_at porque las dos frescuras son
+   * incomparables -- ésta es de hace milisegundos, la de cuota es una muestra fuera de banda de
+   * hace minutos.
+   *
+   * Self-contained como topology()/listAgents(): valida el permiso acá mismo, así que la ruta
+   * sólo necesita el chequeo de rol+permiso sobre el Principal (requireOperatorPermission).
+   *
+   * FLEET_ACTIVITY_QUERY es sólo lectura, sin locks y sin funciones de ventana a propósito
+   * (ver el comentario en fleet-activity.ts): un panel quiere una foto, no una que congele el
+   * despacho mientras la saca, y Postgres rechaza al parsear cualquier combinación de
+   * FOR SHARE/FOR UPDATE con funciones de ventana.
+   */
+  async fleetActivity(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    const thresholds = DEFAULT_FLEET_ACTIVITY_THRESHOLDS;
+    const result = await this.pool.query<Record<string, unknown>>(FLEET_ACTIVITY_QUERY, [
+      actorTenant, thresholds.ack_recent_seconds, thresholds.ack_lookback_seconds, thresholds.items_per_agent
+    ]);
+
+    const agents = result.rows.map((row) => {
+      // lease_online sale de `(lease.lease_until > now())`: NULL cuando el LEFT JOIN no
+      // encontró ninguna fila de lease (nunca se conectó), no cuando el lease está vencido.
+      const leaseOnline = row.lease_online === null || row.lease_online === undefined
+        ? null : row.lease_online === true;
+      // NULL acá es "ningún ACK aplicado dentro de la ventana de búsqueda", la señal MÁS grave;
+      // Number(null) daría 0 y lo pintaría como recién ackeado, exactamente al revés.
+      const secondsSinceLastAck = row.seconds_since_last_ack === null || row.seconds_since_last_ack === undefined
+        ? null : Number(row.seconds_since_last_ack);
+      const inFlight = Number(row.in_flight ?? 0);
+      const queued = Number(row.queued ?? 0);
+      const overdueInFlight = Number(row.overdue_in_flight ?? 0);
+      const registered = row.registered === true;
+
+      const { work_state, flags } = agentWorkState(
+        { registered, in_flight: inFlight, queued, overdue_in_flight: overdueInFlight, seconds_since_last_ack: secondsSinceLastAck, lease_online: leaseOnline },
+        thresholds
+      );
+
+      return {
+        tenant_id: row.tenant_id,
+        alias: row.alias,
+        display_name: row.display_name ?? null,
+        harness_id: row.harness_id ?? null,
+        registered,
+        agent_enabled: row.agent_enabled === true,
+        presence: {
+          online: leaseOnline,
+          instance_id: row.instance_id ?? null,
+          // bigint: el driver de pg lo devuelve como string; el resto de este archivo ya
+          // convierte epoch de la misma forma (ver acquireLease/heartbeat más arriba).
+          epoch: row.epoch === null || row.epoch === undefined ? null : Number(row.epoch),
+          last_heartbeat_at: row.last_heartbeat_at ?? null,
+          lease_until: row.lease_until ?? null
+        },
+        work_state,
+        flags,
+        in_flight: inFlight,
+        started: Number(row.started ?? 0),
+        claimed_not_started: Number(row.claimed_not_started ?? 0),
+        queued,
+        queued_ready: Number(row.queued_ready ?? 0),
+        retrying: Number(row.retrying ?? 0),
+        overdue_in_flight: overdueInFlight,
+        oldest_claimed_at: row.oldest_claimed_at ?? null,
+        oldest_in_flight_seconds: row.oldest_in_flight_seconds === null || row.oldest_in_flight_seconds === undefined
+          ? null : Number(row.oldest_in_flight_seconds),
+        nearest_ack_deadline_at: row.nearest_ack_deadline_at ?? null,
+        max_attempt: row.max_attempt === null || row.max_attempt === undefined ? null : Number(row.max_attempt),
+        last_ack_at: row.last_ack_at ?? null,
+        seconds_since_last_ack: secondsSinceLastAck,
+        acks_recent: Number(row.acks_recent ?? 0),
+        in_flight_items_truncated: row.in_flight_items_truncated === true,
+        in_flight_items: Array.isArray(row.in_flight_items) ? row.in_flight_items : []
+      };
+    });
+
+    const byState = Object.fromEntries(FLEET_WORK_STATES.map((state) => [state, 0])) as Record<FleetWorkState, number>;
+    const flagged = Object.fromEntries(FLEET_ACTIVITY_FLAGS.map((flag) => [flag, 0])) as Record<FleetActivityFlag, number>;
+    const totals = agents.reduce((acc, agent) => {
+      acc.agents += 1;
+      byState[agent.work_state] += 1;
+      for (const flag of agent.flags) flagged[flag] += 1;
+      acc.in_flight += agent.in_flight;
+      acc.queued += agent.queued;
+      acc.retrying += agent.retrying;
+      acc.overdue_in_flight += agent.overdue_in_flight;
+      return acc;
+    }, { agents: 0, in_flight: 0, queued: 0, retrying: 0, overdue_in_flight: 0 });
+
+    return {
+      observed_at: new Date().toISOString(),
+      thresholds,
+      totals: { ...totals, by_state: byState, flagged },
+      agents
+    };
+  }
+
+  /**
+   * Último estado de cuota por (host, proveedor, grupo/cuenta, ventana) más su sparkline de 24h.
+   * Self-contained como topology(): valida el permiso acá mismo.
+   *
+   * Alcance cross-tenant: las tablas de cuota no tienen tenant_id propio -- lo que existe es
+   * `quota_collections.collector_tenant` (la identidad mTLS que publicó, ej.
+   * 'Steven:quota-collector'). Se resuelve igual que topology()/fleetActivity() (tenant propio +
+   * acl_edges allow_read) para decidir qué TENANTS puede ver el actor, y de ahí se deriva qué
+   * HOSTS son visibles (todo host cuya última corrida fue publicada por un tenant visible);
+   * `quota_provider_reports`/`quota_window_samples`/`quota_window_state` no tienen
+   * collector_tenant propio, así que se filtran por host, que es la clave natural compartida.
+   *
+   * NUNCA selecciona external_account_id/credential_ref/credential_ref_kind de
+   * provider_accounts: no están en el shape de salida en ningún lado de este método.
+   */
+  async quotaSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    const observedAt = new Date();
+
+    const visibleTenants = await this.pool.query<{ id: Tenant }>(
+      `SELECT t.id FROM tenants t WHERE t.id=$1 OR EXISTS (
+         SELECT 1 FROM acl_edges a WHERE a.from_tenant=$1 AND a.to_tenant=t.id
+           AND a.enabled AND a.allow_read
+       ) ORDER BY t.id`,
+      [actorTenant]
+    );
+    // El aislamiento es por TENANT, nunca por el nombre de host: `host` es una cadena que declara
+    // el propio recolector, asi que dos tenants que usen el mismo nombre compartirian panel. Se
+    // conserva `visibleHosts` para las lecturas de tablas que aun no llevan el tenant (el historico
+    // se acota ademas por su collection), pero el filtro que MANDA es el de tenant.
+    const visibleTenantIds = visibleTenants.rows.map((row) => row.id);
+    const visibleHostsResult = await this.pool.query<{ host: string }>(
+      `SELECT DISTINCT host FROM quota_collections
+       WHERE collector_tenant = ANY($1::text[])
+       ORDER BY host`,
+      [visibleTenantIds]
+    );
+    const visibleHosts = visibleHostsResult.rows.map((row) => row.host);
+
+    const [collectorRows, providerRows, stateRows, historyRows, pausedRows] = await Promise.all([
+      // El último quota_collections de cada host visible: es el que responde "¿el recolector
+      // sigue vivo?" (collectors[].stale se calcula contra received_at, reloj del servidor).
+      this.pool.query<QuotaCollectorRow>(
+        `SELECT DISTINCT ON (host)
+           host,collector_tenant,collector_alias,captured_at,received_at,
+           schema_version,app_version,provider_count,window_count
+         FROM quota_collections
+         WHERE host = ANY($1::text[])
+         ORDER BY host,received_at DESC`,
+        [visibleHosts]
+      ),
+      // El último reporte de proveedor por (host,provider), entre las collections visibles de
+      // ese host -- ok=false con cero ventanas es información y tiene que sobrevivir acá.
+      this.pool.query<QuotaProviderRow>(
+        `SELECT DISTINCT ON (qc.host,pr.provider)
+           qc.host,pr.provider,pr.ok,pr.available,pr.kind,pr.source,pr.plan,
+           pr.note,pr.effective_remaining_percent,pr.observed_at,
+           qc.received_at,pr.available_groups,pr.limiting_groups
+         FROM quota_provider_reports pr
+         JOIN quota_collections qc ON qc.id=pr.collection_id
+         WHERE qc.host = ANY($1::text[])
+         ORDER BY qc.host,pr.provider,qc.received_at DESC`,
+        [visibleHosts]
+      ),
+      // El estado ACTUAL materializado de cada ventana -- la tabla que existe justamente para
+      // que este endpoint no tenga que escanear el histórico en cada lectura.
+      this.pool.query<QuotaWindowStateRow>(
+        `SELECT s.host,s.provider,s.group_key,s.window_key,s.label,
+                s.used_percent,s.remaining_percent,s.used_units,s.limit_units,
+                s.window_minutes,s.reset_at,s.status,s.family,s.model,
+                s.account_id,s.binding_note,
+                p.label AS account_label,p.provider AS account_provider,
+                p.payer_tenant_id,p.paused_until,p.paused_reason
+         FROM quota_window_state s
+         LEFT JOIN provider_accounts p ON p.id=s.account_id
+         WHERE s.collector_tenant = ANY($1::text[])
+         ORDER BY s.host,s.provider,s.group_key,s.window_key`,
+        [visibleTenantIds]
+      ),
+      // Sparkline: 24h en cubetas de 30min, último valor observado por cubeta. DISTINCT ON no es
+      // una función de ventana -- no hay ningún FOR SHARE/FOR UPDATE en este método de cualquier
+      // forma (es de sólo lectura), pero queda documentado porque es la misma familia de
+      // consulta que fleetActivity().
+      this.pool.query<QuotaHistoryRow>(
+        `WITH bucketed AS (
+           SELECT host,provider,group_key,window_key,
+                  to_timestamp(floor(extract(epoch FROM captured_at)/$2::double precision)*$2::double precision) AS bucket,
+                  captured_at,used_percent
+             FROM quota_window_samples
+            WHERE collection_id IN (SELECT id FROM quota_collections WHERE collector_tenant = ANY($1::text[]))
+              AND captured_at >= $3::timestamptz - ($4::double precision * interval '1 second')
+         ), sampled AS (
+           SELECT DISTINCT ON (host,provider,group_key,window_key,bucket)
+                  host,provider,group_key,window_key,bucket,used_percent
+             FROM bucketed
+            ORDER BY host,provider,group_key,window_key,bucket,captured_at DESC
+         )
+         SELECT host,provider,group_key,window_key,bucket,used_percent
+           FROM sampled
+          ORDER BY host,provider,group_key,window_key,bucket`,
+        [visibleTenantIds, DEFAULT_QUOTA_THRESHOLDS.history_bucket_seconds, observedAt, DEFAULT_QUOTA_THRESHOLDS.history_window_seconds]
+      ),
+      // Suscripciones actualmente pausadas cuyo estado de cuota vive en un host visible. No hay
+      // redacción de tenant acá: label/provider/payer_tenant_id no son el secreto, el secreto es
+      // external_account_id/credential_ref, que este método nunca toca.
+      this.pool.query<QuotaPausedAccountRow>(
+        `SELECT p.id AS account_id,p.provider,p.label,p.payer_tenant_id,p.paused_until,p.paused_reason
+           FROM provider_accounts p
+          WHERE p.paused_until > $2::timestamptz
+            AND EXISTS (SELECT 1 FROM quota_window_state s
+                          WHERE s.account_id=p.id AND s.collector_tenant = ANY($1::text[]))
+          ORDER BY p.provider,p.id`,
+        [visibleTenantIds, observedAt]
+      )
+    ]);
+
+    const historyByWindow = new Map<string, QuotaHistoryPoint[]>();
+    for (const row of historyRows.rows) {
+      const key = JSON.stringify([row.host, row.provider, row.group_key, row.window_key]);
+      const points = historyByWindow.get(key) ?? [];
+      points.push({ at: row.bucket.toISOString(), used_percent: row.used_percent === null ? null : Number(row.used_percent) });
+      historyByWindow.set(key, points);
+    }
+
+    const groupsByProvider = new Map<string, Map<string, MutableQuotaSnapshotGroup>>();
+    const unboundGroups = new Map<string, QuotaSampleUnboundGroup>();
+    const noAccountDetail = 'El recolector no mandó account_id para este grupo: la muestra se guarda pero no puede pausar ninguna suscripción.';
+    const unknownAccountDetail = 'El recolector mandó un account_id desconocido para este grupo: la muestra se guarda sin vincular y no puede pausar ninguna suscripción.';
+
+    for (const row of stateRows.rows) {
+      const providerKey = JSON.stringify([row.host, row.provider]);
+      const providerGroups = groupsByProvider.get(providerKey) ?? new Map<string, MutableQuotaSnapshotGroup>();
+      let group = providerGroups.get(row.group_key);
+      if (!group) {
+        group = {
+          group_key: row.group_key,
+          limit_id: row.group_key === 'default' ? null : row.group_key,
+          account_id: null, account_label: null, account_provider: null, payer_tenant_id: null,
+          paused_until: null, paused_reason: null, min_remaining_percent: null,
+          severity: 'unknown', windows: []
+        };
+        providerGroups.set(row.group_key, group);
+        groupsByProvider.set(providerKey, providerGroups);
+      }
+      if (group.account_id === null && row.account_id !== null) {
+        group.account_id = row.account_id;
+        group.account_label = row.account_label;
+        group.account_provider = row.account_provider;
+        group.payer_tenant_id = row.payer_tenant_id;
+        group.paused_until = row.paused_until?.toISOString() ?? null;
+        group.paused_reason = row.paused_reason;
+      }
+
+      const remainingPercent = row.remaining_percent === null ? null : Number(row.remaining_percent);
+      const severity = windowSeverity(remainingPercent, row.status, DEFAULT_QUOTA_THRESHOLDS);
+      const historyKey = JSON.stringify([row.host, row.provider, row.group_key, row.window_key]);
+      const points = historyByWindow.get(historyKey) ?? [];
+
+      group.windows.push({
+        window_key: row.window_key,
+        label: row.label,
+        used_percent: row.used_percent === null ? null : Number(row.used_percent),
+        remaining_percent: remainingPercent,
+        used_units: row.used_units === null ? null : Number(row.used_units),
+        limit_units: row.limit_units === null ? null : Number(row.limit_units),
+        window_minutes: row.window_minutes === null ? null : Number(row.window_minutes),
+        reset_at: row.reset_at?.toISOString() ?? null,
+        // Math.max(0, ...): un reset_at que ya pasó (el recolector todavía no volvió a
+        // muestrear esa ventana) no puede mostrar una cuenta regresiva negativa.
+        reset_in_seconds: row.reset_at === null ? null : Math.max(0, Math.round((row.reset_at.getTime() - observedAt.getTime()) / 1_000)),
+        status: row.status, family: row.family, model: row.model,
+        severity,
+        history: { bucket_seconds: DEFAULT_QUOTA_THRESHOLDS.history_bucket_seconds, points: points.slice(-DEFAULT_QUOTA_THRESHOLDS.history_max_points) }
+      });
+      group.severity = worstQuotaSeverity([group.severity, severity]);
+      if (remainingPercent !== null && (group.min_remaining_percent === null || remainingPercent < group.min_remaining_percent)) {
+        group.min_remaining_percent = remainingPercent;
+      }
+
+      if (row.account_id === null) {
+        const unboundKey = JSON.stringify([row.host, row.provider, row.group_key]);
+        // La tabla sólo guarda account_id NULL para los dos motivos ("nunca lo mandaron" y
+        // "mandaron uno que no existe"); el binding_note con el marcador estable es la única
+        // señal que sobrevive para distinguirlos en la lectura (ver unknownAccountBindingNote).
+        const reason: QuotaSampleUnboundGroup['reason'] =
+          row.binding_note?.startsWith(UNKNOWN_ACCOUNT_BINDING_PREFIX) === true ? 'unknown_account_id' : 'no_account_id_supplied';
+        const existing = unboundGroups.get(unboundKey);
+        if (existing) {
+          existing.window_count += 1;
+          if (reason === 'unknown_account_id') { existing.reason = reason; existing.detail = unknownAccountDetail; }
+        } else {
+          unboundGroups.set(unboundKey, {
+            host: row.host, provider: row.provider, group_key: row.group_key, window_count: 1,
+            reason, detail: reason === 'unknown_account_id' ? unknownAccountDetail : noAccountDetail
+          });
+        }
+      }
+    }
+
+    const collectors = collectorRows.rows.map((row) => {
+      const ageSeconds = Math.max(0, Math.round((observedAt.getTime() - row.received_at.getTime()) / 1_000));
+      return {
+        host: row.host, collector_tenant: row.collector_tenant, collector_alias: row.collector_alias,
+        captured_at: row.captured_at.toISOString(), received_at: row.received_at.toISOString(),
+        age_seconds: ageSeconds, stale: ageSeconds > DEFAULT_QUOTA_THRESHOLDS.stale_after_seconds,
+        schema_version: Number(row.schema_version), app_version: row.app_version,
+        provider_count: Number(row.provider_count), window_count: Number(row.window_count)
+      };
+    });
+
+    const providers = providerRows.rows.map((row) => {
+      const providerKey = JSON.stringify([row.host, row.provider]);
+      const groups = [...(groupsByProvider.get(providerKey)?.values() ?? [])];
+      return {
+        host: row.host, provider: row.provider, ok: row.ok, available: row.available,
+        kind: row.kind, source: row.source, plan: row.plan, note: row.note,
+        effective_remaining_percent: row.effective_remaining_percent === null ? null : Number(row.effective_remaining_percent),
+        observed_at: row.observed_at?.toISOString() ?? null,
+        age_seconds: Math.max(0, Math.round((observedAt.getTime() - row.received_at.getTime()) / 1_000)),
+        available_groups: row.available_groups, limiting_groups: row.limiting_groups,
+        severity: worstQuotaSeverity(groups.map((group) => group.severity)),
+        groups
+      };
+    });
+
+    return {
+      observed_at: observedAt.toISOString(),
+      thresholds: DEFAULT_QUOTA_THRESHOLDS,
+      collectors,
+      providers,
+      unbound_groups: [...unboundGroups.values()],
+      paused_accounts: pausedRows.rows.map((row) => ({
+        account_id: row.account_id, provider: row.provider, label: row.label,
+        payer_tenant_id: row.payer_tenant_id, paused_until: row.paused_until.toISOString(),
+        paused_reason: row.paused_reason, automatic: row.paused_reason?.startsWith('quota_exhausted:') ?? false
+      }))
+    };
+  }
+
+  /**
+   * Ingesta de una corrida del recolector de cuotas (POST /v3/quotas/samples). NO autochequea
+   * permiso -- lo hace la ruta antes de llamar acá, mismo patrón que enqueueJob(). actorTenant/
+   * actorAlias son la identidad mTLS AUTENTICADA (nunca el cuerpo) y se graban como
+   * collector_tenant/collector_alias: estas filas pueden pausar suscripciones pagas, así que
+   * tiene que quedar registrado quién publicó la muestra que cortó el despacho.
+   *
+   * Todo en UNA transacción: colisión de (host,captured_at) => 202 duplicate=true sin escribir
+   * nada más: el recolector puede reintentar sin miedo a duplicar la serie.
+   */
+  async recordQuotaSample(actorTenant: Tenant, actorAlias: string, sample: QuotaSampleRequest): Promise<QuotaSampleIngestResult> {
+    // Chequeo síncrono ANTES de tocar la base: un schema_version que esta versión del gateway no
+    // entiende no se mapea a ciegas -- eso es exactamente cómo una muestra mal leída dispara la
+    // auto-pausa de una suscripción sana.
+    if (!(SUPPORTED_QUOTA_SCHEMA_VERSIONS as readonly number[]).includes(sample.schema_version)) {
+      throw new StoreError('invalid_input', `unsupported quota schema_version: ${sample.schema_version}`);
+    }
+
+    const providerCount = sample.providers.length;
+    const windowCount = sample.providers.reduce((count, provider) => count + provider.windows.length, 0);
+
+    return withTransaction(this.pool, async (client) => {
+      const insertedCollection = await client.query<{ id: string }>(
+        `INSERT INTO quota_collections(host,collector_tenant,collector_alias,captured_at,schema_version,app_version,provider_count,window_count)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (host,captured_at) DO NOTHING
+         RETURNING id`,
+        [sample.host, actorTenant, actorAlias, sample.captured_at, sample.schema_version, sample.app_version ?? null, providerCount, windowCount]
+      );
+      const collectionId = insertedCollection.rows[0]?.id;
+      if (!collectionId) {
+        // Colisión con UNIQUE(host,captured_at): un reintento de red del mismo recolector. Se
+        // recupera el id existente para que la respuesta siga siendo útil, y no se escribe nada.
+        const existingCollection = await client.query<{ id: string }>(
+          `SELECT id FROM quota_collections WHERE host=$1 AND captured_at=$2`,
+          [sample.host, sample.captured_at]
+        );
+        const existingId = existingCollection.rows[0]?.id;
+        if (!existingId) throw new StoreError('conflict', 'duplicate quota collection vanished mid-transaction');
+        return {
+          collection_id: existingId, host: sample.host, captured_at: sample.captured_at, duplicate: true,
+          accepted_providers: 0, accepted_windows: 0,
+          unbound_groups: [], paused_accounts: [], resumed_accounts: [], pruned_collections: 0
+        };
+      }
+
+      // account_id lo manda el RECOLECTOR, nunca lo adivina el gateway (ver migración 013). Se
+      // pre-valida contra provider_accounts ACÁ, antes de insertar nada, porque insertar contra
+      // un account_id inexistente rompería la FK y abortaría TODA la transacción -- justo lo que
+      // "un account_id desconocido no tira el POST" prohíbe.
+      const suppliedAccountIds = new Set<string>();
+      for (const provider of sample.providers) {
+        for (const window of provider.windows) {
+          if (window.account_id !== null && window.account_id !== undefined) suppliedAccountIds.add(window.account_id);
+        }
+      }
+      // …y se exige ADEMAS que la cuenta la pague EL TENANT QUE PUBLICA. Sin este filtro, un
+      // operador de otro tenant podia declarar el account_id ajeno y, via la auto-pausa por cuota
+      // agotada, dejar sin despacho a los agentes de un tenant que no es el suyo: un POST bien
+      // formado apagaba la flota de otro. La cuenta desconocida YA no rompe el POST (se guarda sin
+      // vincular), asi que la ajena toma exactamente ese mismo camino: se guarda la muestra, no se
+      // vincula, y el motivo queda escrito en unbound_groups.
+      const knownAccountRows = await client.query<{ id: string }>(
+        `SELECT id FROM provider_accounts WHERE id = ANY($1::text[]) AND payer_tenant_id = $2`,
+        [[...suppliedAccountIds], actorTenant]
+      );
+      const knownAccountIds = new Set(knownAccountRows.rows.map((row) => row.id));
+
+      const unboundGroups = new Map<string, QuotaSampleUnboundGroup>();
+      const noAccountDetail = 'El recolector no mandó account_id para este grupo: la muestra se guarda pero no puede pausar ninguna suscripción.';
+      const unknownAccountDetail = 'El recolector mandó un account_id desconocido para este grupo: la muestra se guarda sin vincular y no puede pausar ninguna suscripción.';
+
+      for (const provider of sample.providers) {
+        await client.query(
+          `INSERT INTO quota_provider_reports(collection_id,provider,ok,available,kind,source,plan,note,effective_remaining_percent,observed_at,available_groups,limiting_groups)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb)`,
+          [
+            collectionId, provider.provider, provider.ok, provider.available,
+            provider.kind ?? null, provider.source ?? null, provider.plan ?? null, provider.note ?? null,
+            provider.effective_remaining_percent ?? null, provider.observed_at ?? null,
+            JSON.stringify(provider.available_groups), JSON.stringify(provider.limiting_groups)
+          ]
+        );
+
+        for (const window of provider.windows) {
+          let finalAccountId: string | null;
+          let finalBindingNote: string | null;
+          let unboundReason: QuotaSampleUnboundGroup['reason'] | null = null;
+
+          if (window.account_id === null || window.account_id === undefined) {
+            finalAccountId = null;
+            finalBindingNote = window.binding_note ?? null;
+            unboundReason = 'no_account_id_supplied';
+          } else if (!knownAccountIds.has(window.account_id)) {
+            finalAccountId = null;
+            // Marcador estable ANTEPUESTO siempre, aunque el recolector haya mandado su propia
+            // nota: si no fuera así, una nota custom podría esconder "cuenta desconocida" detrás
+            // de texto arbitrario y quotaSnapshot() ya no podría reconstruir el motivo real.
+            finalBindingNote = unknownAccountBindingNote(window.account_id, window.binding_note);
+            unboundReason = 'unknown_account_id';
+          } else {
+            finalAccountId = window.account_id;
+            finalBindingNote = window.binding_note ?? null;
+          }
+
+          if (unboundReason !== null) {
+            const unboundKey = JSON.stringify([sample.host, provider.provider, window.group_key]);
+            const existing = unboundGroups.get(unboundKey);
+            if (existing) {
+              existing.window_count += 1;
+              if (unboundReason === 'unknown_account_id') { existing.reason = unboundReason; existing.detail = unknownAccountDetail; }
+            } else {
+              unboundGroups.set(unboundKey, {
+                host: sample.host, provider: provider.provider, group_key: window.group_key, window_count: 1,
+                reason: unboundReason, detail: unboundReason === 'unknown_account_id' ? unknownAccountDetail : noAccountDetail
+              });
+            }
+          }
+
+          await client.query(
+            `INSERT INTO quota_window_samples(collection_id,provider,group_key,window_key,host,captured_at,label,used_percent,remaining_percent,used_units,limit_units,window_minutes,reset_at,status,family,model,account_id,binding_note)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+            [
+              collectionId, provider.provider, window.group_key, window.window_key, sample.host, sample.captured_at,
+              window.label ?? null, window.used_percent ?? null, window.remaining_percent ?? null,
+              window.used_units ?? null, window.limit_units ?? null, window.window_minutes ?? null,
+              window.reset_at ?? null, window.status ?? null, window.family ?? null, window.model ?? null,
+              finalAccountId, finalBindingNote
+            ]
+          );
+
+          // Guarda anti-retroceso en el WHERE: una corrida vieja que llega tarde (reintento de
+          // red, cola atascada) no puede pisar un estado más nuevo que ya se leyó.
+          await client.query(
+            `INSERT INTO quota_window_state(collector_tenant,host,provider,group_key,window_key,collection_id,captured_at,label,used_percent,remaining_percent,used_units,limit_units,window_minutes,reset_at,status,family,model,account_id,binding_note)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+             ON CONFLICT (collector_tenant,host,provider,group_key,window_key) DO UPDATE SET
+               collection_id=EXCLUDED.collection_id, captured_at=EXCLUDED.captured_at, received_at=now(),
+               label=EXCLUDED.label, used_percent=EXCLUDED.used_percent, remaining_percent=EXCLUDED.remaining_percent,
+               used_units=EXCLUDED.used_units, limit_units=EXCLUDED.limit_units, window_minutes=EXCLUDED.window_minutes,
+               reset_at=EXCLUDED.reset_at, status=EXCLUDED.status, family=EXCLUDED.family, model=EXCLUDED.model,
+               account_id=EXCLUDED.account_id, binding_note=EXCLUDED.binding_note
+             WHERE quota_window_state.captured_at < EXCLUDED.captured_at`,
+            [
+              actorTenant, sample.host, provider.provider, window.group_key, window.window_key, collectionId, sample.captured_at,
+              window.label ?? null, window.used_percent ?? null, window.remaining_percent ?? null,
+              window.used_units ?? null, window.limit_units ?? null, window.window_minutes ?? null,
+              window.reset_at ?? null, window.status ?? null, window.family ?? null, window.model ?? null,
+              finalAccountId, finalBindingNote
+            ]
+          );
+        }
+      }
+
+      // Auto-pausa: sólo cuentas ATADAS (account_id NOT NULL vía el JOIN) y sólo hasta el reset
+      // informado -- nunca indefinida. Acotada a esta collection_id: una corrida vieja rechazada
+      // por la guarda anti-retroceso de arriba no puede disparar una pausa basada en datos viejos.
+      const pausedAccountRows = await client.query<{ account_id: string; provider: string; group_key: string; window_key: string; paused_until: Date }>(
+        `UPDATE provider_accounts p
+            SET paused_until = GREATEST(COALESCE(p.paused_until, now()), s.reset_at),
+                paused_reason = 'quota_exhausted:'||s.provider||'/'||s.group_key||'/'||s.window_key,
+                updated_at = now()
+           FROM quota_window_state s
+          WHERE s.account_id = p.id AND s.collection_id = $1
+            AND (s.remaining_percent <= 0 OR s.status = 'rate-limited')
+            AND s.reset_at IS NOT NULL
+         RETURNING p.id AS account_id, p.provider, s.group_key, s.window_key, p.paused_until`,
+        [collectionId]
+      );
+      const pausedAccounts: QuotaSamplePausedAccount[] = pausedAccountRows.rows.map((row) => ({
+        account_id: row.account_id, provider: row.provider, group_key: row.group_key,
+        window_key: row.window_key, paused_until: row.paused_until.toISOString()
+      }));
+
+      // Auto-reanudación GLOBAL (no acotada a esta collection_id) a propósito: si otro proveedor
+      // de la misma corrida, o una corrida anterior, ya dejó una cuenta sana, tiene que levantarse
+      // apenas se detecte, no recién cuando ESA cuenta puntual vuelva a aparecer en un POST. El
+      // WHERE paused_reason LIKE 'quota_exhausted:%' es lo que impide pisar una pausa manual.
+      const resumedAccountRows = await client.query<{ account_id: string; provider: string }>(
+        `UPDATE provider_accounts p
+            SET paused_until = NULL, paused_reason = NULL, updated_at = now()
+          WHERE p.paused_reason LIKE 'quota_exhausted:%'
+            AND NOT EXISTS (
+              SELECT 1 FROM quota_window_state s
+               WHERE s.account_id = p.id AND (s.remaining_percent <= 0 OR s.status = 'rate-limited')
+            )
+         RETURNING p.id AS account_id, p.provider`
+      );
+      const resumedAccounts: QuotaSampleResumedAccount[] = resumedAccountRows.rows.map((row) => ({
+        account_id: row.account_id, provider: row.provider
+      }));
+
+      // Retención acotada (LIMIT 500) para que un solo POST nunca dispare un DELETE ilimitado.
+      const prunedCollections = await client.query(
+        `DELETE FROM quota_collections WHERE ctid IN (
+           SELECT ctid FROM quota_collections
+            WHERE received_at < now() - interval '30 days' ORDER BY received_at LIMIT 500
+         )`
+      );
+
+      return {
+        collection_id: collectionId, host: sample.host, captured_at: sample.captured_at, duplicate: false,
+        accepted_providers: providerCount, accepted_windows: windowCount,
+        unbound_groups: [...unboundGroups.values()], paused_accounts: pausedAccounts, resumed_accounts: resumedAccounts,
+        pruned_collections: prunedCollections.rowCount ?? 0
+      };
+    });
   }
 }

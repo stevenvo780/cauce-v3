@@ -5,6 +5,22 @@ export interface TelegramFile {
   file_unique_id?: string;
   file_size?: number;
   mime_type?: string;
+  file_name?: string;
+  /** Segundos. Sólo lo mandan voice/audio/video/video_note. */
+  duration?: number;
+}
+
+export interface TelegramRemoteFile extends TelegramFile {
+  file_path: string;
+}
+
+export interface PreparedTelegramAttachment {
+  kind: 'image' | 'document';
+  name: string;
+  mime_type: string;
+  file_size: number;
+  sha256: string;
+  content_base64: string;
 }
 
 /**
@@ -56,6 +72,7 @@ export interface TelegramMessage {
   audio?: TelegramFile;
   video?: TelegramFile;
   voice?: TelegramFile;
+  video_note?: TelegramFile;
   animation?: TelegramFile;
 }
 
@@ -85,11 +102,18 @@ export type TelegramChatAction = 'typing';
 export interface TelegramSendOptions {
   reply_to_message_id?: string;
   message_thread_id?: string;
+  /**
+   * `html` hace que Telegram renderice negritas, código y citas en vez de mostrar el marcado
+   * crudo. Ausente = texto plano, que es como se comportó siempre este puente.
+   */
+  parse_mode?: 'html';
 }
 
 export interface TelegramApi {
   getIdentity(): Promise<TelegramIdentity>;
   getUpdates(offset: number, timeoutSeconds: number): Promise<TelegramUpdate[]>;
+  getFile(fileId: string): Promise<TelegramRemoteFile>;
+  downloadFile(filePath: string, maxBytes: number): Promise<Buffer>;
   sendText(chatId: string, text: string, options?: TelegramSendOptions): Promise<TelegramSendResult>;
   setMessageReaction(
     chatId: string,
@@ -271,4 +295,7 @@ export type BridgeMetric =
   | 'updates_suppressed_bot' | 'updates_via_bot'
   | 'updates_chat_denied' | 'updates_chat_disabled' | 'updates_conflict'
   | 'group_config_degraded'
-  | 'egress_sent' | 'egress_retry' | 'egress_dead' | 'egress_ambiguous';
+  | 'egress_sent' | 'egress_retry' | 'egress_dead' | 'egress_ambiguous'
+  // Telegram rechazó el HTML y el mensaje salió en texto plano. Si este contador sube, la
+  // conversión de markdown está generando algo que Telegram no acepta y hay que mirarla.
+  | 'egress_format_downgraded';
