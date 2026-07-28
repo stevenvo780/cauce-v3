@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { CauceRepository, type DatabasePool } from '@cauce/store';
+import {
+  CauceRepository, type DatabasePool, type ObservabilityRetentionPolicy,
+} from '@cauce/store';
 import { asClaimedJob, createDefaultJobHandlerRegistry, type JobHandlerRegistry } from './handlers.js';
 import type { DispatcherMetrics } from './metrics.js';
 
@@ -10,6 +12,12 @@ export interface DispatcherOptions {
   jobLeaseMs?: number;
   /** Ver `DispatcherConfig.retryStartedDeliveries` y `CauceRepository.retryStaleDeliveries`. */
   retryStartedDeliveries?: boolean;
+  /** Techo de vida total de un intento. Ver `DEFAULT_DELIVERY_LEASE_CAP_MS` en el store. */
+  leaseCapMs?: number;
+  leaseCapGraceMs?: number;
+  /** Cada cuánto se poda la observabilidad. 0 apaga el barrido. */
+  retentionIntervalMs?: number;
+  retention?: ObservabilityRetentionPolicy;
   handlers?: JobHandlerRegistry;
   metrics?: DispatcherMetrics;
   onError?: (error: unknown) => void;
@@ -20,13 +28,22 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
   const handlers = options.handlers ?? createDefaultJobHandlerRegistry(pool);
   const worker = `dispatcher:${randomUUID()}`;
   let running = false;
+  const retentionIntervalMs = options.retentionIntervalMs ?? 0;
+  // Arranca en -infinito para que el PRIMER tick barra: si arrancara en `Date.now()` un
+  // dispatcher que se reinicia cada pocos minutos —lo normal durante un despliegue— nunca
+  // llegaría a podar nada.
+  let nextPruneAtMs = Number.NEGATIVE_INFINITY;
 
   const tick = async (): Promise<void> => {
     if (running) return;
     running = true;
     try {
       await repository.retryStaleDeliveries(options.staleAckMs ?? 30_000, 100, {
-        retryStartedDeliveries: options.retryStartedDeliveries === true
+        retryStartedDeliveries: options.retryStartedDeliveries === true,
+        ...(options.leaseCapMs === undefined ? {} : { leaseCapMs: options.leaseCapMs }),
+        ...(options.leaseCapGraceMs === undefined
+          ? {}
+          : { leaseCapGraceMs: options.leaseCapGraceMs })
       });
       await repository.retryExpiredJobs();
       const jobs = await repository.claimFairJobs(
@@ -54,6 +71,21 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
             claimed.id, worker, error instanceof Error ? error.message : 'unknown job error', claimed.claim_token
           );
           options.metrics?.recordJob(claimed.lane, result);
+          options.onError?.(error);
+        }
+      }
+      // Va al final y con su propio try: la retención es mantenimiento, y un DELETE que falla
+      // (por ejemplo porque la migración 014 todavía no aterrizó en esta base y no existe
+      // `delivery_acks.renewal`) no puede dejar de reintentar garras vencidas, que es el
+      // trabajo por el que existe el dispatcher. Se reporta por `onError`, no se traga.
+      if (retentionIntervalMs > 0 && Date.now() >= nextPruneAtMs) {
+        nextPruneAtMs = Date.now() + retentionIntervalMs;
+        try {
+          const pruned = await repository.pruneObservability(options.retention ?? {});
+          if (pruned.ack_renewals + pruned.acks + pruned.audit_renewals + pruned.audit_events > 0) {
+            console.log(JSON.stringify({ event: 'observability_pruned', ...pruned }));
+          }
+        } catch (error) {
           options.onError?.(error);
         }
       }

@@ -4,8 +4,8 @@ import type {
   PublishMessage, QuotaSampleRequest, Tenant
 } from '@cauce/protocol';
 import {
-  AGENT_TO_AGENT_MESSAGE_TYPES, isAmbiguousAckErrorCode, NOTIFY_KINDS, PROTOCOL_VERSION,
-  SUPPORTED_QUOTA_SCHEMA_VERSIONS
+  AGENT_TO_AGENT_MESSAGE_TYPES, isAmbiguousAckErrorCode, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs,
+  NOTIFY_KINDS, PROTOCOL_VERSION, SUPPORTED_QUOTA_SCHEMA_VERSIONS
 } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
@@ -85,12 +85,186 @@ export interface LiveDeliveryClaim {
   readonly agent_to_agent: boolean;
 }
 
+/**
+ * Techo de vida TOTAL de un intento de entrega, en milisegundos, cuando el mensaje no declara
+ * su propio `body.timeout_ms`.
+ *
+ * EL PROBLEMA. Cada ACK 'started' aplicado empuja `ack_deadline_at` a `now()+plazo`, sin
+ * límite. Un harness colgado que sigue latiendo se renueva para siempre y es INVISIBLE al
+ * reaper, porque el reaper sólo mira `ack_deadline_at <= now()`. Medido el 2026-07-27: una
+ * entrega de janus se sostuvo 17,36 h emitiendo ~60 ACKs/hora durante 16 h seguidas y aportó
+ * ella sola el 32,7% de todos los `delivery_acks` de 24 h.
+ *
+ * POR QUÉ 12 h Y NO OTRA COSA. Es el punto delicado del parche, porque matar un turno legítimo
+ * es peor que dejar viva una entrega colgada. Los tres números que acotan la elección:
+ *   - el plazo de ACK en producción es de 30 min (`CAUCE_ACK_DEADLINE_MS=1800000`);
+ *   - el timeout por defecto del harness en el SDK es de 24 h;
+ *   - el máximo que el SDK acepta por mensaje es de 7 días.
+ * 12 h es la mitad del presupuesto que el propio harness se da y 24 veces el plazo de ACK.
+ *
+ * QUÉ TRABAJO LEGÍTIMO MUERE CON ESTE DEFAULT, dicho explícitamente: una entrega que (a) NO
+ * declara `body.timeout_ms` y (b) mantiene el harness corriendo de verdad más de 12 h de reloj
+ * de pared en UN solo intento. Ese turno hoy termina en `dead` con motivo propio, con su fila
+ * en `dead_letters` y con el aviso al padre y al origen — o sea, replayable a mano, no perdido.
+ * Es aceptable porque cualquier trabajo que de verdad necesite más lo pide: declarar
+ * `body.timeout_ms` (ver `deliveryLeaseCapMs`) sube el techo de esa entrega EXACTAMENTE a lo
+ * pedido, hasta los 7 días del SDK. Y si mañana resulta que hay una familia entera de turnos
+ * larguísimos sin declarar, `CAUCE_DELIVERY_LEASE_CAP_MS` los devuelve a la vida sin redeploy.
+ *
+ * Hacia dónde se equivoca: hacia arriba. 12 h no habría matado ninguna corrida observada salvo
+ * la colgada de janus, que habría muerto a las 12 h en vez de a las 17,36 h — 5,36 h y unos 320
+ * ACKs de renovación menos, además de cerrar el caso realmente infinito, que es el que no tiene
+ * techo de ninguna clase hoy.
+ */
+export const DEFAULT_DELIVERY_LEASE_CAP_MS = 12 * 60 * 60_000;
+
+/**
+ * Margen que se le suma a un `body.timeout_ms` declarado para obtener el techo de la entrega.
+ *
+ * El `timeout_ms` es el presupuesto del HARNESS; el techo tiene que cubrir además lo que pasa
+ * alrededor: la espera del candado de sesión antes de arrancar (que ya se midió en 40 min en
+ * este mismo sistema) y el viaje del ACK final. 30 min = exactamente un plazo de ACK de
+ * producción, que es la unidad natural de "una renovación más".
+ */
+export const DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS = 30 * 60_000;
+
+/** Techo de vida de una entrega. Ver `DEFAULT_DELIVERY_LEASE_CAP_MS`. */
+export interface DeliveryLeaseCap {
+  /** Techo por defecto, para mensajes sin `body.timeout_ms`. */
+  readonly leaseCapMs?: number;
+  /** Margen sumado al `body.timeout_ms` declarado. */
+  readonly leaseCapGraceMs?: number;
+}
+
+function positiveMs(value: number | undefined, fallback: number, name: string): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new StoreError('conflict', `${name} must be a positive integer`);
+  }
+  return value;
+}
+
+/**
+ * Techo de vida de ESTA entrega: `body.timeout_ms + gracia` si el mensaje lo declara, y el
+ * default configurado si no.
+ *
+ * Un `timeout_ms` declarado gana en las DOS direcciones, y eso es a propósito. Hacia arriba
+ * porque es la única forma de pedir un turno de más de 12 h sin tocar la configuración de la
+ * flota entera. Hacia abajo porque un publicador que sabe que su tarea dura 5 minutos puede
+ * pedir supervisión estrecha, y con `timeout_ms=300000` el techo queda en 35 min en vez de 12 h.
+ */
+export function deliveryLeaseCapMs(
+  body: Record<string, unknown> | undefined,
+  cap: DeliveryLeaseCap = {}
+): number {
+  const fallback = positiveMs(cap.leaseCapMs, DEFAULT_DELIVERY_LEASE_CAP_MS, 'lease cap');
+  const grace = positiveMs(cap.leaseCapGraceMs, DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, 'lease cap grace');
+  const declared = messageTimeoutMs(body);
+  return declared === undefined ? fallback : declared + grace;
+}
+
+/**
+ * Instante en que la garra de una entrega deja de poder renovarse, en SQL.
+ *
+ * El ancla es `COALESCE(execution_started_at, claimed_at)`, o sea la MÁS TARDÍA de las dos que
+ * conocemos, porque las dos se limpian en cada reintento y por lo tanto miden la vida del
+ * INTENTO vigente, no la de la entrega desde que nació. Elegir la más tardía es la opción
+ * permisiva: cuando el adaptador informa que el harness arrancó de verdad, el tiempo que la
+ * entrega pasó esperando el candado de sesión NO se le descuenta del techo.
+ *
+ * Con las dos en NULL la expresión da NULL, y tanto `LEAST` como la comparación `<= now()`
+ * tratan ese NULL como "no hay techo". También es deliberado: una fila sin `claimed_at` no
+ * está en vuelo y no es asunto de este guarda.
+ */
+function leaseCapInstantSql(capMsParameter: string, table = 'd'): string {
+  return `(COALESCE(${table}.execution_started_at,${table}.claimed_at)`
+    + ` + ${capMsParameter}*interval '1 millisecond')`;
+}
+
+/**
+ * `deliveryLeaseCapMs` en SQL, para el reaper, que necesita el techo dentro del WHERE y no
+ * puede traerse la flota entera a memoria para calcularlo fila por fila.
+ *
+ * Los dos CASE anidados no son estilo: el `::bigint` sólo aparece dentro del THEN del CASE
+ * externo, así que PostgreSQL garantiza que el guarda de forma (`jsonb_typeof` + expresión
+ * regular) se evaluó ANTES del cast. Con un solo CASE y un AND, el orden de evaluación de los
+ * operandos no está definido y una fila vieja con `timeout_ms:"pronto"` reventaría el tick
+ * entero del reaper con un error de conversión — exactamente el modo de falla que ya dejó una
+ * vez a la flota con los agentes vivos y las entregas muertas.
+ *
+ * La regla tiene que dar lo MISMO que `messageTimeoutMs`, incluido el máximo de 7 días: si
+ * divergieran, el WHERE marcaría una entrega como vencida por techo y el motivo que se escribe
+ * en `dead_letters` diría otro número.
+ */
+function leaseCapMsSql(defaultCapParameter: string, graceParameter: string, table = 'm'): string {
+  return `COALESCE(
+    CASE WHEN jsonb_typeof(${table}.body->'timeout_ms')='number'
+              AND (${table}.body->>'timeout_ms') ~ '^[1-9][0-9]{0,9}$'
+         THEN CASE WHEN (${table}.body->>'timeout_ms')::bigint <= ${MAX_MESSAGE_TIMEOUT_MS}
+                   THEN (${table}.body->>'timeout_ms')::bigint + ${graceParameter}::bigint END
+    END, ${defaultCapParameter}::bigint)`;
+}
+
+/**
+ * Retención de los ACK de RENOVACIÓN: 6 h.
+ *
+ * Un ACK de renovación dice "el harness sigue vivo". Su valor operativo dura lo que dura la
+ * entrega, y su valor forense se agota en cuanto la entrega termina: para reconstruir un
+ * incidente alcanza con saber cuándo arrancó, cuándo terminó y con qué — no con tener las 1.041
+ * pruebas de vida intermedias. 6 h es cómodamente más que el techo típico de una entrega larga
+ * en curso, así que ninguna renovación se borra mientras su entrega sigue viva; y cubre además
+ * el turno de un operador que llega a investigar algo que pasó "esta mañana".
+ */
+export const DEFAULT_RETENTION_ACK_RENEWAL_MS = 6 * 60 * 60_000;
+
+/**
+ * Retención general de `delivery_acks`: 14 días. Cubre las transiciones de estado (accepted,
+ * el primer started, done, failed), que son la prueba de qué hizo el sistema con cada entrega,
+ * y también las filas anteriores a la migración 014, que no se pueden reclasificar.
+ */
+export const DEFAULT_RETENTION_ACK_MS = 14 * 24 * 60 * 60_000;
+
+/** Retención de los `audit_events` de renovación de garra. Mismo argumento que los ACK. */
+export const DEFAULT_RETENTION_AUDIT_RENEWAL_MS = 6 * 60 * 60_000;
+
+/**
+ * Retención general de `audit_events`: 30 días, MÁS que los ACK, y a propósito. Un ACK es
+ * telemetría de transporte; un audit_event contesta "quién autorizó qué, y con qué decisión",
+ * que es la pregunta que aparece semanas después.
+ */
+export const DEFAULT_RETENTION_AUDIT_MS = 30 * 24 * 60 * 60_000;
+
+/** Filas por lote y por tabla en cada barrido. Acota el DELETE sobre una base viva. */
+export const DEFAULT_RETENTION_BATCH = 5_000;
+
+/** Ventanas de retención de la observabilidad. Ver `pruneObservability`. */
+export interface ObservabilityRetentionPolicy {
+  readonly ackRenewalMs?: number;
+  readonly ackMs?: number;
+  readonly auditRenewalMs?: number;
+  readonly auditMs?: number;
+  readonly batch?: number;
+}
+
+/** Filas borradas por cada regla en un barrido. */
+export interface ObservabilityRetentionResult {
+  readonly ack_renewals: number;
+  readonly acks: number;
+  readonly audit_renewals: number;
+  readonly audit_events: number;
+}
+
 /** Política del reaper de garras vencidas. Ver `retryStaleDeliveries`. */
-export interface StaleDeliveryPolicy {
+export interface StaleDeliveryPolicy extends DeliveryLeaseCap {
   /**
    * Vuelve al comportamiento viejo: reintentar aunque conste que la entrega ya había arrancado.
    * Existe como palanca de emergencia, no como default. Prenderlo vuelve a pagar cada corrida
    * dos veces.
+   *
+   * NO desactiva el techo de vida: son dos guardas distintas. Ésta decide qué hacer con una
+   * garra vencida que YA se pagó; el techo decide cuándo una garra deja de poder renovarse.
+   * Reintentar una entrega que estuvo 12 h renovando es exactamente la realimentación que el
+   * techo existe para cortar, así que el techo manda incluso con la palanca prendida.
    */
   readonly retryStartedDeliveries?: boolean;
 }
@@ -1503,12 +1677,22 @@ export class CauceRepository {
       }));
   }
 
+  /**
+   * `leaseCap` acota la vida TOTAL del intento. Se aplica acá y no sólo en el reaper porque
+   * acá es donde se escribe el plazo: si la renovación pudiera empujar `ack_deadline_at` más
+   * allá del techo, entre tick y tick del dispatcher el adaptador seguiría recibiendo
+   * `applied:true` y seguiría escribiendo dos filas (una en `delivery_acks`, otra en
+   * `audit_events`) por cada latido, que es el 90% del volumen que este parche viene a cortar.
+   * Con el `LEAST` de abajo el plazo se congela en el techo y el reaper lo recoge en el tick
+   * siguiente, con su motivo propio.
+   */
   async ackDelivery(
     deliveryId: string,
     tenantId: Tenant,
     alias: string,
     ack: Ack,
-    ackDeadlineMs = 30_000
+    ackDeadlineMs = 30_000,
+    leaseCap: DeliveryLeaseCap = {}
   ): Promise<AckResult> {
     if (!ack.claim_token || !ack.attempt) {
       throw new StoreError('fenced', 'ACK requires claim_token and positive attempt');
@@ -1614,18 +1798,33 @@ export class CauceRepository {
       // reserva el candado antes de ACKear. COALESCE: es el instante del PRIMER arranque del
       // intento, no el de la última renovación.
       const executionStarted = ack.status === 'started' && ack.execution_started === true;
+      const leaseCapMs = deliveryLeaseCapMs(row.body, leaseCap);
       if (ack.status === 'started' && row.status === 'started') {
+        // El ancla se escribe con el valor que la fila va a TENER después de este UPDATE, no
+        // con el que tenía: en PostgreSQL las expresiones del SET leen la fila vieja, y si el
+        // ancla de acá y la del reaper no fueran el mismo instante, una entrega podría vencer
+        // por el `LEAST` de acá y que el reaper —mirando la otra ancla— la clasificara como
+        // "ACK timeout" genérico. Justamente la confusión que este parche viene a evitar.
+        // `LEAST` ignora los NULL, así que una fila sin ancla simplemente no tiene techo.
         await client.query(
           `UPDATE deliveries
-           SET ack_deadline_at=now()+$2*interval '1 millisecond',
-               claim_expires_at=now()+$2*interval '1 millisecond',
+           SET ack_deadline_at=LEAST(
+                 now()+$2*interval '1 millisecond',
+                 COALESCE(CASE WHEN $3::boolean THEN COALESCE(execution_started_at,now())
+                               ELSE execution_started_at END, claimed_at)
+                   + $4*interval '1 millisecond'),
+               claim_expires_at=LEAST(
+                 now()+$2*interval '1 millisecond',
+                 COALESCE(CASE WHEN $3::boolean THEN COALESCE(execution_started_at,now())
+                               ELSE execution_started_at END, claimed_at)
+                   + $4*interval '1 millisecond'),
                execution_started_at=CASE WHEN $3::boolean
                  THEN COALESCE(execution_started_at,now()) ELSE execution_started_at END,
                updated_at=now()
            WHERE id=$1`,
-          [deliveryId, ackDeadlineMs, executionStarted]
+          [deliveryId, ackDeadlineMs, executionStarted, leaseCapMs]
         );
-        if (!repeatedAck) await this.insertAck(client, row, ack, true, persistedResult);
+        if (!repeatedAck) await this.insertAck(client, row, ack, true, persistedResult, true);
         await client.query(
           `INSERT INTO audit_events(
              tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
@@ -1700,10 +1899,18 @@ export class CauceRepository {
             available_at=CASE WHEN $2='retry' THEN now()+$6*interval '1 second' ELSE available_at END,
              claimed_at=CASE WHEN $2='retry' THEN NULL ELSE claimed_at END,
              claim_expires_at=CASE WHEN $2='retry' THEN NULL
-                                   WHEN $2='started' THEN now()+$7*interval '1 millisecond'
+                                   WHEN $2='started' THEN LEAST(
+                                     now()+$7*interval '1 millisecond',
+                                     COALESCE(CASE WHEN $8::boolean THEN COALESCE(execution_started_at,now())
+                                                   ELSE execution_started_at END, claimed_at)
+                                       + $9*interval '1 millisecond')
                                    ELSE claim_expires_at END,
              ack_deadline_at=CASE WHEN $2='retry' THEN NULL
-                                  WHEN $2='started' THEN now()+$7*interval '1 millisecond'
+                                  WHEN $2='started' THEN LEAST(
+                                    now()+$7*interval '1 millisecond',
+                                    COALESCE(CASE WHEN $8::boolean THEN COALESCE(execution_started_at,now())
+                                                  ELSE execution_started_at END, claimed_at)
+                                      + $9*interval '1 millisecond')
                                   ELSE ack_deadline_at END,
              execution_started_at=CASE WHEN $2='retry' THEN NULL
                                        WHEN $8::boolean THEN COALESCE(execution_started_at,now())
@@ -1714,7 +1921,7 @@ export class CauceRepository {
             terminal_at=${terminalAt},updated_at=now() WHERE id=$1`,
         [deliveryId, nextStatus, nextRank, terminalError ?? null,
           persistedResult ? JSON.stringify(persistedResult) : null, backoffSeconds,
-          ackDeadlineMs, executionStarted]
+          ackDeadlineMs, executionStarted, leaseCapMs]
       );
       if (nextStatus === 'retry') {
         await client.query(
@@ -2956,16 +3163,25 @@ export class CauceRepository {
     );
   }
 
+  /**
+   * `renewal` separa el latido de la transición de estado, y esa distinción es la que hace
+   * posible la retención por tipo: un ACK que sólo dice "sigo vivo" no tiene valor forense
+   * pasadas unas horas, y es ~90% del volumen de la tabla. Uno que dice "pasé de accepted a
+   * started" o "terminé" sí lo tiene y se conserva mucho más. Se marca acá, en el único lugar
+   * que sabe con certeza cuál es cuál (la rama de renovación de `ackDelivery`), en vez de
+   * inferirlo después con una función de ventana sobre la tabla entera.
+   */
   private async insertAck(
     client: DatabaseClient,
     row: DeliveryRow,
     ack: Ack,
     applied: boolean,
-    persistedResult: Record<string, unknown> | undefined
+    persistedResult: Record<string, unknown> | undefined,
+    renewal = false
   ): Promise<void> {
     await client.query(
-      `INSERT INTO delivery_acks(event_id,delivery_id,status,instance_id,epoch,claim_token,attempt,applied,payload)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) ON CONFLICT(event_id) DO NOTHING`,
+      `INSERT INTO delivery_acks(event_id,delivery_id,status,instance_id,epoch,claim_token,attempt,applied,renewal,payload)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$10,$9::jsonb) ON CONFLICT(event_id) DO NOTHING`,
       [ack.event_id, row.id, ack.status, ack.instance_id, ack.epoch, ack.claim_token, ack.attempt, applied,
         JSON.stringify({
           retryable: ack.retryable,
@@ -2976,7 +3192,7 @@ export class CauceRepository {
             ? {}
             : { error_code: postgresTextSafe(ack.error_code) }),
           ...(persistedResult === undefined ? {} : { result: persistedResult })
-        })]
+        }), renewal]
     );
   }
 
@@ -3520,6 +3736,19 @@ export class CauceRepository {
    *
    * `policy.retryStartedDeliveries` restaura el comportamiento viejo (reintentar a ciegas) si
    * alguna vez hiciera falta, sin redeploy de código.
+   *
+   *  (c) TERCER caso, nuevo: la entrega superó su TECHO DE VIDA. No es una garra vencida — al
+   *      contrario, la garra puede estar perfectamente viva, renovada hace segundos. Es la
+   *      entrega inmortal: un harness colgado que sigue latiendo empuja `ack_deadline_at` 30 min
+   *      hacia adelante en cada ACK y por eso el barrido de arriba, que sólo mira plazos
+   *      vencidos, NO LA VE NUNCA. Medido: 17,36 h de una sola entrega de janus, 60 ACKs/hora
+   *      durante 16 h, el 32,7% de todos los `delivery_acks` del día.
+   *      Se distingue en el motivo (`Lease cap exhausted: ...`) y no se mezcla con "ACK
+   *      timeout": son diagnósticos opuestos —una dejó de responder, la otra no deja de
+   *      responder— y el operador tiene que poder separarlos en `dead_letters` de un vistazo.
+   *      Termina en `dead` y no en `retry` incluso si no consta que haya ejecutado: reintentar
+   *      un intento que estuvo horas renovando es realimentar el mismo bucle. La fila queda en
+   *      `dead_letters`, replayable a mano, y el padre y el origen reciben el aviso de siempre.
    */
   async retryStaleDeliveries(
     staleMs: number,
@@ -3527,23 +3756,41 @@ export class CauceRepository {
     policy: StaleDeliveryPolicy = {}
   ): Promise<{ retried: number; dead: number }> {
     const retryStartedDeliveries = policy.retryStartedDeliveries === true;
+    // Se validan acá, fuera de la transacción, para que una configuración inválida falle en el
+    // primer tick con un error nítido en vez de dejar el reaper girando sin techo.
+    const defaultCapMs = positiveMs(policy.leaseCapMs, DEFAULT_DELIVERY_LEASE_CAP_MS, 'lease cap');
+    const graceMs = positiveMs(
+      policy.leaseCapGraceMs, DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, 'lease cap grace'
+    );
     return withTransaction(this.pool, async (client) => {
       // `execution_started` es una columna de la propia fila, no una subconsulta y muchísimo
       // menos una función de ventana: este SELECT lleva `FOR UPDATE OF d` y PostgreSQL rechaza
       // al PARSEAR cualquier consulta que combine FOR UPDATE/FOR SHARE con una función de
       // ventana. Ya pasó una vez y dejó a la flota con los agentes vivos y las entregas muertas,
       // porque el reaper fallaba entero en cada tick.
-      const rows = await client.query<DeliveryRow & { execution_started: boolean }>(
+      // El techo se evalúa DOS veces (en la proyección y en el WHERE) con la misma expresión
+      // literal a propósito: son escalares sobre la fila que el SELECT ya trae bajo lock, no
+      // subconsultas y mucho menos funciones de ventana, así que conviven con `FOR UPDATE OF d`.
+      const leaseCapExceeded = `${leaseCapInstantSql(`(${leaseCapMsSql('$3', '$4')})`)} <= now()`;
+      const rows = await client.query<DeliveryRow & {
+        execution_started: boolean;
+        lease_cap_exceeded: boolean;
+        lease_cap_ms: string;
+      }>(
         `SELECT d.id,d.message_id,d.recipient_tenant,d.recipient_alias,d.status,d.attempt,d.max_attempts,
                 d.last_ack_rank,d.consumer_instance_id,d.consumer_epoch,d.claim_token,d.ack_deadline_at,
                  m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
                  m.auth_session_id,m.auth_channel,
-                 (d.execution_started_at IS NOT NULL) AS execution_started
+                 (d.execution_started_at IS NOT NULL) AS execution_started,
+                 (${leaseCapMsSql('$3', '$4')}) AS lease_cap_ms,
+                 COALESCE(${leaseCapExceeded},false) AS lease_cap_exceeded
           FROM deliveries d JOIN messages m ON m.id=d.message_id
           WHERE d.status IN ('leased','accepted','started')
-            AND ($1=0 OR COALESCE(d.ack_deadline_at,d.claim_expires_at,
-                                  d.claimed_at+$1*interval '1 millisecond') <= now())
-         ORDER BY d.claimed_at FOR UPDATE OF d SKIP LOCKED LIMIT $2`, [staleMs, limit]
+            AND (($1=0 OR COALESCE(d.ack_deadline_at,d.claim_expires_at,
+                                   d.claimed_at+$1*interval '1 millisecond') <= now())
+                 OR ${leaseCapExceeded})
+         ORDER BY d.claimed_at FOR UPDATE OF d SKIP LOCKED LIMIT $2`,
+        [staleMs, limit, defaultCapMs, graceMs]
       );
       const chainPolicy = await this.loadChainPolicy(client);
       let retried = 0;
@@ -3554,13 +3801,22 @@ export class CauceRepository {
         // no cuenta y se reintenta como siempre.
         const heldForReview = row.execution_started && !retryStartedDeliveries;
         const attemptsExhausted = row.attempt >= row.max_attempts;
-        if (attemptsExhausted || heldForReview) {
+        // El techo manda sobre las otras dos condiciones y sobre la palanca de emergencia: una
+        // entrega que estuvo horas renovando no se reintenta nunca, tenga o no la marca de
+        // ejecución y esté o no prendido `retryStartedDeliveries`.
+        const leaseCapExhausted = row.lease_cap_exceeded === true;
+        if (attemptsExhausted || heldForReview || leaseCapExhausted) {
           // Cuando arrancó, ese es el motivo que le sirve al operador: le dice que la corrida
           // pudo haber terminado y que reencolar cuesta plata. El de intentos agotados es
-          // secundario.
-          const reason = heldForReview
-            ? 'ACK timeout: execution already started; held for manual replay'
-            : 'ACK timeout: max attempts exhausted';
+          // secundario. El del techo va PRIMERO y con texto propio: "dejó de responder" y "no
+          // deja de responder" son diagnósticos opuestos y confundirlos manda al operador a
+          // buscar un adaptador caído que está perfectamente vivo.
+          const reason = leaseCapExhausted
+            ? `Lease cap exhausted: delivery renewed its claim past the ${row.lease_cap_ms} ms`
+              + ' total execution ceiling; held for manual replay'
+            : heldForReview
+              ? 'ACK timeout: execution already started; held for manual replay'
+              : 'ACK timeout: max attempts exhausted';
           await client.query(
             `UPDATE deliveries SET status='dead',terminal_at=now(),last_error=$2,updated_at=now()
              WHERE id=$1`, [row.id, reason]
@@ -3603,19 +3859,31 @@ export class CauceRepository {
           // Auditoría separada sólo para el caso nuevo: sin esto, "no se reintentó" y "se
           // reintentó tres veces y murió" quedan indistinguibles en el histórico, y no hay
           // forma de medir cuánta cuota ahorró el cambio.
-          if (heldForReview) {
+          if (heldForReview || leaseCapExhausted) {
+            // Acción propia y no `delivery.ack_timeout`: contar cuántas entregas mueren por
+            // techo es lo que dice si el default es demasiado agresivo, y mezclarlas con los
+            // plazos vencidos hace esa cuenta imposible.
+            const action = leaseCapExhausted ? 'delivery.lease_cap' : 'delivery.ack_timeout';
             await client.query(
               `INSERT INTO audit_events(
                  tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
-               ) VALUES($1,$2,'delivery.ack_timeout','deny',$3,$4,$5,$6,$7::jsonb)`,
+               ) VALUES($1,$2,$8,'deny',$3,$4,$5,$6,$7::jsonb)`,
               [row.recipient_tenant, row.recipient_alias, row.request_id, row.message_id, row.id,
                 row.trace_id, JSON.stringify({
-                  reason: 'execution_already_started',
+                  reason: leaseCapExhausted ? 'lease_cap_exhausted' : 'execution_already_started',
                   attempt: row.attempt,
                   max_attempts: row.max_attempts,
                   attempts_exhausted: attemptsExhausted,
-                  held_for_manual_replay: true
-                })]
+                  held_for_manual_replay: true,
+                  ...(leaseCapExhausted
+                    ? {
+                      lease_cap_ms: Number(row.lease_cap_ms),
+                      // Sin esto no se puede contestar la única pregunta que importa al revisar
+                      // un techo agotado: ¿el harness llegó a correr, o se colgó antes?
+                      execution_started: row.execution_started
+                    }
+                    : {})
+                }), action]
             );
           }
           dead += 1;
@@ -3645,6 +3913,79 @@ export class CauceRepository {
       }
       return { retried, dead };
     });
+  }
+
+  /**
+   * Poda las dos tablas de observabilidad. Ver `packages/store/migrations/014_*.sql` para el
+   * porqué de cada ventana; acá va el porqué de la FORMA del barrido.
+   *
+   * Cuatro DELETE independientes y no uno con OR: cada uno tiene su propia ventana y su propio
+   * predicado, y separarlos es lo que permite que el barrido de renovaciones —que es el que
+   * recupera el 90% del espacio— corra cada pocos minutos y sea barato, sin arrastrar detrás el
+   * escaneo de la ventana larga.
+   *
+   * Cada uno es su propio statement fuera de una transacción explícita, a propósito: si fueran
+   * una sola transacción, los locks de fila de los cuatro lotes se sostendrían hasta el COMMIT
+   * final y el barrido pasaría de "cuatro pausas de milisegundos" a "una pausa larga". Un lote
+   * que falla no deja los otros a medias porque no hay nada que dejar consistente entre ellos:
+   * son cuatro podas independientes, y la del tick siguiente reintenta lo que quedó.
+   *
+   * `id IN (SELECT id ... LIMIT n)` es lo que garantiza que NUNCA hay un DELETE ilimitado sobre
+   * una base viva. El primer barrido sobre un backlog acumulado no se come la base: se lleva n
+   * filas y vuelve en el tick siguiente.
+   */
+  async pruneObservability(
+    policy: ObservabilityRetentionPolicy = {}
+  ): Promise<ObservabilityRetentionResult> {
+    const ackRenewalMs = positiveMs(
+      policy.ackRenewalMs, DEFAULT_RETENTION_ACK_RENEWAL_MS, 'ack renewal retention'
+    );
+    const ackMs = positiveMs(policy.ackMs, DEFAULT_RETENTION_ACK_MS, 'ack retention');
+    const auditRenewalMs = positiveMs(
+      policy.auditRenewalMs, DEFAULT_RETENTION_AUDIT_RENEWAL_MS, 'audit renewal retention'
+    );
+    const auditMs = positiveMs(policy.auditMs, DEFAULT_RETENTION_AUDIT_MS, 'audit retention');
+    const batch = positiveMs(policy.batch, DEFAULT_RETENTION_BATCH, 'retention batch');
+    // Una ventana de renovaciones MÁS LARGA que la general no borraría nada de más, pero sí
+    // volvería el barrido incomprensible al leer los números: la regla general ya se habría
+    // llevado las renovaciones antes. Falla acá, que es donde se configura.
+    if (ackRenewalMs > ackMs || auditRenewalMs > auditMs) {
+      throw new StoreError(
+        'conflict', 'renewal retention window cannot exceed the general retention window'
+      );
+    }
+    const prune = async (sql: string, parameters: unknown[]): Promise<number> =>
+      (await this.pool.query(sql, parameters)).rowCount ?? 0;
+    return {
+      ack_renewals: await prune(
+        `DELETE FROM delivery_acks WHERE id IN (
+           SELECT id FROM delivery_acks
+            WHERE renewal AND created_at < now()-$1*interval '1 millisecond' LIMIT $2)`,
+        [ackRenewalMs, batch]
+      ),
+      acks: await prune(
+        `DELETE FROM delivery_acks WHERE id IN (
+           SELECT id FROM delivery_acks
+            WHERE created_at < now()-$1*interval '1 millisecond' LIMIT $2)`,
+        [ackMs, batch]
+      ),
+      // `lease_renewed` lo escribe SÓLO la rama de renovación de `ackDelivery`, y lo viene
+      // escribiendo desde antes de este parche: por eso el backlog histórico de audit_events sí
+      // se puede podar desde el primer barrido, sin columna nueva y sin backfill.
+      audit_renewals: await prune(
+        `DELETE FROM audit_events WHERE id IN (
+           SELECT id FROM audit_events
+            WHERE metadata->>'lease_renewed'='true'
+              AND created_at < now()-$1*interval '1 millisecond' LIMIT $2)`,
+        [auditRenewalMs, batch]
+      ),
+      audit_events: await prune(
+        `DELETE FROM audit_events WHERE id IN (
+           SELECT id FROM audit_events
+            WHERE created_at < now()-$1*interval '1 millisecond' LIMIT $2)`,
+        [auditMs, batch]
+      )
+    };
   }
 
   async claimOutbox(

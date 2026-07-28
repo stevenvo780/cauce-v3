@@ -45,12 +45,69 @@ por lo que una revocación runtime corta la autorización sin confiar solo en el
 `production`. Never expose this mode on a shared network. Production always requires
 delivery/outbox ACK claims; attempting to disable them fails startup.
 
-`CAUCE_ACK_DEADLINE_MS` is the positive, fixed deadline assigned when either
-HTTP or WebSocket claims a delivery. It is not extended by `accepted`, repeated
-`started` ACKs, or connection heartbeats. The source fallback is 30000 ms for
-compatibility, while the production compose declares 600000 ms explicitly for
-slow LLM work. Dispatcher `ACK_TIMEOUT_MS` must be equal to or greater than the
-same `CAUCE_ACK_DEADLINE_MS`; incoherent or non-integer values fail startup.
+`CAUCE_ACK_DEADLINE_MS` is the positive deadline assigned when either HTTP or
+WebSocket claims a delivery. The source fallback is 30000 ms for compatibility,
+while the production compose declares 600000 ms explicitly for slow LLM work.
+Dispatcher `ACK_TIMEOUT_MS` must be equal to or greater than the same
+`CAUCE_ACK_DEADLINE_MS`; incoherent or non-integer values fail startup.
+
+Este documento afirmaba hasta hoy que el plazo "no lo extienden los `started`
+repetidos". Es FALSO y era el bug: cada `started` aplicado lo empuja
+`CAUCE_ACK_DEADLINE_MS` hacia adelante, sin límite. Un harness colgado que sigue
+latiendo se renueva para siempre y es invisible al reaper, que sólo mira plazos
+vencidos. Medido el 2026-07-27: una entrega de janus se sostuvo 17,36 h
+emitiendo ~60 ACKs/hora y aportó el 32,7% de todos los `delivery_acks` del día.
+
+## Techo de vida total de una entrega
+
+`CAUCE_DELIVERY_LEASE_CAP_MS` (default 43200000, o sea 12 h) es el tiempo máximo
+que UN intento puede sostener su garra, contado desde `execution_started_at` —o
+desde `claimed_at` si el adaptador no informa el arranque— e INDEPENDIENTE de
+cuántas veces se renueve. Al superarlo la entrega termina en `dead` con motivo
+`Lease cap exhausted: ...`, queda en `dead_letters` para replay manual y emite un
+`audit_events` con `action='delivery.lease_cap'`. El motivo es deliberadamente
+distinto del de `ACK timeout`: "dejó de responder" y "no deja de responder" son
+diagnósticos opuestos.
+
+Qué trabajo legítimo muere con el default: una entrega que no declara
+`body.timeout_ms` y de verdad mantiene el harness corriendo más de 12 h de reloj
+de pared en un solo intento. Las dos salidas, en orden de preferencia:
+
+1. `body.timeout_ms` por mensaje (entero, 1 a 604800000 ms = 7 días, validado en
+   la puerta). El techo de esa entrega pasa a ser `timeout_ms` +
+   `CAUCE_DELIVERY_LEASE_CAP_GRACE_MS` (default 1800000, un plazo de ACK), y
+   sirve en las dos direcciones: subirlo por encima de las 12 h, o bajarlo para
+   pedir supervisión estrecha de una tarea que se sabe corta.
+2. Subir `CAUCE_DELIVERY_LEASE_CAP_MS` para toda la flota.
+
+Gateway y dispatcher leen las MISMAS variables y hay que desplegarlos con el
+mismo bloque de entorno: el gateway congela el plazo en el techo (por eso el
+harness deja de poder renovar) y el dispatcher recoge lo que lo superó. El techo
+no puede ser menor que `CAUCE_ACK_DEADLINE_MS`; si lo es, el arranque falla.
+
+## Retención de la observabilidad
+
+Cada renovación de garra escribía dos filas —una en `delivery_acks`, otra en
+`audit_events`— sin ninguna política de borrado: 24 MB + 24 MB sobre una base de
+93 MB creada 6 días antes. El dispatcher poda cada
+`CAUCE_RETENTION_INTERVAL_MS` (default 300000; `0` APAGA el barrido, y es la
+palanca de emergencia), en lotes de `CAUCE_RETENTION_BATCH` filas (default 5000)
+por tabla y por regla, sin lock de tabla.
+
+Se retiene por TIPO, no sólo por edad, porque un latido no tiene valor forense
+pasadas unas horas y una transición de estado sí:
+
+| variable | default | qué borra |
+| --- | --- | --- |
+| `CAUCE_RETENTION_ACK_RENEWAL_MS` | 6 h | `delivery_acks` con `renewal=true` |
+| `CAUCE_RETENTION_ACK_MS` | 14 d | el resto de `delivery_acks` |
+| `CAUCE_RETENTION_AUDIT_RENEWAL_MS` | 6 h | `audit_events` con `metadata->>'lease_renewed'='true'` |
+| `CAUCE_RETENTION_AUDIT_MS` | 30 d | el resto de `audit_events` |
+
+`audit_events` tiene ventana más larga que `delivery_acks` a propósito: un ACK es
+telemetría de transporte, un audit_event contesta "quién autorizó qué", que es la
+pregunta que aparece semanas después. Una ventana de renovaciones más larga que
+su ventana general hace fallar el arranque.
 
 `CAUCE_CONSOLE_ORIGINS` is an optional comma-separated list of exact console
 origins. Without it, console requests must be same-origin with the gateway Host.
