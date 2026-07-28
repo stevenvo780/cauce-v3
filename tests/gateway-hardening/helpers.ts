@@ -132,6 +132,10 @@ export function fakeRepository(): GatewayRepository {
       accepted_providers: 0, accepted_windows: 0,
       unbound_groups: [], paused_accounts: [], resumed_accounts: [], pruned_collections: 0
     })),
+    selectAccount: vi.fn(async (tenant: Tenant, alias: string, provider: string) => ({
+      tenant_id: tenant, alias, provider, observed_at: new Date().toISOString(),
+      selected: null, candidates: [], failover: false, auto_paused: []
+    })),
     getConfiguration: vi.fn(async () => ({ revision: 0, tenants: [], rooms: [], memberships: [], acl_edges: [] })),
     applyConfigurationChange: vi.fn(async (
       _tenant: Tenant, _alias: string, mutation: ConfigMutation, dryRun: boolean

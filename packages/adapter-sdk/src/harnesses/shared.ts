@@ -138,6 +138,22 @@ export interface HarnessAdapterOptions {
   readonly fallbackSessionKey?: string;
   /** Exact Kant/OpenCode-only opt-in for the canonical native-session pointer. */
   readonly canonicalOpenCodeSession?: boolean;
+  /**
+   * El sistema rotativo de cuentas: se llama ANTES de cada ejecución y devuelve las variables de
+   * entorno que apuntan al harness a la suscripción elegida por el selector
+   * (GET /v3/accounts/selection -> `resolveAccountCredentialEnv`).
+   *
+   * Ausente, o devolviendo `{}`, el harness se lanza sin ninguna variable añadida: el CLI resuelve
+   * la credencial que ya está logueada en su contenedor, que es el comportamiento de siempre. Ese
+   * es el camino de los 6 alias cuyo `~/.claude` es el mount compartido
+   * `/datos/agents/shared/.claude` y que por lo tanto NO pueden rotar; ver
+   * `sdk/account-credentials.ts` para el porqué y el camino de migración.
+   *
+   * Se resuelve por ejecución y no por proceso a propósito: una cuenta se puede agotar entre dos
+   * entregas del mismo adaptador, y ese es justamente el momento en que hay que caer a la
+   * siguiente.
+   */
+  readonly resolveCredentialEnv?: () => Promise<Readonly<Record<string, string>>>;
 }
 
 /**
@@ -218,6 +234,7 @@ export class HarnessAdapter {
   private readonly sessionNamespace: string | undefined;
   private readonly fallbackSessionKey: string | undefined;
   private readonly canonicalOpenCodeSession: boolean;
+  private readonly resolveCredentialEnv: (() => Promise<Readonly<Record<string, string>>>) | undefined;
 
   constructor(options: HarnessAdapterOptions) {
     this.definition = options.definition;
@@ -227,6 +244,7 @@ export class HarnessAdapter {
     this.sessionNamespace = options.sessionNamespace;
     this.fallbackSessionKey = options.fallbackSessionKey;
     this.canonicalOpenCodeSession = options.canonicalOpenCodeSession === true;
+    this.resolveCredentialEnv = options.resolveCredentialEnv;
     if (this.canonicalOpenCodeSession
       && (this.definition.id !== "opencode" || this.sessionNamespace !== "kant")) {
       throw new Error("Canonical OpenCode session publication is restricted to alias 'kant'");
@@ -312,11 +330,23 @@ export class HarnessAdapter {
     const sessionContext: HarnessExecutionContext = session.context;
     const attachmentPlan = planAttachments(this.definition.id, request.attachments ?? []);
     const invocation = this.invocation(sessionContext, attachmentPlan.args);
+    // La cuenta se resuelve DESPUÉS de tomar el candado de sesión y justo antes de gastar: entre
+    // que la entrega se admitió y que llega acá pueden pasar minutos, y en ese rato la cuenta
+    // preferida se puede haber agotado. Resolver antes daría la respuesta vieja.
+    //
+    // Un fallo del resolutor NO puede tumbar la ejecución: si el gateway no contesta, se sigue con
+    // `{}` — o sea el comportamiento de siempre, el CLI usa la credencial ya logueada. Quedarse
+    // sin despachar porque no se pudo consultar QUÉ cuenta usar sería cambiar un problema de
+    // costos por una caída.
+    const credentialEnv = this.resolveCredentialEnv === undefined
+      ? {}
+      : await this.resolveCredentialEnv().catch(() => ({}));
     const effectivePrompt = attachmentPlan.prompt.length === 0
       ? request.prompt
       : `${request.prompt}\n\n${attachmentPlan.prompt}`;
     const result = await this.runner.run({
       ...invocation,
+      ...(Object.keys(credentialEnv).length === 0 ? {} : { env: credentialEnv }),
       stdin: protocolPrompt(effectivePrompt, request.origin, request.context),
       timeoutMs: request.timeoutMs,
       signal: request.signal,
