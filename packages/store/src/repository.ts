@@ -1974,11 +1974,42 @@ export class CauceRepository {
       && uuidPattern.test(parentCorrelation.root_delivery_id)
       ? parentCorrelation.root_delivery_id
       : row.id;
-    // The delegation path is rebuilt from the parent materialization only, and the current
-    // consumer is appended server-side. Nothing here is readable from any client-writable
-    // field, so a publisher cannot seed it to censor a legitimate delegation.
+    // Simetría con hop_count. El camino visitado se reconstruye desde la fila del padre y el
+    // consumidor actual se agrega del lado del servidor, pero hasta acá NO tenía el respaldo
+    // que hop_count sí tiene (`?? bodyCorrelation.hop_count`, arriba). Esa asimetría dejaba
+    // CIEGO al guarda de ciclo: medida en filas reales de prod como
+    // `hop_count=16 | vp_len=1 | corr_has_hop=t | corr_has_vp=f`, el hop sobrevivía y el
+    // camino se reiniciaba en largo 1, así que `visitedPath.includes(destino)` nunca podía
+    // ser verdadero por más que se encendiera `cycle_cut_enabled`.
+    //
+    // Dos estados producen esa pérdida y el respaldo cubre a los dos:
+    //   - la fila del padre no existe (continuación `agent.response` en la RAÍZ de la cadena:
+    //     `continuationBranchMaterialization` busca `produced_delivery_id=<entrega raíz>`, que
+    //     por definición no nació de ninguna materialización);
+    //   - la fila existe pero con el camino vacío (migración 008 declara
+    //     `visited_path text[] NOT NULL DEFAULT '{}'`, así que toda fila anterior a 008 —y toda
+    //     fila escrita durante un despliegue parcial con `visitedPathAvailable=false`— vale '{}').
+    //
+    // Un camino vacío es un centinela fiable de "sin información", no un dato legítimo: toda
+    // materialización guarda al menos a su propio emisor, así que su camino nunca es
+    // legítimamente vacío. Por eso caer a la correlación jamás pisa un dato bueno; sólo
+    // rellena uno ausente.
+    //
+    // Procedencia: se lee exactamente la misma superficie de confianza que ya usa hop_count.
+    // `bodyCorrelation` sólo está definido para los tipos internos reservados, que ningún
+    // cliente puede publicar (publish() lo rechaza con 'forbidden'), y además
+    // `sanitizedVisitedPath` revalida cada entrada contra tenantPattern/aliasPattern. Un
+    // publicador sigue sin poder sembrar el camino para censurar una delegación legítima.
+    //
+    // Cota: se reserva un lugar para el nodo actual antes de heredar, de modo que el
+    // consumidor SIEMPRE entre en su propio camino aunque el heredado llegue saturado; si no,
+    // un camino de largo tope lo expulsaría y un hijo podría volver a él sin ser detectado.
+    const inheritedVisitedPath = sanitizedVisitedPath(parentMaterialization?.visited_path);
     const visitedPath = sanitizedVisitedPath([
-      ...sanitizedVisitedPath(parentMaterialization?.visited_path),
+      ...(inheritedVisitedPath.length > 0
+        ? inheritedVisitedPath
+        : sanitizedVisitedPath(bodyCorrelation?.visited_path)
+      ).slice(0, maxVisitedPathEntries - 1),
       chainNode(row.recipient_tenant, row.recipient_alias)
     ]);
 
@@ -2044,7 +2075,23 @@ export class CauceRepository {
         output_index: output.index,
         trace_id: row.trace_id,
         hop_count: hopCount,
-        hop_budget: hopBudget
+        hop_budget: hopBudget,
+        // Contraparte del respaldo de arriba: hasta ahora la correlación llevaba hop_count
+        // pero NO el camino, así que el respaldo no tenía de dónde leer (`corr_has_vp=f` en
+        // prod). Es el camino de ANTEPASADOS del destinatario —incluye al emisor actual, que
+        // es su padre— y el destinatario se agrega a sí mismo cuando ACKea.
+        //
+        // `agent.response` lo hereda solo: su correlación se arma con
+        // `...relationship.correlation` (materializeAgentResponse), y `relationship` es
+        // justamente esta arista, así que una continuación recupera el camino hasta el
+        // coordinador inclusive sin código extra.
+        //
+        // Cadenas viejas: las que ya estaban en vuelo cuando entra esta imagen no traen el
+        // campo. Ahí el respaldo no encuentra nada, el camino queda en largo 1 y el guarda se
+        // comporta EXACTAMENTE como hoy: no corta. Es degradación a la conducta actual, nunca
+        // un corte nuevo, así que el despliegue no puede inventar falsos positivos sobre
+        // cadenas que ya estaban corriendo. Se cura sola en el primer salto nuevo.
+        visited_path: visitedPath
       };
       const existing = await client.query(
         `SELECT 1 FROM agent_output_materializations
