@@ -267,6 +267,9 @@ const tenantPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const maxVisitedPathEntries = agentOutputHopBudget;
 const maxProgressSummaryBytes = 1_024;
+/** agentResponseText ya recorta el diagnóstico a 2 000 caracteres; esto acota la reescritura
+ *  agregada, que se le suma encima, para que un cubo muy vivo no engorde el cuerpo sin techo. */
+const maxAgentResponseTextBytes = 4 * 1_024;
 const progressRelayCappedText =
   'La cadena sigue en curso; dejo de enviar avances y aviso cuando termine.';
 
@@ -286,13 +289,20 @@ interface ChainPolicy {
   cycleCutEnabled: boolean;
   /** False until migration 008 lands, which keeps ACKs working during a partial deploy. */
   visitedPathAvailable: boolean;
+  failureCoalesceEnabled: boolean;
+  failureCoalesceWindowSeconds: number;
+  /** False until migration 014 lands; same partial-deploy contract as visitedPathAvailable. */
+  failureCoalesceAvailable: boolean;
 }
 
 const disabledChainPolicy: ChainPolicy = {
   progressRelayEnabled: false,
   progressRelayMaxEvents: 0,
   cycleCutEnabled: false,
-  visitedPathAvailable: false
+  visitedPathAvailable: false,
+  failureCoalesceEnabled: false,
+  failureCoalesceWindowSeconds: 0,
+  failureCoalesceAvailable: false
 };
 
 /**
@@ -430,7 +440,14 @@ interface EgressDestinationRow {
   enabled: boolean;
 }
 
-type AgentResponseDisposition = 'not_child' | 'returned' | 'denied' | 'deferred';
+/**
+ * 'coalesced' es un retorno LEGÍTIMO, no un error: el fracaso quedó registrado y el padre ya
+ * había sido avisado de esta misma causa dentro de la ventana. Se distingue de 'not_child'
+ * porque sigue siendo una rama con padre, y de 'returned' porque no produjo entrega. Los dos
+ * consumidores de este tipo sólo preguntan por 'not_child' (para decidir el relay al origen),
+ * así que un fracaso plegado nunca se escapa hacia Telegram como si nadie lo estuviera esperando.
+ */
+type AgentResponseDisposition = 'not_child' | 'returned' | 'denied' | 'deferred' | 'coalesced';
 
 interface AgentFaninDisposition {
   hasFanout: boolean;
@@ -653,6 +670,70 @@ function agentResponseText(
     .replace(/[\p{Cf}\p{Cc}]/gu, ' ')
     .slice(0, 2_000);
   return `${alias} could not complete the delegated request: ${diagnostic}`;
+}
+
+/**
+ * Normalised fingerprint of *why* a branch failed. It is part of the coalescing key, which is
+ * the whole answer to "two failures with different causes: do they aggregate?" — they do not.
+ * Folding a brand new cause into a notice the parent already read would hide a new problem
+ * behind an old one, which is a worse failure mode than the flood this patch removes.
+ *
+ * What DOES fold together is the same cause reworded by a counter: attempt numbers, delivery
+ * uuids, hex digests and clock values are masked so that "ACK timeout on attempt 3" and
+ * "ACK timeout on attempt 4" are one bucket instead of two. Without that masking the coalescer
+ * would have collapsed nothing at all during the 27-jul incident, where every notice carried a
+ * different delivery id.
+ */
+export function failureSignature(
+  outcome: DeliveryState,
+  error: string | undefined,
+  errorCode: string | undefined
+): string {
+  const code = visibleText(errorCode);
+  const raw = code || visibleText(error);
+  if (!raw) return `${outcome}:unspecified`;
+  const normalised = raw
+    .replace(/[\p{Cf}\p{Cc}]/gu, ' ')
+    .toLowerCase()
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gu, '<uuid>')
+    .replace(/\b[0-9a-f]{8,}\b/gu, '<hex>')
+    .replace(/\d+/gu, '<n>')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, 200);
+  return `${outcome}:${normalised || 'unspecified'}`;
+}
+
+/**
+ * The aggregate sentence. It is appended, never substituted: the parent keeps reading the same
+ * first line it has always read, so a coordinator that greps for the old wording is unaffected,
+ * and the extra clause tells it how much it is NOT seeing and where the rest lives.
+ */
+function aggregatedFailureText(
+  base: string,
+  childAlias: string,
+  reservation: FailureNoticeReservation | undefined
+): string {
+  if (!reservation || reservation.coalescedFailures < 1) return base;
+  return `${base} [aggregated: ${reservation.totalFailures} failures with this same cause from `
+    + `${childAlias} in this chain; ${reservation.coalescedFailures} of them were coalesced into `
+    + `this notice instead of being delivered. Full detail: `
+    + `agent_failure_notice_events where notice_id=${reservation.noticeId}.]`;
+}
+
+/** What the coalescer decided for one failure, and the numbers the notice has to carry. */
+interface FailureNoticeReservation {
+  noticeId: string;
+  emit: boolean;
+  totalFailures: number;
+  /** Cuántos de esos fracasos nunca produjeron una entrega propia. */
+  coalescedFailures: number;
+  windowStartedAt: string;
+  lastNoticeMessageId: string | null;
+  lastNoticeDeliveryId: string | null;
+  /** Texto del aviso en pie sin la cláusula agregada; la base para reescribirlo. */
+  lastNoticeBaseText: string | null;
+  signature: string;
 }
 
 function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
@@ -1812,15 +1893,33 @@ export class CauceRepository {
    * catalog is probed first with a query that cannot fail.
    */
   private async loadChainPolicy(client: DatabaseClient): Promise<ChainPolicy> {
-    const schema = await client.query<{ policies_present: boolean; visited_path_present: boolean }>(
+    const schema = await client.query<{
+      policies_present: boolean;
+      visited_path_present: boolean;
+      failure_coalesce_present: boolean;
+    }>(
       `SELECT to_regclass('public.agent_chain_policies') IS NOT NULL AS policies_present,
               EXISTS (
                 SELECT 1 FROM pg_attribute attribute
                 WHERE attribute.attrelid=to_regclass('public.agent_output_materializations')
                   AND attribute.attname='visited_path' AND NOT attribute.attisdropped
-              ) AS visited_path_present`
+              ) AS visited_path_present,
+              (
+                to_regclass('public.agent_failure_notices') IS NOT NULL
+                AND to_regclass('public.agent_failure_notice_events') IS NOT NULL
+                AND EXISTS (
+                  SELECT 1 FROM pg_attribute attribute
+                  WHERE attribute.attrelid=to_regclass('public.agent_chain_policies')
+                    AND attribute.attname='failure_coalesce_enabled' AND NOT attribute.attisdropped
+                )
+              ) AS failure_coalesce_present`
     );
     const visitedPathAvailable = schema.rows[0]?.visited_path_present === true;
+    // Migration 014 ships the two ledger tables and the two policy columns in one transaction,
+    // but the probe still checks all three: a half-applied schema must degrade to "no
+    // coalescing" instead of raising 42P01/42703 inside the ACK transaction, which would
+    // poison every later statement of the same turn.
+    const failureCoalesceAvailable = schema.rows[0]?.failure_coalesce_present === true;
     if (schema.rows[0]?.policies_present !== true) {
       return { ...disabledChainPolicy, visitedPathAvailable };
     }
@@ -1828,19 +1927,32 @@ export class CauceRepository {
       progress_relay_enabled: boolean;
       progress_relay_max_events: number;
       cycle_cut_enabled: boolean;
+      failure_coalesce_enabled: boolean | null;
+      failure_coalesce_window_seconds: number | null;
     }>(
-      `SELECT progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled
+      `SELECT progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled,
+              ${failureCoalesceAvailable
+                ? 'failure_coalesce_enabled,failure_coalesce_window_seconds'
+                : 'NULL::boolean AS failure_coalesce_enabled,NULL::integer AS failure_coalesce_window_seconds'}
        FROM agent_chain_policies WHERE id='default'`
     );
     const row = policy.rows[0];
     if (!row) return { ...disabledChainPolicy, visitedPathAvailable };
+    const windowSeconds = Number.isSafeInteger(row.failure_coalesce_window_seconds)
+      ? Number(row.failure_coalesce_window_seconds)
+      : 0;
     return {
       progressRelayEnabled: row.progress_relay_enabled === true,
       progressRelayMaxEvents: Number.isSafeInteger(row.progress_relay_max_events)
         ? row.progress_relay_max_events
         : 0,
       cycleCutEnabled: row.cycle_cut_enabled === true && visitedPathAvailable,
-      visitedPathAvailable
+      visitedPathAvailable,
+      failureCoalesceEnabled: failureCoalesceAvailable && row.failure_coalesce_enabled === true,
+      // A saturated ceiling, never a raw value: the CHECK on the column is NOT VALID, so a row
+      // written before it existed could still carry an absurd window and mute a parent for days.
+      failureCoalesceWindowSeconds: Math.min(86_400, Math.max(0, windowSeconds)),
+      failureCoalesceAvailable
     };
   }
 
@@ -2413,6 +2525,24 @@ export class CauceRepository {
     // The coordinator needs it to tell two branches delegated to the same alias apart when
     // it decides which raw branch evidence its own synthesis already covers.
     const childDeliveryId = responseToDeliveryId ?? row.id;
+
+    // ------------------------------------------------------------------------------------
+    // Coalescencia de fracasos. Todo lo de arriba (parentesco, membresías, ACL inversa) ya se
+    // verificó: se pliega un aviso que el padre TENÍA derecho a recibir, nunca uno denegado,
+    // así que la coalescencia no puede tapar un problema de autorización.
+    // ------------------------------------------------------------------------------------
+    const reservation = outcome === 'done'
+      ? undefined
+      : await this.reserveFailureNotice(
+        client, row, relationship, attempt, childDeliveryId, outcome, policy, error, errorCode
+      );
+    if (reservation && !reservation.emit) {
+      await this.recordCoalescedFailure(
+        client, row, relationship, reservation, attempt, childDeliveryId, outcome
+      );
+      return 'coalesced';
+    }
+
     const correlation = {
       ...relationship.correlation,
       parent_request_id: row.request_id,
@@ -2423,8 +2553,22 @@ export class CauceRepository {
       response_to_message_id: relationship.source_message_id,
       child_delivery_id: childDeliveryId,
       hop_count: relationship.hop_count,
-      hop_budget: relationship.hop_budget
+      hop_budget: relationship.hop_budget,
+      // El padre necesita poder pasar del aviso al detalle sin adivinar. Con notice_id resuelve
+      // agent_failure_notice_events; total_failures y coalesced_failures le dicen
+      // cuánto NO le llegó como entrega.
+      ...(reservation === undefined ? {} : {
+        failure_coalescing: {
+          notice_id: reservation.noticeId,
+          signature: reservation.signature,
+          window_seconds: policy.failureCoalesceWindowSeconds,
+          window_started_at: reservation.windowStartedAt,
+          total_failures: reservation.totalFailures,
+          coalesced_failures: reservation.coalescedFailures
+        }
+      })
     };
+    const baseText = agentResponseText(row.recipient_alias, outcome, result, error, errorCode);
     const message = await client.query<{ id: string }>(
       `INSERT INTO messages(
          request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
@@ -2439,7 +2583,7 @@ export class CauceRepository {
         row.recipient_alias,
         JSON.stringify({
           type: 'agent.response',
-          text: agentResponseText(row.recipient_alias, outcome, result, error, errorCode),
+          text: aggregatedFailureText(baseText, row.recipient_alias, reservation),
           from_alias: row.recipient_alias,
           outcome,
           correlation
@@ -2462,6 +2606,20 @@ export class CauceRepository {
     );
     const responseDeliveryId = delivery.rows[0]?.id;
     if (!responseDeliveryId) throw new Error('agent response delivery insert returned no id');
+    if (reservation) {
+      // El fracaso que SÍ viajó también entra al libro mayor, para que "223 fracasos" y "12
+      // avisos" sean dos consultas sobre las mismas filas y no dos fuentes que se contradicen.
+      await this.bindFailureNoticeEvent(
+        client, row.id, attempt, reservation.noticeId, false, responseMessageId
+      );
+      await client.query(
+        `UPDATE agent_failure_notices
+         SET last_notice_message_id=$2,last_notice_delivery_id=$3,last_notice_base_text=$4,
+             updated_at=now()
+         WHERE id=$1`,
+        [reservation.noticeId, responseMessageId, responseDeliveryId, baseText]
+      );
+    }
     await client.query(
       `INSERT INTO adapter_outbox(
          tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload
@@ -2532,6 +2690,236 @@ export class CauceRepository {
   private relationshipRoot(relationship: { correlation: Record<string, unknown> }): string | undefined {
     const root = relationship.correlation.root_message_id;
     return typeof root === 'string' && uuidPattern.test(root) ? root : undefined;
+  }
+
+  /**
+   * Decide, atómicamente, si este fracaso viaja como entrega propia o se pliega en el aviso que
+   * el padre ya recibió.
+   *
+   * La decisión y el movimiento de los contadores son UNA sola sentencia a propósito. Dos ACKs
+   * concurrentes del mismo (raíz, padre, hijo, causa) — que es exactamente lo que pasa cuando el
+   * reaper mata una tanda de hermanos — se serializan en el candado de fila del ON CONFLICT, y
+   * ninguno puede leer un estado que el otro está por pisar. Un `SELECT` seguido de un `UPDATE`
+   * dejaría que los dos se creyeran el primero y emitieran los dos.
+   *
+   * `now()` es el instante de INICIO de la transacción en PostgreSQL, no el del reloj: por eso
+   * varias muertes dentro del mismo tick del reaper caen todas dentro de la misma ventana recién
+   * abierta y producen un aviso, no uno por hermano.
+   */
+  private async reserveFailureNotice(
+    client: DatabaseClient,
+    row: DeliveryRow,
+    relationship: {
+      source_delivery_id: string;
+      source_message_id: string;
+      source_tenant: Tenant;
+      source_alias: string;
+      correlation: Record<string, unknown>;
+    },
+    attempt: number,
+    childDeliveryId: string,
+    outcome: DeliveryState,
+    policy: ChainPolicy,
+    error: string | undefined,
+    errorCode: string | undefined
+  ): Promise<FailureNoticeReservation | undefined> {
+    if (!policy.failureCoalesceEnabled || policy.failureCoalesceWindowSeconds < 1) return undefined;
+    // Sin raíz declarada por el store, la vuelta del padre sigue siendo un agrupador válido: es
+    // el turno concreto que abrió estas ramas. Nunca se deja de coalescer por falta de raíz.
+    const root = this.relationshipRoot(relationship) ?? relationship.source_message_id;
+    if (!uuidPattern.test(root)) return undefined;
+    const signature = failureSignature(outcome, error, errorCode);
+
+    // Reintento del MISMO ACK: la clave (entrega, intento) del libro mayor ya está tomada, así
+    // que este fracaso ya se contó. No se vuelve a mover ningún contador ni se emite de nuevo.
+    const claimed = await client.query(
+      `INSERT INTO agent_failure_notice_events(
+         ack_delivery_id,ack_attempt,child_delivery_id,child_tenant,child_alias,outcome,error,error_code
+       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (ack_delivery_id,ack_attempt) DO NOTHING`,
+      [row.id, attempt, childDeliveryId, row.recipient_tenant, row.recipient_alias, outcome,
+        postgresTextSafe(error) ?? null, postgresTextSafe(errorCode) ?? null]
+    );
+    if (claimed.rowCount !== 1) return undefined;
+
+    const reserved = await client.query<{
+      id: string;
+      total_failures: number;
+      notices_emitted: number;
+      window_started_at: Date | string;
+      last_failure_emitted: boolean;
+      last_notice_message_id: string | null;
+      last_notice_delivery_id: string | null;
+      last_notice_base_text: string | null;
+    }>(
+      `INSERT INTO agent_failure_notices(
+         root_message_id,parent_tenant,parent_alias,child_tenant,child_alias,failure_signature,
+         window_started_at,window_expires_at,notices_emitted,total_failures,last_failure_emitted
+       ) VALUES($1,$2,$3,$4,$5,$6,now(),now()+$7*interval '1 second',1,1,true)
+       ON CONFLICT ON CONSTRAINT agent_failure_notices_key DO UPDATE SET
+         total_failures=agent_failure_notices.total_failures+1,
+         notices_emitted=agent_failure_notices.notices_emitted
+           +CASE WHEN agent_failure_notices.window_expires_at<=now() THEN 1 ELSE 0 END,
+         window_started_at=CASE WHEN agent_failure_notices.window_expires_at<=now()
+           THEN now() ELSE agent_failure_notices.window_started_at END,
+         window_expires_at=CASE WHEN agent_failure_notices.window_expires_at<=now()
+           THEN now()+$7*interval '1 second' ELSE agent_failure_notices.window_expires_at END,
+         last_failure_emitted=(agent_failure_notices.window_expires_at<=now()),
+         updated_at=now()
+       RETURNING id::text,total_failures,notices_emitted,window_started_at,last_failure_emitted,
+                 last_notice_message_id::text,last_notice_delivery_id::text,last_notice_base_text`,
+      [root, relationship.source_tenant, relationship.source_alias, row.recipient_tenant,
+        row.recipient_alias, signature, policy.failureCoalesceWindowSeconds]
+    );
+    const bucket = reserved.rows[0];
+    if (!bucket) return undefined;
+    const windowStartedAt = bucket.window_started_at instanceof Date
+      ? bucket.window_started_at.toISOString()
+      : String(bucket.window_started_at);
+    // Plegar contra un aviso que no existe sería silencio, no coalescencia: si por lo que fuera
+    // el cubo no tiene un mensaje anterior al que apuntar, este fracaso viaja.
+    const emit = bucket.last_failure_emitted === true || bucket.last_notice_message_id === null;
+    return {
+      noticeId: bucket.id,
+      emit,
+      totalFailures: bucket.total_failures,
+      // Cuántos fracasos de este cubo NUNCA viajaron con entrega propia. Vale tanto al emitir
+      // (los que quedaron mudos en la ventana que se acaba de cerrar) como al plegar (esos más
+      // el de ahora), porque es una resta contra las entregas realmente producidas y no un
+      // contador aparte que pudiera desincronizarse.
+      coalescedFailures: Math.max(0, bucket.total_failures - bucket.notices_emitted),
+      windowStartedAt,
+      lastNoticeMessageId: bucket.last_notice_message_id,
+      lastNoticeDeliveryId: bucket.last_notice_delivery_id,
+      lastNoticeBaseText: bucket.last_notice_base_text,
+      signature
+    };
+  }
+
+  /**
+   * Un fracaso plegado: no produce mensaje, ni entrega, ni outbox, ni relay. Sí produce las dos
+   * filas sin las cuales coalescer sería perder información:
+   *
+   *  - el libro mayor, que guarda su causa cruda y el aviso agregado que lo cubre;
+   *  - el audit_event 'agent_output.response', que NO es cosmético: materializeAgentFanin cuenta
+   *    exactamente estas filas por child_delivery_id para saber si la cadena está completa. Sin
+   *    él, plegar un aviso dejaría el fan-in esperando para siempre una respuesta que ya nunca
+   *    va a llegar, y la tormenta de avisos se habría cambiado por un cuelgue silencioso.
+   */
+  private async recordCoalescedFailure(
+    client: DatabaseClient,
+    row: DeliveryRow,
+    relationship: {
+      source_delivery_id: string;
+      source_tenant: Tenant;
+      source_alias: string;
+    },
+    reservation: FailureNoticeReservation,
+    attempt: number,
+    childDeliveryId: string,
+    outcome: DeliveryState
+  ): Promise<void> {
+    await this.bindFailureNoticeEvent(
+      client, row.id, attempt, reservation.noticeId, true, reservation.lastNoticeMessageId
+    );
+    await this.refreshStandingFailureNotice(client, row.recipient_alias, reservation);
+    await client.query(
+      `INSERT INTO audit_events(
+         tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+       ) VALUES($1,$2,'agent_output.response','allow',$3,$4,$5,$6,$7::jsonb)`,
+      [
+        row.recipient_tenant,
+        row.recipient_alias,
+        row.request_id,
+        // El mensaje del aviso agregado que cubre este fracaso: es lo que hace que el resumen de
+        // fan-in muestre el texto agregado para esta rama en vez de una celda vacía.
+        reservation.lastNoticeMessageId,
+        row.id,
+        row.trace_id,
+        JSON.stringify({
+          child_delivery_id: childDeliveryId,
+          child_attempt: attempt,
+          source_delivery_id: relationship.source_delivery_id,
+          target_tenant: relationship.source_tenant,
+          target_alias: relationship.source_alias,
+          outcome,
+          coalesced: true,
+          failure_notice_id: reservation.noticeId,
+          failure_signature: reservation.signature,
+          coalesced_into_message_id: reservation.lastNoticeMessageId,
+          total_failures: reservation.totalFailures
+        })
+      ]
+    );
+  }
+
+  /**
+   * Reescribe el aviso que sigue en pie para que diga cuántos fracasos representa.
+   *
+   * Sin esto, "N fracasos producen UN aviso" sería cierto pero el aviso diría "1": el primero se
+   * emite antes de que exista nadie a quien contar, que es justo lo que hay que preservar (el
+   * padre se entera enseguida, no dentro de 15 minutos). Mientras esa entrega siga `pending`,
+   * nadie la leyó todavía y ponerle el número correcto no reescribe historia: reescribe algo que
+   * aún no ocurrió.
+   *
+   * El candado de fila sobre la entrega es lo que hace segura la reescritura frente a un
+   * `claimDeliveries` concurrente. Si el padre ya la reclamó, el estado deja de ser `pending`,
+   * no se toca nada, y el número sigue estando en el libro mayor y en el aviso siguiente.
+   */
+  private async refreshStandingFailureNotice(
+    client: DatabaseClient,
+    childAlias: string,
+    reservation: FailureNoticeReservation
+  ): Promise<void> {
+    const { lastNoticeMessageId, lastNoticeDeliveryId, lastNoticeBaseText } = reservation;
+    if (!lastNoticeMessageId || !lastNoticeDeliveryId || lastNoticeBaseText === null) return;
+    const standing = await client.query<{ status: DeliveryState }>(
+      'SELECT status FROM deliveries WHERE id=$1 FOR UPDATE', [lastNoticeDeliveryId]
+    );
+    if (standing.rows[0]?.status !== 'pending') return;
+    const text = truncateUtf8(
+      aggregatedFailureText(lastNoticeBaseText, childAlias, reservation), maxAgentResponseTextBytes
+    ).value;
+    await client.query(
+      `UPDATE messages
+       SET body=jsonb_set(
+         jsonb_set(body,'{text}',to_jsonb($2::text),true),
+         '{correlation,failure_coalescing}',$3::jsonb,true)
+       WHERE id=$1`,
+      [
+        lastNoticeMessageId,
+        text,
+        JSON.stringify({
+          notice_id: reservation.noticeId,
+          signature: reservation.signature,
+          total_failures: reservation.totalFailures,
+          coalesced_failures: reservation.coalescedFailures,
+          window_started_at: reservation.windowStartedAt
+        })
+      ]
+    );
+  }
+
+  /**
+   * Cierra la fila del libro mayor que reserveFailureNotice() ya creó para tomar la clave
+   * (ack_delivery_id, ack_attempt). La causa cruda se escribió allá, en la misma sentencia que
+   * garantiza que un ACK repetido no cuente dos veces; acá sólo se le atan el cubo y el aviso
+   * concreto bajo el cual el padre va a poder encontrarla.
+   */
+  private async bindFailureNoticeEvent(
+    client: DatabaseClient,
+    ackDeliveryId: string,
+    ackAttempt: number,
+    noticeId: string,
+    coalesced: boolean,
+    noticeMessageId: string | null
+  ): Promise<void> {
+    await client.query(
+      `UPDATE agent_failure_notice_events
+       SET notice_id=$3,coalesced=$4,notice_message_id=$5
+       WHERE ack_delivery_id=$1 AND ack_attempt=$2`,
+      [ackDeliveryId, ackAttempt, noticeId, coalesced, noticeMessageId]
+    );
   }
 
   private async insertAgentResponseDenial(
@@ -4901,6 +5289,54 @@ export class CauceRepository {
        ) ORDER BY outbox.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
     );
     return { items: result.rows };
+  }
+
+  /**
+   * El detalle que el aviso agregado promete. Sin este método coalescer sería perder
+   * información: el padre lee "se plegaron N avisos idénticos, notice_id=X" y con X llega acá,
+   * a la causa cruda de cada uno de los N, con su entrega y su intento.
+   *
+   * Default-deny igual que el resto de los read-models: sólo el padre al que iba dirigido el
+   * aviso, el propio hijo que falló, o un operador de un tenant hub. Un cubo de fracasos nombra
+   * dos tenants (padre e hijo), así que dejarlo abierto filtraría topología cross-tenant.
+   */
+  async failureNoticeDetail(
+    noticeId: string,
+    actorTenant: Tenant,
+    actorAlias: string,
+    limit = 500
+  ): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    if (!/^\d{1,19}$/u.test(noticeId)) throw new StoreError('not_found', 'failure notice id is invalid');
+    const bounded = Math.min(Math.max(Number.isSafeInteger(limit) ? limit : 500, 1), 1_000);
+    const notice = await this.pool.query<Record<string, unknown>>(
+      `SELECT notice.id::text AS id,notice.root_message_id,notice.parent_tenant,notice.parent_alias,
+              notice.child_tenant,notice.child_alias,notice.failure_signature,
+              notice.window_started_at,notice.window_expires_at,notice.notices_emitted,
+              notice.total_failures,
+              (notice.total_failures-notice.notices_emitted) AS coalesced_failures,
+              notice.last_notice_message_id,notice.created_at,notice.updated_at,
+              (
+                (notice.parent_tenant=$2 AND notice.parent_alias=$3)
+                OR (notice.child_tenant=$2 AND notice.child_alias=$3)
+                OR EXISTS (SELECT 1 FROM tenants hub WHERE hub.id=$2 AND hub.is_hub AND hub.enabled)
+              ) AS visible
+       FROM agent_failure_notices notice WHERE notice.id=$1::bigint`,
+      [noticeId, actorTenant, actorAlias]
+    );
+    const row = notice.rows[0];
+    // Mismo código para "no existe" y "no te corresponde": distinguirlos convertiría este
+    // endpoint en un oráculo para enumerar cadenas de otros tenants.
+    if (!row || row.visible !== true) throw new StoreError('not_found', 'failure notice was not found');
+    const { visible: _visible, ...summary } = row;
+    const events = await this.pool.query<Record<string, unknown>>(
+      `SELECT ack_delivery_id,ack_attempt,child_delivery_id,child_tenant,child_alias,outcome,
+              error,error_code,coalesced,notice_message_id,created_at
+       FROM agent_failure_notice_events
+       WHERE notice_id=$1::bigint ORDER BY created_at,ack_delivery_id LIMIT $2`,
+      [noticeId, bounded]
+    );
+    return { notice: summary, failures: events.rows };
   }
 
   /**

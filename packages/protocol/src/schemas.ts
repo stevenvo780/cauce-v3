@@ -452,7 +452,12 @@ export const ChainPolicyConfigMutationSchema = z.object({
   value: z.object({
     progress_relay_enabled: z.boolean().optional(),
     progress_relay_max_events: z.number().int().min(1).max(64).optional(),
-    cycle_cut_enabled: z.boolean().optional()
+    cycle_cut_enabled: z.boolean().optional(),
+    // Coalescencia de avisos de fracaso. El 0 se admite y significa "ventana nula": es el modo
+    // de desactivación gradual (deja de plegar sin borrar el histórico ya acumulado), distinto
+    // de failure_coalesce_enabled=false, que apaga la maquinaria entera.
+    failure_coalesce_enabled: z.boolean().optional(),
+    failure_coalesce_window_seconds: z.number().int().min(0).max(86_400).optional()
   }).strict().optional()
 }).strict();
 
