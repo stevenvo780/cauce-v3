@@ -13,8 +13,9 @@ import {
 } from '@cauce/protocol';
 import {
   CauceRepository, StoreError, subscribeDeliveryWakes,
-  type AckResult, type DatabasePool, type DeliveryLeaseCap, type LeaseResult,
-  type NotificationVerdict, type OutboxEvent, type PublishResult, type QuotaSampleIngestResult
+  type AccountSelection, type AckResult, type DatabasePool, type DeliveryLeaseCap,
+  type LeaseResult, type NotificationVerdict, type OutboxEvent, type PublishResult,
+  type QuotaSampleIngestResult
 } from '@cauce/store';
 import {
   AuthError, AuthorizationError, MtlsAuthProvider, requireOperatorPermission, requirePermission, validatePrincipal,
@@ -93,6 +94,7 @@ export interface GatewayRepository {
   fleetActivity(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   quotaSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   recordQuotaSample(actorTenant: Tenant, actorAlias: string, sample: QuotaSampleRequest): Promise<QuotaSampleIngestResult>;
+  selectAccount(actorTenant: Tenant, actorAlias: string, provider: string): Promise<AccountSelection>;
   getConfiguration(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   applyConfigurationChange(actorTenant: Tenant, actorAlias: string, mutation: ConfigMutation, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
   rollbackConfiguration(actorTenant: Tenant, actorAlias: string, revisionId: number, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
@@ -500,6 +502,29 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const sample = QuotaSampleRequestSchema.parse(request.body);
       const result = await repository.recordQuotaSample(actor.tenant_id, actor.alias, sample);
       return reply.code(202).send(result);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  // Selección de cuenta del PROPIO alias (el sistema rotativo de cuentas). Vive fuera de
+  // /v3/console/ por la misma razón que /v3/quotas/samples: la llama un adaptador con certificado
+  // de cliente, y createConsoleSecurityHook rechaza todo lo que no traiga un Origin same-origin,
+  // que un demonio jamás manda.
+  //
+  // El sujeto NO es un parámetro: sale del certificado. Un alias resuelve su propia cuenta y
+  // ninguna otra, así que el permiso que hace falta es 'route' (el que ya tiene todo adaptador
+  // que despacha) y no 'control'. Pedir 'control' acá habría obligado a darle a cada agente el
+  // mismo permiso que pausa suscripciones de toda la flota, que es justo lo contrario de lo que
+  // esta ruta necesita.
+  app.get('/v3/accounts/selection', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requirePermission(actor, 'route');
+      await repository.assertPermission(actor.tenant_id, actor.alias, 'route');
+      const provider = (request.query as { provider?: unknown } | undefined)?.provider;
+      if (typeof provider !== 'string') {
+        return reply.code(400).send({ error: 'invalid_input', message: 'provider query parameter is required' });
+      }
+      return await repository.selectAccount(actor.tenant_id, actor.alias, provider);
     } catch (error) { replyError(reply, error); }
   });
 

@@ -16,6 +16,7 @@ import {
   agentWorkState, DEFAULT_FLEET_ACTIVITY_THRESHOLDS, FLEET_ACTIVITY_QUERY, FLEET_ACTIVITY_FLAGS,
   FLEET_WORK_STATES, type FleetActivityFlag, type FleetWorkState
 } from './fleet-activity.js';
+import { selectAccountForAlias, type AccountSelection } from './accounts.js';
 
 export type StoreErrorCode =
   'forbidden' | 'no_route' | 'conflict' | 'fenced' | 'not_found' | 'invalid_actor' | 'invalid_input';
@@ -6332,17 +6333,34 @@ export class CauceRepository {
       const insertedCollection = await client.query<{ id: string }>(
         `INSERT INTO quota_collections(host,collector_tenant,collector_alias,captured_at,schema_version,app_version,provider_count,window_count)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-         ON CONFLICT (host,captured_at) DO NOTHING
+         ON CONFLICT (collector_tenant,host,captured_at) DO NOTHING
          RETURNING id`,
         [sample.host, actorTenant, actorAlias, sample.captured_at, sample.schema_version, sample.app_version ?? null, providerCount, windowCount]
       );
       const collectionId = insertedCollection.rows[0]?.id;
       if (!collectionId) {
-        // Colisión con UNIQUE(host,captured_at): un reintento de red del mismo recolector. Se
-        // recupera el id existente para que la respuesta siga siendo útil, y no se escribe nada.
+        // Colisión con UNIQUE(collector_tenant,host,captured_at): un reintento de red del mismo
+        // recolector. Se recupera el id existente para que la respuesta siga siendo útil, y no se
+        // escribe nada.
+        //
+        // `collector_tenant` es parte de la clave y por lo tanto DEBE estar en las dos consultas.
+        // Decía `ON CONFLICT (host,captured_at)`, que no corresponde a ningún índice único: la
+        // migración 013 lo declara como `UNIQUE (collector_tenant, host, captured_at)` a
+        // propósito ("dos tenants que declaren el mismo host compartirían fila"). Postgres no
+        // resuelve eso con una advertencia sino con el error 42P10 "there is no unique or
+        // exclusion constraint matching the ON CONFLICT specification", así que TODO POST a
+        // /v3/quotas/samples abortaba la transacción entera y devolvía error. Eso es exactamente
+        // por qué en producción `quota_window_state` tenía 0 filas y no había ni una muestra en
+        // 72 h con el recolector corriendo: no era que nadie publicaba, era que la ingesta
+        // rechazaba todo. Sin muestras no hay detección de agotamiento, y sin eso la rotación de
+        // cuentas no tiene de dónde sacar que una suscripción se quedó sin saldo.
+        //
+        // El SELECT de recuperación llevaba el mismo defecto y era además una fuga: sin filtrar
+        // por collector_tenant, el recolector de un tenant recibía el `collection_id` de la
+        // corrida de otro que casualmente declaró el mismo host.
         const existingCollection = await client.query<{ id: string }>(
-          `SELECT id FROM quota_collections WHERE host=$1 AND captured_at=$2`,
-          [sample.host, sample.captured_at]
+          `SELECT id FROM quota_collections WHERE collector_tenant=$1 AND host=$2 AND captured_at=$3`,
+          [actorTenant, sample.host, sample.captured_at]
         );
         const existingId = existingCollection.rows[0]?.id;
         if (!existingId) throw new StoreError('conflict', 'duplicate quota collection vanished mid-transaction');
@@ -6513,6 +6531,33 @@ export class CauceRepository {
         unbound_groups: [...unboundGroups.values()], paused_accounts: pausedAccounts, resumed_accounts: resumedAccounts,
         pruned_collections: prunedCollections.rowCount ?? 0
       };
+    });
+  }
+
+  /**
+   * Qué suscripción gasta el alias en su próxima ejecución (GET /v3/accounts/selection).
+   *
+   * `actorTenant`/`actorAlias` son la identidad mTLS AUTENTICADA y son TAMBIÉN el sujeto de la
+   * consulta: no hay parámetro para preguntar por otro alias. Es deliberado y es la mitad de la
+   * seguridad de esta ruta — la respuesta incluye el `credential_ref` de la cuenta, y aunque sea
+   * un locator y no un secreto, decirle a un agente dónde busca su credencial OTRO agente es
+   * exactamente el tipo de dato que no tiene por qué cruzar. Un alias sólo resuelve lo suyo.
+   *
+   * Nótese la diferencia con `getConfiguration()`, que NUNCA devuelve `credential_ref` ni a su
+   * pagador (ver configuration.ts): aquello alimenta un navegador, esto alimenta al adaptador que
+   * corre en el host que ya tiene el material montado. La migración 010 lo dice al describir el
+   * locator: "the borrower receives a reference it can only dereference on a host that already
+   * holds the material".
+   */
+  async selectAccount(actorTenant: Tenant, actorAlias: string, provider: string): Promise<AccountSelection> {
+    // Mismo juego de caracteres que el CHECK de `provider_accounts.provider`. Se valida acá y no
+    // sólo en la ruta para que ningún llamador futuro pueda meter una cadena arbitraria en el
+    // parámetro de la consulta.
+    if (!/^[a-z][a-z0-9_.-]{0,63}$/.test(provider)) {
+      throw new StoreError('invalid_input', `invalid provider name: ${provider}`);
+    }
+    return selectAccountForAlias(this.pool, {
+      tenant_id: actorTenant, alias: actorAlias, provider
     });
   }
 }
