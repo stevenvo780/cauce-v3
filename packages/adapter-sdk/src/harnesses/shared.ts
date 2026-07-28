@@ -591,19 +591,42 @@ const STDERR_HEAD_SHARE = 0.6;
 
 /**
  * Sanitize process output by removing secret-like patterns and truncating.
- * Patterns removed: API keys, tokens, passwords, OAuth credentials, bearer tokens.
  *
- * La redacción corre ANTES del recorte, así que ampliar el presupuesto no amplía la
- * superficie de fuga: un secreto que caiga en la cola ya viene reemplazado por [REDACTED].
+ * La redacción corre ANTES del recorte. Eso NO es suficiente por sí solo: subir el presupuesto
+ * de 100 a 1200 bytes y además emitir la COLA —donde caen los volcados de entorno y de config—
+ * amplía mucho lo que puede escaparse, y `last_error` termina en la base, que leen los agentes.
+ * Por eso los patrones de abajo cubren las cuatro formas que la versión anterior dejaba pasar:
+ *
+ *   1. `ANTHROPIC_API_KEY=…`  — un `\b` delante de `api_key` no ancla, porque `_` es carácter
+ *      de palabra y no hay frontera dentro de `ANTHROPIC_API_KEY`. Se admite prefijo de palabra.
+ *   2. `Authorization: Bearer sk-…` — `[^\s]+` se comía `Bearer` y dejaba el token en claro.
+ *      Se consume el esquema (Bearer/Basic/Token) antes del valor.
+ *   3. `postgres://usuario:clave@host` — no había ningún patrón para credenciales en URL.
+ *   4. `{"api_key":"…"}` — la comilla entre la clave y los dos puntos rompía el patrón.
+ *
+ * Y como red final, se redactan los prefijos de credencial conocidos aunque aparezcan sueltos,
+ * sin clave que los nombre.
  */
 function sanitizeProcessOutput(stderr: string, maxLengthBytes: number = STDERR_DETAIL_BUDGET): string {
   if (!stderr || stderr.trim().length === 0) return "";
 
-  // Remove common secret patterns while preserving line breaks for readability
+  const KEYWORD = String.raw`(?:api[_-]?key|api[_-]?secret|client[_-]?secret|secret|password|passwd|pwd|token|bearer|authorization|x-api-key|aws_access_key_id|aws_secret_access_key|(?:oauth|refresh|access|id)[_-]?token)`;
+  // Prefijo de palabra opcional (ANTHROPIC_, GITHUB_, …) y comillas opcionales alrededor de la clave.
+  const KEY = String.raw`[\w.-]*${KEYWORD}["']?`;
+  // Esquema HTTP opcional delante del valor, para no perderlo dentro de `Bearer <token>`.
+  const SCHEME = String.raw`(?:\s*(?:Bearer|Basic|Token|Digest))?`;
+
   const sanitized = stderr
-    .replace(/\b(?:api[_-]?key|api[_-]?secret|secret|password|passwd|token|bearer|authorization|x-api-key)\s*[:=]\s*[^\s]+/gi, "[REDACTED]")
-    .replace(/\b(?:oauth|refresh|access)\s*[_]?token\s*[:=]\s*[^\s]+/gi, "[REDACTED]")
-    .replace(/\b(?:aws_access_key_id|aws_secret_access_key)\s*[:=]\s*[^\s]+/gi, "[REDACTED]")
+    // clave = valor  ·  "clave": "valor"  ·  Authorization: Bearer <token>
+    .replace(new RegExp(String.raw`${KEY}\s*[:=]${SCHEME}\s*["']?[^\s"',;}\]]+`, "gi"), "[REDACTED]")
+    // credenciales embebidas en URL: esquema://usuario:clave@host
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+):[^\s@]+@/gi, "$1:[REDACTED]@")
+    // prefijos de credencial conocidos, aunque no los nombre ninguna clave
+    .replace(/\b(?:sk-ant-|sk-proj-|sk-|ghp_|gho_|ghs_|ghu_|github_pat_|napi_|xox[baprs]-|AIza|glpat-)[A-Za-z0-9_-]{16,}/g, "[REDACTED]")
+    // JWT suelto (tres segmentos base64url separados por puntos)
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[REDACTED]")
+    // clave privada PEM: se colapsa el cuerpo entero
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[REDACTED]")
     .trim();
 
   return clampPreservingTail(sanitized, maxLengthBytes);

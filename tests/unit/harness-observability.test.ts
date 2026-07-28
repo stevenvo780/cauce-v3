@@ -123,6 +123,47 @@ describe('causa real del fallo del harness en last_error', () => {
     expect(error.message).toContain('was rejected upstream');
   });
 
+  /**
+   * Las cuatro formas que la redacción anterior dejaba pasar. No son hipotéticas: salieron de
+   * la revisión adversarial de este mismo parche, que midió que subir el presupuesto a 1200
+   * bytes y empezar a emitir la COLA multiplicaba ~12x lo que podía escaparse a `last_error`
+   * —y `last_error` va a la base, que leen los agentes—.
+   */
+  it.each([
+    ['prefijo de palabra rompe el \\b', 'ANTHROPIC_API_KEY=sk-ant-aaaaaaaaaaaaaaaaaaaaaaaa'],
+    ['el esquema Bearer se comía el match', 'Authorization: Bearer sk-ant-bbbbbbbbbbbbbbbbbbbbbbbb'],
+    ['credenciales embebidas en una URL', 'postgres://usuario:clavesecretaaaa@db.interno/cauce'],
+    ['la comilla entre clave y dos puntos', '{"api_key":"sk-proj-cccccccccccccccccccc"}'],
+    ['prefijo conocido sin clave que lo nombre', 'ghp_dddddddddddddddddddddddddddddddddddd'],
+    ['la key de Neon que vive en la config de la flota', 'napi_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'],
+    ['un JWT suelto', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk']
+  ])('no deja escapar un secreto: %s', async (_caso, linea) => {
+    const error = await failureFor(`FATAL: el proveedor rechazó las credenciales\n${linea}`);
+
+    expect(error.message).toContain('[REDACTED]');
+    // El cuerpo del secreto no sobrevive en ninguna forma.
+    for (const fragmento of ['sk-ant-aaaa', 'sk-ant-bbbb', 'clavesecretaaaa', 'sk-proj-cccc',
+                             'ghp_dddd', 'napi_eeee', 'dBjftJeZ']) {
+      expect(error.message).not.toContain(fragmento);
+    }
+  });
+
+  /**
+   * El contrapeso obligatorio: si la redacción se vuelve tan agresiva que borra la causa, el
+   * parche entero pierde sentido. Éste es textualmente el error que costó horas el 2026-07-28,
+   * y la clave ofensora estaba en la SEGUNDA línea — justo lo que el recorte a 100 bytes comía.
+   */
+  it('no redacta la causa real: el mensaje de config.toml sobrevive entero', async () => {
+    const causa = 'Error loading config.toml: unknown variant `writes`, expected one of '
+      + '`auto`, `prompt`, `approve`\nin `mcp_servers.chrome-devtools.default_tools_approval_mode`';
+
+    const error = await failureFor(causa);
+
+    expect(error.message).toContain('unknown variant `writes`');
+    expect(error.message).toContain('default_tools_approval_mode');
+    expect(error.message).not.toContain('[REDACTED]');
+  });
+
   it('no inventa detalle cuando el harness no escribió nada en stderr', async () => {
     const error = await failureFor('   \n  \n');
 
