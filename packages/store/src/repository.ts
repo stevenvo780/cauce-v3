@@ -234,6 +234,36 @@ export const DEFAULT_RETENTION_AUDIT_RENEWAL_MS = 6 * 60 * 60_000;
  */
 export const DEFAULT_RETENTION_AUDIT_MS = 30 * 24 * 60 * 60_000;
 
+/**
+ * Acciones de `audit_events` que son TELEMETRÍA y por lo tanto se pueden borrar. LISTA BLANCA,
+ * no lista negra, y ésta es la decisión más importante de todo el barrido.
+ *
+ * `audit_events` NO es un log en este sistema: es ESTADO del que dependen guardas de
+ * corrección, y borrar por edad a secas los rompería en silencio y con semanas de retraso.
+ * Las dos que costarían caro:
+ *
+ *  - `delivery.replay` (allow) es el candado de idempotencia del replay manual: `replayDelivery`
+ *    pregunta si ya existe uno antes de clonar. Sin esa fila, un dead letter que un humano
+ *    reencola a los 31 días se clona DOS veces y se paga la corrida dos veces — exactamente el
+ *    desperdicio que el resto de este parche existe para cortar. Además es el detector de
+ *    ciclos de linaje (`replayed_from_message_id`), así que borrarla también reabre el camino
+ *    que el sistema cierra a propósito.
+ *  - `agent_output.response` (allow/deny) es la marca de confianza de la cadena agente-a-agente:
+ *    `materializeAgentResponse` sólo cree la correlación declarada si existe esa fila, y la
+ *    vista de cadena y el fan-in la usan para contar respuestas. Sin ella, la respuesta al padre
+ *    se degrada a "no es hija" sin ningún error visible.
+ *
+ * Por eso la lista arranca con `delivery.ack` y nada más: es la única acción de volumen (una
+ * fila por ACK aplicado) que ninguna consulta lee para decidir nada. `delivery.ack_timeout` y
+ * `delivery.lease_cap` quedan fuera aunque nadie las lea: son la evidencia de por qué murió una
+ * entrega, son raras, y no pesan.
+ *
+ * NO se expone como variable de entorno a propósito. Una lista de acciones configurable invita
+ * a que alguien agregue `delivery.replay` para "ahorrar espacio" y rompa el candado de
+ * idempotencia sin que ningún test lo note. Ampliarla es un cambio de código, revisable.
+ */
+export const DISPOSABLE_AUDIT_ACTIONS: readonly string[] = ['delivery.ack'];
+
 /** Filas por lote y por tabla en cada barrido. Acota el DELETE sobre una base viva. */
 export const DEFAULT_RETENTION_BATCH = 5_000;
 
@@ -244,6 +274,8 @@ export interface ObservabilityRetentionPolicy {
   readonly auditRenewalMs?: number;
   readonly auditMs?: number;
   readonly batch?: number;
+  /** Ver `DISPOSABLE_AUDIT_ACTIONS`. Ampliarla sin leer ese comentario rompe cosas. */
+  readonly disposableAuditActions?: readonly string[];
 }
 
 /** Filas borradas por cada regla en un barrido. */
@@ -3946,6 +3978,7 @@ export class CauceRepository {
     );
     const auditMs = positiveMs(policy.auditMs, DEFAULT_RETENTION_AUDIT_MS, 'audit retention');
     const batch = positiveMs(policy.batch, DEFAULT_RETENTION_BATCH, 'retention batch');
+    const disposable = [...(policy.disposableAuditActions ?? DISPOSABLE_AUDIT_ACTIONS)];
     // Una ventana de renovaciones MÁS LARGA que la general no borraría nada de más, pero sí
     // volvería el barrido incomprensible al leer los números: la regla general ya se habría
     // llevado las renovaciones antes. Falla acá, que es donde se configura.
@@ -3971,19 +4004,25 @@ export class CauceRepository {
       ),
       // `lease_renewed` lo escribe SÓLO la rama de renovación de `ackDelivery`, y lo viene
       // escribiendo desde antes de este parche: por eso el backlog histórico de audit_events sí
-      // se puede podar desde el primer barrido, sin columna nueva y sin backfill.
-      audit_renewals: await prune(
+      // se puede podar desde el primer barrido, sin columna nueva y sin backfill. Va acotado
+      // igual por la lista blanca, para que un `lease_renewed` que apareciera algún día en otra
+      // acción no arrastre una fila de la que dependa un guarda.
+      audit_renewals: disposable.length === 0 ? 0 : await prune(
         `DELETE FROM audit_events WHERE id IN (
            SELECT id FROM audit_events
-            WHERE metadata->>'lease_renewed'='true'
+            WHERE action=ANY($3::text[]) AND metadata->>'lease_renewed'='true'
               AND created_at < now()-$1*interval '1 millisecond' LIMIT $2)`,
-        [auditRenewalMs, batch]
+        [auditRenewalMs, batch, disposable]
       ),
-      audit_events: await prune(
+      // Lista BLANCA de acciones. Ver `DISPOSABLE_AUDIT_ACTIONS`: borrar `audit_events` por edad
+      // a secas rompe el candado de idempotencia del replay y la marca de confianza de la
+      // cadena agente-a-agente, en silencio y con semanas de retraso.
+      audit_events: disposable.length === 0 ? 0 : await prune(
         `DELETE FROM audit_events WHERE id IN (
            SELECT id FROM audit_events
-            WHERE created_at < now()-$1*interval '1 millisecond' LIMIT $2)`,
-        [auditMs, batch]
+            WHERE action=ANY($3::text[])
+              AND created_at < now()-$1*interval '1 millisecond' LIMIT $2)`,
+        [auditMs, batch, disposable]
       )
     };
   }

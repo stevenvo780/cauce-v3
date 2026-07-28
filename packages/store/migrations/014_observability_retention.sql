@@ -70,15 +70,24 @@ CREATE INDEX IF NOT EXISTS audit_events_created_brin
 -- tick del dispatcher cada `CAUCE_RETENTION_INTERVAL_MS`). Va documentado acá porque las
 -- ventanas son la parte que un operador va a querer cambiar sin leer TypeScript.
 --
---   delivery_acks, renewal=true    6 h   (CAUCE_RETENTION_ACK_RENEWAL_MS)
---   delivery_acks, resto          14 d   (CAUCE_RETENTION_ACK_MS)
---   audit_events, renovaciones     6 h   (CAUCE_RETENTION_AUDIT_RENEWAL_MS)
---   audit_events, resto           30 d   (CAUCE_RETENTION_AUDIT_MS)
+--   delivery_acks, renewal=true                        6 h   (CAUCE_RETENTION_ACK_RENEWAL_MS)
+--   delivery_acks, resto                              14 d   (CAUCE_RETENTION_ACK_MS)
+--   audit_events, action='delivery.ack' + renovación   6 h   (CAUCE_RETENTION_AUDIT_RENEWAL_MS)
+--   audit_events, action='delivery.ack'               30 d   (CAUCE_RETENTION_AUDIT_MS)
+--   audit_events, CUALQUIER OTRA acción             NUNCA
 --
 -- `audit_events` tiene ventana MÁS LARGA que `delivery_acks` (30 d contra 14 d) y no es un
 -- descuido: un ACK es telemetría de transporte, mientras que un audit_event contesta "quién
 -- autorizó qué y con qué decisión", que es lo que se necesita semanas después cuando alguien
 -- pregunta por qué un mensaje se entregó —o no— a determinado alias.
+--
+-- Y sobre todo: la poda de `audit_events` va por LISTA BLANCA de acciones, no por edad a secas.
+-- Esta tabla NO es un log en este sistema, es ESTADO del que dependen guardas de corrección:
+-- `delivery.replay` es el candado de idempotencia del replay manual (sin esa fila, un dead
+-- letter reencolado a los 31 días se clona dos veces y se paga la corrida dos veces) y también
+-- el detector de ciclos de linaje; `agent_output.response` es la marca de confianza sin la cual
+-- `materializeAgentResponse` deja de reconocer a la hija. Borrarlas no da un error: degrada en
+-- silencio, semanas después. Ver `DISPOSABLE_AUDIT_ACTIONS` en repository.ts.
 --
 -- Las renovaciones de `audit_events` SÍ se identifican en las filas históricas, sin columna
 -- nueva y sin backfill: la rama de renovación de `ackDelivery` viene escribiendo

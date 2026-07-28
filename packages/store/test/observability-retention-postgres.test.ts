@@ -187,7 +187,14 @@ describe('retención por tipo de la observabilidad', () => {
     const pruned = await repository.pruneObservability();
     expect(pruned.ack_renewals + pruned.acks).toBe(4);
     expect(await count(`SELECT count(*)::text AS n FROM delivery_acks`)).toBe(0);
-    expect(await count(`SELECT count(*)::text AS n FROM audit_events`)).toBe(0);
+    // De `audit_events` sólo se va la telemetría de la lista blanca; `message.publish` y
+    // compañía sobreviven porque no son un log, son estado.
+    expect(await count(
+      `SELECT count(*)::text AS n FROM audit_events WHERE action='delivery.ack'`
+    )).toBe(0);
+    expect(await count(
+      `SELECT count(*)::text AS n FROM audit_events WHERE action='message.publish'`
+    )).toBeGreaterThan(0);
   });
 
   /**
@@ -204,6 +211,38 @@ describe('retención por tipo de la observabilidad', () => {
     expect((await repository.pruneObservability({ batch: 2 })).ack_renewals).toBe(2);
     expect((await repository.pruneObservability({ batch: 2 })).ack_renewals).toBe(1);
     expect(await count(`SELECT count(*)::text AS n FROM delivery_acks WHERE renewal`)).toBe(0);
+  });
+
+  /**
+   * `audit_events` NO es un log: es estado del que dependen guardas de corrección. Un DELETE por
+   * edad a secas rompería el candado de idempotencia del replay (un dead letter reencolado a los
+   * 31 días se clonaría dos veces) y la marca de confianza de la cadena agente-a-agente, en
+   * silencio y con semanas de retraso. Por eso la poda es una lista BLANCA.
+   */
+  it('nunca borra los audit_events de los que dependen las guardas, por viejos que sean', async () => {
+    const messageId = randomUUID();
+    const deliveryId = randomUUID();
+    for (const action of ['delivery.replay', 'agent_output.response', 'message.publish']) {
+      await pool.query(
+        `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,message_id,delivery_id,metadata,created_at)
+         VALUES('Steven','kant',$1,'allow',$2,$3,'{}'::jsonb,now()-interval '400 days')`,
+        [action, messageId, deliveryId]
+      );
+    }
+    await pool.query(
+      `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata,created_at)
+       VALUES('Steven','kant','delivery.ack','allow','{}'::jsonb,now()-interval '400 days')`
+    );
+
+    const pruned = await repository.pruneObservability();
+
+    // Sólo se fue la telemetría, aunque las cuatro filas tienen la misma edad.
+    expect(pruned.audit_events).toBe(1);
+    const survivors = await pool.query<{ action: string }>(
+      `SELECT action FROM audit_events ORDER BY action`
+    );
+    expect(survivors.rows.map((row) => row.action))
+      .toEqual(['agent_output.response', 'delivery.replay', 'message.publish']);
   });
 
   it('rechaza una ventana de renovaciones más larga que la general', async () => {

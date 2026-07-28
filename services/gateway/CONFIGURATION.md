@@ -101,13 +101,22 @@ pasadas unas horas y una transición de estado sí:
 | --- | --- | --- |
 | `CAUCE_RETENTION_ACK_RENEWAL_MS` | 6 h | `delivery_acks` con `renewal=true` |
 | `CAUCE_RETENTION_ACK_MS` | 14 d | el resto de `delivery_acks` |
-| `CAUCE_RETENTION_AUDIT_RENEWAL_MS` | 6 h | `audit_events` con `metadata->>'lease_renewed'='true'` |
-| `CAUCE_RETENTION_AUDIT_MS` | 30 d | el resto de `audit_events` |
+| `CAUCE_RETENTION_AUDIT_RENEWAL_MS` | 6 h | `audit_events` de `delivery.ack` con `metadata->>'lease_renewed'='true'` |
+| `CAUCE_RETENTION_AUDIT_MS` | 30 d | el resto de `audit_events` de `delivery.ack` |
 
 `audit_events` tiene ventana más larga que `delivery_acks` a propósito: un ACK es
 telemetría de transporte, un audit_event contesta "quién autorizó qué", que es la
 pregunta que aparece semanas después. Una ventana de renovaciones más larga que
 su ventana general hace fallar el arranque.
+
+La poda de `audit_events` va por **lista blanca de acciones**, hoy sólo
+`delivery.ack`, y NO es configurable por entorno a propósito. Esta tabla no es un
+log: `delivery.replay` es el candado de idempotencia del replay manual —sin esa
+fila un dead letter reencolado a los 31 días se clona dos veces— y
+`agent_output.response` es la marca de confianza de la cadena agente-a-agente.
+Borrarlas no da error: degrada en silencio, semanas después. Ampliar la lista es
+un cambio de código revisable, no una variable que alguien mueva para ahorrar
+espacio.
 
 `CAUCE_CONSOLE_ORIGINS` is an optional comma-separated list of exact console
 origins. Without it, console requests must be same-origin with the gateway Host.
