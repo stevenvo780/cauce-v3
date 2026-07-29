@@ -67,7 +67,8 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
       // agent_chain_progress has no foreign key by design, so CASCADE cannot reach it.
-      // agent_failure_notices and its event ledger are in the same situation (migration 014).
+      // agent_failure_notices and its event ledger are in the same situation (migration 014),
+      // y agent_chain_closures también (migración 015 del vigía de cadenas mudas).
       await pool.query(`TRUNCATE TABLE
         gateway_oidc_sessions,telegram_egress_effects,channel_bridge_cursors,channel_bridge_leases,
         shadow_compare_verdicts,shadow_human_reply_guards,shadow_router_mappings,shadow_router_inbox,
@@ -76,7 +77,7 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
         audit_events,dead_letters,jobs,adapter_outbox,adapter_inbox,delivery_acks,
         delivery_lane_fairness,job_lane_fairness,
         deliveries,idempotency_keys,messages,connection_leases,agent_chain_progress,
-        agent_failure_notice_events,agent_failure_notices
+        agent_failure_notice_events,agent_failure_notices,agent_chain_closures
         RESTART IDENTITY CASCADE`);
       // Same reason the relay flags are pinned here: every suite that does not opt in must see
       // the pre-014 behaviour, so an unrelated test never fails because a sibling failure got

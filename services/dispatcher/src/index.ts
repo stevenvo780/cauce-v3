@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
-  CauceRepository, type DatabasePool, type ObservabilityRetentionPolicy,
+  CauceRepository, type ChainSilenceSweepOptions, type DatabasePool,
+  type ObservabilityRetentionPolicy,
 } from '@cauce/store';
 import { asClaimedJob, createDefaultJobHandlerRegistry, type JobHandlerRegistry } from './handlers.js';
 import type { DispatcherMetrics } from './metrics.js';
@@ -18,6 +19,9 @@ export interface DispatcherOptions {
   /** Cada cuánto se poda la observabilidad. 0 apaga el barrido. */
   retentionIntervalMs?: number;
   retention?: ObservabilityRetentionPolicy;
+  /** Reloj propio del vigía de cadenas mudas (P0-4). 0 lo apaga. */
+  chainSweepMs?: number;
+  chainSweep?: ChainSilenceSweepOptions;
   handlers?: JobHandlerRegistry;
   metrics?: DispatcherMetrics;
   onError?: (error: unknown) => void;
@@ -27,12 +31,16 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
   const repository = new CauceRepository(pool);
   const handlers = options.handlers ?? createDefaultJobHandlerRegistry(pool);
   const worker = `dispatcher:${randomUUID()}`;
+  const chainSweepMs = options.chainSweepMs ?? 60_000;
   let running = false;
   const retentionIntervalMs = options.retentionIntervalMs ?? 0;
   // Arranca en -infinito para que el PRIMER tick barra: si arrancara en `Date.now()` un
   // dispatcher que se reinicia cada pocos minutos —lo normal durante un despliegue— nunca
   // llegaría a podar nada.
   let nextPruneAtMs = Number.NEGATIVE_INFINITY;
+  // Mismo criterio para el vigía: el primer tick tras un despliegue ya barre, porque una raíz
+  // que lleva horas muda no tiene por qué esperar otro minuto más.
+  let lastChainSweep = Number.NEGATIVE_INFINITY;
 
   const tick = async (): Promise<void> => {
     if (running) return;
@@ -46,6 +54,18 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
           : { leaseCapGraceMs: options.leaseCapGraceMs })
       });
       await repository.retryExpiredJobs();
+      // Reloj propio: ~1 barrido/min contra los ~10 ticks/s del reaper. Y con su propio
+      // try/catch, porque el vigía existe para que el dueño no se quede sin noticias: no
+      // puede ser él quien tumbe el tick que reparte el trabajo.
+      if (chainSweepMs > 0 && Date.now() - lastChainSweep >= chainSweepMs) {
+        lastChainSweep = Date.now();
+        try {
+          options.metrics?.recordChainSweep(await repository.sweepSilentChains(options.chainSweep));
+        } catch (error) {
+          options.metrics?.recordChainSweepFailure();
+          options.onError?.(error);
+        }
+      }
       const jobs = await repository.claimFairJobs(
         worker, 1, options.jobLeaseMs ?? 30_000, options.interactiveBurst ?? 3, 'dispatcher'
       );

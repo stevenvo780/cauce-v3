@@ -16,6 +16,12 @@ export const DEFAULT_ACK_TIMEOUT_MS = 30_000;
  * y es la palanca de emergencia: deja de borrar sin revertir el esquema ni redesplegar código.
  */
 export const DEFAULT_RETENTION_INTERVAL_MS = 5 * 60_000;
+/** P0-4 — vigía de cadenas mudas. La justificación de cada número está en el store. */
+export const DEFAULT_CHAIN_SWEEP_MS = 60_000;
+export const DEFAULT_CHAIN_IDLE_MS = 6 * 60 * 60 * 1_000;
+export const DEFAULT_CHAIN_SETTLED_GRACE_MS = 15 * 60 * 1_000;
+export const DEFAULT_CHAIN_MAX_AGE_MS = 48 * 60 * 60 * 1_000;
+export const DEFAULT_CHAIN_SWEEP_LIMIT = 5;
 
 export interface DispatcherConfig {
   pollMs: number;
@@ -39,6 +45,11 @@ export interface DispatcherConfig {
   retentionAuditRenewalMs: number;
   retentionAuditMs: number;
   retentionBatch: number;
+  chainSweepMs: number;
+  chainIdleMs: number;
+  chainSettledGraceMs: number;
+  chainMaxAgeMs: number;
+  chainSweepLimit: number;
 }
 
 function positiveInteger(environment: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -49,6 +60,7 @@ function positiveInteger(environment: NodeJS.ProcessEnv, name: string, fallback:
   return parsed;
 }
 
+/** Igual que `positiveInteger` pero admite 0, el valor con el que se apaga el vigía. */
 function nonNegativeInteger(environment: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const parsed = Number(environment[name] ?? fallback);
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
@@ -97,6 +109,13 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
       'renewal retention windows must be shorter than or equal to the general retention windows',
     );
   }
+  const chainIdleMs = positiveInteger(environment, 'CHAIN_IDLE_MS', DEFAULT_CHAIN_IDLE_MS);
+  const chainMaxAgeMs = positiveInteger(environment, 'CHAIN_MAX_AGE_MS', DEFAULT_CHAIN_MAX_AGE_MS);
+  // Una ventana de rastreo más corta que el plazo de inactividad deja un agujero garantizado:
+  // la raíz envejecería fuera del barrido antes de poder vencer, y el silencio volvería.
+  if (chainMaxAgeMs < chainIdleMs) {
+    throw new Error('CHAIN_MAX_AGE_MS must be equal to or greater than CHAIN_IDLE_MS');
+  }
   return {
     pollMs: positiveInteger(environment, 'DISPATCHER_POLL_MS', 250),
     ackDeadlineMs,
@@ -120,5 +139,12 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
     retentionBatch: positiveInteger(
       environment, 'CAUCE_RETENTION_BATCH', DEFAULT_RETENTION_BATCH,
     ),
+    chainSweepMs: nonNegativeInteger(environment, 'CHAIN_SWEEP_MS', DEFAULT_CHAIN_SWEEP_MS),
+    chainIdleMs,
+    chainSettledGraceMs: positiveInteger(
+      environment, 'CHAIN_SETTLED_GRACE_MS', DEFAULT_CHAIN_SETTLED_GRACE_MS
+    ),
+    chainMaxAgeMs,
+    chainSweepLimit: positiveInteger(environment, 'CHAIN_SWEEP_LIMIT', DEFAULT_CHAIN_SWEEP_LIMIT),
   };
 }

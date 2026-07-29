@@ -26,6 +26,13 @@ const dispatcher = tlsPolicy.ok ? runDispatcher(pool, {
     batch: config.retentionBatch,
   },
   jobLeaseMs: config.jobLeaseMs,
+  chainSweepMs: config.chainSweepMs,
+  chainSweep: {
+    idleMs: config.chainIdleMs,
+    settledGraceMs: config.chainSettledGraceMs,
+    maxAgeMs: config.chainMaxAgeMs,
+    limit: config.chainSweepLimit
+  },
   handlers: createDefaultJobHandlerRegistry(pool),
   metrics,
   onError: (error) => {

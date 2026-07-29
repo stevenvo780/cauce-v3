@@ -4,7 +4,9 @@ import {
   DEFAULT_RETENTION_ACK_RENEWAL_MS, DEFAULT_RETENTION_AUDIT_MS, DEFAULT_RETENTION_BATCH,
 } from '@cauce/store';
 import {
-  configuredDispatcher, DEFAULT_ACK_DEADLINE_MS, DEFAULT_RETENTION_INTERVAL_MS,
+  configuredDispatcher, DEFAULT_ACK_DEADLINE_MS, DEFAULT_CHAIN_IDLE_MS,
+  DEFAULT_CHAIN_MAX_AGE_MS, DEFAULT_CHAIN_SETTLED_GRACE_MS, DEFAULT_CHAIN_SWEEP_LIMIT,
+  DEFAULT_CHAIN_SWEEP_MS, DEFAULT_RETENTION_INTERVAL_MS
 } from '../src/config.js';
 
 describe('dispatcher delivery deadline configuration', () => {
@@ -87,5 +89,68 @@ describe('retencion de la observabilidad', () => {
       CAUCE_RETENTION_ACK_RENEWAL_MS: String(30 * 24 * 60 * 60_000),
       CAUCE_RETENTION_ACK_MS: String(24 * 60 * 60_000),
     })).toThrow(/renewal retention windows/u);
+  });
+});
+
+describe('vigía de cadenas mudas (P0-4)', () => {
+  it('trae los plazos medidos como valores por defecto', () => {
+    expect(configuredDispatcher({})).toMatchObject({
+      chainSweepMs: DEFAULT_CHAIN_SWEEP_MS,
+      chainIdleMs: DEFAULT_CHAIN_IDLE_MS,
+      chainSettledGraceMs: DEFAULT_CHAIN_SETTLED_GRACE_MS,
+      chainMaxAgeMs: DEFAULT_CHAIN_MAX_AGE_MS,
+      chainSweepLimit: DEFAULT_CHAIN_SWEEP_LIMIT,
+    });
+    // 6 h de inactividad = 1,4× el p99 medido de huecos sanos (4,25 h); 15 min de gracia
+    // para una cadena que ya está probadamente quieta; 48 h de ventana de rastreo.
+    expect(DEFAULT_CHAIN_IDLE_MS).toBe(6 * 60 * 60 * 1_000);
+    expect(DEFAULT_CHAIN_SETTLED_GRACE_MS).toBe(15 * 60 * 1_000);
+    expect(DEFAULT_CHAIN_MAX_AGE_MS).toBe(48 * 60 * 60 * 1_000);
+  });
+
+  it('se puede apagar con 0 sin apagar el resto del dispatcher', () => {
+    expect(configuredDispatcher({ CHAIN_SWEEP_MS: '0' })).toMatchObject({
+      chainSweepMs: 0, chainIdleMs: DEFAULT_CHAIN_IDLE_MS,
+    });
+  });
+
+  it('acepta plazos propios del operador', () => {
+    expect(configuredDispatcher({
+      CHAIN_SWEEP_MS: '30000',
+      CHAIN_IDLE_MS: '7200000',
+      CHAIN_SETTLED_GRACE_MS: '300000',
+      CHAIN_MAX_AGE_MS: '86400000',
+      CHAIN_SWEEP_LIMIT: '3',
+    })).toMatchObject({
+      chainSweepMs: 30_000,
+      chainIdleMs: 7_200_000,
+      chainSettledGraceMs: 300_000,
+      chainMaxAgeMs: 86_400_000,
+      chainSweepLimit: 3,
+    });
+  });
+
+  it('falla cerrado si la ventana de rastreo no alcanza para vencer', () => {
+    // Con la ventana más corta que el plazo, una raíz muda envejecería fuera del barrido
+    // antes de poder cerrarse: el silencio volvería, pero en silencio.
+    expect(() => configuredDispatcher({
+      CHAIN_IDLE_MS: '21600000', CHAIN_MAX_AGE_MS: '3600000',
+    })).toThrow(/equal to or greater/u);
+  });
+
+  it.each([
+    { CHAIN_SWEEP_MS: '-1' },
+    { CHAIN_SWEEP_MS: '1.5' },
+    { CHAIN_SWEEP_MS: 'invalid' },
+  ])('rechaza un reloj de barrido inválido %#', (environment) => {
+    expect(() => configuredDispatcher(environment)).toThrow(/non-negative integer/u);
+  });
+
+  it.each([
+    { CHAIN_IDLE_MS: '0' },
+    { CHAIN_SETTLED_GRACE_MS: '0' },
+    { CHAIN_SWEEP_LIMIT: '0' },
+  ])('rechaza plazos y techos no positivos %#', (environment) => {
+    expect(() => configuredDispatcher(environment)).toThrow(/positive integer/u);
   });
 });
