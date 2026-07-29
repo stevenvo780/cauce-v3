@@ -83,6 +83,15 @@ export function fakeRepository(): GatewayRepository {
       state: 'pending',
       replayed: true
     })),
+    cancelDelivery: vi.fn(async (deliveryId: string) => ({
+      delivery_id: deliveryId,
+      state: 'dead',
+      cancelled: true,
+      cancelled_from_state: 'started',
+      parent_notice: 'returned',
+      origin_relayed: true,
+      replayable: true
+    })),
     listJobs: vi.fn(async () => ({ items: [] })),
     enqueueJob: vi.fn(async () => 'job-1'),
     listAdapters: vi.fn(async () => ({ items: [] })),

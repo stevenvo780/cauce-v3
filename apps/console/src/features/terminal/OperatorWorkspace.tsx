@@ -335,6 +335,11 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
     messages.reload();
   }
 
+  async function cancel(deliveryId: string) {
+    await api.cancelDelivery(deliveryId);
+    messages.reload();
+  }
+
   async function requestChannel(reason: string) {
     if (!channel?.enabled) return;
     setRequesting(true);
@@ -486,7 +491,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
         )}
       </section>
       <aside className="terminal-inspector" aria-label="Inspector de sesión">
-        <AckInspector delivery={selectedDelivery} access={access} onReplay={replay} />
+        <AckInspector delivery={selectedDelivery} access={access} onReplay={replay} onCancel={cancel} />
         <section className="terminal-inspector-section session-facts">
           <header className="inspector-title"><div><p className="eyebrow">Session facts</p><h3>Observación</h3></div><Activity size={18} aria-hidden="true" /></header>
           <dl>

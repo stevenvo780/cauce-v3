@@ -20,7 +20,7 @@ export const handlers = [
   }),
   http.get('*/v3/console/access', () => HttpResponse.json({
     subject: 'Steven:kant', roles: ['operator'],
-    permissions: ['message.publish', 'delivery.replay', 'job.create', 'config.write', 'config.rollback', 'ultimate-terminal.connect'],
+    permissions: ['message.publish', 'delivery.replay', 'delivery.cancel', 'job.create', 'config.write', 'config.rollback', 'ultimate-terminal.connect'],
   })),
   http.get('*/v3/console/topology', () => HttpResponse.json(topology)),
   http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())),
@@ -33,6 +33,7 @@ export const handlers = [
   }),
   http.get('*/v3/console/queues', () => HttpResponse.json(mockQueues())),
   http.post('*/v3/console/deliveries/:deliveryId/replay', ({ params }) => HttpResponse.json({ delivery_id: params.deliveryId, state: 'pending', replayed: true }, { status: 202 })),
+  http.post('*/v3/console/deliveries/:deliveryId/cancel', ({ params }) => HttpResponse.json({ delivery_id: params.deliveryId, state: 'dead', cancelled: true, cancelled_from_state: 'started', parent_notice: 'returned', origin_relayed: true, replayable: true }, { status: 200 })),
   http.get('*/v3/console/jobs', () => HttpResponse.json(mockJobs())),
   http.post('*/v3/console/jobs', () => HttpResponse.json({ job_id: crypto.randomUUID() }, { status: 202 })),
   http.get('*/v3/console/adapters', () => HttpResponse.json(adapters)),

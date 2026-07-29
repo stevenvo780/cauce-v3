@@ -102,27 +102,69 @@ describe('gateway hardening facades and RBAC', () => {
     expect(response.json()).toMatchObject({ items: [] });
   });
 
-  it('requires operator independently for audit, jobs, and replay', async () => {
+  it('requires operator independently for audit, jobs, replay, and cancel', async () => {
     const repository = fakeRepository();
     const app = await gateway(repository, testPrincipal({
       roles: roles('agent'),
       permissions: grants('route', 'read', 'control')
     }));
 
-    const [audit, jobs, replay] = await Promise.all([
+    const [audit, jobs, replay, cancel] = await Promise.all([
       app.inject({ method: 'GET', url: '/v3/console/audit' }),
       app.inject({ method: 'GET', url: '/v3/console/jobs' }),
       app.inject({
         method: 'POST',
         url: `/v3/console/deliveries/${ids.delivery}/replay`,
         headers: { host: 'gateway.test', origin: 'http://gateway.test' }
+      }),
+      // Cancelar mueve el estado terminal de una entrega ajena igual que replay, así que va con
+      // el mismo candado: `control` a secas no alcanza si el rol no es operator.
+      app.inject({
+        method: 'POST',
+        url: `/v3/console/deliveries/${ids.delivery}/cancel`,
+        headers: { host: 'gateway.test', origin: 'http://gateway.test' },
+        payload: { reason: 'intento sin rol operator' }
       })
     ]);
 
-    expect([audit.statusCode, jobs.statusCode, replay.statusCode]).toEqual([403, 403, 403]);
+    expect([audit.statusCode, jobs.statusCode, replay.statusCode, cancel.statusCode])
+      .toEqual([403, 403, 403, 403]);
     expect(repository.listAudit).not.toHaveBeenCalled();
     expect(repository.listJobs).not.toHaveBeenCalled();
     expect(repository.replayDelivery).not.toHaveBeenCalled();
+    expect(repository.cancelDelivery).not.toHaveBeenCalled();
+  });
+
+  it('passes the operator cancellation reason through to the store as plain text', async () => {
+    const repository = fakeRepository();
+    const app = await gateway(repository, testPrincipal({
+      roles: roles('operator'), permissions: grants('route', 'read', 'control')
+    }));
+
+    const cancelled = await app.inject({
+      method: 'POST',
+      url: `/v3/console/deliveries/${ids.delivery}/cancel`,
+      headers: { host: 'gateway.test', origin: 'http://gateway.test' },
+      payload: { reason: 'duplicado del árbol roto' }
+    });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json()).toMatchObject({ cancelled: true, replayable: true });
+    expect(repository.cancelDelivery).toHaveBeenCalledWith(
+      ids.delivery, 'Pablo', 'midas', 'duplicado del árbol roto'
+    );
+
+    // Un motivo que no es texto se ignora en vez de tumbar la cancelación: el campo es
+    // decorativo y la operación no puede fallar por él.
+    const forged = await app.inject({
+      method: 'POST',
+      url: `/v3/console/deliveries/${ids.delivery}/cancel`,
+      headers: { host: 'gateway.test', origin: 'http://gateway.test' },
+      payload: { reason: { nested: 'objeto' } }
+    });
+    expect(forged.statusCode).toBe(200);
+    expect(repository.cancelDelivery).toHaveBeenLastCalledWith(
+      ids.delivery, 'Pablo', 'midas', undefined
+    );
   });
 
   it('requires operator for the agent registry reads', async () => {
@@ -306,7 +348,10 @@ describe('gateway hardening facades and RBAC', () => {
     const access = await app.inject({ method: 'GET', url: '/v3/console/access' });
     expect(access.json()).toMatchObject({
       subject: 'Pablo:midas',
-      permissions: ['message.publish', 'delivery.replay', 'job.create', 'config.write', 'config.rollback']
+      permissions: [
+        'message.publish', 'delivery.replay', 'delivery.cancel', 'job.create', 'config.write',
+        'config.rollback'
+      ]
     });
     const unknown = await app.inject({
       method: 'POST', url: '/v3/console/jobs',

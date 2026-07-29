@@ -11,8 +11,8 @@ export type DeliveryState =
 export type JobLane = 'interactive' | 'batch';
 export type CapabilityState = 'available' | 'degraded' | 'unavailable' | 'unknown';
 export type ConsolePermission =
-  | 'message.publish' | 'delivery.replay' | 'job.create' | 'config.write' | 'config.rollback'
-  | 'ultimate-terminal.connect';
+  | 'message.publish' | 'delivery.replay' | 'delivery.cancel' | 'job.create' | 'config.write'
+  | 'config.rollback' | 'ultimate-terminal.connect';
 
 export interface ConsoleAuthState {
   /** null means the selected legacy auth mode has no BFF session facade. */
@@ -159,6 +159,17 @@ export interface ReplayResult {
   delivery_id?: string | null;
   state?: DeliveryState | null;
   replayed?: boolean | null;
+}
+
+export interface CancelResult {
+  delivery_id?: string | null;
+  state?: DeliveryState | null;
+  cancelled?: boolean | null;
+  cancelled_from_state?: DeliveryState | null;
+  parent_notice?: string | null;
+  origin_relayed?: boolean | null;
+  /** Siempre true: cancelar deja fila en `dead_letters`, o sea sigue siendo replayable. */
+  replayable?: boolean | null;
 }
 
 export interface JobView {

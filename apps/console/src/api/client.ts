@@ -1,6 +1,7 @@
 import type {
   AdapterPage,
   AuditPage,
+  CancelResult,
   ConsoleAccess,
   ConsoleAuthState,
   ConfigurationChangeResult,
@@ -197,6 +198,14 @@ export class CauceApi {
     return this.request(`/v3/console/deliveries/${encoded}/replay`, {
       method: 'POST',
       body: '{}',
+    });
+  }
+
+  cancelDelivery(deliveryId: string, reason?: string): Promise<CancelResult> {
+    const encoded = encodeURIComponent(deliveryId);
+    return this.request(`/v3/console/deliveries/${encoded}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify(reason === undefined ? {} : { reason }),
     });
   }
 

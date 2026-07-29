@@ -82,6 +82,9 @@ export interface GatewayRepository {
   listMessages(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   queueSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   replayDelivery(deliveryId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  cancelDelivery(
+    deliveryId: string, actorTenant: Tenant, actorAlias: string, reason?: string
+  ): Promise<Record<string, unknown>>;
   listJobs(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   enqueueJob(tenantId: Tenant, lane: 'interactive' | 'batch', priority: number, kind: string, payload: Record<string, unknown>): Promise<string>;
   listAdapters(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
@@ -472,7 +475,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
         ...(effectivePermissions.includes('route') ? ['message.publish'] : []),
         ...(effectivePermissions.includes('notify') ? ['message.notify'] : []),
         ...(effectiveRoles.includes('operator') && effectivePermissions.includes('control')
-          ? ['delivery.replay', 'job.create', 'config.write', 'config.rollback'] : []),
+          ? ['delivery.replay', 'delivery.cancel', 'job.create', 'config.write', 'config.rollback'] : []),
         ...(options.terminalCapability?.available === true && effectiveRoles.includes('operator') && effectivePermissions.includes('control')
           ? ['ultimate-terminal.connect'] : [])
       ];
@@ -611,6 +614,24 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const actor = await principal(request, options.authProvider);
       requireOperatorPermission(actor, 'control');
       return await repository.replayDelivery(request.params.deliveryId, actor.tenant_id, actor.alias);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  // Cancelar es la operación gemela de replay y va con exactamente el mismo candado
+  // (`requireOperatorPermission(actor,'control')` acá y `assertReplayAuthorization` en el store).
+  // Se expone por la misma superficie a propósito: hasta hoy la única forma de cancelar era un
+  // UPDATE a mano en la base, sin auditoría, sin aviso al origen y sin liberar al padre.
+  app.post<{ Params: { deliveryId: string } }>('/v3/console/deliveries/:deliveryId/cancel', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requireOperatorPermission(actor, 'control');
+      // El motivo es opcional y sólo se acepta como texto. Cualquier otra forma se ignora en vez
+      // de rechazarse: la cancelación no puede fallar por un campo decorativo.
+      const body = request.body as { reason?: unknown } | undefined;
+      const reason = typeof body?.reason === 'string' ? body.reason : undefined;
+      return await repository.cancelDelivery(
+        request.params.deliveryId, actor.tenant_id, actor.alias, reason
+      );
     } catch (error) { replyError(reply, error); }
   });
 

@@ -342,7 +342,8 @@ interface DeliveryRow {
 }
 
 /**
- * Columnas de `deliveries` que agrega la migración 016. Van aparte de `DeliveryRow` a propósito:
+ * Columnas de `deliveries` que agrega la migración 016_late_terminal_ack. Van aparte de
+ * `DeliveryRow` a propósito:
  * sólo `ackDelivery` las proyecta, y el reaper —que comparte el tipo `DeliveryRow`— no las trae.
  * Declararlas obligatorias en `DeliveryRow` haría que el tipo mintiera en la otra consulta.
  */
@@ -784,6 +785,28 @@ function postgresJsonSafe(value: unknown): unknown {
 
 function postgresTextSafe(value: string | undefined): string | undefined {
   return value?.replaceAll(nulCharacter, '');
+}
+
+/** Prefijo estable del motivo de una cancelación: es lo que permite contarlas sin heurística. */
+const cancellationReasonPrefix = 'Cancelled by operator';
+const maxCancellationReasonBytes = 500;
+
+/**
+ * Motivo con el que queda marcada una entrega cancelada.
+ *
+ * El prefijo es fijo y la nota del operador va después, recortada. Dos razones: `last_error` y
+ * `dead_letters.reason` los lee un humano en la consola, y un texto libre sin techo puede venir
+ * de un cliente. El NUL se saca porque PostgreSQL no lo acepta en `text` y el `INSERT`
+ * abortaría la transacción entera de la cancelación.
+ */
+function cancellationReason(actorTenant: Tenant, actorAlias: string, reason?: string): string {
+  const header = `${cancellationReasonPrefix} ${actorTenant}:${actorAlias}`;
+  const note = visibleText(postgresTextSafe(reason));
+  if (!note) return header;
+  const trimmed = note.length > maxCancellationReasonBytes
+    ? `${note.slice(0, maxCancellationReasonBytes)}…`
+    : note;
+  return `${header}: ${trimmed}`;
 }
 
 function agentOutputEntries(result: Record<string, unknown> | undefined): AgentOutputEntry[] {
@@ -2417,12 +2440,38 @@ export class CauceRepository {
             JSON.stringify({ recipient_alias: alias, reason: 'delivery_available' }), backoffSeconds]
         );
       }
-      if (nextStatus === 'dead') {
+      // TODO final de ERROR deja rastro replayable, no sólo 'dead'.
+      //
+      // Antes esta rama era `if (nextStatus === 'dead')` y ese `if` era, medido, el agujero por
+      // el que se caía el trabajo: el 28-jul-2026 la base de producción tenía 197 entregas en
+      // 'failed' y CERO filas de `dead_letters` para ellas. Como `replayDelivery` exige el JOIN
+      // con `dead_letters`, esas 197 eran irrecuperables PARA SIEMPRE, y lo peor es de quién
+      // dependía: `ack.retryable` lo elige el agente que acaba de fallar. Un harness que
+      // contesta `retryable:false` —lo que hace cualquier salida malformada— condenaba su propia
+      // entrega sin que ningún humano lo decidiera.
+      //
+      // La corrección NO es fusionar 'failed' con 'dead'. Los dos estados los consumen hoy, con
+      // significados distintos, `terminal()`, el conteo de fan-in (`status IN ('done','failed',
+      // 'dead')`), el CHECK de `deliveries.status`, `DeliveryStateSchema` del protocolo, la serie
+      // `cauce_dispatcher_delivery_*` del dispatcher y cuatro vistas de la consola. Fusionarlos
+      // borraría la única distinción útil que queda —"el agente declaró un error definitivo" vs
+      // "el sistema se dio por vencido"— y dejaría una serie de métrica en cero para siempre, a
+      // cambio de nada: lo que hace recuperable a una entrega no es su estado, es tener fila en
+      // `dead_letters`. Así que se emite la fila para AMBOS finales de error y se relaja el
+      // filtro de `replayDelivery`; el resto del sistema no se entera.
+      //
+      // `retryable` conserva su único trabajo legítimo: decidir si el bus REINTENTA solo. Deja de
+      // decidir si un humano puede rescatar la entrega.
+      if (nextStatus === 'dead' || nextStatus === 'failed') {
         await client.query(
           `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
            SELECT $1,$2,$3,m.body,$4 FROM messages m WHERE m.id=$5
            ON CONFLICT(delivery_id) DO NOTHING`,
-          [deliveryId, tenantId, terminalError ?? terminalErrorCode ?? 'max attempts exhausted',
+          [deliveryId, tenantId,
+            terminalError ?? terminalErrorCode
+              ?? (nextStatus === 'dead'
+                ? 'max attempts exhausted'
+                : 'non-retryable failure without error text'),
             row.attempt, row.message_id]
         );
       }
@@ -4941,8 +4990,9 @@ export class CauceRepository {
    *
    * El tratamiento de (b) es marcarla `dead` con un motivo propio y dejarla en `dead_letters`.
    * Se eligió `dead` en vez de inventar un estado nuevo porque toda la maquinaria de revisión
-   * manual ya existe y apunta ahí: `replayDelivery` exige exactamente `status='dead'` + fila en
-   * `dead_letters`, la consola ya lista los dead letters, y `queueSnapshot` ya los cuenta.
+   * manual ya existe y apunta ahí: `replayDelivery` exige un final de error (`status IN
+   * ('dead','failed')`) + fila en `dead_letters`, la consola ya lista los dead letters, y
+   * `queueSnapshot` ya los cuenta.
    * Un estado nuevo habría pedido migración, ampliar el CHECK de `deliveries.status` y tocar
    * cada consumidor de ese enum, para terminar reimplementando el mismo botón de replay.
    *
@@ -6391,15 +6441,28 @@ export class CauceRepository {
               )))
        ORDER BY d.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
     );
+    // 'failed' cuenta como dead letter porque desde este parche LO ES: `ackDelivery` le escribe
+    // su fila y `replayDelivery` la acepta. Dejarla fuera del contador mantendría al operador
+    // creyendo que no hay nada que revisar mientras el botón de replay ya está disponible: el
+    // mismo desfase que hizo invisibles las 197 entregas de producción.
     const counts = result.rows.reduce<{ pending: number; retrying: number; dead: number }>((value, row) => {
       if (row.state === 'retry') value.retrying += 1;
-      if (row.state === 'dead') value.dead += 1;
+      if (row.state === 'dead' || row.state === 'failed') value.dead += 1;
       if (['pending', 'leased', 'accepted', 'started'].includes(String(row.state))) value.pending += 1;
       return value;
     }, { pending: 0, retrying: 0, dead: 0 });
     return { observed_at: new Date().toISOString(), ...counts, items: result.rows };
   }
 
+  /**
+   * Autorización compartida por las DOS operaciones de operador sobre una entrega ajena:
+   * `replayDelivery` y `cancelDelivery`. Es deliberado que sean la misma: las dos mueven el
+   * estado terminal de una entrega que el operador no emitió, y tener dos criterios distintos
+   * garantizaría que uno de los dos se quede viejo.
+   *
+   * Se responde `not_found` (nunca `forbidden`) para no confirmar la existencia de entregas
+   * fuera del alcance del actor.
+   */
   private async assertReplayAuthorization(
     client: DatabaseClient,
     actorTenant: Tenant,
@@ -6410,7 +6473,7 @@ export class CauceRepository {
     }
   ): Promise<void> {
     const denied = (): never => {
-      throw new StoreError('not_found', 'dead delivery not found or not visible');
+      throw new StoreError('not_found', 'delivery not found or not visible');
     };
     const actorControl = await client.query(
       `SELECT 1 FROM memberships membership
@@ -6492,6 +6555,21 @@ export class CauceRepository {
     if (controlEdge.rowCount === 0) denied();
   }
 
+  /**
+   * Reencola a mano una entrega que terminó en error.
+   *
+   * El filtro es `status IN ('dead','failed')` y no `status='dead'` porque los dos son finales de
+   * ERROR y la diferencia entre ellos la elige el agente que falló (`ack.retryable`), no el
+   * operador. Con el filtro viejo, 197 entregas de producción quedaron sin botón de rescate por
+   * una decisión que tomó el proceso que se rompió. Ver el comentario largo de `ackDelivery`
+   * junto al INSERT en `dead_letters`.
+   *
+   * El JOIN con `dead_letters` se conserva y sigue siendo el candado de idempotencia: es la fila
+   * que se marca `resolved_at` acá dentro, en la misma transacción que crea el clon, y sin ella
+   * dos operadores simultáneos crearían dos clones. La migración 017_terminal_recovery_backfill hace el backfill de las
+   * entregas terminales que quedaron sin esa fila, incluidas las que un humano marcó `dead` a
+   * mano en psql.
+   */
   async replayDelivery(deliveryId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'control');
     return withTransaction(this.pool, async (client) => {
@@ -6507,7 +6585,7 @@ export class CauceRepository {
          FROM deliveries d
          JOIN messages m ON m.id=d.message_id
          JOIN dead_letters dl ON dl.delivery_id=d.id
-         WHERE d.id=$1 AND d.status='dead'
+         WHERE d.id=$1 AND d.status IN ('dead','failed')
            AND EXISTS (
              SELECT 1 FROM memberships actor_member
              JOIN role_policies role ON role.role=actor_member.role
@@ -6572,7 +6650,7 @@ export class CauceRepository {
         [deliveryId, actorTenant, actorAlias]
       );
       const row = selected.rows[0];
-      if (!row) throw new StoreError('not_found', 'dead delivery not found or not visible');
+      if (!row) throw new StoreError('not_found', 'terminal delivery not found or not visible');
       await this.assertReplayAuthorization(client, actorTenant, actorAlias, row);
 
       const existingReplay = await client.query(
@@ -6605,7 +6683,7 @@ export class CauceRepository {
           ]
         )).rowCount === 1;
       if (row.dead_letter_resolved_at !== null && !legacyReplay) {
-        throw new StoreError('not_found', 'dead delivery has no open or legacy-replay dead letter');
+        throw new StoreError('not_found', 'terminal delivery has no open or legacy-replay dead letter');
       }
 
       const message = await client.query<{ id: string; request_id: string }>(
@@ -6676,6 +6754,145 @@ export class CauceRepository {
         replayed_from_delivery_id: row.id,
         state: 'pending',
         replayed: true
+      };
+    });
+  }
+
+  /**
+   * CANCELACIÓN de una entrega en vuelo. Operación de primera clase del operador, hermana de
+   * `replayDelivery` y con exactamente su misma autorización.
+   *
+   * POR QUÉ EXISTE. Hasta hoy no había ninguna: `packages/adapter-sdk/src/sdk/types.ts` dice
+   * textual "V3 has no remote cancel frame". Lo que había era un `UPDATE` a mano en psql, y está
+   * medido cuánto se usó: el 28-jul-2026 producción tenía 221 filas en 'dead' con
+   * `last_error` = 'cancelado por zeus ...'. Ese camino saltea las TRES cosas que hace este
+   * método, y cada omisión tiene una consecuencia concreta:
+   *
+   *   1. Sin fila en `dead_letters` la entrega queda irreplayable para siempre (el JOIN de
+   *      `replayDelivery`). Cancelar por error era una decisión irreversible.
+   *   2. Sin `insertOriginRelay` el humano que mandó el mensaje por Telegram nunca se entera:
+   *      pidió algo y no recibe ni respuesta ni error. Silencio.
+   *   3. Sin `materializeAgentResponse` el PADRE de la delegación queda esperando esa rama para
+   *      siempre. Y no es sólo ese padre: `materializeAgentFanin` cuenta ramas completas contra
+   *      ramas esperadas, así que una rama cancelada a mano traba el contador del fan-in de toda
+   *      la cadena, que es el síntoma que el dueño describe como "no logran prácticamente nada".
+   *
+   * NO INVENTA UN ESTADO NUEVO. Termina en 'dead', por el mismo motivo por el que lo hace el
+   * reaper (ver su comentario): toda la maquinaria de revisión manual ya apunta ahí, y un
+   * 'cancelled' obligaría a ampliar el CHECK de `deliveries.status`, `DeliveryStateSchema`, las
+   * series del dispatcher y cinco vistas de consola para terminar reimplementando el mismo botón
+   * de replay. Lo que sí es propio es el rastro: motivo con prefijo estable y un `audit_events`
+   * con acción `delivery.cancel`, para poder contar cancelaciones sin confundirlas con timeouts.
+   *
+   * NO MANDA NINGÚN FRAME AL ADAPTADOR, a propósito. El lado servidor queda consistente en una
+   * sola transacción; el harness que siga corriendo morirá por su propio camino (techo de vida)
+   * y su ACK tardío rebotará como `ownership_lost`, porque `ackDelivery` corta antes con
+   * `terminal(row.status)`. Es la degradación correcta: no depende de que el adaptador esté vivo,
+   * que es justamente la situación en la que hace falta cancelar.
+   */
+  async cancelDelivery(
+    deliveryId: string,
+    actorTenant: Tenant,
+    actorAlias: string,
+    reason?: string
+  ): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'control');
+    const cancelReason = cancellationReason(actorTenant, actorAlias, reason);
+    return withTransaction(this.pool, async (client) => {
+      // Se traen las MISMAS columnas que arma el reaper porque abajo se llaman los mismos tres
+      // helpers (`materializeAgentResponse`, `materializeAgentFanin`, `insertOriginRelay`) y
+      // todos esperan un `DeliveryRow` completo. `FOR UPDATE OF d` sin función de ventana: ver
+      // `sql-locking-clauses.test.ts`, PostgreSQL rechaza esa combinación al parsear.
+      const selected = await client.query<DeliveryRow>(
+        `SELECT d.id,d.message_id,d.recipient_tenant,d.recipient_alias,d.status,d.attempt,
+                d.max_attempts,d.last_ack_rank,d.consumer_instance_id,d.consumer_epoch,
+                d.claim_token,d.ack_deadline_at,
+                m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,
+                m.priority,m.origin,m.auth_session_id,m.auth_channel
+         FROM deliveries d JOIN messages m ON m.id=d.message_id
+         WHERE d.id=$1
+         FOR UPDATE OF d`,
+        [deliveryId]
+      );
+      const row = selected.rows[0];
+      if (!row) throw new StoreError('not_found', 'delivery not found or not visible');
+      await this.assertReplayAuthorization(client, actorTenant, actorAlias, row);
+      // Una entrega ya terminal no se cancela: se replaya o se deja. Devolver `conflict` en vez
+      // de "ok" es lo honesto, porque un segundo cancel que dijera que sí haría creer al operador
+      // que interrumpió algo que en realidad ya había terminado (y quizá terminado BIEN).
+      if (terminal(row.status)) {
+        throw new StoreError('conflict', `delivery is already terminal (${row.status})`);
+      }
+
+      // Se limpian los campos de vallado además del estado. No es cosmético: mientras
+      // `claim_token`/`consumer_epoch` sigan puestos, un adaptador con la garra en la mano puede
+      // seguir renovándola, y el objetivo de cancelar es soltar el cupo del alias ya.
+      const cancelled = await client.query(
+        `UPDATE deliveries
+           SET status='dead',terminal_at=now(),last_error=$2,last_ack_rank=3,
+               claim_expires_at=NULL,ack_deadline_at=NULL,claim_token=NULL,
+               consumer_instance_id=NULL,consumer_epoch=NULL,updated_at=now()
+         WHERE id=$1 AND status NOT IN ('done','failed','dead')`,
+        [row.id, cancelReason]
+      );
+      if (cancelled.rowCount !== 1) {
+        throw new StoreError('conflict', 'delivery became terminal while being cancelled');
+      }
+
+      // (1) Rastro replayable. El `ON CONFLICT` cubre la entrega que ya tenía dead letter de una
+      // vida anterior; el `resolved_at` lo pone `replayDelivery` cuando alguien la rescate.
+      await client.query(
+        `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
+         VALUES($1,$2,$5,$3::jsonb,$4)
+         ON CONFLICT(delivery_id) DO NOTHING`,
+        [row.id, row.recipient_tenant, JSON.stringify(row.body), row.attempt, cancelReason]
+      );
+
+      // (2) y (3): el padre y el humano, por los mismos dos caminos que usa el reaper. A
+      // diferencia del reaper, acá NO se atrapa el error de materialización: el reaper procesa un
+      // lote y no puede dejar que una fila mate el tick entero, pero esto es un comando
+      // interactivo de una sola entrega. Si el aviso al padre no se puede escribir, la
+      // transacción entera se deshace y el operador ve el motivo, en vez de quedarse con una
+      // cancelación a medias —que es exactamente el estado que produce el UPDATE manual—.
+      const chainPolicy = await this.loadChainPolicy(client);
+      const responseDisposition = await this.materializeAgentResponse(
+        client, row, row.attempt, 'dead', chainPolicy, undefined, cancelReason, 'DELIVERY_CANCELLED'
+      );
+      const fanin = await this.materializeAgentFanin(client, this.rootMessageId(row));
+      const relayed = responseDisposition === 'not_child'
+        && (row.body.type === 'agent.fanin' || !fanin.hasFanout);
+      if (relayed) {
+        await this.insertOriginRelay(
+          client, row, 'dead', { error: cancelReason, error_code: 'DELIVERY_CANCELLED' }
+        );
+      }
+
+      await client.query(
+        `INSERT INTO audit_events(
+           tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+         ) VALUES($1,$2,'delivery.cancel','allow',$3,$4,$5,$6,$7::jsonb)`,
+        [actorTenant, actorAlias, row.request_id, row.message_id, row.id, row.trace_id,
+          JSON.stringify({
+            cancelled_from_status: row.status,
+            attempt: row.attempt,
+            reason: cancelReason,
+            recipient_tenant: row.recipient_tenant,
+            recipient_alias: row.recipient_alias,
+            parent_notice: responseDisposition,
+            origin_relayed: relayed
+          })]
+      );
+      return {
+        delivery_id: row.id,
+        state: 'dead',
+        cancelled: true,
+        cancelled_from_state: row.status,
+        reason: cancelReason,
+        parent_notice: responseDisposition,
+        origin_relayed: relayed,
+        // El operador tiene que saber que esto NO es irreversible: la fila de `dead_letters` que
+        // se acaba de escribir es la que habilita el botón de replay.
+        replayable: true
       };
     });
   }
