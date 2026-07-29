@@ -381,10 +381,10 @@ describe('cancelación de primera clase', () => {
   });
 });
 
-describe('migración 017: rescate de las entregas que ya murieron sin dead letter', () => {
+describe('migración 018: rescate de las entregas que ya murieron sin dead letter', () => {
   async function runBackfill(): Promise<void> {
     const sql = await readFile(
-      new URL('../migrations/017_terminal_recovery_backfill.sql', import.meta.url), 'utf8'
+      new URL('../migrations/018_terminal_recovery_backfill.sql', import.meta.url), 'utf8'
     );
     await pool.query(sql);
   }
@@ -418,14 +418,14 @@ describe('migración 017: rescate de las entregas que ya murieron sin dead lette
 
     const rescued = await pool.query<{ delivery_id: string; reason: string; created_at: Date }>(
       `SELECT delivery_id,reason,created_at FROM dead_letters
-       WHERE reason LIKE 'backfill 016 (%' ORDER BY delivery_id`
+       WHERE reason LIKE 'backfill 018 (%' ORDER BY delivery_id`
     );
     expect(rescued.rowCount).toBe(2);
     const byId = new Map(rescued.rows.map((row) => [row.delivery_id, row]));
     expect(byId.get(failedId)?.reason)
-      .toBe('backfill 016 (failed): OpenClaw result contained a malformed JSON object');
+      .toBe('backfill 018 (failed): OpenClaw result contained a malformed JSON object');
     expect(byId.get(manualId)?.reason)
-      .toBe('backfill 016 (dead): cancelado por zeus 2026-07-28: aviso duplicado');
+      .toBe('backfill 018 (dead): cancelado por zeus 2026-07-28: aviso duplicado');
     expect((await pool.query(
       `SELECT 1 FROM dead_letters WHERE delivery_id=$1`, [healthyId]
     )).rowCount).toBe(0);
@@ -444,7 +444,7 @@ describe('migración 017: rescate de las entregas que ya murieron sin dead lette
     // Reaplicarla no duplica ni vuelve a auditar: la condición mira el estado, no una marca.
     await runBackfill();
     expect((await pool.query(
-      `SELECT 1 FROM dead_letters WHERE reason LIKE 'backfill 016 (%'`
+      `SELECT 1 FROM dead_letters WHERE reason LIKE 'backfill 018 (%'`
     )).rowCount).toBe(2);
     expect((await pool.query(
       `SELECT 1 FROM audit_events WHERE action='migration.dead_letter_backfill'`
@@ -463,14 +463,14 @@ describe('migración 017: rescate de las entregas que ya murieron sin dead lette
     );
     expect(audit.rowCount).toBe(1);
     expect(audit.rows[0]?.metadata).toMatchObject({
-      migration: '017_terminal_recovery_backfill',
+      migration: '018_terminal_recovery_backfill',
       rescued: 1,
       by_status: { dead: 1 }
     });
     // `reason` es NOT NULL y `last_error` puede ser NULL: hace falta el texto de respaldo.
     expect((await pool.query(
       `SELECT 1 FROM dead_letters
-       WHERE reason='backfill 016 (dead): terminal error without recorded text'`
+       WHERE reason='backfill 018 (dead): terminal error without recorded text'`
     )).rowCount).toBe(1);
   });
 });

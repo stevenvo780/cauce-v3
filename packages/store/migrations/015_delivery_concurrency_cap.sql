@@ -1,4 +1,4 @@
--- packages/store/migrations/014_delivery_concurrency_cap.sql
+-- packages/store/migrations/015_delivery_concurrency_cap.sql
 --
 -- Techo de concurrencia por agente: no entregar más de lo que se puede ejecutar.
 --

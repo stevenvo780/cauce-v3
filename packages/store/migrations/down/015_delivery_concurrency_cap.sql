@@ -1,4 +1,4 @@
--- Reversa de 014_delivery_concurrency_cap.sql
+-- Reversa de 015_delivery_concurrency_cap.sql
 --
 -- El runner (packages/store/src/db.ts, applyMigrations) sólo lee `*.sql` del directorio
 -- `migrations/`; `down/` es un subdirectorio y readdir lo devuelve como 'down', que no termina
@@ -23,4 +23,4 @@ ALTER TABLE agents DROP COLUMN IF EXISTS max_concurrent_deliveries;
 
 -- Sin esto el runner considera la migración aplicada para siempre y un re-deploy del árbol con
 -- 014 presente no la volvería a correr.
-DELETE FROM schema_migrations WHERE version = '014_delivery_concurrency_cap.sql';
+DELETE FROM schema_migrations WHERE version = '015_delivery_concurrency_cap.sql';

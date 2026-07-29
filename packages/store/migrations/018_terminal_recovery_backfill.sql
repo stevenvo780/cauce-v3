@@ -1,4 +1,4 @@
--- packages/store/migrations/017_terminal_recovery_backfill.sql
+-- packages/store/migrations/018_terminal_recovery_backfill.sql
 --
 -- RESCATE DE LO QUE YA ESTÁ MUERTO. El código de este parche arregla el futuro: desde ahora todo
 -- final de error escribe su fila en `dead_letters` y `replayDelivery` acepta 'failed' además de
@@ -29,15 +29,15 @@
 --      textual "V3 has no remote cancel frame"). Ese camino saltea las tres cosas que ahora hace
 --      `cancelDelivery`, y ésta es la primera: dejar rastro replayable.
 --
--- La 016 le da a las 419 exactamente lo que les falta y nada más: la fila abierta en
+-- La 018 le da a las 419 exactamente lo que les falta y nada más: la fila abierta en
 -- `dead_letters`. No toca `deliveries`, no cambia ningún estado, no reencola nada. Después de
 -- aplicarla el operador ve el botón de replay y decide una por una; ninguna se reintenta sola.
 --
--- POR QUÉ 016 Y NO 014/015: en el árbol de integración ya conviven dos migraciones numeradas 014
+-- POR QUÉ 018 Y NO 014..017: en el árbol de integración ya conviven dos migraciones numeradas 014
 -- (`014_failure_notice_coalescing.sql` y `014_observability_retention.sql`) y hay otros parches
 -- en vuelo que agregan más. El runner indexa por NOMBRE de archivo y ordena por nombre, así que
 -- el número sólo define el ORDEN. Esta migración no depende de ninguna otra —sólo de tablas de
--- la 001— así que puede correr en cualquier posición; el 016 es para no colisionar. Ver NOTAS.md.
+-- la 001— así que puede correr en cualquier posición; el 018 es para no colisionar. Ver NOTAS.md.
 --
 -- IDEMPOTENTE de verdad, en los dos sentidos que importan:
 --   * `ON CONFLICT (delivery_id) DO NOTHING` sobre el UNIQUE de `dead_letters.delivery_id`, más
@@ -55,7 +55,7 @@ WITH backfilled AS (
          -- `reason` es NOT NULL. Se prefiere el error real de la entrega; el prefijo dice de dónde
          -- salió la fila, para que nadie confunda un rescate retroactivo con un dead letter que el
          -- sistema escribió en su momento.
-         'backfill 016 (' || delivery.status || '): '
+         'backfill 018 (' || delivery.status || '): '
            || COALESCE(NULLIF(btrim(delivery.last_error), ''), 'terminal error without recorded text'),
          message.body,
          delivery.attempt,
@@ -86,7 +86,7 @@ summary AS (
 INSERT INTO audit_events (tenant_id, actor_alias, action, decision, metadata)
 SELECT NULL, NULL, 'migration.dead_letter_backfill', 'info',
        jsonb_build_object(
-         'migration', '017_terminal_recovery_backfill',
+         'migration', '018_terminal_recovery_backfill',
          'rescued', COALESCE(sum(rescued), 0),
          'by_status', COALESCE(jsonb_object_agg(status, rescued), '{}'::jsonb)
        )

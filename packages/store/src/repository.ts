@@ -18,6 +18,11 @@ import {
   FLEET_WORK_STATES, type FleetActivityFlag, type FleetWorkState
 } from './fleet-activity.js';
 import { selectAccountForAlias, type AccountSelection } from './accounts.js';
+import {
+  describeDelegationRejection, DISABLED_DELEGATION_CAPS, fanoutCapForTurn, HUMAN_GATE_TARGET,
+  rejectionText, sanitizedDelegationCaps,
+  type DelegationCaps, type DelegationRejectionCode, type RejectionNotice
+} from './delegation-guard.js';
 
 export type StoreErrorCode =
   'forbidden' | 'no_route' | 'conflict' | 'fenced' | 'not_found' | 'invalid_actor' | 'invalid_input';
@@ -342,7 +347,17 @@ interface DeliveryRow {
 }
 
 /**
- * Columnas de `deliveries` que agrega la migración 016_late_terminal_ack. Van aparte de
+ * Un rechazo de delegación tal como lo lee el agente que lo provocó: código estable + motivo y
+ * qué hacer en vez de reintentar. Viaja en la respuesta del ACK, así que hacer legible el
+ * rechazo NO cuesta ni una entrega nueva.
+ */
+export interface DelegationRejection extends RejectionNotice {
+  output_index: number;
+  target?: string;
+}
+
+/**
+ * Columnas de `deliveries` que agrega la migración 017_late_terminal_ack. Van aparte de
  * `DeliveryRow` a propósito:
  * sólo `ackDelivery` las proyecta, y el reaper —que comparte el tipo `DeliveryRow`— no las trae.
  * Declararlas obligatorias en `DeliveryRow` haría que el tipo mintiera en la otra consulta.
@@ -374,6 +389,29 @@ export interface AckResult {
   status: DeliveryState;
   applied: boolean;
   receipt: 'applied' | 'duplicate' | 'superseded' | 'ownership_lost';
+  /** Presente sólo cuando alguna salida `messages` no se convirtió en entrega. */
+  delegation_rejections?: DelegationRejection[];
+  /** La rama quedó suspendida esperando a una persona; hay un gate abierto que la reanudará. */
+  chain_gate?: { gate_id: string; question: string };
+}
+
+/** Resultado interno de materializar las salidas de un ACK. */
+interface AgentOutputOutcome {
+  materialized: number;
+  /**
+   * La rama abrió un gate humano: NO debe devolver su respuesta hacia arriba, porque no terminó
+   * — está esperando. Es la diferencia entre "suspendida" y "fallada", y es lo que evita que un
+   * gate se convierta en una entrega muerta.
+   */
+  suspended: boolean;
+  rejections: DelegationRejection[];
+  /** El gate vigente de la raíz, si esta materialización se topó con uno o abrió uno. */
+  gate?: OpenChainGate;
+}
+
+interface OpenChainGate {
+  id: string;
+  question: string;
 }
 
 /** Store claim record; event_id is the immutable ACK correlation id for this delivery. */
@@ -503,6 +541,8 @@ const tenantPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const maxVisitedPathEntries = agentOutputHopBudget;
 const maxProgressSummaryBytes = 1_024;
+/** Coincide con el CHECK de `agent_chain_gates.question` (8192 caracteres). */
+const maxChainGateQuestionBytes = 8 * 1_024;
 /** agentResponseText ya recorta el diagnóstico a 2 000 caracteres; esto acota la reescritura
  *  agregada, que se le suma encima, para que un cubo muy vivo no engorde el cuerpo sin techo. */
 const maxAgentResponseTextBytes = 4 * 1_024;
@@ -538,13 +578,12 @@ const chainSilenceSweepLimit = 5;
 const chainSilenceNoticeMaxBytes = 1_024;
 const chainSilenceCauseMaxBytes = 240;
 
-/** Durable rejection domain; migration 008 widens the CHECK with exactly these values. */
-export type AgentOutputRejectionCode =
-  | 'invalid_output'
-  | 'unroutable_alias'
-  | 'ambiguous_alias'
-  | 'hop_budget_exhausted'
-  | 'cycle_detected';
+/**
+ * Durable rejection domain; migration 008 widens the CHECK with 'cycle_detected' and migration
+ * 019 with los cinco de disciplina de delegación. La lista vive en delegation-guard.ts para que
+ * el texto legible de cada código y el código mismo no se puedan desincronizar.
+ */
+export type AgentOutputRejectionCode = DelegationRejectionCode;
 
 export type AgentChainProgressStage = 'delegated' | 'returned' | 'denied' | 'capped';
 
@@ -558,6 +597,13 @@ interface ChainPolicy {
   failureCoalesceWindowSeconds: number;
   /** False until migration 014 lands; same partial-deploy contract as visitedPathAvailable. */
   failureCoalesceAvailable: boolean;
+  /** Topes de disciplina de delegación (019). `enabled:false` = conducta previa a 019. */
+  delegationCaps: DelegationCaps;
+  /** False until migration 019 lands; same partial-deploy contract as visitedPathAvailable. */
+  delegationCapsAvailable: boolean;
+  humanGateEnabled: boolean;
+  /** False until migration 019 lands: sin la tabla no hay gates y `@human` vuelve a ser unroutable. */
+  humanGateAvailable: boolean;
 }
 
 const disabledChainPolicy: ChainPolicy = {
@@ -567,7 +613,11 @@ const disabledChainPolicy: ChainPolicy = {
   visitedPathAvailable: false,
   failureCoalesceEnabled: false,
   failureCoalesceWindowSeconds: 0,
-  failureCoalesceAvailable: false
+  failureCoalesceAvailable: false,
+  delegationCaps: DISABLED_DELEGATION_CAPS,
+  delegationCapsAvailable: false,
+  humanGateEnabled: false,
+  humanGateAvailable: false
 };
 
 /**
@@ -719,7 +769,7 @@ interface AgentFaninDisposition {
   scheduled: boolean;
 }
 
-/** Migration 014 constrains agent_chain_closures.reason to exactly these values. */
+/** Migration 016_chain_silence_sweep constrains agent_chain_closures.reason to exactly these values. */
 export type ChainSilenceClosureReason = 'settled_without_fanin' | 'idle_timeout';
 
 export interface ChainSilenceSweepOptions {
@@ -2477,6 +2527,8 @@ export class CauceRepository {
       }
       await this.insertAck(client, row, ack, true, persistedResult);
       let notified = { allowed: 0, denied: 0, errors: 0 };
+      let delegationRejections: DelegationRejection[] = [];
+      let chainGate: OpenChainGate | undefined;
       if (terminal(nextStatus)) {
         const policy = await this.loadChainPolicy(client);
         // Proactive egress is a side effect of a terminal turn, not a delegation.
@@ -2484,16 +2536,24 @@ export class CauceRepository {
         notified = await this.materializeAgentNotifications(
           client, row, ack, notifications, ambiguousExecution
         );
-        let materializedOutputs = 0;
+        let outputOutcome: AgentOutputOutcome = { materialized: 0, suspended: false, rejections: [] };
         if (nextStatus === 'done' && row.body.type !== 'agent.fanin') {
-          materializedOutputs = await this.materializeAgentOutputs(client, row, ack, outputs, policy);
+          outputOutcome = await this.materializeAgentOutputs(client, row, ack, outputs, policy);
         }
+        delegationRejections = outputOutcome.rejections;
+        chainGate = outputOutcome.gate;
+        const materializedOutputs = outputOutcome.materialized;
         // A child that successfully delegated work is not terminal from its
         // parent's perspective. Returning its empty/intermediate ACK here lets
         // the parent close before the delegated descendants finish. The later
         // authenticated agent.response continuation is the logical terminal
         // turn and is the only response that may flow back to the parent.
+        //
+        // `suspended` entra acá por la misma razón que `materializedOutputs > 0`: una rama que
+        // abrió un gate humano NO terminó, está esperando. Devolver su respuesta al padre la
+        // daría por cerrada y el padre seguiría delegando sobre una cadena suspendida.
         const responseDisposition: AgentResponseDisposition = materializedOutputs > 0
+          || outputOutcome.suspended
           ? 'deferred'
           : await this.materializeAgentResponse(
               client,
@@ -2541,6 +2601,14 @@ export class CauceRepository {
         status: nextStatus,
         applied: true,
         receipt: 'applied',
+        // Ausentes cuando no hay nada que decir: agregar claves vacías cambiaría los bytes que
+        // el gateway devuelve a TODO ACK, y hay adaptadores viejos comparando la respuesta.
+        ...(delegationRejections.length === 0
+          ? {}
+          : { delegation_rejections: delegationRejections }),
+        ...(chainGate === undefined
+          ? {}
+          : { chain_gate: { gate_id: chainGate.id, question: chainGate.question } })
       };
     });
   }
@@ -2831,6 +2899,8 @@ export class CauceRepository {
       policies_present: boolean;
       visited_path_present: boolean;
       failure_coalesce_present: boolean;
+      delegation_caps_present: boolean;
+      human_gate_present: boolean;
     }>(
       `SELECT to_regclass('public.agent_chain_policies') IS NOT NULL AS policies_present,
               EXISTS (
@@ -2846,7 +2916,28 @@ export class CauceRepository {
                   WHERE attribute.attrelid=to_regclass('public.agent_chain_policies')
                     AND attribute.attname='failure_coalesce_enabled' AND NOT attribute.attisdropped
                 )
-              ) AS failure_coalesce_present`
+              ) AS failure_coalesce_present,
+              (
+                to_regclass('public.agent_chain_edge_uses') IS NOT NULL
+                AND EXISTS (
+                  SELECT 1 FROM pg_attribute attribute
+                  WHERE attribute.attrelid=to_regclass('public.agent_chain_policies')
+                    AND attribute.attname='delegation_caps_enabled' AND NOT attribute.attisdropped
+                )
+                AND EXISTS (
+                  SELECT 1 FROM pg_attribute attribute
+                  WHERE attribute.attrelid=to_regclass('public.agent_chain_progress')
+                    AND attribute.attname='delegations' AND NOT attribute.attisdropped
+                )
+              ) AS delegation_caps_present,
+              (
+                to_regclass('public.agent_chain_gates') IS NOT NULL
+                AND EXISTS (
+                  SELECT 1 FROM pg_attribute attribute
+                  WHERE attribute.attrelid=to_regclass('public.agent_chain_policies')
+                    AND attribute.attname='human_gate_enabled' AND NOT attribute.attisdropped
+                )
+              ) AS human_gate_present`
     );
     const visitedPathAvailable = schema.rows[0]?.visited_path_present === true;
     // Migration 014 ships the two ledger tables and the two policy columns in one transaction,
@@ -2854,6 +2945,12 @@ export class CauceRepository {
     // coalescing" instead of raising 42P01/42703 inside the ACK transaction, which would
     // poison every later statement of the same turn.
     const failureCoalesceAvailable = schema.rows[0]?.failure_coalesce_present === true;
+    // Migración 019: mismo contrato de despliegue parcial. Sin la tabla de aristas, sin la
+    // columna de combustible o sin las columnas de política, los topes quedan APAGADOS y
+    // `materializeAgentOutputs` se comporta exactamente como antes de 019. Nunca 42P01/42703
+    // dentro de la transacción del ACK.
+    const delegationCapsAvailable = schema.rows[0]?.delegation_caps_present === true;
+    const humanGateAvailable = schema.rows[0]?.human_gate_present === true;
     if (schema.rows[0]?.policies_present !== true) {
       return { ...disabledChainPolicy, visitedPathAvailable };
     }
@@ -2863,11 +2960,23 @@ export class CauceRepository {
       cycle_cut_enabled: boolean;
       failure_coalesce_enabled: boolean | null;
       failure_coalesce_window_seconds: number | null;
+      delegation_caps_enabled: boolean | null;
+      max_fanout_per_turn: number | null;
+      max_edge_repeats_per_root: number | null;
+      max_delegations_per_root: number | null;
+      human_gate_enabled: boolean | null;
     }>(
       `SELECT progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled,
               ${failureCoalesceAvailable
                 ? 'failure_coalesce_enabled,failure_coalesce_window_seconds'
-                : 'NULL::boolean AS failure_coalesce_enabled,NULL::integer AS failure_coalesce_window_seconds'}
+                : 'NULL::boolean AS failure_coalesce_enabled,NULL::integer AS failure_coalesce_window_seconds'},
+              ${delegationCapsAvailable
+                ? 'delegation_caps_enabled,max_fanout_per_turn,max_edge_repeats_per_root,max_delegations_per_root'
+                : `NULL::boolean AS delegation_caps_enabled,NULL::integer AS max_fanout_per_turn,
+                   NULL::integer AS max_edge_repeats_per_root,NULL::integer AS max_delegations_per_root`},
+              ${humanGateAvailable
+                ? 'human_gate_enabled'
+                : 'NULL::boolean AS human_gate_enabled'}
        FROM agent_chain_policies WHERE id='default'`
     );
     const row = policy.rows[0];
@@ -2886,7 +2995,18 @@ export class CauceRepository {
       // A saturated ceiling, never a raw value: the CHECK on the column is NOT VALID, so a row
       // written before it existed could still carry an absurd window and mute a parent for days.
       failureCoalesceWindowSeconds: Math.min(86_400, Math.max(0, windowSeconds)),
-      failureCoalesceAvailable
+      failureCoalesceAvailable,
+      delegationCaps: delegationCapsAvailable
+        ? sanitizedDelegationCaps({
+          enabled: row.delegation_caps_enabled === true,
+          maxFanoutPerTurn: row.max_fanout_per_turn ?? undefined,
+          maxEdgeRepeatsPerRoot: row.max_edge_repeats_per_root ?? undefined,
+          maxDelegationsPerRoot: row.max_delegations_per_root ?? undefined
+        })
+        : DISABLED_DELEGATION_CAPS,
+      delegationCapsAvailable,
+      humanGateEnabled: humanGateAvailable && row.human_gate_enabled === true,
+      humanGateAvailable
     };
   }
 
@@ -2934,8 +3054,8 @@ export class CauceRepository {
     ack: Ack,
     outputs: AgentOutputEntry[],
     policy: ChainPolicy
-  ): Promise<number> {
-    if (outputs.length === 0) return 0;
+  ): Promise<AgentOutputOutcome> {
+    if (outputs.length === 0) return { materialized: 0, suspended: false, rejections: [] };
 
     const sourceMembership = await client.query<{ room_id: string }>(
       `SELECT membership.room_id
@@ -3059,6 +3179,20 @@ export class CauceRepository {
       chainNode(row.recipient_tenant, row.recipient_alias)
     ]);
 
+    // Gate humano abierto = cadena SUSPENDIDA. Se lee antes de expandir nada, con FOR SHARE:
+    // ese candado es el que hace que responder el gate y delegar sobre la misma raíz no puedan
+    // cruzarse. Mientras esté abierto, NINGUNA salida de esta raíz se convierte en entrega; la
+    // pregunta ya salió una vez y repetirla es exactamente la amplificación que se quiere matar.
+    //
+    // La condición es `humanGateAvailable` (la TABLA existe) y no `humanGateEnabled` (la bandera
+    // está prendida) a propósito. Apagar la bandera impide abrir gates NUEVOS, pero no debe
+    // desbloquear en silencio una cadena que quedó suspendida esperando a una persona: eso la
+    // haría seguir delegando sin la respuesta que estaba esperando. Para liberarla hay una
+    // operación explícita y auditada, `cancelChainGate`.
+    const openGate = policy.humanGateAvailable
+      ? await this.openChainGateFor(client, rootMessageId)
+      : undefined;
+
     const internalAgentDelivery = typeof row.body.type === 'string'
       && reservedInternalMessageTypes.has(row.body.type);
     const hasAllDirective = outputs.some((output) => output.target === '@all');
@@ -3104,9 +3238,26 @@ export class CauceRepository {
       expandedOutputs = outputs;
     }
 
+    // Una pregunta a una persona no compite con las delegaciones del mismo turno: las cancela.
+    // Pedir ayuda humana y repartir trabajo en el mismo ACK es la firma de un agente que no sabe
+    // cómo seguir, y es justamente ahí donde nace el paseo aleatorio. La directiva se procesa
+    // PRIMERO para que las hermanas ya vean el gate abierto y se rechacen con 'chain_gated'.
+    const gateDirective = policy.humanGateEnabled && openGate === undefined && rootMessageId !== undefined
+      ? expandedOutputs.find((output) => output.target === HUMAN_GATE_TARGET
+        && output.rejection === undefined && visibleText(output.body))
+      : undefined;
+    const orderedOutputs = gateDirective === undefined
+      ? expandedOutputs
+      : [gateDirective, ...expandedOutputs.filter((output) => output !== gateDirective)];
+
     let materialized = 0;
+    let suspended = false;
+    const rejections: DelegationRejection[] = [];
+    /** Un gate abierto en ESTE turno pesa igual que uno heredado para las salidas siguientes. */
+    let activeGate = openGate;
     const materializedTargets: string[] = [];
-    for (const output of expandedOutputs) {
+    const fanoutCap = fanoutCapForTurn(policy.delegationCaps, hopCount);
+    for (const output of orderedOutputs) {
       const requestId = agentOutputRequestId(row.id, ack.attempt, output.index);
       const targetRefHash = sha256(output.targetRef ?? output.target);
       const bodyHash = sha256(output.body);
@@ -3149,33 +3300,75 @@ export class CauceRepository {
       const rejection = output.rejection;
       const targetAlias = typeof output.target === 'string' ? output.target : undefined;
       const body = typeof output.body === 'string' ? output.body : undefined;
-      if (!rejection && (!targetAlias || !aliasPattern.test(targetAlias))) {
+      /**
+       * Un rechazo durable QUE ADEMÁS SE LEE. Antes esto era una fila y un audit 'deny' y el
+       * emisor no se enteraba de nada, así que lo natural era reintentar; de ahí las 148
+       * repeticiones de una misma arista medidas en prod. Ahora el motivo y qué hacer en vez
+       * de reintentar viajan en el audit, en la correlación de la fila y en la respuesta del
+       * ACK (`delegation_rejections`), sin generar NI UNA entrega nueva.
+       */
+      const reject = async (
+        code: AgentOutputRejectionCode,
+        extra: { target?: string; cap?: number; question?: string; gateId?: string } = {}
+      ): Promise<void> => {
+        const notice = describeDelegationRejection(code, {
+          hopCount,
+          hopBudget,
+          ...(targetAlias === undefined ? {} : { target: targetAlias }),
+          ...extra
+        });
+        rejections.push({
+          output_index: output.index,
+          ...(targetAlias === undefined ? {} : { target: targetAlias }),
+          ...notice
+        });
         await this.insertAgentOutputRejection(
           client, row, ack, output.index, requestId, targetRefHash, bodyHash,
-          hopCount, hopBudget, correlation, 'unroutable_alias'
+          hopCount, hopBudget, correlation, code, notice
         );
+      };
+
+      // La cadena está esperando a una persona: no sale nada hacia ningún agente.
+      if (activeGate !== undefined) {
+        await reject('chain_gated', { question: activeGate.question, gateId: activeGate.id });
+        continue;
+      }
+      // `@human` no es un alias: es una pregunta. Deja de ser una entrega imposible de completar
+      // y pasa a ser una fila con estado. Sólo cuando la primitiva existe y está encendida; si
+      // no, cae al camino de siempre y termina en 'unroutable_alias', como hoy.
+      if (output === gateDirective && targetAlias === HUMAN_GATE_TARGET && body !== undefined
+        && rootMessageId !== undefined) {
+        const gate = await this.openHumanGate(client, row, ack, output.index, {
+          rootMessageId, question: body, correlation
+        });
+        if (gate !== undefined) {
+          activeGate = gate;
+          suspended = true;
+          await reject('human_gate_opened', { question: gate.question, gateId: gate.id });
+          continue;
+        }
+      }
+      if (!rejection && (!targetAlias || !aliasPattern.test(targetAlias))) {
+        await reject('unroutable_alias');
         continue;
       }
       if (!rejection && hopCount > hopBudget) {
-        await this.insertAgentOutputRejection(
-          client, row, ack, output.index, requestId, targetRefHash, bodyHash,
-          hopCount, hopBudget, correlation, 'hop_budget_exhausted'
-        );
+        await reject('hop_budget_exhausted');
         continue;
       }
       if (!rejection && (targetAlias === row.recipient_alias
         || (internalAgentDelivery && targetAlias === row.actor_alias))) {
-        await this.insertAgentOutputRejection(
-          client, row, ack, output.index, requestId, targetRefHash, bodyHash,
-          hopCount, hopBudget, correlation, 'unroutable_alias'
-        );
+        await reject('unroutable_alias');
+        continue;
+      }
+      // Tope de ABANICO por nodo, no sólo de profundidad. Se cuenta sobre lo MATERIALIZADO, así
+      // que un turno cuyas salidas se rechazan por otra causa no gasta abanico.
+      if (!rejection && fanoutCap !== undefined && materialized >= fanoutCap) {
+        await reject('fanout_exceeded', { cap: fanoutCap });
         continue;
       }
       if (rejection || targetAlias === undefined || body === undefined) {
-        await this.insertAgentOutputRejection(
-          client, row, ack, output.index, requestId, targetRefHash, bodyHash,
-          hopCount, hopBudget, correlation, rejection ?? 'invalid_output'
-        );
+        await reject(rejection ?? 'invalid_output');
         continue;
       }
 
@@ -3212,23 +3405,47 @@ export class CauceRepository {
         }
       }
       if (allowedTargets.length !== 1) {
-        await this.insertAgentOutputRejection(
-          client, row, ack, output.index, requestId, targetRefHash, bodyHash,
-          hopCount, hopBudget, correlation,
-          allowedTargets.length > 1 ? 'ambiguous_alias' : 'unroutable_alias'
-        );
+        await reject(allowedTargets.length > 1 ? 'ambiguous_alias' : 'unroutable_alias');
         continue;
       }
       const targetTenant = allowedTargets[0]!;
+      const targetNode = chainNode(targetTenant, targetAlias);
       // The only point where the destination pair is both resolved and authorized. A cycle
       // is a durable rejection, never an exception: when every output of an ACK is rejected
       // the agent simply relays its own reply upwards, which is an already covered path.
-      if (policy.cycleCutEnabled && visitedPath.includes(chainNode(targetTenant, targetAlias))) {
-        await this.insertAgentOutputRejection(
-          client, row, ack, output.index, requestId, targetRefHash, bodyHash,
-          hopCount, hopBudget, correlation, 'cycle_detected'
-        );
+      if (policy.cycleCutEnabled && visitedPath.includes(targetNode)) {
+        await reject('cycle_detected', { target: targetNode });
         continue;
+      }
+      // Reserva de cupo. Va DESPUÉS de resolver el destino y ANTES de escribir nada: un rechazo
+      // por forma o por ruta no debe gastar combustible de la cadena.
+      //
+      // El orden importa. Primero la raíz (una sola fila, el candado que ya toma el relay de
+      // progreso), después la arista. Si la arista no entra, el combustible de la raíz se
+      // DEVUELVE en la misma transacción: si no, un destino saturado iría drenando el
+      // presupuesto de toda la cadena sin producir una sola entrega.
+      if (policy.delegationCaps.enabled && policy.delegationCapsAvailable
+        && rootMessageId !== undefined) {
+        const rootReserved = await this.reserveRootDelegation(
+          client, rootMessageId, policy.delegationCaps.maxDelegationsPerRoot
+        );
+        if (!rootReserved) {
+          await reject('root_budget_exhausted', {
+            target: targetNode, cap: policy.delegationCaps.maxDelegationsPerRoot
+          });
+          continue;
+        }
+        const edgeReserved = await this.reserveChainEdge(
+          client, rootMessageId, chainNode(row.recipient_tenant, row.recipient_alias), targetNode,
+          policy.delegationCaps.maxEdgeRepeatsPerRoot
+        );
+        if (!edgeReserved) {
+          await this.releaseRootDelegation(client, rootMessageId);
+          await reject('edge_repeat_exceeded', {
+            target: targetNode, cap: policy.delegationCaps.maxEdgeRepeatsPerRoot
+          });
+          continue;
+        }
       }
 
       const message = await client.query<{ id: string }>(
@@ -3319,7 +3536,7 @@ export class CauceRepository {
         JSON.stringify({ tenant_id: targetTenant, alias: targetAlias })
       ]);
       materialized += 1;
-      materializedTargets.push(chainNode(targetTenant, targetAlias));
+      materializedTargets.push(targetNode);
     }
     // Rendered here because hop_count, hop_budget and the accepted destinations only exist
     // as locals of this method; the relay helper never re-derives them.
@@ -3330,7 +3547,183 @@ export class CauceRepository {
         + ` (hop ${hopCount}/${hopBudget}).`
       );
     }
-    return materialized;
+    return {
+      materialized,
+      suspended,
+      rejections,
+      ...(activeGate === undefined ? {} : { gate: activeGate })
+    };
+  }
+
+  /** El gate abierto de una raíz, si lo hay. `FOR SHARE` es el interlock contra `answerChainGate`. */
+  private async openChainGateFor(
+    client: DatabaseClient,
+    rootMessageId: string | undefined
+  ): Promise<OpenChainGate | undefined> {
+    if (rootMessageId === undefined) return undefined;
+    const gate = await client.query<{ id: string; question: string }>(
+      `SELECT id,question FROM agent_chain_gates
+       WHERE root_message_id=$1 AND status='open' LIMIT 1 FOR SHARE`,
+      [rootMessageId]
+    );
+    return gate.rows[0];
+  }
+
+  /**
+   * Convierte una pregunta a una persona en una FILA, no en una entrega.
+   *
+   * Devuelve `undefined` cuando otra rama de la misma raíz ganó la carrera y ya dejó un gate
+   * abierto: el índice único parcial `agent_chain_gates_open_root_idx` es lo que garantiza que
+   * la pregunta salga UNA sola vez, y el `ON CONFLICT DO NOTHING` lo convierte en un no-op en
+   * vez de en una violación que abortaría la transacción del ACK.
+   *
+   * La pregunta se relaya al canal humano por `adapter_outbox` reusando la forma de acuse no
+   * terminal que el bridge ya implementa (misma que insertProgressRelay), así que no hay orden
+   * de despliegue entre store y bridge.
+   */
+  private async openHumanGate(
+    client: DatabaseClient,
+    row: DeliveryRow,
+    ack: Ack,
+    outputIndex: number,
+    input: { rootMessageId: string; question: string; correlation: Record<string, unknown> }
+  ): Promise<OpenChainGate | undefined> {
+    const question = truncateUtf8(input.question, maxChainGateQuestionBytes).value;
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO agent_chain_gates(
+         root_message_id,tenant_id,asked_by_alias,source_delivery_id,source_attempt,output_index,
+         trace_id,question,correlation,origin
+       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb)
+       ON CONFLICT DO NOTHING RETURNING id`,
+      [
+        input.rootMessageId, row.recipient_tenant, row.recipient_alias, row.id, ack.attempt,
+        outputIndex, row.trace_id, question, JSON.stringify(input.correlation),
+        row.origin ? JSON.stringify(row.origin) : null
+      ]
+    );
+    const gateId = inserted.rows[0]?.id;
+    if (gateId === undefined) {
+      // Perdió la carrera (otro gate abierto de la misma raíz) o es un ACK repetido del mismo
+      // output. En los dos casos el gate vigente es el que manda.
+      const current = await this.openChainGateFor(client, input.rootMessageId);
+      return current;
+    }
+    await client.query(
+      `INSERT INTO audit_events(
+         tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+       ) VALUES($1,$2,'agent_chain.gate_opened','allow',$3,$4,$5,$6,$7::jsonb)`,
+      [
+        row.recipient_tenant, row.recipient_alias, row.request_id, row.message_id, row.id,
+        row.trace_id,
+        JSON.stringify({
+          gate_id: gateId,
+          root_message_id: input.rootMessageId,
+          source_attempt: ack.attempt,
+          output_index: outputIndex,
+          question_bytes: Buffer.byteLength(question, 'utf8')
+        })
+      ]
+    );
+    if (row.origin) {
+      await client.query(
+        `INSERT INTO adapter_outbox(
+           tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload
+         ) VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
+         ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
+        [
+          originRelayTenant(row), row.origin.adapter, `chain-gate:${gateId}`, row.request_id,
+          row.message_id, row.id, row.trace_id, JSON.stringify(row.origin),
+          JSON.stringify({
+            relay_kind: 'ack',
+            terminal: false,
+            outcome: 'ack',
+            progress_stage: 'gated',
+            gate_id: gateId,
+            result: {
+              output: {
+                reply: `${row.recipient_alias} necesita una respuesta tuya para seguir:\n\n${question}`,
+                messages: [],
+                status: 'done',
+                retryable: false,
+                artifacts: []
+              }
+            },
+            correlation: {
+              request_id: row.request_id,
+              message_id: row.message_id,
+              trace_id: row.trace_id,
+              root_message_id: input.rootMessageId,
+              gate_id: gateId
+            }
+          })
+        ]
+      );
+    }
+    return { id: gateId, question };
+  }
+
+  /**
+   * Reserva una delegación del combustible de la raíz.
+   *
+   * La reserva ES el UPDATE condicional: si el `WHERE delegations < cap` no se cumple no vuelve
+   * ninguna fila y el contador NO avanza, así que un rechazo no consume presupuesto y dos ACK
+   * concurrentes de la misma cadena serializan sobre la fila en vez de pasarse de largo.
+   */
+  private async reserveRootDelegation(
+    client: DatabaseClient,
+    rootMessageId: string,
+    cap: number
+  ): Promise<boolean> {
+    await client.query(
+      `INSERT INTO agent_chain_progress(root_message_id) VALUES($1)
+       ON CONFLICT(root_message_id) DO NOTHING`,
+      [rootMessageId]
+    );
+    const reserved = await client.query(
+      `UPDATE agent_chain_progress SET delegations=delegations+1
+       WHERE root_message_id=$1 AND delegations<$2 RETURNING delegations`,
+      [rootMessageId, cap]
+    );
+    return reserved.rowCount === 1;
+  }
+
+  /** Devuelve el combustible tomado cuando el paso siguiente de la reserva no entró. */
+  private async releaseRootDelegation(
+    client: DatabaseClient,
+    rootMessageId: string
+  ): Promise<void> {
+    await client.query(
+      `UPDATE agent_chain_progress SET delegations=delegations-1
+       WHERE root_message_id=$1 AND delegations>0`,
+      [rootMessageId]
+    );
+  }
+
+  /**
+   * Reserva un uso de la arista (raíz, emisor, destino).
+   *
+   * Este es el tope que corta el paseo aleatorio de verdad. El guarda de ciclo por camino de
+   * ANTEPASADOS no ve el caso dominante medido en prod (61% de las delegaciones nacen sobre una
+   * continuación `agent.response`): cuando C delega en X y X le responde, X nunca fue antepasado
+   * de C, así que C -> X -> C -> X ... es invisible para `visited_path`. Contar la arista sí lo ve.
+   */
+  private async reserveChainEdge(
+    client: DatabaseClient,
+    rootMessageId: string,
+    sourceNode: string,
+    targetNode: string,
+    cap: number
+  ): Promise<boolean> {
+    const reserved = await client.query(
+      `INSERT INTO agent_chain_edge_uses(root_message_id,source_node,target_node,uses)
+       VALUES($1,$2,$3,1)
+       ON CONFLICT(root_message_id,source_node,target_node) DO UPDATE
+         SET uses=agent_chain_edge_uses.uses+1,last_used_at=now()
+         WHERE agent_chain_edge_uses.uses<$4
+       RETURNING uses`,
+      [rootMessageId, sourceNode, targetNode, cap]
+    );
+    return reserved.rowCount === 1;
   }
 
   private async materializeAgentResponse(
@@ -4335,8 +4728,15 @@ export class CauceRepository {
     hopCount: number,
     hopBudget: number,
     correlation: Record<string, unknown>,
-    rejectionCode: AgentOutputRejectionCode
+    rejectionCode: AgentOutputRejectionCode,
+    notice?: RejectionNotice
   ): Promise<void> {
+    // El motivo legible entra en la correlación de la fila, no en una columna nueva: así el
+    // read-model de la cadena y cualquier lectura forense lo encuentran sin migración extra, y
+    // la fila sigue sin guardar el cuerpo (sólo su hash), que es la regla de esta tabla.
+    const rejectionCorrelation = notice === undefined
+      ? correlation
+      : { ...correlation, rejection: { code: notice.code, reason: notice.reason, guidance: notice.guidance } };
     await client.query(
       `INSERT INTO agent_output_materializations(
          source_delivery_id,source_attempt,output_index,source_message_id,source_tenant,source_alias,
@@ -4346,7 +4746,7 @@ export class CauceRepository {
       [
         row.id, ack.attempt, outputIndex, row.message_id, row.recipient_tenant, row.recipient_alias,
         targetRefHash, bodyHash, rejectionCode, requestId, row.trace_id,
-        hopCount, hopBudget, JSON.stringify(correlation)
+        hopCount, hopBudget, JSON.stringify(rejectionCorrelation)
       ]
     );
     await client.query(
@@ -4362,7 +4762,8 @@ export class CauceRepository {
           target_ref_hash: targetRefHash,
           body_hash: bodyHash,
           hop_count: hopCount,
-          hop_budget: hopBudget
+          hop_budget: hopBudget,
+          ...(notice === undefined ? {} : { rejection_notice: rejectionText(notice) })
         })
       ]
     );
@@ -5325,7 +5726,7 @@ export class CauceRepository {
    * -------------
    * No toca `ack()` ni `retryStaleDeliveries()`. El dispatcher lo llama con su propio reloj
    * (por defecto una vez por minuto, contra ~10 ticks/s del reaper), la consulta de
-   * candidatos está acotada por `LIMIT` y se apoya en los índices de la migración 015_chain_silence_sweep — tres
+   * candidatos está acotada por `LIMIT` y se apoya en los índices de la migración 016_chain_silence_sweep — tres
    * de los cuales aceleran además consultas que la ruta caliente ya hacía con seq scan.
    */
   async sweepSilentChains(options: ChainSilenceSweepOptions = {}): Promise<ChainSilenceSweepResult> {
@@ -6566,7 +6967,7 @@ export class CauceRepository {
    *
    * El JOIN con `dead_letters` se conserva y sigue siendo el candado de idempotencia: es la fila
    * que se marca `resolved_at` acá dentro, en la misma transacción que crea el clon, y sin ella
-   * dos operadores simultáneos crearían dos clones. La migración 017_terminal_recovery_backfill hace el backfill de las
+   * dos operadores simultáneos crearían dos clones. La migración 018_terminal_recovery_backfill hace el backfill de las
    * entregas terminales que quedaron sin esa fila, incluidas las que un humano marcó `dead` a
    * mano en psql.
    */
@@ -7046,6 +7447,229 @@ export class CauceRepository {
        ) ORDER BY outbox.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
     );
     return { items: result.rows };
+  }
+
+  /**
+   * La LISTA VISIBLE de preguntas pendientes a una persona.
+   *
+   * Es la contrapartida obligatoria del gate: sacar la espera humana del bus sólo sirve si lo
+   * que queda es algo que alguien puede VER y contestar. Antes esto vivía como entregas que
+   * ningún agente podía completar y terminaban en `dead_letters` (23+ desde el 24-jul en un
+   * solo gate de facturación), donde nadie las mira.
+   *
+   * Devuelve los abiertos primero y luego los resueltos recientes, para que la lista sirva
+   * también como acuse de "esto ya se contestó".
+   */
+  async listChainGates(
+    actorTenant: Tenant,
+    actorAlias: string,
+    options: { status?: 'open' | 'all'; limit?: number } = {}
+  ): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    const limit = Number.isSafeInteger(options.limit) && (options.limit ?? 0) > 0
+      ? Math.min(options.limit!, 500)
+      : 200;
+    const onlyOpen = options.status !== 'all';
+    const result = await this.pool.query<Record<string, unknown>>(
+      `SELECT gate.id,gate.root_message_id,gate.tenant_id,gate.asked_by_alias,gate.trace_id,
+              gate.question,gate.status,gate.answer,gate.answered_at,gate.answered_by,
+              gate.resume_delivery_id,gate.origin,gate.created_at,gate.updated_at,
+              gate.source_delivery_id,
+              (gate.correlation->>'hop_count')::integer AS hop_count,
+              (gate.correlation->>'hop_budget')::integer AS hop_budget,
+              extract(epoch FROM (now()-gate.created_at))::bigint AS waiting_seconds
+       FROM agent_chain_gates gate
+       WHERE (NOT $3::boolean OR gate.status='open')
+         AND (gate.tenant_id=$1 OR EXISTS (
+           SELECT 1 FROM acl_edges edge
+           WHERE edge.from_tenant=$1 AND edge.to_tenant=gate.tenant_id
+             AND edge.enabled AND edge.allow_read
+         ))
+         AND EXISTS (
+           SELECT 1 FROM memberships membership
+           WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
+         )
+       ORDER BY (gate.status='open') DESC,gate.created_at DESC
+       LIMIT $4`,
+      [actorTenant, actorAlias, onlyOpen, limit]
+    );
+    return { items: result.rows };
+  }
+
+  /**
+   * El humano contesta y la cadena se reanuda.
+   *
+   * Emite EXACTAMENTE UNA entrega, hacia el agente que preguntó, con la correlación de la rama
+   * suspendida restaurada: misma raíz, mismo trace, mismo presupuesto de saltos y mismo camino
+   * visitado. Por eso reanudar no arranca una cadena nueva ni recupera combustible ya gastado.
+   *
+   * `FOR UPDATE` sobre la fila del gate es el otro lado del `FOR SHARE` que toma
+   * `materializeAgentOutputs`: contestar y delegar sobre la misma raíz no se pueden cruzar.
+   */
+  async answerChainGate(
+    gateId: string,
+    answer: string,
+    actorTenant: Tenant,
+    actorAlias: string
+  ): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'route');
+    if (!uuidPattern.test(gateId)) {
+      throw new StoreError('invalid_input', 'gate id must be a uuid');
+    }
+    const text = postgresTextSafe(answer) ?? '';
+    if (!visibleText(text)) {
+      throw new StoreError('invalid_input', 'gate answer must be non-empty text');
+    }
+    const bounded = truncateUtf8(text, maxChainGateQuestionBytes).value;
+    return withTransaction(this.pool, async (client) => {
+      const gate = await client.query<{
+        id: string;
+        root_message_id: string;
+        tenant_id: Tenant;
+        asked_by_alias: string;
+        trace_id: string;
+        question: string;
+        status: string;
+        correlation: Record<string, unknown> | null;
+        origin: Origin | null;
+      }>(
+        `SELECT id,root_message_id,tenant_id,asked_by_alias,trace_id,question,status,correlation,origin
+         FROM agent_chain_gates WHERE id=$1 FOR UPDATE`,
+        [gateId]
+      );
+      const row = gate.rows[0];
+      if (!row) throw new StoreError('not_found', 'chain gate not found');
+      if (row.status !== 'open') {
+        throw new StoreError('conflict', `chain gate is already ${row.status}`);
+      }
+      const room = await client.query<{ room_id: string }>(
+        `SELECT membership.room_id
+         FROM memberships membership
+         JOIN role_policies policy ON policy.role=membership.role
+         JOIN tenants tenant ON tenant.id=membership.tenant_id
+         JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
+         WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
+           AND tenant.enabled AND room.enabled AND policy.allow_route
+         ORDER BY membership.room_id LIMIT 1`,
+        [row.tenant_id, row.asked_by_alias]
+      );
+      const roomId = room.rows[0]?.room_id;
+      if (!roomId) {
+        throw new StoreError('invalid_actor', 'the agent that opened the gate has no routable room');
+      }
+      const gateCorrelation = objectRecord(row.correlation) ?? {};
+      // Se resta un salto a propósito. La correlación guardada es la que habría llevado el HIJO
+      // de esta rama; la reanudación no baja un nivel, vuelve al MISMO agente. Sin la resta,
+      // cada gate le comería un salto al presupuesto de la cadena.
+      const storedHop = typeof gateCorrelation.hop_count === 'number'
+        && Number.isSafeInteger(gateCorrelation.hop_count)
+        ? gateCorrelation.hop_count
+        : 1;
+      const correlation = {
+        ...gateCorrelation,
+        hop_count: Math.max(0, storedHop - 1),
+        gate_id: row.id,
+        gate_question: row.question,
+        gate_answered_by: `${actorTenant}/${actorAlias}`
+      };
+      const requestId = randomUUID();
+      const message = await client.query<{ id: string }>(
+        `INSERT INTO messages(
+           request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
+           auth_session_id,auth_channel
+         ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,'batch',$8,$9,$10) RETURNING id`,
+        [
+          requestId, row.trace_id, row.tenant_id, roomId, row.asked_by_alias,
+          JSON.stringify({
+            type: 'agent.message',
+            text: `Respuesta humana a tu pregunta pendiente.\n\nPregunta: ${row.question}\n\n`
+              + `Respuesta de ${actorAlias}: ${bounded}\n\n`
+              + 'Retomá la tarea con esto. No vuelvas a preguntar lo mismo.',
+            from_alias: actorAlias,
+            correlation
+          }),
+          row.origin ? JSON.stringify(row.origin) : null,
+          7, `chain-gate:${row.id}`, 'chain-gate'
+        ]
+      );
+      const resumeMessageId = message.rows[0]?.id;
+      if (!resumeMessageId) throw new Error('gate resume message insert returned no id');
+      const delivery = await client.query<{ id: string }>(
+        `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias)
+         VALUES($1,$2,$3) RETURNING id`,
+        [resumeMessageId, row.tenant_id, row.asked_by_alias]
+      );
+      const resumeDeliveryId = delivery.rows[0]?.id;
+      if (!resumeDeliveryId) throw new Error('gate resume delivery insert returned no id');
+      await client.query(
+        `INSERT INTO adapter_outbox(
+           tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload
+         ) VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,NULL,$7::jsonb)
+         ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
+        [
+          row.tenant_id, `chain-gate-resume:${row.id}`, requestId, resumeMessageId,
+          resumeDeliveryId, row.trace_id,
+          JSON.stringify({ recipient_alias: row.asked_by_alias, reason: 'delivery_available' })
+        ]
+      );
+      await client.query(
+        `UPDATE agent_chain_gates
+         SET status='answered',answer=$2,answered_at=now(),answered_by=$3,
+             resume_message_id=$4,resume_delivery_id=$5,updated_at=now()
+         WHERE id=$1`,
+        [row.id, bounded, `${actorTenant}/${actorAlias}`, resumeMessageId, resumeDeliveryId]
+      );
+      await client.query(
+        `INSERT INTO audit_events(
+           tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+         ) VALUES($1,$2,'agent_chain.gate_answered','allow',$3,$4,$5,$6,$7::jsonb)`,
+        [
+          row.tenant_id, actorAlias, requestId, resumeMessageId, resumeDeliveryId, row.trace_id,
+          JSON.stringify({
+            gate_id: row.id,
+            root_message_id: row.root_message_id,
+            asked_by_alias: row.asked_by_alias,
+            answered_by: `${actorTenant}/${actorAlias}`
+          })
+        ]
+      );
+      await client.query('SELECT pg_notify($1,$2)', [
+        'cauce_delivery_wake',
+        JSON.stringify({ tenant_id: row.tenant_id, alias: row.asked_by_alias })
+      ]);
+      return {
+        gate_id: row.id,
+        status: 'answered',
+        resume_message_id: resumeMessageId,
+        resume_delivery_id: resumeDeliveryId,
+        recipient_tenant: row.tenant_id,
+        recipient_alias: row.asked_by_alias
+      };
+    });
+  }
+
+  /**
+   * Cierra un gate sin reanudar nada. Es la válvula para una pregunta que ya no tiene sentido:
+   * sin esto, un gate mal abierto dejaría su raíz suspendida para siempre.
+   */
+  async cancelChainGate(
+    gateId: string,
+    actorTenant: Tenant,
+    actorAlias: string
+  ): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'route');
+    if (!uuidPattern.test(gateId)) {
+      throw new StoreError('invalid_input', 'gate id must be a uuid');
+    }
+    const updated = await this.pool.query<{ id: string; root_message_id: string }>(
+      `UPDATE agent_chain_gates SET status='cancelled',updated_at=now()
+       WHERE id=$1 AND status='open' RETURNING id,root_message_id`,
+      [gateId]
+    );
+    if (updated.rowCount !== 1) {
+      throw new StoreError('conflict', 'chain gate is not open');
+    }
+    return { gate_id: gateId, status: 'cancelled' };
   }
 
   /**

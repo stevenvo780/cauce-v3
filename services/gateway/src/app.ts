@@ -95,6 +95,27 @@ export interface GatewayRepository {
   listNotifications(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listAudit(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   agentChain(traceId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  /**
+   * Opcionales por la misma razón que `liveDeliveryClaims`: los dobles de test del gateway no
+   * implementan la primitiva de gate, y sin ella la ruta responde 404 en vez de romper el
+   * arranque. Las implementa `CauceRepository` desde la migración 019_delegation_discipline.
+   */
+  listChainGates?(
+    actorTenant: Tenant,
+    actorAlias: string,
+    options?: { status?: 'open' | 'all'; limit?: number },
+  ): Promise<Record<string, unknown>>;
+  answerChainGate?(
+    gateId: string,
+    answer: string,
+    actorTenant: Tenant,
+    actorAlias: string,
+  ): Promise<Record<string, unknown>>;
+  cancelChainGate?(
+    gateId: string,
+    actorTenant: Tenant,
+    actorAlias: string,
+  ): Promise<Record<string, unknown>>;
   fleetActivity(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   quotaSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   recordQuotaSample(actorTenant: Tenant, actorAlias: string, sample: QuotaSampleRequest): Promise<QuotaSampleIngestResult>;
@@ -747,6 +768,69 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       return await repository.agentChain(request.params.traceId, actor.tenant_id, actor.alias);
     } catch (error) { replyError(reply, error); }
   });
+
+  // Las preguntas que la flota le dejó a una persona. Es la LISTA VISIBLE que el gate promete:
+  // sin ella, sacar la espera humana del bus sólo la escondería en otro lado.
+  //
+  // Sin fachada sameTenantRows, por el mismo motivo que /v3/console/chains/:traceId: el store ya
+  // aplicó la visibilidad fila por fila (tenant propio, o arista ACL con allow_read), y aplastar
+  // por tenant acá dejaría a un operador del hub sin poder contestar la pregunta de un agente de
+  // otro tenant, que es justo para lo que existe esta lista.
+  app.get<{ Querystring: { status?: string; limit?: string } }>(
+    '/v3/console/chain-gates',
+    async (request, reply) => {
+      try {
+        const actor = await principal(request, options.authProvider);
+        requirePermission(actor, 'read');
+        if (repository.listChainGates === undefined) {
+          throw new StoreError('not_found', 'chain gates are not available in this deployment');
+        }
+        const limit = Number.parseInt(request.query.limit ?? '', 10);
+        return await repository.listChainGates(actor.tenant_id, actor.alias, {
+          status: request.query.status === 'all' ? 'all' : 'open',
+          ...(Number.isSafeInteger(limit) && limit > 0 ? { limit } : {})
+        });
+      } catch (error) { replyError(reply, error); }
+    }
+  );
+
+  // Contestar reanuda la rama suspendida con UNA entrega. Pide 'route' y no 'read' porque
+  // produce tráfico en el bus, igual que publicar.
+  app.post<{ Params: { gateId: string } }>(
+    '/v3/console/chain-gates/:gateId/answer',
+    async (request, reply) => {
+      try {
+        const actor = await principal(request, options.authProvider);
+        requirePermission(actor, 'route');
+        if (repository.answerChainGate === undefined) {
+          throw new StoreError('not_found', 'chain gates are not available in this deployment');
+        }
+        const body = request.body === null || typeof request.body !== 'object'
+          ? {}
+          : request.body as Record<string, unknown>;
+        const answer = typeof body.answer === 'string' ? body.answer : '';
+        return await repository.answerChainGate(
+          request.params.gateId, answer, actor.tenant_id, actor.alias
+        );
+      } catch (error) { replyError(reply, error); }
+    }
+  );
+
+  app.post<{ Params: { gateId: string } }>(
+    '/v3/console/chain-gates/:gateId/cancel',
+    async (request, reply) => {
+      try {
+        const actor = await principal(request, options.authProvider);
+        requirePermission(actor, 'route');
+        if (repository.cancelChainGate === undefined) {
+          throw new StoreError('not_found', 'chain gates are not available in this deployment');
+        }
+        return await repository.cancelChainGate(
+          request.params.gateId, actor.tenant_id, actor.alias
+        );
+      } catch (error) { replyError(reply, error); }
+    }
+  );
 
   app.get('/v3/console/config', async (request, reply) => {
     try {

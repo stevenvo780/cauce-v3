@@ -1,4 +1,4 @@
--- Reversa de 016_late_terminal_ack.sql.
+-- Reversa de 017_late_terminal_ack.sql.
 --
 -- Ojo con el orden: primero hay que desplegar el código anterior (el que no proyecta
 -- `d.late_result_at` en el SELECT de `ackDelivery`) y recién después correr esto. Al revés,

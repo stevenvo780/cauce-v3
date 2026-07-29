@@ -1,8 +1,8 @@
--- Reversa de 017_terminal_recovery_backfill.sql
+-- Reversa de 018_terminal_recovery_backfill.sql
 --
--- La 016 no hace DDL: sólo inserta filas de rescate en `dead_letters` y una fila de auditoría.
+-- La 018 no hace DDL: sólo inserta filas de rescate en `dead_letters` y una fila de auditoría.
 -- Revertirla es borrar exactamente esas filas, y se identifican sin ambigüedad por el prefijo
--- 'backfill 016 (' que la propia migración escribe en `reason`.
+-- 'backfill 018 (' que la propia migración escribe en `reason`.
 --
 -- SE PROTEGE LO QUE YA SE USÓ. Una fila con `resolved_at` NO SE BORRA: significa que un operador
 -- ya apretó replay sobre ella y que existe un clon de la entrega corriendo o corrido. Borrarla
@@ -17,12 +17,12 @@
 -- Idempotente: correrla dos veces borra cero filas la segunda vez.
 
 DELETE FROM dead_letters
-WHERE reason LIKE 'backfill 016 (%'
+WHERE reason LIKE 'backfill 018 (%'
   AND resolved_at IS NULL
   AND delivery_id IS NOT NULL;
 
 DELETE FROM audit_events
 WHERE action = 'migration.dead_letter_backfill'
-  AND metadata->>'migration' = '017_terminal_recovery_backfill';
+  AND metadata->>'migration' = '018_terminal_recovery_backfill';
 
-DELETE FROM schema_migrations WHERE version = '017_terminal_recovery_backfill.sql';
+DELETE FROM schema_migrations WHERE version = '018_terminal_recovery_backfill.sql';
