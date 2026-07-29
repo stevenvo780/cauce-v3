@@ -163,10 +163,197 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
   await connection.send({ type: "heartbeat", instance_id: "argos-1", epoch: 7 });
   await received;
   assert.equal(entries.length, 1);
-  assert.deepEqual(delivered.map((raw) => JSON.parse(raw).type), ["heartbeat"]);
+  assert.deepEqual(
+    // `JSON.parse` devuelve `any`: sin la anotación esta línea rompe `lint:adapter`.
+    delivered.map((raw) => (JSON.parse(raw) as { type: string }).type),
+    ["heartbeat"],
+  );
 
   await connection.close();
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+});
+
+/**
+ * ============================================================================================
+ * EL FRAME QUE MATABA LA COLA
+ *
+ * `ack_result` ganó `delegation_rejections` y `chain_gate` en el store, el gateway los esparcía
+ * al frame sin gate, y el miembro del esquema seguía `.strict()`. Del lado del adaptador eso NO
+ * era "descarto este frame": `parse()` tiraba, el catch llamaba `queue.fail(...)` y eso rechaza
+ * al iterador y a todos los que esperan — se cae la cola ENTERA de la conexión y con ella todas
+ * las entregas en vuelo.
+ *
+ * Estos tests miran el FRAME, que es el hueco por donde entró el defecto: los tests que había
+ * verificaban el valor de retorno de `ackDelivery` en el store, y ese valor era correcto. Lo que
+ * nadie validaba era el frame que salía al cable.
+ * ============================================================================================
+ */
+
+const frameIds = {
+  event: "51000000-0000-4000-8000-000000000001",
+  delivery: "52000000-0000-4000-8000-000000000001",
+  message: "53000000-0000-4000-8000-000000000001",
+  request: "54000000-0000-4000-8000-000000000001",
+  claim: "55000000-0000-4000-8000-000000000001",
+} as const;
+
+function ackResultFrame(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    type: "ack_result",
+    event_id: frameIds.event,
+    delivery_id: frameIds.delivery,
+    attempt: 1,
+    claim_token: frameIds.claim,
+    status: "done",
+    applied: true,
+    receipt: "applied",
+    ...extra,
+  };
+}
+
+function deliveryFrame(): Record<string, unknown> {
+  return {
+    type: "delivery",
+    version: PROTOCOL_VERSION,
+    event_id: frameIds.event,
+    delivery_id: frameIds.delivery,
+    message_id: frameIds.message,
+    request_id: frameIds.request,
+    trace_id: "trace-survives-the-bad-frame",
+    epoch: 1,
+    attempt: 1,
+    claim_token: frameIds.claim,
+    ack_deadline_at: new Date(Date.now() + 30_000).toISOString(),
+    tenant_id: "Steven",
+    room_id: "grp.steven",
+    actor_alias: "kant",
+    recipient_alias: "zeus",
+    body: { text: "la cola sigue viva" },
+  };
+}
+
+/** Un servidor que dice exactamente los frames que le pidamos, en orden. */
+async function frameServer(): Promise<{
+  port: number;
+  say: (frame: unknown) => Promise<void>;
+  close: () => Promise<void>;
+}> {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const connected = once(server, "connection") as Promise<[import("ws").WebSocket]>;
+  return {
+    port: address.port,
+    say: async (frame: unknown) => {
+      const [socket] = await connected;
+      const raw = typeof frame === "string" ? frame : JSON.stringify(frame);
+      await new Promise<void>((resolveSend, rejectSend) => {
+        socket.send(raw, (error) => {
+          if (error == null) resolveSend();
+          else rejectSend(error);
+        });
+      });
+    },
+    close: async () => { await new Promise<void>((done) => server.close(() => done())); },
+  };
+}
+
+test("the delegation feedback fields are part of the ack_result frame contract", async () => {
+  const server = await frameServer();
+  const entries: AdapterLog[] = [];
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${server.port}`, {
+    environment: "test",
+    alias: "zeus",
+    logger: (entry) => { entries.push(entry); },
+  });
+  const connection = await connector.connect(new AbortController().signal);
+  const frames = connection.frames()[Symbol.asyncIterator]();
+
+  await server.say(ackResultFrame({
+    delegation_rejections: [{
+      code: "fanout_exceeded",
+      reason: "Abanico agotado: este turno ya delegó 3 veces.",
+      guidance: "No reintentes.",
+      output_index: 0,
+      target: "kratos",
+    }],
+    chain_gate: { gate_id: "gate-1", question: "¿Sigo?" },
+  }));
+
+  const received = await frames.next();
+  assert.equal(received.done, false);
+  const frame = received.value as Record<string, unknown>;
+  assert.equal(frame.type, "ack_result");
+  // El adaptador que declara la capability RECIBE los campos, no una versión recortada.
+  assert.deepEqual(frame.delegation_rejections, [{
+    code: "fanout_exceeded",
+    reason: "Abanico agotado: este turno ya delegó 3 veces.",
+    guidance: "No reintentes.",
+    output_index: 0,
+    target: "kratos",
+  }]);
+  assert.deepEqual(frame.chain_gate, { gate_id: "gate-1", question: "¿Sigo?" });
+  assert.deepEqual(entries, []);
+
+  await connection.close();
+  await server.close();
+});
+
+test("a frame outside the schema is dropped and the queue keeps serving the next one", async () => {
+  const server = await frameServer();
+  const entries: AdapterLog[] = [];
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${server.port}`, {
+    environment: "test",
+    alias: "zeus",
+    logger: (entry) => { entries.push(entry); },
+  });
+  const connection = await connector.connect(new AbortController().signal);
+  const frames = connection.frames()[Symbol.asyncIterator]();
+
+  // Un gateway MÁS NUEVO que este adaptador: un campo que su esquema no conoce. Es la forma
+  // exacta del defecto, y también la de cualquier campo que se agregue en el futuro.
+  await server.say(ackResultFrame({ delegation_disciplina_v2: { cap: 3 } }));
+  // Y las otras dos formas de frame ilegible que llegaban al mismo `queue.fail`.
+  await server.say("{no-es-json");
+  await server.say({ type: "ack_result", applied: "no-es-booleano" });
+
+  // LA aserción: la cola sobrevivió a los tres y sigue entregando. Los frames del WebSocket
+  // están ordenados, así que recibir éste prueba que los anteriores no la mataron.
+  await server.say(deliveryFrame());
+  const received = await frames.next();
+  assert.equal(received.done, false);
+  const survivor = received.value as Record<string, unknown>;
+  assert.equal(survivor.type, "delivery");
+  assert.equal(survivor.trace_id, "trace-survives-the-bad-frame");
+
+  // El descarte es observable, nunca silencioso.
+  assert.equal(entries.length, 3);
+  assert.deepEqual(entries.map((entry) => entry.event), [
+    "inbound_frame_invalid", "inbound_frame_invalid", "inbound_frame_invalid",
+  ]);
+  assert.deepEqual(entries.map((entry) => entry.error_code), [
+    "INBOUND_FRAME_SCHEMA", "INBOUND_FRAME_DECODE", "INBOUND_FRAME_SCHEMA",
+  ]);
+  assert.deepEqual(entries.map((entry) => entry.reason), [
+    "frame_dropped", "frame_dropped", "frame_dropped",
+  ]);
+  assert.equal(entries[0]?.frame_type, "ack_result");
+  assert.equal(entries[0]?.alias, "zeus");
+  assert.equal(entries[0]?.delivery_id, frameIds.delivery);
+  // `unrecognized_keys` se reporta en la raíz, no en la clave: el path es `<root>` y el NOMBRE
+  // del campo que sobra viaja en el mensaje. Es el dato que sirve para diagnosticar deriva de
+  // protocolo ("qué campo nuevo nos rompió"), así que el test lo fija explícitamente.
+  assert.equal(entries[0]?.issues?.length, 1);
+  assert.equal(entries[0]?.issues?.[0]?.code, "unrecognized_keys");
+  assert.deepEqual(entries[0]?.issues?.map((issue) => issue.path), ["<root>"]);
+  assert.match(String(entries[0]?.issues?.[0]?.message), /delegation_disciplina_v2/u);
+  // El JSON roto no tiene forma, y aun así no derriba nada ni inventa campos.
+  assert.equal(entries[1]?.frame_type, "unknown");
+  assert.deepEqual(entries[1]?.issues, []);
+
+  await connection.close();
+  await server.close();
 });
 
 test("mTLS requires complete valid owner-only material and wss", async () => {

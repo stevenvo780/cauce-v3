@@ -42,6 +42,7 @@ export function capabilities(
     authenticated_session_scope: true,
     routing_targets_v1: true,
     renewable_delivery_claims_v1: true,
+    delegation_feedback_v1: true,
     agent_identity_v1: true,
     attachments_v1: true,
     ...(harness === "codex" ? { native_image_input_v1: true } : {}),

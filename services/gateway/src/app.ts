@@ -235,6 +235,13 @@ interface Session {
   /** Un wake que llegó mientras drenábamos. Se atiende al terminar, nunca se pierde. */
   drainAgain: boolean;
   renewableDeliveryClaims: boolean;
+  /**
+   * El adaptador declaró entender la disciplina de delegación, así que `ack_result` puede llevar
+   * `delegation_rejections` y `chain_gate`. Sin la capability esos campos NO se emiten: el
+   * adaptador viejo valida el frame con `.strict()` y, cuando el esquema lo rechaza, no descarta
+   * el frame — falla la cola entera de la conexión y se lleva puesto todo lo que tenía en vuelo.
+   */
+  delegationFeedback: boolean;
   claims: Map<string, SessionClaim>;
   recentClaims: Map<string, SessionClaim>;
   /** Re-drenaje programado al primer vencimiento de garra. Ver `scheduleExpiryDrain`. */
@@ -1172,6 +1179,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
               throw new StoreError('forbidden', 'authenticated identity does not match hello');
             }
             const renewableDeliveryClaims = hello.capabilities.includes('renewable_delivery_claims_v1');
+            const delegationFeedback = hello.capabilities.includes('delegation_feedback_v1');
             const lease = await repository.acquireLease(
               hello.tenant_id,
               hello.alias,
@@ -1201,6 +1209,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
               draining: false,
               drainAgain: false,
               renewableDeliveryClaims,
+              delegationFeedback,
               // El cupo NO arranca vacío: se reconstruye desde la base. Ver `rehydrateClaims`.
               claims: await rehydrateClaims(hello.tenant_id, hello.alias),
               recentClaims: new Map(),
@@ -1287,14 +1296,30 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
             deliveryId, current.tenantId, current.alias, incoming, ackDeadlineMs,
             deliveryLeaseCap
           );
-          const { receipt, ...legacyResult } = result;
+          // Todo campo que el store agregue a `AckResult` se saca de `legacyResult` A MANO y se
+          // vuelve a poner detrás de su capability. `legacyResult` es lo que un adaptador de
+          // cualquier versión sabe leer, así que el spread NO puede ser la vía por la que entra
+          // un campo nuevo: ahí está el defecto que esto arregla — `delegation_rejections` y
+          // `chain_gate` viajaban en el spread, el `.strict()` del adaptador viejo los rechazaba,
+          // y un frame rechazado no se descarta: falla la cola entera de la conexión.
+          const {
+            receipt,
+            delegation_rejections: delegationRejections,
+            chain_gate: chainGate,
+            ...legacyResult
+          } = result;
+          const feedback = current.delegationFeedback;
           send(socket, {
             type: 'ack_result',
             ...legacyResult,
             event_id: incoming.event_id,
             attempt: incoming.attempt,
             claim_token: incoming.claim_token,
-            ...(current.renewableDeliveryClaims ? { receipt } : {})
+            ...(current.renewableDeliveryClaims ? { receipt } : {}),
+            ...(feedback && delegationRejections !== undefined
+              ? { delegation_rejections: delegationRejections }
+              : {}),
+            ...(feedback && chainGate !== undefined ? { chain_gate: chainGate } : {})
           });
           // Todo 'started' aplicado corre el plazo en la base a now()+plazo, incluido el
           // primero: el cupo tiene que seguirlo o el gateway daría por vencida una garra que

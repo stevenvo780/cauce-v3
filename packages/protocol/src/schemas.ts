@@ -689,6 +689,61 @@ export const DeliveryEnvelopeSchema = z.object({
   self_role: z.string().min(1).max(1200).optional()
 }).strict();
 
+/**
+ * Vocabulario durable de por qué una salida `messages` NO se convirtió en delegación.
+ *
+ * Vive acá y no en el store que lo produce porque viaja en el frame `ack_result`: el adaptador
+ * tiene que poder validarlo sin depender de `@cauce/store`. `DelegationRejectionCode` del store
+ * se DERIVA de esta lista, así que agregar un código allá sin agregarlo acá no compila — que es
+ * exactamente la deriva que dejó el frame fuera del esquema la primera vez.
+ */
+export const DELEGATION_REJECTION_CODES = [
+  'invalid_output',
+  'unroutable_alias',
+  'ambiguous_alias',
+  'hop_budget_exhausted',
+  'cycle_detected',
+  'fanout_exceeded',
+  'edge_repeat_exceeded',
+  'root_budget_exhausted',
+  'chain_gated',
+  'human_gate_opened'
+] as const;
+
+/**
+ * El destino rechazado es texto del AGENTE, no un alias validado: `unroutable_alias` existe
+ * justamente para el `to` que no rutea, y `agentOutputEntries` lo copia tal cual. Por eso NO es
+ * `AliasSchema` y por eso el store lo recorta a este largo antes de ponerlo en el frame: un tope
+ * más chico que lo que el productor puede emitir volvería a tirar la conexión entera.
+ */
+export const MAX_DELEGATION_REJECTION_TARGET_CHARS = 256;
+
+/**
+ * `reason` de `chain_gated` incrusta la pregunta del gate, que la base acota a 8 KiB. El tope
+ * tiene que quedar por ENCIMA de eso con aire, o el rechazo más largo que el store sabe generar
+ * no pasaría su propio esquema.
+ */
+export const MAX_DELEGATION_REJECTION_REASON_CHARS = 12_000;
+
+export const DelegationRejectionSchema = z.object({
+  code: z.enum(DELEGATION_REJECTION_CODES),
+  reason: z.string().min(1).max(MAX_DELEGATION_REJECTION_REASON_CHARS),
+  guidance: z.string().min(1).max(2_000),
+  /**
+   * Índice de la salida rechazada. La expansión de `@all` lo desplaza a propósito
+   * (`maxAgentOutputMessages + index*100 + targetIndex`), así que acá no hay techo: sólo tiene
+   * que ser un entero no negativo.
+   */
+  output_index: z.number().int().min(0),
+  target: z.string().min(1).max(MAX_DELEGATION_REJECTION_TARGET_CHARS).optional()
+}).strict();
+
+export const ChainGateSchema = z.object({
+  gate_id: z.string().min(1).max(128),
+  /** Mismo techo que el CHECK de `agent_chain_gates.question`. */
+  question: z.string().min(1).max(8_192)
+}).strict();
+
 export const WsInboundSchema = z.discriminatedUnion('type', [HelloSchema, HeartbeatSchema, WsAckSchema]);
 
 export const WsOutboundSchema = z.discriminatedUnion('type', [
@@ -707,7 +762,16 @@ export const WsOutboundSchema = z.discriminatedUnion('type', [
     type: z.literal('ack_result'), event_id: EventIdSchema, delivery_id: DeliveryIdSchema,
     attempt: z.number().int().positive(), claim_token: ClaimTokenSchema,
     status: DeliveryStateSchema, applied: z.boolean(),
-    receipt: z.enum(['applied', 'duplicate', 'superseded', 'ownership_lost']).optional()
+    receipt: z.enum(['applied', 'duplicate', 'superseded', 'ownership_lost']).optional(),
+    /**
+     * Los dos campos de disciplina de delegación. Opcionales en el esquema y ADEMÁS gateados en
+     * el gateway detrás de `delegation_feedback_v1`: el esquema los hace válidos para quien los
+     * entiende, la capability evita mandárselos a quien no los pidió. Hacen falta las dos cosas
+     * porque un adaptador viejo valida con `.strict()` y, al fallar, mata la cola entera de la
+     * conexión — no descarta el frame.
+     */
+    delegation_rejections: z.array(DelegationRejectionSchema).max(1_000).optional(),
+    chain_gate: ChainGateSchema.optional()
   }).strict(),
   z.object({ type: z.literal('error'), code: z.string(), message: z.string() }).strict()
 ]);
@@ -726,6 +790,9 @@ export type AttachmentContent = z.infer<typeof AttachmentContentSchema>;
 export type Lane = z.infer<typeof LaneSchema>;
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 export type DeliveryEnvelope = z.infer<typeof DeliveryEnvelopeSchema>;
+export type DelegationRejectionCode = (typeof DELEGATION_REJECTION_CODES)[number];
+export type DelegationRejectionNotice = z.infer<typeof DelegationRejectionSchema>;
+export type ChainGateNotice = z.infer<typeof ChainGateSchema>;
 export type ConfigMutation = z.infer<typeof ConfigMutationSchema>;
 export type NotifyKind = z.infer<typeof NotifyKindSchema>;
 export type NotifyRequest = z.infer<typeof NotifyRequestSchema>;

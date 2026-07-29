@@ -1,5 +1,7 @@
 import type {
   Ack,
+  ChainGateNotice,
+  DelegationRejectionNotice,
   DeliveryEnvelope,
   DeliveryState,
   Hello,
@@ -38,6 +40,13 @@ export interface AdapterCapabilities {
   readonly stable_alias_sessions?: true;
   readonly api_cancellation?: 'abort_signal';
   readonly renewable_delivery_claims_v1?: true;
+  /**
+   * Declara que el adaptador sabe validar `ack_result.delegation_rejections` y
+   * `ack_result.chain_gate`. El gateway NO manda esos campos a quien no lo declare, porque un
+   * adaptador que valida el frame con `.strict()` no descarta el frame que rechaza: falla la cola
+   * entera de la conexión.
+   */
+  readonly delegation_feedback_v1?: true;
   /** Acepta `self_role` en el sobre y lo emite como preámbulo de identidad. Ver migración 020. */
   readonly agent_identity_v1?: true;
 }
@@ -117,6 +126,10 @@ export interface AckResultFrame {
   readonly status: DeliveryState;
   readonly applied: boolean;
   readonly receipt?: 'applied' | 'duplicate' | 'superseded' | 'ownership_lost';
+  /** Salidas `messages` que NO se convirtieron en entrega. Sólo con `delegation_feedback_v1`. */
+  readonly delegation_rejections?: readonly DelegationRejectionNotice[];
+  /** La rama quedó suspendida esperando a una persona. Sólo con `delegation_feedback_v1`. */
+  readonly chain_gate?: ChainGateNotice;
 }
 
 /** Every ACK is scoped to one delivery attempt and one opaque claim. */
@@ -292,7 +305,9 @@ export interface AdapterLog {
     | 'claim_renewal_start'
     | 'claim_renewal_end'
     | 'connection_error'
-    | 'outbound_frame_invalid';
+    | 'outbound_frame_invalid'
+    /** Un frame del gateway que el esquema rechazó y el adaptador DESCARTÓ sin cortar la cola. */
+    | 'inbound_frame_invalid';
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;
@@ -304,7 +319,7 @@ export interface AdapterLog {
   reason?: string;
   /** Discriminator of the offending frame (`ack`, `hello`, `heartbeat`); never its body. */
   frame_type?: string;
-  /** Fields a schema rejected. Set on `outbound_frame_invalid`. */
+  /** Fields a schema rejected. Set on `outbound_frame_invalid` and `inbound_frame_invalid`. */
   issues?: readonly FrameValidationIssue[];
   /** Truncated SHA-256 of a claim token. Never the token itself; see the note above. */
   claim_token_fingerprint?: string;

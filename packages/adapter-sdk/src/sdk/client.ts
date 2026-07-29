@@ -61,6 +61,7 @@ export function capabilityStrings(capabilities: AdapterCapabilities): string[] {
     ...(capabilities.routing_targets_v1 ? ['routing_targets_v1'] : []),
     ...(capabilities.agent_identity_v1 ? ['agent_identity_v1'] : []),
     ...(capabilities.renewable_delivery_claims_v1 ? ['renewable_delivery_claims_v1'] : []),
+    ...(capabilities.delegation_feedback_v1 ? ['delegation_feedback_v1'] : []),
     ...(capabilities.persistent_sessions ? ['persistent-sessions'] : []),
     ...(capabilities.loopback_api === true ? ['loopback-api'] : []),
     ...(capabilities.stable_alias_sessions === true ? ['stable-alias-sessions'] : []),

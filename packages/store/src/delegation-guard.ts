@@ -10,18 +10,21 @@
  * migrations/019_delegation_discipline.sql y en NOTAS.md.
  */
 
-/** Todo lo que puede impedir que una salida de agente se convierta en una entrega. */
-export type DelegationRejectionCode =
-  | 'invalid_output'
-  | 'unroutable_alias'
-  | 'ambiguous_alias'
-  | 'hop_budget_exhausted'
-  | 'cycle_detected'
-  | 'fanout_exceeded'
-  | 'edge_repeat_exceeded'
-  | 'root_budget_exhausted'
-  | 'chain_gated'
-  | 'human_gate_opened';
+import {
+  MAX_DELEGATION_REJECTION_TARGET_CHARS,
+  type DelegationRejectionCode as ProtocolDelegationRejectionCode
+} from '@cauce/protocol';
+
+/**
+ * Todo lo que puede impedir que una salida de agente se convierta en una entrega.
+ *
+ * La lista canónica vive en `@cauce/protocol` porque estos códigos VIAJAN al adaptador dentro de
+ * `ack_result.delegation_rejections`. Derivarla en vez de repetirla es lo que hace imposible
+ * agregar un código acá y olvidarse del esquema del frame: eso fue exactamente el defecto —
+ * campos nuevos en la respuesta del ACK que el `.strict()` del adaptador rechazaba, y un rechazo
+ * de frame no descarta el frame, mata la cola entera de la conexión.
+ */
+export type DelegationRejectionCode = ProtocolDelegationRejectionCode;
 
 /** Códigos que 019 agrega al dominio durable de `agent_output_materializations.rejection_code`. */
 export const DELEGATION_DISCIPLINE_REJECTION_CODES = [
@@ -95,6 +98,22 @@ export function fanoutCapForTurn(caps: DelegationCaps, hopCount: number): number
   if (!caps.enabled) return undefined;
   if (!Number.isSafeInteger(hopCount) || hopCount < 2) return undefined;
   return caps.maxFanoutPerTurn;
+}
+
+/**
+ * El `to` de una salida rechazada es texto crudo del agente: `agentOutputEntries` lo copia sin
+ * validar largo, porque `invalid_output`/`unroutable_alias` existen precisamente para el destino
+ * que no es un alias. Ese valor viaja al adaptador dentro del rechazo, así que el productor lo
+ * recorta al tope del esquema del frame. Sin esto un `to` de 5 000 caracteres haría que el store
+ * emitiera un `ack_result` que su propio esquema rechaza, y ese rechazo tira la conexión entera.
+ *
+ * El recorte es SÓLO para el frame: el hash durable de la fila de denegación se calcula aparte,
+ * sobre el valor completo.
+ */
+export function boundedRejectionTarget(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (value.length <= MAX_DELEGATION_REJECTION_TARGET_CHARS) return value;
+  return `${value.slice(0, MAX_DELEGATION_REJECTION_TARGET_CHARS - 1)}…`;
 }
 
 export interface RejectionContext {

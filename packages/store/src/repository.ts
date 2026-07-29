@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type {
-  Ack, ConfigMutation, DeliveryEnvelope, DeliveryState, NotifyRequest, Origin,
-  PublishMessage, QuotaSampleRequest, Tenant
+  Ack, ChainGateNotice, ConfigMutation, DelegationRejectionNotice, DeliveryEnvelope, DeliveryState,
+  NotifyRequest, Origin, PublishMessage, QuotaSampleRequest, Tenant
 } from '@cauce/protocol';
 import {
   AGENT_TO_AGENT_MESSAGE_TYPES, clampAgentPriority, isAmbiguousAckErrorCode,
@@ -19,6 +19,7 @@ import {
 } from './fleet-activity.js';
 import { selectAccountForAlias, type AccountSelection } from './accounts.js';
 import {
+  boundedRejectionTarget,
   describeDelegationRejection, DISABLED_DELEGATION_CAPS, fanoutCapForTurn, HUMAN_GATE_TARGET,
   rejectionText, sanitizedDelegationCaps,
   type DelegationCaps, type DelegationRejectionCode, type RejectionNotice
@@ -351,10 +352,13 @@ interface DeliveryRow {
  * qué hacer en vez de reintentar. Viaja en la respuesta del ACK, así que hacer legible el
  * rechazo NO cuesta ni una entrega nueva.
  */
-export interface DelegationRejection extends RejectionNotice {
-  output_index: number;
-  target?: string;
-}
+/**
+ * ES el tipo del esquema del frame, no una copia con la misma forma. Mientras fueron dos
+ * declaraciones paralelas se pudo agregar el campo al store sin agregarlo al esquema del frame, y
+ * eso es lo que llegó a producción. Ahora el store no puede describir un rechazo que el adaptador
+ * no sepa validar: no compilaría.
+ */
+export type DelegationRejection = DelegationRejectionNotice;
 
 /**
  * Columnas de `deliveries` que agrega la migración 017_late_terminal_ack. Van aparte de
@@ -398,8 +402,14 @@ export interface AckResult {
   receipt: 'applied' | 'duplicate' | 'superseded' | 'ownership_lost';
   /** Presente sólo cuando alguna salida `messages` no se convirtió en entrega. */
   delegation_rejections?: DelegationRejection[];
-  /** La rama quedó suspendida esperando a una persona; hay un gate abierto que la reanudará. */
-  chain_gate?: { gate_id: string; question: string };
+  /**
+   * La rama quedó suspendida esperando a una persona; hay un gate abierto que la reanudará.
+   *
+   * El tipo sale del esquema del frame a propósito: los dos campos que siguen VIAJAN al adaptador
+   * dentro de `ack_result`, así que cambiarles la forma acá sin cambiar el esquema allá tiene que
+   * romper el build. Eso es precisamente lo que no pasó cuando se agregaron.
+   */
+  chain_gate?: ChainGateNotice;
 }
 
 /** Resultado interno de materializar las salidas de un ACK. */
@@ -3367,15 +3377,19 @@ export class CauceRepository {
         code: AgentOutputRejectionCode,
         extra: { target?: string; cap?: number; question?: string; gateId?: string } = {}
       ): Promise<void> => {
+        // Recortado UNA vez, y el mismo valor va al texto y al campo: `reason` incrusta el
+        // destino, así que dejar el crudo en el texto y recortar sólo el campo movería el
+        // problema de largo de un lado al otro del mismo frame.
+        const boundedTarget = boundedRejectionTarget(targetAlias);
         const notice = describeDelegationRejection(code, {
           hopCount,
           hopBudget,
-          ...(targetAlias === undefined ? {} : { target: targetAlias }),
+          ...(boundedTarget === undefined ? {} : { target: boundedTarget }),
           ...extra
         });
         rejections.push({
           output_index: output.index,
-          ...(targetAlias === undefined ? {} : { target: targetAlias }),
+          ...(boundedTarget === undefined ? {} : { target: boundedTarget }),
           ...notice
         });
         await this.insertAgentOutputRejection(
