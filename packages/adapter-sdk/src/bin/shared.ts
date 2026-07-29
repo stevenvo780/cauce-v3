@@ -3,7 +3,7 @@ import { DurableStore } from "../sdk/durable-store.js";
 import { SpawnCommandRunner } from "../sdk/process-runner.js";
 import { WebSocketConsumerConnector } from "../sdk/websocket-transport.js";
 import { OpenClawApiRunner } from "../sdk/openclaw-api-runner.js";
-import { HarnessAdapter } from "../harnesses/shared.js";
+import { HarnessAdapter, sanitizeProcessOutput } from "../harnesses/shared.js";
 import { harnessDefinition } from "../harnesses/index.js";
 import type {
   AdapterLog,
@@ -160,8 +160,21 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   }
 }
 
+/**
+ * Un adaptador que muere tiene que decir POR QUE.
+ *
+ * La version anterior escribia solo `ADAPTER_FATAL: adapter stopped`. Con eso, una variable de
+ * entorno faltante, un certificado vencido y un relay inalcanzable son la MISMA linea, y quien
+ * lee el journal no puede distinguirlas. Asi es como la suite e2e paso cuatro dias muerta por un
+ * `Required configuration 'CAUCE_ROOM' is missing` que nadie llego a leer nunca: el arranque
+ * conocia la causa exacta y la tiraba a la basura.
+ *
+ * La causa pasa por el mismo redactor que el stderr de los harnesses, porque este texto termina
+ * en journals y en `last_error`, que leen los agentes.
+ */
 export function reportFatal(error: unknown): never {
   const code = error instanceof Error && "code" in error ? String(error.code) : "ADAPTER_FATAL";
-  process.stderr.write(`${code}: adapter stopped\n`);
+  const cause = sanitizeProcessOutput(error instanceof Error ? error.message : String(error));
+  process.stderr.write(`${code}: adapter stopped${cause.length === 0 ? "" : `: ${cause}`}\n`);
   process.exit(1);
 }

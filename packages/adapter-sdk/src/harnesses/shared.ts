@@ -637,7 +637,7 @@ const STDERR_HEAD_SHARE = 0.6;
  * Y como red final, se redactan los prefijos de credencial conocidos aunque aparezcan sueltos,
  * sin clave que los nombre.
  */
-function sanitizeProcessOutput(stderr: string, maxLengthBytes: number = STDERR_DETAIL_BUDGET): string {
+export function sanitizeProcessOutput(stderr: string, maxLengthBytes: number = STDERR_DETAIL_BUDGET): string {
   if (!stderr || stderr.trim().length === 0) return "";
 
   const KEYWORD = String.raw`(?:api[_-]?key|api[_-]?secret|client[_-]?secret|secret|password|passwd|pwd|token|bearer|authorization|x-api-key|aws_access_key_id|aws_secret_access_key|(?:oauth|refresh|access|id)[_-]?token)`;
