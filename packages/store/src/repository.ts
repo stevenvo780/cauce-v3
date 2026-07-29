@@ -4,8 +4,9 @@ import type {
   PublishMessage, QuotaSampleRequest, Tenant
 } from '@cauce/protocol';
 import {
-  AGENT_TO_AGENT_MESSAGE_TYPES, isAmbiguousAckErrorCode, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs,
-  NOTIFY_KINDS, PROTOCOL_VERSION, SUPPORTED_QUOTA_SCHEMA_VERSIONS
+  AGENT_TO_AGENT_MESSAGE_TYPES, clampAgentPriority, isAmbiguousAckErrorCode,
+  MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs, NOTIFY_KINDS, PROTOCOL_VERSION,
+  SUPPORTED_QUOTA_SCHEMA_VERSIONS
 } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
@@ -2687,7 +2688,15 @@ export class CauceRepository {
           // agente-a-agente lo copiaba, así que la cola del asistente y la cola de trabajo
           // eran la misma cola. Una delegación es trabajo de fondo por definición; el mensaje
           // de la persona que la originó ya se atendió (o se está atendiendo) aparte.
-          'batch', row.priority,
+          //
+          // La PRIORIDAD se hereda y después se acota. Los dos ejes son independientes y hacen
+          // falta los dos: el carril decide qué cola, la prioridad decide el orden DENTRO de la
+          // cola (`ORDER BY (m.lane='interactive') DESC, m.priority DESC`). Éste es el punto
+          // exacto donde el número de una persona se escaparía al tráfico entre máquinas — el
+          // 88% de los mensajes de agente de la semana medida desciende de una raíz de Telegram,
+          // así que copiarlo sin techo pondría a la flota entera en la banda humana. Es además
+          // el único techo que un agente no puede esquivar, porque nunca elige este número.
+          'batch', clampAgentPriority(row.priority),
           row.auth_session_id ?? `delivery:${row.id}:attempt:${ack.attempt}`,
           row.auth_channel ?? row.origin?.channel ?? 'agent-output'
         ]
@@ -2963,7 +2972,11 @@ export class CauceRepository {
         // Mismo criterio que materializeAgentOutputs: el retorno de una delegación es tráfico
         // entre agentes, no la conversación de la persona. Va al carril de fondo.
         'batch',
-        row.priority,
+        // Y el mismo techo que el salto de ida. `agent.response` es la clase más grande de la
+        // cola (2.504 de las 2.757 entregas medidas delante de los mensajes del dueño): dejarla
+        // sin acotar mantendría el camino de vuelta del trabajo viejo empatado con el tráfico
+        // humano nuevo.
+        clampAgentPriority(row.priority),
         row.auth_session_id ?? `delivery:${row.id}:attempt:${attempt}`,
         row.auth_channel ?? row.origin?.channel ?? 'agent-response'
       ]
@@ -3656,6 +3669,15 @@ export class CauceRepository {
         rootRow.origin ? JSON.stringify(rootRow.origin) : null,
         // La síntesis de fan-in también es tráfico interno de la cadena.
         'batch',
+        // La PRIORIDAD, en cambio, se hereda SIN ACOTAR — al revés que los dos saltos de arriba,
+        // y a propósito. Éste es el mensaje que despierta al coordinador para que escriba la
+        // respuesta que la persona sigue esperando: es parte de la espera, no del tráfico entre
+        // máquinas que la causó. Es seguro dejarlo en la banda humana porque no puede
+        // amplificarse: hay exactamente un fan-in por raíz (lo impone la clave de idempotencia
+        // `agent-fanin:<root>` de adapter_outbox) y hereda de la entrega que recibió el propio
+        // coordinador — que ya está acotada a la banda de agentes en toda delegación anidada, así
+        // que sólo el fan-in de primer nivel de un pedido humano real puede llegar a 70. Cota:
+        // uno por mensaje humano, ~18/día contra 65 mensajes humanos/día medidos.
         rootRow.priority,
         rootRow.auth_session_id ?? `fanin:${rootMessageId}`,
         rootRow.auth_channel ?? rootRow.origin?.channel ?? 'agent-fanin'

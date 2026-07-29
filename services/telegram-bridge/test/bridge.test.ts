@@ -1361,3 +1361,74 @@ describe('Telegram proactive egress', () => {
     expect(repository.acknowledgements[0]?.status).toBe('dead');
   });
 });
+
+/**
+ * The reserved human band is granted from a DERIVED fact, never from a name in the code: the
+ * poller only reaches the ingress after `accepted()` matched this alias's `allowed_user_ids` —
+ * the operator-maintained allowlist of the people the bot serves — and it then reports whether
+ * Telegram says the author is a bot.
+ */
+describe('Telegram human authorship', () => {
+  it('marks an allowlisted person as human so the ingress can raise the priority', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const api = new FakeTelegram([update(11)]);
+
+    await new TelegramPoller({
+      config: config(), botId: '900001', api, repository, ingress
+    }).runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.human).toBe(true);
+  });
+
+  it('denies the band to a bot author in a private chat without dropping the message', async () => {
+    // `resolveAddressing` runs its bot-author guard for GROUPS only (P0.b answers a private chat
+    // before P0.d can), so a DM from a bot on the allowlist still reaches the fleet. It must
+    // arrive as machine traffic, not as a person: the message is published, the band is not
+    // granted.
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const api = new FakeTelegram([{
+      update_id: 12,
+      message: {
+        message_id: 112,
+        from: { id: 101, is_bot: true },
+        chat: { id: 201, type: 'private' },
+        text: 'automated digest'
+      }
+    }]);
+
+    await new TelegramPoller({
+      config: config(), botId: '900001', api, repository, ingress
+    }).runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.human).toBe(false);
+    expect(repository.next).toBe(13);
+  });
+
+  it('marks a mentioned person in a group as human', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const api = new FakeTelegram([groupUpdate(13, {
+      text: '@kantbot revisá el deploy',
+      entities: [{ type: 'mention', offset: 0, length: 8 }]
+    })]);
+
+    await new TelegramPoller({
+      config: config({
+        bot_username: 'kantbot',
+        allowed_chat_ids: ['201', String(GROUP_CHAT_ID)],
+        chats: [{
+          chat_id: String(GROUP_CHAT_ID), mode: 'mention', session_scope: 'user',
+          reply_to_origin: true, threads: []
+        }]
+      }),
+      botId: '900001', api, repository, ingress
+    }).runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.human).toBe(true);
+  });
+});

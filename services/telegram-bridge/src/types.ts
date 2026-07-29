@@ -224,6 +224,15 @@ export interface TelegramIngressMessage {
   body: Record<string, unknown>;
   origin: Origin;
   session_id: string;
+  /**
+   * The update was authored by a PERSON, which is what earns the reserved human priority band.
+   *
+   * It is derived, never configured: the poller only reaches here after `accepted()` matched
+   * `allowed_user_ids` — the operator-maintained allowlist of the humans this bot serves — and the
+   * flag additionally requires `from.is_bot !== true`. Both facts come from the alias config and
+   * the Telegram wire record, so no alias, chat or user id is written into the code.
+   */
+  human: boolean;
 }
 
 export interface TelegramIngress {

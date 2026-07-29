@@ -204,6 +204,8 @@ export const PublishMessageSchema = z.object({
   channel: z.string().min(1).max(128).optional(),
   authenticated_context: AuthenticatedContextSchema.optional(),
   lane: LaneSchema.default('interactive'),
+  // The full range is NOT the ceiling. Who may reach the human band (>= HUMAN_PRIORITY_FLOOR) is
+  // decided where the producer's authenticated role is known — see priority.ts.
   priority: z.number().int().min(-100).max(100).default(0)
 }).strict();
 
@@ -294,6 +296,10 @@ export const AuthenticatedPublishSchema = z.object({
   body: AuthenticatedPublishBodySchema,
   idempotency_key: z.string().min(1).max(200),
   lane: LaneSchema.default('interactive'),
+  // A caller may ASK for anything in range; the gateway holds every non-operator principal at
+  // AGENT_PRIORITY_CEILING before the command reaches the store. Enforcing the ceiling here
+  // instead would reject the request, and a 400 on a canary or on an over-eager adapter is a
+  // worse outcome than a clamped number.
   priority: z.number().int().min(-100).max(100).default(0)
 }).strict();
 

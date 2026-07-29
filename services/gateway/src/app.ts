@@ -4,7 +4,8 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { WebSocket, type RawData } from 'ws';
 import {
-  AliasSchema, AuthenticatedPublishSchema, ClaimedAckSchema, ConfigChangeRequestSchema, ConfigRollbackRequestSchema,
+  AliasSchema, AuthenticatedPublishSchema, ClaimedAckSchema, clampAgentPriority,
+  ConfigChangeRequestSchema, ConfigRollbackRequestSchema,
   CreateJobSchema, DeliveryIdSchema, HeartbeatSchema, HelloSchema, isAgentToAgentBody,
   NotifyRequestSchema, PROTOCOL_VERSION,
   QueryDeliveriesSchema, QuotaSampleRequestSchema, TenantSchema,
@@ -283,6 +284,36 @@ function publicPublish(value: unknown): ReturnType<typeof AuthenticatedPublishSc
   return AuthenticatedPublishSchema.parse(value);
 }
 
+/**
+ * The ceiling an agent cannot publish over.
+ *
+ * This is the only surface where an agent chooses its own `priority`, and the only place in the
+ * process that knows whether the caller is a machine or a person: the number arrives in an
+ * anonymous public payload, the ROLE comes from the certificate. An `operator` is a human at the
+ * console (or the tooling one runs on purpose) and keeps the whole range, including the band above
+ * HUMAN_PRIORITY_FLOOR; that authority is already strictly weaker than what the operator role can
+ * do elsewhere here — replay deliveries, mutate config, enqueue jobs.
+ *
+ * Everything else is held at AGENT_PRIORITY_CEILING. Clamping rather than rejecting keeps a
+ * misconfigured canary or an old adapter publishing instead of 400-ing; the drop is logged so the
+ * misconfiguration is still visible.
+ */
+function routedPriority(actor: Principal, requested: number, request: FastifyRequest): number {
+  if (actor.roles.includes('operator')) return requested;
+  const allowed = clampAgentPriority(requested);
+  if (allowed !== requested) {
+    request.log?.warn?.({
+      event: 'publish_priority_clamped',
+      tenant_id: actor.tenant_id,
+      alias: actor.alias,
+      channel: actor.channel,
+      requested,
+      applied: allowed
+    }, 'agent priority clamped to the agent band');
+  }
+  return allowed;
+}
+
 function claimFromDelivery(delivery: DeliveryClaimRecord, fallbackDeadlineMs: number): SessionClaim {
   if (typeof delivery.event_id !== 'string' || delivery.event_id.length === 0 ||
       typeof delivery.claim_token !== 'string' || delivery.claim_token.length === 0 ||
@@ -470,7 +501,10 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           channel: actor.channel,
           ...(actor.origin === undefined ? {} : { origin: actor.origin })
         },
-        ...command
+        ...command,
+        // After the spread on purpose: `command` carries the caller's requested number and this
+        // must be the value that survives.
+        priority: routedPriority(actor, command.priority, request)
       };
       return reply.code(202).send(await repository.publish(trustedCommand));
     } catch (error) {

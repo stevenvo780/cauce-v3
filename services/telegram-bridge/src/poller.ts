@@ -531,7 +531,14 @@ export class TelegramPoller {
           this.transcription
         ),
         origin,
-        session_id: session(scope, this.botId, chatId, userId, threadId)
+        session_id: session(scope, this.botId, chatId, userId, threadId),
+        // `accepted()` already proved `userId` is on this alias's `allowed_user_ids`, the
+        // operator-maintained allowlist of the people this bot serves. The extra `is_bot` test
+        // matters for PRIVATE chats, where `resolveAddressing` deliberately skips its bot-author
+        // guard (P0.b runs before P0.d) so that a DM a human sent through a bot keeps working.
+        // Failing that test here never drops the update — it only denies the human band, which is
+        // the conservative direction.
+        human: message.from?.is_bot !== true
       });
     } catch (error) {
       if (!isRequestConflict(error)) throw error;
