@@ -63,12 +63,13 @@ function runSuite(name) {
     process.stdout.write(`\n${'='.repeat(72)}\n=== ${name}\n${'='.repeat(72)}\n`);
     const child = spawn('pnpm', ['run', name], { cwd: root, stdio: 'inherit' });
     child.on('error', fail);
-    child.on('close', (code, signal) => settle({
-      name,
-      code: code ?? 1,
-      signal,
-      elapsedMs: Date.now() - startedAt,
-    }));
+    child.on('close', (code, signal) => {
+      const result = { name, code: code ?? 1, signal, elapsedMs: Date.now() - startedAt };
+      // Verdict now, not only in the closing summary: a full matrix run takes many minutes,
+      // and whoever is watching should not have to wait for the end to learn suite one fell.
+      process.stdout.write(`\n=== ${name}: ${result.code === 0 ? 'PASS' : 'FAIL'} in ${seconds(result.elapsedMs)}\n`);
+      settle(result);
+    });
   });
 }
 
