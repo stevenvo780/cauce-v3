@@ -16,6 +16,13 @@
 --
 -- Idempotente: correrla dos veces borra cero filas la segunda vez.
 
+-- Los tres DELETE van en UNA transacción, y acá la razón es más fuerte que en las otras reversas:
+-- son borrados de FILAS, no DDL idempotente. Si el segundo falla a mitad de camino, quedan
+-- entregas sin su fila de rescate en `dead_letters` pero con la fila de auditoría que dice que el
+-- backfill sigue aplicado, y el registro de migraciones también. Con la transacción, o se
+-- revierten las tres cosas o no se revierte ninguna.
+BEGIN;
+
 DELETE FROM dead_letters
 WHERE reason LIKE 'backfill 018 (%'
   AND resolved_at IS NULL
@@ -26,3 +33,5 @@ WHERE action = 'migration.dead_letter_backfill'
   AND metadata->>'migration' = '018_terminal_recovery_backfill';
 
 DELETE FROM schema_migrations WHERE version = '018_terminal_recovery_backfill.sql';
+
+COMMIT;

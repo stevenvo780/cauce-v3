@@ -19,7 +19,24 @@
 -- SEGUNDA `agent.response` por la misma delegación. Si hay que bajar el esquema, bajá también el
 -- código de cancelación (018) o dejá esta columna en su lugar: no tiene dependencias y no cuesta
 -- nada tenerla de más.
+--
+-- CONSOLIDACIÓN 2026-07-29: este archivo no borraba la fila de `schema_migrations` en ninguna
+-- línea —ni activa ni comentada— y tampoco abría transacción. Sin ese borrado la reversa deja la
+-- base en el peor estado posible: las tres columnas ya no existen, pero el registro sigue
+-- diciendo que la 017 está aplicada, así que el runner no la reaplica jamás. Y como `ackDelivery`
+-- proyecta `d.late_result_at` en su SELECT, TODO ACK empieza a fallar con 42703 y el bus se queda
+-- mudo, exactamente el escenario que la advertencia de arriba pide evitar — sólo que sin salida,
+-- porque redesplegar el código nuevo tampoco arregla nada mientras el registro miente.
+--
+-- Los tres DROP y el borrado del registro van en UNA transacción: media reversa aplicada es la
+-- forma más cara de fallar, y en PostgreSQL el DDL es transaccional, así que no cuesta nada.
+BEGIN;
+
 ALTER TABLE deliveries DROP COLUMN IF EXISTS cancelled_at;
 
 ALTER TABLE deliveries DROP COLUMN IF EXISTS late_result_attempt;
 ALTER TABLE deliveries DROP COLUMN IF EXISTS late_result_at;
+
+DELETE FROM schema_migrations WHERE version='017_late_terminal_ack.sql';
+
+COMMIT;
