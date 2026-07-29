@@ -186,7 +186,7 @@ export class AdapterEngine {
     const lane: SessionLane = isAgentToAgentBody(delivery.body) ? "agent" : "human";
     const session: HarnessSessionRequestScope = fanin
       ? {}
-      : { ...sessionFromDelivery(delivery), sessionLane: lane };
+      : { ...sessionFromDelivery(delivery, this.ownTenantId), sessionLane: lane };
     const reservation = fanin ? undefined : this.harness.reserveSession(session.sessionKey, lane);
 
     this.logger({
@@ -886,29 +886,119 @@ function promptForDelivery(delivery: Delivery, store: DurableStore): string {
   ].join("\n");
 }
 
-function sessionFromDelivery(delivery: Delivery): { sessionKey?: string } {
+/**
+ * Identidad de la CONVERSACIÓN, no del transporte ni del intento.
+ *
+ * `auth-v2` mezclaba tres cosas distintas en una sola clave y por eso el mismo humano, en el
+ * mismo chat, con el mismo agente, caía en sesiones nativas distintas — el síntoma que el dueño
+ * describe como "se duplican las instancias": escribe por Telegram y le contesta alguien que no
+ * recuerda la conversación.
+ *
+ *  1. `attempt`. Medido sobre prod el 2026-07-29: 1499 de 5312 entregas (28,2 %) llegaron con
+ *     attempt > 1, y cada una estrenó una sesión SIN memoria para responderle a la persona. El
+ *     costo era peor que la duplicación: la sesión del reintento acumula un intercambio real con
+ *     el humano que la sesión "principal" (attempt 1) nunca ve, así que las dos divergen para
+ *     siempre. Se saca.
+ *
+ *     `attempt` entró en 44521b6 para frenar el crecimiento del transcript en los reintentos
+ *     (socrates: ~300K → 1,8MB en 4 intentos). Ese caso -- el intento anterior murió a mitad de
+ *     ejecución -- YA lo frena `DurableStore.accept`, que desde e5c909e devuelve `blocked` a todo
+ *     reintento cuyo intento previo no haya terminado en `failed` con `retryable: true`. Cortar
+ *     la identidad de la conversación era una defensa cara y colocada en el lugar equivocado; el
+ *     techo de transcript va en el harness, no en la clave.
+ *
+ *  2. `bridge_tenant`. Es el tenant del PUENTE por el que entró el mensaje, no el de nadie que
+ *     importe para la separación: nunca fue una frontera de seguridad. Peor, cuando falta cae a
+ *     `delivery.tenant_id`, que es el tenant del EMISOR (el agente que delega), así que la misma
+ *     conversación cambiaba de clave según quién publicara. En prod hay 6 conversaciones de
+ *     Telegram donde las filas viejas traen `bridge_tenant` vacío y las nuevas lo traen puesto:
+ *     mismo chat, mismo bot, mismo alias, dos sesiones. Se reemplaza por el tenant del
+ *     RECEPTOR, que sale de la configuración local del adaptador y nadie del otro lado del bus
+ *     puede falsificar.
+ *
+ *  3. Sin `origin` no había clave, y por lo tanto no había continuidad: 810 de 5312 entregas
+ *     (consola, publicaciones de adaptador, herramientas de ops) corrieron cada una en una
+ *     sesión nueva. Ahora esas caen en una conversación derivada del actor autenticado
+ *     (`operator:<tenant>:<alias>`), que sobrevive al re-login porque no depende del `sid`.
+ *
+ * Lo que la clave SIGUE separando, a propósito: alias receptor, tenant receptor, adaptador,
+ * canal, `conversation_id` y el alcance de sesión que publica el puente (`session_id`, que en
+ * Telegram codifica bot+chat+usuario o bot+chat+hilo según `session_scope`). El carril
+ * humano/agente lo agrega `HarnessAdapter.laneSessionKey`, no esta función.
+ */
+const CONVERSATION_SESSION_NAMESPACE = "cauce-conversation-session-v3";
+
+/**
+ * Identificadores de sesión que el store fabrica POR ENTREGA cuando el mensaje raíz no traía
+ * ninguno (`repository.ts`: `delivery:<id>:attempt:<n>`, `fanin:<id>`). Meterlos en la clave
+ * daría una sesión nativa por entrega, que es exactamente el problema que este cambio arregla.
+ */
+const EPHEMERAL_SESSION_ID = /^(?:delivery|fanin):/u;
+
+interface ConversationScope {
+  readonly adapter: string;
+  readonly channel: string;
+  readonly conversation_id: string;
+  /** Alcance dentro de la conversación (hilo/usuario) según lo declare el puente; nunca un login. */
+  readonly scope: string | null;
+}
+
+function conversationScope(delivery: Delivery): ConversationScope | undefined {
   const context = delivery.authenticated_context;
   const origin = context?.origin ?? delivery.origin;
   const channel = context?.channel ?? origin?.channel;
-  const sessionId = context?.session_id ?? origin?.conversation_id;
-  const conversationId = origin?.conversation_id;
-  if (origin === undefined || channel === undefined || sessionId === undefined || conversationId === undefined) return {};
-  const bridgeTenant = typeof origin.metadata.bridge_tenant === "string"
-    ? origin.metadata.bridge_tenant
-    : delivery.tenant_id;
-  const scope = JSON.stringify({
-    namespace: "cauce-authenticated-session-v2",
-    tenant_id: bridgeTenant,
-    recipient_alias: delivery.recipient_alias,
-    attempt: delivery.attempt,
-    origin: {
+  if (channel === undefined || channel.length === 0) return undefined;
+
+  if (origin !== undefined && origin.conversation_id.length > 0) {
+    const sessionId = context?.session_id;
+    return {
       adapter: origin.adapter,
       channel,
-      session_id: sessionId,
-      conversation_id: conversationId,
+      conversation_id: origin.conversation_id,
+      scope: typeof sessionId === "string"
+        && sessionId.length > 0
+        && !EPHEMERAL_SESSION_ID.test(sessionId)
+        ? sessionId
+        : null,
+    };
+  }
+
+  /**
+   * Sin ruta de retorno (consola, publicación de adaptador, herramientas de ops). La conversación
+   * es el ACTOR autenticado, que el gateway deriva del certificado o del token y el cliente no
+   * puede declarar. Deliberadamente NO se usa `session_id` acá: con OIDC es el `sid` del login y
+   * con eso la consola estrenaba sesión en cada re-login.
+   *
+   * No se sintetiza un `origin` real en el gateway a propósito: `origin` es la ruta de retorno y
+   * `repository.materializeOriginRelay` encola una fila de `adapter_outbox` por cada entrega que
+   * lo tenga. Un `origin` con `adapter: "console"` dejaría filas que ningún puente arrienda
+   * (`leaseOutbox` sólo atiende `telegram`), acumulando cola atascada. El alcance de sesión se
+   * deriva acá, donde no toca ninguna ruta de retorno.
+   */
+  return {
+    adapter: channel,
+    channel,
+    conversation_id: `operator:${delivery.tenant_id}:${delivery.actor_alias}`,
+    scope: null,
+  };
+}
+
+function sessionFromDelivery(
+  delivery: Delivery,
+  recipientTenantId: string | undefined,
+): { sessionKey?: string } {
+  const conversation = conversationScope(delivery);
+  if (conversation === undefined) return {};
+  const scope = JSON.stringify({
+    namespace: CONVERSATION_SESSION_NAMESPACE,
+    recipient: {
+      // Identidad propia del adaptador (configuración local), nunca la del emisor.
+      tenant_id: recipientTenantId ?? null,
+      alias: delivery.recipient_alias,
     },
+    conversation,
   });
-  return { sessionKey: `auth-v2:${createHash("sha256").update(scope).digest("base64url")}` };
+  return { sessionKey: `auth-v3:${createHash("sha256").update(scope).digest("base64url")}` };
 }
 
 function timeoutFromBody(body: Record<string, unknown>, fallback: number): number {

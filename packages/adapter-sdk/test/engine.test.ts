@@ -181,7 +181,11 @@ class SessionConcurrencyRunner implements CommandRunner {
   }
 }
 
-async function setup(name: string, runner = new ControlledRunner()): Promise<{
+async function setup(
+  name: string,
+  runner = new ControlledRunner(),
+  options: { ownTenantId?: string } = {},
+): Promise<{
   store: DurableStore;
   runner: ControlledRunner;
   events: DeliveryEvent[];
@@ -196,9 +200,55 @@ async function setup(name: string, runner = new ControlledRunner()): Promise<{
     publish: async (event) => {
       events.push(event);
     },
+    ...(options.ownTenantId === undefined ? {} : { ownTenantId: options.ownTenantId }),
   });
   await engine.activateEpoch(1);
   return { store, runner, events, engine };
+}
+
+/** Sesión nativa que el harness recibió en la ejecución `index`. */
+function sessionOf(runner: ControlledRunner, index: number): string {
+  const value = runner.requests[index]?.args.at(-1);
+  assert.ok(value, `la ejecución ${index} no llegó al harness`);
+  return value;
+}
+
+/** Conversación autenticada: lo que un puente publica junto al mensaje. */
+function conversation(options: {
+  adapter?: string;
+  channel?: string;
+  conversationId: string;
+  sessionId?: string;
+  metadata?: Record<string, unknown>;
+}): Pick<Delivery, "origin" | "authenticated_context"> {
+  const origin = {
+    adapter: options.adapter ?? "telegram",
+    channel: options.channel ?? "telegram",
+    conversation_id: options.conversationId,
+    relay: [],
+    metadata: options.metadata ?? {},
+  };
+  return {
+    origin,
+    authenticated_context: {
+      session_id: options.sessionId ?? `tg-${options.conversationId}`,
+      channel: options.channel ?? "telegram",
+      origin,
+    },
+  };
+}
+
+/**
+ * Publicación sin ruta de retorno: consola, adaptador, herramientas de ops. `origin` se quita de
+ * verdad (no se pisa con `undefined`) porque el proyecto compila con `exactOptionalPropertyTypes`.
+ */
+function originless(
+  base: Delivery,
+  sessionId: string,
+  channel = "console",
+): Delivery {
+  const { origin: _origin, ...rest } = base;
+  return { ...rest, authenticated_context: { session_id: sessionId, channel } };
 }
 
 async function setupSessionConcurrency(name: string, claimRenewalMs?: number): Promise<{
@@ -1677,20 +1727,119 @@ test("out-of-order event receipts correlate by full event identity", async () =>
   );
 });
 
-test("same untrusted session label is isolated across authenticated tenants", async () => {
+/**
+ * CAMBIO DE CONTRATO DELIBERADO (2026-07-29). Antes esto separaba por `delivery.tenant_id`, que
+ * es el tenant del EMISOR: la misma persona, en el mismo chat, hablándole al mismo agente, caía
+ * en sesiones distintas según qué agente publicara la entrega. Esa separación no era una
+ * frontera — el test de abajo ("trusted bridge tenant…") exige lo contrario para la misma
+ * conversación — y era una de las causas del síntoma "se duplican las instancias".
+ *
+ * Lo que sigue protegiendo, que es la razón por la que existe: dos conversaciones autenticadas
+ * distintas (dos humanos, dos chats) jamás comparten sesión aunque traigan la misma etiqueta
+ * `session_key` en el cuerpo, que es un campo NO confiable.
+ */
+test("two authenticated conversations never share a session, whatever the untrusted label says", async () => {
   const context = await setup("engine-tenant-session");
-  const steven = delivery("tenant-session-a");
+  const steven: Delivery = {
+    ...delivery("tenant-session-a"),
+    ...conversation({ conversationId: "6979524541" }),
+    body: { prompt: "perform the task", session_key: "same-label" },
+  };
   const miguel: Delivery = {
     ...delivery("tenant-session-b"),
     tenant_id: "Miguel",
-    body: { prompt: "perform the task", session_key: "thread-1" },
+    ...conversation({ conversationId: "-1003969325671" }),
+    body: { prompt: "perform the task", session_key: "same-label" },
   };
   await context.engine.handleDelivery(steven);
   await context.engine.handleDelivery(miguel);
-  const firstSession = context.runner.requests[0]?.args.at(-1);
-  const secondSession = context.runner.requests[1]?.args.at(-1);
-  assert.ok(firstSession && secondSession);
-  assert.notEqual(firstSession, secondSession);
+  assert.notEqual(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+/**
+ * La consola y las herramientas de ops publican SIN `origin`: hasta ahora eso significaba que no
+ * había clave y cada entrega corría sin continuidad (243 publicaciones de consola en prod al
+ * 2026-07-29, 0 con origen). La conversación es el actor autenticado, y el tenant es parte de
+ * ella: dos tenants distintos por la misma superficie no se tocan.
+ */
+test("originless publishes are isolated per authenticated tenant", async () => {
+  const context = await setup("engine-console-tenant");
+  const steven = originless(delivery("console-tenant-a"), "console-steven");
+  const pablo: Delivery = {
+    ...originless(delivery("console-tenant-b"), "console-pablo"),
+    tenant_id: "Pablo",
+  };
+  await context.engine.handleDelivery(steven);
+  await context.engine.handleDelivery(pablo);
+  assert.notEqual(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+/**
+ * Punto 4: la consola tiene que converger en UNA conversación por operador. El `session_id` de
+ * un principal OIDC es el `sid` del login y cambia en cada re-login; si entrara en la clave, la
+ * consola estrenaría sesión cada vez que Steven vuelve a entrar.
+ */
+test("console keeps one session per operator across re-login", async () => {
+  const context = await setup("engine-console-relogin");
+  await context.engine.handleDelivery(originless(delivery("console-login-a"), "sid-primer-login"));
+  await context.engine.handleDelivery(originless(delivery("console-login-b"), "sid-segundo-login"));
+  assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+/**
+ * El store fabrica `delivery:<id>:attempt:<n>` cuando el mensaje raíz no traía sesión
+ * autenticada. Ese identificador es por ENTREGA: si entrara en la clave daría una sesión nativa
+ * por entrega, que es exactamente el defecto que este cambio arregla.
+ */
+test("per-delivery synthetic session ids never fragment the conversation", async () => {
+  const context = await setup("engine-ephemeral-session-id");
+  await context.engine.handleDelivery(
+    originless(delivery("ephemeral-a"), "delivery:11111111-1111-4111-8111-111111111111:attempt:1", "agent-output"),
+  );
+  await context.engine.handleDelivery(
+    originless(delivery("ephemeral-b"), "delivery:22222222-2222-4222-8222-222222222222:attempt:1", "agent-output"),
+  );
+  assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+/**
+ * El tenant que separa es el del RECEPTOR, que sale de la configuración local del adaptador y no
+ * viaja en la entrega. Nadie del otro lado del bus puede moverlo.
+ */
+test("recipient tenant scopes the session and is taken from local configuration", async () => {
+  const steven = await setup("engine-recipient-tenant-steven", new ControlledRunner(), {
+    ownTenantId: "Steven",
+  });
+  const miguel = await setup("engine-recipient-tenant-miguel", new ControlledRunner(), {
+    ownTenantId: "Miguel",
+  });
+  const shared = { ...delivery("recipient-tenant"), ...conversation({ conversationId: "6979524541" }) };
+  await steven.engine.handleDelivery(shared);
+  await miguel.engine.handleDelivery(shared);
+  assert.notEqual(sessionOf(steven.runner, 0), sessionOf(miguel.runner, 0));
+});
+
+/**
+ * La reparación medida: en prod hay 6 conversaciones de Telegram cuyas filas viejas no traen
+ * `bridge_tenant` y las nuevas sí. Mismo chat, mismo bot, mismo alias, dos sesiones nativas.
+ * El tenant del PUENTE no identifica ninguna conversación y no puede partirla.
+ */
+test("bridge tenant no longer splits one conversation in two", async () => {
+  const context = await setup("engine-bridge-tenant-merge");
+  const legacy: Delivery = {
+    ...delivery("bridge-tenant-legacy"),
+    ...conversation({ conversationId: "6979524541", metadata: {} }),
+  };
+  const current: Delivery = {
+    ...delivery("bridge-tenant-current"),
+    ...conversation({
+      conversationId: "6979524541",
+      metadata: { bridge_alias: "zeus", bridge_tenant: "Steven", chat_type: "private" },
+    }),
+  };
+  await context.engine.handleDelivery(legacy);
+  await context.engine.handleDelivery(current);
+  assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
 });
 
 /**
@@ -1702,11 +1851,16 @@ test("same untrusted session label is isolated across authenticated tenants", as
  * carril propio y los dos pueden correr a la vez.
  *
  * Lo que este test SIGUE protegiendo, que es la razón por la que existe: el alcance de la
- * sesión lo gobierna el `bridge_tenant` de confianza y no el tenant de la entrega. Dos
- * respuestas que llegan de tenants distintos sobre la misma conversación tienen que compartir
- * sesión; lo único que cambió es cuál.
+ * sesión lo gobierna la CONVERSACIÓN y no el tenant de la entrega. Dos respuestas que llegan de
+ * tenants distintos sobre la misma conversación tienen que compartir sesión; lo único que cambió
+ * es cuál.
+ *
+ * 2026-07-29: antes ese alcance salía de `origin.metadata.bridge_tenant`, con caída a
+ * `delivery.tenant_id` cuando faltaba — o sea que el mismo chat se partía en dos según quién
+ * publicara. Ahora ni uno ni otro entran en la clave y la igualdad de abajo vale por
+ * construcción, no por coincidencia.
  */
-test("trusted bridge tenant keeps cross-tenant agent responses in one shared agent-lane session", async () => {
+test("the conversation, not the delivery tenant, keeps cross-tenant agent responses in one shared agent-lane session", async () => {
   const context = await setup("engine-agent-response-session");
   const root = delivery("agent-response-session-a");
   const trustedOrigin = {
@@ -1788,39 +1942,70 @@ test("stale claim token neither executes nor acknowledges the current event", as
   assert.equal(context.runner.calls, 1);
 });
 
-test("authenticated session keys include attempt number to isolate retries", async () => {
+/**
+ * CAMBIO DE CONTRATO DELIBERADO (2026-07-29). Este test exigía lo contrario desde 44521b6:
+ * "attempts 1 and 2 must have different session IDs". Medido sobre prod el 2026-07-29, eso le
+ * pasaba a 1499 de 5312 entregas (28,2 %): el reintento le contestaba a la persona desde una
+ * sesión sin memoria — el síntoma "se duplican las instancias" — y peor, esa sesión acumulaba un
+ * intercambio real que la sesión principal nunca vería.
+ *
+ * Lo que 44521b6 quería frenar (el transcript creciendo en cada reintento, socrates ~300K →
+ * 1,8MB en 4 intentos) es el caso "el intento anterior murió a mitad de ejecución", y ese lo
+ * fenced `DurableStore.accept` desde e5c909e: un intento mayor sólo se acepta si el anterior
+ * terminó en `failed` con `retryable: true` — ver el test "crash recovery marks started work
+ * ambiguous and blocks automatic redelivery", que comprueba que ni siquiera se ejecuta.
+ */
+test("a retry of the same conversation keeps the same session", async () => {
   const runner = new ControlledRunner();
   runner.stdout = JSON.stringify({
-    reply: "attempt 1 failed",
+    reply: "temporary outage",
     messages: [],
     status: "failed",
     retryable: true,
     artifacts: [],
   });
-  const context = await setup("engine-session-attempt-v2", runner);
-  const attempt1 = delivery("session-attempt-v2", 1, 1);
-  const attempt2 = delivery("session-attempt-v2", 1, 2);
+  const context = await setup("engine-session-retry-v3", runner);
+  const attempt1 = delivery("session-retry-v3", 1, 1);
+  const attempt2 = delivery("session-retry-v3", 1, 2);
 
-  // Send first attempt (will fail with retryable=true)
   await context.engine.handleDelivery(attempt1);
-  assert.equal(runner.calls, 1, "first attempt should execute");
-  const session1 = context.runner.requests[0]?.args.at(-1);
-  assert.ok(session1, "session 1 should exist");
+  assert.equal(runner.calls, 1, "el primer intento tiene que ejecutar");
 
-  // Switch runner to return success for attempt 2
   runner.stdout = SUCCESS;
-
-  // Send second attempt of same delivery
   await context.engine.handleDelivery(attempt2);
-  assert.ok(
-    runner.calls >= 2,
-    `expected second attempt to execute; got ${runner.calls} calls`,
-  );
-  const session2 = context.runner.requests[1]?.args.at(-1);
-  assert.ok(session2, "session 2 should exist");
+  assert.equal(runner.calls, 2, "el reintento tiene que ejecutar");
 
-  // Different attempts should use different session IDs (isolated by v2 namespace including attempt)
-  assert.notEqual(session1, session2, "attempts 1 and 2 must have different session IDs due to attempt scoping in v2");
+  assert.equal(
+    sessionOf(context.runner, 0),
+    sessionOf(context.runner, 1),
+    "un reintento de la misma conversación no puede estrenar sesión: le contestaría a la persona sin memoria",
+  );
+});
+
+/**
+ * El mensaje SIGUIENTE de la misma persona, en el mismo chat, también cae en esa sesión — que es
+ * lo que el dueño percibe como "es el mismo, se acuerda". Antes no: el reintento se iba a una
+ * sesión propia y el mensaje siguiente volvía a la de attempt 1, así que las dos divergían.
+ */
+test("the next message of the same conversation lands in the session the retry used", async () => {
+  const runner = new ControlledRunner();
+  runner.stdout = JSON.stringify({
+    reply: "temporary outage",
+    messages: [],
+    status: "failed",
+    retryable: true,
+    artifacts: [],
+  });
+  const context = await setup("engine-session-retry-continuity", runner);
+  const chat = conversation({ conversationId: "6979524541" });
+  await context.engine.handleDelivery({ ...delivery("retry-continuity-a", 1, 1), ...chat });
+  runner.stdout = SUCCESS;
+  await context.engine.handleDelivery({ ...delivery("retry-continuity-a", 1, 2), ...chat });
+  await context.engine.handleDelivery({ ...delivery("retry-continuity-b", 1, 1), ...chat });
+
+  assert.equal(runner.calls, 3);
+  assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 2));
+  assert.equal(sessionOf(context.runner, 1), sessionOf(context.runner, 2));
 });
 
 test("un mensaje con solo adjuntos llega al harness en vez de morir sin respuesta", async () => {
