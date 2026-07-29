@@ -109,5 +109,38 @@ class EncoderGuardTests(unittest.TestCase):
             agent.decode_data(b"Z" * agent.SESSION_ID_BYTES + b"hi")
 
 
+class KeepaliveContractTests(unittest.TestCase):
+    """PING and PONG travel EMPTY.
+
+    The relay writes `encodeFrame(FRAME_TAGS.PING)` with no payload and ignores whatever a PONG
+    carries, so a PING branch that decodes the payload as JSON tore down every healthy connection
+    ten seconds after the hello was accepted. This is the contract, not an implementation detail.
+    """
+
+    @staticmethod
+    def _agent() -> "agent.PtyAgent":
+        instance = agent.PtyAgent.__new__(agent.PtyAgent)
+        instance.bundle = {"alias": "zeus", "tenant_id": "Steven"}
+        instance.modes = ["shell"]
+        instance.outbound = bytearray()
+        instance.acknowledged = False
+        instance.last_ping = 0.0
+        return instance
+
+    def test_an_empty_ping_is_answered_instead_of_parsed_as_json(self) -> None:
+        instance = self._agent()
+        instance._dispatch(agent.TAG_PING, b"")
+        self.assertEqual(bytes(instance.outbound), agent.encode_frame(agent.TAG_PONG, b""))
+
+    def test_a_ping_is_answered_before_the_hello_is_acknowledged(self) -> None:
+        instance = self._agent()
+        instance._dispatch(agent.TAG_PING, b"")
+        self.assertGreater(instance.last_ping, 0.0)
+        self.assertFalse(instance.acknowledged)
+
+    def test_the_pong_we_emit_is_a_bare_five_byte_header(self) -> None:
+        self.assertEqual(agent.encode_frame(agent.TAG_PONG, b"").hex(), "4100000000")
+
+
 if __name__ == "__main__":
     unittest.main()

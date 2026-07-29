@@ -244,7 +244,7 @@ describe('terminal control plane', () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  it('lists the fourteen aliases with an explicit PTY state and never a bare grey button', async () => {
+  it('lists the fifteen aliases with an explicit PTY state and never a bare grey button', async () => {
     await report([presence()]);
     const response = await app.inject({ method: 'GET', url: '/v3/console/terminal/targets' });
     expect(response.statusCode).toBe(200);
@@ -253,7 +253,7 @@ describe('terminal control plane', () => {
       items: Array<Record<string, unknown>>;
     }>();
     expect(body.websocket_path).toBe('/v3/console/terminal/ws');
-    expect(body.items).toHaveLength(14);
+    expect(body.items).toHaveLength(15);
     for (const item of body.items) {
       expect(['online', 'agent_offline', 'not_installed', 'unknown']).toContain(item.pty_state);
       expect(typeof item.reason).toBe('string');
