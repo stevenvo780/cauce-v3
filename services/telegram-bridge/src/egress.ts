@@ -66,6 +66,12 @@ function hasVisibleText(value: unknown): value is string {
  * contrato (un `reply` más algún otro campo del protocolo) y ocupa el final del mensaje. Un texto
  * que simplemente CITA un JSON —alguien explicando un payload— no cumple las dos condiciones y se
  * publica intacto. Ante la duda, no se toca: publicar de más es feo, tragarse una respuesta es peor.
+ *
+ * Devuelve `undefined` en un solo caso: cuando el objeto SÍ está confirmado como sobre del
+ * contrato, su `reply` no tiene texto humano y tampoco hay prosa delante. Ahí ya no hay duda que
+ * respetar —consta que es nuestro sobre y consta que no dice nada—, así que publicar el JSON crudo
+ * sería exactamente la fuga que esta red existe para tapar. El que llama trata ese `undefined`
+ * como "este candidato no sirve" y sigue con el siguiente.
  */
 const ENVELOPE_KEYS = ['status', 'messages', 'artifacts', 'retryable'];
 
@@ -91,7 +97,7 @@ function balancedObjectAt(text: string, start: number): string | undefined {
   return undefined;
 }
 
-export function unwrapStructuredEnvelope(value: string): string {
+export function unwrapStructuredEnvelope(value: string): string | undefined {
   // Se quita la valla de código antes de buscar: es la envoltura más común alrededor del objeto.
   const bare = value.trim().replace(/^```[A-Za-z0-9_-]*\r?\n/u, '').replace(/\r?\n?```$/u, '').trim();
   const opening = bare.indexOf('{');
@@ -116,7 +122,9 @@ export function unwrapStructuredEnvelope(value: string): string {
   // mensaje como prosa y dejó el campo en null— vale la prosa que quedó delante del objeto.
   if (hasVisibleText(envelope.reply)) return envelope.reply;
   const prose = bare.slice(0, opening).trim();
-  return hasVisibleText(prose) ? prose : value;
+  // Sobre confirmado, sin `reply` y sin prosa: no hay nada humano que publicar. Devolver `value`
+  // acá volvería a soltar el JSON crudo en el chat.
+  return hasVisibleText(prose) ? prose : undefined;
 }
 
 function candidate(payload: Record<string, unknown>): string | undefined {
@@ -128,8 +136,15 @@ function candidate(payload: Record<string, unknown>): string | undefined {
     payload.text, payload.content, payload.message,
     typeof payload.error === 'string' ? `Error: ${payload.error}` : undefined
   ];
-  const chosen = values.find(hasVisibleText);
-  return chosen === undefined ? undefined : unwrapStructuredEnvelope(chosen);
+  // Se recorren en orden de preferencia y no con un `find`: si el candidato preferido resulta ser
+  // un sobre vacío, desarmarlo no deja texto, y quedarse con él publicaría un mensaje en blanco
+  // habiendo un candidato peor pero legible más abajo (típicamente `result.text`).
+  for (const value of values) {
+    if (!hasVisibleText(value)) continue;
+    const unwrapped = unwrapStructuredEnvelope(value);
+    if (hasVisibleText(unwrapped)) return unwrapped;
+  }
+  return undefined;
 }
 
 export function telegramTextChunks(payload: Record<string, unknown>): string[] {
