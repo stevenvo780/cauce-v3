@@ -223,11 +223,29 @@ async function setupSessionConcurrency(name: string, claimRenewalMs?: number): P
   return { store, runner, events, engine };
 }
 
-async function waitForStarted(store: DurableStore, deliveryId: string): Promise<void> {
-  while (store.getDelivery(deliveryId)?.state !== "started") {
+/**
+ * Espera a que una entrega quede ESTACIONADA en el candado de sesion.
+ *
+ * Antes esto esperaba a que la entrega encolada llegara al estado "started". Ese era justamente el
+ * defecto: el motor declaraba ejecucion antes de tomar el candado, asi que una entrega que solo
+ * hacia fila se veia igual que una trabajando y renovaba su garra para siempre. Ahora la entrega en
+ * cola se queda en "accepted" y late en esa misma fase, asi que la senal correcta de "ya esta
+ * haciendo fila" es su ACK 'accepted' durable.
+ */
+async function waitForQueued(store: DurableStore, deliveryId: string): Promise<void> {
+  // El latido de cola es la unica senal que prueba que la entrega YA esta estacionada en el
+  // candado: se emite desde `awaitSessionTurn`, despues de que el motor registre su AbortController.
+  // Esperar solo el estado "accepted" seria una carrera — ese estado se alcanza antes, y un
+  // `cancel()`/`stop()` disparado en esa ventana no encontraria nada que abortar.
+  const parked = (): boolean => store.getDelivery(deliveryId)?.state === "accepted"
+    && store.pendingEvents().some((event) => (
+      event.delivery_id === deliveryId
+      && event.phase === "accepted"
+      && event.claim_renewal === true
+    ));
+  while (!parked()) {
     await new Promise<void>((resolveWait) => setImmediate(resolveWait));
   }
-  await new Promise<void>((resolveWait) => setImmediate(resolveWait));
 }
 
 /**
@@ -281,11 +299,14 @@ test("concurrent deliveries for one authenticated session share one UUID and exe
     store,
     harness,
     publish: async (event) => {
-      if (event.delivery_id === "session-serialized-a" && event.phase === "accepted") {
+      if (event.delivery_id === "session-serialized-a"
+        && event.phase === "accepted"
+        && event.claim_renewal !== true) {
         markFirstAccepted();
         await acceptedBarrier;
       }
     },
+    claimRenewalMs: 25,
   });
   await engine.activateEpoch(1);
   const firstInput: Delivery = {
@@ -300,7 +321,7 @@ test("concurrent deliveries for one authenticated session share one UUID and exe
   const first = engine.handleDelivery(firstInput);
   await firstAccepted;
   const second = engine.handleDelivery(secondInput);
-  await waitForStarted(store, secondInput.delivery_id);
+  await waitForQueued(store, secondInput.delivery_id);
 
   assert.equal(runner.requests.length, 0);
   releaseFirstAccepted();
@@ -414,7 +435,10 @@ test("two human messages of the same conversation stay serialized", async () => 
     ...delivery("human-lane-second"),
     body: { prompt: "segunda pregunta" },
   });
-  await waitForStarted(context.store, "human-lane-second");
+  // INTEGRACIÓN 2026-07-29: la segunda entrega ya no pasa por 'started' mientras hace fila —
+  // se estaciona en 'accepted' y late ahí. `waitForQueued` es el reemplazo exacto de la vieja
+  // `waitForStarted` para este caso: mismo punto del ciclo, señal correcta.
+  await waitForQueued(context.store, "human-lane-second");
 
   assert.equal(context.runner.requests.length, 1);
   assert.equal(context.runner.maxActive, 1);
@@ -431,7 +455,7 @@ test("two human messages of the same conversation stay serialized", async () => 
 });
 
 test("cancelling a queued session delivery skips execution without breaking the session queue", async () => {
-  const context = await setupSessionConcurrency("engine-session-queued-cancel");
+  const context = await setupSessionConcurrency("engine-session-queued-cancel", 25);
   const firstInput = delivery("session-cancel-a");
   const secondInput = delivery("session-cancel-b");
   const thirdInput = delivery("session-cancel-c");
@@ -439,9 +463,9 @@ test("cancelling a queued session delivery skips execution without breaking the 
   const first = context.engine.handleDelivery(firstInput);
   await context.runner.waitForCalls(1);
   const second = context.engine.handleDelivery(secondInput);
-  await waitForStarted(context.store, secondInput.delivery_id);
+  await waitForQueued(context.store, secondInput.delivery_id);
   const third = context.engine.handleDelivery(thirdInput);
-  await waitForStarted(context.store, thirdInput.delivery_id);
+  await waitForQueued(context.store, thirdInput.delivery_id);
   await context.engine.cancel({
     type: "cancel",
     delivery_id: secondInput.delivery_id,
@@ -464,14 +488,14 @@ test("cancelling a queued session delivery skips execution without breaking the 
 });
 
 test("fencing queued session work skips stale execution and releases the queue", async () => {
-  const context = await setupSessionConcurrency("engine-session-queued-fence");
+  const context = await setupSessionConcurrency("engine-session-queued-fence", 25);
   const firstInput = delivery("session-fence-a");
   const secondInput = delivery("session-fence-b");
 
   const first = context.engine.handleDelivery(firstInput);
   await context.runner.waitForCalls(1);
   const second = context.engine.handleDelivery(secondInput);
-  await waitForStarted(context.store, secondInput.delivery_id);
+  await waitForQueued(context.store, secondInput.delivery_id);
   await context.engine.activateEpoch(2);
   await second;
 
@@ -494,14 +518,14 @@ test("fencing queued session work skips stale execution and releases the queue",
 });
 
 test("shutdown is retryable before dispatch but successful output obtained after abort is ambiguous", async () => {
-  const context = await setupSessionConcurrency("engine-session-shutdown-boundary");
+  const context = await setupSessionConcurrency("engine-session-shutdown-boundary", 25);
   const dispatchedInput = delivery("session-stop-dispatched");
   const queuedInput = delivery("session-stop-queued");
 
   const dispatched = context.engine.handleDelivery(dispatchedInput);
   await context.runner.waitForCalls(1);
   const queued = context.engine.handleDelivery(queuedInput);
-  await waitForStarted(context.store, queuedInput.delivery_id);
+  await waitForQueued(context.store, queuedInput.delivery_id);
 
   context.engine.stop();
   await queued;
@@ -1415,7 +1439,7 @@ test("a failure before started never creates a renewal timer", async () => {
   assert.equal(context.events.length, eventCount);
 });
 
-test("a queued serialized session keeps renewing its claim before execution", async () => {
+test("a queued serialized session keeps renewing its claim, in 'accepted', before execution", async () => {
   const context = await setupSessionConcurrency("engine-session-ack-budget", 50);
   const firstInput = delivery("session-ack-budget-a");
   const secondInput: Delivery = {
@@ -1427,13 +1451,25 @@ test("a queued serialized session keeps renewing its claim before execution", as
   const first = context.engine.handleDelivery(firstInput);
   await context.runner.waitForCalls(1);
   const second = context.engine.handleDelivery(secondInput);
+  // La entrega encolada tiene que seguir renovando su garra —si no, el reaper se la lleva a mitad
+  // de la fila— pero renovando en 'accepted'. Antes esta prueba esperaba dos ACK 'started', que era
+  // el defecto escrito como aserción: declaraba ejecución sin haber tomado el candado.
   const renewalDeadline = Date.now() + 5_000;
   while (context.events.filter(
-    (event) => event.delivery_id === secondInput.delivery_id && event.phase === "started",
+    (event) => event.delivery_id === secondInput.delivery_id
+      && event.phase === "accepted"
+      && event.claim_renewal === true,
   ).length < 2) {
     if (Date.now() >= renewalDeadline) throw new Error("queued claim renewal timeout");
     await new Promise<void>((resolveWait) => setTimeout(resolveWait, 20));
   }
+  assert.equal(
+    context.events.filter(
+      (event) => event.delivery_id === secondInput.delivery_id && event.phase === "started",
+    ).length,
+    0,
+    "mientras hace fila no puede haber emitido un solo ACK 'started'",
+  );
 
   assert.equal(context.runner.requests.length, 1);
   context.runner.releaseNext();

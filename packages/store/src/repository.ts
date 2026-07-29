@@ -1913,6 +1913,83 @@ export class CauceRepository {
       // intento, no el de la última renovación.
       const executionStarted = ack.status === 'started' && ack.execution_started === true;
       const leaseCapMs = deliveryLeaseCapMs(row.body, leaseCap);
+      /**
+       * Latido de una entrega que está EN COLA, no ejecutando.
+       *
+       * El adaptador serializa por candado de sesión y esa espera dura lo que dure la entrega que
+       * tiene adelante (p75 medido en producción: 52,9 min; p90: 2h13m). Hasta 2026-07-29 el
+       * adaptador mandaba 'started' antes de tomar el candado, así que la fila entraba en 'started'
+       * sin haber ejecutado nada y cada renovación le corría `ack_deadline_at` 30 minutos más: una
+       * entrega que sólo hacía fila era indistinguible de una trabajando y el reaper no la recogía
+       * jamás. Ahora la cola late en 'accepted' y esto es lo que lo hace efectivo: sin esta rama,
+       * `rank(accepted)=1 <= last_ack_rank=1` cae en 'superseded' y el latido no renueva nada.
+       *
+       * Lo que la rama hace y lo que deliberadamente NO hace:
+       * - Corre el plazo de la garra, igual que la renovación de 'started'. Un adaptador que muere
+       *   mientras su entrega hace fila deja de latir y el reaper la recoge a los 30 min, que es
+       *   exactamente lo que debe pasar.
+       * - NO mueve `status` (sigue 'accepted'), NO toca `last_ack_rank` (sigue 1) y NO sella
+       *   `execution_started_at`. Esa marca queda para el primer 'started' aplicado, que ahora sí
+       *   significa "el harness arrancó". El reaper conserva sin cambios su criterio de retener
+       *   una entrega para replay manual, y lo aplica sobre una marca que por fin es cierta.
+       *
+       * Nada de esto pide esquema nuevo: 'accepted' ya está en el CHECK de `delivery_acks.status`
+       * y en `deliveries.status`, y `last_ack_rank` no se mueve. El reaper tampoco cambia: ya
+       * barre `status IN ('leased','accepted','started')` contra `ack_deadline_at`.
+       *
+       * INTEGRACIÓN 2026-07-29: el latido de cola queda sujeto al MISMO techo de vida que la
+       * renovación de 'started' (`LEAST` contra `COALESCE(execution_started_at,claimed_at) +
+       * leaseCapMs`). Sin el `LEAST`, una entrega que hace fila para siempre seguiría corriendo
+       * su `ack_deadline_at` 30 min por latido mientras el reaper —que calcula el techo por su
+       * cuenta en el WHERE— la mata igual: las dos vistas de la misma garra volverían a
+       * separarse, que es justo lo que el techo vino a cerrar. Acá `execution_started_at` es
+       * NULL por construcción (todavía no arrancó), así que el ancla efectiva es `claimed_at`:
+       * el tiempo en cola SÍ cuenta contra el techo, y por eso el techo por defecto (12 h) es
+       * ~5,4× el p90 de espera de candado medido (2h13m).
+       *
+       * El ACK se marca como RENOVACIÓN (`renewal=true`, último argumento de `insertAck`). Es lo
+       * mismo que hace la renovación de 'started' y no es cosmético: la retención diferenciada
+       * de `delivery_acks` (migración 014_observability_retention) poda renovaciones a las 6 h y
+       * conserva las transiciones de estado. Un latido de cola es una prueba de vida, no una
+       * transición; sin la marca, una entrega que espera el candado 12 h dejaría ~24 filas
+       * "de transición" imborrables por cada entrega encolada.
+       */
+      if (ack.status === 'accepted' && row.status === 'accepted') {
+        await client.query(
+          `UPDATE deliveries
+           SET ack_deadline_at=LEAST(
+                 now()+$2*interval '1 millisecond',
+                 COALESCE(execution_started_at,claimed_at) + $3*interval '1 millisecond'),
+               claim_expires_at=LEAST(
+                 now()+$2*interval '1 millisecond',
+                 COALESCE(execution_started_at,claimed_at) + $3*interval '1 millisecond'),
+               updated_at=now()
+           WHERE id=$1 AND status='accepted'`,
+          [deliveryId, ackDeadlineMs, leaseCapMs]
+        );
+        if (!repeatedAck) await this.insertAck(client, row, ack, true, persistedResult, true);
+        await client.query(
+          `INSERT INTO audit_events(
+             tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+           ) VALUES($1,$2,'delivery.ack','allow',$3,$4,$5,$6,$7::jsonb)`,
+          [tenantId, alias, row.request_id, row.message_id, deliveryId, row.trace_id,
+            JSON.stringify({
+              ack: ack.status,
+              resulting_status: row.status,
+              epoch: ack.epoch,
+              attempt: ack.attempt,
+              lease_renewed: true,
+              queued: true,
+              ...(repeatedAck ? { duplicate_replay: true } : {})
+            })]
+        );
+        return {
+          delivery_id: deliveryId,
+          status: 'accepted',
+          applied: true,
+          receipt: repeatedAck ? 'duplicate' : 'applied',
+        };
+      }
       if (ack.status === 'started' && row.status === 'started') {
         // El ancla se escribe con el valor que la fila va a TENER después de este UPDATE, no
         // con el que tenía: en PostgreSQL las expresiones del SET leen la fila vieja, y si el

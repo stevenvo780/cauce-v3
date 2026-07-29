@@ -225,6 +225,14 @@ export class AdapterClient {
         if (acknowledged && pending?.claim_renewal === true) {
           if (frame.applied === true || frame.receipt === 'duplicate') {
             this.engine.confirmClaim(frame.delivery_id, frame.attempt, frame.claim_token);
+          } else if (pending.phase === 'accepted' && frame.receipt !== 'ownership_lost') {
+            // Latido de cola que el gateway no aplicó. Un gateway anterior a esta versión no
+            // conoce la renovación en fase 'accepted' y contesta 'superseded' (o sin `receipt`),
+            // que NO es pérdida de propiedad: tratarlo como tal mataría la entrega con
+            // CLAIM_OWNERSHIP_LOST, que es no-retryable, sin que nadie haya perdido nada. Se lo
+            // trata como ausencia de señal: el watchdog fail-closed sigue corriendo y, si el
+            // gateway efectivamente no renueva, vence solo con un error RETRYABLE.
+            this.engine.logDroppedQueueRenewal(frame.delivery_id, frame.attempt);
           } else {
             this.engine.loseClaim(frame.delivery_id, frame.attempt, frame.claim_token);
           }

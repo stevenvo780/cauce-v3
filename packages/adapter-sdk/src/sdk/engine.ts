@@ -32,6 +32,22 @@ const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
 const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 const MAX_AGENT_EXECUTION_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
 
+/**
+ * Techo absoluto de la espera en el candado de sesión, medido desde que la entrega se acepta.
+ *
+ * No es un número de gusto. Sobre las 4.280 entregas de producción que sí toman candado (las que
+ * traen `origin.conversation_id`), 2.416 quedaron encoladas detrás de otra del mismo candado. De
+ * esas: 584 esperaron más de 1 h, 339 más de 2 h, 130 más de 6 h, 129 más de 12 h y 129 más de 24 h.
+ * Entre las 6 h y las 12 h hay exactamente UNA entrega. Es decir: pasadas las 6 h la cola ya no
+ * contiene trabajo que vaya a ser servido, contiene 129 zombis que nadie va a atender (la espera
+ * máxima medida fue de 3,26 días). Cortar en 6 h mata a los 129 y le cuesta una sola espera legítima
+ * de la muestra completa.
+ *
+ * Se acota además por el `timeout_ms` que pidió el emisor: nadie que pidió 10 minutos de trabajo
+ * quiere que su entrega siga viva 6 horas después sin haber arrancado.
+ */
+const DEFAULT_QUEUE_WAIT_TIMEOUT_MS = 6 * 60 * 60_000;
+
 export interface AdapterEngineOptions {
   readonly store: DurableStore;
   readonly harness: HarnessAdapter;
@@ -44,6 +60,11 @@ export interface AdapterEngineOptions {
   readonly claimRenewalMs?: number;
   /** Test/diagnostic override; production derives the fail-closed watchdog from the claim. */
   readonly claimWatchdogMs?: number;
+  /**
+   * Techo absoluto de la espera en el candado de sesión. Sin override se usa
+   * `min(timeout pedido por el emisor, DEFAULT_QUEUE_WAIT_TIMEOUT_MS)`.
+   */
+  readonly queueWaitTimeoutMs?: number;
   readonly clock?: Clock;
 }
 
@@ -57,6 +78,7 @@ export class AdapterEngine {
   private readonly defaultTimeoutMs: number;
   private readonly claimRenewalMs: number | undefined;
   private readonly claimWatchdogMs: number | undefined;
+  private readonly queueWaitTimeoutMs: number | undefined;
   private readonly clock: Clock;
   private readonly tasks = new Map<string, {
     readonly attempt: number;
@@ -93,6 +115,11 @@ export class AdapterEngine {
     if (this.claimWatchdogMs !== undefined
       && (!Number.isSafeInteger(this.claimWatchdogMs) || this.claimWatchdogMs <= 0)) {
       throw new RangeError("claimWatchdogMs must be a positive integer");
+    }
+    this.queueWaitTimeoutMs = options.queueWaitTimeoutMs;
+    if (this.queueWaitTimeoutMs !== undefined
+      && (!Number.isSafeInteger(this.queueWaitTimeoutMs) || this.queueWaitTimeoutMs <= 0)) {
+      throw new RangeError("queueWaitTimeoutMs must be a positive integer");
     }
     this.clock = options.clock ?? systemClock;
   }
@@ -214,6 +241,23 @@ export class AdapterEngine {
     ));
   }
 
+  /**
+   * Un latido de cola que el gateway no aplicó. Deja rastro y nada más: no confirma la garra (el
+   * watchdog debe seguir corriendo) ni la da por perdida (nadie la perdió). Existe para que un
+   * gateway sin la renovación en fase 'accepted' degrade a "la entrega encolada vence sola y se
+   * reintenta" en vez de morir con CLAIM_OWNERSHIP_LOST, que es no-retryable.
+   */
+  logDroppedQueueRenewal(deliveryId: string, attempt: number): void {
+    this.logger({
+      event: "claim_renewal_end",
+      delivery_id: deliveryId,
+      attempt,
+      phase: "accepted",
+      timestamp: this.clock.now().toISOString(),
+      reason: "queue_renewal_not_applied",
+    });
+  }
+
   confirmClaim(
     deliveryId: string,
     attempt: number,
@@ -310,6 +354,24 @@ export class AdapterEngine {
 
     const controller = new AbortController();
     this.controllers.set(delivery.delivery_id, controller);
+
+    // Hacer cola NO es ejecutar. El candado de sesión serializa las entregas del mismo hilo y la
+    // espera puede durar horas (p75 medido en producción: 52,9 min; máximo: 3,26 días). Hasta
+    // 2026-07-29 el ACK 'started' salía acá, antes de tomar el candado: la entrega se declaraba en
+    // ejecución mientras hacía fila, el store le sellaba `execution_started_at` y cada renovación
+    // empujaba `ack_deadline_at` a now()+30 min, así que el reaper no la recogía nunca. 44.545 ACK
+    // 'started' para 5.270 entregas —8,45 por entrega— eran en buena parte eso: latidos de cola
+    // disfrazados de ejecución.
+    if (reservation !== undefined) {
+      const acquired = await this.awaitSessionTurn(
+        accepted.record,
+        reservation,
+        executionBudget,
+        controller,
+      );
+      if (!acquired) return;
+    }
+
     const started = await this.store.transition(delivery.delivery_id, "started", this.clock.now().toISOString(), {
       retainRequest: true,
       attempt: delivery.attempt,
@@ -375,11 +437,16 @@ export class AdapterEngine {
         //
         // `wait` es idempotente: `harness.execute` vuelve a esperar la misma promesa, que para
         // entonces ya está resuelta.
+        // INTEGRACIÓN 2026-07-29: `awaitSessionTurn` ya esperó el candado ANTES de la
+        // transición a 'started', así que para cuando se llega acá la reserva está adquirida y
+        // este `wait` resuelve de inmediato (`reservation.wait` devuelve la misma promesa ya
+        // resuelta). Se conserva porque es la garantía local de que no se invoca el harness sin
+        // el candado, independiente de por qué camino se llegó.
         if (reservation !== undefined) await reservation.wait(controller.signal);
         // Se emite como renovación de garra a propósito: reusa la confirmación de propiedad que
         // ya existe, así que además funciona como último chequeo de "esto sigue siendo mío"
         // justo antes de gastar plata. Si el gateway responde que no, `loseClaim` aborta.
-        await this.emitClaimRenewal(started, { executionStarted: true });
+        await this.emitClaimRenewal(started, "started", { executionStarted: true });
         output = await this.harness.execute({
           prompt,
           ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
@@ -446,15 +513,101 @@ export class AdapterEngine {
   }
 
   /**
+   * Espera el turno del candado de sesión SIN declarar ejecución.
+   *
+   * Mientras hace cola la entrega late en fase 'accepted', no 'started'. Los dos latidos usan la
+   * misma maquinaria (misma cadencia, mismo watchdog fail-closed) y renuevan igual la garra, pero
+   * dicen cosas distintas y el store los trata distinto: 'accepted' sobre una fila 'accepted' sólo
+   * corre `ack_deadline_at`; 'started' sella `execution_started_at` y mueve la fila a 'started'.
+   * Esa es toda la diferencia entre "está en cola" y "está trabajando", y es la que faltaba.
+   *
+   * Por qué latir y no callar: si la entrega encolada no manda nada, su garra vence a los 30 min
+   * (CAUCE_ACK_DEADLINE_MS) y el reaper la reintenta. Medido sobre producción eso alcanza al 41%
+   * de las entregas encoladas (997 de 2.416 esperaron más de 30 min), y el reintento no es gratis:
+   * `handleDelivery` encadena el intento n+1 detrás de la tarea del intento n, que sigue en la
+   * cola, así que la entrega termina EJECUTÁNDOSE DOS VECES —una con la garra perdida y otra con
+   * la nueva— con todos sus efectos laterales duplicados. Con max_attempts=3 y una espera p90 de
+   * 2h13m, además, la entrega se agota en dead-letters antes de haber corrido una sola vez.
+   *
+   * Y por qué el latido no la vuelve inmortal: la espera tiene techo absoluto
+   * (`queueWaitTimeoutMs`), y al vencer se falla RETRYABLE y no ambiguo. La entrega vuelve a la
+   * cola limpia, sin `execution_started_at` sellado y sin quedar "held for manual replay", porque
+   * es verdad que nunca ejecutó.
+   *
+   * Devuelve `false` cuando ya cerró la entrega con un error y el llamador debe cortar.
+   */
+  private async awaitSessionTurn(
+    record: InboxRecord,
+    reservation: HarnessSessionReservation,
+    budget: ExecutionBudget,
+    controller: AbortController,
+  ): Promise<boolean> {
+    const stopQueueRenewal = this.startClaimRenewal(
+      record,
+      this.claimRenewalMs ?? budget.claimRenewalMs,
+      this.claimWatchdogMs ?? budget.claimWatchdogMs,
+      controller,
+      "accepted",
+    );
+    const queueBudgetMs = this.queueWaitTimeoutMs
+      ?? Math.min(budget.harnessTimeoutMs, DEFAULT_QUEUE_WAIT_TIMEOUT_MS);
+    const queueTimer = setTimeout(() => {
+      controller.abort(new AdapterError(
+        "SESSION_QUEUE_TIMEOUT",
+        `Delivery waited ${queueBudgetMs} ms for its session turn without starting execution`,
+        true,
+      ));
+    }, queueBudgetMs);
+    queueTimer.unref();
+
+    let failure: unknown;
+    try {
+      await reservation.wait(controller.signal);
+    } catch (error) {
+      failure = error;
+    } finally {
+      clearTimeout(queueTimer);
+      await stopQueueRenewal();
+    }
+    if (failure === undefined) return true;
+
+    // Nada corrió todavía, así que nada puede ser ambiguo. Degradar un código ambiguo acá sería
+    // mentir en el otro sentido: mandaría a dead-letters "held for manual replay" una entrega que
+    // el harness jamás vio. La normalización a FENCED es la misma que aplica el camino de
+    // ejecución, y acá vale siempre porque nunca hay ejecución ambigua que preservar.
+    const queueError = asAdapterError(failure);
+    const normalized = this.fenced.has(record.delivery_id)
+      ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
+      : isAmbiguousAckErrorCode(queueError.code)
+        ? new AdapterError("SESSION_QUEUE_ABORTED", queueError.message, true)
+        : queueError;
+    this.logger({
+      event: "claim_renewal_end",
+      delivery_id: record.delivery_id,
+      attempt: record.attempt,
+      phase: "accepted",
+      timestamp: this.clock.now().toISOString(),
+      reason: normalized.code,
+    });
+    await this.finishError(record, normalized);
+    return false;
+  }
+
+  /**
    * A delivery claim is a short renewable lease, not the agent's wall-clock
    * execution deadline. Renewal events are durable locally before transport;
    * an offline socket can therefore flush them after reconnect.
+   *
+   * `phase` distingue el latido de cola ('accepted') del de ejecución ('started'). El transporte
+   * lo mapea tal cual al `status` del ACK; ambos son valores que `AckStatusSchema` y el CHECK de
+   * `delivery_acks.status` ya aceptan, así que esto no pide ningún cambio de esquema.
    */
   private startClaimRenewal(
     record: InboxRecord,
     intervalMs: number,
     watchdogMs: number,
     controller: AbortController,
+    phase: "accepted" | "started" = "started",
   ): () => Promise<void> {
     let stopped = false;
     let tail = Promise.resolve();
@@ -484,7 +637,7 @@ export class AdapterEngine {
         .then(async () => {
           if (stopped) return;
           try {
-            await this.emitClaimRenewal(record);
+            await this.emitClaimRenewal(record, phase);
           } catch {
             stopped = true;
             clearInterval(timer);
@@ -524,6 +677,12 @@ export class AdapterEngine {
    */
   private async emitClaimRenewal(
     record: InboxRecord,
+    // INTEGRACIÓN 2026-07-29: los dos ejes son ortogonales y por eso son dos parámetros.
+    // `phase` dice DÓNDE está la entrega (haciendo cola por el candado de sesión = 'accepted',
+    // o ejecutando = 'started'); `options.executionStarted` sella de una vez, y sólo una, el
+    // instante en que el harness arrancó de verdad. Un latido de cola nunca lleva la marca —
+    // `execution_started_at` es justamente lo que distingue esperar de ejecutar.
+    phase: "accepted" | "started" = "started",
     options: { readonly executionStarted?: boolean } = {},
   ): Promise<void> {
     const event: DeliveryEvent = {
@@ -532,7 +691,7 @@ export class AdapterEngine {
       attempt: record.attempt,
       claim_token: record.claim_token,
       epoch: this.store.epoch,
-      phase: "started",
+      phase,
       occurred_at: this.clock.now().toISOString(),
       claim_renewal: true,
       ...(options.executionStarted === true ? { execution_started: true } : {}),
@@ -542,7 +701,7 @@ export class AdapterEngine {
       event: "claim_renewal_start",
       delivery_id: record.delivery_id,
       attempt: record.attempt,
-      phase: "started",
+      phase,
       timestamp: event.occurred_at,
     });
     // A renewal must reach stable local storage before it can be treated as
