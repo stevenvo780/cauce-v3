@@ -61,8 +61,12 @@ function parseJson(text: string, context: string): unknown {
   }
 }
 
+const REQUIRED_OUTPUT_KEYS = ["reply", "messages", "status", "retryable", "artifacts"] as const;
+/** Cota del rastreo de sobres embebidos; con dos ya alcanza para declarar ambigüedad. */
+const MAX_EMBEDDED_ENVELOPE_CANDIDATES = 64;
+
 function requiredKeys(value: JsonObject): void {
-  for (const key of ["reply", "messages", "status", "retryable", "artifacts"]) {
+  for (const key of REQUIRED_OUTPUT_KEYS) {
     if (!(key in value)) {
       throw new MalformedOutputError(`Structured output is missing '${key}'`);
     }
@@ -342,6 +346,159 @@ function validateDelegationTargets(
   }
 }
 
+/**
+ * BUG: un turno que el harness declaró FALLIDO se registraba como 'done'.
+ *
+ * Los dialectos nativos traen su propia señal de fracaso, y ninguna se estaba mirando: se tomaba
+ * el texto final del turno y se lo daba por bueno. Un `error_max_turns` de Claude o un
+ * `turn.failed` de Codex salen con código 0 y con texto en el campo de resultado, así que
+ * `shared.ts` —que sólo mira `exitCode` y `status`— tampoco los podía atrapar. Resultado: el
+ * sistema cree que salió bien trabajo que fracasó, y nadie lo reintenta ni lo revisa.
+ *
+ * Campos verificados contra los binarios instalados el 2026-07-29:
+ *  - claude 2.1.220: `{type:"result", subtype:"success"|"error_max_turns"|"error_during_execution"
+ *    |"error_max_budget_usd"|"error_max_structured_output_retries"|"error", is_error:bool, result, …}`
+ *  - codex 0.145.0 (`exec --json`): eventos `turn.failed`, `error`, e `item.completed` con
+ *    `item.type:"error"`, junto a `thread.started`/`turn.completed`/`item.completed`.
+ *  - openclaw / hermes: los puentes envuelven el objeto nativo (`{result:…}`), y el fracaso
+ *    nativo viaja en `ok:false`, `error` o un `status` de la familia de fallo.
+ *
+ * `retryable:false` a propósito: el turno YA se ejecutó y ya tuvo efectos, así que reintentarlo
+ * duplica trabajo. Es el mismo criterio que `EXECUTION_TIMEOUT_AMBIGUOUS` y
+ * `PROCESS_EXIT_AMBIGUOUS`. La entrega queda `failed` con el texto del harness en el ack, que es
+ * lo que hace visible el fracaso en vez de esconderlo.
+ */
+const NATIVE_FAILURE_STATUS: ReadonlySet<string> = new Set([
+  "error",
+  "errored",
+  "failed",
+  "failure",
+  "fatal",
+  "aborted",
+  "cancelled",
+  "canceled",
+  "timeout",
+  "timed_out",
+  "interrupted",
+  "rejected",
+]);
+const FAILURE_DETAIL_KEYS = ["message", "detail", "description", "reason", "error", "text"] as const;
+const MAX_FAILURE_DETAIL_BYTES = 4 * 1024;
+
+function failureText(value: unknown, depth = 0): string | undefined {
+  if (depth > 4) return undefined;
+  if (typeof value === "string") return hasVisibleText(value) ? value.trim() : undefined;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const nested = failureText(entry, depth + 1);
+      if (nested !== undefined) return nested;
+    }
+    return undefined;
+  }
+  if (isObject(value)) {
+    for (const key of FAILURE_DETAIL_KEYS) {
+      const nested = failureText(value[key], depth + 1);
+      if (nested !== undefined) return nested;
+    }
+  }
+  return undefined;
+}
+
+function hasErrorPayload(value: unknown): boolean {
+  if (value === undefined || value === null || value === false) return false;
+  if (typeof value === "string") return hasVisibleText(value);
+  if (Array.isArray(value)) return value.length > 0;
+  if (isObject(value)) return Object.keys(value).length > 0;
+  return true;
+}
+
+/**
+ * Señal de fracaso en un objeto envoltorio nativo. El sobre del contrato queda EXPLÍCITAMENTE
+ * fuera: su `status:"failed"` ya lo valida `validateStructuredOutput`, y confundirlo con un
+ * `status` nativo lo haría pasar dos veces por el mismo molino.
+ */
+function nativeFailureDetail(value: JsonObject): string | undefined {
+  if (isEnvelopeShape(value)) return undefined;
+  const declared = failureText(value.error) ?? failureText(value.message);
+  if (value.ok === false || value.success === false || value.is_error === true || value.isError === true) {
+    return declared ?? "the harness reported a failed turn";
+  }
+  const status = typeof value.status === "string" ? value.status : undefined;
+  if (status !== undefined && NATIVE_FAILURE_STATUS.has(status.toLowerCase())) {
+    return declared ?? `native status '${status}'`;
+  }
+  if (hasErrorPayload(value.error)) return declared ?? "the harness reported an error";
+  return undefined;
+}
+
+/** Claude Code: `is_error` y los `subtype` de la familia `error*` del evento `result`. */
+function claudeFailureDetail(value: JsonObject): string | undefined {
+  const subtype = typeof value.subtype === "string" ? value.subtype : undefined;
+  const failedSubtype = subtype !== undefined && (subtype === "error" || subtype.startsWith("error_"));
+  if (value.is_error === true || failedSubtype) {
+    return failureText(value.error)
+      ?? failureText(value.message)
+      ?? (subtype === undefined ? "is_error" : `result subtype '${subtype}'`);
+  }
+  return nativeFailureDetail(value);
+}
+
+/** Codex `exec --json`: `turn.failed`, `error` y los ítems de tipo `error`. */
+function codexEventFailureDetail(event: JsonObject): string | undefined {
+  if (event.type === "turn.failed") {
+    return failureText(event.error) ?? failureText(event.message) ?? "turn.failed";
+  }
+  if (event.type === "error") {
+    return failureText(event.error) ?? failureText(event.message) ?? "error event";
+  }
+  if (event.type === "item.completed" && isObject(event.item) && event.item.type === "error") {
+    return failureText(event.item) ?? "error item";
+  }
+  return undefined;
+}
+
+function safeCandidate(candidate: unknown, context: string): StructuredOutput | undefined {
+  if (candidate === undefined || candidate === null) return undefined;
+  try {
+    return parseCandidate(candidate, context);
+  } catch {
+    // Un turno que el propio harness declaró fallido no debe además morir por el parser.
+    return undefined;
+  }
+}
+
+function boundedDetail(text: string): string {
+  if (Buffer.byteLength(text, "utf8") <= MAX_FAILURE_DETAIL_BYTES) return text;
+  return `${Buffer.from(text, "utf8").subarray(0, MAX_FAILURE_DETAIL_BYTES).toString("utf8")}…`;
+}
+
+/**
+ * Convierte una señal nativa de fracaso en un resultado `failed` de verdad. Si el harness llegó a
+ * emitir un sobre que YA dice `failed`, se respeta tal cual (conserva su `reply` y su
+ * `retryable`); en cualquier otro caso se sintetiza el fracaso conservando el texto del harness.
+ *
+ * `messages: []` no es un descarte silencioso: un turno fallido nunca materializa delegaciones
+ * —`validateDeliveryOutput` lo prohíbe explícitamente—, y la entrega termina en `failed`, visible
+ * en el ack y en las dead-letters.
+ */
+function failedTurnOutput(candidate: unknown, context: string, detail: string): StructuredOutput {
+  const parsed = safeCandidate(candidate, context);
+  if (parsed?.status === "failed") return parsed;
+  const spoken = typeof candidate === "string" && hasVisibleText(candidate)
+    ? candidate.trim()
+    : parsed?.reply ?? undefined;
+  const headline = `${context} reported a failed turn: ${detail}`;
+  return {
+    reply: boundedDetail(spoken === undefined ? headline : `${headline}\n\n${spoken}`),
+    messages: [],
+    notify: [],
+    status: "failed",
+    retryable: false,
+    artifacts: [],
+  };
+}
+
 function sessionResult(output: StructuredOutput, nativeSessionId: unknown): ParsedHarnessOutput {
   if (typeof nativeSessionId === "string" && nativeSessionId.length > 0) {
     return { output, nativeSessionId };
@@ -368,6 +525,105 @@ function fallbackTextOutput(text: string, context: string): StructuredOutput {
     retryable: false,
     artifacts: [],
   };
+}
+
+/**
+ * Recorta los objetos JSON de primer nivel embebidos en un texto.
+ *
+ * Una sola pasada con conciencia de cadenas y escapes, así que unas llaves adentro de un string
+ * (`"usá {\"a\":1}"`) no abren ni cierran nada. No se miran objetos anidados: el sobre del
+ * contrato siempre es un objeto de primer nivel del texto.
+ */
+function embeddedObjects(text: string): readonly string[] {
+  const found: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+      continue;
+    }
+    if (character === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        found.push(text.slice(start, index + 1));
+        start = -1;
+        if (found.length >= MAX_EMBEDDED_ENVELOPE_CANDIDATES) break;
+      }
+    }
+  }
+  return found;
+}
+
+function isEnvelopeShape(value: unknown): boolean {
+  return isObject(value) && REQUIRED_OUTPUT_KEYS.every((key) => key in value);
+}
+
+/**
+ * BUG: el sobre del contrato se perdía en silencio y con él TODAS las delegaciones.
+ *
+ * Un modelo devuelve el sobre precedido de una frase ("Listo, delegué a kant.\n{…}") o dentro de
+ * una valla con texto alrededor. `JSON.parse` falla sobre el texto entero, el texto no empieza con
+ * `{`, y el fallback lo convertía en un `reply` de texto plano con `messages: []`. El agente creía
+ * haber delegado, la entrega se cerraba en `done` y el destinatario NUNCA recibía el trabajo.
+ * Medido en prod el 2026-07-29: 160 respuestas con el sobre publicado como texto desde el 23-jul,
+ * 39 de ellas con un `messages` NO VACÍO — 39 delegaciones destruidas en seis días.
+ *
+ * Qué debe pasar: nunca descartar el sobre en silencio. Y entre las dos opciones,
+ *  - degradar con aviso NO sirve: `messages` es el único mecanismo durable para mandarle trabajo a
+ *    otro agente, así que un aviso dentro del `reply` le llega a una persona y el agente destino
+ *    sigue sin recibir nada. La delegación se pierde igual, sólo que con nota al pie.
+ *  - fallar la entrega sí es aceptable como PISO, pero `MALFORMED_OUTPUT` es no reintentable: el
+ *    trabajo también se pierde, sólo que ruidosamente.
+ * Por eso: se RECUPERA el sobre cuando se lo puede identificar sin ambigüedad, y sólo si no se
+ * puede se falla fuerte. El texto que no trae sobre alguno sigue cayendo al fallback de siempre.
+ *
+ * Deliberadamente estricto para no delegar de más: un candidato sólo cuenta si trae las CINCO
+ * claves obligatorias del contrato; dos o más candidatos son ambigüedad y se rechaza sin adivinar.
+ * Y el sobre recuperado pasa igual por `validateStructuredOutput` y después por
+ * `validateDeliveryOutput`, que rechaza destinos desconocidos, ausentes o fuera de línea.
+ */
+function recoverEmbeddedEnvelope(text: string, context: string): StructuredOutput | undefined {
+  const candidates = embeddedObjects(text);
+  if (candidates.length === 0) return undefined;
+
+  const envelopes: JsonObject[] = [];
+  for (const candidate of candidates) {
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(candidate) as unknown;
+    } catch {
+      continue;
+    }
+    if (isObject(decoded) && isEnvelopeShape(decoded)) envelopes.push(decoded);
+  }
+
+  if (envelopes.length === 0) return undefined;
+  if (envelopes.length > 1) {
+    throw new MalformedOutputError(
+      `${context} embedded more than one structured output envelope in plain text; refusing to guess which delegation is real`,
+    );
+  }
+  return validateStructuredOutput(envelopes[0]);
+}
+
+function recoverOrFallback(text: string, context: string): StructuredOutput {
+  const recovered = recoverEmbeddedEnvelope(text, context);
+  return recovered ?? fallbackTextOutput(text, context);
 }
 
 /**
@@ -411,11 +667,11 @@ export function parseFinalText(text: string, context: string): StructuredOutput 
     if (jsonCandidate.startsWith("{")) {
       throw new MalformedOutputError(`${context} contained a malformed JSON object`);
     }
-    return fallbackTextOutput(trimmed, context);
+    return recoverOrFallback(trimmed, context);
   }
 
   if (isObject(decoded)) return validateStructuredOutput(decoded);
-  if (typeof decoded === "string") return fallbackTextOutput(decoded, context);
+  if (typeof decoded === "string") return recoverOrFallback(decoded, context);
   throw new MalformedOutputError(`${context} must be a structured JSON object or non-empty text`);
 }
 
@@ -428,6 +684,13 @@ function parseCandidate(candidate: unknown, context: string): StructuredOutput {
 export function parseDirectOutput(stdout: string): ParsedHarnessOutput {
   const value = parseJson(stdout.trim(), "Harness output");
   if (!isObject(value)) return { output: validateStructuredOutput(value) };
+  const failure = nativeFailureDetail(value);
+  if (failure !== undefined) {
+    return sessionResult(
+      failedTurnOutput(structuredCandidate(value), "Harness output", failure),
+      value.session_id,
+    );
+  }
   return sessionResult(validateStructuredOutput(structuredCandidate(value)), value.session_id);
 }
 
@@ -448,6 +711,13 @@ export function parseHermesOutput(stdout: string): ParsedHarnessOutput {
   const value = parseJson(stdout.trim(), "Hermes output");
   if (!isObject(value)) return { output: validateStructuredOutput(value) };
   const candidate = value.output ?? value.result ?? value;
+  // El sobre del puente y el objeto nativo que trae adentro: cualquiera de los dos puede declarar
+  // el fracaso, y ninguno de los dos se estaba mirando.
+  const failure = nativeFailureDetail(value)
+    ?? (isObject(candidate) ? nativeFailureDetail(candidate) : undefined);
+  if (failure !== undefined) {
+    return sessionResult(failedTurnOutput(candidate, "Hermes result", failure), value.session_id);
+  }
   return sessionResult(parseCandidate(candidate, "Hermes result"), value.session_id);
 }
 
@@ -455,21 +725,35 @@ export function parseOpenCodeOutput(stdout: string): ParsedHarnessOutput {
   const events = jsonLines(stdout, "OpenCode");
   let sessionId: unknown;
   let candidate: unknown;
+  let failure: string | undefined;
+  let failureIndex = -1;
+  let candidateIndex = -1;
   const textParts: string[] = [];
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
     if (event.type === "session" && typeof event.id === "string") sessionId = event.id;
     if (typeof event.sessionID === "string") sessionId = event.sessionID;
     if (event.session_id !== undefined) sessionId = event.session_id;
-    if (event.type === "result") candidate = event.output ?? event.result;
+    if (event.type === "result") {
+      candidate = event.output ?? event.result;
+      candidateIndex = index;
+    }
     if (event.type === "text" && isObject(event.part) && event.part.type === "text"
       && typeof event.part.text === "string") {
       textParts.push(event.part.text);
+      candidateIndex = index;
+    }
+    if (event.type === "error" || (isObject(event.part) && event.part.type === "error")) {
+      failure = failureText(event.error) ?? failureText(event.message) ?? failureText(event.part) ?? "error event";
+      failureIndex = index;
     }
   }
   if (textParts.length > 0) candidate = textParts.join("");
   if (candidate === undefined) {
     const last = events.at(-1);
     candidate = last?.output ?? last?.result;
+  }
+  if (failure !== undefined && failureIndex > candidateIndex) {
+    return sessionResult(failedTurnOutput(candidate, "OpenCode result", failure), sessionId);
   }
   return sessionResult(parseCandidate(candidate, "OpenCode result"), sessionId);
 }
@@ -478,20 +762,44 @@ export function parseClaudeOutput(stdout: string): ParsedHarnessOutput {
   const value = parseJson(stdout.trim(), "Claude Code output");
   if (!isObject(value)) throw new MalformedOutputError("Claude Code result must be an object");
   const candidate: unknown = value.output ?? value.result;
-  return sessionResult(parseCandidate(candidate, "Claude Code result"), value.session_id ?? value.sessionId);
+  const sessionId = value.session_id ?? value.sessionId;
+  const failure = claudeFailureDetail(value);
+  if (failure !== undefined) {
+    return sessionResult(failedTurnOutput(candidate, "Claude Code result", failure), sessionId);
+  }
+  return sessionResult(parseCandidate(candidate, "Claude Code result"), sessionId);
 }
 
 export function parseCodexOutput(stdout: string): ParsedHarnessOutput {
   const events = jsonLines(stdout, "Codex");
   let sessionId: unknown;
   let candidate: unknown;
-  for (const event of events) {
+  let failure: string | undefined;
+  let failureIndex = -1;
+  let candidateIndex = -1;
+  for (const [index, event] of events.entries()) {
     if (event.type === "thread.started") sessionId = event.thread_id;
     if (event.session_id !== undefined) sessionId = event.session_id;
-    if (event.type === "result") candidate = event.output ?? event.result;
-    if (event.type === "item.completed" && isObject(event.item)) {
-      if (event.item.type === "agent_message") candidate = event.item.text;
+    if (event.type === "result") {
+      candidate = event.output ?? event.result;
+      candidateIndex = index;
     }
+    if (event.type === "item.completed" && isObject(event.item)) {
+      if (event.item.type === "agent_message") {
+        candidate = event.item.text;
+        candidateIndex = index;
+      }
+    }
+    const eventFailure = codexEventFailureDetail(event);
+    if (eventFailure !== undefined) {
+      failure = eventFailure;
+      failureIndex = index;
+    }
+  }
+  // El fracaso gana sólo si es lo ÚLTIMO que dijo el turno: un `error` seguido de un
+  // `agent_message` es un reintento interno que terminó bien, y ese sí completó.
+  if (failure !== undefined && failureIndex > candidateIndex) {
+    return sessionResult(failedTurnOutput(candidate, "Codex agent message", failure), sessionId);
   }
   return sessionResult(parseCandidate(candidate, "Codex agent message"), sessionId);
 }
@@ -510,6 +818,17 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
     if (seen.has(current)) throw new MalformedOutputError("OpenClaw result contained a wrapper cycle");
     seen.add(current);
     sessionId ??= current.session_id ?? current.sessionId;
+
+    // ANTES de mirar payloads o texto visible: una corrida que el runtime nativo declaró fallida
+    // igual deja texto atrás, y ese texto se estaba tomando como resultado exitoso del turno.
+    const failure = nativeFailureDetail(current);
+    if (failure !== undefined) {
+      const spoken = Array.isArray(current.payloads)
+        ? current.payloads.filter(isObject).map((payload) => payload.text)
+          .filter((text): text is string => typeof text === "string" && text.trim().length > 0).at(-1)
+        : undefined;
+      return sessionResult(failedTurnOutput(spoken, "OpenClaw result", failure), sessionId);
+    }
 
     if (Array.isArray(current.payloads)) {
       const texts = current.payloads

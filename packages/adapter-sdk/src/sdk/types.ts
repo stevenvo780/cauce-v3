@@ -243,7 +243,12 @@ export interface CommandRunner {
 }
 
 export interface SafeRunnerLog {
-  readonly event: 'spawn' | 'exit' | 'terminate';
+  /**
+   * `orphaned_pipes`: el hijo salió pero un descendiente heredó stdout/stderr y las dejó
+   * abiertas, así que la entrega se cerró cosechando el grupo de procesos. Es la huella
+   * operativa de una entrega que antes quedaba colgada para siempre y en silencio.
+   */
+  readonly event: 'spawn' | 'exit' | 'terminate' | 'orphaned_pipes';
   readonly harness: HarnessId;
   readonly exitCode?: number | null;
   readonly timedOut?: boolean;
