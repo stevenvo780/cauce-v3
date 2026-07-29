@@ -1151,8 +1151,20 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           if (incoming.epoch > current.epoch) {
             throw new StoreError('fenced', 'ACK identity does not match socket lease');
           }
-          const sessionClaim = current.claims.get(deliveryId)
-            ?? current.recentClaims.get(deliveryId);
+          // El orden importa. `claims` tiene la garra VIVA; `recentClaims`, la anterior. Cuando
+          // el reaper reintentó una entrega y el mismo adaptador se la volvió a llevar, la viva
+          // es la del intento nuevo — y el ACK terminal del intento viejo, que llega tarde con
+          // la respuesta adentro, no coincide con ella. `assertAckClaim` lo convertía en un
+          // 'fenced' con cierre de socket 4401: el resultado no llegaba siquiera a la base, que
+          // es quien sabe decidir si sirve (ver `lateTerminalSalvage`). Si el ACK correlaciona
+          // EXACTO con una garra que este mismo socket recuerda haber entregado, se usa ésa y se
+          // deja que decida el store. Cuando no correlaciona con ninguna, no cambia nada.
+          const liveClaim = current.claims.get(deliveryId);
+          const recentClaim = current.recentClaims.get(deliveryId);
+          const matchesRecent = recentClaim !== undefined
+            && recentClaim.attempt === incoming.attempt
+            && recentClaim.claim_token === incoming.claim_token;
+          const sessionClaim = matchesRecent ? recentClaim : (liveClaim ?? recentClaim);
           // Una garra rehidratada cuenta para el cupo pero NO fencea: la reconstruimos de la
           // base sin saber si el adaptador la conoce con ese mismo intento, así que exigirle
           // que coincida convertiría un ACK viejo en un cierre de socket 4401 donde antes había

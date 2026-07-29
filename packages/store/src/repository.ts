@@ -341,6 +341,33 @@ interface DeliveryRow {
   ack_deadline_at: Date | null;
 }
 
+/**
+ * Columnas de `deliveries` que agrega la migración 016. Van aparte de `DeliveryRow` a propósito:
+ * sólo `ackDelivery` las proyecta, y el reaper —que comparte el tipo `DeliveryRow`— no las trae.
+ * Declararlas obligatorias en `DeliveryRow` haría que el tipo mintiera en la otra consulta.
+ */
+interface LateResultRow {
+  late_result_at: Date | null;
+}
+
+/** Cómo se probó que la garra que firma un ACK tardío existió de verdad sobre esta entrega. */
+type LateClaimProvenance = 'current' | 'applied' | 'observed' | 'none';
+
+/** Qué pasó con el aviso al origen cuando se rescató un resultado tardío. */
+type LateRelayDisposition = 'skipped' | 'inserted' | 'rewritten' | 'corrected';
+
+/**
+ * Aviso que precede a la respuesta cuando el humano YA recibió el "murió". Va en castellano
+ * porque es la única cadena generada por el bus que lee una persona (el resto del texto del
+ * relay es la respuesta del agente, en el idioma que haya escrito), y porque quien opera esta
+ * flota lee castellano. El aviso al agente padre, en cambio, va en inglés como el resto de los
+ * textos máquina-a-máquina de este archivo.
+ */
+const LATE_RESULT_HUMAN_NOTICE =
+  '[respuesta tardía] Esta tarea se había dado por caída y ya te avisamos del fallo. '
+  + 'El agente sí la terminó: su ACK final llegó después del plazo y el bus lo aceptó. '
+  + 'El aviso de fallo anterior queda sin efecto. Respuesta:';
+
 export interface AckResult {
   delivery_id: string;
   status: DeliveryState;
@@ -872,6 +899,24 @@ function relaySafeResult(
   return { ...result, output: { ...output, reply: null } };
 }
 
+/**
+ * Antepone un aviso al texto que el puente le va a mostrar a una persona.
+ *
+ * Va sobre `output.reply` y no como campo aparte porque el puente de Telegram compone el mensaje
+ * a partir del primer campo con texto visible (`telegramTextChunks` → `candidate`): un campo
+ * nuevo no lo leería nadie. Sólo se aplica a la copia del relay; `deliveries.result` conserva la
+ * respuesta del agente tal cual la escribió.
+ */
+function withReplyNotice(
+  result: Record<string, unknown> | undefined,
+  notice: string
+): Record<string, unknown> | undefined {
+  const output = objectRecord(result?.output);
+  const reply = visibleText(output?.reply);
+  if (!result || !output || !reply) return result;
+  return { ...result, output: { ...output, reply: `${notice}\n\n${reply}` } };
+}
+
 function sha256(value: unknown): string {
   const encoded = typeof value === 'string' ? value : JSON.stringify(canonical(value)) ?? 'undefined';
   return createHash('sha256').update(encoded).digest('hex');
@@ -905,9 +950,20 @@ function agentNotifyRequestId(deliveryId: string, attempt: number, notifyIndex: 
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function agentResponseRequestId(deliveryId: string, attempt: number): string {
+/**
+ * `kind` separa el espacio de nombres del aviso tardío del normal. Hace falta porque
+ * `messages_request_actor_idx` es UNIQUE(tenant_id, actor_alias, request_id) y la clave de
+ * idempotencia del outbox del aviso al padre también se deriva de acá: un rescate del MISMO
+ * intento que el reaper ya avisó chocaría con la fila vieja y abortaría la transacción entera
+ * del ACK. El valor por defecto reproduce el hash anterior byte por byte.
+ */
+function agentResponseRequestId(
+  deliveryId: string,
+  attempt: number,
+  kind: 'agent-response' | 'agent-response-late' = 'agent-response'
+): string {
   const bytes = Buffer.from(
-    createHash('sha256').update(`agent-response:${deliveryId}:${attempt}`).digest('hex').slice(0, 32),
+    createHash('sha256').update(`${kind}:${deliveryId}:${attempt}`).digest('hex').slice(0, 32),
     'hex'
   );
   bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
@@ -983,6 +1039,24 @@ export function failureSignature(
     .trim()
     .slice(0, 200);
   return `${outcome}:${normalised || 'unspecified'}`;
+}
+
+/**
+ * Header for a reply that arrives after the bus already told the parent this branch was gone.
+ * Machine-to-machine text, so English like every other generated string in this file; the
+ * structured twin lives in `correlation.late_result` for a coordinator that parses instead of
+ * reading. It is prepended, never substituted: the reply itself must survive verbatim.
+ */
+function lateResultText(
+  base: string,
+  alias: string,
+  late: { previousStatus: DeliveryState } | undefined
+): string {
+  if (late === undefined) return base;
+  return `[late result] ${alias} finished this branch after the bus had already closed it as `
+    + `'${late.previousStatus}'; the terminal ACK arrived past the claim deadline and was `
+    + 'accepted. This supersedes the earlier notice for the same branch.\n\n'
+    + base;
 }
 
 /**
@@ -1987,6 +2061,22 @@ export class CauceRepository {
    * `audit_events`) por cada latido, que es el 90% del volumen que este parche viene a cortar.
    * Con el `LEAST` de abajo el plazo se congela en el techo y el reaper lo recoge en el tick
    * siguiente, con su motivo propio.
+   *
+   * ------------------------------------------------------------------------------------------
+   * DOS JUICIOS, NO UNO. Hasta este parche un único predicado (`exactClaim`) decidía a la vez
+   * si el ACK podía MODIFICAR la fila y si el RESULTADO valía algo. Son preguntas distintas: el
+   * plazo es la caducidad de la EXCLUSIVIDAD, no la del RESULTADO. Un 'done' que llegaba un
+   * milisegundo tarde se guardaba en `delivery_acks` con `applied=false` y nadie lo leía jamás.
+   * Medido sobre producción el 2026-07-29, ventana de 7 días: 495 ACKs 'done' descartados sobre
+   * entregas que terminaron `dead`, **387 de ellos con un `reply` NO VACÍO** — respuestas reales
+   * que el humano nunca vio (argos 250, kratos 23, iza 21, zeus 20, atlas 15). Sólo 2 de los 387
+   * conservaban `claim_token`+`attempt`: en 487 casos el reaper ya había rotado la garra y el
+   * bus ya había mandado a ejecutar lo mismo otra vez.
+   *
+   * La asimetría era grotesca contra el defecto que ya se había arreglado del otro lado: las
+   * renovaciones se aceptaban indefinidamente y el resultado no se aceptaba un milisegundo
+   * tarde. `lateTerminalSalvage` separa los dos juicios; su contrato está documentado ahí.
+   * ------------------------------------------------------------------------------------------
    */
   async ackDelivery(
     deliveryId: string,
@@ -2004,9 +2094,10 @@ export class CauceRepository {
     }
     return withTransaction(this.pool, async (client) => {
       await this.assertRuntimeRoute(client, tenantId, alias);
-      const selected = await client.query<DeliveryRow & { claim_live: boolean }>(
+      const selected = await client.query<DeliveryRow & LateResultRow & { claim_live: boolean }>(
         `SELECT d.id,d.message_id,d.recipient_tenant,d.recipient_alias,d.status,d.attempt,d.max_attempts,
                 d.last_ack_rank,d.consumer_instance_id,d.consumer_epoch,d.claim_token,d.ack_deadline_at,
+                d.late_result_at,
                 (d.ack_deadline_at>now()) AS claim_live,
                  m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
                  m.auth_session_id,m.auth_channel
@@ -2041,7 +2132,7 @@ export class CauceRepository {
           && Number(repeatedAck.epoch) === ack.epoch
           && repeatedAck.claim_token === ack.claim_token
           && repeatedAck.attempt === ack.attempt;
-        if (!exactEvent || !repeatedAck.applied) {
+        if (!exactEvent) {
           return {
             delivery_id: deliveryId,
             status: row.status,
@@ -2053,7 +2144,7 @@ export class CauceRepository {
         // started event is handled below only while the exact claim and
         // connection lease remain live, because the client may use that
         // receipt as fresh proof of ownership.
-        if (ack.status !== 'started') {
+        if (repeatedAck.applied && ack.status !== 'started') {
           return {
             delivery_id: deliveryId,
             status: row.status,
@@ -2061,6 +2152,12 @@ export class CauceRepository {
             receipt: 'duplicate',
           };
         }
+        // Un evento EXACTO que ya fue rechazado no se corta acá. Antes sí, y eso convertía el
+        // primer rechazo en definitivo: el mismo ACK, con el mismo resultado adentro, reenviado
+        // por un adaptador que no se rindió, volvía a caer en `ownership_lost` sin que nadie
+        // mirara el contenido. Sigue hacia abajo y lo juzga el mismo camino que a un ACK nuevo;
+        // si tampoco es rescatable, el `return` de `!exactClaim` devuelve el mismo receipt de
+        // siempre. `insertAck` sube `applied` de false a true si esta vuelta sí se aplica.
       }
       if (row.claim_token === ack.claim_token && row.attempt === ack.attempt &&
           (row.consumer_instance_id !== ack.instance_id || Number(row.consumer_epoch) !== ack.epoch)) {
@@ -2071,6 +2168,11 @@ export class CauceRepository {
         && row.claim_live
         && ['leased', 'accepted', 'started'].includes(row.status);
       if (!exactClaim) {
+        // La garra se perdió. El RESULTADO puede seguir valiendo: ver `lateTerminalSalvage`.
+        const salvaged = await this.lateTerminalSalvage(
+          client, tenantId, alias, row, ack, persistedResult, outputs, notifications
+        );
+        if (salvaged) return salvaged;
         if (!repeatedAck) await this.insertAck(client, row, ack, false, persistedResult);
         return {
           delivery_id: deliveryId,
@@ -2203,7 +2305,10 @@ export class CauceRepository {
            WHERE id=$1`,
           [deliveryId, ackDeadlineMs, executionStarted, leaseCapMs]
         );
-        if (!repeatedAck) await this.insertAck(client, row, ack, true, persistedResult, true);
+        // Sin condición: si el evento ya estaba guardado como rechazado y esta vuelta SÍ se
+        // aplica, la fila tiene que decirlo. El upsert de `insertAck` sólo sube de false a true,
+        // así que para un duplicado ya aplicado esto es un no-op exacto.
+        await this.insertAck(client, row, ack, true, persistedResult, true);
         await client.query(
           `INSERT INTO audit_events(
              tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
@@ -2389,6 +2494,281 @@ export class CauceRepository {
         receipt: 'applied',
       };
     });
+  }
+
+  /**
+   * ============================================================================================
+   * EL ACK TERMINAL QUE LLEGA TARDE, CON LA RESPUESTA ADENTRO.
+   * ============================================================================================
+   *
+   * El plazo (`ack_deadline_at`) es la caducidad de la EXCLUSIVIDAD: dice hasta cuándo esta
+   * garra es la única que puede tocar la fila. NO es la caducidad del RESULTADO: el trabajo ya
+   * se hizo, ya se pagó la cuota del modelo y la respuesta existe. Este método es el segundo
+   * juicio, el del resultado, y corre sólo cuando el primero (`exactClaim`) ya dijo que no.
+   *
+   * Devuelve `undefined` cuando no corresponde rescatar: el llamador sigue con el
+   * `ownership_lost` de siempre, byte por byte igual que antes de este parche.
+   *
+   * CUÁNDO ES SEGURO. Seis condiciones; las tres primeras acotan QUÉ se acepta y las tres
+   * últimas QUIÉN y SOBRE QUÉ.
+   *
+   *  S1. El ACK es terminal ('done'/'failed') y trae un `reply` con texto visible. Sin texto no
+   *      hay nada que rescatar: el aviso de fallo que el sistema ya mandó dice lo mismo y mejor.
+   *  S2. No pide delegar (`output.messages` vacío). Un ACK tardío NO abre ramas nuevas: la
+   *      ventana de delegación ya pasó, la corrida nueva podría estar delegando lo mismo en este
+   *      instante, y materializar acá es exactamente el "sobre-delegar / duplicar instancias"
+   *      que este trabajo viene a matar. Lo mismo con `notify[]`: no se emite. Se cuentan los
+   *      dos en la auditoría para poder medir cuánto se está descartando.
+   *  S3. La garra que firma existió DE VERDAD sobre esta entrega — ver `lateClaimProvenance`.
+   *  S4. La instancia que habla está viva y registrada AHORA (`connection_leases`). Es la misma
+   *      condición que exige el camino normal; un ACK tardío no relaja la identidad, sólo el
+   *      plazo.
+   *  S5. **Ninguna OTRA corrida asentó ya un resultado para esta entrega.** Ésta es la
+   *      condición central y se evalúa bajo el `FOR UPDATE OF d` que ya tomó `ackDelivery`:
+   *        - `status IN ('done','failed')` ⇒ hay un ACK terminal APLICADO que ya materializó su
+   *          respuesta al padre y su relay al origen. No se toca. (caso (c) de abajo)
+   *        - `late_result_at IS NOT NULL` ⇒ ya se rescató un tardío. Un rescate por entrega.
+   *  S6. Un 'failed' tardío además exige que la entrega YA esté `dead`. Nunca mata una corrida
+   *      viva ni un reintento en curso para escribirle encima un fracaso viejo: un fracaso
+   *      tardío sólo puede MEJORAR el diagnóstico de algo que ya estaba muerto.
+   *
+   * LOS TRES CASOS QUE HAY QUE MIRAR, Y QUÉ HACE ESTE CÓDIGO EN CADA UNO:
+   *
+   *  (a) La entrega sigue NO TERMINAL y con `attempt` mayor: el reaper la reintentó y hay otra
+   *      corrida en vuelo. S5 la deja pasar (nadie asentó nada todavía) y la entrega queda
+   *      `done` con el resultado del que llegó. La corrida nueva pierde la garra en su próxima
+   *      renovación y el SDK aborta el harness (`CLAIM_OWNERSHIP_LOST`) — que es precisamente el
+   *      objetivo: deja de quemar cuota repitiendo un trabajo que ya está hecho. No corrompe
+   *      nada porque el resultado que se guarda lo produjo una corrida REAL de ESTA entrega, y
+   *      porque el `FOR UPDATE` hace que "primero en comprometer, gana" sea una regla y no una
+   *      carrera. Si la corrida nueva termina igual y ACKea, cae en (c). Lo que se pierde es su
+   *      trabajo — que ya estaba duplicado.
+   *  (b) La entrega ya es `dead` por timeout y llega el 'done'. **Éste es el caso que recupera
+   *      las 387.** S5 la deja pasar: `dead` no es un resultado, es la ausencia de uno. Se
+   *      revive a `done`, se deshacen los efectos de la muerte (ver `undoDeathNotice`) y la
+   *      respuesta llega. No corrompe nada porque nadie contestó por ella: el único aviso que
+   *      salió fue "esto quedó a medias", y se lo corrige explícitamente.
+   *  (c) La entrega ya es `done` (o `failed`) y llega otro 'done' de una corrida vieja. S5 lo
+   *      bloquea. Se devuelve `ownership_lost` y el ACK queda en `delivery_acks` con
+   *      `applied=false`, igual que hoy. Pisar un resultado ya entregado al padre y al humano
+   *      sería la única forma real de corromper: dos respuestas distintas para una pregunta, y
+   *      la segunda sin ningún criterio que la haga mejor que la primera.
+   *
+   * LA CARRERA (dos corridas devolviendo 'done' a la vez) la resuelve el `SELECT ... FOR UPDATE
+   * OF d` que `ackDelivery` ya toma sobre la fila: la segunda transacción se bloquea, y al
+   * despertar RE-LEE la fila (READ COMMITTED) y ve el `status='done'` de la primera, así que cae
+   * en (c). No hay ventana entre la lectura de S5 y la escritura porque las dos ocurren dentro
+   * del mismo lock de fila.
+   */
+  private async lateTerminalSalvage(
+    client: DatabaseClient,
+    tenantId: Tenant,
+    alias: string,
+    row: DeliveryRow & LateResultRow,
+    ack: Ack,
+    persistedResult: Record<string, unknown> | undefined,
+    outputs: AgentOutputEntry[],
+    notifications: AgentNotifyEntry[]
+  ): Promise<AckResult | undefined> {
+    // S1
+    if (ack.status !== 'done' && ack.status !== 'failed') return undefined;
+    const reply = textualReply(persistedResult);
+    if (!reply) return undefined;
+    // S2
+    if (outputs.length > 0) return undefined;
+    // S5
+    if (row.status === 'done' || row.status === 'failed') return undefined;
+    if (row.late_result_at !== null) return undefined;
+    // S6
+    if (ack.status === 'failed' && row.status !== 'dead') return undefined;
+    // Un ACK que dice pertenecer a un intento que la entrega todavía no alcanzó no es tardío:
+    // es imposible. Se rechaza sin mirar nada más.
+    if (ack.attempt > row.attempt) return undefined;
+    // S4
+    const lease = await client.query(
+      `SELECT 1 FROM connection_leases WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3
+       AND epoch=$4 AND lease_until>now()`, [tenantId, alias, ack.instance_id, ack.epoch]
+    );
+    if (lease.rowCount !== 1) return undefined;
+    // S3
+    const provenance = await this.lateClaimProvenance(client, row, ack);
+    if (provenance === 'none') return undefined;
+
+    const salvagedStatus: DeliveryState = ack.status === 'done' ? 'done' : 'dead';
+    const terminalError = postgresTextSafe(ack.error);
+    const terminalErrorCode = postgresTextSafe(ack.error_code);
+    const previousStatus = row.status;
+
+    // `last_ack_rank=3` deja la fila en rango terminal, así que un ACK de rango menor que
+    // llegue después se lleva 'superseded' y no vuelve a entrar acá. Los plazos se anulan
+    // porque ya no hay garra viva que puedan describir; `claim_token` y el consumidor se
+    // CONSERVAN, que es la única traza de quién la tuvo al final.
+    await client.query(
+      `UPDATE deliveries
+       SET status=$2,last_ack_rank=3,last_error=$3,result=$4::jsonb,
+           terminal_at=COALESCE(terminal_at,now()),
+           late_result_at=now(),late_result_attempt=$5,
+           claim_expires_at=NULL,ack_deadline_at=NULL,updated_at=now()
+       WHERE id=$1`,
+      [row.id, salvagedStatus, terminalError ?? null,
+        persistedResult ? JSON.stringify(persistedResult) : null, ack.attempt]
+    );
+
+    const relayDisposition = await this.undoDeathNotice(
+      client, row, ack, salvagedStatus, previousStatus, persistedResult,
+      terminalError, terminalErrorCode
+    );
+
+    await this.insertAck(client, row, ack, true, persistedResult);
+    await client.query(
+      `INSERT INTO audit_events(
+         tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+       ) VALUES($1,$2,'delivery.late_result','allow',$3,$4,$5,$6,$7::jsonb)`,
+      [tenantId, alias, row.request_id, row.message_id, row.id, row.trace_id,
+        JSON.stringify({
+          ack: ack.status,
+          resulting_status: salvagedStatus,
+          previous_status: previousStatus,
+          epoch: ack.epoch,
+          attempt: ack.attempt,
+          delivery_attempt: row.attempt,
+          claim_provenance: provenance,
+          reply_characters: reply.length,
+          // Lo que el rescate NO hizo. Sin estos dos números no hay forma de saber si la
+          // restricción de S2 está tirando trabajo real a la basura.
+          skipped_delegations: outputs.length,
+          skipped_notifications: notifications.length,
+          origin_relay: relayDisposition,
+          ...(terminalErrorCode === undefined ? {} : { error_code: terminalErrorCode })
+        })]
+    );
+    return {
+      delivery_id: row.id,
+      status: salvagedStatus,
+      applied: true,
+      // Deliberadamente el mismo receipt que un ACK sano. El contrato de `ack_result` es
+      // `.strict()` en el esquema del protocolo: un valor nuevo lo rechazaría el SDK de los 14
+      // adaptadores que hoy están en producción con el bundle viejo. Toda la información de
+      // "esto fue un rescate" vive en `audit_events`, en `delivery_acks` y en las dos columnas
+      // nuevas de `deliveries`, que es donde la mira un operador, no un adaptador.
+      receipt: 'applied',
+    };
+  }
+
+  /**
+   * ¿Esta garra existió alguna vez sobre esta entrega?
+   *
+   * El `claim_token` es un uuid que genera PostgreSQL al arrendar y que nunca sale del dueño de
+   * la garra, así que presentarlo ES la prueba — pero sólo si queda registro de que se emitió,
+   * y la fila de `deliveries` guarda una sola garra: la última. En 487 de los 495 casos medidos
+   * el reaper ya la había rotado.
+   *
+   * El registro que sí sobrevive es `delivery_acks`: todo ACK de este intento, aplicado o
+   * rechazado, dejó ahí su `claim_token`. Se distinguen dos calidades de prueba y las dos se
+   * aceptan, pero la auditoría anota cuál fue:
+   *   - 'applied': existe un ACK de esa misma garra que el store ACEPTÓ en su momento. Prueba
+   *     fuerte: el store mismo verificó la propiedad cuando el plazo estaba vivo. 188/495.
+   *   - 'observed': sólo hay ACKs rechazados de esa misma garra. Es prueba débil —la escribió el
+   *     propio cliente— pero no está sola: el llamador ya está autenticado como el alias
+   *     destinatario (mTLS en el gateway) y S4 exige lease vivo de esa instancia. Lo que un
+   *     'observed' habilita, entonces, es que un alias conteste una entrega SUYA que nadie
+   *     contestó. Los 307 restantes son este caso, y son 307 corridas de harness pagadas cuyo
+   *     ACK fue rechazado desde el primer 'accepted': el alias trabajó de verdad.
+   *
+   * Endurecerlo a 'applied' solamente costaría el 62% de la recuperación. Queda como palanca
+   * obvia si algún día la prioridad se invierte: basta con exigir `=== 'applied'`.
+   */
+  private async lateClaimProvenance(
+    client: DatabaseClient,
+    row: DeliveryRow,
+    ack: Ack
+  ): Promise<LateClaimProvenance> {
+    if (row.claim_token === ack.claim_token
+      && row.attempt === ack.attempt
+      && row.consumer_instance_id === ack.instance_id
+      && Number(row.consumer_epoch) === ack.epoch) {
+      return 'current';
+    }
+    const proof = await client.query<{ applied: boolean | null }>(
+      `SELECT bool_or(applied) AS applied FROM delivery_acks
+       WHERE delivery_id=$1 AND claim_token=$2 AND attempt=$3
+         AND instance_id=$4 AND epoch=$5 AND event_id IS DISTINCT FROM $6`,
+      [row.id, ack.claim_token, ack.attempt, ack.instance_id, ack.epoch, ack.event_id]
+    );
+    const applied = proof.rows[0]?.applied ?? null;
+    if (applied === null) return 'none';
+    return applied ? 'applied' : 'observed';
+  }
+
+  /**
+   * Deshacer los efectos de la muerte, sin mandarle a nadie dos avisos contradictorios.
+   *
+   * Al morir por timeout el reaper hace tres cosas: marca `dead`, abre una fila en
+   * `dead_letters` y avisa —al padre por `materializeAgentResponse`, o al origen por
+   * `insertOriginRelay`. Aceptar el resultado tardío sin tocar esas tres deja al sistema
+   * mintiendo en tres lugares distintos, y el peor es el tercero.
+   *
+   *  1. `dead_letters`. Un 'done' rescatado la RESUELVE (`resolved_at=now()`). No es cosmético:
+   *     `replayDelivery` es el botón de "correr esto de nuevo" y una entrega ya contestada
+   *     ofrecida al operador para replay es una corrida duplicada esperando a que alguien haga
+   *     clic. Un 'failed' rescatado la deja abierta —sigue siendo un fracaso— pero le reescribe
+   *     el motivo con el error real del harness en vez del "ACK timeout" genérico.
+   *  2. El padre (otro agente) recibe una `agent.response` NUEVA con `outcome='done'` y un
+   *     encabezado que dice explícitamente que reemplaza al aviso de fallo anterior. No se
+   *     reescribe el mensaje viejo: puede haber sido leído, puede haber sido plegado por el
+   *     coalescer, y su auditoría dice 'dead'. Dos mensajes con la corrección explícita es
+   *     legible para un LLM; una auditoría que se contradice con el mensaje, no.
+   *  3. El origen (una persona en Telegram) es el caso que hay que cuidar de verdad, porque
+   *     "falló" seguido de "acá está tu respuesta" sin contexto es peor que el silencio. El
+   *     aviso de muerte vive como una fila de `adapter_outbox` con clave de idempotencia
+   *     `relay:<delivery>`, y el estado de esa fila decide:
+   *       - todavía `pending`/`failed` (nadie lo mandó): se REESCRIBE en el lugar. La persona
+   *         recibe UN solo mensaje y es el correcto. Esto es lo que hace que el arreglo no
+   *         genere ruido en el caso más común, que es que la respuesta llegue segundos después
+   *         del timeout, antes de que el dispatcher drene la cola.
+   *       - ya `processing`/`sent`/`dead` (salió o está saliendo): se inserta una fila NUEVA con
+   *         otra clave (`relay-late:<delivery>:<intento>`) y la respuesta va precedida de
+   *         `LATE_RESULT_HUMAN_NOTICE`. Deliberado y redactado, no un segundo mensaje a secas.
+   *     El `FOR UPDATE` sobre la fila del relay serializa esto contra el dispatcher: o lo
+   *     agarramos antes de que lo reclame, o esperamos a que lo reclame y entonces corregimos.
+   */
+  private async undoDeathNotice(
+    client: DatabaseClient,
+    row: DeliveryRow,
+    ack: Ack,
+    salvagedStatus: DeliveryState,
+    previousStatus: DeliveryState,
+    persistedResult: Record<string, unknown> | undefined,
+    terminalError: string | undefined,
+    terminalErrorCode: string | undefined
+  ): Promise<LateRelayDisposition> {
+    if (salvagedStatus === 'done') {
+      await client.query(
+        `UPDATE dead_letters SET resolved_at=now()
+         WHERE delivery_id=$1 AND resolved_at IS NULL`,
+        [row.id]
+      );
+    } else if (terminalError !== undefined || terminalErrorCode !== undefined) {
+      await client.query(
+        `UPDATE dead_letters SET reason=$2 WHERE delivery_id=$1 AND resolved_at IS NULL`,
+        [row.id, terminalError ?? terminalErrorCode]
+      );
+    }
+    const policy = await this.loadChainPolicy(client);
+    const responseDisposition = await this.materializeAgentResponse(
+      client, row, ack.attempt, salvagedStatus, policy, persistedResult,
+      terminalError, terminalErrorCode, { previousStatus }
+    );
+    const fanin = await this.materializeAgentFanin(client, this.rootMessageId(row));
+    if (responseDisposition !== 'not_child'
+      || (row.body.type !== 'agent.fanin' && fanin.hasFanout)) {
+      return 'skipped';
+    }
+    return this.insertOriginRelay(client, row, salvagedStatus, {
+      ...(persistedResult === undefined ? {} : { result: persistedResult }),
+      ...(terminalError === undefined ? {} : { error: terminalError }),
+      ...(terminalErrorCode === undefined ? {} : { error_code: terminalErrorCode })
+    }, { previousStatus, attempt: ack.attempt });
   }
 
   /**
@@ -2912,7 +3292,8 @@ export class CauceRepository {
     policy: ChainPolicy,
     result: Record<string, unknown> | undefined,
     error?: string,
-    errorCode?: string
+    errorCode?: string,
+    late?: { previousStatus: DeliveryState }
   ): Promise<AgentResponseDisposition> {
     const responseCorrelation = row.body.type === 'agent.response'
       ? objectRecord(row.body.correlation)
@@ -3033,7 +3414,9 @@ export class CauceRepository {
       }
     }
 
-    const requestId = agentResponseRequestId(row.id, attempt);
+    const requestId = agentResponseRequestId(
+      row.id, attempt, late === undefined ? 'agent-response' : 'agent-response-late'
+    );
     // Same server-derived value as the audit below: the delegated branch this reply closes.
     // The coordinator needs it to tell two branches delegated to the same alias apart when
     // it decides which raw branch evidence its own synthesis already covers.
@@ -3079,9 +3462,21 @@ export class CauceRepository {
           total_failures: reservation.totalFailures,
           coalesced_failures: reservation.coalescedFailures
         }
+      }),
+      // El padre ya recibió un aviso de fallo por esta misma rama. Esto le dice, sin que tenga
+      // que inferirlo del texto, que lo que está leyendo lo reemplaza.
+      ...(late === undefined ? {} : {
+        late_result: {
+          superseded_outcome: late.previousStatus,
+          supersedes_request_id: agentResponseRequestId(row.id, attempt)
+        }
       })
     };
-    const baseText = agentResponseText(row.recipient_alias, outcome, result, error, errorCode);
+    const baseText = lateResultText(
+      agentResponseText(row.recipient_alias, outcome, result, error, errorCode),
+      row.recipient_alias,
+      late
+    );
     const message = await client.query<{ id: string }>(
       `INSERT INTO messages(
          request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
@@ -3143,7 +3538,11 @@ export class CauceRepository {
        ) VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)`,
       [
         relationship.source_tenant,
-        `agent-response:${row.id}:${attempt}`,
+        // Mismo espacio de nombres que `requestId`: el aviso tardío del MISMO intento tiene que
+        // poder convivir con la fila que ya escribió el aviso de muerte. Este INSERT no lleva
+        // `ON CONFLICT`, así que una colisión no sería un duplicado silencioso sino el aborto de
+        // la transacción entera del ACK.
+        `${late === undefined ? 'agent-response' : 'agent-response-late'}:${row.id}:${attempt}`,
         requestId,
         responseMessageId,
         responseDeliveryId,
@@ -3173,7 +3572,10 @@ export class CauceRepository {
           source_delivery_id: relationship.source_delivery_id,
           target_tenant: relationship.source_tenant,
           target_alias: relationship.source_alias,
-          outcome
+          outcome,
+          ...(late === undefined
+            ? {}
+            : { late_result: true, superseded_outcome: late.previousStatus })
         })
       ]
     );
@@ -3924,6 +4326,12 @@ export class CauceRepository {
    * started" o "terminé" sí lo tiene y se conserva mucho más. Se marca acá, en el único lugar
    * que sabe con certeza cuál es cuál (la rama de renovación de `ackDelivery`), en vez de
    * inferirlo después con una función de ventana sobre la tabla entera.
+   *
+   * `DO UPDATE ... WHERE` en vez de `DO NOTHING`: el mismo evento puede ser rechazado primero y
+   * aceptado después (un ACK terminal reenviado que la segunda vez cae en el rescate tardío, o
+   * uno que falló por lease y se reintenta con el lease ya renovado). La fila tiene que quedar
+   * diciendo la verdad. La cláusula sólo deja subir de `false` a `true`, nunca al revés, y
+   * cuando el ACK se rechaza otra vez el UPDATE no se ejecuta: idéntico al `DO NOTHING` viejo.
    */
   private async insertAck(
     client: DatabaseClient,
@@ -3935,7 +4343,10 @@ export class CauceRepository {
   ): Promise<void> {
     await client.query(
       `INSERT INTO delivery_acks(event_id,delivery_id,status,instance_id,epoch,claim_token,attempt,applied,renewal,payload)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$10,$9::jsonb) ON CONFLICT(event_id) DO NOTHING`,
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$10,$9::jsonb)
+       ON CONFLICT(event_id) DO UPDATE
+         SET applied=true,renewal=EXCLUDED.renewal,payload=EXCLUDED.payload
+         WHERE delivery_acks.applied=false AND EXCLUDED.applied`,
       [ack.event_id, row.id, ack.status, ack.instance_id, ack.epoch, ack.claim_token, ack.attempt, applied,
         JSON.stringify({
           retryable: ack.retryable,
@@ -4411,9 +4822,10 @@ export class CauceRepository {
       result?: Record<string, unknown> | undefined;
       error?: string | undefined;
       error_code?: string | undefined;
-    }
-  ): Promise<void> {
-    if (!row.origin) return;
+    },
+    late?: { previousStatus: DeliveryState; attempt: number }
+  ): Promise<LateRelayDisposition> {
+    if (!row.origin) return 'skipped';
     const rootMessageId = row.body.type === 'agent.fanin'
       ? this.rootMessageId(row)
       : undefined;
@@ -4427,27 +4839,81 @@ export class CauceRepository {
       : visibleError || visibleErrorCode
         || (relayOutcome === 'done' ? undefined : `Delivery ended with outcome ${relayOutcome}`);
     const relayErrorCode = missingFinalReply ? 'MISSING_FINAL_REPLY' : visibleErrorCode || undefined;
+    const relayTenant = originRelayTenant(row);
+    const idempotencyKey = rootMessageId ? `relay-root:${rootMessageId}` : `relay:${row.id}`;
+    const correlation = {
+      request_id: row.request_id,
+      message_id: row.message_id,
+      delivery_id: row.id,
+      trace_id: row.trace_id,
+      ...(rootMessageId ? { root_message_id: rootMessageId } : {})
+    };
+    const payload = (result: Record<string, unknown> | undefined): string => JSON.stringify({
+      outcome: relayOutcome,
+      ...(result === undefined ? {} : { result }),
+      ...(relayError === undefined ? {} : { error: relayError }),
+      ...(relayErrorCode === undefined ? {} : { error_code: relayErrorCode }),
+      ...(late === undefined ? {} : {
+        late_result: true,
+        superseded_outcome: late.previousStatus,
+        late_result_attempt: late.attempt
+      }),
+      correlation
+    });
+    if (late === undefined) {
+      await client.query(
+        `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
+         VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
+         ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
+        [relayTenant, row.origin.adapter, idempotencyKey,
+          row.request_id, row.message_id, row.id,
+          row.trace_id, JSON.stringify(row.origin), payload(relayResult)]
+      );
+      return 'inserted';
+    }
+    // El aviso de muerte que ya escribió el reaper (o el ACK terminal anterior) se toma bajo
+    // lock: o lo alcanzamos antes de que el dispatcher lo reclame, o esperamos a que lo
+    // reclame y entonces sabemos con certeza que la persona lo va a ver.
+    const prior = await client.query<{ id: string; status: string }>(
+      `SELECT id,status FROM adapter_outbox
+       WHERE tenant_id=$1 AND adapter=$2 AND idempotency_key=$3 FOR UPDATE`,
+      [relayTenant, row.origin.adapter, idempotencyKey]
+    );
+    const priorStatus = prior.rows[0]?.status;
+    if (priorStatus === 'pending' || priorStatus === 'failed') {
+      // Nadie lo mandó todavía: se reescribe en el lugar y la persona recibe UN mensaje, el
+      // correcto. Sin encabezado de corrección, porque no hay nada que corregir para ella.
+      await client.query(
+        `UPDATE adapter_outbox
+         SET payload=$2::jsonb,status='pending',available_at=now(),attempts=0,last_error=NULL,
+             claimed_by=NULL,claim_token=NULL,claim_expires_at=NULL,claimed_at=NULL,dead_at=NULL
+         WHERE id=$1`,
+        [prior.rows[0]!.id, payload(relayResult)]
+      );
+      return 'rewritten';
+    }
+    if (priorStatus === undefined) {
+      await client.query(
+        `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
+         VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
+         ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
+        [relayTenant, row.origin.adapter, idempotencyKey,
+          row.request_id, row.message_id, row.id,
+          row.trace_id, JSON.stringify(row.origin), payload(relayResult)]
+      );
+      return 'inserted';
+    }
+    // Ya salió o está saliendo. Va un mensaje nuevo, con la respuesta precedida del aviso.
     await client.query(
       `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
        VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
        ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
-      [originRelayTenant(row), row.origin.adapter,
-        rootMessageId ? `relay-root:${rootMessageId}` : `relay:${row.id}`,
+      [relayTenant, row.origin.adapter, `relay-late:${row.id}:${late.attempt}`,
         row.request_id, row.message_id, row.id,
-        row.trace_id, JSON.stringify(row.origin), JSON.stringify({
-          outcome: relayOutcome,
-          ...(relayResult === undefined ? {} : { result: relayResult }),
-          ...(relayError === undefined ? {} : { error: relayError }),
-          ...(relayErrorCode === undefined ? {} : { error_code: relayErrorCode }),
-          correlation: {
-            request_id: row.request_id,
-            message_id: row.message_id,
-            delivery_id: row.id,
-            trace_id: row.trace_id,
-            ...(rootMessageId ? { root_message_id: rootMessageId } : {})
-          }
-        })]
+        row.trace_id, JSON.stringify(row.origin),
+        payload(withReplyNotice(relayResult, LATE_RESULT_HUMAN_NOTICE))]
     );
+    return 'corrected';
   }
 
   /**
