@@ -38,6 +38,8 @@ export interface AdapterCapabilities {
   readonly stable_alias_sessions?: true;
   readonly api_cancellation?: 'abort_signal';
   readonly renewable_delivery_claims_v1?: true;
+  /** Acepta `self_role` en el sobre y lo emite como preámbulo de identidad. Ver migración 020. */
+  readonly agent_identity_v1?: true;
 }
 
 export type RelayOrigin = Origin;

@@ -679,7 +679,14 @@ export const DeliveryEnvelopeSchema = z.object({
   body: MessageBodySchema,
   origin: OriginSchema.optional(),
   authenticated_context: AuthenticatedContextSchema.optional(),
-  routing_targets: z.array(RoutingTargetSchema).max(100).optional()
+  routing_targets: z.array(RoutingTargetSchema).max(100).optional(),
+  // Rol declarado del destinatario (agents.role_brief). El adaptador lo antepone al contrato como
+  // preámbulo de identidad. Opcional y detrás de la capability `agent_identity_v1` por el mismo
+  // motivo que routing_targets: este esquema es .strict(), así que un adaptador de una imagen
+  // anterior RECHAZARÍA el sobre entero si el store le mandara un campo que no conoce, y se
+  // quedaría sin poder consumir ninguna entrega. El tope de 1200 espeja el CHECK de la migración
+  // 020.
+  self_role: z.string().min(1).max(1200).optional()
 }).strict();
 
 export const WsInboundSchema = z.discriminatedUnion('type', [HelloSchema, HeartbeatSchema, WsAckSchema]);

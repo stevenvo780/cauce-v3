@@ -406,6 +406,7 @@ export class AdapterEngine {
           || messageType === "agent.fanin",
         message_type: messageType,
         routing_targets: routingTargetsFromDelivery(delivery),
+        ...selfRoleFromDelivery(delivery),
       };
       const processedReplies = messageType === "agent.fanin"
         ? this.store.processedRepliesForFanin(delivery)
@@ -1067,6 +1068,26 @@ function executionBudgetFor(
     claimRenewalMs: Math.max(100, Math.min(60_000, Math.floor(claimBudgetMs / 3))),
     claimWatchdogMs: claimBudgetMs,
   };
+}
+
+/**
+ * El rol declarado del alias, tal como lo mandó el store (`agents.role_brief`, migración 020).
+ *
+ * Devuelve un objeto vacío —y no `{ self_role: undefined }`— cuando el sobre no lo trae, para que
+ * el contexto no gane una clave con valor indefinido que después aparezca como `"self_role":null`
+ * en el JSON del TRUSTED DELIVERY CONTEXT. Un rol nulo explícito le diría al agente que su rol es
+ * "ninguno", que no es lo mismo que "este store todavía no lo manda".
+ *
+ * El recorte a 1200 espeja el CHECK de la migración y el tope del esquema: el sobre ya viene
+ * validado, pero el SDK no asume que el único emisor sea un store de esta versión.
+ */
+function selfRoleFromDelivery(delivery: Delivery): { self_role?: string } {
+  const forwardCompatible = delivery as Delivery & { readonly self_role?: unknown };
+  const candidate = forwardCompatible.self_role;
+  if (typeof candidate !== "string") return {};
+  const trimmed = candidate.trim();
+  if (trimmed.length === 0) return {};
+  return { self_role: trimmed.slice(0, 1200) };
 }
 
 function routingTargetsFromDelivery(delivery: Delivery): readonly {

@@ -1797,6 +1797,29 @@ export class CauceRepository {
     return result.rows.map((row) => ({ ...row, epoch: Number(row.epoch) }));
   }
 
+  /**
+   * El rol declarado del alias que reclama, para el preámbulo de identidad del adaptador.
+   *
+   * Devuelve `undefined` —y no una cadena vacía ni un texto por defecto— cuando la fila no existe o
+   * `role_brief` es NULL. Es deliberado: el adaptador omite la línea `Tu rol:` en vez de inventar
+   * una. Un rol equivocado es peor que ninguno; el caso testigo es el `SOUL.md` de fábrica que le
+   * decía a `iza` que era "Hermes Agent, created by Nous Research".
+   */
+  private async selfRoleBrief(
+    client: DatabaseClient,
+    tenantId: Tenant,
+    alias: string
+  ): Promise<string | undefined> {
+    const result = await client.query<{ role_brief: string | null }>(
+      `SELECT role_brief FROM agents WHERE tenant_id=$1 AND alias=$2`,
+      [tenantId, alias]
+    );
+    const brief = result.rows[0]?.role_brief;
+    if (typeof brief !== 'string') return undefined;
+    const trimmed = brief.trim();
+    return trimmed.length === 0 ? undefined : trimmed;
+  }
+
   private async routingTargets(
     client: DatabaseClient,
     sourceTenant: Tenant,
@@ -1880,6 +1903,11 @@ export class CauceRepository {
       const capabilities = lease.rows[0]?.capabilities;
       const includeRoutingTargets = Array.isArray(capabilities)
         && capabilities.includes('routing_targets_v1');
+      // Mismo criterio de compatibilidad que routing_targets: DeliveryEnvelopeSchema es .strict(),
+      // así que un adaptador de una imagen anterior rechazaría el sobre entero al ver un campo que
+      // no conoce y se quedaría sin consumir NINGUNA entrega. Sólo se manda a quien lo declaró.
+      const includeSelfRole = Array.isArray(capabilities)
+        && capabilities.includes('agent_identity_v1');
 
       await client.query(
         `INSERT INTO delivery_lane_fairness(tenant_id,alias) VALUES($1,$2)
@@ -2047,6 +2075,12 @@ export class CauceRepository {
       const routingTargets = includeRoutingTargets
         ? await this.routingTargets(client, tenantId, alias)
         : undefined;
+      // Una sola lectura por reclamo, no una por entrega: el rol es del alias que reclama, no del
+      // mensaje. Se resuelve acá, dentro de la misma transacción, para que el sobre nunca lleve un
+      // rol de otro alias.
+      const selfRole = includeSelfRole && claimedRows.length > 0
+        ? await this.selfRoleBrief(client, tenantId, alias)
+        : undefined;
 
       return claimedRows.map((row) => ({
         type: 'delivery',
@@ -2066,6 +2100,7 @@ export class CauceRepository {
         recipient_alias: row.recipient_alias,
         body: row.body,
         ...(routingTargets === undefined ? {} : { routing_targets: routingTargets }),
+        ...(selfRole === undefined ? {} : { self_role: selfRole }),
         ...(row.origin ? { origin: row.origin } : {}),
         ...(row.auth_session_id && row.auth_channel ? {
           authenticated_context: {
