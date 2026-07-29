@@ -364,6 +364,13 @@ export interface DelegationRejection extends RejectionNotice {
  */
 interface LateResultRow {
   late_result_at: Date | null;
+  /**
+   * INTEGRACIÓN 2026-07-29. Lo escribe `cancelDelivery` y sólo lo lee `lateTerminalSalvage`.
+   * Ver la justificación larga en `migrations/017_late_terminal_ack.sql`: una entrega que un
+   * operador canceló ya le avisó al padre y al humano, así que rescatarla con un ACK tardío
+   * mandaría una SEGUNDA respuesta por la misma delegación y descuadraría el fan-in.
+   */
+  cancelled_at: Date | null;
 }
 
 /** Cómo se probó que la garra que firma un ACK tardío existió de verdad sobre esta entrega. */
@@ -2170,7 +2177,7 @@ export class CauceRepository {
       const selected = await client.query<DeliveryRow & LateResultRow & { claim_live: boolean }>(
         `SELECT d.id,d.message_id,d.recipient_tenant,d.recipient_alias,d.status,d.attempt,d.max_attempts,
                 d.last_ack_rank,d.consumer_instance_id,d.consumer_epoch,d.claim_token,d.ack_deadline_at,
-                d.late_result_at,
+                d.late_result_at,d.cancelled_at,
                 (d.ack_deadline_at>now()) AS claim_live,
                  m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
                  m.auth_session_id,m.auth_channel
@@ -2648,6 +2655,12 @@ export class CauceRepository {
    *  S6. Un 'failed' tardío además exige que la entrega YA esté `dead`. Nunca mata una corrida
    *      viva ni un reintento en curso para escribirle encima un fracaso viejo: un fracaso
    *      tardío sólo puede MEJORAR el diagnóstico de algo que ya estaba muerto.
+   *  S7. (INTEGRACIÓN 2026-07-29) La entrega NO fue cancelada por un operador
+   *      (`cancelled_at IS NULL`). S5 mira si otra CORRIDA asentó un resultado; S7 mira si lo
+   *      asentó una PERSONA. Un `dead` del reaper es la ausencia de un desenlace y por eso es
+   *      rescatable; un `dead` de `cancelDelivery` es un desenlace elegido, y encima ya salieron
+   *      sus dos avisos (la `agent.response` con `DELIVERY_CANCELLED` al padre y el relay al
+   *      humano). Rescatar encima duplicaría la respuesta del padre y el conteo de fan-in.
    *
    * LOS TRES CASOS QUE HAY QUE MIRAR, Y QUÉ HACE ESTE CÓDIGO EN CADA UNO:
    *
@@ -2696,6 +2709,14 @@ export class CauceRepository {
     // S5
     if (row.status === 'done' || row.status === 'failed') return undefined;
     if (row.late_result_at !== null) return undefined;
+    // S7 (INTEGRACIÓN 2026-07-29) — una cancelación del operador NO es la ausencia de un
+    // resultado, es una decisión. `cancelDelivery` ya materializó la `agent.response` con
+    // `DELIVERY_CANCELLED` hacia el padre y ya mandó el relay al humano; rescatar encima le
+    // daría al padre DOS respuestas por una sola delegación y `responsesRecorded` contaría dos,
+    // que es exactamente la forma de dejar un fan-in trabado para siempre. El resto de los
+    // `dead` —los del reaper, por plazo o por techo— siguen siendo rescatables, que es el caso
+    // que motiva todo esto (387 respuestas medidas).
+    if (row.cancelled_at !== null) return undefined;
     // S6
     if (ack.status === 'failed' && row.status !== 'dead') return undefined;
     // Un ACK que dice pertenecer a un intento que la entrega todavía no alcanzó no es tardío:
@@ -7231,6 +7252,7 @@ export class CauceRepository {
       const cancelled = await client.query(
         `UPDATE deliveries
            SET status='dead',terminal_at=now(),last_error=$2,last_ack_rank=3,
+               cancelled_at=now(),
                claim_expires_at=NULL,ack_deadline_at=NULL,claim_token=NULL,
                consumer_instance_id=NULL,consumer_epoch=NULL,updated_at=now()
          WHERE id=$1 AND status NOT IN ('done','failed','dead')`,

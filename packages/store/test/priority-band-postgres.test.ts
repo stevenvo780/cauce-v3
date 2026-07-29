@@ -242,6 +242,25 @@ describe('lane fairness burst', () => {
     }));
   }
 
+  /**
+   * Escribe una entrega agente-a-agente igual que `materializeAgentOutputs`: mismo `body.type` y
+   * mismo `lane='batch'`. Va por INSERT directo porque `publish()` rechaza los tipos reservados
+   * a propósito — un cliente no puede fabricar tráfico entre agentes.
+   */
+  async function seedAgentToAgent(alias: string, text: string): Promise<void> {
+    const message = await pool.query<{ id: string }>(
+      `INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane,priority)
+       VALUES($1,$2,'Steven','grp.steven','argos',$3::jsonb,'batch',0) RETURNING id`,
+      [randomUUID(), `trace-${randomUUID()}`, JSON.stringify({
+        type: 'agent.message', text, from_alias: 'argos'
+      })]
+    );
+    await pool.query(
+      `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias) VALUES($1,'Steven',$2)`,
+      [message.rows[0]!.id, alias]
+    );
+  }
+
   async function seedBatch(alias: string, text: string): Promise<void> {
     await repository.publish(command({
       recipients: [{ tenant_id: 'Steven', alias }],
@@ -252,16 +271,32 @@ describe('lane fairness burst', () => {
     }));
   }
 
-  it('still gives batch its turn when only machine traffic is waiting in the interactive lane', async () => {
+  /**
+   * INTEGRACIÓN 2026-07-29 — este test cambió de forma porque cambió el mecanismo, no el
+   * objetivo. Nació contra la equidad POR CARRIL (`interactive_streak` contaba reclamos del
+   * carril 'interactive' y cada `interactiveBurst` le cedía un turno a 'batch'). La línea que se
+   * integra reemplazó esa partición por la clasificación HUMANO / AGENTE-A-AGENTE, porque el
+   * carril se heredaba literal en cada salto y una cadena de agentes entera viajaba en
+   * 'interactive' junto con los mensajes de las personas (2.374 de 2.429 entregas medidas).
+   *
+   * Con eso, "tráfico de máquinas esperando en el carril interactivo" ya no se escribe con un
+   * `telegram.message` de prioridad 0 —eso es clase HUMANA para el clasificador— sino con un
+   * `agent.message`, que además desde esta misma integración nace en 'batch'.
+   *
+   * Lo que se sigue probando es lo mismo que antes: **el trabajo entre agentes no se muere de
+   * hambre**. Sólo que ahora quien le cede el turno es la ráfaga HUMANA (`humanBurst`), no la de
+   * carril. Si alguien borrara el `yieldTurn` de `claimDeliveries`, este test se pondría rojo.
+   */
+  it('gives agent-to-agent work its turn once the human burst is spent', async () => {
     const instanceId = 'burst-control';
     const epoch = await lease('Steven', 'kant', instanceId);
-    await seedInteractive('kant', 0, 'machine one');
-    await seedInteractive('kant', 0, 'machine two');
-    await seedBatch('kant', 'background');
+    await seedInteractive('kant', HUMAN_CHAT_PRIORITY, 'person one');
+    await seedInteractive('kant', HUMAN_CHAT_PRIORITY, 'person two');
+    await seedAgentToAgent('kant', 'agent work');
 
-    // interactiveBurst=1: the second claim of the call is the batch turn.
+    // humanBurst=1: servida una persona, el segundo reclamo de la llamada cede el turno.
     const claimed = await repository.claimDeliveries('Steven', 'kant', instanceId, epoch, 2, 30_000, 1);
-    expect(claimed.map((delivery) => delivery.body.text)).toEqual(['machine one', 'background']);
+    expect(claimed.map((delivery) => delivery.body.text)).toEqual(['person one', 'agent work']);
   });
 
   it('does not spend the batch turn while a person is waiting', async () => {

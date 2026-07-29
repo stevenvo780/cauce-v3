@@ -13,5 +13,13 @@
 -- Se borra `late_result_attempt` primero por simetría con el orden de creación; ninguna de las
 -- dos tiene dependencias (no hay índices, vistas ni constraints que las nombren).
 
+-- INTEGRACIÓN 2026-07-29: `cancelled_at` va PRIMERO y merece su propia advertencia. Bajarla no
+-- sólo pierde una marca: reabre la puerta que cerraba. Una entrega que un operador canceló
+-- vuelve a ser candidata a que un ACK terminal tardío la rescate, y eso le manda al padre una
+-- SEGUNDA `agent.response` por la misma delegación. Si hay que bajar el esquema, bajá también el
+-- código de cancelación (018) o dejá esta columna en su lugar: no tiene dependencias y no cuesta
+-- nada tenerla de más.
+ALTER TABLE deliveries DROP COLUMN IF EXISTS cancelled_at;
+
 ALTER TABLE deliveries DROP COLUMN IF EXISTS late_result_attempt;
 ALTER TABLE deliveries DROP COLUMN IF EXISTS late_result_at;
