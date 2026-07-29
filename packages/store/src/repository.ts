@@ -528,19 +528,6 @@ function terminal(status: string): boolean {
   return status === 'done' || status === 'failed' || status === 'dead';
 }
 
-/**
- * Espera entre reintentos por garra vencida: 30 s, 60 s, 120 s… con techo de 5 minutos.
- *
- * Es más larga que la de un fallo declarado (que llega a 60 s) a propósito. Un fallo declarado
- * significa que el agente contestó y falló: reintentar rápido es razonable. Una garra vencida
- * significa lo contrario — el agente no dijo nada durante todo el plazo — y el trabajo agéntico
- * tarda lo que tarda. Volver a despachar de inmediato apila una segunda corrida sobre la primera,
- * que puede seguir viva, y empeora justo la saturación que causó el silencio.
- */
-export function timeoutRetryBackoffSeconds(attempt: number): number {
-  return Math.min(300, 30 * 2 ** Math.max(0, attempt - 1));
-}
-
 const agentOutputHopBudget = 16;
 const maxAgentOutputMessages = 100;
 const maxAgentOutputBodyBytes = 64 * 1024;
