@@ -10,7 +10,6 @@ import {
   Container,
   LockKeyhole,
   MessageSquareText,
-  Plus,
   PowerOff,
   RefreshCw,
   Send,
@@ -91,53 +90,6 @@ function PermissionState({ access, permission }: { access?: ConsoleAccess; permi
   );
 }
 
-function SessionTabs({ sessions, activeId, onActivate, onClose }: {
-  sessions: OperatorSession[];
-  activeId?: string;
-  onActivate: (id: string) => void;
-  onClose: (id: string) => void;
-}) {
-  function navigate(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    event.preventDefault();
-    const direction = event.key === 'ArrowRight' ? 1 : -1;
-    const next = sessions[(index + direction + sessions.length) % sessions.length];
-    onActivate(next.id);
-    document.getElementById(`terminal-tab-${next.id}`)?.focus();
-  }
-
-  return (
-    <div className="terminal-session-tabs" role="tablist" aria-label="Sesiones de agentes">
-      {sessions.map((session, index) => (
-        <div className="terminal-tab-wrap" key={session.id} data-active={session.id === activeId || undefined}>
-          <button
-            id={`terminal-tab-${session.id}`}
-            type="button"
-            role="tab"
-            aria-selected={session.id === activeId}
-            aria-controls="terminal-active-session"
-            tabIndex={session.id === activeId ? 0 : -1}
-            onClick={() => onActivate(session.id)}
-            onKeyDown={(event) => navigate(event, index)}
-          >
-            <span className={`tab-live-dot ${session.agent.leaseState}`} aria-hidden="true" />
-            <span><strong>{session.agent.alias}</strong><small>{session.agent.tenantId}</small></span>
-          </button>
-          <button className="terminal-tab-close" type="button" onClick={() => onClose(session.id)} aria-label={`Cerrar sesión ${session.agent.alias}`}>
-            <X size={13} aria-hidden="true" />
-          </button>
-        </div>
-      ))}
-      <span className="terminal-tabs-hint"><Plus size={13} aria-hidden="true" /> Elegí un agente para abrir otra sesión</span>
-    </div>
-  );
-}
-
-/**
- * Consent dialog. It exists to make the blast radius impossible to miss: a shell in a shared
- * container is not "the terminal of one alias", it is the home where several agents live.
- * The justification is mandatory and free-form; there is no default and no autocomplete.
- */
 function PtySessionDialog({ agent, resolution, pending, error, onCancel, onConfirm }: {
   agent: FleetAgent;
   resolution: TerminalTargetResolution;
@@ -216,13 +168,6 @@ function PtySessionDialog({ agent, resolution, pending, error, onCancel, onConfi
   );
 }
 
-/**
- * Permanent header over the terminal: who, where, as whom, and how long is left.
- *
- * `expires_at` is the deadline of the single-use TICKET, not of the shell. Once the relay
- * accepts the attach the ticket is spent, so the countdown is replaced by that fact instead of
- * being left frozen at 0:00 over a perfectly healthy session.
- */
 function PtySessionBar({ agent, grant, secondsLeft, ticketConsumed, closing, onClose }: {
   agent: FleetAgent;
   grant: TerminalSessionGrant;
@@ -269,7 +214,7 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
             <article key={adapter.id ?? index}>
               <span className={`adapter-state-dot ${adapter.state ?? 'unknown'}`} aria-hidden="true" />
               <div><strong><Unknown value={adapter.label ?? adapter.id} /></strong><small>{adapter.capabilities?.length ?? 'UNKNOWN'} capabilities</small></div>
-              <Badge tone={adapter.state === 'available' ? 'online' : adapter.state === 'degraded' ? 'warning' : adapter.state === 'unavailable' ? 'offline' : 'unknown'}><Unknown value={adapter.state} /></Badge>
+              <Badge tone={adapter.state === 'available' ? 'online' : adapter.state === 'degraded' ? 'warning' : adapter.state === 'unavailable' ? 'offline' : 'unknown'}>&lt;Unknown value={adapter.state} /&gt;</Badge>
             </article>
           )) : <EmptyState>Adapters no informados.</EmptyState>}
         </div>
@@ -287,19 +232,15 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
   );
 }
 
-function SessionStage({ sessions, activeId, agents, adapters, access, topologyAccess, capability, targets, grants, closedChannels, onActivate, onClose, onUpdate, onGrant, onChannelClosed, onReleaseChannel }: {
-  sessions: OperatorSession[];
-  activeId?: string;
+function SessionStage({ session, agents, access, topologyAccess, capability, targets, grants, closedChannels, onUpdate, onGrant, onChannelClosed, onReleaseChannel }: {
+  session: OperatorSession;
   agents: FleetAgent[];
-  adapters: AdapterView[];
   access?: ConsoleAccess;
   topologyAccess?: TopologySnapshot;
   capability?: TerminalCapability;
   targets?: TerminalTargetsSnapshot;
   grants: Record<string, TerminalSessionGrant>;
   closedChannels: Record<string, true>;
-  onActivate: (id: string) => void;
-  onClose: (id: string) => void;
   onUpdate: (session: OperatorSession) => void;
   onGrant: (sessionId: string, grant: TerminalSessionGrant) => void;
   onChannelClosed: (sessionId: string) => void;
@@ -307,22 +248,21 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
 }) {
   const api = useApi();
   const messages = useResource('terminal-message-feed', () => api.listMessages());
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [selectedDeliveries, setSelectedDeliveries] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState('');
+  const [selectedDeliveryId, setSelectedDeliveryId] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string }>();
-  const [dialogFor, setDialogFor] = useState<string>();
+  const [showPtyDialog, setShowPtyDialog] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [requestError, setRequestError] = useState<string>();
   const [closingChannel, setClosingChannel] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [showInspector, setShowInspector] = useState(false);
 
-  const storedSession = sessions.find((session) => session.id === activeId);
-  const currentAgent = storedSession ? agents.find((agent) => agent.id === storedSession.agent.id) ?? storedSession.agent : undefined;
-  const session = storedSession && currentAgent ? { ...storedSession, agent: currentAgent } : undefined;
-  const grant = session ? grants[session.id] : undefined;
-  // An open PTY carries its own live stream: the 2.5 s message polling is redundant there.
-  const ptyChannelLive = Boolean(session && session.mode === 'pty' && grant && !closedChannels[session.id]);
+  const currentAgent = agents.find((agent) => agent.id === session.agent.id) ?? session.agent;
+  const liveSession = { ...session, agent: currentAgent };
+  const grant = grants[liveSession.id];
+  const ptyChannelLive = Boolean(liveSession.mode === 'pty' && grant && !closedChannels[liveSession.id]);
 
   const channelSessionId = grant?.session_id;
   const subscribeChannel = useCallback(
@@ -339,44 +279,42 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
   }, [messages.loading, messages.reload, ptyChannelLive]);
 
   useEffect(() => {
-    // Only the ticket window needs a clock; once it is spent the countdown has nothing to say.
     if (!ptyChannelLive || channelView?.state === 'open') return;
     const interval = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(interval);
   }, [channelView?.state, ptyChannelLive]);
 
-  const transcript = session ? transcriptForSession(messages.data, session) : [];
+  const transcript = transcriptForSession(messages.data, liveSession);
   const deliveries = sessionDeliveries(transcript);
-  const selectedId = session ? selectedDeliveries[session.id] : undefined;
-  const selectedDelivery = deliveries.find((delivery) => delivery.delivery_id === selectedId) ?? deliveries.at(-1);
+  const selectedDelivery = deliveries.find((delivery) => delivery.delivery_id === selectedDeliveryId) ?? deliveries.at(-1);
   const canPublish = permissionState(access, 'message.publish') === 'allowed';
-  const route = session ? operatorRouteForAgent(topologyAccess, access, session.agent) : undefined;
-  const sourceRoomId = session && route
-    ? route.sourceRoomIds.includes(session.sourceRoomId) ? session.sourceRoomId : route.sourceRoomIds[0] ?? ''
-    : '';
-  const roomEnabled = route?.membership === true && Boolean(sourceRoomId);
-  const canRoute = route?.allowed === true && roomEnabled;
-  const channel = session ? terminalChannelGate(capability, access, targets, session.agent) : undefined;
+  const route = operatorRouteForAgent(topologyAccess, access, liveSession.agent);
+  const sourceRoomId = route.sourceRoomIds.includes(liveSession.sourceRoomId)
+    ? liveSession.sourceRoomId
+    : route.sourceRoomIds[0] ?? '';
+  const roomEnabled = route.membership === true && Boolean(sourceRoomId);
+  const canRoute = route.allowed === true && roomEnabled;
+  const channel = terminalChannelGate(capability, access, targets, liveSession.agent);
   const channelLabel = channel && channel.status !== 'blocked' ? TERMINAL_ACCESS_LABELS[channel.status] : 'PTY no habilitado';
-  const channelTarget = session ? terminalTargetForAgent(targets?.items, session.agent) : undefined;
+  const channelTarget = terminalTargetForAgent(targets?.items, liveSession.agent);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!session || !canPublish || !sourceRoomId || !canRoute) return;
-    const text = drafts[session.id]?.trim();
+    if (!canPublish || !sourceRoomId || !canRoute) return;
+    const text = draft.trim();
     if (!text) return;
     setSubmitting(true);
     setNotice(undefined);
     try {
       const result = await api.publishMessage({
         room_id: sourceRoomId,
-        recipients: [{ tenant_id: session.agent.tenantId, alias: session.agent.alias }],
+        recipients: [{ tenant_id: liveSession.agent.tenantId, alias: liveSession.agent.alias }],
         body: { text },
         lane: 'interactive',
         priority: 10,
-        idempotency_key: createId(`ultimate-terminal-${session.agent.alias}`),
+        idempotency_key: createId(`ultimate-terminal-${liveSession.agent.alias}`),
       });
-      setDrafts((current) => ({ ...current, [session.id]: '' }));
+      setDraft('');
       setNotice({ tone: 'success', text: `Aceptado por el control plane · ${compactId(result.message_id)}. Esperando ACK por polling.` });
       messages.reload();
     } catch (error) {
@@ -397,23 +335,27 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
     messages.reload();
   }
 
-  /** Requests the single-use ticket and only then opens the socket. */
+  async function cancel(deliveryId: string) {
+    await api.cancelDelivery(deliveryId);
+    messages.reload();
+  }
+
   async function requestChannel(reason: string) {
-    if (!session || !channel?.enabled) return;
+    if (!channel?.enabled) return;
     setRequesting(true);
     setRequestError(undefined);
     try {
       const issued = await createTerminalSession({
-        tenant_id: session.agent.tenantId,
-        alias: session.agent.alias,
+        tenant_id: liveSession.agent.tenantId,
+        alias: liveSession.agent.alias,
         mode: channelTarget?.modes[0] ?? 'shell',
         reason,
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
       });
-      onGrant(session.id, issued);
-      onUpdate({ ...session, mode: 'pty' });
-      setDialogFor(undefined);
+      onGrant(liveSession.id, issued);
+      onUpdate({ ...liveSession, mode: 'pty' });
+      setShowPtyDialog(false);
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : 'El servidor rechazó la sesión PTY.');
     } finally {
@@ -422,158 +364,153 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
   }
 
   async function releaseChannel() {
-    if (!session) return;
     setClosingChannel(true);
     try {
-      await onReleaseChannel(session.id);
-      onUpdate({ ...session, mode: 'transcript' });
+      await onReleaseChannel(liveSession.id);
+      onUpdate({ ...liveSession, mode: 'transcript' });
     } finally {
       setClosingChannel(false);
     }
   }
 
   function selectPtyMode() {
-    if (!session || !channel?.enabled) return;
-    // A live grant just re-shows the terminal; a new channel always goes through the dialog.
-    if (grants[session.id] && !closedChannels[session.id]) onUpdate({ ...session, mode: 'pty' });
-    else { setRequestError(undefined); setDialogFor(session.id); }
+    if (!channel?.enabled) return;
+    if (grants[liveSession.id] && !closedChannels[liveSession.id]) {
+      onUpdate({ ...liveSession, mode: 'pty' });
+    } else {
+      setRequestError(undefined);
+      setShowPtyDialog(true);
+    }
   }
 
   return (
-    <div className="terminal-stage">
-      <SessionTabs sessions={sessions} activeId={activeId} onActivate={onActivate} onClose={onClose} />
-      {!session ? (
-        <div className="terminal-no-session">
-          <span><MessageSquareText size={27} aria-hidden="true" /></span>
-          <p className="eyebrow">No active target</p>
-          <h2>Abrí una sesión desde Fleet</h2>
-          <p>Cada pestaña es una vista efímera sobre mensajes y ACK del servidor. No se persiste estado de sesión en el navegador.</p>
-        </div>
-      ) : (
-        <div className="terminal-active-grid" id="terminal-active-session" role="tabpanel" aria-labelledby={`terminal-tab-${session.id}`}>
-          <section className="terminal-console">
-            <header className="terminal-session-head">
-              <div className="session-identity">
-                <span className={`session-avatar ${session.agent.leaseState}`}><Braces size={20} aria-hidden="true" /></span>
-                <div><p className="eyebrow">{session.agent.tenantId} · epoch {session.agent.presence?.epoch ?? 'UNKNOWN'}</p><h2>{session.agent.alias}</h2></div>
-                <Badge tone={session.agent.leaseState === 'online' ? 'online' : session.agent.leaseState === 'expired' ? 'offline' : 'unknown'}>{session.agent.leaseState}</Badge>
-              </div>
-              <div className="session-controls">
-                 <label>Room de origen
-                   <span className="room-select-wrap"><select value={sourceRoomId} onChange={(event) => onUpdate({ ...session, sourceRoomId: event.target.value })} disabled={!route?.sourceRoomIds.length}>
-                     {route?.sourceRoomIds.length ? route.sourceRoomIds.map((room) => <option key={room} value={room}>{room}</option>) : <option value="">No autorizado</option>}
-                   </select><ChevronDown size={14} aria-hidden="true" /></span>
-                 </label>
-                 <div className="terminal-mode-switch" aria-label="Canal de sesión">
-                   <button type="button" aria-pressed={session.mode === 'transcript'} data-active={session.mode === 'transcript' || undefined} onClick={() => onUpdate({ ...session, mode: 'transcript' })}><MessageSquareText size={14} aria-hidden="true" /> Feed</button>
-                   <button
-                     type="button"
-                     aria-pressed={session.mode === 'pty'}
-                     data-active={session.mode === 'pty' || undefined}
-                     disabled={!channel?.enabled}
-                     onClick={selectPtyMode}
-                     title={channel?.reason}
-                   ><TerminalSquare size={14} aria-hidden="true" /> PTY</button>
-                </div>
-              </div>
-            </header>
-
-            <p className="terminal-channel-state" data-status={channel?.status ?? 'blocked'}>
-              <ShieldCheck size={13} aria-hidden="true" />
-              <strong>{channelLabel}</strong>
-              <span>{channel?.reason ?? 'Canal PTY UNKNOWN.'}</span>
-            </p>
-
-            <div className="terminal-connection-bar" role="status">
-              <span className={`connection-dot ${messages.error ? 'error' : ptyChannelLive ? 'open' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
-              <strong>{messages.error ? 'FEED DEGRADADO' : ptyChannelLive ? 'POLLING EN PAUSA' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
-              <span>{messages.error?.message ?? (ptyChannelLive ? 'el canal PTY es la fuente en vivo de esta sesión' : 'deliveries + ACK cada 2.5 s')}</span>
-              <button type="button" onClick={messages.reload} disabled={messages.loading}><RefreshCw size={13} aria-hidden="true" /> Sincronizar</button>
+    <div className="terminal-active-grid" id={`terminal-session-${liveSession.id}`} role="tabpanel" data-show-inspector={showInspector} style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+      <section className="terminal-console">
+        <header className="terminal-session-head">
+          <div className="session-identity">
+            <span className={`session-avatar ${liveSession.agent.leaseState}`}><Braces size={20} aria-hidden="true" /></span>
+            <div><p className="eyebrow">{liveSession.agent.tenantId} · epoch {liveSession.agent.presence?.epoch ?? 'UNKNOWN'}</p><h2>{liveSession.agent.alias}</h2></div>
+            <Badge tone={liveSession.agent.leaseState === 'online' ? 'online' : liveSession.agent.leaseState === 'expired' ? 'offline' : 'unknown'}>{liveSession.agent.leaseState}</Badge>
+          </div>
+          <div className="session-controls">
+             <label>Room de origen
+               <span className="room-select-wrap"><select value={sourceRoomId} onChange={(event) => onUpdate({ ...liveSession, sourceRoomId: event.target.value })} disabled={!route.sourceRoomIds.length}>
+                 {route.sourceRoomIds.length ? route.sourceRoomIds.map((room) => <option key={room} value={room}>{room}</option>) : <option value="">No autorizado</option>}
+               </select><ChevronDown size={14} aria-hidden="true" /></span>
+             </label>
+             <div className="terminal-mode-switch" aria-label="Canal de sesión">
+               <button type="button" aria-pressed={liveSession.mode === 'transcript'} data-active={liveSession.mode === 'transcript' || undefined} onClick={() => onUpdate({ ...liveSession, mode: 'transcript' })}><MessageSquareText size={14} aria-hidden="true" /> Feed</button>
+               <button
+                 type="button"
+                 aria-pressed={liveSession.mode === 'pty'}
+                 data-active={liveSession.mode === 'pty' || undefined}
+                 disabled={!channel?.enabled}
+                 onClick={selectPtyMode}
+                 title={channel?.reason}
+               ><TerminalSquare size={14} aria-hidden="true" /> PTY</button>
+               <button
+                 type="button"
+                 data-active={showInspector || undefined}
+                 onClick={() => setShowInspector(!showInspector)}
+                 title="Ver detalles / ACK inspector"
+               ><Activity size={14} aria-hidden="true" /> Detalles</button>
             </div>
+          </div>
+        </header>
 
-            {session.mode === 'pty' ? (
-               channel?.enabled && grant && channel.websocketPath ? (
-                 <div className="terminal-pty-pane">
-                   <PtySessionBar
-                     agent={session.agent}
-                     grant={grant}
-                     secondsLeft={ptySecondsLeft(grant.expires_at, now)}
-                     ticketConsumed={channelView?.state === 'open'}
-                     closing={closingChannel}
-                     onClose={() => void releaseChannel()}
-                   />
-                   <Suspense fallback={<LoadingState label="Cargando Xterm…" />}>
-                     <PtyTerminal
-                       websocketPath={grant.websocket_path || channel.websocketPath}
-                       sessionId={grant.session_id}
-                       ticket={grant.ticket}
-                       onClosed={() => onChannelClosed(session.id)}
-                       onRequestNewSession={() => { void onReleaseChannel(session.id).then(() => { setRequestError(undefined); setDialogFor(session.id); }); }}
-                     />
-                   </Suspense>
-                </div>
-              ) : <div className="terminal-channel-unavailable"><CircleOff aria-hidden="true" /><h3>{channelLabel}</h3><p>{channel?.reason ?? 'Canal PTY UNKNOWN.'}</p></div>
-            ) : (
-              <>
-                {messages.loading && !messages.data ? <LoadingState label="Abriendo feed durable de mensajes…" /> : (
-                   <TerminalTranscript
-                     key={session.id}
-                     items={transcript}
-                    selectedDeliveryId={selectedDelivery?.delivery_id ?? undefined}
-                    onSelectDelivery={(delivery: DeliveryView) => delivery.delivery_id && setSelectedDeliveries((current) => ({ ...current, [session.id]: delivery.delivery_id! }))}
-                  />
-                )}
-                <form className="terminal-composer" onSubmit={(event) => void submit(event)}>
-                  <label htmlFor={`terminal-input-${session.id}`}>Entrada para {session.agent.alias}</label>
-                  <textarea
-                    id={`terminal-input-${session.id}`}
-                    value={drafts[session.id] ?? ''}
-                    onChange={(event) => setDrafts((current) => ({ ...current, [session.id]: event.target.value }))}
-                    onKeyDown={composerKeyDown}
-                    rows={3}
-                    maxLength={8_000}
-                    placeholder={session.agent.leaseState === 'online' ? 'Escribí una instrucción…' : 'El agente no tiene lease vigente; Cauce puede encolar la instrucción.'}
-                     disabled={!canPublish || !sourceRoomId || !canRoute || submitting}
-                  />
-                  <div className="composer-footer">
-                    <span><kbd>Enter</kbd> enviar · <kbd>Shift</kbd> + <kbd>Enter</kbd> nueva línea</span>
-                     <button className="button primary" type="submit" disabled={!canPublish || !sourceRoomId || !canRoute || submitting || !(drafts[session.id]?.trim())}>
-                      <Send size={15} aria-hidden="true" /> {submitting ? 'Enviando…' : 'Enviar'}
-                    </button>
-                  </div>
-                   {!canPublish ? <p className="composer-blocked"><LockKeyhole size={14} aria-hidden="true" /> Requiere message.publish.</p> : null}
-                   {route?.membership === undefined ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> Membership UNKNOWN; no se asume acceso al room de origen.</p> : null}
-                   {route?.membership === false ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> Membership deshabilitada o sin room compartido.</p> : null}
-                   {route && !route.allowed ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> {route.reason}</p> : null}
-                  {notice ? <p className={`notice ${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p> : null}
-                </form>
-              </>
-            )}
-          </section>
-          <aside className="terminal-inspector" aria-label="Inspector de sesión">
-            <AckInspector delivery={selectedDelivery} access={access} onReplay={replay} />
-            <section className="terminal-inspector-section session-facts">
-              <header className="inspector-title"><div><p className="eyebrow">Session facts</p><h3>Observación</h3></div><Activity size={18} aria-hidden="true" /></header>
-              <dl>
-                <div><dt>Abierta en UI</dt><dd><Time value={session.openedAt} /></dd></div>
-                <div><dt>Lease vence</dt><dd><Time value={session.agent.presence?.lease_expires_at ?? session.agent.presence?.lease_until} /></dd></div>
-                <div><dt>Instance</dt><dd className="mono"><Unknown value={session.agent.presence?.instance_id} /></dd></div>
-                <div><dt>Historial</dt><dd>{transcript.length} items del servidor</dd></div>
-              </dl>
-              <p className="inspector-footnote"><Clock3 size={13} aria-hidden="true" /> La pestaña no es una sesión durable ni fuente de verdad.</p>
-            </section>
-          </aside>
+        <p className="terminal-channel-state" data-status={channel?.status ?? 'blocked'}>
+          <ShieldCheck size={13} aria-hidden="true" />
+          <strong>{channelLabel}</strong>
+          <span>{channel?.reason ?? 'Canal PTY UNKNOWN.'}</span>
+        </p>
+
+        <div className="terminal-connection-bar" role="status">
+          <span className={`connection-dot ${messages.error ? 'error' : ptyChannelLive ? 'open' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
+          <strong>{messages.error ? 'FEED DEGRADADO' : ptyChannelLive ? 'POLLING EN PAUSA' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
+          <span>{messages.error?.message ?? (ptyChannelLive ? 'el canal PTY es la fuente en vivo de esta sesión' : 'deliveries + ACK cada 2.5 s')}</span>
+          <button type="button" onClick={messages.reload} disabled={messages.loading}><RefreshCw size={13} aria-hidden="true" /> Sincronizar</button>
         </div>
-      )}
-      <footer className="terminal-doctrine"><ShieldCheck size={14} aria-hidden="true" /> Cliente de transporte: no crea workers remotos, no ejecuta adapters y no persiste sesiones.</footer>
-      <div className="terminal-adapter-mobile"><AdapterInspector adapters={adapters} access={access} capability={capability} /></div>
-      {session && dialogFor === session.id && channel?.enabled ? (
+
+        {liveSession.mode === 'pty' ? (
+           channel?.enabled && grant && channel.websocketPath ? (
+             <div className="terminal-pty-pane">
+               <PtySessionBar
+                 agent={liveSession.agent}
+                 grant={grant}
+                 secondsLeft={ptySecondsLeft(grant.expires_at, now)}
+                 ticketConsumed={channelView?.state === 'open'}
+                 closing={closingChannel}
+                 onClose={() => void releaseChannel()}
+               />
+               <Suspense fallback={<LoadingState label="Cargando Xterm…" />}>
+                 <PtyTerminal
+                   websocketPath={grant.websocket_path || channel.websocketPath}
+                   sessionId={grant.session_id}
+                   ticket={grant.ticket}
+                   onClosed={() => onChannelClosed(liveSession.id)}
+                   onRequestNewSession={() => { void onReleaseChannel(liveSession.id).then(() => { setRequestError(undefined); setShowPtyDialog(true); }); }}
+                 />
+               </Suspense>
+            </div>
+          ) : <div className="terminal-channel-unavailable"><CircleOff aria-hidden="true" /><h3>{channelLabel}</h3><p>{channel?.reason ?? 'Canal PTY UNKNOWN.'}</p></div>
+        ) : (
+          <>
+            {messages.loading && !messages.data ? <LoadingState label="Abriendo feed durable de mensajes…" /> : (
+               <TerminalTranscript
+                 key={liveSession.id}
+                 items={transcript}
+                 selectedDeliveryId={selectedDelivery?.delivery_id ?? undefined}
+                 onSelectDelivery={(delivery: DeliveryView) => delivery.delivery_id && setSelectedDeliveryId(delivery.delivery_id)}
+              />
+            )}
+            <form className="terminal-composer" onSubmit={(event) => void submit(event)}>
+              <label htmlFor={`terminal-input-${liveSession.id}`}>Entrada para {liveSession.agent.alias}</label>
+              <textarea
+                id={`terminal-input-${liveSession.id}`}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={composerKeyDown}
+                rows={3}
+                maxLength={8_000}
+                placeholder={liveSession.agent.leaseState === 'online' ? 'Escribí una instrucción…' : 'El agente no tiene lease vigente; Cauce puede encolar la instrucción.'}
+                disabled={!canPublish || !sourceRoomId || !canRoute || submitting}
+              />
+              <div className="composer-footer">
+                <span><kbd>Enter</kbd> enviar · <kbd>Shift</kbd> + <kbd>Enter</kbd> nueva línea</span>
+                 <button className="button primary" type="submit" disabled={!canPublish || !sourceRoomId || !canRoute || submitting || !(draft.trim())}>
+                  <Send size={15} aria-hidden="true" /> {submitting ? 'Enviando…' : 'Enviar'}
+                </button>
+              </div>
+               {!canPublish ? <p className="composer-blocked"><LockKeyhole size={14} aria-hidden="true" /> Requiere message.publish.</p> : null}
+               {route.membership === undefined ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> Membership UNKNOWN; no se asume acceso al room de origen.</p> : null}
+               {route.membership === false ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> Membership deshabilitada o sin room compartido.</p> : null}
+               {route && !route.allowed ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> {route.reason}</p> : null}
+              {notice ? <p className={`notice ${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p> : null}
+            </form>
+          </>
+        )}
+      </section>
+      <aside className="terminal-inspector" aria-label="Inspector de sesión">
+        <AckInspector delivery={selectedDelivery} access={access} onReplay={replay} onCancel={cancel} />
+        <section className="terminal-inspector-section session-facts">
+          <header className="inspector-title"><div><p className="eyebrow">Session facts</p><h3>Observación</h3></div><Activity size={18} aria-hidden="true" /></header>
+          <dl>
+            <div><dt>Abierta en UI</dt><dd><Time value={liveSession.openedAt} /></dd></div>
+            <div><dt>Lease vence</dt><dd><Time value={liveSession.agent.presence?.lease_expires_at ?? liveSession.agent.presence?.lease_until} /></dd></div>
+            <div><dt>Instance</dt><dd className="mono"><Unknown value={liveSession.agent.presence?.instance_id} /></dd></div>
+            <div><dt>Historial</dt><dd>{transcript.length} items del servidor</dd></div>
+          </dl>
+          <p className="inspector-footnote"><Clock3 size={13} aria-hidden="true" /> La pestaña no es una sesión durable ni fuente de verdad.</p>
+        </section>
+      </aside>
+
+      {showPtyDialog ? (
         <PtySessionDialog
-          agent={session.agent}
+          agent={liveSession.agent}
           resolution={{ status: channel.status === 'blocked' ? 'unknown' : channel.status, reason: channel.reason, target: channelTarget }}
           pending={requesting}
           error={requestError}
-          onCancel={() => setDialogFor(undefined)}
+          onCancel={() => setShowPtyDialog(false)}
           onConfirm={(reason) => void requestChannel(reason)}
         />
       ) : null}
@@ -581,10 +518,115 @@ function SessionStage({ sessions, activeId, agents, adapters, access, topologyAc
   );
 }
 
+interface GridContainerProps {
+  sessions: OperatorSession[];
+  activeId?: string;
+  agents: FleetAgent[];
+  adapters: AdapterView[];
+  access?: ConsoleAccess;
+  topologyAccess?: TopologySnapshot;
+  capability?: TerminalCapability;
+  targets?: TerminalTargetsSnapshot;
+  grants: Record<string, TerminalSessionGrant>;
+  closedChannels: Record<string, true>;
+  onActivate: (id: string) => void;
+  onClose: (id: string) => void;
+  onUpdate: (session: OperatorSession) => void;
+  onGrant: (sessionId: string, grant: TerminalSessionGrant) => void;
+  onChannelClosed: (sessionId: string) => void;
+  onReleaseChannel: (sessionId: string) => Promise<void>;
+}
+
+function GridContainer({
+  sessions,
+  activeId,
+  agents,
+  adapters,
+  access,
+  topologyAccess,
+  capability,
+  targets,
+  grants,
+  closedChannels,
+  onActivate,
+  onClose,
+  onUpdate,
+  onGrant,
+  onChannelClosed,
+  onReleaseChannel
+}: GridContainerProps) {
+  if (sessions.length === 0) {
+    return (
+      <div className="terminal-no-session" style={{ flex: 1 }}>
+        <span><MessageSquareText size={27} aria-hidden="true" /></span>
+        <p className="eyebrow">No active target</p>
+        <h2>Abrí una sesión desde Fleet</h2>
+        <p>Cada pestaña es una vista efímera sobre mensajes y ACK del servidor. No se persiste estado de sesión en el navegador.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="terminal-grid-wrapper">
+      <div className="terminal-grid-container">
+        {sessions.map((session) => (
+          <div
+            className="terminal-panel"
+            key={session.id}
+            data-active={session.id === activeId || undefined}
+            onClick={() => onActivate(session.id)}
+          >
+            <header className="terminal-panel-header">
+              <button
+                className="terminal-panel-title-btn"
+                type="button"
+                role="tab"
+                aria-selected={session.id === activeId}
+                onClick={() => onActivate(session.id)}
+              >
+                <span className={`tab-live-dot ${session.agent.leaseState}`} aria-hidden="true" />
+                <span><strong>{session.agent.alias}</strong><small>{session.agent.tenantId}</small></span>
+              </button>
+              <button
+                className="terminal-panel-close"
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose(session.id);
+                }}
+                aria-label={`Cerrar sesión ${session.agent.alias}`}
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
+            </header>
+          <div className="terminal-panel-body">
+            <SessionStage
+              session={session}
+              agents={agents}
+              access={access}
+                topologyAccess={topologyAccess}
+                capability={capability}
+                targets={targets}
+                grants={grants}
+                closedChannels={closedChannels}
+                onUpdate={onUpdate}
+                onGrant={onGrant}
+                onChannelClosed={onChannelClosed}
+                onReleaseChannel={onReleaseChannel}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      <footer className="terminal-doctrine"><ShieldCheck size={14} aria-hidden="true" /> Cliente de transporte: no crea workers remotos, no ejecuta adapters y no persiste sesiones.</footer>
+      <div className="terminal-adapter-mobile"><AdapterInspector adapters={adapters} access={access} capability={capability} /></div>
+    </div>
+  );
+}
+
 export function OperatorWorkspace({ agents, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError }: OperatorWorkspaceProps) {
   const [sessions, setSessions] = useState<OperatorSession[]>([]);
   const [activeId, setActiveId] = useState<string>();
-  // Tickets and grants live in memory only, keyed by UI session; never persisted.
   const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
   const [closedChannels, setClosedChannels] = useState<Record<string, true>>({});
   const liveSessions = sessions.map((session) => ({
@@ -605,7 +647,6 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
     setActiveId(id);
   }
 
-  /** Releases the grant server-side (DELETE) and then tears the local terminal down. */
   async function releaseChannel(id: string) {
     const grant = grants[id];
     if (!grant) return;
@@ -651,7 +692,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
         error={fleetError}
         targets={terminalTargets}
       />
-      <SessionStage
+      <GridContainer
         sessions={liveSessions}
         activeId={activeId}
         agents={agents}

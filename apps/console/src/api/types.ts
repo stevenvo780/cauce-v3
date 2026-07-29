@@ -11,8 +11,8 @@ export type DeliveryState =
 export type JobLane = 'interactive' | 'batch';
 export type CapabilityState = 'available' | 'degraded' | 'unavailable' | 'unknown';
 export type ConsolePermission =
-  | 'message.publish' | 'delivery.replay' | 'job.create' | 'config.write' | 'config.rollback'
-  | 'ultimate-terminal.connect';
+  | 'message.publish' | 'delivery.replay' | 'delivery.cancel' | 'job.create' | 'config.write'
+  | 'config.rollback' | 'ultimate-terminal.connect';
 
 export interface ConsoleAuthState {
   /** null means the selected legacy auth mode has no BFF session facade. */
@@ -161,6 +161,17 @@ export interface ReplayResult {
   replayed?: boolean | null;
 }
 
+export interface CancelResult {
+  delivery_id?: string | null;
+  state?: DeliveryState | null;
+  cancelled?: boolean | null;
+  cancelled_from_state?: DeliveryState | null;
+  parent_notice?: string | null;
+  origin_relayed?: boolean | null;
+  /** Siempre true: cancelar deja fila en `dead_letters`, o sea sigue siendo replayable. */
+  replayable?: boolean | null;
+}
+
 export interface JobView {
   job_id?: string | null;
   tenant_id?: string | null;
@@ -306,4 +317,231 @@ export interface ObservabilitySnapshot {
   queues?: QueueSnapshot | null;
   jobs?: JobPage | null;
   origin_relays?: OriginRelayPage | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// GET /v3/console/activity — actividad en vuelo de la flota, agregada por alias. Ver
+// features/activity para la derivación pura de badges y umbrales, y el SQL de referencia en el
+// contrato (fleetActivity()): esta vista NUNCA trae cuerpos de mensaje, `result` ni `last_error`;
+// eso queda para Messages/Chains, que ya redactan.
+
+export type FleetWorkState = 'idle' | 'queued' | 'working' | 'saturated' | 'stalled';
+
+/** Acumulativo y no excluyente: un agente puede estar saturado Y con ACKs detenidos a la vez. */
+export type FleetActivityFlag =
+  | 'saturated'
+  | 'ack_stalled'
+  | 'overdue_acks'
+  | 'lease_expired'
+  | 'never_connected'
+  | 'unregistered'
+  | 'queued_without_consumer';
+
+export interface FleetActivityThresholds {
+  saturation_in_flight?: number | null;
+  stall_after_seconds?: number | null;
+  ack_recent_seconds?: number | null;
+  ack_lookback_seconds?: number | null;
+  items_per_agent?: number | null;
+}
+
+/** Subconjunto de PresenceLease relevante a esta vista; misma fuente (connection_leases). */
+export interface FleetActivityPresence {
+  online?: boolean | null;
+  instance_id?: string | null;
+  epoch?: number | null;
+  last_heartbeat_at?: string | null;
+  lease_until?: string | null;
+}
+
+export interface FleetActivityItem {
+  delivery_id?: string | null;
+  message_id?: string | null;
+  trace_id?: string | null;
+  from_tenant?: string | null;
+  from_alias?: string | null;
+  lane?: JobLane | null;
+  /** Sólo el adaptador de origen ('bus', 'telegram'…). Nunca conversation_id. */
+  origin_adapter?: string | null;
+  published_at?: string | null;
+  status?: DeliveryState | null;
+  attempt?: number | null;
+  claimed_at?: string | null;
+  ack_deadline_at?: string | null;
+  seconds_in_flight?: number | null;
+  last_ack_at?: string | null;
+  last_ack_status?: string | null;
+}
+
+export interface FleetActivityAgent {
+  tenant_id: string;
+  alias: string;
+  display_name?: string | null;
+  harness_id?: string | null;
+  /** false: el alias apareció por deliveries o por lease, no por el registro de agentes. */
+  registered?: boolean | null;
+  agent_enabled?: boolean | null;
+  presence?: FleetActivityPresence | null;
+  work_state?: FleetWorkState | null;
+  flags?: FleetActivityFlag[] | null;
+  in_flight?: number | null;
+  started?: number | null;
+  claimed_not_started?: number | null;
+  queued?: number | null;
+  queued_ready?: number | null;
+  retrying?: number | null;
+  overdue_in_flight?: number | null;
+  oldest_claimed_at?: string | null;
+  oldest_in_flight_seconds?: number | null;
+  nearest_ack_deadline_at?: string | null;
+  max_attempt?: number | null;
+  last_ack_at?: string | null;
+  /**
+   * null significa "ningún ACK aplicado dentro de ack_lookback_seconds" — la señal MÁS grave,
+   * nunca "recién ackeado". No renderizar como 0; usar formatAckAge() de features/activity.
+   */
+  seconds_since_last_ack?: number | null;
+  acks_recent?: number | null;
+  in_flight_items_truncated?: boolean | null;
+  in_flight_items?: FleetActivityItem[] | null;
+}
+
+export interface FleetActivityTotals {
+  agents?: number | null;
+  /** Excluyente: suma a totals.agents. */
+  by_state?: Partial<Record<FleetWorkState, number>> | null;
+  /** Acumulativo: NO suma a totals.agents ni entre sí. */
+  flagged?: Partial<Record<FleetActivityFlag, number>> | null;
+  in_flight?: number | null;
+  queued?: number | null;
+  retrying?: number | null;
+  overdue_in_flight?: number | null;
+}
+
+export interface FleetActivitySnapshot {
+  observed_at?: string | null;
+  thresholds?: FleetActivityThresholds | null;
+  totals?: FleetActivityTotals | null;
+  agents?: FleetActivityAgent[] | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// GET /v3/console/quotas — última muestra de cuota por (host, proveedor, grupo, ventana), más
+// sparkline de 24h. Ver features/quotas para agrupar por family (antigravity) y elegir la peor
+// ventana de un grupo colapsado.
+
+export type QuotaSeverity = 'ok' | 'warn' | 'critical' | 'exhausted' | 'unknown';
+
+export interface QuotaHistoryPoint {
+  at?: string | null;
+  used_percent?: number | null;
+}
+
+export interface QuotaHistory {
+  bucket_seconds?: number | null;
+  points?: QuotaHistoryPoint[] | null;
+}
+
+export interface QuotaWindow {
+  window_key?: string | null;
+  label?: string | null;
+  used_percent?: number | null;
+  remaining_percent?: number | null;
+  used_units?: number | null;
+  limit_units?: number | null;
+  window_minutes?: number | null;
+  reset_at?: string | null;
+  reset_in_seconds?: number | null;
+  status?: string | null;
+  family?: string | null;
+  model?: string | null;
+  severity?: QuotaSeverity | null;
+  history?: QuotaHistory | null;
+}
+
+export interface QuotaGroup {
+  group_key?: string | null;
+  limit_id?: string | null;
+  /** Ninguno de los dos viaja salvo que el actor sea el pagador — misma regla que getAgent(). */
+  account_id?: string | null;
+  account_label?: string | null;
+  account_provider?: string | null;
+  payer_tenant_id?: string | null;
+  paused_until?: string | null;
+  paused_reason?: string | null;
+  min_remaining_percent?: number | null;
+  severity?: QuotaSeverity | null;
+  windows?: QuotaWindow[] | null;
+}
+
+export interface QuotaProviderReport {
+  host?: string | null;
+  provider?: string | null;
+  /** ok=false con groups=[] es información ("el CLI dejó de responder"), no ausencia de dato. */
+  ok?: boolean | null;
+  available?: boolean | null;
+  kind?: string | null;
+  source?: string | null;
+  plan?: string | null;
+  note?: string | null;
+  effective_remaining_percent?: number | null;
+  observed_at?: string | null;
+  age_seconds?: number | null;
+  available_groups?: string[] | null;
+  limiting_groups?: string[] | null;
+  severity?: QuotaSeverity | null;
+  groups?: QuotaGroup[] | null;
+}
+
+export interface QuotaCollector {
+  host?: string | null;
+  collector_tenant?: string | null;
+  collector_alias?: string | null;
+  captured_at?: string | null;
+  received_at?: string | null;
+  /** Frescura real: medida contra received_at (reloj del servidor), no captured_at. */
+  age_seconds?: number | null;
+  stale?: boolean | null;
+  schema_version?: number | null;
+  app_version?: string | null;
+  provider_count?: number | null;
+  window_count?: number | null;
+}
+
+export interface QuotaUnboundGroup {
+  host?: string | null;
+  provider?: string | null;
+  group_key?: string | null;
+  window_count?: number | null;
+  reason?: string | null;
+  detail?: string | null;
+}
+
+export interface QuotaPausedAccount {
+  account_id?: string | null;
+  provider?: string | null;
+  label?: string | null;
+  payer_tenant_id?: string | null;
+  paused_until?: string | null;
+  paused_reason?: string | null;
+  /** false: pausada a mano por un operador; el recolector nunca debe pisar esa pausa. */
+  automatic?: boolean | null;
+}
+
+export interface QuotaThresholds {
+  stale_after_seconds?: number | null;
+  warn_remaining_percent?: number | null;
+  critical_remaining_percent?: number | null;
+  history_window_seconds?: number | null;
+  history_bucket_seconds?: number | null;
+  history_max_points?: number | null;
+}
+
+export interface QuotaSnapshot {
+  observed_at?: string | null;
+  thresholds?: QuotaThresholds | null;
+  collectors?: QuotaCollector[] | null;
+  providers?: QuotaProviderReport[] | null;
+  unbound_groups?: QuotaUnboundGroup[] | null;
+  paused_accounts?: QuotaPausedAccount[] | null;
 }

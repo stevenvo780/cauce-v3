@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import {
@@ -180,7 +181,11 @@ class SessionConcurrencyRunner implements CommandRunner {
   }
 }
 
-async function setup(name: string, runner = new ControlledRunner()): Promise<{
+async function setup(
+  name: string,
+  runner = new ControlledRunner(),
+  options: { ownTenantId?: string } = {},
+): Promise<{
   store: DurableStore;
   runner: ControlledRunner;
   events: DeliveryEvent[];
@@ -195,9 +200,55 @@ async function setup(name: string, runner = new ControlledRunner()): Promise<{
     publish: async (event) => {
       events.push(event);
     },
+    ...(options.ownTenantId === undefined ? {} : { ownTenantId: options.ownTenantId }),
   });
   await engine.activateEpoch(1);
   return { store, runner, events, engine };
+}
+
+/** Sesión nativa que el harness recibió en la ejecución `index`. */
+function sessionOf(runner: ControlledRunner, index: number): string {
+  const value = runner.requests[index]?.args.at(-1);
+  assert.ok(value, `la ejecución ${index} no llegó al harness`);
+  return value;
+}
+
+/** Conversación autenticada: lo que un puente publica junto al mensaje. */
+function conversation(options: {
+  adapter?: string;
+  channel?: string;
+  conversationId: string;
+  sessionId?: string;
+  metadata?: Record<string, unknown>;
+}): Pick<Delivery, "origin" | "authenticated_context"> {
+  const origin = {
+    adapter: options.adapter ?? "telegram",
+    channel: options.channel ?? "telegram",
+    conversation_id: options.conversationId,
+    relay: [],
+    metadata: options.metadata ?? {},
+  };
+  return {
+    origin,
+    authenticated_context: {
+      session_id: options.sessionId ?? `tg-${options.conversationId}`,
+      channel: options.channel ?? "telegram",
+      origin,
+    },
+  };
+}
+
+/**
+ * Publicación sin ruta de retorno: consola, adaptador, herramientas de ops. `origin` se quita de
+ * verdad (no se pisa con `undefined`) porque el proyecto compila con `exactOptionalPropertyTypes`.
+ */
+function originless(
+  base: Delivery,
+  sessionId: string,
+  channel = "console",
+): Delivery {
+  const { origin: _origin, ...rest } = base;
+  return { ...rest, authenticated_context: { session_id: sessionId, channel } };
 }
 
 async function setupSessionConcurrency(name: string, claimRenewalMs?: number): Promise<{
@@ -222,29 +273,63 @@ async function setupSessionConcurrency(name: string, claimRenewalMs?: number): P
   return { store, runner, events, engine };
 }
 
-async function waitForStarted(store: DurableStore, deliveryId: string): Promise<void> {
-  while (store.getDelivery(deliveryId)?.state !== "started") {
+/**
+ * Espera a que una entrega quede ESTACIONADA en el candado de sesion.
+ *
+ * Antes esto esperaba a que la entrega encolada llegara al estado "started". Ese era justamente el
+ * defecto: el motor declaraba ejecucion antes de tomar el candado, asi que una entrega que solo
+ * hacia fila se veia igual que una trabajando y renovaba su garra para siempre. Ahora la entrega en
+ * cola se queda en "accepted" y late en esa misma fase, asi que la senal correcta de "ya esta
+ * haciendo fila" es su ACK 'accepted' durable.
+ */
+async function waitForQueued(store: DurableStore, deliveryId: string): Promise<void> {
+  // El latido de cola es la unica senal que prueba que la entrega YA esta estacionada en el
+  // candado: se emite desde `awaitSessionTurn`, despues de que el motor registre su AbortController.
+  // Esperar solo el estado "accepted" seria una carrera — ese estado se alcanza antes, y un
+  // `cancel()`/`stop()` disparado en esa ventana no encontraria nada que abortar.
+  const parked = (): boolean => store.getDelivery(deliveryId)?.state === "accepted"
+    && store.pendingEvents().some((event) => (
+      event.delivery_id === deliveryId
+      && event.phase === "accepted"
+      && event.claim_renewal === true
+    ));
+  while (!parked()) {
     await new Promise<void>((resolveWait) => setImmediate(resolveWait));
   }
-  await new Promise<void>((resolveWait) => setImmediate(resolveWait));
 }
 
+/**
+ * El segundo 'started' no es ruido: es la marca `execution_started`, y su POSICIÓN es todo el
+ * punto. Sale después de que el harness consiguió su turno de sesión y antes de invocarlo, o
+ * sea que separa "admitida y esperando el candado" de "arrancó y esto ya se está pagando". El
+ * primer 'started' no distingue esas dos cosas, y por eso el reaper que lo tomaba como prueba
+ * de ejecución mandaba a dead trabajo que nunca había corrido.
+ */
 test("accepted is durable and published before started and execution", async () => {
   const context = await setup("engine-order");
   let phasesAtRun: string[] = [];
+  let executionMarkedAtRun = 0;
   context.runner.onRun = () => {
     phasesAtRun = context.events.map((event) => event.phase);
+    executionMarkedAtRun = context.events.filter((event) => event.execution_started === true).length;
   };
   await context.engine.handleDelivery(delivery("order-1"));
-  assert.deepEqual(phasesAtRun, ["accepted", "started"]);
+  assert.deepEqual(phasesAtRun, ["accepted", "started", "started"]);
+  // La marca ya estaba emitida cuando el harness arrancó, no después: emitirla después dejaría
+  // una corrida que muere en el primer segundo indistinguible de una que nunca arrancó.
+  assert.equal(executionMarkedAtRun, 1);
   assert.deepEqual(
     context.events.map((event) => event.phase),
-    ["accepted", "started", "done"],
+    ["accepted", "started", "started", "done"],
+  );
+  assert.deepEqual(
+    context.events.map((event) => event.execution_started === true),
+    [false, false, true, false],
   );
   assert.equal(context.store.getDelivery("order-1")?.state, "done");
   assert.deepEqual(
     context.store.pendingEvents().map((event) => event.phase),
-    ["accepted", "started", "done"],
+    ["accepted", "started", "started", "done"],
   );
 });
 
@@ -264,11 +349,14 @@ test("concurrent deliveries for one authenticated session share one UUID and exe
     store,
     harness,
     publish: async (event) => {
-      if (event.delivery_id === "session-serialized-a" && event.phase === "accepted") {
+      if (event.delivery_id === "session-serialized-a"
+        && event.phase === "accepted"
+        && event.claim_renewal !== true) {
         markFirstAccepted();
         await acceptedBarrier;
       }
     },
+    claimRenewalMs: 25,
   });
   await engine.activateEpoch(1);
   const firstInput: Delivery = {
@@ -283,7 +371,7 @@ test("concurrent deliveries for one authenticated session share one UUID and exe
   const first = engine.handleDelivery(firstInput);
   await firstAccepted;
   const second = engine.handleDelivery(secondInput);
-  await waitForStarted(store, secondInput.delivery_id);
+  await waitForQueued(store, secondInput.delivery_id);
 
   assert.equal(runner.requests.length, 0);
   releaseFirstAccepted();
@@ -332,8 +420,92 @@ test("concurrent deliveries for different authenticated sessions execute in para
   await Promise.all([first, second]);
 });
 
+/**
+ * EL escenario del dueño del sistema, tal como lo describió el revisor, y el motivo de todo el
+ * carril de agentes.
+ *
+ * jarvis (openclaw, sessionStrategy 'generated' ⇒ candado activo) atiende a su dueño en el chat
+ * C. La cadena delega y vuelve como `agent.response` HEREDANDO
+ * `origin={adapter:'telegram', conversation_id:C}`, así que antes le tocaba la MISMA clave de
+ * sesión: esa respuesta agarraba el candado de la conversación de la persona y lo retenía toda
+ * su corrida. Cuando el dueño escribía, su mensaje entraba rápido al gateway y se quedaba
+ * esperando ese candado. 114 minutos de mediana en midas, 235 en el peor caso.
+ *
+ * Lo que se afirma acá es exactamente lo que pidió el dueño: la tarea agente-a-agente NO se
+ * cancela ni se acorta —sigue bloqueada— y aun así el mensaje humano ejecuta.
+ */
+test("a human message executes while agent-to-agent work of the same conversation is still running", async () => {
+  const context = await setupSessionConcurrency("engine-human-lane-preemption");
+  const agentWork: Delivery = {
+    ...delivery("human-lane-agent-work"),
+    actor_alias: "kant",
+    body: { type: "agent.response", text: "kant volvió con el resultado" },
+  };
+  // Misma conversación, mismo origin, misma clave base: lo único que difiere es la clase.
+  const ownerMessage: Delivery = {
+    ...delivery("human-lane-owner-message"),
+    body: { prompt: "che, ¿qué estás haciendo?" },
+  };
+
+  const agent = context.engine.handleDelivery(agentWork);
+  await context.runner.waitForCalls(1);
+
+  const owner = context.engine.handleDelivery(ownerMessage);
+  // Sin carriles esto se colgaba acá para siempre: waitForCalls(2) no llegaba nunca hasta que
+  // la tarea del agente terminara.
+  await context.runner.waitForCalls(2);
+  assert.equal(context.runner.maxActive, 2);
+  assert.match(context.runner.requests[1]?.stdin ?? "", /qué estás haciendo/u);
+  // Sesiones nativas distintas: es el costo declarado del cambio (el agente pierde el hilo
+  // conversacional entre los dos carriles) y a la vez lo que hace posible la concurrencia.
+  assert.notEqual(
+    context.runner.requests[0]?.args.at(-1),
+    context.runner.requests[1]?.args.at(-1),
+  );
+
+  // El humano puede terminar primero sin que nadie haya tocado la tarea larga.
+  context.runner.releaseNext();
+  context.runner.releaseNext();
+  await Promise.all([agent, owner]);
+});
+
+/**
+ * El contracargo del test de arriba: separar carriles no puede volver concurrente lo que tiene
+ * que seguir serializado. Dos mensajes de la MISMA persona en la misma conversación siguen
+ * ejecutándose de a uno, o el harness se pisaría a sí mismo dentro de una conversación.
+ */
+test("two human messages of the same conversation stay serialized", async () => {
+  const context = await setupSessionConcurrency("engine-human-lane-serialized");
+  const first = context.engine.handleDelivery({
+    ...delivery("human-lane-first"),
+    body: { prompt: "primera pregunta" },
+  });
+  await context.runner.waitForCalls(1);
+  const second = context.engine.handleDelivery({
+    ...delivery("human-lane-second"),
+    body: { prompt: "segunda pregunta" },
+  });
+  // INTEGRACIÓN 2026-07-29: la segunda entrega ya no pasa por 'started' mientras hace fila —
+  // se estaciona en 'accepted' y late ahí. `waitForQueued` es el reemplazo exacto de la vieja
+  // `waitForStarted` para este caso: mismo punto del ciclo, señal correcta.
+  await waitForQueued(context.store, "human-lane-second");
+
+  assert.equal(context.runner.requests.length, 1);
+  assert.equal(context.runner.maxActive, 1);
+
+  context.runner.releaseNext();
+  await context.runner.waitForCalls(2);
+  context.runner.releaseNext();
+  await Promise.all([first, second]);
+  assert.equal(context.runner.maxActive, 1);
+  assert.equal(
+    context.runner.requests[0]?.args.at(-1),
+    context.runner.requests[1]?.args.at(-1),
+  );
+});
+
 test("cancelling a queued session delivery skips execution without breaking the session queue", async () => {
-  const context = await setupSessionConcurrency("engine-session-queued-cancel");
+  const context = await setupSessionConcurrency("engine-session-queued-cancel", 25);
   const firstInput = delivery("session-cancel-a");
   const secondInput = delivery("session-cancel-b");
   const thirdInput = delivery("session-cancel-c");
@@ -341,9 +513,9 @@ test("cancelling a queued session delivery skips execution without breaking the 
   const first = context.engine.handleDelivery(firstInput);
   await context.runner.waitForCalls(1);
   const second = context.engine.handleDelivery(secondInput);
-  await waitForStarted(context.store, secondInput.delivery_id);
+  await waitForQueued(context.store, secondInput.delivery_id);
   const third = context.engine.handleDelivery(thirdInput);
-  await waitForStarted(context.store, thirdInput.delivery_id);
+  await waitForQueued(context.store, thirdInput.delivery_id);
   await context.engine.cancel({
     type: "cancel",
     delivery_id: secondInput.delivery_id,
@@ -366,14 +538,14 @@ test("cancelling a queued session delivery skips execution without breaking the 
 });
 
 test("fencing queued session work skips stale execution and releases the queue", async () => {
-  const context = await setupSessionConcurrency("engine-session-queued-fence");
+  const context = await setupSessionConcurrency("engine-session-queued-fence", 25);
   const firstInput = delivery("session-fence-a");
   const secondInput = delivery("session-fence-b");
 
   const first = context.engine.handleDelivery(firstInput);
   await context.runner.waitForCalls(1);
   const second = context.engine.handleDelivery(secondInput);
-  await waitForStarted(context.store, secondInput.delivery_id);
+  await waitForQueued(context.store, secondInput.delivery_id);
   await context.engine.activateEpoch(2);
   await second;
 
@@ -396,14 +568,14 @@ test("fencing queued session work skips stale execution and releases the queue",
 });
 
 test("shutdown is retryable before dispatch but successful output obtained after abort is ambiguous", async () => {
-  const context = await setupSessionConcurrency("engine-session-shutdown-boundary");
+  const context = await setupSessionConcurrency("engine-session-shutdown-boundary", 25);
   const dispatchedInput = delivery("session-stop-dispatched");
   const queuedInput = delivery("session-stop-queued");
 
   const dispatched = context.engine.handleDelivery(dispatchedInput);
   await context.runner.waitForCalls(1);
   const queued = context.engine.handleDelivery(queuedInput);
-  await waitForStarted(context.store, queuedInput.delivery_id);
+  await waitForQueued(context.store, queuedInput.delivery_id);
 
   context.engine.stop();
   await queued;
@@ -1317,7 +1489,7 @@ test("a failure before started never creates a renewal timer", async () => {
   assert.equal(context.events.length, eventCount);
 });
 
-test("a queued serialized session keeps renewing its claim before execution", async () => {
+test("a queued serialized session keeps renewing its claim, in 'accepted', before execution", async () => {
   const context = await setupSessionConcurrency("engine-session-ack-budget", 50);
   const firstInput = delivery("session-ack-budget-a");
   const secondInput: Delivery = {
@@ -1329,13 +1501,25 @@ test("a queued serialized session keeps renewing its claim before execution", as
   const first = context.engine.handleDelivery(firstInput);
   await context.runner.waitForCalls(1);
   const second = context.engine.handleDelivery(secondInput);
+  // La entrega encolada tiene que seguir renovando su garra —si no, el reaper se la lleva a mitad
+  // de la fila— pero renovando en 'accepted'. Antes esta prueba esperaba dos ACK 'started', que era
+  // el defecto escrito como aserción: declaraba ejecución sin haber tomado el candado.
   const renewalDeadline = Date.now() + 5_000;
   while (context.events.filter(
-    (event) => event.delivery_id === secondInput.delivery_id && event.phase === "started",
+    (event) => event.delivery_id === secondInput.delivery_id
+      && event.phase === "accepted"
+      && event.claim_renewal === true,
   ).length < 2) {
     if (Date.now() >= renewalDeadline) throw new Error("queued claim renewal timeout");
     await new Promise<void>((resolveWait) => setTimeout(resolveWait, 20));
   }
+  assert.equal(
+    context.events.filter(
+      (event) => event.delivery_id === secondInput.delivery_id && event.phase === "started",
+    ).length,
+    0,
+    "mientras hace fila no puede haber emitido un solo ACK 'started'",
+  );
 
   assert.equal(context.runner.requests.length, 1);
   context.runner.releaseNext();
@@ -1365,11 +1549,14 @@ test("outbox removes events only after relay ACK", async () => {
   const context = await setup("engine-ack");
   await context.engine.handleDelivery(delivery("ack-1"));
   const pending = context.store.pendingEvents();
-  assert.equal(pending.length, 3);
+  // accepted + started + started(execution_started) + done. El tercero es la marca de arranque
+  // real del harness, que es durable como cualquier otro evento: si el socket está caído cuando
+  // el harness arranca, se despacha al reconectar y la base igual se entera de que ya se pagó.
+  assert.equal(pending.length, 4);
   const first = pending[0];
   assert.ok(first);
   assert.equal(await context.store.acknowledge(first), true);
-  assert.equal(context.store.pendingEvents().length, 2);
+  assert.equal(context.store.pendingEvents().length, 3);
   assert.equal(await context.store.acknowledge({
     ...first,
     event_id: "00000000-0000-4000-8000-000000000000",
@@ -1523,31 +1710,157 @@ test("crash recovery marks started work ambiguous and blocks automatic redeliver
 test("out-of-order event receipts correlate by full event identity", async () => {
   const context = await setup("engine-event-correlation");
   await context.engine.handleDelivery(delivery("event-correlation"));
-  const [accepted, started, done] = context.store.pendingEvents();
-  assert.ok(accepted && started && done);
+  // El tercer evento es la marca `execution_started`; correlaciona por identidad completa como
+  // cualquier otro y no altera el orden de los demás.
+  const [accepted, started, executionStarted, done] = context.store.pendingEvents();
+  assert.ok(accepted && started && executionStarted && done);
+  assert.equal(executionStarted.execution_started, true);
   assert.equal(await context.store.acknowledge(done), true);
-  assert.deepEqual(context.store.pendingEvents().map((event) => event.event_id), [accepted.event_id, started.event_id]);
+  assert.deepEqual(
+    context.store.pendingEvents().map((event) => event.event_id),
+    [accepted.event_id, started.event_id, executionStarted.event_id],
+  );
   assert.equal(await context.store.acknowledge(accepted), true);
-  assert.deepEqual(context.store.pendingEvents().map((event) => event.event_id), [started.event_id]);
+  assert.deepEqual(
+    context.store.pendingEvents().map((event) => event.event_id),
+    [started.event_id, executionStarted.event_id],
+  );
 });
 
-test("same untrusted session label is isolated across authenticated tenants", async () => {
+/**
+ * CAMBIO DE CONTRATO DELIBERADO (2026-07-29). Antes esto separaba por `delivery.tenant_id`, que
+ * es el tenant del EMISOR: la misma persona, en el mismo chat, hablándole al mismo agente, caía
+ * en sesiones distintas según qué agente publicara la entrega. Esa separación no era una
+ * frontera — el test de abajo ("trusted bridge tenant…") exige lo contrario para la misma
+ * conversación — y era una de las causas del síntoma "se duplican las instancias".
+ *
+ * Lo que sigue protegiendo, que es la razón por la que existe: dos conversaciones autenticadas
+ * distintas (dos humanos, dos chats) jamás comparten sesión aunque traigan la misma etiqueta
+ * `session_key` en el cuerpo, que es un campo NO confiable.
+ */
+test("two authenticated conversations never share a session, whatever the untrusted label says", async () => {
   const context = await setup("engine-tenant-session");
-  const steven = delivery("tenant-session-a");
+  const steven: Delivery = {
+    ...delivery("tenant-session-a"),
+    ...conversation({ conversationId: "6979524541" }),
+    body: { prompt: "perform the task", session_key: "same-label" },
+  };
   const miguel: Delivery = {
     ...delivery("tenant-session-b"),
     tenant_id: "Miguel",
-    body: { prompt: "perform the task", session_key: "thread-1" },
+    ...conversation({ conversationId: "-1003969325671" }),
+    body: { prompt: "perform the task", session_key: "same-label" },
   };
   await context.engine.handleDelivery(steven);
   await context.engine.handleDelivery(miguel);
-  const firstSession = context.runner.requests[0]?.args.at(-1);
-  const secondSession = context.runner.requests[1]?.args.at(-1);
-  assert.ok(firstSession && secondSession);
-  assert.notEqual(firstSession, secondSession);
+  assert.notEqual(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
 });
 
-test("trusted bridge tenant keeps a cross-tenant agent response in the requester's session", async () => {
+/**
+ * La consola y las herramientas de ops publican SIN `origin`: hasta ahora eso significaba que no
+ * había clave y cada entrega corría sin continuidad (243 publicaciones de consola en prod al
+ * 2026-07-29, 0 con origen). La conversación es el actor autenticado, y el tenant es parte de
+ * ella: dos tenants distintos por la misma superficie no se tocan.
+ */
+test("originless publishes are isolated per authenticated tenant", async () => {
+  const context = await setup("engine-console-tenant");
+  const steven = originless(delivery("console-tenant-a"), "console-steven");
+  const pablo: Delivery = {
+    ...originless(delivery("console-tenant-b"), "console-pablo"),
+    tenant_id: "Pablo",
+  };
+  await context.engine.handleDelivery(steven);
+  await context.engine.handleDelivery(pablo);
+  assert.notEqual(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+/**
+ * Punto 4: la consola tiene que converger en UNA conversación por operador. El `session_id` de
+ * un principal OIDC es el `sid` del login y cambia en cada re-login; si entrara en la clave, la
+ * consola estrenaría sesión cada vez que Steven vuelve a entrar.
+ */
+test("console keeps one session per operator across re-login", async () => {
+  const context = await setup("engine-console-relogin");
+  await context.engine.handleDelivery(originless(delivery("console-login-a"), "sid-primer-login"));
+  await context.engine.handleDelivery(originless(delivery("console-login-b"), "sid-segundo-login"));
+  assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+/**
+ * El store fabrica `delivery:<id>:attempt:<n>` cuando el mensaje raíz no traía sesión
+ * autenticada. Ese identificador es por ENTREGA: si entrara en la clave daría una sesión nativa
+ * por entrega, que es exactamente el defecto que este cambio arregla.
+ */
+test("per-delivery synthetic session ids never fragment the conversation", async () => {
+  const context = await setup("engine-ephemeral-session-id");
+  await context.engine.handleDelivery(
+    originless(delivery("ephemeral-a"), "delivery:11111111-1111-4111-8111-111111111111:attempt:1", "agent-output"),
+  );
+  await context.engine.handleDelivery(
+    originless(delivery("ephemeral-b"), "delivery:22222222-2222-4222-8222-222222222222:attempt:1", "agent-output"),
+  );
+  assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+/**
+ * El tenant que separa es el del RECEPTOR, que sale de la configuración local del adaptador y no
+ * viaja en la entrega. Nadie del otro lado del bus puede moverlo.
+ */
+test("recipient tenant scopes the session and is taken from local configuration", async () => {
+  const steven = await setup("engine-recipient-tenant-steven", new ControlledRunner(), {
+    ownTenantId: "Steven",
+  });
+  const miguel = await setup("engine-recipient-tenant-miguel", new ControlledRunner(), {
+    ownTenantId: "Miguel",
+  });
+  const shared = { ...delivery("recipient-tenant"), ...conversation({ conversationId: "6979524541" }) };
+  await steven.engine.handleDelivery(shared);
+  await miguel.engine.handleDelivery(shared);
+  assert.notEqual(sessionOf(steven.runner, 0), sessionOf(miguel.runner, 0));
+});
+
+/**
+ * La reparación medida: en prod hay 6 conversaciones de Telegram cuyas filas viejas no traen
+ * `bridge_tenant` y las nuevas sí. Mismo chat, mismo bot, mismo alias, dos sesiones nativas.
+ * El tenant del PUENTE no identifica ninguna conversación y no puede partirla.
+ */
+test("bridge tenant no longer splits one conversation in two", async () => {
+  const context = await setup("engine-bridge-tenant-merge");
+  const legacy: Delivery = {
+    ...delivery("bridge-tenant-legacy"),
+    ...conversation({ conversationId: "6979524541", metadata: {} }),
+  };
+  const current: Delivery = {
+    ...delivery("bridge-tenant-current"),
+    ...conversation({
+      conversationId: "6979524541",
+      metadata: { bridge_alias: "zeus", bridge_tenant: "Steven", chat_type: "private" },
+    }),
+  };
+  await context.engine.handleDelivery(legacy);
+  await context.engine.handleDelivery(current);
+  assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 1));
+});
+
+/**
+ * CAMBIO DE CONTRATO DELIBERADO (2026-07-27). Antes esto exigía que una `agent.response`
+ * cross-tenant cayera en la MISMA sesión nativa que el pedido del humano. Esa igualdad era
+ * exactamente el bloqueo: el candado de sesión es FIFO estricta, así que la respuesta de la
+ * delegación se quedaba con la sesión de la conversación durante toda su corrida y el dueño
+ * esperaba detrás (114 min de mediana en midas). Ahora el tráfico agente-a-agente vive en un
+ * carril propio y los dos pueden correr a la vez.
+ *
+ * Lo que este test SIGUE protegiendo, que es la razón por la que existe: el alcance de la
+ * sesión lo gobierna la CONVERSACIÓN y no el tenant de la entrega. Dos respuestas que llegan de
+ * tenants distintos sobre la misma conversación tienen que compartir sesión; lo único que cambió
+ * es cuál.
+ *
+ * 2026-07-29: antes ese alcance salía de `origin.metadata.bridge_tenant`, con caída a
+ * `delivery.tenant_id` cuando faltaba — o sea que el mismo chat se partía en dos según quién
+ * publicara. Ahora ni uno ni otro entran en la clave y la igualdad de abajo vale por
+ * construcción, no por coincidencia.
+ */
+test("the conversation, not the delivery tenant, keeps cross-tenant agent responses in one shared agent-lane session", async () => {
   const context = await setup("engine-agent-response-session");
   const root = delivery("agent-response-session-a");
   const trustedOrigin = {
@@ -1577,10 +1890,26 @@ test("trusted bridge tenant keeps a cross-tenant agent response in the requester
       origin: trustedOrigin,
     },
   };
+  const otherTenantResponse: Delivery = {
+    ...response,
+    delivery_id: "agent-response-session-c",
+    event_id: "agent-response-session-c",
+    tenant_id: "Miguel",
+  };
 
   await context.engine.handleDelivery(request);
   await context.engine.handleDelivery(response);
-  assert.equal(context.runner.requests[0]?.args.at(-1), context.runner.requests[1]?.args.at(-1));
+  await context.engine.handleDelivery(otherTenantResponse);
+  const humanSession = context.runner.requests[0]?.args.at(-1);
+  const agentSession = context.runner.requests[1]?.args.at(-1);
+  const otherTenantSession = context.runner.requests[2]?.args.at(-1);
+  assert.ok(humanSession && agentSession && otherTenantSession);
+  // El carril de agentes NO es la sesión del humano: eso es lo que le devuelve disponibilidad
+  // al dueño sin cancelar la tarea larga.
+  assert.notEqual(agentSession, humanSession);
+  // Pero sigue siendo UNA sola sesión por conversación, derivada del bridge_tenant de
+  // confianza: el tenant de la entrega no la parte en dos.
+  assert.equal(otherTenantSession, agentSession);
   assert.match(context.runner.requests[1]?.stdin ?? "", /"message_type":"agent.response"/u);
   assert.match(context.runner.requests[1]?.stdin ?? "", /"sender_alias":"seneca"/u);
 });
@@ -1613,39 +1942,70 @@ test("stale claim token neither executes nor acknowledges the current event", as
   assert.equal(context.runner.calls, 1);
 });
 
-test("authenticated session keys include attempt number to isolate retries", async () => {
+/**
+ * CAMBIO DE CONTRATO DELIBERADO (2026-07-29). Este test exigía lo contrario desde 44521b6:
+ * "attempts 1 and 2 must have different session IDs". Medido sobre prod el 2026-07-29, eso le
+ * pasaba a 1499 de 5312 entregas (28,2 %): el reintento le contestaba a la persona desde una
+ * sesión sin memoria — el síntoma "se duplican las instancias" — y peor, esa sesión acumulaba un
+ * intercambio real que la sesión principal nunca vería.
+ *
+ * Lo que 44521b6 quería frenar (el transcript creciendo en cada reintento, socrates ~300K →
+ * 1,8MB en 4 intentos) es el caso "el intento anterior murió a mitad de ejecución", y ese lo
+ * fenced `DurableStore.accept` desde e5c909e: un intento mayor sólo se acepta si el anterior
+ * terminó en `failed` con `retryable: true` — ver el test "crash recovery marks started work
+ * ambiguous and blocks automatic redelivery", que comprueba que ni siquiera se ejecuta.
+ */
+test("a retry of the same conversation keeps the same session", async () => {
   const runner = new ControlledRunner();
   runner.stdout = JSON.stringify({
-    reply: "attempt 1 failed",
+    reply: "temporary outage",
     messages: [],
     status: "failed",
     retryable: true,
     artifacts: [],
   });
-  const context = await setup("engine-session-attempt-v2", runner);
-  const attempt1 = delivery("session-attempt-v2", 1, 1);
-  const attempt2 = delivery("session-attempt-v2", 1, 2);
+  const context = await setup("engine-session-retry-v3", runner);
+  const attempt1 = delivery("session-retry-v3", 1, 1);
+  const attempt2 = delivery("session-retry-v3", 1, 2);
 
-  // Send first attempt (will fail with retryable=true)
   await context.engine.handleDelivery(attempt1);
-  assert.equal(runner.calls, 1, "first attempt should execute");
-  const session1 = context.runner.requests[0]?.args.at(-1);
-  assert.ok(session1, "session 1 should exist");
+  assert.equal(runner.calls, 1, "el primer intento tiene que ejecutar");
 
-  // Switch runner to return success for attempt 2
   runner.stdout = SUCCESS;
-
-  // Send second attempt of same delivery
   await context.engine.handleDelivery(attempt2);
-  assert.ok(
-    runner.calls >= 2,
-    `expected second attempt to execute; got ${runner.calls} calls`,
-  );
-  const session2 = context.runner.requests[1]?.args.at(-1);
-  assert.ok(session2, "session 2 should exist");
+  assert.equal(runner.calls, 2, "el reintento tiene que ejecutar");
 
-  // Different attempts should use different session IDs (isolated by v2 namespace including attempt)
-  assert.notEqual(session1, session2, "attempts 1 and 2 must have different session IDs due to attempt scoping in v2");
+  assert.equal(
+    sessionOf(context.runner, 0),
+    sessionOf(context.runner, 1),
+    "un reintento de la misma conversación no puede estrenar sesión: le contestaría a la persona sin memoria",
+  );
+});
+
+/**
+ * El mensaje SIGUIENTE de la misma persona, en el mismo chat, también cae en esa sesión — que es
+ * lo que el dueño percibe como "es el mismo, se acuerda". Antes no: el reintento se iba a una
+ * sesión propia y el mensaje siguiente volvía a la de attempt 1, así que las dos divergían.
+ */
+test("the next message of the same conversation lands in the session the retry used", async () => {
+  const runner = new ControlledRunner();
+  runner.stdout = JSON.stringify({
+    reply: "temporary outage",
+    messages: [],
+    status: "failed",
+    retryable: true,
+    artifacts: [],
+  });
+  const context = await setup("engine-session-retry-continuity", runner);
+  const chat = conversation({ conversationId: "6979524541" });
+  await context.engine.handleDelivery({ ...delivery("retry-continuity-a", 1, 1), ...chat });
+  runner.stdout = SUCCESS;
+  await context.engine.handleDelivery({ ...delivery("retry-continuity-a", 1, 2), ...chat });
+  await context.engine.handleDelivery({ ...delivery("retry-continuity-b", 1, 1), ...chat });
+
+  assert.equal(runner.calls, 3);
+  assert.equal(sessionOf(context.runner, 0), sessionOf(context.runner, 2));
+  assert.equal(sessionOf(context.runner, 1), sessionOf(context.runner, 2));
 });
 
 test("un mensaje con solo adjuntos llega al harness en vez de morir sin respuesta", async () => {
@@ -1671,6 +2031,47 @@ test("un mensaje con solo adjuntos llega al harness en vez de morir sin respuest
   const enviado = context.runner.requests[0]?.stdin ?? "";
   assert.match(enviado, /2 adjuntos de tipo photo/u);
   assert.match(enviado, /No podés ver ni abrir el contenido/u);
+});
+
+test("materializa attachments_v1 para el harness, verifica contenido y limpia el temporal", async () => {
+  const payload = Buffer.from("%PDF-1.7\ncontenido de prueba", "utf8");
+  let materializedPath: string | undefined;
+  let materializedContents: Buffer | undefined;
+  class AttachmentRunner extends ControlledRunner {
+    override async run(request: CommandRunRequest): Promise<CommandRunResult> {
+      const pathMatch = request.stdin.match(/"local_path":"([^"]+)"/u);
+      assert.ok(pathMatch?.[1], "el prompt debe incluir una ruta local accesible");
+      materializedPath = pathMatch[1];
+      materializedContents = await readFile(materializedPath);
+      assert.match(request.stdin, /"name":"informe\.pdf"/u);
+      assert.match(request.stdin, /"mime_type":"application\/pdf"/u);
+      assert.match(request.stdin, /delivery_mode=filesystem_fallback/u);
+      return super.run(request);
+    }
+  }
+  const runner = new AttachmentRunner();
+  const context = await setup("engine-telegram-attachment", runner);
+  const input: Delivery = {
+    ...delivery("media-pdf"),
+    body: {
+      type: "telegram.message",
+      attachments_v1: [{
+        kind: "document",
+        name: "informe.pdf",
+        mime_type: "application/pdf",
+        file_size: payload.length,
+        sha256: createHash("sha256").update(payload).digest("hex"),
+        content_base64: payload.toString("base64"),
+      }],
+    },
+  };
+
+  await context.engine.handleDelivery(input);
+
+  assert.deepEqual(materializedContents, payload);
+  assert.ok(materializedPath);
+  await assert.rejects(access(materializedPath), { code: "ENOENT" });
+  assert.equal(context.events.at(-1)?.phase, "done");
 });
 
 test("un cuerpo realmente vacio sigue siendo rechazado", async () => {

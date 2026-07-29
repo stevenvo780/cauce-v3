@@ -59,7 +59,9 @@ export function capabilityStrings(capabilities: AdapterCapabilities): string[] {
     'claim-token-correlation',
     'authenticated-session-scope',
     ...(capabilities.routing_targets_v1 ? ['routing_targets_v1'] : []),
+    ...(capabilities.agent_identity_v1 ? ['agent_identity_v1'] : []),
     ...(capabilities.renewable_delivery_claims_v1 ? ['renewable_delivery_claims_v1'] : []),
+    ...(capabilities.delegation_feedback_v1 ? ['delegation_feedback_v1'] : []),
     ...(capabilities.persistent_sessions ? ['persistent-sessions'] : []),
     ...(capabilities.loopback_api === true ? ['loopback-api'] : []),
     ...(capabilities.stable_alias_sessions === true ? ['stable-alias-sessions'] : []),
@@ -225,6 +227,14 @@ export class AdapterClient {
         if (acknowledged && pending?.claim_renewal === true) {
           if (frame.applied === true || frame.receipt === 'duplicate') {
             this.engine.confirmClaim(frame.delivery_id, frame.attempt, frame.claim_token);
+          } else if (pending.phase === 'accepted' && frame.receipt !== 'ownership_lost') {
+            // Latido de cola que el gateway no aplicó. Un gateway anterior a esta versión no
+            // conoce la renovación en fase 'accepted' y contesta 'superseded' (o sin `receipt`),
+            // que NO es pérdida de propiedad: tratarlo como tal mataría la entrega con
+            // CLAIM_OWNERSHIP_LOST, que es no-retryable, sin que nadie haya perdido nada. Se lo
+            // trata como ausencia de señal: el watchdog fail-closed sigue corriendo y, si el
+            // gateway efectivamente no renueva, vence solo con un error RETRYABLE.
+            this.engine.logDroppedQueueRenewal(frame.delivery_id, frame.attempt);
           } else {
             this.engine.loseClaim(frame.delivery_id, frame.attempt, frame.claim_token);
           }
@@ -259,6 +269,9 @@ export class AdapterClient {
       instance_id: this.config.instanceId,
       epoch: event.epoch,
       retryable: event.error?.retryable ?? event.output?.retryable ?? false,
+      // Campo opcional del protocolo: un gateway viejo lo ignora y el reaper se queda con el
+      // reintento de siempre, que es caro pero no pierde trabajo.
+      ...(event.execution_started === true ? { execution_started: true } : {}),
       ...(detail === undefined ? {} : { error: detail }),
       ...(event.error === undefined ? {} : { error_code: event.error.code }),
       ...(event.output === undefined ? {} : { result: { output: event.output } }),

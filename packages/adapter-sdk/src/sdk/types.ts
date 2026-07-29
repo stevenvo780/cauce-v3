@@ -1,5 +1,7 @@
 import type {
   Ack,
+  ChainGateNotice,
+  DelegationRejectionNotice,
   DeliveryEnvelope,
   DeliveryState,
   Hello,
@@ -30,11 +32,23 @@ export interface AdapterCapabilities {
   readonly claim_token_correlation: true;
   readonly authenticated_session_scope: true;
   readonly routing_targets_v1: true;
+  readonly attachments_v1: true;
+  readonly native_image_input_v1?: true;
+  readonly native_document_input_v1?: true;
   readonly persistent_sessions: boolean;
   readonly loopback_api?: true;
   readonly stable_alias_sessions?: true;
   readonly api_cancellation?: 'abort_signal';
   readonly renewable_delivery_claims_v1?: true;
+  /**
+   * Declara que el adaptador sabe validar `ack_result.delegation_rejections` y
+   * `ack_result.chain_gate`. El gateway NO manda esos campos a quien no lo declare, porque un
+   * adaptador que valida el frame con `.strict()` no descarta el frame que rechaza: falla la cola
+   * entera de la conexión.
+   */
+  readonly delegation_feedback_v1?: true;
+  /** Acepta `self_role` en el sobre y lo emite como preámbulo de identidad. Ver migración 020. */
+  readonly agent_identity_v1?: true;
 }
 
 export type RelayOrigin = Origin;
@@ -112,6 +126,10 @@ export interface AckResultFrame {
   readonly status: DeliveryState;
   readonly applied: boolean;
   readonly receipt?: 'applied' | 'duplicate' | 'superseded' | 'ownership_lost';
+  /** Salidas `messages` que NO se convirtieron en entrega. Sólo con `delegation_feedback_v1`. */
+  readonly delegation_rejections?: readonly DelegationRejectionNotice[];
+  /** La rama quedó suspendida esperando a una persona. Sólo con `delegation_feedback_v1`. */
+  readonly chain_gate?: ChainGateNotice;
 }
 
 /** Every ACK is scoped to one delivery attempt and one opaque claim. */
@@ -158,6 +176,15 @@ export interface DeliveryEvent {
   readonly duplicate?: boolean;
   /** Local-only marker; the transport maps it to a normal `started` ACK. */
   readonly claim_renewal?: true;
+  /**
+   * "El harness EMPEZÓ a ejecutar", no "la entrega fue admitida". Se emite una vez por intento,
+   * después de obtener la reserva de sesión y justo antes de invocar al harness. El ACK
+   * `started` normal no sirve para esto: sale ANTES de todo eso, y el reaper que lo tomaba como
+   * prueba de ejecución mandaba a `dead` entregas que nunca habían corrido. A diferencia de
+   * `claim_renewal`, este campo SÍ viaja por el cable; es opcional en el protocolo y un gateway
+   * viejo simplemente lo ignora.
+   */
+  readonly execution_started?: true;
   readonly output?: StructuredOutput;
   readonly error?: AdapterErrorPayload;
 }
@@ -217,12 +244,26 @@ export interface CommandRunResult {
   readonly cancelled: boolean;
 }
 
+export interface HarnessAttachment {
+  readonly kind: 'image' | 'document';
+  readonly name: string;
+  readonly mimeType: string;
+  readonly path: string;
+  readonly size: number;
+  readonly sha256: string;
+}
+
 export interface CommandRunner {
   run(request: CommandRunRequest): Promise<CommandRunResult>;
 }
 
 export interface SafeRunnerLog {
-  readonly event: 'spawn' | 'exit' | 'terminate';
+  /**
+   * `orphaned_pipes`: el hijo salió pero un descendiente heredó stdout/stderr y las dejó
+   * abiertas, así que la entrega se cerró cosechando el grupo de procesos. Es la huella
+   * operativa de una entrega que antes quedaba colgada para siempre y en silencio.
+   */
+  readonly event: 'spawn' | 'exit' | 'terminate' | 'orphaned_pipes';
   readonly harness: HarnessId;
   readonly exitCode?: number | null;
   readonly timedOut?: boolean;
@@ -264,7 +305,9 @@ export interface AdapterLog {
     | 'claim_renewal_start'
     | 'claim_renewal_end'
     | 'connection_error'
-    | 'outbound_frame_invalid';
+    | 'outbound_frame_invalid'
+    /** Un frame del gateway que el esquema rechazó y el adaptador DESCARTÓ sin cortar la cola. */
+    | 'inbound_frame_invalid';
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;
@@ -276,7 +319,7 @@ export interface AdapterLog {
   reason?: string;
   /** Discriminator of the offending frame (`ack`, `hello`, `heartbeat`); never its body. */
   frame_type?: string;
-  /** Fields a schema rejected. Set on `outbound_frame_invalid`. */
+  /** Fields a schema rejected. Set on `outbound_frame_invalid` and `inbound_frame_invalid`. */
   issues?: readonly FrameValidationIssue[];
   /** Truncated SHA-256 of a claim token. Never the token itself; see the note above. */
   claim_token_fingerprint?: string;

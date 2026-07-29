@@ -228,6 +228,9 @@ export class TelegramHttpClient implements TelegramApi {
       chat_id: chatId,
       text,
       disable_web_page_preview: true,
+      // Sin parse_mode Telegram muestra el marcado crudo (`##`, `**`, las vallas de código) en
+      // medio del texto, que es como llegaban los informes de la flota hasta el 2026-07-27.
+      ...(options?.parse_mode === 'html' ? { parse_mode: 'HTML' } : {}),
       ...(threadId !== undefined && validTelegramMessageId(threadId)
         ? { message_thread_id: Number(threadId) } : {}),
       ...(replyTo !== undefined && validTelegramMessageId(replyTo)

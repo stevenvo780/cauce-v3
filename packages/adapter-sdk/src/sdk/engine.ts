@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { isAmbiguousAckErrorCode } from "@cauce/protocol";
+import { isAgentToAgentBody, isAmbiguousAckErrorCode } from "@cauce/protocol";
 import type { InboxRecord } from "./durable-store.js";
 import { DurableStore } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
-import type { HarnessAdapter, HarnessSessionReservation } from "../harnesses/shared.js";
+import type { HarnessAdapter, HarnessSessionReservation, SessionLane } from "../harnesses/shared.js";
 import type {
   AdapterLogger,
   CancelDelivery,
@@ -16,13 +16,37 @@ import type {
 import { systemClock } from "./backoff.js";
 import { synthesizeFaninOutput } from "./fanin-synthesizer.js";
 import { validateDeliveryOutput } from "./output-parser.js";
+import { materializeAttachments, type MaterializedAttachments } from "./attachments.js";
 
 export type EventPublisher = (event: DeliveryEvent) => Promise<void>;
+
+/**
+ * Lo que el engine le pasa al harness para ubicar la sesión: la clave derivada del origen y el
+ * carril. Se lleva tal cual al request de ejecución, así que las dos cosas que deciden qué
+ * candado y qué sesión nativa se usan viajan siempre juntas y no se pueden desincronizar.
+ */
+type HarnessSessionRequestScope = { sessionKey?: string; sessionLane?: SessionLane };
 
 const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
 const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
 const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 const MAX_AGENT_EXECUTION_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * Techo absoluto de la espera en el candado de sesión, medido desde que la entrega se acepta.
+ *
+ * No es un número de gusto. Sobre las 4.280 entregas de producción que sí toman candado (las que
+ * traen `origin.conversation_id`), 2.416 quedaron encoladas detrás de otra del mismo candado. De
+ * esas: 584 esperaron más de 1 h, 339 más de 2 h, 130 más de 6 h, 129 más de 12 h y 129 más de 24 h.
+ * Entre las 6 h y las 12 h hay exactamente UNA entrega. Es decir: pasadas las 6 h la cola ya no
+ * contiene trabajo que vaya a ser servido, contiene 129 zombis que nadie va a atender (la espera
+ * máxima medida fue de 3,26 días). Cortar en 6 h mata a los 129 y le cuesta una sola espera legítima
+ * de la muestra completa.
+ *
+ * Se acota además por el `timeout_ms` que pidió el emisor: nadie que pidió 10 minutos de trabajo
+ * quiere que su entrega siga viva 6 horas después sin haber arrancado.
+ */
+const DEFAULT_QUEUE_WAIT_TIMEOUT_MS = 6 * 60 * 60_000;
 
 export interface AdapterEngineOptions {
   readonly store: DurableStore;
@@ -36,6 +60,11 @@ export interface AdapterEngineOptions {
   readonly claimRenewalMs?: number;
   /** Test/diagnostic override; production derives the fail-closed watchdog from the claim. */
   readonly claimWatchdogMs?: number;
+  /**
+   * Techo absoluto de la espera en el candado de sesión. Sin override se usa
+   * `min(timeout pedido por el emisor, DEFAULT_QUEUE_WAIT_TIMEOUT_MS)`.
+   */
+  readonly queueWaitTimeoutMs?: number;
   readonly clock?: Clock;
 }
 
@@ -49,6 +78,7 @@ export class AdapterEngine {
   private readonly defaultTimeoutMs: number;
   private readonly claimRenewalMs: number | undefined;
   private readonly claimWatchdogMs: number | undefined;
+  private readonly queueWaitTimeoutMs: number | undefined;
   private readonly clock: Clock;
   private readonly tasks = new Map<string, {
     readonly attempt: number;
@@ -86,6 +116,11 @@ export class AdapterEngine {
       && (!Number.isSafeInteger(this.claimWatchdogMs) || this.claimWatchdogMs <= 0)) {
       throw new RangeError("claimWatchdogMs must be a positive integer");
     }
+    this.queueWaitTimeoutMs = options.queueWaitTimeoutMs;
+    if (this.queueWaitTimeoutMs !== undefined
+      && (!Number.isSafeInteger(this.queueWaitTimeoutMs) || this.queueWaitTimeoutMs <= 0)) {
+      throw new RangeError("queueWaitTimeoutMs must be a positive integer");
+    }
     this.clock = options.clock ?? systemClock;
   }
 
@@ -116,9 +151,43 @@ export class AdapterEngine {
       }
       return Promise.resolve();
     }
+    /**
+     * ACÁ se resuelve el reclamo del dueño del sistema: "estar SIEMPRE disponibles para
+     * responder", sin cancelar ni acortar la tarea en curso.
+     *
+     * El bloqueo real no estaba en el gateway sino en este candado. `reserveSession` es FIFO
+     * estricta por clave de sesión, y una entrega agente-a-agente HEREDA el `origin` de la
+     * persona que originó la cadena (mismo adapter, mismo conversation_id), así que
+     * `sessionFromDelivery` le daba la MISMA clave: la delegación que volvía tomaba el candado
+     * de la conversación del dueño y lo retenía toda su corrida. El mensaje del dueño entraba
+     * rápido al gateway y se quedaba esperando ahí. 114 minutos de mediana en midas.
+     *
+     * Alternativas evaluadas:
+     *  - Cola con prioridad en el candado: NO sirve. El que bloquea ya está ejecutando, no
+     *    encolado; reordenar la cola no lo saca del medio y el dueño sigue esperando los 40
+     *    minutos. Sólo ayudaría con dos o más ESPERANDO, que no es el caso que duele.
+     *  - Interrumpir la tarea larga: prohibido por el requisito ("si tardan, tardan, normal").
+     *  - Dos carriles de sesión: es lo único que da disponibilidad sin tocar la tarea en curso.
+     *
+     * COSTO, y es real: el carril de agentes abre otra sesión nativa del harness, así que el
+     * agente pierde el hilo conversacional entre lo que hizo para su dueño y lo que hace cuando
+     * vuelve una delegación. Se paga porque el SDK ya estaba preparado para eso: para una
+     * `agent.response`, `promptForDelivery` reconstruye el pedido original y lo manda explícito
+     * en el prompt (`cauce.agent_response_continuation.v1`), justamente porque nunca se dio por
+     * sentado que el harness se acordara. Y la respuesta le sigue llegando a la persona por el
+     * relay al origen. Lo que se pierde es contexto implícito; lo que se gana es que el dueño
+     * tenga a su asistente disponible siempre.
+     *
+     * Segundo costo: dos procesos de harness a la vez para un mismo alias. Ya pasaba entre
+     * conversaciones distintas, y ahora el control de admisión del gateway lo acota a
+     * `maxInflight + humanReserved` (4 por defecto) contra las 71 en vuelo del incidente.
+     */
     const fanin = delivery.body.type === "agent.fanin";
-    const session = fanin ? {} : sessionFromDelivery(delivery);
-    const reservation = fanin ? undefined : this.harness.reserveSession(session.sessionKey);
+    const lane: SessionLane = isAgentToAgentBody(delivery.body) ? "agent" : "human";
+    const session: HarnessSessionRequestScope = fanin
+      ? {}
+      : { ...sessionFromDelivery(delivery, this.ownTenantId), sessionLane: lane };
+    const reservation = fanin ? undefined : this.harness.reserveSession(session.sessionKey, lane);
 
     this.logger({
       event: 'delivery_start',
@@ -172,6 +241,23 @@ export class AdapterEngine {
     ));
   }
 
+  /**
+   * Un latido de cola que el gateway no aplicó. Deja rastro y nada más: no confirma la garra (el
+   * watchdog debe seguir corriendo) ni la da por perdida (nadie la perdió). Existe para que un
+   * gateway sin la renovación en fase 'accepted' degrade a "la entrega encolada vence sola y se
+   * reintenta" en vez de morir con CLAIM_OWNERSHIP_LOST, que es no-retryable.
+   */
+  logDroppedQueueRenewal(deliveryId: string, attempt: number): void {
+    this.logger({
+      event: "claim_renewal_end",
+      delivery_id: deliveryId,
+      attempt,
+      phase: "accepted",
+      timestamp: this.clock.now().toISOString(),
+      reason: "queue_renewal_not_applied",
+    });
+  }
+
   confirmClaim(
     deliveryId: string,
     attempt: number,
@@ -213,7 +299,7 @@ export class AdapterEngine {
 
   private async runDelivery(
     delivery: Delivery,
-    session: { sessionKey?: string },
+    session: HarnessSessionRequestScope,
     reservation: HarnessSessionReservation | undefined,
   ): Promise<void> {
     try {
@@ -225,7 +311,7 @@ export class AdapterEngine {
 
   private async runReservedDelivery(
     delivery: Delivery,
-    session: { sessionKey?: string },
+    session: HarnessSessionRequestScope,
     reservation: HarnessSessionReservation | undefined,
   ): Promise<void> {
     const occurredAt = this.clock.now().toISOString();
@@ -268,6 +354,24 @@ export class AdapterEngine {
 
     const controller = new AbortController();
     this.controllers.set(delivery.delivery_id, controller);
+
+    // Hacer cola NO es ejecutar. El candado de sesión serializa las entregas del mismo hilo y la
+    // espera puede durar horas (p75 medido en producción: 52,9 min; máximo: 3,26 días). Hasta
+    // 2026-07-29 el ACK 'started' salía acá, antes de tomar el candado: la entrega se declaraba en
+    // ejecución mientras hacía fila, el store le sellaba `execution_started_at` y cada renovación
+    // empujaba `ack_deadline_at` a now()+30 min, así que el reaper no la recogía nunca. 44.545 ACK
+    // 'started' para 5.270 entregas —8,45 por entrega— eran en buena parte eso: latidos de cola
+    // disfrazados de ejecución.
+    if (reservation !== undefined) {
+      const acquired = await this.awaitSessionTurn(
+        accepted.record,
+        reservation,
+        executionBudget,
+        controller,
+      );
+      if (!acquired) return;
+    }
+
     const started = await this.store.transition(delivery.delivery_id, "started", this.clock.now().toISOString(), {
       retainRequest: true,
       attempt: delivery.attempt,
@@ -286,6 +390,7 @@ export class AdapterEngine {
       : "request";
     let output: StructuredOutput | undefined;
     let executionFailure: unknown;
+    let attachments: MaterializedAttachments | undefined;
     try {
       const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
       const requestContext = {
@@ -301,29 +406,59 @@ export class AdapterEngine {
           || messageType === "agent.fanin",
         message_type: messageType,
         routing_targets: routingTargetsFromDelivery(delivery),
+        ...selfRoleFromDelivery(delivery),
       };
       const processedReplies = messageType === "agent.fanin"
         ? this.store.processedRepliesForFanin(delivery)
         : [];
-      output = messageType === "agent.fanin"
-        ? validateDeliveryOutput(synthesizeFaninOutput(
-            delivery.body,
-            processedReplies.length === 0 ? {} : { processedReplies },
-          ), {
-            messageType,
-            senderAlias: requestContext.sender_alias,
-            selfAlias: requestContext.self_alias,
-            routingTargets: requestContext.routing_targets,
-          })
-        : await this.harness.execute({
-            prompt: promptForDelivery(delivery, this.store),
-            context: requestContext,
-            ...session,
-            ...(reservation === undefined ? {} : { sessionReservation: reservation }),
-            ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
-            timeoutMs: executionBudget.harnessTimeoutMs,
-            signal: controller.signal,
-          });
+      if (messageType === "agent.fanin") {
+        // El fan-in no invoca harness: lo sintetiza el SDK, es determinístico y gratis.
+        // Por eso tampoco emite `execution_started`: reintentarlo no cuesta cuota, y marcarlo
+        // como "ya ejecutado" sólo lo mandaría a revisión manual sin motivo.
+        output = validateDeliveryOutput(synthesizeFaninOutput(
+          delivery.body,
+          processedReplies.length === 0 ? {} : { processedReplies },
+        ), {
+          messageType,
+          senderAlias: requestContext.sender_alias,
+          selfAlias: requestContext.self_alias,
+          routingTargets: requestContext.routing_targets,
+        });
+      } else {
+        const prompt = await (async () => {
+          attachments = await materializeAttachments(delivery.body);
+          const base = promptForDelivery(delivery, this.store);
+          return attachments === undefined ? base : `${base}\n\n${attachments.prompt}`;
+        })();
+        // Esperar el turno de sesión ACÁ, y no adentro de `harness.execute`, es lo que permite
+        // decir "arrancó de verdad". Hasta esta línea la entrega puede llevar minutos admitida,
+        // ACKeando 'started' y renovando cada 60 s, sin haber gastado un centavo. Ese ACK
+        // 'started' era el que el reaper tomaba como prueba de ejecución para NO reintentar, y
+        // por eso mandaba a dead trabajo que nunca había corrido.
+        //
+        // `wait` es idempotente: `harness.execute` vuelve a esperar la misma promesa, que para
+        // entonces ya está resuelta.
+        // INTEGRACIÓN 2026-07-29: `awaitSessionTurn` ya esperó el candado ANTES de la
+        // transición a 'started', así que para cuando se llega acá la reserva está adquirida y
+        // este `wait` resuelve de inmediato (`reservation.wait` devuelve la misma promesa ya
+        // resuelta). Se conserva porque es la garantía local de que no se invoca el harness sin
+        // el candado, independiente de por qué camino se llegó.
+        if (reservation !== undefined) await reservation.wait(controller.signal);
+        // Se emite como renovación de garra a propósito: reusa la confirmación de propiedad que
+        // ya existe, así que además funciona como último chequeo de "esto sigue siendo mío"
+        // justo antes de gastar plata. Si el gateway responde que no, `loseClaim` aborta.
+        await this.emitClaimRenewal(started, "started", { executionStarted: true });
+        output = await this.harness.execute({
+          prompt,
+          ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
+          context: requestContext,
+          ...session,
+          ...(reservation === undefined ? {} : { sessionReservation: reservation }),
+          ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
+          timeoutMs: executionBudget.harnessTimeoutMs,
+          signal: controller.signal,
+        });
+      }
       if (controller.signal.aborted) {
         throw controller.signal.reason instanceof Error
           ? controller.signal.reason
@@ -333,6 +468,15 @@ export class AdapterEngine {
       executionFailure = error;
     } finally {
       await stopClaimRenewal();
+      try {
+        await attachments?.cleanup();
+      } catch {
+        executionFailure ??= new AdapterError(
+          "ATTACHMENT_CLEANUP_FAILED",
+          "Temporary attachment cleanup failed",
+          false,
+        );
+      }
     }
 
     if (executionFailure !== undefined) {
@@ -370,15 +514,101 @@ export class AdapterEngine {
   }
 
   /**
+   * Espera el turno del candado de sesión SIN declarar ejecución.
+   *
+   * Mientras hace cola la entrega late en fase 'accepted', no 'started'. Los dos latidos usan la
+   * misma maquinaria (misma cadencia, mismo watchdog fail-closed) y renuevan igual la garra, pero
+   * dicen cosas distintas y el store los trata distinto: 'accepted' sobre una fila 'accepted' sólo
+   * corre `ack_deadline_at`; 'started' sella `execution_started_at` y mueve la fila a 'started'.
+   * Esa es toda la diferencia entre "está en cola" y "está trabajando", y es la que faltaba.
+   *
+   * Por qué latir y no callar: si la entrega encolada no manda nada, su garra vence a los 30 min
+   * (CAUCE_ACK_DEADLINE_MS) y el reaper la reintenta. Medido sobre producción eso alcanza al 41%
+   * de las entregas encoladas (997 de 2.416 esperaron más de 30 min), y el reintento no es gratis:
+   * `handleDelivery` encadena el intento n+1 detrás de la tarea del intento n, que sigue en la
+   * cola, así que la entrega termina EJECUTÁNDOSE DOS VECES —una con la garra perdida y otra con
+   * la nueva— con todos sus efectos laterales duplicados. Con max_attempts=3 y una espera p90 de
+   * 2h13m, además, la entrega se agota en dead-letters antes de haber corrido una sola vez.
+   *
+   * Y por qué el latido no la vuelve inmortal: la espera tiene techo absoluto
+   * (`queueWaitTimeoutMs`), y al vencer se falla RETRYABLE y no ambiguo. La entrega vuelve a la
+   * cola limpia, sin `execution_started_at` sellado y sin quedar "held for manual replay", porque
+   * es verdad que nunca ejecutó.
+   *
+   * Devuelve `false` cuando ya cerró la entrega con un error y el llamador debe cortar.
+   */
+  private async awaitSessionTurn(
+    record: InboxRecord,
+    reservation: HarnessSessionReservation,
+    budget: ExecutionBudget,
+    controller: AbortController,
+  ): Promise<boolean> {
+    const stopQueueRenewal = this.startClaimRenewal(
+      record,
+      this.claimRenewalMs ?? budget.claimRenewalMs,
+      this.claimWatchdogMs ?? budget.claimWatchdogMs,
+      controller,
+      "accepted",
+    );
+    const queueBudgetMs = this.queueWaitTimeoutMs
+      ?? Math.min(budget.harnessTimeoutMs, DEFAULT_QUEUE_WAIT_TIMEOUT_MS);
+    const queueTimer = setTimeout(() => {
+      controller.abort(new AdapterError(
+        "SESSION_QUEUE_TIMEOUT",
+        `Delivery waited ${queueBudgetMs} ms for its session turn without starting execution`,
+        true,
+      ));
+    }, queueBudgetMs);
+    queueTimer.unref();
+
+    let failure: unknown;
+    try {
+      await reservation.wait(controller.signal);
+    } catch (error) {
+      failure = error;
+    } finally {
+      clearTimeout(queueTimer);
+      await stopQueueRenewal();
+    }
+    if (failure === undefined) return true;
+
+    // Nada corrió todavía, así que nada puede ser ambiguo. Degradar un código ambiguo acá sería
+    // mentir en el otro sentido: mandaría a dead-letters "held for manual replay" una entrega que
+    // el harness jamás vio. La normalización a FENCED es la misma que aplica el camino de
+    // ejecución, y acá vale siempre porque nunca hay ejecución ambigua que preservar.
+    const queueError = asAdapterError(failure);
+    const normalized = this.fenced.has(record.delivery_id)
+      ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
+      : isAmbiguousAckErrorCode(queueError.code)
+        ? new AdapterError("SESSION_QUEUE_ABORTED", queueError.message, true)
+        : queueError;
+    this.logger({
+      event: "claim_renewal_end",
+      delivery_id: record.delivery_id,
+      attempt: record.attempt,
+      phase: "accepted",
+      timestamp: this.clock.now().toISOString(),
+      reason: normalized.code,
+    });
+    await this.finishError(record, normalized);
+    return false;
+  }
+
+  /**
    * A delivery claim is a short renewable lease, not the agent's wall-clock
    * execution deadline. Renewal events are durable locally before transport;
    * an offline socket can therefore flush them after reconnect.
+   *
+   * `phase` distingue el latido de cola ('accepted') del de ejecución ('started'). El transporte
+   * lo mapea tal cual al `status` del ACK; ambos son valores que `AckStatusSchema` y el CHECK de
+   * `delivery_acks.status` ya aceptan, así que esto no pide ningún cambio de esquema.
    */
   private startClaimRenewal(
     record: InboxRecord,
     intervalMs: number,
     watchdogMs: number,
     controller: AbortController,
+    phase: "accepted" | "started" = "started",
   ): () => Promise<void> {
     let stopped = false;
     let tail = Promise.resolve();
@@ -408,7 +638,7 @@ export class AdapterEngine {
         .then(async () => {
           if (stopped) return;
           try {
-            await this.emitClaimRenewal(record);
+            await this.emitClaimRenewal(record, phase);
           } catch {
             stopped = true;
             clearInterval(timer);
@@ -446,23 +676,33 @@ export class AdapterEngine {
    * summary here would produce a value that is dropped in `AdapterClient.sendEvent`
    * and never reaches the wire, so it is left out rather than declared and ignored.
    */
-  private async emitClaimRenewal(record: InboxRecord): Promise<void> {
+  private async emitClaimRenewal(
+    record: InboxRecord,
+    // INTEGRACIÓN 2026-07-29: los dos ejes son ortogonales y por eso son dos parámetros.
+    // `phase` dice DÓNDE está la entrega (haciendo cola por el candado de sesión = 'accepted',
+    // o ejecutando = 'started'); `options.executionStarted` sella de una vez, y sólo una, el
+    // instante en que el harness arrancó de verdad. Un latido de cola nunca lleva la marca —
+    // `execution_started_at` es justamente lo que distingue esperar de ejecutar.
+    phase: "accepted" | "started" = "started",
+    options: { readonly executionStarted?: boolean } = {},
+  ): Promise<void> {
     const event: DeliveryEvent = {
       event_id: randomUUID(),
       delivery_id: record.delivery_id,
       attempt: record.attempt,
       claim_token: record.claim_token,
       epoch: this.store.epoch,
-      phase: "started",
+      phase,
       occurred_at: this.clock.now().toISOString(),
       claim_renewal: true,
+      ...(options.executionStarted === true ? { execution_started: true } : {}),
       ...(record.origin === undefined ? {} : { origin: record.origin }),
     };
     this.logger({
       event: "claim_renewal_start",
       delivery_id: record.delivery_id,
       attempt: record.attempt,
-      phase: "started",
+      phase,
       timestamp: event.occurred_at,
     });
     // A renewal must reach stable local storage before it can be treated as
@@ -570,7 +810,8 @@ export class AdapterEngine {
  * sabe que llegó y puede decirlo, que es infinitamente mejor que el silencio.
  */
 function describeMedia(body: Record<string, unknown>): string | undefined {
-  const media = body.media;
+  const verified = body.attachments_v1;
+  const media = Array.isArray(verified) && verified.length > 0 ? verified : body.media;
   if (!Array.isArray(media) || media.length === 0) return undefined;
 
   const kinds = new Map<string, number>();
@@ -585,6 +826,10 @@ function describeMedia(body: Record<string, unknown>): string | undefined {
     .map(([kind, count]) => (count === 1 ? `un adjunto de tipo ${kind}` : `${count} adjuntos de tipo ${kind}`))
     .join(" y ");
 
+  const downloadable = Array.isArray(verified) && verified.length > 0;
+  if (downloadable) {
+    return `El usuario envió ${detalle}, sin texto acompañante. Inspeccioná el adjunto local indicado abajo antes de responder.`;
+  }
   return `El usuario envió ${detalle}, sin texto acompañante. No podés ver ni abrir el contenido del `
     + `adjunto: sólo sabés que llegó y de qué tipo es. Respondé reconociendo lo que envió y pedile `
     + `que describa en palabras lo que necesita, o explicale que todavía no podés procesar ese tipo `
@@ -592,7 +837,11 @@ function describeMedia(body: Record<string, unknown>): string | undefined {
 }
 
 function promptFromBody(body: Record<string, unknown>): string {
-  const value = typeof body.prompt === "string" ? body.prompt : body.text;
+  const value = typeof body.prompt === "string"
+    ? body.prompt
+    : typeof body.text === "string"
+      ? body.text
+      : body.caption;
   if (typeof value === "string" && value.trim().length > 0) return value;
 
   const media = describeMedia(body);
@@ -638,29 +887,119 @@ function promptForDelivery(delivery: Delivery, store: DurableStore): string {
   ].join("\n");
 }
 
-function sessionFromDelivery(delivery: Delivery): { sessionKey?: string } {
+/**
+ * Identidad de la CONVERSACIÓN, no del transporte ni del intento.
+ *
+ * `auth-v2` mezclaba tres cosas distintas en una sola clave y por eso el mismo humano, en el
+ * mismo chat, con el mismo agente, caía en sesiones nativas distintas — el síntoma que el dueño
+ * describe como "se duplican las instancias": escribe por Telegram y le contesta alguien que no
+ * recuerda la conversación.
+ *
+ *  1. `attempt`. Medido sobre prod el 2026-07-29: 1499 de 5312 entregas (28,2 %) llegaron con
+ *     attempt > 1, y cada una estrenó una sesión SIN memoria para responderle a la persona. El
+ *     costo era peor que la duplicación: la sesión del reintento acumula un intercambio real con
+ *     el humano que la sesión "principal" (attempt 1) nunca ve, así que las dos divergen para
+ *     siempre. Se saca.
+ *
+ *     `attempt` entró en 44521b6 para frenar el crecimiento del transcript en los reintentos
+ *     (socrates: ~300K → 1,8MB en 4 intentos). Ese caso -- el intento anterior murió a mitad de
+ *     ejecución -- YA lo frena `DurableStore.accept`, que desde e5c909e devuelve `blocked` a todo
+ *     reintento cuyo intento previo no haya terminado en `failed` con `retryable: true`. Cortar
+ *     la identidad de la conversación era una defensa cara y colocada en el lugar equivocado; el
+ *     techo de transcript va en el harness, no en la clave.
+ *
+ *  2. `bridge_tenant`. Es el tenant del PUENTE por el que entró el mensaje, no el de nadie que
+ *     importe para la separación: nunca fue una frontera de seguridad. Peor, cuando falta cae a
+ *     `delivery.tenant_id`, que es el tenant del EMISOR (el agente que delega), así que la misma
+ *     conversación cambiaba de clave según quién publicara. En prod hay 6 conversaciones de
+ *     Telegram donde las filas viejas traen `bridge_tenant` vacío y las nuevas lo traen puesto:
+ *     mismo chat, mismo bot, mismo alias, dos sesiones. Se reemplaza por el tenant del
+ *     RECEPTOR, que sale de la configuración local del adaptador y nadie del otro lado del bus
+ *     puede falsificar.
+ *
+ *  3. Sin `origin` no había clave, y por lo tanto no había continuidad: 810 de 5312 entregas
+ *     (consola, publicaciones de adaptador, herramientas de ops) corrieron cada una en una
+ *     sesión nueva. Ahora esas caen en una conversación derivada del actor autenticado
+ *     (`operator:<tenant>:<alias>`), que sobrevive al re-login porque no depende del `sid`.
+ *
+ * Lo que la clave SIGUE separando, a propósito: alias receptor, tenant receptor, adaptador,
+ * canal, `conversation_id` y el alcance de sesión que publica el puente (`session_id`, que en
+ * Telegram codifica bot+chat+usuario o bot+chat+hilo según `session_scope`). El carril
+ * humano/agente lo agrega `HarnessAdapter.laneSessionKey`, no esta función.
+ */
+const CONVERSATION_SESSION_NAMESPACE = "cauce-conversation-session-v3";
+
+/**
+ * Identificadores de sesión que el store fabrica POR ENTREGA cuando el mensaje raíz no traía
+ * ninguno (`repository.ts`: `delivery:<id>:attempt:<n>`, `fanin:<id>`). Meterlos en la clave
+ * daría una sesión nativa por entrega, que es exactamente el problema que este cambio arregla.
+ */
+const EPHEMERAL_SESSION_ID = /^(?:delivery|fanin):/u;
+
+interface ConversationScope {
+  readonly adapter: string;
+  readonly channel: string;
+  readonly conversation_id: string;
+  /** Alcance dentro de la conversación (hilo/usuario) según lo declare el puente; nunca un login. */
+  readonly scope: string | null;
+}
+
+function conversationScope(delivery: Delivery): ConversationScope | undefined {
   const context = delivery.authenticated_context;
   const origin = context?.origin ?? delivery.origin;
   const channel = context?.channel ?? origin?.channel;
-  const sessionId = context?.session_id ?? origin?.conversation_id;
-  const conversationId = origin?.conversation_id;
-  if (origin === undefined || channel === undefined || sessionId === undefined || conversationId === undefined) return {};
-  const bridgeTenant = typeof origin.metadata.bridge_tenant === "string"
-    ? origin.metadata.bridge_tenant
-    : delivery.tenant_id;
-  const scope = JSON.stringify({
-    namespace: "cauce-authenticated-session-v2",
-    tenant_id: bridgeTenant,
-    recipient_alias: delivery.recipient_alias,
-    attempt: delivery.attempt,
-    origin: {
+  if (channel === undefined || channel.length === 0) return undefined;
+
+  if (origin !== undefined && origin.conversation_id.length > 0) {
+    const sessionId = context?.session_id;
+    return {
       adapter: origin.adapter,
       channel,
-      session_id: sessionId,
-      conversation_id: conversationId,
+      conversation_id: origin.conversation_id,
+      scope: typeof sessionId === "string"
+        && sessionId.length > 0
+        && !EPHEMERAL_SESSION_ID.test(sessionId)
+        ? sessionId
+        : null,
+    };
+  }
+
+  /**
+   * Sin ruta de retorno (consola, publicación de adaptador, herramientas de ops). La conversación
+   * es el ACTOR autenticado, que el gateway deriva del certificado o del token y el cliente no
+   * puede declarar. Deliberadamente NO se usa `session_id` acá: con OIDC es el `sid` del login y
+   * con eso la consola estrenaba sesión en cada re-login.
+   *
+   * No se sintetiza un `origin` real en el gateway a propósito: `origin` es la ruta de retorno y
+   * `repository.materializeOriginRelay` encola una fila de `adapter_outbox` por cada entrega que
+   * lo tenga. Un `origin` con `adapter: "console"` dejaría filas que ningún puente arrienda
+   * (`leaseOutbox` sólo atiende `telegram`), acumulando cola atascada. El alcance de sesión se
+   * deriva acá, donde no toca ninguna ruta de retorno.
+   */
+  return {
+    adapter: channel,
+    channel,
+    conversation_id: `operator:${delivery.tenant_id}:${delivery.actor_alias}`,
+    scope: null,
+  };
+}
+
+function sessionFromDelivery(
+  delivery: Delivery,
+  recipientTenantId: string | undefined,
+): { sessionKey?: string } {
+  const conversation = conversationScope(delivery);
+  if (conversation === undefined) return {};
+  const scope = JSON.stringify({
+    namespace: CONVERSATION_SESSION_NAMESPACE,
+    recipient: {
+      // Identidad propia del adaptador (configuración local), nunca la del emisor.
+      tenant_id: recipientTenantId ?? null,
+      alias: delivery.recipient_alias,
     },
+    conversation,
   });
-  return { sessionKey: `auth-v2:${createHash("sha256").update(scope).digest("base64url")}` };
+  return { sessionKey: `auth-v3:${createHash("sha256").update(scope).digest("base64url")}` };
 }
 
 function timeoutFromBody(body: Record<string, unknown>, fallback: number): number {
@@ -729,6 +1068,26 @@ function executionBudgetFor(
     claimRenewalMs: Math.max(100, Math.min(60_000, Math.floor(claimBudgetMs / 3))),
     claimWatchdogMs: claimBudgetMs,
   };
+}
+
+/**
+ * El rol declarado del alias, tal como lo mandó el store (`agents.role_brief`, migración 020).
+ *
+ * Devuelve un objeto vacío —y no `{ self_role: undefined }`— cuando el sobre no lo trae, para que
+ * el contexto no gane una clave con valor indefinido que después aparezca como `"self_role":null`
+ * en el JSON del TRUSTED DELIVERY CONTEXT. Un rol nulo explícito le diría al agente que su rol es
+ * "ninguno", que no es lo mismo que "este store todavía no lo manda".
+ *
+ * El recorte a 1200 espeja el CHECK de la migración y el tope del esquema: el sobre ya viene
+ * validado, pero el SDK no asume que el único emisor sea un store de esta versión.
+ */
+function selfRoleFromDelivery(delivery: Delivery): { self_role?: string } {
+  const forwardCompatible = delivery as Delivery & { readonly self_role?: unknown };
+  const candidate = forwardCompatible.self_role;
+  if (typeof candidate !== "string") return {};
+  const trimmed = candidate.trim();
+  if (trimmed.length === 0) return {};
+  return { self_role: trimmed.slice(0, 1200) };
 }
 
 function routingTargetsFromDelivery(delivery: Delivery): readonly {

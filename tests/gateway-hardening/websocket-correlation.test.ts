@@ -129,9 +129,15 @@ describe('gateway WebSocket ACK correlation', () => {
       .toEqual([ids.deliveryTwo, ids.delivery]);
     expect(vi.mocked(repository.ackDelivery).mock.calls.map((call) => call[4]))
       .toEqual([600_000, 600_000]);
-    expect(repository.claimDeliveries).toHaveBeenCalledWith(
-      'Pablo', 'midas', 'serial-consumer', 1, undefined, 600_000
+    // Ya no se llama con `undefined` en la posición de `limit` (que se comía el default 20 del
+    // store): el primer drain de la sesión pide exactamente el presupuesto vacío.
+    expect(repository.claimDeliveries).toHaveBeenNthCalledWith(
+      1, 'Pablo', 'midas', 'serial-consumer', 1, 2, 600_000, undefined, { humanReservedLimit: 2 }
     );
+    // Tres drains y no uno: el del hello, y uno por cada ACK terminal. Cada ACK terminal libera un
+    // cupo de agents.max_concurrent_deliveries y es el único instante en que el agente vuelve a
+    // tener lugar; si el gateway no reclamara ahí, la cola se quedaría quieta.
+    expect(vi.mocked(repository.claimDeliveries).mock.calls).toHaveLength(3);
   });
 
   it('keeps renewable leases across transient closes while preserving legacy release behavior', async () => {
@@ -311,6 +317,7 @@ describe('gateway WebSocket ACK correlation', () => {
       authProvider: DevOnlyAuthProvider.forTests(),
       deliveryWakeSubscriber: noDeliveryWakes,
       ackDeadlineMs: 600_000,
+      deliveryLeaseCap: { leaseCapMs: 7_200_000, leaseCapGraceMs: 600_000 },
       outboxPollMs: 60_000
     });
     apps.push(app);
@@ -385,7 +392,10 @@ describe('gateway WebSocket ACK correlation', () => {
         instance_id: 'durable-consumer',
         epoch: 1
       }),
-      600_000
+      600_000,
+      // Una renovacion tras reconectar tiene que llevar el techo igual que la primera: es
+      // justo el camino por el que una entrega se volvia inmortal.
+      { leaseCapMs: 7_200_000, leaseCapGraceMs: 600_000 }
     );
     await disconnect(resumed.socket);
 

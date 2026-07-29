@@ -28,7 +28,20 @@ const [cert, key, clientCa, agentCa] = await Promise.all([
   readFile(config.agentCaFile)
 ]);
 
-const gateway = new HttpsTerminalGatewayClient({ gatewayUrl: config.gatewayUrl, tokenFile: config.tokenFile });
+// La identidad de cliente hacia el gateway es opcional (sólo hace falta con CAUCE_AUTH_PROVIDER=mtls),
+// pero si está configurada se lee ACÁ, al arrancar: así el relay muere de entrada si el material no
+// se puede leer, en vez de levantar sano y descubrirlo cuando la primera revalidación no llegue.
+const [gatewayClientCert, gatewayClientKey] = await Promise.all([
+  config.gatewayClientCertFile === undefined ? undefined : readFile(config.gatewayClientCertFile),
+  config.gatewayClientKeyFile === undefined ? undefined : readFile(config.gatewayClientKeyFile)
+]);
+
+const gateway = new HttpsTerminalGatewayClient({
+  gatewayUrl: config.gatewayUrl,
+  tokenFile: config.tokenFile,
+  ...(gatewayClientCert === undefined ? {} : { clientCert: gatewayClientCert }),
+  ...(gatewayClientKey === undefined ? {} : { clientKey: gatewayClientKey })
+});
 const sessions = new SessionManager({ gateway, limits: config });
 
 // Presence is republished as soon as the connected set changes, debounced so a fleet-wide

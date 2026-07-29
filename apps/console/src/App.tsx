@@ -1,8 +1,10 @@
 import {
   Activity,
+  BatteryCharging,
   Bot,
   Boxes,
   CreditCard,
+  Flame,
   GitFork,
   Grid3x3,
   History,
@@ -22,6 +24,8 @@ import { useApi } from './api/context';
 import type { ConsoleAuthState } from './api/types';
 import { FleetAgentDetailPage } from './features/fleet/FleetAgentDetailPage';
 import { FleetPage } from './features/fleet/FleetPage';
+import { ActivityPage } from './features/activity/ActivityPage';
+import { QuotasPage } from './features/quotas/QuotasPage';
 import { TopologyPage } from './features/topology/TopologyPage';
 import { MessagesPage } from './features/messages/MessagesPage';
 import { QueuesPage } from './features/queues/QueuesPage';
@@ -45,6 +49,8 @@ interface Route {
 
 const routes: Route[] = [
   { id: 'fleet', label: 'Fleet', icon: RadioTower, component: FleetPage },
+  { id: 'activity', label: 'Actividad de la flota', icon: Flame, component: ActivityPage },
+  { id: 'quotas', label: 'Consumo de cuotas', icon: BatteryCharging, component: QuotasPage },
   { id: 'topology', label: 'Tenants & ACL', icon: GitFork, component: TopologyPage },
   { id: 'messages', label: 'Messages', icon: MessageSquareText, component: MessagesPage },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, component: QueuesPage },

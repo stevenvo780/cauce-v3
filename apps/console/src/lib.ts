@@ -39,6 +39,24 @@ export function leaseExpiry(record: { lease_expires_at?: string | null; lease_un
   return record.lease_expires_at ?? record.lease_until;
 }
 
+/**
+ * Formatea una duración en segundos como "1h 4m", "3m 12s" o "12s". Negativos (deadlines
+ * vencidos, resets ya pasados) se muestran con signo en vez de invertirse en silencio: decidir
+ * qué significa "vencido" queda para quien llama, no para este formateador genérico. Usado por
+ * activity (antigüedad en vuelo) y quotas (tiempo a reset).
+ */
+export function formatDurationSeconds(seconds: unknown): string {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return UNKNOWN;
+  const sign = seconds < 0 ? '-' : '';
+  const abs = Math.round(Math.abs(seconds));
+  const hours = Math.floor(abs / 3600);
+  const minutes = Math.floor((abs % 3600) / 60);
+  const secs = abs % 60;
+  if (hours > 0) return `${sign}${hours}h ${minutes}m`;
+  if (minutes > 0) return `${sign}${minutes}m ${secs}s`;
+  return `${sign}${secs}s`;
+}
+
 export function compactId(value: unknown): string {
   const text = display(value);
   return text === UNKNOWN || text.length <= 18 ? text : `${text.slice(0, 8)}…${text.slice(-6)}`;

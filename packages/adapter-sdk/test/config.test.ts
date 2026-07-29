@@ -74,6 +74,7 @@ test("CLI configuration rejects inline secrets and production dev headers", asyn
 test("bridge and Hermes Python paths are configurable through non-secret environment", async () => {
   const names = [
     "CAUCE_TENANT",
+    "CAUCE_ROOM",
     "CAUCE_ALIAS",
     "CAUCE_INSTANCE_ID",
     "CAUCE_STATE_DIR",
@@ -87,6 +88,7 @@ test("bridge and Hermes Python paths are configurable through non-secret environ
   try {
     Object.assign(process.env, {
       CAUCE_TENANT: "Steven",
+      CAUCE_ROOM: "grp.steven",
       CAUCE_ALIAS: "kant",
       CAUCE_INSTANCE_ID: "adapter-1",
       CAUCE_STATE_DIR: resolve(root, "state"),
@@ -122,4 +124,52 @@ test("bridge and Hermes Python paths are configurable through non-secret environ
       else process.env[name] = value;
     }
   }
+});
+
+/**
+ * La sala propia es identidad, no decoracion: el agente la reporta como suya al harness. Los dos
+ * caminos del cargador tenian contratos distintos y NINGUNO estaba afirmado, asi que 547eda3 pudo
+ * volver `CAUCE_ROOM` obligatorio sin que nada delatara a los arranques que no la pasaban.
+ */
+test("la sala propia es obligatoria por entorno y declarable por archivo", async () => {
+  const names = ["CAUCE_TENANT", "CAUCE_ROOM", "CAUCE_ALIAS", "CAUCE_INSTANCE_ID", "CAUCE_STATE_DIR",
+    "CAUCE_RELAY_URL", "CAUCE_ENVIRONMENT"] as const;
+  const previous = new Map(names.map((name) => [name, process.env[name]]));
+  try {
+    Object.assign(process.env, {
+      CAUCE_TENANT: "Isa",
+      CAUCE_ALIAS: "salva",
+      CAUCE_INSTANCE_ID: "adapter-1",
+      CAUCE_STATE_DIR: resolve(root, "state"),
+      CAUCE_RELAY_URL: "ws://127.0.0.1:8080/v3/ws",
+      CAUCE_ENVIRONMENT: "test",
+    });
+    delete process.env.CAUCE_ROOM;
+    // Falla cerrado: un default silencioso devolveria la sala equivocada en produccion, que es
+    // justo el defecto que 547eda3 arreglo.
+    await assert.rejects(loadCliRuntimeConfig("claude", []), /'CAUCE_ROOM' is missing/u);
+
+    process.env.CAUCE_ROOM = "grp.isa";
+    assert.equal((await loadCliRuntimeConfig("claude", [])).room, "grp.isa");
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+
+  const base = {
+    tenant: "Isa",
+    instance_id: "salva-1",
+    state_directory: "state/salva",
+    relay_url: "wss://gateway.example/v3/adapter",
+    environment: "test",
+  };
+  const declared = resolve(root, "declared-room.json");
+  await writeFile(declared, JSON.stringify({ aliases: { salva: { ...base, room: "grp.isa" } } }));
+  assert.equal((await loadCliRuntimeConfig("claude", ["--config", declared, "--alias", "salva"])).room, "grp.isa");
+
+  const omitted = resolve(root, "omitted-room.json");
+  await writeFile(omitted, JSON.stringify({ aliases: { salva: base } }));
+  assert.equal((await loadCliRuntimeConfig("claude", ["--config", omitted, "--alias", "salva"])).room, "Isa");
 });

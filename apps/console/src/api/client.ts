@@ -1,12 +1,14 @@
 import type {
   AdapterPage,
   AuditPage,
+  CancelResult,
   ConsoleAccess,
   ConsoleAuthState,
   ConfigurationChangeResult,
   ConfigurationSnapshot,
   ConfigMutation,
   CreateJobInput,
+  FleetActivitySnapshot,
   JobPage,
   MessagePage,
   OriginRelayPage,
@@ -14,6 +16,7 @@ import type {
   PublishMessageInput,
   PublishResult,
   QueueSnapshot,
+  QuotaSnapshot,
   ReplayResult,
   SystemStatus,
   TerminalCapability,
@@ -198,6 +201,14 @@ export class CauceApi {
     });
   }
 
+  cancelDelivery(deliveryId: string, reason?: string): Promise<CancelResult> {
+    const encoded = encodeURIComponent(deliveryId);
+    return this.request(`/v3/console/deliveries/${encoded}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify(reason === undefined ? {} : { reason }),
+    });
+  }
+
   listJobs(): Promise<JobPage> {
     return this.request('/v3/console/jobs');
   }
@@ -257,6 +268,23 @@ export class CauceApi {
 
   getObservability(): Promise<ObservabilitySnapshot> {
     return this.request('/v3/console/observability');
+  }
+
+  /**
+   * Actividad en vuelo de la flota entera, agregada por alias. Endpoint operator-only: el
+   * alcance cross-tenant sale de las mismas aristas ACL allow_read que topology(), nunca de un
+   * "modo flota" propio de esta ruta. No trae cuerpos de mensaje ni errores — ver features/activity.
+   */
+  getFleetActivity(): Promise<FleetActivitySnapshot> {
+    return this.request('/v3/console/activity');
+  }
+
+  /**
+   * Último estado de cuota por (host, proveedor, grupo, ventana) más sparkline de 24h. Mismo par
+   * de permisos que getFleetActivity(): operator + read, re-verificado en el store.
+   */
+  getQuotas(): Promise<QuotaSnapshot> {
+    return this.request('/v3/console/quotas');
   }
 
   async getTerminalCapability(): Promise<TerminalCapability> {

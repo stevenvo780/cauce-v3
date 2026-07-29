@@ -47,6 +47,9 @@ afterAll(async () => {
 
 describe('real external QA harness', () => {
   it('passes against Fastify WebSocket and PostgreSQL and emits evidence', async () => {
+    // `execFile` rechaza con "Command failed: <argv>" y deja el stdout/stderr reales colgando en
+    // propiedades del error que nadie imprime. Ese mensaje sin causa es lo que hizo que esta
+    // suite pareciera un misterio durante cuatro dias: el arnes SI decia qué chequeo cayo.
     const { stdout, stderr } = await execute(process.execPath, [
       'ops/harness/runner.mjs', '--live', '--artifact-dir', 'ops/artifacts/real',
     ], {
@@ -61,6 +64,12 @@ describe('real external QA harness', () => {
       },
       timeout: 170_000,
       maxBuffer: 2 * 1024 * 1024,
+    }).catch((error: unknown) => {
+      const detail = error as { stdout?: string; stderr?: string };
+      throw new Error(
+        `real QA harness failed\n--- stdout ---\n${detail.stdout ?? ''}\n--- stderr ---\n${detail.stderr ?? ''}`,
+        { cause: error },
+      );
     });
     expect(stderr).toBe('');
     expect(stdout).toContain('PASS 12 aliases and four harness kinds over real WS');
@@ -73,9 +82,13 @@ describe('real external QA harness', () => {
     const root = await mkdtemp(join(process.cwd(), '.adapter-e2e-'));
     const adapters: ChildProcess[] = [];
     const diagnostics: string[] = [];
+    // La sala es identidad PROPIA del agente, no la del remitente: estas son las que siembra
+    // 001_initial.sql para salva/hegel y las que declaran sus manifiestos de flota. Desde 547eda3
+    // el adaptador falla cerrado sin ella, asi que este arnes debe pasarla igual que la unit de
+    // systemd (generate-units.py) y el supervisor de contenedor.
     const identities = [
-      { tenant: 'Isa', alias: 'salva', instance: 'e2e-fake-isa' },
-      { tenant: 'Jhon', alias: 'hegel', instance: 'e2e-fake-jhon' },
+      { tenant: 'Isa', room: 'grp.isa', alias: 'salva', instance: 'e2e-fake-isa' },
+      { tenant: 'Jhon', room: 'grp.jhon', alias: 'hegel', instance: 'e2e-fake-jhon' },
     ];
     try {
       for (const item of identities) {
@@ -84,6 +97,7 @@ describe('real external QA harness', () => {
           env: {
             ...process.env,
             CAUCE_TENANT: item.tenant,
+            CAUCE_ROOM: item.room,
             CAUCE_ALIAS: item.alias,
             CAUCE_INSTANCE_ID: item.instance,
             CAUCE_STATE_DIR: join(root, item.alias),

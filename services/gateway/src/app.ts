@@ -4,23 +4,29 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { WebSocket, type RawData } from 'ws';
 import {
-  AliasSchema, AuthenticatedPublishSchema, ClaimedAckSchema, ConfigChangeRequestSchema, ConfigRollbackRequestSchema,
-  CreateJobSchema, DeliveryIdSchema, HeartbeatSchema, HelloSchema,
+  AliasSchema, AuthenticatedPublishSchema, ClaimedAckSchema, clampAgentPriority,
+  ConfigChangeRequestSchema, ConfigRollbackRequestSchema,
+  CreateJobSchema, DeliveryIdSchema, HeartbeatSchema, HelloSchema, isAgentToAgentBody,
   NotifyRequestSchema, PROTOCOL_VERSION,
-  QueryDeliveriesSchema, TenantSchema,
-  type ClaimedAck, type ConfigMutation, type DeliveryEnvelope, type Hello, type NotifyRequest, type Tenant
+  QueryDeliveriesSchema, QuotaSampleRequestSchema, TenantSchema,
+  type ClaimedAck, type ConfigMutation, type DeliveryEnvelope, type Hello, type NotifyRequest,
+  type QuotaSampleRequest, type Tenant
 } from '@cauce/protocol';
 import {
   CauceRepository, StoreError, subscribeDeliveryWakes,
-  type AckResult, type DatabasePool, type LeaseResult, type NotificationVerdict, type OutboxEvent,
-  type PublishResult
+  type AccountSelection, type AckResult, type DatabasePool, type DeliveryLeaseCap,
+  type LeaseResult, type NotificationVerdict, type OutboxEvent, type PublishResult,
+  type QuotaSampleIngestResult
 } from '@cauce/store';
 import {
   AuthError, AuthorizationError, MtlsAuthProvider, requireOperatorPermission, requirePermission, validatePrincipal,
   type AuthProvider, type Principal
 } from './auth.js';
 import { createConsoleSecurityHook } from './console-security.js';
-import { DEFAULT_ACK_DEADLINE_MS, validateAckDeadlineMs } from './config.js';
+import {
+  DEFAULT_ACK_DEADLINE_MS, DEFAULT_HUMAN_RESERVED_DELIVERIES, DEFAULT_MAX_INFLIGHT_DELIVERIES,
+  validateAckDeadlineMs, validateDeliveryAdmission, type DeliveryAdmissionConfig
+} from './config.js';
 import { registerHealthRoutes } from './health.js';
 import { OidcBffAuthProvider, registerOidcBff } from './oidc-bff.js';
 import {
@@ -76,6 +82,9 @@ export interface GatewayRepository {
   listMessages(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   queueSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   replayDelivery(deliveryId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  cancelDelivery(
+    deliveryId: string, actorTenant: Tenant, actorAlias: string, reason?: string
+  ): Promise<Record<string, unknown>>;
   listJobs(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   enqueueJob(tenantId: Tenant, lane: 'interactive' | 'batch', priority: number, kind: string, payload: Record<string, unknown>): Promise<string>;
   listAdapters(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
@@ -86,6 +95,31 @@ export interface GatewayRepository {
   listNotifications(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listAudit(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   agentChain(traceId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  /**
+   * Opcionales por la misma razón que `liveDeliveryClaims`: los dobles de test del gateway no
+   * implementan la primitiva de gate, y sin ella la ruta responde 404 en vez de romper el
+   * arranque. Las implementa `CauceRepository` desde la migración 019_delegation_discipline.
+   */
+  listChainGates?(
+    actorTenant: Tenant,
+    actorAlias: string,
+    options?: { status?: 'open' | 'all'; limit?: number },
+  ): Promise<Record<string, unknown>>;
+  answerChainGate?(
+    gateId: string,
+    answer: string,
+    actorTenant: Tenant,
+    actorAlias: string,
+  ): Promise<Record<string, unknown>>;
+  cancelChainGate?(
+    gateId: string,
+    actorTenant: Tenant,
+    actorAlias: string,
+  ): Promise<Record<string, unknown>>;
+  fleetActivity(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  quotaSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  recordQuotaSample(actorTenant: Tenant, actorAlias: string, sample: QuotaSampleRequest): Promise<QuotaSampleIngestResult>;
+  selectAccount(actorTenant: Tenant, actorAlias: string, provider: string): Promise<AccountSelection>;
   getConfiguration(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   applyConfigurationChange(actorTenant: Tenant, actorAlias: string, mutation: ConfigMutation, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
   rollbackConfiguration(actorTenant: Tenant, actorAlias: string, revisionId: number, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
@@ -107,13 +141,28 @@ export interface GatewayRepository {
     epoch: number,
     limit?: number,
     ackDeadlineMs?: number,
+    interactiveBurst?: number,
+    admission?: { humanReservedLimit?: number; humanBurst?: number },
   ): Promise<DeliveryClaimRecord[]>;
+  /**
+   * Opcional a propósito: los dobles de test que sólo ejercitan el camino de ACK no la
+   * implementan, y sin ella el gateway simplemente arranca la sesión con el cupo vacío, que es
+   * el comportamiento anterior. Ver `rehydrateClaims`.
+   */
+  liveDeliveryClaims?(tenantId: Tenant, alias: string, limit?: number): Promise<readonly {
+    delivery_id: string;
+    attempt: number;
+    claim_token: string;
+    ack_deadline_at: string;
+    agent_to_agent: boolean;
+  }[]>;
   ackDelivery(
     deliveryId: string,
     tenantId: Tenant,
     alias: string,
     ack: GatewayAck,
     ackDeadlineMs?: number,
+    leaseCap?: DeliveryLeaseCap,
   ): Promise<AckResult>;
   claimOutbox(kind: 'wake', worker: string, limit?: number, leaseMs?: number): Promise<OutboxLeaseEvent[]>;
   ackOutbox?(ack: OutboxLeaseAck): Promise<unknown>;
@@ -128,8 +177,18 @@ export interface GatewayOptions {
   deliveryWakeSubscriber?: typeof subscribeDeliveryWakes;
   leaseTtlMs?: number;
   ackDeadlineMs?: number;
+  /**
+   * Techo de vida total de un intento. El gateway lo necesita porque es quien ESCRIBE el plazo
+   * en cada renovacion: sin el, `ackDelivery` seguiria empujando `ack_deadline_at` 30 min hacia
+   * adelante indefinidamente y el techo solo existiria en el reaper, o sea un tick tarde y con
+   * dos filas de observabilidad escritas por cada latido de un harness ya colgado.
+   */
+  deliveryLeaseCap?: DeliveryLeaseCap;
+  /** Control de admisión por sesión. Ver `DeliveryAdmissionConfig` y `drain()`. */
+  admission?: DeliveryAdmissionConfig;
   outboxPollMs?: number;
   outboxLeaseMs?: number;
+  deliveryClaimLimit?: number;
   requireAckClaims?: boolean;
   consoleOrigins?: readonly string[];
   allowedJobKinds?: readonly string[];
@@ -139,6 +198,33 @@ export interface GatewayOptions {
   logger?: boolean;
 }
 
+/**
+ * Una garra viva de la sesión. Además del par (attempt, claim_token) que ya fenceaba los ACKs,
+ * lleva las dos cosas que necesita el control de admisión: de qué clase es la entrega (para
+ * saber qué cupo ocupa) y hasta cuándo cuenta como en vuelo.
+ */
+interface SessionClaim {
+  readonly attempt: GatewayAck['attempt'];
+  readonly claim_token: GatewayAck['claim_token'];
+  /** False para agente-a-agente. Determina si ocupa el cupo reservado o el general. */
+  readonly humanOriginated: boolean;
+  /**
+   * Instante en que la garra deja de ocupar cupo. Arranca en el `ack_deadline_at` que puso la
+   * base y se corre con cada ACK 'started' aplicado, que es exactamente lo que hace el store.
+   */
+  admissionExpiresAtMs: number;
+  /**
+   * La garra se reconstruyó desde la base al conectar, no la entregó esta sesión.
+   *
+   * Cambia UNA cosa y es importante: no se usa para fencear ACKs. Una garra rehidratada puede
+   * ser de otra época o de otro intento —justamente lo que hace falta contar para el cupo— y si
+   * se la tratara como expectativa de ACK, un ACK viejo del adaptador dejaría de correlacionar
+   * y se llevaría un 'fenced' con cierre de socket, donde hoy recibe `ownership_lost` y sigue
+   * vivo. Para eso la base ya es la autoridad.
+   */
+  readonly rehydrated?: true;
+}
+
 interface Session {
   socket: WebSocket;
   tenantId: Tenant;
@@ -146,12 +232,41 @@ interface Session {
   instanceId: string;
   epoch: number;
   draining: boolean;
+  /** Un wake que llegó mientras drenábamos. Se atiende al terminar, nunca se pierde. */
+  drainAgain: boolean;
   renewableDeliveryClaims: boolean;
-  claims: Map<string, Pick<GatewayAck, 'attempt' | 'claim_token'>>;
-  recentClaims: Map<string, Pick<GatewayAck, 'attempt' | 'claim_token'>>;
+  /**
+   * El adaptador declaró entender la disciplina de delegación, así que `ack_result` puede llevar
+   * `delegation_rejections` y `chain_gate`. Sin la capability esos campos NO se emiten: el
+   * adaptador viejo valida el frame con `.strict()` y, cuando el esquema lo rechaza, no descarta
+   * el frame — falla la cola entera de la conexión y se lleva puesto todo lo que tenía en vuelo.
+   */
+  delegationFeedback: boolean;
+  claims: Map<string, SessionClaim>;
+  recentClaims: Map<string, SessionClaim>;
+  /** Re-drenaje programado al primer vencimiento de garra. Ver `scheduleExpiryDrain`. */
+  expiryTimer: NodeJS.Timeout | undefined;
 }
 
 const MAX_RECENT_SESSION_CLAIMS = 1_024;
+/**
+ * Techo de garras que se rehidratan al conectar. Muy por encima de cualquier cupo razonable:
+ * sólo está para que una cola patológica no se traiga miles de filas al socket. Si el alias
+ * tuviera más garras vivas que esto, el presupuesto ya da cero de todas formas.
+ */
+const MAX_REHYDRATED_CLAIMS = 256;
+/** Vueltas máximas de un mismo `drain()`. Ver el comentario del bucle. */
+const MAX_DRAIN_ROUNDS = 16;
+
+// Lote máximo por drain. Deliberadamente igual al default histórico de QueryDeliveriesSchema para
+// que este cambio no altere por sí solo cuánto se reclama: lo que cambia es que ahora el número
+// está escrito donde se usa en vez de heredarse en silencio del esquema de un endpoint HTTP.
+const DEFAULT_DELIVERY_CLAIM_LIMIT = 20;
+
+// Estados de ACK que devuelven la entrega al mundo terminal o reintentable y por lo tanto la sacan
+// de agents.max_concurrent_deliveries. Es el conjunto complementario de ('leased','accepted',
+// 'started'), que es exactamente lo que cuenta claimDeliveries.
+const RELEASES_CAPACITY: ReadonlySet<string> = new Set(['done', 'failed', 'dead', 'retry']);
 
 function sessionKey(tenantId: Tenant, alias: string): string {
   return `${tenantId}:${alias}`;
@@ -171,7 +286,7 @@ function statusFor(error: StoreError): number {
   if (error.code === 'forbidden' || error.code === 'fenced') return 403;
   if (error.code === 'not_found') return 404;
   if (error.code === 'conflict') return 409;
-  if (error.code === 'no_route' || error.code === 'invalid_actor') return 422;
+  if (error.code === 'no_route' || error.code === 'invalid_actor' || error.code === 'invalid_input') return 422;
   return 500;
 }
 
@@ -200,17 +315,56 @@ function publicPublish(value: unknown): ReturnType<typeof AuthenticatedPublishSc
   return AuthenticatedPublishSchema.parse(value);
 }
 
-function claimFromDelivery(delivery: DeliveryClaimRecord): Pick<GatewayAck, 'attempt' | 'claim_token'> {
+/**
+ * The ceiling an agent cannot publish over.
+ *
+ * This is the only surface where an agent chooses its own `priority`, and the only place in the
+ * process that knows whether the caller is a machine or a person: the number arrives in an
+ * anonymous public payload, the ROLE comes from the certificate. An `operator` is a human at the
+ * console (or the tooling one runs on purpose) and keeps the whole range, including the band above
+ * HUMAN_PRIORITY_FLOOR; that authority is already strictly weaker than what the operator role can
+ * do elsewhere here — replay deliveries, mutate config, enqueue jobs.
+ *
+ * Everything else is held at AGENT_PRIORITY_CEILING. Clamping rather than rejecting keeps a
+ * misconfigured canary or an old adapter publishing instead of 400-ing; the drop is logged so the
+ * misconfiguration is still visible.
+ */
+function routedPriority(actor: Principal, requested: number, request: FastifyRequest): number {
+  if (actor.roles.includes('operator')) return requested;
+  const allowed = clampAgentPriority(requested);
+  if (allowed !== requested) {
+    request.log?.warn?.({
+      event: 'publish_priority_clamped',
+      tenant_id: actor.tenant_id,
+      alias: actor.alias,
+      channel: actor.channel,
+      requested,
+      applied: allowed
+    }, 'agent priority clamped to the agent band');
+  }
+  return allowed;
+}
+
+function claimFromDelivery(delivery: DeliveryClaimRecord, fallbackDeadlineMs: number): SessionClaim {
   if (typeof delivery.event_id !== 'string' || delivery.event_id.length === 0 ||
       typeof delivery.claim_token !== 'string' || delivery.claim_token.length === 0 ||
       !Number.isInteger(delivery.attempt) || delivery.attempt < 1) {
     throw new Error('repository returned an incomplete delivery claim');
   }
-  return { attempt: delivery.attempt, claim_token: delivery.claim_token };
+  // `ack_deadline_at` lo generó PostgreSQL; es la única fuente de verdad sobre cuándo el reaper
+  // puede llevarse la garra. Si viniera ilegible se usa el plazo configurado, que es lo mismo
+  // que acaba de aplicar el store.
+  const deadlineMs = Date.parse(delivery.ack_deadline_at);
+  return {
+    attempt: delivery.attempt,
+    claim_token: delivery.claim_token,
+    humanOriginated: !isAgentToAgentBody(delivery.body),
+    admissionExpiresAtMs: Number.isFinite(deadlineMs) ? deadlineMs : Date.now() + fallbackDeadlineMs
+  };
 }
 
-function normalizeDeliveryClaim(delivery: DeliveryClaimRecord): DeliveryClaimRecord {
-  claimFromDelivery(delivery);
+function normalizeDeliveryClaim(delivery: DeliveryClaimRecord, fallbackDeadlineMs: number): DeliveryClaimRecord {
+  claimFromDelivery(delivery, fallbackDeadlineMs);
   return delivery;
 }
 
@@ -218,10 +372,58 @@ function parseAck(value: unknown): GatewayAck {
   return ClaimedAckSchema.parse(value);
 }
 
-function assertAckClaim(ack: GatewayAck, expected?: ReturnType<typeof claimFromDelivery>): void {
+function assertAckClaim(ack: GatewayAck, expected?: Pick<SessionClaim, 'attempt' | 'claim_token'>): void {
   if (expected && (ack.attempt !== expected.attempt || ack.claim_token !== expected.claim_token)) {
     throw new StoreError('fenced', 'ACK claim does not match the delivered event');
   }
+}
+
+function rememberRecentClaim(session: Session, deliveryId: string, claim: SessionClaim): void {
+  session.recentClaims.delete(deliveryId);
+  session.recentClaims.set(deliveryId, claim);
+  while (session.recentClaims.size > MAX_RECENT_SESSION_CLAIMS) {
+    const oldest = session.recentClaims.keys().next().value;
+    if (oldest === undefined) break;
+    session.recentClaims.delete(oldest);
+  }
+}
+
+/**
+ * Cuánto cupo hay libre AHORA, por clase.
+ *
+ * De paso saca de `claims` las garras cuyo plazo ya venció. No es una optimización: una garra
+ * vencida no se puede renovar nunca más (`ackDelivery` exige `ack_deadline_at > now()`, misma
+ * condición), así que si se quedara en el mapa ocuparía un cupo para siempre y el agente se
+ * quedaría sin trabajo hasta reconectar. Se mueve a `recentClaims` en vez de borrarse, porque
+ * borrarla haría que un ACK tardío no correlacione y un cliente legacy se comiera un 'fenced'
+ * con cierre de socket, cuando hoy recibe un `ownership_lost` y sigue vivo.
+ *
+ * El error de reloj entre gateway y PostgreSQL sólo puede sobre-admitir de a una garra, y el
+ * store igual la va a reclamar en el mismo instante: es el lado seguro del error.
+ */
+function admissionBudget(
+  session: Session,
+  admission: DeliveryAdmissionConfig,
+  nowMs: number
+): { limit: number; humanReservedLimit: number } {
+  let human = 0;
+  let agent = 0;
+  for (const [deliveryId, claim] of [...session.claims]) {
+    if (claim.admissionExpiresAtMs <= nowMs) {
+      session.claims.delete(deliveryId);
+      rememberRecentClaim(session, deliveryId, claim);
+      continue;
+    }
+    if (claim.humanOriginated) human += 1;
+    else agent += 1;
+  }
+  // El tráfico humano gasta primero su cupo reservado; sólo cuando lo agota empieza a comerse
+  // el general. Por eso el general se descuenta con el excedente humano, no con todo el humano.
+  const humanOverflow = Math.max(0, human - admission.humanReservedDeliveries);
+  return {
+    limit: Math.max(0, admission.maxInflightDeliveries - agent - humanOverflow),
+    humanReservedLimit: Math.max(0, admission.humanReservedDeliveries - human)
+  };
 }
 
 export async function buildGateway(options: GatewayOptions): Promise<FastifyInstance> {
@@ -230,6 +432,12 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     throw new Error('development/test AuthProvider is forbidden in production');
   }
   const ackDeadlineMs = validateAckDeadlineMs(options.ackDeadlineMs ?? DEFAULT_ACK_DEADLINE_MS);
+  const deliveryLeaseCap = options.deliveryLeaseCap ?? {};
+  const admission = validateDeliveryAdmission(options.admission ?? {
+    maxInflightDeliveries: DEFAULT_MAX_INFLIGHT_DELIVERIES,
+    humanReservedDeliveries: DEFAULT_HUMAN_RESERVED_DELIVERIES
+  });
+  const maxQueryLimit = admission.maxInflightDeliveries + admission.humanReservedDeliveries;
   const app = Fastify({
     logger: options.logger ?? false,
     ...(options.https === undefined ? {} : { https: options.https })
@@ -238,6 +446,14 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   const leaseTtlMs = options.leaseTtlMs ?? 30_000;
   const outboxPollMs = options.outboxPollMs ?? 100;
   const outboxLeaseMs = options.outboxLeaseMs ?? 30_000;
+  // Cota superior de un drain. Antes iba `undefined` y caía en el default 20 de
+  // QueryDeliveriesSchema — un 20 que nadie eligió para este camino y que nadie podía ver leyendo
+  // el gateway. El techo real por agente vive en agents.max_concurrent_deliveries y lo aplica
+  // claimDeliveries; esto es sólo el tamaño máximo de lote para un agente sin techo declarado.
+  const deliveryClaimLimit = options.deliveryClaimLimit ?? DEFAULT_DELIVERY_CLAIM_LIMIT;
+  if (!Number.isInteger(deliveryClaimLimit) || deliveryClaimLimit < 1 || deliveryClaimLimit > 100) {
+    throw new Error('deliveryClaimLimit must be an integer between 1 and 100');
+  }
   // Kept as an explicit startup invariant for migration diagnostics; ACK claims are mandatory below.
   if (options.requireAckClaims === false && process.env.NODE_ENV === 'production') {
     throw new Error('delivery ACK claims cannot be disabled in production');
@@ -287,7 +503,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
         ...(effectivePermissions.includes('route') ? ['message.publish'] : []),
         ...(effectivePermissions.includes('notify') ? ['message.notify'] : []),
         ...(effectiveRoles.includes('operator') && effectivePermissions.includes('control')
-          ? ['delivery.replay', 'job.create', 'config.write', 'config.rollback'] : []),
+          ? ['delivery.replay', 'delivery.cancel', 'job.create', 'config.write', 'config.rollback'] : []),
         ...(options.terminalCapability?.available === true && effectiveRoles.includes('operator') && effectivePermissions.includes('control')
           ? ['ultimate-terminal.connect'] : [])
       ];
@@ -316,7 +532,10 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           channel: actor.channel,
           ...(actor.origin === undefined ? {} : { origin: actor.origin })
         },
-        ...command
+        ...command,
+        // After the spread on purpose: `command` carries the caller's requested number and this
+        // must be the value that survives.
+        priority: routedPriority(actor, command.priority, request)
       };
       return reply.code(202).send(await repository.publish(trustedCommand));
     } catch (error) {
@@ -346,6 +565,50 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
         });
       }
       return reply.code(202).send(verdict);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  // Ingesta de muestras de cuota del recolector fuera de banda (get_ai_quotas, corre en kratos y
+  // en los contenedores de agente). Va A PROPÓSITO fuera de /v3/console/: createConsoleSecurityHook
+  // devuelve 403 a todo método inseguro bajo ese prefijo que no traiga un Origin same-origin, y un
+  // demonio con certificado de cliente jamás manda Origin. Por eso vive acá, junto a /v3/messages
+  // y /v3/egress/notifications, que son la misma clase de superficie máquina-a-máquina.
+  //
+  // Permiso: mismo par que POST /v3/console/jobs -- requireOperatorPermission sobre el Principal
+  // (rol derivado del certificado) MÁS assertPermission contra role_policies (la fuente de verdad
+  // en la base). recordQuotaSample() en sí no se autochequea, así que sin este segundo chequeo acá
+  // un agente con permiso 'control' mal otorgado podría pausar suscripciones de toda la flota.
+  app.post('/v3/quotas/samples', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requireOperatorPermission(actor, 'control');
+      await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
+      const sample = QuotaSampleRequestSchema.parse(request.body);
+      const result = await repository.recordQuotaSample(actor.tenant_id, actor.alias, sample);
+      return reply.code(202).send(result);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  // Selección de cuenta del PROPIO alias (el sistema rotativo de cuentas). Vive fuera de
+  // /v3/console/ por la misma razón que /v3/quotas/samples: la llama un adaptador con certificado
+  // de cliente, y createConsoleSecurityHook rechaza todo lo que no traiga un Origin same-origin,
+  // que un demonio jamás manda.
+  //
+  // El sujeto NO es un parámetro: sale del certificado. Un alias resuelve su propia cuenta y
+  // ninguna otra, así que el permiso que hace falta es 'route' (el que ya tiene todo adaptador
+  // que despacha) y no 'control'. Pedir 'control' acá habría obligado a darle a cada agente el
+  // mismo permiso que pausa suscripciones de toda la flota, que es justo lo contrario de lo que
+  // esta ruta necesita.
+  app.get('/v3/accounts/selection', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requirePermission(actor, 'route');
+      await repository.assertPermission(actor.tenant_id, actor.alias, 'route');
+      const provider = (request.query as { provider?: unknown } | undefined)?.provider;
+      if (typeof provider !== 'string') {
+        return reply.code(400).send({ error: 'invalid_input', message: 'provider query parameter is required' });
+      }
+      return await repository.selectAccount(actor.tenant_id, actor.alias, provider);
     } catch (error) { replyError(reply, error); }
   });
 
@@ -382,6 +645,24 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     } catch (error) { replyError(reply, error); }
   });
 
+  // Cancelar es la operación gemela de replay y va con exactamente el mismo candado
+  // (`requireOperatorPermission(actor,'control')` acá y `assertReplayAuthorization` en el store).
+  // Se expone por la misma superficie a propósito: hasta hoy la única forma de cancelar era un
+  // UPDATE a mano en la base, sin auditoría, sin aviso al origen y sin liberar al padre.
+  app.post<{ Params: { deliveryId: string } }>('/v3/console/deliveries/:deliveryId/cancel', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requireOperatorPermission(actor, 'control');
+      // El motivo es opcional y sólo se acepta como texto. Cualquier otra forma se ignora en vez
+      // de rechazarse: la cancelación no puede fallar por un campo decorativo.
+      const body = request.body as { reason?: unknown } | undefined;
+      const reason = typeof body?.reason === 'string' ? body.reason : undefined;
+      return await repository.cancelDelivery(
+        request.params.deliveryId, actor.tenant_id, actor.alias, reason
+      );
+    } catch (error) { replyError(reply, error); }
+  });
+
   app.get('/v3/console/jobs', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
@@ -409,6 +690,31 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
       return await repository.listAdapters(actor.tenant_id, actor.alias);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  // "Qué está trabajando cada agente ahora mismo", agregado por alias. Igual que topology()/
+  // listAgents(), el alcance cross-tenant sale de acl_edges allow_read dentro del propio store
+  // (fleetActivity() se autochequea el permiso, no hace falta un facade acá) -- este endpoint no
+  // tiene un "modo flota" especial, es la misma regla default-deny de siempre. No lleva
+  // sameTenantRows: aplastarlo por tenant sería esconder exactamente el caso que este panel
+  // existe para mostrar (un alias sin registrar con entregas en vuelo en otro tenant visible).
+  app.get('/v3/console/activity', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requireOperatorPermission(actor, 'read');
+      return await repository.fleetActivity(actor.tenant_id, actor.alias);
+    } catch (error) { replyError(reply, error); }
+  });
+
+  // Consumo de cuotas de las suscripciones de IA, con su propio observed_at: es una muestra
+  // fuera de banda de hace minutos, no de hace milisegundos como fleetActivity(), así que
+  // fusionar los dos payloads mentiría sobre una de las dos frescuras.
+  app.get('/v3/console/quotas', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requireOperatorPermission(actor, 'read');
+      return await repository.quotaSnapshot(actor.tenant_id, actor.alias);
     } catch (error) { replyError(reply, error); }
   });
 
@@ -469,6 +775,69 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       return await repository.agentChain(request.params.traceId, actor.tenant_id, actor.alias);
     } catch (error) { replyError(reply, error); }
   });
+
+  // Las preguntas que la flota le dejó a una persona. Es la LISTA VISIBLE que el gate promete:
+  // sin ella, sacar la espera humana del bus sólo la escondería en otro lado.
+  //
+  // Sin fachada sameTenantRows, por el mismo motivo que /v3/console/chains/:traceId: el store ya
+  // aplicó la visibilidad fila por fila (tenant propio, o arista ACL con allow_read), y aplastar
+  // por tenant acá dejaría a un operador del hub sin poder contestar la pregunta de un agente de
+  // otro tenant, que es justo para lo que existe esta lista.
+  app.get<{ Querystring: { status?: string; limit?: string } }>(
+    '/v3/console/chain-gates',
+    async (request, reply) => {
+      try {
+        const actor = await principal(request, options.authProvider);
+        requirePermission(actor, 'read');
+        if (repository.listChainGates === undefined) {
+          throw new StoreError('not_found', 'chain gates are not available in this deployment');
+        }
+        const limit = Number.parseInt(request.query.limit ?? '', 10);
+        return await repository.listChainGates(actor.tenant_id, actor.alias, {
+          status: request.query.status === 'all' ? 'all' : 'open',
+          ...(Number.isSafeInteger(limit) && limit > 0 ? { limit } : {})
+        });
+      } catch (error) { replyError(reply, error); }
+    }
+  );
+
+  // Contestar reanuda la rama suspendida con UNA entrega. Pide 'route' y no 'read' porque
+  // produce tráfico en el bus, igual que publicar.
+  app.post<{ Params: { gateId: string } }>(
+    '/v3/console/chain-gates/:gateId/answer',
+    async (request, reply) => {
+      try {
+        const actor = await principal(request, options.authProvider);
+        requirePermission(actor, 'route');
+        if (repository.answerChainGate === undefined) {
+          throw new StoreError('not_found', 'chain gates are not available in this deployment');
+        }
+        const body = request.body === null || typeof request.body !== 'object'
+          ? {}
+          : request.body as Record<string, unknown>;
+        const answer = typeof body.answer === 'string' ? body.answer : '';
+        return await repository.answerChainGate(
+          request.params.gateId, answer, actor.tenant_id, actor.alias
+        );
+      } catch (error) { replyError(reply, error); }
+    }
+  );
+
+  app.post<{ Params: { gateId: string } }>(
+    '/v3/console/chain-gates/:gateId/cancel',
+    async (request, reply) => {
+      try {
+        const actor = await principal(request, options.authProvider);
+        requirePermission(actor, 'route');
+        if (repository.cancelChainGate === undefined) {
+          throw new StoreError('not_found', 'chain gates are not available in this deployment');
+        }
+        return await repository.cancelChainGate(
+          request.params.gateId, actor.tenant_id, actor.alias
+        );
+      } catch (error) { replyError(reply, error); }
+    }
+  );
 
   app.get('/v3/console/config', async (request, reply) => {
     try {
@@ -557,14 +926,40 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     }
   });
 
+  /**
+   * Reclamo por HTTP. Es el otro punto por donde se puede vaciar la cola de un agente, y hasta
+   * ahora el `limit` lo elegía el cliente sin techo.
+   *
+   * Decisión: se topea al mismo presupuesto total configurado, y además —si hay una sesión
+   * WebSocket viva del mismo (tenant, alias)— se le descuentan las garras que esa sesión ya
+   * tiene en vuelo, para que las dos superficies compartan un solo presupuesto en vez de
+   * duplicarlo. No se puede hacer un control de admisión completo acá porque el POST es sin
+   * estado: no hay nada que sobreviva entre dos polls de un cliente que no tenga socket, así
+   * que cualquier acumulado sería una invención. Topear el lote sí acota el daño de UN poll a
+   * exactamente lo que puede tomar un drain, que es lo que rompía hoy: el SDK cayendo al
+   * camino HTTP heredaba el default 20 del store.
+   */
   const queryHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
       const query = QueryDeliveriesSchema.parse(request.body);
+      const live = sessions.get(sessionKey(actor.tenant_id, actor.alias));
+      const budget = live !== undefined && live.instanceId === query.instance_id
+        && live.epoch === query.epoch
+        ? admissionBudget(live, admission, Date.now())
+        : { limit: admission.maxInflightDeliveries, humanReservedLimit: admission.humanReservedDeliveries };
+      // `query.limit` es un techo total pedido por el cliente (el schema le pone default 20).
+      // Se reparte primero contra el cupo general y el resto contra el reservado, para que un
+      // cliente que pide 1 no se lleve 1 general + 1 reservado.
+      const requested = Math.min(query.limit, maxQueryLimit);
+      const generalLimit = Math.min(requested, budget.limit);
+      const humanReservedLimit = Math.min(requested - generalLimit, budget.humanReservedLimit);
+      if (generalLimit + humanReservedLimit < 1) return { deliveries: [] };
       const deliveries = (await repository.claimDeliveries(
-        actor.tenant_id, actor.alias, query.instance_id, query.epoch, query.limit, ackDeadlineMs
-      )).map(normalizeDeliveryClaim);
+        actor.tenant_id, actor.alias, query.instance_id, query.epoch,
+        generalLimit, ackDeadlineMs, undefined, { humanReservedLimit }
+      )).map((delivery) => normalizeDeliveryClaim(delivery, ackDeadlineMs));
       return {
         deliveries
       };
@@ -595,7 +990,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       requirePermission(actor, 'route');
       const ack = parseAck(request.body);
       const result = await repository.ackDelivery(
-        request.params.deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs
+        request.params.deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs,
+        deliveryLeaseCap
       );
       return { ...result, event_id: ack.event_id, attempt: ack.attempt, claim_token: ack.claim_token };
     } catch (error) {
@@ -614,26 +1010,117 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const deliveryId = DeliveryIdSchema.parse(deliveryValue);
       const ack = parseAck(ackValue);
       const result = await repository.ackDelivery(
-        deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs
+        deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs, deliveryLeaseCap
       );
+      // Un ACK por HTTP libera capacidad igual que uno por WebSocket. Si el mismo alias tiene un
+      // socket vivo, hay que despertarlo: si no, la capacidad que este ACK liberó queda sin usar
+      // hasta el próximo mensaje publicado. No se espera el drenaje para no atar la respuesta HTTP
+      // a una ronda de reclamo.
+      if (RELEASES_CAPACITY.has(result.status)) {
+        const active = sessions.get(sessionKey(actor.tenant_id, actor.alias));
+        if (active) void drain(active).catch((error: unknown) => app.log.error(error));
+      }
       return { ...result, event_id: ack.event_id, attempt: ack.attempt, claim_token: ack.claim_token };
     } catch (error) {
       replyError(reply, error);
     }
   });
 
+  /**
+   * Reconstruye el cupo ocupado de un alias desde la base, al conectar.
+   *
+   * Sin esto el control de admisión vivía sólo en la RAM del socket y una reconexión lo
+   * multiplicaba: `hello` creaba `claims: new Map()` y el adaptador volvía a tener el
+   * presupuesto entero. Con `renewable_delivery_claims_v1` es peor todavía, porque esa
+   * capacidad existe justamente para CONSERVAR el lease y la época entre reconexiones: las
+   * garras viejas siguen vivas en la base y el gateway las olvidaba.
+   *
+   * Falla abierta a propósito. Si la consulta revienta, se arranca con el cupo vacío —el
+   * comportamiento anterior— en vez de dejar al adaptador sin poder reclamar nada: un agente
+   * que no recibe trabajo es peor que el bug que estamos arreglando. El techo de la base
+   * (`ack_deadline_at`) sigue acotando el daño en el peor caso.
+   */
+  async function rehydrateClaims(tenantId: Tenant, alias: string): Promise<Map<string, SessionClaim>> {
+    const claims = new Map<string, SessionClaim>();
+    if (repository.liveDeliveryClaims === undefined) return claims;
+    try {
+      const live = await repository.liveDeliveryClaims(tenantId, alias, MAX_REHYDRATED_CLAIMS);
+      for (const claim of live) {
+        const deadlineMs = Date.parse(claim.ack_deadline_at);
+        if (!Number.isFinite(deadlineMs) || deadlineMs <= Date.now()) continue;
+        claims.set(claim.delivery_id, {
+          attempt: claim.attempt,
+          claim_token: claim.claim_token,
+          humanOriginated: claim.agent_to_agent !== true,
+          admissionExpiresAtMs: deadlineMs,
+          rehydrated: true
+        });
+      }
+    } catch (error) {
+      app.log.error(error);
+    }
+    return claims;
+  }
+
+  /**
+   * Entrega a un adaptador SÓLO lo que le entra.
+   *
+   * Antes esto llamaba a claimDeliveries con `undefined` en la posición de `limit`, o sea que
+   * se comía el default 20 del store: veinte entregas reclamadas en el mismo instante,
+   * arrancando el mismo plazo de ACK de 30 minutos a la vez. La cola del lote se moría sin
+   * haber empezado, se reintentaba, y el reintento volvía a ejecutar trabajo ya hecho.
+   *
+   * Dos cuidados que son la parte peligrosa del cambio:
+   *
+   *  1. Si el cupo se libera y nadie vuelve a drenar, el agente se queda sin trabajo PARA
+   *     SIEMPRE, con la cola llena. Antes daba lo mismo (se pedían 20 y no había límite que
+   *     liberar); ahora no. Por eso todo ACK que saca una garra de `session.claims` vuelve a
+   *     llamar a drain, no sólo el 'retry' como antes.
+   *  2. Un wake que llega mientras estamos drenando se descartaba silenciosamente por el
+   *     `if (session.draining) return`. Con cupo eso puede significar perder el único aviso de
+   *     que había trabajo. Ahora se anota en `drainAgain` y se vuelve a drenar al terminar.
+   *  3. Hay una forma de liberar cupo que NO produce ni ACK ni wake: que a una garra se le
+   *     venza el plazo. Pasa con las garras rehidratadas de un adaptador que murió, y con las
+   *     que el reaper manda a `dead` (ese camino no encola wake). Sin nada que dispare, el
+   *     agente quedaría con cupo libre y la cola llena. Por eso al terminar se arma un timer al
+   *     primer vencimiento conocido: la liveness queda acotada por el plazo de ACK, no por la
+   *     suerte.
+   */
   async function drain(session: Session): Promise<void> {
-    if (session.draining || session.socket.readyState !== WebSocket.OPEN) return;
+    if (session.socket.readyState !== WebSocket.OPEN) return;
+    if (session.draining) {
+      session.drainAgain = true;
+      return;
+    }
     session.draining = true;
     try {
-      const deliveries = (await repository.claimDeliveries(
-        session.tenantId, session.alias, session.instanceId, session.epoch, undefined, ackDeadlineMs
-      )).map(normalizeDeliveryClaim);
-      for (const delivery of deliveries) {
-        const claim = claimFromDelivery(delivery);
-        session.recentClaims.delete(delivery.delivery_id);
-        session.claims.set(delivery.delivery_id, claim);
-        send(session.socket, delivery);
+      // El tope existe sólo contra las vueltas IMPRODUCTIVAS: las productivas ya están
+      // acotadas por el cupo, que baja con cada garra tomada. Sin tope, dos gateways contra la
+      // misma cola podrían pasarse wakes de entregas que el otro ya se llevó y girar en vacío.
+      for (let round = 0; round < MAX_DRAIN_ROUNDS; round += 1) {
+        session.drainAgain = false;
+        const budget = admissionBudget(session, admission, Date.now());
+        if (budget.limit + budget.humanReservedLimit < 1) return;
+        // INTEGRACIÓN 2026-07-29: quien manda es el cupo de admisión (`budget.limit`), que sale
+        // de las garras vivas de ESTA sesión. `deliveryClaimLimit` queda como techo de lote
+        // explícito por encima: con los defaults (cupo 2, lote 20) nunca ata, y existe para
+        // poder bajarle el lote a un gateway sin tocar el cupo. Lo que ya no puede pasar —que era
+        // el punto del parche de concurrencia— es que este argumento viaje `undefined` y caiga en
+        // silencio en el default 20 del esquema de un endpoint HTTP.
+        const generalLimit = Math.min(budget.limit, deliveryClaimLimit);
+        if (generalLimit + budget.humanReservedLimit < 1) return;
+        const deliveries = (await repository.claimDeliveries(
+          session.tenantId, session.alias, session.instanceId, session.epoch,
+          generalLimit, ackDeadlineMs, undefined,
+          { humanReservedLimit: budget.humanReservedLimit }
+        )).map((delivery) => normalizeDeliveryClaim(delivery, ackDeadlineMs));
+        for (const delivery of deliveries) {
+          const claim = claimFromDelivery(delivery, ackDeadlineMs);
+          session.recentClaims.delete(delivery.delivery_id);
+          session.claims.set(delivery.delivery_id, claim);
+          send(session.socket, delivery);
+        }
+        if (!session.drainAgain) return;
       }
     } catch (error) {
       if (error instanceof StoreError && error.code === 'fenced') {
@@ -644,7 +1131,33 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       }
     } finally {
       session.draining = false;
+      scheduleExpiryDrain(session);
     }
+  }
+
+  /**
+   * Vuelve a drenar cuando venza la primera garra viva. Es la red de seguridad del punto 3 de
+   * `drain()`: sin esto, una garra que se libera por vencimiento —y no por ACK ni por wake—
+   * deja al adaptador conectado, con cupo y sin trabajo, que es indistinguible de un adaptador
+   * roto. Uno solo por sesión, se reprograma en cada drenaje y se cancela al cerrar el socket.
+   */
+  function scheduleExpiryDrain(session: Session): void {
+    if (session.expiryTimer !== undefined) clearTimeout(session.expiryTimer);
+    session.expiryTimer = undefined;
+    if (session.socket.readyState !== WebSocket.OPEN || session.claims.size === 0) return;
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const claim of session.claims.values()) {
+      earliest = Math.min(earliest, claim.admissionExpiresAtMs);
+    }
+    if (!Number.isFinite(earliest)) return;
+    // El piso de 1 s evita que un reloj corrido convierta esto en un bucle de drenajes.
+    const delayMs = Math.max(1_000, earliest - Date.now() + 1_000);
+    const timer = setTimeout(() => {
+      session.expiryTimer = undefined;
+      void drain(session);
+    }, delayMs);
+    timer.unref();
+    session.expiryTimer = timer;
   }
 
   app.get('/v3/ws', { websocket: true }, (socket, request) => {
@@ -666,6 +1179,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
               throw new StoreError('forbidden', 'authenticated identity does not match hello');
             }
             const renewableDeliveryClaims = hello.capabilities.includes('renewable_delivery_claims_v1');
+            const delegationFeedback = hello.capabilities.includes('delegation_feedback_v1');
             const lease = await repository.acquireLease(
               hello.tenant_id,
               hello.alias,
@@ -693,9 +1207,13 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
               instanceId: hello.instance_id,
               epoch: lease.epoch,
               draining: false,
+              drainAgain: false,
               renewableDeliveryClaims,
-              claims: new Map(),
-              recentClaims: new Map()
+              delegationFeedback,
+              // El cupo NO arranca vacío: se reconstruye desde la base. Ver `rehydrateClaims`.
+              claims: await rehydrateClaims(hello.tenant_id, hello.alias),
+              recentClaims: new Map(),
+              expiryTimer: undefined
             };
             sessions.set(key, current);
             if (previous && previous.socket !== socket) previous.socket.close(4401, 'superseded by newer epoch');
@@ -747,11 +1265,27 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           if (incoming.epoch > current.epoch) {
             throw new StoreError('fenced', 'ACK identity does not match socket lease');
           }
-          const sessionClaim = current.claims.get(deliveryId)
-            ?? current.recentClaims.get(deliveryId);
-          if (sessionClaim !== undefined) {
+          // El orden importa. `claims` tiene la garra VIVA; `recentClaims`, la anterior. Cuando
+          // el reaper reintentó una entrega y el mismo adaptador se la volvió a llevar, la viva
+          // es la del intento nuevo — y el ACK terminal del intento viejo, que llega tarde con
+          // la respuesta adentro, no coincide con ella. `assertAckClaim` lo convertía en un
+          // 'fenced' con cierre de socket 4401: el resultado no llegaba siquiera a la base, que
+          // es quien sabe decidir si sirve (ver `lateTerminalSalvage`). Si el ACK correlaciona
+          // EXACTO con una garra que este mismo socket recuerda haber entregado, se usa ésa y se
+          // deja que decida el store. Cuando no correlaciona con ninguna, no cambia nada.
+          const liveClaim = current.claims.get(deliveryId);
+          const recentClaim = current.recentClaims.get(deliveryId);
+          const matchesRecent = recentClaim !== undefined
+            && recentClaim.attempt === incoming.attempt
+            && recentClaim.claim_token === incoming.claim_token;
+          const sessionClaim = matchesRecent ? recentClaim : (liveClaim ?? recentClaim);
+          // Una garra rehidratada cuenta para el cupo pero NO fencea: la reconstruimos de la
+          // base sin saber si el adaptador la conoce con ese mismo intento, así que exigirle
+          // que coincida convertiría un ACK viejo en un cierre de socket 4401 donde antes había
+          // un `ownership_lost` recuperable.
+          if (sessionClaim !== undefined && sessionClaim.rehydrated !== true) {
             assertAckClaim(incoming, sessionClaim);
-          } else if (!current.renewableDeliveryClaims) {
+          } else if (sessionClaim === undefined && !current.renewableDeliveryClaims) {
             throw new StoreError('fenced', 'ACK has no claim in the live socket session');
           }
           // A renewable client can resume the same fenced DB lease after a
@@ -759,31 +1293,74 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           // intentionally empty; repository.ackDelivery remains authoritative
           // for delivery id, attempt, token, instance, epoch and deadline.
           const result = await repository.ackDelivery(
-            deliveryId, current.tenantId, current.alias, incoming, ackDeadlineMs
+            deliveryId, current.tenantId, current.alias, incoming, ackDeadlineMs,
+            deliveryLeaseCap
           );
-          const { receipt, ...legacyResult } = result;
+          // Todo campo que el store agregue a `AckResult` se saca de `legacyResult` A MANO y se
+          // vuelve a poner detrás de su capability. `legacyResult` es lo que un adaptador de
+          // cualquier versión sabe leer, así que el spread NO puede ser la vía por la que entra
+          // un campo nuevo: ahí está el defecto que esto arregla — `delegation_rejections` y
+          // `chain_gate` viajaban en el spread, el `.strict()` del adaptador viejo los rechazaba,
+          // y un frame rechazado no se descarta: falla la cola entera de la conexión.
+          const {
+            receipt,
+            delegation_rejections: delegationRejections,
+            chain_gate: chainGate,
+            ...legacyResult
+          } = result;
+          const feedback = current.delegationFeedback;
           send(socket, {
             type: 'ack_result',
             ...legacyResult,
             event_id: incoming.event_id,
             attempt: incoming.attempt,
             claim_token: incoming.claim_token,
-            ...(current.renewableDeliveryClaims ? { receipt } : {})
+            ...(current.renewableDeliveryClaims ? { receipt } : {}),
+            ...(feedback && delegationRejections !== undefined
+              ? { delegation_rejections: delegationRejections }
+              : {}),
+            ...(feedback && chainGate !== undefined ? { chain_gate: chainGate } : {})
           });
-          if (['done', 'failed', 'dead'].includes(result.status)) {
-            const completedClaim = current.claims.get(deliveryId);
-            current.claims.delete(deliveryId);
-            if (completedClaim !== undefined) {
-              current.recentClaims.delete(deliveryId);
-              current.recentClaims.set(deliveryId, completedClaim);
-              while (current.recentClaims.size > MAX_RECENT_SESSION_CLAIMS) {
-                const oldest = current.recentClaims.keys().next().value;
-                if (oldest === undefined) break;
-                current.recentClaims.delete(oldest);
-              }
+          // Todo 'started' aplicado corre el plazo en la base a now()+plazo, incluido el
+          // primero: el cupo tiene que seguirlo o el gateway daría por vencida una garra que
+          // sigue viva. Antes la base NO lo movía en el primero y las dos vistas de la misma
+          // garra se separaban por lo que hubiera tardado el arranque; ahora las dos parten del
+          // mismo hecho. El máximo evita que un ACK tardío acorte el plazo.
+          if (result.applied && incoming.status === 'started') {
+            const renewed = current.claims.get(deliveryId);
+            if (renewed !== undefined) {
+              renewed.admissionExpiresAtMs = Math.max(
+                renewed.admissionExpiresAtMs, Date.now() + ackDeadlineMs
+              );
             }
           }
-          if (result.status === 'retry') await drain(current);
+          // 'retry' TIENE que liberar el cupo, y no lo hacía. Cuando el harness ACKea un fallo
+          // reintentable (un rate limit, digamos) la base pone la entrega en 'retry' y le borra
+          // claim_token, consumer y plazo: ya no es de nadie. El gateway, en cambio, se quedaba
+          // con ella en `claims` hasta que venciera su `admissionExpiresAtMs`. Con el cupo en 2,
+          // dos fallos reintentables dejaban al agente en CUPO CERO durante media hora — el
+          // mismo modo de falla que este parche existe para evitar, y bajo saturación 'retry' es
+          // el desenlace MÁS frecuente.
+          //
+          // Estos cuatro son exactamente los estados en los que la base no tiene ninguna garra
+          // viva para la entrega. Los otros ('leased', 'accepted', 'started') significan que
+          // alguien la tiene; si ese alguien ya no somos nosotros, el vencimiento del plazo la
+          // saca del mapa igual. Soltar de más admitiría trabajo que sigue corriendo.
+          let releasedSlot = false;
+          if (['done', 'failed', 'dead', 'retry'].includes(result.status)) {
+            const completedClaim = current.claims.get(deliveryId);
+            releasedSlot = current.claims.delete(deliveryId);
+            // No se borra: se mueve a `recentClaims`. Un ACK tardío de esta misma entrega tiene
+            // que seguir correlacionando, o un cliente viejo se come un 'fenced' con cierre de
+            // socket donde hoy recibe un `ownership_lost` y sigue vivo.
+            if (completedClaim !== undefined) rememberRecentClaim(current, deliveryId, completedClaim);
+          }
+          // ESTE es el punto que hace viable el control de admisión: si una garra se liberó,
+          // hay que volver a drenar acá mismo. Si sólo se drenara con el 'retry' de antes, un
+          // agente que termina su tarea se quedaría con el cupo libre y la cola llena hasta
+          // que llegara un wake externo — y una entrega que ya estaba encolada y se salteó no
+          // genera ningún wake nuevo. Sería un agente colgado con trabajo esperando.
+          if (releasedSlot || result.status === 'retry') await drain(current);
         } catch (error) {
           const code = error instanceof StoreError ? error.code : 'invalid_frame';
           send(socket, { type: 'error', code, message: error instanceof Error ? error.message : 'unknown frame error' });
@@ -796,6 +1373,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       closed = true;
       const closing = current;
       if (!closing) return;
+      if (closing.expiryTimer !== undefined) clearTimeout(closing.expiryTimer);
+      closing.expiryTimer = undefined;
       const key = sessionKey(closing.tenantId, closing.alias);
       if (sessions.get(key)?.socket === socket) sessions.delete(key);
       // Keep the DB lease and epoch until heartbeat expiry. The same stable

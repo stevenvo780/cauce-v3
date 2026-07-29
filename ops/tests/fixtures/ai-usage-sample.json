@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 2,
+  "appVersion": "0.12.0",
+  "providers": {
+    "claude": {
+      "ok": true,
+      "available": true,
+      "kind": "detected-percent",
+      "source": "claude-cli",
+      "plan": null,
+      "note": "Claude /usage detectado desde el CLI.",
+      "windows": [
+        {
+          "label": "sesion",
+          "usedPercent": 10,
+          "remainingPercent": 90,
+          "resetInSeconds": 9968,
+          "resetAt": "2026-07-27T15:50:00Z",
+          "key": "session"
+        },
+        {
+          "label": "semana",
+          "usedPercent": 81,
+          "remainingPercent": 19,
+          "key": "week_all",
+          "resetAt": "2026-07-28T13:59:00Z"
+        }
+      ]
+    },
+    "codex": {
+      "ok": true,
+      "available": true,
+      "kind": "detected-percent",
+      "source": "codex-app-server",
+      "plan": "pro",
+      "note": "Codex app-server (consulta oficial).",
+      "effectiveRemainingPercent": 100,
+      "availableGroups": ["codex_bengalfox"],
+      "limitingGroups": ["codex"],
+      "windows": [
+        {
+          "key": "codex_primary_10080",
+          "label": "semana",
+          "usedPercent": 100,
+          "remainingPercent": 0,
+          "windowMinutes": 10080,
+          "resetAt": "2026-08-01T19:18:21Z",
+          "status": "rate-limited",
+          "limitId": "codex"
+        },
+        {
+          "key": "codex_bengalfox_primary_10080",
+          "label": "semana",
+          "usedPercent": 0,
+          "remainingPercent": 100,
+          "windowMinutes": 10080,
+          "resetAt": "2026-08-03T14:28:04Z",
+          "limitId": "codex_bengalfox"
+        }
+      ]
+    },
+    "antigravity": {
+      "ok": true,
+      "available": true,
+      "kind": "detected-percent",
+      "source": "antigravity-api",
+      "note": "Antigravity (API real).",
+      "windows": [
+        {
+          "key": "gemini-3.1-pro-preview",
+          "label": "gemini-3.1-pro",
+          "usedPercent": 0,
+          "remainingPercent": 100,
+          "windowMinutes": 1440,
+          "resetAt": "2026-07-28T14:40:24Z",
+          "family": "gemini",
+          "model": "gemini-3.1-pro-preview"
+        },
+        {
+          "key": "gemini-3-flash-preview",
+          "label": "gemini-3-flash",
+          "usedPercent": 0,
+          "remainingPercent": 100,
+          "windowMinutes": 1440,
+          "resetAt": "2026-07-28T14:40:24Z",
+          "family": "gemini",
+          "model": "gemini-3-flash-preview"
+        }
+      ]
+    },
+    "opencode": {
+      "ok": true,
+      "available": true,
+      "kind": "detected-percent",
+      "source": "opencode-db",
+      "note": "Estimado local (opencode.db).",
+      "windows": [
+        {
+          "key": "5h",
+          "label": "5 horas",
+          "usedPercent": 0,
+          "remainingPercent": 100,
+          "usedUnits": 0,
+          "limitUnits": 12,
+          "windowMinutes": 300,
+          "resetAt": "2026-07-27T19:40:14Z"
+        },
+        {
+          "key": "week",
+          "label": "semanal",
+          "usedPercent": 0,
+          "remainingPercent": 100,
+          "usedUnits": 0,
+          "limitUnits": 30,
+          "windowMinutes": 10080,
+          "resetAt": "2026-08-03T00:00:00Z"
+        }
+      ]
+    }
+  }
+}

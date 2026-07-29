@@ -102,6 +102,11 @@ export type TelegramChatAction = 'typing';
 export interface TelegramSendOptions {
   reply_to_message_id?: string;
   message_thread_id?: string;
+  /**
+   * `html` hace que Telegram renderice negritas, código y citas en vez de mostrar el marcado
+   * crudo. Ausente = texto plano, que es como se comportó siempre este puente.
+   */
+  parse_mode?: 'html';
 }
 
 export interface TelegramApi {
@@ -219,6 +224,15 @@ export interface TelegramIngressMessage {
   body: Record<string, unknown>;
   origin: Origin;
   session_id: string;
+  /**
+   * The update was authored by a PERSON, which is what earns the reserved human priority band.
+   *
+   * It is derived, never configured: the poller only reaches here after `accepted()` matched
+   * `allowed_user_ids` — the operator-maintained allowlist of the humans this bot serves — and the
+   * flag additionally requires `from.is_bot !== true`. Both facts come from the alias config and
+   * the Telegram wire record, so no alias, chat or user id is written into the code.
+   */
+  human: boolean;
 }
 
 export interface TelegramIngress {
@@ -290,4 +304,7 @@ export type BridgeMetric =
   | 'updates_suppressed_bot' | 'updates_via_bot'
   | 'updates_chat_denied' | 'updates_chat_disabled' | 'updates_conflict'
   | 'group_config_degraded'
-  | 'egress_sent' | 'egress_retry' | 'egress_dead' | 'egress_ambiguous';
+  | 'egress_sent' | 'egress_retry' | 'egress_dead' | 'egress_ambiguous'
+  // Telegram rechazó el HTML y el mensaje salió en texto plano. Si este contador sube, la
+  // conversión de markdown está generando algo que Telegram no acepta y hay que mirarla.
+  | 'egress_format_downgraded';

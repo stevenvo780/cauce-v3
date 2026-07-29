@@ -203,6 +203,57 @@ test("prompt secrets are confined to stdin and omitted from safe logs for every 
   }
 });
 
+test("Codex receives images through its native provider attachment argument", async () => {
+  for (const definition of [HARNESS_DEFINITIONS.codex]) {
+    const runner = new RecordingRunner(new SpawnCommandRunner());
+    const adapter = new HarnessAdapter({
+      definition,
+      runner,
+      store: await freshStore(`native-image-${definition.id}`),
+      commandOverride: { command: process.execPath, prefixArgs: [fixture(definition)] },
+    });
+    await adapter.execute({
+      prompt: "describe the supplied image",
+      attachments: [{
+        kind: "image", name: "pixel.png", mimeType: "image/png",
+        path: "/tmp/cauce-fixture/pixel.png", size: 67, sha256: "a".repeat(64),
+      }],
+      timeoutMs: 2_000,
+      signal: new AbortController().signal,
+    });
+    const request = runner.requests[0];
+    assert.ok(request);
+    assert.ok(request.args.includes("--image"));
+    assert.ok(request.args.includes("/tmp/cauce-fixture/pixel.png"));
+    assert.match(request.stdin, /delivery_mode=native/u);
+  }
+});
+
+test("a provider without a native document input gets an explicit filesystem fallback", async () => {
+  const runner = new RecordingRunner(new SpawnCommandRunner());
+  const definition = HARNESS_DEFINITIONS.codex;
+  const adapter = new HarnessAdapter({
+    definition,
+    runner,
+    store: await freshStore("document-fallback-codex"),
+    commandOverride: { command: process.execPath, prefixArgs: [fixture(definition)] },
+  });
+  await adapter.execute({
+    prompt: "extract the document text",
+    attachments: [{
+      kind: "document", name: "report.pdf", mimeType: "application/pdf",
+      path: "/tmp/cauce-fixture/report.pdf", size: 42, sha256: "b".repeat(64),
+    }],
+    timeoutMs: 2_000,
+    signal: new AbortController().signal,
+  });
+  const request = runner.requests[0];
+  assert.ok(request);
+  assert.equal(request.args.includes("/tmp/cauce-fixture/report.pdf"), false);
+  assert.match(request.stdin, /delivery_mode=filesystem_fallback/u);
+  assert.match(request.stdin, /provider does not expose native application\/pdf input/u);
+});
+
 test("persistent session mappings survive adapter reconstruction where supported", async () => {
   for (const definition of definitions.filter((candidate) => candidate.capabilities.persistent_sessions)) {
     const directoryName = `session-${definition.id}`;

@@ -14,7 +14,25 @@ const dispatcher = tlsPolicy.ok ? runDispatcher(pool, {
   pollMs: config.pollMs,
   staleAckMs: config.ackTimeoutMs,
   interactiveBurst: config.interactiveBurst,
+  retryStartedDeliveries: config.retryStartedDeliveries,
+  leaseCapMs: config.leaseCapMs,
+  leaseCapGraceMs: config.leaseCapGraceMs,
+  retentionIntervalMs: config.retentionIntervalMs,
+  retention: {
+    ackRenewalMs: config.retentionAckRenewalMs,
+    ackMs: config.retentionAckMs,
+    auditRenewalMs: config.retentionAuditRenewalMs,
+    auditMs: config.retentionAuditMs,
+    batch: config.retentionBatch,
+  },
   jobLeaseMs: config.jobLeaseMs,
+  chainSweepMs: config.chainSweepMs,
+  chainSweep: {
+    idleMs: config.chainIdleMs,
+    settledGraceMs: config.chainSettledGraceMs,
+    maxAgeMs: config.chainMaxAgeMs,
+    limit: config.chainSweepLimit
+  },
   handlers: createDefaultJobHandlerRegistry(pool),
   metrics,
   onError: (error) => {

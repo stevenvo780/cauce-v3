@@ -4,16 +4,26 @@ import type { ConsoleAccess, DeliveryView } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { compactId, permissionState, safeDeliveryState } from '../../lib';
 
-export function AckInspector({ delivery, access, onReplay }: {
+// 'failed' es tan replayable como 'dead': los dos son finales de error y desde este parche los
+// dos dejan fila en `dead_letters`. Cuál de los dos toca lo decidía `ack.retryable`, o sea el
+// propio agente que falló, y eso no tiene por qué decidir si un humano puede rescatar el trabajo.
+const replayableStates: ReadonlySet<string> = new Set(['dead', 'failed']);
+const cancellableStates: ReadonlySet<string> = new Set(['pending', 'retry', 'leased', 'accepted', 'started']);
+
+export function AckInspector({ delivery, access, onReplay, onCancel }: {
   delivery?: DeliveryView;
   access?: ConsoleAccess;
   onReplay: (deliveryId: string) => Promise<void>;
+  onCancel: (deliveryId: string) => Promise<void>;
 }) {
   const [replaying, setReplaying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string }>();
   const canReplay = permissionState(access, 'delivery.replay') === 'allowed';
+  const canCancel = permissionState(access, 'delivery.cancel') === 'allowed';
   const state = safeDeliveryState(delivery?.status);
-  const replayApplies = state === 'dead';
+  const replayApplies = state !== undefined && replayableStates.has(state);
+  const cancelApplies = state !== undefined && cancellableStates.has(state);
 
   async function replay() {
     if (!delivery?.delivery_id || !canReplay || !replayApplies) return;
@@ -26,6 +36,23 @@ export function AckInspector({ delivery, access, onReplay }: {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'Replay falló.' });
     } finally {
       setReplaying(false);
+    }
+  }
+
+  async function cancel() {
+    if (!delivery?.delivery_id || !canCancel || !cancelApplies) return;
+    setCancelling(true);
+    setNotice(undefined);
+    try {
+      await onCancel(delivery.delivery_id);
+      setNotice({
+        tone: 'success',
+        text: 'Cancelación aplicada: queda en DLQ (replayable) y el padre y el origen fueron avisados.'
+      });
+    } catch (error) {
+      setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'Cancelación falló.' });
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -60,12 +87,18 @@ export function AckInspector({ delivery, access, onReplay }: {
               type="button"
               disabled={!canReplay || !replayApplies || replaying}
               onClick={() => void replay()}
-              title={!canReplay ? 'Requiere delivery.replay' : !replayApplies ? 'Replay solo aplica a deliveries dead' : undefined}
+              title={!canReplay ? 'Requiere delivery.replay' : !replayApplies ? 'Replay solo aplica a deliveries failed o dead' : undefined}
             >
               <RotateCcw size={14} aria-hidden="true" /> {replaying ? 'Solicitando…' : 'Replay'}
             </button>
-            <button className="button small secondary" type="button" disabled title="El backend no expone cancelación de delivery">
-              <Ban size={14} aria-hidden="true" /> Cancelar
+            <button
+              className="button small secondary"
+              type="button"
+              disabled={!canCancel || !cancelApplies || cancelling}
+              onClick={() => void cancel()}
+              title={!canCancel ? 'Requiere delivery.cancel' : !cancelApplies ? 'Cancelar solo aplica a deliveries en vuelo' : 'Marca dead, avisa al padre y al origen, y queda replayable'}
+            >
+              <Ban size={14} aria-hidden="true" /> {cancelling ? 'Cancelando…' : 'Cancelar'}
             </button>
           </div>
           {!canReplay ? <p className="inspector-warning"><ShieldAlert size={14} aria-hidden="true" /> Replay bloqueado: RBAC DENY o UNKNOWN.</p> : null}

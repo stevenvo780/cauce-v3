@@ -773,7 +773,8 @@ describe('Telegram fenced egress', () => {
     expect(api.sends).toEqual([{
       chat: '201',
       text: 'Recibido; estoy trabajando en ello.',
-      arity: 2
+      options: { parse_mode: 'html' },
+      arity: 3
     }]);
     expect(repository.acknowledgements.at(-1)).toMatchObject({
       status: 'sent',
@@ -854,7 +855,7 @@ describe('Telegram fenced egress', () => {
       repository, aliases: [config()], apis: new Map([['kant', api]])
     }).runOnce();
 
-    expect(api.sends).toEqual([{ chat: '201', text: 'adapter reply', arity: 2 }]);
+    expect(api.sends).toEqual([{ chat: '201', text: 'adapter reply', options: { parse_mode: 'html' }, arity: 3 }]);
     expect(repository.acknowledgements.at(-1)).toMatchObject({ status: 'sent', effect_count: 1 });
   });
 
@@ -873,7 +874,7 @@ describe('Telegram fenced egress', () => {
     }).runOnce();
     await activity.whenIdle();
 
-    expect(api.sends).toEqual([{ chat: '201', text: 'durable response', arity: 2 }]);
+    expect(api.sends).toEqual([{ chat: '201', text: 'durable response', options: { parse_mode: 'html' }, arity: 3 }]);
     expect(repository.acknowledgements.at(-1)).toMatchObject({ status: 'sent', effect_count: 1 });
     activity.stop();
   });
@@ -1230,7 +1231,7 @@ describe('Telegram group egress', () => {
       apis: new Map([['kant', api]])
     }).runOnce();
 
-    expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', arity: 2 }]);
+    expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', options: { parse_mode: 'html' }, arity: 3 }]);
     expect(repository.acknowledgements.at(-1)?.status).toBe('sent');
   });
 
@@ -1257,8 +1258,8 @@ describe('Telegram group egress', () => {
     }).runOnce();
 
     expect(api.sends).toHaveLength(2);
-    expect(api.sends[0]?.options).toEqual({ message_thread_id: '42', reply_to_message_id: '301' });
-    expect(api.sends[1]?.options).toEqual({ message_thread_id: '42' });
+    expect(api.sends[0]?.options).toEqual({ message_thread_id: '42', reply_to_message_id: '301', parse_mode: 'html' });
+    expect(api.sends[1]?.options).toEqual({ message_thread_id: '42', parse_mode: 'html' });
   });
 
   it('omits reply_to_message_id when the chat policy has reply_to_origin: false', async () => {
@@ -1276,7 +1277,7 @@ describe('Telegram group egress', () => {
       apis: new Map([['kant', api]])
     }).runOnce();
 
-    expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', arity: 2 }]);
+    expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', options: { parse_mode: 'html' }, arity: 3 }]);
   });
 });
 
@@ -1332,7 +1333,7 @@ describe('Telegram proactive egress', () => {
       }
     }).runOnce();
 
-    expect(api.sends).toEqual([{ chat: '201', text: 'terminé la tarea larga', arity: 2 }]);
+    expect(api.sends).toEqual([{ chat: '201', text: 'terminé la tarea larga', options: { parse_mode: 'html' }, arity: 3 }]);
     expect(repository.acknowledgements.at(-1)).toMatchObject({ status: 'sent' });
     // No inbound message exists, so no reaction may be placed on one.
     expect(finishes).toEqual([]);
@@ -1358,5 +1359,76 @@ describe('Telegram proactive egress', () => {
 
     expect(api.sends).toHaveLength(0);
     expect(repository.acknowledgements[0]?.status).toBe('dead');
+  });
+});
+
+/**
+ * The reserved human band is granted from a DERIVED fact, never from a name in the code: the
+ * poller only reaches the ingress after `accepted()` matched this alias's `allowed_user_ids` —
+ * the operator-maintained allowlist of the people the bot serves — and it then reports whether
+ * Telegram says the author is a bot.
+ */
+describe('Telegram human authorship', () => {
+  it('marks an allowlisted person as human so the ingress can raise the priority', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const api = new FakeTelegram([update(11)]);
+
+    await new TelegramPoller({
+      config: config(), botId: '900001', api, repository, ingress
+    }).runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.human).toBe(true);
+  });
+
+  it('denies the band to a bot author in a private chat without dropping the message', async () => {
+    // `resolveAddressing` runs its bot-author guard for GROUPS only (P0.b answers a private chat
+    // before P0.d can), so a DM from a bot on the allowlist still reaches the fleet. It must
+    // arrive as machine traffic, not as a person: the message is published, the band is not
+    // granted.
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const api = new FakeTelegram([{
+      update_id: 12,
+      message: {
+        message_id: 112,
+        from: { id: 101, is_bot: true },
+        chat: { id: 201, type: 'private' },
+        text: 'automated digest'
+      }
+    }]);
+
+    await new TelegramPoller({
+      config: config(), botId: '900001', api, repository, ingress
+    }).runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.human).toBe(false);
+    expect(repository.next).toBe(13);
+  });
+
+  it('marks a mentioned person in a group as human', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const api = new FakeTelegram([groupUpdate(13, {
+      text: '@kantbot revisá el deploy',
+      entities: [{ type: 'mention', offset: 0, length: 8 }]
+    })]);
+
+    await new TelegramPoller({
+      config: config({
+        bot_username: 'kantbot',
+        allowed_chat_ids: ['201', String(GROUP_CHAT_ID)],
+        chats: [{
+          chat_id: String(GROUP_CHAT_ID), mode: 'mention', session_scope: 'user',
+          reply_to_origin: true, threads: []
+        }]
+      }),
+      botId: '900001', api, repository, ingress
+    }).runOnce();
+
+    expect(ingress.calls).toHaveLength(1);
+    expect(ingress.calls[0]?.human).toBe(true);
   });
 });

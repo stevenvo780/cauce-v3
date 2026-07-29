@@ -67,16 +67,32 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
       // agent_chain_progress has no foreign key by design, so CASCADE cannot reach it.
+      // agent_failure_notices and its event ledger are in the same situation (migration 014),
+      // y agent_chain_closures también (migración 016 del vigía de cadenas mudas).
       await pool.query(`TRUNCATE TABLE
         gateway_oidc_sessions,telegram_egress_effects,channel_bridge_cursors,channel_bridge_leases,
         shadow_compare_verdicts,shadow_human_reply_guards,shadow_router_mappings,shadow_router_inbox,
         egress_notifications,egress_destinations,egress_contacts,
         agent_account_bindings,agents,provider_accounts,
         audit_events,dead_letters,jobs,adapter_outbox,adapter_inbox,delivery_acks,
-        deliveries,idempotency_keys,messages,connection_leases,agent_chain_progress
+        delivery_lane_fairness,job_lane_fairness,
+        deliveries,idempotency_keys,messages,connection_leases,agent_chain_progress,
+        agent_failure_notice_events,agent_failure_notices,agent_chain_closures,
+        agent_chain_edge_uses,agent_chain_gates
         RESTART IDENTITY CASCADE`);
+      // Same reason the relay flags are pinned here: every suite that does not opt in must see
+      // the pre-014 behaviour, so an unrelated test never fails because a sibling failure got
+      // coalesced. The suites that exercise the coalescer turn it on themselves.
+      //
+      // Los topes de 019 se fijan APAGADOS por el mismo motivo, y con más razón: nacen
+      // ENCENDIDOS en producción, así que sin este pin cualquier suite que delegue varias veces
+      // sobre la misma raíz empezaría a fallar por un tope que no está probando. La suite de
+      // disciplina de delegación los enciende ella misma con los valores que quiere medir.
       await pool.query(`UPDATE agent_chain_policies
-        SET progress_relay_enabled=false,progress_relay_max_events=12,cycle_cut_enabled=false`);
+        SET progress_relay_enabled=false,progress_relay_max_events=12,cycle_cut_enabled=false,
+            failure_coalesce_enabled=false,failure_coalesce_window_seconds=900,
+            delegation_caps_enabled=false,human_gate_enabled=false,
+            max_fanout_per_turn=6,max_edge_repeats_per_root=3,max_delegations_per_root=64`);
       return;
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;

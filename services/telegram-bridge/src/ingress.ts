@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { PROTOCOL_VERSION, PublishMessageSchema, type PublishMessage } from '@cauce/protocol';
+import {
+  HUMAN_CHAT_PRIORITY, PROTOCOL_VERSION, PublishMessageSchema, type PublishMessage
+} from '@cauce/protocol';
 import type { CauceRepository } from '@cauce/store';
 import type { TelegramIngress, TelegramIngressMessage } from './types.js';
 
@@ -27,7 +29,14 @@ export class StoreTelegramIngress implements TelegramIngress {
       body: message.body,
       idempotency_key: correlation,
       lane: 'interactive',
-      priority: 0,
+      // A person on a chat channel enters the reserved human band; anything else stays at the
+      // neutral 0 it has always used. `human` is the poller's derived fact, not a name in this
+      // file: see TelegramIngressMessage.human.
+      //
+      // Only the ENTRY POINT is privileged. The agent traffic this message spawns is clamped back
+      // to AGENT_PRIORITY_CEILING by the store when it materializes an ACK, so the human band
+      // cannot grow with fan-out and cannot starve background work.
+      priority: message.human ? HUMAN_CHAT_PRIORITY : 0,
       authenticated_context: {
         session_id: message.session_id,
         channel: 'telegram',

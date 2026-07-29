@@ -1,6 +1,7 @@
-import type { DatabasePool } from '@cauce/store';
+import type { ChainSilenceSweepResult, DatabasePool } from '@cauce/store';
 
 type Lane = 'interactive' | 'batch';
+type ChainSweepOutcome = 'scanned' | 'fanin_recovered' | 'notified' | 'skipped' | 'failed';
 type JobResult = 'done' | 'retry' | 'dead' | 'fenced' | 'unknown_kind';
 
 interface CountRow {
@@ -19,6 +20,7 @@ const relayStates = ['pending', 'processing', 'sent', 'failed', 'dead'] as const
 export class DispatcherMetrics {
   private readonly jobResults = new Map<string, number>();
   private readonly ticks = new Map<'ok' | 'error', number>([['ok', 0], ['error', 0]]);
+  private readonly chainSweeps = new Map<ChainSweepOutcome, number>();
 
   constructor(private readonly pool: DatabasePool) {}
 
@@ -29,6 +31,27 @@ export class DispatcherMetrics {
   recordJob(lane: Lane, result: JobResult): void {
     const key = `${lane}:${result}`;
     this.jobResults.set(key, (this.jobResults.get(key) ?? 0) + 1);
+  }
+
+  /**
+   * Vigía de cadenas mudas. `notified` es la métrica que Steven mira: cuántas tareas suyas
+   * se cerraron con un aviso en vez de morir calladas. `fanin_recovered` es la buena: la
+   * cadena se destrabó y va a llegar la síntesis real.
+   */
+  recordChainSweep(result: ChainSilenceSweepResult): void {
+    this.addChainSweep('scanned', result.scanned);
+    this.addChainSweep('fanin_recovered', result.faninRecovered);
+    this.addChainSweep('notified', result.notified);
+    this.addChainSweep('skipped', result.skipped);
+  }
+
+  recordChainSweepFailure(): void {
+    this.addChainSweep('failed', 1);
+  }
+
+  private addChainSweep(outcome: ChainSweepOutcome, delta: number): void {
+    if (delta <= 0) return;
+    this.chainSweeps.set(outcome, (this.chainSweeps.get(outcome) ?? 0) + delta);
   }
 
   async render(databaseAllowed = true): Promise<string> {
@@ -43,6 +66,11 @@ export class DispatcherMetrics {
       for (const result of ['done', 'retry', 'dead', 'fenced', 'unknown_kind'] as const) {
         lines.push(`cauce_dispatcher_jobs_processed_total{lane="${lane}",result="${result}"} ${this.jobResults.get(`${lane}:${result}`) ?? 0}`);
       }
+    }
+    lines.push('# HELP cauce_dispatcher_chain_sweep_total Human-rooted chains handled by the silence sweep, by outcome.');
+    lines.push('# TYPE cauce_dispatcher_chain_sweep_total counter');
+    for (const outcome of ['scanned', 'fanin_recovered', 'notified', 'skipped', 'failed'] as const) {
+      lines.push(`cauce_dispatcher_chain_sweep_total{outcome="${outcome}"} ${this.chainSweeps.get(outcome) ?? 0}`);
     }
 
     if (!databaseAllowed) {

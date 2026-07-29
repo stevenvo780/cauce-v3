@@ -196,6 +196,9 @@ function minimalAdapterEnvironment(manifest: AliasManifest, wsUrl: string, binar
     HOME: path.join(binaryRoot, 'home'),
     NODE_ENV: 'test',
     CAUCE_TENANT: manifest.tenant,
+    // El manifiesto ya declara la sala y `generate-units.py` la escribe en la unit; este entorno
+    // minimo imita el `env -i` del supervisor, asi que tiene que reconstruirla tambien.
+    CAUCE_ROOM: manifest.room,
     CAUCE_ALIAS: manifest.alias,
     CAUCE_INSTANCE_ID: `fleet-${manifest.alias}`,
     CAUCE_STATE_DIR: path.join(binaryRoot, 'state'),

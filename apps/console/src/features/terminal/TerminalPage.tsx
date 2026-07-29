@@ -8,6 +8,7 @@ import { listTerminalTargets } from './api';
 import { buildFleetAgents, countOnlinePtyTargets } from './fleet';
 import { OperatorWorkspace } from './OperatorWorkspace';
 import { ultimateTerminalGate } from './plugin';
+import { deriveTerminalRelayState } from './relay-status';
 import './terminal-panel.css';
 
 function useRefreshInterval(reload: () => void, milliseconds: number, loading: boolean) {
@@ -50,13 +51,18 @@ export function TerminalPage() {
     : fleetError && agents.length === 0
       ? 'Privileged operations · fleet unavailable'
       : `Privileged operations · ${agents.length}-agent fleet`;
+  // El relay PTY es opt-in por stack (ver 0a1d0e3): su ausencia tiene un aviso propio, calmo y
+  // con motivo explícito, en vez de sumarse como un "PTY: Bad Gateway" al banner de incidentes.
+  const relay = deriveTerminalRelayState(capability.data, capability.error);
+  const relayUnavailable = relay.status === 'unavailable';
   const failures = [
     status.error ? `Presence: ${status.error.message}` : undefined,
     topology.error ? `Rooms: ${topology.error.message}` : undefined,
     adapters.error ? `Adapters: ${adapters.error.message}` : undefined,
     access.error ? `RBAC: ${access.error.message}` : undefined,
-    capability.error ? `PTY: ${capability.error.message}` : undefined,
-    targets.error ? `Targets PTY: ${targets.error.message}` : undefined,
+    // El inventario de targets depende del mismo relay; si ya sabemos que está ausente, no
+    // duplicamos el aviso con su propio error técnico.
+    targets.error && !relayUnavailable ? `Targets PTY: ${targets.error.message}` : undefined,
   ].filter((value): value is string => Boolean(value));
 
   function refreshAll() {
@@ -84,6 +90,13 @@ export function TerminalPage() {
         <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Interactive channel</small><strong>{ptyEnabled ? 'PTY + FEED' : 'DURABLE FEED'}</strong></div><Badge tone={ptyEnabled ? 'online' : 'info'}>CLIENT</Badge></article>
         <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Alias con PTY online</small><strong>{ptyOnline === undefined ? 'UNKNOWN' : `${ptyOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={ptyOnline ? 'online' : ptyOnline === 0 ? 'warning' : 'unknown'}>TARGETS</Badge></article>
       </div>
+
+      {relayUnavailable ? (
+        <div className="terminal-relay-notice" role="status">
+          <TerminalSquare size={17} aria-hidden="true" />
+          <div><strong>Canal PTY no disponible en este stack</strong><p>{relay.reason}</p></div>
+        </div>
+      ) : null}
 
       {failures.length ? (
         <div className="terminal-degraded" role="alert">

@@ -140,7 +140,8 @@ export class ConfigurationRepository {
            ORDER BY tenant_id,alias,handle`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
-          `SELECT id,progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled,updated_at
+          `SELECT id,progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled,
+                  failure_coalesce_enabled,failure_coalesce_window_seconds,updated_at
            FROM agent_chain_policies ORDER BY id`
         ),
         this.pool.query<Record<string, unknown>>(
@@ -356,8 +357,10 @@ export class ConfigurationRepository {
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const selected = await client.query<{
       progress_relay_enabled: boolean; progress_relay_max_events: number; cycle_cut_enabled: boolean;
+      failure_coalesce_enabled: boolean; failure_coalesce_window_seconds: number;
     }>(
-      `SELECT progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled
+      `SELECT progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled,
+              failure_coalesce_enabled,failure_coalesce_window_seconds
        FROM agent_chain_policies WHERE id=$1 FOR UPDATE`, [mutation.id]
     );
     const old = selected.rows[0];
@@ -369,13 +372,19 @@ export class ConfigurationRepository {
       progress_relay_max_events: has(value, 'progress_relay_max_events')
         ? value.progress_relay_max_events as number : old.progress_relay_max_events,
       cycle_cut_enabled: has(value, 'cycle_cut_enabled')
-        ? value.cycle_cut_enabled as boolean : old.cycle_cut_enabled
+        ? value.cycle_cut_enabled as boolean : old.cycle_cut_enabled,
+      failure_coalesce_enabled: has(value, 'failure_coalesce_enabled')
+        ? value.failure_coalesce_enabled as boolean : old.failure_coalesce_enabled,
+      failure_coalesce_window_seconds: has(value, 'failure_coalesce_window_seconds')
+        ? value.failure_coalesce_window_seconds as number : old.failure_coalesce_window_seconds
     };
     await client.query(
       `UPDATE agent_chain_policies
-       SET progress_relay_enabled=$2,progress_relay_max_events=$3,cycle_cut_enabled=$4,updated_at=now()
+       SET progress_relay_enabled=$2,progress_relay_max_events=$3,cycle_cut_enabled=$4,
+           failure_coalesce_enabled=$5,failure_coalesce_window_seconds=$6,updated_at=now()
        WHERE id=$1`,
-      [mutation.id, next.progress_relay_enabled, next.progress_relay_max_events, next.cycle_cut_enabled]
+      [mutation.id, next.progress_relay_enabled, next.progress_relay_max_events,
+        next.cycle_cut_enabled, next.failure_coalesce_enabled, next.failure_coalesce_window_seconds]
     );
     return {
       inverse: {
@@ -383,7 +392,9 @@ export class ConfigurationRepository {
         value: {
           progress_relay_enabled: old.progress_relay_enabled,
           progress_relay_max_events: old.progress_relay_max_events,
-          cycle_cut_enabled: old.cycle_cut_enabled
+          cycle_cut_enabled: old.cycle_cut_enabled,
+          failure_coalesce_enabled: old.failure_coalesce_enabled,
+          failure_coalesce_window_seconds: old.failure_coalesce_window_seconds
         }
       },
       summary: `update chain policy ${mutation.id}`

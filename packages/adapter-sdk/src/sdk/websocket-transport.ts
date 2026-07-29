@@ -72,15 +72,40 @@ class WebSocketConsumerConnection implements ConsumerConnection {
     private readonly socket: WebSocket,
     private readonly diagnostics: OutboundDiagnostics = SILENT_DIAGNOSTICS,
   ) {
+    /**
+     * UN frame que el esquema rechaza se DESCARTA; no se lleva puesta la conexión.
+     *
+     * Antes esto era `queue.fail(...)`, y `fail` no es "descartar este frame": rechaza al
+     * iterador y a todos los que estaban esperando, o sea que mata la cola ENTERA de la
+     * conexión y con ella todas las entregas en vuelo. Un gateway más nuevo que agregara un
+     * campo opcional a `ack_result` bastaba para eso: se midieron 7 frames de esa forma en 7
+     * días, y los topes que los disparan quedan encendidos por default desde la migración 019.
+     *
+     * Descartar es estrictamente mejor que fallar en las dos formas en que esto puede pasar:
+     * un `delivery` ilegible no se trabaja, vence su plazo y el store lo reintenta como
+     * cualquier entrega no ACKeada; un `ack_result` ilegible deja el evento pendiente en el
+     * outbox durable y el adaptador lo reenvía. En los dos casos el mecanismo de reintento que
+     * ya existe se ocupa, y lo que NO pasa es perder el trabajo de las otras entregas.
+     *
+     * El descarte nunca es silencioso: sale por `inbound_frame_invalid` con los campos que el
+     * esquema señaló, que es lo que permite ver la deriva de protocolo sin una caída.
+     */
     socket.on('message', (data, isBinary) => {
       if (isBinary) {
-        this.queue.fail(new Error('Binary gateway frames are not supported'));
+        this.reportInvalidInboundFrame(undefined, new Error('Binary gateway frames are not supported'));
+        return;
+      }
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(data.toString('utf8'));
+      } catch (error) {
+        this.reportInvalidInboundFrame(undefined, error);
         return;
       }
       try {
-        this.queue.push(parseServerFrame(JSON.parse(data.toString('utf8'))));
+        this.queue.push(parseServerFrame(decoded));
       } catch (error) {
-        this.queue.fail(new Error('Gateway sent a frame outside the Cauce V3 schema', { cause: error }));
+        this.reportInvalidInboundFrame(decoded, error);
       }
     });
     socket.on('close', () => this.queue.end());
@@ -118,18 +143,54 @@ class WebSocketConsumerConnection implements ConsumerConnection {
 
   private reportInvalidFrame(frame: ClientFrame, error: unknown): void {
     const issues = frameValidationIssues(error);
-    const deliveryId = stringField(frame, 'delivery_id');
-    const attempt = numberField(frame, 'attempt');
+    const record = frame as unknown as Record<string, unknown>;
+    const deliveryId = stringField(record, 'delivery_id');
+    const attempt = numberField(record, 'attempt');
     const alias = this.diagnostics.alias;
-    const fingerprint = claimTokenFingerprint(frame);
+    const fingerprint = claimTokenFingerprint(record);
     const entry: AdapterLog = {
       event: 'outbound_frame_invalid',
       timestamp: new Date().toISOString(),
-      frame_type: stringField(frame, 'type') ?? 'unknown',
+      frame_type: stringField(record, 'type') ?? 'unknown',
       error_code: issues.length > 0 ? 'OUTBOUND_FRAME_SCHEMA' : 'OUTBOUND_FRAME_ENCODE',
       error_message: issues.length > 0
         ? 'Outbound frame rejected by the Cauce V3 schema'
         : encodeFailureMessage(error),
+      issues,
+      ...(alias === undefined ? {} : { alias }),
+      ...(deliveryId === undefined ? {} : { delivery_id: deliveryId }),
+      ...(attempt === undefined ? {} : { attempt }),
+      ...(fingerprint === undefined ? {} : { claim_token_fingerprint: fingerprint }),
+    };
+    try {
+      this.diagnostics.logger(entry);
+    } catch {
+      // Observability must never replace the failure it is describing.
+    }
+  }
+
+  /**
+   * Un frame de servidor descartado. Mismo cuidado que en la salida: se nombran los campos que
+   * el esquema rechazó, nunca el cuerpo del frame — el `body` de una entrega es el mensaje.
+   */
+  private reportInvalidInboundFrame(frame: unknown, error: unknown): void {
+    const issues = frameValidationIssues(error);
+    const record = typeof frame === 'object' && frame !== null && !Array.isArray(frame)
+      ? (frame as Record<string, unknown>)
+      : undefined;
+    const deliveryId = record === undefined ? undefined : stringField(record, 'delivery_id');
+    const attempt = record === undefined ? undefined : numberField(record, 'attempt');
+    const alias = this.diagnostics.alias;
+    const fingerprint = record === undefined ? undefined : claimTokenFingerprint(record);
+    const entry: AdapterLog = {
+      event: 'inbound_frame_invalid',
+      timestamp: new Date().toISOString(),
+      frame_type: (record === undefined ? undefined : stringField(record, 'type')) ?? 'unknown',
+      error_code: issues.length > 0 ? 'INBOUND_FRAME_SCHEMA' : 'INBOUND_FRAME_DECODE',
+      error_message: issues.length > 0
+        ? 'Gateway frame rejected by the Cauce V3 schema and dropped'
+        : inboundFailureMessage(error),
+      reason: 'frame_dropped',
       issues,
       ...(alias === undefined ? {} : { alias }),
       ...(deliveryId === undefined ? {} : { delivery_id: deliveryId }),
@@ -175,13 +236,13 @@ const MAX_LOGGED_ISSUES = 10;
 const MAX_ISSUE_MESSAGE = 200;
 const CLAIM_FINGERPRINT_LENGTH = 12;
 
-function stringField(frame: ClientFrame, key: string): string | undefined {
-  const value = (frame as Record<string, unknown>)[key];
+function stringField(frame: Record<string, unknown>, key: string): string | undefined {
+  const value = frame[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-function numberField(frame: ClientFrame, key: string): number | undefined {
-  const value = (frame as Record<string, unknown>)[key];
+function numberField(frame: Record<string, unknown>, key: string): number | undefined {
+  const value = frame[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
@@ -190,7 +251,7 @@ function numberField(frame: ClientFrame, key: string): number | undefined {
  * putting the claim on disk. Truncated because this is a correlation handle, not a
  * proof of possession: nobody should be able to replay it.
  */
-function claimTokenFingerprint(frame: ClientFrame): string | undefined {
+function claimTokenFingerprint(frame: Record<string, unknown>): string | undefined {
   const token = stringField(frame, 'claim_token');
   if (token === undefined) return undefined;
   return `sha256:${createHash('sha256').update(token).digest('hex').slice(0, CLAIM_FINGERPRINT_LENGTH)}`;
@@ -237,6 +298,12 @@ function frameValidationIssues(error: unknown): FrameValidationIssue[] {
 function encodeFailureMessage(error: unknown): string {
   if (!(error instanceof Error)) return `Outbound frame could not be encoded (${typeof error})`;
   return `Outbound frame could not be encoded: ${error.name}`;
+}
+
+/** Binary frames and malformed JSON: no issue list to show, but the drop still gets a name. */
+function inboundFailureMessage(error: unknown): string {
+  if (!(error instanceof Error)) return `Gateway frame could not be decoded (${typeof error})`;
+  return `Gateway frame could not be decoded and was dropped: ${error.message}`;
 }
 
 export interface WebSocketConnectorOptions {

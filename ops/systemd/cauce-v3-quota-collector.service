@@ -1,0 +1,18 @@
+[Unit]
+Description=Cauce V3 quota collector -- muestrea ai-usage y publica en POST /v3/quotas/samples
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/.config/cauce-v3/quota-collector.env
+
+[Service]
+Type=oneshot
+UMask=0077
+EnvironmentFile=%h/.config/cauce-v3/quota-collector.env
+ExecStart=%h/.local/share/cauce-v3/ops/scripts/quota-collector.py
+TimeoutStartSec=90s
+StandardInput=null
+NoNewPrivileges=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native

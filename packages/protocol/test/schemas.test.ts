@@ -3,8 +3,52 @@ import { describe, expect, it } from 'vitest';
 import {
   AgentAccountBindingConfigMutationSchema, AgentConfigMutationSchema,
   AliasRoutingCeilingConfigMutationSchema, ConfigMutationSchema,
-  ProviderAccountConfigMutationSchema, WsOutboundSchema
+  MAX_ATTACHMENTS_TOTAL_BYTES, ProviderAccountConfigMutationSchema, PublishMessageSchema, WsOutboundSchema
 } from '../src/index.js';
+
+const publishBase = {
+  version: '3.0', request_id: randomUUID(), trace_id: 'media-contract',
+  tenant_id: 'Steven', room_id: 'grp.steven', actor_alias: 'argos',
+  recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
+  idempotency_key: 'media-contract-1'
+} as const;
+
+describe('attachment transport contract', () => {
+  const payload = Buffer.from('%PDF-1.7\nfixture', 'utf8');
+  const attachment = {
+    kind: 'document', name: 'report.pdf', mime_type: 'application/pdf',
+    file_size: payload.length, sha256: 'a'.repeat(64), content_base64: payload.toString('base64')
+  } as const;
+
+  it('carries strict usable attachment metadata and content through publish and delivery frames', () => {
+    const body = { type: 'telegram.message', attachments_v1: [attachment] };
+    expect(PublishMessageSchema.parse({ ...publishBase, body }).body).toEqual(body);
+    expect(WsOutboundSchema.parse({
+      type: 'delivery', version: '3.0', event_id: randomUUID(), delivery_id: randomUUID(),
+      message_id: randomUUID(), request_id: randomUUID(), trace_id: 'media-delivery', epoch: 1,
+      attempt: 1, claim_token: randomUUID(), ack_deadline_at: new Date().toISOString(),
+      tenant_id: 'Steven', room_id: 'grp.steven', actor_alias: 'argos', recipient_alias: 'jarvis', body
+    })).toMatchObject({ body });
+  });
+
+  it.each([
+    { ...attachment, name: '../report.pdf' },
+    { ...attachment, name: 'report\u202Efdp.exe' },
+    { ...attachment, mime_type: 'application/x-sh' },
+    { ...attachment, file_size: 10_000_001 },
+    { ...attachment, content_base64: 'not-base64!' },
+    { ...attachment, sha256: 'token=secret-value' }
+  ])('rejects unsafe attachment metadata %#', (invalid) => {
+    expect(PublishMessageSchema.safeParse({ ...publishBase, body: { attachments_v1: [invalid] } }).success).toBe(false);
+  });
+
+  it('rejects excessive attachment count and aggregate size', () => {
+    expect(PublishMessageSchema.safeParse({
+      ...publishBase, body: { attachments_v1: Array.from({ length: 5 }, () => attachment) }
+    }).success).toBe(false);
+    expect(MAX_ATTACHMENTS_TOTAL_BYTES).toBe(10_000_000);
+  });
+});
 
 describe('WebSocket ACK result receipts', () => {
   const receiptFrame = {

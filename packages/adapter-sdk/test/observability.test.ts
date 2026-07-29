@@ -195,6 +195,10 @@ const WIRE_MAPPED_EVENT_FIELDS = new Set<string>([
   "duplicate",
   "claim_renewal",
   "origin",
+  // Este SÍ viaja: `sendEvent` lo mapea al campo opcional `execution_started` del ACK, que es
+  // la marca de "el harness arrancó de verdad" con la que el reaper decide si reintentar
+  // cuesta una corrida paga.
+  "execution_started",
 ]);
 
 test("a claim renewal carries no field the wire mapping drops", async () => {
