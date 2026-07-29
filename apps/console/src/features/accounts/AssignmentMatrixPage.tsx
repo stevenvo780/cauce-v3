@@ -93,7 +93,11 @@ export function AssignmentMatrixPage() {
   }
 
   const [selectedTenant, selectedAlias] = assignment.agentKey.split('/');
-  const priorityNumber = Number(assignment.priority);
+  // `Number('')` y `Number('   ')` valen 0, y 0 es una prioridad válida — además de la más alta.
+  // Sin este guard, vaciar el campo no pedía un valor: despachaba `priority: 0` en silencio y el
+  // alias pasaba a intentar esa cuenta primero. Un 0 escrito a propósito sigue siendo válido.
+  const priorityText = assignment.priority.trim();
+  const priorityNumber = priorityText === '' ? Number.NaN : Number(priorityText);
   const priorityValid = Number.isInteger(priorityNumber) && priorityNumber >= 0 && priorityNumber <= 32_767;
   const needsPriority = assignment.operation === 'create-binding' || assignment.operation === 'update-binding';
 

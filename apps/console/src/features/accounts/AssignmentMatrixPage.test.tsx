@@ -118,6 +118,56 @@ it('ordena el fallback con una mutación de binding que lleva prioridad y estado
   });
 });
 
+it('no convierte una prioridad vacía en 0, que es la más alta', async () => {
+  const changes: ChangeRequest[] = [];
+  configuration();
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<AssignmentMatrixPage />);
+
+  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
+  // `Number('')` es 0 y 0 pasaba `Number.isInteger(n) && n >= 0`: vaciar el campo armaba
+  // silenciosamente la prioridad más alta en vez de pedir un valor.
+  await user.clear(screen.getByLabelText(/prioridad/i));
+
+  expect(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
+  expect(screen.getByText(/la prioridad debe ser un entero entre 0 y 32767/i)).toBeInTheDocument();
+  expect(changes).toHaveLength(0);
+});
+
+it('tampoco acepta una prioridad de puros espacios', async () => {
+  const changes: ChangeRequest[] = [];
+  configuration();
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<AssignmentMatrixPage />);
+
+  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
+  await user.clear(screen.getByLabelText(/prioridad/i));
+  await user.type(screen.getByLabelText(/prioridad/i), '   ');
+
+  expect(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
+  expect(changes).toHaveLength(0);
+});
+
+it('sigue aceptando la prioridad 0 cuando el operador la escribe de verdad', async () => {
+  const changes: ChangeRequest[] = [];
+  configuration();
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<AssignmentMatrixPage />);
+
+  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
+  await user.clear(screen.getByLabelText(/prioridad/i));
+  await user.type(screen.getByLabelText(/prioridad/i), '0');
+  await user.click(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+
+  expect(changes[0]?.mutation).toEqual({
+    resource: 'agent_account_binding', action: 'update', tenant_id: 'Steven',
+    agent_alias: 'kant', account_id: 'minimax-pablo', value: { priority: 0, enabled: true },
+  });
+});
+
 it('avisa que revocar el techo cascadea el binding', async () => {
   configuration();
   const user = userEvent.setup();
