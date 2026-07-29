@@ -134,6 +134,10 @@ describe('gateway WebSocket ACK correlation', () => {
     expect(repository.claimDeliveries).toHaveBeenNthCalledWith(
       1, 'Pablo', 'midas', 'serial-consumer', 1, 2, 600_000, undefined, { humanReservedLimit: 2 }
     );
+    // Tres drains y no uno: el del hello, y uno por cada ACK terminal. Cada ACK terminal libera un
+    // cupo de agents.max_concurrent_deliveries y es el único instante en que el agente vuelve a
+    // tener lugar; si el gateway no reclamara ahí, la cola se quedaría quieta.
+    expect(vi.mocked(repository.claimDeliveries).mock.calls).toHaveLength(3);
   });
 
   it('keeps renewable leases across transient closes while preserving legacy release behavior', async () => {

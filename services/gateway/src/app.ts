@@ -163,6 +163,7 @@ export interface GatewayOptions {
   admission?: DeliveryAdmissionConfig;
   outboxPollMs?: number;
   outboxLeaseMs?: number;
+  deliveryClaimLimit?: number;
   requireAckClaims?: boolean;
   consoleOrigins?: readonly string[];
   allowedJobKinds?: readonly string[];
@@ -224,6 +225,16 @@ const MAX_RECENT_SESSION_CLAIMS = 1_024;
 const MAX_REHYDRATED_CLAIMS = 256;
 /** Vueltas máximas de un mismo `drain()`. Ver el comentario del bucle. */
 const MAX_DRAIN_ROUNDS = 16;
+
+// Lote máximo por drain. Deliberadamente igual al default histórico de QueryDeliveriesSchema para
+// que este cambio no altere por sí solo cuánto se reclama: lo que cambia es que ahora el número
+// está escrito donde se usa en vez de heredarse en silencio del esquema de un endpoint HTTP.
+const DEFAULT_DELIVERY_CLAIM_LIMIT = 20;
+
+// Estados de ACK que devuelven la entrega al mundo terminal o reintentable y por lo tanto la sacan
+// de agents.max_concurrent_deliveries. Es el conjunto complementario de ('leased','accepted',
+// 'started'), que es exactamente lo que cuenta claimDeliveries.
+const RELEASES_CAPACITY: ReadonlySet<string> = new Set(['done', 'failed', 'dead', 'retry']);
 
 function sessionKey(tenantId: Tenant, alias: string): string {
   return `${tenantId}:${alias}`;
@@ -373,6 +384,14 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   const leaseTtlMs = options.leaseTtlMs ?? 30_000;
   const outboxPollMs = options.outboxPollMs ?? 100;
   const outboxLeaseMs = options.outboxLeaseMs ?? 30_000;
+  // Cota superior de un drain. Antes iba `undefined` y caía en el default 20 de
+  // QueryDeliveriesSchema — un 20 que nadie eligió para este camino y que nadie podía ver leyendo
+  // el gateway. El techo real por agente vive en agents.max_concurrent_deliveries y lo aplica
+  // claimDeliveries; esto es sólo el tamaño máximo de lote para un agente sin techo declarado.
+  const deliveryClaimLimit = options.deliveryClaimLimit ?? DEFAULT_DELIVERY_CLAIM_LIMIT;
+  if (!Number.isInteger(deliveryClaimLimit) || deliveryClaimLimit < 1 || deliveryClaimLimit > 100) {
+    throw new Error('deliveryClaimLimit must be an integer between 1 and 100');
+  }
   // Kept as an explicit startup invariant for migration diagnostics; ACK claims are mandatory below.
   if (options.requireAckClaims === false && process.env.NODE_ENV === 'production') {
     throw new Error('delivery ACK claims cannot be disabled in production');
@@ -847,6 +866,14 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const result = await repository.ackDelivery(
         deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs, deliveryLeaseCap
       );
+      // Un ACK por HTTP libera capacidad igual que uno por WebSocket. Si el mismo alias tiene un
+      // socket vivo, hay que despertarlo: si no, la capacidad que este ACK liberó queda sin usar
+      // hasta el próximo mensaje publicado. No se espera el drenaje para no atar la respuesta HTTP
+      // a una ronda de reclamo.
+      if (RELEASES_CAPACITY.has(result.status)) {
+        const active = sessions.get(sessionKey(actor.tenant_id, actor.alias));
+        if (active) void drain(active).catch((error: unknown) => app.log.error(error));
+      }
       return { ...result, event_id: ack.event_id, attempt: ack.attempt, claim_token: ack.claim_token };
     } catch (error) {
       replyError(reply, error);
@@ -928,9 +955,17 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
         session.drainAgain = false;
         const budget = admissionBudget(session, admission, Date.now());
         if (budget.limit + budget.humanReservedLimit < 1) return;
+        // INTEGRACIÓN 2026-07-29: quien manda es el cupo de admisión (`budget.limit`), que sale
+        // de las garras vivas de ESTA sesión. `deliveryClaimLimit` queda como techo de lote
+        // explícito por encima: con los defaults (cupo 2, lote 20) nunca ata, y existe para
+        // poder bajarle el lote a un gateway sin tocar el cupo. Lo que ya no puede pasar —que era
+        // el punto del parche de concurrencia— es que este argumento viaje `undefined` y caiga en
+        // silencio en el default 20 del esquema de un endpoint HTTP.
+        const generalLimit = Math.min(budget.limit, deliveryClaimLimit);
+        if (generalLimit + budget.humanReservedLimit < 1) return;
         const deliveries = (await repository.claimDeliveries(
           session.tenantId, session.alias, session.instanceId, session.epoch,
-          budget.limit, ackDeadlineMs, undefined,
+          generalLimit, ackDeadlineMs, undefined,
           { humanReservedLimit: budget.humanReservedLimit }
         )).map((delivery) => normalizeDeliveryClaim(delivery, ackDeadlineMs));
         for (const delivery of deliveries) {

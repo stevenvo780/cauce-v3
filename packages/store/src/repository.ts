@@ -1608,10 +1608,64 @@ export class CauceRepository {
       // en 'interactive' junto con los mensajes de las personas: 2.374 de 2.429 entregas.
       let humanStreak = fairness.rows[0]?.interactive_streak ?? 0;
       const claimedRows: DeliveryRow[] = [];
+
+      /**
+       * Techo de concurrencia DURABLE por agente. No entregar más de lo que se puede ejecutar.
+       *
+       * Sin esto el cupo vivía sólo en la RAM del socket del gateway y el harness ejecuta UNA
+       * entrega por sessionKey (el mutex de packages/adapter-sdk/src/harnesses/shared.ts). Las
+       * sobrantes no esperan gratis: reclamar arranca `ack_deadline_at`, y ese reloj corre
+       * mientras la entrega hace cola detrás del mutex. `retryStaleDeliveries` las vence, les
+       * suma `attempt` y a los `max_attempts` las manda a `dead`. Medido en producción: argos
+       * con 92 en vuelo ejecutando 2, espera mediana de 3 h y 73% muerto sin ejecutar nunca.
+       *
+       * Va acá, DESPUÉS del `FOR UPDATE` sobre `delivery_lane_fairness`, y eso es lo que lo
+       * hace correcto y no una estimación: esa fila está cuñada por (tenant_id, alias) — no por
+       * instancia ni por época — así que cualquier par de `claimDeliveries` concurrentes del
+       * MISMO alias ya está serializado en este punto. El conteo no puede quedar viejo entre
+       * que se lee y que se reclama, y dos reclamos simultáneos no pueden superar el techo.
+       *
+       * Ausencia de fila en `agents` o columna NULL => sin techo. Fail-open deliberado: los 15
+       * alias vivos tienen fila, y el consumidor que no está modelado como agente (un puente,
+       * un recolector) tiene que seguir comportándose como antes.
+       *
+       * INTEGRACIÓN 2026-07-29 — DÓNDE SE APLICA EL TECHO, que es la decisión de fusión.
+       * El techo acota el cupo GENERAL, no el total. La reserva humana queda por encima, igual
+       * que ya lo estaba respecto de `CAUCE_MAX_INFLIGHT_DELIVERIES` en el gateway ("es
+       * aditivo, así que el peor caso en vuelo por agente pasa a ser 4"). Dos motivos:
+       *  1. El motivo por el que existe el techo no aplica a la reserva humana. El techo existe
+       *     porque el mutex del harness serializa por sessionKey; desde los carriles de sesión
+       *     el tráfico humano y el agente-a-agente tienen sessionKey DISTINTA, así que una
+       *     entrega humana admitida por la reserva no hace cola detrás de la tarea larga: se
+       *     ejecuta en paralelo. Contarla contra el mismo techo la haría esperar por una razón
+       *     que no existe.
+       *  2. Si el techo (default 2) se aplicara al total, con dos delegaciones en vuelo la
+       *     reserva humana quedaría permanentemente inalcanzable y el arreglo de prioridad —
+       *     que existe porque el dueño esperaba 114 min de mediana — quedaría muerto en la
+       *     práctica. El peor caso combinado sigue acotado: `cap` + `humanReservedLimit`.
+       */
+      const capacity = await client.query<{ cap: number | null; in_flight: string }>(
+        `SELECT
+           (SELECT a.max_concurrent_deliveries FROM agents a
+             WHERE a.tenant_id=$1 AND a.alias=$2) AS cap,
+           (SELECT count(*) FROM deliveries d
+             WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
+               AND d.status IN ('leased','accepted','started')) AS in_flight`,
+        [tenantId, alias]
+      );
+      const concurrencyCap = capacity.rows[0]?.cap ?? null;
+      const inFlight = Number(capacity.rows[0]?.in_flight ?? 0);
+      // Un techo ya consumido da 0: el cupo general no reclama nada y lo no reclamado sigue
+      // 'pending'/'retry' esperando el próximo wake. El drenaje depende de que el gateway
+      // vuelva a llamar cuando se libere capacidad — ver el drain tras un ACK terminal.
+      const capRemaining = concurrencyCap === null
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, concurrencyCap - inFlight);
+
       // Cupo general (cualquier entrega) y cupo reservado (sólo humano). Se cuentan por
       // separado y el humano gasta PRIMERO el reservado, para no comerse el cupo con el que
       // el agente pipelinea su trabajo largo.
-      let generalRemaining = Math.min(limit, 100);
+      let generalRemaining = Math.min(limit, 100, capRemaining);
       let humanReservedRemaining = Math.min(humanReservedLimit, 100);
       const maxClaims = Math.min(generalRemaining + humanReservedRemaining, 100);
 
@@ -4431,6 +4485,24 @@ export class CauceRepository {
                 }), action]
             );
           }
+          // Morir también libera un cupo de agents.max_concurrent_deliveries: la entrega sale de
+          // ('leased','accepted','started') igual que si hubiera terminado bien. La rama de retry
+          // de acá abajo ya despertaba al destinatario; ésta no, y sin techo daba lo mismo porque
+          // el reclamo previo se había llevado la cola entera de todas formas.
+          //
+          // Con techo sí importa: si las entregas en vuelo de un alias mueren todas por timeout,
+          // el cupo queda libre, no va a llegar ningún ACK (por eso vencieron) y la cola pendiente
+          // se quedaría quieta hasta que alguien publique un mensaje nuevo. El wake cuesta una fila
+          // de outbox por entrega MUERTA — un evento raro, no uno por tick — y deja el invariante
+          // parejo: toda salida del conjunto en vuelo despierta al destinatario.
+          await client.query(
+            `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
+             VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)
+             ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
+            [row.recipient_tenant, `wake-dead:${row.id}:${row.attempt}`, row.request_id, row.message_id,
+              row.id, row.trace_id, row.origin ? JSON.stringify(row.origin) : null,
+              JSON.stringify({ recipient_alias: row.recipient_alias, reason: 'delivery_available' })]
+          );
           dead += 1;
         } else {
           // Reintento legítimo: nunca arrancó. Aun así se espacia, porque `available_at=now()`
