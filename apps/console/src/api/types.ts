@@ -254,7 +254,12 @@ export interface TerminalCapability {
   reason?: string | null;
 }
 
-export type ConfigResource = 'tenant' | 'room' | 'membership' | 'acl_edge' | 'harness' | 'role_policy';
+export type ConfigResource =
+  | 'tenant' | 'room' | 'membership' | 'acl_edge' | 'harness' | 'role_policy'
+  /** Singleton hub-only de visibilidad de cadena: sólo admite `update` sobre el id `default`. */
+  | 'chain_policy'
+  /** Allowlist de egress proactivo: es configuración versionada, no dato de runtime. */
+  | 'egress_destination';
 /**
  * Recursos del registro de agentes y del pool de suscripciones (migración
  * `packages/store/migrations/010_agent_account_registry.sql`). Son hub-only: `authorizeMutation`
@@ -288,6 +293,10 @@ export interface ConfigurationSnapshot {
   acl_edges?: Array<Record<string, unknown>> | null;
   harness_definitions?: Array<Record<string, unknown>> | null;
   role_policies?: Array<Record<string, unknown>> | null;
+  /** Singleton `default` de la política de visibilidad de cadena (migración 008). */
+  chain_policies?: Array<Record<string, unknown>> | null;
+  /** Allowlist de egress proactivo (migración 009). */
+  egress_destinations?: Array<Record<string, unknown>> | null;
   /**
    * Registro de agentes y pool de cuentas. Las cuatro claves son opcionales a propósito: un
    * gateway anterior a la migración 010 no las publica, y eso NO es lo mismo que una lista vacía.
