@@ -18,7 +18,7 @@ export interface AdapterConsumer {
   ack(
     delivery: Pick<DeliveryEnvelope, 'event_id' | 'delivery_id' | 'attempt' | 'claim_token'>,
     status: Ack['status'],
-    detail?: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result'>>,
+    detail?: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result' | 'execution_started'>>,
   ): void;
   close(): Promise<void>;
 }
@@ -87,7 +87,7 @@ export class FakeHarness extends EventEmitter implements AdapterConsumer {
   ack(
     delivery: Pick<DeliveryEnvelope, 'event_id' | 'delivery_id' | 'attempt' | 'claim_token'>,
     status: Ack['status'],
-    detail: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result'>> = {},
+    detail: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result' | 'execution_started'>> = {},
   ): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('harness is disconnected');
     this.socket.send(JSON.stringify({
@@ -97,7 +97,12 @@ export class FakeHarness extends EventEmitter implements AdapterConsumer {
       retryable: detail.retryable ?? false,
       ...(detail.error ? { error: detail.error } : {}),
       ...(detail.error_code ? { error_code: detail.error_code } : {}),
-      ...(detail.result ? { result: detail.result } : {})
+      ...(detail.result ? { result: detail.result } : {}),
+      // La marca que distingue "el harness arrancó de verdad" de "la entrega hace cola".
+      // El SDK real la manda en el 'started' posterior a la reserva de sesión; sin poder
+      // emitirla acá, ninguna prueba de integración puede cubrir el camino de la ejecución
+      // ya pagada, que es justo el que no se debe reintentar.
+      ...(detail.execution_started === true ? { execution_started: true } : {})
     }));
   }
 

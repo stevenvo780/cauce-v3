@@ -78,7 +78,7 @@ async function ackAndWait(
   client: FakeHarness,
   delivery: DeliveryEnvelope,
   status: Ack['status'],
-  detail: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result'>> = {}
+  detail: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result' | 'execution_started'>> = {}
 ) {
   client.ack(delivery, status, detail);
   return client.waitFor((frame) => frame.type === 'ack_result' && frame.delivery_id === delivery.delivery_id);
@@ -403,6 +403,11 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     const sent = await publish(message());
     expect(sent.response.status).toBe(202);
     const original = await consumer.nextDelivery();
+    // La ambigüedad sólo es terminal si HUBO ejecución, y eso lo dice `execution_started`, que el
+    // SDK manda tras tomar la reserva de sesión y antes de invocar al harness. Sin este ACK la
+    // entrega murió sin haber corrido nada y ahora se reintenta en vez de ir al DLQ, así que lo
+    // que este test vigila —dead-letter + exactamente un clon de replay manual— exige la marca.
+    await ackAndWait(consumer, original, 'started', { execution_started: true });
     const eventId = randomUUID();
     const detail = {
       event_id: eventId,
