@@ -10,12 +10,19 @@
 -- con el reaper SANO (1.184.426 ticks, 0 errores). `CAUCE_DEFAULT_TIMEOUT_MS` (24 h) tampoco
 -- actuaba. Un intento tiene que tener un techo que ninguna renovación pueda mover.
 --
--- POR QUÉ 014 Y NO 011
+-- POR QUÉ 022 Y NO 011 NI 014
 -- Producción ya aplicó 011_terminal_sessions.sql, 012_execution_started_marker.sql y
 -- 013_quota_observation.sql (schema_migrations, 2026-07-26/27). El runner indexa por NOMBRE DE
 -- ARCHIVO y corre todo dentro de UNA transacción con pg_advisory_xact_lock: un 011 nuevo se
 -- ejecutaría igual y su `ADD COLUMN execution_started_at` chocaría con la columna que ya creó
 -- 012, abortando la transacción entera y dejando al gateway y al dispatcher sin arrancar.
+--
+-- Nació como 011, se renumeró a 014 mientras vivía fuera de `main`, y al integrarla el 2026-07-30
+-- hubo que moverla otra vez a 022: la consolidación de `main` ya ocupa el 014 con
+-- 014_observability_retention.sql y llega hasta 021_failure_notice_coalescing.sql. Dos archivos
+-- con el mismo número no son un problema estético — el runner los indexa por nombre, así que
+-- ambos se aplicarían, y el orden alfabético entre dos "014_*" lo decide el sufijo. Este archivo
+-- tiene que quedar DESPUÉS de todo lo que main ya aplicó en producción.
 --
 -- POR QUÉ TODO ES IDEMPOTENTE
 -- Esta migración tiene que poder correr sobre tres esquemas distintos: producción (que ya tiene
@@ -79,4 +86,4 @@ COMMENT ON COLUMN deliveries.execution_lifetime_ms IS
 -- status con filtro. Un índice extra sólo agregaría amplificación de escritura en la tabla más
 -- caliente del bus, que se actualiza en cada claim y en cada ACK.
 
--- Rollback manual: packages/store/migrations/down/014_execution_lifetime.sql
+-- Rollback manual: packages/store/migrations/down/022_execution_lifetime.sql
