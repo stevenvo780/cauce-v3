@@ -39,6 +39,14 @@ export interface EnsureResult {
   /** PID del proceso del panel de la TUI, cuando se pudo leer. */
   readonly pid?: string;
   readonly detail: string;
+  /**
+   * Qué falló exactamente, para que el aviso que lee el dueño no mienta.
+   *
+   * "no hay sesión" y "la sesión está pero la TUI no responde" se arreglan de formas distintas, y
+   * deducirlo de si hubo que crearla daba la etiqueta equivocada en el caso más frecuente: sesión
+   * viva con la TUI muerta dentro.
+   */
+  readonly failure?: "session_absent" | "tui_absent";
 }
 
 const DEFAULT_READY_TIMEOUT_MS = 90_000;
@@ -78,20 +86,26 @@ export async function ensureSharedSession(
   if (await hasSession(tmux, session)) {
     const pid = await panePid(tmux, target);
     if (pid === undefined) {
-      return { ready: false, created: false, detail: `la sesión ${session} existe pero no tiene panel de TUI` };
+      return {
+        ready: false, created: false, failure: "tui_absent",
+        detail: `la sesión ${session} existe pero no tiene panel de TUI`,
+      };
     }
     return { ready: true, created: false, pid, detail: `sesión ${session} ya abierta` };
   }
 
   const created = await createSession(tmux, spec, options);
-  if (!created.ok) return { ready: false, created: false, detail: created.detail };
+  if (!created.ok) {
+    return { ready: false, created: false, failure: "session_absent", detail: created.detail };
+  }
 
   const ready = await waitForTui(tmux, target, options);
   const pid = await panePid(tmux, target);
   if (!ready) {
+    const detail = `la TUI de ${spec.alias} no llegó a estar lista`;
     return pid === undefined
-      ? { ready: false, created: true, detail: `la TUI de ${spec.alias} no llegó a estar lista` }
-      : { ready: false, created: true, pid, detail: `la TUI de ${spec.alias} no llegó a estar lista` };
+      ? { ready: false, created: true, failure: "tui_absent", detail }
+      : { ready: false, created: true, pid, failure: "tui_absent", detail };
   }
   return pid === undefined
     ? { ready: true, created: true, detail: `sesión ${session} creada` }

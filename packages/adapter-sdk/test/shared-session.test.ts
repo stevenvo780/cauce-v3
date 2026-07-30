@@ -443,7 +443,16 @@ class FakeLink implements AppServerLink {
   private waiter: ((value: IteratorResult<AppServerMessage>) => void) | undefined;
   private ended = false;
 
-  constructor(private readonly threads: readonly string[], private readonly answer?: string) {}
+  /**
+   * `eager` emite las notificaciones del turno ANTES de contestar a `turn/start`. El servidor
+   * puede hacerlo, y un cliente que descarte lo que llega mientras espera una respuesta se queda
+   * colgado para siempre.
+   */
+  constructor(
+    private readonly threads: readonly string[],
+    private readonly answer?: string,
+    private readonly eager = false,
+  ) {}
 
   open(): Promise<void> {
     return Promise.resolve();
@@ -457,21 +466,25 @@ class FakeLink implements AppServerLink {
     if (message.method === "thread/resume") this.push({ id, result: {} });
     if (message.method === "turn/start") {
       const threadId = this.threads[this.threads.length - 1];
+      const answer = (): void => {
+        // El pedido vuelve como `userMessage`: un TIPO DISTINTO. Por eso no existe la ambigüedad
+        // del eco que descalificó a la salida (b).
+        this.push({
+          method: "item/completed",
+          params: { threadId, turnId: "t1", item: { id: "i0", type: "userMessage", content: [] } },
+        });
+        this.push({
+          method: "item/completed",
+          params: {
+            threadId, turnId: "t1",
+            item: { id: "i1", type: "agentMessage", text: this.answer ?? envelopeText("desde codex"), phase: "final_answer" },
+          },
+        });
+        this.push({ method: "turn/completed", params: { threadId, turn: { id: "t1", status: "completed", items: [] } } });
+      };
+      if (this.eager) answer();
       this.push({ id, result: { turn: { id: "t1", status: "inProgress", items: [] } } });
-      // El pedido vuelve como `userMessage`: un TIPO DISTINTO. Por eso no existe la ambigüedad
-      // del eco que descalificó a la salida (b).
-      this.push({
-        method: "item/completed",
-        params: { threadId, turnId: "t1", item: { id: "i0", type: "userMessage", content: [] } },
-      });
-      this.push({
-        method: "item/completed",
-        params: {
-          threadId, turnId: "t1",
-          item: { id: "i1", type: "agentMessage", text: this.answer ?? envelopeText("desde codex"), phase: "final_answer" },
-        },
-      });
-      this.push({ method: "turn/completed", params: { threadId, turn: { id: "t1", status: "completed", items: [] } } });
+      if (!this.eager) answer();
     }
   }
 
@@ -564,6 +577,42 @@ test("codex sin hilo vivo degrada con aviso en vez de fingir que comparte", asyn
   assert.ok(reply.includes(DEGRADED_MARK));
   assert.ok(reply.includes("tui_absent"));
   assert.ok(reply.includes("clasico"));
+  const records = await readDegradations(state);
+  assert.equal(records[0]?.reason, "tui_absent");
+});
+
+test("codex no pierde las notificaciones que llegan antes de la respuesta", async () => {
+  const { state } = await freshState("codex-eager");
+  const tmux = new FakeTmux();
+  const fallback = new RecordingFallback("{}");
+  // El servidor emite el turno completo ANTES de contestar a `turn/start`.
+  const link = new FakeLink(["019fb4a9-25f7-7f10-92ac-871fd93b2989"], undefined, true);
+
+  const runner = codexRunner("socrates", tmux, fallback, link);
+  const adapter = await adapterFor(runner, state, "socrates", "codex");
+  const output = await execute(adapter);
+
+  assert.equal(output.reply, "desde codex");
+  assert.equal(fallback.calls, 0);
+});
+
+test("una sesion viva sin panel de TUI se reporta como tui_absent, no como ausente", async () => {
+  const { state, home, workspace } = await freshState("sin-panel");
+  const tmux = new FakeTmux();
+  tmux.sessionExists = true;
+  // La sesión responde a has-session pero el panel no existe: la TUI se murió dentro.
+  const originalRun = tmux.run.bind(tmux);
+  tmux.run = async (args, stdin): Promise<TmuxResult> => {
+    if (args[0] === "display-message" && args[1] === "-p") return { exitCode: 1, stdout: "", stderr: "" };
+    return originalRun(args, stdin);
+  };
+  const fallback = new RecordingFallback(JSON.stringify({ result: envelopeText("clasico") }));
+
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const adapter = await adapterFor(runner, state, "kratos", "claude");
+  const output = await execute(adapter);
+
+  assert.ok((output.reply ?? "").includes("tui_absent"));
   const records = await readDegradations(state);
   assert.equal(records[0]?.reason, "tui_absent");
 });

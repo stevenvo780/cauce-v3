@@ -5,7 +5,6 @@ import {
   capturePane,
   clearDegradation,
   hasSession,
-  panePid,
   pastePrompt,
   sendEnter,
   type TmuxController,
@@ -57,6 +56,14 @@ export interface ClaudeSharedSessionOptions {
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 120_000;
 const DEFAULT_TURN_TIMEOUT_MS = 3_600_000;
 const DEFAULT_POLL_MS = 750;
+
+/**
+ * Cada cuántos sondeos se comprueba que la sesión tmux sigue viva.
+ *
+ * Comprobarlo en todos costaba un proceso `tmux` cada 750 ms —unos 4800 por hora de turno— para
+ * detectar un suceso rarísimo. Cada 8 sondeos da un aviso en menos de 10 s, que es de sobra.
+ */
+const LIVENESS_EVERY = 8;
 
 /**
  * Salida (d): conducir la TUI real por tmux y cosechar el sobre del transcript.
@@ -137,7 +144,7 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
       this.ensureOptions(),
     );
     if (!ensure.ready) {
-      return { ok: false, reason: ensure.created ? "tui_absent" : "session_absent", detail: ensure.detail };
+      return { ok: false, reason: ensure.failure ?? "session_absent", detail: ensure.detail };
     }
     this.notePaneIdentity(ensure.pid);
     return { ok: true };
@@ -211,23 +218,30 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
     );
     const deadline = Date.now() + budget;
     let injected: { file: string; uuid: string; sessionId?: string } | undefined;
+    // El transcript de una conversación larga pesa megabytes y un turno puede durar una hora.
+    // Releerlo entero en cada sondeo costaría más que el propio turno, así que sólo se parsea
+    // cuando el fichero creció; y la sesión tmux se comprueba cada tantos sondeos, no en todos.
+    let lastSize = -1;
+    let probe = 0;
 
     for (;;) {
       if (request.signal.aborted) {
         return result({ cancelled: true });
       }
-      if (!await hasSession(this.options.tmux, session)) {
+      if (probe % LIVENESS_EVERY === 0 && !await hasSession(this.options.tmux, session)) {
         return result({
           exitCode: 1,
           stderr: "la sesión compartida desapareció mientras el turno estaba en marcha;"
             + " el estado de finalización es desconocido",
         });
       }
+      probe += 1;
 
       if (injected === undefined) {
         injected = await this.locateInjectedTurn(directory, baseline, request.stdin);
       }
-      if (injected !== undefined) {
+      if (injected !== undefined && await this.grew(injected.file, lastSize)) {
+        lastSize = await fileSize(injected.file);
         const entries = await readTranscript(injected.file);
         const answer = findFinalAssistant(entries, injected.uuid);
         if (answer !== undefined) {
@@ -252,6 +266,10 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
       }
       await this.options.sleep(this.options.pollMs ?? DEFAULT_POLL_MS);
     }
+  }
+
+  private async grew(file: string, lastSize: number): Promise<boolean> {
+    return await fileSize(file) > lastSize;
   }
 
   /**
@@ -331,6 +349,14 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
         fellBack: previous.fellBack || degradation.fellBack,
       };
     this.options.onDegradation?.(degradation);
+  }
+}
+
+async function fileSize(file: string): Promise<number> {
+  try {
+    return (await stat(file)).size;
+  } catch {
+    return -1;
   }
 }
 

@@ -187,7 +187,7 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
       this.ensureOptions(),
     );
     if (!ensure.ready) {
-      return this.degrade(ensure.created ? "tui_absent" : "session_absent", ensure.detail, request);
+      return this.degrade(ensure.failure ?? "session_absent", ensure.detail, request);
     }
     if (!await access(this.options.socketPath).then(() => true, () => false)) {
       return this.degrade("session_absent", `no existe el socket ${this.options.socketPath}`, request);
@@ -219,6 +219,11 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
     }
 
     const inbox = link.messages()[Symbol.asyncIterator]();
+    // Las notificaciones que llegan MIENTRAS se espera la respuesta de una llamada se guardan, no
+    // se tiran. El servidor puede emitir `turn/started` —o incluso un `item/completed`— antes de
+    // contestar a `turn/start`, y descartarlas dejaría el turno esperando para siempre una
+    // notificación que ya había pasado.
+    const buffered: AppServerMessage[] = [];
     const call = async (method: string, params: Record<string, unknown>, id: number): Promise<
       { ok: true; result: unknown } | { ok: false; detail: string }
     > => {
@@ -227,7 +232,10 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
         const next = await inbox.next();
         if (next.done === true) return { ok: false, detail: `la conexión se cerró esperando ${method}` };
         const message = next.value;
-        if (message.id !== id) continue;
+        if (message.id !== id) {
+          if (message.method !== undefined) buffered.push(message);
+          continue;
+        }
         if (message.error !== undefined) {
           return { ok: false, detail: `${method}: ${describeRpcError(message.error)}` };
         }
@@ -275,7 +283,7 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
     // Turno en marcha: desde acá no se degrada nunca, porque reejecutar por el camino de siempre
     // correría el trabajo dos veces.
     await clearDegradation(this.options.tmux, sessionName(this.options.alias), TUI_WINDOW);
-    return this.collect(inbox, threadId, request);
+    return this.collect(inbox, buffered, threadId, request);
   }
 
   /**
@@ -297,6 +305,7 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
 
   private async collect(
     inbox: AsyncIterator<AppServerMessage>,
+    buffered: AppServerMessage[],
     threadId: string,
     request: CommandRunRequest,
   ): Promise<CommandRunResult> {
@@ -312,15 +321,19 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
       if (request.signal.aborted) return result({ cancelled: true });
       if (Date.now() >= deadline) return result({ timedOut: true });
 
-      const next = await inbox.next();
-      if (next.done === true) {
-        return result({
-          exitCode: 1,
-          stderr: "el app-server cerró la conexión con el turno en marcha;"
-            + " el estado de finalización es desconocido",
-        });
+      // Primero lo que llegó mientras se negociaban las llamadas; después la conexión.
+      let message = buffered.shift();
+      if (message === undefined) {
+        const next = await inbox.next();
+        if (next.done === true) {
+          return result({
+            exitCode: 1,
+            stderr: "el app-server cerró la conexión con el turno en marcha;"
+              + " el estado de finalización es desconocido",
+          });
+        }
+        message = next.value;
       }
-      const message = next.value;
       const params = asObject(message.params);
       if (params === undefined) continue;
       if (params.threadId !== undefined && params.threadId !== threadId) continue;
