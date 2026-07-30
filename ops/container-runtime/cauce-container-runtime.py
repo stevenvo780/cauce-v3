@@ -876,13 +876,48 @@ def stale_generation_is_quiescent(
     return True
 
 
-def reap_children() -> None:
+def reap_children(protected: int | None = None) -> None:
+    """Reap exited children, optionally leaving one PID's status untouched.
+
+    set_subreaper() makes this controller the adoptive parent of every descendant the
+    adapter orphans, so nothing else in the container will ever wait() for them: without
+    a reap here they stay <defunct> for the whole (multi-day) life of the adapter.
+
+    `protected` is the one PID whose exit status belongs to subprocess.Popen. Consuming
+    it here would be silent corruption, not a hang: Popen._internal_poll() maps the
+    resulting ECHILD to `returncode = 0`, so a harness that died with a real failure code
+    would be reported as a clean exit and the adapter's PROCESS_EXIT_AMBIGUOUS
+    classification would be destroyed. waitid(WNOWAIT) peeks without consuming, so the
+    protected status stays pending for Popen.poll()/Popen.wait().
+    """
+    if protected is None:
+        while True:
+            try:
+                pid, _ = os.waitpid(-1, os.WNOHANG)
+            except ChildProcessError:
+                return
+            if pid == 0:
+                return
+    if not hasattr(os, "waitid") or not hasattr(os, "WNOWAIT"):
+        # Without a non-consuming peek there is no way to reap orphans and still hand the
+        # adapter's own status to Popen. Leaking a zombie is recoverable; losing the
+        # adapter exit code is not, so this degrades to not reaping.
+        return
     while True:
         try:
-            pid, _ = os.waitpid(-1, os.WNOHANG)
+            peeked = os.waitid(os.P_ALL, 0, os.WEXITED | os.WNOHANG | os.WNOWAIT)
         except ChildProcessError:
             return
-        if pid == 0:
+        if peeked is None or peeked.si_pid == 0:
+            return
+        if peeked.si_pid == protected:
+            # The tracked child is the first entry of the kernel's sibling list, so it
+            # shadows the rest while its status is pending. Popen.poll() consumes it on
+            # the very next iteration and the following pass drains what is behind it.
+            return
+        try:
+            os.waitpid(peeked.si_pid, os.WNOHANG)
+        except ChildProcessError:
             return
 
 
@@ -1002,6 +1037,11 @@ def wait_process_tracking(
         status = process.poll()
         if status is not None:
             return status
+        # This is the only long-lived loop in the supervisor, so it is the only place
+        # that can drain the orphans PR_SET_CHILD_SUBREAPER hands us while the adapter
+        # runs. It runs after poll() so the leader's status is always claimed by Popen
+        # first, and passes it as `protected` to close the exit-between-the-two race.
+        reap_children(protected=process.pid)
         if deadline is not None and time.monotonic() >= deadline:
             raise subprocess.TimeoutExpired(process.args, timeout)
         time.sleep(0.02)
@@ -1383,7 +1423,7 @@ def run_adapter(args: argparse.Namespace) -> int:
             # Phase "post-child": the child exists but metadata is still "starting".
             phase_gate("post-child", should_stop)
             if termination_requested:
-                signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=True)
+                signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=False)
                 wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
                 raise PermanentError("adapter launch was cancelled before metadata publication")
             executable = wait_for_exec(process_tree, args.command[0])
@@ -1412,7 +1452,7 @@ def run_adapter(args: argparse.Namespace) -> int:
             remove_metadata(control_fd)
             return remap_child_exit(status)
         except BaseException:
-            signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=True)
+            signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=False)
             try:
                 wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
             except subprocess.TimeoutExpired:
