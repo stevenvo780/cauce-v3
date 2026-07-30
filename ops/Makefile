@@ -5,7 +5,7 @@ ENV_DEV ?= config/dev.env
 ENV_PROD ?= config/prod.env
 ARTIFACT_DIR ?= artifacts
 
-.PHONY: help test test-contract test-doubles test-real test-compose test-compose-authentic test-runtime-authentic test-restarts test-container-supervisor test-container-cutover smoke-cli smoke-adapters validate manifest verify-manifest \
+.PHONY: help test test-contract test-doubles test-real test-compose test-compose-authentic test-runtime-authentic test-restarts test-container-supervisor test-container-reaping test-container-cutover smoke-cli smoke-adapters validate manifest verify-manifest \
 	dev-up dev-down dev-health prod-up prod-down prod-health migrate backup restore manifests release-build release-gate
 
 help: ## Lista objetivos
@@ -27,6 +27,9 @@ smoke-adapters: ## Adapters con ejecutables fake; nunca invoca CLIs auténticas
 
 test-container-supervisor: ## Supervisor Docker host-side con Docker falso y lifecycle PID exacto
 	node tests/container-supervisor.test.mjs
+
+test-container-reaping: ## Fuga de zombis del supervisor: leak reproducido y cosecha sin perder el exit code
+	python3 tests/test_container_runtime_reaping.py
 
 test-container-cutover: ## Exclusión de familias, cutover y rollback container
 	node tests/container-cutover.test.mjs

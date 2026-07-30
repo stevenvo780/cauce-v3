@@ -27,6 +27,7 @@ STATIC_INPUTS = (
     # Critical adversarial suites and their fakes: a change to the supervisor/lifecycle
     # behaviour that is not matched by its regression tests must move this digest.
     "tests/container-supervisor.test.mjs",
+    "tests/test_container_runtime_reaping.py",
     "tests/alias-runner.test.mjs",
     "tests/container-release-pin.test.mjs",
     "tests/container-cutover.test.mjs",

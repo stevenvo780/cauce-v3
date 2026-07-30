@@ -22,6 +22,7 @@ for (const required of [
   "scripts/cutover-rollback.sh",
   "scripts/rollback.sh",
   "tests/container-supervisor.test.mjs",
+  "tests/test_container_runtime_reaping.py",
   "tests/alias-runner.test.mjs",
   "tests/container-cutover.test.mjs",
   "tests/container-ops-evidence.test.mjs",
