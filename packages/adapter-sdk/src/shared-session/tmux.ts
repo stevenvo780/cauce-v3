@@ -77,10 +77,51 @@ export async function capturePane(tmux: TmuxController, target: string): Promise
  * conversación" de "una TUI nueva que no recuerda nada".
  */
 export async function panePid(tmux: TmuxController, target: string): Promise<string | undefined> {
+  // El target es `sesión:ventana`. Se comprueba que la ventana EXISTA antes de preguntar el PID,
+  // porque preguntar primero devuelve el de otra ventana sin ningún error. Ver `windowExists`.
+  const separator = target.lastIndexOf(":");
+  if (separator > 0) {
+    const session = target.slice(0, separator);
+    const window = target.slice(separator + 1);
+    if (!await windowExists(tmux, session, window)) return undefined;
+  }
   const result = await tmux.run(["display-message", "-p", "-t", target, "#{pane_pid}"]);
   if (result.exitCode !== 0) return undefined;
   const value = result.stdout.trim();
   return /^[0-9]+$/u.test(value) ? value : undefined;
+}
+
+/**
+ * ¿Existe EXACTAMENTE esa ventana en esa sesión?
+ *
+ * Hace falta porque `display-message` MIENTE. Medido en `ws-prizma` el 2026-07-30, con la sesión
+ * `cauce-socrates` teniendo sólo la ventana `servidor`:
+ *
+ * ```
+ * tmux display-message -p -t cauce-socrates:agente  '#{window_name} #{pane_pid}'
+ *   -> servidor 14667      (exit 0)
+ * tmux display-message -p -t cauce-socrates:=agente '#{window_name} #{pane_pid}'
+ *   -> servidor 14667      (exit 0)   <- ni el prefijo '=' lo evita
+ * tmux capture-pane -p -t cauce-socrates:agente
+ *   -> can't find window: agente      (falla, como corresponde)
+ * ```
+ *
+ * Al no encontrar la ventana, `display-message` cae a la ventana ACTUAL y devuelve 0. Sin esta
+ * comprobación `panePid` entregaba el PID del app-server como si fuera el de la TUI, y toda la
+ * cadena daba por viva una TUI inexistente: `ensure` decía `ready`, `cauce <alias>` decía
+ * COMPARTIDA y el adaptador creía estar compartiendo contexto con una ventana que no existe.
+ *
+ * `list-windows` sí enumera lo que hay, y la comparación es por igualdad exacta: tmux acepta
+ * prefijos y patrones, y "agente" no puede significar otra ventana que "agente".
+ */
+export async function windowExists(
+  tmux: TmuxController,
+  session: string,
+  window: string,
+): Promise<boolean> {
+  const result = await tmux.run(["list-windows", "-t", `=${session}`, "-F", "#{window_name}"]);
+  if (result.exitCode !== 0) return false;
+  return result.stdout.split(/\r?\n/u).some((name) => name.trim() === window);
 }
 
 /**

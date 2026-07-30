@@ -73,6 +73,8 @@ function assistantEntry(
 class FakeTmux implements TmuxController {
   readonly calls: string[][] = [];
   sessionExists = true;
+  /** Ventanas realmente presentes en la sesión. Por defecto, la de la TUI. */
+  windows: string[] = ["agente"];
   paneContent = "❯ ";
   panePid = "4242";
   newSessionFails = false;
@@ -84,9 +86,19 @@ class FakeTmux implements TmuxController {
     this.calls.push([...args]);
     const [command] = args;
     if (command === "has-session") return ok(this.sessionExists ? 0 : 1);
+    // `list-windows` es la única fuente honesta de qué ventanas hay: `display-message` cae a la
+    // ventana actual cuando la pedida no existe. El doble modela eso, no lo esquiva.
+    if (command === "list-windows") {
+      if (!this.sessionExists) return { exitCode: 1, stdout: "", stderr: "can't find session" };
+      return { exitCode: 0, stdout: `${this.windows.join("\n")}\n`, stderr: "" };
+    }
     if (command === "new-session" || command === "new-window") {
       if (this.newSessionFails) return { exitCode: 1, stdout: "", stderr: "no server running" };
       this.sessionExists = true;
+      const nameIndex = args.indexOf("-n");
+      const created = nameIndex >= 0 ? args[nameIndex + 1] : undefined;
+      if (command === "new-session") this.windows = [];
+      if (created !== undefined && !this.windows.includes(created)) this.windows.push(created);
       return ok(0);
     }
     if (command === "capture-pane") return { exitCode: 0, stdout: this.paneContent, stderr: "" };
@@ -615,6 +627,39 @@ test("una sesion viva sin panel de TUI se reporta como tui_absent, no como ausen
   assert.ok((output.reply ?? "").includes("tui_absent"));
   const records = await readDegradations(state);
   assert.equal(records[0]?.reason, "tui_absent");
+});
+
+test("la ventana de la TUI que no existe NO se confunde con otra ventana de la sesión", async () => {
+  // Regresión de un fallo medido en ws-prizma el 2026-07-30. Con la sesión `cauce-socrates`
+  // teniendo sólo la ventana `servidor`, `tmux display-message -p -t cauce-socrates:agente` NO
+  // falla: cae a la ventana actual y devuelve su PID con exit 0. Ni el prefijo `=` lo evita.
+  //
+  // Consecuencia real: `ensure` decía `ready:true`, `cauce socrates` anunciaba COMPARTIDA y el
+  // adaptador daba por compartida una conversación con una ventana que no existía — la clase de
+  // éxito silencioso que este trabajo existe para eliminar. La única defensa es enumerar con
+  // `list-windows` y comparar por igualdad exacta.
+  const { state, home, workspace } = await freshState("ventana-fantasma");
+  const tmux = new FakeTmux();
+  tmux.sessionExists = true;
+  tmux.windows = ["servidor"]; // la ventana `agente` se murió al nacer
+  const originalRun = tmux.run.bind(tmux);
+  tmux.run = async (args, stdin): Promise<TmuxResult> => {
+    // El tmux real MIENTE acá: responde por otra ventana en vez de fallar.
+    if (args[0] === "display-message" && args[1] === "-p") {
+      return { exitCode: 0, stdout: "14667\n", stderr: "" };
+    }
+    return originalRun(args, stdin);
+  };
+  const fallback = new RecordingFallback(JSON.stringify({ result: envelopeText("clasico") }));
+
+  const runner = claudeRunner({ alias: "kratos", home, workspace, tmux, fallback });
+  const adapter = await adapterFor(runner, state, "kratos", "claude");
+  const output = await execute(adapter);
+
+  // Cayó al camino de siempre y lo dijo, en vez de creerse el PID prestado.
+  assert.equal(fallback.calls, 1);
+  assert.ok((output.reply ?? "").includes("tui_absent"));
+  assert.equal((await readDegradations(state))[0]?.reason, "tui_absent");
 });
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { connect } from "node:net";
 import { capturePane, hasSession, panePid, type TmuxController } from "./tmux.js";
 import { inputBoxState } from "./pane.js";
 import { SERVER_WINDOW, TUI_WINDOW, sessionName, type SharedSessionHarness } from "./types.js";
@@ -107,9 +108,20 @@ export async function ensureSharedSession(
       ? { ready: false, created: true, failure: "tui_absent", detail }
       : { ready: false, created: true, pid, failure: "tui_absent", detail };
   }
-  return pid === undefined
-    ? { ready: true, created: true, detail: `sesión ${session} creada` }
-    : { ready: true, created: true, pid, detail: `sesión ${session} creada` };
+  // Sin PID no hay panel, y sin panel no hay TUI: nunca "listo".
+  //
+  // Esto era un éxito silencioso medido, no una hipótesis. Cuando la ventana de la TUI moría al
+  // nacer (codex contra un app-server que aún no aceptaba), `waitForTui` llegaba a ver el panel
+  // un instante, devolvía `true`, y `ensure` contestaba `ready:true` sobre una sesión que sólo
+  // tenía la ventana del servidor. El adaptador y `cauce <alias>` daban por buena una sesión
+  // compartida inexistente: exactamente el fallo que este trabajo existe para eliminar.
+  if (pid === undefined) {
+    return {
+      ready: false, created: true, failure: "tui_absent",
+      detail: `la TUI de ${spec.alias} se creó y desapareció antes de poder usarla`,
+    };
+  }
+  return { ready: true, created: true, pid, detail: `sesión ${session} creada` };
 }
 
 async function createSession(
@@ -164,17 +176,45 @@ function tmuxError(stderr: string): string {
   return detail === "" ? "tmux rechazó la creación de la sesión" : detail;
 }
 
+/**
+ * Espera a que el app-server ACEPTE una conexión, no a que exista el fichero del socket.
+ *
+ * Medido en `ws-prizma` el 2026-07-30: `codex app-server --listen unix://…` crea el nodo del
+ * socket antes de estar sirviendo. Con `access()` la espera terminaba en ~1 s, la ventana de la
+ * TUI se lanzaba contra un servidor que todavía no aceptaba, `codex --remote` moría en el acto y
+ * la ventana desaparecía. Con el servidor ya caliente la misma ventana sobrevive indefinidamente:
+ * la diferencia es exactamente esta carrera.
+ *
+ * Conectar y cerrar es la única prueba de que el servidor sirve. Un fichero de socket huérfano de
+ * un servidor muerto también satisface `access()`, así que esto además evita arrancar la TUI
+ * contra un socket que no lleva a ninguna parte.
+ */
 async function waitForSocket(path: string, options: EnsureOptions): Promise<boolean> {
   const deadline = Date.now() + (options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS);
   for (;;) {
     try {
       await access(path);
-      return true;
+      if (await socketAccepts(path)) return true;
     } catch {
-      if (Date.now() >= deadline) return false;
-      await options.sleep(READY_POLL_MS);
+      // El socket todavía no existe: se reintenta igual que si no aceptara.
     }
+    if (Date.now() >= deadline) return false;
+    await options.sleep(READY_POLL_MS);
   }
+}
+
+function socketAccepts(path: string): Promise<boolean> {
+  return new Promise<boolean>((resolveAccepts) => {
+    const probe = connect(path);
+    const settle = (accepted: boolean): void => {
+      probe.removeAllListeners();
+      probe.destroy();
+      resolveAccepts(accepted);
+    };
+    probe.once("connect", () => settle(true));
+    probe.once("error", () => settle(false));
+    probe.setTimeout(2_000, () => settle(false));
+  });
 }
 
 /**

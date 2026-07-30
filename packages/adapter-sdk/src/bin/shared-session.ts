@@ -78,10 +78,21 @@ async function main(): Promise<void> {
   const options = parse(process.argv.slice(2));
   const home = process.env.HOME ?? homedir();
   const tmux = new CliTmux();
+  // OJO: este temporizador NO se puede `unref()`.
+  //
+  // En el adaptador da igual —su bucle de eventos lo sostiene el websocket del bus— pero acá el
+  // único trabajo pendiente ES la espera. Con `unref()`, en cuanto `ensureSharedSession` se
+  // dormía a esperar (el app-server que todavía no acepta, la TUI que todavía no dibuja la caja)
+  // Node se quedaba sin nada que lo mantuviera vivo y TERMINABA SOLO, con código 0 y sin escribir
+  // una línea.
+  //
+  // Medido en ws-prizma el 2026-07-30: `ensure` de codex salía 0 en silencio, sin la ventana de
+  // la TUI y sin JSON. `cauce socrates` lo leía como éxito y anunciaba COMPARTIDA sobre una
+  // sesión que sólo tenía el app-server. Un `unref()` de una línea producía exactamente el fallo
+  // silencioso que este trabajo existe para eliminar.
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((resolveSleep) => {
-      const timer = setTimeout(resolveSleep, ms);
-      timer.unref();
+      setTimeout(resolveSleep, ms);
     });
 
   if (options.command === "degradations") {
@@ -97,7 +108,12 @@ async function main(): Promise<void> {
   if (options.command === "status") {
     const status = await sharedSessionStatus(tmux, sessionSpec);
     process.stdout.write(`${JSON.stringify(status)}\n`);
-    process.exit(status.present ? 0 : 1);
+    // `process.exit()` descarta lo que quede pendiente en stdout cuando stdout es una tubería, y
+    // acá SIEMPRE lo es: `cauce <alias>` llama a esto por `docker exec`. Medido en ws-prizma: el
+    // JSON se perdía entero y el CLI mostraba «sin detalle» justo cuando el dueño necesitaba
+    // saber qué había fallado. Con `exitCode` el proceso termina solo, ya vaciada la tubería.
+    process.exitCode = status.present ? 0 : 1;
+    return;
   }
 
   if (options.command === "ensure") {
@@ -110,7 +126,8 @@ async function main(): Promise<void> {
       session: sessionName(options.alias),
       window: TUI_WINDOW,
     })}\n`);
-    process.exit(result.ready ? 0 : 1);
+    process.exitCode = result.ready ? 0 : 1;
+    return;
   }
 
   usage();
