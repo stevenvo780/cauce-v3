@@ -517,6 +517,59 @@ try {
   await writeConfig("kant");
   process.stdout.write("default timeout: 86400000 default and 480000 override exported; invalid values rejected before Docker\n");
 
+  // ---- Sesión compartida: una sola conversación en la terminal y en Telegram. ----
+  // El interruptor sólo existe para claude y codex, sólo admite el valor exacto 1, y cuando está
+  // encendido tiene que llegar al adaptador junto con un TERM utilizable: sin TERM tmux crea la
+  // sesión con un terminal desconocido y la TUI se dibuja rota para el dueño.
+  await writeConfig("kant", ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=/workspace"]);
+  await clearLog();
+  result = runSupervisor("start", "kant", await dockerState("kant"));
+  assert.equal(result.status, 0, `shared session must start: ${result.stderr}`);
+  const sharedFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
+  assert(sharedFinal?.argv.includes("CAUCE_SHARED_SESSION=1"));
+  assert(sharedFinal?.argv.includes("CAUCE_SHARED_SESSION_WORKSPACE=/workspace"));
+  assert(sharedFinal?.argv.includes("TERM=xterm-256color"),
+    "con sesión compartida el adaptador necesita un TERM utilizable para crear la sesión tmux");
+
+  // Sin el interruptor, el comportamiento es byte a byte el de siempre.
+  await writeConfig("kant");
+  await clearLog();
+  result = runSupervisor("start", "kant", await dockerState("kant"));
+  assert.equal(result.status, 0, result.stderr);
+  const plainFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
+  assert(!plainFinal?.argv.some((value) => value.startsWith("CAUCE_SHARED_SESSION")),
+    "sin SHARED_SESSION no se exporta ninguna variable de sesión compartida");
+  assert(!plainFinal?.argv.some((value) => value.startsWith("TERM=")),
+    "sin sesión compartida el entorno del adaptador no cambia");
+
+  for (const [name, extra, expected] of [
+    ["valor distinto de 1", ["SHARED_SESSION=true"], /SHARED_SESSION must be exactly 1/u],
+    ["workspace relativo", ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=workspace"],
+      /SHARED_SESSION_WORKSPACE must be a canonical absolute path/u],
+    ["workspace sin interruptor", ["SHARED_SESSION_WORKSPACE=/workspace"],
+      /SHARED_SESSION_WORKSPACE requires SHARED_SESSION=1/u],
+  ]) {
+    await writeConfig("kant", extra);
+    await clearLog();
+    result = runSupervisor("start", "kant", await dockerState("kant"));
+    assert.notEqual(result.status, 0, `${name} debe fallar`);
+    assert.match(result.stderr, expected);
+    assert.equal((await records()).length, 0, `${name} debe fallar antes de tocar Docker`);
+  }
+
+  // Un harness sin TUI compartible no puede declarar el interruptor: aceptarlo dejaría un alias
+  // convencido de compartir una conversación que no existe.
+  await writeConfig("argos", [
+    "HERMES_HOME=/home/dev/.hermes", "HERMES_INFERENCE_MODEL=approved/model-v1", "SHARED_SESSION=1",
+  ]);
+  await clearLog();
+  result = runSupervisor("start", "argos", await dockerState("argos"));
+  assert.notEqual(result.status, 0, "hermes no tiene sesión compartida");
+  assert.match(result.stderr, /config key is not allowed for hermes: SHARED_SESSION/u);
+  await writeConfig("argos", ["HERMES_HOME=/home/dev/.hermes", "HERMES_INFERENCE_MODEL=approved/model-v1"]);
+  await writeConfig("kant");
+  process.stdout.write("shared session: switch exported with TERM for claude/codex, rejected elsewhere and for non-1 values\n");
+
   // ---- Bundle layout regression guard: mini-monorepo vs legacy root layout. ----
   // The real production bundle ships adapters at packages/adapter-sdk/dist/src/bin/<harness>.js;
   // the supervisor must resolve exactly that path. Positive: the standard fixture uses that

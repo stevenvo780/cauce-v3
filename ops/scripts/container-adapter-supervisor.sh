@@ -117,6 +117,12 @@ load_config() {
     case "$key" in
       BUNDLE_RELEASE|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW|DEFAULT_TIMEOUT_MS) ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
+      # Sesión compartida: la MISMA conversación en la terminal del dueño y en Telegram. Sólo
+      # existe para claude y codex, que son los dos harness con una TUI compartible; para el resto
+      # el interruptor no significaría nada y aceptarlo sería mentir sobre en qué modo corre.
+      SHARED_SESSION|SHARED_SESSION_WORKSPACE)
+        [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
+        ;;
       OPENCLAW_TRANSPORT|OPENCLAW_API_URL|OPENCLAW_TOKEN_FILE|OPENCLAW_AGENT_TARGET|OPENCLAW_DIST_DIR)
         [[ $harness == openclaw ]] || die "config key is not allowed for $harness: $key"
         ;;
@@ -180,6 +186,16 @@ validate_config_values() {
     default_timeout_ms=$((10#${CONFIG[DEFAULT_TIMEOUT_MS]}))
     (( default_timeout_ms >= 60000 && default_timeout_ms <= 604800000 )) \
       || die 'DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 604800000'
+  fi
+  # El interruptor sólo admite el valor exacto 1. Un `SHARED_SESSION=true` que se aceptara como
+  # "encendido" en un lado y como "apagado" en otro daría un alias que cree compartir y no
+  # comparte: precisamente el estado que este trabajo existe para eliminar.
+  if [[ -v CONFIG[SHARED_SESSION] ]]; then
+    [[ ${CONFIG[SHARED_SESSION]} == 1 ]] || die 'SHARED_SESSION must be exactly 1'
+  fi
+  if [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]]; then
+    [[ -v CONFIG[SHARED_SESSION] ]] || die 'SHARED_SESSION_WORKSPACE requires SHARED_SESSION=1'
+    valid_absolute_path "${CONFIG[SHARED_SESSION_WORKSPACE]}" || die 'SHARED_SESSION_WORKSPACE must be a canonical absolute path'
   fi
   validate_relay_url "${CONFIG[RELAY_URL]}"
   if [[ $harness == hermes ]]; then
@@ -566,6 +582,14 @@ start_adapter() {
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"
   )
   if [[ $bearer_token_present == true ]]; then environment+=("CAUCE_TOKEN_FILE=$secret_directory/token"); fi
+  if [[ -v CONFIG[SHARED_SESSION] ]]; then
+    environment+=("CAUCE_SHARED_SESSION=${CONFIG[SHARED_SESSION]}")
+    [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]] \
+      && environment+=("CAUCE_SHARED_SESSION_WORKSPACE=${CONFIG[SHARED_SESSION_WORKSPACE]}")
+    # tmux crea la sesión con este TERM. Sin él el servidor nace con un terminal desconocido y la
+    # TUI se dibuja rota para el dueño, que es quien se engancha después.
+    environment+=('TERM=xterm-256color')
+  fi
   if [[ $harness == hermes ]]; then
     environment+=("HERMES_HOME=${CONFIG[HERMES_HOME]}" "HERMES_INFERENCE_MODEL=${CONFIG[HERMES_INFERENCE_MODEL]}")
     [[ -v CONFIG[HERMES_PYTHON] ]] && environment+=("CAUCE_HERMES_PYTHON=${CONFIG[HERMES_PYTHON]}")

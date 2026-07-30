@@ -14,6 +14,11 @@ import type {
 } from "../sdk/types.js";
 import { TenantSchema } from "@cauce/protocol";
 import { loadCliRuntimeConfig } from "./config.js";
+import { CliTmux } from "../shared-session/tmux.js";
+import { ClaudeSharedSessionRunner } from "../shared-session/claude-runner.js";
+import { CodexSharedSessionRunner } from "../shared-session/codex-runner.js";
+import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
+import type { CommandRunner } from "../sdk/types.js";
 
 function commandOverride(
   harnessId: HarnessId,
@@ -88,6 +93,55 @@ function operationalLogger(alias: string): AdapterLogger {
   };
 }
 
+/**
+ * Envuelve el runner de siempre con el de sesión compartida cuando el alias la tiene encendida.
+ *
+ * El runner compartido NO reemplaza al clásico: lo lleva dentro como camino de respaldo. Es lo que
+ * permite que una entrega no se pierda porque el dueño cerró su terminal, sin que eso vuelva a ser
+ * un fallback silencioso: cada vez que usa el respaldo lo declara, y ese aviso termina en el
+ * "reply" que llega por Telegram, en el panel y en el log durable.
+ */
+function sharedSessionRunner(
+  shared: SharedSessionConfig,
+  fallback: CommandRunner,
+  logger: AdapterLogger,
+): CommandRunner {
+  const tmux = new CliTmux();
+  const sleep = (ms: number): Promise<void> =>
+    new Promise<void>((resolveSleep) => {
+      const timer = setTimeout(resolveSleep, ms);
+      timer.unref();
+    });
+  const onDegradation = (degradation: { reason: string; detail: string }): void => {
+    logger({
+      event: "shared_session_degraded",
+      alias: shared.alias,
+      reason: degradation.reason,
+      error_message: degradation.detail,
+    });
+  };
+  if (shared.harness === "claude") {
+    return new ClaudeSharedSessionRunner({
+      alias: shared.alias,
+      workspace: shared.workspace,
+      home: shared.home,
+      tmux,
+      fallback,
+      sleep,
+      onDegradation,
+    });
+  }
+  return new CodexSharedSessionRunner({
+    alias: shared.alias,
+    workspace: shared.workspace,
+    socketPath: shared.socketPath,
+    tmux,
+    fallback,
+    sleep,
+    onDegradation,
+  });
+}
+
 export async function runCli(harnessId: HarnessId): Promise<void> {
   const runtime = await loadCliRuntimeConfig(harnessId);
   const tenantId = TenantSchema.parse(runtime.tenant);
@@ -101,13 +155,18 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     runtime.stateDirectory,
     canonicalOpenCodeSession ? { deferSessions: true } : {},
   );
-  const runner = harnessId === "openclaw" && runtime.openClaw?.transport === "api"
+  const baseRunner = harnessId === "openclaw" && runtime.openClaw?.transport === "api"
     ? new OpenClawApiRunner({
       endpoint: runtime.openClaw.apiUrl!,
       tokenFile: runtime.openClaw.tokenFile!,
       ...(runtime.openClaw.agentTarget === undefined ? {} : { agentTarget: runtime.openClaw.agentTarget }),
     })
     : new SpawnCommandRunner();
+  const logger = operationalLogger(runtime.alias);
+  const shared = loadSharedSessionConfig(harnessId, runtime.alias, runtime.stateDirectory);
+  const runner = shared === undefined
+    ? baseRunner
+    : sharedSessionRunner(shared, baseRunner, logger);
   const override = commandOverride(harnessId, definition, runtime);
   const harness = new HarnessAdapter({
     definition,
@@ -117,8 +176,14 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     ...(canonicalOpenCodeSession ? { canonicalOpenCodeSession: true } : {}),
     ...(harnessId === "openclaw" ? { fallbackSessionKey: "alias-default" } : {}),
     ...(override === undefined ? {} : { commandOverride: override }),
+    ...(shared === undefined ? {} : {
+      sharedSession: {
+        alias: shared.alias,
+        harness: shared.harness,
+        stateDirectory: shared.stateDirectory,
+      },
+    }),
   });
-  const logger = operationalLogger(runtime.alias);
   const client = new AdapterClient({
     config: {
       tenantId,

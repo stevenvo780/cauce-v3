@@ -21,7 +21,8 @@
     "cauce-adapter-codex": "./dist/src/bin/codex.js",
     "cauce-adapter-openclaw": "./dist/src/bin/openclaw.js",
     "cauce-adapter-fake": "./dist/src/bin/fake.js",
-    "cauce-fake-harness": "./dist/src/bin/fake-harness.js"
+    "cauce-fake-harness": "./dist/src/bin/fake-harness.js",
+    "cauce-shared-session": "./dist/src/bin/shared-session.js"
   },
   "scripts": {
     "clean": "node --eval \"import('node:fs/promises').then(fs => Promise.all(['dist','.test-state'].map(path => fs.rm(path,{recursive:true,force:true}))))\"",

@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# cauce — un solo CLI para operar la flota Cauce V3.
+#
+# Reemplaza a: ia, ia-ver, ia-tui, ia-tui-session, cauce-attach, cauce-estado.
+# La regla: `cauce <alias>` hace LO CORRECTO sin que tengas que elegir entre variantes.
+#
+# ESTE FICHERO ES LA FUENTE. Se instala en kratos como ~/.local/bin/cauce.
+# Vivió catorce meses sólo en el home de stev y por eso nadie podía revisarlo ni revertirlo;
+# ahora se edita acá y se instala con `ops/scripts/install-cauce-cli.sh`.
+#
+# MODO COMPARTIDA: `cauce <alias>` abre la TUI REAL del harness (claude o codex) dentro de una
+# sesión tmux que el adaptador también usa para los turnos del bus. No es un cliente de línea que
+# imita una TUI: es el binario de verdad, con su panel, sus /comandos y su historial.
+set -uo pipefail
+OPS=$HOME/.local/share/cauce-v3/ops
+BIN=$HOME/.local/bin
+CONFIG=$HOME/.config/cauce-v3/container-aliases
+TMUX_SOCKET=cauce
+
+c_reset=$'\033[0m'; c_b=$'\033[1m'; c_dim=$'\033[90m'
+c_ok=$'\033[32m'; c_warn=$'\033[33m'; c_err=$'\033[31m'; c_cy=$'\033[36m'
+
+alias_info() {  # $1=alias -> "tenant\troom\tcontenedor\tusuario\thome\tstate\tharness"
+  PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$1" 2>/dev/null
+}
+todos_los_alias() {
+  for f in "$CONFIG"/*.env; do
+    [ -e "$f" ] || continue; basename "$f" .env
+  done | sort
+}
+adaptador_activo() { systemctl --user is-active "cauce-v3-container-$1.service" 2>/dev/null; }
+
+# ¿El alias tiene ENCENDIDA la sesión compartida en su configuración?
+# Es la única fuente de verdad: el mismo interruptor que lee el supervisor para el adaptador.
+compartida_configurada() {
+  [ -f "$CONFIG/$1.env" ] && grep -qx 'SHARED_SESSION=1' "$CONFIG/$1.env"
+}
+
+# Ruta del helper de sesión compartida DENTRO del contenedor. Sale del bundle que el supervisor ya
+# desplegó, así que el CLI y el adaptador corren exactamente el mismo código.
+helper_en_contenedor() {  # $1=alias
+  local release
+  release=$(sed -n 's/^BUNDLE_RELEASE=//p' "$CONFIG/$1.env" 2>/dev/null | head -1)
+  [ -n "$release" ] || return 1
+  printf '/opt/cauce-v3-adapter/%s/releases/%s/packages/adapter-sdk/dist/src/bin/shared-session.js\n' "$1" "$release"
+}
+
+# `ensure|status` de la sesión compartida, ejecutado dentro del contenedor como el usuario del alias.
+sesion() {  # $1=accion $2=alias $3=contenedor $4=usuario $5=harness
+  local helper
+  helper=$(helper_en_contenedor "$2") || return 3
+  docker exec --user "$4" "$3" test -f "$helper" || return 3
+  docker exec --user "$4" "$3" node "$helper" "$1" --alias "$2" --harness "$5" --workspace /workspace
+}
+
+# Los avisos de caída que quedaron registrados mientras el dueño no estaba mirando.
+avisos() {  # $1=alias $2=contenedor $3=usuario $4=state $5=harness
+  local helper
+  helper=$(helper_en_contenedor "$1") || return 0
+  docker exec --user "$3" "$2" node "$helper" degradations \
+    --alias "$1" --harness "$5" --state "$4" 2>/dev/null
+}
+
+uso() {
+  cat <<EOF
+${c_b}cauce${c_reset} — operar la flota Cauce V3
+
+  ${c_b}cauce${c_reset}                    estado de toda la flota
+  ${c_b}cauce <alias>${c_reset}            entrar a hablarle (elige solo el mejor modo)
+  ${c_b}cauce <alias> ver${c_reset}        mirar en vivo lo que le llega, sin entrar
+  ${c_b}cauce <alias> estado${c_reset}     detalle de un agente
+  ${c_b}cauce <alias> sesiones${c_reset}   que conversaciones tiene y cual comparte
+  ${c_b}cauce <alias> on|off${c_reset}     encender / apagar su adaptador
+  ${c_b}cauce ver [alias...]${c_reset}     mirar varios a la vez
+
+Al entrar con ${c_b}cauce <alias>${c_reset} te dice en la cabecera cual de los tres modos te toco:
+  ${c_ok}compartida${c_reset}  la TUI REAL del agente, y la MISMA conversacion que Telegram.
+  ${c_warn}aparte${c_reset}      TUI real pero conversacion nueva: NO comparte con Telegram.
+  ${c_err}exclusiva${c_reset}   el adaptador esta parado; lo de Telegram se encola.
+EOF
+}
+
+# ---------- estado de la flota ----------
+cmd_flota() {
+  printf "\n  ${c_b}%-9s %-22s %-9s %-9s %-9s %s${c_reset}\n" ALIAS CONTENEDOR HARNESS ADAPTADOR TERMINAL MODO
+  printf "  %s\n" "$(printf '─%.0s' $(seq 1 76))"
+  local a line ctr cuser harness ad modo color term
+  for a in $(todos_los_alias); do
+    line=$(alias_info "$a") || continue
+    IFS=$'\t' read -r _ _ ctr cuser _ _ harness _ <<<"$line"
+    ad=$(adaptador_activo "$a")
+    if compartida_configurada "$a" && sesion status "$a" "$ctr" "$cuser" "$harness" >/dev/null 2>&1; then
+      modo=compartida; color=$c_ok; term="${c_ok}si${c_reset}"
+    elif [[ $ad == active ]]; then
+      modo=aparte; color=$c_warn; term="${c_dim}no${c_reset}"
+    else
+      modo="—"; color=$c_dim; term="${c_dim}no${c_reset}"
+    fi
+    [[ $ad == active ]] && ad="${c_ok}activo${c_reset}" || ad="${c_dim}parado${c_reset}"
+    printf "  %-9s %-22s %-9s %-18s %-18s ${color}%s${c_reset}\n" "$a" "$ctr" "$harness" "$ad" "$term" "$modo"
+  done
+  printf "\n  ${c_dim}entrar:  cauce <alias>      mirar:  cauce <alias> ver${c_reset}\n\n"
+}
+
+# ---------- entrar ----------
+cmd_entrar() {
+  local a=$1 line ctr cuser state harness ad salida
+  line=$(alias_info "$a") || { echo "alias desconocido: $a"; exit 2; }
+  IFS=$'\t' read -r _ _ ctr cuser _ state harness _ <<<"$line"
+  ad=$(adaptador_activo "$a")
+
+  printf "\n  ${c_b}%s${c_reset} · %s · %s\n" "$a" "$harness" "$ctr"
+
+  # 1) sesion compartida: la TUI real, y la misma conversacion que Telegram.
+  if compartida_configurada "$a"; then
+    salida=$(sesion ensure "$a" "$ctr" "$cuser" "$harness" 2>&1)
+    if [[ $? -eq 0 ]]; then
+      printf "  modo: ${c_ok}${c_b}COMPARTIDA${c_reset} — la TUI real, y la misma conversacion que Telegram.\n"
+      printf "  ${c_dim}lo que llegue por el bus aparece aca EN VIVO. salir sin cerrarla: Ctrl-b d${c_reset}\n"
+      # Lo que se rompio mientras no estabas mirando. Si el bus tuvo que contestar por el camino
+      # de siempre, se dice aca ANTES de entrar: una caida silenciosa es indistinguible del exito.
+      local pendientes
+      pendientes=$(avisos "$a" "$ctr" "$cuser" "$state" "$harness")
+      if [ -n "$pendientes" ]; then
+        printf "\n  ${c_err}${c_b}avisos de la sesion compartida:${c_reset}\n"
+        printf '%s\n' "$pendientes" | python3 -c '
+import json,sys
+for line in sys.stdin:
+    line=line.strip()
+    if not line: continue
+    try: r=json.loads(line)
+    except Exception: continue
+    print("    \033[31m•\033[0m %s  %s: %s" % (r.get("occurredAt","")[:19], r.get("reason","?"), r.get("detail","")))
+'
+      fi
+      printf "\n"
+      exec docker exec -it --user "$cuser" "$ctr" \
+        tmux -L "$TMUX_SOCKET" attach-session -t "cauce-$a:agente"
+    fi
+    # El interruptor esta encendido pero la sesion no se pudo abrir. Se DICE, y se cae a lo de
+    # siempre: exactamente lo contrario del fallback silencioso que mato al intento anterior.
+    printf "  ${c_err}la sesion compartida esta configurada pero NO se pudo abrir:${c_reset}\n"
+    printf "  ${c_dim}%s${c_reset}\n" "${salida:-sin detalle}"
+  elif [[ $harness == claude || $harness == codex ]]; then
+    printf "  ${c_dim}este alias no tiene sesion compartida encendida (falta SHARED_SESSION=1 en su .env)${c_reset}\n"
+  else
+    printf "  ${c_dim}el harness %s no tiene sesion compartida: solo la tienen claude y codex${c_reset}\n" "$harness"
+  fi
+
+  # 2) conversacion aparte, sin parar al agente
+  if [[ $ad == active ]]; then
+    printf "  modo: ${c_warn}${c_b}APARTE${c_reset} — TUI real, pero conversacion nueva: NO comparte con Telegram.\n"
+    printf "  ${c_dim}el agente sigue respondiendo Telegram y el bus. salir: Ctrl-D${c_reset}\n\n"
+    case "$harness" in
+      claude) exec docker exec -it --user "$cuser" -w /workspace "$ctr" claude ;;
+      codex)  exec docker exec -it --user "$cuser" -w /workspace "$ctr" codex ;;
+      *)      printf "  ${c_dim}sin TUI propia: te abro un shell${c_reset}\n\n"
+              exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l ;;
+    esac
+  fi
+
+  # 3) el adaptador esta parado: attach exclusivo clasico
+  printf "  modo: ${c_err}${c_b}EXCLUSIVA${c_reset} — su adaptador esta parado.\n"
+  printf "  ${c_dim}lo que le escriban por Telegram se ENCOLA y entra cuando salgas.${c_reset}\n\n"
+  if [[ -x $BIN/cauce-attach ]]; then exec python3 "$BIN/cauce-attach" "$a"; fi
+  exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l
+}
+
+# ---------- resto ----------
+cmd_ver()      { exec "$BIN/ia-ver" "$@"; }
+cmd_estado()   { [ $# -eq 0 ] && exec "$BIN/ia" estado || exec "$BIN/ia" "$1" estado; }
+cmd_sesiones() { exec "$BIN/ia" "$1" sesiones; }
+cmd_on()  { systemctl --user start "cauce-v3-container-$1.service"; sleep 6
+            printf "  %s adaptador: %s\n" "$1" "$(adaptador_activo "$1")"; }
+cmd_off() { systemctl --user stop  "cauce-v3-container-$1.service"; sleep 3
+            printf "  %s adaptador: %s\n" "$1" "$(adaptador_activo "$1")"; }
+
+case "${1:-}" in
+  ""|flota|estado) [[ ${1:-} == estado ]] && cmd_estado "${2:-}" || cmd_flota ;;
+  -h|--help|help|ayuda) uso ;;
+  ver) shift; cmd_ver "$@" ;;
+  *)
+    a=$1; shift || true
+    case "${1:-}" in
+      "")        cmd_entrar "$a" ;;
+      ver)       cmd_ver "$a" ;;
+      estado)    cmd_estado "$a" ;;
+      sesiones)  cmd_sesiones "$a" ;;
+      on)        cmd_on "$a" ;;
+      off)       cmd_off "$a" ;;
+      *)         echo "no entiendo '$1'"; uso; exit 2 ;;
+    esac ;;
+esac

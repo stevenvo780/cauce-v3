@@ -18,6 +18,13 @@ import type {
 } from "../sdk/types.js";
 import { PROTOCOL_VERSION } from "../sdk/types.js";
 import { validateDeliveryOutput } from "../sdk/output-parser.js";
+import { recordDegradation } from "../shared-session/degradation-log.js";
+import { annotateDegraded, degradationNotice } from "../shared-session/notice.js";
+import {
+  isSharedSessionRunner,
+  type SharedSessionDegradation,
+  type SharedSessionHarness,
+} from "../shared-session/types.js";
 
 export function capabilities(
   harness: HarnessId,
@@ -311,6 +318,18 @@ export interface HarnessAdapterOptions {
    * siguiente.
    */
   readonly resolveCredentialEnv?: () => Promise<Readonly<Record<string, string>>>;
+  /**
+   * Identidad de la sesión compartida, presente sólo cuando el alias la tiene encendida.
+   *
+   * Habilita lo que el no-negociable «nada de fallback silencioso» exige: cuando el runner declara
+   * que el turno NO pasó por la terminal del dueño, el adaptador escribe el incidente en el log
+   * durable y mete el aviso DENTRO del "reply" que vuelve por Telegram.
+   */
+  readonly sharedSession?: {
+    readonly alias: string;
+    readonly harness: SharedSessionHarness;
+    readonly stateDirectory: string;
+  };
 }
 
 /**
@@ -392,8 +411,10 @@ export class HarnessAdapter {
   private readonly fallbackSessionKey: string | undefined;
   private readonly canonicalOpenCodeSession: boolean;
   private readonly resolveCredentialEnv: (() => Promise<Readonly<Record<string, string>>>) | undefined;
+  private readonly sharedSession: HarnessAdapterOptions["sharedSession"];
 
   constructor(options: HarnessAdapterOptions) {
+    this.sharedSession = options.sharedSession;
     this.definition = options.definition;
     this.runner = options.runner;
     this.store = options.store;
@@ -509,6 +530,11 @@ export class HarnessAdapter {
       signal: request.signal,
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
     });
+    // Se consume PEGADO a la ejecución, no más tarde: si el turno falla y se lanza una excepción,
+    // el aviso no puede quedarse guardado y contaminar el turno siguiente, que quizá sí compartió.
+    const degradation = isSharedSessionRunner(this.runner)
+      ? this.runner.takeDegradation()
+      : undefined;
 
     if (result.timedOut) {
       throw new ProcessExecutionError(
@@ -596,7 +622,35 @@ export class HarnessAdapter {
       }
     }
 
-    return output;
+    return this.announceSharedSession(output, degradation);
+  }
+
+  /**
+   * El aviso de caída, pegado al resultado ya validado.
+   *
+   * Va DESPUÉS de `validateDeliveryOutput` a propósito: el contrato del bus se exige entero sobre
+   * lo que produjo el harness, sin ninguna concesión, y sólo entonces el adaptador añade su nota.
+   * Así el aviso no puede convertir en válido un sobre que no lo era.
+   *
+   * Y lo escribe el adaptador, nunca el modelo: ya se demostró que un agente puede falsificar
+   * cualquier señal que venga de su stdout —un descendiente que hereda el pipe envuelve la
+   * salida—, así que un aviso autodeclarado no probaría nada.
+   */
+  private async announceSharedSession(
+    output: StructuredOutput,
+    degradation: SharedSessionDegradation | undefined,
+  ): Promise<StructuredOutput> {
+    const shared = this.sharedSession;
+    if (degradation === undefined || shared === undefined) return output;
+    await recordDegradation(shared.stateDirectory, {
+      ...degradation,
+      alias: shared.alias,
+      harness: shared.harness,
+    });
+    return annotateDegraded(
+      output,
+      degradationNotice(shared.alias, shared.harness, degradation),
+    );
   }
 
   private invocation(context: HarnessExecutionContext, attachmentArgs: readonly string[]): {

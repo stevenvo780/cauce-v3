@@ -307,7 +307,13 @@ export interface AdapterLog {
     | 'connection_error'
     | 'outbound_frame_invalid'
     /** Un frame del gateway que el esquema rechazó y el adaptador DESCARTÓ sin cortar la cola. */
-    | 'inbound_frame_invalid';
+    | 'inbound_frame_invalid'
+    /**
+     * Un turno del bus que NO pasó por la terminal compartida del dueño, o que la encontró
+     * reiniciada. Se emite al journal ADEMÁS de viajar dentro del "reply": el intento anterior
+     * murió justamente porque esa situación no dejaba rastro en ninguna parte.
+     */
+    | 'shared_session_degraded';
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;

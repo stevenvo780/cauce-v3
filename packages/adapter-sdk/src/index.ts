@@ -13,4 +13,5 @@ export * from "./sdk/client.js";
 export * from "./sdk/websocket-transport.js";
 export * from "./harnesses/index.js";
 export * from "./harnesses/shared.js";
+export * from "./shared-session/index.js";
 export * from "./fake-harness.js";
