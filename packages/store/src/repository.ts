@@ -2222,11 +2222,14 @@ export class CauceRepository {
     }
     return withTransaction(this.pool, async (client) => {
       await this.assertRuntimeRoute(client, tenantId, alias);
-      const selected = await client.query<DeliveryRow & LateResultRow & { claim_live: boolean }>(
+      const selected = await client.query<
+        DeliveryRow & LateResultRow & { claim_live: boolean; execution_started: boolean }
+      >(
         `SELECT d.id,d.message_id,d.recipient_tenant,d.recipient_alias,d.status,d.attempt,d.max_attempts,
                 d.last_ack_rank,d.consumer_instance_id,d.consumer_epoch,d.claim_token,d.ack_deadline_at,
                 d.late_result_at,d.cancelled_at,
                 (d.ack_deadline_at>now()) AS claim_live,
+                (d.execution_started_at IS NOT NULL) AS execution_started,
                  m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
                  m.auth_session_id,m.auth_channel
          FROM deliveries d JOIN messages m ON m.id=d.message_id
@@ -2474,12 +2477,44 @@ export class CauceRepository {
       let terminalAt = rank === 3 ? 'now()' : 'NULL';
       let terminalError = postgresTextSafe(ack.error);
       let terminalErrorCode = postgresTextSafe(ack.error_code);
-      const ambiguousExecution = ack.status === 'failed'
+      /**
+       * Un código ambiguo existe para proteger trabajo YA PAGADO: dice "no sé si terminó, no lo
+       * vuelvas a correr". Eso vale sólo si algo corrió. Hasta acá la rama no lo comprobaba y
+       * tampoco miraba `max_attempts`, así que mataba en el intento 1 —con dos intentos
+       * intactos— entregas que jamás llegaron a invocar al harness.
+       *
+       * La señal es la MISMA que ya usa `retryStaleDeliveries` para el mismo dilema, y por eso
+       * no se inventa un criterio nuevo: `execution_started_at`, que el store sella cuando el
+       * SDK ACKea `execution_started` DESPUÉS de obtener la reserva de sesión y justo antes de
+       * invocar al harness. No es el ACK 'started' a secas —ese sale mientras la entrega hace
+       * cola por el candado, sin ejecutar nada—, distinción que ya costó un incidente.
+       *
+       * Sin la marca, la entrega murió reclamando, haciendo cola o preparando el proceso: no hay
+       * ejecución ambigua que preservar, y reintentar no puede volver a pagar lo que nunca se
+       * pagó. Con la marca se mantiene EXACTAMENTE el comportamiento anterior: `dead` + fila en
+       * `dead_letters` para replay manual.
+       *
+       * Deliberadamente NO se toca `retryable=false` en los constructores del harness
+       * (`harnesses/shared.ts`): ese `false` sigue siendo correcto para la entrega que sí
+       * ejecutó, y volverlo `true` reintroduciría la re-ejecución de trabajo pagado que el
+       * código de arriba documenta. Lo que se corrige es tratar "nunca arrancó" como si hubiera
+       * arrancado. Es el mismo razonamiento que `AdapterEngine.awaitSessionTurn` aplica al
+       * camino de cola cuando degrada un ambiguo a `SESSION_QUEUE_ABORTED` reintentable.
+       *
+       * Medido contra prod el 2026-07-30 (esquema 013, la marca ya poblada: 1.116 filas): de 652
+       * muertes ambiguas con intentos disponibles, 445 no tenían la marca y habrían reintentado;
+       * 207 la tenían y siguen yendo a `dead`.
+       *
+       * Un adaptador viejo que no emite la marca degrada hacia el reintento, no hacia la muerte
+       * silenciosa: es el sentido barato y no destructivo, el mismo que eligió el reaper.
+       */
+      const ambiguousFailure = ack.status === 'failed'
         && isAmbiguousAckErrorCode(ack.error_code);
+      const ambiguousExecution = ambiguousFailure && row.execution_started;
       if (ambiguousExecution) {
         nextStatus = 'dead';
         terminalAt = 'now()';
-      } else if (ack.status === 'failed' && ack.retryable) {
+      } else if (ack.status === 'failed' && (ack.retryable || ambiguousFailure)) {
         if (row.attempt < row.max_attempts) {
           nextStatus = 'retry';
           nextRank = 0;
@@ -2588,8 +2623,13 @@ export class CauceRepository {
         const policy = await this.loadChainPolicy(client);
         // Proactive egress is a side effect of a terminal turn, not a delegation.
         // The count deliberately stays out of the response disposition below.
+        // Se pasa `ambiguousFailure`, NO `ambiguousExecution`: el veto a las notificaciones
+        // depende de que el sistema NO SEPA si el trabajo pasó, y eso lo dice el código de error
+        // por sí solo. Un ambiguo sin marca de ejecución que además agotó los intentos termina
+        // en `dead` igual, y ahí no puede salir un aviso a un humano afirmando que algo se hizo.
+        // Con `ambiguousExecution` este veto se habría relajado justo en ese caso.
         notified = await this.materializeAgentNotifications(
-          client, row, ack, notifications, ambiguousExecution
+          client, row, ack, notifications, ambiguousFailure
         );
         let outputOutcome: AgentOutputOutcome = { materialized: 0, suspended: false, rejections: [] };
         if (nextStatus === 'done' && row.body.type !== 'agent.fanin') {
@@ -2642,6 +2682,12 @@ export class CauceRepository {
              attempt: ack.attempt,
              ...(terminalErrorCode === undefined ? {} : { error_code: terminalErrorCode }),
              ...(ambiguousExecution ? { ambiguous_execution: true } : {}),
+             // El ambiguo que NO llegó a ejecutar se audita aparte para que el operador pueda
+             // separar de un vistazo "retenido porque pudo haber corrido" de "reintentado porque
+             // no corrió", que son diagnósticos opuestos sobre el mismo código de error.
+             ...(ambiguousFailure && !row.execution_started
+               ? { ambiguous_without_execution: true }
+               : {}),
              ...(notified.allowed + notified.denied + notified.errors === 0
                ? {}
                : {
