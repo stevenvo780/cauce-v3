@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { CliTmux } from "../shared-session/tmux.js";
 import { ensureSharedSession, sharedSessionStatus } from "../shared-session/session.js";
-import { appServerSocketPath, runtimeDirectory } from "../shared-session/config.js";
+import { cliSharedSessionSpec, runtimeDirectory } from "../shared-session/config.js";
 import { readDegradations } from "../shared-session/degradation-log.js";
 import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-session/types.js";
 import type { SharedSessionSpec } from "../shared-session/session.js";
@@ -65,13 +65,15 @@ function spec(options: Options, home: string): SharedSessionSpec {
     process.stderr.write(`el harness '${options.harness}' no tiene sesión compartida\n`);
     process.exit(3);
   }
-  const harness = options.harness as "claude" | "codex";
-  return {
-    alias: options.alias,
-    harness,
-    workspace: options.workspace,
-    ...(harness === "codex" ? { socketPath: appServerSocketPath(home, options.alias) } : {}),
-  };
+  // MISMO spec —y sobre todo mismo entorno— que si la sesión la creara el adaptador. El servidor
+  // tmux se queda con el entorno del primero que lo crea y descarta el del segundo, así que dos
+  // rutinas parecidas darían una TUI distinta según quién ganó la carrera.
+  return cliSharedSessionSpec(
+    options.harness as "claude" | "codex",
+    options.alias,
+    options.workspace,
+    home,
+  );
 }
 
 async function main(): Promise<void> {

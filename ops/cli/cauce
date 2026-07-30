@@ -125,12 +125,20 @@ cmd_entrar() {
         printf "\n  ${c_err}${c_b}avisos de la sesion compartida:${c_reset}\n"
         printf '%s\n' "$pendientes" | python3 -c '
 import json,sys
+# Dos cosas MUY distintas comparten este log y no se pueden pintar igual: "el turno NO paso por tu
+# terminal" (rojo) y "el turno SI paso, pero la memoria cambio" —/clear, compactacion, sesion
+# recien creada— (amarillo). Llamar caida a lo segundo es la misma clase de mentira que este
+# mecanismo existe para eliminar.
 for line in sys.stdin:
     line=line.strip()
     if not line: continue
     try: r=json.loads(line)
     except Exception: continue
-    print("    \033[31m•\033[0m %s  %s: %s" % (r.get("occurredAt","")[:19], r.get("reason","?"), r.get("detail","")))
+    cayo = r.get("fellBack") is not False
+    color = "\033[31m" if cayo else "\033[33m"
+    etiqueta = "NO paso por la terminal" if cayo else "paso, pero cambio el contexto"
+    print("    %s•\033[0m %s  %s [%s]: %s" % (
+        color, r.get("occurredAt","")[:19], r.get("reason","?"), etiqueta, r.get("detail","")))
 '
       fi
       printf "\n"

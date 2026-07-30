@@ -11,8 +11,17 @@ import { join } from "node:path";
 
 export interface TranscriptEntry {
   readonly type?: unknown;
+  readonly subtype?: unknown;
   readonly uuid?: unknown;
   readonly parentUuid?: unknown;
+  /**
+   * El padre REAL cuando `parentUuid` es `null` por una compactación.
+   *
+   * Lo escribe claude en la entrada `compact_boundary`: ahí `parentUuid` vale `null` —la cadena
+   * queda cortada— y la continuidad de la conversación vive sólo acá.
+   */
+  readonly logicalParentUuid?: unknown;
+  readonly compactMetadata?: unknown;
   readonly isSidechain?: unknown;
   readonly sessionId?: unknown;
   readonly message?: unknown;
@@ -64,26 +73,54 @@ export async function transcriptFiles(directory: string): Promise<readonly strin
  * siguiente sondeo es correcto; abortar el turno por eso sería un fallo inventado.
  */
 export async function readTranscript(file: string): Promise<readonly TranscriptEntry[]> {
+  return (await readTranscriptSince(file, Number.MAX_SAFE_INTEGER)).entries;
+}
+
+export interface TranscriptSlice {
+  /** Todo el fichero, que es lo que hace falta para seguir la cadena de padres hacia atrás. */
+  readonly entries: readonly TranscriptEntry[];
+  /** Sólo lo escrito DESPUÉS del corte, que es lo que pudo pasar durante este turno. */
+  readonly appended: readonly TranscriptEntry[];
+}
+
+/**
+ * Lo mismo, separando lo que ya estaba de lo que se escribió después de un corte en bytes.
+ *
+ * El corte es la foto que se toma ANTES de pegar (`transcriptBaseline`). Sirve para poder afirmar
+ * "esta compactación ocurrió DURANTE nuestro turno" en vez de "este fichero contiene
+ * compactaciones", que en un transcript de semanas sería siempre cierto y produciría un aviso falso
+ * en cada entrega.
+ */
+export async function readTranscriptSince(
+  file: string,
+  offset: number,
+): Promise<TranscriptSlice> {
   let raw: string;
   try {
     raw = await readFile(file, "utf8");
   } catch {
-    return [];
+    return { entries: [], appended: [] };
   }
   const entries: TranscriptEntry[] = [];
+  const appended: TranscriptEntry[] = [];
+  let position = 0;
   for (const line of raw.split(/\r?\n/u)) {
+    const start = position;
+    position += Buffer.byteLength(line, "utf8") + 1;
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
     try {
       const value: unknown = JSON.parse(trimmed);
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-        entries.push(value as TranscriptEntry);
+        const entry = value as TranscriptEntry;
+        entries.push(entry);
+        if (start >= offset) appended.push(entry);
       }
     } catch {
       // Línea a medio escribir: la TUI todavía la está volcando.
     }
   }
-  return entries;
+  return { entries, appended };
 }
 
 function asString(value: unknown): string | undefined {
@@ -176,25 +213,102 @@ export function descendsFrom(
   ancestorUuid: string,
 ): boolean {
   const seen = new Set<string>();
-  let current: string | undefined = asString(entry.parentUuid);
+  let current: string | undefined = parentOf(entry);
   for (let depth = 0; depth < MAX_ANCESTRY_DEPTH && current !== undefined; depth += 1) {
     if (current === ancestorUuid) return true;
     if (seen.has(current)) return false;
     seen.add(current);
     const parent: TranscriptEntry | undefined = byUuid.get(current);
     if (parent === undefined) return false;
-    current = asString(parent.parentUuid);
+    current = parentOf(parent);
   }
   return false;
 }
 
+/**
+ * El padre por el que se sube la cadena, atravesando compactaciones.
+ *
+ * Una compactación CORTA la cadena: la entrada `compact_boundary` trae `parentUuid: null` y la
+ * continuidad sólo vive en `logicalParentUuid`. Sin mirarlo, una compactación ocurrida a MITAD del
+ * turno del bus hace que la respuesta deje de "descender" de nuestra entrada y el runner NO cosecha
+ * nunca: agota el presupuesto (1 h) y devuelve `timedOut` -> AMBIGUO. El agente contestó y el dueño
+ * ve una entrega muerta. No es "contexto perdido", es ENTREGA perdida.
+ *
+ * Medido el 2026-07-30 sobre un transcript real de este contenedor: con la cadena cortada,
+ * `findFinalAssistant` devolvía `undefined` para el turno `e8f1e4b6…` del fichero
+ * `6d9e6ff0-0462-413c-bf97-ec65b5613799.jsonl`, mientras un turno de control del MISMO fichero sin
+ * compactación de por medio sí se cosechaba. En una muestra de 25 ficheros, 36 de 49 compactaciones
+ * cayeron justo entre un prompt y su respuesta final, así que no es un caso de borde.
+ *
+ * `parentUuid` manda siempre que exista: `logicalParentUuid` es el respaldo, no un atajo.
+ */
+function parentOf(entry: TranscriptEntry): string | undefined {
+  return asString(entry.parentUuid) ?? asString(entry.logicalParentUuid);
+}
+
+export interface CompactionEvent {
+  readonly uuid: string;
+  /** `auto` (nadie la pidió) o `manual` (`/compact`). La forma del registro es idéntica. */
+  readonly trigger: string;
+  readonly preTokens?: number;
+  readonly postTokens?: number;
+}
+
+/**
+ * Las compactaciones que hay entre estas entradas.
+ *
+ * La marca la escribe claude como `type: "system"` / `subtype: "compact_boundary"`, con
+ * `compactMetadata.trigger` y el antes/después en tokens. La automática deja EXACTAMENTE la misma
+ * marca que `/compact`; lo único que cambia es el `trigger`. Por eso el aviso puede decir cuál fue
+ * sin adivinar.
+ */
+export function compactBoundaries(
+  entries: readonly TranscriptEntry[],
+): readonly CompactionEvent[] {
+  const events: CompactionEvent[] = [];
+  for (const entry of entries) {
+    if (entry.type !== "system" || entry.subtype !== "compact_boundary") continue;
+    const uuid = asString(entry.uuid);
+    if (uuid === undefined) continue;
+    const metadata = typeof entry.compactMetadata === "object" && entry.compactMetadata !== null
+      ? entry.compactMetadata as Record<string, unknown>
+      : {};
+    const pre = typeof metadata.preTokens === "number" ? metadata.preTokens : undefined;
+    const post = typeof metadata.postTokens === "number" ? metadata.postTokens : undefined;
+    events.push({
+      uuid,
+      trigger: asString(metadata.trigger) ?? "desconocido",
+      ...(pre === undefined ? {} : { preTokens: pre }),
+      ...(post === undefined ? {} : { postTokens: post }),
+    });
+  }
+  return events;
+}
+
+/**
+ * Índice por uuid quedándose con la PRIMERA aparición de cada uno.
+ *
+ * En un `.jsonl` los uuid NO son únicos: al compactar, claude REEMITE el segmento preservado con
+ * los mismos uuid pero RECOLGADO del resumen. Medido sobre un transcript real de este contenedor:
+ * 1.873 uuid repetidos en 13.976 entradas.
+ *
+ * Quedarse con la última copia crea un CICLO real, no teórico: la copia reemitida de
+ * `0cf696e4` cuelga del usuario-resumen `35bf3ef8`, que cuelga del `compact_boundary` `ec421d80`,
+ * cuyo `logicalParentUuid` vuelve a `6b60f3c8`, que cuelga otra vez de la copia reemitida. La
+ * cota de ciclos evitaba el cuelgue, pero la respuesta quedaba sin cosechar igual.
+ *
+ * La primera aparición conserva el padre ORIGINAL, es decir la cadena cronológica de verdad, que
+ * es la única que llega hasta la entrada que inyectamos. Medido: con la última copia, la respuesta
+ * del turno `e8f1e4b6…` NO se alcanza (ciclo a los 421 saltos); con la primera y siguiendo
+ * `logicalParentUuid`, se alcanza en 434.
+ */
 export function indexByUuid(
   entries: readonly TranscriptEntry[],
 ): ReadonlyMap<string, TranscriptEntry> {
   const byUuid = new Map<string, TranscriptEntry>();
   for (const entry of entries) {
     const uuid = asString(entry.uuid);
-    if (uuid !== undefined) byUuid.set(uuid, entry);
+    if (uuid !== undefined && !byUuid.has(uuid)) byUuid.set(uuid, entry);
   }
   return byUuid;
 }

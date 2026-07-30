@@ -150,12 +150,20 @@ export async function sendEnter(tmux: TmuxController, target: string): Promise<b
 }
 
 /**
- * El aviso que el dueño ve EN SU PROMPT cuando la sesión compartida no sirvió el turno.
+ * El aviso que el dueño ve EN SU PANEL cuando la sesión compartida no sirvió el turno.
  *
- * Son dos superficies porque una sola no alcanza: `display-message` es inmediato pero se va solo,
- * y el nombre de la ventana persiste en la barra de estado mientras el cliente siga enganchado.
- * Ninguna de las dos escribe en la caja de entrada — eso corrompería lo que el dueño esté
- * tecleando, que es justamente el defecto que este mecanismo tiene que evitar.
+ * Son dos superficies porque una sola no alcanza: `display-message` es inmediato pero se va solo, y
+ * el ROJO de la barra de estado persiste mientras el cliente siga enganchado. Ninguna de las dos
+ * escribe en la caja de entrada — eso corrompería lo que el dueño esté tecleando, que es justamente
+ * el defecto que este mecanismo tiene que evitar.
+ *
+ * Lo que NO se hace nunca es renombrar la ventana. La versión anterior la renombraba a
+ * `⚠ CAUCE-DEGRADADO` y eso se auto-enclavaba: `tuiTarget()` busca la ventana por su NOMBRE
+ * (`cauce-<alias>:agente`), así que en cuanto salía el primer aviso la ventana dejaba de existir
+ * para el propio adaptador y TODAS las entregas siguientes degradaban `tui_absent` en 0,2 s, para
+ * siempre, con la TUI viva delante. `clearDegradation` tampoco podía curarlo, porque apuntaba al
+ * mismo nombre que ya no existía. Verificado de punta a punta el 2026-07-30. El color dice lo
+ * mismo sin tocar la identidad de la ventana.
  *
  * Nunca falla hacia afuera: avisar es importante, pero no puede tumbar un turno que ya se
  * respondió.
@@ -166,21 +174,66 @@ export async function announceDegradation(
   window: string,
   summary: string,
 ): Promise<void> {
-  const oneLine = summary.replace(/\s+/gu, " ").slice(0, 200);
-  await tmux.run(["display-message", "-t", `${session}:${window}`, "-d", "15000", oneLine])
-    .catch(() => undefined);
-  await tmux.run(["rename-window", "-t", `${session}:${window}`, "⚠ CAUCE-DEGRADADO"])
-    .catch(() => undefined);
+  await announceNotice(tmux, session, window, summary);
+  await tmux.run([
+    "set-option", "-w", "-t", `${session}:${window}`, "window-status-style", "bg=red,fg=white",
+  ]).catch(() => undefined);
   await tmux.run(["set-option", "-t", session, "status-style", "bg=red,fg=white"])
     .catch(() => undefined);
 }
 
-/** Devuelve la ventana a su nombre normal cuando un turno vuelve a pasar por la sesión compartida. */
+/**
+ * Aviso EFÍMERO, sin rojo.
+ *
+ * Es para los sucesos que NO son una caída: el turno sí pasó por la terminal, pero su memoria
+ * cambió (se vació con `/clear`, se compactó, o la sesión se acababa de crear). Teñir la barra de
+ * rojo ahí sería mentir en la otra dirección — el mecanismo funciona— y dejaría el rojo pegado en
+ * un panel sano.
+ */
+export async function announceNotice(
+  tmux: TmuxController,
+  session: string,
+  window: string,
+  summary: string,
+): Promise<void> {
+  const oneLine = summary.replace(/\s+/gu, " ").slice(0, 200);
+  await tmux.run(["display-message", "-t", `${session}:${window}`, "-d", "15000", oneLine])
+    .catch(() => undefined);
+}
+
+/** Quita el rojo cuando un turno vuelve a pasar por la sesión compartida. */
 export async function clearDegradation(
   tmux: TmuxController,
   session: string,
   window: string,
 ): Promise<void> {
-  await tmux.run(["rename-window", "-t", `${session}:${window}`, window]).catch(() => undefined);
+  await tmux.run(["set-option", "-w", "-t", `${session}:${window}`, "-u", "window-status-style"])
+    .catch(() => undefined);
   await tmux.run(["set-option", "-t", session, "-u", "status-style"]).catch(() => undefined);
+}
+
+/**
+ * Deshace el enclavamiento que dejó la versión anterior.
+ *
+ * Una sesión que ya degradó con el build viejo tiene su ventana renombrada a `⚠ CAUCE-DEGRADADO` y
+ * está condenada: nunca más volverá a encontrar la TUI. Se repara devolviéndole el nombre, y sólo
+ * en el caso exacto —la ventana buena ausente y la renombrada presente— para no tocar jamás una
+ * ventana que el dueño haya bautizado él.
+ *
+ * Devuelve `true` si reparó algo, para poder decirlo en vez de arreglarlo en silencio.
+ */
+export async function repairLegacyDegradedWindow(
+  tmux: TmuxController,
+  session: string,
+  window: string,
+  legacyName: string,
+): Promise<boolean> {
+  const result = await tmux.run(["list-windows", "-t", `=${session}`, "-F", "#{window_name}"]);
+  if (result.exitCode !== 0) return false;
+  const names = result.stdout.split(/\r?\n/u).map((name) => name.trim());
+  if (names.includes(window) || !names.includes(legacyName)) return false;
+  const renamed = await tmux.run([
+    "rename-window", "-t", `${session}:${legacyName}`, window,
+  ]).catch(() => undefined);
+  return renamed?.exitCode === 0;
 }

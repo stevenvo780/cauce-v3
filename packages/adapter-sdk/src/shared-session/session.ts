@@ -1,8 +1,20 @@
 import { access } from "node:fs/promises";
 import { connect } from "node:net";
-import { capturePane, hasSession, panePid, type TmuxController } from "./tmux.js";
+import {
+  capturePane,
+  hasSession,
+  panePid,
+  repairLegacyDegradedWindow,
+  type TmuxController,
+} from "./tmux.js";
 import { inputBoxState } from "./pane.js";
-import { SERVER_WINDOW, TUI_WINDOW, sessionName, type SharedSessionHarness } from "./types.js";
+import {
+  LEGACY_DEGRADED_WINDOW,
+  SERVER_WINDOW,
+  TUI_WINDOW,
+  sessionName,
+  type SharedSessionHarness,
+} from "./types.js";
 
 /**
  * Cómo se levanta y cómo se mira la sesión compartida de un alias. UNA sola implementación.
@@ -22,6 +34,22 @@ export interface SharedSessionSpec {
   readonly socketPath?: string;
   /** Binario del harness. Se separa para poder apuntarlo a un doble en las pruebas. */
   readonly command?: string;
+  /**
+   * Variables que la TUI tiene que ver SÍ O SÍ, vaya quien vaya a crear la sesión.
+   *
+   * Se aplican en el ARGV del panel (`env K=V … exec …`) y no por el entorno del proceso que llama
+   * a tmux. La diferencia es total y está medida: el servidor tmux se queda con el entorno del
+   * PRIMER cliente que lo crea y DESCARTA el de los siguientes. Prueba en `ws-prizma` el
+   * 2026-07-30, socket aislado: el cliente A creó el servidor con `MARCA=servidor-A`, el cliente B
+   * creó otra sesión con `MARCA=cliente-B`, y los paneles de AMBAS sesiones vieron `servidor-A`.
+   *
+   * Consecuencia real: cualquier variable que ponga el supervisor es INERTE si el dueño abrió su
+   * terminal primero. Ya hay una víctima comprobada: `supervisor.sh` exporta
+   * `TERM=xterm-256color` con el comentario «sin él la TUI se dibuja rota para el dueño», y el
+   * servidor tmux de socrates no tiene `TERM` en absoluto. Como los dos creadores —el adaptador y
+   * `cauce <alias>`— pasan por aquí, el argv es el único punto que tmux no puede descartar.
+   */
+  readonly environment?: Readonly<Record<string, string>>;
 }
 
 export interface EnsureOptions {
@@ -65,8 +93,21 @@ export function tuiTarget(alias: string): string {
  * bandera que lo revele.
  */
 export function transcriptDirectory(home: string, workspace: string): string {
+  return transcriptDirectoryIn(`${home}/.claude`, workspace);
+}
+
+/**
+ * Igual, pero a partir del directorio de configuración EXACTO con el que va a correr la TUI.
+ *
+ * Existe porque el sitio donde `claude` escribe los transcripts y el sitio donde el adaptador los
+ * lee TIENEN que ser el mismo por construcción. Si alguien exporta `CLAUDE_CONFIG_DIR`, el panel lo
+ * respeta (se lo pasamos en su argv) y la cosecha tiene que mirar allí, no en `~/.claude`. Derivar
+ * los dos del mismo valor hace imposible que se separen.
+ */
+export function transcriptDirectoryIn(configDirectory: string, workspace: string): string {
   const slug = workspace.replace(/\/+$/u, "").replace(/\//gu, "-");
-  return `${home}/.claude/projects/${slug === "" ? "-" : slug}`;
+  const root = configDirectory.replace(/\/+$/u, "");
+  return `${root}/projects/${slug === "" ? "-" : slug}`;
 }
 
 /**
@@ -85,7 +126,14 @@ export async function ensureSharedSession(
   const session = sessionName(spec.alias);
   const target = tuiTarget(spec.alias);
   if (await hasSession(tmux, session)) {
-    const pid = await panePid(tmux, target);
+    let pid = await panePid(tmux, target);
+    if (pid === undefined
+      && await repairLegacyDegradedWindow(tmux, session, TUI_WINDOW, LEGACY_DEGRADED_WINDOW)) {
+      // La sesión estaba enclavada por el renombrado de una versión anterior: la ventana existía
+      // pero con otro nombre, así que el adaptador la daba por muerta en cada entrega, para
+      // siempre. Devolverle el nombre la resucita sin tocar la conversación del dueño.
+      pid = await panePid(tmux, target);
+    }
     if (pid === undefined) {
       return {
         ready: false, created: false, failure: "tui_absent",
@@ -124,6 +172,33 @@ export async function ensureSharedSession(
   return { ready: true, created: true, pid, detail: `sesión ${session} creada` };
 }
 
+/**
+ * El prefijo `env K=V …` que fija el entorno del panel, ya escapado para `bash -lc`.
+ *
+ * Devuelve un error en vez de descartar en silencio una variable con nombre inválido: una TUI que
+ * arranca con menos entorno del que se le pidió es exactamente la clase de degradación muda que
+ * este mecanismo existe para eliminar.
+ */
+export function paneEnvironmentPrefix(
+  environment: Readonly<Record<string, string>> | undefined,
+): { ok: true; prefix: string } | { ok: false; detail: string } {
+  const entries = Object.entries(environment ?? {});
+  if (entries.length === 0) return { ok: true, prefix: "" };
+  const parts: string[] = [];
+  for (const [name, value] of entries) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
+      return { ok: false, detail: `nombre de variable inválido para la sesión compartida: ${name}` };
+    }
+    parts.push(`${name}=${shellQuote(value)}`);
+  }
+  return { ok: true, prefix: `env ${parts.join(" ")} ` };
+}
+
+/** Comillas simples, que en POSIX no interpretan NADA. El valor nunca toca el parser del shell. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/gu, "'\\''")}'`;
+}
+
 async function createSession(
   tmux: TmuxController,
   spec: SharedSessionSpec,
@@ -133,12 +208,15 @@ async function createSession(
   const command = spec.command ?? spec.harness;
   const width = String(options.width ?? 200);
   const height = String(options.height ?? 50);
+  const environment = paneEnvironmentPrefix(spec.environment);
+  if (!environment.ok) return { ok: false, detail: environment.detail };
+  const env = environment.prefix;
 
   if (spec.harness === "claude") {
     const result = await tmux.run([
       "new-session", "-d", "-s", session, "-n", TUI_WINDOW,
       "-c", spec.workspace, "-x", width, "-y", height,
-      "bash", "-lc", `exec ${command}`,
+      "bash", "-lc", `exec ${env}${command}`,
     ]);
     return result.exitCode === 0 ? { ok: true } : { ok: false, detail: tmuxError(result.stderr) };
   }
@@ -153,7 +231,7 @@ async function createSession(
   const server = await tmux.run([
     "new-session", "-d", "-s", session, "-n", SERVER_WINDOW,
     "-c", spec.workspace, "-x", width, "-y", height,
-    "bash", "-lc", `exec ${command} app-server --listen unix://${socketPath}`,
+    "bash", "-lc", `exec ${env}${command} app-server --listen unix://${socketPath}`,
   ]);
   if (server.exitCode !== 0) return { ok: false, detail: tmuxError(server.stderr) };
 
@@ -164,7 +242,7 @@ async function createSession(
   const tui = await tmux.run([
     "new-window", "-d", "-t", `${session}:`, "-n", TUI_WINDOW,
     "-c", spec.workspace,
-    "bash", "-lc", `exec ${command} --remote unix://${socketPath}`,
+    "bash", "-lc", `exec ${env}${command} --remote unix://${socketPath}`,
   ]);
   if (tui.exitCode !== 0) return { ok: false, detail: tmuxError(tui.stderr) };
   await tmux.run(["select-window", "-t", `${session}:${TUI_WINDOW}`]);

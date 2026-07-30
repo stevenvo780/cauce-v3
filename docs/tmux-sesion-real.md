@@ -49,11 +49,18 @@ pasó por la terminal se avisa en cuatro sitios a la vez:
 
 1. dentro de la respuesta que te llega por Telegram (`⚠ CAUCE — SESIÓN COMPARTIDA CAÍDA`, con el
    motivo y cómo restablecerlo);
-2. la ventana de tmux pasa a `⚠ CAUCE-DEGRADADO` y la barra se pone roja;
+2. un mensaje en la barra de tmux y la barra de estado en rojo (el nombre de la ventana **no** se
+   toca: renombrarla dejaba al adaptador sin encontrarla nunca más);
 3. `cauce <alias>` te los lee al entrar;
 4. `shared_session_degraded` en el journal del adaptador.
 
 El aviso lo escribe **el adaptador después de validar el sobre**, nunca el modelo.
+
+Hay un segundo tipo de aviso, por los mismos cuatro sitios pero **sin** rojo: el turno **sí** pasó
+por tu terminal, pero su memoria cambió — la terminal se reinició, no había ninguna y hubo que
+crearla, hiciste `/clear` (o `/new` en codex), o el propio harness compactó el contexto. Ahí no se
+degrada nada: se dice, con las cifras cuando el evento las trae, y en el caso de codex el bus pasa a
+seguir el hilo **nuevo**, que es el que estás mirando.
 
 ---
 

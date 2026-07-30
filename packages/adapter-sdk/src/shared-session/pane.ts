@@ -20,11 +20,34 @@ const PENDING_PASTE_MARKS = ["[Pasted text", "paste again to expand"];
 /** Caracteres con los que la TUI dibuja el cursor de entrada. */
 const PROMPT_MARKS = ["❯", ">"];
 
+/**
+ * Por qué no se puede inyectar ahora mismo. La distinción NO cambia la decisión —en los tres casos
+ * se espera y, si no se libera, se degrada— pero sí cambia lo que hay que hacer para arreglarlo,
+ * que es lo único que el dueño lee.
+ *
+ *  - `busy`: hay una línea a medio escribir. Se resuelve sola en segundos, o borrándola.
+ *  - `modal`: la TUI está esperando una RESPUESTA a un diálogo (confiar en la carpeta, elegir
+ *    modelo, aprobar un permiso). No se resuelve sola: hay que contestarlo. Medido el 2026-07-30
+ *    con claude 2.1.220, los tres modales probados dejaban la caja "ocupada" y el aviso decía
+ *    «soltá la línea a medio escribir», que es exactamente lo que NO había que hacer.
+ */
+export type InputBoxKind = "free" | "busy" | "modal";
+
 export interface InputBoxState {
   readonly occupied: boolean;
+  readonly kind: InputBoxKind;
   /** Qué se vio, para el detalle del aviso. Ya recortado. */
   readonly evidence: string;
 }
+
+/**
+ * Cómo se reconoce un diálogo: la línea de prompt es una OPCIÓN NUMERADA.
+ *
+ * Medido: `❯ 1. Yes, I trust this folder` (confianza de carpeta) y `❯ 2. Opus (1M context) ✔`
+ * (`/model`). No es infalible —el dueño podría teclear literalmente "1. algo"— y no hace falta que
+ * lo sea: equivocarse acá sólo cambia el TEXTO del aviso, nunca si se inyecta o no.
+ */
+const MODAL_OPTION = /^\d+\.\s/u;
 
 /**
  * ¿Hay texto del dueño esperando en la caja?
@@ -38,23 +61,41 @@ export interface InputBoxState {
  */
 export function inputBoxState(pane: string | undefined): InputBoxState {
   if (pane === undefined) {
-    return { occupied: true, evidence: "no se pudo capturar el panel" };
+    return { occupied: true, kind: "busy", evidence: "no se pudo capturar el panel" };
   }
   const lines = pane.split(/\r?\n/u);
 
   for (const mark of PENDING_PASTE_MARKS) {
     if (lines.some((line) => line.includes(mark))) {
-      return { occupied: true, evidence: `hay un pegado sin enviar (${mark})` };
+      return { occupied: true, kind: "busy", evidence: `hay un pegado sin enviar (${mark})` };
     }
   }
 
   const promptLine = lastPromptLine(lines);
   if (promptLine === undefined) {
-    return { occupied: true, evidence: "no se encontró la caja de entrada en el panel" };
+    // Un panel EN BLANCO es una TUI que todavía no dibujó nada, no un diálogo: llamarlo modal
+    // mandaría al dueño a contestar algo que no existe. Un panel con contenido pero SIN caja sí es
+    // un diálogo a pantalla completa — medido con `/config`, que la tapa entera.
+    if (pane.trim().length === 0) {
+      return { occupied: true, kind: "busy", evidence: "el panel está en blanco" };
+    }
+    return {
+      occupied: true,
+      kind: "modal",
+      evidence: "no se encontró la caja de entrada en el panel (hay un diálogo a pantalla completa)",
+    };
   }
-  if (promptLine.length === 0) return { occupied: false, evidence: "" };
+  if (promptLine.length === 0) return { occupied: false, kind: "free", evidence: "" };
+  if (MODAL_OPTION.test(promptLine)) {
+    return {
+      occupied: true,
+      kind: "modal",
+      evidence: `la TUI está esperando una respuesta a un diálogo (${promptLine.slice(0, 60)})`,
+    };
+  }
   return {
     occupied: true,
+    kind: "busy",
     evidence: `hay texto sin enviar en la caja (${promptLine.slice(0, 60)})`,
   };
 }

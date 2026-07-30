@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "../sdk/types.js";
 import {
   announceDegradation,
+  announceNotice,
   capturePane,
   clearDegradation,
   hasSession,
@@ -12,17 +13,20 @@ import {
 import { inputBoxState } from "./pane.js";
 import {
   ensureSharedSession,
-  transcriptDirectory,
+  transcriptDirectoryIn,
   tuiTarget,
   type EnsureOptions,
 } from "./session.js";
 import {
+  compactBoundaries,
   findFinalAssistant,
   findInjectedTurn,
   readTranscript,
+  readTranscriptSince,
   stripJsonFence,
   transcriptBaseline,
   transcriptFiles,
+  type TranscriptEntry,
   type TranscriptFileBaseline,
 } from "./transcript.js";
 import { TUI_WINDOW, sessionName } from "./types.js";
@@ -34,6 +38,15 @@ export interface ClaudeSharedSessionOptions {
   readonly workspace: string;
   /** HOME del usuario del contenedor, para resolver `~/.claude/projects`. */
   readonly home: string;
+  /**
+   * Directorio de configuración con el que arranca la TUI (`CLAUDE_CONFIG_DIR`).
+   *
+   * Es de donde cuelgan los transcripts, así que la cosecha y el panel tienen que compartirlo por
+   * construcción. Ausente = `${home}/.claude`, que es lo que resuelve claude sin la variable.
+   */
+  readonly configDirectory?: string;
+  /** Lo que se le fija al panel al crearlo. Ver `SharedSessionSpec.environment`. */
+  readonly environment?: Readonly<Record<string, string>>;
   readonly tmux: TmuxController;
   /**
    * El camino de siempre (`claude --print --output-format json …`).
@@ -86,8 +99,27 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
   private pending: SharedSessionDegradation | undefined;
   /** PID del panel en el turno anterior, para detectar que la TUI se reinició sola. */
   private lastPanePid: string | undefined;
+  /**
+   * `sessionId` del transcript en el que cayó el turno anterior.
+   *
+   * Es la ÚNICA señal que delata un `/clear`. Medido el 2026-07-30 con claude 2.1.220: `/clear`
+   * cierra el `.jsonl` y abre otro con `sessionId` nuevo, sin escribir ninguna marca en el viejo
+   * —simplemente deja de crecer— y SIN reiniciar el proceso: `pane_pid` idéntico antes y después.
+   * O sea que el heurístico de PID no lo ve nunca, y la cosecha sigue funcionando perfecta: el bus
+   * entregaba una respuesta impecable producida por un contexto vacío, con cero señal.
+   */
+  private lastSessionId: string | undefined;
+  /** Compactaciones ya avisadas, para no repetir el aviso en cada sondeo del mismo turno. */
+  private readonly reportedBoundaries = new Set<string>();
 
   constructor(private readonly options: ClaudeSharedSessionOptions) {}
+
+  private transcriptDirectory(): string {
+    return transcriptDirectoryIn(
+      this.options.configDirectory ?? `${this.options.home}/.claude`,
+      this.options.workspace,
+    );
+  }
 
   takeDegradation(): SharedSessionDegradation | undefined {
     const degradation = this.pending;
@@ -107,9 +139,9 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
     // comprueba que la caja está libre y que se envía, no puede haber más esperas de las
     // imprescindibles.
     const acquired = await this.acquireInputBox(target);
-    if (!acquired.ok) return this.degrade("input_busy", acquired.detail, request);
+    if (!acquired.ok) return this.degrade(acquired.reason, acquired.detail, request);
 
-    const directory = transcriptDirectory(this.options.home, this.options.workspace);
+    const directory = this.transcriptDirectory();
     const baseline = await transcriptBaseline(directory);
 
     const buffer = `cauce-${this.options.alias}`;
@@ -140,13 +172,29 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
         harness: "claude",
         workspace: this.options.workspace,
         ...(this.options.command === undefined ? {} : { command: this.options.command }),
+        ...(this.options.environment === undefined ? {} : { environment: this.options.environment }),
       },
       this.ensureOptions(),
     );
     if (!ensure.ready) {
       return { ok: false, reason: ensure.failure ?? "session_absent", detail: ensure.detail };
     }
-    this.notePaneIdentity(ensure.pid);
+    if (ensure.created) {
+      // Resurrección: había que crearla, así que el dueño NO tenía ese panel abierto y la
+      // conversación empieza vacía. `ensure` ya lo sabía y el runner lo tiraba: medido el
+      // 2026-07-30, borrada la sesión, la entrega salió con `exitCode 0` y sin un solo aviso.
+      await this.note({
+        reason: "session_created",
+        detail: `no había sesión compartida y se creó una nueva: ${ensure.detail}`,
+        occurredAt: new Date().toISOString(),
+        fellBack: false,
+      });
+      // Una TUI recién nacida no es "la misma que antes": el PID viejo ya no significa nada.
+      this.lastPanePid = ensure.pid;
+      this.lastSessionId = undefined;
+      return { ok: true };
+    }
+    await this.notePaneIdentity(ensure.pid);
     return { ok: true };
   }
 
@@ -166,15 +214,18 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
    * hablando con una conversación vacía mientras todo parece normal. Se avisa y NO se degrada: el
    * turno sí pasa por la terminal, lo que se perdió es la memoria.
    */
-  private notePaneIdentity(pid: string | undefined): void {
+  private async notePaneIdentity(pid: string | undefined): Promise<void> {
     if (pid === undefined) return;
     if (this.lastPanePid !== undefined && this.lastPanePid !== pid) {
-      this.record({
+      await this.note({
         reason: "context_reset",
         detail: `el panel pasó del proceso ${this.lastPanePid} al ${pid}`,
         occurredAt: new Date().toISOString(),
         fellBack: false,
       });
+      // La conversación de la TUI nueva no tiene nada que ver con la anterior: comparar su
+      // `sessionId` con el de antes daría un `/clear` que nadie hizo.
+      this.lastSessionId = undefined;
     }
     this.lastPanePid = pid;
   }
@@ -186,14 +237,25 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
    * segundos, y degradar de inmediato regalaría el contexto compartido por una pausa de tecleo.
    * Lo que no se hace nunca es escribir encima.
    */
-  private async acquireInputBox(target: string): Promise<{ ok: true } | { ok: false; detail: string }> {
+  private async acquireInputBox(target: string): Promise<
+    { ok: true } | { ok: false; reason: "input_busy" | "modal_blocking"; detail: string }
+  > {
     const deadline = Date.now() + (this.options.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS);
     let evidence = "la caja de entrada nunca quedó libre";
+    let modal = false;
     for (;;) {
       const state = inputBoxState(await capturePane(this.options.tmux, target));
       if (!state.occupied) return { ok: true };
       evidence = state.evidence;
-      if (Date.now() >= deadline) return { ok: false, detail: evidence };
+      modal = state.kind === "modal";
+      if (Date.now() >= deadline) {
+        // El diagnóstico correcto importa porque las dos salidas son OPUESTAS: ante `input_busy`
+        // el dueño tiene que BORRAR lo que escribió, ante un diálogo tiene que CONTESTARLO. El
+        // aviso anterior mandaba a hacer lo primero en los dos casos.
+        return modal
+          ? { ok: false, reason: "modal_blocking", detail: evidence }
+          : { ok: false, reason: "input_busy", detail: evidence };
+      }
       await this.options.sleep(this.options.pollMs ?? DEFAULT_POLL_MS);
     }
   }
@@ -223,6 +285,7 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
     // cuando el fichero creció; y la sesión tmux se comprueba cada tantos sondeos, no en todos.
     let lastSize = -1;
     let probe = 0;
+    const baselineSizes = new Map(baseline.map((entry) => [entry.file, entry.size]));
 
     for (;;) {
       if (request.signal.aborted) {
@@ -239,10 +302,16 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
 
       if (injected === undefined) {
         injected = await this.locateInjectedTurn(directory, baseline, request.stdin);
+        if (injected !== undefined) await this.noteTranscriptIdentity(injected.sessionId);
       }
       if (injected !== undefined && await this.grew(injected.file, lastSize)) {
         lastSize = await fileSize(injected.file);
-        const entries = await readTranscript(injected.file);
+        const slice = await readTranscriptSince(
+          injected.file,
+          baselineSizes.get(injected.file) ?? 0,
+        );
+        const entries = slice.entries;
+        await this.noteCompactions(slice.appended);
         const answer = findFinalAssistant(entries, injected.uuid);
         if (answer !== undefined) {
           const sessionId = answer.sessionId ?? injected.sessionId;
@@ -270,6 +339,54 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
 
   private async grew(file: string, lastSize: number): Promise<boolean> {
     return await fileSize(file) > lastSize;
+  }
+
+  /**
+   * ¿El turno cayó en OTRA conversación que la del turno anterior? Eso es un `/clear`.
+   *
+   * Se comprueba después de inyectar, que es cuando se sabe con certeza en qué fichero quedó el
+   * pedido —antes sólo se podría adivinar cuál es el `.jsonl` "activo"—. No se degrada ni se
+   * bloquea: vaciar el contexto es una acción deliberada del dueño y el camino de siempre también
+   * arrancaría sin memoria, así que degradar perdería lo único que justifica este diseño (que el
+   * turno se vea en el panel) sin ganar nada. Lo que no puede pasar es que el remitente siga
+   * creyendo que habla con el mismo hilo.
+   */
+  private async noteTranscriptIdentity(sessionId: string | undefined): Promise<void> {
+    if (sessionId === undefined) return;
+    if (this.lastSessionId !== undefined && this.lastSessionId !== sessionId) {
+      await this.note({
+        reason: "context_cleared",
+        detail: `la conversación de la terminal pasó de ${this.lastSessionId} a ${sessionId}`
+          + " sin que el proceso se reiniciara (/clear)",
+        occurredAt: new Date().toISOString(),
+        fellBack: false,
+      });
+      this.reportedBoundaries.clear();
+    }
+    this.lastSessionId = sessionId;
+  }
+
+  /**
+   * Compactaciones ocurridas DESDE que se pegó el prompt: sólo lo escrito tras la foto previa.
+   *
+   * Acotarlo a lo nuevo es lo que hace que el aviso signifique algo: un transcript de semanas
+   * contiene decenas de compactaciones viejas y avisar de ellas sería ruido en cada entrega.
+   */
+  private async noteCompactions(appended: readonly TranscriptEntry[]): Promise<void> {
+    for (const event of compactBoundaries(appended)) {
+      if (this.reportedBoundaries.has(event.uuid)) continue;
+      this.reportedBoundaries.add(event.uuid);
+      const tokens = event.preTokens === undefined || event.postTokens === undefined
+        ? ""
+        : ` (${event.preTokens} -> ${event.postTokens} tokens)`;
+      await this.note({
+        reason: "context_compacted",
+        detail: `la terminal compactó su contexto durante este turno, disparo ${event.trigger}`
+          + `${tokens}`,
+        occurredAt: new Date().toISOString(),
+        fellBack: false,
+      });
+    }
   }
 
   /**
@@ -311,7 +428,7 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
    * participado. La degradación silenciosa es indistinguible del éxito, así que no puede existir.
    */
   private async degrade(
-    reason: "session_absent" | "tui_absent" | "input_busy" | "handshake_failed",
+    reason: "session_absent" | "tui_absent" | "input_busy" | "modal_blocking" | "handshake_failed",
     detail: string,
     request: CommandRunRequest,
   ): Promise<CommandRunResult> {
@@ -349,6 +466,23 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
         fellBack: previous.fellBack || degradation.fellBack,
       };
     this.options.onDegradation?.(degradation);
+  }
+
+  /**
+   * Un aviso que NO es una caída: registra y además lo dice en el panel, sin teñirlo de rojo.
+   *
+   * El dueño es el único que puede compensar una compactación —volviendo a pegar lo importante— y
+   * el único que sabe si el `/clear` lo hizo él, así que el aviso tiene que llegarle a él y no
+   * sólo al remitente de Telegram.
+   */
+  private async note(degradation: SharedSessionDegradation): Promise<void> {
+    this.record(degradation);
+    await announceNotice(
+      this.options.tmux,
+      sessionName(this.options.alias),
+      TUI_WINDOW,
+      `CAUCE: ${degradation.reason} — ${degradation.detail}`,
+    );
   }
 }
 

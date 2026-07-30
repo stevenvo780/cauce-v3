@@ -144,9 +144,16 @@ Acá una caída se ve en **cuatro** sitios:
 | Superficie | Qué se ve |
 |---|---|
 | El "reply" que llega por Telegram | `⚠ CAUCE — SESIÓN COMPARTIDA CAÍDA` + motivo + cómo restablecerlo |
-| El panel del dueño | la ventana pasa a `⚠ CAUCE-DEGRADADO` y la barra de estado se pone roja |
+| El panel del dueño | mensaje inmediato en la barra + la barra de estado **en rojo** |
 | `cauce <alias>` | lista los avisos pendientes **antes** de enganchar |
 | El journal del adaptador | `{"event":"shared_session_degraded",…}` |
+
+> La ventana **no** se renombra. Antes se renombraba a `⚠ CAUCE-DEGRADADO` y eso se auto-enclavaba:
+> el adaptador busca la ventana por su nombre (`cauce-<alias>:agente`), así que en cuanto salía el
+> primer aviso dejaba de encontrarla y **todas** las entregas siguientes degradaban `tui_absent` en
+> 0,2 s, para siempre, con la TUI viva delante y diciendo la mentira «la sesión existe pero no tiene
+> panel de TUI». Una sesión que haya quedado así con el build viejo se repara sola en el siguiente
+> turno: se le devuelve el nombre.
 
 El aviso lo escribe **el adaptador, después de validar el sobre**, nunca el modelo. Ya se demostró
 que un agente puede falsificar cualquier señal que venga de su stdout (un descendiente que hereda el
@@ -160,13 +167,39 @@ Motivos posibles:
 | `session_absent` | no hay sesión tmux y no se pudo crear | sí |
 | `tui_absent` | la sesión existe pero no hay TUI viva / hilo cargado | sí |
 | `input_busy` | el dueño dejó texto a medio escribir y no lo soltó | sí |
+| `modal_blocking` | la TUI está esperando que el dueño conteste un diálogo | sí |
 | `handshake_failed` | el mecanismo no respondió | sí |
 | `context_reset` | la TUI se reinició sola y la conversación empezó de cero | **no** |
+| `session_created` | no había terminal abierta: se creó una nueva y vacía | **no** |
+| `context_cleared` | el dueño vació el contexto (`/clear`, `/new`) | **no** |
+| `context_compacted` | la terminal compactó: lo anterior quedó resumido | **no** |
 
-`context_reset` es el único que no degrada: el turno **sí** pasa por la terminal, lo que se perdió es
-la memoria. Se avisa igual porque desde fuera «compartida y vacía» es indistinguible de «compartida y
-completa». La causa medida es que `claude` se auto-actualiza y se relanza solo (visto
-`Auto-updating…` con la TUI reportando 2.1.179 y el binario en 2.1.220).
+Los cuatro últimos **no** degradan: el turno **sí** pasa por la terminal, lo que cambió es la
+memoria. Se avisan igual porque desde fuera «compartida y vacía» es indistinguible de «compartida y
+completa». Van con marca propia (`⚠ CAUCE — LA TERMINAL SE REINICIÓ` los dos primeros,
+`⚠ CAUCE — EL CONTEXTO DE LA TERMINAL CAMBIÓ` los otros dos) y llegan **también** al panel del
+dueño, sin rojo: él es el único que puede compensar una compactación volviendo a pegar lo
+importante.
+
+Cómo se detecta cada uno, todo medido el 2026-07-30:
+
+- `context_reset`: cambia el `pane_pid`. La causa medida es que `claude` se auto-actualiza y se
+  relanza solo (visto `Auto-updating…` con la TUI reportando 2.1.179 y el binario en 2.1.220).
+- `session_created`: `ensure` tuvo que crear la sesión. Antes se descartaba ese dato: con la sesión
+  borrada, la entrega se respondía en 75,9 s con `exitCode 0` y **cero** avisos.
+- `context_cleared`: en claude, el `.jsonl` activo cambia de `sessionId` **sin** que cambie el
+  `pane_pid` —por eso el heurístico del PID no lo ve nunca—; en codex, `thread/loaded/list` empieza
+  a devolver un hilo más. En codex hay un corolario obligatorio: se sigue el hilo **nuevo**.
+  Quedarse en el viejo daba respuestas plausibles de una conversación que el dueño ya no mira.
+- `context_compacted`: en claude, un `compact_boundary` nuevo en el transcript (con `trigger` y
+  `preTokens`→`postTokens`); en codex, un item `contextCompaction` dentro del turno.
+
+Una compactación además **corta la cadena de padres** del transcript (`parentUuid: null`, la
+continuidad sólo en `logicalParentUuid`) y **reemite** el segmento preservado con los mismos uuid
+recolgados del resumen. Sin tratar las dos cosas, una compactación a mitad del turno del bus hacía
+que la respuesta no se cosechara **nunca**: una hora de presupuesto y `EXECUTION_TIMEOUT_AMBIGUOUS`
+con el agente ya habiendo contestado. Eso no es contexto perdido, es **entrega** perdida, y es un
+bug, no una política.
 
 ---
 

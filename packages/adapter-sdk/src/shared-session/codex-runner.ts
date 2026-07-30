@@ -1,7 +1,12 @@
 import { access } from "node:fs/promises";
 import WebSocket from "ws";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "../sdk/types.js";
-import { announceDegradation, clearDegradation, type TmuxController } from "./tmux.js";
+import {
+  announceDegradation,
+  announceNotice,
+  clearDegradation,
+  type TmuxController,
+} from "./tmux.js";
 import { ensureSharedSession, type EnsureOptions } from "./session.js";
 import { TUI_WINDOW, sessionName } from "./types.js";
 import type { SharedSessionDegradation, SharedSessionRunner } from "./types.js";
@@ -18,6 +23,8 @@ export interface CodexSharedSessionOptions {
   readonly turnTimeoutMs?: number;
   readonly readyTimeoutMs?: number;
   readonly command?: string;
+  /** Lo que se le fija al panel al crearlo. Ver `SharedSessionSpec.environment`. */
+  readonly environment?: Readonly<Record<string, string>>;
   readonly onDegradation?: (degradation: SharedSessionDegradation) => void;
   /** Fábrica del transporte, para poder sustituirla por un doble en las pruebas. */
   readonly connect?: (socketPath: string) => AppServerLink;
@@ -183,11 +190,24 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
         workspace: this.options.workspace,
         socketPath: this.options.socketPath,
         ...(this.options.command === undefined ? {} : { command: this.options.command }),
+        ...(this.options.environment === undefined ? {} : { environment: this.options.environment }),
       },
       this.ensureOptions(),
     );
     if (!ensure.ready) {
       return this.degrade(ensure.failure ?? "session_absent", ensure.detail, request);
+    }
+    if (ensure.created) {
+      // El dueño no tenía esta terminal abierta: la acabamos de crear para servir el turno, y su
+      // hilo nace vacío. Sin este aviso la resurrección es indistinguible de una sesión compartida
+      // de verdad.
+      await this.note({
+        reason: "session_created",
+        detail: `no había sesión compartida y se creó una nueva: ${ensure.detail}`,
+        occurredAt: new Date().toISOString(),
+        fellBack: false,
+      });
+      this.lastThreadId = undefined;
     }
     if (!await access(this.options.socketPath).then(() => true, () => false)) {
       return this.degrade("session_absent", `no existe el socket ${this.options.socketPath}`, request);
@@ -251,7 +271,8 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
 
     const loaded = await call("thread/loaded/list", {}, 2);
     if (!loaded.ok) return this.degrade("handshake_failed", loaded.detail, request);
-    const threadId = this.pickThread(loaded.result);
+    const threads = listThreads(loaded.result);
+    const threadId = threads[threads.length - 1];
     if (threadId === undefined) {
       return this.degrade(
         "tui_absent",
@@ -260,8 +281,12 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
       );
     }
     if (this.lastThreadId !== undefined && this.lastThreadId !== threadId) {
-      this.record({
-        reason: "context_reset",
+      // Dos sucesos distintos, y el dueño tiene que poder distinguirlos:
+      //  - el hilo anterior SIGUE cargado y hay uno más nuevo -> el dueño hizo `/new`. Se sigue el
+      //    nuevo, que es el que él está mirando.
+      //  - el hilo anterior YA NO ESTÁ -> el app-server o la TUI se reiniciaron.
+      await this.note({
+        reason: threads.includes(this.lastThreadId) ? "context_cleared" : "context_reset",
         detail: `el hilo vivo pasó de ${this.lastThreadId} a ${threadId}`,
         occurredAt: new Date().toISOString(),
         fellBack: false,
@@ -279,34 +304,19 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
       input: [{ type: "text", text: request.stdin }],
     }, 4);
     if (!started.ok) return this.degrade("handshake_failed", started.detail, request);
+    const turnId = startedTurnId(started.result);
 
     // Turno en marcha: desde acá no se degrada nunca, porque reejecutar por el camino de siempre
     // correría el trabajo dos veces.
     await clearDegradation(this.options.tmux, sessionName(this.options.alias), TUI_WINDOW);
-    return this.collect(inbox, buffered, threadId, request);
-  }
-
-  /**
-   * Cuál de los hilos cargados es el del dueño.
-   *
-   * Con una TUI por alias hay exactamente uno. Si hubiera varios se prefiere el que ya se usó en
-   * el turno anterior —para no saltar de conversación a mitad de una tarea— y en su defecto el
-   * último cargado, que es el que acaba de abrir la TUI.
-   */
-  private pickThread(result: unknown): string | undefined {
-    if (typeof result !== "object" || result === null) return undefined;
-    const data = (result as { data?: unknown }).data;
-    if (!Array.isArray(data)) return undefined;
-    const threads = data.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
-    if (threads.length === 0) return undefined;
-    if (this.lastThreadId !== undefined && threads.includes(this.lastThreadId)) return this.lastThreadId;
-    return threads[threads.length - 1];
+    return this.collect(inbox, buffered, threadId, turnId, request);
   }
 
   private async collect(
     inbox: AsyncIterator<AppServerMessage>,
     buffered: AppServerMessage[],
     threadId: string,
+    turnId: string | undefined,
     request: CommandRunRequest,
   ): Promise<CommandRunResult> {
     const budget = Math.min(
@@ -337,12 +347,34 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
       const params = asObject(message.params);
       if (params === undefined) continue;
       if (params.threadId !== undefined && params.threadId !== threadId) continue;
+      // Y del turno correcto. El hilo es COMPARTIDO: si el dueño escribe en su panel mientras
+      // corre el turno del bus, su `turn/completed` cortaría la cosecha y nos llevaríamos su
+      // respuesta o un `exitCode 1` inventado. `turn/start` devuelve el id del nuestro, así que no
+      // hay que adivinar. Las notificaciones de item lo traen en `params.turnId`; las de turno, en
+      // `params.turn.id` (verificado contra el esquema que emite `app-server
+      // generate-json-schema` y contra capturas reales de 0.145.0).
+      if (turnId !== undefined) {
+        const observed = observedTurnId(params);
+        if (observed !== undefined && observed !== turnId) continue;
+      }
 
       if (message.method === "item/completed") {
         const item = asObject(params.item);
         if (item?.type === "agentMessage" && typeof item.text === "string") {
           answer = item.text;
           if (item.phase === "final_answer") finalAnswer = item.text;
+        }
+        // La compactación de codex pasa DELANTE de estas narices como un item más y hasta ahora se
+        // descartaba con un `continue`. No rompe la cosecha —el `agentMessage` llega igual— pero
+        // el remitente se queda creyendo que habla con el contexto entero cuando ya es un resumen.
+        if (item?.type === "contextCompaction") {
+          await this.note({
+            reason: "context_compacted",
+            detail: "la terminal compactó su contexto durante este turno"
+              + (typeof item.id === "string" ? ` (item ${item.id})` : ""),
+            occurredAt: new Date().toISOString(),
+            fellBack: false,
+          });
         }
         continue;
       }
@@ -405,6 +437,47 @@ export class CodexSharedSessionRunner implements SharedSessionRunner {
       };
     this.options.onDegradation?.(degradation);
   }
+
+  /** Aviso que NO es una caída: al remitente y al panel del dueño, sin teñir nada de rojo. */
+  private async note(degradation: SharedSessionDegradation): Promise<void> {
+    this.record(degradation);
+    await announceNotice(
+      this.options.tmux,
+      sessionName(this.options.alias),
+      TUI_WINDOW,
+      `CAUCE: ${degradation.reason} — ${degradation.detail}`,
+    );
+  }
+}
+
+/**
+ * Los hilos cargados, en el orden en que los da el app-server.
+ *
+ * El ÚLTIMO es el que el dueño está mirando: `/new` añade uno y no cierra el anterior —no hay
+ * `thread/closed` y `thread/loaded/list` pasa a devolver los dos, medido el 2026-07-30—. Preferir
+ * el del turno anterior "para no saltar de conversación" sonaba prudente y era lo peor de todos los
+ * mundos: tras un `/new` el adaptador se quedaba hablando con el hilo ABANDONADO. Demostrado en
+ * vivo: turno aceptado, `agentMessage` correcto, `turn/completed` correcto… y en el panel del dueño
+ * no apareció nada. El bus cobra una respuesta plausible de una conversación que ya nadie mira.
+ */
+function listThreads(result: unknown): readonly string[] {
+  if (typeof result !== "object" || result === null) return [];
+  const data = (result as { data?: unknown }).data;
+  if (!Array.isArray(data)) return [];
+  return data.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
+/** El id del turno que acabamos de arrancar, tal como lo devuelve `turn/start`. */
+function startedTurnId(result: unknown): string | undefined {
+  const turn = asObject(asObject(result)?.turn);
+  return typeof turn?.id === "string" && turn.id.length > 0 ? turn.id : undefined;
+}
+
+/** El id de turno que trae una notificación, esté donde esté. */
+function observedTurnId(params: Record<string, unknown>): string | undefined {
+  if (typeof params.turnId === "string" && params.turnId.length > 0) return params.turnId;
+  const turn = asObject(params.turn);
+  return typeof turn?.id === "string" && turn.id.length > 0 ? turn.id : undefined;
 }
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
