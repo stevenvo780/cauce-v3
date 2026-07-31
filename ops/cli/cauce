@@ -130,9 +130,9 @@ s.on("timeout",()=>process.exit(1));
 
 # ---------- entrar ----------
 cmd_entrar() {
-  local a=$1 line ctr cuser state harness ad salida
+  local a=$1 line ctr cuser chome state harness ad salida
   line=$(alias_info "$a") || { echo "alias desconocido: $a"; exit 2; }
-  IFS=$'\t' read -r _ _ ctr cuser _ state harness _ <<<"$line"
+  IFS=$'\t' read -r _ _ ctr cuser chome state harness _ <<<"$line"
   ad=$(adaptador_activo "$a")
 
   printf "\n  ${c_b}%s${c_reset} · %s · %s\n" "$a" "$harness" "$ctr"
@@ -183,7 +183,7 @@ for line in sys.stdin:
       printf "    · el PEDIDO del bus no se pinta en vivo (la respuesta si): veras respuestas sin pregunta\n"
       printf "    · veras el sobre JSON crudo y el prompt de protocolo entero\n"
       printf "    · el agente NO recuerda lo que EL te contesto a vos (lo que vos escribis si lo ve)${c_reset}\n\n"
-      exec docker exec -it --user "$cuser" -w /workspace "$ctr" openclaw tui --session "$clave_oc"
+      exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" openclaw tui --session "$clave_oc"
     fi
   elif [[ $harness == claude || $harness == codex ]]; then
     printf "  ${c_dim}este alias no tiene sesion compartida encendida (falta SHARED_SESSION=1 en su .env)${c_reset}\n"
@@ -203,7 +203,7 @@ for line in sys.stdin:
               printf "  ${c_dim}comparte el ESTADO con el bus y aun asi el panel es CIEGO (el turno del${c_reset}\n"
               printf "  ${c_dim}bus nunca aparece). La conversacion mutaria debajo tuyo sin dejar rastro.${c_reset}\n"
               printf "  ${c_dim}Te abro un shell; para la TUI compartida hace falta gateway.${c_reset}\n\n"
-              exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l ;;
+              exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" bash -l ;;
       *)      printf "  ${c_dim}sin TUI propia: te abro un shell${c_reset}\n\n"
               exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l ;;
     esac
