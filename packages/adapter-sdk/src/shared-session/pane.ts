@@ -17,8 +17,15 @@
 /** Marcas que la TUI de claude deja cuando la caja tiene un pegado sin enviar. */
 const PENDING_PASTE_MARKS = ["[Pasted text", "paste again to expand"];
 
-/** Caracteres con los que la TUI dibuja el cursor de entrada. */
-const PROMPT_MARKS = ["❯", ">"];
+/**
+ * Caracteres con los que la TUI dibuja el cursor de entrada.
+ *
+ * `❯` es el de claude y `›` (U+203A) el de codex. Sin el de codex el barrido de abajo
+ * hacia arriba pasaba de largo la caja real y enganchaba el banner `>_ OpenAI Codex (vX)` del
+ * propio programa, que empieza por `>` y nunca cambia: la caja quedaba "ocupada" para siempre y
+ * TODO turno degradaba a los 90 s. Medido en el panel vivo de socrates el 2026-07-31.
+ */
+const PROMPT_MARKS = ["❯", "›", ">"];
 
 /**
  * Por qué no se puede inyectar ahora mismo. La distinción NO cambia la decisión —en los tres casos
@@ -111,10 +118,53 @@ function lastPromptLine(lines: readonly string[]): string | undefined {
     const raw = lines[index];
     if (raw === undefined) continue;
     // El recuadro de la caja puede envolver la línea en bordes verticales.
-    const line = raw.replace(/^\s*│/u, "").replace(/│\s*$/u, "").trim();
+    const line = stripSgr(raw).replace(/^\s*│/u, "").replace(/│\s*$/u, "").trim();
     for (const mark of PROMPT_MARKS) {
-      if (line.startsWith(mark)) return line.slice(mark.length).trim();
+      if (!line.startsWith(mark)) continue;
+      const content = line.slice(mark.length).trim();
+      // El texto FANTASMA de codex (la sugerencia de ejemplo que dibuja cuando la caja está
+      // vacía) viene atenuado; lo que el dueño teclea de verdad, nunca. Verificado el 2026-07-31
+      // contra el panel vivo de socrates: `› Find and fix a bug in @filename` con SGR
+      // ['1','0','2','0'] — el 2 es el dim. Si la línea no trae estilos (captura sin `-e`) esto
+      // no se activa nunca y el comportamiento queda idéntico al anterior.
+      if (content !== "" && isEntirelyDim(raw, mark)) return "";
+      return content;
     }
   }
   return undefined;
+}
+
+/** Quita los códigos SGR para poder comparar el texto. */
+function stripSgr(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/\u001b\[[0-9;]*m/gu, "");
+}
+
+/**
+ * ¿Todo lo que sigue a la marca del cursor está atenuado?
+ *
+ * Se mira SÓLO la línea del cursor y SÓLO cuando la captura trae estilos, así que no puede
+ * tragarse texto real: en claude el texto sin enviar se dibuja normal. La alternativa que se
+ * descartó —tratar como vacío todo lo dim del panel— sí se lo comía, y está medida.
+ */
+function isEntirelyDim(raw: string, mark: string): boolean {
+  const at = raw.indexOf(mark);
+  if (at < 0) return false;
+  const tail = raw.slice(at + mark.length);
+  // eslint-disable-next-line no-control-regex
+  const segments = tail.split(/\u001b\[([0-9;]*)m/gu);
+  let dim = false;
+  let vioTextoNoAtenuado = false;
+  for (let i = 0; i < segments.length; i += 1) {
+    const seg = segments[i];
+    if (seg === undefined) continue;
+    if (i % 2 === 1) {
+      const codes = seg.split(";").filter((c) => c !== "");
+      if (codes.length === 0 || codes.includes("0")) dim = false;
+      if (codes.includes("2")) dim = true;
+      continue;
+    }
+    if (seg.trim() !== "" && !dim) vioTextoNoAtenuado = true;
+  }
+  return !vioTextoNoAtenuado;
 }

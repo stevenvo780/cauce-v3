@@ -8,22 +8,19 @@ import { HarnessAdapter } from "../src/harnesses/shared.js";
 import { claudeDefinition, codexDefinition } from "../src/harnesses/index.js";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "../src/sdk/types.js";
 import type { TmuxController, TmuxResult } from "../src/shared-session/tmux.js";
-import { ClaudeSharedSessionRunner } from "../src/shared-session/claude-runner.js";
-import {
-  CodexSharedSessionRunner,
-  type AppServerLink,
-  type AppServerMessage,
-} from "../src/shared-session/codex-runner.js";
+import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
 import { CONTEXT_MARK, DEGRADED_MARK, RESET_MARK } from "../src/shared-session/notice.js";
 import { readDegradations } from "../src/shared-session/degradation-log.js";
 import { inputBoxState } from "../src/shared-session/pane.js";
 import {
+  claudeTranscript,
   descendsFrom,
   findFinalAssistant,
   indexByUuid,
   stripJsonFence,
   type TranscriptEntry,
 } from "../src/shared-session/transcript.js";
+import { codexTranscript, rolloutSessionId, type RolloutLine } from "../src/shared-session/rollout.js";
 import {
   ensureSharedSession,
   paneEnvironmentPrefix,
@@ -170,16 +167,18 @@ const immediate = (): Promise<void> => Promise.resolve();
 
 function claudeRunner(
   options: { alias: string; home: string; workspace: string; tmux: FakeTmux; fallback: CommandRunner },
-): ClaudeSharedSessionRunner {
-  return new ClaudeSharedSessionRunner({
+): PasteSessionRunner<TranscriptEntry> {
+  return new PasteSessionRunner({
     alias: options.alias,
-    home: options.home,
+    harness: "claude",
     workspace: options.workspace,
+    transcript: claudeTranscript(join(options.home, ".claude"), options.workspace),
     tmux: options.tmux,
     fallback: options.fallback,
     sleep: immediate,
     acquireTimeoutMs: 30,
     turnTimeoutMs: 2_000,
+    settleMs: 0,
     pollMs: 1,
     readyTimeoutMs: 30,
   });
@@ -475,165 +474,246 @@ test("una TUI reiniciada avisa aunque el turno si pase por la terminal", async (
 });
 
 // ---------------------------------------------------------------------------
-// codex: el sobre llega como campo tipado del protocolo.
+// codex: el MISMO mecanismo, y el sobre sale de su rollout.
 // ---------------------------------------------------------------------------
 
-class FakeLink implements AppServerLink {
-  readonly sent: Record<string, unknown>[] = [];
-  private queue: AppServerMessage[] = [];
-  private waiter: ((value: IteratorResult<AppServerMessage>) => void) | undefined;
-  private ended = false;
-
-  /**
-   * `eager` emite las notificaciones del turno ANTES de contestar a `turn/start`. El servidor
-   * puede hacerlo, y un cliente que descarte lo que llega mientras espera una respuesta se queda
-   * colgado para siempre.
-   */
-  constructor(
-    private readonly threads: readonly string[],
-    private readonly answer?: string,
-    private readonly eager = false,
-  ) {}
-
-  open(): Promise<void> {
-    return Promise.resolve();
-  }
-
-  send(message: Record<string, unknown>): void {
-    this.sent.push(message);
-    const id = message.id;
-    if (message.method === "initialize") this.push({ id, result: {} });
-    if (message.method === "thread/loaded/list") this.push({ id, result: { data: this.threads } });
-    if (message.method === "thread/resume") this.push({ id, result: {} });
-    if (message.method === "turn/start") {
-      const threadId = this.threads[this.threads.length - 1];
-      const answer = (): void => {
-        // El pedido vuelve como `userMessage`: un TIPO DISTINTO. Por eso no existe la ambigüedad
-        // del eco que descalificó a la salida (b).
-        this.push({
-          method: "item/completed",
-          params: { threadId, turnId: "t1", item: { id: "i0", type: "userMessage", content: [] } },
-        });
-        this.push({
-          method: "item/completed",
-          params: {
-            threadId, turnId: "t1",
-            item: { id: "i1", type: "agentMessage", text: this.answer ?? envelopeText("desde codex"), phase: "final_answer" },
-          },
-        });
-        this.push({ method: "turn/completed", params: { threadId, turn: { id: "t1", status: "completed", items: [] } } });
-      };
-      if (this.eager) answer();
-      this.push({ id, result: { turn: { id: "t1", status: "inProgress", items: [] } } });
-      if (!this.eager) answer();
-    }
-  }
-
-  messages(): AsyncIterable<AppServerMessage> {
-    return {
-      [Symbol.asyncIterator]: (): AsyncIterator<AppServerMessage> => ({
-        next: (): Promise<IteratorResult<AppServerMessage>> => {
-          const value = this.queue.shift();
-          if (value !== undefined) return Promise.resolve({ value, done: false });
-          if (this.ended) return Promise.resolve({ value: undefined, done: true });
-          return new Promise((resolveNext) => {
-            this.waiter = resolveNext;
-          });
-        },
-      }),
-    };
-  }
-
-  close(): void {
-    this.ended = true;
-    const waiter = this.waiter;
-    this.waiter = undefined;
-    waiter?.({ value: undefined, done: true });
-  }
-
-  private push(message: AppServerMessage): void {
-    const waiter = this.waiter;
-    if (waiter === undefined) {
-      this.queue.push(message);
-      return;
-    }
-    this.waiter = undefined;
-    waiter({ value: message, done: false });
-  }
+/**
+ * Una línea de rollout con la forma EXACTA que escribe codex 0.144.6.
+ *
+ * Copiada del rollout vivo de socrates del 2026-07-31, no de la documentación: es el fichero en el
+ * que quedó registrado el `PEGADO` que se probó a mano en su panel.
+ */
+function rolloutLine(type: string, payload: Record<string, unknown>): string {
+  return JSON.stringify({ timestamp: new Date().toISOString(), type, payload });
 }
 
-function codexRunner(
-  alias: string,
-  tmux: FakeTmux,
-  fallback: CommandRunner,
-  link: AppServerLink,
-): CodexSharedSessionRunner {
-  return new CodexSharedSessionRunner({
-    alias,
-    workspace: "/workspace",
-    // El socket se comprueba con `access`; se apunta a un fichero que sí existe para que la
-    // prueba ejercite el protocolo y no el chequeo de presencia.
-    socketPath: resolve("package.json"),
-    tmux,
-    fallback,
-    sleep: immediate,
-    turnTimeoutMs: 2_000,
-    readyTimeoutMs: 30,
-    connect: () => link,
+function codexStarted(turnId: string): string {
+  return rolloutLine("event_msg", { type: "task_started", turn_id: turnId });
+}
+
+/** El pedido, tal como lo registra codex: `response_item` de rol `user` CON su `turn_id`. */
+function codexUser(text: string, turnId: string): string {
+  return rolloutLine("response_item", {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text }],
+    internal_chat_message_metadata_passthrough: { turn_id: turnId },
   });
 }
 
-test("codex saca el sobre de un campo tipado del protocolo", async () => {
-  const { state } = await freshState("codex-sobre");
-  const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
-  const link = new FakeLink(["019fb4a9-25f7-7f10-92ac-871fd93b2989"]);
+/** El cierre del turno, que trae el desenlace Y la respuesta final, los dos con `turn_id`. */
+function codexComplete(turnId: string, text: string): string {
+  return rolloutLine("event_msg", {
+    type: "task_complete", turn_id: turnId, last_agent_message: text,
+  });
+}
 
-  const runner = codexRunner("socrates", tmux, fallback, link);
+function codexAborted(turnId: string): string {
+  return rolloutLine("event_msg", {
+    type: "turn_aborted", turn_id: turnId, reason: "interrupted",
+  });
+}
+
+async function codexWorkspace(name: string): Promise<{
+  state: string;
+  codexHome: string;
+  rollout: string;
+  sessionId: string;
+}> {
+  const { state, home } = await freshState(name);
+  const codexHome = join(home, ".codex");
+  const day = join(codexHome, "sessions", "2026", "07", "31");
+  await mkdir(day, { recursive: true });
+  const sessionId = randomUUID();
+  // El nombre lleva el session_id, que es de donde sale la sesión observada sin abrir el fichero.
+  const rollout = join(day, `rollout-2026-07-31T16-33-07-${sessionId}.jsonl`);
+  await appendFile(rollout, `${rolloutLine("session_meta", { session_id: sessionId })}\n`);
+  return { state, codexHome, rollout, sessionId };
+}
+
+function codexRunner(
+  options: { alias: string; codexHome: string; tmux: FakeTmux; fallback: CommandRunner },
+): PasteSessionRunner<RolloutLine> {
+  return new PasteSessionRunner({
+    alias: options.alias,
+    harness: "codex",
+    workspace: "/workspace",
+    transcript: codexTranscript(options.codexHome),
+    tmux: options.tmux,
+    fallback: options.fallback,
+    sleep: immediate,
+    acquireTimeoutMs: 30,
+    turnTimeoutMs: 2_000,
+    injectTimeoutMs: 20,
+    settleMs: 0,
+    pollMs: 1,
+    readyTimeoutMs: 30,
+  });
+}
+
+test("el turno del bus entra por la caja de codex y el sobre sale de su rollout", async () => {
+  const { state, codexHome, rollout, sessionId } = await codexWorkspace("codex-sobre");
+  const tmux = new FakeTmux();
+  // La caja de codex se dibuja con `›`, no con `❯`.
+  tmux.paneContent = "› ";
+  const fallback = new RecordingFallback("{}");
+  const turnId = "019fb910-ddd9-7d80-af14-8cb69357d917";
+  tmux.onSubmit = async (text) => {
+    await appendFile(rollout, `${[
+      codexStarted(turnId),
+      codexUser(text, turnId),
+      codexComplete(turnId, envelopeText("desde codex")),
+    ].join("\n")}\n`);
+  };
+
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
   const adapter = await adapterFor(runner, state, "socrates", "codex");
   const output = await execute(adapter);
 
   assert.equal(output.reply, "desde codex");
   assert.equal(fallback.calls, 0);
-  // `thread/resume` es lo que suscribe: sin él no llega ninguna notificación.
-  const methods = link.sent.map((message) => message.method);
-  assert.deepEqual(methods, ["initialize", "thread/loaded/list", "thread/resume", "turn/start"]);
+  // El pedido entró por la caja de entrada, entre corchetes y como UNA sola entrada.
+  assert.ok(tmux.used("load-buffer"));
+  assert.ok(tmux.calls.some((call) => call[0] === "paste-buffer" && call.includes("-p")));
+  assert.equal(tmux.submittedCount, 1);
+  // Y la conversación observada es la del rollout, que es la que reanudaría el camino de siempre.
+  assert.equal(rolloutSessionId(rollout), sessionId);
 });
 
-test("codex sin hilo vivo degrada con aviso en vez de fingir que comparte", async () => {
-  const { state } = await freshState("codex-sin-hilo");
+test("codex recorta el salto final al enviar y aun así se reconoce el turno", async () => {
+  // Medido en ws-prizma el 2026-07-31: se pegó un fichero de 88 bytes acabado en `\n` y el
+  // `response_item` guardó 87. `protocolPrompt` termina SIEMPRE en `\n`, así que con igualdad
+  // byte a byte el runner no reconocería jamás su propio turno; vería el `task_started` —el turno
+  // corrió de verdad— y esperaría el presupuesto entero. El dueño: agente mudo 30 minutos con la
+  // respuesta ya escrita en su panel.
+  const { state, codexHome, rollout } = await codexWorkspace("codex-recorte");
   const tmux = new FakeTmux();
-  const fallback = new RecordingFallback(
-    [JSON.stringify({ type: "thread.started", thread_id: "x" }),
-      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: envelopeText("clasico") } })].join("\n"),
-  );
-  const link = new FakeLink([]);
+  tmux.paneContent = "› ";
+  const fallback = new RecordingFallback("{}");
+  const turnId = "019fb92d-2577-7c12-a243-7152c7e05bce";
+  tmux.onSubmit = async (text) => {
+    // Exactamente lo que hace la caja de codex: recorta el blanco final.
+    assert.ok(/\s$/u.test(text), "el prompt de protocolo tiene que llegar con blanco al final");
+    await appendFile(rollout, `${[
+      codexStarted(turnId),
+      codexUser(text.replace(/\s+$/u, ""), turnId),
+      codexComplete(turnId, envelopeText("recortado y reconocido")),
+    ].join("\n")}\n`);
+  };
 
-  const runner = codexRunner("socrates", tmux, fallback, link);
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const adapter = await adapterFor(runner, state, "socrates", "codex");
+  const output = await execute(adapter);
+
+  assert.equal(output.reply, "recortado y reconocido");
+  // Lo que importa: NO degradó al camino de siempre y NO se comió el presupuesto.
+  assert.equal(fallback.calls, 0);
+});
+
+test("el turno del dueño no puede cortar la cosecha del turno del bus", async () => {
+  // El rollout es COMPARTIDO: mientras corre el turno del bus, el dueño puede lanzar el suyo desde
+  // el panel. Sin filtrar por `turn_id`, su `task_complete` cerraría la cosecha y el bus se
+  // llevaría la respuesta ajena.
+  const { state, codexHome, rollout } = await codexWorkspace("codex-turno-ajeno");
+  const tmux = new FakeTmux();
+  const fallback = new RecordingFallback("{}");
+  tmux.onSubmit = async (text) => {
+    await appendFile(rollout, `${[
+      codexStarted("turno-del-bus"),
+      codexUser(text, "turno-del-bus"),
+      codexStarted("turno-del-dueño"),
+      codexUser("lo que escribió el dueño", "turno-del-dueño"),
+      codexComplete("turno-del-dueño", envelopeText("RESPUESTA AJENA")),
+      codexComplete("turno-del-bus", envelopeText("MI RESPUESTA")),
+    ].join("\n")}\n`);
+  };
+
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const adapter = await adapterFor(runner, state, "socrates", "codex");
+  const output = await execute(adapter);
+
+  assert.equal(output.reply, "MI RESPUESTA");
+  assert.equal(fallback.calls, 0);
+});
+
+test("codex avisa cuando compacta durante el turno", async () => {
+  const { state, codexHome, rollout } = await codexWorkspace("codex-compactacion");
+  const tmux = new FakeTmux();
+  const fallback = new RecordingFallback("{}");
+  tmux.onSubmit = async (text) => {
+    await appendFile(rollout, `${[
+      codexStarted("t1"),
+      codexUser(text, "t1"),
+      // Forma real: el aviso de compactación de codex NO trae ningún campo, ni cifras ni id.
+      rolloutLine("event_msg", { type: "context_compacted" }),
+      codexComplete("t1", envelopeText("respondido tras compactar")),
+    ].join("\n")}\n`);
+  };
+
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const adapter = await adapterFor(runner, state, "socrates", "codex");
+  const output = await execute(adapter);
+
+  const reply = output.reply ?? "";
+  assert.ok(reply.includes("respondido tras compactar"));
+  assert.ok(reply.includes(CONTEXT_MARK));
+  assert.ok(reply.includes("context_compacted"));
+  assert.equal(fallback.calls, 0);
+  assert.equal((await readDegradations(state))[0]?.fellBack, false);
+});
+
+test("un pegado que no llega a la caja se DICE, en vez de esperar media hora", async () => {
+  // Es la diferencia entre un fallo y un silencio. Si la TUI no registra NINGÚN turno, no corrió
+  // nada, así que caer al camino de siempre no puede duplicar ningún efecto — y se declara.
+  const { state, codexHome } = await codexWorkspace("codex-sin-registro");
+  const tmux = new FakeTmux();
+  const fallback = new RecordingFallback([
+    JSON.stringify({ type: "thread.started", thread_id: "x" }),
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: envelopeText("clasico") } }),
+  ].join("\n"));
+  // El Enter no produce nada: el rollout no crece.
+  tmux.onSubmit = undefined;
+
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
   const adapter = await adapterFor(runner, state, "socrates", "codex");
   const output = await execute(adapter);
 
   assert.equal(fallback.calls, 1);
   const reply = output.reply ?? "";
   assert.ok(reply.includes(DEGRADED_MARK));
-  assert.ok(reply.includes("tui_absent"));
+  assert.ok(reply.includes("handshake_failed"));
   assert.ok(reply.includes("clasico"));
-  const records = await readDegradations(state);
-  assert.equal(records[0]?.reason, "tui_absent");
+  assert.equal((await readDegradations(state))[0]?.reason, "handshake_failed");
 });
 
-test("codex no pierde las notificaciones que llegan antes de la respuesta", async () => {
-  const { state } = await freshState("codex-eager");
+test("un turno que el dueño interrumpe no se cobra como respuesta", async () => {
+  // Sin esto el runner espera el presupuesto entero por una respuesta que ya nadie va a escribir, y
+  // el dueño ve un agente mudo durante los 30 minutos del plazo de ACK.
+  const { state, codexHome, rollout } = await codexWorkspace("codex-interrumpido");
+  void state;
   const tmux = new FakeTmux();
   const fallback = new RecordingFallback("{}");
-  // El servidor emite el turno completo ANTES de contestar a `turn/start`.
-  const link = new FakeLink(["019fb4a9-25f7-7f10-92ac-871fd93b2989"], undefined, true);
+  tmux.onSubmit = async (text) => {
+    await appendFile(rollout, `${[
+      codexStarted("t1"),
+      codexUser(text, "t1"),
+      codexAborted("t1"),
+    ].join("\n")}\n`);
+  };
 
-  const runner = codexRunner("socrates", tmux, fallback, link);
-  const adapter = await adapterFor(runner, state, "socrates", "codex");
-  const output = await execute(adapter);
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const outcome = await runner.run({
+    command: "codex",
+    args: [],
+    harness: "codex",
+    stdin: "pedido del bus",
+    timeoutMs: 2_000,
+    signal: new AbortController().signal,
+  });
 
-  assert.equal(output.reply, "desde codex");
+  assert.equal(outcome.exitCode, 1);
+  assert.match(outcome.stderr, /se interrumpió/u);
+  // Y NO se reintenta por el camino de siempre: el turno sí entró en la terminal.
   assert.equal(fallback.calls, 0);
 });
 
@@ -977,207 +1057,6 @@ test("una sesión ya enclavada por el build viejo se repara sola", async () => {
   assert.ok((output.reply ?? "").includes("resucitada"));
   assert.deepEqual(tmux.windows, ["agente"]);
   assert.equal(fallback.calls, 0);
-});
-
-// ---------------------------------------------------------------------------
-// codex: el hilo del dueño, el turno del bus y la compactación.
-// ---------------------------------------------------------------------------
-
-/**
- * Un app-server programable. A diferencia de `FakeLink`, deja escribir el guion de notificaciones
- * de cada turno, que es lo que hace falta para reproducir un `/new`, un turno ajeno o una
- * compactación.
- */
-class ScriptedLink implements AppServerLink {
-  readonly sent: Record<string, unknown>[] = [];
-  private queue: AppServerMessage[] = [];
-  private waiter: ((value: IteratorResult<AppServerMessage>) => void) | undefined;
-  private ended = false;
-  turns = 0;
-
-  constructor(
-    readonly threads: string[],
-    private readonly script: (context: {
-      readonly threadId: string;
-      readonly turnId: string;
-      readonly push: (message: AppServerMessage) => void;
-    }) => void,
-  ) {}
-
-  open(): Promise<void> {
-    this.ended = false;
-    this.queue = [];
-    return Promise.resolve();
-  }
-
-  send(message: Record<string, unknown>): void {
-    this.sent.push(message);
-    const id = message.id;
-    if (message.method === "initialize") this.push({ id, result: {} });
-    if (message.method === "thread/loaded/list") this.push({ id, result: { data: [...this.threads] } });
-    if (message.method === "thread/resume") this.push({ id, result: {} });
-    if (message.method === "turn/start") {
-      this.turns += 1;
-      const turnId = `turno-${this.turns}`;
-      const threadId = String((message.params as { threadId?: unknown }).threadId);
-      this.push({ id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
-      this.script({ threadId, turnId, push: (value) => this.push(value) });
-    }
-  }
-
-  messages(): AsyncIterable<AppServerMessage> {
-    return {
-      [Symbol.asyncIterator]: (): AsyncIterator<AppServerMessage> => ({
-        next: (): Promise<IteratorResult<AppServerMessage>> => {
-          const value = this.queue.shift();
-          if (value !== undefined) return Promise.resolve({ value, done: false });
-          if (this.ended) return Promise.resolve({ value: undefined, done: true });
-          return new Promise((resolveNext) => {
-            this.waiter = resolveNext;
-          });
-        },
-      }),
-    };
-  }
-
-  close(): void {
-    this.ended = true;
-    const waiter = this.waiter;
-    this.waiter = undefined;
-    waiter?.({ value: undefined, done: true });
-  }
-
-  private push(message: AppServerMessage): void {
-    const waiter = this.waiter;
-    if (waiter === undefined) {
-      this.queue.push(message);
-      return;
-    }
-    this.waiter = undefined;
-    waiter({ value: message, done: false });
-  }
-}
-
-/** El guion normal: el turno contesta el sobre y termina. */
-function answersWith(text: string) {
-  return (context: {
-    readonly threadId: string;
-    readonly turnId: string;
-    readonly push: (message: AppServerMessage) => void;
-  }): void => {
-    context.push({
-      method: "item/completed",
-      params: {
-        threadId: context.threadId, turnId: context.turnId,
-        item: { id: "i1", type: "agentMessage", text, phase: "final_answer" },
-      },
-    });
-    context.push({
-      method: "turn/completed",
-      params: { threadId: context.threadId, turn: { id: context.turnId, status: "completed", items: [] } },
-    });
-  };
-}
-
-test("tras un /new el bus sigue al hilo NUEVO, no al abandonado", async () => {
-  // Probado en vivo el 2026-07-30: `/new` NO cierra el hilo viejo —no hay `thread/closed` y
-  // `thread/loaded/list` pasa a devolver los dos—. Al preferir el hilo del turno anterior, el
-  // adaptador se quedaba hablando con el hilo ABANDONADO: `turn/start` aceptado, `agentMessage`
-  // correcto, `turn/completed` correcto… y en el panel del dueño no aparecía NADA.
-  const { state } = await freshState("codex-new");
-  const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
-  const link = new ScriptedLink(["hilo-viejo"], answersWith(envelopeText("desde el hilo vivo")));
-
-  const runner = codexRunner("socrates", tmux, fallback, link);
-  const adapter = await adapterFor(runner, state, "socrates", "codex");
-  await execute(adapter);
-
-  // El dueño teclea /new: aparece un hilo más y el viejo SIGUE cargado.
-  link.threads.push("hilo-nuevo");
-  const second = await execute(adapter, "segundo pedido");
-
-  const starts = link.sent.filter((message) => message.method === "turn/start");
-  assert.equal((starts[1]?.params as { threadId?: string }).threadId, "hilo-nuevo");
-  const reply = second.reply ?? "";
-  assert.ok(reply.includes(CONTEXT_MARK));
-  assert.ok(reply.includes("context_cleared"));
-  assert.equal(fallback.calls, 0);
-});
-
-test("si el hilo anterior DESAPARECE es un reinicio, no un /new", async () => {
-  const { state } = await freshState("codex-reinicio");
-  const tmux = new FakeTmux();
-  const link = new ScriptedLink(["hilo-a"], answersWith(envelopeText("ok")));
-  const runner = codexRunner("socrates", tmux, new RecordingFallback("{}"), link);
-  const adapter = await adapterFor(runner, state, "socrates", "codex");
-  await execute(adapter);
-
-  link.threads.splice(0, link.threads.length, "hilo-b");
-  const second = await execute(adapter, "segundo");
-
-  assert.ok((second.reply ?? "").includes("context_reset"));
-  assert.ok((second.reply ?? "").includes(RESET_MARK));
-});
-
-test("el turno del dueño no puede cortar la cosecha del turno del bus", async () => {
-  // El hilo es COMPARTIDO: mientras corre el turno del bus, el dueño puede lanzar el suyo. Sin
-  // filtrar por `turnId`, su `turn/completed` cerraba la cosecha y el bus se llevaba la respuesta
-  // ajena —o un `exitCode 1` inventado—. `turn/start` devuelve el id del nuestro, así que no hay
-  // que adivinarlo.
-  const { state } = await freshState("codex-turno-ajeno");
-  const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
-  const link = new ScriptedLink(["hilo"], (context) => {
-    context.push({
-      method: "item/completed",
-      params: {
-        threadId: context.threadId, turnId: "turno-del-dueño",
-        item: { id: "ajeno", type: "agentMessage", text: envelopeText("RESPUESTA AJENA"), phase: "final_answer" },
-      },
-    });
-    context.push({
-      method: "turn/completed",
-      params: { threadId: context.threadId, turn: { id: "turno-del-dueño", status: "completed", items: [] } },
-    });
-    answersWith(envelopeText("MI RESPUESTA"))(context);
-  });
-
-  const runner = codexRunner("socrates", tmux, fallback, link);
-  const adapter = await adapterFor(runner, state, "socrates", "codex");
-  const output = await execute(adapter);
-
-  assert.equal(output.reply, "MI RESPUESTA");
-  assert.equal(fallback.calls, 0);
-});
-
-test("codex avisa cuando compacta durante el turno", async () => {
-  const { state } = await freshState("codex-compactacion");
-  const tmux = new FakeTmux();
-  const fallback = new RecordingFallback("{}");
-  const link = new ScriptedLink(["hilo"], (context) => {
-    // Forma real de 0.145.0: la automática y la de `/compact` son EL MISMO item, sin ningún campo
-    // que las distinga.
-    context.push({
-      method: "item/completed",
-      params: {
-        threadId: context.threadId, turnId: context.turnId,
-        item: { id: "019fb544-e7b3", type: "contextCompaction" },
-      },
-    });
-    answersWith(envelopeText("respondido tras compactar"))(context);
-  });
-
-  const runner = codexRunner("socrates", tmux, fallback, link);
-  const adapter = await adapterFor(runner, state, "socrates", "codex");
-  const output = await execute(adapter);
-
-  const reply = output.reply ?? "";
-  assert.ok(reply.includes("respondido tras compactar"));
-  assert.ok(reply.includes(CONTEXT_MARK));
-  assert.ok(reply.includes("context_compacted"));
-  assert.equal(fallback.calls, 0);
-  assert.equal((await readDegradations(state))[0]?.fellBack, false);
 });
 
 // ---------------------------------------------------------------------------

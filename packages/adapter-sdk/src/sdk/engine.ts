@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isAgentToAgentBody, isAmbiguousAckErrorCode } from "@cauce/protocol";
-import type { InboxRecord } from "./durable-store.js";
-import { DurableStore } from "./durable-store.js";
+import type { InboxRecord, SessionOrigin } from "./durable-store.js";
+import { DurableStore, sanitizeSessionOrigin } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
 import type { HarnessAdapter, HarnessSessionReservation, SessionLane } from "../harnesses/shared.js";
 import type {
@@ -25,7 +25,16 @@ export type EventPublisher = (event: DeliveryEvent) => Promise<void>;
  * carril. Se lleva tal cual al request de ejecución, así que las dos cosas que deciden qué
  * candado y qué sesión nativa se usan viajan siempre juntas y no se pueden desincronizar.
  */
-type HarnessSessionRequestScope = { sessionKey?: string; sessionLane?: SessionLane };
+type HarnessSessionRequestScope = {
+  sessionKey?: string;
+  sessionLane?: SessionLane;
+  /**
+   * La MISMA conversación que la clave hashea, pero en claro. Viaja hasta `HarnessAdapter` para
+   * que quede escrita junto al `native_id` en `sessions.json`: el hash es irreversible y sin
+   * esto nadie puede volver a decir de qué canal salió cada sesión.
+   */
+  sessionOrigin?: SessionOrigin;
+};
 
 const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
 const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
@@ -183,10 +192,26 @@ export class AdapterEngine {
      * `maxInflight + humanReserved` (4 por defecto) contra las 71 en vuelo del incidente.
      */
     const fanin = delivery.body.type === "agent.fanin";
-    const lane: SessionLane = isAgentToAgentBody(delivery.body) ? "agent" : "human";
+    /*
+     * SESION COMPARTIDA: un solo carril y una sola clave, la del alias.
+     *
+     * Los dos carriles existen para que el dueno no espere detras de una delegacion larga, y con
+     * sesiones nativas separadas eso funciona. Con la sesion compartida encendida se da vuelta:
+     * hay UNA sola caja de entrada en la TUI, asi que dos claves son dos candados sobre un unico
+     * teclado y los turnos se pisan. Medido el 2026-07-31 en kratos: cuatro degradaciones
+     * input_busy seguidas, y el texto que bloqueaba la caja lo habia tecleado el propio dueno.
+     * Colapsar al alias hace que "una sesion por agente" sea un INVARIANTE y no un resultado
+     * observado: el candado ya existia, sólo estaba parametrizado por canal.
+     */
+    const compartida = process.env.CAUCE_SHARED_SESSION === "1";
+    const lane: SessionLane = compartida
+      ? "human"
+      : (isAgentToAgentBody(delivery.body) ? "agent" : "human");
     const session: HarnessSessionRequestScope = fanin
       ? {}
-      : { ...sessionFromDelivery(delivery, this.ownTenantId), sessionLane: lane };
+      : (compartida
+        ? { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane }
+        : { ...sessionFromDelivery(delivery, this.ownTenantId), sessionLane: lane });
     const reservation = fanin ? undefined : this.harness.reserveSession(session.sessionKey, lane);
 
     this.logger({
@@ -1091,7 +1116,7 @@ function conversationScope(delivery: Delivery): ConversationScope | undefined {
 function sessionFromDelivery(
   delivery: Delivery,
   recipientTenantId: string | undefined,
-): { sessionKey?: string } {
+): HarnessSessionRequestScope {
   const conversation = conversationScope(delivery);
   if (conversation === undefined) return {};
   const scope = JSON.stringify({
@@ -1103,7 +1128,28 @@ function sessionFromDelivery(
     },
     conversation,
   });
-  return { sessionKey: `auth-v3:${createHash("sha256").update(scope).digest("base64url")}` };
+  /**
+   * La descripción en claro de la conversación, para que el store la guarde al lado del
+   * `native_id`. Hasta hoy esto se calculaba, se hasheaba y se tiraba, y por eso `cauce
+   * <alias>` no podía distinguir el DM de Telegram de la publicación de consola.
+   *
+   * NO va `conversation.scope` (el hilo/usuario que declara el puente): sigue entrando al hash
+   * —o sea que sigue separando sesiones— pero no se persiste, porque no aporta nada a "de qué
+   * canal vino" y `sessions.json` tiene tope de tamaño.
+   *
+   * `sanitizeSessionOrigin` puede devolver `undefined`, y entonces no se escribe nada: una
+   * conversación con forma inesperada se queda sin etiqueta, que es lo honesto, en vez de
+   * arriesgar el fichero entero.
+   */
+  const sessionOrigin = sanitizeSessionOrigin({
+    adapter: conversation.adapter,
+    channel: conversation.channel,
+    conversation_id: conversation.conversation_id,
+  });
+  return {
+    sessionKey: `auth-v3:${createHash("sha256").update(scope).digest("base64url")}`,
+    ...(sessionOrigin === undefined ? {} : { sessionOrigin }),
+  };
 }
 
 function timeoutFromBody(body: Record<string, unknown>, fallback: number): number {

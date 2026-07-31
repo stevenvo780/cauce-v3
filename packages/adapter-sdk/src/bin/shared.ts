@@ -15,8 +15,9 @@ import type {
 import { TenantSchema } from "@cauce/protocol";
 import { loadCliRuntimeConfig } from "./config.js";
 import { CliTmux } from "../shared-session/tmux.js";
-import { ClaudeSharedSessionRunner } from "../shared-session/claude-runner.js";
-import { CodexSharedSessionRunner } from "../shared-session/codex-runner.js";
+import { PasteSessionRunner } from "../shared-session/paste-runner.js";
+import { claudeTranscript } from "../shared-session/transcript.js";
+import { codexTranscript } from "../shared-session/rollout.js";
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
 import type { CommandRunner } from "../sdk/types.js";
 
@@ -120,29 +121,28 @@ function sharedSessionRunner(
       error_message: degradation.detail,
     });
   };
-  if (shared.harness === "claude") {
-    return new ClaudeSharedSessionRunner({
-      alias: shared.alias,
-      workspace: shared.workspace,
-      home: shared.home,
-      configDirectory: shared.configDirectory,
-      environment: shared.paneEnvironment,
-      tmux,
-      fallback,
-      sleep,
-      onDegradation,
-    });
-  }
-  return new CodexSharedSessionRunner({
+  // El mecanismo es uno solo; lo único que cambia por harness es de dónde se cosecha el sobre. Y
+  // el directorio del que se cosecha sale del MISMO valor que el entorno del panel, así que la TUI
+  // no puede escribir en un sitio mientras el adaptador lee en otro.
+  const comun = {
     alias: shared.alias,
+    harness: shared.harness,
     workspace: shared.workspace,
-    socketPath: shared.socketPath,
     environment: shared.paneEnvironment,
     tmux,
     fallback,
     sleep,
     onDegradation,
-  });
+  };
+  return shared.harness === "claude"
+    ? new PasteSessionRunner({
+      ...comun,
+      transcript: claudeTranscript(shared.configDirectory, shared.workspace),
+    })
+    : new PasteSessionRunner({
+      ...comun,
+      transcript: codexTranscript(shared.configDirectory),
+    });
 }
 
 export async function runCli(harnessId: HarnessId): Promise<void> {

@@ -18,9 +18,10 @@ export interface SharedSessionConfig {
   readonly workspace: string;
   readonly home: string;
   readonly stateDirectory: string;
-  /** Sólo codex. */
-  readonly socketPath: string;
-  /** Dónde vive la configuración del harness. Para claude es además la raíz de los transcripts. */
+  /**
+   * Dónde vive la configuración del harness, y de dónde cuelga su registro: `projects/` en claude,
+   * `sessions/` en codex. Es el valor del que salen a la vez el entorno del panel y la cosecha.
+   */
   readonly configDirectory: string;
   /** Lo que la TUI tiene que ver en su entorno, lo cree quien lo cree. */
   readonly paneEnvironment: Readonly<Record<string, string>>;
@@ -102,22 +103,7 @@ export function cliSharedSessionSpec(
     harness,
     workspace,
     environment: sharedSessionPaneEnvironment(harness, home, environment),
-    ...(harness === "codex" ? { socketPath: appServerSocketPath(home, alias) } : {}),
   };
-}
-
-/**
- * Directorio de runtime de la sesión compartida de un alias.
- *
- * Cuelga del HOME y no de `/run` porque el adaptador corre como el usuario del contenedor, y el
- * socket lo tiene que poder abrir tanto el app-server (lanzado desde tmux) como el adaptador.
- */
-export function runtimeDirectory(home: string, alias: string): string {
-  return join(home, ".cauce-shared", alias);
-}
-
-export function appServerSocketPath(home: string, alias: string): string {
-  return join(runtimeDirectory(home, alias), "appserver.sock");
 }
 
 /**
@@ -155,7 +141,6 @@ export function loadSharedSessionConfig(
     workspace,
     home,
     stateDirectory,
-    socketPath: appServerSocketPath(home, alias),
     configDirectory: harnessConfigDirectory(harnessId, home, environment),
     paneEnvironment: sharedSessionPaneEnvironment(harnessId, home, environment),
   };

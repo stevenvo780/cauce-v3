@@ -75,7 +75,9 @@ export function degradationNotice(
   harness: SharedSessionHarness,
   degradation: SharedSessionDegradation,
 ): string {
-  const mecanismo = harness === "claude" ? "tmux + transcript" : "app-server de codex";
+  // El mecanismo es el MISMO para los dos harness: pegar en la caja de la TUI y cosechar del
+  // registro que ella escribe. Se nombra igual porque el remedio también es el mismo.
+  const mecanismo = `tmux + registro de ${harness}`;
   if (!degradation.fellBack) {
     const context = CONTEXT_NOTICE[degradation.reason] ?? CONTEXT_NOTICE.context_reset!;
     return [

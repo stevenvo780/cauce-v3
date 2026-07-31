@@ -63,8 +63,18 @@ export async function hasSession(tmux: TmuxController, session: string): Promise
   return result.exitCode === 0;
 }
 
-export async function capturePane(tmux: TmuxController, target: string): Promise<string | undefined> {
-  const result = await tmux.run(["capture-pane", "-p", "-t", target]);
+export async function capturePane(
+  tmux: TmuxController,
+  target: string,
+  options?: { readonly styled?: boolean },
+): Promise<string | undefined> {
+  // `-e` conserva los SGR. Hace falta para distinguir el texto FANTASMA de codex (que se dibuja
+  // atenuado, SGR 2) del texto que el dueno tecleo de verdad, que nunca lo esta. Medido el
+  // 2026-07-31 en el panel vivo de socrates: la linea del cursor trae ['1','0','2','0'].
+  const args = options?.styled === true
+    ? ["capture-pane", "-e", "-p", "-t", target]
+    : ["capture-pane", "-p", "-t", target];
+  const result = await tmux.run(args);
   return result.exitCode === 0 ? result.stdout : undefined;
 }
 

@@ -13,43 +13,36 @@ import {
 import { inputBoxState } from "./pane.js";
 import {
   ensureSharedSession,
-  transcriptDirectoryIn,
   tuiTarget,
   type EnsureOptions,
 } from "./session.js";
-import {
-  compactBoundaries,
-  findFinalAssistant,
-  findInjectedTurn,
-  readTranscript,
-  readTranscriptSince,
-  stripJsonFence,
-  transcriptBaseline,
-  transcriptFiles,
-  type TranscriptEntry,
-  type TranscriptFileBaseline,
-} from "./transcript.js";
 import { TUI_WINDOW, sessionName } from "./types.js";
-import type { SharedSessionDegradation, SharedSessionRunner } from "./types.js";
+import type {
+  SharedSessionDegradation,
+  SharedSessionHarness,
+  SharedSessionRunner,
+  TranscriptReader,
+} from "./types.js";
 
-export interface ClaudeSharedSessionOptions {
+export interface PasteSessionOptions<E> {
   readonly alias: string;
-  /** Directorio de trabajo de la TUI; determina también dónde están los transcripts. */
+  /** Qué TUI corre en el panel. Determina el binario, no el mecanismo: el mecanismo es uno solo. */
+  readonly harness: SharedSessionHarness;
+  /** Directorio de trabajo de la TUI. */
   readonly workspace: string;
-  /** HOME del usuario del contenedor, para resolver `~/.claude/projects`. */
-  readonly home: string;
   /**
-   * Directorio de configuración con el que arranca la TUI (`CLAUDE_CONFIG_DIR`).
+   * De dónde sale el sobre. Lo ÚNICO específico de cada harness.
    *
-   * Es de donde cuelgan los transcripts, así que la cosecha y el panel tienen que compartirlo por
-   * construcción. Ausente = `${home}/.claude`, que es lo que resuelve claude sin la variable.
+   * Se recibe ya construido —y por tanto ya apuntando a un directorio concreto— para que el sitio
+   * donde la TUI escribe y el sitio donde el adaptador lee salgan del mismo valor y no se puedan
+   * separar. Ver `claudeTranscript` y `codexTranscript`.
    */
-  readonly configDirectory?: string;
+  readonly transcript: TranscriptReader<E>;
   /** Lo que se le fija al panel al crearlo. Ver `SharedSessionSpec.environment`. */
   readonly environment?: Readonly<Record<string, string>>;
   readonly tmux: TmuxController;
   /**
-   * El camino de siempre (`claude --print --output-format json …`).
+   * El camino de siempre (`claude --print …`, `codex exec --json …`).
    *
    * Se conserva porque una entrega no se puede perder por una terminal cerrada, pero SÓLO se usa
    * anunciándolo: es el punto exacto donde murió el intento anterior, que caía acá en silencio.
@@ -60,6 +53,10 @@ export interface ClaudeSharedSessionOptions {
   readonly acquireTimeoutMs?: number;
   /** Techo de un turno ya inyectado. Pasado esto es AMBIGUO, nunca un reintento. */
   readonly turnTimeoutMs?: number;
+  /** Cuánto se espera entre el pegado y el Enter. Ver `SETTLE_MS`. */
+  readonly settleMs?: number;
+  /** Cuánto se le da a la TUI para registrar el turno pegado. Ver `harvest`. */
+  readonly injectTimeoutMs?: number;
   readonly pollMs?: number;
   readonly readyTimeoutMs?: number;
   readonly command?: string;
@@ -71,6 +68,29 @@ const DEFAULT_TURN_TIMEOUT_MS = 3_600_000;
 const DEFAULT_POLL_MS = 750;
 
 /**
+ * Cuánto se deja asentar el pegado antes de mandar el Enter.
+ *
+ * No es un `sleep` supersticioso: las dos TUI leen el pegado entre corchetes como un bloque y lo
+ * insertan en su caja de forma asíncrona; codex además tiene un detector de ráfaga
+ * (`tui/src/bottom_pane/paste_burst.rs`, visible en el binario 0.144.6) que agrupa lo que llega
+ * junto. Un Enter que entre dentro de esa misma ráfaga puede acabar siendo un salto de línea del
+ * texto en vez del envío. Un cuarto de segundo no se nota en un turno y quita esa carrera.
+ *
+ * Y si aun así no se enviara, `harvest` lo detecta y lo DICE, en vez de esperar el presupuesto
+ * entero delante de una caja con el pedido escrito sin mandar.
+ */
+const SETTLE_MS = 250;
+
+/**
+ * Cuánto se espera a que la TUI registre el turno pegado antes de darlo por no entregado.
+ *
+ * Medido en el rollout de codex el 2026-07-31: entre el envío y la primera línea del turno en
+ * disco pasan milisegundos (`task_started` a las 16:45:18.174, respuesta completa a las
+ * 16:45:20.107). Treinta segundos es un margen de tres órdenes de magnitud.
+ */
+const DEFAULT_INJECT_TIMEOUT_MS = 30_000;
+
+/**
  * Cada cuántos sondeos se comprueba que la sesión tmux sigue viva.
  *
  * Comprobarlo en todos costaba un proceso `tmux` cada 750 ms —unos 4800 por hora de turno— para
@@ -79,7 +99,7 @@ const DEFAULT_POLL_MS = 750;
 const LIVENESS_EVERY = 8;
 
 /**
- * Salida (d): conducir la TUI real por tmux y cosechar el sobre del transcript.
+ * Salida (d): conducir la TUI real por tmux y cosechar el sobre del registro que ella escribe.
  *
  * Las tres propiedades que el dueño pidió, a la vez:
  *  - TUI de verdad, con su panel, sus `/comandos` y su historial: es el binario real corriendo en
@@ -92,17 +112,20 @@ const LIVENESS_EVERY = 8;
  * entrada, así que hace falta arbitrarla.
  *
  * Este runner sustituye al transporte, no al contrato: devuelve un `CommandRunResult` con la misma
- * forma que produce `claude --print --output-format json`, y lo valida después el mismo
- * `parseClaudeOutput` + `validateDeliveryOutput` de siempre. El sobre se sigue exigiendo entero.
+ * forma que produce el harness en su modo de siempre, y lo valida después el mismo `parse` +
+ * `validateDeliveryOutput`. El sobre se sigue exigiendo entero.
+ *
+ * Vale para los dos harness porque el mecanismo es el mismo. Lo único que cambia —dónde queda
+ * escrito el turno y cómo se le sigue la pista— entra por `options.transcript`.
  */
-export class ClaudeSharedSessionRunner implements SharedSessionRunner {
+export class PasteSessionRunner<E> implements SharedSessionRunner {
   private pending: SharedSessionDegradation | undefined;
   /** PID del panel en el turno anterior, para detectar que la TUI se reinició sola. */
   private lastPanePid: string | undefined;
   /**
-   * `sessionId` del transcript en el que cayó el turno anterior.
+   * Identidad de la conversación en la que cayó el turno anterior.
    *
-   * Es la ÚNICA señal que delata un `/clear`. Medido el 2026-07-30 con claude 2.1.220: `/clear`
+   * Es la ÚNICA señal que delata un vaciado. Medido el 2026-07-30 con claude 2.1.220: `/clear`
    * cierra el `.jsonl` y abre otro con `sessionId` nuevo, sin escribir ninguna marca en el viejo
    * —simplemente deja de crecer— y SIN reiniciar el proceso: `pane_pid` idéntico antes y después.
    * O sea que el heurístico de PID no lo ve nunca, y la cosecha sigue funcionando perfecta: el bus
@@ -112,14 +135,7 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
   /** Compactaciones ya avisadas, para no repetir el aviso en cada sondeo del mismo turno. */
   private readonly reportedBoundaries = new Set<string>();
 
-  constructor(private readonly options: ClaudeSharedSessionOptions) {}
-
-  private transcriptDirectory(): string {
-    return transcriptDirectoryIn(
-      this.options.configDirectory ?? `${this.options.home}/.claude`,
-      this.options.workspace,
-    );
-  }
+  constructor(private readonly options: PasteSessionOptions<E>) {}
 
   takeDegradation(): SharedSessionDegradation | undefined {
     const degradation = this.pending;
@@ -141,25 +157,24 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
     const acquired = await this.acquireInputBox(target);
     if (!acquired.ok) return this.degrade(acquired.reason, acquired.detail, request);
 
-    const directory = this.transcriptDirectory();
-    const baseline = await transcriptBaseline(directory);
+    const baseline = await this.baseline();
 
     const buffer = `cauce-${this.options.alias}`;
     if (!await pastePrompt(this.options.tmux, target, buffer, request.stdin)) {
       return this.degrade("handshake_failed", "tmux no aceptó el pegado del prompt", request);
     }
+    await this.options.sleep(this.options.settleMs ?? SETTLE_MS);
     if (!await sendEnter(this.options.tmux, target)) {
       // El texto quedó en la caja sin enviarse. Se limpia antes de degradar para no dejarle al
       // dueño el prompt de protocolo escrito en su terminal.
-      await this.options.tmux.run(["send-keys", "-t", target, "C-u"]).catch(() => undefined);
+      await this.clearInputBox(target);
       return this.degrade("handshake_failed", "tmux no aceptó el envío del prompt", request);
     }
 
-    // A partir de acá el turno está EN MARCHA dentro de la TUI. No se degrada nunca más en este
-    // turno: reejecutar por el camino de siempre lo correría dos veces, con sus efectos externos
-    // aplicados dos veces. Un fallo desde este punto es ambiguo y se dice como tal.
+    // A partir de acá el turno PUEDE estar en marcha dentro de la TUI. Sólo se degrada si el
+    // registro demuestra que no arrancó ninguno; ver `harvest`.
     await clearDegradation(this.options.tmux, session, TUI_WINDOW);
-    return this.harvest(request, directory, baseline, session);
+    return this.harvest(request, baseline, session, target);
   }
 
   private async preflight(): Promise<
@@ -169,7 +184,7 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
       this.options.tmux,
       {
         alias: this.options.alias,
-        harness: "claude",
+        harness: this.options.harness,
         workspace: this.options.workspace,
         ...(this.options.command === undefined ? {} : { command: this.options.command }),
         ...(this.options.environment === undefined ? {} : { environment: this.options.environment }),
@@ -224,7 +239,7 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
         fellBack: false,
       });
       // La conversación de la TUI nueva no tiene nada que ver con la anterior: comparar su
-      // `sessionId` con el de antes daría un `/clear` que nadie hizo.
+      // identidad con la de antes daría un vaciado que nadie hizo.
       this.lastSessionId = undefined;
     }
     this.lastPanePid = pid;
@@ -244,7 +259,7 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
     let evidence = "la caja de entrada nunca quedó libre";
     let modal = false;
     for (;;) {
-      const state = inputBoxState(await capturePane(this.options.tmux, target));
+      const state = inputBoxState(await capturePane(this.options.tmux, target, { styled: true }));
       if (!state.occupied) return { ok: true };
       evidence = state.evidence;
       modal = state.kind === "modal";
@@ -260,32 +275,50 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
     }
   }
 
+  /** Foto del registro ANTES de inyectar: lo único que acota qué pudo cambiar durante el turno. */
+  private async baseline(): Promise<ReadonlyMap<string, number>> {
+    const sizes = new Map<string, number>();
+    for (const file of await this.options.transcript.files()) {
+      const size = await fileSize(file);
+      if (size >= 0) sizes.set(file, size);
+    }
+    return sizes;
+  }
+
   /**
-   * Saca el sobre del transcript, nunca de la pantalla.
+   * Saca el sobre del registro, nunca de la pantalla.
    *
-   * Dos fases: primero identificar en qué fichero y con qué uuid quedó registrado el prompt que
-   * acabamos de pegar (igualdad exacta), y después esperar la respuesta final que DESCIENDE de esa
-   * entrada. La segunda condición es la que garantiza que no estamos cosechando la respuesta a
-   * algo que el dueño escribió en paralelo.
+   * Dos fases: primero identificar dónde quedó registrado el prompt que acabamos de pegar
+   * (igualdad exacta), y después esperar el desenlace de ESE turno. La segunda condición es la que
+   * garantiza que no estamos cosechando la respuesta a algo que el dueño escribió en paralelo.
+   *
+   * Y una tercera cosa, que es lo que separa una espera honesta de una espera muda: mientras el
+   * turno no aparezca, se mira si arrancó ALGUNO. Si no arrancó ninguno, el pegado no llegó a la
+   * caja, no corrió nada, y caer al camino de siempre no puede duplicar ningún efecto: se degrada
+   * diciéndolo. Si arrancó alguno y aun así no es el nuestro, la situación es ambigua y se agota
+   * el presupuesto, que es exactamente lo que corresponde.
    */
   private async harvest(
     request: CommandRunRequest,
-    directory: string,
-    baseline: readonly TranscriptFileBaseline[],
+    baseline: ReadonlyMap<string, number>,
     session: string,
+    target: string,
   ): Promise<CommandRunResult> {
+    const port = this.options.transcript;
     const budget = Math.min(
       request.timeoutMs,
       this.options.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS,
     );
     const deadline = Date.now() + budget;
-    let injected: { file: string; uuid: string; sessionId?: string } | undefined;
-    // El transcript de una conversación larga pesa megabytes y un turno puede durar una hora.
-    // Releerlo entero en cada sondeo costaría más que el propio turno, así que sólo se parsea
-    // cuando el fichero creció; y la sesión tmux se comprueba cada tantos sondeos, no en todos.
+    const injectTimeoutMs = this.options.injectTimeoutMs ?? DEFAULT_INJECT_TIMEOUT_MS;
+    const injectDeadline = Date.now() + injectTimeoutMs;
+    let injected: { file: string; key: string; sessionId?: string } | undefined;
+    let started = false;
+    // El registro de una conversación larga pesa megabytes y un turno puede durar una hora.
+    // Releerlo entero en cada sondeo costaría más que el propio turno, así que sólo se lee cuando
+    // el fichero creció; y la sesión tmux se comprueba cada tantos sondeos, no en todos.
     let lastSize = -1;
     let probe = 0;
-    const baselineSizes = new Map(baseline.map((entry) => [entry.file, entry.size]));
 
     for (;;) {
       if (request.signal.aborted) {
@@ -301,31 +334,38 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
       probe += 1;
 
       if (injected === undefined) {
-        injected = await this.locateInjectedTurn(directory, baseline, request.stdin);
+        const scan = await this.locateInjectedTurn(baseline, request.stdin);
+        started = started || scan.started;
+        injected = scan.injected;
         if (injected !== undefined) await this.noteTranscriptIdentity(injected.sessionId);
       }
       if (injected !== undefined && await this.grew(injected.file, lastSize)) {
         lastSize = await fileSize(injected.file);
-        const slice = await readTranscriptSince(
-          injected.file,
-          baselineSizes.get(injected.file) ?? 0,
-        );
-        const entries = slice.entries;
+        const slice = await port.read(injected.file, baseline.get(injected.file) ?? 0);
         await this.noteCompactions(slice.appended);
-        const answer = findFinalAssistant(entries, injected.uuid);
-        if (answer !== undefined) {
-          const sessionId = answer.sessionId ?? injected.sessionId;
+        const outcome = port.findAnswer(slice.entries, injected.key);
+        if (outcome?.kind === "failed") {
+          // El turno SÍ entró en la terminal y terminó mal. No se reintenta por el camino de
+          // siempre: pudo haber corrido herramientas antes de romperse.
+          return result({ exitCode: 1, stderr: outcome.detail });
+        }
+        if (outcome !== undefined) {
           return result({
             exitCode: 0,
-            stdout: JSON.stringify({
-              type: "result",
-              subtype: "success",
-              is_error: false,
-              result: stripJsonFence(answer.text),
-              ...(sessionId === undefined ? {} : { session_id: sessionId }),
-            }),
+            stdout: port.stdout(outcome.text, outcome.sessionId ?? injected.sessionId),
           });
         }
+      }
+
+      if (injected === undefined && !started && port.startedTurn !== undefined
+        && Date.now() >= injectDeadline) {
+        await this.clearInputBox(target);
+        return this.degrade(
+          "handshake_failed",
+          `la TUI no registró ningún turno en ${Math.round(injectTimeoutMs / 1000)} s tras el`
+          + " envío: el pedido no llegó a la caja de entrada",
+          request,
+        );
       }
 
       if (Date.now() >= deadline) {
@@ -337,19 +377,29 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
     }
   }
 
+  /**
+   * Borra lo que quedó escrito en la caja. Mejor esfuerzo, y nunca falla hacia afuera.
+   *
+   * Sólo se llama cuando está demostrado que el pedido NO se envió: dejarle al dueño el prompt de
+   * protocolo escrito en su terminal es un residuo, no un aviso.
+   */
+  private async clearInputBox(target: string): Promise<void> {
+    await this.options.tmux.run(["send-keys", "-t", target, "C-u"]).catch(() => undefined);
+  }
+
   private async grew(file: string, lastSize: number): Promise<boolean> {
     return await fileSize(file) > lastSize;
   }
 
   /**
-   * ¿El turno cayó en OTRA conversación que la del turno anterior? Eso es un `/clear`.
+   * ¿El turno cayó en OTRA conversación que la del turno anterior? Eso es un vaciado.
    *
-   * Se comprueba después de inyectar, que es cuando se sabe con certeza en qué fichero quedó el
-   * pedido —antes sólo se podría adivinar cuál es el `.jsonl` "activo"—. No se degrada ni se
-   * bloquea: vaciar el contexto es una acción deliberada del dueño y el camino de siempre también
-   * arrancaría sin memoria, así que degradar perdería lo único que justifica este diseño (que el
-   * turno se vea en el panel) sin ganar nada. Lo que no puede pasar es que el remitente siga
-   * creyendo que habla con el mismo hilo.
+   * Se comprueba después de inyectar, que es cuando se sabe con certeza dónde quedó el pedido
+   * —antes sólo se podría adivinar cuál es el registro "activo"—. No se degrada ni se bloquea:
+   * vaciar el contexto es una acción deliberada del dueño y el camino de siempre también arrancaría
+   * sin memoria, así que degradar perdería lo único que justifica este diseño (que el turno se vea
+   * en el panel) sin ganar nada. Lo que no puede pasar es que el remitente siga creyendo que habla
+   * con el mismo hilo.
    */
   private async noteTranscriptIdentity(sessionId: string | undefined): Promise<void> {
     if (sessionId === undefined) return;
@@ -357,7 +407,7 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
       await this.note({
         reason: "context_cleared",
         detail: `la conversación de la terminal pasó de ${this.lastSessionId} a ${sessionId}`
-          + " sin que el proceso se reiniciara (/clear)",
+          + " sin que el proceso se reiniciara (/clear en claude, /new en codex)",
         occurredAt: new Date().toISOString(),
         fellBack: false,
       });
@@ -369,20 +419,16 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
   /**
    * Compactaciones ocurridas DESDE que se pegó el prompt: sólo lo escrito tras la foto previa.
    *
-   * Acotarlo a lo nuevo es lo que hace que el aviso signifique algo: un transcript de semanas
+   * Acotarlo a lo nuevo es lo que hace que el aviso signifique algo: un registro de semanas
    * contiene decenas de compactaciones viejas y avisar de ellas sería ruido en cada entrega.
    */
-  private async noteCompactions(appended: readonly TranscriptEntry[]): Promise<void> {
-    for (const event of compactBoundaries(appended)) {
-      if (this.reportedBoundaries.has(event.uuid)) continue;
-      this.reportedBoundaries.add(event.uuid);
-      const tokens = event.preTokens === undefined || event.postTokens === undefined
-        ? ""
-        : ` (${event.preTokens} -> ${event.postTokens} tokens)`;
+  private async noteCompactions(appended: readonly E[]): Promise<void> {
+    for (const event of this.options.transcript.compactions(appended)) {
+      if (this.reportedBoundaries.has(event.id)) continue;
+      this.reportedBoundaries.add(event.id);
       await this.note({
         reason: "context_compacted",
-        detail: `la terminal compactó su contexto durante este turno, disparo ${event.trigger}`
-          + `${tokens}`,
+        detail: event.detail,
         occurredAt: new Date().toISOString(),
         fellBack: false,
       });
@@ -392,31 +438,36 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
   /**
    * Sólo mira los ficheros que crecieron o que aparecieron después del pegado.
    *
-   * Un directorio de proyecto acumula decenas de conversaciones; releerlas todas en cada sondeo
-   * costaría más que el turno. La foto previa acota el trabajo a lo que pudo haber cambiado.
+   * Un registro acumula meses de conversaciones —6.511 ficheros y 2,5 GB en `ws-prizma` el
+   * 2026-07-31— y releerlas todas en cada sondeo costaría más que el turno. La foto previa acota
+   * el trabajo a lo que pudo haber cambiado; recorrer el árbol entero y preguntar los tamaños
+   * cuesta 15 ms medidos sobre esos 6.511 ficheros.
    */
   private async locateInjectedTurn(
-    directory: string,
-    baseline: readonly TranscriptFileBaseline[],
+    baseline: ReadonlyMap<string, number>,
     promptText: string,
-  ): Promise<{ file: string; uuid: string; sessionId?: string } | undefined> {
-    const sizes = new Map(baseline.map((entry) => [entry.file, entry.size]));
-    for (const file of await transcriptFiles(directory)) {
-      let size: number;
-      try {
-        size = (await stat(file)).size;
-      } catch {
-        continue;
-      }
-      if (size <= (sizes.get(file) ?? -1)) continue;
-      const found = findInjectedTurn(await readTranscript(file), promptText);
-      if (found !== undefined) {
-        return found.sessionId === undefined
-          ? { file, uuid: found.uuid }
-          : { file, uuid: found.uuid, sessionId: found.sessionId };
-      }
+  ): Promise<{
+    injected?: { file: string; key: string; sessionId?: string };
+    started: boolean;
+  }> {
+    const port = this.options.transcript;
+    let started = false;
+    for (const file of await port.files()) {
+      const size = await fileSize(file);
+      const previous = baseline.get(file) ?? -1;
+      if (size <= previous) continue;
+      const slice = await port.read(file, Math.max(previous, 0));
+      if (port.startedTurn?.(slice.appended) === true) started = true;
+      const found = port.findInjected(file, slice.entries, promptText);
+      if (found === undefined) continue;
+      return {
+        injected: found.sessionId === undefined
+          ? { file, key: found.key }
+          : { file, key: found.key, sessionId: found.sessionId },
+        started,
+      };
     }
-    return undefined;
+    return { started };
   }
 
   /**
@@ -472,8 +523,8 @@ export class ClaudeSharedSessionRunner implements SharedSessionRunner {
    * Un aviso que NO es una caída: registra y además lo dice en el panel, sin teñirlo de rojo.
    *
    * El dueño es el único que puede compensar una compactación —volviendo a pegar lo importante— y
-   * el único que sabe si el `/clear` lo hizo él, así que el aviso tiene que llegarle a él y no
-   * sólo al remitente de Telegram.
+   * el único que sabe si el vaciado lo hizo él, así que el aviso tiene que llegarle a él y no sólo
+   * al remitente de Telegram.
    */
   private async note(degradation: SharedSessionDegradation): Promise<void> {
     this.record(degradation);

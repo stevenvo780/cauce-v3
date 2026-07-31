@@ -41,9 +41,33 @@ interface OutboxFile {
   readonly pending: readonly DeliveryEvent[];
 }
 
+/**
+ * De qué conversación salió una sesión, tal como el sobre de la entrega la describía.
+ *
+ * Es DESCRIPTIVO y nada del despacho lo mira: la clave de sesión la sigue derivando
+ * `sessionFromDelivery` por hash, y este campo es la misma información en claro. Existe porque
+ * el hash es irreversible y sin esto un lector externo (`cauce <alias>`) no puede decir cuál de
+ * las 14 conversaciones de un alias openclaw es el DM de Telegram del dueño: las listaba todas
+ * como "sin origen" y abría una cualquiera afirmando que era la del bus.
+ *
+ * Se guardan tres campos y no el sobre entero a propósito: es lo mínimo para nombrar la
+ * conversación, y `sessions.json` tiene tope de tamaño (`MAX_SESSIONS_FILE_BYTES`).
+ */
+export interface SessionOrigin {
+  readonly adapter: string;
+  readonly channel: string;
+  readonly conversation_id: string;
+}
+
 export interface SessionRecord {
   readonly native_id: string;
   readonly initialized: boolean;
+  /**
+   * Ausente en toda entrada escrita antes de 2026-07-31, y ausente cuando el sobre no traía
+   * conversación. El lector DEBE tolerar su ausencia y decir "sin origen": inventarlo sería
+   * exactamente la afirmación no verificada que este campo vino a eliminar.
+   */
+  readonly origin?: SessionOrigin;
 }
 
 export interface ProcessedFaninReply {
@@ -548,6 +572,37 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
   return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
 }
 
+/**
+ * Juego de caracteres y cotas de los tres campos de `SessionOrigin`.
+ *
+ * El tope importa por una razón concreta y no por prolijidad: `validateSessionsFile` admite
+ * hasta 4096 entradas y `readSessionsSecure` rechaza el fichero entero pasado 1 MiB. Un origen
+ * sin cota multiplicado por 4096 entradas empuja contra ese techo, y pasarse NO degrada: deja
+ * al alias sin ninguna sesión con INVALID_SESSIONS_FILE.
+ */
+const SESSION_ORIGIN_FIELD = /^[A-Za-z0-9._:@+-]{1,128}$/u;
+
+/**
+ * Un origen con forma inesperada se DESCARTA; no invalida el fichero.
+ *
+ * Es deliberadamente asimétrico con el resto del validador, que es estricto y tira. La razón es
+ * la consecuencia: `native_id` es lo único de lo que depende reanudar una conversación, así que
+ * ahí una forma rara es corrupción y hay que parar. `origin` es una etiqueta para el humano;
+ * perderla degrada a "sin origen" —que es la respuesta honesta que el lector ya sabe dar— y
+ * tirar por ella convertiría un metadato cosmético en una caída del alias.
+ */
+export function sanitizeSessionOrigin(value: unknown): SessionOrigin | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (!exactKeys(record, ["adapter", "channel", "conversation_id"])) return undefined;
+  const { adapter, channel, conversation_id: conversationId } = record;
+  if (typeof adapter !== "string" || !SESSION_ORIGIN_FIELD.test(adapter)) return undefined;
+  if (typeof channel !== "string" || !SESSION_ORIGIN_FIELD.test(channel)) return undefined;
+  if (typeof conversationId !== "string"
+    || !SESSION_ORIGIN_FIELD.test(conversationId)) return undefined;
+  return { adapter, channel, conversation_id: conversationId };
+}
+
 function validateSessionsFile(value: unknown): SessionsFile {
   if (typeof value !== "object" || value === null || Array.isArray(value)) invalidSessionsFile();
   const root = value as Record<string, unknown>;
@@ -564,11 +619,19 @@ function validateSessionsFile(value: unknown): SessionsFile {
       || valueRecord === null
       || Array.isArray(valueRecord)) invalidSessionsFile();
     const record = valueRecord as Record<string, unknown>;
-    if (!exactKeys(record, ["native_id", "initialized"])
+    // Las DOS formas admitidas, y sólo esas: la vieja (sin `origin`) sigue siendo válida tal
+    // cual, así que ninguna entrada escrita antes de este cambio se rompe.
+    if (!(exactKeys(record, ["native_id", "initialized"])
+        || exactKeys(record, ["native_id", "initialized", "origin"]))
       || typeof record.native_id !== "string"
       || !/^[A-Za-z0-9._:-]{1,512}$/u.test(record.native_id)
       || typeof record.initialized !== "boolean") invalidSessionsFile();
-    sessions[key] = { native_id: record.native_id, initialized: record.initialized };
+    const origin = sanitizeSessionOrigin(record.origin);
+    sessions[key] = {
+      native_id: record.native_id,
+      initialized: record.initialized,
+      ...(origin === undefined ? {} : { origin }),
+    };
   }
   return { version: 1, sessions };
 }

@@ -1,5 +1,7 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { transcriptDirectoryIn } from "./session.js";
+import type { TranscriptReader, TranscriptSlice } from "./types.js";
 
 /**
  * De dónde sale el sobre en el harness claude: del fichero de transcript, nunca de la pantalla.
@@ -30,31 +32,6 @@ export interface TranscriptEntry {
 /** Cota de seguridad al subir la cadena de padres: un transcript corrupto no puede colgar el turno. */
 const MAX_ANCESTRY_DEPTH = 10_000;
 
-export interface TranscriptFileBaseline {
-  readonly file: string;
-  readonly size: number;
-}
-
-/**
- * Foto de los transcripts ANTES de inyectar.
- *
- * Sirve para no releer entero un directorio con decenas de conversaciones: después de inyectar
- * sólo hay que mirar los ficheros que crecieron o los que aparecieron.
- */
-export async function transcriptBaseline(directory: string): Promise<readonly TranscriptFileBaseline[]> {
-  const files = await transcriptFiles(directory);
-  const baseline: TranscriptFileBaseline[] = [];
-  for (const file of files) {
-    try {
-      const info = await stat(file);
-      baseline.push({ file, size: info.size });
-    } catch {
-      // Una conversación borrada entre el listado y el stat simplemente no entra en la foto.
-    }
-  }
-  return baseline;
-}
-
 export async function transcriptFiles(directory: string): Promise<readonly string[]> {
   let names: readonly string[];
   try {
@@ -66,27 +43,15 @@ export async function transcriptFiles(directory: string): Promise<readonly strin
 }
 
 /**
- * Lee un `.jsonl` tolerando la última línea a medio escribir.
+ * Lee un `.jsonl` entero tolerando la última línea a medio escribir, y separa lo que ya estaba de
+ * lo que se escribió después de un corte en bytes.
  *
  * Se lee mientras la TUI está ESCRIBIENDO en el mismo fichero, así que encontrar una línea
  * incompleta al final es lo normal, no una corrupción. Descartarla y volver a intentar en el
  * siguiente sondeo es correcto; abortar el turno por eso sería un fallo inventado.
- */
-export async function readTranscript(file: string): Promise<readonly TranscriptEntry[]> {
-  return (await readTranscriptSince(file, Number.MAX_SAFE_INTEGER)).entries;
-}
-
-export interface TranscriptSlice {
-  /** Todo el fichero, que es lo que hace falta para seguir la cadena de padres hacia atrás. */
-  readonly entries: readonly TranscriptEntry[];
-  /** Sólo lo escrito DESPUÉS del corte, que es lo que pudo pasar durante este turno. */
-  readonly appended: readonly TranscriptEntry[];
-}
-
-/**
- * Lo mismo, separando lo que ya estaba de lo que se escribió después de un corte en bytes.
  *
- * El corte es la foto que se toma ANTES de pegar (`transcriptBaseline`). Sirve para poder afirmar
+ * Se devuelve el fichero ENTERO en `entries` porque la cosecha de claude sube la cadena de padres
+ * hacia atrás y esa cadena empieza mucho antes del corte. `appended` sirve para poder afirmar
  * "esta compactación ocurrió DURANTE nuestro turno" en vez de "este fichero contiene
  * compactaciones", que en un transcript de semanas sería siempre cierto y produciría un aviso falso
  * en cada entrega.
@@ -94,7 +59,7 @@ export interface TranscriptSlice {
 export async function readTranscriptSince(
   file: string,
   offset: number,
-): Promise<TranscriptSlice> {
+): Promise<TranscriptSlice<TranscriptEntry>> {
   let raw: string;
   try {
     raw = await readFile(file, "utf8");
@@ -365,4 +330,60 @@ export function stripJsonFence(text: string): string {
   // envolvía al texto entero.
   if (body.includes("```")) return trimmed;
   return body.trim();
+}
+
+/**
+ * El registro de claude, visto por el runner de pegado.
+ *
+ * Recibe el directorio de configuración EXACTO con el que va a correr la TUI y deriva de él el de
+ * transcripts, que es lo que hace imposible que el sitio donde claude escribe y el sitio donde el
+ * adaptador lee se separen.
+ *
+ * No implementa `startedTurn`: en el `.jsonl` de claude no hay ninguna marca de "empezó un turno"
+ * —lo primero que aparece ya es la propia entrada de usuario— así que este harness no puede
+ * distinguir "el pegado no llegó" de "llegó y no lo supe correlacionar". Al no declararlo, el
+ * runner nunca degrada después de haber pegado, que es el comportamiento que claude tiene hoy y que
+ * está verificado en producción.
+ */
+export function claudeTranscript(
+  configDirectory: string,
+  workspace: string,
+): TranscriptReader<TranscriptEntry> {
+  const directory = transcriptDirectoryIn(configDirectory, workspace);
+  return {
+    files: () => transcriptFiles(directory),
+    read: (file, offset) => readTranscriptSince(file, offset),
+    findInjected: (_file, entries, promptText) => {
+      const found = findInjectedTurn(entries, promptText);
+      if (found === undefined) return undefined;
+      return found.sessionId === undefined
+        ? { key: found.uuid }
+        : { key: found.uuid, sessionId: found.sessionId };
+    },
+    findAnswer: (entries, key) => {
+      const answer = findFinalAssistant(entries, key);
+      if (answer === undefined) return undefined;
+      const text = stripJsonFence(answer.text);
+      return answer.sessionId === undefined
+        ? { kind: "answer", text }
+        : { kind: "answer", text, sessionId: answer.sessionId };
+    },
+    compactions: (appended) => compactBoundaries(appended).map((event) => {
+      const tokens = event.preTokens === undefined || event.postTokens === undefined
+        ? ""
+        : ` (${event.preTokens} -> ${event.postTokens} tokens)`;
+      return {
+        id: event.uuid,
+        detail: `la terminal compactó su contexto durante este turno, disparo ${event.trigger}`
+          + `${tokens}`,
+      };
+    }),
+    stdout: (text, sessionId) => JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: text,
+      ...(sessionId === undefined ? {} : { session_id: sessionId }),
+    }),
+  };
 }

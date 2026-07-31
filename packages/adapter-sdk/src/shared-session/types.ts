@@ -1,17 +1,20 @@
 import type { CommandRunner, HarnessId } from "../sdk/types.js";
 
 /**
- * Los dos harness que tienen sesión compartida real, y NO son intercambiables.
+ * Los dos harness que tienen sesión compartida real. Y se conducen IGUAL.
  *
- * `claude` no expone ningún protocolo local: `--input-format stream-json` sólo funciona con
- * `--print` (headless, sin TUI), `--tmux` es para worktrees y `--remote-control` es la nube de
- * Anthropic. Se conduce su TUI real por tmux y el sobre se cosecha del transcript `.jsonl`.
+ * Ninguno de los dos expone un protocolo que sirva para esto. En claude, `--input-format
+ * stream-json` sólo funciona con `--print` (headless, sin TUI), `--tmux` es para worktrees y
+ * `--remote-control` es la nube de Anthropic. En codex existe `app-server --listen unix://`, y se
+ * probó: el turno entraba, pero el camino traía cuatro piezas propias (servidor, socket, websocket
+ * y un handshake de cuatro llamadas) y el 2026-07-31 se quedó colgado en `turn/start` sin que el
+ * log del servidor registrara nada. El mismo día se comprobó EN VIVO que pegar en su caja de
+ * entrada funciona igual de bien que en claude —`send-keys -l` + Enter, respuesta en el panel—, y
+ * que su rollout `.jsonl` trae el turno con un `turn_id` tipado.
  *
- * `codex` sí tiene demonio de primera parte (`app-server --listen unix://`), así que el turno del
- * bus entra por protocolo y el sobre llega como campo tipado.
- *
- * La respuesta distinta por harness no es una inconsistencia: es la consecuencia de que uno tenga
- * API local y el otro no.
+ * Así que hay UN solo mecanismo: pegar en la caja de la TUI y cosechar del registro que el propio
+ * harness escribe. Lo único que cambia entre los dos es ese registro, y eso vive detrás de
+ * `TranscriptReader`.
  */
 export type SharedSessionHarness = Extract<HarnessId, "claude" | "codex">;
 
@@ -30,7 +33,7 @@ export function isSharedSessionHarness(harness: HarnessId): harness is SharedSes
 export type DegradationReason =
   /** No existe la sesión tmux, o no se pudo crear. */
   | "session_absent"
-  /** La sesión existe pero no hay TUI viva del harness dentro (o el hilo de codex no está cargado). */
+  /** La sesión existe pero no hay TUI viva del harness dentro. */
   | "tui_absent"
   /** El dueño tenía texto a medio escribir en la caja y nunca la soltó dentro del plazo. */
   | "input_busy"
@@ -44,7 +47,13 @@ export type DegradationReason =
    * el mensaje que leía el dueño.
    */
   | "modal_blocking"
-  /** El mecanismo está pero no habla: socket que no responde, handshake rechazado. */
+  /**
+   * El pegado no entró: tmux lo rechazó, o la TUI nunca registró el turno.
+   *
+   * Se conserva el nombre porque ya está en el log durable y en los avisos que el dueño leyó. Lo
+   * que significa hoy es "el pedido NO llegó a la caja de entrada", y por eso es seguro caer al
+   * camino de siempre: si no llegó, no corrió nada que se pueda duplicar.
+   */
   | "handshake_failed"
   /**
    * La TUI se reinició entre dos turnos del bus y la conversación empezó de cero.
@@ -74,9 +83,9 @@ export type DegradationReason =
    * arrancaría sin contexto). Lo que no puede pasar es que el remitente siga creyendo que habla
    * con el mismo hilo.
    *
-   * En claude se detecta porque el `.jsonl` activo cambia de `sessionId` sin que el proceso se
-   * reinicie —medido: `pane_pid` idéntico antes y después, así que el heurístico de PID NO lo ve
-   * jamás—. En codex, porque `thread/loaded/list` empieza a devolver un hilo más.
+   * En los dos se detecta igual: el turno cae en OTRO registro que el del turno anterior sin que
+   * el proceso se reinicie —medido en claude: `pane_pid` idéntico antes y después, así que el
+   * heurístico de PID NO lo ve jamás—. En codex, `/new` abre un rollout nuevo con otro session_id.
    */
   | "context_cleared"
   /**
@@ -88,6 +97,74 @@ export type DegradationReason =
    * volviendo a pegar lo importante.
    */
   | "context_compacted";
+
+/**
+ * De dónde sale el sobre en un harness concreto. Es lo ÚNICO que los diferencia.
+ *
+ * El pegado, el arbitraje de la caja, la detección de reinicios, los avisos y la ambigüedad del
+ * turno ya inyectado son idénticos para los dos, y por eso viven una sola vez en
+ * `PasteSessionRunner`. Lo que cambia es el fichero que escribe cada TUI y cómo se correlaciona en
+ * él el turno que acabamos de pegar:
+ *
+ *  - claude: `.jsonl` por proyecto, correlación por texto exacto y DESCENDENCIA de uuid.
+ *  - codex: rollout por fecha, correlación por texto exacto y `turn_id` tipado.
+ *
+ * Ninguna implementación puede leer la PANTALLA: el sobre sale del registro o no sale. Una pantalla
+ * de 100 columnas parte un sobre largo y no se puede recomponer.
+ */
+export interface TranscriptSlice<E> {
+  /** Lo que hace falta para correlacionar. Puede ser el fichero entero si el harness lo exige. */
+  readonly entries: readonly E[];
+  /** Sólo lo escrito después del corte, que es lo que pudo pasar durante este turno. */
+  readonly appended: readonly E[];
+}
+
+/** El turno que creó nuestro pegado, ya identificado dentro del registro. */
+export interface InjectedTurn {
+  /** Con qué se sigue el turno: el uuid de la entrada en claude, el `turn_id` en codex. */
+  readonly key: string;
+  /** Identidad de la conversación, para detectar un vaciado y para el `session_id` del resultado. */
+  readonly sessionId?: string;
+}
+
+/**
+ * Cómo terminó el turno, cuando ya se puede afirmar que terminó.
+ *
+ * `failed` existe para que una interrupción del dueño (Esc en la TUI de codex) no se pague con
+ * media hora de silencio: sin esto el turno agota el presupuesto y sale `timedOut`, que el
+ * adaptador trata como AMBIGUO y no reintenta. Con esto se dice lo que pasó.
+ */
+export type TurnOutcome =
+  | { readonly kind: "answer"; readonly text: string; readonly sessionId?: string }
+  | { readonly kind: "failed"; readonly detail: string };
+
+/** Una compactación ocurrida durante el turno, con un id estable para no repetir el aviso. */
+export interface CompactionNotice {
+  readonly id: string;
+  readonly detail: string;
+}
+
+export interface TranscriptReader<E> {
+  /** Los ficheros del registro. Recursivo si el harness los reparte en carpetas. */
+  files(): Promise<readonly string[]>;
+  /** Lee desde `offset`; `entries` es lo que hace falta para correlacionar, `appended` sólo lo nuevo. */
+  read(file: string, offset: number): Promise<TranscriptSlice<E>>;
+  /** La entrada que creó ESTE turno, identificada por el texto exacto que se pegó. */
+  findInjected(file: string, entries: readonly E[], promptText: string): InjectedTurn | undefined;
+  /** El desenlace de ese turno, o `undefined` mientras siga corriendo. */
+  findAnswer(entries: readonly E[], key: string): TurnOutcome | undefined;
+  compactions(appended: readonly E[]): readonly CompactionNotice[];
+  /**
+   * ¿Arrancó ALGÚN turno en lo nuevo? Ausente = este registro no lo sabe decir.
+   *
+   * Es lo que separa "el pegado no llegó a la caja" (no corrió nada: degradar es seguro) de "corrió
+   * algo que no supe correlacionar" (ambiguo: reejecutar duplicaría efectos externos). Sin esta
+   * pregunta las dos son la misma espera muda hasta el plazo.
+   */
+  startedTurn?(appended: readonly E[]): boolean;
+  /** El resultado con la forma NATIVA del harness, que parsea el mismo `parse` de siempre. */
+  stdout(text: string, sessionId: string | undefined): string;
+}
 
 export interface SharedSessionDegradation {
   readonly reason: DegradationReason;
@@ -147,6 +224,3 @@ export const TUI_WINDOW = "agente";
  * 2026-07-30. Hoy no se renombra nada; ver `announceDegradation`.
  */
 export const LEGACY_DEGRADED_WINDOW = "⚠ CAUCE-DEGRADADO";
-
-/** Ventana donde vive el app-server de codex. Sólo existe para el harness codex. */
-export const SERVER_WINDOW = "servidor";

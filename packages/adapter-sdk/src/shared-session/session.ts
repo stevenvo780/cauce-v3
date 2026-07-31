@@ -1,5 +1,3 @@
-import { access } from "node:fs/promises";
-import { connect } from "node:net";
 import {
   capturePane,
   hasSession,
@@ -10,7 +8,6 @@ import {
 import { inputBoxState } from "./pane.js";
 import {
   LEGACY_DEGRADED_WINDOW,
-  SERVER_WINDOW,
   TUI_WINDOW,
   sessionName,
   type SharedSessionHarness,
@@ -30,8 +27,6 @@ export interface SharedSessionSpec {
   readonly harness: SharedSessionHarness;
   /** Directorio de trabajo de la TUI. Es también lo que determina el directorio de transcripts. */
   readonly workspace: string;
-  /** Ruta del socket del app-server. Sólo codex. */
-  readonly socketPath?: string;
   /** Binario del harness. Se separa para poder apuntarlo a un doble en las pruebas. */
   readonly command?: string;
   /**
@@ -159,10 +154,9 @@ export async function ensureSharedSession(
   // Sin PID no hay panel, y sin panel no hay TUI: nunca "listo".
   //
   // Esto era un éxito silencioso medido, no una hipótesis. Cuando la ventana de la TUI moría al
-  // nacer (codex contra un app-server que aún no aceptaba), `waitForTui` llegaba a ver el panel
-  // un instante, devolvía `true`, y `ensure` contestaba `ready:true` sobre una sesión que sólo
-  // tenía la ventana del servidor. El adaptador y `cauce <alias>` daban por buena una sesión
-  // compartida inexistente: exactamente el fallo que este trabajo existe para eliminar.
+  // nacer, `waitForTui` llegaba a ver el panel un instante, devolvía `true`, y `ensure` contestaba
+  // `ready:true` sobre una sesión sin TUI dentro. El adaptador y `cauce <alias>` daban por buena
+  // una sesión compartida inexistente: exactamente el fallo que este trabajo existe para eliminar.
   if (pid === undefined) {
     return {
       ready: false, created: true, failure: "tui_absent",
@@ -212,41 +206,19 @@ async function createSession(
   if (!environment.ok) return { ok: false, detail: environment.detail };
   const env = environment.prefix;
 
-  if (spec.harness === "claude") {
-    const result = await tmux.run([
-      "new-session", "-d", "-s", session, "-n", TUI_WINDOW,
-      "-c", spec.workspace, "-x", width, "-y", height,
-      "bash", "-lc", `exec ${env}${command}`,
-    ]);
-    return result.exitCode === 0 ? { ok: true } : { ok: false, detail: tmuxError(result.stderr) };
-  }
-
-  const socketPath = spec.socketPath;
-  if (socketPath === undefined) {
-    return { ok: false, detail: "codex necesita la ruta del socket del app-server" };
-  }
-  // Ventana 0: el app-server. `daemon start` no sirve acá —exige el managed standalone install en
-  // $CODEX_HOME/packages/standalone/current/codex, que no existe: el binario es un paquete npm
-  // global— pero `--listen unix://` arranca igual y crea el socket.
-  const server = await tmux.run([
-    "new-session", "-d", "-s", session, "-n", SERVER_WINDOW,
+  // Una ventana, un proceso: el binario del harness tal cual, igual que si lo abriera el dueño.
+  //
+  // codex tenía además una ventana `servidor` con `app-server --listen unix://` y arrancaba la TUI
+  // con `--remote`. Se retiró entera: el turno ya no entra por ese protocolo sino por la caja de
+  // entrada, así que el servidor, el socket, la espera a que aceptara y la ventana extra eran
+  // cuatro piezas que sólo podían fallar. Y fallaron: el 2026-07-31 `turn/start` se quedó colgado
+  // sin que el log del servidor registrara nada.
+  const result = await tmux.run([
+    "new-session", "-d", "-s", session, "-n", TUI_WINDOW,
     "-c", spec.workspace, "-x", width, "-y", height,
-    "bash", "-lc", `exec ${env}${command} app-server --listen unix://${socketPath}`,
+    "bash", "-lc", `exec ${env}${command}`,
   ]);
-  if (server.exitCode !== 0) return { ok: false, detail: tmuxError(server.stderr) };
-
-  if (!await waitForSocket(socketPath, options)) {
-    return { ok: false, detail: `el app-server no creó el socket ${socketPath}` };
-  }
-
-  const tui = await tmux.run([
-    "new-window", "-d", "-t", `${session}:`, "-n", TUI_WINDOW,
-    "-c", spec.workspace,
-    "bash", "-lc", `exec ${env}${command} --remote unix://${socketPath}`,
-  ]);
-  if (tui.exitCode !== 0) return { ok: false, detail: tmuxError(tui.stderr) };
-  await tmux.run(["select-window", "-t", `${session}:${TUI_WINDOW}`]);
-  return { ok: true };
+  return result.exitCode === 0 ? { ok: true } : { ok: false, detail: tmuxError(result.stderr) };
 }
 
 function tmuxError(stderr: string): string {
@@ -255,52 +227,15 @@ function tmuxError(stderr: string): string {
 }
 
 /**
- * Espera a que el app-server ACEPTE una conexión, no a que exista el fichero del socket.
- *
- * Medido en `ws-prizma` el 2026-07-30: `codex app-server --listen unix://…` crea el nodo del
- * socket antes de estar sirviendo. Con `access()` la espera terminaba en ~1 s, la ventana de la
- * TUI se lanzaba contra un servidor que todavía no aceptaba, `codex --remote` moría en el acto y
- * la ventana desaparecía. Con el servidor ya caliente la misma ventana sobrevive indefinidamente:
- * la diferencia es exactamente esta carrera.
- *
- * Conectar y cerrar es la única prueba de que el servidor sirve. Un fichero de socket huérfano de
- * un servidor muerto también satisface `access()`, así que esto además evita arrancar la TUI
- * contra un socket que no lleva a ninguna parte.
- */
-async function waitForSocket(path: string, options: EnsureOptions): Promise<boolean> {
-  const deadline = Date.now() + (options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS);
-  for (;;) {
-    try {
-      await access(path);
-      if (await socketAccepts(path)) return true;
-    } catch {
-      // El socket todavía no existe: se reintenta igual que si no aceptara.
-    }
-    if (Date.now() >= deadline) return false;
-    await options.sleep(READY_POLL_MS);
-  }
-}
-
-function socketAccepts(path: string): Promise<boolean> {
-  return new Promise<boolean>((resolveAccepts) => {
-    const probe = connect(path);
-    const settle = (accepted: boolean): void => {
-      probe.removeAllListeners();
-      probe.destroy();
-      resolveAccepts(accepted);
-    };
-    probe.once("connect", () => settle(true));
-    probe.once("error", () => settle(false));
-    probe.setTimeout(2_000, () => settle(false));
-  });
-}
-
-/**
  * Espera a que la caja de entrada exista y esté vacía.
  *
  * No es un `sleep` fijo porque el arranque medido de claude va de 15 a 30 s y varía con la carga
  * del contenedor: un pegado que llega antes de que el lector de entrada esté listo se PIERDE sin
  * error —comprobado— y el turno se quedaría esperando una respuesta que nunca se pidió.
+ *
+ * Vale igual para codex desde que `inputBoxState` reconoce su cursor `›` y trata como VACÍO el
+ * texto fantasma atenuado que dibuja cuando la caja está libre. Antes de eso, la caja de codex
+ * parecía ocupada para siempre y todo turno degradaba a los 90 s.
  */
 async function waitForTui(
   tmux: TmuxController,
@@ -309,7 +244,7 @@ async function waitForTui(
 ): Promise<boolean> {
   const deadline = Date.now() + (options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS);
   for (;;) {
-    const pane = await capturePane(tmux, target);
+    const pane = await capturePane(tmux, target, { styled: true });
     if (!inputBoxState(pane).occupied) return true;
     if (Date.now() >= deadline) return false;
     await options.sleep(READY_POLL_MS);
@@ -322,7 +257,6 @@ export interface SharedSessionStatus {
   readonly session: string;
   readonly present: boolean;
   readonly pid?: string;
-  readonly socketPresent?: boolean;
 }
 
 export async function sharedSessionStatus(
@@ -332,16 +266,11 @@ export async function sharedSessionStatus(
   const session = sessionName(spec.alias);
   const present = await hasSession(tmux, session);
   const pid = present ? await panePid(tmux, tuiTarget(spec.alias)) : undefined;
-  let socketPresent: boolean | undefined;
-  if (spec.harness === "codex" && spec.socketPath !== undefined) {
-    socketPresent = await access(spec.socketPath).then(() => true, () => false);
-  }
   return {
     alias: spec.alias,
     harness: spec.harness,
     session,
     present,
     ...(pid === undefined ? {} : { pid }),
-    ...(socketPresent === undefined ? {} : { socketPresent }),
   };
 }

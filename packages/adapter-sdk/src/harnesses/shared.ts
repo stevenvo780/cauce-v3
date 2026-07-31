@@ -4,6 +4,7 @@ import {
   isCanonicalOpenCodeSessionId,
   isCanonicalOpenCodeScopeKey,
   type DurableStore,
+  type SessionOrigin,
 } from "../sdk/durable-store.js";
 import type {
   AdapterCapabilities,
@@ -405,6 +406,12 @@ export interface HarnessExecuteRequest {
   readonly sessionKey?: string;
   /** Carril de sesión. Ausente = `human`, que es el comportamiento de siempre. */
   readonly sessionLane?: SessionLane;
+  /**
+   * Descripción en claro de la conversación que produjo `sessionKey`. Sólo se persiste; no
+   * cambia qué sesión se elige ni qué candado se toma. Ausente cuando el sobre no traía
+   * conversación (`fallbackSessionKey`), y entonces la entrada queda sin `origin`.
+   */
+  readonly sessionOrigin?: SessionOrigin;
   readonly sessionReservation?: HarnessSessionReservation;
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
@@ -539,7 +546,7 @@ export class HarnessAdapter {
     request: HarnessExecuteRequest,
     effectiveSessionKey: string | undefined,
   ): Promise<StructuredOutput> {
-    const session = await this.resolveSession(effectiveSessionKey);
+    const session = await this.resolveSession(effectiveSessionKey, request.sessionOrigin);
     if (request.signal.aborted) throw abortReason(request.signal);
     const sessionContext: HarnessExecutionContext = session.context;
     const attachmentPlan = planAttachments(this.definition.id, request.attachments ?? []);
@@ -636,10 +643,17 @@ export class HarnessAdapter {
     });
 
     if (effectiveSessionKey !== undefined) {
+      // La misma etiqueta en las dos estrategias. Va acá y no sólo al crear la entrada porque
+      // así también se rellena hacia atrás: una sesión abierta antes de que este campo
+      // existiera queda etiquetada en su siguiente turno, sin migración ni script aparte.
+      const origin = request.sessionOrigin === undefined
+        ? {}
+        : { origin: request.sessionOrigin };
       if (this.definition.sessionStrategy.kind === "generated" && session.nativeId !== undefined) {
         await this.store.setSession(this.sessionStoreKey(effectiveSessionKey), {
           native_id: session.nativeId,
           initialized: true,
+          ...origin,
         });
       }
       if (this.definition.sessionStrategy.kind === "observed" && parsed.nativeSessionId !== undefined) {
@@ -653,6 +667,7 @@ export class HarnessAdapter {
           await this.store.setSession(this.sessionStoreKey(effectiveSessionKey), {
             native_id: parsed.nativeSessionId,
             initialized: true,
+            ...origin,
           });
         }
       }
@@ -712,7 +727,10 @@ export class HarnessAdapter {
     return `${this.definition.id}:${namespace}${sessionKey}`;
   }
 
-  private async resolveSession(sessionKey: string | undefined): Promise<{
+  private async resolveSession(
+    sessionKey: string | undefined,
+    sessionOrigin: SessionOrigin | undefined,
+  ): Promise<{
     context: HarnessExecutionContext;
     nativeId?: string;
   }> {
@@ -736,6 +754,7 @@ export class HarnessAdapter {
       await this.store.setSession(this.sessionStoreKey(sessionKey), {
         native_id: nativeId,
         initialized: false,
+        ...(sessionOrigin === undefined ? {} : { origin: sessionOrigin }),
       });
       return { context: { sessionId: nativeId, resume: false }, nativeId };
     }

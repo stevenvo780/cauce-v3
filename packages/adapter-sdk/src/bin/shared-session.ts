@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { CliTmux } from "../shared-session/tmux.js";
 import { ensureSharedSession, sharedSessionStatus } from "../shared-session/session.js";
-import { cliSharedSessionSpec, runtimeDirectory } from "../shared-session/config.js";
+import { cliSharedSessionSpec } from "../shared-session/config.js";
 import { readDegradations } from "../shared-session/degradation-log.js";
 import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-session/types.js";
 import type { SharedSessionSpec } from "../shared-session/session.js";
@@ -84,14 +83,13 @@ async function main(): Promise<void> {
   //
   // En el adaptador da igual —su bucle de eventos lo sostiene el websocket del bus— pero acá el
   // único trabajo pendiente ES la espera. Con `unref()`, en cuanto `ensureSharedSession` se
-  // dormía a esperar (el app-server que todavía no acepta, la TUI que todavía no dibuja la caja)
-  // Node se quedaba sin nada que lo mantuviera vivo y TERMINABA SOLO, con código 0 y sin escribir
-  // una línea.
+  // dormía a esperar a que la TUI dibujara su caja, Node se quedaba sin nada que lo mantuviera
+  // vivo y TERMINABA SOLO, con código 0 y sin escribir una línea.
   //
-  // Medido en ws-prizma el 2026-07-30: `ensure` de codex salía 0 en silencio, sin la ventana de
-  // la TUI y sin JSON. `cauce socrates` lo leía como éxito y anunciaba COMPARTIDA sobre una
-  // sesión que sólo tenía el app-server. Un `unref()` de una línea producía exactamente el fallo
-  // silencioso que este trabajo existe para eliminar.
+  // Medido en ws-prizma el 2026-07-30: `ensure` de codex salía 0 en silencio y sin la ventana de
+  // la TUI. `cauce socrates` lo leía como éxito y anunciaba COMPARTIDA sobre una sesión que no lo
+  // era. Un `unref()` de una línea producía exactamente el fallo silencioso que este trabajo
+  // existe para eliminar.
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((resolveSleep) => {
       setTimeout(resolveSleep, ms);
@@ -119,9 +117,6 @@ async function main(): Promise<void> {
   }
 
   if (options.command === "ensure") {
-    // El directorio de runtime lo crea quien enciende, no el arranque del contenedor: así el
-    // socket del app-server tiene dueño y permisos correctos sin depender de la imagen.
-    await mkdir(runtimeDirectory(home, options.alias), { recursive: true, mode: 0o700 });
     const result = await ensureSharedSession(tmux, sessionSpec, { sleep });
     process.stdout.write(`${JSON.stringify({
       ...result,
