@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# cauce-panel <alias> — vuelca el panel tmux de la sesion compartida de un alias, y nada mas.
+# Existe porque el panel es la UNICA prueba de que un turno paso por el arnes: una entrega `done`
+# no lo prueba (el fan-in lo sintetiza el SDK sin invocar al arnes) y `cauce` diciendo "compartida"
+# tampoco (llego a decirlo con la ventana enclavada en CAUCE-DEGRADADO).
+#
+# Ojo, dos sitios distintos: kant corre nativo en la torre y su tmux es el del HOST; los demas
+# viven dentro de su contenedor y hay que entrar con docker exec. Barrer el /proc o el tmux
+# equivocado devuelve vacio con codigo 0, que es el fallo mas caro de este proyecto.
+#
+# Codigos:  0 = hay panel (va por stdout)   3 = este arnes NO tiene panel tmux (openclaw)
+#           1 = deberia haber panel y no lo hay
+set -uo pipefail
+A=${1:?uso: cauce-panel <alias>}
+OPS=$HOME/.local/share/cauce-v3/ops
+SOCK=cauce
+
+if systemctl --user cat "cauce-v3-host-$A.service" >/dev/null 2>&1; then
+  tmux -L "$SOCK" capture-pane -p -t "cauce-$A:agente" 2>/dev/null || exit 1
+  exit 0
+fi
+
+LINE=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$A" 2>/dev/null) || exit 1
+IFS=$'\t' read -r _ _ CTR CUSER _ _ HARNESS _ <<<"$LINE"
+[ -n "${CTR:-}" ] || exit 1
+
+# openclaw no es una TUI en tmux: el arnes es un servidor y tanto el cliente del duenio como el
+# turno del bus son dos clientes de la MISMA conversacion. No hay panel que mirar, y decir que
+# "el turno no paso por el arnes" porque falta un tmux seria exactamente al reves de la verdad.
+[ "${HARNESS:-}" = openclaw ] && exit 3
+
+docker exec --user "${CUSER:-root}" "$CTR" \
+  tmux -L "$SOCK" capture-pane -p -t "cauce-$A:agente" 2>/dev/null || exit 1
