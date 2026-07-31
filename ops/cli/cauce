@@ -119,16 +119,80 @@ cmd_flota() {
 
 # La clave de sesion que usa el bus para un alias openclaw: la entrada "openclaw:<alias>:" de su
 # sessions.json. Hay que leerla en caliente porque es un randomUUID que cambia si se limpia el store.
-openclaw_sesion() {  # $1=alias $2=contenedor $3=usuario -> native_id o vacio
-  docker exec --user "$3" "$2" sh -lc "cat ~/.local/state/cauce-v3/$1/sessions.json 2>/dev/null" 2>/dev/null \
-    | python3 -c "
-import json,sys
-try: d=json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-for k,v in (d.get('sessions') or {}).items():
-    if k.startswith('openclaw:$1:') and v.get('native_id'):
-        print(v['native_id']); break
-" 2>/dev/null
+# Las sesiones que Cauce le abrio a este alias, una por conversacion, enriquecidas con lo que
+# sabe el gestor de sesiones de openclaw (edad, tokens) y con un adelanto del ultimo texto.
+# Salida: una linea por sesion, "native_id<TAB>edad<TAB>tokens<TAB>adelanto".
+openclaw_sesiones() {  # $1=alias $2=contenedor $3=usuario
+  docker exec --user "$3" "$2" python3 -c '
+import json, os, subprocess, sys
+alias = sys.argv[1]
+home = os.path.expanduser("~")
+
+# 1) las sesiones que Cauce le abrio a este alias, una por conversacion
+try:
+    with open("%s/.local/state/cauce-v3/%s/sessions.json" % (home, alias)) as fh:
+        cauce = json.load(fh)
+except Exception:
+    raise SystemExit(0)
+mias = [v["native_id"] for k, v in (cauce.get("sessions") or {}).items()
+        if k.startswith("openclaw:%s:" % alias) and v.get("native_id")]
+if not mias:
+    raise SystemExit(0)
+
+# 2) lo que sabe el gestor de sesiones de openclaw: edad, tokens, y el id del transcript
+porclave = {}
+try:
+    out = subprocess.run(["openclaw", "sessions", "list", "--json", "--limit", "all"],
+                         capture_output=True, text=True, timeout=25).stdout
+    lista = json.loads(out)
+    if isinstance(lista, dict):
+        lista = lista.get("sessions") or lista.get("items") or []
+    for s in lista:
+        k = s.get("key", "")
+        if ":" in k:
+            porclave[k.rsplit(":", 1)[-1]] = s
+except Exception:
+    pass
+
+def edad(ms):
+    if not ms: return "?"
+    m = ms // 60000
+    if m < 60: return "%dm" % m
+    if m < 1440: return "%dh" % (m // 60)
+    return "%dd" % (m // 1440)
+
+# 3) el ultimo turno del DUEÑO identifica la conversacion mejor que la respuesta. En la del bus
+#    ese turno es el sobre de protocolo entero, asi que se extrae el pedido real de adentro.
+def adelanto(sid):
+    if not sid: return ""
+    f = "%s/.openclaw/agents/main/sessions/%s.jsonl" % (home, sid)
+    if not os.path.exists(f): return ""
+    ult = ""
+    try:
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            for ln in fh:
+                try: e = json.loads(ln)
+                except Exception: continue
+                m = e.get("message") or {}
+                if m.get("role") != "user": continue
+                c = m.get("content")
+                if isinstance(c, list):
+                    c = " ".join(x.get("text", "") for x in c
+                                 if isinstance(x, dict) and x.get("type") == "text")
+                if isinstance(c, str) and c.strip(): ult = c.strip()
+    except Exception:
+        return ""
+    for ini_m, fin_m in (("BEGIN REQUEST", "END REQUEST"), ("BEGIN IDENTITY", "END IDENTITY")):
+        if ini_m in ult and fin_m in ult:
+            ult = ult.split(ini_m, 1)[1].split(fin_m, 1)[0]
+            break
+    return " ".join(ult.split()).strip("- ")[:64]
+
+for n in mias:
+    s = porclave.get(n, {})
+    tok = "%dk" % (s.get("totalTokens", 0) // 1000) if s.get("totalTokens") else "?"
+    print("%s\t%s\t%s\t%s" % (n, edad(s.get("ageMs")), tok, adelanto(s.get("sessionId"))))
+' "$1" 2>/dev/null
 }
 
 # El gateway de openclaw acepta conexiones? Sin el no hay a que engancharse: el alias corre por
@@ -183,24 +247,41 @@ for line in sys.stdin:
     printf "  ${c_err}la sesion compartida esta configurada pero NO se pudo abrir:${c_reset}\n"
     printf "  ${c_dim}%s${c_reset}\n" "${salida:-sin detalle}"
   elif [[ $harness == openclaw ]]; then
-    local clave_oc
-    clave_oc=$(openclaw_sesion "$a" "$ctr" "$cuser")
-    if [[ -z $clave_oc ]]; then
-      printf "  ${c_dim}todavia no hay sesion del bus para %s: mandale algo por Telegram y volve${c_reset}\n" "$a"
+    local lineas clave_oc n
+    mapfile -t lineas < <(openclaw_sesiones "$a" "$ctr" "$cuser")
+    if [[ ${#lineas[@]} -eq 0 ]]; then
+      printf "  ${c_dim}todavia no hay ninguna sesion del bus para %s: mandale algo y volve${c_reset}\n" "$a"
     elif ! openclaw_gateway_vivo "$ctr"; then
       printf "  ${c_err}el gateway de openclaw NO responde en %s (127.0.0.1:18789)${c_reset}\n" "$ctr"
       printf "  ${c_dim}sin gateway no hay a que engancharse: este alias corre por el camino embebido,${c_reset}\n"
       printf "  ${c_dim}dentro del propio puente, asi que una TUI aca seria una conversacion aparte.${c_reset}\n"
     else
-      printf "  modo: ${c_ok}${c_b}COMPARTIDA${c_reset} — la TUI real de openclaw, misma conversacion que Telegram.\n"
+      if [[ ${#lineas[@]} -gt 1 ]]; then
+        # openclaw abre una conversacion por canal (Telegram, consola, bus). No son un error:
+        # son hilos distintos de verdad, y el dueño elige a cual entra.
+        printf "  ${c_b}%s conversaciones${c_reset} ${c_dim}— openclaw abre una por canal. Elegi:${c_reset}\n\n" "${#lineas[@]}"
+        for i in "${!lineas[@]}"; do
+          IFS=$'\t' read -r nid ed tk pre <<<"${lineas[$i]}"
+          printf "   ${c_b}%d)${c_reset} %-9s ${c_dim}hace %-5s · %-5s${c_reset}  %s\n" \
+            $((i+1)) "${nid:0:8}" "$ed" "$tk" "${pre:0:60}"
+        done
+        printf "\n  ${c_dim}numero (Enter = 1, q = salir):${c_reset} "
+        read -r n </dev/tty || n=""
+        [[ $n == q ]] && { printf "\n"; exit 0; }
+        [[ -z $n ]] && n=1
+        if ! [[ $n =~ ^[0-9]+$ ]] || (( n < 1 || n > ${#lineas[@]} )); then
+          printf "  ${c_err}opcion invalida${c_reset}\n\n"; exit 2
+        fi
+      else
+        n=1
+      fi
+      IFS=$'\t' read -r clave_oc _ _ _ <<<"${lineas[$((n-1))]}"
+      printf "\n  modo: ${c_ok}${c_b}COMPARTIDA${c_reset} — la TUI real de openclaw, la MISMA conversacion que el bus.\n"
       printf "  ${c_dim}salir sin cerrarla: Ctrl-b d  ·  sesion %s${c_reset}\n" "${clave_oc:0:8}"
-      printf "  ${c_warn}ojo, openclaw todavia NO esta endurecido${c_reset}${c_dim} — cuatro cosas medidas:\n"
+      printf "  ${c_warn}ojo, openclaw todavia NO esta endurecido${c_reset}${c_dim} — tres cosas medidas:\n"
       printf "    · el PEDIDO del bus no se pinta en vivo (la respuesta si): veras respuestas sin pregunta\n"
       printf "    · veras el sobre JSON crudo y el prompt de protocolo entero\n"
-      printf "    · el agente NO recuerda lo que EL te contesto a vos (lo que vos escribis si lo ve)\n"
-      printf "    · si el gateway se cae, el bus SIGUE contestando por el camino embebido y este\n"
-      printf "      panel no se entera. La caida NO se avisa en el chat; se ve en 'cauce' como\n"
-      printf "      SIN GATEWAY. Levantarlo: systemctl --user start cauce-v3-openclaw-gateway@%s${c_reset}\n\n" "$a"
+      printf "    · el agente NO recuerda lo que EL te contesto a vos (lo que vos escribis si lo ve)${c_reset}\n\n"
       exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" openclaw tui --session "$clave_oc"
     fi
   elif [[ $harness == claude || $harness == codex ]]; then
