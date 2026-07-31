@@ -85,12 +85,22 @@ cmd_flota() {
   printf "\n  ${c_b}%-9s %-22s %-9s %-9s %-9s %s${c_reset}\n" ALIAS CONTENEDOR HARNESS ADAPTADOR TERMINAL MODO
   printf "  %s\n" "$(printf '─%.0s' $(seq 1 76))"
   local a line ctr cuser harness ad modo color term
+  local -a sin_gateway=()
   for a in $(todos_los_alias); do
     line=$(alias_info "$a") || continue
     IFS=$'\t' read -r _ _ ctr cuser _ _ harness _ <<<"$line"
     ad=$(adaptador_activo "$a")
     if compartida_configurada "$a" && sesion status "$a" "$ctr" "$cuser" "$harness" >/dev/null 2>&1; then
       modo=compartida; color=$c_ok; term="${c_ok}si${c_reset}"
+    elif [[ $harness == openclaw ]] && openclaw_gateway_vivo "$ctr"; then
+      # En openclaw la sesión compartida no tiene interruptor propio: la da el gateway. Si acepta
+      # conexiones, la TUI y el turno del bus son dos clientes de la MISMA conversación.
+      modo=compartida; color=$c_ok; term="${c_ok}si${c_reset}"
+    elif [[ $harness == openclaw && $ad == active ]]; then
+      # El caso que no se puede pintar como "aparte" sin mentir: el alias SIGUE contestando el bus,
+      # pero por el camino embebido, dentro del propio puente. El dueño no ve NADA de eso, y hoy
+      # nada se lo dice en el chat. Que al menos se lo diga acá, y en rojo.
+      modo="SIN GATEWAY"; color=$c_err; term="${c_err}NO${c_reset}"; sin_gateway+=("$a")
     elif [[ $ad == active ]]; then
       modo=aparte; color=$c_warn; term="${c_dim}no${c_reset}"
     else
@@ -99,6 +109,11 @@ cmd_flota() {
     [[ $ad == active ]] && ad="${c_ok}activo${c_reset}" || ad="${c_dim}parado${c_reset}"
     printf "  %-9s %-22s %-9s %-18s %-18s ${color}%s${c_reset}\n" "$a" "$ctr" "$harness" "$ad" "$term" "$modo"
   done
+  if [ ${#sin_gateway[@]} -gt 0 ]; then
+    printf "\n  ${c_err}${c_b}SIN GATEWAY: %s${c_reset}\n" "${sin_gateway[*]}"
+    printf "  ${c_dim}siguen contestando Telegram por el camino embebido, en una conversacion que vos NO ves.${c_reset}\n"
+    printf "  ${c_dim}levantar:  systemctl --user start cauce-v3-openclaw-gateway@<alias>${c_reset}\n"
+  fi
   printf "\n  ${c_dim}entrar:  cauce <alias>      mirar:  cauce <alias> ver${c_reset}\n\n"
 }
 
@@ -179,10 +194,13 @@ for line in sys.stdin:
     else
       printf "  modo: ${c_ok}${c_b}COMPARTIDA${c_reset} — la TUI real de openclaw, misma conversacion que Telegram.\n"
       printf "  ${c_dim}salir sin cerrarla: Ctrl-b d  ·  sesion %s${c_reset}\n" "${clave_oc:0:8}"
-      printf "  ${c_warn}ojo, openclaw todavia NO esta endurecido${c_reset}${c_dim} — tres cosas medidas:\n"
+      printf "  ${c_warn}ojo, openclaw todavia NO esta endurecido${c_reset}${c_dim} — cuatro cosas medidas:\n"
       printf "    · el PEDIDO del bus no se pinta en vivo (la respuesta si): veras respuestas sin pregunta\n"
       printf "    · veras el sobre JSON crudo y el prompt de protocolo entero\n"
-      printf "    · el agente NO recuerda lo que EL te contesto a vos (lo que vos escribis si lo ve)${c_reset}\n\n"
+      printf "    · el agente NO recuerda lo que EL te contesto a vos (lo que vos escribis si lo ve)\n"
+      printf "    · si el gateway se cae, el bus SIGUE contestando por el camino embebido y este\n"
+      printf "      panel no se entera. La caida NO se avisa en el chat; se ve en 'cauce' como\n"
+      printf "      SIN GATEWAY. Levantarlo: systemctl --user start cauce-v3-openclaw-gateway@%s${c_reset}\n\n" "$a"
       exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" openclaw tui --session "$clave_oc"
     fi
   elif [[ $harness == claude || $harness == codex ]]; then

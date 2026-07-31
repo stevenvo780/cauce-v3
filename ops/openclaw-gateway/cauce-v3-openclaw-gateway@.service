@@ -1,0 +1,32 @@
+[Unit]
+Description=Gateway de OpenClaw del alias %i (sesion compartida Cauce V3)
+Documentation=file:%h/.local/share/cauce-v3/ops/openclaw-gateway/openclaw-gateway-supervisor.sh
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/.config/cauce-v3/openclaw-gateway/%i.env
+StartLimitIntervalSec=300s
+StartLimitBurst=10
+
+[Service]
+Type=simple
+UMask=0077
+Environment=CAUCE_OPENCLAW_GATEWAY_CONFIG_ROOT=%h/.config/cauce-v3/openclaw-gateway
+ExecStart=%h/.local/share/cauce-v3/ops/openclaw-gateway/openclaw-gateway-supervisor.sh start %i
+ExecStop=%h/.local/share/cauce-v3/ops/openclaw-gateway/openclaw-gateway-supervisor.sh stop %i
+Restart=always
+RestartSec=5s
+# 78 = EX_CONFIG (falta el .env del alias): reintentar en bucle solo llena el journal.
+RestartPreventExitStatus=78
+# El gateway tarda ~2 s en aceptar; el apagado limpio del arbol (gateway + `claude -p`) hasta 12 s.
+TimeoutStartSec=90s
+TimeoutStopSec=45s
+KillMode=control-group
+StandardInput=null
+NoNewPrivileges=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target
