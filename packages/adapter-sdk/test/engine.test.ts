@@ -2084,3 +2084,181 @@ test("un cuerpo realmente vacio sigue siendo rechazado", async () => {
   assert.equal(context.runner.requests.length, 0);
   assert.equal(context.events.at(-1)?.error?.code, "INVALID_DELIVERY");
 });
+
+/**
+ * DEFECTO B, medido el 2026-07-30 sobre una malla 5x4 en producción: el `agent.fanin` llegaba con
+ * las cuatro respuestas adentro y el coordinador escribía igual FALTA para tres de las cuatro.
+ * La causa no era desatención: cada `agent.response` abre un turno propio que traía el pedido
+ * original y UNA rama, sin ninguna noticia de las hermanas. Con esto el turno trae el estado del
+ * abanico completo, calculado del inbox local, así que la última rama puede consolidar aunque el
+ * arnés no tenga memoria ninguna.
+ *
+ * Y es también la mitad de DEFECTO A: `still_pending` es la respuesta a la pregunta que hacía
+ * re-pinguear ("¿a quién le falta contestarme?") sin gastar una entrega en preguntarla.
+ */
+test("cada agent.response de un abanico llega con el estado de sus ramas hermanas", async () => {
+  const runner = new ControlledRunner();
+  runner.stdout = JSON.stringify({
+    reply: "reparto el trabajo entre dos",
+    messages: [
+      { to: "socrates", body: "rama uno" },
+      { to: "seneca", body: "rama dos" },
+    ],
+    status: "done",
+    retryable: false,
+    artifacts: [],
+  });
+  const context = await setup("engine-branch-progress", runner);
+  const rootDelivery: Delivery = {
+    ...delivery("branch-progress-root"),
+    trace_id: "trace-branch-progress",
+    body: { prompt: "traeme una palabra de cada uno" },
+    routing_targets: [
+      { tenant_id: "Steven", alias: "socrates", online: true },
+      { tenant_id: "Steven", alias: "seneca", online: true },
+    ],
+  };
+  await context.engine.handleDelivery(rootDelivery);
+
+  const correlation = {
+    root_message_id: rootDelivery.message_id,
+    root_delivery_id: rootDelivery.delivery_id,
+    response_to_delivery_id: rootDelivery.delivery_id,
+  };
+  runner.stdout = JSON.stringify({
+    reply: "socrates=BOTON; seneca sigue abierto",
+    messages: [],
+    status: "done",
+    retryable: false,
+    artifacts: [],
+  });
+  await context.engine.handleDelivery({
+    ...delivery("branch-progress-a"),
+    actor_alias: "socrates",
+    recipient_alias: "argos",
+    trace_id: rootDelivery.trace_id,
+    body: { type: "agent.response", text: "BOTON", correlation },
+  });
+
+  runner.stdout = SUCCESS;
+  await context.engine.handleDelivery({
+    ...delivery("branch-progress-b"),
+    actor_alias: "seneca",
+    recipient_alias: "argos",
+    trace_id: rootDelivery.trace_id,
+    body: { type: "agent.response", text: "CIRUELA", correlation },
+  });
+
+  const first = runner.requests[1]?.stdin ?? "";
+  const second = runner.requests[2]?.stdin ?? "";
+
+  // La primera rama ya sabe que la otra está abierta: re-pinguearla es duplicar, no avanzar.
+  assert.match(first, /"delegated_to":\["socrates","seneca"\]/u);
+  assert.match(first, /"this_branch":"socrates"/u);
+  assert.match(first, /"already_returned":\[\]/u);
+  assert.match(first, /"still_pending":\["seneca"\]/u);
+
+  // La última rama llega con el agregado adentro y sin nada pendiente que pueda leerse como falta.
+  assert.match(second, /"this_branch":"seneca"/u);
+  assert.match(second, /"still_pending":\[\]/u);
+  assert.match(
+    second,
+    /"alias":"socrates","your_reply":"socrates=BOTON; seneca sigue abierto"/u,
+  );
+  assert.match(second, /Carry every already_returned branch into this reply/u);
+  assert.match(second, /do not re-send this task to any alias in either list/u);
+});
+
+/** Una delegación de una sola rama no tiene nada que consolidar: el prompt queda como estaba. */
+test("un abanico de una sola rama no paga el bloque de branch_progress", async () => {
+  const runner = new ControlledRunner();
+  runner.stdout = JSON.stringify({
+    reply: "va uno solo",
+    messages: [{ to: "socrates", body: "rama unica" }],
+    status: "done",
+    retryable: false,
+    artifacts: [],
+  });
+  const context = await setup("engine-branch-progress-single", runner);
+  const rootDelivery: Delivery = {
+    ...delivery("branch-single-root"),
+    trace_id: "trace-branch-single",
+    body: { prompt: "una sola cosa" },
+    routing_targets: [{ tenant_id: "Steven", alias: "socrates", online: true }],
+  };
+  await context.engine.handleDelivery(rootDelivery);
+
+  runner.stdout = SUCCESS;
+  await context.engine.handleDelivery({
+    ...delivery("branch-single-response"),
+    actor_alias: "socrates",
+    recipient_alias: "argos",
+    trace_id: rootDelivery.trace_id,
+    body: {
+      type: "agent.response",
+      text: "listo",
+      correlation: {
+        root_message_id: rootDelivery.message_id,
+        root_delivery_id: rootDelivery.delivery_id,
+        response_to_delivery_id: rootDelivery.delivery_id,
+      },
+    },
+  });
+
+  const prompt = runner.requests[1]?.stdin ?? "";
+  assert.match(prompt, /agent_response_continuation/u);
+  // La clave del JSON y la instrucción que la acompaña; la palabra suelta no sirve como prueba,
+  // porque el contrato de toda `agent.response` la nombra en prosa aunque no haya bloque.
+  assert.ok(!prompt.includes('"branch_progress"'));
+  assert.ok(!prompt.includes("branch_progress is this adapter's own local record"));
+});
+
+/**
+ * Sin `origin` la conversación se derivaba del ACTOR, y para el tráfico entre agentes el actor no
+ * es una conversación: es una RAMA. Un abanico de cuatro volvía como cuatro sesiones nativas
+ * aisladas y cuatro candados FIFO independientes, así que ningún turno veía a los demás y encima
+ * podían correr a la vez. Se colapsa hasta el tenant del par: ni más (una sesión por cadena no
+ * tiene cota y `sessions.json` se invalida a las 4096 entradas, sin poda) ni menos (una sesión
+ * única mezclaría el trabajo de dos tenants en un mismo transcript).
+ */
+test("sin origin, el carril de agentes es uno por tenant y no uno por remitente", async () => {
+  const context = await setup("engine-agent-lane-session");
+  const consolePublish = (id: string, overrides: Partial<Delivery>): Delivery => {
+    const { origin: _origin, authenticated_context: _authenticated, ...rest } = delivery(id);
+    return {
+      ...rest,
+      authenticated_context: { session_id: `delivery:${id}:attempt:1`, channel: "console" },
+      ...overrides,
+    };
+  };
+
+  await context.engine.handleDelivery(consolePublish("agent-lane-human", {
+    body: { prompt: "esto lo hacés vos" },
+  }));
+  await context.engine.handleDelivery(consolePublish("agent-lane-a", {
+    actor_alias: "socrates",
+    body: { type: "agent.response", text: "rama de socrates" },
+  }));
+  await context.engine.handleDelivery(consolePublish("agent-lane-b", {
+    actor_alias: "seneca",
+    body: { type: "agent.response", text: "rama de seneca" },
+  }));
+  await context.engine.handleDelivery(consolePublish("agent-lane-c", {
+    tenant_id: "Miguel",
+    actor_alias: "atlas",
+    body: { type: "agent.response", text: "rama de atlas" },
+  }));
+
+  const human = sessionOf(context.runner, 0);
+  const socrates = sessionOf(context.runner, 1);
+  const seneca = sessionOf(context.runner, 2);
+  const atlas = sessionOf(context.runner, 3);
+
+  // Dos ramas del mismo tenant comparten sesión: por eso la última puede ver a la anterior, y por
+  // eso el candado FIFO las serializa en vez de dejarlas correr en paralelo.
+  assert.equal(seneca, socrates);
+  // Pero el trabajo de otro tenant no entra en ese transcript.
+  assert.notEqual(atlas, socrates);
+  // Y la conversación de la persona sigue siendo suya, en su propio carril.
+  assert.notEqual(human, socrates);
+});

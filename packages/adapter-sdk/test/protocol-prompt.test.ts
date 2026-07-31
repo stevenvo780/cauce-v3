@@ -216,7 +216,6 @@ test("every invariant that was not under discussion is preserved verbatim", () =
     '- "reply" answers this delivery and is automatically returned to the sender. Never target sender_alias in "messages".',
     '- Never delegate to self_alias, sender_alias, an offline/unknown alias, or an alias that appears for multiple tenants.',
     '- For an "agent.message" delivery, answer its sender with "reply"; never create a message back to sender_alias.',
-    '- For an "agent.response" delivery, finish the original task supplied by the SDK',
     "- Filesystem paths are local to each alias container.",
     "resolve the intended repository under your own current workspace",
     "Do not rewrite the recipient path from your local mount",
@@ -232,15 +231,47 @@ test("every invariant that was not under discussion is preserved verbatim", () =
   }
 });
 
-test("the fan-in block is still emitted only for agent.fanin, and still forbids re-delegation", () => {
-  const fanin = protocolPrompt("request", undefined, context({ message_type: "agent.fanin" }));
-  assert.match(fanin, /This is an "agent.fanin" delivery\. Synthesize the complete ordered aggregate/u);
-  assert.match(fanin, /For "agent.fanin", use "messages":\[\] and do not start another delegation round\./u);
-  assert.match(fanin, /do not call tools, execute commands, publish messages, mutate state/u);
-  assert.ok(fanin.indexOf(PRIMARY_DUTY_HEADER) < fanin.indexOf('- This is an "agent.fanin" delivery'));
+/**
+ * DEFECTO A, medido el 2026-07-30: la prohibición de abrir otra ronda de delegación vivía SÓLO en
+ * el bloque de `agent.fanin`, y para `agent.response` lo único escrito prohibía rebotarle al
+ * remitente — lo único que nunca pasó. Lo que sí pasó, 4 de 4 veces, fue re-delegar A TERCEROS
+ * desde la respuesta: 22 entregas donde tocaban 10.
+ */
+test("una agent.response trae la regla que prohibe re-pinguear las ramas ya abiertas", () => {
+  const response = protocolPrompt("request", undefined, context({ message_type: "agent.response" }));
 
-  const plain = protocolPrompt("request", undefined, context());
-  assert.ok(!plain.includes('This is an "agent.fanin" delivery'));
+  assert.match(response, /- For an "agent\.response" delivery, finish the original task supplied by the SDK/u);
+  assert.match(response, /closes ONE branch of a fan-out you already opened; it never reopens the round/u);
+  assert.match(response, /never re-send this task to an alias in already_returned or still_pending/u);
+  // Y el permiso para una cadena de trabajo real de varios pasos NO se retira: la prohibición es
+  // de duplicar, no de delegar. Un "nunca delegues desde un response" rompería trabajo válido.
+  assert.match(response, /admissible only for work that is genuinely NEW/u);
+  assert.ok(response.indexOf(PRIMARY_DUTY_HEADER) < response.indexOf('- For an "agent.response" delivery'));
+});
+
+/**
+ * Las reglas de continuación sólo pesan en una continuación. Iban en el bloque fijo de TODA
+ * entrega, que es el que el dueño paga ~1.000 tokens por turno sin deduplicación.
+ */
+test("las reglas de agent.response no viajan en las entregas que no son continuaciones", () => {
+  for (const messageType of ["request", "agent.message", "agent.fanin"]) {
+    const prompt = protocolPrompt("request", undefined, context({ message_type: messageType }));
+    assert.ok(!prompt.includes('- For an "agent.response" delivery'), messageType);
+    assert.ok(!prompt.includes("closes ONE branch of a fan-out"), messageType);
+  }
+});
+
+/**
+ * El bloque de `agent.fanin` era código muerto: `AdapterEngine` sintetiza el fan-in en el SDK y
+ * nunca invoca al arnés, así que esas cuatro líneas no se renderizaron nunca en producción. El
+ * test que las exigía sostenía la creencia falsa de que el agente sintetiza el fan-in. Lo que
+ * pedían sigue garantizado sin prompt: ver «every harness runtime bypasses providers and native
+ * sessions for agent fan-in» en engine.test.ts y el rechazo de `validateDeliveryOutput`.
+ */
+test("no hay bloque de agent.fanin en el prompt: ese camino no llega a ningun modelo", () => {
+  const fanin = protocolPrompt("request", undefined, context({ message_type: "agent.fanin" }));
+  assert.ok(!fanin.includes('This is an "agent.fanin" delivery'));
+  assert.ok(!fanin.includes("do not start another delegation round"));
 });
 
 test("sin contexto no hay identidad, pero el deber abre el prompt", () => {

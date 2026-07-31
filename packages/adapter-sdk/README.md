@@ -242,6 +242,14 @@ Retained lineage requests are removed atomically when fan-in completes and are
 also pruned by an unreferenced timer after 24 hours, including while the
 adapter is otherwise idle.
 
+When that same turn opened two or more branches, the continuation also carries
+`branch_progress`: the aliases this adapter delegated to, the replies this
+adapter itself wrote for the sibling branches that already returned (bounded to
+2 KiB each, head and tail preserved) and the branches still owed. It is derived
+only from local durable state, never from wire text. Without it a branch turn
+saw a single sibling and therefore both reported the others as missing and
+re-sent them the same task. Single-branch fan-outs do not carry the block.
+
 `agent.message`, `agent.response` and `agent.fanin` are reserved internal body
 types. Store is the provenance trust boundary that must reject these types on
 public publish and create them only from durable materialization state. The SDK

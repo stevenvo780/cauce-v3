@@ -60,6 +60,16 @@ export interface ProcessedFaninReply {
   readonly childDeliveryId?: string;
 }
 
+/** Ramas hermanas de un mismo abanico, tal como este adaptador las tiene registradas. */
+export interface DelegationBranchProgress {
+  /** Destinos que este adaptador emitió en el turno que abrió las ramas, en orden de emisión. */
+  readonly delegated: readonly string[];
+  /** Ramas hermanas ya cerradas localmente, más nuevas primero. El texto es de este adaptador. */
+  readonly returned: readonly Omit<ProcessedFaninReply, "childDeliveryId">[];
+  /** Destinos delegados sin respuesta terminal local todavía, sin la rama que llega ahora. */
+  readonly pending: readonly string[];
+}
+
 export const CANONICAL_OPEN_CODE_SESSION_FILE = "canonical-opencode-session.json";
 export const MAX_SESSIONS_FILE_BYTES = 1024 * 1024;
 export const MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS = 24 * 60 * 60 * 1_000;
@@ -974,6 +984,73 @@ export class DurableStore {
       return undefined;
     }
     return clone(source);
+  }
+
+  /**
+   * Estado de las ramas HERMANAS del abanico que esta `agent.response` viene a cerrar.
+   *
+   * Es la respuesta local a una pregunta que el agente no podía contestar y que le costó el
+   * defecto medido: "¿a quién más le pedí esto y quién ya me contestó?". Cada `agent.response`
+   * abre un turno propio; con la clave de sesión partida por remitente, ese turno veía UNA rama y
+   * escribía FALTA para las otras tres aunque el agregado existiera. Y por el mismo hueco
+   * re-pingueaba a los que creía ausentes: 22 entregas donde tocaban 10.
+   *
+   * Todo sale del inbox local y nada del cable:
+   *  - `delegated` son los destinos que ESTE adaptador emitió en el turno que abrió las ramas
+   *    (`continuationSource` ya probó que la rama que llega es una de ellas);
+   *  - `returned` son las respuestas que ESTE adaptador escribió al cerrar las ramas hermanas
+   *    —texto propio, nunca `untrusted_text` de un tercero—, más nuevas primero, que es el mismo
+   *    criterio con el que `processedRepliesForFanin` elige la síntesis que encabeza el fan-in;
+   *  - `pending` es la resta, sin la rama que está llegando ahora.
+   *
+   * Devuelve `undefined` para un abanico de una sola rama: ahí no hay nada que consolidar ni nadie
+   * a quien duplicar, y el prompt de continuación queda byte a byte como estaba.
+   *
+   * Dos imprecisiones conocidas, las dos conservadoras y las dos declaradas:
+   *  - `delegated` es lo que el agente PIDIÓ, no lo que el store materializó. El adaptador declara
+   *    `delegation_feedback_v1` y el frame `ack_result` trae `delegation_rejections`, pero nadie
+   *    las guarda todavía en el inbox, así que una rama rechazada (alias offline, tope de repetición
+   *    de arista, cadena con gate humano abierto) figura como pendiente para siempre. El efecto es
+   *    que el agente espera en vez de reintentar, que es el lado seguro del defecto que se está
+   *    cerrando. Cablear `delegation_rejections` hasta acá es el paso siguiente.
+   *  - la resta de `pending` se hace por ALIAS. El store distingue dos ramas al mismo alias por
+   *    `child_delivery_id`, pero la salida local sólo tiene el alias al que el agente escribió, así
+   *    que dos ramas al mismo destino cuentan como una.
+   */
+  branchProgressForResponse(delivery: Delivery): DelegationBranchProgress | undefined {
+    const source = this.continuationSource(delivery);
+    if (source?.request === undefined || source.output === undefined) return undefined;
+    const delegated = source.output.messages.map((message) => message.to);
+    if (delegated.length < 2) return undefined;
+
+    const returned = Object.values(this.inbox.deliveries)
+      .filter((record) => {
+        if (record.delivery_id === delivery.delivery_id) return false;
+        const request = record.request;
+        const correlation = objectRecord(request?.body.correlation);
+        return record.state === "done"
+          && request?.body.type === "agent.response"
+          && request.trace_id === delivery.trace_id
+          && request.recipient_alias === delivery.recipient_alias
+          && correlation?.response_to_delivery_id === source.delivery_id
+          && visibleText(record.output?.reply);
+      })
+      .sort((left, right) =>
+        right.updated_at.localeCompare(left.updated_at)
+        || right.delivery_id.localeCompare(left.delivery_id))
+      .map((record) => ({
+        tenantId: record.request!.tenant_id,
+        alias: record.request!.actor_alias,
+        reply: record.output!.reply!.trim(),
+        updatedAt: record.updated_at,
+      }));
+
+    const closed = new Set([delivery.actor_alias, ...returned.map((entry) => entry.alias)]);
+    return {
+      delegated,
+      returned,
+      pending: delegated.filter((alias) => !closed.has(alias)),
+    };
   }
 
   /**
