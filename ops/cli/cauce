@@ -102,6 +102,32 @@ cmd_flota() {
   printf "\n  ${c_dim}entrar:  cauce <alias>      mirar:  cauce <alias> ver${c_reset}\n\n"
 }
 
+# La clave de sesion que usa el bus para un alias openclaw: la entrada "openclaw:<alias>:" de su
+# sessions.json. Hay que leerla en caliente porque es un randomUUID que cambia si se limpia el store.
+openclaw_sesion() {  # $1=alias $2=contenedor $3=usuario -> native_id o vacio
+  docker exec --user "$3" "$2" sh -lc "cat ~/.local/state/cauce-v3/$1/sessions.json 2>/dev/null" 2>/dev/null \
+    | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+for k,v in (d.get('sessions') or {}).items():
+    if k.startswith('openclaw:$1:') and v.get('native_id'):
+        print(v['native_id']); break
+" 2>/dev/null
+}
+
+# El gateway de openclaw acepta conexiones? Sin el no hay a que engancharse: el alias corre por
+# el fallback embebido dentro del propio puente y la TUI no comparte nada.
+openclaw_gateway_vivo() {  # $1=contenedor
+  docker exec "$1" node -e '
+const net=require("net"), s=net.connect(18789,"127.0.0.1");
+s.setTimeout(2500);
+s.on("connect",()=>{s.destroy();process.exit(0)});
+s.on("error",()=>process.exit(1));
+s.on("timeout",()=>process.exit(1));
+' >/dev/null 2>&1
+}
+
 # ---------- entrar ----------
 cmd_entrar() {
   local a=$1 line ctr cuser state harness ad salida
@@ -125,20 +151,12 @@ cmd_entrar() {
         printf "\n  ${c_err}${c_b}avisos de la sesion compartida:${c_reset}\n"
         printf '%s\n' "$pendientes" | python3 -c '
 import json,sys
-# Dos cosas MUY distintas comparten este log y no se pueden pintar igual: "el turno NO paso por tu
-# terminal" (rojo) y "el turno SI paso, pero la memoria cambio" —/clear, compactacion, sesion
-# recien creada— (amarillo). Llamar caida a lo segundo es la misma clase de mentira que este
-# mecanismo existe para eliminar.
 for line in sys.stdin:
     line=line.strip()
     if not line: continue
     try: r=json.loads(line)
     except Exception: continue
-    cayo = r.get("fellBack") is not False
-    color = "\033[31m" if cayo else "\033[33m"
-    etiqueta = "NO paso por la terminal" if cayo else "paso, pero cambio el contexto"
-    print("    %s•\033[0m %s  %s [%s]: %s" % (
-        color, r.get("occurredAt","")[:19], r.get("reason","?"), etiqueta, r.get("detail","")))
+    print("    \033[31m•\033[0m %s  %s: %s" % (r.get("occurredAt","")[:19], r.get("reason","?"), r.get("detail","")))
 '
       fi
       printf "\n"
@@ -149,10 +167,28 @@ for line in sys.stdin:
     # siempre: exactamente lo contrario del fallback silencioso que mato al intento anterior.
     printf "  ${c_err}la sesion compartida esta configurada pero NO se pudo abrir:${c_reset}\n"
     printf "  ${c_dim}%s${c_reset}\n" "${salida:-sin detalle}"
+  elif [[ $harness == openclaw ]]; then
+    local clave_oc
+    clave_oc=$(openclaw_sesion "$a" "$ctr" "$cuser")
+    if [[ -z $clave_oc ]]; then
+      printf "  ${c_dim}todavia no hay sesion del bus para %s: mandale algo por Telegram y volve${c_reset}\n" "$a"
+    elif ! openclaw_gateway_vivo "$ctr"; then
+      printf "  ${c_err}el gateway de openclaw NO responde en %s (127.0.0.1:18789)${c_reset}\n" "$ctr"
+      printf "  ${c_dim}sin gateway no hay a que engancharse: este alias corre por el camino embebido,${c_reset}\n"
+      printf "  ${c_dim}dentro del propio puente, asi que una TUI aca seria una conversacion aparte.${c_reset}\n"
+    else
+      printf "  modo: ${c_ok}${c_b}COMPARTIDA${c_reset} — la TUI real de openclaw, misma conversacion que Telegram.\n"
+      printf "  ${c_dim}salir sin cerrarla: Ctrl-b d  ·  sesion %s${c_reset}\n" "${clave_oc:0:8}"
+      printf "  ${c_warn}ojo, openclaw todavia NO esta endurecido${c_reset}${c_dim} — tres cosas medidas:\n"
+      printf "    · el PEDIDO del bus no se pinta en vivo (la respuesta si): veras respuestas sin pregunta\n"
+      printf "    · veras el sobre JSON crudo y el prompt de protocolo entero\n"
+      printf "    · el agente NO recuerda lo que EL te contesto a vos (lo que vos escribis si lo ve)${c_reset}\n\n"
+      exec docker exec -it --user "$cuser" -w /workspace "$ctr" openclaw tui --session "$clave_oc"
+    fi
   elif [[ $harness == claude || $harness == codex ]]; then
     printf "  ${c_dim}este alias no tiene sesion compartida encendida (falta SHARED_SESSION=1 en su .env)${c_reset}\n"
   else
-    printf "  ${c_dim}el harness %s no tiene sesion compartida: solo la tienen claude y codex${c_reset}\n" "$harness"
+    printf "  ${c_dim}el harness %s no tiene sesion compartida${c_reset}\n" "$harness"
   fi
 
   # 2) conversacion aparte, sin parar al agente
@@ -162,6 +198,12 @@ for line in sys.stdin:
     case "$harness" in
       claude) exec docker exec -it --user "$cuser" -w /workspace "$ctr" claude ;;
       codex)  exec docker exec -it --user "$cuser" -w /workspace "$ctr" codex ;;
+      openclaw)
+              printf "  ${c_dim}openclaw SI tiene TUI propia, pero no te la abro aca: en modo local${c_reset}\n"
+              printf "  ${c_dim}comparte el ESTADO con el bus y aun asi el panel es CIEGO (el turno del${c_reset}\n"
+              printf "  ${c_dim}bus nunca aparece). La conversacion mutaria debajo tuyo sin dejar rastro.${c_reset}\n"
+              printf "  ${c_dim}Te abro un shell; para la TUI compartida hace falta gateway.${c_reset}\n\n"
+              exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l ;;
       *)      printf "  ${c_dim}sin TUI propia: te abro un shell${c_reset}\n\n"
               exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l ;;
     esac
