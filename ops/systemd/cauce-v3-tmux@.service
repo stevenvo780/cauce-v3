@@ -1,0 +1,16 @@
+[Unit]
+Description=Cauce V3 panel tmux de %i (sesion compartida, fuera del cgroup del adaptador)
+After=docker.service network-online.target
+Before=cauce-v3-container-%i.service
+ConditionPathExists=%h/.local/bin/cauce-tmux-panel
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/.local/bin/cauce-tmux-panel %i
+# NO control-group: parar esta unit no puede llevarse por delante el panel del dueno.
+KillMode=process
+StandardInput=null
+
+[Install]
+WantedBy=default.target
