@@ -211,7 +211,7 @@ test("every invariant that was not under discussion is preserved verbatim", () =
 
   for (const invariant of [
     "Return exactly one structured result with this JSON shape:",
-    '{"reply":string|null,"messages":[{"to":string,"body":string}],"notify":[{"to":string,"body":string}],"status":"done"|"failed","retryable":boolean,"artifacts":[{"name":string,"uri":string,"media_type"?:string,"sha256"?:string}]}',
+    '{"reply":string|null,"messages":[{"to":string,"body":string}],"notify":[{"to":string,"kind":"alert"|"decision_request"|"task_complete"|"digest","body":string}],"status":"done"|"failed","retryable":boolean,"artifacts":[{"name":string,"uri":string,"media_type"?:string,"sha256"?:string}]}',
     "Do not wrap the result in Markdown.",
     '- "reply" answers this delivery and is automatically returned to the sender. Never target sender_alias in "messages".',
     '- Never delegate to self_alias, sender_alias, an offline/unknown alias, or an alias that appears for multiple tenants.',
