@@ -215,11 +215,24 @@ export function validateDeliveryOutput(
   // `notify` is intentionally NOT covered by this rule: telling a human that a
   // long task failed is the single most valuable proactive message there is.
   if (output.status === "failed" && output.messages.length > 0) {
-    throw new AdapterError(
-      "FAILED_OUTPUT_MESSAGES_FORBIDDEN",
-      "A failed harness output cannot delegate messages because failed outputs are not materialized",
-      false,
-    );
+    // Esto era un `throw`, y el throw se llevaba puesto el `reply` ENTERO. El agente escribia su
+    // diagnostico, el turno terminaba en "failed", y al remitente le llegaba unicamente
+    // "<alias> could not complete the delegated request: ...". Medido el 2026-08-01: 98 entregas
+    // perdieron su respuesta asi (kant 23, dedalo 15, kratos 12). Un caso concreto: zeus explico
+    // en 1.900 caracteres que el fallo era un sshd ausente y no una ruta, socrates nunca lo vio y
+    // siguio media hora buscando donde no era.
+    //
+    // Descartar los mensajes no pierde nada que hoy exista: un turno "failed" no se materializa
+    // igual, y el gateway lo compuerta aguas abajo. Lo que se gana es que la respuesta sobreviva.
+    const descartadas = output.messages.length;
+    const aviso = `[Cauce] Se descartaron ${descartadas} delegacion(es): un turno que termina en "failed" no materializa mensajes. Si siguen haciendo falta, repetilas en un turno que cierre en "done", o usa "notify" para avisarle a una persona.`;
+    output = {
+      ...output,
+      messages: [],
+      reply: output.reply === null || output.reply.trim() === ""
+        ? aviso
+        : `${output.reply}\n\n${aviso}`,
+    };
   }
 
   const internalMessage = context.messageType === "agent.message"

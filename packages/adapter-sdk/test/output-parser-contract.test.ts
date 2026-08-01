@@ -479,19 +479,25 @@ test("failed fan-in cannot carry messages", () => {
   );
 });
 
-test("failed non-fanin output cannot claim an unmaterialized delegation", () => {
+test("un output failed pierde sus delegaciones pero conserva la respuesta", () => {
+  // Antes esto lanzaba FAILED_OUTPUT_MESSAGES_FORBIDDEN, y el throw se llevaba puesto el `reply`
+  // entero: al remitente le llegaba "could not complete the delegated request" y nada mas.
+  // Un turno failed no materializa mensajes de todos modos, asi que descartarlos no pierde nada;
+  // lo que se gana es que la respuesta del agente sobreviva y el sepa que se descartaron.
   const failedWithMessages = delegatedOutput("socrates", {
     status: "failed",
     retryable: true,
   });
-  assert.throws(
-    () => validateDeliveryOutput(failedWithMessages, {
-      messageType: "request",
-      selfAlias: "jarvis",
-      routingTargets: ROUTING_TARGETS,
-    }),
-    isContractError("FAILED_OUTPUT_MESSAGES_FORBIDDEN"),
-  );
+  const resultado = validateDeliveryOutput(failedWithMessages, {
+    messageType: "request",
+    selfAlias: "jarvis",
+    routingTargets: ROUTING_TARGETS,
+  });
+  assert.deepEqual(resultado.messages, []);
+  assert.equal(resultado.status, "failed");
+  assert.equal(resultado.retryable, true);
+  assert.ok(resultado.reply !== null && resultado.reply.length > 0, "el reply tiene que sobrevivir");
+  assert.match(resultado.reply as string, /Se descartaron 1 delegacion/u);
 });
 
 test("failed output rejects an invisible reply but permits reply null", () => {
@@ -607,14 +613,17 @@ test("a failed output may notify even though it may not delegate", () => {
   });
   assert.equal(validateDeliveryOutput(failed), failed);
 
-  assert.throws(
-    () => validateDeliveryOutput(validateStructuredOutput({
-      reply: "falló",
-      messages: [{ to: "socrates", body: "seguí vos" }],
-      status: "failed",
-      retryable: false,
-      artifacts: [],
-    })),
-    isContractError("FAILED_OUTPUT_MESSAGES_FORBIDDEN"),
-  );
+  // Y una delegacion en un turno failed ya no hace estallar el turno: se descarta y se avisa,
+  // sin tocar `notify`, que es el unico canal que sobrevive a un fallo.
+  const conDelegacion = validateDeliveryOutput(validateStructuredOutput({
+    reply: "falló",
+    messages: [{ to: "socrates", body: "seguí vos" }],
+    notify: [{ to: "steven.dm", kind: "alert", body: "necesito autorizacion" }],
+    status: "failed",
+    retryable: false,
+    artifacts: [],
+  }));
+  assert.deepEqual(conDelegacion.messages, []);
+  assert.match(conDelegacion.reply as string, /^falló\n\n\[Cauce\] Se descartaron 1 delegacion/u);
+  assert.equal(conDelegacion.notify?.length, 1);
 });
