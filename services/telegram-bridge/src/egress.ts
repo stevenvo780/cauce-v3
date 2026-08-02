@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { TelegramActivity, TelegramActivityTarget, TelegramTerminalOutcome } from './activity.js';
+import { planArtifacts, type PlannedUpload } from './artifacts.js';
 import { effectiveChatPolicy, groupRouting } from './config.js';
 import type {
   BridgeMetric, TelegramAliasConfig, TelegramApi, TelegramEgressRepository,
   TelegramEffect, TelegramOriginRelay, TelegramOriginRelayAck, TelegramSendOptions,
-  TelegramSendResult
+  TelegramSendResult, TelegramUpload
 } from './types.js';
 import { TelegramApiError, validTelegramMessageId } from './telegram.js';
 import { markdownToPlainText, markdownToTelegramHtml } from './markdown.js';
@@ -147,9 +148,22 @@ function candidate(payload: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-export function telegramTextChunks(payload: Record<string, unknown>): string[] {
+/**
+ * El texto que se publica, ya troceado a la medida de Telegram.
+ *
+ * `footer` es el bloque de adjuntos que arma `planArtifacts`. Va PEGADO al texto y no como mensaje
+ * aparte por dos razones: viaja con la misma fila durable que la respuesta —así no puede llegar la
+ * lista sin la respuesta ni al revés— y no gasta una notificación más en el teléfono de nadie.
+ *
+ * Cuando no hay respuesta pero sí adjuntos, el pie ES el mensaje: publicar lo que el agente produjo
+ * vale mucho más que el silencio que había hasta ahora.
+ */
+export function telegramTextChunks(payload: Record<string, unknown>, footer = ''): string[] {
   if (isMissingFinalReply(payload)) return [];
-  const value = candidate(payload);
+  const original = candidate(payload);
+  const value = original === undefined
+    ? (footer === '' ? undefined : footer.trim())
+    : `${original}${footer}`;
   if (value === undefined) return [];
   const source = value.split('\u0000').join('').trim();
   const characters = [...source].slice(0, 65_536);
@@ -234,6 +248,37 @@ function blockedDiagnostic(effect: TelegramEffect): string {
     : RESTART_AMBIGUOUS);
 }
 
+/**
+ * Una pieza de la respuesta: un trozo de texto o un archivo.
+ *
+ * Las dos comparten la misma secuencia de `telegram_egress_effects` (índices 0..n-1) porque el ACK
+ * del repositorio verifica que existan TODOS los índices y que todos estén `sent`. Numerar los
+ * adjuntos aparte rompería esa verificación y dejaría la entrega colgada.
+ */
+type EgressPiece =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'upload'; readonly upload: PlannedUpload };
+
+/**
+ * Identidad durable de la pieza.
+ *
+ * El texto se hashea EXACTAMENTE como antes de que existieran los adjuntos —`sha256(texto)`, sin
+ * prefijo— a propósito: `prepareEffect` compara el hash contra la fila ya guardada y un cambio de
+ * fórmula haría que toda entrega a medio enviar durante el despliegue chocara con
+ * "Telegram effect idempotency conflict" y muriera. La compatibilidad del hash es lo que hace que
+ * este cambio se pueda desplegar en caliente.
+ *
+ * Para un adjunto se hashea el sha256 del CONTENIDO junto con su nombre y su forma de envío: si el
+ * agente cambia el archivo, el hash cambia y el efecto no se confunde con el anterior; si no lo
+ * cambia, un reintento reconoce la pieza ya enviada y no la sube dos veces.
+ */
+function pieceHash(piece: EgressPiece): string {
+  const material = piece.kind === 'text'
+    ? piece.text
+    : `artifact:${piece.upload.kind}:${piece.upload.name}:${piece.upload.sha256}`;
+  return createHash('sha256').update(material).digest('hex');
+}
+
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
@@ -308,6 +353,65 @@ export class TelegramEgressWorker {
     }
   }
 
+  /**
+   * Sube un adjunto, y si no se puede, DICE por qué en el chat.
+   *
+   * La cadena es foto → documento → línea de texto, y existe para sostener el invariante duro de
+   * este servicio: cada pieza planificada produce SIEMPRE un mensaje de Telegram. Si una subida
+   * fallida no produjera ninguno, su fila de `telegram_egress_effects` no llegaría nunca a `sent`,
+   * el ACK exige que TODAS lo estén (`repository.ack`), y la entrega entera —la respuesta del
+   * agente incluida— terminaría en `dead` por culpa de un archivo. Un adjunto es un campo
+   * accesorio: no puede costar el turno.
+   *
+   * El degradado a documento cubre el caso más común de rechazo de `sendPhoto`: Telegram limita
+   * las dimensiones y la relación de aspecto de una foto, no sólo su peso. Como documento, la
+   * misma imagen entra.
+   *
+   * Sólo se degrada ante un rechazo CONOCIDO (`outcomeKnown && !retryable`). Un fallo de red o un
+   * resultado ambiguo sigue el camino normal, o se subiría dos veces algo que la persona ya tiene.
+   */
+  private async sendAttachment(
+    api: TelegramApi,
+    chatId: string,
+    upload: PlannedUpload,
+    options: TelegramSendOptions | undefined
+  ): Promise<TelegramSendResult> {
+    const payload: TelegramUpload = {
+      kind: upload.kind,
+      name: upload.name,
+      mime_type: upload.mime_type,
+      bytes: upload.bytes,
+      caption: upload.name
+    };
+    const rejected = (error: unknown): boolean =>
+      error instanceof TelegramApiError && error.outcomeKnown && !error.retryable;
+
+    if (upload.kind === 'photo' && api.sendPhoto !== undefined) {
+      try {
+        const sent = await api.sendPhoto(chatId, payload, options);
+        this.onMetric('egress_attachment_uploaded');
+        return sent;
+      } catch (error) {
+        if (error instanceof EgressCrash || !rejected(error)) throw error;
+      }
+    }
+    if (api.sendDocument !== undefined) {
+      try {
+        const sent = await api.sendDocument(chatId, { ...payload, kind: 'document' }, options);
+        this.onMetric('egress_attachment_uploaded');
+        return sent;
+      } catch (error) {
+        if (error instanceof EgressCrash || !rejected(error)) throw error;
+      }
+    }
+    this.onMetric('egress_attachment_upload_failed');
+    const aviso = `📎 No pude adjuntar «${upload.name}»: Telegram rechazó el archivo. `
+      + 'Pedile al agente que lo mande más liviano o en otro formato.';
+    return options === undefined
+      ? await api.sendText(chatId, aviso)
+      : await api.sendText(chatId, aviso, options);
+  }
+
   private acknowledgement(
     event: TelegramOriginRelay,
     values: Omit<TelegramOriginRelayAck, 'event_id' | 'attempt' | 'claim_token'>
@@ -361,8 +465,16 @@ export class TelegramEgressWorker {
     }
 
     try {
-      const chunks = telegramTextChunks(event.payload);
-      if (chunks.length === 0 || (!interimAcknowledgement && isMissingFinalReply(event.payload))) {
+      // Los adjuntos se planifican ANTES de trocear: el pie que resume lo que no viajó forma parte
+      // del texto, y los bytes que sí viajan son piezas más de la misma secuencia durable.
+      const plan = planArtifacts(event.payload);
+      const chunks = telegramTextChunks(event.payload, plan.footer);
+      const pieces: EgressPiece[] = [
+        ...chunks.map((text): EgressPiece => ({ kind: 'text', text })),
+        ...plan.uploads.map((upload): EgressPiece => ({ kind: 'upload', upload }))
+      ];
+      if (plan.listed > 0) this.onMetric('egress_attachment_listed');
+      if (pieces.length === 0 || (!interimAcknowledgement && isMissingFinalReply(event.payload))) {
         const diagnostic = 'Telegram relay has no visible final reply; no message was sent';
         await this.repository.ack(this.acknowledgement(event, { status: 'dead', error: diagnostic }));
         if (!interimAcknowledgement) this.finishActivity(event, bridgeAlias, api, 'failed');
@@ -370,8 +482,8 @@ export class TelegramEgressWorker {
         return;
       }
       let blocked: string | undefined;
-      for (const [index, text] of chunks.entries()) {
-        const payloadHash = createHash('sha256').update(text).digest('hex');
+      for (const [index, piece] of pieces.entries()) {
+        const payloadHash = pieceHash(piece);
         const effectId = `${event.event_id}:${index}`;
         let effect = await this.repository.prepareEffect({
           effect_id: effectId,
@@ -379,7 +491,7 @@ export class TelegramEgressWorker {
           tenant_id: event.tenant_id,
           bridge_alias: bridgeAlias,
           chunk_index: index,
-          chunk_count: chunks.length,
+          chunk_count: pieces.length,
           payload_hash: payloadHash
         });
         if (effect.state === 'sent') continue;
@@ -414,7 +526,9 @@ export class TelegramEgressWorker {
           const options = threadOptions(event, index, threadId, replyToOrigin);
           // Omit the argument entirely when there is nothing to thread, so any existing
           // two-parameter TelegramApi implementation keeps behaving exactly as before.
-          const sent = await this.sendFormatted(api, chatId, text, options);
+          const sent = piece.kind === 'text'
+            ? await this.sendFormatted(api, chatId, piece.text, options)
+            : await this.sendAttachment(api, chatId, piece.upload, options);
           remotelyAccepted = true;
           await this.hooks.afterSend?.(effectId);
           await this.repository.completeEffect(effectId, payloadHash, sent.message_id);
@@ -452,7 +566,7 @@ export class TelegramEgressWorker {
         this.onMetric('egress_dead');
         return;
       }
-      await this.repository.ack(this.acknowledgement(event, { status: 'sent', effect_count: chunks.length }));
+      await this.repository.ack(this.acknowledgement(event, { status: 'sent', effect_count: pieces.length }));
       if (!interimAcknowledgement) {
         this.finishActivity(event, bridgeAlias, api, relayOutcome(event.payload));
       }

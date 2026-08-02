@@ -12,6 +12,7 @@ import type {
 import type { TelegramActivity } from './activity.js';
 import { TelegramApiError } from './telegram.js';
 import { prepareTelegramAttachments, prepareTelegramVoice } from './attachments.js';
+import { redactSecretsDeep } from './redaction.js';
 import type { transcribeAudio, TranscriptionConfig } from './transcription.js';
 
 /** Punto de inyección para las pruebas; en producción siempre es el cliente HTTP real. */
@@ -211,7 +212,8 @@ async function normalizedBody(
   api: TelegramApi,
   context?: GroupBodyContext,
   transcription?: TranscriptionConfig,
-  transcriber?: Transcriber
+  transcriber?: Transcriber,
+  onRedaction?: () => void
 ): Promise<Record<string, unknown>> {
   const prepared = await prepareTelegramAttachments(message, api);
   const voice = transcriber === undefined
@@ -246,7 +248,7 @@ async function normalizedBody(
     : request === undefined
       ? attachmentError
       : `${request}\n\n${attachmentError}`;
-  return {
+  const body = {
     type: 'telegram.message',
     update_id: updateId,
     message_id: message.message_id,
@@ -269,6 +271,21 @@ async function normalizedBody(
     ...(context !== undefined || (attachmentError === undefined && spoken === undefined)
       ? {} : { prompt: effectiveRequest })
   };
+  /**
+   * Última parada antes de persistir.
+   *
+   * `StoreTelegramIngress.publish` escribe este objeto tal cual en `messages.body`, y de ahí no se
+   * borra nunca: el 02-ago quedó ahí un `DATABASE_URL` con usuario y contraseña que sobrevive a
+   * cualquier rotación. Se redacta el cuerpo ENTERO —no una lista de campos— porque el secreto se
+   * cuela por el campo que nadie acordó de incluir: `prompt` nació mucho después que `text`.
+   *
+   * La marca `redacted_v1` es para el operador en la consola; el humano y el agente ven el
+   * `[secreto-redactado]` en el propio texto, que se explica solo.
+   */
+  const redacted = redactSecretsDeep(body);
+  if (redacted.count === 0) return body;
+  onRedaction?.();
+  return { ...redacted.value, redacted_v1: { count: redacted.count, kinds: redacted.kinds } };
 }
 
 /**
@@ -528,7 +545,9 @@ export class TelegramPoller {
           group
             ? { threadId, bucket: decision.bucket, untrusted: this.untrustedContext(message) }
             : undefined,
-          this.transcription
+          this.transcription,
+          undefined,
+          () => this.onMetric('ingress_secret_redacted')
         ),
         origin,
         session_id: session(scope, this.botId, chatId, userId, threadId),

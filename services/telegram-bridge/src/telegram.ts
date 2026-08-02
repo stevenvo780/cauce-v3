@@ -1,7 +1,7 @@
 import { TELEGRAM_ACTIVITY_REACTIONS } from './types.js';
 import type {
   TelegramApi, TelegramChatAction, TelegramIdentity, TelegramMessage, TelegramReactionEmoji,
-  TelegramRemoteFile, TelegramSendOptions, TelegramSendResult, TelegramUpdate
+  TelegramRemoteFile, TelegramSendOptions, TelegramSendResult, TelegramUpdate, TelegramUpload
 } from './types.js';
 
 interface TelegramResponse<T> {
@@ -54,6 +54,26 @@ export function validTelegramMessageId(value: string): boolean {
   return Number.isSafeInteger(Number(value));
 }
 
+/**
+ * Identidad del mensaje que Telegram acaba de aceptar.
+ *
+ * Un resultado ilegible se marca como `outcomeKnown:false`: el mensaje PUDO haberse publicado, y
+ * reintentarlo automáticamente duplicaría algo que la persona ya tiene en el teléfono.
+ */
+function sentMessageId(raw: unknown, method: string): TelegramSendResult {
+  let result: Record<string, unknown>;
+  try {
+    result = record(raw);
+  } catch {
+    throw new TelegramApiError(`Telegram accepted ${method} with a malformed result`, false, undefined, false);
+  }
+  const messageId = result.message_id;
+  if (!Number.isSafeInteger(messageId) || Number(messageId) < 1) {
+    throw new TelegramApiError(`Telegram accepted ${method} with an invalid message id`, false, undefined, false);
+  }
+  return { message_id: String(messageId) };
+}
+
 function parseUpdate(value: unknown): TelegramUpdate {
   const row = record(value);
   const update: TelegramUpdate = { update_id: safeInteger(row.update_id, 'update_id') };
@@ -80,13 +100,33 @@ export class TelegramHttpClient implements TelegramApi {
     body: Record<string, unknown>,
     externalSignal?: AbortSignal
   ): Promise<T> {
+    return this.dispatch<T>(
+      method,
+      { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } },
+      externalSignal
+    );
+  }
+
+  /**
+   * Un único punto de envío para JSON y para multipart.
+   *
+   * La interpretación de la respuesta —y sobre todo la distinción entre "Telegram lo rechazó" y
+   * "no sé qué pasó"— tiene que ser IDÉNTICA para los dos, o una subida ambigua se reintentaría
+   * y el humano recibiría la misma foto dos veces. Con `FormData` no se fija `content-type`
+   * a mano: lo pone `fetch` con el boundary que corresponde.
+   */
+  private async dispatch<T>(
+    method: string,
+    init: { body: BodyInit; headers?: Record<string, string> },
+    externalSignal?: AbortSignal
+  ): Promise<T> {
     let response: Response;
     try {
       const timeoutSignal = AbortSignal.timeout(this.requestTimeoutMs);
       response = await this.fetcher(`${this.endpoint}/${method}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
+        ...(init.headers === undefined ? {} : { headers: init.headers }),
+        body: init.body,
         redirect: 'error',
         signal: externalSignal === undefined
           ? timeoutSignal
@@ -237,17 +277,66 @@ export class TelegramHttpClient implements TelegramApi {
         // allow_sending_without_reply keeps a deleted original from making the chunk dead forever.
         ? { reply_parameters: { message_id: Number(replyTo), allow_sending_without_reply: true } } : {})
     });
-    let result: Record<string, unknown>;
-    try {
-      result = record(raw);
-    } catch {
-      throw new TelegramApiError('Telegram accepted sendMessage with a malformed result', false, undefined, false);
+    return sentMessageId(raw, 'sendMessage');
+  }
+
+  /**
+   * Sube los BYTES de un adjunto.
+   *
+   * `sendPhoto` deja la imagen visible dentro del chat —lo que Jhon pidió tres veces el 28-jul:
+   * "que pueda ver no en letras"— y `sendDocument` conserva el archivo tal cual, con su nombre,
+   * que es lo que hacía falta para el guion `.docx` de Isa.
+   *
+   * El `caption` va SIN `parse_mode`: es un nombre de archivo, no marcado, y un `<` suelto en un
+   * nombre no puede costar la subida entera por un 400 de parseo.
+   */
+  private async upload(
+    method: 'sendPhoto' | 'sendDocument',
+    field: 'photo' | 'document',
+    chatId: string,
+    upload: TelegramUpload,
+    options?: TelegramSendOptions
+  ): Promise<TelegramSendResult> {
+    if (!validTelegramChatId(chatId)) throw new TelegramApiError('invalid Telegram destination', false);
+    if (upload.bytes.length === 0) throw new TelegramApiError('Telegram upload has no bytes', false);
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    // `new Uint8Array(buffer)` copia: es lo que hace falta para que el tipo sea `ArrayBuffer` y no
+    // `ArrayBufferLike`. Un adjunto está acotado a 10 MB, así que la copia es irrelevante al lado
+    // de la subida en sí.
+    const contenido = new Uint8Array(upload.bytes);
+    form.append(field, new Blob([contenido], { type: upload.mime_type }), upload.name);
+    if (upload.caption !== undefined && upload.caption.length > 0) {
+      form.append('caption', [...upload.caption].slice(0, 1_024).join(''));
     }
-    const messageId = result.message_id;
-    if (!Number.isSafeInteger(messageId) || Number(messageId) < 1) {
-      throw new TelegramApiError('Telegram accepted sendMessage with an invalid message id', false, undefined, false);
+    const threadId = options?.message_thread_id;
+    const replyTo = options?.reply_to_message_id;
+    if (threadId !== undefined && validTelegramMessageId(threadId)) {
+      form.append('message_thread_id', threadId);
     }
-    return { message_id: String(messageId) };
+    if (replyTo !== undefined && validTelegramMessageId(replyTo)) {
+      form.append('reply_parameters', JSON.stringify({
+        message_id: Number(replyTo), allow_sending_without_reply: true
+      }));
+    }
+    const raw = await this.dispatch<unknown>(method, { body: form });
+    return sentMessageId(raw, method);
+  }
+
+  async sendPhoto(
+    chatId: string,
+    upload: TelegramUpload,
+    options?: TelegramSendOptions
+  ): Promise<TelegramSendResult> {
+    return this.upload('sendPhoto', 'photo', chatId, upload, options);
+  }
+
+  async sendDocument(
+    chatId: string,
+    upload: TelegramUpload,
+    options?: TelegramSendOptions
+  ): Promise<TelegramSendResult> {
+    return this.upload('sendDocument', 'document', chatId, upload, options);
   }
 
   async setMessageReaction(

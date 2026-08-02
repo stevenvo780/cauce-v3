@@ -109,12 +109,33 @@ export interface TelegramSendOptions {
   parse_mode?: 'html';
 }
 
+/** Un archivo listo para subir. Los bytes ya están validados por `planArtifacts`. */
+export interface TelegramUpload {
+  readonly kind: 'photo' | 'document';
+  readonly name: string;
+  readonly mime_type: string;
+  readonly bytes: Buffer;
+  /** Texto corto que Telegram muestra debajo del archivo. */
+  readonly caption?: string;
+}
+
 export interface TelegramApi {
   getIdentity(): Promise<TelegramIdentity>;
   getUpdates(offset: number, timeoutSeconds: number): Promise<TelegramUpdate[]>;
   getFile(fileId: string): Promise<TelegramRemoteFile>;
   downloadFile(filePath: string, maxBytes: number): Promise<Buffer>;
   sendText(chatId: string, text: string, options?: TelegramSendOptions): Promise<TelegramSendResult>;
+  /**
+   * Subida de bytes. OPCIONALES a propósito.
+   *
+   * El invariante de este servicio es que un adjunto no puede costar el texto: si una
+   * implementación de `TelegramApi` no sabe subir archivos, el egreso lo detecta y manda en su
+   * lugar una línea explicando por qué no fue, en vez de romper la entrega. Declararlos
+   * obligatorios haría que ese fallo se manifestara como un error de tipo en compilación y como
+   * una excepción en ejecución, que es exactamente lo contrario de lo que hace falta acá.
+   */
+  sendPhoto?(chatId: string, upload: TelegramUpload, options?: TelegramSendOptions): Promise<TelegramSendResult>;
+  sendDocument?(chatId: string, upload: TelegramUpload, options?: TelegramSendOptions): Promise<TelegramSendResult>;
   setMessageReaction(
     chatId: string,
     messageId: string,
@@ -307,4 +328,11 @@ export type BridgeMetric =
   | 'egress_sent' | 'egress_retry' | 'egress_dead' | 'egress_ambiguous'
   // Telegram rechazó el HTML y el mensaje salió en texto plano. Si este contador sube, la
   // conversión de markdown está generando algo que Telegram no acepta y hay que mirarla.
-  | 'egress_format_downgraded';
+  | 'egress_format_downgraded'
+  // Adjuntos. `uploaded` son bytes que llegaron al chat; `listed` son artifacts que sólo se
+  // pudieron nombrar (enlace o ruta del agente); `upload_failed` es una subida que Telegram
+  // rechazó y terminó como línea de texto. Si `listed` es alto y `uploaded` cero, los agentes
+  // siguen devolviendo rutas en vez de bytes y el trabajo no está terminado.
+  | 'egress_attachment_uploaded' | 'egress_attachment_listed' | 'egress_attachment_upload_failed'
+  // Se redactó al menos un secreto en un mensaje entrante antes de persistirlo.
+  | 'ingress_secret_redacted';
