@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { redactSecrets, redactSecretsDeep } from '../src/redaction.js';
 import { normalizedBody } from '../src/poller.js';
 import type { TelegramApi, TelegramMessage } from '../src/types.js';
@@ -20,7 +20,19 @@ function message(text: string): TelegramMessage {
   return { message_id: 7, chat: { id: 42, type: 'private' }, from: { id: 9 }, text };
 }
 
+/**
+ * La redacción está APAGADA por defecto desde el 02-ago (decisión de Steven; ver la cabecera de
+ * `redaction.ts`). Todo lo que sigue prueba el comportamiento CON el interruptor encendido, así que
+ * hay que encenderlo explícitamente; el bloque del final prueba que apagado no toca nada.
+ */
 describe('redacción de secretos en la ingesta', () => {
+  beforeEach(() => {
+    process.env.CAUCE_TELEGRAM_REDACT_INGRESS = '1';
+  });
+  afterEach(() => {
+    delete process.env.CAUCE_TELEGRAM_REDACT_INGRESS;
+  });
+
   /* ---------------- Lo que SÍ se redacta ---------------- */
 
   it('redacta la URI con credenciales del caso medido (mensaje ced40f3c, 02-ago 13:00)', () => {
@@ -164,5 +176,52 @@ describe('redacción de secretos en la ingesta', () => {
     const cuerpo = await normalizedBody(message('hola, ¿cómo vas con el guion?'), 42, api);
     expect(cuerpo.text).toBe('hola, ¿cómo vas con el guion?');
     expect(cuerpo.redacted_v1).toBeUndefined();
+  });
+});
+
+/**
+ * El comportamiento por defecto, que es el que corre en producción desde el 02-ago.
+ *
+ * Sin esto la única prueba del interruptor sería leer el código: los 14 casos de arriba encienden
+ * la redacción a mano y pasarían igual aunque el default estuviera al revés.
+ */
+describe('apagada por defecto: el dueño puede pasar credenciales', () => {
+  beforeEach(() => {
+    delete process.env.CAUCE_TELEGRAM_REDACT_INGRESS;
+  });
+
+  it('el token de bot que socrates no pudo instalar llega entero', () => {
+    const crudo = 'Use this token to access the HTTP API:\n'
+      + '7891234560:AAHkL2mQ9vZxR4tYpB6nWc8sDfGhJkLmNoP';
+    const resultado = redactSecrets(crudo);
+    expect(resultado.value).toBe(crudo);
+    expect(resultado.count).toBe(0);
+    expect(resultado.kinds).toEqual([]);
+  });
+
+  it('la URI con usuario y contraseña tampoco se toca', () => {
+    const crudo = 'DATABASE_URL=postgresql://neondb_owner:npg_mCRl9zxXQ7qG@ep-dry.neon.tech/neondb';
+    expect(redactSecrets(crudo).value).toBe(crudo);
+    expect(redactSecretsDeep({ text: crudo, prompt: crudo }).count).toBe(0);
+  });
+
+  it('el cuerpo del mensaje sale sin la marca redacted_v1', async () => {
+    const cuerpo = await normalizedBody(
+      message('DATABASE_URL=postgresql://neondb_owner:npg_mCRl9zxXQ7qG@ep-dry.neon.tech/neondb'),
+      42,
+      api,
+      { threadId: '0', bucket: 'directed', untrusted: { author: { username: 'pablo' } } }
+    );
+    expect(String(cuerpo.text)).toContain('npg_mCRl9zxXQ7qG');
+    expect(cuerpo.redacted_v1).toBeUndefined();
+  });
+
+  it('con el interruptor en 1 vuelve a redactar, sin reiniciar el proceso', () => {
+    process.env.CAUCE_TELEGRAM_REDACT_INGRESS = '1';
+    try {
+      expect(redactSecrets('postgresql://u:p@host/db').count).toBe(1);
+    } finally {
+      delete process.env.CAUCE_TELEGRAM_REDACT_INGRESS;
+    }
   });
 });

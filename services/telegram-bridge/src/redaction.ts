@@ -171,8 +171,29 @@ const RULES: readonly Rule[] = [
 /** Cota de trabajo por valor: un texto absurdo no puede colgar la ingesta. */
 const MAX_SCANNED_CHARACTERS = 256 * 1024;
 
+/**
+ * Interruptor de la redacción en la ingesta. POR DEFECTO NO REDACTA.
+ *
+ * Decisión de Steven, 2026-08-02, después de medir el daño real: la redacción le impidió pasarle a
+ * `socrates` el token de @polidinamica_sell_bot TRES veces seguidas (21:10, 21:26 y 21:59 UTC), y
+ * el agente le contestó literalmente "Cauce me entregó el token como [secreto-redactado], así que
+ * no puedo leerlo ni instalarlo". Montar un sistema de punta a punta implica pasarle credenciales
+ * a quien lo monta; un canal que las mutila no sirve para trabajar.
+ *
+ * Le planteé el costo —el texto queda escrito en `messages.body` y sobrevive a la rotación— y lo
+ * asumió: tiene limpieza periódica de historiales, y le da igual que las credenciales pasen por
+ * el proveedor del modelo. Es su postura de seguridad y es su decisión, no la mía.
+ *
+ * Se deja el módulo ENTERO vivo y encendible con `CAUCE_TELEGRAM_REDACT_INGRESS=1`, porque el
+ * riesgo que documenta la cabecera de este archivo sigue siendo real para un tenant cliente que no
+ * tenga esa limpieza. Borrar el código habría hecho falta escribirlo de nuevo para volver atrás.
+ */
+function redactionEnabled(): boolean {
+  return process.env.CAUCE_TELEGRAM_REDACT_INGRESS === '1';
+}
+
 export function redactSecrets(value: string): RedactionResult {
-  if (value.length === 0 || value.length > MAX_SCANNED_CHARACTERS) {
+  if (!redactionEnabled() || value.length === 0 || value.length > MAX_SCANNED_CHARACTERS) {
     return { value, kinds: [], count: 0 };
   }
   const kinds = new Set<RedactionKind>();
