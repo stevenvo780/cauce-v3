@@ -551,40 +551,63 @@ test("accepts a well formed notify directive", () => {
   ]);
 });
 
-test("rejects malformed notify directives", () => {
-  const cases: Array<[unknown, RegExp]> = [
-    ["not-an-array", /'notify' must be an array/u],
-    [[{ to: "Steven.DM", kind: "alert", body: "x" }], /canonical destination handle/u],
-    [[{ to: "steven.dm", kind: "gossip", body: "x" }], /notify\[0\]\.kind must be one of/u],
-    [[{ to: "steven.dm", kind: "alert", body: " " }], /must contain visible text/u],
+test("una notify mal formada se descarta y la respuesta sobrevive", () => {
+  // Antes cada una de estas era un throw, y el throw se llevaba puesto el reply entero: el agente
+  // hacia el trabajo y el duenio recibia un error de esquema. `notify` es accesorio; si viene mal
+  // se descarta, se le explica al agente en su propia respuesta, y el turno sigue vivo.
+  const casos: Array<[unknown, RegExp]> = [
+    ["not-an-array", /no era una lista/u],
+    [[{ to: "Steven.DM", kind: "alert", body: "x" }], /no es un handle de destino/u],
+    [[{ to: "steven.dm", kind: "gossip", body: "x" }], /'kind' debe ser uno de/u],
+    [[{ to: "steven.dm", kind: "alert", body: " " }], /no tiene texto visible/u],
     [
       [{ to: "steven.dm", kind: "alert", body: "x".repeat(MAX_NOTIFY_BODY_BYTES + 1) }],
-      /UTF-8 byte limit/u,
+      /supera el limite de bytes/u,
     ],
     [
       Array.from({ length: MAX_NOTIFY_DIRECTIVES + 1 }, () => ({
         to: "steven.dm", kind: "alert", body: "x",
       })),
-      /exceeded the 4 directive limit/u,
+      /el limite es 4/u,
     ],
   ];
-  for (const [notify, pattern] of cases) {
-    assert.throws(
-      () => validateStructuredOutput({ ...output("done", false), notify }),
-      pattern,
-    );
+  for (const [notify, patron] of casos) {
+    const salida = validateStructuredOutput({ ...output("done", false), notify });
+    assert.match(salida.reply as string, patron);
+    assert.match(salida.reply as string, /\[Cauce\]/u);
   }
 });
 
-test("notify bodies are bounded in aggregate", () => {
+test("una notify bien formada pasa intacta y no ensucia la respuesta", () => {
+  const salida = validateStructuredOutput({
+    ...output("done", false),
+    notify: [{ to: "steven_dm", kind: "decision_request", body: "necesito que autorices X" }],
+  });
+  assert.equal(salida.notify?.length, 1);
+  assert.equal(salida.notify?.[0]?.to, "steven_dm");
+  assert.ok(!(salida.reply as string).includes("[Cauce]"));
+});
+
+test("las notify agregadas se acotan sin tumbar el turno", () => {
   const body = "x".repeat(MAX_NOTIFY_BODY_BYTES);
-  assert.throws(
-    () => validateStructuredOutput({
-      ...output("done", false),
-      notify: Array.from({ length: 3 }, () => ({ to: "steven.dm", kind: "digest", body })),
-    }),
-    /aggregate UTF-8 byte limit/u,
-  );
+  const salida = validateStructuredOutput({
+    ...output("done", false),
+    notify: Array.from({ length: 3 }, () => ({ to: "steven.dm", kind: "digest", body })),
+  });
+  assert.ok((salida.notify?.length ?? 0) < 3, "las que exceden el agregado no se entregan");
+  assert.match(salida.reply as string, /limite agregado de bytes/u);
+});
+
+test("artifacts ausente se normaliza a lista vacia", () => {
+  // Era obligatorio, y omitirlo costaba el turno entero por un campo que casi siempre es [].
+  const salida = validateStructuredOutput({
+    reply: "hecho",
+    messages: [],
+    status: "done",
+    retryable: false,
+  });
+  assert.deepEqual(salida.artifacts, []);
+  assert.equal(salida.reply, "hecho");
 });
 
 test("notify never satisfies the final reply requirement", () => {

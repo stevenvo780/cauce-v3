@@ -61,7 +61,10 @@ function parseJson(text: string, context: string): unknown {
   }
 }
 
-const REQUIRED_OUTPUT_KEYS = ["reply", "messages", "status", "retryable", "artifacts"] as const;
+// `artifacts` salio de aqui el 2026-08-02: es el campo que menos veces lleva la respuesta y el que
+// mas veces el modelo omite cuando no produjo ninguno. Exigirlo costaba el turno ENTERO -- reply
+// incluido -- por un `[]` que falta. Ahora se normaliza a lista vacia en parseArtifacts.
+const REQUIRED_OUTPUT_KEYS = ["reply", "messages", "status", "retryable"] as const;
 /** Cota del rastreo de sobres embebidos; con dos ya alcanza para declarar ambigüedad. */
 const MAX_EMBEDDED_ENVELOPE_CANDIDATES = 64;
 
@@ -110,42 +113,62 @@ function parseMessages(value: unknown): readonly RelayMessage[] {
  * five mandatory keys and must keep validating unchanged. An output without it
  * normalizes to an empty list, which produces exactly zero rows downstream.
  */
-function parseNotify(value: unknown): readonly NotifyDirective[] {
+function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; descartes: readonly string[] } {
+  // Nada de lo que venga en `notify` puede tumbar el turno. Antes cada regla era un throw, y un
+  // throw aqui se lleva puesto el `reply` ENTERO: el agente hacia el trabajo, escribia su
+  // respuesta, y el duenio recibia un error de esquema. Medido el 2026-08-02 con kratos, dos veces:
+  // escribio {"to":"Miguel"} -- el nombre de la persona, no un handle -- y se perdio un diagnostico
+  // completo de por que Graf no entregaba al OMS.
+  //
+  // `notify` es accesorio: si viene mal, se descarta y se le dice al agente que se descarto y por
+  // que, para que lo corrija en el proximo turno. La respuesta siempre sobrevive.
+  const descartes: string[] = [];
   if (!Array.isArray(value)) {
-    throw new MalformedOutputError("'notify' must be an array");
+    return { directives: [], descartes: ["'notify' no era una lista; se descarto entera"] };
   }
-  if (value.length > MAX_NOTIFY_DIRECTIVES) {
-    throw new MalformedOutputError(`'notify' exceeded the ${MAX_NOTIFY_DIRECTIVES} directive limit`);
-  }
+  const directives: NotifyDirective[] = [];
   let aggregateBodyBytes = 0;
-  return value.map((entry, index) => {
+  for (const [index, entry] of value.entries()) {
+    if (directives.length >= MAX_NOTIFY_DIRECTIVES) {
+      descartes.push(`se descartaron las notificaciones a partir de la ${MAX_NOTIFY_DIRECTIVES + 1}: el limite es ${MAX_NOTIFY_DIRECTIVES}`);
+      break;
+    }
     if (!isObject(entry) || typeof entry.to !== "string" || typeof entry.body !== "string") {
-      throw new MalformedOutputError(`notify[${index}] must contain string 'to' and 'body'`);
+      descartes.push(`notify[${index}] descartada: necesita 'to' y 'body' de texto`);
+      continue;
     }
     if (!CANONICAL_NOTIFY_HANDLE.test(entry.to)) {
-      throw new MalformedOutputError(`notify[${index}].to must be a canonical destination handle`);
+      descartes.push(`notify[${index}] descartada: "${entry.to}" no es un handle de destino. Un handle es minusculas, digitos, punto, guion o guion bajo (por ejemplo steven_dm); NO es el nombre de la persona ni un alias de agente`);
+      continue;
     }
     if (typeof entry.kind !== "string" || !NOTIFY_KINDS.includes(entry.kind as NotifyKind)) {
-      throw new MalformedOutputError(
-        `notify[${index}].kind must be one of ${NOTIFY_KINDS.join(", ")}`,
-      );
+      descartes.push(`notify[${index}] descartada: 'kind' debe ser uno de ${NOTIFY_KINDS.join(", ")}`);
+      continue;
     }
     if (!hasVisibleText(entry.body)) {
-      throw new MalformedOutputError(`notify[${index}].body must contain visible text`);
+      descartes.push(`notify[${index}] descartada: 'body' no tiene texto visible`);
+      continue;
     }
     const bodyBytes = Buffer.byteLength(entry.body, "utf8");
     if (bodyBytes > MAX_NOTIFY_BODY_BYTES) {
-      throw new MalformedOutputError(`notify[${index}].body exceeded the UTF-8 byte limit`);
+      descartes.push(`notify[${index}] descartada: 'body' supera el limite de bytes UTF-8`);
+      continue;
+    }
+    if (aggregateBodyBytes + bodyBytes > MAX_NOTIFY_AGGREGATE_BYTES) {
+      descartes.push(`notify[${index}] y las siguientes descartadas: se supero el limite agregado de bytes`);
+      break;
     }
     aggregateBodyBytes += bodyBytes;
-    if (aggregateBodyBytes > MAX_NOTIFY_AGGREGATE_BYTES) {
-      throw new MalformedOutputError("'notify' bodies exceeded the aggregate UTF-8 byte limit");
-    }
-    return { to: entry.to, body: entry.body, kind: entry.kind as NotifyKind };
-  });
+    directives.push({ to: entry.to, body: entry.body, kind: entry.kind as NotifyKind });
+  }
+  return { directives, descartes };
 }
 
+
 function parseArtifacts(value: unknown): readonly OutputArtifact[] {
+  // Ausente == ninguno. Es lo que el modelo quiere decir cuando lo omite, y exigirlo costaba el
+  // turno entero por un campo que casi siempre es [].
+  if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
     throw new MalformedOutputError("'artifacts' must be an array");
   }
@@ -182,10 +205,19 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
   if (typeof value.retryable !== "boolean") {
     throw new MalformedOutputError("'retryable' must be a boolean");
   }
+  const notificaciones = value.notify === undefined
+    ? { directives: [] as readonly NotifyDirective[], descartes: [] as readonly string[] }
+    : parseNotify(value.notify);
+  // El agente tiene que enterarse de lo que se descarto, o repetira el mismo error cada turno.
+  const aviso = notificaciones.descartes.length === 0
+    ? ""
+    : `\n\n[Cauce] ${notificaciones.descartes.join(". ")}.`;
   return {
-    reply: value.reply,
+    reply: aviso === ""
+      ? value.reply
+      : `${value.reply === null || value.reply.trim() === "" ? "(sin respuesta)" : value.reply}${aviso}`,
     messages: parseMessages(value.messages),
-    notify: value.notify === undefined ? [] : parseNotify(value.notify),
+    notify: notificaciones.directives,
     status: value.status,
     // `retryable` has no meaning after a successful terminal result. Native
     // models occasionally emit the redundant contradictory pair
