@@ -3,7 +3,6 @@ import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterError } from "../src/sdk/errors.js";
 import { validateDeliveryOutput } from "../src/sdk/output-parser.js";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "../src/sdk/types.js";
 import { HARNESS_DEFINITIONS } from "../src/harnesses/index.js";
@@ -158,14 +157,16 @@ test("the narrowed reply wording still matches what the validator actually enfor
   );
   assert.equal(delegated.reply, null);
 
-  // Still refused: silence with nothing delegated.
-  assert.throws(
-    () => validateDeliveryOutput(
-      { reply: null, messages: [], notify: [], status: "done", retryable: false, artifacts: [] },
-      { messageType: "request", senderAlias: "kratos", selfAlias: "iza", routingTargets },
-    ),
-    (error: unknown) => error instanceof AdapterError && error.code === "MISSING_FINAL_REPLY",
+  // Sigue sin valer: silencio sin delegar nada. Lo que cambio es el PRECIO. El `throw` mataba el
+  // turno entero y dejaba la entrega sin `result`, asi que el castigo por un harness que corta
+  // antes de responder se lo comia la persona que habia preguntado, no el agente.
+  const mudo = validateDeliveryOutput(
+    { reply: null, messages: [], notify: [], status: "done", retryable: false, artifacts: [] },
+    { messageType: "request", senderAlias: "kratos", selfAlias: "iza", routingTargets },
   );
+  assert.equal(mudo.status, "failed");
+  assert.equal(mudo.retryable, false);
+  assert.match(mudo.reply ?? "", /Volve a preguntarme/u);
 });
 
 test("routing_targets is framed as a backup inventory and still travels whole", () => {

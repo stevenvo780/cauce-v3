@@ -716,7 +716,7 @@ test("trusted routing inventory is exposed to the harness and @all is the only a
   assert.match(prompt, /every online routable peer except self_alias/u);
 });
 
-test("done agent response without a reply or delegation fails observably", async () => {
+test("un 'done' sin reply ni delegacion falla, pero deja texto que la persona puede leer", async () => {
   const runner = new ControlledRunner();
   runner.stdout = JSON.stringify({
     reply: null,
@@ -736,10 +736,18 @@ test("done agent response without a reply or delegation fails observably", async
   await context.engine.handleDelivery(input);
   const terminal = context.events.at(-1);
   assert.equal(terminal?.phase, "failed");
-  assert.equal(terminal?.error?.code, "MISSING_FINAL_REPLY");
+  // Antes el codigo era MISSING_FINAL_REPLY y el evento viajaba SIN `output`. Eso dejaba
+  // `deliveries.result` en NULL y `agentResponseText` sin nada que leer: el remitente recibia
+  // silencio. Medido el 2026-08-02: las cuatro preguntas de Miguel a janus del 27-jul quedaron
+  // asi, `failed` con `result` NULL y sin respuesta posterior.
+  assert.equal(terminal?.error?.code, "HARNESS_REPORTED_FAILURE");
   assert.equal(terminal?.error?.retryable, false);
   assert.equal(context.store.getDelivery(input.delivery_id)?.state, "failed");
   assert.equal(context.events.some((event) => event.phase === "done"), false);
+  // Lo que hace que esto le sirva a un humano: el evento terminal LLEVA output con texto, que es
+  // de donde `agentResponseText` (packages/store) saca el cuerpo del mensaje de vuelta.
+  assert.equal(terminal?.output?.status, "failed");
+  assert.match(terminal?.output?.reply ?? "", /Volve a preguntarme/u);
 });
 
 test("reply null remains valid when an agent response delegates to a different agent", async () => {

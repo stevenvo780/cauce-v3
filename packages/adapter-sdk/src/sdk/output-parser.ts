@@ -40,6 +40,16 @@ export const NOTIFY_KINDS: readonly NotifyKind[] = [
   "alert",
 ];
 const MAX_OPENCLAW_UNWRAP_DEPTH = 8;
+// Los dos avisos que openclaw 2026.6.6 emite como un payload de texto MAS, no como respuesta.
+// Verificado leyendo el binario instalado en el contenedor `claw`
+// (/usr/lib/node_modules/openclaw/dist/helpers-CYQZyDV5.js:119-127), donde el propio openclaw los
+// clasifica con `isCronToolWarning` (startsWith "⚠️ 🛠️ ") e `isCronMessagePresentationWarning`
+// (el texto es "⚠️ ✉️ message failed" o empieza por "⚠️ ✉️ message failed:"), y los marca en el
+// payload con `isError:true` + `nonTerminalToolErrorWarning`. O sea: el origen del string NO es
+// nuestro —no aparece en ningun fichero de packages/— y openclaw ya sabe que no es una respuesta.
+// El selector de variacion va opcional porque el emisor no garantiza emitirlo.
+const OPENCLAW_TOOL_WARNING = /^⚠️? \u{1F6E0}️? /u;
+const OPENCLAW_MESSAGE_WARNING = /^⚠️? ✉️? message failed(?::|$)/iu;
 const CANONICAL_MESSAGE_TARGET = /^(?:@all|[a-z][a-z0-9_-]{0,63})$/u;
 const CANONICAL_NOTIFY_HANDLE = /^[a-z][a-z0-9_.-]{0,63}$/u;
 const INVISIBLE_TEXT = /[\p{White_Space}\p{Cf}\p{Cc}\p{Mn}\p{Me}]/gu;
@@ -282,17 +292,84 @@ export function validateDeliveryOutput(
 
   if (output.status !== "done") return output;
 
+  // Un aviso de herramienta NO es una respuesta, aunque el turno diga "done". Medido el
+  // 2026-08-02 sobre produccion: 30 entregas `done` cuyo `reply` ENTERO era una sola linea
+  // de aviso de openclaw, con CERO delegaciones en las 30. Eso es lo que recibieron Pablo
+  // (seneca/grp.pablo, 3 el 26-jul) y Jhon (hegel/grp.jhon, 1 el 28-jul) al preguntar por su
+  // proyecto: creyeron que el agente les contestaba y era el volcado de una herramienta rota.
+  // El grueso lo comio Steven en grp.steven (jarvis 19, janus 3, midas 2, hegel 1, seneca 1).
+  //
+  // Se degrada a "failed" y no se tira `throw`: un throw deja la entrega SIN `result` —medido:
+  // las cuatro de janus del 27-jul tienen `result` NULL— y entonces la persona no recibe nada.
+  // Con "failed" + texto, `agentResponseText` de packages/store usa el `reply` y el humano lee
+  // una frase que entiende, mientras las metricas siguen contando el turno como lo que fue.
+  if (output.messages.length === 0) {
+    const volcado = openclawToolWarningOnly(output.reply);
+    if (volcado !== undefined) {
+      return {
+        ...output,
+        status: "failed",
+        // El turno ya corrio y ya tuvo efectos; reintentarlo los duplica. Mismo criterio que
+        // `failedTurnOutput` y que EXECUTION_TIMEOUT_AMBIGUOUS.
+        retryable: false,
+        reply: `No pude completar la respuesta: se me rompio una herramienta y el turno cerro sin que yo llegara a escribir nada. Volve a preguntarme y lo reintento.\n\n[Cauce] Detalle tecnico del harness: ${volcado}`,
+      };
+    }
+  }
+
   // A notification is a side effect, never the result of the delivery: an agent
   // cannot replace its answer to the caller with a DM to a human.
+  //
+  // Esto era un `throw MISSING_FINAL_REPLY`, y el throw se llevaba puesto el turno ENTERO.
+  // Medido el 2026-08-02 en produccion: cuatro entregas a janus el 27-jul (16:13, 16:16, 18:24,
+  // 18:27) murieron asi. Eran las cuatro preguntas seguidas de Miguel desde grp.miguel sobre
+  // accesos y estado de Demeter/Graf ("hola, como estas. Cuantame en que vamos...",
+  // "explicame uno a uno de los links...", "sabes que perfiles tenemos en Demeter..."). Las
+  // cuatro quedaron `status=failed` con `result` NULL: Miguel no recibio NADA, ni respuesta ni
+  // aviso, y no hubo contestacion posterior.
+  //
+  // El guard sigue siendo correcto en su diagnostico —un "done" sin reply y sin delegaciones
+  // de verdad no produjo nada— asi que NO se convierte en "done": eso ensuciaria las metricas y
+  // dejaria al alias pareciendo sano mientras no contesta. Lo que cambia es el precio: en vez de
+  // un error sin cuerpo, un turno "failed" QUE LLEVA TEXTO. Asi la persona del otro lado lee una
+  // frase honesta en vez de esperar media hora un mensaje que nunca llega, y el `notify` y los
+  // `artifacts` que el turno si haya producido sobreviven en el output en lugar de perderse.
   if (output.reply === null && output.messages.length === 0) {
-    throw new AdapterError(
-      "MISSING_FINAL_REPLY",
-      "Successful harness output requires a non-empty reply when it does not delegate new work",
-      false,
-    );
+    return {
+      ...output,
+      status: "failed",
+      retryable: false,
+      reply: "Cerre el turno sin escribir respuesta, asi que no tengo nada que contarte todavia. No es que no haya nada que decir: es que no llegue a redactarlo. Volve a preguntarme.\n\n[Cauce] El turno termino en \"done\" con 'reply' vacio y sin delegaciones, que es exactamente el sintoma de un harness que corto antes de responder.",
+    };
   }
 
   return output;
+}
+
+/**
+ * Openclaw emite sus avisos de herramienta rota como un payload de texto mas, y ese payload cae
+ * AL FINAL del turno. Devuelve el aviso cuando el `reply` completo es SOLO eso, y `undefined`
+ * en cualquier otro caso.
+ *
+ * La regla es deliberadamente estrecha —una sola linea, y que el aviso ABRA el texto— porque
+ * mencionar el aviso dentro de una respuesta real es legitimo y frecuente. Medido el 2026-08-02
+ * sobre produccion: hay 256 entregas `done` cuyo reply contiene el simbolo de aviso; 131 no
+ * empiezan por el, 125 si, y de esas 125 solo 30 son de una sola linea. Esas 30 son exactamente
+ * las que matchean estos dos patrones, y son las unicas que se tocan. Las otras 226 son
+ * respuestas de verdad y quedan intactas: el caso que no se puede romper es argos explicandole
+ * a seneca, en 2.685 caracteres, que "tu entrega volvio como `⚠️ ✉️ Message failed`, sin
+ * cuerpo" —eso es analisis del fallo, no el fallo— y jarvis con 15.480 caracteres de informe
+ * que citan el aviso a mitad de texto.
+ */
+function openclawToolWarningOnly(reply: string | null): string | undefined {
+  if (reply === null) return undefined;
+  const texto = reply.trim();
+  // Multilinea == hay contenido ademas del aviso. En las 30 entregas medidas el volcado era
+  // SIEMPRE una sola linea (de 20 a 487 caracteres).
+  if (texto.length === 0 || /[\n\r]/u.test(texto)) return undefined;
+  if (OPENCLAW_TOOL_WARNING.test(texto)) return texto;
+  if (OPENCLAW_MESSAGE_WARNING.test(texto)) return texto;
+  return undefined;
 }
 
 function validateDelegationTargets(
@@ -863,6 +940,8 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
     if (seen.has(current)) throw new MalformedOutputError("OpenClaw result contained a wrapper cycle");
     seen.add(current);
     sessionId ??= current.session_id ?? current.sessionId;
+    /** Ultimo aviso de openclaw cuando NINGUN payload traia una respuesta de verdad. */
+    let avisoDeCola: string | undefined;
 
     // ANTES de mirar payloads o texto visible: una corrida que el runtime nativo declaró fallida
     // igual deja texto atrás, y ese texto se estaba tomando como resultado exitoso del turno.
@@ -880,10 +959,29 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
         .filter(isObject)
         .map((payload) => payload.text)
         .filter((text): text is string => typeof text === "string" && text.trim().length > 0);
-      const payloadText = texts.at(-1);
+      // `.at(-1)` a secas era el bug: openclaw APENDA su aviso de herramienta rota como un payload
+      // de texto mas, y ese payload queda EL ULTIMO. Asi el aviso le ganaba a la respuesta real y
+      // se entregaba como si fuera la contestacion del agente, con status "done".
+      //
+      // Que la respuesta real convive con el aviso lo dice el propio openclaw 2026.6.6: en
+      // dist/embedded-agent-L9tQiaO-.js:1796 marca el payload como
+      // `nonTerminalToolErrorWarning: hasUserFacingAssistantReply && ...`, es decir SOLO lo marca
+      // cuando ya hay una respuesta visible para el usuario. Y su propia via de entrega se
+      // recupera igual que aca (helpers-CYQZyDV5.js:152, `hasRecoveredToolWarning`): si los
+      // payloads de error son todos avisos de herramienta, prefiere `finalAssistantVisibleText`.
+      //
+      // Por eso: se descartan los avisos de cola y gana el ultimo texto que SI es una respuesta.
+      // Si no queda ninguno, no se devuelve el aviso: se cae al `finalAssistantVisibleText` de
+      // mas abajo, que es donde openclaw deja el texto real en ese caso. Y si tampoco lo hay,
+      // recien ahi vale el aviso —lo agarra `openclawToolWarningOnly` en validateDeliveryOutput
+      // y el turno termina en "failed" con una frase que la persona entiende, en vez de un
+      // volcado disfrazado de respuesta.
+      const reales = texts.filter((text) => openclawToolWarningOnly(text) === undefined);
+      const payloadText = reales.at(-1);
       if (payloadText !== undefined) {
         return sessionResult(parseCandidate(payloadText, "OpenClaw result"), sessionId);
       }
+      avisoDeCola = texts.at(-1);
     }
 
     const visibleText = typeof current.finalAssistantVisibleText === "string"
@@ -893,6 +991,15 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
         : undefined;
     if (visibleText !== undefined && visibleText.trim().length > 0) {
       return sessionResult(parseCandidate(visibleText, "OpenClaw result"), sessionId);
+    }
+
+    // No hubo respuesta por ningun lado y lo unico que dijo el turno fue el aviso. Se devuelve el
+    // aviso IGUAL —no se deja caer al desenvuelto de mas abajo, que sobre un objeto sin `reply`
+    // tira MalformedOutputError y mata el turno sin dejar `result`, que es justo el modo de fallo
+    // que este parche existe para quitar. `validateDeliveryOutput` lo reconoce y lo convierte en
+    // un "failed" con texto legible para la persona.
+    if (avisoDeCola !== undefined) {
+      return sessionResult(parseCandidate(avisoDeCola, "OpenClaw result"), sessionId);
     }
 
     if ("reply" in current) {
