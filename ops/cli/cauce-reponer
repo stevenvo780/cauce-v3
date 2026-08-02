@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# cauce-reponer <delivery_id> — vuelve a encolar una entrega que murió, para que el agente la
+# conteste y la respuesta llegue al canal REAL de la persona que preguntó.
+#
+# POR QUÉ EXISTE
+# `cauce-huerfanas` dice qué se perdió; esto es lo que lo repara. El mecanismo ya existía en el
+# gateway (`POST /v3/console/deliveries/:id/replay`), pero llegar a él a mano tiene tres trampas
+# que cuestan una tarde, y ninguna da un error que se entienda:
+#
+#   1. Va por `/v3/console/`, y ese prefijo exige cabecera `Origin` **same-origin** en todo método
+#      que no sea GET/HEAD/OPTIONS. Sin ella:
+#         403 {"message":"same-origin Origin is required for console mutations"}
+#   2. La `Origin` tiene que ser una de `CAUCE_CONSOLE_ORIGINS` del gateway, NO la URL a la que
+#      apuntás. Con la URL del gateway da:
+#         403 {"message":"cross-origin console request rejected"}
+#      Hoy son `https://100.64.0.6:8444` y `https://consola.elenxos.com`.
+#   3. Con `content-type: application/json` y sin cuerpo, fastify corta antes de llegar al handler:
+#         400 FST_ERR_CTP_EMPTY_JSON_BODY
+#      Por eso se manda `{}`.
+#
+# Y una condición que no depende de vos: `replayDelivery` hace JOIN con `dead_letters`, así que
+# una entrega sin esa fila **no es replayable** y contesta 404. `cauce-huerfanas` no lo distingue;
+# si querés saberlo antes, mirá la columna en la consulta de ese script.
+#
+# Corre desde un contenedor ws-*, no desde kratos: necesita el certificado de consola que vive en
+# agora-storage, y kratos no tiene llave hacia allá.
+#
+# CUÁNDO NO USARLO — esto importa más que la mecánica:
+# Reponer hace que el agente conteste a la persona AHORA, con el texto de ENTONCES. Si la
+# conversación siguió, le vas a contestar a un cliente una pregunta que ya superó. Antes de
+# reponer, mirá si esa persona siguió hablando con ese agente y si el agente tiene algo en vuelo.
+# El 02-ago no repuse dos pedidos de Miguel exactamente por esto.
+set -euo pipefail
+
+ID=${1:-}
+ORIGIN=${CAUCE_CONSOLE_ORIGIN:-https://consola.elenxos.com}
+GW=${CAUCE_GATEWAY:-https://100.64.0.6:8443}
+
+case "$ID" in
+  '' ) echo "uso: cauce-reponer <delivery_id>   (sacalo de: cauce-huerfanas)" >&2; exit 2 ;;
+  [0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]* ) ;;
+  * ) echo "eso no parece un delivery_id (uuid): $ID" >&2; exit 2 ;;
+esac
+
+echo "  reponiendo entrega $ID"
+SALIDA=$(ssh -o BatchMode=yes agora-storage "curl -sS -k -o /tmp/cauce-reponer.\$\$ -w '%{http_code}' \
+    --cert /etc/cauce-v3/pki/console-client.crt --key /etc/cauce-v3/pki/console-client.key \
+    -H 'content-type: application/json' -H 'x-cauce-operator: steven' \
+    -H 'Origin: $ORIGIN' --data '{}' \
+    -X POST '$GW/v3/console/deliveries/$ID/replay'; echo; cat /tmp/cauce-reponer.\$\$; rm -f /tmp/cauce-reponer.\$\$")
+
+CODIGO=$(printf '%s' "$SALIDA" | head -1)
+CUERPO=$(printf '%s' "$SALIDA" | tail -n +2)
+
+if [ "$CODIGO" = 200 ]; then
+  NUEVA=$(printf '%s' "$CUERPO" | sed -n 's/.*"delivery_id":"\([^"]*\)".*/\1/p')
+  printf '  \033[32mrepuesta\033[0m — entrega nueva: %s\n' "${NUEVA:-?}"
+  printf '  \033[2mmirá que termine y que SALGA: la respuesta tiene que quedar en adapter_outbox con status=sent\033[0m\n'
+  exit 0
+fi
+
+printf '  \033[31mno se repuso (HTTP %s)\033[0m\n  %s\n' "$CODIGO" "$CUERPO"
+[ "$CODIGO" = 404 ] && printf '  \033[2m404 suele ser: ya la repusieron, o no tiene fila en dead_letters (no replayable)\033[0m\n'
+exit 1

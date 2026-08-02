@@ -98,6 +98,7 @@ cauce <alias> on|off       # comprueba de verdad; LEE LA SALIDA ENTERA
 cauce probar <alias>       # entrega REAL por el gateway + marca buscada en el panel
 cauce-panel <alias>        # (en kratos) el panel; rc=3 en openclaw, que no usa tmux
 cauce-huerfanas [dias]     # lo que pidió una PERSONA y se perdió sin respuesta (default 7)
+cauce-reponer <delivery>   # vuelve a encolarla; la respuesta sale al canal real de esa persona
 cauce-panel-guard --dry-run  # (en kratos) qué panel repondría, sin tocar nada
 ```
 
@@ -225,6 +226,15 @@ conjunto cerrado en `auth.js` que **no incluye `agent_notify`**, así que toda n
   `sudo` descarta `COMPOSE_PROFILES`, y `CAUCE_RUNTIME_IMAGE` la comparten cinco servicios.
 - Un encargo de Steven a socrates del 02-ago 12:18 (réplica de Prometeo para Polidinámica) murió
   `dead` en el intento 1/3 y **socrates no sabe que existe**. *(Sigue vivo al 02-ago 17:30.)*
+
+- **Un cron de sesión `main` en openclaw NO puede entregar nada.** El briefing de las 6 AM de Miguel
+  inyecta un `systemEvent` en la sesión principal, sale en `NO_REPLY` con `lastDurationMs: 6` y
+  `lastDeliveryStatus: not-requested`. No se arregla con `--announce`: `--expect-final` exige
+  `payload.kind="agentTurn"` y un job `main` exige `systemEvent` — las dos reglas se contradicen y
+  el CLI rechaza el `edit` (atómicamente, no deja el job a medias; comprobado). Salir de ahí es
+  pasarlo a `--session isolated` + `agentTurn` + `--announce --channel telegram --to <chat>`, y eso
+  **pierde el contexto de la sesión principal**, que es de donde el briefing saca «la memoria y los
+  pendientes vivos». Es una decisión de producto del asistente de ese cliente, no una reparación.
 
 ### Lo que sí quedó arreglado el 02-ago
 - La **sesión compartida ya no se muere en silencio**: `cauce-panel-guard` +
