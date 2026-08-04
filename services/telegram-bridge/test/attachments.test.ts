@@ -115,6 +115,13 @@ describe('Telegram attachment preparation', () => {
     ['image/webp', 'scan.webp', Buffer.from('RIFF\u0004\u0000\u0000\u0000WEBPdata', 'binary')],
     ['application/pdf', 'report.pdf', Buffer.from('%PDF-1.7\nfixture')],
     ['text/plain', 'notes.txt', Buffer.from('hola mundo\n', 'utf8')],
+    // El repro exacto del 2026-08-04: un .md por el DM de Steven se rechazaba con "tipo o
+    // extensión no admitido" mientras imagen y audio entraban bien. Telegram no manda un mime
+    // estable para markdown, así que se fijan las tres variantes que llegan según el cliente.
+    ['text/markdown', 'TECLAS-RPG-DOS-ALMAS.md', Buffer.from('# teclas\n- w: arriba\n', 'utf8')],
+    ['text/x-markdown', 'notas.md', Buffer.from('# titulo\n', 'utf8')],
+    ['text/plain', 'plano.md', Buffer.from('texto plano en un .md\n', 'utf8')],
+    ['text/csv', 'ventas.csv', Buffer.from('fecha,total\n2026-08-04,10\n', 'utf8')],
     [
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'brief.docx',

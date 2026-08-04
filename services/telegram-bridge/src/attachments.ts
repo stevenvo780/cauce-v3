@@ -34,6 +34,16 @@ const TYPES: readonly AttachmentType[] = [
   { mime: 'image/webp', extension: '.webp', matches: (value) => value.length >= 12 && value.toString('ascii', 0, 4) === 'RIFF' && value.toString('ascii', 8, 12) === 'WEBP' },
   { mime: 'application/pdf', extension: '.pdf', matches: (value) => value.subarray(0, 5).toString('ascii') === '%PDF-' },
   { mime: 'text/plain', extension: '.txt', matches: validUtf8Text },
+  // La flota trabaja sobre .md y Telegram no manda un mime estable para ellos: según el cliente
+  // llega `text/markdown`, `text/x-markdown` o directamente `text/plain`. Se declaran los tres
+  // pares porque el match exige (mime, extensión) y basta que uno no coincida para rechazarlo.
+  // El control de seguridad no lo da la extensión sino `validUtf8Text`: el contenido tiene que ser
+  // UTF-8 real sin bytes nulos, así que un binario renombrado a .md sigue sin entrar.
+  { mime: 'text/markdown', extension: '.md', matches: validUtf8Text },
+  { mime: 'text/x-markdown', extension: '.md', matches: validUtf8Text },
+  { mime: 'text/plain', extension: '.md', matches: validUtf8Text },
+  { mime: 'text/csv', extension: '.csv', matches: validUtf8Text },
+  { mime: 'text/plain', extension: '.csv', matches: validUtf8Text },
   {
     mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     extension: '.docx',
