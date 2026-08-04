@@ -37,10 +37,10 @@ describe('redacción de secretos en la ingesta', () => {
 
   it('redacta la URI con credenciales del caso medido (mensaje ced40f3c, 02-ago 13:00)', () => {
     const crudo = '# Recommended for most uses\n'
-      + 'DATABASE_URL=postgresql://neondb_owner:npg_mCRl9zxXQ7qG@ep-dry-smoke-au2e5vtg-pooler'
+      + 'DATABASE_URL=postgresql://neondb_owner:npg_FICTICIA0AbCdEf@ep-dry-smoke-au2e5vtg-pooler'
       + '.c-10.us-east-2.aws.neon.tech/neondb?sslmode=require';
     const resultado = redactSecrets(crudo);
-    expect(resultado.value).not.toContain('npg_mCRl9zxXQ7qG');
+    expect(resultado.value).not.toContain('npg_FICTICIA0AbCdEf');
     expect(resultado.value).not.toContain('neondb_owner:');
     // El host sobrevive: el agente necesita saber contra qué se estaba conectando el humano.
     expect(resultado.value).toContain('ep-dry-smoke-au2e5vtg-pooler');
@@ -87,7 +87,7 @@ describe('redacción de secretos en la ingesta', () => {
       'sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789',
       'ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789',
       'AKIAIOSFODNN7EXAMPLE',
-      'npg_mCRl9zxXQ7qGabcd',
+      'npg_FICTICIA0AbCdEfabcd',
       'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk'
     ]) {
       expect(redactSecrets(`valor: ${secreto}`).value).toBe('valor: [secreto-redactado]');
@@ -159,12 +159,12 @@ describe('redacción de secretos en la ingesta', () => {
 
   it('redacta el prompt de grupo, que es lo que realmente lee el harness', async () => {
     const cuerpo = await normalizedBody(
-      message('DATABASE_URL=postgresql://neondb_owner:npg_mCRl9zxXQ7qG@ep-dry.neon.tech/neondb'),
+      message('DATABASE_URL=postgresql://neondb_owner:npg_FICTICIA0AbCdEf@ep-dry.neon.tech/neondb'),
       42,
       api,
       { threadId: '0', bucket: 'directed', untrusted: { author: { username: 'pablo' } } }
     );
-    expect(JSON.stringify(cuerpo)).not.toContain('npg_mCRl9zxXQ7qG');
+    expect(JSON.stringify(cuerpo)).not.toContain('npg_FICTICIA0AbCdEf');
     expect(String(cuerpo.prompt)).toContain('[credencial-redactada]');
     expect(String(cuerpo.text)).toContain('[credencial-redactada]');
     // Dos: el `text` original y el `prompt` que se arma a partir de él. La marca cuenta
@@ -200,19 +200,19 @@ describe('apagada por defecto: el dueño puede pasar credenciales', () => {
   });
 
   it('la URI con usuario y contraseña tampoco se toca', () => {
-    const crudo = 'DATABASE_URL=postgresql://neondb_owner:npg_mCRl9zxXQ7qG@ep-dry.neon.tech/neondb';
+    const crudo = 'DATABASE_URL=postgresql://neondb_owner:npg_FICTICIA0AbCdEf@ep-dry.neon.tech/neondb';
     expect(redactSecrets(crudo).value).toBe(crudo);
     expect(redactSecretsDeep({ text: crudo, prompt: crudo }).count).toBe(0);
   });
 
   it('el cuerpo del mensaje sale sin la marca redacted_v1', async () => {
     const cuerpo = await normalizedBody(
-      message('DATABASE_URL=postgresql://neondb_owner:npg_mCRl9zxXQ7qG@ep-dry.neon.tech/neondb'),
+      message('DATABASE_URL=postgresql://neondb_owner:npg_FICTICIA0AbCdEf@ep-dry.neon.tech/neondb'),
       42,
       api,
       { threadId: '0', bucket: 'directed', untrusted: { author: { username: 'pablo' } } }
     );
-    expect(String(cuerpo.text)).toContain('npg_mCRl9zxXQ7qG');
+    expect(String(cuerpo.text)).toContain('npg_FICTICIA0AbCdEf');
     expect(cuerpo.redacted_v1).toBeUndefined();
   });
 
