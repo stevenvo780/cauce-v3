@@ -1148,3 +1148,54 @@ test("un recorte explicito acota, y solo hacia abajo", () => {
   // Un recorte mayor que el presupuesto no puede AMPLIARLO: la entrega manda.
   assert.equal(turnBudgetMs(2_000, 10_000), 2_000);
 });
+
+// ---------------------------------------------------------------------------
+// El 2026-08-04, ya sin el techo de 60 min, apareció el fallo simétrico: claude NO declara
+// `startedTurn` a propósito, así que nunca degradaba tras pegar. Si el pegado se perdía —se
+// entreveró con lo que tecleaba una persona en la MISMA caja de entrada— `harvest` se quedaba
+// esperando el presupuesto de la entrega: 24 h reteniendo el lock de la sesión. Resultado medido:
+// 16 entregas encoladas, 4 h sin una sola respuesta, y reiniciar el adaptador no lo soltaba porque
+// la siguiente entrega volvía a trabarse igual.
+//
+// La red de seguridad corta por CORRELACIÓN, no por presupuesto: un turno legítimo puede durar
+// horas, pero su entrada aparece en el registro en segundos.
+// ---------------------------------------------------------------------------
+
+test("un pegado que nunca aparece en el registro suelta la sesion en vez de retenerla", async () => {
+  const { state: _state, home, workspace } = await freshState("pegado-perdido");
+  const tmux = new FakeTmux();
+  const fallback = new RecordingFallback("{}");
+  // El pegado se pierde: la TUI NUNCA escribe la entrada en el transcript.
+  tmux.onSubmit = async () => {};
+
+  const runner = new PasteSessionRunner({
+    alias: "zeus",
+    harness: "claude",
+    workspace,
+    transcript: claudeTranscript(join(home, ".claude"), workspace),
+    tmux,
+    fallback,
+    sleep: immediate,
+    acquireTimeoutMs: 30,
+    settleMs: 0,
+    pollMs: 1,
+    readyTimeoutMs: 30,
+    // Presupuesto enorme (como las 24 h reales), corte de correlación corto.
+    turnTimeoutMs: 60 * 60_000,
+    correlationTimeoutMs: 20,
+  });
+
+  const outcome = await runner.run({
+    command: "claude",
+    args: [],
+    harness: "claude",
+    stdin: "pedido que se perdio",
+    timeoutMs: 24 * 60 * 60_000,
+    signal: new AbortController().signal,
+  });
+
+  // Suelta la sesión como AMBIGUO...
+  assert.equal(outcome.timedOut, true);
+  // ...y NO lo re-ejecuta por el camino de respaldo: si el pegado sí había entrado, correría dos veces.
+  assert.equal(fallback.calls, 0);
+});

@@ -64,6 +64,8 @@ export interface PasteSessionOptions<E> {
   readonly settleMs?: number;
   /** Cuánto se le da a la TUI para registrar el turno pegado. Ver `harvest`. */
   readonly injectTimeoutMs?: number;
+  /** Recorte de la espera por correlacionar el pegado. Ver `DEFAULT_CORRELATION_TIMEOUT_MS`. */
+  readonly correlationTimeoutMs?: number;
   readonly pollMs?: number;
   readonly readyTimeoutMs?: number;
   readonly command?: string;
@@ -119,6 +121,26 @@ const DEFAULT_INJECT_TIMEOUT_MS = 30_000;
  * detectar un suceso rarísimo. Cada 8 sondeos da un aviso en menos de 10 s, que es de sobra.
  */
 const LIVENESS_EVERY = 8;
+
+/**
+ * Cuánto se espera a CORRELACIONAR el pegado antes de soltar la sesión.
+ *
+ * Distinto del presupuesto del turno: un turno legítimo puede durar horas, pero su entrada aparece
+ * en el registro a los pocos segundos de pegarla. Si pasa esto sin que aparezca, el pegado se perdió
+ * —se entreveró con lo que estaba tecleando una persona en la misma caja de entrada, o cayó mientras
+ * la TUI generaba— y esperar el presupuesto entero no lo va a arreglar.
+ *
+ * Lo que arregla, medido el 2026-08-04: al quitar el tope escondido de 60 min, el presupuesto de
+ * claude pasó a ser el de la entrega (24 h). Como este harness NO declara `startedTurn` a propósito
+ * (ver `claudeTranscript`), nunca degradaba tras pegar, así que un pegado perdido retenía el lock de
+ * la sesión 24 h: 16 entregas encoladas, cuatro horas sin una sola respuesta, y el reinicio del
+ * adaptador no lo soltaba porque la siguiente entrega volvía a trabarse igual.
+ *
+ * Se sale por `timedOut` (AMBIGUO), no por `degrade`: si el pegado SÍ había entrado y sólo no se
+ * supo correlacionar, degradar lo volvería a ejecutar por el camino de respaldo y el turno correría
+ * dos veces. Ambiguo suelta el lock, deja constancia y no reintenta solo.
+ */
+const DEFAULT_CORRELATION_TIMEOUT_MS = 5 * 60_000;
 
 /**
  * Salida (d): conducir la TUI real por tmux y cosechar el sobre del registro que ella escribe.
@@ -350,6 +372,8 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
     const deadline = Date.now() + budget;
     const injectTimeoutMs = this.options.injectTimeoutMs ?? DEFAULT_INJECT_TIMEOUT_MS;
     const injectDeadline = Date.now() + injectTimeoutMs;
+    const correlationDeadline = Date.now()
+      + (this.options.correlationTimeoutMs ?? DEFAULT_CORRELATION_TIMEOUT_MS);
     let injected: { file: string; key: string; sessionId?: string } | undefined;
     let started = false;
     // El registro de una conversación larga pesa megabytes y un turno puede durar una hora.
@@ -404,6 +428,18 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
           + " envío: el pedido no llegó a la caja de entrada",
           request,
         );
+      }
+
+      // Red de seguridad para los harness que no pueden declarar `startedTurn` (claude): el pegado
+      // nunca apareció en el registro. No se degrada —eso lo ejecutaría dos veces— se suelta la
+      // sesión como AMBIGUO para que la cola siga corriendo.
+      if (injected === undefined && !started && Date.now() >= correlationDeadline) {
+        await this.clearInputBox(target);
+        return result({
+          timedOut: true,
+          stderr: "el pegado no apareció en el registro de la terminal;"
+            + " el turno se suelta como ambiguo para no retener la sesión",
+        });
       }
 
       if (Date.now() >= deadline) {
