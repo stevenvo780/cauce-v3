@@ -1,0 +1,11 @@
+[Unit]
+Description=Chequeo de credenciales de la flota cada 30 min
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Unit=cred-guard.service
+
+[Install]
+WantedBy=timers.target

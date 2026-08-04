@@ -1,0 +1,19 @@
+# Parche 2026-08-02 (zeus, por decisión de Steven): la redacción de secretos en la INGESTA de
+# Telegram queda APAGADA.
+#
+# Por qué: la redacción le impidió pasarle a `socrates` el token de @polidinamica_sell_bot tres
+# veces (21:10, 21:26 y 21:59 UTC) y el agente contestó "Cauce me entregó el token como
+# [secreto-redactado], así que no puedo leerlo ni instalarlo". Montar un sistema de punta a punta
+# implica pasarle credenciales a quien lo monta. Steven asumió el costo (el texto queda escrito en
+# `messages.body`): tiene limpieza periódica de historiales.
+#
+# Por qué un montaje y no un `docker cp`: el rootfs del puente es read-only, a propósito.
+#
+# Qué monta: el mismo `dist/redaction.js` de la imagen más una guarda que lee
+# `CAUCE_TELEGRAM_REDACT_INGRESS` (default apagado). Encenderla de nuevo es poner esa variable en
+# `/etc/cauce-v3/prod.env`, sin tocar código. El fuente ya tiene el mismo cambio, así que cuando se
+# reconstruya `CAUCE_RUNTIME_IMAGE` este montaje pasa a ser redundante y se puede borrar.
+services:
+  telegram-bridge:
+    volumes:
+      - /etc/cauce-v3/patches/telegram-bridge-redaction.js:/app/services/telegram-bridge/dist/redaction.js:ro

@@ -1,0 +1,6 @@
+[Unit]
+Description=Revisa las credenciales de la flota (refreshToken muerto / credencial compartida)
+
+[Service]
+Type=oneshot
+ExecStart=/home/stev/.local/bin/cred-guard.sh

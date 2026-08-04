@@ -1,0 +1,6 @@
+[Unit]
+Description=Repone el tunel ws-zeus:12222 -> VM polidinamica-temp si se cayo
+
+[Service]
+Type=oneshot
+ExecStart=/home/stev/.local/bin/polidin-guard.sh

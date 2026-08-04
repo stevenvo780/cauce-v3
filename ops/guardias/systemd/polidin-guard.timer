@@ -1,0 +1,11 @@
+[Unit]
+Description=Chequeo cada 2 min del tunel de Polidinamica
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=polidin-guard.service
+
+[Install]
+WantedBy=timers.target
