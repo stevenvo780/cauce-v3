@@ -8,7 +8,7 @@ import { HarnessAdapter } from "../src/harnesses/shared.js";
 import { claudeDefinition, codexDefinition } from "../src/harnesses/index.js";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "../src/sdk/types.js";
 import type { TmuxController, TmuxResult } from "../src/shared-session/tmux.js";
-import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
+import { PasteSessionRunner, turnBudgetMs } from "../src/shared-session/paste-runner.js";
 import { CONTEXT_MARK, DEGRADED_MARK, RESET_MARK } from "../src/shared-session/notice.js";
 import { readDegradations } from "../src/shared-session/degradation-log.js";
 import { inputBoxState } from "../src/shared-session/pane.js";
@@ -1118,4 +1118,33 @@ test("el entorno se escapa y entra en el argv del panel", async () => {
   );
   const created = tmux.calls.find((call) => call[0] === "new-session");
   assert.ok(created?.at(-1)?.startsWith(`exec env CLAUDE_CONFIG_DIR='${home}/.claude' claude`));
+});
+
+// ---------------------------------------------------------------------------
+// El presupuesto de un turno sale de la entrega, no de una constante escondida.
+//
+// El 2026-08-04 `harvest` hacía `Math.min(request.timeoutMs, 3_600_000)` con un
+// `turnTimeoutMs` que NADIE pasaba: todo turno moría a los 60:00 exactos, aunque la entrega
+// declarara 24 h. Dos entregas de Miguel a kratos murieron así, y como el alias sirve una por
+// vez, la cola detrás se fue muriendo igual. Ningún error: sólo silencio.
+//
+// Estas pruebas fijan la regla. Sin ellas, el default vuelve en el próximo refactor.
+// ---------------------------------------------------------------------------
+
+test("sin recorte explicito, el turno usa el presupuesto de la entrega", () => {
+  const veinticuatroHoras = 24 * 60 * 60_000;
+  assert.equal(turnBudgetMs(veinticuatroHoras), veinticuatroHoras);
+});
+
+test("no queda ningun techo de una hora escondido", () => {
+  const unaHora = 3_600_000;
+  // El caso exacto que mato las entregas de kratos: la entrega pedia mucho mas de una hora.
+  assert.ok(turnBudgetMs(6 * unaHora) > unaHora, "un turno de 6 h no puede recortarse a 1 h");
+  assert.equal(turnBudgetMs(unaHora + 1), unaHora + 1);
+});
+
+test("un recorte explicito acota, y solo hacia abajo", () => {
+  assert.equal(turnBudgetMs(10_000, 2_000), 2_000);
+  // Un recorte mayor que el presupuesto no puede AMPLIARLO: la entrega manda.
+  assert.equal(turnBudgetMs(2_000, 10_000), 2_000);
 });

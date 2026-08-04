@@ -51,7 +51,14 @@ export interface PasteSessionOptions<E> {
   readonly sleep: (ms: number) => Promise<void>;
   /** Cuánto se espera a que el dueño suelte la caja de entrada antes de degradar. */
   readonly acquireTimeoutMs?: number;
-  /** Techo de un turno ya inyectado. Pasado esto es AMBIGUO, nunca un reintento. */
+  /**
+   * Recorte OPCIONAL del turno ya inyectado, por debajo del presupuesto de la entrega.
+   *
+   * Sin esto el turno usa `request.timeoutMs`, que es lo que negoció el motor. No tiene default a
+   * propósito: un default acá es un techo invisible que contradice al presupuesto declarado, y eso
+   * es exactamente lo que mató las entregas de kratos el 2026-08-04 (ver `harvest`).
+   * Pasado el plazo el estado es AMBIGUO, nunca un reintento.
+   */
   readonly turnTimeoutMs?: number;
   /** Cuánto se espera entre el pegado y el Enter. Ver `SETTLE_MS`. */
   readonly settleMs?: number;
@@ -64,8 +71,23 @@ export interface PasteSessionOptions<E> {
 }
 
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 120_000;
-const DEFAULT_TURN_TIMEOUT_MS = 3_600_000;
 const DEFAULT_POLL_MS = 750;
+
+/**
+ * Cuánto dura un turno ya inyectado en la TUI.
+ *
+ * Es una función exportada y no dos líneas dentro de `harvest` para que la regla se pueda fijar
+ * con una prueba: lo que se rompió el 2026-08-04 no fue el cálculo, fue que un default escondido
+ * ganaba sobre el presupuesto declarado y nadie tenía dónde verlo.
+ *
+ * La regla, entera: manda `request.timeoutMs`. Sólo se recorta si alguien pasó `turnTimeoutMs` a
+ * propósito, y sólo hacia abajo — un recorte nunca puede AMPLIAR el presupuesto de la entrega.
+ */
+export function turnBudgetMs(requestTimeoutMs: number, turnTimeoutMs?: number): number {
+  return turnTimeoutMs === undefined
+    ? requestTimeoutMs
+    : Math.min(requestTimeoutMs, turnTimeoutMs);
+}
 
 /**
  * Cuánto se deja asentar el pegado antes de mandar el Enter.
@@ -305,10 +327,26 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
     target: string,
   ): Promise<CommandRunResult> {
     const port = this.options.transcript;
-    const budget = Math.min(
-      request.timeoutMs,
-      this.options.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS,
-    );
+    /**
+     * El presupuesto del turno es el que negoció el motor, NO una constante de este archivo.
+     *
+     * Hasta el 2026-08-04 acá había un `Math.min(request.timeoutMs, 3_600_000)`. `turnTimeoutMs`
+     * no lo pasaba nadie —ni `bin/shared.ts` ni ningún otro sitio—, así que ese `min` ganaba
+     * SIEMPRE y todo turno moría a los 60:00 exactos, contradiciendo en silencio el presupuesto
+     * que `executionBudgetFor` había calculado a partir de la entrega (24 h por defecto en
+     * `CAUCE_DEFAULT_TIMEOUT_MS`, acotado por la lease del ACK y por el techo de 12 h del store).
+     *
+     * Qué costó: el 2026-08-04 dos entregas de Miguel a `kratos` ejecutaron 60:00 clavados
+     * (23:57:28→00:57:28 y 00:57:30→01:57:28) y murieron. Como el alias sirve una entrega por vez,
+     * al morir arrancaba la siguiente, tardaba lo mismo y moría igual: cinco pedidos de un cliente
+     * en cola, ninguna respuesta, y ni un solo error visible.
+     *
+     * No es "sin techo": `request.timeoutMs` YA viene acotado, y el bucle de abajo sigue vigilando
+     * `signal.aborted` y la vida de la sesión tmux. Lo que se quita es un límite escondido que
+     * nadie podía ver ni configurar. `turnTimeoutMs` queda como recorte EXPLÍCITO para quien lo
+     * pase a propósito.
+     */
+    const budget = turnBudgetMs(request.timeoutMs, this.options.turnTimeoutMs);
     const deadline = Date.now() + budget;
     const injectTimeoutMs = this.options.injectTimeoutMs ?? DEFAULT_INJECT_TIMEOUT_MS;
     const injectDeadline = Date.now() + injectTimeoutMs;
