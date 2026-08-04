@@ -37,6 +37,15 @@
       "stateDirectory": "/home/claw/.openclaw/cauce-v3/hegel",
       "harness": "openclaw"
     },
+    "heraclito": {
+      "tenant": "Jhon",
+      "room": "grp.jhon",
+      "container": "agv2-jhon-heraclito-oc",
+      "user": "claw",
+      "home": "/home/claw",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/heraclito",
+      "harness": "openclaw"
+    },
     "iza": {
       "tenant": "Miguel",
       "room": "grp.miguel",

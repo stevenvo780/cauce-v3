@@ -12,6 +12,7 @@ EXPECTED = {
     "atlas": ("Miguel", "grp.miguel", "ws-humanizar", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/atlas", "codex"),
     "dedalo": ("Pablo", "grp.pablo", "ws-pablo-dev", "dev", "/home/dev", "/workspace/.cauce-v3/dedalo", "codex"),
     "hegel": ("Jhon", "grp.jhon", "agv2-jhon-hegel-oc", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/hegel", "openclaw"),
+    "heraclito": ("Jhon", "grp.jhon", "agv2-jhon-heraclito-oc", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/heraclito", "openclaw"),
     "iza": ("Miguel", "grp.miguel", "ws-humanizar", "dev", "/home/dev", "/home/dev/.local/state/cauce-v3/iza", "hermes"),
     "janus": ("Miguel", "grp.miguel", "claw-miguel", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/janus", "openclaw"),
     "jarvis": ("Steven", "grp.steven", "claw", "claw", "/home/claw", "/home/claw/.openclaw/cauce-v3/jarvis", "openclaw"),

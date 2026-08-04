@@ -7,7 +7,7 @@ unknown-alias failure, the runtime-dir path defaults (which must match the compo
 mount), the single self-recipient invariant, and the ids-only allowlist file. Core tests
 use a hermetic synthetic fleet (independent of the live manifests, which other
 branches may be editing); a final block runs the real CLI end-to-end against the
-checked-in 14-alias source of truth.
+checked-in 15-alias source of truth.
 
 Runs standalone (`python3 ops/tests/test_generate_telegram_config.py`) or under pytest.
 """
@@ -407,7 +407,7 @@ class ValidatorTests(unittest.TestCase):
 
 
 class RealFleetCliTests(unittest.TestCase):
-    """End-to-end against the checked-in 14-alias source of truth."""
+    """End-to-end against the checked-in 15-alias source of truth."""
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -421,10 +421,10 @@ class RealFleetCliTests(unittest.TestCase):
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
         config = json.loads(result.stdout)
-        self.assertEqual(len(config["aliases"]), 14)
+        self.assertEqual(len(config["aliases"]), 15)
         gen.validate_config(config)
         names = sorted(row["alias"] for row in config["aliases"])
-        self.assertEqual(len(set(names)), 14)
+        self.assertEqual(len(set(names)), 15)
         # Turnkey defaults: self recipients + token/marker under the compose mount.
         for row in config["aliases"]:
             self.assertEqual(row["recipients"], [{"tenant_id": row["tenant_id"], "alias": row["alias"]}])

@@ -1,0 +1,18 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: heraclito
+spec:
+  tenant: Jhon
+  room: grp.jhon
+  alias: heraclito
+  harness: openclaw
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_HERACLITO_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_HERACLITO_TOKEN_PATH
+    clientCertificate: CAUCE_HERACLITO_CERT_PATH
+    clientKey: CAUCE_HERACLITO_KEY_PATH
+    certificateAuthority: CAUCE_HERACLITO_CA_PATH
+  process: {executablePathEnv: CAUCE_HERACLITO_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/heraclito

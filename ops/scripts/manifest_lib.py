@@ -14,6 +14,7 @@ EXPECTED = {
     "atlas": ("Miguel", "grp.miguel", "codex"),
     "dedalo": ("Pablo", "grp.pablo", "codex"),
     "hegel": ("Jhon", "grp.jhon", "openclaw"),
+    "heraclito": ("Jhon", "grp.jhon", "openclaw"),
     "iza": ("Miguel", "grp.miguel", "hermes"),
     "janus": ("Miguel", "grp.miguel", "openclaw"),
     "jarvis": ("Steven", "grp.steven", "openclaw"),
