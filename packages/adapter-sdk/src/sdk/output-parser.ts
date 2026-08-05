@@ -777,6 +777,62 @@ function unwrapCodeFence(candidate: string): string {
   return inner.startsWith("{") || inner.startsWith("[") ? inner : candidate;
 }
 
+/**
+ * Rescata el `reply` de un sobre JSON que se truncó, para no perder el turno entero.
+ *
+ * LA RESPUESTA ES EL TRABAJO. Un turno puede haber corrido veinte minutos, leído medio repositorio
+ * y decidido algo caro; que el sobre se corte DESPUÉS del `reply` —en `messages`, en `artifacts`, o
+ * a mitad de un campo accesorio— no puede costar todo eso. Antes sí lo costaba: cualquier objeto
+ * que empezara con `{` y no parseara moría en `contained a malformed JSON object`, y el usuario veía
+ * un error en vez de la respuesta que el agente YA había escrito. A Steven le pasó dos veces
+ * seguidas con jarvis el 2026-08-05.
+ *
+ * Sólo se rescata el `reply`, y a propósito: los campos accesorios de un sobre truncado NO son
+ * confiables —un `messages` a medias podría despachar trabajo a quien no corresponde, y un `status`
+ * cortado podría dar por buena una entrega fallida—. Así que se devuelve la respuesta y se descarta
+ * el resto, que es exactamente "descartar la parte mala y dejar vivo el turno".
+ *
+ * Se lee carácter a carácter en vez de con una expresión regular porque hay que respetar el
+ * escapado de JSON: un `\"` dentro del texto no cierra la cadena, y una regex ingenua cortaría la
+ * respuesta a la mitad justo cuando contiene comillas — que es lo habitual en estos sobres.
+ */
+function rescataReply(candidato: string): string | undefined {
+  const marca = /"reply"\s*:\s*"/u.exec(candidato);
+  if (marca === null) return undefined;
+  let indice = marca.index + marca[0].length;
+  let texto = "";
+  while (indice < candidato.length) {
+    const caracter = candidato[indice];
+    if (caracter === "\\") {
+      // Se delega el desescapado a JSON.parse sobre la cadena SOLA: reusar el mismo desescapado
+      // que el resto del sobre evita inventar aquí una segunda interpretación de \n, \u y \".
+      const siguiente = candidato[indice + 1];
+      if (siguiente === undefined) break;
+      texto += caracter + siguiente;
+      indice += 2;
+      continue;
+    }
+    if (caracter === '"') {
+      try {
+        const valor = JSON.parse(`"${texto}"`) as unknown;
+        return typeof valor === "string" && hasVisibleText(valor) ? valor : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    texto += caracter;
+    indice += 1;
+  }
+  // El corte cayó DENTRO del propio `reply`: se devuelve lo que se alcanzó a escribir, porque medio
+  // párrafo del agente vale más que un error. Se cierra la cadena a mano para poder desescaparla.
+  try {
+    const valor = JSON.parse(`"${texto.replace(/\\$/u, "")}"`) as unknown;
+    return typeof valor === "string" && hasVisibleText(valor) ? valor : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseFinalText(text: string, context: string): StructuredOutput {
   const trimmed = text.trim();
   if (!hasVisibleText(trimmed)) throw new MalformedOutputError(`${context} did not contain visible text`);
@@ -787,6 +843,8 @@ export function parseFinalText(text: string, context: string): StructuredOutput 
     decoded = JSON.parse(jsonCandidate) as unknown;
   } catch {
     if (jsonCandidate.startsWith("{")) {
+      const rescatado = rescataReply(jsonCandidate);
+      if (rescatado !== undefined) return fallbackTextOutput(rescatado, context);
       throw new MalformedOutputError(`${context} contained a malformed JSON object`);
     }
     return recoverOrFallback(trimmed, context);
