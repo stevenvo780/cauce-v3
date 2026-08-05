@@ -4612,6 +4612,12 @@ export class CauceRepository {
          WHERE response_audit.action='agent_output.response'
            AND response_audit.decision IN ('allow','deny')
            AND response_audit.metadata->>'child_delivery_id'=child.id::text
+           -- La fila sintética de recordTerminalBranchesWithoutResponse existe para que la rama
+           -- sea CONTABLE, no para hablar por ella: no hubo ninguna respuesta que denegar. Si se
+           -- renderizara, el coordinador leería «Agent response denied» de una rama que nadie
+           -- denegó, en vez del desenlace real que agentResponseText sí sabe contar (el
+           -- last_error de la rama muerta, por ejemplo).
+           AND response_audit.metadata->>'reason' IS DISTINCT FROM 'terminal_without_response'
            AND (
              response_audit.decision='deny'
              OR response.body->>'type'='agent.response'
@@ -5970,12 +5976,23 @@ export class CauceRepository {
     if (candidate.branches > 0 && !candidate.fanin_present) {
       await client.query('SAVEPOINT chain_silence_fanin');
       try {
+        // Una rama que llegó a estado terminal SIN pasar por el ACK no tiene su fila de
+        // `agent_output.response` y por eso es INCONTABLE para el fan-in: ver
+        // `recordTerminalBranchesWithoutResponse`. Rellenarla sólo acá y sólo con la cadena
+        // ya declarada muda y sin trabajo abierto.
+        if (candidate.open_work === 0) {
+          await this.recordTerminalBranchesWithoutResponse(client, candidate.root_message_id);
+        }
         const fanin = await this.materializeAgentFanin(client, candidate.root_message_id);
-        await client.query('RELEASE SAVEPOINT chain_silence_fanin');
         if (fanin.scheduled) {
+          await client.query('RELEASE SAVEPOINT chain_silence_fanin');
           await this.recordChainSweepAudit(client, candidate, 'fanin_recovered', undefined, undefined);
           return 'fanin';
         }
+        // No se destrabó: se descartan las filas sintéticas. Si quedaran, `chainSilenceDetail`
+        // las contaría como ramas que devolvieron resultado y el aviso al humano diría que N
+        // ramas contestaron cuando ninguna contestó. O destraba, o no deja rastro.
+        await client.query('ROLLBACK TO SAVEPOINT chain_silence_fanin');
       } catch (error) {
         // Un fallo SQL acá envenena la transacción; el punto de guardado la devuelve intacta
         // para que la raíz igual termine avisada en vez de quedar muda una vez más.
@@ -6069,6 +6086,107 @@ export class CauceRepository {
     // alias de agente, y esto no crea ninguna entrega. El puente toma el relay por
     // `claimOutbox`, que es el camino durable de siempre.
     return 'notified';
+  }
+
+  /**
+   * La rama INCONTABLE: terminal, pero sin la fila que el fan-in cuenta.
+   *
+   * `materializeAgentFanin` no cuenta mensajes ni entregas: cuenta filas de `audit_events` con
+   * `action='agent_output.response'` keyeadas por `metadata->>'child_delivery_id'`, y esa fila
+   * la escribe SÓLO un ACK terminal aplicado (o el reaper, que pasa por el mismo camino). Si
+   * una entrega llega a estado terminal por fuera de ese camino —el 2026-08-04 alguien terminó
+   * ramas con un UPDATE directo en la base para destrabar otra cosa— esa rama queda contada en
+   * `completed` pero NUNCA en `responsesRecorded`, y el gate del fan-in
+   * (`completed === expected && responsesRecorded === expected`) pasa a ser insatisfacible PARA
+   * SIEMPRE. Jarvis quedó esperando 17 ramas de las que ninguna podía volver.
+   *
+   * Peor: la red de seguridad reusa el MISMO predicado, así que tampoco rescataba; caía al
+   * aviso de cierre, que se relaya al adaptador de ORIGEN (el humano) y nunca al coordinador.
+   *
+   * Esto rellena la fila que falta, con la verdad de lo que pasó: `deny` con razón
+   * `terminal_without_response`. No relaja el gate general —una cadena viva sigue exigiendo
+   * respuestas de verdad— porque corre EXCLUSIVAMENTE en el camino del barredor de silencio,
+   * sobre una raíz que el propio barredor ya declaró muda y con cero trabajo abierto: ahí el
+   * peor resultado posible (el coordinador esperando para siempre) ya ocurrió, y lo único que
+   * queda por decidir es si el coordinador llega a sintetizar lo que sí volvió.
+   *
+   * QUÉ RAMA SE RELLENA Y CUÁL NO — las tres condiciones de abajo NO son cosméticas: cada una
+   * evita convertir un desenlace que hoy es correcto en un fan-in vacío.
+   *
+   *  1. HOJA (sin materializaciones propias). Una rama que volvió a delegar NO está incontable
+   *     por este fallo: su fila la escribe el ACK de la continuación que le devuelve su hijo,
+   *     keyeada por su propio `child_delivery_id`. Ése es el agujero de `deferred`, que este
+   *     barredor ya cubre avisándole al humano; rellenarlo acá le pondría al coordinador una
+   *     rama en blanco por cada delegación anidada muerta.
+   *  2. `done`, o bien la cadena tiene al menos UNA respuesta real. Una raíz donde todas las
+   *     ramas murieron sin devolver nada no tiene nada que sintetizar: el aviso agregado con la
+   *     causa dominante es MEJOR respuesta para el humano que un fan-in de N ramas vacías, y es
+   *     la garantía P0-4 que ya está fijada en los tests. Una rama `done` sí completó su
+   *     trabajo, y una muerta en una cadena que sí trajo resultados es exactamente el hueco de
+   *     plomería del 2026-08-04.
+   *  3. Sin fila previa: `NOT EXISTS` sobre la misma clave que cuenta el fan-in la hace
+   *     idempotente, y el candado consultivo del llamador la serializa contra cualquier ACK en
+   *     vuelo de la misma raíz.
+   */
+  private async recordTerminalBranchesWithoutResponse(
+    client: DatabaseClient,
+    rootMessageId: string
+  ): Promise<number> {
+    const answered = await client.query<{ answered: boolean }>(
+      `SELECT EXISTS(
+                SELECT 1
+                FROM agent_output_materializations materialization
+                JOIN deliveries child ON child.id=materialization.produced_delivery_id
+                WHERE materialization.status='materialized'
+                  AND materialization.correlation->>'root_message_id'=$1
+                  AND EXISTS (
+                    SELECT 1 FROM audit_events response_audit
+                    WHERE response_audit.action='agent_output.response'
+                      AND response_audit.decision IN ('allow','deny')
+                      AND response_audit.metadata->>'child_delivery_id'=child.id::text
+                  )
+              ) AS answered`,
+      [rootMessageId]
+    );
+    const chainAnswered = answered.rows[0]?.answered === true;
+    const filled = await client.query(
+      `INSERT INTO audit_events(
+         tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+       )
+       SELECT child.recipient_tenant,child.recipient_alias,
+              'agent_output.response','deny',
+              child_message.request_id,child.message_id,child.id,child_message.trace_id,
+              jsonb_build_object(
+                'reason','terminal_without_response',
+                'child_delivery_id',child.id::text,
+                'source_delivery_id',materialization.source_delivery_id::text,
+                'target_tenant',materialization.source_tenant,
+                'target_alias',materialization.source_alias,
+                'outcome',child.status,
+                'root_message_id',$1::text,
+                'synthesized_by','chain_silence_sweep'
+              )
+       FROM agent_output_materializations materialization
+       JOIN deliveries child ON child.id=materialization.produced_delivery_id
+       JOIN messages child_message ON child_message.id=child.message_id
+       WHERE materialization.status='materialized'
+         AND materialization.correlation->>'root_message_id'=$1
+         AND child.status IN ('done','failed','dead')
+         AND (child.status='done' OR $2::boolean)
+         AND NOT EXISTS (
+           SELECT 1 FROM agent_output_materializations descendant
+           WHERE descendant.source_delivery_id=child.id
+             AND descendant.status='materialized'
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM audit_events response_audit
+           WHERE response_audit.action='agent_output.response'
+             AND response_audit.decision IN ('allow','deny')
+             AND response_audit.metadata->>'child_delivery_id'=child.id::text
+         )`,
+      [rootMessageId, chainAnswered]
+    );
+    return filled.rowCount ?? 0;
   }
 
   /**
