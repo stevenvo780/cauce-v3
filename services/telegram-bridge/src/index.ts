@@ -9,4 +9,5 @@ export * from './poller.js';
 export * from './redaction.js';
 export * from './repository.js';
 export * from './telegram.js';
+export * from './untrusted.js';
 export * from './types.js';

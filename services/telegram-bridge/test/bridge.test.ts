@@ -8,7 +8,8 @@ import { TelegramApiError, TelegramHttpClient } from '../src/telegram.js';
 import type {
   PollLease, TelegramAliasConfig, TelegramApi, TelegramCursorRepository, TelegramEffect,
   TelegramEffectInput, TelegramEgressRepository, TelegramEntity, TelegramIngress, TelegramIngressMessage,
-  TelegramOriginRelay, TelegramOriginRelayAck, TelegramRemoteFile, TelegramSendOptions, TelegramSendResult, TelegramUpdate
+  TelegramOriginRelay, TelegramOriginRelayAck, TelegramRemoteFile, TelegramSendOptions, TelegramSendResult,
+  TelegramUpdate, TelegramUser
 } from '../src/types.js';
 
 const TENANT = 'Steven';
@@ -1455,5 +1456,130 @@ describe('Telegram human authorship', () => {
 
     expect(ingress.calls).toHaveLength(1);
     expect(ingress.calls[0]?.human).toBe(true);
+  });
+});
+
+/**
+ * P8 — la identidad del humano en el DM.
+ *
+ * Hasta acá el privado publicaba `conversation_id` y nada más: el agente hablaba con un número.
+ * Estas pruebas fijan las dos mitades del trabajo, que se rompen por separado: que el nombre
+ * LLEGUE al prompt (si no, la función no existe) y que llegue SANEADO y marcado como no confiable
+ * (si no, cualquiera le dicta al agente quién dice ser).
+ */
+describe('Telegram DM identity (poller integration)', () => {
+  const DM_CHAT_ID = 201;
+
+  function dmUpdate(updateId: number, from: TelegramUser, text = 'hola, ¿podés mirar el deploy?'): TelegramUpdate {
+    return {
+      update_id: updateId,
+      message: {
+        message_id: updateId + 100,
+        from,
+        chat: { id: DM_CHAT_ID, type: 'private' },
+        text
+      }
+    };
+  }
+
+  /** Directorio con dos alias vivos: es de donde el poller saca los nombres reservados. */
+  const FLEET = {
+    byUsername: new Map([['kant_bot', 'kant'], ['zeus_bot', 'zeus']]),
+    byBotId: new Map([['900001', 'kant']])
+  };
+
+  async function publish(update: TelegramUpdate): Promise<TelegramIngressMessage> {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const api = new FakeTelegram([update]);
+    await new TelegramPoller({
+      config: config({ alias: 'kant', bot_username: 'kant_bot' }),
+      botId: '900001',
+      api,
+      repository,
+      ingress,
+      fleet: FLEET
+    }).runOnce();
+    expect(ingress.calls).toHaveLength(1);
+    return ingress.calls[0]!;
+  }
+
+  it('le dice al agente con quién habla, dentro del bloque untrusted y nunca en el contexto confiable', async () => {
+    const call = await publish(dmUpdate(300, { id: 101, first_name: 'Ana', username: 'ana_dev' }));
+
+    const prompt = String(call.body.prompt);
+    expect(prompt).toContain('--- BEGIN UNTRUSTED TELEGRAM CONTEXT ---');
+    expect(prompt).toContain('--- END UNTRUSTED TELEGRAM CONTEXT ---');
+    expect(prompt).toContain('"display_name":"Ana"');
+    expect(prompt).toContain('"username":"ana_dev"');
+    expect(prompt.endsWith('hola, ¿podés mirar el deploy?')).toBe(true);
+    // El nombre NO se cuela en origin.metadata, que el harness imprime como TRUSTED ORIGIN CONTEXT.
+    expect(call.origin.metadata).toEqual({
+      bridge_alias: 'kant', bridge_tenant: TENANT, chat_type: 'private'
+    });
+    expect(JSON.stringify(call.origin.metadata)).not.toContain('Ana');
+    // El sobre de grupo sigue siendo de los grupos.
+    expect(call.body).not.toHaveProperty('thread_id');
+    expect(call.body).not.toHaveProperty('addressed_by');
+  });
+
+  it('marca como sospechoso el homóglifo cirílico que imita a otro agente de la flota', async () => {
+    // "zeu" + CYRILLIC SMALL LETTER DZE (U+0455): se dibuja "zeus" y no es "zeus" en ningún byte.
+    const call = await publish(dmUpdate(301, { id: 101, first_name: 'zeu\u0455' }));
+
+    const prompt = String(call.body.prompt);
+    expect(prompt).toContain('"impersonation_suspected"');
+    expect(prompt).toContain('"collides_with":"zeus"');
+    expect(prompt).toContain('"normalized":"zeus"');
+    // La advertencia va en texto, no sólo en el JSON: es lo que tiene que LEER el modelo.
+    expect(prompt).toContain('WARNING: this display name imitates "zeus"');
+    expect(prompt).toContain('proves nothing');
+  });
+
+  it('un nombre honesto no dispara la advertencia', async () => {
+    const call = await publish(dmUpdate(302, { id: 101, first_name: 'Kanta Pérez' }));
+
+    const prompt = String(call.body.prompt);
+    expect(prompt).toContain('"display_name":"Kanta P');
+    expect(prompt).not.toContain('impersonation_suspected');
+    expect(prompt).not.toContain('WARNING');
+  });
+
+  it('el override bidi no sobrevive al cuerpo publicado', async () => {
+    // RIGHT-TO-LEFT OVERRIDE (U+202E) + ZERO WIDTH SPACE (U+200B) dentro del nombre.
+    const call = await publish(dmUpdate(303, { id: 101, first_name: 'A\u202enn\u200ba' }));
+
+    const serialized = JSON.stringify(call.body);
+    expect(serialized).not.toContain('\u202e');
+    expect(serialized).not.toContain('\u200b');
+    expect(String(call.body.prompt)).toContain('"display_name":"Anna"');
+  });
+
+  it('un nombre larguísimo entra recortado y no puede empujar al mensaje fuera del prompt', async () => {
+    const call = await publish(dmUpdate(304, { id: 101, first_name: 'A'.repeat(5_000) }));
+
+    const prompt = String(call.body.prompt);
+    expect(prompt).toContain(`"display_name":"${'A'.repeat(64)}"`);
+    expect(prompt).not.toContain('A'.repeat(65));
+    expect(prompt.endsWith('hola, ¿podés mirar el deploy?')).toBe(true);
+  });
+
+  it('el emoji del nombre llega intacto: sanear no es mutilar el nombre de un humano', async () => {
+    const call = await publish(dmUpdate(305, { id: 101, first_name: '\u{1f98a} Ana' }));
+
+    expect(String(call.body.prompt)).toContain('\u{1f98a} Ana');
+  });
+
+  it('sin nombre ni username el DM sale como salía antes de P8: sin clave prompt', async () => {
+    const call = await publish(dmUpdate(306, { id: 101 }));
+
+    expect(call.body).not.toHaveProperty('prompt');
+    expect(call.body).toEqual({
+      type: 'telegram.message',
+      update_id: 306,
+      message_id: 406,
+      chat_type: 'private',
+      text: 'hola, ¿podés mirar el deploy?'
+    });
   });
 });

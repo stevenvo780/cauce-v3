@@ -79,7 +79,15 @@ function safeRemotePath(value: string): boolean {
     !value.includes('\\') && !value.split('/').includes('..') && /^[A-Za-z0-9._/-]+$/u.test(value);
 }
 
-function hasUnsafeAttachmentCodePoint(value: string): boolean {
+/**
+ * Criterio de code points hostiles: controles C0/C1, bidi, invisibles y las anotaciones.
+ *
+ * Se exporta para que `test/untrusted.test.ts` pueda comprobar que el saneo de los NOMBRES no deja
+ * pasar nada de lo que acá se rechaza. Los dos criterios nacieron separados —uno para nombres de
+ * archivo, otro para texto libre— y dos validadores del mismo campo que se van desincronizando es
+ * exactamente cómo un valor termina aceptado por una capa y rechazado por la de al lado.
+ */
+export function hasUnsafeAttachmentCodePoint(value: string): boolean {
   return [...value].some((character) => {
     const code = character.codePointAt(0)!;
     return code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
