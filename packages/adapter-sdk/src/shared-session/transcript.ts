@@ -176,18 +176,74 @@ export function descendsFrom(
   byUuid: ReadonlyMap<string, TranscriptEntry>,
   entry: TranscriptEntry,
   ancestorUuid: string,
+  positions?: ReadonlyMap<string, number>,
 ): boolean {
   const seen = new Set<string>();
+  // Si la subida cruza una compactación, se recuerda DÓNDE: es el puente que permite decidir por
+  // posición cuando claude deja la cadena lógica rota. Ver `crossedCompaction` más abajo.
+  let compactionAt: number | undefined;
   let current: string | undefined = parentOf(entry);
   for (let depth = 0; depth < MAX_ANCESTRY_DEPTH && current !== undefined; depth += 1) {
     if (current === ancestorUuid) return true;
-    if (seen.has(current)) return false;
+    if (seen.has(current)) return crossedCompaction(positions, compactionAt, ancestorUuid);
     seen.add(current);
     const parent: TranscriptEntry | undefined = byUuid.get(current);
-    if (parent === undefined) return false;
+    if (parent === undefined) return crossedCompaction(positions, compactionAt, ancestorUuid);
+    if (parent.type === "system" && parent.subtype === "compact_boundary") {
+      const at = positions?.get(current);
+      if (at !== undefined && (compactionAt === undefined || at < compactionAt)) compactionAt = at;
+    }
     current = parentOf(parent);
   }
-  return false;
+  return crossedCompaction(positions, compactionAt, ancestorUuid);
+}
+
+/**
+ * Rescate cuando la cadena lógica que escribe claude está ROTA y no se puede probar descendencia.
+ *
+ * Medido en kratos el 2026-08-04: el `compact_boundary` `fee7e005` traía `parentUuid: null` y un
+ * `logicalParentUuid` que apuntaba HACIA ADELANTE (`7afcfe7d`, cuatro entradas DESPUÉS del propio
+ * boundary), y esa entrada volvía a colgar del boundary. Un ciclo cerrado de cinco nodos: ninguna
+ * ruta llega ya a la entrada inyectada. Sin esto, `findAnswer` devuelve `undefined` en cada sondeo y
+ * `harvest` gira hasta agotar el presupuesto de la entrega RETENIENDO el lock de la sesión: kratos
+ * estuvo 8 h sin contestar con la respuesta ya escrita en su propio registro desde hacía 6 h, y las
+ * 8 entregas siguientes encoladas detrás. No es un caso de borde: le pasa a cualquier alias claude
+ * que compacte a mitad de turno.
+ *
+ * El criterio de rescate es CONVERSACIONAL, no sintáctico: una compactación no abre una rama nueva,
+ * resume lo anterior y sigue el MISMO hilo. Así que si la subida cruzó una compactación y la entrada
+ * que inyectamos está ANTES de ella en el fichero, esa entrada sí es ancestro aunque los uuid ya no
+ * lo puedan demostrar.
+ *
+ * Se exige haber cruzado una compactación de verdad: sin esa prueba se devuelve `false` y se
+ * conserva la exigencia estricta de descendencia, que es la que evita cosechar la respuesta a lo que
+ * el dueño tecleó en paralelo.
+ */
+function crossedCompaction(
+  positions: ReadonlyMap<string, number> | undefined,
+  compactionAt: number | undefined,
+  ancestorUuid: string,
+): boolean {
+  if (positions === undefined || compactionAt === undefined) return false;
+  const ancestorAt = positions.get(ancestorUuid);
+  return ancestorAt !== undefined && ancestorAt < compactionAt;
+}
+
+/**
+ * Posición de la PRIMERA aparición de cada uuid, en el mismo criterio que `indexByUuid`.
+ *
+ * Tiene que ser la primera y no la última por lo mismo que allí: al compactar, claude REEMITE el
+ * segmento preservado con los mismos uuid, y quedarse con la copia tardía invierte el orden real.
+ */
+export function positionByUuid(
+  entries: readonly TranscriptEntry[],
+): ReadonlyMap<string, number> {
+  const positions = new Map<string, number>();
+  for (let index = 0; index < entries.length; index += 1) {
+    const uuid = asString(entries[index]?.uuid);
+    if (uuid !== undefined && !positions.has(uuid)) positions.set(uuid, index);
+  }
+  return positions;
 }
 
 /**
@@ -293,12 +349,13 @@ export function findFinalAssistant(
   userUuid: string,
 ): { readonly text: string; readonly sessionId?: string } | undefined {
   const byUuid = indexByUuid(entries);
+  const positions = positionByUuid(entries);
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (entry === undefined) continue;
     if (entry.type !== "assistant" || entry.isSidechain === true) continue;
     if (stopReason(entry) !== "end_turn") continue;
-    if (!descendsFrom(byUuid, entry, userUuid)) continue;
+    if (!descendsFrom(byUuid, entry, userUuid, positions)) continue;
     const text = assistantText(entry);
     if (text === undefined) continue;
     const sessionId = asString(entry.sessionId);

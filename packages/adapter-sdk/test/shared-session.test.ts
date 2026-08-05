@@ -1199,3 +1199,48 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
   // ...y NO lo re-ejecuta por el camino de respaldo: si el pegado sí había entrado, correría dos veces.
   assert.equal(fallback.calls, 0);
 });
+
+// ---------------------------------------------------------------------------
+// kratos, 2026-08-04: el turno del bus SI se pego y SI termino bien, pero claude compacto a mitad
+// y el `compact_boundary` quedo con `parentUuid: null` y un `logicalParentUuid` que apuntaba HACIA
+// ADELANTE, a una entrada que a su vez colgaba del propio boundary: un ciclo cerrado. Ninguna ruta
+// llegaba ya a la entrada inyectada, `findFinalAssistant` devolvia undefined en cada sondeo y
+// `harvest` giraba reteniendo el lock de la sesion. Resultado medido: 8 h sin contestar con la
+// respuesta ya escrita en el registro desde hacia 6 h, y 8 entregas encoladas detras.
+// ---------------------------------------------------------------------------
+
+test("una compactacion con la cadena rota no deja la respuesta sin cosechar", () => {
+  // Reproduce la forma exacta: user inyectado -> compactacion -> respuesta, con el ciclo.
+  const entries = [
+    { type: "user", uuid: "u-inyectado", message: { role: "user", content: "pedido del bus" } },
+    { type: "system", subtype: "compact_boundary", uuid: "b-boundary", parentUuid: null, logicalParentUuid: "x-adelante" },
+    { type: "assistant", uuid: "a-1", parentUuid: "b-boundary", message: { role: "assistant", content: [{ type: "text", text: "intermedio" }] } },
+    { type: "user", uuid: "x-adelante", parentUuid: "a-1", message: { role: "user", content: "resumen" } },
+    {
+      type: "assistant",
+      uuid: "a-final",
+      parentUuid: "x-adelante",
+      message: { role: "assistant", content: [{ type: "text", text: "la respuesta de verdad" }], stop_reason: "end_turn" },
+    },
+  ] as unknown as TranscriptEntry[];
+
+  const encontrada = findFinalAssistant(entries, "u-inyectado");
+  assert.ok(encontrada !== undefined, "la respuesta posterior a una compactacion tiene que cosecharse");
+  assert.equal(encontrada?.text, "la respuesta de verdad");
+});
+
+test("sin compactacion de por medio se sigue exigiendo descendencia real", () => {
+  // Lo que tecleo el dueño en paralelo NO desciende de nuestra entrada y no debe cosecharse.
+  const entries = [
+    { type: "user", uuid: "u-inyectado", message: { role: "user", content: "pedido del bus" } },
+    { type: "user", uuid: "u-del-dueno", message: { role: "user", content: "otra cosa" } },
+    {
+      type: "assistant",
+      uuid: "a-del-dueno",
+      parentUuid: "u-del-dueno",
+      message: { role: "assistant", content: [{ type: "text", text: "respuesta ajena" }], stop_reason: "end_turn" },
+    },
+  ] as unknown as TranscriptEntry[];
+
+  assert.equal(findFinalAssistant(entries, "u-inyectado"), undefined);
+});
