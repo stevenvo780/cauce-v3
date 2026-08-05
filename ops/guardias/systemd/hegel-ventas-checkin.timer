@@ -1,0 +1,13 @@
+[Unit]
+Description=Dispara el check-in diario de ventas de hegel a las 13:00 UTC (08:00 America/Bogota)
+
+[Timer]
+# 13:00 UTC fijo == 08:00 America/Bogota (UTC-5, sin horario de verano).
+# El sufijo UTC pina la hora aunque cambie el TZ del host (hoy es Etc/UTC de todos modos).
+OnCalendar=*-*-* 13:00:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=hegel-ventas-checkin.service
+
+[Install]
+WantedBy=timers.target

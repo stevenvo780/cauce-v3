@@ -417,12 +417,18 @@ export class TelegramPoller {
     this.participants = options.participants;
     this.onSuppressed = options.onSuppressed ?? logSuppressedUpdate;
     this.transcription = options.transcription;
+    // El `tenant_id` NO va acá. Los tenants de esta flota se llaman como las personas que son
+    // dueñas de ellos —Steven, Miguel, Pablo— así que incluirlo hacía que el dueño, escribiéndole
+    // a su propio agente con su propio nombre de Telegram, saliera marcado como suplantador en
+    // TODOS sus mensajes. Una marca que se dispara siempre no informa nada y enseña a ignorarla,
+    // que es exactamente lo contrario de para lo que existe. Lo que sí tiene sentido suplantar es
+    // una identidad de AGENTE (su alias o el usuario de su bot): ahí un nombre parecido es un
+    // intento de hacerse pasar por un miembro de la flota ante otro.
     this.reservedNames = new Set([
       ...this.fleet.byUsername.keys(),
       ...this.fleet.byUsername.values(),
       ...this.fleet.byBotId.values(),
-      options.config.alias,
-      options.config.tenant_id
+      options.config.alias
     ]);
   }
 

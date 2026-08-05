@@ -21,6 +21,8 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | `cauce-envoltorio-local.sh` | `<contenedor>:~/.local/bin/cauce` | Envoltorio que hace el `ssh kratos` por vos |
 | `cauce-huerfanas.sh` | `<contenedor>:~/.local/bin/` | Lista lo que pidió una PERSONA y se perdió sin respuesta |
 | `telegram-bridge.override.yaml` | `agora-storage:/etc/cauce-v3/compose-overrides/` | Monta el parche que apaga la redacción de la ingesta |
+| `hegel-ventas-checkin.py` | `agora-storage:/usr/local/sbin/` | Publica el check-in diario de ventas de `hegel` (`POST /v3/messages` con cert mTLS de hegel) |
+| `systemd/hegel-ventas-checkin.{service,timer}` | `agora-storage:/etc/systemd/system/` | Disparan el inyector todos los días a las 13:00 UTC (08:00 America/Bogota) |
 
 ## Por qué los guardias viven en kratos y no donde corre lo que vigilan
 
@@ -29,6 +31,35 @@ dentro no lo repone nadie, y el síntoma no dice "falta un proceso" —dice `Con
 `HTTP 000`—. `kratos` sí tiene systemd de usuario con `Linger=yes`, así que el guardián vive ahí y
 alcanza al contenedor por `docker exec`. Pasó dos veces en 48 h: el túnel de Polidinámica y el shim
 de Antigravity, los dos caídos días sin que nadie lo notara.
+
+## El check-in diario de hegel corre en agora-storage, no en kratos
+
+A diferencia de los guardias de arriba (que viven en `kratos` y alcanzan al contenedor por
+`docker exec`), el inyector de `hegel-ventas-checkin` corre en **agora-storage** como unidad
+systemd de **sistema**. Va ahí porque los dos motivos apuntan al mismo host: el gateway de
+Cauce V3 escucha en `agora-storage` (`100.64.0.6:8443`), así que el `POST /v3/messages` es
+local; y los certificados de cliente mTLS viven en `agora-storage:/etc/cauce-v3/pki`
+(root-only), así que no hay que copiarlos a ningún lado. El inyector se autentica con el
+**certificado del propio hegel** (`agent-hegel.crt/.key`): el gateway deriva tenant+alias del
+certificado, de modo que el mensaje se queda dentro del tenant de hegel (`Jhon`, room
+`grp.jhon`), sin cruzar tenants. La `idempotency_key` lleva la fecha UTC, así que correrlo dos
+veces el mismo día NO duplica la entrega y cada día produce una nueva.
+
+Instalar / restaurar en `agora-storage` (con el repo clonado):
+
+```sh
+sudo install -m755 ops/guardias/hegel-ventas-checkin.py            /usr/local/sbin/
+sudo install -m644 ops/guardias/systemd/hegel-ventas-checkin.service /etc/systemd/system/
+sudo install -m644 ops/guardias/systemd/hegel-ventas-checkin.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now hegel-ventas-checkin.timer
+sudo systemctl list-timers hegel-ventas-checkin.timer   # NEXT debe caer 13:00:00 UTC
+```
+
+Probar el efecto (crea una entrega real y hace correr a hegel):
+`sudo systemctl start hegel-ventas-checkin.service` y verificar una fila nueva en
+`deliveries` (columnas `recipient_tenant`/`recipient_alias`, NO `tenant_id`/`alias`):
+`docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -c "select id,status from deliveries where recipient_alias='hegel' order by created_at desc limit 3"`.
 
 ## Restaurar después de una pérdida de disco
 

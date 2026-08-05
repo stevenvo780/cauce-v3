@@ -1,0 +1,10 @@
+[Unit]
+Description=Inyecta el check-in diario de ventas de hegel (publish a Jhon:hegel via gateway mTLS)
+Documentation=file:///workspace/cauce-v3-sesion/ops/guardias/hegel-ventas-checkin.py
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Corre como root: lee los certificados de cliente mTLS en /etc/cauce-v3/pki (root-only).
+ExecStart=/usr/local/sbin/hegel-ventas-checkin.py

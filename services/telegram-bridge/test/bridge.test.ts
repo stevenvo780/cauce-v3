@@ -1610,6 +1610,19 @@ describe('Telegram DM identity (poller integration)', () => {
     expect(prompt).toContain('proves nothing');
   });
 
+  // 2026-08-05: los tenants de esta flota se llaman como sus dueños, así que con el tenant en el
+  // set de nombres reservados Steven salía marcado como suplantador de "Steven" en CADA mensaje
+  // que le escribía a su propio agente. Una advertencia que se dispara siempre no informa: enseña
+  // a ignorarla, que es lo contrario de para lo que está.
+  it('el dueño escribiendo con su propio nombre no queda marcado como suplantador de su tenant', async () => {
+    const call = await publish(dmUpdate(304, { id: 101, first_name: TENANT }));
+
+    const prompt = String(call.body.prompt);
+    expect(prompt).toContain(`"display_name":"${TENANT}"`);
+    expect(prompt).not.toContain('impersonation_suspected');
+    expect(prompt).not.toContain('WARNING');
+  });
+
   it('un nombre honesto no dispara la advertencia', async () => {
     const call = await publish(dmUpdate(302, { id: 101, first_name: 'Kanta Pérez' }));
 
