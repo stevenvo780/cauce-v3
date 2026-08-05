@@ -714,6 +714,80 @@ describe('Telegram group routing (poller integration)', () => {
     }]);
   });
 
+  // 2026-08-05: heraclito no contestaba en un grupo y el log no decía NADA. La configuración era
+  // correcta (bot administrador, chat permitido, privacidad apagada, cero updates pendientes en
+  // Telegram) porque el descarte ocurría antes del resolutor, en el allowlist de usuario, y ese
+  // camino no dejaba rastro. Un mensaje anónimo lo firma GroupAnonymousBot, así que fallaba el
+  // allowlist y desaparecía. Ahora deja línea, y con el motivo REAL (anónimo, no "usuario
+  // denegado", que habría mandado el diagnóstico a revisar el allowlist otra vez).
+  it('un mensaje anonimo de grupo deja rastro con motivo anonymous_sender, no desaparece en silencio', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const anonimo = groupUpdate(80, { userId: 1087968824, text: 'hola heraclito' });
+    (anonimo.message as { sender_chat?: unknown }).sender_chat = { id: GROUP_CHAT_ID, type: 'supergroup' };
+    const api = new FakeTelegram([anonimo]);
+    const suppressed: unknown[] = [];
+
+    await new TelegramPoller({
+      config: config({
+        alias: 'kant',
+        allowed_chat_ids: [String(GROUP_CHAT_ID)],
+        bot_username: 'kant_bot',
+        chats: [{ chat_id: String(GROUP_CHAT_ID), mode: 'always', session_scope: 'user', reply_to_origin: true, threads: [] }]
+      }),
+      botId: '900001',
+      api,
+      repository,
+      ingress,
+      onSuppressed: (record) => suppressed.push(record)
+    }).runOnce();
+
+    expect(ingress.calls).toHaveLength(0);
+    expect(repository.next).toBe(81);
+    expect(suppressed).toEqual([{
+      event: 'telegram_group_update_suppressed',
+      alias: 'kant',
+      tenant_id: TENANT,
+      chat_id: String(GROUP_CHAT_ID),
+      thread_id: '0',
+      update_id: 80,
+      message_id: 180,
+      reason: 'anonymous_sender',
+      group_routing: 'scoped',
+      chat_configured: true
+    }]);
+  });
+
+  it('un desconocido en un grupo permitido deja rastro user_denied, y el privado sigue mudo', async () => {
+    const repository = new MemoryCursorRepository();
+    const ingress = new DeduplicatingIngress();
+    const api = new FakeTelegram([
+      groupUpdate(90, { userId: 999999, text: 'hola' }),
+      groupUpdate(91, { chatId: 777, userId: 999999, text: 'hola por privado' })
+    ]);
+    const suppressed: Array<{ reason: string; chat_id: string }> = [];
+
+    await new TelegramPoller({
+      config: config({
+        alias: 'kant',
+        allowed_chat_ids: [String(GROUP_CHAT_ID)],
+        bot_username: 'kant_bot',
+        chats: [{ chat_id: String(GROUP_CHAT_ID), mode: 'always', session_scope: 'user', reply_to_origin: true, threads: [] }]
+      }),
+      botId: '900001',
+      api,
+      repository,
+      ingress,
+      onSuppressed: (record) => suppressed.push(record as unknown as { reason: string; chat_id: string })
+    }).runOnce();
+
+    expect(ingress.calls).toHaveLength(0);
+    // Sólo el grupo deja rastro: en el privado el descarte es el filtro de desconocidos y sería
+    // ruido permanente.
+    expect(suppressed.map((record) => [record.chat_id, record.reason]))
+      .toEqual([[String(GROUP_CHAT_ID), 'user_denied']]);
+  });
+
   it('an alias that never declared chats keeps legacy behaviour: no thread_id/addressed_by/prompt, published on the alias-wide allowlist alone', async () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DeduplicatingIngress();

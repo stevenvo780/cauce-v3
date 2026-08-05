@@ -335,7 +335,7 @@ function session(
 function suppressionMetric(reason: SuppressionReason): BridgeMetric {
   if (reason === 'bot_author') return 'updates_suppressed_bot';
   if (reason === 'via_bot') return 'updates_via_bot';
-  if (reason === 'chat_not_configured') return 'updates_chat_denied';
+  if (reason === 'chat_not_configured' || reason === 'chat_not_allowed') return 'updates_chat_denied';
   if (reason === 'chat_disabled') return 'updates_chat_disabled';
   if (reason === 'no_author' || reason === 'anonymous_sender' || reason === 'user_denied') return 'updates_denied';
   if (reason === 'other_bot_mentioned' || reason === 'other_bot_replied') return 'updates_echo_suppressed';
@@ -444,6 +444,52 @@ export class TelegramPoller {
   }
 
   /**
+   * Deja rastro de los updates de grupo que `accepted()` descarta ANTES de llegar al resolutor.
+   *
+   * Ese descarte era el único camino de la ingesta que no dejaba absolutamente nada: ni línea de
+   * log ni fila; sólo un contador sin etiquetas. El 2026-08-05 costó una noche de diagnóstico con
+   * heraclito, que estaba bien configurado —bot administrador, chat en `allowed_chat_ids`,
+   * privacidad apagada, cero updates pendientes en Telegram— y aun así no contestaba en el grupo:
+   * el mensaje entraba, se descartaba acá y desaparecía sin dejar huella. Se revisó dos veces la
+   * configuración del bot antes de sospechar del código, porque el log decía que no había llegado
+   * nada.
+   *
+   * Sólo ids y enums, igual que `SuppressedUpdate`: nunca texto del mensaje ni nombre visible. Los
+   * privados siguen fuera —ahí el descarte es el filtro de desconocidos y sería ruido constante.
+   */
+  private reportSilentDrop(update: TelegramUpdate): void {
+    const message = update.message;
+    if (!message || !Number.isSafeInteger(message.message_id)) return;
+    const chatId = conversationId(message.chat?.id);
+    if (chatId === undefined || isPrivateChatId(chatId)) return;
+    // El orden importa: un mensaje anónimo TAMBIÉN falla el allowlist de usuario (Telegram lo firma
+    // como GroupAnonymousBot), así que si se preguntara primero por el usuario el motivo real
+    // quedaría escondido detrás de un 'user_denied' que no explica nada.
+    const reason: SuppressionReason =
+      message.sender_chat !== undefined ? 'anonymous_sender'
+        : id(message.from?.id) === undefined ? 'no_author'
+          : !this.config.allowed_chat_ids.includes(chatId) ? 'chat_not_allowed'
+            : 'user_denied';
+    const threadId = telegramThreadId(message);
+    try {
+      this.onSuppressed({
+        event: 'telegram_group_update_suppressed',
+        alias: this.config.alias,
+        tenant_id: this.config.tenant_id,
+        chat_id: chatId,
+        thread_id: threadId,
+        update_id: update.update_id,
+        message_id: message.message_id,
+        reason,
+        group_routing: groupRouting(this.config),
+        chat_configured: effectiveChatPolicy(this.config, chatId, threadId) !== undefined
+      });
+    } catch {
+      // El rastro es best effort; jamás puede trabar el poller en este update.
+    }
+  }
+
+  /**
    * Non-textual, authenticated facts about the human and the replied-to message.
    *
    * Only ids and booleans live here because this object ends up inside `origin.metadata`, which
@@ -501,6 +547,7 @@ export class TelegramPoller {
   private async process(update: TelegramUpdate, current: PollLease): Promise<void> {
     const accepted = this.accepted(update);
     if (!accepted) {
+      this.reportSilentDrop(update);
       this.onMetric('updates_denied');
       await this.repository.advanceCursor(current, update.update_id + 1);
       return;

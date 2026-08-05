@@ -58,7 +58,7 @@ export type AddressingReason =
 
 export type SuppressionReason =
   | 'no_author' | 'bot_author' | 'via_bot' | 'anonymous_sender'
-  | 'chat_not_configured' | 'chat_disabled' | 'user_denied'
+  | 'chat_not_configured' | 'chat_not_allowed' | 'chat_disabled' | 'user_denied'
   | 'other_bot_mentioned' | 'foreign_mention' | 'other_bot_replied'
   | 'mention_unserved' | 'not_addressed';
 
