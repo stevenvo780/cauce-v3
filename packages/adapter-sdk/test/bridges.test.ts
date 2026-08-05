@@ -81,7 +81,15 @@ for (const state of ["absent", "ambiguous"] as const) {
     });
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
-    assert.equal(result.stderr, "openclaw stdin bridge failed\n");
+    // CAMBIO DE CONTRATO (b30acaf): el stderr dice POR QUÉ falló. Antes era una línea muda
+    // idéntica para los dos estados, y desde afuera no había forma de distinguir "no encontré los
+    // módulos" de "encontré varios" sin entrar a leer el bridge. Lo que NO puede aparecer sigue
+    // siendo el prompt, y eso lo fija la aserción de abajo.
+    assert.match(result.stderr, /^openclaw stdin bridge failed: /u);
+    assert.match(
+      result.stderr,
+      state === "absent" ? /modules were absent or ambiguous/u : /ambiguous OpenClaw modules/u,
+    );
     assert.doesNotMatch(`${result.stdout}${result.stderr}`, /private prompt/u);
   });
 }
