@@ -21,7 +21,9 @@ import {
   type LiveState,
   type PulseMap,
 } from './agent-state';
+import { LiveHypergraph } from './LiveHypergraph';
 import './live.css';
+import './live-hypergraph.css';
 
 const INTERVALS = [
   { value: 2000, label: 'cada 2 s' },
@@ -73,6 +75,10 @@ function arcPath(from: Point, to: Point): { d: string; mid: Point } {
 export function LiveFleetPage() {
   const api = useApi();
   const activity = useResource('live-fleet-activity', () => api.getFleetActivity());
+  // La topología aporta las SALAS, que la actividad no trae. Se lee aparte y una sola vez: cambia
+  // cuando alguien toca la configuración, no cada cuatro segundos como la actividad. Si falla, el
+  // hipergrafo desaparece y la lista de muñecos sigue funcionando igual.
+  const topology = useResource('live-topology', () => api.getTopology());
   const [intervalMs, setIntervalMs] = useState(4000);
   const [selected, setSelected] = useState<string>();
   const [stateFilter, setStateFilter] = useState<LiveState>();
@@ -249,6 +255,20 @@ export function LiveFleetPage() {
           );
         })}
       </div>
+
+      <Panel
+        title="Quién le habla a quién, ahora"
+        subtitle="Los mismos muñecos, colocados en su sala. Cada flecha es una delegación con entrega en vuelo real; si no hay flecha, nadie se está pasando trabajo."
+      >
+        <LiveHypergraph
+          topology={topology.data}
+          views={views}
+          edges={edges}
+          focusKey={selected ?? null}
+          onFocus={(key) => setSelected(key ?? undefined)}
+          onOpen={(view) => setSelected(view.key)}
+        />
+      </Panel>
 
       <div className="live-stage" ref={stageRef}>
         <svg className="live-links" aria-hidden="true">

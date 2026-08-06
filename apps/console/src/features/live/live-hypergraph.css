@@ -1,0 +1,174 @@
+/*
+ * Hipergrafo vivo de la sala de máquinas.
+ *
+ * Reusa los seis matices y los tonos de estado que ya definen `styles.css` y `live.css`, así que
+ * el modo claro se hereda sin duplicar paleta. Todo lo que se mueve acá significa algo: el punto
+ * que viaja indica el sentido de una delegación real, y el ámbar indica que lleva demasiado.
+ * Nada gira por decoración.
+ */
+
+.lhg {
+  --lhg-0: var(--mint);
+  --lhg-1: var(--blue);
+  --lhg-2: var(--violet);
+  --lhg-3: var(--amber);
+  --lhg-4: var(--lime);
+  --lhg-5: #6fd3e8;
+  position: relative;
+}
+
+@media (prefers-color-scheme: light) {
+  .lhg { --lhg-5: #0f7c92; }
+}
+
+.lhg-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 76vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 20% 6%, rgb(122 184 255 / 8%), transparent 46%),
+    radial-gradient(circle at 80% 96%, rgb(99 222 185 / 7%), transparent 44%),
+    var(--surface-2);
+  overflow: visible;
+}
+
+.lhg-empty,
+.lhg-legend,
+.lhg-note {
+  margin: 12px 2px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.lhg-legend strong { color: var(--text); font-weight: 600; }
+.lhg-note { color: var(--faint); }
+
+/* --- Salas ---------------------------------------------------------------- */
+
+.lhg-room-fill {
+  fill: currentColor;
+  opacity: .07;
+  transition: opacity .3s ease;
+}
+
+.lhg-room-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-opacity: .45;
+  stroke-dasharray: 5 8;
+  animation: lhg-drift 40s linear infinite;
+}
+
+.lhg-room-label {
+  fill: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.lhg-hue-0 { color: var(--lhg-0); }
+.lhg-hue-1 { color: var(--lhg-1); }
+.lhg-hue-2 { color: var(--lhg-2); }
+.lhg-hue-3 { color: var(--lhg-3); }
+.lhg-hue-4 { color: var(--lhg-4); }
+.lhg-hue-5 { color: var(--lhg-5); }
+
+@keyframes lhg-drift { to { stroke-dashoffset: -260; } }
+
+/* --- Delegaciones vivas --------------------------------------------------- */
+
+.lhg-flow { color: var(--blue); }
+
+.lhg-flow-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-opacity: .7;
+  transition: stroke-opacity .3s ease;
+}
+
+.lhg-flow-dot {
+  fill: currentColor;
+  filter: drop-shadow(0 0 5px currentColor);
+}
+
+/* Ámbar = lleva más de 5 minutos en vuelo. Es un aviso, no un adorno. */
+.lhg-flow.is-slow { color: var(--amber); }
+.lhg-flow.is-slow .lhg-flow-line { stroke-dasharray: 6 5; }
+
+.lhg-flow.is-dim .lhg-flow-line { stroke-opacity: .12; }
+.lhg-flow.is-dim .lhg-flow-dot { opacity: .15; }
+
+/* --- Muñecos -------------------------------------------------------------- */
+
+.lhg-bot { cursor: pointer; }
+.lhg-bot:focus { outline: none; }
+.lhg-bot-hit { fill: transparent; }
+
+.lhg-bot-avatar {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.lhg-bot-avatar svg { width: 100%; height: 100%; }
+
+.lhg-bot-name {
+  fill: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4.5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* Un agente que la topología declara pero la actividad no reporta: apagado y con borde punteado.
+   NUNCA se pinta como sano — "no informado" no es lo mismo que "bien". */
+.lhg-bot.is-unknown .lhg-bot-avatar { opacity: .38; filter: grayscale(1); }
+.lhg-bot.is-unknown .lhg-bot-name { fill: var(--faint); }
+
+.lhg-bot.is-active .lhg-bot-name { fill: var(--text); }
+.lhg-bot.is-active .lhg-bot-hit { fill: currentColor; fill-opacity: .07; }
+.lhg-bot.is-dim { opacity: .28; }
+
+.lhg-bot:focus-visible .lhg-bot-hit {
+  fill: none;
+  stroke: var(--blue);
+  stroke-width: 3;
+}
+
+/* Cola pendiente: el número que más rápido delata a un agente que se está quedando atrás. */
+.lhg-bot-queue circle {
+  fill: var(--amber-dim);
+  stroke: var(--amber);
+  stroke-width: 1.5;
+}
+
+.lhg-bot-queue text {
+  fill: var(--amber);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/*
+ * `styles.css` ya frena toda animación bajo `prefers-reduced-motion`. Acá hay que NEUTRALIZAR, no
+ * solo congelar: un punto detenido a mitad de una flecha se lee como "hay algo trabado ahí", y en
+ * esta vista un falso indicio de estado es peor que no animar nada.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .lhg-flow-dot { display: none; }
+  .lhg-room-line { stroke-dasharray: none; }
+}
