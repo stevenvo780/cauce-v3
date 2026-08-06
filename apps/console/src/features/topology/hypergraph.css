@@ -1,0 +1,256 @@
+/*
+ * Hipergrafo de topología.
+ *
+ * Los seis matices salen de los acentos que ya define `styles.css`, así que el modo claro los
+ * hereda sin duplicar la paleta. El sexto (`--hg-5`) no existía y se declara acá en ambos esquemas.
+ * Deliberadamente NO se usa `--red`: en esta consola el rojo significa "algo está mal", y teñir un
+ * tenant de rojo por el simple hecho de ser el sexto le pondría un estado que no tiene.
+ */
+
+.hg-wrap {
+  --hg-0: var(--mint);
+  --hg-1: var(--blue);
+  --hg-2: var(--violet);
+  --hg-3: var(--amber);
+  --hg-4: var(--lime);
+  --hg-5: #6fd3e8;
+
+  position: relative;
+  margin-top: 4px;
+}
+
+@media (prefers-color-scheme: light) {
+  .hg-wrap { --hg-5: #0f7c92; }
+}
+
+.hg-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 74vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 22% 8%, rgb(122 184 255 / 9%), transparent 46%),
+    radial-gradient(circle at 78% 96%, rgb(99 222 185 / 8%), transparent 44%),
+    var(--surface-2);
+  overflow: visible;
+}
+
+.hg-empty,
+.hg-legend,
+.hg-note {
+  margin: 12px 2px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.hg-legend strong { color: var(--text); font-weight: 600; }
+.hg-note { color: var(--faint); }
+
+/* --- Hiperaristas (rooms) ------------------------------------------------ */
+
+.hg-edge { cursor: default; }
+
+.hg-edge-fill {
+  transition: opacity .28s ease;
+}
+
+.hg-edge-line {
+  fill: none;
+  stroke: var(--hg-0);
+  stroke-width: 1.6;
+  stroke-opacity: .55;
+  stroke-dasharray: 5 7;
+  transition: stroke-opacity .28s ease, stroke-width .28s ease;
+  animation: hg-drift 34s linear infinite;
+}
+
+.hg-edge-label {
+  fill: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+  transition: fill .28s ease;
+}
+
+.hg-hue-0 .hg-edge-line { stroke: var(--hg-0); }
+.hg-hue-1 .hg-edge-line { stroke: var(--hg-1); }
+.hg-hue-2 .hg-edge-line { stroke: var(--hg-2); }
+.hg-hue-3 .hg-edge-line { stroke: var(--hg-3); }
+.hg-hue-4 .hg-edge-line { stroke: var(--hg-4); }
+.hg-hue-5 .hg-edge-line { stroke: var(--hg-5); }
+
+.hg-edge.is-active .hg-edge-line { stroke-opacity: 1; stroke-width: 2.4; }
+.hg-edge.is-active .hg-edge-label { fill: var(--text); }
+.hg-edge.is-dim .hg-edge-fill { opacity: .22; }
+.hg-edge.is-dim .hg-edge-line { stroke-opacity: .16; }
+.hg-edge.is-dim .hg-edge-label { fill: var(--faint); opacity: .35; }
+
+@keyframes hg-drift {
+  to { stroke-dashoffset: -240; }
+}
+
+/* --- Aristas ACL entre tenants ------------------------------------------- */
+
+.hg-arc path {
+  fill: none;
+  stroke-width: 1.8;
+  transition: stroke-opacity .28s ease;
+}
+
+.hg-arc text {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.hg-arc.is-ok { color: var(--mint); }
+.hg-arc.is-ok path { stroke: var(--mint); stroke-opacity: .75; }
+.hg-arc.is-ok text { fill: var(--mint); }
+
+.hg-arc.is-off { color: var(--faint); }
+.hg-arc.is-off path { stroke: var(--faint); stroke-opacity: .5; stroke-dasharray: 3 6; }
+.hg-arc.is-off text { fill: var(--faint); }
+
+.hg-arc.is-unknown { color: var(--amber); }
+.hg-arc.is-unknown path { stroke: var(--amber); stroke-opacity: .55; stroke-dasharray: 2 7; }
+.hg-arc.is-unknown text { fill: var(--amber); }
+
+/*
+ * Un trazo corto que recorre la curva: indica el SENTIDO del permiso, que es lo que una flecha
+ * estática en el medio no alcanza a comunicar cuando hay ida y vuelta entre los mismos dos tenants.
+ */
+.hg-arc-flow {
+  stroke: var(--text);
+  stroke-opacity: .5;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-dasharray: 1 168;
+  animation: hg-flow 3.4s linear infinite;
+}
+
+@keyframes hg-flow {
+  from { stroke-dashoffset: 169; }
+  to { stroke-dashoffset: 0; }
+}
+
+/* --- Nodos (alias) -------------------------------------------------------- */
+
+.hg-node { cursor: pointer; }
+.hg-node:focus { outline: none; }
+
+.hg-node-hit { fill: transparent; }
+
+.hg-node-dot {
+  fill: var(--surface);
+  stroke: var(--mint);
+  stroke-width: 2.6;
+  transition: stroke-width .2s ease, fill .2s ease;
+}
+
+.hg-node-ring {
+  fill: none;
+  stroke: var(--text);
+  stroke-opacity: .28;
+  stroke-width: 1.2;
+  stroke-dasharray: 3 5;
+  animation: hg-spin 18s linear infinite;
+  transform-origin: center;
+}
+
+.hg-node-pulse {
+  fill: var(--mint);
+  opacity: .3;
+  animation: hg-pulse 3.6s ease-out infinite;
+  transform-origin: center;
+}
+
+.hg-node-label {
+  fill: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4.5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+  transition: fill .28s ease, opacity .28s ease;
+}
+
+.hg-node.is-on .hg-node-dot { stroke: var(--mint); }
+.hg-node.is-on .hg-node-pulse { fill: var(--mint); }
+
+/* UNKNOWN se pinta ámbar y NUNCA verde: no informado no es lo mismo que habilitado. */
+.hg-node.is-unknown .hg-node-dot { stroke: var(--amber); stroke-dasharray: 3 3; }
+.hg-node.is-unknown .hg-node-pulse { fill: var(--amber); }
+
+.hg-node.is-off .hg-node-dot { stroke: var(--faint); fill: var(--surface-3); }
+.hg-node.is-off .hg-node-label { fill: var(--faint); }
+
+.hg-node.is-active .hg-node-dot { stroke-width: 3.6; }
+.hg-node.is-active .hg-node-label { fill: var(--text); }
+.hg-node.is-dim { opacity: .26; }
+
+.hg-node:focus-visible .hg-node-hit {
+  fill: none;
+  stroke: var(--blue);
+  stroke-width: 3;
+}
+
+@keyframes hg-pulse {
+  0% { transform: scale(1); opacity: .34; }
+  70% { transform: scale(2.5); opacity: 0; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+@keyframes hg-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --- Etiquetas de tenant -------------------------------------------------- */
+
+.hg-tenant-labels { pointer-events: none; }
+
+.hg-tenant {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  opacity: .85;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 6px;
+  stroke-linejoin: round;
+}
+
+.hg-tenant.hg-hue-0 { fill: var(--hg-0); }
+.hg-tenant.hg-hue-1 { fill: var(--hg-1); }
+.hg-tenant.hg-hue-2 { fill: var(--hg-2); }
+.hg-tenant.hg-hue-3 { fill: var(--hg-3); }
+.hg-tenant.hg-hue-4 { fill: var(--hg-4); }
+.hg-tenant.hg-hue-5 { fill: var(--hg-5); }
+
+/*
+ * `styles.css` ya apaga toda animación bajo `prefers-reduced-motion`. Se repite acá lo que además
+ * hay que **neutralizar** y no solo congelar: un guion detenido a mitad de recorrido o un pulso
+ * congelado en su fotograma más grande se leen como estado, y en esta vista el estado importa.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .hg-node-pulse { display: none; }
+  .hg-arc-flow { display: none; }
+  .hg-edge-line { stroke-dasharray: none; }
+  .hg-node-ring { stroke-dasharray: none; }
+}

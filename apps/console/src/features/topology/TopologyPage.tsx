@@ -2,6 +2,8 @@ import { ArrowRight, KeyRound, Network } from 'lucide-react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel, RefreshButton, Time, Unknown } from '../../components/ui';
+import { HyperGraph } from './HyperGraph';
+import './hypergraph.css';
 
 export function TopologyPage() {
   const api = useApi();
@@ -16,6 +18,12 @@ export function TopologyPage() {
     <>
       <PageHeader eyebrow="Policy graph" title="Tenants, rooms & ACL" description="Vista de políticas resueltas por Cauce. La UI no concede membresías ni calcula permisos." actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />} />
       <div className="observation-line"><Network size={16} aria-hidden="true" /> Snapshot servidor: <Time value={resource.data?.observed_at} /></div>
+      <Panel
+        title="Hipergrafo de la flota"
+        subtitle="Cada room envuelve a todos sus miembros a la vez. Se deriva del mismo snapshot que las tablas de abajo; no consulta nada aparte."
+      >
+        <HyperGraph snapshot={resource.data} />
+      </Panel>
       <Panel title="Mapa de tenants" subtitle="Rooms y membresías activas informadas por el control plane.">
         {tenants.length === 0 ? <EmptyState>Topología no disponible: UNKNOWN.</EmptyState> : (
           <div className="tenant-grid">
