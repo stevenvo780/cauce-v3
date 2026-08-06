@@ -8,13 +8,40 @@ import {
 import { AdapterError } from "./errors.js";
 import type { HarnessAttachment } from "./types.js";
 
+/**
+ * Lo que la ENTREGA acepta, que tiene que ser lo mismo que acepta la INGESTA.
+ *
+ * Este allowlist es OTRO —hardcodeado acá, sin relación con `ATTACHMENT_MIME_TYPES`—, así que
+ * ampliar solo el protocolo mueve el fallo de la ingesta a la entrega: el adjunto entra, se
+ * guarda, y al entregarlo `materializeAttachments` tira `INVALID_ATTACHMENT` no reintentable, que
+ * el motor convierte en `finishError` ANTES de invocar al harness. El agente no ve el archivo Y
+ * TAMPOCO el texto del humano. Por eso los dos lados se mueven juntos o no se mueve ninguno.
+ */
 const SUPPORTED_MIME = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
   "application/pdf",
   "text/plain",
+  "text/markdown",
+  "text/x-markdown",
+  "text/csv",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+
+/**
+ * Extensiones admitidas por cada mime de texto.
+ *
+ * Telegram no manda un mime estable para markdown: según el cliente llega `text/markdown`,
+ * `text/x-markdown` o directamente `text/plain`. Por eso `text/plain` acepta las tres extensiones
+ * y no solo `.txt`. La extensión NO es el control de seguridad: sigue siéndolo `validUtf8Text`,
+ * que exige UTF-8 real y sin bytes nulos, igual que antes.
+ */
+const TEXT_EXTENSIONS = new Map<string, readonly string[]>([
+  ["text/plain", [".txt", ".md", ".csv"]],
+  ["text/markdown", [".md"]],
+  ["text/x-markdown", [".md"]],
+  ["text/csv", [".csv"]],
 ]);
 
 export interface MaterializedAttachments {
@@ -58,7 +85,10 @@ function contentMatches(name: string, mime: string, kind: unknown, payload: Buff
     payload.toString("ascii", 0, 4) === "RIFF" && payload.toString("ascii", 8, 12) === "WEBP";
   if (mime === "application/pdf") return kind === "document" && extension === ".pdf" &&
     payload.subarray(0, 5).toString("ascii") === "%PDF-";
-  if (mime === "text/plain") return kind === "document" && extension === ".txt" && validUtf8Text(payload);
+  const textExtensions = TEXT_EXTENSIONS.get(mime);
+  if (textExtensions !== undefined) {
+    return kind === "document" && textExtensions.includes(extension) && validUtf8Text(payload);
+  }
   return mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
     kind === "document" && extension === ".docx" && payload.length >= 4 &&
     payload[0] === 0x50 && payload[1] === 0x4b && payload[2] === 0x03 && payload[3] === 0x04 &&
