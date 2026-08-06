@@ -319,7 +319,7 @@ export function protocolPrompt(
     '{"reply":string|null,"messages":[{"to":string,"body":string}],"notify":[{"to":string,"kind":"alert"|"decision_request"|"task_complete"|"digest","body":string}],"status":"done"|"failed","retryable":boolean,"artifacts":[{"name":string,"uri":string,"media_type"?:string,"sha256"?:string}]}',
     "Do not wrap the result in Markdown.",
     "Protocol invariants:",
-    '- "reply" answers this delivery and is automatically returned to the sender. Never target sender_alias in "messages".',
+    '- "reply" answers this delivery and is automatically returned to the sender. Never target sender_alias in "messages". A message aimed at sender_alias is discarded and reported back inside your reply; it no longer costs you the turn, and its body is folded into the reply when you left none.',
     '- Write a "reply" on every turn, including turns where you also delegate: what you did, what you found, what is still open.',
     '- A successful result with "messages":[] MUST have a non-empty "reply".',
     '- A null "reply" is admissible only in the narrow case where the whole delivery was legitimately handed off under the DEBER PRIMARIO and no part of the answer can exist yet; even then a short "reply" naming what you delegated and why is better. Never leave "reply" null or blank to avoid doing or explaining the work.',

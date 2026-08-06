@@ -256,20 +256,28 @@ test("agent fan-in must synthesize instead of starting another delegation round"
   );
 });
 
+/**
+ * Rebotarle al remitente sigue sin valer, pero ya no con un `throw`. Lo que cambio es el PRECIO:
+ * `AGENT_MESSAGE_PING_PONG` era no reintentable y se llevaba el `reply` ENTERO, o sea el trabajo.
+ * Medido en 48 h (2026-08-04/05): 5 turnos asi en 5 alias de 4 tenants. Ahora se descarta el
+ * mensaje, se avisa por que, y la respuesta llega. Ver test/pingpong-descarte.test.ts.
+ */
 test("an internal delivery cannot send any message back to its sender", () => {
   const bounced = validateStructuredOutput({
     ...EMPTY_SUCCESS,
     messages: [{ to: "seneca", body: "a differently worded follow-up" }],
   });
-  assert.throws(
-    () => validateDeliveryOutput(bounced, {
-      messageType: "agent.response",
-      senderAlias: "seneca",
-      selfAlias: "jarvis",
-      routingTargets: ROUTING_TARGETS,
-    }),
-    isContractError("AGENT_MESSAGE_PING_PONG"),
-  );
+  const output = validateDeliveryOutput(bounced, {
+    messageType: "agent.response",
+    senderAlias: "seneca",
+    selfAlias: "jarvis",
+    routingTargets: ROUTING_TARGETS,
+  });
+
+  assert.deepEqual(output.messages, [], "el rebote no se materializa");
+  assert.equal(output.status, "done", "pero tampoco cuesta el turno");
+  assert.match(output.reply ?? "", /a differently worded follow-up/u);
+  assert.match(output.reply ?? "", /\[Cauce\].*"seneca"/su);
 });
 
 function delegatedOutput(
