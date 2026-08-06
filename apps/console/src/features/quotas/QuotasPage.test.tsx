@@ -242,12 +242,17 @@ it('sin recolector NO inventa porcentajes: muestra el inventario y declara que n
   renderWithApi(<QuotasPage />);
 
   await screen.findByRole('heading', { level: 1, name: 'Cuotas y licencias' });
-  expect(screen.getByText(/Ningún recolector reportó\./)).toBeInTheDocument();
+
+  // UNA sola vez. La causa es la misma para las tres cuentas, así que repetirla en cada tarjeta
+  // —que es lo que hacía el `reason` de alcance global— sólo consigue que se lea menos.
+  expect(screen.getAllByText(/Ningún recolector reportó/)).toHaveLength(1);
 
   // El inventario sigue siendo útil: la cuenta y a quién está asignada se ven igual.
   const inventory = panel('Inventario de cuentas');
   expect(inventory).toHaveTextContent('codex-pro-steven');
   expect(inventory).toHaveTextContent('claw-zeus');
+  expect(inventory.textContent ?? '').not.toContain('Ningún recolector reportó');
+  expect(document.querySelectorAll('.account-notice')).toHaveLength(0);
   // Y el consumo está declarado como ausente, no como cero. (El alcance es el inventario: la
   // tarjeta explicativa del pie cita porcentajes de ejemplo en texto fijo, que no son un dato.)
   expect(inventory.textContent ?? '').not.toMatch(/\d+\s*%/);
@@ -277,6 +282,12 @@ it('una sonda caída no reaparece como un número: la cuenta queda en interrogan
   // El motivo aparece en el cartel agregado, en la tarjeta del proveedor y en la cuenta afectada:
   // las tres son lecturas distintas del mismo `ok:false`, ninguna sobra.
   expect(screen.getAllByText(/dejó de responder/).length).toBeGreaterThan(0);
+
+  // El motivo por cuenta SÍ se queda cuando dice algo que el cartel de arriba no dice: que a esta
+  // cuenta la dejó sin número la sonda de SU proveedor, y que a esas otras el recolector ni las trajo.
+  const notices = [...document.querySelectorAll('.account-notice')].map((n) => n.textContent ?? '');
+  expect(notices.filter((text) => text.includes('Sonda caída:'))).toHaveLength(1);
+  expect(notices.filter((text) => text.includes('El recolector no reportó esta cuenta'))).toHaveLength(2);
 
   // La garantía dura: ningún porcentaje inventado para una cuenta cuya sonda murió.
   const inventory = panel('Inventario de cuentas');

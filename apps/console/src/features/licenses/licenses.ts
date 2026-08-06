@@ -142,9 +142,24 @@ export interface WindowSummary {
   severity: string | null;
 }
 
+/**
+ * Alcance de un motivo de indisponibilidad.
+ *
+ * `global`: la causa es de toda la muestra —no hay snapshot, o ningún recolector publicó nunca—.
+ * Es idéntica para TODAS las cuentas, así que la vista la declara una sola vez arriba: repetir el
+ * mismo cartel en cada tarjeta no comunica más, satura y consigue que se lea menos.
+ *
+ * `account`: la causa es de esta cuenta o de su proveedor —el recolector no la trajo, su sonda
+ * murió, no tiene ventanas—. No se puede leer en ningún otro lado de la página, así que va en la
+ * tarjeta, que es donde explica el hueco que el operador está mirando.
+ */
+export type ConsumptionScope = 'global' | 'account';
+
 export interface AccountConsumption {
   available: boolean;
   reason?: string; // si available=false, por qué no hay dato
+  /** Presente sólo cuando `available` es false. Ver `ConsumptionScope`. */
+  scope?: ConsumptionScope;
   plan: string | null;
   windows: WindowSummary[];
 }
@@ -163,6 +178,7 @@ export function accountConsumption(
     return {
       available: false,
       reason: 'Cuotas no disponibles',
+      scope: 'global',
       plan: null,
       windows: [],
     };
@@ -173,6 +189,7 @@ export function accountConsumption(
     return {
       available: false,
       reason: 'Ningún recolector reportó. Todos los porcentajes son ?.',
+      scope: 'global',
       plan: null,
       windows: [],
     };
@@ -188,6 +205,7 @@ export function accountConsumption(
     return {
       available: false,
       reason: 'El recolector no reportó esta cuenta',
+      scope: 'account',
       plan: null,
       windows: [],
     };
@@ -208,6 +226,7 @@ export function accountConsumption(
       reason: note
         ? `Sonda caída: ${note}. No se muestra ningún porcentaje.`
         : 'Sonda caída: el recolector reportó ok=false para este proveedor. No se muestra ningún porcentaje.',
+      scope: 'account',
       plan: relevantProviders[0]?.plan ?? null,
       windows: [],
     };
@@ -224,6 +243,7 @@ export function accountConsumption(
     return {
       available: false,
       reason: 'Sin ventanas de cuota para esta cuenta',
+      scope: 'account',
       plan,
       windows: [],
     };

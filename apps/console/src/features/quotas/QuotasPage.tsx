@@ -368,7 +368,15 @@ export function QuotasPage() {
                       </dl>
                     </div>
 
-                    {consumption.available === false && (
+                    {consumption.available === false && consumption.scope === 'account' && (
+                      /*
+                       * Sólo los motivos de ESTA cuenta. Los de alcance global —no hay muestra,
+                       * ningún recolector publicó nunca— ya se declaran una vez arriba, y ponerlos
+                       * además en cada tarjeta era el mismo cartel repetido N veces: no comunica
+                       * más, satura y consigue que se lea menos. Acá queda lo que el cartel de
+                       * arriba no puede decir: que a ESTA cuenta el recolector no la trajo, o que
+                       * murió la sonda de SU proveedor.
+                       */
                       <div className="account-section">
                         <div className="account-notice">
                           <AlertCircle size={14} aria-hidden="true" />
