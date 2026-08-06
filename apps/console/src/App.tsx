@@ -7,7 +7,6 @@ import {
   GitFork,
   Grid3x3,
   History,
-  KeyRound,
   Settings2,
   ListRestart,
   MessageSquareText,
@@ -18,11 +17,10 @@ import {
   Sparkles,
   TerminalSquare,
 } from 'lucide-react';
-import { useSyncExternalStore, type ComponentType } from 'react';
+import { useEffect, useSyncExternalStore, type ComponentType } from 'react';
 import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import type { AuthGateState } from './features/auth/auth-session';
 import { LiveFleetPage } from './features/live/LiveFleetPage';
-import { LicensesPage } from './features/licenses/LicensesPage';
 import { FleetAgentDetailPage } from './features/fleet/FleetAgentDetailPage';
 import { FleetPage } from './features/fleet/FleetPage';
 import { QuotasPage } from './features/quotas/QuotasPage';
@@ -38,7 +36,7 @@ import { ConfigPage } from './features/config/ConfigPage';
 import { AccountsPage } from './features/accounts/AccountsPage';
 import { AssignmentMatrixPage } from './features/accounts/AssignmentMatrixPage';
 import { ObservabilityPage } from './features/observability/ObservabilityPage';
-import { onNavClick } from './navigation';
+import { onNavClick, redirect } from './navigation';
 
 interface Route {
   id: string;
@@ -56,6 +54,13 @@ interface Route {
  * dentro de "Sala de máquinas", alimentada por el snapshot que esa página ya tenía. Antes eran dos
  * entradas de menú y dos pollings del mismo endpoint.
  *
+ * **"Licencias y consumo"** dejó de existir en 2026-08-06: repetía el panel de recolectores, el
+ * porcentaje libre por cuenta y los grupos de cuota sin cuenta atada que ya estaban en "Consumo de
+ * cuotas", y las dos entradas se llamaban casi igual. Ahora hay una sola, **"Cuotas y licencias"**,
+ * que responde entera la pregunta que ninguna de las dos respondía sola —*a esta cuenta le queda
+ * saldo, y quién la está usando*—, porque el saldo estaba en una y el dueño en la otra. `/licenses`
+ * redirige a `/quotas` (ver `ROUTE_ALIASES`): un enlace guardado que se rompe es un defecto.
+ *
  * Lo que NO se unificó, y por qué: "Sala de máquinas" y "Tenants & ACL" dibujan los dos un
  * hipergrafo de salas, pero responden preguntas distintas — *quién le está pasando trabajo a quién
  * ahora* (cambia cada cuatro segundos) contra *quién tiene permiso de hablarle a quién* (cambia
@@ -66,8 +71,7 @@ interface Route {
 const routes: Route[] = [
   { id: 'live', label: 'Sala de máquinas', icon: Sparkles, component: LiveFleetPage },
   { id: 'fleet', label: 'Fleet', icon: RadioTower, component: FleetPage },
-  { id: 'licenses', label: 'Licencias y consumo', icon: KeyRound, component: LicensesPage },
-  { id: 'quotas', label: 'Consumo de cuotas', icon: BatteryCharging, component: QuotasPage },
+  { id: 'quotas', label: 'Cuotas y licencias', icon: BatteryCharging, component: QuotasPage },
   { id: 'topology', label: 'Tenants & ACL', icon: GitFork, component: TopologyPage },
   { id: 'messages', label: 'Messages', icon: MessageSquareText, component: MessagesPage },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, component: QueuesPage },
@@ -82,10 +86,24 @@ const routes: Route[] = [
   { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, component: TerminalPage },
 ];
 
+/**
+ * Rutas retiradas que siguen vivas en marcadores, en enlaces pegados en un chat y en el historial
+ * del navegador. No pueden caer en el `fallback` a "Sala de máquinas": eso deja al operador en una
+ * página que no pidió, sin una palabra que explique adónde se fue la que buscaba. Se resuelven a su
+ * heredera y la barra de direcciones se reescribe con `replaceState`, así el botón "atrás" tampoco
+ * vuelve a la ruta muerta.
+ */
+const ROUTE_ALIASES: Record<string, string> = {
+  /** Fusionada con "Consumo de cuotas" en "Cuotas y licencias" — 2026-08-06. */
+  licenses: 'quotas',
+};
+
 interface RouteMatch {
   id: string;
   /** Segmentos posteriores al id de ruta, ej. `#/fleet/:tenant/:alias` → ['tenant', 'alias']. */
   params: string[];
+  /** Id tal como venía en la URL cuando era un alias retirado; `undefined` si la ruta es canónica. */
+  aliasedFrom?: string;
 }
 
 /** Snapshot crudo para useSyncExternalStore: debe ser un primitivo estable, no un objeto recién creado. */
@@ -103,9 +121,11 @@ function decodeSegment(segment: string): string {
 
 function matchRoute(path: string): RouteMatch {
   const segments = path.split('/').filter(Boolean).map(decodeSegment);
-  const id = segments[0] ?? '';
+  const requested = segments[0] ?? '';
+  const alias = ROUTE_ALIASES[requested];
+  const id = alias ?? requested;
   return routes.some((route) => route.id === id)
-    ? { id, params: segments.slice(1) }
+    ? { id, params: segments.slice(1), aliasedFrom: alias ? requested : undefined }
     : { id: 'live', params: [] };
 }
 
@@ -120,8 +140,16 @@ export function App() {
 
 function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const path = useSyncExternalStore(subscribe, currentPath, () => 'live');
-  const { id: routeId, params } = matchRoute(path);
+  const { id: routeId, params, aliasedFrom } = matchRoute(path);
   const route = routes.find((candidate) => candidate.id === routeId) ?? routes[0];
+
+  // La vista correcta ya se eligió arriba (`matchRoute` resuelve el alias); esto sólo pone la barra
+  // de direcciones de acuerdo con lo que se está viendo. Si fallara, la página igual es la buena.
+  useEffect(() => {
+    if (!aliasedFrom) return;
+    redirect(`/${routeId}`);
+  }, [aliasedFrom, routeId]);
+
   const Page = route.component;
   // Único sub-detalle soportado hoy: /fleet/:tenant/:alias reutiliza el workspace de terminal, no FleetPage.
   const fleetAgentTarget = routeId === 'fleet' && params.length >= 2

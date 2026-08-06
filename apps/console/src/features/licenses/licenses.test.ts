@@ -48,6 +48,9 @@ describe('freshness', () => {
     const result = freshness(collector, thresholds, now);
     expect(result.state).toBe('stale');
     expect(result.ageSeconds).toBe(600);
+    // La etiqueta se muestra en pantalla: una antigüedad NUNCA se escribe en negativo.
+    expect(result.label).toContain('10m');
+    expect(result.label).not.toContain('-');
   });
 
   it('devuelve "stale" si age_seconds > stale_after_seconds', () => {

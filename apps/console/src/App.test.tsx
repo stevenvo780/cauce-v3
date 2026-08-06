@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { App } from './App';
@@ -36,6 +36,26 @@ it('routes /fleet/:tenant/:alias to the bot detail instead of the fleet list', a
   expect(await screen.findByRole('heading', { level: 1, name: 'kant' })).toBeInTheDocument();
   expect(screen.getByRole('link', { name: /volver a fleet/i })).toHaveAttribute('href', '/fleet');
   expect(screen.getByRole('link', { name: /^fleet$/i })).toHaveAttribute('aria-current', 'page');
+});
+
+it('el menú tiene UNA sola entrada para cuotas y licencias, no dos que se llaman casi igual', async () => {
+  window.history.pushState({}, '', '/fleet');
+  renderWithApi(<App />);
+
+  const nav = await screen.findByRole('navigation', { name: /principal/i });
+  const entries = within(nav).getAllByRole('link')
+    .filter((link) => /cuota|licencia/i.test(link.textContent ?? ''));
+  expect(entries.map((link) => link.textContent)).toEqual(['Cuotas y licencias']);
+});
+
+it('redirige /licenses a la vista fusionada en vez de dejar el enlace guardado en la nada', async () => {
+  // La ruta se retiró al fusionar las dos vistas: un marcador viejo tiene que llegar a la heredera,
+  // no caer en el fallback a "Sala de máquinas" —que es una página que nadie pidió—.
+  window.history.pushState({}, '', '/licenses');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: 'Cuotas y licencias' })).toBeInTheDocument();
+  expect(window.location.pathname).toBe('/quotas');
 });
 
 it('falls back to the live fleet room for an unknown route id even with extra pathname segments', async () => {

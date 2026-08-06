@@ -12,6 +12,17 @@ export function navigate(path: string): void {
 }
 
 /**
+ * Reemplaza la entrada actual del historial en vez de apilar una nueva. Es lo que corresponde para
+ * una ruta retirada que redirige a su heredera: con `pushState` el botón "atrás" volvería a la ruta
+ * muerta, que redirige de nuevo hacia adelante, y el operador quedaría atrapado sin poder salir.
+ */
+export function redirect(path: string): void {
+  if (window.location.pathname === path) return;
+  window.history.replaceState({}, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+/**
  * Los enlaces conservan su `href` real para que sigan funcionando el clic del medio, ctrl+clic,
  * "abrir en pestaña nueva" y el menú contextual. Solo se intercepta el clic izquierdo limpio,
  * que es el único que debería quedarse dentro de la aplicación.

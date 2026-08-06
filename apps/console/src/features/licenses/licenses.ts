@@ -1,3 +1,9 @@
+/**
+ * Lecturas del inventario de licencias (`GET /v3/console/config`) cruzadas contra la muestra del
+ * recolector de cuota. Este módulo tenía su propia página, `LicensesPage`; desde el 2026-08-06 la
+ * página vive fusionada en `features/quotas/QuotasPage` —"Cuotas y licencias"— y acá queda sólo la
+ * lógica: extractores, frescura, consumo por cuenta, asignaciones y huérfanos.
+ */
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
 import type {
   ConfigurationSnapshot, QuotaCollector, QuotaSnapshot,
@@ -87,8 +93,13 @@ export function freshness(
 
   if (collector.stale === true) {
     const ageSeconds = (collector.age_seconds ?? null) as number | null;
+    /*
+     * `age_seconds` ya es la antigüedad de la muestra: negarlo imprimía "caduco hace -1h 29m", un
+     * tiempo negativo hacia el pasado que no significa nada. Visto en pantalla contra la columna
+     * "Edad" de la misma fila, que decía 1h 29m.
+     */
     const ageLabel = ageSeconds !== null
-      ? `caduco hace ${formatDurationSeconds(-ageSeconds)}`
+      ? `caduco hace ${formatDurationSeconds(Math.abs(ageSeconds))}`
       : 'caduco';
     return {
       state: 'stale',

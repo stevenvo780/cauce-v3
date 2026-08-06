@@ -24,69 +24,23 @@
   }
 }
 
-/* Grid de recolectores */
-.collectors-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 16px;
-  margin-top: 16px;
-}
-
-.collector-card {
-  padding: 12px;
-  border: 1px solid hsl(0 0% 80%);
-  border-radius: 6px;
-  background-color: hsl(0 0% 98%);
+.banner-warning {
+  background-color: hsl(40 90% 94%);
+  border: 1px solid hsl(40 90% 82%);
+  color: hsl(35 80% 26%);
 }
 
 @media (prefers-color-scheme: dark) {
-  .collector-card {
-    border-color: hsl(0 0% 25%);
-    background-color: hsl(0 0% 12%);
+  .banner-warning {
+    background-color: hsl(40 60% 14%);
+    border: 1px solid hsl(40 60% 26%);
+    color: hsl(40 90% 72%);
   }
 }
 
-.collector-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-  gap: 8px;
-}
-
-.collector-host {
-  font-weight: 500;
-  font-size: 12px;
-}
-
-.collector-detail {
-  font-size: 12px;
-  color: hsl(0 0% 50%);
-  margin-bottom: 8px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .collector-detail {
-    color: hsl(0 0% 55%);
-  }
-}
-
-.collector-counts {
-  display: flex;
-  gap: 12px;
-  font-size: 11px;
-  color: hsl(0 0% 55%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .collector-counts {
-    color: hsl(0 0% 50%);
-  }
-}
-
-.collector-counts span strong {
-  font-weight: 600;
-}
+/* El texto del cartel se queda con el ancho sobrante y el botón no se deforma. */
+.banner > span { flex: 1; min-width: 0; }
+.banner > .button { flex: none; align-self: center; }
 
 /* Lista de cuentas */
 .accounts-list {
@@ -201,111 +155,6 @@
 .detail-row dd {
   margin: 0;
   word-break: break-word;
-}
-
-/* Ventanas de cuota */
-.windows-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-}
-
-.window-card {
-  padding: 12px;
-  border: 1px solid hsl(0 0% 80%);
-  border-radius: 6px;
-  background-color: hsl(0 0% 98%);
-  font-size: 12px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .window-card {
-    border-color: hsl(0 0% 25%);
-    background-color: hsl(0 0% 12%);
-  }
-}
-
-.window-label {
-  font-weight: 500;
-  margin-bottom: 8px;
-  font-size: 11px;
-}
-
-.window-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.bar-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.bar-label {
-  min-width: 40px;
-  font-size: 10px;
-  color: hsl(0 0% 55%);
-  font-weight: 500;
-}
-
-@media (prefers-color-scheme: dark) {
-  .bar-label {
-    color: hsl(0 0% 50%);
-  }
-}
-
-.bar-container {
-  flex: 1;
-  height: 20px;
-  border: 1px solid hsl(0 0% 75%);
-  border-radius: 3px;
-  overflow: hidden;
-  background-color: hsl(0 0% 93%);
-  position: relative;
-}
-
-@media (prefers-color-scheme: dark) {
-  .bar-container {
-    border-color: hsl(0 0% 30%);
-    background-color: hsl(0 0% 18%);
-  }
-}
-
-.bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, hsl(120 70% 50%), hsl(60 100% 40%));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 600;
-  color: white;
-  transition: width 0.2s ease;
-  min-width: 24px;
-}
-
-.bar-value {
-  font-weight: 600;
-  min-width: 40px;
-  text-align: right;
-}
-
-.window-reset {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  color: hsl(0 0% 55%);
-  margin-bottom: 6px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .window-reset {
-    color: hsl(0 0% 50%);
-  }
 }
 
 /* Asignaciones */
@@ -434,158 +283,6 @@
     border-left-color: hsl(0 100% 45%);
     background-color: hsl(0 50% 15%);
     color: hsl(0 70% 70%);
-  }
-}
-
-/* Matriz */
-.matrix-wrap {
-  overflow-x: auto;
-  margin-top: 16px;
-  border: 1px solid hsl(0 0% 80%);
-  border-radius: 6px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .matrix-wrap {
-    border-color: hsl(0 0% 25%);
-  }
-}
-
-.assignment-matrix {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 11px;
-  background-color: hsl(0 0% 99%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .assignment-matrix {
-    background-color: hsl(0 0% 10%);
-  }
-}
-
-.assignment-matrix thead {
-  background-color: hsl(0 0% 95%);
-  border-bottom: 1px solid hsl(0 0% 80%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .assignment-matrix thead {
-    background-color: hsl(0 0% 15%);
-    border-bottom-color: hsl(0 0% 25%);
-  }
-}
-
-.assignment-matrix th,
-.assignment-matrix td {
-  padding: 8px;
-  text-align: center;
-  border: 1px solid hsl(0 0% 85%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .assignment-matrix th,
-  .assignment-matrix td {
-    border-color: hsl(0 0% 20%);
-  }
-}
-
-.assignment-matrix th {
-  font-weight: 600;
-}
-
-.assignment-matrix .agent-row {
-  text-align: left;
-  background-color: hsl(0 0% 97%);
-  font-weight: 600;
-}
-
-@media (prefers-color-scheme: dark) {
-  .assignment-matrix .agent-row {
-    background-color: hsl(0 0% 12%);
-  }
-}
-
-.assignment-matrix .account-col {
-  width: 60px;
-  font-weight: 500;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  word-break: break-word;
-}
-
-.account-abbr {
-  display: block;
-}
-
-.assignment-matrix .cell {
-  position: relative;
-  background-color: hsl(0 0% 99%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .assignment-matrix .cell {
-    background-color: hsl(0 0% 10%);
-  }
-}
-
-.assignment-matrix .cell.has-ceiling {
-  background-color: hsl(240 100% 97%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .assignment-matrix .cell.has-ceiling {
-    background-color: hsl(240 30% 15%);
-  }
-}
-
-.assignment-matrix .cell.disabled {
-  opacity: 0.5;
-}
-
-.priority-badge {
-  display: inline-block;
-  padding: 2px 6px;
-  background-color: hsl(0 0% 80%);
-  border-radius: 3px;
-  font-weight: 600;
-  min-width: 20px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .priority-badge {
-    background-color: hsl(0 0% 30%);
-  }
-}
-
-.priority-badge.primary {
-  background-color: hsl(120 100% 50%);
-  color: white;
-}
-
-@media (prefers-color-scheme: dark) {
-  .priority-badge.primary {
-    background-color: hsl(120 100% 45%);
-  }
-}
-
-.ceiling-marker {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  font-size: 12px;
-}
-
-.matrix-legend {
-  font-size: 11px;
-  color: hsl(0 0% 55%);
-  margin-top: 12px;
-  margin-bottom: 0;
-}
-
-@media (prefers-color-scheme: dark) {
-  .matrix-legend {
-    color: hsl(0 0% 50%);
   }
 }
 
