@@ -5,12 +5,10 @@ import {
   Boxes,
   CreditCard,
   GitFork,
-  Grid3x3,
   History,
   Settings2,
   ListRestart,
   MessageSquareText,
-  SendToBack,
   RadioTower,
   ShieldCheck,
   Gauge,
@@ -31,10 +29,8 @@ import { JobsPage } from './features/jobs/JobsPage';
 import { AdaptersPage } from './features/adapters/AdaptersPage';
 import { AuditPage } from './features/audit/AuditPage';
 import { TerminalPage } from './features/terminal/TerminalPage';
-import { RelaysPage } from './features/relays/RelaysPage';
 import { ConfigPage } from './features/config/ConfigPage';
 import { AccountsPage } from './features/accounts/AccountsPage';
-import { AssignmentMatrixPage } from './features/accounts/AssignmentMatrixPage';
 import { ObservabilityPage } from './features/observability/ObservabilityPage';
 import { onNavClick, redirect } from './navigation';
 
@@ -61,27 +57,41 @@ interface Route {
  * saldo, y quién la está usando*—, porque el saldo estaba en una y el dueño en la otra. `/licenses`
  * redirige a `/quotas` (ver `ROUTE_ALIASES`): un enlace guardado que se rompe es un defecto.
  *
+ * **"Matriz agente × cuenta"** dejó de existir en 2026-08-06: era la tercera ruta que dibujaba el
+ * mismo inventario de cuentas —sus columnas eran las filas de la tabla de "Cuentas de IA"—, salía
+ * del mismo `GET /v3/console/config` y escribía por el mismo `POST /v3/console/config/changes`.
+ * Vive ahora dentro de **"Cuentas de IA"**, como la segunda mitad de la misma pantalla y sin volver
+ * a pedir el snapshot: un solo `useResource` alimenta las dos mitades. `/assignments` redirige a
+ * `/accounts`.
+ *
+ * **"Origin relays"** dejó de existir en 2026-08-06: `GET /v3/console/observability` ya traía los
+ * relays y "Observability" los escupía como volcado JSON, o sea el mismo dato dibujado dos veces y
+ * peor en una de las dos. La tabla —la buena— vive ahora en **"Observabilidad y relays"**, y se
+ * sigue alimentando de `GET /v3/console/origin-relays`, no del snapshot: la ruta dedicada aplica la
+ * fachada `visibleOriginRelays` y el snapshot NO (medido en `services/gateway/src/app.ts`), así que
+ * el volcado mostraba relays de otros tenants. `/relays` redirige a `/observability`.
+ *
  * Lo que NO se unificó, y por qué: "Sala de máquinas" y "Tenants & ACL" dibujan los dos un
  * hipergrafo de salas, pero responden preguntas distintas — *quién le está pasando trabajo a quién
  * ahora* (cambia cada cuatro segundos) contra *quién tiene permiso de hablarle a quién* (cambia
  * cuando alguien edita la configuración). Las flechas no significan lo mismo: una es una entrega en
  * vuelo, la otra es una arista ACL. Fundirlas obligaría a elegir cuál de las dos preguntas se
- * responde peor.
+ * responde peor. Tampoco se fundieron "Cuotas y licencias" y "Cuentas de IA": la primera es de
+ * lectura y depende del recolector externo; la segunda escribe el registro y tiene que funcionar
+ * aunque el recolector esté caído.
  */
 const routes: Route[] = [
   { id: 'live', label: 'Sala de máquinas', icon: Sparkles, component: LiveFleetPage },
   { id: 'fleet', label: 'Fleet', icon: RadioTower, component: FleetPage },
   { id: 'quotas', label: 'Cuotas y licencias', icon: BatteryCharging, component: QuotasPage },
+  { id: 'accounts', label: 'Cuentas de IA', icon: CreditCard, component: AccountsPage },
   { id: 'topology', label: 'Tenants & ACL', icon: GitFork, component: TopologyPage },
   { id: 'messages', label: 'Messages', icon: MessageSquareText, component: MessagesPage },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, component: QueuesPage },
   { id: 'jobs', label: 'Jobs', icon: Boxes, component: JobsPage },
   { id: 'adapters', label: 'Adapters', icon: Bot, component: AdaptersPage },
-  { id: 'relays', label: 'Origin relays', icon: SendToBack, component: RelaysPage },
   { id: 'audit', label: 'Audit', icon: History, component: AuditPage },
-  { id: 'observability', label: 'Observability', icon: Gauge, component: ObservabilityPage },
-  { id: 'accounts', label: 'Cuentas de IA', icon: CreditCard, component: AccountsPage },
-  { id: 'assignments', label: 'Matriz agente × cuenta', icon: Grid3x3, component: AssignmentMatrixPage },
+  { id: 'observability', label: 'Observabilidad y relays', icon: Gauge, component: ObservabilityPage },
   { id: 'config', label: 'Configuration', icon: Settings2, component: ConfigPage },
   { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, component: TerminalPage },
 ];
@@ -96,6 +106,16 @@ const routes: Route[] = [
 const ROUTE_ALIASES: Record<string, string> = {
   /** Fusionada con "Consumo de cuotas" en "Cuotas y licencias" — 2026-08-06. */
   licenses: 'quotas',
+  /** "Matriz agente × cuenta" pasó a ser la segunda mitad de "Cuentas de IA" — 2026-08-06. */
+  assignments: 'accounts',
+  /** "Origin relays" pasó a ser la tabla de "Observabilidad y relays" — 2026-08-06. */
+  relays: 'observability',
+  /**
+   * "Actividad de la flota" se fundió en "Sala de máquinas" el 2026-08-06 (commit `f0f18ae`) pero
+   * quedó sin alias: `/activity` caía al `fallback` y mostraba la sala con la barra de direcciones
+   * todavía diciendo `/activity`. Es el mismo defecto que este mapa existe para evitar.
+   */
+  activity: 'live',
 };
 
 interface RouteMatch {

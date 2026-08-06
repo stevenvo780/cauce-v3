@@ -1,9 +1,16 @@
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { AssignmentMatrixPage } from './AssignmentMatrixPage';
+import { AccountsPage } from './AccountsPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
+
+/*
+ * La matriz dejó de ser la ruta `/assignments` el 2026-08-06: es la segunda mitad de "Cuentas de
+ * IA". Estos tests montan **AccountsPage**, no la matriz suelta, justamente para que fallen si
+ * alguien vuelve a partir la vista en dos: si la matriz saliera de esta pantalla, ninguna de estas
+ * aserciones encontraría su botón.
+ */
 
 interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }
 
@@ -41,11 +48,33 @@ function recordChanges(sink: ChangeRequest[]) {
   }));
 }
 
+/**
+ * Las dos barras de escritura de la vista tienen botones con el mismo texto. Se distinguen por el
+ * `role="group"` que las nombra: sin eso, `getByRole('button', { name: /previsualizar/i })`
+ * encontraría dos, y previsualizar el formulario equivocado manda una mutación que nadie pidió.
+ */
+function assignmentActions() {
+  return within(screen.getByRole('group', { name: /acciones de asignación/i }));
+}
+
+it('la matriz vive DENTRO de «Cuentas de IA», sin segunda ruta y sin segundo h1', async () => {
+  configuration();
+  renderWithApi(<AccountsPage />);
+
+  const headings = await screen.findAllByRole('heading', { level: 1 });
+  expect(headings).toHaveLength(1);
+  expect(headings[0]).toHaveTextContent(/cuentas de ia/i);
+
+  // Las dos mitades, en la misma pantalla: el inventario y el techo por alias.
+  expect(screen.getByRole('heading', { name: /inventario de cuentas/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /techo por alias/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /ruteo: qué cuenta puede usar cada agente/i })).toBeInTheDocument();
+});
+
 it('muestra el techo por alias y el orden de fallback derivado de los bindings habilitados', async () => {
   configuration();
-  renderWithApi(<AssignmentMatrixPage />);
+  renderWithApi(<AccountsPage />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /matriz agente × cuenta/i })).toBeInTheDocument();
   expect(await screen.findByRole('button', { name: /Steven\/kant × codex-steven: #1 · prio 10/i })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i })).toBeInTheDocument();
 
@@ -56,7 +85,7 @@ it('muestra el techo por alias y el orden de fallback derivado de los bindings h
 
 it('dice que el intento 1 no pasa por el pool, porque el main del harness no es una fila de estas tablas', async () => {
   configuration();
-  renderWithApi(<AssignmentMatrixPage />);
+  renderWithApi(<AccountsPage />);
 
   expect(await screen.findByText(/sin ningún override de entorno/i)).toBeInTheDocument();
   expect(screen.getByText(/reintentos/i)).toBeInTheDocument();
@@ -64,14 +93,14 @@ it('dice que el intento 1 no pasa por el pool, porque el main del harness no es 
 
 it('marca la cuenta ajena como prestada usando el pagador que informa el servidor', async () => {
   configuration();
-  renderWithApi(<AssignmentMatrixPage />);
+  renderWithApi(<AccountsPage />);
 
   expect(await screen.findAllByText('prestada')).not.toHaveLength(0);
 });
 
 it('declara no disponible cada sección que el gateway no publica', async () => {
   configuration({ alias_routing_ceiling: undefined, agent_account_bindings: undefined });
-  renderWithApi(<AssignmentMatrixPage />);
+  renderWithApi(<AccountsPage />);
 
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(/no disponible/i);
@@ -84,10 +113,10 @@ it('otorga un techo con dry-run previo y una sola mutación de alias_routing_cei
   configuration({ alias_routing_ceiling: [], agent_account_bindings: [] });
   recordChanges(changes);
   const user = userEvent.setup();
-  renderWithApi(<AssignmentMatrixPage />);
+  renderWithApi(<AccountsPage />);
 
   await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: sin techo/i }));
-  await user.click(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   expect(changes[0]).toEqual({
     dry_run: true,
@@ -95,9 +124,28 @@ it('otorga un techo con dry-run previo y una sola mutación de alias_routing_cei
     mutation: { resource: 'alias_routing_ceiling', action: 'create', tenant_id: 'Steven', alias: 'kant', account_id: 'minimax-pablo' },
   });
 
-  await user.click(screen.getByRole('button', { name: /^aplicar$/i }));
+  await user.click(assignmentActions().getByRole('button', { name: /^aplicar$/i }));
   expect(await screen.findByText(/aplicado en revisión 5/i)).toBeInTheDocument();
   expect(changes[1]?.dry_run).toBe(false);
+});
+
+it('el dry-run de una mitad no habilita el apply de la otra: cada formulario tiene su propio runner', async () => {
+  const changes: ChangeRequest[] = [];
+  configuration({ alias_routing_ceiling: [], agent_account_bindings: [] });
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+
+  // Se deja el alta de cuenta lista para enviarse, pero se previsualiza la ASIGNACIÓN.
+  await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
+  await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
+  await user.click(screen.getByRole('button', { name: /Steven\/kant × minimax-pablo: sin techo/i }));
+  await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+
+  expect(changes).toHaveLength(1);
+  expect(changes[0]?.mutation).toMatchObject({ resource: 'alias_routing_ceiling' });
+  const accountActions = within(screen.getByRole('group', { name: /acciones de alta de cuenta/i }));
+  expect(accountActions.getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
 });
 
 it('ordena el fallback con una mutación de binding que lleva prioridad y estado', async () => {
@@ -105,12 +153,12 @@ it('ordena el fallback con una mutación de binding que lleva prioridad y estado
   configuration();
   recordChanges(changes);
   const user = userEvent.setup();
-  renderWithApi(<AssignmentMatrixPage />);
+  renderWithApi(<AccountsPage />);
 
   await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
   await user.clear(screen.getByLabelText(/prioridad/i));
   await user.type(screen.getByLabelText(/prioridad/i), '20');
-  await user.click(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   expect(changes[0]?.mutation).toEqual({
     resource: 'agent_account_binding', action: 'update', tenant_id: 'Steven',
@@ -123,14 +171,14 @@ it('no convierte una prioridad vacía en 0, que es la más alta', async () => {
   configuration();
   recordChanges(changes);
   const user = userEvent.setup();
-  renderWithApi(<AssignmentMatrixPage />);
+  renderWithApi(<AccountsPage />);
 
   await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
   // `Number('')` es 0 y 0 pasaba `Number.isInteger(n) && n >= 0`: vaciar el campo armaba
   // silenciosamente la prioridad más alta en vez de pedir un valor.
   await user.clear(screen.getByLabelText(/prioridad/i));
 
-  expect(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
+  expect(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
   expect(screen.getByText(/la prioridad debe ser un entero entre 0 y 32767/i)).toBeInTheDocument();
   expect(changes).toHaveLength(0);
 });
@@ -140,13 +188,13 @@ it('tampoco acepta una prioridad de puros espacios', async () => {
   configuration();
   recordChanges(changes);
   const user = userEvent.setup();
-  renderWithApi(<AssignmentMatrixPage />);
+  renderWithApi(<AccountsPage />);
 
   await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
   await user.clear(screen.getByLabelText(/prioridad/i));
   await user.type(screen.getByLabelText(/prioridad/i), '   ');
 
-  expect(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
+  expect(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
   expect(changes).toHaveLength(0);
 });
 
@@ -155,12 +203,12 @@ it('sigue aceptando la prioridad 0 cuando el operador la escribe de verdad', asy
   configuration();
   recordChanges(changes);
   const user = userEvent.setup();
-  renderWithApi(<AssignmentMatrixPage />);
+  renderWithApi(<AccountsPage />);
 
   await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
   await user.clear(screen.getByLabelText(/prioridad/i));
   await user.type(screen.getByLabelText(/prioridad/i), '0');
-  await user.click(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   expect(changes[0]?.mutation).toEqual({
     resource: 'agent_account_binding', action: 'update', tenant_id: 'Steven',
@@ -171,8 +219,27 @@ it('sigue aceptando la prioridad 0 cuando el operador la escribe de verdad', asy
 it('avisa que revocar el techo cascadea el binding', async () => {
   configuration();
   const user = userEvent.setup();
-  renderWithApi(<AssignmentMatrixPage />);
+  renderWithApi(<AccountsPage />);
 
   await user.selectOptions(await screen.findByLabelText(/operación/i), 'revoke-ceiling');
   expect(screen.getByText(/borra en cascada el binding/i)).toBeInTheDocument();
+});
+
+it('lee el snapshot UNA sola vez para las dos mitades', async () => {
+  let configReads = 0;
+  server.use(http.get('http://localhost/v3/console/config', () => {
+    configReads += 1;
+    return HttpResponse.json({
+      revision: 4, observed_at: new Date().toISOString(), tenants: [{ id: 'Steven' }],
+      rooms: [], memberships: [], acl_edges: [], harness_definitions: [], role_policies: [], revisions: [],
+      agents: [{ tenant_id: 'Steven', alias: 'kant', harness_id: 'claude-code', enabled: true }],
+      provider_accounts: accounts, alias_routing_ceiling: [], agent_account_bindings: [],
+    });
+  }));
+  renderWithApi(<AccountsPage />);
+
+  await screen.findByRole('heading', { name: /techo por alias/i });
+  // Antes de la fusión eran dos rutas con su propio `useResource`, que no comparte caché: montar
+  // las dos mitades pedía `/v3/console/config` dos veces. Ahora la matriz lo recibe por props.
+  expect(configReads).toBe(1);
 });

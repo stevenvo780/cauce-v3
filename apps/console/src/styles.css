@@ -120,6 +120,13 @@ h1 { margin: 0; font-size: clamp(1.85rem, 4vw, 2.8rem); line-height: 1.08; lette
 .page-description { max-width: 760px; margin: 11px 0 0; color: var(--muted); line-height: 1.65; }
 .page-actions { flex: none; }
 
+/* Separador de las dos mitades de una vista fusionada: un solo <h1> por página, y las mitades
+   se anuncian con un <h2> propio en vez de con otra ruta. El borde superior es lo único que
+   sustituye visualmente al cambio de pantalla que había antes. */
+.section-header { margin: 44px 0 22px; padding-top: 26px; border-top: 1px solid var(--border-strong); }
+.section-header h2 { margin: 0; font-size: clamp(1.25rem, 2.4vw, 1.6rem); letter-spacing: -.03em; }
+.section-header p { max-width: 760px; margin: 9px 0 0; color: var(--muted); line-height: 1.6; }
+
 .button { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; gap: 8px; padding: 8px 14px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-3); color: var(--text); font-weight: 700; cursor: pointer; transition: .18s ease; }
 .button:hover:not(:disabled) { transform: translateY(-1px); border-color: #4c6b91; background: #1b2b43; }
 .button:disabled { cursor: not-allowed; opacity: .55; }
