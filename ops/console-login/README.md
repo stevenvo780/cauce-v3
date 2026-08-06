@@ -253,7 +253,8 @@ tocar nada, porque no queda ninguna segunda puerta.
    redirige `308` al dominio nuevo. **El `basic_auth` no está en ninguno de los dos.**
 
    O sea que el archivo a mirar hoy es el `/etc/caddy/Caddyfile` **del VPS**, no el de
-   `agora-storage`. El bloque vivo:
+   `agora-storage`. El bloque vivo (con la lista blanca del §6; **el bloque de abajo ya no es el
+   que corre**, quedó como referencia histórica de cómo estaba cuando se quitó el `basic_auth`):
 
    ```
    consola.humanizar.tech {
@@ -336,3 +337,110 @@ sesión cifrada en `gateway_oidc_sessions`, mismas cookies y mismo CSRF) y se en
 `CAUCE_AUTH_PROVIDER=oidc` más las URLs del proveedor. Es más trabajo de configuración y depende
 de un proveedor externo; el login por contraseña existe justamente para no necesitarlo. Las dos
 variantes son excluyentes: el gateway corre una o la otra.
+
+## 6. 🔴 El agujero que abrió la guarda por RUTA, y la lista blanca del borde (2026-08-06)
+
+La medición del §4 valía mientras la guarda era **por canal**: cualquier principal del canal
+`console` —el certificado que el nginx del contenedor presenta en TODO lo que proxea— moría en 401
+en cualquier endpoint. Eso cubría también las rutas que todavía no existían.
+
+Esa guarda se cambió a **por ruta** (`isConsoleSurface`, ver §3 y `password-auth.ts`) porque la
+guarda por canal dejó a la flota sin plano de control: `console-client` es el único principal mTLS
+con permiso `control` y el que usan el guardia médico y las herramientas de operación para
+publicar, así que `POST /v3/messages` empezó a devolver 401. El cambio destrabó el bus **y volvió a
+abrir la superficie de bus a través del dominio público**. Medido desde internet, sin cookie y sin
+ninguna credencial:
+
+| sonda (antes de la lista blanca) | resultado |
+|---|---|
+| `GET /v3/accounts/selection?provider=claude` | **200 con datos reales**: `tenant_id: Steven`, `alias: kant`, el inventario de cuentas y las **rutas de los archivos de credenciales** |
+| `POST /v3/messages` | **202**, publicando en el bus **como `Steven:kant`** (medido por el turno anterior; en la re-medición con cuerpo vacío daba `400` de validación de esquema del gateway, o sea que la autenticación ya había pasado) |
+| `GET /v3/status`, `GET /v3/console/*` | 401 — la superficie de consola sí seguía cerrada |
+
+O sea: cualquiera con la URL podía inyectar entregas a la flota con identidad de operador.
+
+**El arreglo aplicado no toca ni el gateway ni el contenedor de la consola.** El dominio público no
+tiene por qué proxear la superficie de bus en absoluto: la SPA sólo usa `/v3/auth/*`, `/v3/status` y
+`/v3/console/*` (enumerado en `apps/console/src/api/client.ts` y
+`apps/console/src/features/terminal/api.ts`; `/v3/ws` es el bus de los agentes y la propia SPA lo
+dice en `LiveFleetPage.tsx`). En el Caddy del VPS, **lista blanca**, no negra —una lista negra se
+queda vieja con la próxima ruta que alguien agregue al gateway—:
+
+```
+consola.humanizar.tech {
+  @bus_privado {
+    path /v3/*
+    not path /v3/auth/* /v3/status /v3/console/*
+  }
+  route {                       # `route` conserva el orden escrito
+    respond @bus_privado "not found" 404
+    reverse_proxy https://100.64.0.6:8444 {
+      header_up -X-Cauce-Operator
+      transport http { tls_insecure_skip_verify }
+    }
+  }
+}
+```
+
+Medido desde internet después del `systemctl reload caddy`:
+
+| sonda | antes | después |
+|---|---|---|
+| `GET /v3/accounts/selection?provider=claude` | 200 con datos reales | **404** `not found` (cuerpo del borde, no JSON del gateway) |
+| `POST /v3/messages`, `/v3/publish`, `/v3/ack` | 202 / 400 del gateway | **404** del borde |
+| `GET /v3/heartbeat`, `/v3/query`, `/v3/deliveries`, `/v3/connections`, `/v3/quotas/samples`, `/v3/ws` | llegaban al gateway | **404** del borde |
+| evasiones: `/v3/console/../accounts/…`, `%2e%2e`, `/V3/…`, `/v3/%61ccounts/…`, `//v3/…`, `/v3//accounts/…` | — | **404** en las 8 (Caddy normaliza y decodifica **antes** de casar, así que falla cerrado) |
+| `/`, `/assets/*.js`, ruta del router (`/cuentas`) | 200 | **200** |
+| `GET /v3/auth/session` | 200 | **200** `{"authenticated":false,"login_mode":"password"}` |
+| `GET /v3/status`, `/v3/console/*` sin sesión | 401 | **401** — la guarda de sesión **no** se reabrió |
+| `GET /v3/console/terminal/ws` | cuelga (llega al relay) | **cuelga igual**; `/v3/ws` en cambio corta en 404 en 1 s — ése es el discriminador |
+
+La flota siguió entregando durante todo el cambio (los adaptadores no pasan por este dominio: van
+por la tailnet a `100.64.0.6:8443`). Después del reload: 16 leases vivos latiendo a <15 s y tres
+entregas reales a `done` en tenants distintos (Jhon/hegel 11:58:23Z, Pablo/seneca 12:03:50Z,
+Miguel/atlas 12:03:51Z).
+
+**Para revertir**: `cp /etc/caddy/Caddyfile.bak-antes-lista-blanca-<TS> /etc/caddy/Caddyfile` y
+`systemctl reload caddy`. El parche es idempotente y busca el marcador `LISTA-BLANCA-CONSOLA`.
+
+### Lo que falta: separar identidades (preparado, NO aplicado)
+
+La lista blanca es una mitigación de borde: cierra el dominio público, pero **el certificado
+`console-client` sigue siendo un principal `operator` con `permissions:[route,read,control]`**, y
+el nginx del contenedor lo sigue presentando en todo lo que proxea. El arreglo estructural es
+partirlo en dos, tal como lo pide el propio comentario de `password-auth.ts` (usar `console-client`
+para el guardia médico es *prestado*):
+
+| principal | quién lo usa | `channel` | `roles` | `permissions` |
+|---|---|---|---|---|
+| `console-proxy` (nuevo) | sólo el nginx de `cauce-v3-prod-console-1` | `console` | `[]` | `[]` |
+| `ops-control` (nuevo) | guardia médico (`ops/guardias/cauce-envoltorio-local.sh`) y herramientas de operación | `adapter` | `["operator"]` | `["route","read","control"]` |
+| `console-client` | — | se **retira** de `mtls_identities.json` cuando los dos anteriores estén medidos |
+
+Con `console-proxy` sin permisos, una ruta de bus que se filtrara por el proxy muere en 403 aunque
+el borde fallara: la consola sigue andando porque ahí el principal sale de la **cookie de sesión**,
+no del certificado. Es defensa en profundidad de la misma cosa.
+
+Secuencia sin recrear nada:
+
+1. Emitir los dos pares cert/key con la CA de cliente del gateway y registrar sus huellas en
+   `/etc/cauce-v3/secrets/identities/mtls_identities.json`. El gateway **relee ese archivo por
+   request** (`HashedMtlsIdentityFileProvider.resolve` → `readIdentityFile`, caché de 1 s), así que
+   **no hay que reiniciar el gateway ni recrearlo**.
+2. Apuntar el guardia médico a `ops-control` (`--cert /etc/cauce-v3/pki/ops-control.crt`) **antes**
+   de tocar nada más, y probar `cauce probar <alias>` de punta a punta.
+3. Poner los bytes de `console-proxy` **encima** de `/etc/cauce-v3/pki/console-client.{crt,key}` y
+   `docker exec cauce-v3-prod-console-1 nginx -s reload`. ⚠️ **En sitio** (`cat nuevo > archivo`),
+   nunca `mv`/`install`: el bind-mount es de un **archivo**, y cambiar el inodo deja al contenedor
+   con el certificado viejo y con cara de que el cambio se aplicó. Así **no hace falta recrear el
+   contenedor `console`**; si el reload no lo tomara, ahí sí toca recrear con rutas nuevas.
+4. Medir con sesión: login, una vista con datos, y el PTY. Si el login rompiera (habría que
+   comprobar si `POST /v3/auth/login` y `GET /v3/auth/session` toleran un principal de transporte
+   sin permisos), se revierte reponiendo los bytes viejos y otro `nginx -s reload`.
+5. Recién entonces borrar la entrada `console-client` de `mtls_identities.json`.
+
+Riesgo abierto que hay que medir en el paso 4, no suponer: **no está probado** que `/v3/auth/*` y
+el relay de terminal funcionen con un principal de transporte con `permissions:[]`.
+
+El script del parche de Caddy quedó en `ops/console-login/patch-caddy-lista-blanca.py` (el mismo
+que se corrió en el VPS como `/root/patch_caddy.py`).
