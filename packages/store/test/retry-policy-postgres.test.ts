@@ -274,25 +274,88 @@ describe('R1 — un código de pre-vuelo vuelve al circuito de reintento', () =>
     expect(row.terminal_at).toBeNull();
   });
 
-  it('el mismo fallo con código AMBIGUO sigue muriendo en el primer intento', async () => {
-    const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
-    await repository.publish(command('turno que pudo haber terminado'));
-    const [claimed] = await repository.claimDeliveries(
-      'Isa', 'salva', CONSUMER, lease.epoch!, 1, ACK_DEADLINE_MS
-    );
-    if (!claimed) throw new Error('expected a claimed delivery');
+  /**
+   * Este era el contraste de R1: "un código de pre-vuelo vuelve al reintento, uno AMBIGUO no".
+   * Se escribió afirmando `dead` a secas porque en ese momento un ambiguo moría siempre en el
+   * intento 1. `merge/ambiguo-a-main` cambió esa regla a propósito y con medición de prod: un
+   * ambiguo sólo mata si consta que ALGO corrió (`execution_started_at`); de 652 muertes
+   * ambiguas con intentos disponibles, 445 nunca habían arrancado.
+   *
+   * Lo que R1 quería proteger NO era el `dead` literal: era que un código ambiguo no se
+   * confundiera con uno de pre-vuelo, que sí es retryable por sí solo. Esa distinción sigue
+   * viva y es lo que se comprueba acá, ahora en sus dos mitades:
+   *
+   *  - con la marca de ejecución, el ambiguo muere en el primer intento y con presupuesto
+   *    intacto — un pre-vuelo, en la misma situación, reintentaría;
+   *  - sin la marca reintenta, pero queda auditado aparte (`ambiguous_without_execution`), que
+   *    es lo que impide que se lo lea como un reintento de pre-vuelo cualquiera.
+   *
+   * Si alguien colapsara los ambiguos dentro de la clase retryable, la primera mitad falla.
+   * El caso completo vive en packages/store/test/ambiguous-without-execution-postgres.test.ts.
+   */
+  it('un código AMBIGUO no es un pre-vuelo: muere en el primer intento si llegó a ejecutar',
+    async () => {
+      const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
+      await repository.publish(command('turno que pudo haber terminado'));
+      const [claimed] = await repository.claimDeliveries(
+        'Isa', 'salva', CONSUMER, lease.epoch!, 1, ACK_DEADLINE_MS
+      );
+      if (!claimed) throw new Error('expected a claimed delivery');
 
-    await repository.ackDelivery(
-      claimed.delivery_id, 'Isa', 'salva',
-      ack(claimed, lease.epoch!, 'failed', {
-        error_code: 'PROCESS_EXIT_AMBIGUOUS',
-        error: 'Harness exited with code 1 without structured output'
-      }),
-      ACK_DEADLINE_MS
-    );
+      // El harness arrancó de verdad: reserva tomada y proceso invocado. Esta es la marca que
+      // separa "no sabemos si hizo algo" de "no hizo nada".
+      await repository.ackDelivery(
+        claimed.delivery_id, 'Isa', 'salva',
+        ack(claimed, lease.epoch!, 'started', { execution_started: true }), ACK_DEADLINE_MS
+      );
 
-    expect((await deliveryRow(claimed.delivery_id)).status).toBe('dead');
-  });
+      await repository.ackDelivery(
+        claimed.delivery_id, 'Isa', 'salva',
+        ack(claimed, lease.epoch!, 'failed', {
+          error_code: 'PROCESS_EXIT_AMBIGUOUS',
+          error: 'Harness exited with code 1 without structured output'
+        }),
+        ACK_DEADLINE_MS
+      );
+
+      const row = await deliveryRow(claimed.delivery_id);
+      expect(row.status).toBe('dead');
+      // Con presupuesto de sobra: lo que mata es la ambigüedad con ejecución, no el agotamiento.
+      // Un PROCESS_EXIT_PREFLIGHT en este mismo punto habría quedado en 'retry'.
+      expect(row.attempt).toBeLessThan(3);
+    });
+
+  it('el mismo código AMBIGUO sin ejecución reintenta, pero se audita aparte del pre-vuelo',
+    async () => {
+      const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
+      await repository.publish(command('turno que nunca llegó a arrancar'));
+      const [claimed] = await repository.claimDeliveries(
+        'Isa', 'salva', CONSUMER, lease.epoch!, 1, ACK_DEADLINE_MS
+      );
+      if (!claimed) throw new Error('expected a claimed delivery');
+
+      // Sin ACK de `execution_started`: el proceso murió antes de invocar nada.
+      await repository.ackDelivery(
+        claimed.delivery_id, 'Isa', 'salva',
+        ack(claimed, lease.epoch!, 'failed', {
+          error_code: 'PROCESS_EXIT_AMBIGUOUS',
+          error: 'Harness exited with code 1 without structured output'
+        }),
+        ACK_DEADLINE_MS
+      );
+
+      const row = await deliveryRow(claimed.delivery_id);
+      expect(row.status).toBe('retry');
+      expect(row.terminal_at).toBeNull();
+      // El rastro que lo distingue de un reintento de pre-vuelo: son diagnósticos opuestos
+      // sobre el mismo código de error y el operador tiene que poder separarlos de un vistazo.
+      const audit = await pool.query<{ metadata: Record<string, unknown> }>(
+        `SELECT metadata FROM audit_events
+          WHERE delivery_id=$1 AND action='delivery.ack'
+          ORDER BY id DESC LIMIT 1`, [claimed.delivery_id]
+      );
+      expect(audit.rows[0]?.metadata).toMatchObject({ ambiguous_without_execution: true });
+    });
 
   it('el esquema impide que un código de pre-vuelo entre en la lista de ambiguos', () => {
     for (const code of PREFLIGHT_ACK_ERROR_CODES) {
