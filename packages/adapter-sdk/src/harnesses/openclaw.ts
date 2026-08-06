@@ -1,5 +1,5 @@
 import { parseOpenClawOutput } from "../sdk/output-parser.js";
-import type { HarnessDefinition } from "../sdk/types.js";
+import { HARNESS_START_MARKER, type HarnessDefinition } from "../sdk/types.js";
 import { capabilities } from "./shared.js";
 import { OPENCLAW_BRIDGE_PATH } from "./bridge-paths.js";
 
@@ -14,6 +14,9 @@ export const openClawDefinition: HarnessDefinition = {
     api_cancellation: "abort_signal",
   }),
   sessionStrategy: { kind: "generated" },
+  // El puente es codigo nuestro y escribe la marca en stderr justo antes de la llamada
+  // efectiva; si no aparece, el fallo fue de arranque del propio puente.
+  startWitness: { kind: "stderr-marker", marker: HARNESS_START_MARKER },
   sessionArgs: ({ sessionId }) => (sessionId === undefined ? [] : ["--session-key", sessionId]),
   parse: parseOpenClawOutput,
 };

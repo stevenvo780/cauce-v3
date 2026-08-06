@@ -82,6 +82,14 @@ def main() -> int:
     prompt = read_prompt()
     from hermes_cli.oneshot import run_oneshot
 
+    # Desde la linea siguiente el turno PUEDE tener efectos. La marca sale aqui y no antes ni
+    # despues: antes mentiria (leer el prompt e importar hermes todavia puede fallar sin haber
+    # tocado nada) y despues dejaria un turno a medias indistinguible de uno que nunca arranco,
+    # que es el error caro -- reintentar trabajo ya pagado. Va por stderr porque stdout es el
+    # contrato estructurado. Ver HARNESS_START_MARKER en sdk/types.ts.
+    sys.stderr.write("<<cauce:harness-started>>\n")
+    sys.stderr.flush()
+
     capture = io.StringIO()
     with contextlib.redirect_stdout(capture):
         returned = run_oneshot(prompt)

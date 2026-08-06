@@ -177,7 +177,7 @@ async function killByTimeout(conversation: string): Promise<{
   if (!delivery) throw new Error('expected a claimed delivery');
   await startExecution(delivery, instanceId, lease.epoch!);
   await expire(delivery.delivery_id);
-  expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 0, dead: 1 });
+  expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 0, dead: 1, parked: 0 });
   return { delivery, epoch: lease.epoch!, instanceId };
 }
 
@@ -352,7 +352,7 @@ describe('(a) la entrega sigue no terminal, con un intento mayor', () => {
       first.delivery_id, tenant, alias, ack(first, instanceId, lease.epoch!, 'started')
     );
     await expire(first.delivery_id);
-    expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 1, dead: 0 });
+    expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 1, dead: 0, parked: 0 });
     await pool.query(
       `UPDATE deliveries SET available_at=now()-interval '1 second' WHERE id=$1`,
       [first.delivery_id]
@@ -647,7 +647,7 @@ describe('la rama de un padre que ya recibió el aviso de fallo', () => {
       ack(child, childInstance, childLease.epoch!, 'started', { execution_started: true })
     );
     await expire(child.delivery_id);
-    expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 0, dead: 1 });
+    expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 0, dead: 1, parked: 0 });
 
     // El padre ya tiene el aviso de fallo en su bandeja.
     const notices = await pool.query<{ text: string; outcome: string }>(

@@ -142,6 +142,12 @@ async function main() {
   let returned;
   try {
     const { agentCliCommand, defaultRuntime } = await loadOpenClaw();
+    // Desde la línea siguiente el turno PUEDE tener efectos. La marca sale acá y no antes ni
+    // después: antes mentiría (el descubrimiento de módulos todavía puede fallar sin haber
+    // tocado nada) y después dejaría un turno a medias indistinguible de uno que nunca arrancó,
+    // que es el error caro — reintentar trabajo ya pagado. Va por stderr porque stdout es el
+    // contrato estructurado. Ver HARNESS_START_MARKER en sdk/types.ts.
+    process.stderr.write("<<cauce:harness-started>>\n");
     returned = await agentCliCommand({
       message,
       sessionKey: nativeSessionKey,
