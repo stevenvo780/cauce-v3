@@ -136,6 +136,20 @@ export const DEFAULT_DELIVERY_LEASE_CAP_MS = 12 * 60 * 60_000;
  */
 export const DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS = 30 * 60_000;
 
+/**
+ * Cuánto se aparca una entrega cuyo destino no tiene ningún adaptador conectado.
+ *
+ * Gastar los tres intentos contra un alias que no existe no es reintentar: es ruido. Medido el
+ * 2026-07-27: 829 entregas murieron en una sola noche con `ACK timeout: max attempts exhausted`
+ * contra alias que esa noche no estaban levantados; ninguna de las tres corridas tuvo jamás un
+ * consumidor del otro lado.
+ *
+ * El horizonte NO es un criterio sobre efectos —eso lo decide `execution_started_at`— sino de
+ * retención: pasadas 24 h el contexto conversacional ya venció y sostener la entrega en cola no
+ * le sirve a nadie. Ahí sí muere, y ahora con rastro en `audit_events`.
+ */
+export const DEFAULT_NO_CONSUMER_PARK_MAX_AGE_MS = 24 * 60 * 60_000;
+
 /** Techo de vida de una entrega. Ver `DEFAULT_DELIVERY_LEASE_CAP_MS`. */
 export interface DeliveryLeaseCap {
   /** Techo por defecto, para mensajes sin `body.timeout_ms`. */
@@ -307,6 +321,19 @@ export interface StaleDeliveryPolicy extends DeliveryLeaseCap {
    * techo existe para cortar, así que el techo manda incluso con la palanca prendida.
    */
   readonly retryStartedDeliveries?: boolean;
+  /**
+   * Apaga el aparcado de entregas cuyo destino no tiene NINGÚN adaptador conectado. Prenderlo
+   * (o sea, poner `false`) devuelve el comportamiento viejo: gastar los tres intentos contra un
+   * alias que no existe y morir. Existe como palanca, no como default.
+   */
+  readonly parkWithoutConsumer?: boolean;
+  /**
+   * Hasta cuándo se aparca una entrega sin consumidor. No es un criterio sobre efectos —de eso
+   * se ocupa `execution_started_at`— sino un horizonte de retención: pasado ese tiempo el
+   * contexto conversacional ya no existe y sostenerla en cola deja de servirle a nadie.
+   * Default: 24 h.
+   */
+  readonly noConsumerParkMaxAgeMs?: number;
 }
 
 /**
@@ -5510,8 +5537,12 @@ export class CauceRepository {
     staleMs: number,
     limit = 100,
     policy: StaleDeliveryPolicy = {}
-  ): Promise<{ retried: number; dead: number }> {
+  ): Promise<{ retried: number; dead: number; parked: number }> {
     const retryStartedDeliveries = policy.retryStartedDeliveries === true;
+    const parkWithoutConsumer = policy.parkWithoutConsumer !== false;
+    const noConsumerParkMaxAgeMs = positiveMs(
+      policy.noConsumerParkMaxAgeMs, DEFAULT_NO_CONSUMER_PARK_MAX_AGE_MS, 'no-consumer park age'
+    );
     // Se validan acá, fuera de la transacción, para que una configuración inválida falle en el
     // primer tick con un error nítido en vez de dejar el reaper girando sin techo.
     const defaultCapMs = positiveMs(policy.leaseCapMs, DEFAULT_DELIVERY_LEASE_CAP_MS, 'lease cap');
@@ -5532,6 +5563,7 @@ export class CauceRepository {
         execution_started: boolean;
         lease_cap_exceeded: boolean;
         lease_cap_ms: string;
+        age_ms: string;
       }>(
         `SELECT d.id,d.message_id,d.recipient_tenant,d.recipient_alias,d.status,d.attempt,d.max_attempts,
                 d.last_ack_rank,d.consumer_instance_id,d.consumer_epoch,d.claim_token,d.ack_deadline_at,
@@ -5539,6 +5571,7 @@ export class CauceRepository {
                  m.auth_session_id,m.auth_channel,
                  (d.execution_started_at IS NOT NULL) AS execution_started,
                  (${leaseCapMsSql('$3', '$4')}) AS lease_cap_ms,
+                 (EXTRACT(EPOCH FROM (now()-d.created_at))*1000)::bigint AS age_ms,
                  COALESCE(${leaseCapExceeded},false) AS lease_cap_exceeded
           FROM deliveries d JOIN messages m ON m.id=d.message_id
           WHERE d.status IN ('leased','accepted','started')
@@ -5549,18 +5582,86 @@ export class CauceRepository {
         [staleMs, limit, defaultCapMs, graceMs]
       );
       const chainPolicy = await this.loadChainPolicy(client);
+      // Quién tiene adaptador conectado AHORA. Va en una consulta aparte y no como subconsulta
+      // del SELECT de arriba a propósito: ese SELECT lleva `FOR UPDATE OF d` y es el camino
+      // caliente del reaper; la tabla de presencia tiene una fila por alias de la flota, así
+      // que traerla entera cuesta menos que correlacionarla por fila.
+      const consumidorVivo = new Set<string>();
+      if (rows.rows.length > 0) {
+        const presentes = await client.query<{ tenant_id: string; alias: string }>(
+          'SELECT tenant_id,alias FROM connection_leases WHERE lease_until>now()'
+        );
+        for (const fila of presentes.rows) consumidorVivo.add(`${fila.tenant_id} ${fila.alias}`);
+      }
       let retried = 0;
       let dead = 0;
+      let parked = 0;
       for (const row of rows.rows) {
         // El adaptador confirmó que el harness ARRANCÓ: obtuvo la reserva de sesión y estaba a
         // punto de invocarlo. Sólo con esa marca se retiene; "admitida y esperando el candado"
         // no cuenta y se reintenta como siempre.
         const heldForReview = row.execution_started && !retryStartedDeliveries;
         const attemptsExhausted = row.attempt >= row.max_attempts;
+        const sinConsumidor = !consumidorVivo.has(
+          `${row.recipient_tenant} ${row.recipient_alias}`
+        );
         // El techo manda sobre las otras dos condiciones y sobre la palanca de emergencia: una
         // entrega que estuvo horas renovando no se reintenta nunca, tenga o no la marca de
         // ejecución y esté o no prendido `retryStartedDeliveries`.
         const leaseCapExhausted = row.lease_cap_exceeded === true;
+        // R3. Gastar los tres intentos contra un alias sin adaptador conectado no es reintentar:
+        // es ruido, y termina matando el encargo por una ausencia que no tiene nada que ver con
+        // el trabajo. Se aparca y se le devuelve el intento, porque no hubo intento: nadie lo
+        // ejecutó. Las tres guardas son necesarias:
+        //  - `!heldForReview`: si consta que arrancó, manda la retención; no se toca.
+        //  - `!leaseCapExhausted`: el techo manda sobre todo lo demás.
+        //  - `sinConsumidor`: con un adaptador vivo del otro lado el fallo SÍ es del destino y
+        //    los intentos cuentan como siempre.
+        // El horizonte de edad evita la entrega inmortal: pasado ese tiempo muere, y ahora deja
+        // rastro en `audit_events`.
+        const sinConsumidorAparcable = parkWithoutConsumer
+          && attemptsExhausted
+          && !heldForReview
+          && !leaseCapExhausted
+          && sinConsumidor
+          && Number(row.age_ms) < noConsumerParkMaxAgeMs;
+        if (sinConsumidorAparcable) {
+          const backoffSeconds = timeoutRetryBackoffSeconds(row.attempt);
+          await client.query(
+            `UPDATE deliveries SET status='pending',attempt=GREATEST(0,attempt-1),last_ack_rank=0,
+              claimed_at=NULL,claim_expires_at=NULL,ack_deadline_at=NULL,claim_token=NULL,
+              consumer_instance_id=NULL,consumer_epoch=NULL,execution_started_at=NULL,
+              available_at=now()+$2*interval '1 second',
+              last_error='ACK timeout: no adapter connected; parked without spending an attempt',
+              updated_at=now()
+             WHERE id=$1`, [row.id, backoffSeconds]
+          );
+          await client.query(
+            `INSERT INTO audit_events(
+               tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+             ) VALUES($1,$2,'delivery.parked_no_consumer','allow',$3,$4,$5,$6,$7::jsonb)`,
+            [row.recipient_tenant, row.recipient_alias, row.request_id, row.message_id, row.id,
+              row.trace_id, JSON.stringify({
+                reason: 'no_adapter_connected',
+                attempt: row.attempt,
+                max_attempts: row.max_attempts,
+                attempt_refunded: true,
+                age_ms: Number(row.age_ms),
+                park_max_age_ms: noConsumerParkMaxAgeMs
+              })]
+          );
+          await client.query(
+            `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload,available_at)
+             VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,now()+$9*interval '1 second')
+             ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
+            [row.recipient_tenant, `wake-parked:${row.id}:${row.attempt}`, row.request_id, row.message_id,
+              row.id, row.trace_id, row.origin ? JSON.stringify(row.origin) : null,
+              JSON.stringify({ recipient_alias: row.recipient_alias, reason: 'delivery_available' }),
+              backoffSeconds]
+          );
+          parked += 1;
+          continue;
+        }
         if (attemptsExhausted || heldForReview || leaseCapExhausted) {
           // Cuando arrancó, ese es el motivo que le sirve al operador: le dice que la corrida
           // pudo haber terminado y que reencolar cuesta plata. El de intentos agotados es
@@ -5612,36 +5713,40 @@ export class CauceRepository {
             && (row.body.type === 'agent.fanin' || !fanin.hasFanout)) {
             await this.insertOriginRelay(client, row, 'dead', { error: reason });
           }
-          // Auditoría separada sólo para el caso nuevo: sin esto, "no se reintentó" y "se
-          // reintentó tres veces y murió" quedan indistinguibles en el histórico, y no hay
-          // forma de medir cuánta cuota ahorró el cambio.
-          if (heldForReview || leaseCapExhausted) {
-            // Acción propia y no `delivery.ack_timeout`: contar cuántas entregas mueren por
-            // techo es lo que dice si el default es demasiado agresivo, y mezclarlas con los
-            // plazos vencidos hace esa cuenta imposible.
-            const action = leaseCapExhausted ? 'delivery.lease_cap' : 'delivery.ack_timeout';
-            await client.query(
-              `INSERT INTO audit_events(
-                 tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
-               ) VALUES($1,$2,$8,'deny',$3,$4,$5,$6,$7::jsonb)`,
-              [row.recipient_tenant, row.recipient_alias, row.request_id, row.message_id, row.id,
-                row.trace_id, JSON.stringify({
-                  reason: leaseCapExhausted ? 'lease_cap_exhausted' : 'execution_already_started',
-                  attempt: row.attempt,
-                  max_attempts: row.max_attempts,
-                  attempts_exhausted: attemptsExhausted,
-                  held_for_manual_replay: true,
-                  ...(leaseCapExhausted
-                    ? {
-                      lease_cap_ms: Number(row.lease_cap_ms),
-                      // Sin esto no se puede contestar la única pregunta que importa al revisar
-                      // un techo agotado: ¿el harness llegó a correr, o se colgó antes?
-                      execution_started: row.execution_started
-                    }
-                    : {})
-                }), action]
-            );
-          }
+          // R6. Auditoría para las TRES ramas, no sólo para las dos nuevas.
+          //
+          // La condición era `if (heldForReview || leaseCapExhausted)`, así que el caso normal
+          // —intentos agotados— moría sin escribir nada. 881 entregas se murieron así, sin un
+          // solo `audit_events`: no aparecían en ningún informe, no se podían contar por causa y
+          // no había forma de saber que el problema existía. Eso es lo que hizo invisible la
+          // fuga durante semanas. Un final de entrega SIEMPRE deja rastro.
+          //
+          // Acciones distintas por rama a propósito: contar cuántas mueren por techo es lo que
+          // dice si el default es demasiado agresivo, y mezclarlas con los plazos vencidos hace
+          // esa cuenta imposible.
+          const action = leaseCapExhausted ? 'delivery.lease_cap' : 'delivery.ack_timeout';
+          await client.query(
+            `INSERT INTO audit_events(
+               tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+             ) VALUES($1,$2,$8,'deny',$3,$4,$5,$6,$7::jsonb)`,
+            [row.recipient_tenant, row.recipient_alias, row.request_id, row.message_id, row.id,
+              row.trace_id, JSON.stringify({
+                reason: leaseCapExhausted
+                  ? 'lease_cap_exhausted'
+                  : heldForReview ? 'execution_already_started' : 'max_attempts_exhausted',
+                attempt: row.attempt,
+                max_attempts: row.max_attempts,
+                attempts_exhausted: attemptsExhausted,
+                held_for_manual_replay: heldForReview || leaseCapExhausted,
+                // Iba sólo en la rama del techo y sirve en las tres: la única pregunta que
+                // importa al revisar una entrega muerta es si el harness llegó a correr.
+                execution_started: row.execution_started,
+                // Sin adaptador conectado y aun así muerta = superó el horizonte de aparcado.
+                // Es la señal de que el destino lleva demasiado tiempo ausente.
+                no_consumer: sinConsumidor,
+                ...(leaseCapExhausted ? { lease_cap_ms: Number(row.lease_cap_ms) } : {})
+              }), action]
+          );
           // Morir también libera un cupo de agents.max_concurrent_deliveries: la entrega sale de
           // ('leased','accepted','started') igual que si hubiera terminado bien. La rama de retry
           // de acá abajo ya despertaba al destinatario; ésta no, y sin techo daba lo mismo porque
@@ -5692,7 +5797,7 @@ export class CauceRepository {
           retried += 1;
         }
       }
-      return { retried, dead };
+      return { retried, dead, parked };
     });
   }
 

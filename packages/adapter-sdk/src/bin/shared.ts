@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { AdapterClient } from "../sdk/client.js";
 import { DurableStore } from "../sdk/durable-store.js";
 import { SpawnCommandRunner } from "../sdk/process-runner.js";
@@ -36,6 +37,46 @@ function commandOverride(
     command,
     ...(runtime.harnessBridge === undefined ? {} : { baseArgs: [runtime.harnessBridge] }),
   };
+}
+
+/**
+ * Un testigo `stderr-marker` sólo vale si el puente que se va a EJECUTAR escribe esa marca.
+ *
+ * `CAUCE_HERMES_BRIDGE` y `CAUCE_OPENCLAW_BRIDGE` pueden apuntar a un archivo fuera del paquete,
+ * y ahí el código nuevo podría convivir con un puente viejo. Sería el peor fallo posible en esta
+ * dirección: el transporte diría «no arrancó» en TODOS los turnos, incluidos los que trabajaron,
+ * y el bus los reintentaría. Como no hay forma de distinguir «puente viejo» de «no arrancó», se
+ * comprueba antes: si el archivo no contiene la marca, este adaptador se queda SIN testigo y
+ * vuelve al comportamiento conservador de siempre.
+ *
+ * Lee el archivo una vez, al arrancar. Si no se puede leer, tampoco se atestigua.
+ */
+function definitionWithVerifiedBridge(
+  definition: HarnessDefinition,
+  override: HarnessCommandOverride | undefined,
+  logger: AdapterLogger,
+): HarnessDefinition {
+  const witness = definition.startWitness;
+  if (witness?.kind !== "stderr-marker") return definition;
+  const bridgePath = override?.baseArgs?.[0] ?? definition.baseArgs[0];
+  const contents = bridgePath === undefined
+    ? undefined
+    : (() => {
+      try {
+        return readFileSync(bridgePath, "utf8");
+      } catch {
+        return undefined;
+      }
+    })();
+  if (contents !== undefined && contents.includes(witness.marker)) return definition;
+  logger({
+    event: "harness_start_witness_disabled",
+    harness: definition.id,
+    reason: contents === undefined ? "bridge_unreadable" : "bridge_without_start_marker",
+  });
+  const { startWitness: _startWitness, ...withoutWitness } = definition;
+  void _startWitness;
+  return withoutWitness;
 }
 
 /**
@@ -180,7 +221,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     : sharedSessionRunner(shared, baseRunner, logger);
   const override = commandOverride(harnessId, definition, runtime);
   const harness = new HarnessAdapter({
-    definition,
+    definition: definitionWithVerifiedBridge(definition, override, logger),
     runner,
     store,
     sessionNamespace: runtime.alias,

@@ -9,6 +9,7 @@ import {
 import type {
   AdapterCapabilities,
   CommandRunner,
+  CommandRunResult,
   HarnessAttachment,
   HarnessCommandOverride,
   HarnessDefinition,
@@ -17,7 +18,7 @@ import type {
   RelayOrigin,
   StructuredOutput,
 } from "../sdk/types.js";
-import { PROTOCOL_VERSION } from "../sdk/types.js";
+import { HARNESS_START_MARKER, PROTOCOL_VERSION } from "../sdk/types.js";
 import { validateDeliveryOutput } from "../sdk/output-parser.js";
 import { recordDegradation } from "../shared-session/degradation-log.js";
 import { annotateDegraded, degradationNotice } from "../shared-session/notice.js";
@@ -307,6 +308,124 @@ export function esInterrupcionDelDuenio(detalle: string | undefined): boolean {
   return /interrup|interrupt|aborted by user|turn_aborted|cancell?ed by user/i.test(detalle);
 }
 
+/**
+ * Diagnósticos que un CLI imprime EN VEZ DE TRABAJAR.
+ *
+ * Cada patrón sale de un fallo medido en `deliveries.last_error` de producción y todos cumplen
+ * el mismo criterio de admisión: son cosas que el binario sólo puede decir DURANTE SU PROPIO
+ * ARRANQUE —la configuración que lee una vez, la sesión que resuelve antes del turno, su propia
+ * línea de órdenes—, y que son estructuralmente imposibles una vez que el turno empezó.
+ *
+ * Es una lista BLANCA y ese es el punto: lo que no coincide sigue siendo ambiguo. Un `panic`, un
+ * OOM, un stack de Node a mitad de turno no coinciden con ninguno de estos y por lo tanto siguen
+ * sin reintentarse, que es lo correcto. Y nunca decide sola: quien la llama exige además que el
+ * proceso no haya escrito NI UN BYTE por stdout (ver `nuncaEmpezoElTurno`).
+ *
+ * DELIBERADAMENTE FUERA, aunque son 26 entregas medidas y casi seguro sin efectos:
+ * `quota exhausted` y `no usable credentials found`. Un proveedor se puede agotar A MITAD de
+ * turno, después de que el agente ya escribió archivos o mandó correos, y el texto sería el
+ * mismo. No pasan el criterio de admisión. Ante la duda real, no reintentar.
+ *
+ * Y NO hay ningún patrón temporal. «Murió en menos de 30 s» describe estos fallos pero no los
+ * prueba: una máquina cargada tarda más y un turno real puede morir antes.
+ */
+export function esDiagnosticoDeArranque(detalle: string | undefined): boolean {
+  if (detalle === undefined || detalle === "") return false;
+  return [
+    // Configuración que no parsea. Se lee UNA vez, al arrancar: después del turno es imposible.
+    // `Error loading config.toml: unknown variant \`writes\`` — 173 entregas de argos.
+    /error loading config\.toml/i,
+    /unknown variant `/i,
+    // Resolución de sesión, siempre anterior al turno.
+    // `thread/resume failed: failed to resolve rollout` / `no rollout found` — 81, kant.
+    /thread\/resume[^\n]*fail/i,
+    /no rollout found/i,
+    // `Error: Session ID <uuid> is already in use.` — 21, zeus/vulcano.
+    /session id[^\n]*already in use/i,
+    /no conversation found with session id/i,
+    // El binario no está o no acepta su propia línea de órdenes: no llegó a existir un turno.
+    /\bcommand not found\b/i,
+    /spawn[^\n]*\bENOENT\b/i,
+    /\b(?:unexpected argument|unrecognized (?:option|argument))\b/i,
+    // Nuestros propios puentes, cuando se caen descubriendo módulos (argos, 2026-08-04).
+    /stdin bridge failed[^\n]*(?:modules|import|cannot find)/i,
+  ].some((patron) => patron.test(detalle));
+}
+
+/**
+ * ¿Consta que el turno NUNCA empezó?
+ *
+ * Devuelve `true` sólo con prueba positiva, y la prueba tiene tres partes que se exigen JUNTAS:
+ *
+ *  1. **Ni un byte por stdout.** stdout es el canal donde vive la salida del turno: el JSONL de
+ *     codex, el sobre de los puentes, el JSON de claude. Cero bytes significa que no hay ni un
+ *     fragmento de turno. Si hay algo —aunque `parse` no lo entienda— la entrega es ambigua.
+ *  2. **Salió por su propio pie.** `exitCode` propio, sin señal, sin timeout y sin cancelación.
+ *     Un proceso que matamos nosotros a mitad de camino es ambiguo por definición: pudo estar
+ *     trabajando.
+ *  3. **Una señal positiva de arranque fallido**, de una de estas dos clases:
+ *     a. el TESTIGO del transporte dice que el byte declarado nunca llegó
+ *        (`harnessStarted === false`), o
+ *     b. el propio CLI imprimió un DIAGNÓSTICO DE ARRANQUE (`esDiagnosticoDeArranque`).
+ *
+ * El testigo es de UN SOLO SENTIDO, y por eso las dos clases se suman en vez de exigirse juntas:
+ * `false` PRUEBA que no empezó, pero `true` no prueba que hubo efectos —los puentes propios
+ * escriben su marca antes de la llamada, a propósito, así que un `true` sólo dice «se llegó
+ * hasta la puerta»—. Por eso un diagnóstico de arranque vale aunque el testigo diga `true`: es
+ * el caso de argos, donde el puente ya había marcado y el codex de abajo se rindió leyendo su
+ * `config.toml`. Y `undefined` (sesión compartida, API de OpenClaw) no habilita (a), pero
+ * tampoco bloquea (b).
+ *
+ * Fuera de esto, ambiguo. La garantía *at-most-once* no se toca: lo único que cambia es que el
+ * caso fácil —el que se puede demostrar— deja de tratarse como el caso difícil.
+ */
+export function nuncaEmpezoElTurno(result: CommandRunResult, detalle: string | undefined): boolean {
+  if (result.stdout.length > 0) return false;
+  if (result.timedOut || result.cancelled) return false;
+  if (result.signal !== null || result.exitCode === null) return false;
+  return result.harnessStarted === false || esDiagnosticoDeArranque(detalle);
+}
+
+/**
+ * La misma pregunta cuando el proceso NO salió por su propio pie porque lo cortamos nosotros.
+ *
+ * Sirve para el camino de cancelación (R2), donde exigir «salió solo» sería contradictorio: lo
+ * cortó el apagado del adaptador. Acá la prueba tiene que ser más estricta, no menos, y por eso
+ * sólo vale el TESTIGO del transporte: un diagnóstico de arranque en el stderr de un proceso que
+ * matamos no prueba nada —pudo imprimirlo un descendiente cualquiera mientras el turno corría—.
+ * Sin testigo (`undefined`) la respuesta es «no sé», y no se reintenta.
+ */
+export function elTestigoDiceQueNoEmpezo(result: CommandRunResult): boolean {
+  return result.stdout.length === 0 && result.harnessStarted === false;
+}
+
+/**
+ * ¿Este aborto es el apagado del adaptador?
+ *
+ * `AdapterEngine.stop()` aborta con `AdapterError("SHUTDOWN", …, true)`: el motivo viaja en el
+ * `reason` del `AbortSignal` y ahí sigue estando cuando el transporte lo recoge. Reiniciar un
+ * adaptador es un fallo de INFRAESTRUCTURA, no un veredicto sobre el trabajo.
+ */
+export function abortadoPorApagado(signal: AbortSignal): boolean {
+  const reason: unknown = signal.reason;
+  return reason instanceof AdapterError && reason.code === "SHUTDOWN" && reason.retryable;
+}
+
+/**
+ * Quita la marca de arranque del stderr antes de que se convierta en causa visible.
+ *
+ * La marca es protocolo interno entre el puente y el runner; el operador que lee `last_error`
+ * no tiene por qué verla, y peor: contaría como texto útil y desplazaría la causa real dentro
+ * del presupuesto de caracteres.
+ */
+export function sinMarcaDeArranque(stderr: string): string {
+  if (!stderr.includes(HARNESS_START_MARKER)) return stderr;
+  return stderr
+    .split(/\r?\n/u)
+    .filter((linea) => linea.trim() !== HARNESS_START_MARKER)
+    .join("\n");
+}
+
 export function protocolPrompt(
   prompt: string,
   origin: RelayOrigin | undefined,
@@ -435,6 +554,13 @@ export interface HarnessExecuteRequest {
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
   readonly origin?: RelayOrigin;
+  /**
+   * Se invoca en el instante en que el harness demuestra que arrancó. `AdapterEngine` lo usa
+   * para sellar `execution_started_at` con el PRIMER BYTE del harness en vez de con el `spawn`.
+   * Sólo llega para harness con testigo declarado; sin él nunca se llama y el motor sella la
+   * marca antes de invocar, como siempre.
+   */
+  readonly onHarnessStart?: () => void;
 }
 
 export interface HarnessSessionReservation {
@@ -489,6 +615,21 @@ export class HarnessAdapter {
       && (this.definition.id !== "opencode" || this.sessionNamespace !== "kant")) {
       throw new Error("Canonical OpenCode session publication is restricted to alias 'kant'");
     }
+  }
+
+  /**
+   * ¿Esta combinación de harness y transporte puede decir cuándo arrancó el turno?
+   *
+   * Hacen falta LOS DOS: el harness tiene que declarar qué byte suyo significa «ya estoy
+   * ejecutando», y el transporte tiene que estar en condiciones de verlo. El mismo `codex` puede
+   * correr por un proceso —que atestigua— o por la sesión compartida —que cosecha un panel de
+   * tmux y no ve bytes—, y confundirlos sería el peor error posible en esta dirección: el motor
+   * dejaría de sellar `execution_started_at` y un turno de media hora que pierde su ACK final
+   * volvería a pagarse entero.
+   */
+  get witnessesHarnessStart(): boolean {
+    return this.definition.startWitness !== undefined
+      && this.runner.witnessesHarnessStart === true;
   }
 
   async execute(request: HarnessExecuteRequest): Promise<StructuredOutput> {
@@ -591,6 +732,13 @@ export class HarnessAdapter {
       timeoutMs: request.timeoutMs,
       signal: request.signal,
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
+      // El testigo de arranque y su aviso viajan juntos hasta el transporte: es el transporte el
+      // único que ve los bytes del harness, y por lo tanto el único que puede decir cuándo
+      // empezó de verdad. Un runner que no los entienda los ignora y todo sigue como antes.
+      ...(this.definition.startWitness === undefined
+        ? {}
+        : { startWitness: this.definition.startWitness }),
+      ...(request.onHarnessStart === undefined ? {} : { onHarnessStart: request.onHarnessStart }),
     });
     // Se consume PEGADO a la ejecución, no más tarde: si el turno falla y se lanza una excepción,
     // el aviso no puede quedarse guardado y contaminar el turno siguiente, que quizá sí compartió.
@@ -613,6 +761,20 @@ export class HarnessAdapter {
     // trabajo YA PAGADO: exactamente la multiplicación de entregas del incidente. La
     // ambigüedad del estado es real; lo que faltaba era decir POR QUÉ se cortó.
     if (result.cancelled || request.signal.aborted) {
+      // R2. Un apagado del adaptador que corta un turno que NO había empezado es un fallo de
+      // infraestructura, no un veredicto sobre el trabajo: `engine.stop()` ya lo marca
+      // `retryable`, y era el reetiquetado a `..._AMBIGUOUS` de esta línea el que tiraba ese
+      // `retryable` a la basura (el esquema prohíbe reintentar un código ambiguo) y mataba la
+      // entrega en el intento 1. Sigue haciendo falta la PRUEBA de que no empezó: un apagado a
+      // mitad de turno sigue siendo ambiguo y sigue sin reintentarse.
+      if (abortadoPorApagado(request.signal) && elTestigoDiceQueNoEmpezo(result)) {
+        throw new ProcessExecutionError(
+          "EXECUTION_CANCELLED_PREFLIGHT",
+          `Adapter shutdown cancelled the delivery before the harness began; nothing was executed (${
+            cancellationMessage(request.signal)})`,
+          true,
+        );
+      }
       throw new ProcessExecutionError(
         "EXECUTION_CANCELLED_AMBIGUOUS",
         cancellationMessage(request.signal),
@@ -626,7 +788,22 @@ export class HarnessAdapter {
     } catch (error) {
       if (result.exitCode !== 0) {
         // Extract real cause from stderr, sanitized to avoid leaking secrets
-        const causeDetail = sanitizeProcessOutput(result.stderr);
+        const causeDetail = sanitizeProcessOutput(sinMarcaDeArranque(result.stderr));
+        // R1. El caso que se llevaba el trabajo por delante: el harness reventó ANTES de
+        // empezar —config que no parsea, sesión que no existe, credencial ausente— y el
+        // sistema lo trataba igual que a un turno que pudo haber terminado. Efectos: cero.
+        // Reintentar no repite nada, y no reintentar pierde el encargo para siempre.
+        if (nuncaEmpezoElTurno(result, causeDetail)) {
+          const detalle = causeDetail
+            ? `: ${causeDetail}`
+            : "; the transport witnessed that it never started";
+          throw new ProcessExecutionError(
+            "PROCESS_EXIT_PREFLIGHT",
+            `Harness exited with code ${result.exitCode} before beginning the turn,`
+            + ` without producing any output${detalle}`,
+            true,
+          );
+        }
         const message = causeDetail
           ? `Harness exited with code ${result.exitCode} without structured output: ${causeDetail}`
           : "Harness exited after execution began without structured output; completion state is unknown";
@@ -639,8 +816,10 @@ export class HarnessAdapter {
       throw error;
     }
     if (result.exitCode !== 0 && parsed.output.status !== "failed") {
-      // Extract real cause from stderr
-      const causeDetail = sanitizeProcessOutput(result.stderr);
+      // Extract real cause from stderr. No hay rama de pre-vuelo acá y no es un olvido: si
+      // `parse` tuvo éxito, el harness escribió salida estructurada, o sea que el turno
+      // existió. `nuncaEmpezoElTurno` exige stdout vacío y devolvería `false` igual.
+      const causeDetail = sanitizeProcessOutput(sinMarcaDeArranque(result.stderr));
       const message = causeDetail
         ? `Harness exited with code ${result.exitCode}: ${causeDetail}`
         : "Harness exited with a non-zero status after execution began; completion state is unknown";

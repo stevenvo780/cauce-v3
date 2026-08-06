@@ -227,12 +227,49 @@ export interface CommandInvocation {
   readonly harness: HarnessId;
 }
 
+/**
+ * Marca que los puentes propios (`bridge/*.mjs`, `bridge/*.py`) escriben en stderr JUSTO ANTES
+ * de la llamada que puede tener efectos. No va por stdout a propósito: stdout es el contrato
+ * estructurado del turno y `definition.parse` lo lee entero.
+ *
+ * La POSICIÓN es todo el arreglo. Si la marca saliera tarde —al primer byte que el harness
+ * imprime, por ejemplo— un turno que se cayó a la mitad sin llegar a imprimir quedaría marcado
+ * como «nunca arrancó» y se reintentaría trabajo ya pagado. Sale temprano: como mucho se pierde
+ * un reintento legítimo, nunca se repite un efecto.
+ */
+export const HARNESS_START_MARKER = '<<cauce:harness-started>>';
+
+/**
+ * Cómo sabe el transporte que el harness EMPEZÓ a ejecutar de verdad.
+ *
+ * Es por harness porque la respuesta depende de qué escribe cada CLI y cuándo:
+ *  - `stdout-first-byte`: el CLI emite eventos según avanza el turno (codex `--json` escribe su
+ *    primer evento de hilo antes de cualquier llamada al modelo). Cero bytes en stdout prueba
+ *    entonces que el turno no empezó.
+ *  - `stderr-marker`: el harness lo invoca un puente NUESTRO, que escribe `HARNESS_START_MARKER`
+ *    en stderr inmediatamente antes de la llamada efectiva.
+ *  - ausente: no hay manera de atestiguarlo (claude `--print --output-format json` sólo escribe
+ *    al final, y un turno completo que muere antes de imprimir es indistinguible de uno que
+ *    nunca arrancó). Sin testigo NO se degrada nada: la entrega sigue siendo ambigua, que es el
+ *    comportamiento de siempre.
+ */
+export type HarnessStartWitness =
+  | { readonly kind: 'stdout-first-byte' }
+  | { readonly kind: 'stderr-marker'; readonly marker: string };
+
 export interface CommandRunRequest extends CommandInvocation {
   readonly stdin: string;
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
   /** Internal native session id; never logged or sent as a credential. */
   readonly sessionId?: string;
+  /** Testigo declarado por el harness. Ausente = el transporte no atestigua nada. */
+  readonly startWitness?: HarnessStartWitness;
+  /**
+   * Se invoca UNA sola vez, en el instante exacto en que el testigo se cumple. Es lo que permite
+   * que `execution_started_at` se selle con el primer byte del harness y no con el `spawn`.
+   */
+  readonly onHarnessStart?: () => void;
 }
 
 export interface CommandRunResult {
@@ -242,6 +279,13 @@ export interface CommandRunResult {
   readonly signal: NodeJS.Signals | null;
   readonly timedOut: boolean;
   readonly cancelled: boolean;
+  /**
+   * Veredicto del testigo de arranque. `true` se cumplió, `false` NO se cumplió (prueba positiva
+   * de que el turno no empezó), `undefined` este transporte no atestigua —el runner de sesión
+   * compartida y el cliente HTTP de OpenClaw no ven bytes del proceso—. `undefined` se trata
+   * siempre como ambiguo.
+   */
+  readonly harnessStarted?: boolean;
 }
 
 export interface HarnessAttachment {
@@ -254,6 +298,18 @@ export interface HarnessAttachment {
 }
 
 export interface CommandRunner {
+  /**
+   * `true` sólo si este transporte VE los bytes del harness y por lo tanto puede cumplir el
+   * `startWitness` que declara el harness. Lo cumple el runner de procesos y nadie más: el de
+   * sesión compartida cosecha un panel de tmux y el cliente HTTP de OpenClaw recibe una
+   * respuesta entera, así que ninguno de los dos puede decir cuándo salió el primer byte.
+   *
+   * Ausente = no atestigua, y ése es el default correcto: el motor entonces sella
+   * `execution_started_at` antes de invocar, como siempre. Si esto se declarara de más, un turno
+   * largo que perdiera su ACK final quedaría marcado como «nunca arrancó» y el reaper lo
+   * volvería a pagar entero.
+   */
+  readonly witnessesHarnessStart?: boolean;
   run(request: CommandRunRequest): Promise<CommandRunResult>;
 }
 
@@ -322,11 +378,20 @@ export interface AdapterLog {
      * la única señal de que se perdió la memoria sería que el agente responde raro, que fue
      * exactamente cómo se descubrió la pérdida de los 38 MB de kant.
      */
-    | 'shared_session_resume';
+    | 'shared_session_resume'
+    /**
+     * El puente que este adaptador va a ejecutar NO escribe la marca de arranque, así que su
+     * testigo se apaga y todo fallo sin salida estructurada vuelve a ser ambiguo. Es la señal de
+     * un despliegue a medias (`CAUCE_*_BRIDGE` apuntando fuera del paquete): degrada el ahorro,
+     * nunca la corrección, pero hay que verlo.
+     */
+    | 'harness_start_witness_disabled';
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;
   alias?: string;
+  /** Qué harness ejecuta este adaptador. No es secreto y nunca lleva argumentos ni prompt. */
+  harness?: HarnessId;
   attempt?: number;
   error_code?: string;
   error_message?: string;
@@ -363,6 +428,11 @@ export interface HarnessDefinition {
   readonly baseArgs: readonly string[];
   readonly capabilities: AdapterCapabilities;
   readonly sessionStrategy: SessionStrategy;
+  /**
+   * Qué byte de este harness significa «ya estoy ejecutando». Ausente = no se puede atestiguar,
+   * y entonces todo fallo sin salida estructurada sigue siendo ambiguo. Ver `HarnessStartWitness`.
+   */
+  readonly startWitness?: HarnessStartWitness;
   sessionArgs(context: HarnessExecutionContext): readonly string[];
   parse(stdout: string): ParsedHarnessOutput;
 }

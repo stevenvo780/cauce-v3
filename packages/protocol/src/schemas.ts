@@ -30,6 +30,48 @@ export function isAmbiguousAckErrorCode(code: unknown): code is AmbiguousAckErro
   return AmbiguousAckErrorCodeSchema.safeParse(code).success;
 }
 
+/**
+ * PRE-VUELO: el harness murió SIN haber empezado el turno, y consta.
+ *
+ * Son el reverso exacto de los ambiguos. Un código ambiguo dice «no sabemos si hubo efectos» y
+ * por eso es terminal; uno de pre-vuelo dice «sabemos que NO los hubo», y por eso vuelve al
+ * circuito de reintento en vez de morir en el intento 1. La garantía *at-most-once* no se
+ * relaja: lo que cambia es que ahora hay una manera de DEMOSTRAR el caso fácil, y sólo se usa
+ * cuando la prueba existe.
+ *
+ * La prueba nunca es el tiempo. Son dos señales positivas, y las dos exigen además que el
+ * proceso no escribiera ni un byte por stdout, que es el canal donde vive la salida del turno
+ * (`packages/adapter-sdk/src/harnesses/shared.ts`):
+ *   1. el TESTIGO de arranque del transporte: el harness declara qué byte suyo significa «ya
+ *      estoy ejecutando» y el runner atestigua que nunca llegó (`CommandRunResult.harnessStarted`);
+ *   2. el DIAGNÓSTICO DE ARRANQUE que el propio CLI imprime en vez de trabajar —config que no
+ *      parsea, sesión que no existe, binario ausente, argumento que no entiende—, de una lista
+ *      blanca de mensajes que son imposibles una vez que el turno empezó.
+ *
+ * NUNCA pueden solaparse con `AMBIGUOUS_ACK_ERROR_CODES`: `BaseAckSchema` descarta
+ * `retryable:true` junto a un código ambiguo, así que un código en las dos listas volvería a
+ * morir en el primer intento y encima en silencio. `assertPreflightCodesAreNotAmbiguous` lo
+ * comprueba al cargar el módulo para que ese error no pueda llegar a producción.
+ */
+export const PREFLIGHT_ACK_ERROR_CODES = [
+  'PROCESS_EXIT_PREFLIGHT',
+  'EXECUTION_CANCELLED_PREFLIGHT'
+] as const;
+export const PreflightAckErrorCodeSchema = z.enum(PREFLIGHT_ACK_ERROR_CODES);
+export type PreflightAckErrorCode = z.infer<typeof PreflightAckErrorCodeSchema>;
+
+export function isPreflightAckErrorCode(code: unknown): code is PreflightAckErrorCode {
+  return PreflightAckErrorCodeSchema.safeParse(code).success;
+}
+
+function assertPreflightCodesAreNotAmbiguous(): void {
+  const overlap = PREFLIGHT_ACK_ERROR_CODES.filter((code) => isAmbiguousAckErrorCode(code));
+  if (overlap.length > 0) {
+    throw new Error(`Preflight ACK codes must never be ambiguous: ${overlap.join(', ')}`);
+  }
+}
+assertPreflightCodesAreNotAmbiguous();
+
 export const DeliveryStateSchema = z.enum([
   'pending', 'leased', 'accepted', 'started', 'done', 'failed', 'retry', 'dead'
 ]);

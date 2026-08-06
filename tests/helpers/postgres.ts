@@ -26,7 +26,43 @@ async function waitForDatabase(pool: DatabasePool): Promise<void> {
   throw lastError;
 }
 
+/**
+ * Base ya existente indicada por `CAUCE_TEST_DATABASE_URL`, para entornos sin Docker.
+ *
+ * Los contenedores de la flota no exponen socket de Docker, así que sin esto la suite del store
+ * no se puede correr donde se escribe el código: el cambio se prueba recién en CI, que es tarde.
+ * La base la provee y la limpia quien exporta la variable; `resetTestDatabase` sigue siendo el
+ * que deja cada test aislado. Sin la variable no cambia nada: se levanta el contenedor de
+ * siempre.
+ */
+function externalDatabase(): string | undefined {
+  const url = process.env.CAUCE_TEST_DATABASE_URL;
+  return url === undefined || url === '' ? undefined : url;
+}
+
+/** El contrato mínimo que las suites usan del contenedor, para la base externa. */
+function detachedContainer(): StartedTestContainer {
+  const noop = async (): Promise<void> => undefined;
+  return {
+    stop: noop,
+    restart: noop,
+    getHost: () => 'external',
+  } as unknown as StartedTestContainer;
+}
+
 export async function startTestDatabase(): Promise<TestDatabase> {
+  const external = externalDatabase();
+  if (external !== undefined) {
+    const pool = createPool(external);
+    try {
+      await waitForDatabase(pool);
+      await applyMigrations(pool);
+      return { container: detachedContainer(), pool, url: external };
+    } catch (error) {
+      await pool.end();
+      throw error;
+    }
+  }
   const password = randomUUID();
   const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
   let builder = new GenericContainer('postgres:16-alpine')

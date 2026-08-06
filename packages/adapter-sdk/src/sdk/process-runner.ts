@@ -84,6 +84,11 @@ function signalProcessGroup(
  * environment, stdin, stdout and stderr.
  */
 export class SpawnCommandRunner {
+  /**
+   * Éste es el único transporte que ve los bytes del harness mientras salen, así que es el único
+   * que puede cumplir un `startWitness`. Ver `CommandRunner.witnessesHarnessStart`.
+   */
+  readonly witnessesHarnessStart = true;
   private readonly killGraceMs: number;
   private readonly maxOutputBytes: number;
   private readonly orphanPipeGraceMs: number;
@@ -142,6 +147,22 @@ export class SpawnCommandRunner {
       const pid = child.pid;
       let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
       let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+      // El testigo arranca en `false` —o sea «hasta ahora consta que NO empezó»— y sólo pasa a
+      // `true` cuando el byte declarado aparece. Sin testigo declarado queda `undefined`, que
+      // río abajo significa «no sé» y se trata como ambiguo.
+      const witness = request.startWitness;
+      let harnessStarted: boolean | undefined = witness === undefined ? undefined : false;
+      const noteHarnessStart = (): void => {
+        if (harnessStarted !== false) return;
+        harnessStarted = true;
+        try {
+          request.onHarnessStart?.();
+        } catch {
+          // Sellar la marca de arranque es un efecto colateral del transporte: si el llamador
+          // falla al anotarla, la ejecución del turno no se toca. Fallar acá convertiría un
+          // problema de observabilidad en una entrega perdida.
+        }
+      };
       let timedOut = false;
       let cancelled = false;
       let outputExceeded = false;
@@ -173,6 +194,7 @@ export class SpawnCommandRunner {
           signal: exitSignal,
           timedOut,
           cancelled,
+          ...(harnessStarted === undefined ? {} : { harnessStarted }),
         });
       };
 
@@ -238,9 +260,14 @@ export class SpawnCommandRunner {
 
       child.stdout.on("data", (chunk: Buffer) => {
         stdout = collect(stdout, chunk);
+        if (witness?.kind === "stdout-first-byte" && chunk.byteLength > 0) noteHarnessStart();
       });
       child.stderr.on("data", (chunk: Buffer) => {
         stderr = collect(stderr, chunk);
+        // Se busca sobre el acumulado y no sobre el trozo: la marca puede llegar partida en dos
+        // lecturas, y buscarla sólo en el trozo la perdería justo cuando el turno SÍ arrancó —
+        // el lado caro del error.
+        if (witness?.kind === "stderr-marker" && stderr.includes(witness.marker)) noteHarnessStart();
       });
 
       const timeout = setTimeout(() => terminate("timeout"), request.timeoutMs);
