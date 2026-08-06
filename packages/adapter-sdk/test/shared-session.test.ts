@@ -1492,6 +1492,15 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
     // Presupuesto enorme (como las 24 h reales), corte de correlación corto.
     turnTimeoutMs: 60 * 60_000,
     correlationTimeoutMs: 20,
+    // Desde `fix/fusion-turnos-20260806` soltar un pegado perdido exige DOS cosas: que venza el
+    // plazo de correlación Y que el registro lleve `quietTimeoutMs` sin crecer. Recortar sólo el
+    // primero ya no acorta nada: el silencio se quedaba en su default de 5 min y este test tardaba
+    // 300 s de reloj —medido: 300003 ms, el 90 % de toda la suite de adapter-sdk— y bajo carga
+    // arrastraba a dos tests de `engine-session-queue` a `cancelledByParent`.
+    //
+    // En producción NO cambia nada y por eso alcanza con calibrar el test: con los defaults los dos
+    // plazos arrancan juntos en t0 y vencen juntos a los 5 min, que es lo que este test comprueba.
+    quietTimeoutMs: 20,
   });
 
   const outcome = await runner.run({
