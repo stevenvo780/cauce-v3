@@ -8,6 +8,7 @@ import { HarnessAdapter } from "../src/harnesses/shared.js";
 import { claudeDefinition, codexDefinition } from "../src/harnesses/index.js";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "../src/sdk/types.js";
 import type { TmuxController, TmuxResult } from "../src/shared-session/tmux.js";
+import { withoutLifecycleIdentity } from "../src/shared-session/tmux.js";
 import { PasteSessionRunner, turnBudgetMs } from "../src/shared-session/paste-runner.js";
 import { CONTEXT_MARK, DEGRADED_MARK, RESET_MARK } from "../src/shared-session/notice.js";
 import { readDegradations } from "../src/shared-session/degradation-log.js";
@@ -786,6 +787,30 @@ test("la caja de entrada se reconoce ocupada en los casos medidos", () => {
   // Fallar cerrado: sin panel legible no se inyecta.
   assert.equal(inputBoxState(undefined).occupied, true);
   assert.equal(inputBoxState("sin caja de entrada").occupied, true);
+});
+
+test("tmux no hereda la identidad de ciclo de vida del adaptador", () => {
+  // Si la hereda, el servidor de tmux se demoniza con ella puesta, el supervisor lo ve como
+  // proceso no rastreado y el alias no se puede reiniciar NUNCA MAS (exit 78, unidad `failed`,
+  // adaptador viejo vivo). Medido en atlas y dedalo el 2026-08-06.
+  const limpio = withoutLifecycleIdentity({
+    CAUCE_ALIAS: "atlas",
+    CAUCE_STATE_DIR: "/home/dev/.local/state/cauce-v3/atlas",
+    CAUCE_CONTROL_DIR: "/home/dev/.local/state/cauce-v3/atlas/control",
+    CAUCE_CONTAINER_ID: "cauce-atlas",
+    CAUCE_CONTAINER_GENERATION: "2d15ee55",
+    PATH: "/usr/bin",
+    HOME: "/home/dev",
+  });
+  // Las CINCO de `IDENTITY_ENV_KEYS`, no solo las tres que hoy mira el barrido de /proc.
+  assert.equal(limpio.CAUCE_ALIAS, undefined);
+  assert.equal(limpio.CAUCE_STATE_DIR, undefined);
+  assert.equal(limpio.CAUCE_CONTROL_DIR, undefined);
+  assert.equal(limpio.CAUCE_CONTAINER_ID, undefined);
+  assert.equal(limpio.CAUCE_CONTAINER_GENERATION, undefined);
+  // El resto del entorno NO se toca: la TUI arranca con lo que le hace falta.
+  assert.equal(limpio.PATH, "/usr/bin");
+  assert.equal(limpio.HOME, "/home/dev");
 });
 
 test("el vallado Markdown se quita solo cuando envuelve todo el texto", () => {
