@@ -64,6 +64,38 @@ la decisión de producto mínima; todo lo demás lo sigue acotando `memberships`
 porque `/v3/console/access` intersecta los permisos del usuario con los que la base le concede a
 su `tenant/alias`. Un rol mal puesto en `console_users` no puede escalar por encima de la base.
 
+### 🔴 El certificado del proxy NO reemplaza a una sesión (medido el 2026-08-06)
+
+Encender `CAUCE_AUTH_PROVIDER=password` **no alcanzaba**. Medido en producción con el login ya
+encendido, `/v3/console/*` y `/v3/status` seguían devolviendo **200 sin cookie de sesión**: unos
+850 KB de entregas, mensajes, auditoría, colas, cuotas y salas de los **cinco** tenants a cualquiera
+que llegara al proxy.
+
+El mecanismo, que no se ve leyendo sólo el código del login:
+
+1. El listener del gateway exige certificado de cliente (`rejectUnauthorized: true`), así que desde
+   internet no se le llega: probado, el handshake muere (`curl` devuelve `000`).
+2. Pero el nginx de la consola **sí** tiene un certificado, y lo presenta en TODO lo que proxea.
+   Ese certificado está provisionado en `mtls_identities.json` como `Steven:kant`,
+   `channel: console`, rol `operator`.
+3. `PasswordAuthProvider.handles()` es "¿trae cookie?". Sin cookie, el request cae al `fallback`
+   mTLS → resuelve el certificado del proxy → entra como operador.
+
+O sea: **el login era una cortina de la SPA** (`AuthGate` escondía la interfaz) y lo único que
+tapaba la API era el `basic_auth` de Caddy. Por eso nadie lo había notado.
+
+El arreglo está en `PasswordAuthProvider`: el certificado del proxy es una credencial de
+**transporte** ("soy la consola"), no una autorización para leer la flota. Cuando el login está
+encendido, un principal de máquina cuyo `channel` sea el de la consola **no** sustituye a una
+sesión y el request muere en 401. La puerta está *después* de resolver la identidad de máquina, no
+en una lista de rutas: cubre toda ruta presente y futura sin que haya que acordarse de nada.
+
+Lo que NO se toca, y es la mitad que importa no romper: los adaptadores (`channel: adapter`) y el
+recolector de cuotas siguen entrando por su propio certificado, y las rutas
+`/v3/terminal/relay/*` se autorizan con su token sin pasar por este proveedor. Verificado tras el
+despliegue: los 16 alias de los 5 tenants latiendo, y entregas aceptadas y arrancadas por agentes
+de Steven, Miguel, Pablo, Jhon e Isa.
+
 ### Conviven `password` y `mtls` en el mismo proceso — probado
 
 Era la pregunta abierta de la versión anterior de este documento ("si no conviven, la consola
@@ -124,6 +156,16 @@ Los pasos 1 y 2 ya están hechos. Del 3 en adelante, no.
    **No se aplicó a propósito**: quitarla ANTES de encender `CAUCE_AUTH_PROVIDER=password` deja
    todas las sesiones PTY sin atribuir y cierra los destinos de otros tenants
    (`attribution_required`). Va en el mismo despliegue que el paso 4, no antes.
+
+   🔴 **Y arrastra las concesiones del PTY**: con la cabecera, el operador era la cadena fija
+   `steven`, y así están escritas las 15 concesiones de `/etc/cauce-v3/terminal/grants.json`. Con
+   el login, `operator_id` pasa a ser el **correo** de `console_users` (`principalFor` →
+   `operator_id: user.email`), así que ninguna concesión casa y **todos los destinos contestan
+   `authorized:false`** aunque la sesión sea válida. Hay que duplicar cada concesión con el correo
+   de la cuenta. Hecho el 2026-08-06 para `steven@elenxos.com`, dejando las de `steven` (inertes,
+   pero permiten volver atrás si se repone la cabecera). Medido después: 15/15 destinos
+   `authorized: true, reason: ok` en los cinco tenants. **Si la cuenta se crea con otro correo,
+   hay que repetir esto con ese correo.**
 
 7. **Sacar el basic auth y la cabecera de Caddy** (`/etc/caddy/Caddyfile` en `agora-storage`,
    fuera del repositorio), en el mismo cambio o quedan dos puertas y la nueva no aporta:

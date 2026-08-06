@@ -218,6 +218,26 @@ export interface PasswordAuthProviderOptions {
   cookieName?: string;
   now?: () => number;
   throttle?: LoginThrottle;
+  /**
+   * Canal de los principales de MÁQUINA que no pueden pasar por una persona.
+   *
+   * El proxy de la consola (nginx) le habla al gateway con SU propio certificado de cliente, y ese
+   * certificado está provisionado en el registro mTLS como `Steven:kant`, `channel: console`,
+   * rol `operator`. Sin esta puerta, un request del navegador SIN cookie de sesión cae al
+   * `fallback` mTLS, presenta el certificado del proxy y el gateway lo atiende como operador: se
+   * medió el 2026-08-06 y `/v3/console/*` devolvía las entregas, los mensajes, la auditoría y las
+   * salas de los CINCO tenants a cualquiera que llegara al proxy. El login quedaba de cortina: la
+   * SPA escondía la interfaz, pero la API seguía abierta y lo único que la tapaba era el basic
+   * auth de Caddy.
+   *
+   * La regla: el certificado del proxy es una credencial de TRANSPORTE ("soy la consola"), no una
+   * autorización para leer la flota. Cuando el login humano está encendido, todo lo que llegue por
+   * el canal de la consola necesita sesión. Los adaptadores (`channel: adapter`) y el recolector
+   * de cuotas no se tocan: siguen entrando por su propio certificado, que es el "no rompas el
+   * mTLS". Las rutas del relay de terminal tampoco, porque se autorizan con su token y ni pasan
+   * por este proveedor.
+   */
+  machineChannelRequiringSession?: string;
 }
 
 interface LoadedSession {
@@ -236,6 +256,7 @@ export class PasswordAuthProvider implements AuthProvider {
   private readonly sessionTtlMs: number;
   private readonly now: () => number;
   private readonly throttle: LoginThrottle;
+  private readonly machineChannelRequiringSession: string;
   private readonly requestCache = new WeakMap<FastifyRequest, LoadedSession>();
 
   constructor(options: PasswordAuthProviderOptions) {
@@ -255,6 +276,21 @@ export class PasswordAuthProvider implements AuthProvider {
     }
     this.now = options.now ?? Date.now;
     this.throttle = options.throttle ?? new LoginThrottle();
+    this.machineChannelRequiringSession = options.machineChannelRequiringSession ?? 'console';
+  }
+
+  /**
+   * Todo lo que no trae cookie pasa por acá, y sale con la identidad de MÁQUINA del `fallback`.
+   * El canal de la consola es la excepción: ahí hay una persona del otro lado y la persona tiene
+   * que estar autenticada, no basta con que el proxy sepa presentar su certificado.
+   */
+  private async viaFallback(resolve: (provider: AuthProvider) => Promise<Principal>): Promise<Principal> {
+    if (!this.fallback) throw new AuthError('se requiere la cookie de sesión de la consola');
+    const machine = await resolve(this.fallback);
+    if (machine.channel === this.machineChannelRequiringSession) {
+      throw new AuthError('se requiere la cookie de sesión de la consola');
+    }
+    return machine;
   }
 
   async ready(): Promise<void> {
@@ -310,16 +346,14 @@ export class PasswordAuthProvider implements AuthProvider {
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
     if (!this.handles(request)) {
-      if (!this.fallback) throw new AuthError('se requiere la cookie de sesión de la consola');
-      return this.fallback.authenticateHttp(request);
+      return this.viaFallback((provider) => provider.authenticateHttp(request));
     }
     return (await this.load(request)).principal;
   }
 
   async authenticateHello(request: FastifyRequest, hello: Parameters<AuthProvider['authenticateHello']>[1]): Promise<Principal> {
     if (!this.handles(request)) {
-      if (!this.fallback) throw new AuthError('se requiere la cookie de sesión de la consola');
-      return this.fallback.authenticateHello(request, hello);
+      return this.viaFallback((provider) => provider.authenticateHello(request, hello));
     }
     return (await this.load(request)).principal;
   }

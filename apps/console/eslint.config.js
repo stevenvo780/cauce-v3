@@ -5,8 +5,7 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  // `dist-preview` es la salida del banco de pruebas visual (vite.preview.config.ts), no fuente.
-  { ignores: ['dist', 'dist-preview', 'coverage', 'public/mockServiceWorker.js'] },
+  { ignores: ['dist', 'coverage', 'public/mockServiceWorker.js'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

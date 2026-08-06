@@ -3,4 +3,3 @@ dist/
 coverage/
 *.tsbuildinfo
 .DS_Store
-dist-preview/

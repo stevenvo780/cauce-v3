@@ -68,6 +68,32 @@ class StubAgentProvider implements AuthProvider {
   async authenticateHello(): Promise<Principal> { return this.principal(); }
 }
 
+/**
+ * Doble del certificado de cliente del PROXY de la consola, tal como está provisionado en
+ * producción: `Steven:kant`, `channel: console`, rol `operator`. nginx lo presenta en TODO lo que
+ * proxea, así que sin la puerta del canal un navegador sin sesión entra como operador.
+ */
+class StubConsoleProxyProvider implements AuthProvider {
+  readonly name = 'stub-console-proxy';
+  readonly mode = 'production' as const;
+  calls = 0;
+
+  private principal(): Principal {
+    this.calls += 1;
+    return validatePrincipal({
+      tenant_id: 'Steven',
+      alias: 'kant',
+      session_id: 'mtls:console-client',
+      channel: 'console',
+      roles: ['operator'],
+      permissions: ['route', 'read', 'control']
+    });
+  }
+
+  async authenticateHttp(): Promise<Principal> { return this.principal(); }
+  async authenticateHello(): Promise<Principal> { return this.principal(); }
+}
+
 async function fixture(options: {
   user?: ConsoleUser;
   fallback?: AuthProvider;
@@ -256,6 +282,48 @@ describe('login por contraseña de la consola', () => {
         method: 'POST', url: '/v3/inexistente', headers: { cookie, origin: 'http://localhost' }
       });
       expect(guarded.statusCode).toBe(403);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('el certificado del PROXY de la consola no reemplaza a una sesión: sin cookie, 401', async () => {
+    // Medido en producción el 2026-08-06 con CAUCE_AUTH_PROVIDER=password ya encendido:
+    // `/v3/console/*` devolvía ~850 KB —entregas, mensajes, auditoría y salas de los cinco
+    // tenants— a cualquiera que llegara al proxy, porque el request sin cookie caía al mTLS y el
+    // certificado de nginx está provisionado como operador. El login era una cortina de la SPA.
+    const fallback = new StubConsoleProxyProvider();
+    const test = await fixture({ fallback });
+    try {
+      const anonymous = await test.app.inject({ method: 'GET', url: '/v3/status' });
+      expect(anonymous.statusCode).toBe(401);
+      // Se consultó al fallback: la puerta está DESPUÉS de resolver la identidad de máquina, no
+      // en una lista de rutas que haya que acordarse de actualizar.
+      expect(fallback.calls).toBeGreaterThan(0);
+
+      // Y la pantalla de login sigue siendo alcanzable, o no habría forma de entrar.
+      const session = await test.app.inject({ method: 'GET', url: '/v3/auth/session' });
+      expect(session.statusCode).toBe(200);
+      expect(session.json()).toMatchObject({ authenticated: false, login_mode: 'password' });
+
+      // Con sesión, el mismo endpoint contesta.
+      const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
+      const authenticated = await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } });
+      expect(authenticated.statusCode).toBe(200);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('cerrar la puerta de la consola NO cierra la de los agentes: el adaptador sigue entrando', async () => {
+    // La otra mitad del arreglo, y la que importa no romper: el mismo request sin cookie, con un
+    // principal de canal `adapter`, tiene que seguir pasando. Si esto se rompe, la flota se queda
+    // muda (los adaptadores y el recolector de cuotas entran por su propio certificado).
+    const fallback = new StubAgentProvider();
+    const test = await fixture({ fallback });
+    try {
+      const api = await test.app.inject({ method: 'GET', url: '/v3/status' });
+      expect(api.statusCode).toBe(200);
     } finally {
       await test.app.close();
     }
