@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TopologySnapshot } from '../../api/types';
 import {
   convexHull,
+  footprintsOverlap,
   inflateHull,
   layoutHypergraph,
   pointInPolygon,
@@ -64,6 +65,50 @@ describe('layoutHypergraph', () => {
   it('es determinista: la misma entrada produce exactamente la misma salida', () => {
     // Si esto falla, el grafo se reacomoda en cada refresco y deja de poder compararse consigo mismo.
     expect(layoutHypergraph(SNAPSHOT)).toEqual(layoutHypergraph(SNAPSHOT));
+  });
+
+  /*
+   * Estas dos afirmaciones son el arreglo de "el gráfico de bots es ilegible", escrito como
+   * condición y no como impresión. Antes se comprobaba mirando una captura, que es como se dejó
+   * pasar `#ops.infra` encima de `zeus` durante toda una revisión.
+   */
+  it('ningún par de nodos se pisa: se comprueban las CAJAS reales, no la distancia entre centros', () => {
+    const footprint = { halfWidth: 41, top: -38, bottom: 55 };
+    const model = layoutHypergraph(SNAPSHOT, { width: 1520, height: 950, padding: 52, footprint, labelBand: 30 });
+
+    const pisados: string[] = [];
+    for (let i = 0; i < model.nodes.length; i += 1) {
+      for (let j = i + 1; j < model.nodes.length; j += 1) {
+        const a = model.nodes[i];
+        const b = model.nodes[j];
+        if (footprintsOverlap({ x: a.x, y: a.y }, { x: b.x, y: b.y }, footprint)) {
+          pisados.push(`${a.alias} × ${b.alias}`);
+        }
+      }
+    }
+    expect(pisados, `nodos encimados: ${pisados.join(', ')}`).toEqual([]);
+  });
+
+  it('ninguna etiqueta de sala cae sobre un nodo: va al borde de la región, no a su centroide', () => {
+    const footprint = { halfWidth: 41, top: -38, bottom: 55 };
+    const model = layoutHypergraph(SNAPSHOT, { width: 1520, height: 950, padding: 52, footprint, labelBand: 30 });
+
+    const encima: string[] = [];
+    for (const edge of model.edges) {
+      // Caja generosa de la etiqueta: si con ésta no toca a nadie, con la real tampoco.
+      const texto = `#${edge.roomLabel ?? 'UNKNOWN'}`;
+      const halfWidth = (texto.length * 8.6) / 2 + 4;
+      for (const node of model.nodes) {
+        const solapaX = Math.abs(edge.labelAnchor.x - node.x) < halfWidth + footprint.halfWidth;
+        const solapaY = edge.labelAnchor.y - 15 < node.y + footprint.bottom
+          && node.y + footprint.top < edge.labelAnchor.y + 5;
+        if (solapaX && solapaY) encima.push(`${texto} × ${node.alias}`);
+      }
+      // Y por encima del borde superior de su propia región, que es lo que se pidió.
+      const topeRegion = Math.min(...edge.hull.map((punto) => punto.y));
+      expect(edge.labelAnchor.y, `${texto} quedó dentro de su región`).toBeLessThanOrEqual(topeRegion);
+    }
+    expect(encima, `etiquetas sobre muñecos: ${encima.join(', ')}`).toEqual([]);
   });
 
   it('un alias presente en dos rooms es UN solo nodo con dos hiperaristas', () => {

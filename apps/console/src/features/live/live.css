@@ -61,74 +61,39 @@
 .live-tally-chip .live-tally-swatch { width: 12px; height: 12px; border-radius: 4px; background: var(--accent, var(--faint)); }
 .live-tally-chip strong { font-variant-numeric: tabular-nums; }
 
-/* --------------------------------------------------------------------------- rejilla + arcos */
+/* ------------------------------------------------------------------- lista de agentes
 
-.live-stage { position: relative; }
+   Acá vivían `.live-stage`, `.live-links`, `.live-tenant`, `.live-grid`, `.live-card` y sus
+   animaciones: la segunda representación gráfica de la misma flota (los mismos muñecos agrupados
+   por tenant, con sus propios arcos de delegación) que se dibujaba justo debajo del hipergrafo.
+   Se eliminó entera junto con su JS de medición. Lo que queda es lo que el dibujo no da: una
+   tabla con búsqueda. — 2026-08-06 */
 
-/* El lienzo de las delegaciones va DEBAJO de las tarjetas para que los arcos no roben el clic. */
-.live-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; overflow: visible; }
-.live-link-path { fill: none; stroke: var(--violet); stroke-width: 2; stroke-linecap: round; opacity: .55; stroke-dasharray: 5 7; animation: live-link-flow 1.1s linear infinite; }
-.live-link-head { fill: var(--violet); }
-.live-link-runner { fill: var(--violet); filter: drop-shadow(0 0 6px rgb(179 155 255 / 70%)); }
-
-@keyframes live-link-flow { to { stroke-dashoffset: -24; } }
-
-.live-tenant { position: relative; z-index: 1; display: grid; gap: 12px; }
-.live-tenant + .live-tenant { margin-top: 22px; }
-.live-tenant-title { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: var(--faint); }
-.live-tenant-title span { letter-spacing: normal; text-transform: none; color: var(--muted); font-weight: 400; }
-
-.live-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(212px, 1fr)); }
-
-/* ------------------------------------------------------------------------------- tarjeta */
-
-.live-card {
-  position: relative;
-  display: grid;
-  gap: 6px;
-  justify-items: center;
-  padding: 14px 12px 13px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: linear-gradient(180deg, var(--surface-2), var(--surface));
-  color: inherit;
-  text-align: center;
-  cursor: pointer;
-  transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
-}
-.live-card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 14px 34px rgb(0 0 0 / 32%); }
-.live-card[data-dimmed='true'] { opacity: .28; filter: saturate(.35); }
-.live-card[data-linked='true'] { border-color: var(--violet); box-shadow: 0 0 0 1px var(--violet) inset; }
-
-/* Un borde que respira sólo cuando el agente está en problemas: se ve desde el otro lado del cuarto. */
-.live-card[data-state='blocked'] { border-color: color-mix(in srgb, var(--amber) 55%, var(--border)); animation: live-card-alert 1.6s ease-in-out infinite; }
-.live-card[data-state='down'] { border-color: color-mix(in srgb, var(--red) 45%, var(--border)); background: linear-gradient(180deg, var(--surface), #0a0d16); }
-
-@keyframes live-card-alert {
-  0%, 100% { box-shadow: 0 0 0 0 rgb(245 200 108 / 0%); }
-  50% { box-shadow: 0 0 22px 0 rgb(245 200 108 / 22%); }
-}
-
-.live-card-alias { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .01em; }
-.live-card-harness { color: var(--faint); font-size: 11.5px; }
-.live-card-state { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); font-size: 12px; font-weight: 700; }
-.live-card-numbers { display: flex; gap: 10px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.live-card-numbers b { color: var(--text); font-variant-numeric: tabular-nums; }
-
-/* Contador de delegaciones salientes, pegado a la esquina. */
-.live-card-fanout {
-  position: absolute;
-  top: 9px;
-  right: 9px;
+.activity-search {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--violet) 22%, var(--surface));
-  color: var(--violet);
-  font-size: 11px;
-  font-weight: 700;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.activity-search input {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  min-width: 240px;
+  outline: none;
+}
+
+/* La fila que el hipergrafo está resaltando ahora mismo. Es el mismo estado, leído de los dos
+   lados: pasar el puntero por un muñeco marca su fila, y al revés. */
+tr[data-highlighted='true'] > td {
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
 }
 
 /* =================================================================================
@@ -322,8 +287,9 @@
 .live-legend-item span { color: var(--muted); font-size: 11.5px; line-height: 1.35; }
 
 @media (max-width: 640px) {
-  .live-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-  .live-links { display: none; }
+  .live-legend { grid-template-columns: 1fr; }
+  .activity-search input { min-width: 0; width: 100%; }
+  .activity-search { display: flex; }
 }
 
 /*
@@ -332,7 +298,7 @@
  * accesorio y etiqueta de texto.
  */
 @media (prefers-reduced-motion: reduce) {
-  .agent-avatar *, .live-card, .live-link-path, .live-link-runner, .live-feed-dot {
+  .agent-avatar *, .live-feed-dot, .live-tally-chip {
     animation: none !important;
     transition: none !important;
   }

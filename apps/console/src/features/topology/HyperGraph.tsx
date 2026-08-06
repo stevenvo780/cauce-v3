@@ -1,6 +1,6 @@
 import { useId, useMemo, useState } from 'react';
 import type { TopologySnapshot } from '../../api/types';
-import { layoutHypergraph, type HyperEdge, type HyperNode } from './hypergraph-layout';
+import { aclCaption, layoutHypergraph, type HyperEdge, type HyperNode } from './hypergraph-layout';
 
 /**
  * Hipergrafo de la topología: tenants, rooms y ACL dibujados como lo que son.
@@ -116,17 +116,14 @@ export function HyperGraph({ snapshot }: { snapshot: TopologySnapshot | undefine
         <g className="hg-layer hg-arcs">
           {model.arcs.map((arc) => {
             const tone = arc.enabled === true ? 'ok' : arc.enabled === false ? 'off' : 'unknown';
-            const caps = [
-              arc.allowRoute === true ? 'route' : null,
-              arc.allowRead === true ? 'read' : null,
-              arc.allowControl === true ? 'control' : null,
-            ].filter(Boolean);
             return (
               <g className={`hg-arc is-${tone}`} key={arc.key}>
                 <path d={arc.path} markerEnd={`url(#${uid}-arrow)`} />
                 {arc.enabled === true ? <path className="hg-arc-flow" d={arc.path} /> : null}
-                <text x={arc.midpoint.x} y={arc.midpoint.y - 9} textAnchor="middle">
-                  {caps.length > 0 ? caps.join(' · ') : arc.enabled === false ? 'denegado' : 'UNKNOWN'}
+                {/* El texto sale de `aclCaption`, el mismo que el layout usó para medir su ancho al
+                    repartir las etiquetas. Escribir otro acá reintroduciría los solapamientos. */}
+                <text x={arc.labelAnchor.x} y={arc.labelAnchor.y} textAnchor="middle">
+                  {aclCaption(arc)}
                 </text>
               </g>
             );
@@ -154,8 +151,8 @@ export function HyperGraph({ snapshot }: { snapshot: TopologySnapshot | undefine
             <text
               key={tenant.id}
               className={`hg-tenant hg-hue-${tenant.hue}`}
-              x={tenant.centroid.x}
-              y={tenant.centroid.y}
+              x={tenant.labelAnchor.x}
+              y={tenant.labelAnchor.y}
               textAnchor="middle"
             >
               {tenant.label ?? tenant.id}
@@ -200,7 +197,9 @@ function EdgeShape({ edge, uid, active, dimmed, onEnter, onLeave }: {
       <title>{`#${label} — ${edge.members.length} miembro${edge.members.length === 1 ? '' : 's'}${unknownSuffix}`}</title>
       <path className="hg-edge-fill" d={edge.outline} fill={`url(#${uid}-fill-${edge.hue})`} />
       <path className="hg-edge-line" d={edge.outline} />
-      <text className="hg-edge-label" x={edge.centroid.x} y={edge.centroid.y} textAnchor="middle">
+      {/* Sobre el borde de la región, NO en su centroide: el centroide es exactamente donde están
+          los nodos, así que la etiqueta caía siempre encima de alguno. */}
+      <text className="hg-edge-label" x={edge.labelAnchor.x} y={edge.labelAnchor.y} textAnchor="middle">
         #{label}
       </text>
     </g>

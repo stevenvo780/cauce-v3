@@ -4,7 +4,6 @@ import {
   Bot,
   Boxes,
   CreditCard,
-  Flame,
   GitFork,
   Grid3x3,
   History,
@@ -26,7 +25,6 @@ import { LiveFleetPage } from './features/live/LiveFleetPage';
 import { LicensesPage } from './features/licenses/LicensesPage';
 import { FleetAgentDetailPage } from './features/fleet/FleetAgentDetailPage';
 import { FleetPage } from './features/fleet/FleetPage';
-import { ActivityPage } from './features/activity/ActivityPage';
 import { QuotasPage } from './features/quotas/QuotasPage';
 import { TopologyPage } from './features/topology/TopologyPage';
 import { MessagesPage } from './features/messages/MessagesPage';
@@ -49,11 +47,26 @@ interface Route {
   component: ComponentType;
 }
 
+/**
+ * El menú.
+ *
+ * **"Actividad de la flota"** dejó de existir en 2026-08-06: leía el mismo
+ * `GET /v3/console/activity` que "Sala de máquinas" y lo dibujaba como tabla. Su tabla —que sí
+ * aporta, porque permite buscar un alias por nombre y abrir el detalle de cada entrega— vive ahora
+ * dentro de "Sala de máquinas", alimentada por el snapshot que esa página ya tenía. Antes eran dos
+ * entradas de menú y dos pollings del mismo endpoint.
+ *
+ * Lo que NO se unificó, y por qué: "Sala de máquinas" y "Tenants & ACL" dibujan los dos un
+ * hipergrafo de salas, pero responden preguntas distintas — *quién le está pasando trabajo a quién
+ * ahora* (cambia cada cuatro segundos) contra *quién tiene permiso de hablarle a quién* (cambia
+ * cuando alguien edita la configuración). Las flechas no significan lo mismo: una es una entrega en
+ * vuelo, la otra es una arista ACL. Fundirlas obligaría a elegir cuál de las dos preguntas se
+ * responde peor.
+ */
 const routes: Route[] = [
   { id: 'live', label: 'Sala de máquinas', icon: Sparkles, component: LiveFleetPage },
   { id: 'fleet', label: 'Fleet', icon: RadioTower, component: FleetPage },
   { id: 'licenses', label: 'Licencias y consumo', icon: KeyRound, component: LicensesPage },
-  { id: 'activity', label: 'Actividad de la flota', icon: Flame, component: ActivityPage },
   { id: 'quotas', label: 'Consumo de cuotas', icon: BatteryCharging, component: QuotasPage },
   { id: 'topology', label: 'Tenants & ACL', icon: GitFork, component: TopologyPage },
   { id: 'messages', label: 'Messages', icon: MessageSquareText, component: MessagesPage },

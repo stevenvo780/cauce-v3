@@ -28,12 +28,50 @@ import { layoutHypergraph, type HyperGraphModel, type Point } from '../topology/
 /** Radio del muñeco dentro del lienzo del grafo. */
 const AVATAR = 26;
 
+/**
+ * Lo que ocupa un muñeco de verdad, medido desde su centro.
+ *
+ * No es `AVATAR`. Debajo cuelga el nombre (14 px, hasta ~8 caracteres) y arriba a la derecha
+ * asoma el globo de la cola (r=10 desplazado 22 px). Separar por el radio del avatar dejaba
+ * `zeus` encima de `argos`: los círculos no se tocaban, los nombres sí. Estos tres números son los
+ * que el layout usa para garantizar —y el test para afirmar— que ningún par de muñecos se pisa.
+ */
+const FOOTPRINT = { halfWidth: 41, top: -38, bottom: 55 } as const;
+
+/**
+ * El lienzo crece con la flota en vez de ser una constante.
+ *
+ * 1040×660 alcanzaba para seis alias y quedaba chico para quince: los muñecos entraban, pero
+ * hombro con hombro, y "no se solapan" no es lo mismo que "se leen". Ocho alias caben cómodos en el
+ * lienzo base; a partir de ahí se ensancha 40 px por alias, con un techo para que en una pantalla
+ * normal el dibujo no obligue a desplazarse para ver la mitad derecha.
+ */
+function canvasFor(nodeCount: number): { width: number; height: number } {
+  const width = Math.min(1760, 1240 + Math.max(0, nodeCount - 8) * 40);
+  return { width, height: Math.round(width / 1.6 / 10) * 10 };
+}
+
+/** Cuántos alias distintos declara la topología. Se necesita antes del layout para dimensionarlo. */
+function countAliases(topology: TopologySnapshot | undefined): number {
+  const seen = new Set<string>();
+  for (const tenant of topology?.tenants ?? []) {
+    for (const room of tenant.rooms ?? []) {
+      for (const member of room.members ?? []) if (member.alias) seen.add(member.alias);
+    }
+  }
+  return seen.size;
+}
+
 export interface LiveHypergraphProps {
   topology: TopologySnapshot | undefined;
   views: readonly LiveAgentView[];
   edges: readonly DelegationEdge[];
   /** Alias resaltado (hover/foco en la lista de al lado), en formato `tenant/alias`. */
   focusKey?: string | null;
+  /** Filtro por estado: sólo estos alias quedan a plena intensidad. `null`/ausente = todos. */
+  spotlight?: Set<string> | null;
+  /** La topología todavía está en vuelo. Sin esto, "aún no llegó" se anunciaría como UNKNOWN. */
+  loadingTopology?: boolean;
   onFocus?: (key: string | null) => void;
   onOpen?: (view: LiveAgentView) => void;
 }
@@ -46,14 +84,25 @@ interface Placed {
   view: LiveAgentView | null;
 }
 
-export function LiveHypergraph({ topology, views, edges, focusKey, onFocus, onOpen }: LiveHypergraphProps) {
+export function LiveHypergraph({ topology, views, edges, focusKey, spotlight, loadingTopology, onFocus, onOpen }: LiveHypergraphProps) {
   const byKey = useMemo(() => new Map(views.map((view) => [view.key, view])), [views]);
 
   // El layout es determinista y caro: depende SOLO de la topología, así que se recalcula cuando
   // cambian las salas — no en cada refresco de actividad. Si dependiera de la actividad, los
   // muñecos saltarían de lugar cada diez segundos y sería imposible seguir a nadie con la vista.
   const model: HyperGraphModel = useMemo(
-    () => layoutHypergraph(topology, { width: 1040, height: 660, padding: 46, nodeSpacing: 96 }),
+    () => {
+      const canvas = canvasFor(countAliases(topology));
+      return layoutHypergraph(topology, {
+        ...canvas,
+        padding: 52,
+        // La relajación apunta a la diagonal de la caja del nodo; la pasada de separación final
+        // garantiza el resto. Pedirle sólo el radio del avatar era el bug.
+        nodeSpacing: Math.hypot(FOOTPRINT.halfWidth * 2, FOOTPRINT.bottom - FOOTPRINT.top),
+        footprint: FOOTPRINT,
+        labelBand: 30,
+      });
+    },
     [topology],
   );
 
@@ -73,7 +122,13 @@ export function LiveHypergraph({ topology, views, edges, focusKey, onFocus, onOp
   );
 
   if (model.edges.length === 0) {
-    return (
+    // "Todavía no llegó" y "el servidor no informó nada" no son lo mismo, y confundirlos hace que
+    // la vista afirme UNKNOWN durante los cuatro segundos que tarda la topología en cargar. Un
+    // panel que declara desconocido lo que simplemente no pidió todavía miente, aunque se corrija
+    // solo un segundo después.
+    return loadingTopology ? (
+      <p className="lhg-empty">Leyendo las salas de la topología…</p>
+    ) : (
       <p className="lhg-empty">
         El control plane todavía no informó ninguna sala, así que no hay grupos que dibujar. La
         topología es <strong>UNKNOWN</strong>; los muñecos siguen abajo, en la lista.
@@ -82,6 +137,9 @@ export function LiveHypergraph({ topology, views, edges, focusKey, onFocus, onOp
   }
 
   const vivas = edges.filter((edge) => position.has(edge.from) && position.has(edge.to));
+  // Dos motivos para atenuar, y se combinan: el foco (un alias y con quién habla) y el filtro por
+  // estado de los chips de arriba. Si hay foco manda el foco, porque es una acción del operador
+  // sobre un filtro que ya estaba puesto.
   const activos = new Set<string>();
   if (focusKey) {
     activos.add(focusKey);
@@ -89,6 +147,8 @@ export function LiveHypergraph({ topology, views, edges, focusKey, onFocus, onOp
       if (edge.from === focusKey) activos.add(edge.to);
       if (edge.to === focusKey) activos.add(edge.from);
     }
+  } else if (spotlight) {
+    for (const key of spotlight) activos.add(key);
   }
   const atenuando = activos.size > 0;
 
@@ -98,6 +158,7 @@ export function LiveHypergraph({ topology, views, edges, focusKey, onFocus, onOp
 
   return (
     <div className={`lhg${atenuando ? ' is-focusing' : ''}`}>
+      <div className="lhg-scroll">
       <svg
         className="lhg-svg"
         viewBox={`0 0 ${model.width} ${model.height}`}
@@ -119,7 +180,9 @@ export function LiveHypergraph({ topology, views, edges, focusKey, onFocus, onOp
               <title>{`#${room.roomLabel ?? 'ROOM UNKNOWN'} — ${room.members.length} miembros`}</title>
               <path className="lhg-room-fill" d={room.outline} />
               <path className="lhg-room-line" d={room.outline} />
-              <text className="lhg-room-label" x={room.centroid.x} y={room.centroid.y} textAnchor="middle">
+              {/* En el BORDE de arriba, nunca en el centroide: el centroide es donde están los
+                  muñecos. `labelAnchor` ya viene separado de todo nodo y de toda otra etiqueta. */}
+              <text className="lhg-room-label" x={room.labelAnchor.x} y={room.labelAnchor.y} textAnchor="middle">
                 #{room.roomLabel ?? 'UNKNOWN'}
               </text>
             </g>
@@ -183,6 +246,10 @@ export function LiveHypergraph({ topology, views, edges, focusKey, onFocus, onOp
               >
                 <title>{detalle}</title>
                 <circle className="lhg-bot-hit" r={AVATAR + 8} />
+                {/* Anillo punteado = la topología lo declara y la actividad no lo reporta. Antes
+                    esto se comunicaba bajando la opacidad al 38 %, y el resultado era que no se
+                    leía. La marca va en el CONTORNO; el nombre se deja legible. */}
+                {view ? null : <circle className="lhg-bot-unknown-ring" r={AVATAR + 3} />}
                 <foreignObject x={-AVATAR} y={-AVATAR} width={AVATAR * 2} height={AVATAR * 2}>
                   <div className="lhg-bot-avatar" data-tone={meta.tone}>
                     <AgentAvatar state={estado} overloaded={view?.overloaded ?? false} label={item.alias} />
@@ -200,6 +267,7 @@ export function LiveHypergraph({ topology, views, edges, focusKey, onFocus, onOp
           })}
         </g>
       </svg>
+      </div>
 
       <p className="lhg-legend">
         Cada región es una <strong>sala</strong> y envuelve a todos sus miembros a la vez; un muñeco

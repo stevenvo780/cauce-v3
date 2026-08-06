@@ -1,10 +1,11 @@
 import { Pause, Play, Radio } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import type { FleetActivitySnapshot } from '../../api/types';
 import { Badge, ErrorState, LoadingState, Metric, PageHeader, Panel, Time } from '../../components/ui';
 import { UNKNOWN } from '../../lib';
+import { ActivityExplainers, FleetActivityTable, FleetSignals } from '../activity/ActivityPage';
 import { AgentAvatar } from './AgentAvatar';
 import {
   BURST_MS,
@@ -15,15 +16,27 @@ import {
   humanSeconds,
   rememberFleet,
   stateTally,
-  type DelegationEdge,
   type FleetMemory,
-  type LiveAgentView,
   type LiveState,
   type PulseMap,
 } from './agent-state';
 import { LiveHypergraph } from './LiveHypergraph';
 import './live.css';
 import './live-hypergraph.css';
+
+/**
+ * Sala de máquinas: la única vista de lo que la flota está haciendo ahora mismo.
+ *
+ * Antes esta página dibujaba la flota **dos veces** — el hipergrafo arriba y, debajo, la misma
+ * quincena de muñecos agrupados por tenant con sus propios arcos de delegación — y además existía
+ * una ruta aparte, "Actividad de la flota", que leía el mismo `GET /v3/console/activity` y lo
+ * mostraba como tabla. Tres caras de un solo dato, dos pollings y dos entradas de menú.
+ *
+ * Ahora hay **un solo dibujo** (el hipergrafo, que es el que responde *quién le habla a quién*) y
+ * **una sola tabla** (que responde *cuánto lleva y si avanza*, con búsqueda por alias, que es lo
+ * único que un dibujo hace peor que una lista). La grilla por tenant no aportaba ninguna de las
+ * dos cosas: se eliminó junto con sus arcos, sus refs de medición y su CSS.
+ */
 
 const INTERVALS = [
   { value: 2000, label: 'cada 2 s' },
@@ -42,35 +55,6 @@ const STATE_ACCENT: Record<LiveState, string> = {
   thinking: 'var(--mint)',
   idle: 'var(--faint)',
 };
-
-interface Point { x: number; y: number }
-
-/** Arco dibujado: dos puntos ya resueltos en píxeles del escenario, más su arista de origen. */
-interface DrawnLink { edge: DelegationEdge; from: Point; to: Point; id: string }
-
-function cardAnchor(element: HTMLElement, stage: HTMLElement): Point {
-  const card = element.getBoundingClientRect();
-  const base = stage.getBoundingClientRect();
-  return { x: card.left - base.left + card.width / 2, y: card.top - base.top + card.height / 2 };
-}
-
-/**
- * Curva entre dos tarjetas. Se desplaza perpendicularmente al segmento para que dos aristas
- * opuestas (a→b y b→a) no se dibujen una encima de la otra, y para que el arco no atraviese la
- * tarjeta de origen.
- */
-function arcPath(from: Point, to: Point): { d: string; mid: Point } {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const distance = Math.hypot(dx, dy) || 1;
-  const bow = Math.min(90, distance * 0.28);
-  const control = { x: (from.x + to.x) / 2 - (dy / distance) * bow, y: (from.y + to.y) / 2 + (dx / distance) * bow };
-  const mid = {
-    x: 0.25 * from.x + 0.5 * control.x + 0.25 * to.x,
-    y: 0.25 * from.y + 0.5 * control.y + 0.25 * to.y,
-  };
-  return { d: `M${from.x} ${from.y} Q${control.x} ${control.y} ${to.x} ${to.y}`, mid };
-}
 
 export function LiveFleetPage() {
   const api = useApi();
@@ -133,62 +117,18 @@ export function LiveFleetPage() {
   );
   const tally = useMemo(() => stateTally(views), [views]);
 
-  const byTenant = useMemo(() => {
-    const groups = new Map<string, LiveAgentView[]>();
-    for (const view of views) groups.set(view.tenantId, [...(groups.get(view.tenantId) ?? []), view]);
-    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [views]);
-
-  // --- Arcos de delegación -------------------------------------------------------------------
-  const stageRef = useRef<HTMLDivElement>(null);
-  const cardRefs = useRef(new Map<string, HTMLElement>());
-  const [links, setLinks] = useState<DrawnLink[]>([]);
-
-  const registerCard = useCallback((key: string, element: HTMLElement | null) => {
-    if (element) cardRefs.current.set(key, element);
-    else cardRefs.current.delete(key);
-  }, []);
-
-  const measure = useCallback(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    const drawn: DrawnLink[] = [];
-    edges.forEach((edge, index) => {
-      const from = cardRefs.current.get(edge.from);
-      const to = cardRefs.current.get(edge.to);
-      if (!from || !to) return;
-      drawn.push({
-        edge,
-        id: `${edge.from}->${edge.to}#${edge.deliveryId ?? index}`,
-        from: cardAnchor(from, stage),
-        to: cardAnchor(to, stage),
-      });
-    });
-    setLinks(drawn);
-  }, [edges]);
-
-  useLayoutEffect(() => {
-    measure();
-    const stage = stageRef.current;
-    if (!stage || typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(measure);
-    observer.observe(stage);
-    window.addEventListener('resize', measure);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, [measure]);
-
-  const linkedKeys = useMemo(() => {
-    if (!selected) return new Set<string>();
-    const related = new Set<string>();
-    for (const edge of edges) {
-      if (edge.from === selected) related.add(edge.to);
-      if (edge.to === selected) related.add(edge.from);
-    }
-    return related;
-  }, [edges, selected]);
+  /**
+   * Filtro por estado: `null` = sin filtro.
+   *
+   * Los chips de arriba filtraban la grilla de tarjetas, que ya no existe. En vez de dejarlos
+   * decorativos —un control que no hace nada es peor que no tenerlo— ahora acotan **las dos**
+   * mitades a la vez: atenúan los muñecos que no son de ese estado y reducen las filas de la
+   * tabla a los mismos alias. Un solo filtro para una sola página.
+   */
+  const spotlight = useMemo<Set<string> | null>(() => {
+    if (stateFilter === undefined) return null;
+    return new Set(views.filter((view) => view.state === stateFilter).map((view) => view.key));
+  }, [views, stateFilter]);
 
   const detail = views.find((view) => view.key === selected);
   const feedState = activity.error ? 'error' : intervalMs <= 0 ? 'paused' : 'live';
@@ -198,10 +138,18 @@ export function LiveFleetPage() {
 
   return (
     <div className="live-page">
+      {/*
+        El recuento sale del snapshot, NO de un número escrito a mano.
+        Estaba fijo en 16 mientras la página dibujaba 15 muñecos, contaba 15 filas y el propio
+        `aria-label` del grafo decía 15: cuatro números a la vista y uno distinto de los otros
+        tres. Una cabecera que se contradice con el dibujo que tiene justo debajo hace desconfiar
+        del resto de la pantalla, y con datos reales ese desfase se produce solo cada vez que
+        alguien da de alta o de baja un alias.
+      */}
       <PageHeader
         eyebrow="Flota"
         title="Sala de máquinas"
-        description="Los 16 alias de la flota, cada uno con su muñeco. Quién trabaja, quién delega y quién está trabado se lee sin abrir una sola fila."
+        description={`Los ${views.length} alias de la flota, cada uno con su muñeco. Quién trabaja, quién delega y quién está trabado se lee sin abrir una sola fila.`}
       />
 
       <div className="live-toolbar">
@@ -235,6 +183,16 @@ export function LiveFleetPage() {
         <code> GET /v3/console/activity</code>, y por eso el intervalo se elige a mano y se muestra la hora del servidor.
       </p>
 
+      {/* Una sola fila de contadores para toda la página. Antes había cuatro `Metric` acá y otros
+          cuatro casi iguales en la ruta "Actividad de la flota"; son el mismo `totals`. */}
+      <div className="metrics-grid">
+        <Metric label="Agentes visibles" value={snapshot?.totals?.agents} detail="propio tenant + ACL allow_read" />
+        <Metric label="En vuelo" value={snapshot?.totals?.in_flight} tone="warning" detail="leased + accepted + started" />
+        <Metric label="En cola" value={snapshot?.totals?.queued} detail="pending + retry" />
+        <Metric label="Vencidas en vuelo" value={snapshot?.totals?.overdue_in_flight} tone="danger" detail="ack_deadline_at ya pasó" />
+        <Metric label="Delegaciones vivas" value={edges.length} detail="entregas de un agente en manos de otro" tone={edges.length > 0 ? 'positive' : 'neutral'} />
+      </div>
+
       <div className="live-tally">
         {LIVE_STATES.map((state) => {
           const meta = LIVE_STATE_META[state];
@@ -265,72 +223,24 @@ export function LiveFleetPage() {
           views={views}
           edges={edges}
           focusKey={selected ?? null}
+          spotlight={spotlight}
+          loadingTopology={topology.loading && !topology.data}
           onFocus={(key) => setSelected(key ?? undefined)}
           onOpen={(view) => setSelected(view.key)}
         />
       </Panel>
 
-      <div className="live-stage" ref={stageRef}>
-        <svg className="live-links" aria-hidden="true">
-          {links.map((link) => {
-            const { d, mid } = arcPath(link.from, link.to);
-            return (
-              <g key={link.id}>
-                <path className="live-link-path" d={d} />
-                <circle className="live-link-runner" cx={mid.x} cy={mid.y} r="3.5">
-                  <animateMotion dur="1.6s" repeatCount="indefinite" path={d} />
-                </circle>
-                <circle className="live-link-head" cx={link.to.x} cy={link.to.y} r="3" />
-              </g>
-            );
-          })}
-        </svg>
+      {/* La lista. No vuelve a dibujar delegaciones — para eso está el grafo de arriba. Lo que
+          aporta es lo que un dibujo no da: buscar un alias por nombre y abrir su detalle. */}
+      <FleetActivityTable
+        snapshot={snapshot}
+        selectedKey={selected ?? null}
+        onlyKeys={spotlight}
+        filterLabel={stateFilter ? LIVE_STATE_META[stateFilter].label : undefined}
+        onSelect={(key) => setSelected(key ?? undefined)}
+      />
 
-        {byTenant.map(([tenant, group]) => (
-          <section className="live-tenant" key={tenant}>
-            <h2 className="live-tenant-title">
-              {tenant} <span>{group.length} {group.length === 1 ? 'agente' : 'agentes'}</span>
-            </h2>
-            <div className="live-grid">
-              {group.map((view) => {
-                const meta = LIVE_STATE_META[view.state];
-                const dimmed = stateFilter !== undefined && view.state !== stateFilter;
-                return (
-                  <button
-                    key={view.key}
-                    type="button"
-                    ref={(element) => registerCard(view.key, element)}
-                    className="live-card"
-                    data-state={view.state}
-                    data-dimmed={dimmed ? 'true' : undefined}
-                    data-linked={linkedKeys.has(view.key) ? 'true' : undefined}
-                    style={{ ['--accent' as string]: STATE_ACCENT[view.state] }}
-                    onClick={() => setSelected((current) => (current === view.key ? undefined : view.key))}
-                    aria-pressed={selected === view.key}
-                    title={view.reason}
-                  >
-                    {view.delegatesTo.length > 0 ? (
-                      <span className="live-card-fanout">→ {view.delegatesTo.length}</span>
-                    ) : null}
-                    <AgentAvatar
-                      state={view.state}
-                      overloaded={view.overloaded}
-                      label={`${view.alias}: ${meta.label}. ${view.reason}`}
-                    />
-                    <p className="live-card-alias">{view.alias}</p>
-                    <span className="live-card-state">{meta.label}</span>
-                    <span className="live-card-harness">{view.harnessId ?? UNKNOWN}</span>
-                    <span className="live-card-numbers">
-                      <span>vuelo <b>{view.inFlight}</b></span>
-                      <span>cola <b>{view.queued}</b></span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        ))}
-      </div>
+      <FleetSignals snapshot={snapshot} />
 
       {detail ? (
         <Panel title={`${detail.tenantId} / ${detail.alias}`} subtitle={detail.displayName ?? undefined} className="live-detail">
@@ -386,17 +296,7 @@ export function LiveFleetPage() {
         </div>
       </Panel>
 
-      <div className="metric-grid">
-        <Metric label="Agentes" value={snapshot?.totals?.agents} detail="registrados y visibles para este operador" />
-        <Metric label="En vuelo" value={snapshot?.totals?.in_flight} detail="entregas tomadas ahora mismo" />
-        <Metric label="Delegaciones vivas" value={edges.length} detail="entregas de un agente en manos de otro" tone={edges.length > 0 ? 'positive' : 'neutral'} />
-        <Metric
-          label="En problemas"
-          value={tally.blocked + tally.down}
-          tone={tally.blocked + tally.down > 0 ? 'danger' : 'positive'}
-          detail="bloqueados más caídos"
-        />
-      </div>
+      <ActivityExplainers thresholds={snapshot?.thresholds} />
     </div>
   );
 }

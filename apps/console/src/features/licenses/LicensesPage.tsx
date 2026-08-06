@@ -285,55 +285,12 @@ export function LicensesPage() {
       )}
     </Panel>
 
-    {agents.length > 0 && accounts.length > 0 && (
-      <Panel title="Matriz agente × cuenta" subtitle="Prioridad de enrutamiento (0=primaria, 1+=fallbacks). Vacío=sin asignación">
-        <div className="matrix-wrap">
-          <table className="assignment-matrix">
-            <caption className="sr-only">Matriz de asignaciones agente × cuenta</caption>
-            <thead>
-              <tr>
-                <th>Agente</th>
-                {accounts.map((a) => (
-                  <th key={a.id} className="account-col" title={`${a.id}: ${a.label || 'sin etiqueta'}`}>
-                    <span className="account-abbr">{a.id.split('-')[0]}</span>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {agents.map((agent) => (
-                <tr key={agent.alias}>
-                  <th className="agent-row">
-                    <span className="mono">{agent.alias}</span>
-                    <span className="agent-display">{agent.display_name ? ` (${agent.display_name})` : ''}</span>
-                  </th>
-                  {accounts.map((account) => {
-                    const binding = bindings.find((b) => b.agent_alias === agent.alias && b.account_id === account.id);
-                    const acct_ceiling = ceiling.find((c) => c.alias === agent.alias && c.account_id === account.id);
-                    return (
-                      <td key={`${agent.alias}-${account.id}`} className={`cell ${acct_ceiling ? 'has-ceiling' : ''} ${!binding?.enabled ? 'disabled' : ''}`}>
-                        {binding ? (
-                          <span className={`priority-badge ${binding.priority === 0 ? 'primary' : ''}`}>
-                            {binding.priority ?? '?'}
-                          </span>
-                        ) : null}
-                        {acct_ceiling && (
-                          <span className="ceiling-marker" title="Techo de ruteo aplicado">🔒</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="matrix-legend">
-          <strong>Leyenda:</strong> Prioridad 0 = primaria. Sin número = sin asignación. 🔒 = techo de ruteo limita a esa cuenta.
-        </p>
-      </Panel>
-    )}
-
+    {/*
+      Acá vivía una copia en modo lectura de la "Matriz agente × cuenta". La ruta homónima ya
+      muestra esa misma matriz con el techo de ruteo, el orden de fallback efectivo y el
+      formulario para cambiarla: dos paneles con el mismo título y los mismos datos, uno de ellos
+      sin poder hacer nada. Se quitó el que no podía. — 2026-08-06
+    */}
     {(orphanedItems.accountsWithoutQuotas.length > 0 || orphanedItems.unboundGroups.length > 0 || orphanedItems.agentsWithoutBindings.length > 0) && (
       <Panel title="Hallazgos" subtitle="Datos inconsistentes o incompletos que deberían revisarse">
         {orphanedItems.accountsWithoutQuotas.length > 0 && (

@@ -49,6 +49,17 @@ export interface HyperEdge {
   /** Contorno cerrado ya suavizado y con padding, listo para un `<path d>`. */
   outline: string;
   /**
+   * Dónde colgar `#nombre-de-sala`.
+   *
+   * **No es el centroide**, y esa es toda la diferencia entre un dibujo legible y uno ilegible: el
+   * centroide de una región es exactamente el sitio donde están los muñecos, así que la etiqueta
+   * caía siempre encima de alguno (`#ops.infra` sobre `zeus`, `#grp.isa` sobre `salva`). Acá se
+   * ancla sobre el **borde superior** de la región y después se separa de cualquier nodo y de
+   * cualquier otra etiqueta (`placeLabels`), así que el solapamiento no es "poco probable": no
+   * ocurre, y hay un test que lo afirma.
+   */
+  labelAnchor: Point;
+  /**
    * Los vértices del contorno antes de suavizar. Se exponen para poder afirmar en los tests que la
    * región **realmente contiene a sus miembros**: una envolvente que deja un nodo afuera dibuja una
    * pertenencia falsa, y eso es un error de datos disfrazado de detalle estético.
@@ -70,8 +81,16 @@ export interface AclArc {
   allowControl: boolean | null;
   /** Curva dirigida entre los centroides de los dos tenants. */
   path: string;
-  /** Punto donde colgar la etiqueta y la punta de flecha. */
+  /** Punto donde colgar la punta de flecha: el medio real de la Bézier. */
   midpoint: Point;
+  /**
+   * Dónde escribir `route · read · control`.
+   *
+   * Sale del mismo reparto que las etiquetas de sala y de tenant. Antes se dibujaba en
+   * `midpoint.y - 9` a secas, y con seis aristas ACL cruzándose por el centro del dibujo el
+   * resultado eran tres textos apilados sobre `argos` y sobre el nombre de un tenant.
+   */
+  labelAnchor: Point;
   /** Ángulo (grados) de la flecha en `midpoint`. */
   angle: number;
 }
@@ -80,9 +99,45 @@ export interface TenantBlob {
   id: string;
   label: string | null;
   centroid: Point;
+  /** Igual que en `HyperEdge`: sobre el borde de arriba, ya separado de nodos y etiquetas. */
+  labelAnchor: Point;
   roomCount: number;
   memberCount: number;
   hue: number;
+}
+
+/**
+ * Cuánto espacio ocupa REALMENTE un nodo en pantalla, medido desde su centro.
+ *
+ * Un nodo no es un punto: es el avatar **más** su nombre debajo **más** el globo de la cola arriba
+ * a la derecha. Separar por `nodeSpacing` circular contra el radio del avatar es justamente el
+ * error que hacía que `zeus` pisara a `argos`: los avatares no se tocaban, pero sus nombres y sus
+ * globos sí. La caja es asimétrica porque el dibujo lo es (el nombre sólo cuelga hacia abajo).
+ */
+export interface NodeFootprint {
+  /** Semiancho: la mitad del nombre más largo esperable, no el radio del avatar. */
+  halfWidth: number;
+  /** Desplazamiento del borde superior respecto del centro (negativo). */
+  top: number;
+  /** Desplazamiento del borde inferior respecto del centro (positivo). */
+  bottom: number;
+}
+
+/** El nodo del hipergrafo estructural: punto de 9 px con su alias debajo. */
+const NODE_FOOTPRINT: NodeFootprint = { halfWidth: 32, top: -20, bottom: 36 };
+
+/**
+ * ¿Se pisan dos nodos colocados en `a` y `b`?
+ *
+ * Se exporta porque es la condición que los tests afirman: dos cajas axis-aligned se solapan si y
+ * sólo si se solapan en los dos ejes a la vez. Comprobarlo con distancia euclídea contra un radio
+ * es más simple y está mal — deja pasar exactamente los casos que se ven feos (dos nodos casi a la
+ * misma altura, separados lo justo para que los círculos no se toquen y los nombres sí).
+ */
+export function footprintsOverlap(a: Point, b: Point, box: NodeFootprint = NODE_FOOTPRINT): boolean {
+  const width = box.halfWidth * 2;
+  const height = box.bottom - box.top;
+  return Math.abs(b.x - a.x) < width && Math.abs(b.y - a.y) < height;
 }
 
 export interface HyperGraphModel {
@@ -101,17 +156,22 @@ export interface LayoutOptions {
   height?: number;
   /** Cuánto se infla la envolvente alrededor de sus nodos. */
   padding?: number;
-  /** Distancia mínima deseada entre dos nodos. */
+  /** Distancia mínima deseada entre dos nodos durante la relajación. */
   nodeSpacing?: number;
   iterations?: number;
+  /** Caja real que ocupa cada nodo. La separación final la garantiza contra esto, no contra un radio. */
+  footprint?: NodeFootprint;
+  /** Altura reservada arriba de todo para que quepan las etiquetas de sala. */
+  labelBand?: number;
 }
 
 const DEFAULTS = {
   width: 1000,
   height: 680,
   padding: 34,
-  nodeSpacing: 62,
+  nodeSpacing: 74,
   iterations: 220,
+  labelBand: 34,
 } as const;
 
 /**
@@ -437,13 +497,15 @@ function relax(
       }
     }
 
-    // Contención: nadie se sale del lienzo. Se recorta en vez de rebotar para no introducir oscilación.
-    const margin = options.padding + 26;
+    // Contención: nadie se sale del lienzo. Se recorta en vez de rebotar para no introducir
+    // oscilación. El margen sale de la caja real del nodo y de la banda reservada arriba para las
+    // etiquetas de sala: un nodo pegado al borde superior no dejaría dónde escribir `#sala`.
+    const box = options.footprint;
     for (const node of nodes) {
       const position = positions.get(node.alias);
       if (!position) continue;
-      position.x = Math.min(options.width - margin, Math.max(margin, position.x));
-      position.y = Math.min(options.height - margin, Math.max(margin, position.y));
+      position.x = Math.min(options.width - options.padding - box.halfWidth, Math.max(options.padding + box.halfWidth, position.x));
+      position.y = Math.min(options.height - options.padding - box.bottom, Math.max(options.padding + options.labelBand - box.top, position.y));
     }
   }
 
@@ -455,6 +517,156 @@ function relax(
   }
   void edgeById;
   return result;
+}
+
+/**
+ * Pasada final: separa a empujones **cualquier** par de nodos cuyas cajas se toquen.
+ *
+ * La relajación de arriba es un compromiso entre atracción y repulsión, así que *tiende* a separar
+ * pero no lo garantiza: con muchos alias en la misma sala converge con nodos encimados, y eso es
+ * exactamente lo que se veía. Esto no negocia — empuja por el eje de menor penetración hasta que no
+ * queda ningún solapamiento, y devuelve si lo consiguió para poder afirmarlo en un test en vez de
+ * mirarlo a ojo.
+ *
+ * Se empuja por un solo eje (el que menos hay que mover) en vez de radialmente porque conserva
+ * mucho mejor la agrupación por sala: dos nodos apilados en vertical se separan en vertical y
+ * siguen dentro de su región, mientras que un empuje radial los manda a la diagonal y termina
+ * sacando a uno de la envolvente a la que pertenece.
+ */
+function separate(
+  order: string[],
+  positions: Map<string, Point>,
+  box: NodeFootprint,
+  bounds: { minX: number; maxX: number; minY: number; maxY: number },
+  passes = 240,
+): boolean {
+  const width = box.halfWidth * 2;
+  const height = box.bottom - box.top;
+
+  for (let pass = 0; pass < passes; pass += 1) {
+    let touched = false;
+    for (let i = 0; i < order.length; i += 1) {
+      for (let j = i + 1; j < order.length; j += 1) {
+        const a = positions.get(order[i]);
+        const b = positions.get(order[j]);
+        if (!a || !b) continue;
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        if (Math.abs(dx) >= width || Math.abs(dy) >= height) continue;
+        touched = true;
+        // Empate exacto: se desempata por hash de los alias, nunca al azar — el layout tiene que
+        // ser reproducible entre refrescos o el operador pierde de vista al agente que seguía.
+        if (dx === 0 && dy === 0) {
+          const angle = jitter(`${order[i]}|${order[j]}`, 7) * Math.PI * 2;
+          dx = Math.cos(angle) * 0.5;
+          dy = Math.sin(angle) * 0.5;
+        }
+        const needX = width - Math.abs(dx);
+        const needY = height - Math.abs(dy);
+        if (needX <= needY) {
+          const push = (needX / 2 + 0.5) * (dx >= 0 ? 1 : -1);
+          a.x -= push;
+          b.x += push;
+        } else {
+          const push = (needY / 2 + 0.5) * (dy >= 0 ? 1 : -1);
+          a.y -= push;
+          b.y += push;
+        }
+      }
+    }
+    // Contención después de cada pasada: si un empujón sacó a alguien del lienzo, vuelve adentro y
+    // la pasada siguiente reparte la diferencia hacia el otro lado.
+    for (const alias of order) {
+      const point = positions.get(alias);
+      if (!point) continue;
+      point.x = Math.min(bounds.maxX, Math.max(bounds.minX, point.x));
+      point.y = Math.min(bounds.maxY, Math.max(bounds.minY, point.y));
+    }
+    if (!touched) return true;
+  }
+
+  return !order.some((alias, i) => order.slice(i + 1).some((other) => {
+    const a = positions.get(alias);
+    const b = positions.get(other);
+    return a && b ? footprintsOverlap(a, b, box) : false;
+  }));
+}
+
+interface LabelRect { x: number; y: number; halfWidth: number; top: number; bottom: number }
+
+function rectsOverlap(a: LabelRect, b: LabelRect): boolean {
+  return Math.abs(a.x - b.x) < a.halfWidth + b.halfWidth
+    && a.y + a.top < b.y + b.bottom
+    && b.y + b.top < a.y + a.bottom;
+}
+
+/**
+ * Coloca las etiquetas (salas y tenants) sobre el borde de arriba de su región y las corre hacia
+ * arriba hasta que dejan de pisar un nodo o a otra etiqueta.
+ *
+ * Determinista: el orden de colocación es fijo (de arriba abajo, desempatando por clave), así que
+ * dos corridas con la misma topología colocan las mismas etiquetas en los mismos píxeles.
+ */
+function placeLabels(
+  requests: { key: string; text: string; anchor: Point; charWidth: number; lineHeight: number }[],
+  nodes: Point[],
+  box: NodeFootprint,
+  limitTop: number,
+): Map<string, Point> {
+  const obstacles: LabelRect[] = nodes.map((point) => ({
+    x: point.x,
+    y: point.y,
+    halfWidth: box.halfWidth,
+    top: box.top,
+    bottom: box.bottom,
+  }));
+
+  const placed = new Map<string, Point>();
+  const ordered = [...requests].sort((a, b) => (a.anchor.y === b.anchor.y ? a.key.localeCompare(b.key) : a.anchor.y - b.anchor.y));
+
+  for (const request of ordered) {
+    const halfWidth = Math.max(18, (request.text.length * request.charWidth) / 2 + 4);
+    const top = -request.lineHeight * 0.82;
+    const bottom = request.lineHeight * 0.28;
+    let best: Point = { ...request.anchor };
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    // Candidatos: primero subir en escalones sobre el borde; después, correrse a los lados —cada
+    // vez más lejos— a esas mismas alturas. Nunca hacia abajo: abajo está la región, y ahí es
+    // justamente donde están los muñecos que la etiqueta no puede pisar.
+    const paso = request.lineHeight + 3;
+    const candidates: Point[] = [];
+    for (let step = 0; step <= 9; step += 1) candidates.push({ x: request.anchor.x, y: request.anchor.y - step * paso });
+    for (let lado = 1; lado <= 3; lado += 1) {
+      for (const dx of [-1, 1]) {
+        for (let step = 0; step <= 6; step += 1) {
+          candidates.push({
+            x: request.anchor.x + dx * (halfWidth + box.halfWidth + 4) * lado,
+            y: request.anchor.y - step * paso,
+          });
+        }
+      }
+    }
+
+    // `obstacles` acumula los nodos Y las etiquetas ya colocadas: por eso una etiqueta no puede
+    // caer sobre otra, sin llevar dos listas separadas.
+    for (const candidate of candidates) {
+      const y = Math.max(limitTop, candidate.y);
+      const rect: LabelRect = { x: candidate.x, y, halfWidth, top, bottom };
+      let score = 0;
+      for (const obstacle of obstacles) if (rectsOverlap(rect, obstacle)) score += 1;
+      if (score < bestScore) {
+        bestScore = score;
+        best = { x: round(candidate.x), y: round(y) };
+      }
+      if (score === 0) break;
+    }
+
+    placed.set(request.key, best);
+    obstacles.push({ x: best.x, y: best.y, halfWidth, top, bottom });
+  }
+
+  return placed;
 }
 
 /** Ancla de cada hiperarista: tenants repartidos en una elipse, rooms en una órbita interna. */
@@ -515,6 +727,25 @@ function arcBetween(from: Point, to: Point, bend: number): { path: string; midpo
   };
 }
 
+
+/**
+ * El texto de la etiqueta de una arista ACL.
+ *
+ * Vive acá y no en el componente porque el layout necesita su **ancho** para poder repartir las
+ * etiquetas sin que se pisen. Si el componente escribiera otro texto, el reparto estaría hecho
+ * sobre una medida que no corresponde y volverían los solapamientos, esta vez sin que se note por
+ * qué.
+ */
+export function aclCaption(arc: Pick<AclArc, 'enabled' | 'allowRoute' | 'allowRead' | 'allowControl'>): string {
+  const caps = [
+    arc.allowRoute === true ? 'route' : null,
+    arc.allowRead === true ? 'read' : null,
+    arc.allowControl === true ? 'control' : null,
+  ].filter(Boolean);
+  if (caps.length > 0) return caps.join(' · ');
+  return arc.enabled === false ? 'denegado' : 'UNKNOWN';
+}
+
 /**
  * Construye el hipergrafo completo a partir del snapshot del control plane.
  *
@@ -530,6 +761,8 @@ export function layoutHypergraph(
     padding: options.padding ?? DEFAULTS.padding,
     nodeSpacing: options.nodeSpacing ?? DEFAULTS.nodeSpacing,
     iterations: options.iterations ?? DEFAULTS.iterations,
+    footprint: options.footprint ?? NODE_FOOTPRINT,
+    labelBand: options.labelBand ?? DEFAULTS.labelBand,
   };
 
   const tenantNodes = snapshot?.tenants ?? [];
@@ -549,6 +782,23 @@ export function layoutHypergraph(
   const anchors = anchorEdges(rawEdges, settings);
   const nodeList = [...rawNodes.values()];
   const positions = relax(nodeList, rawEdges, anchors, settings);
+
+  // La relajación deja *tendencia* a no encimarse; esto lo garantiza. Se hace antes de calcular las
+  // envolventes para que las regiones se dibujen sobre las posiciones definitivas y sigan
+  // conteniendo a sus miembros.
+  const box = settings.footprint;
+  separate(
+    nodeList.map((node) => node.alias),
+    positions,
+    box,
+    {
+      minX: settings.padding + box.halfWidth,
+      maxX: settings.width - settings.padding - box.halfWidth,
+      minY: settings.padding + settings.labelBand - box.top,
+      maxY: settings.height - settings.padding - box.bottom,
+    },
+  );
+  for (const [alias, point] of positions) positions.set(alias, { x: round(point.x), y: round(point.y) });
 
   const tenantOrder: string[] = [];
   for (const edge of rawEdges) if (!tenantOrder.includes(edge.tenantId)) tenantOrder.push(edge.tenantId);
@@ -581,6 +831,10 @@ export function layoutHypergraph(
       : [anchors.get(edge.key) ?? { x: settings.width / 2, y: settings.height / 2 }];
 
     const hull = inflateHull(convexHull(basis), settings.padding);
+    const centroid = centroidOf(basis);
+    const topY = Math.min(...hull.map((point) => point.y));
+    const minX = Math.min(...hull.map((point) => point.x));
+    const maxX = Math.max(...hull.map((point) => point.x));
     return {
       key: edge.key,
       tenantId: edge.tenantId,
@@ -590,7 +844,13 @@ export function layoutHypergraph(
       unknownMembers: edge.unknownMembers,
       outline: closedSmoothPath(hull),
       hull,
-      centroid: { x: round(centroidOf(basis).x), y: round(centroidOf(basis).y) },
+      centroid: { x: round(centroid.x), y: round(centroid.y) },
+      // Ancla provisional: encima del borde superior de la región, horizontalmente centrada pero
+      // sin salirse de ella. `placeLabels` la corrige después si aun así pisara algo.
+      labelAnchor: {
+        x: round(Math.min(maxX - 8, Math.max(minX + 8, centroid.x))),
+        y: round(topY - 8),
+      },
       hue: tenantOrder.indexOf(edge.tenantId) % 6,
     };
   });
@@ -601,15 +861,18 @@ export function layoutHypergraph(
     for (const edge of own) for (const alias of edge.members) members.add(alias);
     const centroid = centroidOf(own.map((edge) => edge.centroid));
     const source = tenantNodes.find((tenant, tenantIndex) => (tenant.id ?? `tenant#${tenantIndex}`) === tenantId);
+    const topY = Math.min(...own.flatMap((edge) => edge.hull.map((point) => point.y)));
     return {
       id: tenantId,
       label: source?.label ?? source?.id ?? null,
       centroid: { x: round(centroid.x), y: round(centroid.y) },
+      labelAnchor: { x: round(centroid.x), y: round(topY - 26) },
       roomCount: own.length,
       memberCount: members.size,
       hue: index % 6,
     };
   });
+
 
   const tenantCentroid = new Map(tenants.map((tenant) => [tenant.id, tenant.centroid]));
   const seenPairs = new Map<string, number>();
@@ -645,10 +908,55 @@ export function layoutHypergraph(
         allowControl: edge.allow_control ?? null,
         path: geometry.path,
         midpoint: geometry.midpoint,
+        labelAnchor: { x: geometry.midpoint.x, y: round(geometry.midpoint.y - 9) },
         angle: geometry.angle,
       };
     })
     .filter((arc): arc is AclArc => arc !== null);
+
+
+  // Reubicación de TODAS las etiquetas en una sola pasada, ya con los arcos ACL construidos.
+  //
+  // Salas, tenants y capacidades ACL compiten por el mismo espacio libre: resolver cada familia
+  // por su cuenta deja una encima de la otra, que es exactamente lo que pasaba (`#marcas.pablo`
+  // sobre `PABLO` sobre `DENEGADO`). Se colocan de arriba hacia abajo y cada etiqueta ya ubicada
+  // pasa a ser obstáculo de las siguientes, igual que los nodos.
+  const nodePoints = nodes.map((node) => ({ x: node.x, y: node.y }));
+  const anchored = placeLabels(
+    [
+      // `charWidth`/`lineHeight` son estimaciones del ancho del texto, no medidas: el layout corre
+      // antes de que exista un DOM donde medir. Se eligen por ARRIBA a propósito — sobrestimar
+      // separa de más (feo pero legible), subestimar deja una etiqueta encima de un muñeco, que es
+      // el defecto que esto vino a arreglar.
+      ...tenants.map((tenant) => ({
+        key: `tenant:${tenant.id}`,
+        text: tenant.label ?? tenant.id,
+        anchor: tenant.labelAnchor,
+        charWidth: 9.6,
+        lineHeight: 20,
+      })),
+      ...edges.map((edge) => ({
+        key: `room:${edge.key}`,
+        text: `#${edge.roomLabel ?? 'UNKNOWN'}`,
+        anchor: edge.labelAnchor,
+        charWidth: 8.6,
+        lineHeight: 18,
+      })),
+      ...arcs.map((arc) => ({
+        key: `acl:${arc.key}`,
+        text: aclCaption(arc),
+        anchor: arc.labelAnchor,
+        charWidth: 7.4,
+        lineHeight: 15,
+      })),
+    ],
+    nodePoints,
+    box,
+    12,
+  );
+  for (const tenant of tenants) tenant.labelAnchor = anchored.get(`tenant:${tenant.id}`) ?? tenant.labelAnchor;
+  for (const edge of edges) edge.labelAnchor = anchored.get(`room:${edge.key}`) ?? edge.labelAnchor;
+  for (const arc of arcs) arc.labelAnchor = anchored.get(`acl:${arc.key}`) ?? arc.labelAnchor;
 
   return { nodes, edges, arcs, tenants, width: settings.width, height: settings.height, emptyEdges };
 }

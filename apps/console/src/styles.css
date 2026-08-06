@@ -129,7 +129,8 @@ h1 { margin: 0; font-size: clamp(1.85rem, 4vw, 2.8rem); line-height: 1.08; lette
 
 .panel { margin-bottom: 18px; padding: 22px; border: 1px solid var(--border); border-radius: var(--radius); background: linear-gradient(145deg, rgb(16 25 42 / 96%), rgb(11 18 31 / 96%)); box-shadow: var(--shadow); }
 .panel-header { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; margin-bottom: 19px; }
-.panel-header h2 { margin: 0; font-size: 1rem; letter-spacing: -.015em; }
+.panel-header h2 { flex: none; margin: 0; font-size: 1rem; letter-spacing: -.015em; }
+.panel-header p { flex: 1 1 auto; min-width: 0; }
 .panel-header p { margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.5; }
 
 .metrics-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
@@ -626,6 +627,31 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   .terminal-agent[data-active="true"] { border-color: #79b5a6; background: linear-gradient(100deg, #dff3ed, #eaf3fb); }
   .transcript-entry.input { border-color: #8fc5b7; background: linear-gradient(145deg, #e2f5ef, #edf5fb); }
   .transcript-entry p { color: #203149; }
+  /* Estas tarjetas traían el fondo oscuro hardcodeado y en modo claro quedaban gris sobre azul
+     marino, ilegibles. Ahora heredan la superficie del tema como el resto de la página. */
+  .explain-grid article, .trust-grid article { background: #f4f7fb; }
+  /*
+   * El tema oscuro está escrito con hex literales por toda la hoja, así que cada superficie que
+   * no aparezca acá se queda azul marino en modo claro y su texto —gris pensado para fondo
+   * oscuro— deja de leerse. No es un matiz: en "Consumo de cuotas" las tarjetas de proveedor
+   * salían gris sobre negro y no se distinguía ni el nombre del proveedor.
+   */
+  .chip { background: #eef3f9; color: #3a4a60; }
+  .badge-offline { border-color: #ccd4de; background: #eceff4; color: #5b6779; }
+  .button:hover:not(:disabled) { border-color: #9ab8d6; background: #e9f0f8; }
+  .quota-provider { background: #ffffff; }
+  .quota-provider[data-severity="critical"], .quota-provider[data-severity="exhausted"] { border-color: #e0a3ab; }
+  .quota-provider[data-severity="warn"] { border-color: #e3c98d; }
+  .delivery, .config-records li, .job-list li, .adapter-meta { background: #f8fafd; }
+  .config-preview { background: #f4f7fb; color: #22344a; }
+  .timeline-node { border-color: #4b91c8; background: #dbeaf6; }
+  .timeline-missing .timeline-node { border-color: #b3bdcb; background: #e8ecf2; }
+  .pty-shell { background: #ffffff; }
+  .tenant-card { background: #ffffff; }
+  .tenant-card > header { background: linear-gradient(90deg, #eef4fa, #f7fafd); }
+  .room { border-color: #dbe4ef; background: #f8fafd; }
+  .member { background: #e4eefb; color: #1d5f95; }
+  .edge-list li { background: #f8fafd; }
 }
 
 @media (prefers-reduced-motion: reduce) {
