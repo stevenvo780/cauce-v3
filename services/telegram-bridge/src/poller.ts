@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Origin } from '@cauce/protocol';
+import { AttachmentContentSchema, AttachmentsV1Schema, type Origin } from '@cauce/protocol';
 import type {
   AddressingDecision, AddressingSelf, FleetDirectory, SuppressionReason
 } from './addressing.js';
 import { isFleetBot, resolveAddressing, telegramThreadId } from './addressing.js';
 import { effectiveChatPolicy, groupRouting } from './config.js';
 import type {
-  BridgeMetric, PollLease, SessionScope, TelegramAliasConfig, TelegramApi, TelegramChatPolicy,
-  TelegramCursorRepository, TelegramFile, TelegramIngress, TelegramMessage, TelegramUpdate
+  BridgeMetric, PollLease, PreparedTelegramAttachment, SessionScope, TelegramAliasConfig,
+  TelegramApi, TelegramChatPolicy, TelegramCursorRepository, TelegramFile, TelegramIngress,
+  TelegramMessage, TelegramUpdate
 } from './types.js';
 import type { TelegramActivity } from './activity.js';
 import { TelegramApiError } from './telegram.js';
@@ -69,9 +70,13 @@ export interface SuppressedUpdate {
   readonly chat_configured: boolean;
 }
 
-function logSuppressedUpdate(record: SuppressedUpdate): void {
-  // Same shape the dispatcher uses: one JSON object per line on stderr.
+/** Same shape the dispatcher uses: one JSON object per line on stderr. */
+function logJsonLine(record: Record<string, unknown>): void {
   console.error(JSON.stringify(record));
+}
+
+function logSuppressedUpdate(record: SuppressedUpdate): void {
+  logJsonLine({ ...record });
 }
 
 /**
@@ -204,6 +209,76 @@ function untrustedPrompt(text: string, untrusted: Record<string, unknown>): stri
   ].join('\n');
 }
 
+/** Lo que devuelve `prepareTelegramAttachments`, para poder tamizarlo antes de publicar. */
+type PreparedAttachments = Awaited<ReturnType<typeof prepareTelegramAttachments>>;
+
+/** Quién sufre el descarte, para poder encontrarlo en el log del contenedor. */
+interface AttachmentScreenMeta {
+  readonly alias: string;
+  readonly tenant_id: string;
+}
+
+/**
+ * Un adjunto que el esquema no acepta NO puede costar el mensaje entero.
+ *
+ * `ingress.publish` corre `PublishMessageSchema.parse()`, y ese parse valida `body.attachments_v1`
+ * contra `AttachmentsV1Schema`. Cuando falla lanza un ZodError DESDE `process()`, o sea por fuera
+ * de los dos únicos `catch` que avanzan el cursor: el error sube hasta el `catch` de `run()`, que
+ * reintenta EL MISMO update para siempre. El lease se renueva al principio de `runOnce()`, así que
+ * el alias late sano y no alerta nunca. Es exactamente lo que le pasó a `heraclito` el 2026-08-05:
+ * un `.md` cuyo mime la ingesta ya producía y el enum del protocolo todavía no aceptaba, y 4
+ * mensajes de Steven parados detrás durante horas.
+ *
+ * Acá se valida ANTES de publicar y con el MISMO esquema que va a validar después: tener dos
+ * criterios distintos es justo como un valor entra por una capa y lo rechaza la de al lado. El
+ * adjunto malo se descarta, el texto del humano SOBREVIVE, el motivo viaja por la misma cañería
+ * que ya usa `prepared.errors` (prompt + `attachment_errors`), y el cursor avanza.
+ */
+function screenAttachments(
+  prepared: PreparedAttachments,
+  message: TelegramMessage,
+  updateId: number,
+  meta?: AttachmentScreenMeta
+): PreparedAttachments {
+  if (prepared.media.length === 0) return prepared;
+  const kept: PreparedTelegramAttachment[] = [];
+  const dropped: PreparedTelegramAttachment[] = [];
+  for (const attachment of prepared.media) {
+    if (AttachmentContentSchema.safeParse(attachment).success) kept.push(attachment);
+    else dropped.push(attachment);
+  }
+  // Los controles de ARRAY (mínimo, máximo y tamaño agregado) no son por adjunto: si el conjunto
+  // que sobrevivió sigue sin pasar, se cae el conjunto entero. Perder los adjuntos es aceptable;
+  // perder el mensaje no.
+  if (kept.length > 0 && !AttachmentsV1Schema.safeParse(kept).success) {
+    dropped.push(...kept.splice(0, kept.length));
+  }
+  if (dropped.length === 0) return prepared;
+  const errors: string[] = [];
+  for (const attachment of dropped) {
+    const mime = attachment.mime_type.slice(0, 128);
+    const name = attachment.name.slice(0, 255);
+    errors.push(`adjunto descartado: tipo no soportado ${mime} (${name})`);
+    try {
+      logJsonLine({
+        event: 'telegram_attachment_dropped',
+        alias: meta?.alias,
+        tenant_id: meta?.tenant_id,
+        update_id: updateId,
+        message_id: message.message_id,
+        mime_type: mime,
+        name,
+        file_size: attachment.file_size,
+        kept: kept.length,
+        dropped: dropped.length
+      });
+    } catch {
+      // El rastro es best effort; jamás puede trabar el update que vino a salvar.
+    }
+  }
+  return { ...prepared, media: kept, errors: [...prepared.errors, ...errors] };
+}
+
 async function normalizedBody(
   message: TelegramMessage,
   updateId: number,
@@ -211,9 +286,10 @@ async function normalizedBody(
   context?: BodyContext,
   transcription?: TranscriptionConfig,
   transcriber?: Transcriber,
-  onRedaction?: () => void
+  onRedaction?: () => void,
+  meta?: AttachmentScreenMeta
 ): Promise<Record<string, unknown>> {
-  const prepared = await prepareTelegramAttachments(message, api);
+  const prepared = screenAttachments(await prepareTelegramAttachments(message, api), message, updateId, meta);
   const voice = transcriber === undefined
     ? await prepareTelegramVoice(message, api, transcription)
     : await prepareTelegramVoice(message, api, transcription, transcriber);
@@ -643,7 +719,8 @@ export class TelegramPoller {
           context,
           this.transcription,
           undefined,
-          () => this.onMetric('ingress_secret_redacted')
+          () => this.onMetric('ingress_secret_redacted'),
+          { alias: this.config.alias, tenant_id: this.config.tenant_id }
         ),
         origin,
         session_id: session(scope, this.botId, chatId, userId, threadId),
@@ -713,6 +790,25 @@ export class TelegramPoller {
         if (count === 0) await sleep(idleMs, signal);
       } catch (error) {
         failures += 1;
+        /**
+         * El único lugar donde queda constancia de que el bucle está fallando.
+         *
+         * Este `catch` reintenta con retroceso exponencial y nunca avanza el cursor, así que un
+         * error que llegue hasta acá se repite para siempre. Sin esta línea el fallo era INVISIBLE:
+         * el lease se renovaba, el alias figuraba en línea y los mensajes se apilaban detrás del
+         * mismo update sin una sola entrada en el log. Así estuvo `heraclito` el 2026-08-05, y lo
+         * que costó encontrarlo fue justamente que el error no se veía por ningún lado.
+         */
+        logJsonLine({
+          event: 'telegram_poll_error',
+          bot_id: this.botId,
+          alias: this.config.alias,
+          tenant_id: this.config.tenant_id,
+          failures,
+          error_name: error instanceof Error ? error.name : undefined,
+          error_message: String(error instanceof Error ? error.message : error).slice(0, 400),
+          stack: String(error instanceof Error ? error.stack ?? '' : '').split('\n').slice(1, 4).join(' | ')
+        });
         const exponential = Math.min(60_000, 1_000 * 2 ** Math.min(6, failures - 1));
         const delay = error instanceof TelegramApiError && error.retryAfterMs !== undefined
           ? Math.max(exponential, error.retryAfterMs) : exponential;

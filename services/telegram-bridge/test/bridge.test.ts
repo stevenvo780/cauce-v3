@@ -1,8 +1,9 @@
-import type { Origin } from '@cauce/protocol';
+import type { Origin, PublishMessage } from '@cauce/protocol';
 import { describe, expect, it } from 'vitest';
 import { TelegramActivityIndicator } from '../src/activity.js';
 import { parseTelegramBridgeConfig } from '../src/config.js';
 import { EgressCrash, TelegramEgressWorker, telegramTextChunks } from '../src/egress.js';
+import { StoreTelegramIngress } from '../src/ingress.js';
 import { TelegramPoller } from '../src/poller.js';
 import { TelegramApiError, TelegramHttpClient } from '../src/telegram.js';
 import type {
@@ -501,6 +502,50 @@ describe('Telegram durable polling', () => {
     expect(ingress.calls[0]?.body.prompt).toMatch(/analizá esto[\s\S]*excede el límite de 10 MB/u);
     expect(ingress.calls[0]?.body.media).toBeUndefined();
     expect(repository.next).toBe(7);
+  });
+
+  it('descarta el adjunto que el esquema rechaza y publica igual el mensaje del humano', async () => {
+    // Un `.txt` VACÍO pasa los controles del puente (mime y extensión admitidos, UTF-8 válido) y lo
+    // rechaza `AttachmentContentSchema`, que exige `file_size` positivo. Antes del tamiz ese
+    // desacuerdo lo pagaba el mensaje entero: `PublishMessageSchema.parse()` tiraba un ZodError
+    // desde `process()`, por fuera de los dos `catch` que avanzan el cursor, y `run()` reintentaba
+    // el MISMO update para siempre con el lease latiendo sano. Le pasó a `heraclito` el 2026-08-05.
+    //
+    // Por eso el doble de acá adentro es `StoreTelegramIngress`, la ingesta de verdad: con un
+    // ingress que no valida, este test pasaría igual sin el arreglo.
+    const repository = new MemoryCursorRepository();
+    const published: PublishMessage[] = [];
+    const ingress = new StoreTelegramIngress({
+      publish: async (command) => {
+        published.push(command);
+        return {
+          message_id: 'm-1', delivery_ids: ['d-1'], duplicate: false,
+          request_id: command.request_id, trace_id: command.trace_id
+        };
+      }
+    });
+    const api = new FakeTelegram([{
+      update_id: 8,
+      message: {
+        message_id: 108,
+        from: { id: 101 },
+        chat: { id: 201, type: 'private' },
+        caption: 'mirá esto',
+        document: { file_id: 'vacio', file_name: 'notas.txt', mime_type: 'text/plain', file_size: 0 }
+      }
+    }]);
+    api.files.set('vacio', { file_id: 'vacio', file_path: 'documents/notas.txt', file_size: 0 });
+    api.filePayloads.set('documents/notas.txt', Buffer.alloc(0));
+
+    await new TelegramPoller({
+      config: config(), botId: '900001', api, repository, ingress
+    }).runOnce();
+
+    expect(published).toHaveLength(1);
+    expect(published[0]?.body.attachments_v1).toBeUndefined();
+    expect(published[0]?.body.prompt).toMatch(/mirá esto[\s\S]*adjunto descartado/u);
+    // Lo que de verdad se estaba perdiendo: el cursor.
+    expect(repository.next).toBe(9);
   });
 
   it('deduplicates repeated updates through a stable ingress key and advances the cursor', async () => {
