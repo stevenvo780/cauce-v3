@@ -39,19 +39,61 @@ export function mockStatus(): SystemStatus {
   };
 }
 
+/**
+ * Topología de demostración, calcada de la flota real: 5 tenants y 15 alias.
+ *
+ * Está escrita para que se vea lo que un hipergrafo tiene de distinto a un grafo: hay tenants con
+ * MÁS DE UNA room y alias que pertenecen a dos rooms a la vez —los puentes—. Un alias así se
+ * dibuja una sola vez y las dos regiones se solapan sobre él; con una room por tenant ese
+ * solapamiento no existe y el dibujo degenera en cinco islas sueltas.
+ *
+ * Los puentes son SIEMPRE dentro del mismo tenant, y no por comodidad: en esta respuesta el
+ * miembro de una room es un alias suelto, sin tenant propio, así que el alias `kant` metido en una
+ * room de Miguel no significa "el kant de Steven entra a la sala de Miguel" — significa que existe
+ * un agente `Miguel:kant`, que es falso. El resto de la consola lee esta misma estructura y crea
+ * el agente (`terminal/fleet.ts` indexa por `tenant:alias`), así que el atajo no quedaría en el
+ * dibujo: inventaría destinos de terminal que no existen. El cruce entre tenants se declara donde
+ * el modelo sí lo admite y donde el backend realmente lo resuelve: las aristas ACL de abajo.
+ */
 export const topology: TopologySnapshot = {
   observed_at: '2026-07-22T16:12:08.000Z',
   tenants: [
-    { id: 'Steven', label: 'Steven', rooms: [{ id: 'grp.steven', label: 'grp.steven', members: [{ alias: 'kant', enabled: true }, { alias: 'argos', enabled: true }, { alias: 'socrates', enabled: true }, { alias: 'jarvis', enabled: true }] }] },
-    { id: 'Miguel', label: 'Miguel', rooms: [{ id: 'grp.miguel', label: 'grp.miguel', members: [{ alias: 'kratos', enabled: true }, { alias: 'janus', enabled: true }] }] },
+    {
+      id: 'Steven', label: 'Steven', rooms: [
+        // La sala del hub tiene a los cinco: es donde el operador comparte room con todos los suyos.
+        { id: 'grp.steven', label: 'grp.steven', members: [{ alias: 'zeus', enabled: true }, { alias: 'kant', enabled: true }, { alias: 'socrates', enabled: true }, { alias: 'jarvis', enabled: true }, { alias: 'argos', enabled: true }] },
+        // Sala de infraestructura: el médico de la flota y el PMO. Está contenida en la anterior, y
+        // ese anidamiento también es información: `zeus` y `argos` son los puentes entre las dos.
+        { id: 'ops.infra', label: 'ops.infra', members: [{ alias: 'zeus', enabled: true }, { alias: 'argos', enabled: true }] },
+      ],
+    },
+    {
+      id: 'Miguel', label: 'Miguel', rooms: [
+        { id: 'grp.miguel', label: 'grp.miguel', members: [{ alias: 'janus', enabled: true }, { alias: 'kratos', enabled: true }, { alias: 'iza', enabled: true }] },
+        // `atlas` es el caso real de un alias con trabajo encolado que nadie dio de alta.
+        { id: 'ops.miguel', label: 'ops.miguel', members: [{ alias: 'kratos', enabled: true }, { alias: 'atlas', enabled: false }] },
+      ],
+    },
+    {
+      id: 'Pablo', label: 'Pablo', rooms: [
+        { id: 'grp.pablo', label: 'grp.pablo', members: [{ alias: 'dedalo', enabled: true }, { alias: 'midas', enabled: true }, { alias: 'seneca', enabled: true }] },
+        { id: 'marcas.pablo', label: 'marcas.pablo', members: [{ alias: 'midas', enabled: true }, { alias: 'vulcano', enabled: false }] },
+      ],
+    },
     { id: 'Isa', label: 'Isa', rooms: [{ id: 'grp.isa', label: 'grp.isa', members: [{ alias: 'salva', enabled: true }] }] },
     { id: 'Jhon', label: 'Jhon', rooms: [{ id: 'grp.jhon', label: 'grp.jhon', members: [{ alias: 'hegel', enabled: true }] }] },
-    { id: 'Pablo', label: 'Pablo', rooms: [{ id: 'grp.pablo', label: 'grp.pablo', members: [{ alias: 'dedalo', enabled: true }, { alias: 'midas', enabled: true }, { alias: 'seneca', enabled: true }, { alias: 'vulcano', enabled: false }] }] },
   ],
   acl_edges: [
     { from_tenant: 'Steven', to_tenant: 'Miguel', enabled: true, allow_route: true, allow_read: true, allow_control: true, policy: 'explicit-cross-tenant' },
-    { from_tenant: 'Miguel', to_tenant: 'Steven', enabled: true, allow_route: true, allow_read: true, allow_control: true, policy: 'explicit-cross-tenant' },
+    { from_tenant: 'Miguel', to_tenant: 'Steven', enabled: true, allow_route: true, allow_read: true, allow_control: false, policy: 'explicit-cross-tenant' },
+    { from_tenant: 'Steven', to_tenant: 'Pablo', enabled: true, allow_route: true, allow_read: true, allow_control: true, policy: 'explicit-cross-tenant' },
+    { from_tenant: 'Pablo', to_tenant: 'Steven', enabled: true, allow_route: true, allow_read: true, allow_control: false, policy: 'explicit-cross-tenant' },
+    { from_tenant: 'Steven', to_tenant: 'Jhon', enabled: true, allow_route: true, allow_read: true, allow_control: true, policy: 'explicit-cross-tenant' },
+    // Entre tenants cliente no hay canal: lo impide un constraint del backend, no un olvido.
     { from_tenant: 'Miguel', to_tenant: 'Pablo', enabled: false, allow_route: false, allow_read: false, allow_control: false, policy: 'default-deny' },
+    // Isa NO tiene arista desde Steven a propósito, y no es un olvido del fixture: el cruce que
+    // nadie declaró queda denegado por default en el backend, y esa es justamente la fila que la
+    // consola tiene que saber mostrar (destino bloqueado con su motivo, no un botón muerto).
   ],
 };
 
