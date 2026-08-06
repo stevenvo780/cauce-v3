@@ -202,6 +202,32 @@ export function sessionName(alias: string): string {
 }
 
 /**
+ * Cómo se le pide al harness que REANUDE su conversación en vez de abrir una en blanco.
+ *
+ * Existe porque parar un agente no puede costarle la memoria. Las dos TUI arrancan SIEMPRE vacías
+ * cuando se las invoca a secas, aunque su registro siga entero en disco: el contexto vivía sólo en
+ * el proceso. Medido con las peores consecuencias posibles la madrugada del 2026-08-06, cuando un
+ * `cauce kant on` rehízo el panel de kant y se llevó por delante 38 MB de conversación acumulada
+ * desde el 2 de agosto — el rollout seguía intacto en `sessions/` y nadie lo volvió a abrir nunca.
+ *
+ * Son dos piezas y ninguna sobra:
+ *
+ *  - `args` es lo que se le añade al binario. Es parte del HARNESS, no del entorno, así que va
+ *    pegado al comando y no al prefijo `env K=V` (ver `paneEnvironmentPrefix`).
+ *  - `hasPreviousConversation` decide si siquiera se intenta. Un `resume` sin nada que reanudar es
+ *    la forma más fácil de dejar un panel muerto, y un panel que no arranca es PEOR que un panel
+ *    sin contexto: un alias mudo es el fallo más caro de la flota. Comprobado el 2026-08-06 con
+ *    claude 2.1.223: en una carpeta sin conversación previa, `claude --continue` escribe «No
+ *    conversation found to continue» y sale con código 1 — el panel muere al nacer.
+ */
+export interface ResumeSpec {
+  /** Argumentos que reanudan: `resume --last` en codex, `--continue` en claude. */
+  readonly args: readonly string[];
+  /** ¿Hay algo que ese `args` pueda reanudar de verdad? */
+  hasPreviousConversation(): Promise<boolean>;
+}
+
+/**
  * Socket tmux propio de Cauce.
  *
  * Deliberadamente NO es el socket por defecto: la flota ya tiene sesiones tmux levantadas por el

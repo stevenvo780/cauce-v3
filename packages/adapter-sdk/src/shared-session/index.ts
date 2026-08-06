@@ -5,6 +5,7 @@ export * from "./pane.js";
 export * from "./transcript.js";
 export * from "./rollout.js";
 export * from "./session.js";
+export * from "./resume.js";
 export * from "./degradation-log.js";
 export * from "./paste-runner.js";
 export * from "./config.js";

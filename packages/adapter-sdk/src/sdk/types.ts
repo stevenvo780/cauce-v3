@@ -313,7 +313,16 @@ export interface AdapterLog {
      * reiniciada. Se emite al journal ADEMÁS de viajar dentro del "reply": el intento anterior
      * murió justamente porque esa situación no dejaba rastro en ninguna parte.
      */
-    | 'shared_session_degraded';
+    | 'shared_session_degraded'
+    /**
+     * Qué pasó al intentar devolverle al panel su conversación anterior.
+     *
+     * Sólo se emite cuando NO salió bien. Hace falta porque el fallo es mudo por naturaleza: el
+     * alias arranca, contesta y parece sano — simplemente no se acuerda de nada. Sin esta línea,
+     * la única señal de que se perdió la memoria sería que el agente responde raro, que fue
+     * exactamente cómo se descubrió la pérdida de los 38 MB de kant.
+     */
+    | 'shared_session_resume';
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;

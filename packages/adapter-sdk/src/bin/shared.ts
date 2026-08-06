@@ -19,6 +19,7 @@ import { PasteSessionRunner } from "../shared-session/paste-runner.js";
 import { claudeTranscript } from "../shared-session/transcript.js";
 import { codexTranscript } from "../shared-session/rollout.js";
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
+import { sharedSessionResume } from "../shared-session/resume.js";
 import type { CommandRunner } from "../sdk/types.js";
 
 function commandOverride(
@@ -129,10 +130,17 @@ function sharedSessionRunner(
     harness: shared.harness,
     workspace: shared.workspace,
     environment: shared.paneEnvironment,
+    // Si al adaptador le toca rehacer el panel, que vuelva con la conversación del dueño. Sale del
+    // MISMO `configDirectory` del que se cosecha, así que no puede preguntar por un registro
+    // distinto del que la TUI escribe.
+    resume: sharedSessionResume(shared.harness, shared.configDirectory, shared.workspace),
     tmux,
     fallback,
     sleep,
     onDegradation,
+    onNotice: (detail: string): void => {
+      logger({ event: "shared_session_resume", alias: shared.alias, error_message: detail });
+    },
   };
   return shared.harness === "claude"
     ? new PasteSessionRunner({

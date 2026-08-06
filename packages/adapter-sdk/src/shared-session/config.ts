@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { HarnessId } from "../sdk/types.js";
 import type { SharedSessionSpec } from "./session.js";
+import { sharedSessionResume } from "./resume.js";
 import { isSharedSessionHarness, type SharedSessionHarness } from "./types.js";
 
 /**
@@ -98,11 +99,17 @@ export function cliSharedSessionSpec(
   home: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): SharedSessionSpec {
+  const configDirectory = harnessConfigDirectory(harness, home, environment);
   return {
     alias,
     harness,
     workspace,
     environment: sharedSessionPaneEnvironment(harness, home, environment),
+    // Este es el camino por el que se perdieron los 38 MB de kant: `cauce <alias> on` rehace el
+    // panel, y hasta hoy lo rehacía SIEMPRE en blanco. Reanudar tiene que estar acá y en el
+    // adaptador, porque son los dos únicos creadores posibles y cualquiera de los dos puede ganar
+    // la carrera.
+    resume: sharedSessionResume(harness, configDirectory, workspace),
   };
 }
 

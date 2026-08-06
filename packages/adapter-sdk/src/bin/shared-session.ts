@@ -117,7 +117,15 @@ async function main(): Promise<void> {
   }
 
   if (options.command === "ensure") {
-    const result = await ensureSharedSession(tmux, sessionSpec, { sleep });
+    // El aviso va a stderr, no al JSON de stdout: quien llama a esto es `cauce <alias>`, un script
+    // bash que parsea stdout. Una reanudación que no salió tiene que verse igualmente, porque el
+    // panel vuelve en blanco y por fuera eso no se distingue de un panel que nunca tuvo contexto.
+    const result = await ensureSharedSession(tmux, sessionSpec, {
+      sleep,
+      log: (detail: string): void => {
+        process.stderr.write(`${detail}\n`);
+      },
+    });
     process.stdout.write(`${JSON.stringify({
       ...result,
       session: sessionName(options.alias),

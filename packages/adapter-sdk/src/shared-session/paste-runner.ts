@@ -18,6 +18,7 @@ import {
 } from "./session.js";
 import { TUI_WINDOW, sessionName } from "./types.js";
 import type {
+  ResumeSpec,
   SharedSessionDegradation,
   SharedSessionHarness,
   SharedSessionRunner,
@@ -69,7 +70,15 @@ export interface PasteSessionOptions<E> {
   readonly pollMs?: number;
   readonly readyTimeoutMs?: number;
   readonly command?: string;
+  /**
+   * Cómo se reanuda la conversación del dueño si hay que rehacerle el panel. Ver `ResumeSpec`.
+   *
+   * Ausente = el panel resucita EN BLANCO, que es lo que hacía este runner hasta el 2026-08-06.
+   */
+  readonly resume?: ResumeSpec;
   readonly onDegradation?: (degradation: SharedSessionDegradation) => void;
+  /** Dónde se cuenta que una reanudación no salió. Ver `EnsureOptions.log`. */
+  readonly onNotice?: (detail: string) => void;
 }
 
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 120_000;
@@ -231,6 +240,7 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
         harness: this.options.harness,
         workspace: this.options.workspace,
         ...(this.options.command === undefined ? {} : { command: this.options.command }),
+        ...(this.options.resume === undefined ? {} : { resume: this.options.resume }),
         ...(this.options.environment === undefined ? {} : { environment: this.options.environment }),
       },
       this.ensureOptions(),
@@ -239,12 +249,18 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
       return { ok: false, reason: ensure.failure ?? "session_absent", detail: ensure.detail };
     }
     if (ensure.created) {
-      // Resurrección: había que crearla, así que el dueño NO tenía ese panel abierto y la
-      // conversación empieza vacía. `ensure` ya lo sabía y el runner lo tiraba: medido el
-      // 2026-07-30, borrada la sesión, la entrega salió con `exitCode 0` y sin un solo aviso.
+      // Resurrección: había que crearla, así que el dueño NO tenía ese panel abierto. `ensure` ya
+      // lo sabía y el runner lo tiraba: medido el 2026-07-30, borrada la sesión, la entrega salió
+      // con `exitCode 0` y sin un solo aviso.
+      //
+      // Se sigue avisando aunque la conversación haya vuelto entera, porque el panel es NUEVO y el
+      // dueño no lo estaba mirando; lo que cambia es qué se le dice. Decir "empieza de cero" cuando
+      // el contexto volvió es tan falso como callarse que se perdió.
       await this.note({
         reason: "session_created",
-        detail: `no había sesión compartida y se creó una nueva: ${ensure.detail}`,
+        detail: ensure.resumed === true
+          ? `no había sesión compartida: se creó una REANUDANDO la conversación anterior (${ensure.detail})`
+          : `no había sesión compartida y se creó una nueva, sin contexto previo: ${ensure.detail}`,
         occurredAt: new Date().toISOString(),
         fellBack: false,
       });
@@ -263,6 +279,7 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
       ...(this.options.readyTimeoutMs === undefined
         ? {}
         : { readyTimeoutMs: this.options.readyTimeoutMs }),
+      ...(this.options.onNotice === undefined ? {} : { log: this.options.onNotice }),
     };
   }
 

@@ -99,6 +99,20 @@ export async function hasSession(tmux: TmuxController, session: string): Promise
   return result.exitCode === 0;
 }
 
+/**
+ * Se lleva la sesión entera. Sólo se usa para DESHACER un arranque que no cuajó.
+ *
+ * El `=` es obligatorio: sin él tmux acepta prefijos, y `cauce-kant` casaría con `cauce-kant-viejo`
+ * o con cualquier sesión que empiece igual. Matar la sesión equivocada de esta flota significa
+ * borrarle a otro alias su conversación, que es exactamente el daño que este mecanismo repara.
+ *
+ * Devuelve si tmux la mató. Que ya no exista NO es un fallo: es el estado que se buscaba.
+ */
+export async function killSession(tmux: TmuxController, session: string): Promise<boolean> {
+  const result = await tmux.run(["kill-session", "-t", `=${session}`]);
+  return result.exitCode === 0 || !await hasSession(tmux, session);
+}
+
 export async function capturePane(
   tmux: TmuxController,
   target: string,
