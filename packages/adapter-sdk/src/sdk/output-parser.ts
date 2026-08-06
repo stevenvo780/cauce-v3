@@ -238,6 +238,68 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
   };
 }
 
+/** Corta en el limite de bytes sin partir un caracter multibyte por la mitad. */
+function recortarABytes(texto: string, limite: number): string {
+  if (Buffer.byteLength(texto, "utf8") <= limite) return texto;
+  const marca = "\n[Cauce] (recortado por limite de tamano)";
+  const disponible = Math.max(0, limite - Buffer.byteLength(marca, "utf8"));
+  const cortado = new TextDecoder("utf-8", { fatal: false })
+    .decode(Buffer.from(texto, "utf8").subarray(0, disponible))
+    // El decoder no fatal deja U+FFFD si el corte partio un caracter: se descarta esa cola.
+    .replace(/\uFFFD+$/gu, "");
+  return `${cortado}${marca}`;
+}
+
+/**
+ * Un `messages` dirigido al REMITENTE ya no cuesta el turno entero.
+ *
+ * Esto era `throw AGENT_MESSAGE_PING_PONG`, no reintentable, y el throw se llevaba puesto el
+ * `reply` ENTERO: el agente hacia el trabajo, lo escribia, y no llegaba a nadie. Medido sobre
+ * 48 h (2026-08-04/05): 5 turnos perdidos asi en 5 alias de 4 tenants —argos y jarvis (Steven),
+ * hegel (Jhon), janus (Miguel), midas (Pablo)—; 7 en total sobre 6 alias contando vulcano. El de
+ * midas llevaba una lista de 11 prospectos YA HECHA.
+ *
+ * Y la culpa no era del agente: el `AGENTS.md` de 5 contenedores exige que todo envio que el
+ * agente afirme haber hecho este en `messages`, sin excepcion para el remitente. El agente que
+ * obedecia al pie de la letra perdia el turno.
+ *
+ * Mismo principio, mismo patron y mismo precio que `parseNotify` y que las delegaciones de un
+ * turno "failed": ningun campo accesorio mal formado puede costar el trabajo. El `reply` ES el
+ * trabajo; `messages` es un accesorio, y encima este tiene un canal correcto y evidente al que
+ * caer —el `reply` vuelve solo a quien escribio—, asi que descartarlo no pierde ni el destino.
+ *
+ * El descarte NUNCA es mudo: deja el motivo, el alias y la regla dentro del `reply`, que es
+ * durable en `deliveries.result.output.reply`. Descartar en silencio es lo que nos costo dias de
+ * diagnostico en otros bugs.
+ *
+ * El resto del contrato de destinos no se ablanda: self, desconocido, ambiguo y fuera de linea
+ * siguen siendo error duro en `validateDelegationTargets`, porque ninguno tiene a donde caer.
+ */
+function descartarReboteAlRemitente(
+  output: StructuredOutput,
+  senderAlias: string | undefined,
+): StructuredOutput {
+  if (senderAlias === undefined || output.messages.length === 0) return output;
+  const rebotes = output.messages.filter((message) => message.to === senderAlias);
+  if (rebotes.length === 0) return output;
+
+  const aviso = `[Cauce] Se descarto ${rebotes.length} mensaje(s) de "messages" dirigido(s) a "${senderAlias}", que es quien te escribio: al remitente se le contesta SOLO por "reply", que vuelve solo a el. "messages" es unicamente para delegar a un TERCER agente.`;
+  const propio = output.reply === null || output.reply.trim() === "" ? "" : output.reply;
+  // El cuerpo rebotado iba al MISMO destinatario que el `reply`, asi que plegarlo ahi no lo
+  // desvia: lo entrega por el canal correcto. Solo se pliega cuando el turno no dejo respuesta
+  // propia —el caso en que, si no, el entregable se perderia entero—; si ya hay `reply`, el
+  // trabajo ya esta dicho y repetirlo duplicaria el texto que lee la persona.
+  const cuerpo = propio === ""
+    ? recortarABytes(rebotes.map((message) => message.body).join("\n\n"), MAX_FINAL_TEXT_BYTES)
+    : propio;
+
+  return {
+    ...output,
+    messages: output.messages.filter((message) => message.to !== senderAlias),
+    reply: cuerpo === "" ? aviso : `${cuerpo}\n\n${aviso}`,
+  };
+}
+
 /**
  * Enforces the semantic result contract once trusted delivery context is
  * available. Dialect parsers intentionally remain context-free; the harness
@@ -276,6 +338,8 @@ export function validateDeliveryOutput(
         : `${output.reply}\n\n${aviso}`,
     };
   }
+
+  output = descartarReboteAlRemitente(output, context.senderAlias);
 
   const internalMessage = context.messageType === "agent.message"
     || context.messageType === "agent.response"
@@ -435,13 +499,9 @@ function validateDelegationTargets(
         false,
       );
     }
-    if (context.senderAlias !== undefined && message.to === context.senderAlias) {
-      throw new AdapterError(
-        "AGENT_MESSAGE_PING_PONG",
-        "A harness must return to its sender through reply, never through messages",
-        false,
-      );
-    }
+    // Aca vivia `AGENT_MESSAGE_PING_PONG`. Ya no: `descartarReboteAlRemitente` corre ANTES y saca
+    // esos mensajes, asi que este bucle nunca ve uno. Dejarlo como throw seria codigo muerto que
+    // ademas sostiene la creencia falsa de que rebotar al remitente todavia mata el turno.
 
     const matches = context.routingTargets?.filter((target) => target.alias === message.to) ?? [];
     if (matches.length === 0) {

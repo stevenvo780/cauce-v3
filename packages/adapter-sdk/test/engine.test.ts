@@ -1152,6 +1152,13 @@ test("an uncorrelated agent response cannot recover a retained local prompt", as
   );
 });
 
+/**
+ * El rebote al remitente no se materializa, pero el turno SOBREVIVE, de punta a punta y no solo
+ * en el validador. Antes esto salia `phase:"failed"` con `AGENT_MESSAGE_PING_PONG` y sin
+ * `output`: la entrega moria sin `result` y el trabajo no llegaba a nadie. Medido en 48 h
+ * (2026-08-04/05): 5 turnos asi en argos, jarvis, hegel, janus y midas; el de midas llevaba una
+ * lista de 11 prospectos ya hecha.
+ */
 test("an internal agent cannot send any message back to its sender", async () => {
   const runner = new ControlledRunner();
   runner.stdout = JSON.stringify({
@@ -1170,9 +1177,12 @@ test("an internal agent cannot send any message back to its sender", async () =>
   };
   await context.engine.handleDelivery(input);
   const terminal = context.events.at(-1);
-  assert.equal(terminal?.phase, "failed");
-  assert.equal(terminal?.error?.code, "AGENT_MESSAGE_PING_PONG");
-  assert.equal(terminal?.error?.retryable, false);
+  assert.equal(terminal?.phase, "done");
+  assert.equal(terminal?.error, undefined);
+  assert.deepEqual(terminal?.output?.messages, [], "el rebote no se manda");
+  // El cuerpo iba al mismo destinatario que el reply, asi que llega igual, y con el motivo.
+  assert.match(terminal?.output?.reply ?? "", /a differently worded follow-up/u);
+  assert.match(terminal?.output?.reply ?? "", /\[Cauce\].*"seneca"/su);
 });
 
 test("every harness runtime bypasses providers and native sessions for agent fan-in", async () => {
