@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# compilar-en-torre — corre comandos pesados de build/typecheck/test en kratos ("la torre")
+# en vez de gastar CPU del VPS.
+#
+# POR QUÉ EXISTE
+# El mismo `tsc --noEmit` tarda 29,2 s en el VPS y 2,9 s en kratos (10x). El VPS es donde vive
+# la flota y donde responden los agentes: quemarlo en compilaciones lo satura para todo el mundo.
+# kratos tiene la CPU libre para esto.
+#
+# QUÉ SINCRONIZA Y QUÉ NO
+#   - Sólo código fuente (rsync con excludes). node_modules NUNCA se sincroniza: son 264 MB /
+#     23.175 archivos y tardan 148 s por rsync contra 1,9 s incremental del código solo. Se
+#     instala en destino con el gestor del lockfile, que con store tibio tarda ~3 s.
+#   - Por default NO se trae nada de vuelta salvo la salida y el código de salida del comando.
+#     Si hace falta un artefacto, pedilo con --fetch=RUTA (repetible). Se acepta JS/JSON/texto;
+#     se RECHAZA cualquier ruta que huela a binario nativo (node_modules/, *.node, *.so) porque
+#     kratos corre glibc 2.43 (CachyOS) y el VPS 2.39 (Ubuntu 24.04): un binario compilado en
+#     kratos puede no cargar en el VPS. Al revés (VPS -> kratos) sí funciona, pero acá no se
+#     compila para copiar binarios de vuelta.
+#
+# POR QUÉ NO HAY FALLBACK AUTOMÁTICO AL VPS
+# Si kratos no responde, el script falla ruidoso y con exit code distinto de cero. NO cae solo
+# al VPS. Un fallback silencioso es exactamente el bug que esta herramienta existe para evitar:
+# si el VPN cae y esto igual "funciona" corriendo local sin decirlo, el operador cree que midió
+# kratos cuando midió el VPS saturado, y el banner de abajo (que muestra dónde corrió de verdad)
+# deja de servir para nada. Si algún día hace falta un router automático, que sea otra
+# herramienta explícita — no una modificación silenciosa de ésta.
+#
+# USO
+#   compilar-en-torre [--fetch=RUTA ...] <ruta-worktree> <comando...>
+#
+# EJEMPLOS
+#   compilar-en-torre /workspace/wt-reintentos pnpm typecheck
+#   compilar-en-torre /workspace/wt-reintentos bash -c 'exit 7'
+#   compilar-en-torre --fetch=dist/index.js /workspace/wt-reintentos pnpm build:core
+#
+# VARIABLES DE ENTORNO
+#   KRATOS_HOST   host SSH destino (default: kratos). Para probar el camino de error, apuntalo
+#                 a un host que no existe: KRATOS_HOST=host-inexistente-xyz compilar-en-torre ...
+#   KRATOS_BASE   directorio remoto base (default: /home/stev/compilar-en-torre). Va bajo /home
+#                 a propósito: la / de kratos está al 91%, /home tiene 497 G libres.
+#
+# CÓDIGOS DE SALIDA
+#   0        el comando remoto terminó OK
+#   2        uso incorrecto (argumentos)
+#   3        kratos inalcanzable (SSH falló) — no hay fallback, este es el fallo "ruidoso"
+#   4        el rsync de código falló
+#   5        la instalación de dependencias remota falló
+#   N        el código de salida real del comando remoto, propagado tal cual (ver EXIT abajo)
+
+set -uo pipefail
+
+KRATOS_HOST="${KRATOS_HOST:-kratos}"
+KRATOS_BASE="${KRATOS_BASE:-/home/stev/compilar-en-torre}"
+SSH_OPTS=(-o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+
+uso() {
+  echo "uso: compilar-en-torre [--fetch=RUTA ...] <ruta-worktree> <comando...>" >&2
+  echo "     KRATOS_HOST=host-inexistente compilar-en-torre ...   # para probar el fallo ruidoso" >&2
+}
+
+# --- 0. parseo de argumentos ---------------------------------------------
+FETCH_PATHS=()
+while [ $# -gt 0 ] && [ "${1:-}" != "${1#--fetch=}" ]; do
+  FETCH_PATHS+=("${1#--fetch=}")
+  shift
+done
+
+if [ $# -lt 2 ]; then
+  uso
+  exit 2
+fi
+
+WORKTREE="$1"; shift
+CMD=("$@")
+
+if [ ! -d "$WORKTREE" ]; then
+  echo "ERROR: no existe el worktree local: $WORKTREE" >&2
+  exit 2
+fi
+WORKTREE="$(cd "$WORKTREE" && pwd)"
+WT_NAME="$(basename "$WORKTREE")"
+REMOTE_DIR="${KRATOS_BASE%/}/$WT_NAME"
+
+# rechazar rutas de --fetch que huelan a binario nativo, ANTES de gastar un solo segundo de red
+for f in "${FETCH_PATHS[@]:-}"; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    *node_modules*|*.node|*.so|*.so.*)
+      echo "ERROR: --fetch='$f' rechazado: huele a binario nativo (glibc de kratos es 2.43," >&2
+      echo "       más nueva que la 2.39 del VPS; ese binario puede no cargar en el VPS)." >&2
+      exit 2
+      ;;
+  esac
+done
+
+# --- 1. banner: dónde va a correr esto, de verdad ------------------------
+echo "== compilar-en-torre: verificando kratos ($KRATOS_HOST) ==" >&2
+BANNER_RAW="$(ssh "${SSH_OPTS[@]}" "$KRATOS_HOST" 'echo "hostname=$(hostname)"; uptime' 2>&1)"
+BANNER_STATUS=$?
+if [ $BANNER_STATUS -ne 0 ]; then
+  echo "ERROR: kratos ($KRATOS_HOST) inalcanzable por SSH (exit $BANNER_STATUS). Salida:" >&2
+  echo "$BANNER_RAW" >&2
+  echo "No hay fallback al VPS. Revisá VPN/tailnet y reintentá a mano." >&2
+  exit 3
+fi
+echo ">>> corre en: $BANNER_RAW" >&2
+echo "==========================================================" >&2
+
+# --- 2. sincronizar sólo código fuente -------------------------------------
+ssh "${SSH_OPTS[@]}" "$KRATOS_HOST" "mkdir -p '$REMOTE_DIR'" || {
+  echo "ERROR: no se pudo crear $REMOTE_DIR en kratos" >&2
+  exit 4
+}
+
+rsync -az --delete \
+  --exclude 'node_modules' --exclude '.git' --exclude 'dist' --exclude 'core.*' \
+  --exclude '.next' --exclude 'coverage' --exclude '*.log' \
+  -e "ssh ${SSH_OPTS[*]}" \
+  "$WORKTREE/" "$KRATOS_HOST:$REMOTE_DIR/"
+if [ $? -ne 0 ]; then
+  echo "ERROR: rsync de código fuente falló" >&2
+  exit 4
+fi
+
+# --- 3. instalar dependencias en destino (nunca se sube node_modules) -----
+INSTALL_CMD=""
+if [ -f "$WORKTREE/pnpm-lock.yaml" ]; then
+  INSTALL_CMD="pnpm install --frozen-lockfile"
+elif [ -f "$WORKTREE/package-lock.json" ]; then
+  INSTALL_CMD="npm ci"
+elif [ -f "$WORKTREE/yarn.lock" ]; then
+  INSTALL_CMD="yarn install --frozen-lockfile"
+fi
+
+if [ -n "$INSTALL_CMD" ]; then
+  ssh "${SSH_OPTS[@]}" "$KRATOS_HOST" "cd '$REMOTE_DIR' && $INSTALL_CMD"
+  if [ $? -ne 0 ]; then
+    echo "ERROR: instalación de dependencias falló en kratos" >&2
+    exit 5
+  fi
+else
+  echo "AVISO: no hay lockfile conocido (pnpm/npm/yarn) en $WORKTREE, se omite install" >&2
+fi
+
+# --- 4. ejecutar el comando remoto, con el cwd correcto --------------------
+REMOTE_CMD="cd '$REMOTE_DIR' &&"
+for tok in "${CMD[@]}"; do
+  REMOTE_CMD="$REMOTE_CMD $(printf '%q' "$tok")"
+done
+
+echo "== ejecutando en $KRATOS_HOST: ${CMD[*]} ==" >&2
+ssh "${SSH_OPTS[@]}" "$KRATOS_HOST" "$REMOTE_CMD"
+EXIT=$?
+echo "== compilar-en-torre: comando remoto terminó con exit $EXIT ==" >&2
+
+# --- 5. traer de vuelta sólo lo pedido explícitamente -----------------------
+for f in "${FETCH_PATHS[@]:-}"; do
+  [ -z "$f" ] && continue
+  echo "== trayendo de vuelta: $f ==" >&2
+  rsync -az \
+    --exclude 'node_modules' --exclude '*.node' --exclude '*.so' \
+    -e "ssh ${SSH_OPTS[*]}" \
+    "$KRATOS_HOST:$REMOTE_DIR/$f" "$WORKTREE/$f" \
+  || echo "AVISO: no se pudo traer $f (¿existe en destino?)" >&2
+done
+
+# el exit code del comando remoto manda, siempre — si esto se come el código, la
+# herramienta miente y no sirve como gate.
+exit $EXIT
