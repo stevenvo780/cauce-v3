@@ -77,10 +77,17 @@ export class CauceApi {
     this.developmentIdentity = developmentIdentity;
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  /**
+   * `requireCsrf: false` es SÓLO para el propio login: pedirle un token CSRF a una sesión que
+   * todavía no existe termina en un 401 que nunca sale al servidor. Ese POST igual está
+   * protegido en el gateway por el chequeo de `Origin`/`Sec-Fetch-Site` del mismo origen.
+   */
+  private async request<T>(
+    path: string, init: RequestInit = {}, { requireCsrf = true }: { requireCsrf?: boolean } = {},
+  ): Promise<T> {
     const method = init.method?.toUpperCase() ?? 'GET';
     const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(method);
-    const csrfToken = unsafe ? await this.csrfForMutation() : undefined;
+    const csrfToken = unsafe && requireCsrf ? await this.csrfForMutation() : undefined;
     const response = await (this.fetcher ?? fetch)(`${this.baseUrl}${path}`, {
       ...init,
       credentials: 'include',
@@ -123,6 +130,21 @@ export class CauceApi {
 
   getLoginUrl(): string {
     return `${this.baseUrl}/v3/auth/login`;
+  }
+
+  /**
+   * Login por contraseña. Lo único que vuelve al navegador es el estado de la sesión: el token
+   * viaja en una cookie `HttpOnly` que este código no puede leer ni guardar. El `csrf_token` de
+   * la respuesta se retiene en memoria (nunca en `localStorage`) para las escrituras siguientes.
+   */
+  async login(email: string, password: string): Promise<ConsoleAuthState> {
+    const state = await this.request<ConsoleAuthState>('/v3/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }, { requireCsrf: false });
+    this.bffSessionSupported = true;
+    this.csrfToken = typeof state.csrf_token === 'string' ? state.csrf_token : undefined;
+    return state;
   }
 
   async getAuthSession(): Promise<ConsoleAuthState> {

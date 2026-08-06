@@ -28,6 +28,7 @@ export interface AuthGateState {
   status: GateStatus;
   busy: boolean;
   check: () => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -62,6 +63,22 @@ export function useAuthGate(): AuthGateState {
     };
   }, [check]);
 
+  /**
+   * Login por contraseña. Igual que el logout: no se cree su propio optimismo — tras el POST
+   * vuelve a preguntarle al servidor quién es. Un fallo de credenciales NO se guarda en `error`
+   * (eso pintaría la pantalla de "no se pudo verificar la sesión", que es otra cosa): se
+   * propaga a quien llamó para que lo muestre dentro del formulario.
+   */
+  const login = useCallback(async (email: string, password: string) => {
+    setBusy(true);
+    try {
+      await api.login(email, password);
+      await check();
+    } finally {
+      setBusy(false);
+    }
+  }, [api, check]);
+
   const logout = useCallback(async () => {
     setBusy(true);
     try {
@@ -75,5 +92,5 @@ export function useAuthGate(): AuthGateState {
     }
   }, [api, check]);
 
-  return { state, error, status: statusOf(state, error), busy, check, logout };
+  return { state, error, status: statusOf(state, error), busy, check, login, logout };
 }

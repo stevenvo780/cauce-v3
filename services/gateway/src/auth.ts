@@ -20,6 +20,14 @@ export interface Principal {
   readonly origin?: Origin;
   readonly roles: readonly PrincipalRole[];
   readonly permissions: readonly PrincipalPermission[];
+  /**
+   * Persona detrás del request, cuando el proveedor pudo establecerla (hoy: login por
+   * contraseña de la consola). Es autoridad AUTENTICADA por el servidor, no una cabecera:
+   * `x-cauce-operator` la declara el proxy con el valor `steven` fijo para todo el mundo y por
+   * eso la auditoría no distinguía a nadie. Cuando este campo viene, gana sobre la cabecera.
+   * Los principals de mTLS lo dejan sin definir y el camino de la cabecera sigue igual.
+   */
+  readonly operator_id?: string;
 }
 
 export class AuthError extends Error {
@@ -78,6 +86,9 @@ export function validatePrincipal(value: Principal): Principal {
   const principalPermissions = stringSet(value.permissions, permissions, 'permissions');
   const origin = value.origin === undefined ? undefined : OriginSchema.safeParse(value.origin);
   if (origin !== undefined && !origin.success) throw new AuthError('authenticated origin claim is invalid');
+  const operatorId = value.operator_id === undefined
+    ? undefined
+    : nonEmptyString(value.operator_id, 'operator_id', 254);
   return {
     tenant_id: tenant.data,
     alias: alias.data,
@@ -85,7 +96,8 @@ export function validatePrincipal(value: Principal): Principal {
     channel,
     roles: principalRoles,
     permissions: principalPermissions,
-    ...(origin === undefined ? {} : { origin: origin.data })
+    ...(origin === undefined ? {} : { origin: origin.data }),
+    ...(operatorId === undefined ? {} : { operator_id: operatorId })
   };
 }
 

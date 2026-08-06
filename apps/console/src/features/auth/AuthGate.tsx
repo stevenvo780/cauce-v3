@@ -1,5 +1,5 @@
 import { KeyRound, LogIn, LogOut, ShieldAlert, ShieldCheck } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import type { ConsoleAuthState } from '../../api/types';
 import { timestamp } from '../../lib';
@@ -9,47 +9,105 @@ import './auth.css';
 /**
  * Puerta de sesión de la consola.
  *
- * Hoy en producción el único control de acceso humano es el `basic_auth` de Caddy delante del
- * origen: una contraseña compartida, sin sesión, sin identidad y sin cierre de sesión posible.
- * El gateway, en cambio, YA trae un BFF OIDC completo (`services/gateway/src/oidc-bff.ts`:
- * authorization code + PKCE, sesión cifrada en `gateway_oidc_sessions`, cookies `__Host-`,
- * token CSRF y `/v3/auth/{login,callback,session,logout}`), sólo que arranca con
- * `CAUCE_AUTH_PROVIDER=mtls` y sin proveedor de identidad configurado.
+ * Bloquea la aplicación entera hasta que el SERVIDOR dice que hay sesión. No decide nada por su
+ * cuenta y no guarda ningún secreto: la autoridad es la cookie HttpOnly, que este código no
+ * puede leer ni falsificar. Ni la contraseña ni el token quedan en `localStorage` — un XSS acá
+ * no se lleva la sesión porque no hay nada que llevarse.
  *
- * Este componente es el lado del navegador de ese login: bloquea la aplicación entera hasta que
- * el SERVIDOR dice que hay sesión. No decide nada por su cuenta y no guarda ningún secreto — la
- * autoridad es la cookie HttpOnly, que este código no puede leer ni falsificar.
+ * El gateway dice CÓMO se entra, en `login_mode`:
+ *  - `password` → formulario de correo y contraseña contra `POST /v3/auth/login`
+ *    (`services/gateway/src/password-auth.ts`, cuentas en la tabla `console_users`).
+ *  - `redirect` o ausente → el BFF OIDC de `services/gateway/src/oidc-bff.ts`, que se activa
+ *    navegando a `/v3/auth/login`.
  *
  * Los tres desenlaces posibles, y por qué cada uno se comporta así:
  *  - `authenticated: true`  → pasa, y la identidad queda visible arriba con su vencimiento.
  *  - `authenticated: false` → pantalla de login. NO se renderiza nada de la consola detrás.
- *  - `authenticated: null`  → el gateway no expone el BFF (es el caso de HOY). Se deja pasar,
- *    porque bloquear dejaría la consola inservible en producción, pero con un aviso permanente
- *    que dice con todas las letras que no hay login de verdad. Mentir acá sería peor que el
- *    propio agujero: un candado dibujado es más peligroso que una puerta abierta señalizada.
+ *  - `authenticated: null`  → el gateway no expone ningún BFF (`CAUCE_AUTH_PROVIDER=mtls`, que
+ *    es lo desplegado mientras no se encienda el login). Se deja pasar, porque bloquear dejaría
+ *    la consola inservible en producción, pero con un aviso permanente que dice con todas las
+ *    letras que no hay login de verdad. Mentir acá sería peor que el propio agujero: un candado
+ *    dibujado es más peligroso que una puerta abierta señalizada.
  *
  * Un error de red NO se trata como "sin sesión": se falla cerrado con reintento, porque un
  * gateway caído no es una autorización.
  */
 
-function LoginScreen({ loginUrl, reason }: { loginUrl: string; reason?: string | null }) {
+const LEDE = 'Esta consola opera la flota entera: publica mensajes, cancela entregas y abre '
+  + 'terminales dentro de los contenedores. Requiere una sesión con identidad.';
+
+const FINEPRINT = (
+  <p className="auth-fineprint">
+    El servidor decide. La sesión vive en una cookie <code>__Host-</code> HttpOnly que este
+    navegador no puede leer, y toda escritura viaja además con un token CSRF de un solo origen.
+  </p>
+);
+
+/** Formulario de contraseña. El error de credenciales se muestra acá, no en la pantalla de fallo. */
+function PasswordLoginForm({ login, busy, reason }: {
+  login: (email: string, password: string) => Promise<void>;
+  busy: boolean;
+  reason?: string | null;
+}) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [failure, setFailure] = useState<string>();
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setFailure(undefined);
+    try {
+      await login(email, password);
+    } catch (cause) {
+      setFailure(cause instanceof Error ? cause.message : 'No se pudo iniciar sesión.');
+    } finally {
+      // La contraseña no sobrevive al intento ni en memoria del componente.
+      setPassword('');
+    }
+  };
+
   return (
     <main className="auth-screen" id="main-content">
       <section className="auth-card">
         <span className="auth-mark" aria-hidden="true"><KeyRound size={26} /></span>
         <h1>Consola de Cauce V3</h1>
-        <p className="auth-lede">
-          Esta consola opera la flota entera: publica mensajes, cancela entregas y abre terminales
-          dentro de los contenedores. Requiere una sesión con identidad.
-        </p>
+        <p className="auth-lede">{LEDE}</p>
+        {reason ? <p className="auth-reason">{reason}</p> : null}
+        <form className="auth-form" onSubmit={(event) => { void submit(event); }}>
+          <label htmlFor="auth-email">Correo</label>
+          <input
+            id="auth-email" name="email" type="email" autoComplete="username" required
+            value={email} onChange={(event) => setEmail(event.target.value)} disabled={busy}
+          />
+          <label htmlFor="auth-password">Contraseña</label>
+          <input
+            id="auth-password" name="password" type="password" autoComplete="current-password" required
+            value={password} onChange={(event) => setPassword(event.target.value)} disabled={busy}
+          />
+          {failure ? <p className="auth-failure" role="alert">{failure}</p> : null}
+          <button className="button auth-primary" type="submit" disabled={busy}>
+            <LogIn size={17} aria-hidden="true" /> {busy ? 'Entrando…' : 'Iniciar sesión'}
+          </button>
+        </form>
+        {FINEPRINT}
+      </section>
+    </main>
+  );
+}
+
+/** Login por redirección: el BFF OIDC. Se conserva porque el gateway puede correr en ese modo. */
+function RedirectLoginScreen({ loginUrl, reason }: { loginUrl: string; reason?: string | null }) {
+  return (
+    <main className="auth-screen" id="main-content">
+      <section className="auth-card">
+        <span className="auth-mark" aria-hidden="true"><KeyRound size={26} /></span>
+        <h1>Consola de Cauce V3</h1>
+        <p className="auth-lede">{LEDE}</p>
         {reason ? <p className="auth-reason">{reason}</p> : null}
         <a className="button auth-primary" href={loginUrl}>
           <LogIn size={17} aria-hidden="true" /> Iniciar sesión
         </a>
-        <p className="auth-fineprint">
-          El servidor decide. La sesión vive en una cookie <code>__Host-</code> HttpOnly que este
-          navegador no puede leer, y toda escritura viaja además con un token CSRF de un solo origen.
-        </p>
+        {FINEPRINT}
       </section>
     </main>
   );
@@ -102,7 +160,8 @@ export function SessionBadge({ state, status, busy, onLogout }: {
     <div className="auth-state authenticated">
       <ShieldCheck size={14} aria-hidden="true" />
       <span>
-        <strong>{state?.subject ?? 'identidad verificada'}</strong>
+        <strong>{state?.name || state?.subject || 'identidad verificada'}</strong>
+        {state?.name && state?.subject ? <small>{state.subject}</small> : null}
         {state?.expires_at ? <small>vence {timestamp(state.expires_at)}</small> : null}
       </span>
       <button className="button small secondary" type="button" disabled={busy} onClick={onLogout}>
@@ -137,6 +196,12 @@ export function AuthGate({ children }: { children: (gate: AuthGateState) => Reac
 
   if (gate.status === 'checking') return <CheckingScreen />;
   if (gate.status === 'error' && gate.error) return <ErrorScreen error={gate.error} onRetry={() => void gate.check()} />;
-  if (gate.status === 'out') return <LoginScreen loginUrl={api.getLoginUrl()} reason={gate.state?.reason} />;
+  if (gate.status === 'out') {
+    // Sin `login_mode` se asume redirección: así se comportaba la consola antes de que existiera
+    // el login por contraseña, y un gateway viejo tiene que seguir entrando por su camino.
+    return gate.state?.login_mode === 'password'
+      ? <PasswordLoginForm login={gate.login} busy={gate.busy} reason={gate.state?.reason} />
+      : <RedirectLoginScreen loginUrl={api.getLoginUrl()} reason={gate.state?.reason} />;
+  }
   return <>{children(gate)}</>;
 }

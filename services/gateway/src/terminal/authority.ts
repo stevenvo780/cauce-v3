@@ -267,15 +267,26 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 }
 
 /**
- * Today the whole console shares one client certificate (Steven:kant) behind one Caddy basic
- * auth user, so the gateway does not know which human is on the other side. The console may
- * declare it with CAUCE_TERMINAL_OPERATOR_HEADER, but only from the console channel and only
- * with a value enrolled in CAUCE_TERMINAL_OPERATORS. On any other channel the header is
- * ignored outright — it is a hint, never a credential.
+ * Quién es la persona, en orden de autoridad.
+ *
+ * 1. `actor.operator_id`, si el proveedor de autenticación lo estableció. Es el caso del login
+ *    por contraseña de la consola: sale del JWT verificado y de la fila de `console_users`, o
+ *    sea del servidor. Cuando existe, GANA y la cabecera ni se mira — no hace falta que el
+ *    correo esté en `CAUCE_TERMINAL_OPERATORS`, porque tener sesión ya es la inscripción.
+ * 2. La cabecera `CAUCE_TERMINAL_OPERATOR_HEADER`, sólo desde el canal `console` y sólo con un
+ *    valor inscripto en `CAUCE_TERMINAL_OPERATORS`. Este es el camino de HOY, y su límite está
+ *    medido: Caddy y nginx inyectan `X-Cauce-Operator: steven` fijo, así que la auditoría dice
+ *    `steven` entre quien entre. Es una pista, nunca una credencial, y por eso sobrevive sólo
+ *    mientras no haya una identidad de verdad en el request.
+ * 3. Sin ninguna de las dos, la sesión queda sin atribuir y `attributionAllows` la encierra en
+ *    su propio tenant.
  */
 export function resolveOperator(
   request: FastifyRequest, actor: Principal, config: TerminalConfig
 ): ResolvedOperator {
+  if (actor.operator_id !== undefined && actor.operator_id.length > 0) {
+    return { operator_id: actor.operator_id, attributed: true };
+  }
   if (actor.channel !== 'console') return { operator_id: UNATTRIBUTED_OPERATOR, attributed: false };
   const declared = headerValue(request.headers[config.operatorHeader])?.trim();
   if (declared === undefined || declared.length === 0 || !config.operators.has(declared)) {

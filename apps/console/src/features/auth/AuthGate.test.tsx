@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { expect, it } from 'vitest';
@@ -72,6 +72,43 @@ it('cerrar sesión vuelve a preguntarle al servidor y devuelve a la pantalla de 
   // No se cree su propio optimismo: el estado sale de volver a leer /v3/auth/session.
   expect(await screen.findByRole('link', { name: /iniciar sesión/i })).toBeInTheDocument();
   expect(screen.queryByRole('navigation', { name: /principal/i })).not.toBeInTheDocument();
+});
+
+it('en modo contraseña muestra el formulario y entra con las credenciales correctas', async () => {
+  let loggedIn = false;
+  server.use(
+    http.get(SESSION, () => HttpResponse.json(loggedIn
+      ? { authenticated: true, login_mode: 'password', subject: 'steven@elenxos.com', name: 'Steven', csrf_token: 'x'.repeat(32) }
+      : { authenticated: false, login_mode: 'password' })),
+    http.post('http://localhost/v3/auth/login', async ({ request }) => {
+      const body = await request.json() as { email: string; password: string };
+      if (body.password !== 'la-buena') {
+        return HttpResponse.json({ error: 'unauthorized', message: 'Correo o contraseña incorrectos.' }, { status: 401 });
+      }
+      loggedIn = true;
+      return HttpResponse.json({ authenticated: true, login_mode: 'password', csrf_token: 'x'.repeat(32) });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+
+  await user.type(await screen.findByLabelText(/correo/i), 'steven@elenxos.com');
+  await user.type(screen.getByLabelText(/contraseña/i), 'la-mala');
+  await user.click(screen.getByRole('button', { name: /iniciar sesión/i }));
+
+  // Credenciales equivocadas: el mensaje sale DENTRO del formulario y la consola no aparece.
+  expect(await screen.findByRole('alert')).toHaveTextContent(/correo o contraseña incorrectos/i);
+  expect(screen.queryByRole('navigation', { name: /principal/i })).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText(/contraseña/i), 'la-buena');
+  await user.click(screen.getByRole('button', { name: /iniciar sesión/i }));
+
+  // El estado no sale del POST: sale de volver a preguntarle a /v3/auth/session.
+  expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
+  // La identidad de la barra superior es la PERSONA, no el tenant: nombre y correo, juntos.
+  const badge = screen.getByRole('button', { name: /cerrar sesión/i }).closest('.auth-state');
+  expect(within(badge as HTMLElement).getByText('Steven')).toBeInTheDocument();
+  expect(within(badge as HTMLElement).getByText('steven@elenxos.com')).toBeInTheDocument();
 });
 
 it('cuando el gateway no expone el BFF deja pasar pero lo declara a los gritos', async () => {

@@ -330,6 +330,23 @@ describe('operator attribution', () => {
       .toEqual({ operator_id: UNATTRIBUTED_OPERATOR, attributed: false });
   });
 
+  it('an authenticated operator_id beats the proxy header, which is fixed to "steven" for everyone', () => {
+    // Caddy y nginx inyectan `X-Cauce-Operator: steven` FIJO delante del gateway, así que
+    // mientras la cabecera mandara, `audit_events` decía `steven` entrara quien entrara. Con el
+    // login por contraseña el operador sale del JWT ya verificado: la cabecera ni se mira, y no
+    // hace falta que el correo esté inscripto en CAUCE_TERMINAL_OPERATORS.
+    const config = terminalConfig({ operators: new Set(['steven']) });
+    const logged = consolePrincipal({ operator_id: 'miguel@elenxos.com' });
+    expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, config))
+      .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
+    // Sin operadores inscriptos la cabecera no atribuye a nadie, pero la sesión sí.
+    expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, terminalConfig()))
+      .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
+    // Y un principal sin identidad humana sigue exactamente como hoy: manda la cabecera.
+    expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), consolePrincipal(), config))
+      .toEqual({ operator_id: 'steven', attributed: true });
+  });
+
   it('HARD INVARIANT: without attribution only the actor own tenant may be targeted', () => {
     expect(attributionAllows(false, 'Steven', 'Steven')).toBe(true);
     for (const tenant of ['Miguel', 'Pablo', 'Isa', 'Jhon']) {
