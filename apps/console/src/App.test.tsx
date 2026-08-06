@@ -8,7 +8,9 @@ import { server } from './mocks/server';
 it('provides basic accessible landmarks and identity guidance', async () => {
   window.history.pushState({}, '', '/fleet');
   renderWithApi(<App />);
-  expect(screen.getByRole('navigation', { name: /principal/i })).toBeInTheDocument();
+  // La consola ya no se pinta antes de saber quién sos: hasta que /v3/auth/session contesta sólo
+  // existe la pantalla de verificación, así que los landmarks aparecen después del await.
+  expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
   expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
   expect(screen.getByRole('link', { name: /saltar al contenido/i })).toHaveAttribute('href', '#main-content');
   expect(await screen.findByRole('heading', { level: 1, name: /fleet/i })).toBeInTheDocument();
@@ -36,11 +38,11 @@ it('routes /fleet/:tenant/:alias to the bot detail instead of the fleet list', a
   expect(screen.getByRole('link', { name: /^fleet$/i })).toHaveAttribute('aria-current', 'page');
 });
 
-it('falls back to Fleet for an unknown route id even with extra pathname segments', async () => {
+it('falls back to the live fleet room for an unknown route id even with extra pathname segments', async () => {
   window.history.pushState({}, '', '/unknown/nested/segment');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /fleet & presencia/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /sala de máquinas/i })).toBeInTheDocument();
 });
 
 it('ignores extra pathname segments on non-fleet routes and keeps rendering the existing page', async () => {

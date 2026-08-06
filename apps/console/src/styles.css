@@ -20,6 +20,12 @@
   --amber-dim: #4a3716;
   --red: #ff8a92;
   --red-dim: #4a2029;
+  /* Dos acentos propios de la vista viva: delegación (violeta) y respuesta cerrada (lima).
+     Van acá y no en live.css porque el modo claro de abajo tiene que poder redefinirlos. */
+  --violet: #b39bff;
+  --violet-dim: #2e2452;
+  --lime: #c6f36a;
+  --lime-dim: #2f3d16;
   --radius: 16px;
   --shadow: 0 18px 50px rgb(0 0 0 / 24%);
 }
@@ -602,6 +608,10 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
     --amber-dim: #fff2cf;
     --red: #b72d3a;
     --red-dim: #fde3e5;
+    --violet: #6742c9;
+    --violet-dim: #e9e2fd;
+    --lime: #4f7a10;
+    --lime-dim: #eaf6d2;
     --shadow: 0 18px 45px rgb(38 63 92 / 12%);
   }
   body { background: radial-gradient(circle at 85% -10%, rgb(111 177 222 / 20%), transparent 35rem), var(--bg); }

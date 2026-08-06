@@ -8,6 +8,7 @@ import {
   GitFork,
   Grid3x3,
   History,
+  KeyRound,
   Settings2,
   ListRestart,
   MessageSquareText,
@@ -15,13 +16,14 @@ import {
   RadioTower,
   ShieldCheck,
   Gauge,
+  Sparkles,
   TerminalSquare,
-  LogIn,
-  LogOut,
 } from 'lucide-react';
-import { useEffect, useState, useSyncExternalStore, type ComponentType } from 'react';
-import { useApi } from './api/context';
-import type { ConsoleAuthState } from './api/types';
+import { useSyncExternalStore, type ComponentType } from 'react';
+import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
+import type { AuthGateState } from './features/auth/auth-session';
+import { LiveFleetPage } from './features/live/LiveFleetPage';
+import { LicensesPage } from './features/licenses/LicensesPage';
 import { FleetAgentDetailPage } from './features/fleet/FleetAgentDetailPage';
 import { FleetPage } from './features/fleet/FleetPage';
 import { ActivityPage } from './features/activity/ActivityPage';
@@ -48,7 +50,9 @@ interface Route {
 }
 
 const routes: Route[] = [
+  { id: 'live', label: 'Sala de máquinas', icon: Sparkles, component: LiveFleetPage },
   { id: 'fleet', label: 'Fleet', icon: RadioTower, component: FleetPage },
+  { id: 'licenses', label: 'Licencias y consumo', icon: KeyRound, component: LicensesPage },
   { id: 'activity', label: 'Actividad de la flota', icon: Flame, component: ActivityPage },
   { id: 'quotas', label: 'Consumo de cuotas', icon: BatteryCharging, component: QuotasPage },
   { id: 'topology', label: 'Tenants & ACL', icon: GitFork, component: TopologyPage },
@@ -89,7 +93,7 @@ function matchRoute(path: string): RouteMatch {
   const id = segments[0] ?? '';
   return routes.some((route) => route.id === id)
     ? { id, params: segments.slice(1) }
-    : { id: 'fleet', params: [] };
+    : { id: 'live', params: [] };
 }
 
 function subscribe(callback: () => void): () => void {
@@ -97,39 +101,12 @@ function subscribe(callback: () => void): () => void {
   return () => window.removeEventListener('popstate', callback);
 }
 
-function AuthStatus() {
-  const api = useApi();
-  const [state, setState] = useState<ConsoleAuthState>();
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    void api.getAuthSession().then((next) => {
-      if (active) setState(next);
-    }).catch(() => {
-      if (active) setError(true);
-    });
-    return () => { active = false; };
-  }, [api]);
-
-  if (error) return <span className="auth-state auth-unknown">Auth no disponible</span>;
-  if (!state) return <span className="auth-state">Verificando sesión…</span>;
-  if (state.authenticated === null) return <span className="auth-state auth-unknown">Auth administrada por gateway</span>;
-  if (!state.authenticated) {
-    return <a className="button small auth-action" href={api.getLoginUrl()}><LogIn size={14} aria-hidden="true" /> Iniciar sesión</a>;
-  }
-  return (
-    <div className="auth-state authenticated">
-      <span><strong>Sesión OIDC</strong>{state.subject ?? 'Identidad verificada'}</span>
-      <button className="button small secondary" type="button" onClick={() => {
-        void api.logout().then(() => setState({ authenticated: false })).catch(() => setError(true));
-      }}><LogOut size={14} aria-hidden="true" /> Cerrar sesión</button>
-    </div>
-  );
+export function App() {
+  return <AuthGate>{(gate) => <ConsoleShell gate={gate} />}</AuthGate>;
 }
 
-export function App() {
-  const path = useSyncExternalStore(subscribe, currentPath, () => 'fleet');
+function ConsoleShell({ gate }: { gate: AuthGateState }) {
+  const path = useSyncExternalStore(subscribe, currentPath, () => 'live');
   const { id: routeId, params } = matchRoute(path);
   const route = routes.find((candidate) => candidate.id === routeId) ?? routes[0];
   const Page = route.component;
@@ -175,10 +152,11 @@ export function App() {
           <div><span className="live-dot" aria-hidden="true" /> Control plane client</div>
           <div className="topbar-meta">
             {import.meta.env.VITE_USE_MOCKS === 'true' ? <span className="mock-flag">MOCK API</span> : null}
-            <AuthStatus />
+            <SessionBadge state={gate.state} status={gate.status} busy={gate.busy} onLogout={() => void gate.logout()} />
           </div>
         </header>
         <main id="main-content" tabIndex={-1}>
+          {gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}
           {fleetAgentTarget
             ? <FleetAgentDetailPage tenantId={fleetAgentTarget.tenantId} alias={fleetAgentTarget.alias} />
             : <Page />}

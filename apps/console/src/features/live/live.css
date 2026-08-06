@@ -1,0 +1,343 @@
+/*
+ * Vista viva de la flota. Toda la animación está acá y toda depende de `data-state` en el SVG:
+ * el componente no calcula estilos, sólo declara en qué estado está cada muñeco.
+ *
+ * Regla de oro del archivo: NINGUNA animación puede depender de un timer de JavaScript para
+ * seguir corriendo. Si el polling se cae, los muñecos se quedan quietos en su último estado
+ * conocido y la cabecera lo dice; nunca siguen moviéndose fingiendo que hay datos frescos.
+ */
+
+.live-page { display: grid; gap: 18px; }
+
+/* ---------------------------------------------------------------- cabecera y estado del feed */
+
+.live-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.live-toolbar label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.live-toolbar select { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-2); color: var(--text); }
+
+.live-feed-state { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.live-feed-state .live-feed-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 0 rgb(99 222 185 / 55%); animation: live-ping 2.4s ease-out infinite; }
+.live-feed-state[data-feed='paused'] { color: var(--muted); }
+.live-feed-state[data-feed='paused'] .live-feed-dot { background: var(--faint); animation: none; }
+.live-feed-state[data-feed='error'] { color: var(--red); }
+.live-feed-state[data-feed='error'] .live-feed-dot { background: var(--red); animation: none; }
+
+@keyframes live-ping {
+  0% { box-shadow: 0 0 0 0 rgb(99 222 185 / 55%); }
+  70% { box-shadow: 0 0 0 9px rgb(99 222 185 / 0%); }
+  100% { box-shadow: 0 0 0 0 rgb(99 222 185 / 0%); }
+}
+
+/* Aviso honesto: no hay websocket para la consola, esto es polling y hay que decirlo. */
+.live-transport-note { margin: 0; color: var(--faint); font-size: 12.5px; }
+
+/* ------------------------------------------------------------------------------- resumen */
+
+.live-tally { display: flex; flex-wrap: wrap; gap: 8px; }
+.live-tally-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+.live-tally-chip:hover { transform: translateY(-1px); border-color: var(--border-strong); }
+.live-tally-chip[aria-pressed='true'] { border-color: var(--accent, var(--border-strong)); background: var(--surface-3); }
+.live-tally-chip[data-empty='true'] { opacity: .45; }
+.live-tally-chip .live-tally-swatch { width: 12px; height: 12px; border-radius: 4px; background: var(--accent, var(--faint)); }
+.live-tally-chip strong { font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------------------------------- rejilla + arcos */
+
+.live-stage { position: relative; }
+
+/* El lienzo de las delegaciones va DEBAJO de las tarjetas para que los arcos no roben el clic. */
+.live-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; overflow: visible; }
+.live-link-path { fill: none; stroke: var(--violet); stroke-width: 2; stroke-linecap: round; opacity: .55; stroke-dasharray: 5 7; animation: live-link-flow 1.1s linear infinite; }
+.live-link-head { fill: var(--violet); }
+.live-link-runner { fill: var(--violet); filter: drop-shadow(0 0 6px rgb(179 155 255 / 70%)); }
+
+@keyframes live-link-flow { to { stroke-dashoffset: -24; } }
+
+.live-tenant { position: relative; z-index: 1; display: grid; gap: 12px; }
+.live-tenant + .live-tenant { margin-top: 22px; }
+.live-tenant-title { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: var(--faint); }
+.live-tenant-title span { letter-spacing: normal; text-transform: none; color: var(--muted); font-weight: 400; }
+
+.live-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(212px, 1fr)); }
+
+/* ------------------------------------------------------------------------------- tarjeta */
+
+.live-card {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  padding: 14px 12px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  color: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+}
+.live-card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 14px 34px rgb(0 0 0 / 32%); }
+.live-card[data-dimmed='true'] { opacity: .28; filter: saturate(.35); }
+.live-card[data-linked='true'] { border-color: var(--violet); box-shadow: 0 0 0 1px var(--violet) inset; }
+
+/* Un borde que respira sólo cuando el agente está en problemas: se ve desde el otro lado del cuarto. */
+.live-card[data-state='blocked'] { border-color: color-mix(in srgb, var(--amber) 55%, var(--border)); animation: live-card-alert 1.6s ease-in-out infinite; }
+.live-card[data-state='down'] { border-color: color-mix(in srgb, var(--red) 45%, var(--border)); background: linear-gradient(180deg, var(--surface), #0a0d16); }
+
+@keyframes live-card-alert {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(245 200 108 / 0%); }
+  50% { box-shadow: 0 0 22px 0 rgb(245 200 108 / 22%); }
+}
+
+.live-card-alias { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .01em; }
+.live-card-harness { color: var(--faint); font-size: 11.5px; }
+.live-card-state { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); font-size: 12px; font-weight: 700; }
+.live-card-numbers { display: flex; gap: 10px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.live-card-numbers b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* Contador de delegaciones salientes, pegado a la esquina. */
+.live-card-fanout {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--violet) 22%, var(--surface));
+  color: var(--violet);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* =================================================================================
+   EL MUÑECO
+   ================================================================================= */
+
+.agent-avatar { width: 100%; max-width: 132px; height: auto; overflow: visible; }
+
+/* Un acento por estado. Todo lo demás del muñeco se pinta a partir de esta variable. */
+.agent-avatar { --accent: var(--faint); --accent-soft: rgb(100 117 143 / 22%); }
+.agent-avatar[data-state='receiving'] { --accent: var(--blue); --accent-soft: rgb(122 184 255 / 24%); }
+.agent-avatar[data-state='thinking'] { --accent: var(--mint); --accent-soft: rgb(99 222 185 / 24%); }
+.agent-avatar[data-state='delegating'] { --accent: var(--violet); --accent-soft: rgb(179 155 255 / 26%); }
+.agent-avatar[data-state='responding'] { --accent: var(--lime); --accent-soft: rgb(198 243 106 / 26%); }
+.agent-avatar[data-state='blocked'] { --accent: var(--amber); --accent-soft: rgb(245 200 108 / 26%); }
+.agent-avatar[data-state='down'] { --accent: var(--red); --accent-soft: rgb(255 138 146 / 16%); }
+
+.av-halo { fill: var(--accent-soft); opacity: .5; animation: av-halo-breathe 4.2s ease-in-out infinite; transform-origin: 60px 66px; }
+.av-shadow { fill: #000; opacity: .34; animation: av-shadow-breathe 3.4s ease-in-out infinite; transform-origin: 60px 120px; }
+
+@keyframes av-halo-breathe { 0%, 100% { transform: scale(.9); opacity: .35; } 50% { transform: scale(1.02); opacity: .6; } }
+@keyframes av-shadow-breathe { 0%, 100% { transform: scaleX(1); opacity: .34; } 50% { transform: scaleX(.86); opacity: .24; } }
+
+.av-body { transform-origin: 60px 114px; animation: av-breathe 3.4s ease-in-out infinite; }
+@keyframes av-breathe { 0%, 100% { transform: translateY(0) scaleY(1); } 50% { transform: translateY(-2.5px) scaleY(1.012); } }
+
+.av-head-shell { fill: var(--surface-3); stroke: var(--accent); stroke-width: 2; }
+.av-visor { fill: #060a12; }
+.av-eyes { color: var(--accent); }
+.av-torso-shell { fill: var(--surface-3); stroke: var(--accent); stroke-width: 2; opacity: .96; }
+.av-arm { stroke: var(--accent); opacity: .85; }
+.av-antenna-stem { stroke: var(--accent); opacity: .8; }
+.av-bulb { fill: var(--accent); }
+.av-bulb-ring { stroke: var(--accent); opacity: 0; }
+.av-core { fill: var(--accent); opacity: .9; }
+.av-core-ring { stroke: var(--accent); opacity: 0; }
+
+.av-head { transform-origin: 60px 76px; transition: transform .35s ease; }
+.av-arm-right { transform-origin: 86px 88px; transition: transform .35s ease; }
+.av-arm-left { transform-origin: 34px 88px; transition: transform .35s ease; }
+
+/* Todos los accesorios apagados por defecto; cada estado enciende el suyo. */
+.av-fx { opacity: 0; visibility: hidden; }
+
+/* ---------------------------------------------------------------- OCIOSO: parpadea y respira */
+
+.agent-avatar[data-state='idle'] .av-eye,
+.agent-avatar[data-state='receiving'] .av-eye {
+  transform-origin: center;
+  animation: av-blink 5.6s infinite;
+}
+/* El segundo ojo parpadea con el mismo ciclo: un guiño desincronizado se lee como un tic. */
+@keyframes av-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(.12); }
+}
+
+/* -------------------------------------------------------- RECIBIENDO: le entra un sobre */
+
+.agent-avatar[data-state='receiving'] .av-fx-incoming { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='receiving'] .av-envelope {
+  fill: var(--blue);
+  stroke: #060a12;
+  animation: av-envelope-fly 1.5s cubic-bezier(.34, .8, .3, 1) infinite;
+}
+@keyframes av-envelope-fly {
+  0% { transform: translate(-6px, 74px) scale(.55); opacity: 0; }
+  22% { opacity: 1; }
+  72% { transform: translate(60px, 97px) scale(1); opacity: 1; }
+  86%, 100% { transform: translate(60px, 97px) scale(.15); opacity: 0; }
+}
+.agent-avatar[data-state='receiving'] .av-arm-left { transform: rotate(-24deg); }
+.agent-avatar[data-state='receiving'] .av-bulb { animation: av-bulb-flash .75s ease-in-out infinite; }
+.agent-avatar[data-state='receiving'] .av-bulb-ring { animation: av-bulb-ripple 1.5s ease-out infinite; }
+@keyframes av-bulb-flash { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes av-bulb-ripple {
+  0% { opacity: .9; transform: scale(1); transform-origin: 60px 14px; }
+  100% { opacity: 0; transform: scale(2.8); transform-origin: 60px 14px; }
+}
+
+/* ----------------------------------------------- TRABAJANDO: piensa, se inclina, late el pecho */
+
+.agent-avatar[data-state='thinking'] .av-fx-thinking { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='thinking'] .av-head { transform: rotate(-5deg) translateY(1px); }
+.agent-avatar[data-state='thinking'] .av-think { fill: var(--mint); }
+.agent-avatar[data-state='thinking'] .av-think-1 { animation: av-think-pop 1.9s ease-in-out infinite; }
+.agent-avatar[data-state='thinking'] .av-think-2 { animation: av-think-pop 1.9s ease-in-out .22s infinite; }
+.agent-avatar[data-state='thinking'] .av-think-3 { animation: av-think-pop 1.9s ease-in-out .44s infinite; }
+@keyframes av-think-pop {
+  0%, 100% { opacity: .12; transform: translateY(3px) scale(.72); }
+  45% { opacity: 1; transform: translateY(-2px) scale(1); }
+}
+.agent-avatar[data-state='thinking'] .av-core { animation: av-core-beat 1.25s ease-in-out infinite; }
+.agent-avatar[data-state='thinking'] .av-core-ring { animation: av-core-ripple 1.25s ease-out infinite; }
+@keyframes av-core-beat { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes av-core-ripple {
+  0% { opacity: .8; transform: scale(1); transform-origin: 60px 97px; }
+  100% { opacity: 0; transform: scale(2.6); transform-origin: 60px 97px; }
+}
+
+/* ---------------------------------------------- DELEGANDO: estira el brazo y suelta un paquete */
+
+.agent-avatar[data-state='delegating'] .av-fx-delegating { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='delegating'] .av-arm-right { transform: rotate(-46deg); }
+.agent-avatar[data-state='delegating'] .av-head { transform: rotate(6deg); }
+.agent-avatar[data-state='delegating'] .av-packet { fill: var(--violet); stroke: #060a12; animation: av-packet-fly 1.35s cubic-bezier(.4, 0, .7, 1) infinite; }
+@keyframes av-packet-fly {
+  0% { transform: translate(88px, 96px) scale(.4); opacity: 0; }
+  18% { transform: translate(92px, 94px) scale(1); opacity: 1; }
+  100% { transform: translate(136px, 78px) scale(.55); opacity: 0; }
+}
+.agent-avatar[data-state='delegating'] .av-trail { stroke: var(--violet); opacity: .35; stroke-dasharray: 4 6; animation: av-trail-flow .7s linear infinite; }
+@keyframes av-trail-flow { to { stroke-dashoffset: -20; } }
+
+/* ------------------------------------------------- RESPONDIENDO: bocadillo con tilde y rebote */
+
+.agent-avatar[data-state='responding'] .av-fx-responding { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='responding'] .av-bubble { fill: var(--lime); animation: av-bubble-pop .55s cubic-bezier(.2, 1.5, .4, 1) both; transform-origin: 92px 42px; }
+.agent-avatar[data-state='responding'] .av-check { stroke: #0a1408; fill: none; }
+@keyframes av-bubble-pop {
+  0% { transform: scale(0) translateY(8px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+.agent-avatar[data-state='responding'] .av-body { animation: av-cheer .75s cubic-bezier(.3, 1.4, .5, 1) 2; }
+@keyframes av-cheer {
+  0%, 100% { transform: translateY(0); }
+  35% { transform: translateY(-9px) scaleY(1.04); }
+  70% { transform: translateY(0) scaleY(.97); }
+}
+.agent-avatar[data-state='responding'] .av-arm-left { transform: rotate(-40deg); }
+.agent-avatar[data-state='responding'] .av-arm-right { transform: rotate(40deg); }
+
+/* --------------------------------------- BLOQUEADO: se desploma y le late la señal de alarma */
+
+.agent-avatar[data-state='blocked'] .av-fx-blocked { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='blocked'] .av-body { animation: av-slump 2.6s ease-in-out infinite; }
+@keyframes av-slump {
+  0%, 100% { transform: translateY(4px) rotate(-3deg); }
+  50% { transform: translateY(6px) rotate(-4.5deg); }
+}
+.agent-avatar[data-state='blocked'] .av-head { transform: rotate(-8deg) translateY(4px); }
+.agent-avatar[data-state='blocked'] .av-alarm { fill: var(--amber); stroke: #1a1204; animation: av-alarm-pulse 1s ease-in-out infinite; transform-origin: 60px 22px; }
+.agent-avatar[data-state='blocked'] .av-alarm-mark,
+.agent-avatar[data-state='blocked'] .av-alarm-dot { stroke: #1a1204; fill: #1a1204; }
+@keyframes av-alarm-pulse {
+  0%, 100% { transform: scale(1); opacity: .82; }
+  50% { transform: scale(1.13); opacity: 1; }
+}
+.agent-avatar[data-state='blocked'] .av-halo { animation: av-halo-alarm 1s ease-in-out infinite; }
+@keyframes av-halo-alarm { 0%, 100% { opacity: .18; transform: scale(.9); } 50% { opacity: .5; transform: scale(1); } }
+
+/* ------------------------------------------ CAÍDO: sin movimiento. La quietud ES la señal. */
+
+.agent-avatar[data-state='down'] .av-fx-down { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='down'] .av-body,
+.agent-avatar[data-state='down'] .av-halo,
+.agent-avatar[data-state='down'] .av-shadow { animation: none; }
+.agent-avatar[data-state='down'] .av-body { transform: translateY(7px) rotate(-7deg); opacity: .5; }
+.agent-avatar[data-state='down'] .av-head-shell,
+.agent-avatar[data-state='down'] .av-torso-shell { fill: #0a0e17; stroke: color-mix(in srgb, var(--red) 45%, var(--border)); }
+.agent-avatar[data-state='down'] .av-bulb { fill: var(--border-strong); }
+.agent-avatar[data-state='down'] .av-core { fill: var(--border-strong); opacity: .6; }
+.agent-avatar[data-state='down'] .av-halo { opacity: .12; }
+.agent-avatar[data-state='down'] .av-shadow { opacity: .1; }
+.agent-avatar[data-state='down'] .av-flatline { stroke: var(--red); opacity: .75; stroke-dasharray: 160; animation: av-flatline-sweep 2.6s linear infinite; }
+@keyframes av-flatline-sweep { 0% { stroke-dashoffset: 160; } 60%, 100% { stroke-dashoffset: 0; } }
+
+/* --------------------------------------------------- SATURADO: chispas encima de lo que haya */
+
+.agent-avatar[data-overloaded='true'] .av-fx-overloaded { opacity: 1; visibility: visible; }
+.av-spark { stroke: var(--amber); }
+.agent-avatar[data-overloaded='true'] .av-spark-1 { animation: av-spark-blink .55s steps(2, end) infinite; }
+.agent-avatar[data-overloaded='true'] .av-spark-2 { animation: av-spark-blink .55s steps(2, end) .27s infinite; }
+@keyframes av-spark-blink { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+
+/* ------------------------------------------------------------------------------ detalle */
+
+.live-detail { display: grid; gap: 14px; }
+.live-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.live-detail-head .agent-avatar { max-width: 108px; }
+.live-detail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 18px; margin: 0; font-size: 13.5px; }
+.live-detail dt { color: var(--muted); }
+.live-detail dd { margin: 0; }
+.live-reason { margin: 0; color: var(--text); font-size: 14px; }
+.live-flags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.live-legend { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.live-legend-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.live-legend-item .agent-avatar { width: 46px; flex: none; }
+.live-legend-item strong { display: block; font-size: 13px; }
+.live-legend-item span { color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+
+@media (max-width: 640px) {
+  .live-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .live-links { display: none; }
+}
+
+/*
+ * Movimiento reducido: se apaga TODO lo que se mueve solo. El estado sigue siendo legible
+ * porque nunca depende únicamente del movimiento — hay color de acento, forma de ojos,
+ * accesorio y etiqueta de texto.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .agent-avatar *, .live-card, .live-link-path, .live-link-runner, .live-feed-dot {
+    animation: none !important;
+    transition: none !important;
+  }
+  .agent-avatar[data-state='receiving'] .av-envelope { transform: translate(60px, 97px) scale(1); }
+  .agent-avatar[data-state='delegating'] .av-packet { transform: translate(104px, 88px) scale(1); }
+  .agent-avatar[data-state='thinking'] .av-think { opacity: 1; }
+  .agent-avatar[data-state='responding'] .av-bubble { opacity: 1; transform: none; }
+}
