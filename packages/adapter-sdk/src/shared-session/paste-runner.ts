@@ -10,7 +10,7 @@ import {
   sendEnter,
   type TmuxController,
 } from "./tmux.js";
-import { inputBoxState } from "./pane.js";
+import { inputBoxState, turnInFlight } from "./pane.js";
 import {
   ensureSharedSession,
   tuiTarget,
@@ -22,6 +22,7 @@ import type {
   SharedSessionHarness,
   SharedSessionRunner,
   TranscriptReader,
+  TurnOutcome,
 } from "./types.js";
 
 export interface PasteSessionOptions<E> {
@@ -66,6 +67,10 @@ export interface PasteSessionOptions<E> {
   readonly injectTimeoutMs?: number;
   /** Recorte de la espera por correlacionar el pegado. Ver `DEFAULT_CORRELATION_TIMEOUT_MS`. */
   readonly correlationTimeoutMs?: number;
+  /** Cuánto silencio hace falta para dar por perdido un pegado sin correlacionar. Ver `DEFAULT_QUIET_MS`. */
+  readonly quietTimeoutMs?: number;
+  /** Techo absoluto de la espera por un turno fundido. Ver `DEFAULT_MERGED_GRACE_MS`. */
+  readonly mergedGraceMs?: number;
   readonly pollMs?: number;
   readonly readyTimeoutMs?: number;
   readonly command?: string;
@@ -143,6 +148,38 @@ const LIVENESS_EVERY = 8;
 const DEFAULT_CORRELATION_TIMEOUT_MS = 5 * 60_000;
 
 /**
+ * Cuánto SILENCIO hace falta, además del plazo de correlación, para dar un pegado por perdido.
+ *
+ * El plazo de arriba, solo, no distingue las dos cosas que puede significar "no correlacioné": que
+ * el pegado se perdiera —y entonces soltar rápido es lo correcto— o que la terminal esté ocupada
+ * ejecutándolo fundido con otro turno, y entonces matarlo TIRA TRABAJO TERMINADO. Hasta el
+ * 2026-08-06 las trataba igual, y la segunda es la que ocurre: entrega `6c7cb0c4`, muerta a los
+ * 301 s con su entregable escrito y su sobre emitido 96 s antes.
+ *
+ * Lo que las separa es si el registro sigue creciendo. Un pegado perdido no escribe nada: a los
+ * 5 min no hay actividad ninguna y se suelta igual de rápido que antes. Un pegado fundido escribe
+ * todo el tiempo, porque el turno está corriendo de verdad; ahí se espera, y el sobre —que llega
+ * antes— cierra la entrega solo.
+ *
+ * Es una espera ACOTADA por dos lados: el presupuesto de la entrega sigue mandando, y en cuanto la
+ * terminal se calla cinco minutos se suelta. No puede volver al lock retenido 24 h.
+ */
+const DEFAULT_QUIET_MS = 5 * 60_000;
+
+/**
+ * Techo ABSOLUTO de la espera por un turno fundido, por encima del silencio.
+ *
+ * El silencio, solo, tiene un supuesto que puede fallar: que si el registro crece es porque está
+ * corriendo LO NUESTRO. Puede no serlo — el pegado se perdió de verdad y el dueño sigue trabajando
+ * en su panel — y entonces la espera duraría lo que dure su jornada. Este techo lo acota.
+ *
+ * El equilibrio no es simétrico y por eso el techo es generoso: soltar de más ENCOLA entregas, que
+ * se atienden después y como mucho reintentan; soltar de menos DESCARTA trabajo terminado, que es
+ * lo que costó la entrega `6c7cb0c4`. Ante la duda se espera, pero con un final escrito.
+ */
+const DEFAULT_MERGED_GRACE_MS = 30 * 60_000;
+
+/**
  * Salida (d): conducir la TUI real por tmux y cosechar el sobre del registro que ella escribe.
  *
  * Las tres propiedades que el dueño pidió, a la vez:
@@ -201,6 +238,11 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
     const acquired = await this.acquireInputBox(target);
     if (!acquired.ok) return this.degrade(acquired.reason, acquired.detail, request);
 
+    // Si la terminal estaba GENERANDO cuando pegamos, el pegado se encola y se funde con el turno
+    // en curso: no habrá turno propio del que descender. No cambia lo que se hace —pegar sigue
+    // siendo correcto, el turno acaba ejecutándose en la conversación compartida— cambia lo que se
+    // puede AFIRMAR después, y el aviso que lee el dueño. Ver `turnInFlight`.
+    const generating = turnInFlight(acquired.pane);
     const baseline = await this.baseline();
 
     const buffer = `cauce-${this.options.alias}`;
@@ -218,7 +260,7 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
     // A partir de acá el turno PUEDE estar en marcha dentro de la TUI. Sólo se degrada si el
     // registro demuestra que no arrancó ninguno; ver `harvest`.
     await clearDegradation(this.options.tmux, session, TUI_WINDOW);
-    return this.harvest(request, baseline, session, target);
+    return this.harvest(request, baseline, session, target, generating);
   }
 
   private async preflight(): Promise<
@@ -297,14 +339,18 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
    * Lo que no se hace nunca es escribir encima.
    */
   private async acquireInputBox(target: string): Promise<
-    { ok: true } | { ok: false; reason: "input_busy" | "modal_blocking"; detail: string }
+    { ok: true; pane: string | undefined }
+    | { ok: false; reason: "input_busy" | "modal_blocking"; detail: string }
   > {
     const deadline = Date.now() + (this.options.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS);
     let evidence = "la caja de entrada nunca quedó libre";
     let modal = false;
     for (;;) {
-      const state = inputBoxState(await capturePane(this.options.tmux, target, { styled: true }));
-      if (!state.occupied) return { ok: true };
+      const pane = await capturePane(this.options.tmux, target, { styled: true });
+      const state = inputBoxState(pane);
+      // El panel con el que se decidió pegar es el que hay que mirar para saber si el turno se
+      // fundió: capturarlo otra vez después ya sería otro instante.
+      if (!state.occupied) return { ok: true, pane };
       evidence = state.evidence;
       modal = state.kind === "modal";
       if (Date.now() >= deadline) {
@@ -347,6 +393,7 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
     baseline: ReadonlyMap<string, number>,
     session: string,
     target: string,
+    generating: boolean,
   ): Promise<CommandRunResult> {
     const port = this.options.transcript;
     /**
@@ -374,8 +421,15 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
     const injectDeadline = Date.now() + injectTimeoutMs;
     const correlationDeadline = Date.now()
       + (this.options.correlationTimeoutMs ?? DEFAULT_CORRELATION_TIMEOUT_MS);
+    const quietMs = this.options.quietTimeoutMs ?? DEFAULT_QUIET_MS;
+    const mergedCeiling = correlationDeadline
+      + (this.options.mergedGraceMs ?? DEFAULT_MERGED_GRACE_MS);
     let injected: { file: string; key: string; sessionId?: string } | undefined;
     let started = false;
+    // Última vez que el registro creció. Es lo que separa "el pegado se perdió" (nada escribe nunca)
+    // de "el pegado se fundió con el turno en curso" (la terminal escribe todo el tiempo). Ver
+    // `DEFAULT_QUIET_MS`.
+    let lastActivityAt = Date.now();
     // El registro de una conversación larga pesa megabytes y un turno puede durar una hora.
     // Releerlo entero en cada sondeo costaría más que el propio turno, así que sólo se lee cuando
     // el fichero creció; y la sesión tmux se comprueba cada tantos sondeos, no en todos.
@@ -398,11 +452,20 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
       if (injected === undefined) {
         const scan = await this.locateInjectedTurn(baseline, request.stdin);
         started = started || scan.started;
+        if (scan.activity) lastActivityAt = Date.now();
         injected = scan.injected;
         if (injected !== undefined) await this.noteTranscriptIdentity(injected.sessionId);
+        // EL SOBRE, sin turno propio del que descender: el pegado se fundió con el turno en curso.
+        // Se cosecha igual, porque el trabajo está hecho y tirarlo es lo que costó la entrega
+        // `6c7cb0c4`. Sólo se mira lo escrito DESPUÉS del pegado, así que no puede ser un sobre
+        // viejo. Ver `findEnvelope`.
+        if (injected === undefined && scan.envelope !== undefined) {
+          return this.harvested(scan.envelope, undefined, generating);
+        }
       }
       if (injected !== undefined && await this.grew(injected.file, lastSize)) {
         lastSize = await fileSize(injected.file);
+        lastActivityAt = Date.now();
         const slice = await port.read(injected.file, baseline.get(injected.file) ?? 0);
         await this.noteCompactions(slice.appended);
         const outcome = port.findAnswer(slice.entries, injected.key);
@@ -416,6 +479,13 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
             exitCode: 0,
             stdout: port.stdout(outcome.text, outcome.sessionId ?? injected.sessionId),
           });
+        }
+        // Turno propio localizado y ascendencia que no llega: el otro modo de retener el lock hasta
+        // el presupuesto entero esperando un sobre que ya está escrito. Se acota a partir de nuestra
+        // entrada, así que un sobre anterior al pegado no se puede colar.
+        const rescue = port.findEnvelope?.(slice.entries, injected.key);
+        if (rescue !== undefined) {
+          return this.harvested(rescue, injected.sessionId, generating);
         }
       }
 
@@ -433,7 +503,16 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
       // Red de seguridad para los harness que no pueden declarar `startedTurn` (claude): el pegado
       // nunca apareció en el registro. No se degrada —eso lo ejecutaría dos veces— se suelta la
       // sesión como AMBIGUO para que la cola siga corriendo.
-      if (injected === undefined && !started && Date.now() >= correlationDeadline) {
+      //
+      // Se exige ADEMÁS silencio: mientras el registro siga creciendo, lo que hay delante no es un
+      // pegado perdido sino un turno en marcha que se lo tragó, y matarlo es tirar trabajo. Con el
+      // pegado de verdad perdido no crece nada y esto vence en los mismos 5 min de siempre.
+      if (injected === undefined && !started && Date.now() >= correlationDeadline
+        && (Date.now() - lastActivityAt >= quietMs || Date.now() >= mergedCeiling)) {
+        // Antes de soltarla, el sobre: puede haber aparecido en el mismo sondeo en que se agotó la
+        // espera. Si llegó, la entrega no muere.
+        const rescate = await this.lastEnvelope(baseline, injected);
+        if (rescate !== undefined) return this.harvested(rescate, undefined, generating);
         await this.clearInputBox(target);
         return result({
           timedOut: true,
@@ -443,6 +522,12 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
       }
 
       if (Date.now() >= deadline) {
+        // Último barrido antes de darla por muerta: si el sobre llegó, la entrega no muere. Esta es
+        // la red que faltaba, y es la que convierte el plazo en un techo y no en una guillotina.
+        const rescue = await this.lastEnvelope(baseline, injected);
+        if (rescue !== undefined) {
+          return this.harvested(rescue, injected?.sessionId, generating);
+        }
         // Ya se inyectó: el turno pudo haber corrido herramientas y causado efectos externos.
         // `timedOut` hace que el adaptador lo trate como AMBIGUO y no lo reintente solo.
         return result({ timedOut: true });
@@ -523,15 +608,24 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
   ): Promise<{
     injected?: { file: string; key: string; sessionId?: string };
     started: boolean;
+    /** ¿Creció algo desde el pegado? Ver `DEFAULT_QUIET_MS`. */
+    activity: boolean;
+    /** El sobre escrito después del pegado, cuando no hay turno propio del que descender. */
+    envelope?: TurnOutcome;
   }> {
     const port = this.options.transcript;
     let started = false;
+    let activity = false;
+    let envelope: TurnOutcome | undefined;
     for (const file of await port.files()) {
       const size = await fileSize(file);
       const previous = baseline.get(file) ?? -1;
       if (size <= previous) continue;
+      activity = true;
       const slice = await port.read(file, Math.max(previous, 0));
       if (port.startedTurn?.(slice.appended) === true) started = true;
+      // Sólo `appended`: lo escrito ANTES del pegado no puede ser la respuesta a este turno.
+      envelope = port.findEnvelope?.(slice.appended) ?? envelope;
       const found = port.findInjected(file, slice.entries, promptText);
       if (found === undefined) continue;
       return {
@@ -539,9 +633,71 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
           ? { file, key: found.key }
           : { file, key: found.key, sessionId: found.sessionId },
         started,
+        activity,
+        ...(envelope === undefined ? {} : { envelope }),
       };
     }
-    return { started };
+    return { started, activity, ...(envelope === undefined ? {} : { envelope }) };
+  }
+
+  /**
+   * El último barrido en busca del sobre, justo antes de dar la entrega por muerta.
+   *
+   * Existe para que el plazo sea un techo y no una guillotina: una entrega cuyo sobre YA está
+   * escrito no puede morir por vencimiento. Es la misma búsqueda que hace el bucle, repetida en el
+   * único punto donde el bucle ya no va a volver a mirar.
+   */
+  private async lastEnvelope(
+    baseline: ReadonlyMap<string, number>,
+    injected: { file: string; key: string } | undefined,
+  ): Promise<TurnOutcome | undefined> {
+    const port = this.options.transcript;
+    if (port.findEnvelope === undefined) return undefined;
+    if (injected !== undefined) {
+      const slice = await port.read(injected.file, baseline.get(injected.file) ?? 0);
+      return port.findEnvelope(slice.entries, injected.key);
+    }
+    let envelope: TurnOutcome | undefined;
+    for (const file of await port.files()) {
+      const previous = baseline.get(file) ?? -1;
+      if (await fileSize(file) <= previous) continue;
+      const slice = await port.read(file, Math.max(previous, 0));
+      envelope = port.findEnvelope(slice.appended) ?? envelope;
+    }
+    return envelope;
+  }
+
+  /**
+   * Devuelve el sobre cosechado SIN ascendencia, diciendo por qué.
+   *
+   * El aviso no es decorativo: la respuesta de un turno fundido contesta a la vez lo que pidió el
+   * dueño y lo que pidió el bus, y el remitente tiene derecho a saberlo. `fellBack: false` porque el
+   * turno SÍ pasó por la terminal —se ejecutó entero en el panel del dueño— y por tanto no hay nada
+   * que reejecutar por el camino de siempre.
+   */
+  private async harvested(
+    outcome: TurnOutcome,
+    sessionId: string | undefined,
+    generating: boolean,
+  ): Promise<CommandRunResult> {
+    if (outcome.kind === "failed") return result({ exitCode: 1, stderr: outcome.detail });
+    await this.note({
+      reason: "turn_merged",
+      detail: generating
+        ? "la terminal estaba generando cuando entró el pedido, así que lo encoló y lo fundió con"
+          + " el turno en curso; el sobre se correlacionó por el registro, no por la cadena de turnos"
+        : "el pedido no abrió un turno propio en el registro; el sobre se correlacionó por el"
+          + " registro, no por la cadena de turnos",
+      occurredAt: new Date().toISOString(),
+      fellBack: false,
+    });
+    // NO se limpia la caja: el turno se ejecutó, así que la caja ya se vació sola, y un `C-u` a
+    // destiempo borraría lo que el dueño esté escribiendo ahora. `clearInputBox` sólo se llama
+    // cuando está demostrado que el pedido NO se envió.
+    return result({
+      exitCode: 0,
+      stdout: this.options.transcript.stdout(outcome.text, outcome.sessionId ?? sessionId),
+    });
   }
 
   /**

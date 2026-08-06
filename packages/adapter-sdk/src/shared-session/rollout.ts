@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { isEnvelopeText } from "./envelope.js";
 import type {
   CompactionNotice,
   InjectedTurn,
@@ -255,6 +256,30 @@ function findRolloutOutcome(
   return undefined;
 }
 
+/**
+ * El SOBRE de un turno que cerró después de que pegáramos, sin exigir que sea el NUESTRO.
+ *
+ * El rescate equivalente al de claude, y hace falta por lo mismo: si el pegado se funde con un turno
+ * en curso, el `turn_id` con el que seguiríamos el nuestro no existe, y `findRolloutOutcome` no
+ * puede devolver nada nunca. Lo que sí existe es el `task_complete` del turno fundido, y su
+ * `last_agent_message` trae el sobre entero.
+ *
+ * Se exige `task_complete` —el cierre real del turno— y que el mensaje SEA un sobre. El runner le
+ * pasa sólo lo escrito después del pegado, así que un cierre anterior no puede colarse.
+ */
+function findRolloutEnvelope(entries: readonly RolloutLine[]): TurnOutcome | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const payload = eventPayload(entries[index]);
+    if (payload === undefined || payload.type !== "task_complete") continue;
+    const turnId = typeof payload.turn_id === "string" ? payload.turn_id : undefined;
+    const text = asText(payload.last_agent_message)
+      ?? (turnId === undefined ? undefined : finalAnswerOf(entries, turnId));
+    if (!isEnvelopeText(text)) continue;
+    return { kind: "answer", text: text! };
+  }
+  return undefined;
+}
+
 /** El último mensaje final del asistente de ese turno. Respaldo por si el cierre viene sin texto. */
 function finalAnswerOf(entries: readonly RolloutLine[], key: string): string | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -300,6 +325,7 @@ export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine
     read: (file, offset) => readRolloutSince(file, offset),
     findInjected: findInjectedRolloutTurn,
     findAnswer: findRolloutOutcome,
+    findEnvelope: (entries) => findRolloutEnvelope(entries),
     compactions: rolloutCompactions,
     // `task_started` es la primera línea de cualquier turno, venga del bus o del dueño. Que no haya
     // ninguna nueva es la prueba de que el pegado no llegó a la caja y de que NADA corrió.

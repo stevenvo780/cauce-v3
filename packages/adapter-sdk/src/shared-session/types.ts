@@ -96,7 +96,23 @@ export type DegradationReason =
    * (`preTokens`→`postTokens`) y va también al panel: el dueño es el único que puede compensar
    * volviendo a pegar lo importante.
    */
-  | "context_compacted";
+  | "context_compacted"
+  /**
+   * El pegado se FUNDIÓ con un turno que ya estaba corriendo, y el sobre se correlacionó por el
+   * registro en vez de por la cadena de turnos.
+   *
+   * `fellBack: false`: el turno pasó por la terminal del dueño, se ejecutó entero y su respuesta es
+   * la que vuelve. Lo que no se pudo probar es la ascendencia, porque nunca hubo un turno propio del
+   * que descender: cuando el panel está ocupado, claude ENCOLA el pegado y lo funde en el turno en
+   * curso (`queue-operation enqueue` y, unos segundos después, `remove`).
+   *
+   * Se avisa porque la respuesta contesta a la vez lo que el dueño estaba pidiendo y lo que pidió el
+   * bus, y porque hasta el 2026-08-06 este caso MATABA la entrega: la correlación no enganchaba
+   * jamás, a los 300 s exactos salía `timedOut` con "Harness exceeded its execution deadline" y sin
+   * reintento. Medido en la entrega `6c7cb0c4` (janus -> kratos): 301 s de ejecución, y el
+   * entregable completo ya escrito con su sobre emitido 96 s ANTES de que la declararan muerta.
+   */
+  | "turn_merged";
 
 /**
  * De dónde sale el sobre en un harness concreto. Es lo ÚNICO que los diferencia.
@@ -153,6 +169,24 @@ export interface TranscriptReader<E> {
   findInjected(file: string, entries: readonly E[], promptText: string): InjectedTurn | undefined;
   /** El desenlace de ese turno, o `undefined` mientras siga corriendo. */
   findAnswer(entries: readonly E[], key: string): TurnOutcome | undefined;
+  /**
+   * EL SOBRE, cuando la ascendencia no lo puede probar. La red que impide tirar trabajo terminado.
+   *
+   * `findInjected` + `findAnswer` correlacionan por ascendencia, y eso tiene un supuesto que no
+   * siempre se cumple: que el pegado abrió un turno PROPIO. Cuando el panel está ocupado, claude
+   * encola el pegado y lo funde en el turno en curso; entonces esa entrada de usuario no existe
+   * nunca y la correlación no puede enganchar jamás por mucho que se espere. Pero el turno corre, y
+   * al terminar escribe el sobre.
+   *
+   * Por eso la regla del runner es: la ascendencia es un DESEMPATE, el sobre es la PRUEBA. Si el
+   * sobre apareció después del pegado, la entrega no muere.
+   *
+   * Se le pasa siempre y sólo lo escrito DESPUÉS del pegado —o, cuando el turno propio sí se
+   * localizó pero su cadena de padres está rota, `desde` acota a partir de él— así que un sobre
+   * anterior no se puede colar. Ausente = este registro no sabe reconocer un sobre, y el runner se
+   * comporta como antes.
+   */
+  findEnvelope?(entries: readonly E[], desde?: string): TurnOutcome | undefined;
   compactions(appended: readonly E[]): readonly CompactionNotice[];
   /**
    * ¿Arrancó ALGÚN turno en lo nuevo? Ausente = este registro no lo sabe decir.
