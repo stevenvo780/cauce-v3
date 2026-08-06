@@ -297,9 +297,15 @@ describe('login por contraseña de la consola', () => {
     try {
       const anonymous = await test.app.inject({ method: 'GET', url: '/v3/status' });
       expect(anonymous.statusCode).toBe(401);
-      // Se consultó al fallback: la puerta está DESPUÉS de resolver la identidad de máquina, no
-      // en una lista de rutas que haya que acordarse de actualizar.
+      // Se consultó al fallback: la puerta está DESPUÉS de resolver la identidad de máquina.
       expect(fallback.calls).toBeGreaterThan(0);
+
+      // Y en toda la superficie de consola, no sólo en la portada. `/v3/console/activity` es el
+      // endpoint con el que se midió el agujero.
+      for (const url of ['/v3/console/activity', '/v3/console/audit', '/v3/console/queues']) {
+        const leak = await test.app.inject({ method: 'GET', url });
+        expect(leak.statusCode, url).toBe(401);
+      }
 
       // Y la pantalla de login sigue siendo alcanzable, o no habría forma de entrar.
       const session = await test.app.inject({ method: 'GET', url: '/v3/auth/session' });
@@ -310,6 +316,37 @@ describe('login por contraseña de la consola', () => {
       const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
       const authenticated = await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } });
       expect(authenticated.statusCode).toBe(200);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('el mismo certificado del proxy SÍ entra al bus: la puerta es la ruta, no el canal', async () => {
+    // REGRESIÓN del 2026-08-06 10:47. La puerta se puso sobre el CANAL, así que `console-client`
+    // —el único principal mTLS con permiso `control`, y el que usan el guardia médico y las
+    // herramientas de operación para publicar— empezó a recibir 401 en CUALQUIER endpoint,
+    // incluido `POST /v3/messages`. Medido: el guardia de las 11:08 no pudo entregarle a zeus y
+    // la flota se quedó sin plano de control. Publicar no es leer la consola en un navegador.
+    const fallback = new StubConsoleProxyProvider();
+    const test = await fixture({ fallback });
+    try {
+      // La superficie de bus no muere en la autenticación: el request LLEGA al router. Un 404 de
+      // ruta inexistente prueba que pasó la puerta; un 401 probaría que no.
+      const bus = await test.app.inject({ method: 'POST', url: '/v3/inexistente' });
+      expect(bus.statusCode).toBe(404);
+
+      // Y el principal que sale del fallback es el de máquina, con su `control` intacto.
+      const machine = await test.provider.authenticateHttp({
+        url: '/v3/messages', headers: {}
+      } as unknown as FastifyRequest);
+      expect(machine.channel).toBe('console');
+      expect(machine.permissions).toContain('control');
+      expect(machine.permissions).toContain('route');
+
+      // La otra mitad, en el mismo test y con el MISMO principal: la consola sigue cerrada.
+      await expect(test.provider.authenticateHttp({
+        url: '/v3/console/activity', headers: {}
+      } as unknown as FastifyRequest)).rejects.toThrow(AuthError);
     } finally {
       await test.app.close();
     }

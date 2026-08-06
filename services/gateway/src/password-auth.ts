@@ -219,7 +219,7 @@ export interface PasswordAuthProviderOptions {
   now?: () => number;
   throttle?: LoginThrottle;
   /**
-   * Canal de los principales de MÁQUINA que no pueden pasar por una persona.
+   * Canal del principal de MÁQUINA que además es la boca del NAVEGADOR.
    *
    * El proxy de la consola (nginx) le habla al gateway con SU propio certificado de cliente, y ese
    * certificado está provisionado en el registro mTLS como `Steven:kant`, `channel: console`,
@@ -231,13 +231,45 @@ export interface PasswordAuthProviderOptions {
    * auth de Caddy.
    *
    * La regla: el certificado del proxy es una credencial de TRANSPORTE ("soy la consola"), no una
-   * autorización para leer la flota. Cuando el login humano está encendido, todo lo que llegue por
-   * el canal de la consola necesita sesión. Los adaptadores (`channel: adapter`) y el recolector
-   * de cuotas no se tocan: siguen entrando por su propio certificado, que es el "no rompas el
-   * mTLS". Las rutas del relay de terminal tampoco, porque se autorizan con su token y ni pasan
-   * por este proveedor.
+   * autorización para LEER LA FLOTA EN EL NAVEGADOR. Es el canal el que dice QUIÉN puede tener un
+   * navegador del otro lado; es la RUTA la que dice si hace falta una persona. Ver
+   * `isConsoleSurface`: sólo la superficie de consola exige sesión, y ahí ni el certificado del
+   * proxy alcanza. El resto de `/v3/` es máquina a máquina y le basta el mTLS, venga por el canal
+   * que venga — ése es el "no rompas el mTLS".
    */
   machineChannelRequiringSession?: string;
+}
+
+/** Mensaje único de la puerta de sesión: no distingue "no hay cookie" de "cookie no vale acá". */
+const SESSION_REQUIRED_MESSAGE = 'se requiere la cookie de sesión de la consola';
+
+/**
+ * Superficie de CONSOLA: las rutas que le devuelven datos de la flota a un NAVEGADOR. Son las
+ * únicas que exigen una sesión humana; todo lo demás bajo `/v3/` es superficie de BUS (máquina a
+ * máquina) y se autoriza con el mTLS del que llama.
+ *
+ * POR QUÉ POR RUTA Y NO POR CANAL. El 2026-08-06 la puerta se puso sobre el canal: cualquier
+ * principal del canal `console` quedaba rechazado en CUALQUIER endpoint. Como `console-client` es
+ * el único principal mTLS con permiso `control` y el único que usan el guardia médico y las
+ * herramientas de operación para publicar, `POST /v3/messages` empezó a devolver 401 y la flota se
+ * quedó sin plano de control: ningún cambio de configuración era posible, ni por un humano ni por
+ * un agente. Un canal dice de dónde PUEDE venir un navegador; no dice qué está pidiendo. Lo que
+ * hay que proteger es la superficie que un navegador puede leer, y eso es una lista de rutas.
+ *
+ * Un mismo principal entra por las dos puertas según qué pida: `console-client` publica en
+ * `/v3/messages` con su certificado, y en `/v3/console/activity` necesita que además haya una
+ * persona con sesión iniciada.
+ *
+ * `/v3/status` está adentro porque devuelve presencia y contadores de la flota y la SPA lo pinta en
+ * la portada; era parte del mismo agujero. Las rutas del relay de terminal (`/v3/terminal/relay/*`)
+ * no aparecen porque se autorizan con su token y ni pasan por este proveedor.
+ *
+ * El prefijo es EXACTAMENTE el mismo que mira `createConsoleSecurityHook`: si un día se agrega una
+ * ruta de consola, queda cubierta por las dos puertas sin tocar ninguna lista.
+ */
+export function isConsoleSurface(url: string): boolean {
+  const path = url.split('?', 1)[0] ?? '';
+  return path.startsWith('/v3/console/') || path === '/v3/status';
 }
 
 interface LoadedSession {
@@ -281,14 +313,21 @@ export class PasswordAuthProvider implements AuthProvider {
 
   /**
    * Todo lo que no trae cookie pasa por acá, y sale con la identidad de MÁQUINA del `fallback`.
-   * El canal de la consola es la excepción: ahí hay una persona del otro lado y la persona tiene
-   * que estar autenticada, no basta con que el proxy sepa presentar su certificado.
+   *
+   * La única excepción es la superficie de CONSOLA pedida por el principal que tiene un navegador
+   * del otro lado (el certificado del proxy, canal `console`): ahí hace falta una persona con
+   * sesión y el certificado no la sustituye. Fuera de esa intersección el mTLS manda, así que el
+   * bus (`/v3/messages`, `/v3/query`, `/v3/quotas/samples`, `/v3/egress/notifications`, `/v3/ws`…)
+   * sigue abierto a TODOS los principales de máquina, incluido el del proxy.
    */
-  private async viaFallback(resolve: (provider: AuthProvider) => Promise<Principal>): Promise<Principal> {
-    if (!this.fallback) throw new AuthError('se requiere la cookie de sesión de la consola');
+  private async viaFallback(
+    request: FastifyRequest,
+    resolve: (provider: AuthProvider) => Promise<Principal>
+  ): Promise<Principal> {
+    if (!this.fallback) throw new AuthError(SESSION_REQUIRED_MESSAGE);
     const machine = await resolve(this.fallback);
-    if (machine.channel === this.machineChannelRequiringSession) {
-      throw new AuthError('se requiere la cookie de sesión de la consola');
+    if (machine.channel === this.machineChannelRequiringSession && isConsoleSurface(request.url)) {
+      throw new AuthError(SESSION_REQUIRED_MESSAGE);
     }
     return machine;
   }
@@ -327,7 +366,7 @@ export class PasswordAuthProvider implements AuthProvider {
     const cached = this.requestCache.get(request);
     if (cached) return cached;
     const token = this.token(request);
-    if (token === undefined) throw new AuthError('se requiere la cookie de sesión de la consola');
+    if (token === undefined) throw new AuthError(SESSION_REQUIRED_MESSAGE);
     const claims = verifyConsoleSession(this.signingKey, token, this.now());
     const user = await this.users.findById(claims.sub);
     // Se relee SIEMPRE. Un token firmado no es autoridad sobre el estado actual de la cuenta.
@@ -346,14 +385,14 @@ export class PasswordAuthProvider implements AuthProvider {
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
     if (!this.handles(request)) {
-      return this.viaFallback((provider) => provider.authenticateHttp(request));
+      return this.viaFallback(request, (provider) => provider.authenticateHttp(request));
     }
     return (await this.load(request)).principal;
   }
 
   async authenticateHello(request: FastifyRequest, hello: Parameters<AuthProvider['authenticateHello']>[1]): Promise<Principal> {
     if (!this.handles(request)) {
-      return this.viaFallback((provider) => provider.authenticateHello(request, hello));
+      return this.viaFallback(request, (provider) => provider.authenticateHello(request, hello));
     }
     return (await this.load(request)).principal;
   }
