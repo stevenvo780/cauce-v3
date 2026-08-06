@@ -18,6 +18,16 @@ export const RESET_MARK = "⚠ CAUCE — LA TERMINAL SE REINICIÓ";
  */
 export const CONTEXT_MARK = "⚠ CAUCE — EL CONTEXTO DE LA TERMINAL CAMBIÓ";
 
+/**
+ * Marca del aviso de turno FUNDIDO: el pedido entró en la terminal pero sin abrir turno propio.
+ *
+ * Es distinta de las otras dos porque no se perdió memoria ni se cayó a otro camino: el turno corrió
+ * en el panel del dueño y su respuesta es la que vuelve. Lo que hay que decir es otra cosa —que la
+ * respuesta puede estar contestando dos pedidos a la vez— y hasta el 2026-08-06 este caso no se
+ * anunciaba porque directamente MATABA la entrega.
+ */
+export const MERGED_MARK = "⚠ CAUCE — EL TURNO SE FUNDIÓ CON OTRO EN CURSO";
+
 const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> = {
   session_absent: "no hay sesión compartida abierta para este alias",
   tui_absent: "la sesión existe pero no hay una TUI viva adentro",
@@ -28,6 +38,7 @@ const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> 
   session_created: "no había terminal abierta y se creó una nueva, vacía, para este turno",
   context_cleared: "el dueño vació el contexto de la terminal (/clear en claude, /new en codex)",
   context_compacted: "la terminal compactó su contexto: lo anterior quedó resumido, no íntegro",
+  turn_merged: "el panel estaba ocupado y la terminal fundió este pedido con el turno en curso",
 };
 
 /**
@@ -57,6 +68,12 @@ const CONTEXT_NOTICE: Readonly<Record<string, { readonly mark: string; readonly 
     mark: CONTEXT_MARK,
     consequence: "Este turno SÍ pasó por la terminal, pero lo anterior quedó RESUMIDO y no"
       + " íntegro: si algo importante se perdió, hay que volver a decirlo.",
+  },
+  turn_merged: {
+    mark: MERGED_MARK,
+    consequence: "Este turno SÍ pasó por la terminal y se ejecutó entero, pero NO abrió un turno"
+      + " propio: la terminal estaba ocupada y lo fundió con lo que ya estaba haciendo, así que esta"
+      + " respuesta puede contestar a la vez lo que pidió el dueño y lo que pidió el bus.",
   },
 };
 

@@ -116,6 +116,48 @@ export function inputBoxState(pane: string | undefined): InputBoxState {
 }
 
 /**
+ * Cómo dibujan las dos TUI que están GENERANDO. Es la única marca estable que tienen en común.
+ *
+ * claude escribe `✻ Herding… (esc to interrupt · ctrl+t to hide todos)` y codex `Esc to interrupt`;
+ * lo que no cambia entre versiones ni entre binarios es que ofrecen cortar el turno, porque es la
+ * única tecla que sirve mientras generan.
+ */
+const IN_FLIGHT_MARK = /\besc(?:ape)?\s+to\s+interrupt\b/iu;
+
+/**
+ * ¿La terminal está GENERANDO ahora mismo?
+ *
+ * No se usa para decidir si se pega —pegar igual es lo correcto, porque un turno encolado se acaba
+ * ejecutando dentro de la conversación compartida, que es justo lo que este diseño existe para
+ * conservar— sino para poder DECIR por qué la correlación por ascendencia no va a enganchar.
+ *
+ * La distinción importa: la caja de entrada está VACÍA mientras la TUI genera, así que
+ * `inputBoxState` la ve libre y el arbitraje la da por disponible. Eso es correcto para lo que ese
+ * arbitraje decide (no pisar lo que el dueño está escribiendo) y ciego para lo otro: pegar en una
+ * caja libre de un panel ocupado hace que claude ENCOLE el pegado y lo funda en el turno en curso,
+ * sin abrir turno propio. Ver `turn_merged` en `types.ts` y la entrega `6c7cb0c4`.
+ *
+ * Se mira sólo la FRANJA de la caja de entrada —las últimas líneas con contenido— que es donde las
+ * dos TUI dibujan su estado: claude justo encima de la caja, codex justo debajo. Más arriba está la
+ * conversación, y ahí la frase puede aparecer como texto cualquiera —un agente hablando de este
+ * mismo mecanismo, por ejemplo—; acotar la ventana evita que eso quede marcado para siempre.
+ *
+ * Equivocarse acá no rompe nada, y por eso la ventana puede ser generosa: esto NO decide si se
+ * inyecta ni si se cosecha, sólo redacta el aviso. La decisión la toma el sobre.
+ */
+export function turnInFlight(pane: string | undefined): boolean {
+  if (pane === undefined) return false;
+  const lines = pane.split(/\r?\n/u).map(stripSgr);
+  let end = lines.length;
+  while (end > 0 && (lines[end - 1] ?? "").trim() === "") end -= 1;
+  return lines.slice(Math.max(0, end - IN_FLIGHT_WINDOW), end)
+    .some((line) => IN_FLIGHT_MARK.test(line));
+}
+
+/** Cuántas líneas alrededor de la caja de entrada cuentan como "franja de estado". */
+const IN_FLIGHT_WINDOW = 6;
+
+/**
  * El contenido de la última línea de prompt, ya sin el cursor ni los bordes del recuadro.
  *
  * Se recorre de abajo hacia arriba porque la caja de entrada es lo último que dibuja la TUI; por
