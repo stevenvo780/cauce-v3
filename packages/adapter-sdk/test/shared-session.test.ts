@@ -813,6 +813,19 @@ test("tmux no hereda la identidad de ciclo de vida del adaptador", () => {
   assert.equal(limpio.HOME, "/home/dev");
 });
 
+test("el cursor de codex se reconoce con los dos glifos que dibuja segun su version", () => {
+  // codex 0.144.x dibuja `›` (U+203A); 0.145.0 lo redibujo como `»` (U+00BB). Los dos son la MISMA
+  // caja de entrada: si uno no se reconoce, el panel queda "sin caja" y el turno degrada con
+  // `modal_blocking` por un modal que no existe.
+  for (const cursor of ["›", "»"]) {
+    assert.equal(inputBoxState(`${cursor} `).occupied, false);
+    assert.equal(inputBoxState(`conversacion previa\n${cursor} `).occupied, false);
+    assert.equal(inputBoxState(`${cursor} algo a medias`).occupied, true);
+    // Lo que NO debe pasar nunca: confundir la caja vacia con un dialogo a pantalla completa.
+    assert.notEqual(inputBoxState(`conversacion previa\n${cursor} `).kind, "modal");
+  }
+});
+
 test("el vallado Markdown se quita solo cuando envuelve todo el texto", () => {
   assert.equal(stripJsonFence("```json\n{\"a\":1}\n```"), '{"a":1}');
   assert.equal(stripJsonFence("```\n{\"a\":1}\n```"), '{"a":1}');

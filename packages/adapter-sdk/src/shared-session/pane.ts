@@ -24,8 +24,16 @@ const PENDING_PASTE_MARKS = ["[Pasted text", "paste again to expand"];
  * hacia arriba pasaba de largo la caja real y enganchaba el banner `>_ OpenAI Codex (vX)` del
  * propio programa, que empieza por `>` y nunca cambia: la caja quedaba "ocupada" para siempre y
  * TODO turno degradaba a los 90 s. Medido en el panel vivo de socrates el 2026-07-31.
+ *
+ * `»` (U+00BB) es el MISMO cursor de codex redibujado a partir de codex-cli 0.145.0. Sin él el
+ * barrido no encuentra ninguna caja, y un panel con contenido pero sin caja se declara «diálogo a
+ * pantalla completa»: el turno degrada con `modal_blocking` inventando un modal que no existe, el
+ * adaptador suelta el panel del dueño y contesta por el camino de respaldo. El dueño deja de ver a
+ * su agente sin que nada falle, y reiniciar no lo arregla porque el glifo sigue siendo el mismo.
+ * Medido con volcado hexadecimal el 2026-08-05 en el panel vivo de kant (`c2 bb 20` = `» `), contra
+ * `e2 80 ba 20` (`› `) en los alias que todavía corren 0.144.x.
  */
-const PROMPT_MARKS = ["❯", "›", ">"];
+const PROMPT_MARKS = ["❯", "›", "»", ">"];
 
 /**
  * Por qué no se puede inyectar ahora mismo. La distinción NO cambia la decisión —en los tres casos
