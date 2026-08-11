@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetActivityAgent, FleetActivitySnapshot } from '../../api/types';
+import { mockActivity, topology } from '../../mocks/data';
+import { layoutHypergraph } from '../topology/hypergraph-layout';
 import {
   BURST_MS,
+  agentKey,
   buildLiveViews,
   delegationEdges,
   detectPulses,
@@ -199,5 +202,47 @@ describe('buildLiveViews', () => {
 
   it('sobrevive a un snapshot ausente sin inventar agentes', () => {
     expect(buildLiveViews(undefined, {}, NOW)).toEqual({ views: [], edges: [] });
+  });
+});
+
+/**
+ * El panel "quién le habla a quién, ahora" sólo dibuja flechas si el snapshot trae entregas en
+ * vuelo con emisor. Esto no es una propiedad del componente sino del DATO, y es exactamente lo que
+ * se rompió antes: la vista se publicó con un fixture cuyas entregas eran anónimas o venían de
+ * alias que la topología no declara, así que se veían los muñecos y las salas y ni una delegación.
+ * Un dibujo vacío no se distingue de "nadie está trabajando", que es la respuesta contraria.
+ */
+describe('la topología y la actividad de demostración se corresponden', () => {
+  const actividad = mockActivity();
+  const agentes = actividad.agents ?? [];
+  const nodos = new Set(
+    layoutHypergraph(topology, { width: 1040, height: 660, padding: 46, nodeSpacing: 96 })
+      .nodes.map((node) => `${node.tenants[0]}/${node.alias}`),
+  );
+
+  it('coloca a cada agente de la actividad dentro de una sala declarada', () => {
+    const sinSala = agentes.map(agentKey).filter((key) => !nodos.has(key));
+    expect(sinSala).toEqual([]);
+  });
+
+  it('produce delegaciones dibujables entre alias que la topología ubica', () => {
+    const edges = delegationEdges(actividad);
+    const dibujables = edges.filter((edge) => nodos.has(edge.from) && nodos.has(edge.to));
+    // El umbral es deliberadamente flojo: lo que hay que impedir es el CERO y el "una sola
+    // relación repetida", no clavar un número que se rompa al ajustar el fixture.
+    expect(dibujables.length).toBeGreaterThanOrEqual(10);
+    expect(new Set(dibujables.map((edge) => `${edge.from}->${edge.to}`)).size).toBeGreaterThanOrEqual(6);
+  });
+
+  it('incluye alguna entrega pasada de los 300 s, que es la que se pinta en ámbar', () => {
+    const lentas = delegationEdges(actividad).filter((edge) => (edge.secondsInFlight ?? 0) > 300);
+    expect(lentas.length).toBeGreaterThan(0);
+  });
+
+  it('no dibuja el mensaje que un alias se publica a sí mismo: es una persona, no una delegación', () => {
+    const propias = agentes.flatMap((a) => (a.in_flight_items ?? [])
+      .filter((item) => item.from_tenant === a.tenant_id && item.from_alias === a.alias));
+    expect(propias.length).toBeGreaterThan(0);
+    expect(delegationEdges(actividad).some((edge) => edge.from === edge.to)).toBe(false);
   });
 });

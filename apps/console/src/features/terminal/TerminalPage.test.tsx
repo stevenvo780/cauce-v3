@@ -100,7 +100,12 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
   expect(await screen.findByText(/Aceptado por el control plane/i)).toBeInTheDocument();
   expect(screen.getByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByText(/no crea workers remotos/i)).toBeInTheDocument();
-});
+  // Timeout explícito, y no por lentitud tolerada: este caso renderiza la barra lateral entera —15
+  // alias, cada uno resolviendo su estado de PTY— y encima escribe un mensaje carácter por carácter
+  // con userEvent. Aislado tarda ~2,7 s; corriendo detrás de los otros 31 archivos, con la máquina
+  // caliente, pasaba los 5 s por defecto y fallaba por reloj, no por conducta. Un test que falla
+  // según con quién comparta la corrida no está midiendo la aplicación.
+}, 20_000);
 
 it('keeps the durable feed operational on a real PTY 501 and disables only PTY', async () => {
   const user = userEvent.setup();
