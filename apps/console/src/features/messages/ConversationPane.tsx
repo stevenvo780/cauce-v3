@@ -188,7 +188,7 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
               ? <>Entrega {compactId(seleccionada.delivery_id)} → {seleccionada.recipient_tenant ?? 'UNKNOWN'}:{seleccionada.recipient_alias ?? 'UNKNOWN'}</>
               : <>Mensaje {compactId(mensajeSeleccionado.message_id)} · sin entrega para este par</>}
           </p>
-          <dl className="metadata-grid messenger-message-meta">
+          <dl className="messenger-message-meta">
             <div><dt>Room</dt><dd><Unknown value={mensajeSeleccionado.room_id} /></dd></div>
             <div><dt>Lane</dt><dd><Unknown value={safeJobLane(mensajeSeleccionado.lane)} /></dd></div>
             <div><dt>Actor verificado</dt><dd><Unknown value={mensajeSeleccionado.actor_alias} /></dd></div>
