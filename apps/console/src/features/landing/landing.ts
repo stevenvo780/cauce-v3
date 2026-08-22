@@ -176,3 +176,26 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
 export function puedeDecirSinIncidencias(resumen: ResumenPortada): boolean {
   return resumen.alertas.length === 0 && resumen.fuentesAusentes.length === 0;
 }
+
+/**
+ * El recuento del panel «El resto de la consola», derivado de la lista y no contado con el dedo.
+ *
+ * El rótulo decía «Ocho vistas» cuando ya eran nueve: el atajo a «Ultimate Terminal» faltaba y
+ * nadie volvió a contar. Un número escrito a mano en una frase envejece en cuanto se agrega una
+ * entrada, y envejece en silencio —no rompe ninguna prueba, no tira ningún error: sólo miente—.
+ *
+ * En letras hasta doce porque es una frase, no una tabla; de ahí en adelante en cifra, que es como
+ * se escribe un número grande en castellano corrido.
+ */
+const NUMERALES = [
+  'Ninguna', 'Una', 'Dos', 'Tres', 'Cuatro', 'Cinco', 'Seis',
+  'Siete', 'Ocho', 'Nueve', 'Diez', 'Once', 'Doce',
+];
+
+export function rotuloDeVistas(cantidad: number): string {
+  if (!Number.isFinite(cantidad) || cantidad < 0) return 'Ninguna vista';
+  const entero = Math.trunc(cantidad);
+  const palabra = NUMERALES[entero] ?? String(entero);
+  // «Ninguna vista» y «Una vista» en singular; de dos en adelante, plural.
+  return `${palabra} ${entero <= 1 ? 'vista' : 'vistas'}`;
+}

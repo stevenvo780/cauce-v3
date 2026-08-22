@@ -1,14 +1,11 @@
-import {
-  AlertTriangle, BatteryCharging, CheckCircle2, CircleHelp, CreditCard, Gauge, History,
-  ListRestart, MessageSquareText, Settings2, Sparkles,
-} from 'lucide-react';
-import type { ComponentType } from 'react';
+import { AlertTriangle, CheckCircle2, CircleHelp, Gauge } from 'lucide-react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { LoadingState, Metric, PageHeader, Panel, RefreshButton, Time } from '../../components/ui';
+import { NAV_ENTRIES, useNavAvailability } from '../../nav';
 import { onNavClick } from '../../navigation';
 import { HarnessStrip } from './HarnessStrip';
-import { puedeDecirSinIncidencias, resumenPortada } from './landing';
+import { puedeDecirSinIncidencias, resumenPortada, rotuloDeVistas } from './landing';
 
 /**
  * **La portada.** Lo que se ve al entrar a la consola, y lo único que hace falta leer para saber
@@ -30,26 +27,33 @@ import { puedeDecirSinIncidencias, resumenPortada } from './landing';
  *    portada que tranquiliza cuando el gateway se cayó.
  */
 
-interface Atajo {
-  ruta: string;
-  label: string;
-  icon: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
-  que: string;
-}
-
-const ATAJOS: Atajo[] = [
-  { ruta: '/live', label: 'La flota ahora', icon: Sparkles, que: 'Quién está trabajando, quién está trabado y quién le delegó a quién, en vivo.' },
-  { ruta: '/queues', label: 'Queues & DLQ', icon: ListRestart, que: 'Cada entrega pendiente, en reintento o muerta, con reinyectar y cancelar.' },
-  { ruta: '/quotas', label: 'Cuotas y licencias', icon: BatteryCharging, que: 'Cuánto saldo le queda a cada cuenta y quién la está gastando.' },
-  { ruta: '/messages', label: 'Messages', icon: MessageSquareText, que: 'El histórico de mensajes publicados y sus entregas.' },
-  { ruta: '/observability', label: 'Observabilidad y relays', icon: Gauge, que: 'Las señales del gateway y el camino de vuelta al canal de origen.' },
-  { ruta: '/accounts', label: 'Cuentas de IA', icon: CreditCard, que: 'El registro de cuentas y qué agente usa cada una.' },
-  { ruta: '/audit', label: 'Audit', icon: History, que: 'Quién pidió qué y si el servidor lo permitió o lo negó.' },
-  { ruta: '/config', label: 'Configuration', icon: Settings2, que: 'Tenants, salas, membresías y políticas — con reversión por revisión.' },
-];
+/**
+ * **Los atajos NO se escriben acá.** Salen de `NAV_ENTRIES`, la misma lista que dibuja la barra
+ * lateral, y pasan por `useNavAvailability()`, la misma función que decide si una entrada está
+ * disponible para QUIEN está mirando.
+ *
+ * Estaban escritos a mano, y el precio se midió el 2026-08-22: con un acceso sin `config.write`,
+ * la barra lateral dejaba «Configuración y altas» inerte con su motivo —el arreglo del commit
+ * 252cf3c— y la portada, que es la primera pantalla de todo el mundo, ofrecía el mismo rótulo como
+ * enlace vivo. El verificador hizo clic y navegó. Además la copia se llamaba «Configuration», que
+ * ya no es el rótulo de nadie, y se olvidaba de «Ultimate Terminal».
+ *
+ * Se deshabilita en vez de esconder, por la misma razón que en la barra: un atajo que desaparece
+ * no distingue «no tengo permiso» de «no existe», y uno visible que dice el motivo sí.
+ */
 
 export function LandingPage() {
   const api = useApi();
+  const navAvailability = useNavAvailability();
+  /**
+   * «El resto de la consola» = todas las entradas del menú MENOS la portada, que es esta misma
+   * pantalla. El recuento del rótulo se deriva de acá: escrito a mano decía «Ocho vistas» cuando
+   * ya eran nueve.
+   */
+  const atajos = NAV_ENTRIES
+    .filter((entrada) => entrada.id !== '')
+    .map((entrada) => ({ entrada, disponible: navAvailability(entrada.id) }))
+    .filter(({ disponible }) => !disponible.hidden);
   const status = useResource('status', () => api.getStatus());
   const queues = useResource('queues', () => api.getQueues());
   const quotas = useResource('quotas', () => api.getQuotas());
@@ -140,15 +144,29 @@ export function LandingPage() {
         Cuotas: <Time value={quotas.data?.observed_at} />
       </div>
 
-      <Panel title="El resto de la consola" subtitle="Ocho vistas, cada una con la pregunta que responde. La portada no las repite: las enlaza.">
+      <Panel
+        title="El resto de la consola"
+        subtitle={`${rotuloDeVistas(atajos.length)}, cada una con la pregunta que responde. La portada no las repite: las enlaza.`}
+      >
         <ul className="landing-atajos" aria-label="El resto de la consola">
-          {ATAJOS.map((atajo) => {
-            const Icon = atajo.icon;
+          {atajos.map(({ entrada, disponible }) => {
+            const Icon = entrada.icon;
+            const ruta = `/${entrada.id}`;
             return (
-              <li key={atajo.ruta}>
-                <a href={atajo.ruta} onClick={(event) => onNavClick(event, atajo.ruta)}>
+              <li key={entrada.id}>
+                <a
+                  href={ruta}
+                  onClick={(event) => onNavClick(event, ruta, disponible.reason)}
+                  aria-disabled={disponible.disabled ? true : undefined}
+                  className={disponible.disabled ? 'atajo-inerte' : undefined}
+                  title={disponible.reason}
+                >
                   <Icon size={18} aria-hidden={true} />
-                  <span><strong>{atajo.label}</strong><small>{atajo.que}</small></span>
+                  <span>
+                    <strong>{entrada.label}</strong>
+                    <small>{entrada.que}</small>
+                    {disponible.disabled ? <small className="atajo-motivo">{disponible.reason}</small> : null}
+                  </span>
                 </a>
               </li>
             );

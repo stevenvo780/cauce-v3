@@ -1,19 +1,9 @@
 import {
   Activity,
-  BatteryCharging,
   Boxes,
-  CreditCard,
-  LayoutDashboard,
   GitFork,
-  History,
-  Settings2,
-  ListRestart,
-  MessageSquareText,
   RadioTower,
   ShieldCheck,
-  Gauge,
-  Sparkles,
-  TerminalSquare,
 } from 'lucide-react';
 import { useEffect, useSyncExternalStore, type ComponentType } from 'react';
 import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
@@ -31,17 +21,8 @@ import { TerminalPage } from './features/terminal/TerminalPage';
 import { ConfigPage } from './features/config/ConfigPage';
 import { AccountsPage } from './features/accounts/AccountsPage';
 import { ObservabilityPage } from './features/observability/ObservabilityPage';
-import { useApi } from './api/context';
-import { useResource } from './api/use-resource';
-import { permissionState } from './lib';
-import { useTerminalRelayStatus } from './features/terminal/relay-status';
-import {
-  configNavAvailability,
-  onNavClick,
-  redirect,
-  terminalNavAvailability,
-  type NavEntryAvailability,
-} from './navigation';
+import { NAV_ENTRIES, useNavAvailability } from './nav';
+import { onNavClick, redirect } from './navigation';
 
 interface Route {
   id: string;
@@ -122,17 +103,32 @@ interface Route {
  * alertas, y qué responde cada vista— y enlaza; `/live` sigue siendo la vista viva con el
  * hipergrafo y el cajón. Ninguna de las dos dibuja lo que dibuja la otra.
  */
+/**
+ * Qué componente dibuja cada entrada CON rótulo. El rótulo, el icono y la pregunta que responde
+ * cada vista viven en `NAV_ENTRIES` (`./nav`), que es también lo que lee la portada: eran dos
+ * listas escritas a mano y ya habían divergido —«Configuration» contra «Configuración y altas»—
+ * el mismo día en que se escribieron.
+ */
+const PAGES: Record<string, ComponentType> = {
+  '': LandingPage,
+  live: LiveFleetPage,
+  quotas: QuotasPage,
+  accounts: AccountsPage,
+  messages: MessagesPage,
+  queues: QueuesPage,
+  audit: AuditPage,
+  observability: ObservabilityPage,
+  config: ConfigPage,
+  terminal: TerminalPage,
+};
+
 const routes: Route[] = [
-  { id: '', label: 'Portada', icon: LayoutDashboard, component: LandingPage },
-  { id: 'live', label: 'La flota ahora', icon: Sparkles, component: LiveFleetPage },
-  { id: 'quotas', label: 'Cuotas y licencias', icon: BatteryCharging, component: QuotasPage },
-  { id: 'accounts', label: 'Cuentas de IA', icon: CreditCard, component: AccountsPage },
-  { id: 'messages', label: 'Messages', icon: MessageSquareText, component: MessagesPage },
-  { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, component: QueuesPage },
-  { id: 'audit', label: 'Audit', icon: History, component: AuditPage },
-  { id: 'observability', label: 'Observabilidad y relays', icon: Gauge, component: ObservabilityPage },
-  { id: 'config', label: 'Configuración y altas', icon: Settings2, component: ConfigPage },
-  { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, component: TerminalPage },
+  ...NAV_ENTRIES.map((entry) => ({
+    id: entry.id,
+    label: entry.label,
+    icon: entry.icon,
+    component: PAGES[entry.id],
+  })),
   /**
    * Entrada OCULTA (sin `label`, excluida del render del menú).
    *
@@ -289,14 +285,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
    * `console-access` comparte clave de caché con las páginas que ya lo piden, así que esto no
    * agrega una petición por navegación.
    */
-  const api = useApi();
-  const access = useResource('console-access', () => api.getConsoleAccess());
-  const relay = useTerminalRelayStatus();
-  const navAvailability = (id: string): NavEntryAvailability => {
-    if (id === 'terminal') return terminalNavAvailability(relay);
-    if (id === 'config') return configNavAvailability(permissionState(access.data, 'config.write'));
-    return { hidden: false, disabled: false };
-  };
+  const navAvailability = useNavAvailability();
   const { id: routeId, params, aliasedFrom } = matchRoute(path);
   const route = routes.find((candidate) => candidate.id === routeId) ?? routes[0];
 

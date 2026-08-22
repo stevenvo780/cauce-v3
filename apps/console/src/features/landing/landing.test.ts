@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EntradaPortada } from './landing';
-import { puedeDecirSinIncidencias, resumenPortada } from './landing';
+import { puedeDecirSinIncidencias, resumenPortada, rotuloDeVistas } from './landing';
 
 /**
  * Una flota sana, leída entera. Es el CONTROL NEGATIVO de todo este fichero: si `resumenPortada`
@@ -143,5 +143,26 @@ describe('lo que no se leyó no se afirma', () => {
       'Actividad de la flota',
     ]);
     expect(puedeDecirSinIncidencias(resumen)).toBe(false);
+  });
+});
+
+/**
+ * El recuento del panel de atajos. Se prueba porque el rótulo escrito a mano ya mintió una vez
+ * («Ocho vistas» cuando eran nueve) y una frase que miente no rompe nada: sólo se lee mal.
+ */
+describe('rotuloDeVistas', () => {
+  it('deriva el numeral y concuerda el sustantivo', () => {
+    expect(rotuloDeVistas(9)).toBe('Nueve vistas');
+    expect(rotuloDeVistas(1)).toBe('Una vista');
+    expect(rotuloDeVistas(0)).toBe('Ninguna vista');
+  });
+
+  it('pasa a cifra cuando se sale de los numerales escritos', () => {
+    expect(rotuloDeVistas(13)).toBe('13 vistas');
+  });
+
+  it('no inventa un rótulo con una entrada absurda', () => {
+    expect(rotuloDeVistas(-1)).toBe('Ninguna vista');
+    expect(rotuloDeVistas(Number.NaN)).toBe('Ninguna vista');
   });
 });

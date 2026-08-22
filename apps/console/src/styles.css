@@ -326,6 +326,13 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .landing-atajos strong { color: var(--text); font-size: .82rem; }
 .landing-atajos small { color: var(--muted); font-size: .72rem; line-height: 1.5; }
 
+/* Un atajo de la portada que este usuario no puede abrir. Mismo trato que en la barra lateral —se
+   deja inerte, no se esconde— pero acá hay sitio para escribir el motivo a la vista en vez de
+   dejarlo en un `title` que sólo aparece con el ratón encima. */
+.landing-atajos a.atajo-inerte { cursor: not-allowed; opacity: .5; }
+.landing-atajos a.atajo-inerte:hover { border-color: var(--border); }
+.landing-atajos .atajo-motivo { margin-top: 4px; color: var(--amber); font-weight: 600; }
+
 .harness-strip { padding: 0; }
 .harness-strip > summary {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
