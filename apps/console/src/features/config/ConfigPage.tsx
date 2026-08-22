@@ -1,4 +1,4 @@
-import { RotateCcw, Save, SearchCheck } from 'lucide-react';
+import { Braces, RotateCcw, Save, SearchCheck } from 'lucide-react';
 import { useMemo, useState, type SyntheticEvent } from 'react';
 import { useApi } from '../../api/context';
 import type { AnyConfigResource, ConfigAction, ConfigMutation, ConfigResource } from '../../api/types';
@@ -8,8 +8,14 @@ import {
   Time, Unknown
 } from '../../components/ui';
 import { permissionState } from '../../lib';
+import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
+import { AltaRapida } from './AltaRapida';
+import { CollectionTable, type AccionPendiente, type AvisoDeColeccion } from './CollectionTable';
 import { configCollections } from './collections';
-import { describeConfigError, type ConfigChangeOutcome } from './config-change';
+import {
+  describeConfigError, textoRecarga,
+  type CaminoDeCambio, type ConfigChangeOutcome, type EstadoRecarga,
+} from './config-change';
 import { SpaceWizard } from './SpaceWizard';
 
 const templates: Record<ConfigResource, ConfigMutation> = {
@@ -74,6 +80,36 @@ function parseMutation(text: string): ConfigMutation {
   return mutation as ConfigMutation;
 }
 
+/**
+ * Aviso de una acción de tabla, atado a la colección donde el operador hizo clic Y a la revisión
+ * del snapshot bajo la que es verdad. Sin la revisión el cartel sobrevivía a lo que lo desmiente:
+ * seguía afirmando «las tablas están en la revisión 2» después de que otra escritura —el alta, el
+ * wizard, el editor crudo, un rollback— las movió a la 3.
+ */
+interface AvisoDeAccion extends AvisoDeColeccion {
+  coleccion: string;
+  revision: number | undefined;
+}
+
+/**
+ * La acción que espera confirmación MÁS la revisión sobre la que se pidió. Una confirmación
+ * pendiente describe la fila TAL COMO ESTABA: si el snapshot se movió debajo (otro operador, o el
+ * propio botón «Actualizar»), lo que el operador leyó en el `<pre>` ya no es lo que hay, y mandarlo
+ * igual con la revisión nueva aplica una mutación que nadie firmó.
+ */
+interface AccionPendienteVigente extends AccionPendiente {
+  revision: number | undefined;
+}
+
+/**
+ * La revisión que el snapshot tiene DESPUÉS de una escritura. Si la relectura llegó, la revisión
+ * que trajo es la que la pantalla está pintando; si no llegó, el snapshot se quedó donde estaba.
+ */
+function revisionTrasEscribir(recarga: EstadoRecarga | undefined, actual: number | undefined): number | undefined {
+  if (recarga && recarga.releido) return recarga.revision;
+  return actual;
+}
+
 export function ConfigPage() {
   const api = useApi();
   const config = useResource('configuration', () => api.getConfiguration());
@@ -82,10 +118,22 @@ export function ConfigPage() {
   const [action, setAction] = useState<ConfigAction>('create');
   const [editor, setEditor] = useState(() => mutationText('acl_edge', 'create'));
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ text: string; tone: 'success' | 'error' }>();
+  const [notice, setNotice] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
   const [preview, setPreview] = useState<string>();
   const [chainedRevision, setChainedRevision] = useState<number>();
-  const canWrite = permissionState(access.data, 'config.write') === 'allowed';
+  const [pendiente, setPendiente] = useState<AccionPendienteVigente>();
+  const [avisoDeAccion, setAvisoDeAccion] = useState<AvisoDeAccion>();
+  // El audit trail tiene sus PROPIOS avisos y su propio preview. Antes `rollback()` escribía en
+  // `notice`/`preview`, que se pintan dentro del `<details>` del editor crudo —cerrado por
+  // defecto—: el POST viajaba, el servidor contestaba 201, y la pantalla no decía absolutamente
+  // nada. Un rollback que falla se veía EXACTAMENTE igual que uno que funciona. El desenlace de
+  // una escritura se pinta junto al control que la disparó y sin abrir nada.
+  const [avisoDeRollback, setAvisoDeRollback] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
+  const [previewDeRollback, setPreviewDeRollback] = useState<string>();
+  // Con el permiso `unknown` —no se pudo leer el RBAC— la pantalla queda HABILITADA: ante la duda
+  // no se le quita nada a nadie, y el servidor rechaza igual si no corresponde. Mismo criterio que
+  // `configNavAvailability` y que el editor de rol declarado.
+  const soloLectura = permissionState(access.data, 'config.write') === 'denied';
   const snapshotRevision = typeof config.data?.revision === 'number' ? config.data.revision : undefined;
   // El wizard encadena mutaciones y la recarga del snapshot es asíncrona: hasta que ésta alcanza
   // la revisión que devolvió el último apply, esa revisión es la única esperada verdadera.
@@ -94,6 +142,7 @@ export function ConfigPage() {
     ? chainedRevision
     : snapshotRevision;
   const groups = useMemo(() => configCollections(config.data), [config.data]);
+  const politicasDeRol = config.data?.role_policies ?? undefined;
 
   function selectTemplate(nextResource: ConfigResource, nextAction: ConfigAction) {
     // Cambiar de recurso puede dejar la acción fuera de lo que ese recurso admite (chain_policy
@@ -103,30 +152,52 @@ export function ConfigPage() {
     setResource(nextResource);
     setAction(validAction);
     setEditor(mutationText(nextResource, validAction));
+    // El preview y el aviso valían para la mutación ANTERIOR. Dejar el verde de «aplicado» debajo
+    // de un JSON distinto lo convierte en una afirmación sobre algo que el servidor nunca vio.
     setPreview(undefined);
+    setNotice(undefined);
   }
 
-  /** Único camino de escritura: lo comparten el editor crudo y el wizard guiado. */
-  async function change(mutation: ConfigMutation, dryRun: boolean): Promise<ConfigChangeOutcome> {
-    if (!canWrite) return { ok: false, conflict: false, message: 'Cambio bloqueado: permiso RBAC DENY o UNKNOWN.' };
+  /** Tocar el JSON invalida lo que se dijo del JSON anterior: mismo motivo que `selectTemplate`. */
+  function editarMutacion(texto: string) {
+    setEditor(texto);
+    setPreview(undefined);
+    setNotice(undefined);
+  }
+
+  /**
+   * Relee el snapshot y ESPERA el dato. Se llama después de toda escritura y después de todo
+   * conflicto de revisión: sin esperarla, la pantalla afirmaría «se recargó» sin haberlo
+   * comprobado, y en el caso del 409 seguiría mandando la revisión vencida en cada reintento —un
+   * bucle del que el operador no puede salir.
+   */
+  async function releer(): Promise<EstadoRecarga> {
+    const resultado = await config.reload();
+    if (resultado.error) return { releido: false, motivo: resultado.error.message };
+    const revision = typeof resultado.data.revision === 'number' ? resultado.data.revision : undefined;
+    return { releido: true, ...(revision === undefined ? {} : { revision }) };
+  }
+
+  /** Único camino de escritura: lo comparten el editor crudo, el wizard, el alta y las tablas. */
+  async function change(
+    mutation: ConfigMutation, dryRun: boolean, camino: CaminoDeCambio = 'previsualizado',
+  ): Promise<ConfigChangeOutcome> {
+    if (soloLectura) return { ok: false, conflict: false, message: `Cambio bloqueado. ${CONFIG_SIN_CONTROL_REASON}` };
     setBusy(true);
     try {
       const result = await api.changeConfiguration(mutation, {
         dryRun,
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
       });
-      if (!dryRun) {
-        if (typeof result.revision === 'number') setChainedRevision(result.revision);
-        config.reload();
-      }
-      return { ok: true, result };
+      // Un dry-run no escribe nada, así que no hay snapshot que releer ni relectura que contar.
+      if (dryRun) return { ok: true, result };
+      if (typeof result.revision === 'number') setChainedRevision(result.revision);
+      return { ok: true, result, recarga: await releer() };
     } catch (error) {
-      const described = describeConfigError(error, 'Cambio rechazado: UNKNOWN');
-      if (described.conflict) {
-        setChainedRevision(undefined);
-        config.reload();
-      }
-      return { ok: false, ...described };
+      const described = describeConfigError(error, 'Cambio rechazado: UNKNOWN', camino);
+      if (!described.conflict) return { ok: false, ...described };
+      setChainedRevision(undefined);
+      return { ok: false, ...described, recarga: await releer() };
     } finally {
       setBusy(false);
     }
@@ -145,7 +216,7 @@ export function ConfigPage() {
     const outcome = await change(mutation, dryRun);
     if (!outcome.ok) {
       if (outcome.conflict) setPreview(undefined);
-      setNotice({ text: outcome.message, tone: 'error' });
+      setNotice({ text: outcome.message + textoRecarga(outcome.recarga), tone: 'error' });
       return;
     }
     if (dryRun) {
@@ -153,33 +224,96 @@ export function ConfigPage() {
       return;
     }
     setPreview(undefined);
-    setNotice({ text: `Cambio atómico aplicado en revisión ${outcome.result.revision ?? 'UNKNOWN'}: ${outcome.result.summary ?? 'UNKNOWN'}`, tone: 'success' });
+    setNotice({
+      tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
+      text: `Cambio atómico aplicado en revisión ${outcome.result.revision ?? 'UNKNOWN'}: `
+        + `${outcome.result.summary ?? 'UNKNOWN'}.${textoRecarga(outcome.recarga)}`,
+    });
   }
 
+  /**
+   * Aplica la acción de tabla que el operador acaba de confirmar. El verde sale con la respuesta
+   * del servidor —nunca antes de mandar— y dice además si la relectura llegó: sin eso, la fila
+   * podría quedar mostrando el valor viejo con cara de recién guardado.
+   */
+  async function confirmarAccion() {
+    if (!pendiente) return;
+    const { coleccion, accion } = pendiente;
+    // Cinturón además del tirante: la confirmación ni siquiera se pinta cuando el snapshot se movió
+    // debajo, pero si llegara acá igual NO se manda. Lo que el operador leyó describía otra fila.
+    if (pendiente.revision !== snapshotRevision) {
+      setPendiente(undefined);
+      return;
+    }
+    setAvisoDeAccion(undefined);
+    // `directo`: estos botones no previsualizan nada, así que el 409 no puede mandar a «volver a
+    // previsualizar».
+    const outcome = await change(accion.mutation, false, 'directo');
+    // La mutación confirmada ya viajó (o fue rechazada): en cualquier caso deja de estar pendiente.
+    // Reintentarla tal cual después de un 409 volvería a chocar contra la revisión vencida.
+    setPendiente(undefined);
+    if (!outcome.ok) {
+      setAvisoDeAccion({
+        coleccion, tone: 'error', revision: revisionTrasEscribir(outcome.recarga, snapshotRevision),
+        text: `NO se aplicó «${accion.descripcion}»: ${outcome.message}${textoRecarga(outcome.recarga)}`,
+      });
+      return;
+    }
+    setAvisoDeAccion({
+      coleccion,
+      revision: revisionTrasEscribir(outcome.recarga, snapshotRevision),
+      tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
+      text: `${accion.descripcion}: aplicado en la revisión ${outcome.result.revision ?? 'UNKNOWN'} `
+        + `(${outcome.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(outcome.recarga)}`,
+    });
+  }
+
+  /**
+   * Deshacer una revisión desde el audit trail. Todo lo que dice se escribe en `avisoDeRollback` y
+   * `previewDeRollback`, que se pintan DENTRO del propio panel del audit trail, junto a los botones
+   * que lo dispararon: `notice`/`preview` viven dentro del `<details>` del editor crudo y ahí un
+   * desenlace no lo lee nadie.
+   */
   async function rollback(revisionId: string, dryRun: boolean) {
-    if (!canWrite) return;
+    if (soloLectura) return;
     setBusy(true);
-    setNotice(undefined);
+    setAvisoDeRollback(undefined);
     try {
       const result = await api.rollbackConfiguration(revisionId, {
         dryRun,
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
       });
-      if (dryRun) setPreview(JSON.stringify(result, null, 2));
-      else {
-        setPreview(undefined);
-        if (typeof result.revision === 'number') setChainedRevision(result.revision);
-        setNotice({ text: `Rollback atómico aplicado: revisión ${result.revision ?? 'UNKNOWN'}`, tone: 'success' });
-        config.reload();
+      if (dryRun) {
+        setPreviewDeRollback(JSON.stringify(result, null, 2));
+        // Un dry-run que no dice nada no se distingue de un botón que no hizo nada: el `<pre>` sale
+        // debajo, pero la frase es lo que se lee primero.
+        setAvisoDeRollback({
+          tone: 'success',
+          text: `Preview del rollback de la revisión ${revisionId} aceptado por el servidor: `
+            + 'no se escribió nada todavía, revisá el resultado de abajo.',
+        });
+        return;
       }
+      setPreviewDeRollback(undefined);
+      if (typeof result.revision === 'number') setChainedRevision(result.revision);
+      const recarga = await releer();
+      setAvisoDeRollback({
+        tone: recarga.releido ? 'success' : 'parcial',
+        text: `Rollback atómico de la revisión ${revisionId} aplicado: revisión `
+          + `${result.revision ?? 'UNKNOWN'}.${textoRecarga(recarga)}`,
+      });
     } catch (error) {
-      const described = describeConfigError(error, 'Rollback rechazado: UNKNOWN');
-      if (described.conflict) {
-        setChainedRevision(undefined);
-        setPreview(undefined);
-        config.reload();
+      // `rollback`: este camino no previsualiza para aplicar, así que el 409 no puede mandar a
+      // «volver a previsualizar» — manda a volver a elegir la revisión sobre el estado nuevo.
+      const described = describeConfigError(error, 'Rollback rechazado: UNKNOWN', 'rollback');
+      if (!described.conflict) {
+        setAvisoDeRollback({ text: described.message, tone: 'error' });
+        return;
       }
-      setNotice({ text: described.message, tone: 'error' });
+      setChainedRevision(undefined);
+      setPreviewDeRollback(undefined);
+      const recarga = await releer();
+      setAvisoDeRollback({ text: described.message + textoRecarga(recarga), tone: 'error' });
     } finally {
       setBusy(false);
     }
@@ -189,33 +323,111 @@ export function ConfigPage() {
   if (config.error && !config.data) return <ErrorState error={config.error} onRetry={config.reload} />;
 
   return <>
-    <PageHeader eyebrow="Atomic control plane" title="Configuración & rollback" description="CRUD server-side con preview transaccional, revisión optimista, default-deny y auditoría durable." actions={<RefreshButton onClick={config.reload} loading={config.loading} />} />
+    <PageHeader eyebrow="Atomic control plane" title="Configuración & rollback" description="Cada colección como tabla, las operaciones frecuentes a un clic con confirmación, y el JSON crudo detrás de un desplegable." actions={<RefreshButton onClick={config.reload} loading={config.loading} />} />
     <PermissionBadge access={access.data} permission="config.write" />
-    <SpaceWizard canWrite={canWrite} busy={busy} onChange={change} />
-    <Panel title="Mutation editor" subtitle={`Revisión esperada: ${expectedRevision ?? 'UNKNOWN'}`}>
-      <form className="config-form" onSubmit={(event) => void submit(event, false)}>
-        <label>Resource<select value={resource} onChange={(event) => selectTemplate(event.target.value as ConfigResource, action)}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Action<select value={action} onChange={(event) => selectTemplate(resource, event.target.value as ConfigAction)}>{actionsFor(resource).map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label className="config-json">Mutación JSON<textarea aria-label="Mutación JSON" rows={12} value={editor} onChange={(event) => setEditor(event.target.value)} spellCheck={false} /></label>
-        <div className="config-actions">
-          <button className="button secondary" type="button" disabled={!canWrite || busy} onClick={(event) => void submit(event, true)}><SearchCheck size={16} />Preview / dry-run</button>
-          <button className="button primary" type="submit" disabled={!canWrite || busy}><Save size={16} />Aplicar atómico</button>
-        </div>
-      </form>
-      {preview ? <pre className="config-preview" aria-label="Resultado de preview">{preview}</pre> : null}
-      {notice ? <p className={notice.tone === 'error' ? 'notice error' : 'notice success'} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p> : null}
-    </Panel>
+
+    {/* Sin permiso NO se esconde nada: las tablas se ven igual y los botones quedan inertes con el
+        motivo escrito. Un panel ausente no distingue «no tengo permiso» de «esto no existe». */}
+    {soloLectura ? <p className="notice" role="note">
+      Solo lectura: {CONFIG_SIN_CONTROL_REASON} Los datos se muestran igual; lo que está apagado es
+      todo lo que escribe.
+    </p> : null}
+
+    {/* `useResource` conserva el último dato bueno cuando una relectura falla: sin este cartel, un
+        GET caído no se notaba en ningún sitio y la pantalla seguía mostrando datos viejos con cara
+        de actuales. */}
+    {config.error ? <p className="notice error" role="alert">
+      La última relectura de la configuración falló ({config.error.message}): lo que ves es la
+      ÚLTIMA lectura buena, no lo que el servidor tiene ahora.
+    </p> : null}
+
     <div className="config-grid">
-      {groups.map(({ key, title, rows }) => <Panel key={key} title={title} subtitle="Datos efectivos del servidor">
-        {!rows ? <EmptyState>UNKNOWN: este gateway no publica esta colección ({key}).</EmptyState>
-          : !rows.length ? <EmptyState>Sin registros.</EmptyState>
-            : <ul className="config-records">{rows.map((row, index) => <li key={String(row.id ?? row.alias ?? row.role ?? index)}><code>{JSON.stringify(row)}</code></li>)}</ul>}
-      </Panel>)}
+      {groups.map((coleccion) => {
+        const pedido = pendiente?.coleccion === coleccion.key ? pendiente : undefined;
+        // Una confirmación pendiente vale para la revisión sobre la que se pidió. Si el snapshot se
+        // movió debajo —«Actualizar», u otra escritura— la fila que el operador leyó en el `<pre>`
+        // ya no es la que hay: la confirmación se anula y se dice, en vez de mandarla igual contra
+        // la revisión nueva.
+        const vigente = pedido !== undefined && pedido.revision === snapshotRevision;
+        const vencida = pedido !== undefined && !vigente;
+        // Mismo criterio para el cartel del desenlace: vale para el estado que lo produjo, y en
+        // cuanto ese estado cambia deja de mostrarse en vez de seguir afirmándolo.
+        const propio = avisoDeAccion?.coleccion === coleccion.key
+          && avisoDeAccion.revision === snapshotRevision
+          ? { text: avisoDeAccion.text, tone: avisoDeAccion.tone }
+          : undefined;
+        const aviso: AvisoDeColeccion | undefined = vencida && pedido
+          ? {
+            tone: 'error',
+            text: `La confirmación de «${pedido.accion.descripcion}» se anuló sola: la configuración `
+              + `pasó a la revisión ${snapshotRevision ?? 'UNKNOWN'} mientras estaba pendiente, así `
+              + 'que lo que ibas a firmar ya no describe la fila que hay. Volvé a pedir el cambio '
+              + 'sobre el dato de ahora.',
+          }
+          : propio;
+        return <CollectionTable
+          key={coleccion.key}
+          coleccion={coleccion}
+          politicasDeRol={politicasDeRol}
+          soloLectura={soloLectura}
+          busy={busy}
+          {...(vigente && pedido ? { pendiente: pedido } : {})}
+          {...(aviso ? { aviso } : {})}
+          onPedir={(siguiente) => {
+            setAvisoDeAccion(undefined);
+            setPendiente({ ...siguiente, revision: snapshotRevision });
+          }}
+          onConfirmar={() => void confirmarAccion()}
+          onCancelar={() => setPendiente(undefined)}
+        />;
+      })}
     </div>
+
+    <AltaRapida soloLectura={soloLectura} busy={busy} onChange={change} />
+    <SpaceWizard canWrite={!soloLectura} busy={busy} onChange={change} />
+
     <Panel title="Audit trail de configuración" subtitle="Rollback crea una nueva revisión; el historial nunca se reescribe.">
-      {!config.data?.revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <div className="table-wrap"><table><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
-        {config.data.revisions.map((revision, index) => <tr key={revision.id ?? index}><td><Badge tone="info"><Unknown value={revision.id} /></Badge></td><td><Unknown value={`${revision.actor_tenant ?? 'UNKNOWN'}:${revision.actor_alias ?? 'UNKNOWN'}`} /></td><td><Unknown value={revision.summary} /></td><td><Time value={revision.created_at} /></td><td>{revision.id ? <span className="config-actions"><button className="button small" disabled={!canWrite || busy} onClick={() => void rollback(revision.id!, true)}>Preview</button><button className="button small" disabled={!canWrite || busy} onClick={() => void rollback(revision.id!, false)}><RotateCcw size={14} />Rollback</button></span> : <Unknown value={null} />}</td></tr>)}
+      {/* El `oldValue` que el store guarda como inversa es la FILA ENTERA que había antes, no el
+          campo que se tocó, aunque la mutación que se mandó fuera parcial. El operador no puede
+          deducir eso de un botón que dice «Rollback», y la diferencia le puede costar el cambio de
+          un compañero. */}
+      <p className="notice" role="note">
+        Deshacer restituye la FILA COMPLETA que había antes de esa revisión, no sólo el campo que se
+        tocó: si otro operador cambió otro campo de la misma fila después, ese cambio también se
+        revierte.
+      </p>
+
+      {/* El desenlace del rollback se pinta ACÁ, encima de la tabla y a la vista sin abrir nada:
+          es el único sitio donde el operador está mirando cuando aprieta uno de estos botones. */}
+      {avisoDeRollback ? <p
+        className={avisoDeRollback.tone === 'error' ? 'notice error' : avisoDeRollback.tone === 'parcial' ? 'notice parcial' : 'notice success'}
+        role={avisoDeRollback.tone === 'success' ? 'status' : 'alert'}
+      >{avisoDeRollback.text}</p> : null}
+      {previewDeRollback ? <pre className="config-preview" aria-label="Preview del rollback">{previewDeRollback}</pre> : null}
+
+      {!config.data?.revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <div className="table-wrap config-audit"><table><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
+        {config.data.revisions.map((revision, index) => <tr key={revision.id ?? index}><td><Badge tone="info"><Unknown value={revision.id} /></Badge></td><td><Unknown value={`${revision.actor_tenant ?? 'UNKNOWN'}:${revision.actor_alias ?? 'UNKNOWN'}`} /></td><td><Unknown value={revision.summary} /></td><td><Time value={revision.created_at} /></td><td>{revision.id ? <span className="config-actions"><button className="button small" disabled={soloLectura || busy} onClick={() => void rollback(revision.id!, true)}>Preview</button><button className="button small" disabled={soloLectura || busy} onClick={() => void rollback(revision.id!, false)}><RotateCcw size={14} />Rollback</button></span> : <Unknown value={null} />}</td></tr>)}
       </tbody></table></div>}
     </Panel>
+
+    {/* La válvula de escape: sigue viva y entera para todo lo que no tiene formulario (harness,
+        role_policy, chain_policy, egress y los cuatro recursos del registro), pero ya no es lo
+        primero que ve el operador. */}
+    <details className="config-editor">
+      <summary><Braces size={14} aria-hidden="true" /> Editor de mutaciones JSON — válvula de escape para lo que no tiene formulario</summary>
+      <Panel title="Mutation editor" subtitle={`Revisión esperada: ${expectedRevision ?? 'UNKNOWN'}`}>
+        <form className="config-form" onSubmit={(event) => void submit(event, false)}>
+          <label>Resource<select value={resource} onChange={(event) => selectTemplate(event.target.value as ConfigResource, action)}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label>Action<select value={action} onChange={(event) => selectTemplate(resource, event.target.value as ConfigAction)}>{actionsFor(resource).map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label className="config-json">Mutación JSON<textarea aria-label="Mutación JSON" rows={12} value={editor} onChange={(event) => editarMutacion(event.target.value)} spellCheck={false} /></label>
+          <div className="config-actions">
+            <button className="button secondary" type="button" disabled={soloLectura || busy} onClick={(event) => void submit(event, true)}><SearchCheck size={16} />Preview / dry-run</button>
+            <button className="button primary" type="submit" disabled={soloLectura || busy}><Save size={16} />Aplicar atómico</button>
+          </div>
+        </form>
+        {preview ? <pre className="config-preview" aria-label="Resultado de preview">{preview}</pre> : null}
+        {notice ? <p className={notice.tone === 'error' ? 'notice error' : notice.tone === 'parcial' ? 'notice parcial' : 'notice success'} role={notice.tone === 'success' ? 'status' : 'alert'}>{notice.text}</p> : null}
+      </Panel>
+    </details>
   </>;
 }

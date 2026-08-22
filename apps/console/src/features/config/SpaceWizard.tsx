@@ -2,7 +2,7 @@ import { ArrowLeft, ArrowRight, CircleCheck, RotateCcw, Save, SearchCheck } from
 import { useMemo, useState } from 'react';
 import type { ConfigMutation } from '../../api/types';
 import { Badge, EmptyState, Panel } from '../../components/ui';
-import type { ConfigChangeOutcome } from './config-change';
+import { textoRecarga, type ConfigChangeOutcome } from './config-change';
 
 type SpaceStep = 'tenant' | 'room' | 'membership' | 'harness';
 type WizardStep = SpaceStep | 'review';
@@ -129,7 +129,7 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
   const [applied, setApplied] = useState<string[]>([]);
   const [validated, setValidated] = useState<string>();
   const [preview, setPreview] = useState<string>();
-  const [notice, setNotice] = useState<{ text: string; tone: 'success' | 'error' }>();
+  const [notice, setNotice] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
 
   const plan = useMemo(() => planFor(draft), [draft]);
   const progress = useMemo(() => {
@@ -188,7 +188,15 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
     setApplied((current) => (current.includes(pendingKey) ? current : [...current, pendingKey]));
     setValidated(undefined);
     setPreview(undefined);
-    setNotice({ text: `${stepTitles[pending.step]} aplicado en revisión ${outcome.result.revision ?? 'UNKNOWN'}.`, tone: 'success' });
+    // El wizard era el único de los cuatro caminos de escritura que tiraba el desenlace de la
+    // relectura: decía «aplicado en revisión 2» aunque el GET posterior hubiera fallado con un 500,
+    // y el paso siguiente se armaba contra un snapshot vencido sin que nadie lo dijera.
+    const falloLaRelectura = outcome.recarga !== undefined && !outcome.recarga.releido;
+    setNotice({
+      tone: falloLaRelectura ? 'parcial' : 'success',
+      text: `${stepTitles[pending.step]} aplicado en revisión ${outcome.result.revision ?? 'UNKNOWN'}.`
+        + textoRecarga(outcome.recarga),
+    });
   }
 
   return <Panel title="Wizard de espacios" subtitle="Alta guiada tenant → room → membership → harness. Cada paso pasa por dry-run y se aplica por separado sobre el mismo change endpoint.">
@@ -243,7 +251,10 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
     </> : null}
 
     {invalid ? <p className="notice error" role="alert">{invalid}</p> : null}
-    {notice ? <p className={notice.tone === 'error' ? 'notice error' : 'notice success'} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p> : null}
+    {notice ? <p
+      className={notice.tone === 'error' ? 'notice error' : notice.tone === 'parcial' ? 'notice parcial' : 'notice success'}
+      role={notice.tone === 'success' ? 'status' : 'alert'}
+    >{notice.text}</p> : null}
 
     {step === 'review' ? null : <div className="config-actions">
       <button className="button small" type="button" disabled={index === 0} onClick={() => setStep(wizardSteps[index - 1])}><ArrowLeft size={14} aria-hidden="true" />Atrás</button>

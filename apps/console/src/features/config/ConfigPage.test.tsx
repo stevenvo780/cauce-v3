@@ -1,9 +1,10 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
+import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
 
 interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }
 
@@ -86,8 +87,10 @@ it('muestra las colecciones que el servidor publica más allá de las seis hist�
   // Las dos que la lista fija de ConfigPage dejaba invisibles aunque el snapshot las trae.
   expect(await screen.findByRole('heading', { name: /chain visibility policy/i })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: /proactive egress allowlist/i })).toBeInTheDocument();
+  // El JSON crudo sigue publicándose, ahora detrás del desplegable «ver crudo» de cada panel.
   expect(screen.getByText(/"cycle_cut_enabled":true/)).toBeInTheDocument();
-  expect(screen.getByText(/steven_dm/)).toBeInTheDocument();
+  // Y el mismo dato se ve además como celda de la tabla, que es lo primero que el operador mira.
+  expect(screen.getByText('steven_dm')).toBeInTheDocument();
 });
 
 it('no confunde una clave que el gateway no publica con una colección vacía', async () => {
@@ -141,4 +144,506 @@ it('no convierte los demás 409 en el mensaje de revisión ni los vuelve genéri
 
   expect(await screen.findByText('ACL edge already exists')).toBeInTheDocument();
   expect(screen.queryByText(/conflicto de revisión/i)).not.toBeInTheDocument();
+});
+
+// ---------------------------------------------------------------------------------------------
+// La vista dejó de ser JSON crudo de sólo lectura. Lo que sigue prueba, comportamiento por
+// comportamiento, que se ve como tabla, que las operaciones frecuentes están a un clic, y —sobre
+// todo— que la pantalla NO afirma nada que no haya comprobado contra el servidor.
+
+const MEMBERSHIP_JANUS = 'Deshabilitar la membership Miguel/grp.miguel/janus';
+
+/** Snapshot mínimo con la forma real del gateway, para los tests que necesitan mover la revisión. */
+function snapshotDeConfig(revision: number) {
+  return {
+    revision,
+    observed_at: new Date().toISOString(),
+    tenants: [{ id: 'Miguel', display_name: 'Miguel', is_hub: false, enabled: true }],
+    rooms: [{ id: 'grp.miguel', tenant_id: 'Miguel', display_name: 'grp.miguel', enabled: true }],
+    memberships: [{ tenant_id: 'Miguel', room_id: 'grp.miguel', alias: 'janus', role: 'agent', enabled: true }],
+    acl_edges: [],
+    role_policies: [{ role: 'agent' }, { role: 'operator' }],
+    revisions: [],
+  };
+}
+
+function panelDe(nombre: RegExp): HTMLElement {
+  const seccion = screen.getByRole('heading', { name: nombre }).closest('section');
+  if (!seccion) throw new Error(`El panel ${String(nombre)} no tiene sección`);
+  return seccion as HTMLElement;
+}
+
+it('pinta cada colección como TABLA con columnas de verdad y deja el JSON crudo detrás del desplegable', async () => {
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+
+  const memberships = panelDe(/memberships/i);
+  expect(within(memberships).getAllByRole('columnheader').map((celda) => celda.textContent))
+    .toEqual(['Tenant', 'Room', 'Alias', 'Rol', 'Habilitado', 'Alta', 'Acciones']);
+  // El alias se lee como celda, no dentro de un `{"tenant_id":"Miguel",...}`.
+  expect(within(memberships).getByText('janus')).toBeInTheDocument();
+
+  const tenants = panelDe(/^Tenants$/);
+  expect(within(tenants).getAllByRole('columnheader').map((celda) => celda.textContent))
+    .toEqual(['Id', 'Nombre', 'Hub', 'Habilitado', 'Alta', 'Acciones']);
+  // El crudo no se borró: sigue estando, un escalón más abajo.
+  expect(within(tenants).getByText(/ver crudo/i)).toBeInTheDocument();
+});
+
+it('deshabilita una membership a un clic: confirma primero, manda la mutación exacta y recién después lo afirma', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  // Nada viajó todavía: primero la confirmación, con la mutación exacta a la vista.
+  expect(changes).toEqual([]);
+  expect(screen.getByLabelText('Mutación a aplicar')).toHaveTextContent('"enabled": false');
+
+  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+  expect(changes[0]).toEqual({
+    dry_run: false,
+    expected_revision: 1,
+    mutation: {
+      resource: 'membership', action: 'update', tenant_id: 'Miguel', room_id: 'grp.miguel',
+      alias: 'janus', value: { enabled: false },
+    },
+  });
+  expect(await screen.findByText(/aplicado en la revisión 2/i)).toBeInTheDocument();
+});
+
+it('cambia el rol de una membership desde su propia columna, con el mismo camino de escritura', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
+  expect(changes).toEqual([]);
+  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+  expect(changes[0]?.mutation).toEqual({
+    resource: 'membership', action: 'update', tenant_id: 'Miguel', room_id: 'grp.miguel',
+    alias: 'janus', value: { role: 'operator' },
+  });
+});
+
+it('cancela sin escribir nada y deja la fila como estaba', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  await user.click(screen.getByRole('button', { name: 'Cancelar' }));
+  expect(changes).toEqual([]);
+  expect(screen.queryByLabelText('Mutación a aplicar')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: MEMBERSHIP_JANUS })).toBeInTheDocument();
+});
+
+it('sin config.write se ve TODO en solo lectura y lo dice, en vez de esconder la vista', async () => {
+  server.use(http.get('*/v3/console/access', () => HttpResponse.json({
+    subject: 'Miguel:janus', roles: ['agent'], permissions: ['message.publish'],
+  })));
+  renderWithApi(<ConfigPage />);
+
+  expect(await screen.findByText(new RegExp(`Solo lectura: ${CONFIG_SIN_CONTROL_REASON}`, 'i')))
+    .toBeInTheDocument();
+  // Los datos siguen a la vista; lo que queda inerte es todo lo que escribe.
+  expect(within(panelDe(/memberships/i)).getByText('janus')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: MEMBERSHIP_JANUS })).toBeDisabled();
+  expect(screen.getByLabelText('Rol de Miguel/grp.miguel/janus')).toBeDisabled();
+  expect(screen.getByRole('button', { name: /aplicar atómico/i })).toBeDisabled();
+});
+
+it('muestra el rechazo del servidor en la propia colección y no dice que aplicó nada', async () => {
+  server.use(http.post('*/v3/console/config/changes', () => HttpResponse.json(
+    { error: 'conflict', message: 'membership has active deliveries or a live lease' },
+    { status: 409 },
+  )));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+
+  const aviso = await within(panelDe(/memberships/i)).findByRole('alert');
+  expect(aviso).toHaveTextContent('membership has active deliveries or a live lease');
+  expect(aviso).toHaveTextContent(/NO se aplicó/i);
+  expect(screen.queryByText(/aplicado en la revisión/i)).not.toBeInTheDocument();
+});
+
+it('ante un 409 de revisión relee el snapshot y ESPERA el dato antes de afirmar que recargó', async () => {
+  let lecturas = 0;
+  server.use(
+    http.get('*/v3/console/config', () => {
+      lecturas += 1;
+      return HttpResponse.json(snapshotDeConfig(lecturas === 1 ? 1 : 7));
+    }),
+    http.post('*/v3/console/config/changes', () => HttpResponse.json(
+      { error: 'conflict', message: 'configuration revision changed: expected 1, current 7' },
+      { status: 409 },
+    )),
+  );
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+
+  const aviso = await within(panelDe(/memberships/i)).findByRole('alert');
+  expect(aviso).toHaveTextContent(/conflicto de revisión/i);
+  // La revisión 7 sólo puede salir de una relectura que llegó: es la prueba de que se esperó el
+  // dato y no de que se disparó un reload y se cantó victoria.
+  expect(aviso).toHaveTextContent(/releído del servidor: las tablas de abajo están en la revisión 7/i);
+  expect(lecturas).toBeGreaterThanOrEqual(2);
+});
+
+it('si la relectura posterior falla lo DICE, en vez de afirmar que recargó', async () => {
+  let lecturas = 0;
+  server.use(
+    http.get('*/v3/console/config', () => {
+      lecturas += 1;
+      return lecturas === 1
+        ? HttpResponse.json(snapshotDeConfig(1))
+        : HttpResponse.json({ error: 'internal', message: 'config store caído' }, { status: 500 });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+
+  const aviso = await within(panelDe(/memberships/i)).findByRole('alert');
+  expect(aviso).toHaveTextContent(/aplicado en la revisión 2/i);
+  expect(aviso).toHaveTextContent(/la relectura del snapshot NO llegó/i);
+  expect(aviso).toHaveTextContent(/pueden estar vencidas/i);
+});
+
+it('crea una arista ACL desde el formulario, sin que el operador tipee una sola llave', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.selectOptions(await screen.findByLabelText('Recurso a crear'), 'acl_edge');
+  await user.type(screen.getByLabelText('Desde el tenant'), 'Steven');
+  await user.type(screen.getByLabelText('Hacia el tenant'), 'Isa');
+  await user.click(screen.getByRole('checkbox', { name: 'allow_route' }));
+  await user.click(screen.getByRole('button', { name: /^Crear$/ }));
+
+  expect(changes[0]).toEqual({
+    dry_run: false,
+    expected_revision: 1,
+    mutation: {
+      resource: 'acl_edge', action: 'create', from_tenant: 'Steven', to_tenant: 'Isa',
+      value: { enabled: true, allow_route: true, allow_read: false, allow_control: false },
+    },
+  });
+  expect(await screen.findByText(/creado en la revisión 2/i)).toBeInTheDocument();
+});
+
+it('crea una membership desde el formulario y bloquea el alta que el gateway rechazaría', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.type(await screen.findByLabelText('Tenant'), 'Miguel');
+  await user.type(screen.getByLabelText('Room'), 'grp.miguel');
+  await user.type(screen.getByLabelText('Alias'), 'Atlas');
+  // El alias en mayúsculas no pasa AliasSchema: el botón queda inerte con el motivo escrito.
+  expect(screen.getByRole('button', { name: /^Crear$/ })).toBeDisabled();
+  expect(screen.getByText(/alias debe ser minúsculas/i)).toBeInTheDocument();
+
+  await user.clear(screen.getByLabelText('Alias'));
+  await user.type(screen.getByLabelText('Alias'), 'atlas');
+  await user.click(screen.getByRole('button', { name: /^Crear$/ }));
+  expect(changes[0]?.mutation).toEqual({
+    resource: 'membership', action: 'create', tenant_id: 'Miguel', room_id: 'grp.miguel',
+    alias: 'atlas', value: { role: 'agent', enabled: true },
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Lo que sigue son los defectos que el panel de revisión encontró sobre la pantalla ya construida.
+// Un test por defecto, con el caso EXACTO que el revisor describió: agruparlos por familia deja
+// pasar tres de cada cuatro.
+
+/** Una revisión en el audit trail: sin esto los botones de rollback ni se pintan. */
+const REVISIONES = [{
+  id: '1', actor_tenant: 'Steven', actor_alias: 'kant',
+  summary: 'alta de la arista Steven → Isa', created_at: '2026-08-20T10:00:00.000Z',
+}];
+
+function snapshotConAudit(revision: number) {
+  return { ...snapshotDeConfig(revision), revisions: REVISIONES };
+}
+
+function servirConfig(snapshot: () => Record<string, unknown>) {
+  server.use(http.get('*/v3/console/config', () => HttpResponse.json(snapshot())));
+}
+
+// --- FAMILIA 1: la pantalla se calla después de escribir --------------------------------------
+
+it('FAMILIA 1: el desenlace de un rollback aplicado se lee SIN abrir ningún desplegable', async () => {
+  servirConfig(() => snapshotConAudit(1));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: /^Rollback$/ }));
+
+  const aviso = await screen.findByText(/rollback atómico de la revisión 1 aplicado/i);
+  // El cartel vivía dentro de `<details className="config-editor">`, cerrado por defecto: el POST
+  // viajaba, el servidor contestaba 201 y la pantalla no decía absolutamente nada.
+  expect(aviso.closest('details')).toBeNull();
+  // Y está en el MISMO panel que el botón que lo disparó, no tres paneles más abajo.
+  expect(panelDe(/audit trail/i)).toContainElement(aviso);
+});
+
+it('FAMILIA 1: un rollback que FALLA no se ve igual que uno que funciona', async () => {
+  servirConfig(() => snapshotConAudit(1));
+  server.use(http.post('*/v3/console/config/revisions/:id/rollback', () => HttpResponse.json(
+    { error: 'internal', message: 'rollback store caído' }, { status: 500 },
+  )));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: /^Rollback$/ }));
+
+  const aviso = await screen.findByText(/rollback store caído/i);
+  expect(aviso.closest('details')).toBeNull();
+  expect(aviso).toHaveClass('notice', 'error');
+  expect(screen.queryByText(/rollback atómico de la revisión 1 aplicado/i)).not.toBeInTheDocument();
+});
+
+it('FAMILIA 1: el preview de un rollback también se pinta junto al botón que lo pidió', async () => {
+  servirConfig(() => snapshotConAudit(1));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: /^Preview$/ }));
+
+  const aviso = await screen.findByText(/preview del rollback de la revisión 1 aceptado/i);
+  expect(aviso.closest('details')).toBeNull();
+  expect(aviso).toHaveTextContent(/no se escribió nada todavía/i);
+  const crudo = screen.getByLabelText('Preview del rollback');
+  expect(crudo.closest('details')).toBeNull();
+  expect(panelDe(/audit trail/i)).toContainElement(crudo);
+});
+
+// --- FAMILIA 2: carteles que sobreviven a lo que los desmiente --------------------------------
+
+it('FAMILIA 2: el aviso de una acción de tabla NO sobrevive a otra escritura que movió las tablas', async () => {
+  // 1ª lectura revisión 1; 2ª (la que sigue al primer cambio) revisión 2; de ahí en más, 3.
+  let lecturas = 0;
+  servirConfig(() => {
+    lecturas += 1;
+    return snapshotDeConfig(lecturas <= 1 ? 1 : lecturas === 2 ? 2 : 3);
+  });
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+  const aviso = await screen.findByText(/Deshabilitar la membership Miguel\/grp\.miguel\/janus: aplicado en la revisión 2/i);
+  expect(aviso).toHaveTextContent(/las tablas de abajo están en la revisión 2/i);
+
+  // Otra escritura, por otro camino, mueve el snapshot a la 3: el cartel afirmaba «revisión 2»
+  // sobre unas tablas que ya no estaban en la 2.
+  await user.type(screen.getByLabelText('Tenant'), 'Miguel');
+  await user.type(screen.getByLabelText('Room'), 'grp.miguel');
+  await user.type(screen.getByLabelText('Alias'), 'atlas');
+  await user.click(screen.getByRole('button', { name: /^Crear$/ }));
+  await screen.findByText(/creado en la revisión 2/i);
+
+  expect(screen.queryByText(/Deshabilitar la membership Miguel\/grp\.miguel\/janus: aplicado/i))
+    .not.toBeInTheDocument();
+});
+
+it('FAMILIA 2: tocar el JSON del editor crudo se lleva puestos el verde y el preview anteriores', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  const editor = screen.getByLabelText('Mutación JSON');
+
+  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
+  await screen.findByLabelText(/resultado de preview/i);
+  await user.type(editor, ' ');
+  // El dry-run valía para OTRO texto: dejarlo es prometer sobre algo que el servidor nunca vio.
+  expect(screen.queryByLabelText(/resultado de preview/i)).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
+  await screen.findByText(/cambio atómico aplicado/i);
+  await user.type(editor, ' ');
+  expect(screen.queryByText(/cambio atómico aplicado/i)).not.toBeInTheDocument();
+
+  // Y cambiar de plantilla también: `selectTemplate` limpiaba el preview pero NO el aviso.
+  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
+  await screen.findByText(/cambio atómico aplicado/i);
+  await user.selectOptions(screen.getByLabelText('Resource'), 'tenant');
+  expect(screen.queryByText(/cambio atómico aplicado/i)).not.toBeInTheDocument();
+});
+
+it('FAMILIA 2: tras un alta exitosa el formulario queda VACÍO y «Crear» no se rearma sobre lo que ya existe', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.type(await screen.findByLabelText('Tenant'), 'Miguel');
+  await user.type(screen.getByLabelText('Room'), 'grp.miguel');
+  await user.type(screen.getByLabelText('Alias'), 'atlas');
+  await user.click(screen.getByRole('button', { name: /^Crear$/ }));
+  expect(await screen.findByText(/creado en la revisión 2/i)).toBeInTheDocument();
+
+  expect(screen.getByLabelText('Tenant')).toHaveValue('');
+  expect(screen.getByLabelText('Room')).toHaveValue('');
+  expect(screen.getByLabelText('Alias')).toHaveValue('');
+  expect(screen.getByRole('button', { name: /^Crear$/ })).toBeDisabled();
+  // Y el motivo vuelve a ser una pista, no un grito: el formulario está recién vaciado.
+  expect(within(panelDe(/alta rápida/i)).queryByRole('alert')).not.toBeInTheDocument();
+  expect(changes).toHaveLength(1);
+});
+
+it('FAMILIA 2: cambiar de recurso en el alta no grita un error sobre un formulario recién abierto', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  // Tocar un campo pone el formulario en modo «el operador ya intentó»: el motivo sale como alert.
+  await user.type(await screen.findByLabelText('Tenant'), 'Miguel');
+  expect(within(panelDe(/alta rápida/i)).getByRole('alert')).toBeInTheDocument();
+
+  await user.selectOptions(screen.getByLabelText('Recurso a crear'), 'acl_edge');
+  expect(within(panelDe(/alta rápida/i)).queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByText(/completá el formulario para habilitar el alta/i)).toBeInTheDocument();
+});
+
+// --- FAMILIA 3: la mutación que viaja no es la que se pidió -----------------------------------
+
+it('FAMILIA 3: la confirmación pendiente se anula cuando «Actualizar» mueve el snapshot debajo', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  let lecturas = 0;
+  servirConfig(() => {
+    lecturas += 1;
+    if (lecturas === 1) return snapshotDeConfig(1);
+    // El servidor ya va por la 5 y otro operador dejó esa misma fila DESHABILITADA.
+    const posterior = snapshotDeConfig(5);
+    posterior.memberships = [{ ...posterior.memberships[0], enabled: false }];
+    return posterior;
+  });
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  expect(screen.getByRole('button', { name: 'Confirmar' })).toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: 'Actualizar' }));
+
+  const aviso = await within(panelDe(/memberships/i)).findByRole('alert');
+  expect(aviso).toHaveTextContent(/se anuló sola/i);
+  expect(aviso).toHaveTextContent(/pasó a la revisión 5 mientras estaba pendiente/i);
+  expect(screen.queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument();
+  expect(changes).toEqual([]);
+});
+
+it('FAMILIA 3: sin tenant_id el selector de rol no se queda mudo: se apaga y DICE por qué', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  servirConfig(() => ({
+    ...snapshotDeConfig(1),
+    // Un gateway que no publica `tenant_id`: la mutación de rol no se puede armar.
+    memberships: [{ room_id: 'grp.miguel', alias: 'janus', role: 'agent', enabled: true }],
+  }));
+  renderWithApi(<ConfigPage />);
+
+  const selector = await screen.findByLabelText('Rol de fila-0');
+  expect(selector).toBeDisabled();
+  expect(selector).toHaveAttribute('title', expect.stringContaining('tenant_id'));
+  expect(within(panelDe(/memberships/i)).getByText(/no publica tenant_id en esta fila/i))
+    .toBeInTheDocument();
+  expect(changes).toEqual([]);
+});
+
+it('FAMILIA 3: la interfaz dice que deshacer revierte la FILA entera, no el campo que se tocó', async () => {
+  servirConfig(() => snapshotConAudit(1));
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+
+  const nota = within(panelDe(/audit trail/i))
+    .getByText(/restituye la FILA COMPLETA que había antes de esa revisión/i);
+  expect(nota).toHaveTextContent(/no sólo el campo que se tocó/i);
+  expect(nota).toHaveTextContent(/ese cambio también se revierte/i);
+  // Se lee sin abrir nada: es lo que evita que un operador pise el cambio de otro sin enterarse.
+  expect(nota.closest('details')).toBeNull();
+});
+
+// --- FAMILIA 4: permiso y presentación --------------------------------------------------------
+
+it('FAMILIA 4: sin config.write el formulario de alta queda INERTE, no lleno y prometiendo', async () => {
+  server.use(http.get('*/v3/console/access', () => HttpResponse.json({
+    subject: 'Miguel:janus', roles: ['agent'], permissions: ['message.publish'],
+  })));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByText(new RegExp(`Solo lectura: ${CONFIG_SIN_CONTROL_REASON}`, 'i'));
+
+  expect(screen.getByLabelText('Recurso a crear')).toBeDisabled();
+  expect(screen.getByLabelText('Tenant')).toBeDisabled();
+  expect(screen.getByLabelText('Room')).toBeDisabled();
+  expect(screen.getByLabelText('Alias')).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: /habilitado/i })).toBeDisabled();
+
+  // Y la mutación en vivo no se mueve: no hay forma de llenarla en una pantalla que no escribe.
+  await user.type(screen.getByLabelText('Tenant'), 'Miguel');
+  expect(screen.getByLabelText('Mutación del alta')).not.toHaveTextContent('Miguel');
+});
+
+it('FAMILIA 4: el 409 no manda a «volver a previsualizar» a los caminos que no previsualizan', async () => {
+  servirConfig(() => snapshotConAudit(1));
+  const conflicto = () => HttpResponse.json(
+    { error: 'conflict', message: 'configuration revision changed: expected 1, current 9' },
+    { status: 409 },
+  );
+  server.use(
+    http.post('*/v3/console/config/changes', conflicto),
+    http.post('*/v3/console/config/revisions/:id/rollback', conflicto),
+  );
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  // Botón de un clic: no hay dry-run en este camino.
+  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+  const deLaTabla = await within(panelDe(/memberships/i)).findByRole('alert');
+  expect(deLaTabla).toHaveTextContent(/pediste el cambio sobre la revisión 1/i);
+  expect(deLaTabla).toHaveTextContent(/volvé a pedir el cambio sobre la revisión nueva/i);
+  expect(deLaTabla).not.toHaveTextContent(/volvé a previsualizar/i);
+
+  // Rollback: tampoco previsualiza para aplicar.
+  await user.click(screen.getByRole('button', { name: /^Rollback$/ }));
+  const delAudit = await within(panelDe(/audit trail/i)).findByRole('alert');
+  expect(delAudit).toHaveTextContent(/pediste el rollback sobre la revisión 1/i);
+  expect(delAudit).toHaveTextContent(/volvé a elegir en el audit trail la revisión a deshacer/i);
+  expect(delAudit).not.toHaveTextContent(/volvé a previsualizar/i);
+});
+
+it('FAMILIA 4: el role_brief de «Agent registry» se ve RESUMIDO, no 1200 caracteres en una celda', async () => {
+  // Sin espacio al final: `getByTitle` normaliza el texto y un `title` con cola en blanco no casa.
+  const brief = Array.from({ length: 27 }, () => 'Sos kant, el hub de coordinación de la flota.').join(' ');
+  expect(brief.length).toBeGreaterThan(1200);
+  servirConfig(() => ({
+    ...snapshotDeConfig(1),
+    agents: [{ tenant_id: 'Steven', alias: 'kant', role_brief: brief, enabled: true }],
+  }));
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+
+  const registro = panelDe(/agent registry/i);
+  const celda = within(registro).getByTitle(brief);
+  expect(celda.textContent).toBe(`${brief.slice(0, 120)}…`);
+  // El texto entero no se pierde —queda en el `title` y en «Ver crudo»— pero no se derrama.
+  expect(within(registro).queryByText(brief)).not.toBeInTheDocument();
 });

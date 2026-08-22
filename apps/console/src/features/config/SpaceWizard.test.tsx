@@ -152,3 +152,23 @@ it('no deja avanzar con un alias que el protocolo rechaza', async () => {
   await user.click(screen.getByRole('button', { name: review }));
   expect(screen.getByRole('button', { name: /previsualizar paso/i })).toBeDisabled();
 });
+
+it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO llegó', async () => {
+  const user = userEvent.setup();
+  // El wizard era el único de los cuatro caminos de escritura que ignoraba `outcome.recarga`:
+  // cantaba «aplicado en revisión 2» aunque el GET posterior hubiera muerto con un 500.
+  renderWizard((call) => call.dryRun ? accept(call) : {
+    ok: true,
+    result: { applied: true, dry_run: false, revision: 2, summary: 'mock' },
+    recarga: { releido: false, motivo: 'config store caído' },
+  });
+  await user.click(screen.getByRole('button', { name: review }));
+  await user.click(screen.getByRole('button', { name: /previsualizar paso/i }));
+  await user.click(await screen.findByRole('button', { name: /aplicar paso/i }));
+
+  const aviso = await screen.findByText(/tenant aplicado en revisión 2/i);
+  expect(aviso).toHaveTextContent(/la relectura del snapshot NO llegó \(config store caído\)/i);
+  expect(aviso).toHaveTextContent(/pueden estar vencidas/i);
+  // Ni verde ni rojo: se aplicó, pero lo que se ve abajo puede estar vencido.
+  expect(aviso).toHaveClass('notice', 'parcial');
+});

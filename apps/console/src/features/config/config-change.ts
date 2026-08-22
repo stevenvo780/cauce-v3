@@ -1,9 +1,30 @@
 import { ApiError } from '../../api/client';
 import type { ConfigurationChangeResult } from '../../api/types';
 
+/**
+ * Qué pasó con la RELECTURA del snapshot que sigue a una escritura. Existe porque «se recargó» era
+ * una afirmación que la pantalla no comprobaba: `config.reload()` se llamaba sin esperarla y el
+ * cartel salía igual aunque el GET fallara. Una pantalla no puede afirmar lo que no comprobó.
+ */
+export type EstadoRecarga =
+  | { releido: true; revision?: number }
+  | { releido: false; motivo: string };
+
 export type ConfigChangeOutcome =
-  | { ok: true; result: ConfigurationChangeResult }
-  | { ok: false; message: string; conflict: boolean };
+  | { ok: true; result: ConfigurationChangeResult; recarga?: EstadoRecarga }
+  | { ok: false; message: string; conflict: boolean; recarga?: EstadoRecarga };
+
+/**
+ * Frase que se le AGREGA al aviso para contar el desenlace de la relectura. `undefined` (un
+ * dry-run, que no escribe nada) no agrega nada: no hubo relectura que contar.
+ */
+export function textoRecarga(recarga: EstadoRecarga | undefined): string {
+  if (!recarga) return '';
+  return recarga.releido
+    ? ` Releído del servidor: las tablas de abajo están en la revisión ${recarga.revision ?? 'UNKNOWN'}.`
+    : ` PERO la relectura del snapshot NO llegó (${recarga.motivo}): las tablas de abajo pueden estar`
+      + ' vencidas, usá «Actualizar» antes de seguir tocando.';
+}
 
 const REVISION_MISMATCH = /revision changed: expected (\d+), current (\d+)/i;
 
@@ -18,14 +39,43 @@ function revisionMismatch(error: unknown): { expected: string; current: string }
   return match ? { expected: match[1], current: match[2] } : undefined;
 }
 
-export function describeConfigError(error: unknown, fallback: string): { message: string; conflict: boolean } {
+/**
+ * Por qué camino se pidió la escritura que chocó. Existe porque el mensaje del 409 mandaba a
+ * «volver a previsualizar» a TODOS por igual, incluidos los botones de un clic de las tablas y el
+ * rollback del audit trail, que no tienen dry-run: el operador leía una instrucción imposible de
+ * seguir y no sabía qué se esperaba de él. Un texto que no sirve para el camino que lo usa es tan
+ * inútil como no decir nada.
+ */
+export type CaminoDeCambio = 'previsualizado' | 'directo' | 'rollback';
+
+/** Qué hacer después del choque, según el camino que lo disparó. */
+const QUE_HACER: Record<CaminoDeCambio, string> = {
+  previsualizado: 'revisá los datos efectivos, volvé a previsualizar y recién ahí aplicá.',
+  directo: 'revisá los datos efectivos y volvé a pedir el cambio sobre la revisión nueva.',
+  rollback: 'revisá los datos efectivos y volvé a elegir en el audit trail la revisión a deshacer '
+    + 'sobre el estado nuevo.',
+};
+
+/** Cómo se llegó a la revisión vencida, según el camino. */
+const COMO_LLEGO: Record<CaminoDeCambio, string> = {
+  previsualizado: 'previsualizaste sobre la revisión',
+  directo: 'pediste el cambio sobre la revisión',
+  rollback: 'pediste el rollback sobre la revisión',
+};
+
+export function describeConfigError(
+  error: unknown,
+  fallback: string,
+  camino: CaminoDeCambio = 'previsualizado',
+): { message: string; conflict: boolean } {
   const mismatch = revisionMismatch(error);
   if (mismatch) {
     return {
       conflict: true,
-      message: `Conflicto de revisión: previsualizaste sobre la revisión ${mismatch.expected} y el servidor ya va por la ${mismatch.current}. `
-        + 'Otro operador cambió la configuración y no se aplicó nada. Se recargó el snapshot: revisá los datos efectivos, '
-        + 'volvé a previsualizar y recién ahí aplicá.',
+      // El texto NO dice «se recargó el snapshot»: quien llama es el único que sabe si la
+      // relectura llegó, y lo agrega con `textoRecarga` DESPUÉS de esperarla.
+      message: `Conflicto de revisión: ${COMO_LLEGO[camino]} ${mismatch.expected} y el servidor ya va por la ${mismatch.current}. `
+        + `Otro operador cambió la configuración y no se aplicó nada: ${QUE_HACER[camino]}`,
     };
   }
   return { conflict: false, message: error instanceof Error ? error.message : fallback };

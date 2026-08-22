@@ -255,11 +255,41 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .config-json textarea, .config-preview, .config-records code { font-family: "SFMono-Regular", Consolas, monospace; }
 .config-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .config-preview { max-height: 440px; overflow: auto; margin: 16px 0 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: #070b13; color: #bad0e9; font-size: .72rem; white-space: pre-wrap; }
-.config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+/* Una columna, no dos: desde que cada colección es una TABLA de hasta siete columnas, media
+   pantalla la obligaba a hacer scroll horizontal dentro del panel para leer una fila. */
+.config-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .config-grid .panel { min-width: 0; margin-bottom: 0; }
 .config-records { display: grid; gap: 7px; max-height: 350px; overflow: auto; margin: 0; padding: 0; list-style: none; }
 .config-records li { padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: #0a111d; }
 .config-records code { color: #b9cae0; font-size: .68rem; overflow-wrap: anywhere; }
+
+/* Tablas de configuración: la vista dejó de ser JSON crudo por fila y pasó a ser una tabla con
+   columnas de verdad, con las operaciones frecuentes a un clic. */
+.config-grid table { font-size: .74rem; }
+.config-grid td .config-actions { gap: 5px; }
+.config-grid td select { max-width: 150px; padding: 3px 6px; font-size: .72rem; }
+/* El motivo por el que un control de la tabla quedó apagado va DEBAJO del control, no en un tooltip
+   que hay que descubrir con el ratón. */
+.config-grid td select + .unknown { display: block; max-width: 260px; margin-top: 5px; font-size: .68rem; font-weight: 600; line-height: 1.4; }
+/* Resumen de un campo de párrafo (`role_brief`): recortado a 120 caracteres y con el texto entero
+   en el `title`. Sin el ancho máximo, una sola celda empuja las otras once columnas de «Agent
+   registry» fuera de la pantalla. */
+.config-resumen { display: inline-block; max-width: 340px; line-height: 1.45; }
+/* El audit trail queda dentro de una pantalla: el aviso del rollback se pinta arriba de la tabla y
+   tiene que seguir a la vista aunque el historial tenga cincuenta revisiones. */
+.config-audit { max-height: 420px; overflow-y: auto; }
+/* La confirmación es un bloque destacado: lo que se firma es una escritura versionada, y el
+   operador tiene que poder leer la mutación exacta antes de que viaje. */
+.config-confirm { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--amber); border-radius: 10px; background: var(--amber-dim); }
+.config-confirm p { margin: 0 0 8px; font-size: .78rem; }
+.config-confirm .config-preview { max-height: 200px; margin: 0 0 10px; }
+/* Desplegables: el JSON crudo de cada colección y el editor de mutaciones. Siguen estando —son la
+   verdad literal del servidor y la válvula de escape— pero ya no son lo primero que se ve. */
+.config-raw { margin-top: 14px; }
+.config-raw > summary, .config-editor > summary { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-size: .74rem; }
+.config-raw > summary { margin-bottom: 10px; }
+.config-editor { margin-bottom: 20px; }
+.config-editor > summary { margin-bottom: 6px; }
 .lane-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .lane-title-icon { display: grid; width: 38px; height: 38px; place-items: center; margin-top: -8px; border-radius: 10px; background: var(--blue-dim); color: var(--blue); }
 .lane-title-icon.batch { background: var(--amber-dim); color: var(--amber); }
@@ -691,6 +721,14 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   .quota-provider[data-severity="warn"] { border-color: #e3c98d; }
   .delivery, .config-records li, .job-list li, .adapter-meta { background: #f8fafd; }
   .config-preview { background: #f4f7fb; color: #22344a; }
+  /* Los cuatro tonos de `.notice` traían el texto pensado para fondo oscuro y en modo claro nadie
+     los había mirado: MEDIDO en Chrome, el verde de «rollback aplicado» quedaba a contraste 1.16 y
+     el gris del aviso a 1.42 — invisibles. Es exactamente el fallo que este trabajo venía a cerrar:
+     una escritura cuyo desenlace no se lee deja la pantalla tan muda como no decir nada. */
+  .notice { color: #33455c; }
+  .notice.success { color: #0f6450; }
+  .notice.error { color: #8f2230; }
+  .notice.parcial { background: #fdf2df; color: #7a4d05; }
   .timeline-node { border-color: #4b91c8; background: #dbeaf6; }
   .timeline-missing .timeline-node { border-color: #b3bdcb; background: #e8ecf2; }
   .pty-shell { background: #ffffff; }

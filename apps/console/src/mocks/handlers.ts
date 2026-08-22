@@ -1,8 +1,8 @@
 import { delay, http, HttpResponse } from 'msw';
 import {
-  adapters, agentAccountBindings, audit, mockActivity, mockJobs, mockMessages, mockQueues,
-  mockChain, mockQuotas, mockStatus, originRelays, providerAccounts, registryAgents, routingCeiling,
-  topology,
+  adapters, agentAccountBindings, audit, configAclEdges, configMemberships, configRooms,
+  configTenants, mockActivity, mockJobs, mockMessages, mockQueues, mockChain, mockQuotas,
+  mockStatus, originRelays, providerAccounts, registryAgents, routingCeiling, topology,
 } from './data';
 
 export const handlers = [
@@ -43,9 +43,13 @@ export const handlers = [
   http.get('*/v3/console/audit', () => HttpResponse.json(audit)),
   http.get('*/v3/console/origin-relays', () => HttpResponse.json(originRelays)),
   http.get('*/v3/console/config', () => HttpResponse.json({
-    revision: 1, observed_at: new Date().toISOString(), tenants: topology.tenants, rooms: [],
-    memberships: [], acl_edges: topology.acl_edges, harness_definitions: adapters.items,
-    role_policies: [{ role: 'operator', allow_route: true, allow_read: true, allow_control: true }],
+    revision: 1, observed_at: new Date().toISOString(), tenants: configTenants, rooms: configRooms,
+    memberships: configMemberships, acl_edges: configAclEdges, harness_definitions: adapters.items,
+    role_policies: [
+      { role: 'operator', allow_route: true, allow_read: true, allow_control: true, allow_notify: true },
+      { role: 'agent', allow_route: true, allow_read: true, allow_control: false, allow_notify: false },
+      { role: 'observer', allow_route: false, allow_read: true, allow_control: false, allow_notify: false }
+    ],
     chain_policies: [{ id: 'default', progress_relay_enabled: true, progress_relay_max_events: 8, cycle_cut_enabled: true }],
     egress_destinations: [{
       tenant_id: 'Miguel', alias: 'janus', handle: 'steven_dm', adapter: 'telegram', channel: 'telegram',

@@ -137,6 +137,43 @@ export const topology: TopologySnapshot = {
   ],
 };
 
+/**
+ * Las mismas cinco tenants, pero con la forma REAL de `GET /v3/console/config` —la del SELECT de
+ * `packages/store/src/configuration.ts`—, no la del grafo de topología.
+ *
+ * Se derivan de `topology` para que no haya dos verdades que se puedan desincronizar, pero los
+ * campos son los de las tablas: `display_name`/`is_hub`/`enabled`/`created_at`, no `label`/`rooms`.
+ * Antes el handler publicaba los nodos del grafo tal cual y la pantalla de configuración mostraba
+ * un tenant con una lista de rooms adentro, que es una fila que la base nunca devuelve.
+ */
+const ALTA_DEMO = '2026-07-01T10:00:00.000Z';
+
+export const configTenants = (topology.tenants ?? []).map((tenant) => ({
+  id: tenant.id, display_name: tenant.label ?? null,
+  // En la flota real el único hub es Steven; el resto son tenants cliente.
+  is_hub: tenant.id === 'Steven', enabled: true, created_at: ALTA_DEMO,
+}));
+
+export const configRooms = (topology.tenants ?? []).flatMap((tenant) => (tenant.rooms ?? []).map((room) => ({
+  id: room.id, tenant_id: tenant.id, display_name: room.label ?? null, enabled: true, created_at: ALTA_DEMO,
+})));
+
+export const configMemberships = (topology.tenants ?? []).flatMap((tenant) => (tenant.rooms ?? [])
+  .flatMap((room) => (room.members ?? []).map((member) => ({
+    tenant_id: tenant.id, room_id: room.id, alias: member.alias,
+    role: tenant.id === 'Steven' ? 'operator' : 'agent',
+    // `atlas` y `vulcano` vienen deshabilitados en la topología: son justamente las filas donde el
+    // botón tiene que decir «Habilitar» y no «Deshabilitar».
+    enabled: member.enabled ?? true, created_at: ALTA_DEMO,
+  }))));
+
+/** El SELECT de configuración no trae `policy`: esa columna es del grafo, no de `acl_edges`. */
+export const configAclEdges = (topology.acl_edges ?? []).map((edge) => ({
+  from_tenant: edge.from_tenant, to_tenant: edge.to_tenant, enabled: edge.enabled,
+  allow_route: edge.allow_route, allow_read: edge.allow_read, allow_control: edge.allow_control,
+  created_at: ALTA_DEMO,
+}));
+
 export function mockMessages(): MessagePage {
   return {
     items: [
