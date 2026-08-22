@@ -15,6 +15,7 @@ import type { QueueItem } from '../../api/types';
 
 const DEAD: QueueItem = { delivery_id: 'delivery-dead-1', state: 'dead', attempts: 5, max_attempts: 5, recipient_alias: 'kant', tenant_id: 'Steven' };
 const LIVE: QueueItem = { delivery_id: 'delivery-pending-1', state: 'pending', attempts: 0, max_attempts: 5, recipient_alias: 'zeus', tenant_id: 'Steven' };
+const FAILED: QueueItem = { delivery_id: 'delivery-failed-1', state: 'failed', attempts: 3, max_attempts: 5, recipient_alias: 'socrates', tenant_id: 'Steven' };
 
 it('la monta cualquier vista con sus propias filas y avisa a su dueño que hay que releer', async () => {
   let replayed = '';
@@ -76,4 +77,26 @@ it('con cero filas dice el vacío que le pasa quien la monta, no uno genérico',
   // ahí, porque las hay — no las hay para ESA conversación.
   renderWithApi(<DeliveryTable rows={[]} canReplay canCancel onChanged={() => undefined} empty="Esta conversación no tiene entregas en cola." />);
   expect(screen.getByText('Esta conversación no tiene entregas en cola.')).toBeInTheDocument();
+});
+
+it('🔴 ofrece replay en «failed», no sólo en «dead»: la extracción no puede perder ese estado', async () => {
+  // Por qué existe: `replayableStates` era una constante DENTRO de QueuesPage y ninguna prueba la
+  // fijaba. Se comprobó por mutación el 2026-08-22 — quitar 'failed' del conjunto dejaba la suite
+  // ENTERA en verde (460/460). O sea que la copia que Messages iba a montar podía nacer sin ese
+  // estado y nadie se enteraba hasta necesitar rescatar una entrega fallida desde la pantalla
+  // equivocada. Ahora el conjunto tiene quien lo guarde.
+  let replayed = '';
+  server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', ({ params }) => {
+    replayed = String(params.deliveryId);
+    return HttpResponse.json({ delivery_id: replayed, state: 'pending', replayed: true }, { status: 202 });
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<DeliveryTable rows={[FAILED]} canReplay canCancel onChanged={() => undefined} />);
+
+  const fila = screen.getByRole('row', { name: /socrates/ });
+  await user.click(within(fila).getByRole('button', { name: /replay delivery delivery-failed-1/i }));
+  expect(await screen.findByText(/Replay encolado/)).toBeInTheDocument();
+  expect(replayed).toBe('delivery-failed-1');
+  // Y no se le ofrece cancelar: una entrega fallida ya no está viva.
+  expect(within(fila).queryByRole('button', { name: /cancelar delivery/i })).toBeNull();
 });
