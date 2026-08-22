@@ -66,3 +66,23 @@ export function terminalNavAvailability(relay: TerminalRelayState): NavEntryAvai
   if (relay.status !== 'unavailable') return { hidden: false, disabled: false };
   return { hidden: false, disabled: true, reason: relay.reason };
 }
+
+export const CONFIG_SIN_CONTROL_REASON =
+  'Tu cuenta no tiene permiso de control sobre esta flota: Configuración es del dueño del bus.';
+
+/**
+ * La entrada "Configuration" apuntaba a una vista que devuelve 403 para todo el que no tenga
+ * `config.write` — o sea, para todos los tenants cliente. Miguel (Miguel:janus) entraba, veía el
+ * menú completo, hacía clic y recibía un error: exactamente la queja de "hay muchas vistas y
+ * algunas no existen". El permiso NO se toca; lo que se arregla es la promesa del menú.
+ *
+ * Misma decisión que en `terminalNavAvailability` y por la misma razón: se DESHABILITA en vez de
+ * esconder. Un menú más corto no distingue "acá no está desplegado" de "no tengo permiso"; una
+ * entrada visible pero inerte que dice el motivo sí. Con el permiso `unknown` -no se pudo leer el
+ * RBAC- la entrada queda HABILITADA: ante la duda no se le quita nada a nadie, y la propia página
+ * ya sabe explicar un 403.
+ */
+export function configNavAvailability(state: 'allowed' | 'denied' | 'unknown'): NavEntryAvailability {
+  if (state !== 'denied') return { hidden: false, disabled: false };
+  return { hidden: false, disabled: true, reason: CONFIG_SIN_CONTROL_REASON };
+}

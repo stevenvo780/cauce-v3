@@ -31,7 +31,17 @@ import { TerminalPage } from './features/terminal/TerminalPage';
 import { ConfigPage } from './features/config/ConfigPage';
 import { AccountsPage } from './features/accounts/AccountsPage';
 import { ObservabilityPage } from './features/observability/ObservabilityPage';
-import { onNavClick, redirect } from './navigation';
+import { useApi } from './api/context';
+import { useResource } from './api/use-resource';
+import { permissionState } from './lib';
+import { useTerminalRelayStatus } from './features/terminal/relay-status';
+import {
+  configNavAvailability,
+  onNavClick,
+  redirect,
+  terminalNavAvailability,
+  type NavEntryAvailability,
+} from './navigation';
 
 interface Route {
   id: string;
@@ -231,6 +241,25 @@ export function App() {
 
 function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const path = useSyncExternalStore(subscribe, currentPath, () => 'live');
+  /**
+   * El menú tiene que decir la verdad ANTES del clic. Las dos funciones que deciden esto ya
+   * existían —`terminalNavAvailability` desde el commit 0a1d0e3 y `useTerminalRelayStatus`, cuyo
+   * propio comentario dice "e.g. the sidebar entry"— y NUNCA se habían conectado a la barra
+   * lateral: estaban escritas, probadas y muertas. Medido el 2026-08-22 contra producción con la
+   * sesión real de Miguel: `/v3/console/config` devuelve 403 `control permission is required`,
+   * y el menú se la ofrecía igual.
+   *
+   * `console-access` comparte clave de caché con las páginas que ya lo piden, así que esto no
+   * agrega una petición por navegación.
+   */
+  const api = useApi();
+  const access = useResource('console-access', () => api.getConsoleAccess());
+  const relay = useTerminalRelayStatus();
+  const navAvailability = (id: string): NavEntryAvailability => {
+    if (id === 'terminal') return terminalNavAvailability(relay);
+    if (id === 'config') return configNavAvailability(permissionState(access.data, 'config.write'));
+    return { hidden: false, disabled: false };
+  };
   const { id: routeId, params, aliasedFrom } = matchRoute(path);
   const route = routes.find((candidate) => candidate.id === routeId) ?? routes[0];
 
@@ -262,12 +291,17 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
           <ul>
             {MENU.map((item) => {
               const Icon = item.icon;
+              const disponible = navAvailability(item.id);
+              if (disponible.hidden) return null;
               return (
                 <li key={item.id}>
                   <a
                     href={`/${item.id}`}
-                    onClick={(event) => onNavClick(event, `/${item.id}`)}
+                    onClick={(event) => onNavClick(event, `/${item.id}`, disponible.reason)}
                     aria-current={route.id === item.id ? 'page' : undefined}
+                    aria-disabled={disponible.disabled ? true : undefined}
+                    className={disponible.disabled ? 'nav-inerte' : undefined}
+                    title={disponible.reason}
                   >
                     <Icon size={18} aria-hidden={true} />
                     <span>{item.label}</span>
