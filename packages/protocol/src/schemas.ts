@@ -72,6 +72,50 @@ function assertPreflightCodesAreNotAmbiguous(): void {
 }
 assertPreflightCodesAreNotAmbiguous();
 
+/**
+ * Tope del rol declarado por alias (`agents.role_brief`), medido en PUNTOS DE CÓDIGO.
+ *
+ * Vive acá y no en el store porque es el número que tienen que compartir CUATRO capas, y
+ * `@cauce/protocol` es la única que las tres de código pueden importar sin ciclos: el CHECK
+ * `agents_role_brief_len` de la migración 020, `normalizeRoleBrief()` en `@cauce/store`,
+ * `self_role` de `DeliveryEnvelopeSchema` (acá abajo) y el recorte de `selfRoleFromDelivery()` en
+ * `@cauce/adapter-sdk`. La cuarta —la columna de Postgres— no puede importar nada, así que espeja
+ * el número con un comentario que apunta acá; es la ÚNICA que no se puede cambiar sin migración,
+ * y por eso es la que manda la unidad.
+ *
+ * La unidad es el punto de código porque eso es lo que mide `char_length` de Postgres. Cualquier
+ * capa que cuente unidades UTF-16 (`String.length`, `z.string().max()`) deja una franja donde el
+ * brief se guarda bien pero el sobre de la entrega se rechaza entero, y el alias deja de recibir
+ * sin que aparezca ningún error: SORDO y en silencio.
+ */
+export const ROLE_BRIEF_MAX_CODE_POINTS = 1200;
+
+/**
+ * Largo de un texto en puntos de código, que es la unidad de `ROLE_BRIEF_MAX_CODE_POINTS`.
+ *
+ * `String.length` cuenta unidades UTF-16 y NO sirve acá: un emoji fuera del BMP vale 2 para `.length`
+ * y 1 para `char_length` de Postgres. El spread itera por puntos de código, que es exactamente lo
+ * que mide la columna.
+ */
+export function countCodePoints(text: string): number {
+  return [...text].length;
+}
+
+/**
+ * Recorta a `ROLE_BRIEF_MAX_CODE_POINTS` sin partir jamás un par suplente.
+ *
+ * `text.slice(0, 1200)` indexa unidades UTF-16: sobre `'a'.repeat(1199) + '🎉'` corta el emoji por
+ * la MITAD y deja un surrogate alto suelto, que al serializarse a UTF-8 viaja como U+FFFD. El
+ * agente recibiría su propio rol terminado en un carácter roto. Se recorta sobre el array de
+ * puntos de código, donde el emoji es un elemento indivisible.
+ */
+export function clampToRoleBriefLimit(text: string): string {
+  const codePoints = [...text];
+  return codePoints.length <= ROLE_BRIEF_MAX_CODE_POINTS
+    ? text
+    : codePoints.slice(0, ROLE_BRIEF_MAX_CODE_POINTS).join('');
+}
+
 export const DeliveryStateSchema = z.enum([
   'pending', 'leased', 'accepted', 'started', 'done', 'failed', 'retry', 'dead'
 ]);
@@ -588,7 +632,19 @@ export const AgentConfigMutationSchema = z.object({
     container_name: z.string().trim().min(1).max(256).nullable().optional(),
     runtime_user: z.string().trim().min(1).max(64).nullable().optional(),
     home_directory: z.string().trim().min(1).max(512).nullable().optional(),
-    state_directory: z.string().trim().min(1).max(512).nullable().optional()
+    state_directory: z.string().trim().min(1).max(512).nullable().optional(),
+    // Rol declarado del alias (columna `role_brief`, migración 020). El borde exacto
+    // —`ROLE_BRIEF_MAX_CODE_POINTS`, vacío = borrar— lo decide `normalizeRoleBrief()` en el store,
+    // que es quien puede devolver cuántos caracteres se mandaron; acá sólo se corta un cuerpo
+    // absurdo antes de abrir transacción, y por eso el techo de este guard es holgado a propósito.
+    //
+    // Se mide con `countCodePoints` y NO con `.max()`: el `.max()` de zod cuenta unidades UTF-16,
+    // así que un brief de 1200 puntos de código con emoji mediría 1300 y lo rechazaría este
+    // esquema aunque `char_length` de Postgres lo acepte. Los puntos de código son lo que mide la
+    // columna.
+    role_brief: z.string()
+      .refine((text) => countCodePoints(text) <= 8_000, { message: 'role_brief is too long' })
+      .nullable().optional()
   }).strict().optional()
 }).strict();
 
@@ -747,9 +803,27 @@ export const DeliveryEnvelopeSchema = z.object({
   // preámbulo de identidad. Opcional y detrás de la capability `agent_identity_v1` por el mismo
   // motivo que routing_targets: este esquema es .strict(), así que un adaptador de una imagen
   // anterior RECHAZARÍA el sobre entero si el store le mandara un campo que no conoce, y se
-  // quedaría sin poder consumir ninguna entrega. El tope de 1200 espeja el CHECK de la migración
-  // 020.
-  self_role: z.string().min(1).max(1200).optional()
+  // quedaría sin poder consumir ninguna entrega. El tope espeja el CHECK de la migración 020 a
+  // través de `ROLE_BRIEF_MAX_CODE_POINTS`.
+  //
+  // NO USAR `.max(ROLE_BRIEF_MAX_CODE_POINTS)`: el `.max()` de zod cuenta unidades UTF-16 y la
+  // columna de Postgres cuenta puntos de código. Un brief de 1200 puntos con emoji mide 1300 en
+  // UTF-16: el store lo acepta, el CHECK lo acepta, la pantalla dice «guardado»… y en la entrega
+  // siguiente `WsOutboundSchema.parse()` rechaza el sobre ENTERO por este campo. El alias deja de
+  // recibir y nadie ve un error. Por eso se cuenta con `countCodePoints`, y por eso el mensaje
+  // dice cuántos puntos de código se mandaron: si algún día vuelve a fallar, el número del error
+  // tiene que ser el mismo que el que cuenta la base, no el de UTF-16.
+  //
+  // `.min(1)` sí puede quedarse: en el borde del vacío las dos unidades coinciden (una cadena con
+  // 0 unidades UTF-16 tiene 0 puntos de código y viceversa).
+  self_role: z.string().min(1).superRefine((text, ctx) => {
+    const codePoints = countCodePoints(text);
+    if (codePoints <= ROLE_BRIEF_MAX_CODE_POINTS) return;
+    ctx.addIssue({
+      code: 'custom',
+      message: `self_role admits ${ROLE_BRIEF_MAX_CODE_POINTS} code points at most; ${codePoints} were sent`
+    });
+  }).optional()
 }).strict();
 
 /**

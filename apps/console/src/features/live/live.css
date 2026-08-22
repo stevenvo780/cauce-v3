@@ -610,3 +610,33 @@ tr[data-clickable='true'] { cursor: pointer; }
   .fleet-verdict-phrase { font-size: 24px; }
   .live-search input { width: 110px; }
 }
+
+/* --- Editor del rol declarado (pestaña «Rol» del cajón) -------------------------------------
+   El brief real mide entre 770 y 1134 caracteres: un textarea de una o dos líneas obligaría a
+   leerlo por una mirilla, que es justo lo que se venía haciendo con `psql`. */
+.role-brief { display: grid; gap: 12px; }
+.role-brief-field { display: grid; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.role-brief-field textarea {
+  min-height: 260px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+  line-height: 1.5;
+  resize: vertical;
+}
+.role-brief-field textarea[readonly] { opacity: 0.75; cursor: default; }
+
+.role-brief-meter { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.role-brief-count { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 13px; }
+/* El aviso NO es sólo color: al lado va siempre la frase que dice qué pasa si se pasa del tope. */
+.role-brief-count[data-tone='ok'] { color: var(--muted); }
+.role-brief-count[data-tone='cerca'] { color: var(--amber, #d08700); }
+.role-brief-count[data-tone='pasado'] { color: var(--danger, #d64545); }
+.role-brief-warn { font-size: 12px; color: var(--amber, #d08700); }
+.role-brief-count[data-tone='pasado'] + .role-brief-warn { color: var(--danger, #d64545); }
+
+.role-brief-actions { display: flex; align-items: center; gap: 8px; }

@@ -311,6 +311,13 @@ export interface ConfigurationSnapshot {
    * Registro de agentes y pool de cuentas. Las cuatro claves son opcionales a propósito: un
    * gateway anterior a la migración 010 no las publica, y eso NO es lo mismo que una lista vacía.
    * La UI distingue "clave ausente" (dato no disponible) de "lista vacía" (cero filas conocidas).
+   *
+   * Cada fila de `agents` trae `role_brief`: el rol declarado que el adaptador antepone al
+   * contrato (`Tu rol: ...`). Es `string | null` — NULL significa "sin rol declarado", que no es
+   * lo mismo que la cadena vacía: el store convierte '' en NULL antes de guardar porque el CHECK
+   * de la base exige longitud >= 1. Se escribe con la mutación
+   * `{ resource: 'agent', action: 'update', tenant_id, alias, value: { role_brief } }`, que deja
+   * su inversa en `config_revisions`; el tope es 1200 PUNTOS DE CÓDIGO, no `String.length`.
    */
   agents?: Array<Record<string, unknown>> | null;
   /** `credential_ref` nunca viaja acá; `external_account_id` y `credential_ref_kind` los anula el

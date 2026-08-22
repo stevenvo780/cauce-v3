@@ -8,6 +8,7 @@ import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../navigation';
 import { AgentAvatar } from './AgentAvatar';
 import { ChainPanel } from './ChainPanel';
+import { RoleBriefTab } from './RoleBriefTab';
 import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
@@ -27,25 +28,38 @@ import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo }
  * su propia confirmación.
  */
 
-export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'cadena';
+export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'cadena' | 'rol';
 
+/**
+ * «Rol» va acá y no en una vista propia: es el sitio donde el operador YA mira al bot, y el texto
+ * que edita es el que explica lo que ese bot está haciendo en las otras cuatro pestañas.
+ */
 const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
   { id: 'ahora', label: 'Ahora' },
   { id: 'conexion', label: 'Conexión' },
   { id: 'entregas', label: 'Entregas' },
   { id: 'cadena', label: 'Cadena' },
+  { id: 'rol', label: 'Rol' },
 ];
 
 export interface AgentDrawerProps {
   view: LiveAgentView;
   tab: DrawerTab;
   traceId?: string;
+  /**
+   * El rol a medio redactar de ESTE alias, si lo hay. No lo guarda la pestaña «Rol» sino la
+   * página, porque el borrador tiene que sobrevivir a lo que desmonta la pestaña: pasar a
+   * «Entregas» a mirar qué hace el bot mientras se le redacta el rol, y volver, era perder el
+   * texto sin un solo aviso. `undefined` = este alias no tiene borrador.
+   */
+  borradorRol?: string;
+  onBorradorRol: (texto: string | undefined) => void;
   onTab: (tab: DrawerTab) => void;
   onTrace: (traceId: string | undefined) => void;
   onClose: () => void;
 }
 
-export function AgentDrawer({ view, tab, traceId, onTab, onTrace, onClose }: AgentDrawerProps) {
+export function AgentDrawer({ view, tab, traceId, borradorRol, onBorradorRol, onTab, onTrace, onClose }: AgentDrawerProps) {
   // Esc cierra desde donde sea. Un panel que sólo se cierra con la crucecita obliga a buscarla con
   // el ratón cada vez, y este cajón se abre y se cierra muchas veces seguidas al triar.
   useEffect(() => {
@@ -95,6 +109,19 @@ export function AgentDrawer({ view, tab, traceId, onTab, onTrace, onClose }: Age
         {tab === 'conexion' ? <TabConexion view={view} /> : null}
         {tab === 'entregas' ? <TabEntregas view={view} onTrace={(id) => { onTrace(id); onTab('cadena'); }} /> : null}
         {tab === 'cadena' ? <TabCadena view={view} traceId={traceId} onTrace={onTrace} /> : null}
+        {/* `key` por alias: sin él, cambiar de agente con la pestaña abierta dejaría en pantalla el
+            aviso del guardado anterior, referido a OTRO bot. El borrador ya viene de fuera y está
+            indexado por alias, así que cambiar de agente empieza limpio por construcción y volver
+            al primero recupera lo que se estaba escribiendo. */}
+        {tab === 'rol' ? (
+          <RoleBriefTab
+            key={view.key}
+            tenantId={view.tenantId}
+            alias={view.alias}
+            borrador={borradorRol}
+            onBorrador={onBorradorRol}
+          />
+        ) : null}
       </div>
 
       <footer className="agent-drawer-foot">

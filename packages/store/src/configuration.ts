@@ -1,8 +1,14 @@
+import { countCodePoints, ROLE_BRIEF_MAX_CODE_POINTS } from '@cauce/protocol';
 import type { ConfigMutation, Tenant } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 
-export type ConfigurationErrorCode = 'forbidden' | 'conflict' | 'not_found';
+/**
+ * `invalid_input` existe para que un texto que el operador tipeó de más NO llegue al CHECK de
+ * Postgres: una violación de CHECK sube como 500 opaco y la pantalla no puede decir qué corregir.
+ * El gateway lo traduce a 422 (`statusFor()` en services/gateway/src/app.ts).
+ */
+export type ConfigurationErrorCode = 'forbidden' | 'conflict' | 'not_found' | 'invalid_input';
 
 export class ConfigurationError extends Error {
   constructor(readonly code: ConfigurationErrorCode, message: string) {
@@ -97,6 +103,42 @@ function databaseError(error: unknown): never {
   throw error;
 }
 
+/**
+ * Normaliza `role_brief` antes de que lo vea Postgres.
+ *
+ * El tope NO se declara acá: es `ROLE_BRIEF_MAX_CODE_POINTS` de `@cauce/protocol`, el mismo valor
+ * que usan el CHECK `agents_role_brief_len` de la migración 020 y `self_role` en el esquema del
+ * sobre. Había una copia a mano de 1200 en este fichero; se eliminó porque si las capas dejan de
+ * coincidir el brief se guarda, la pantalla dice «guardado» y el adaptador rechaza la entrega
+ * ENTERA: el alias queda SORDO sin un solo error visible.
+ *
+ * Cuenta con `countCodePoints` y no con `text.length` porque son magnitudes distintas: JS mide
+ * unidades UTF-16 (un emoji fuera del BMP vale 2) y `char_length` de Postgres mide puntos de
+ * código (ese mismo emoji vale 1). Contar con `String.length` rechazaría un brief de 1200 puntos
+ * de código con emoji que la base acepta sin chistar — el operador vería un error inventado por
+ * nosotros sobre un texto legítimo. Los puntos de código son exactamente lo que la columna mide.
+ *
+ * Vacío o sólo espacios se guarda como NULL, no como '': el CHECK exige longitud >= 1, así que ''
+ * sería una violación; y NULL es lo que `selfRoleBrief()` (repository.ts) espera para OMITIR la
+ * línea `Tu rol:` en vez de anteponer una vacía. Borrar el brief es una operación legítima.
+ */
+function normalizeRoleBrief(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'string') {
+    throw new ConfigurationError('invalid_input', 'agent role_brief must be text or null');
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  const characters = countCodePoints(trimmed);
+  if (characters > ROLE_BRIEF_MAX_CODE_POINTS) {
+    throw new ConfigurationError(
+      'invalid_input',
+      `agent role_brief admits ${ROLE_BRIEF_MAX_CODE_POINTS} characters at most; ${characters} were sent`
+    );
+  }
+  return trimmed;
+}
+
 export class ConfigurationRepository {
   constructor(private readonly pool: DatabasePool) {}
 
@@ -145,8 +187,11 @@ export class ConfigurationRepository {
            FROM agent_chain_policies ORDER BY id`
         ),
         this.pool.query<Record<string, unknown>>(
+          // role_brief viaja en el snapshot porque es lo que la consola EDITA: sin él la pantalla
+          // mostraría una caja vacía y el primer guardado borraría el rol que el alias ya tenía.
           `SELECT tenant_id,alias,harness_id,display_name,enabled,
-                  container_name,runtime_user,home_directory,state_directory,created_at,updated_at
+                  container_name,runtime_user,home_directory,state_directory,role_brief,
+                  created_at,updated_at
            FROM agents WHERE $1::text IS NULL OR tenant_id=$1 ORDER BY tenant_id,alias`, [scope]
         ),
         // credential_ref never leaves the database, not even for its payer: it is a locator, not a
@@ -735,12 +780,17 @@ export class ConfigurationRepository {
     client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'agent' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const key = `${mutation.tenant_id}/${mutation.alias}`;
+    // role_brief viaja en el SELECT porque `oldValue` es lo ÚNICO de lo que sale la mutación
+    // inversa: sin leerlo acá, un rollback restauraría el agente con el brief en NULL y el texto
+    // anterior quedaría irrecuperable. Un cambio de identidad sin vuelta atrás no es auditable,
+    // que es justamente lo que esta pantalla viene a dar.
     const selected = await client.query<{
       harness_id: string | null; display_name: string | null; enabled: boolean;
       container_name: string | null; runtime_user: string | null;
-      home_directory: string | null; state_directory: string | null;
+      home_directory: string | null; state_directory: string | null; role_brief: string | null;
     }>(
-      `SELECT harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory
+      `SELECT harness_id,display_name,enabled,container_name,runtime_user,home_directory,
+              state_directory,role_brief
        FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [mutation.tenant_id, mutation.alias]
     );
     const old = selected.rows[0];
@@ -748,11 +798,14 @@ export class ConfigurationRepository {
       if (old) throw new ConfigurationError('conflict', 'agent already exists');
       const value = valueRequired(mutation);
       await client.query(
-        `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,role_brief)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [mutation.tenant_id, mutation.alias, value.harness_id ?? null, value.display_name ?? null,
           value.enabled ?? false, value.container_name ?? null, value.runtime_user ?? null,
-          value.home_directory ?? null, value.state_directory ?? null]
+          value.home_directory ?? null, value.state_directory ?? null,
+          // Un alta sin role_brief sigue naciendo sin rol declarado, como antes de esta columna:
+          // el adaptador omite la línea `Tu rol:` y nadie le inventa una identidad al alias.
+          normalizeRoleBrief(value.role_brief)]
       );
       return {
         inverse: { resource: 'agent', action: 'delete', tenant_id: mutation.tenant_id, alias: mutation.alias },
@@ -789,13 +842,19 @@ export class ConfigurationRepository {
       container_name: has(value, 'container_name') ? value.container_name as string | null : old.container_name,
       runtime_user: has(value, 'runtime_user') ? value.runtime_user as string | null : old.runtime_user,
       home_directory: has(value, 'home_directory') ? value.home_directory as string | null : old.home_directory,
-      state_directory: has(value, 'state_directory') ? value.state_directory as string | null : old.state_directory
+      state_directory: has(value, 'state_directory') ? value.state_directory as string | null : old.state_directory,
+      // Se valida sólo lo que el operador MANDÓ. Reusar la clave ausente para revalidar `old`
+      // convertiría cualquier edición de otro campo en un rechazo por un brief que ya está en la
+      // base — y las filas anteriores a esta validación entran por un CHECK NOT VALID.
+      role_brief: has(value, 'role_brief') ? normalizeRoleBrief(value.role_brief) : old.role_brief
     };
     await client.query(
       `UPDATE agents SET harness_id=$3,display_name=$4,enabled=$5,container_name=$6,runtime_user=$7,
-         home_directory=$8,state_directory=$9,updated_at=now() WHERE tenant_id=$1 AND alias=$2`,
+         home_directory=$8,state_directory=$9,role_brief=$10,updated_at=now()
+       WHERE tenant_id=$1 AND alias=$2`,
       [mutation.tenant_id, mutation.alias, next.harness_id, next.display_name, next.enabled,
-        next.container_name, next.runtime_user, next.home_directory, next.state_directory]
+        next.container_name, next.runtime_user, next.home_directory, next.state_directory,
+        next.role_brief]
     );
     return {
       inverse: { resource: 'agent', action: 'update', tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue },

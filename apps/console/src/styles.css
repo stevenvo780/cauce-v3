@@ -222,6 +222,8 @@ input::placeholder { color: #60728e; }
 .notice { margin: 14px 0 0; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-2); color: #bfcee2; font-size: .78rem; }
 .notice.success { border-color: #286353; background: var(--mint-dim); color: #a0ecd5; }
 .notice.error { border-color: #74313c; background: var(--red-dim); color: #ffb7bc; }
+/* Guardé, pero no pude releer: ni verde (no está comprobado) ni rojo (el cambio SÍ se aplicó). */
+.notice.parcial { border-color: #7a5a24; background: rgba(208, 135, 0, 0.12); color: #ffd9a0; }
 .permission-line { display: flex; align-items: center; gap: 10px; width: fit-content; margin: -12px 0 18px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--muted); font-size: .72rem; }
 .message-list { display: grid; gap: 4px; }
 .message-card-head { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
