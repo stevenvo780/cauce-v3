@@ -3,6 +3,7 @@ import type {
   AuditPage,
   FleetActivityItem,
   FleetActivitySnapshot,
+  FleetDelegationEdge,
   JobPage,
   MessagePage,
   OriginRelayPage,
@@ -235,7 +236,10 @@ export const originRelays: OriginRelayPage = { items: [
  * quién" queda mudo, con los muñecos en su sala y ni una sola delegación dibujada.
  */
 export function mockActivity(): FleetActivitySnapshot {
-  return {
+  // `enriquecer` añade lo que el backend sumará en su fase: salas, cerradas en 24 h y aristas
+  // agregadas por par. Va como envoltorio y no a mano en cada agente para que un alias nuevo en el
+  // fixture no se quede sin los campos y produzca un falso "el servidor no lo informa".
+  return enriquecer({
     observed_at: iso(0),
     thresholds: {
       saturation_in_flight: 8,
@@ -488,7 +492,7 @@ export function mockActivity(): FleetActivitySnapshot {
         ],
       },
     ],
-  };
+  });
 }
 
 /**
@@ -595,5 +599,164 @@ export function mockQuotas(): QuotaSnapshot {
     paused_accounts: [
       { account_id: 'codex-pro-steven', provider: 'codex', label: 'Codex Pro (principal)', payer_tenant_id: 'Steven', paused_until: iso(447_970_000), paused_reason: 'quota_exhausted:codex/codex/codex_primary_10080', automatic: true },
     ],
+  };
+}
+
+/**
+ * Trabajo cerrado en 24 h por alias, para poder ejercitar el TAMAÑO del muñeco.
+ *
+ * `midas` no está en la tabla a propósito, y no es un descuido del fixture: es el caso de un alias
+ * del que el servidor no informa el cierre. La vista tiene que dibujarlo en el mínimo y quitarle el
+ * pie del globo, nunca inventarle un cero — que en una pantalla donde el tamaño significa "cuánto
+ * trabajó" sería una acusación falsa.
+ */
+const CERRADAS_24H: Record<string, number> = {
+  'Steven/zeus': 27, 'Steven/kant': 41, 'Steven/socrates': 12, 'Steven/argos': 19, 'Steven/jarvis': 33,
+  'Miguel/janus': 16, 'Miguel/kratos': 22, 'Miguel/iza': 0, 'Miguel/atlas': 0,
+  'Pablo/dedalo': 9, 'Pablo/seneca': 6, 'Pablo/vulcano': 0,
+  'Isa/salva': 3, 'Jhon/hegel': 1,
+};
+
+/** Salas por alias, derivadas de la MISMA topología de arriba: dos fixtures que se contradicen
+ *  producen una vista que se contradice, y el defecto parece del código. */
+function salasDe(tenantId: string, alias: string): string[] {
+  const tenant = topology.tenants?.find((candidate) => candidate.id === tenantId);
+  return (tenant?.rooms ?? [])
+    .filter((room) => (room.members ?? []).some((member) => member.alias === alias))
+    .map((room) => room.id ?? 'UNKNOWN');
+}
+
+/**
+ * Agrega por par lo que el backend agregará algún día en SQL.
+ *
+ * Se separa la ida de la vuelta: `kratos → janus` y `janus → kratos` son sentidos distintos del
+ * mismo par y contarlos juntos duplicaría cada conversación. El `total_window` se infla sobre el
+ * "en vuelo" a propósito, para que el grosor de la flecha no sea idéntico al color y las dos
+ * codificaciones se puedan distinguir en pantalla.
+ */
+function aristasDe(agents: FleetActivitySnapshot['agents']): FleetDelegationEdge[] {
+  const conocidos = new Set((agents ?? []).map((agent) => `${agent.tenant_id}/${agent.alias}`));
+  const acumulado = new Map<string, FleetDelegationEdge>();
+  for (const agent of agents ?? []) {
+    const destino = `${agent.tenant_id}/${agent.alias}`;
+    for (const item of agent.in_flight_items ?? []) {
+      if (!item.from_tenant || !item.from_alias) continue;
+      const origen = `${item.from_tenant}/${item.from_alias}`;
+      if (origen === destino || !conocidos.has(origen)) continue;
+      const clave = `${origen}->${destino}`;
+      const actual = acumulado.get(clave) ?? {
+        from_tenant: item.from_tenant, from_alias: item.from_alias,
+        to_tenant: agent.tenant_id, to_alias: agent.alias,
+        in_flight: 0, total_window: 0, last_at: iso(0),
+      };
+      actual.in_flight = (actual.in_flight ?? 0) + 1;
+      actual.total_window = (actual.total_window ?? 0) + 3;
+      acumulado.set(clave, actual);
+    }
+  }
+  return [...acumulado.values()];
+}
+
+function enriquecer(snapshot: FleetActivitySnapshot): FleetActivitySnapshot {
+  const agents = (snapshot.agents ?? []).map((agent) => {
+    const key = `${agent.tenant_id}/${agent.alias}`;
+    const cerradas = CERRADAS_24H[key];
+    return {
+      ...agent,
+      rooms: salasDe(agent.tenant_id, agent.alias),
+      // `undefined` cuando el alias no está en la tabla: el campo AUSENTE es un caso distinto del
+      // cero y la vista tiene que poder distinguirlos.
+      ...(typeof cerradas === 'number' ? { closed_24h: cerradas, failed_24h: 0 } : {}),
+    };
+  });
+  return { ...snapshot, agents, edges: aristasDe(agents) };
+}
+
+/**
+ * El escenario que de verdad se ve casi siempre: **la flota en reposo**.
+ *
+ * Medido en producción: una entrega en vuelo en toda la base y cero en cola. El fixture normal de
+ * arriba es un día de incendio —útil para ejercitar los siete estados de una vez, inútil para
+ * comprobar lo que Steven ve el 95 % del tiempo—. Si la vista sólo se lee bien con quince agentes
+ * trabajando a la vez, se lee mal casi siempre; y el riesgo concreto es que quince muñecos grises
+ * sin una flecha se interpreten como una flota muerta.
+ */
+export function mockActivityEnReposo(): FleetActivitySnapshot {
+  const base = mockActivity();
+  const agents = (base.agents ?? []).map((agent) => ({
+    ...agent,
+    // Reposo significa que TODOS están de alta y conectados, sin nada entre manos. El fixture
+    // normal trae a propósito dos alias dados de baja en el registro y uno sin registrar, que son
+    // casos legítimos de "necesita atención" — pero mezclarlos acá haría imposible comprobar lo
+    // único que este escenario existe para comprobar: que una flota sana no se lea como muerta.
+    registered: true,
+    agent_enabled: true,
+    work_state: 'idle' as const,
+    flags: [],
+    in_flight: 0, started: 0, claimed_not_started: 0,
+    queued: 0, queued_ready: 0, retrying: 0, overdue_in_flight: 0,
+    oldest_claimed_at: null, oldest_in_flight_seconds: null, nearest_ack_deadline_at: null,
+    in_flight_items: [], in_flight_items_truncated: false,
+    presence: { online: true, instance_id: agent.presence?.instance_id ?? null, epoch: agent.presence?.epoch ?? null, last_heartbeat_at: secondsAgo(4), lease_until: iso(25_000) },
+    last_ack_at: secondsAgo(120), seconds_since_last_ack: 120, acks_recent: 0,
+  }));
+  return {
+    ...base,
+    agents,
+    edges: [],
+    totals: {
+      agents: agents.length,
+      by_state: { idle: agents.length },
+      flagged: {},
+      in_flight: 0, queued: 0, retrying: 0, overdue_in_flight: 0,
+    },
+  };
+}
+
+/**
+ * GET /v3/console/chains/:traceId, con la forma EXACTA de `repository.agentChain()`.
+ *
+ * Trae a propósito un extremo `redacted`: la cadena cruza a un cliente que este operador no puede
+ * leer, y el store lo reduce a un id opaco estable en vez de borrar la arista. Un fixture que
+ * mostrara todos los extremos visibles nunca ejercitaría el único camino donde la consola puede
+ * filtrar datos de otro tenant por accidente.
+ */
+export function mockChain(traceId: string) {
+  return {
+    trace_id: traceId,
+    observed_at: iso(0),
+    truncated: false,
+    nodes: [
+      { tenant_id: 'Steven', alias: 'zeus', hop_count: 0, delegated: 2, received: 0, open_branches: 0 },
+      { tenant_id: 'Steven', alias: 'socrates', hop_count: 1, delegated: 1, received: 1, open_branches: 1 },
+      { tenant_id: 'Miguel', alias: 'janus', hop_count: 2, delegated: 0, received: 1, open_branches: 0 },
+    ],
+    edges: [
+      {
+        source: { tenant_id: 'Steven', alias: 'zeus', delivery_id: '1c0ffee0-0001-4000-8000-a1b2c3d4e5f6', attempt: 1, status: 'done' },
+        target: { tenant_id: 'Steven', alias: 'socrates', delivery_id: '1c0ffee0-0002-4000-8000-a1b2c3d4e5f6', attempt: 1, status: 'started', terminal_at: null },
+        output_index: 0, state: 'materialized', rejection_code: null,
+        hop_count: 1, hop_budget: 6, visited_depth: 1, open: true,
+        response: { decision: 'allow', reason: 'acl allow_route', outcome: 'delivered' },
+        root_message_id: 'msg-root-1', created_at: secondsAgo(220),
+      },
+      {
+        source: { tenant_id: 'Steven', alias: 'socrates', delivery_id: '1c0ffee0-0002-4000-8000-a1b2c3d4e5f6', attempt: 1, status: 'started' },
+        target: { redacted: true as const, node_id: 'opaque-9f31c0a4b7' },
+        output_index: 1, state: 'materialized', rejection_code: null,
+        hop_count: 2, hop_budget: 6, visited_depth: 2, open: false,
+        response: { decision: 'allow', reason: 'acl allow_route', outcome: 'delivered' },
+        root_message_id: 'msg-root-1', created_at: secondsAgo(140),
+      },
+      {
+        source: { tenant_id: 'Steven', alias: 'socrates', delivery_id: '1c0ffee0-0002-4000-8000-a1b2c3d4e5f6', attempt: 1, status: 'started' },
+        target: null,
+        output_index: 2, state: 'rejected', rejection_code: 'hop_budget_exhausted',
+        hop_count: 6, hop_budget: 6, visited_depth: 6, open: false,
+        response: null, root_message_id: 'msg-root-1', created_at: secondsAgo(90),
+      },
+    ],
+    origin_relays: [],
+    counters: { edges: 3, hidden_edges: 1, redacted_endpoints: 1, open_branches: 1, rejected_branches: 1 },
   };
 }

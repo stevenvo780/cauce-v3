@@ -8,7 +8,16 @@ import {
   buildLiveViews,
   delegationEdges,
   detectPulses,
+  AVATAR_MAX,
+  AVATAR_MIN,
+  AVATAR_UNIFORME,
+  aggregateEdges,
+  fleetVerdict,
+  grosorDe,
+  radioDe,
+  humanOrigins,
   liveState,
+  ownerBucket,
   rememberFleet,
   stateTally,
 } from './agent-state';
@@ -244,5 +253,228 @@ describe('la topología y la actividad de demostración se corresponden', () => 
       .filter((item) => item.from_tenant === a.tenant_id && item.from_alias === a.alias));
     expect(propias.length).toBeGreaterThan(0);
     expect(delegationEdges(actividad).some((edge) => edge.from === edge.to)).toBe(false);
+  });
+});
+
+describe('ownerBucket', () => {
+  it('reparte los siete estados en las tres respuestas que le importan al dueño', () => {
+    expect(ownerBucket('down')).toBe('problema');
+    expect(ownerBucket('blocked')).toBe('problema');
+    expect(ownerBucket('idle')).toBe('libre');
+    expect(ownerBucket('thinking')).toBe('trabajando');
+    expect(ownerBucket('delegating')).toBe('trabajando');
+    expect(ownerBucket('receiving')).toBe('trabajando');
+    expect(ownerBucket('responding')).toBe('trabajando');
+  });
+});
+
+describe('fleetVerdict', () => {
+  const RECIEN = '2026-08-22T10:00:00.000Z';
+  const AHORA = Date.parse(RECIEN) + 2_000;
+
+  function vistas(snapshotAgents: FleetActivityAgent[]) {
+    return buildLiveViews(snapshot(snapshotAgents), {}, AHORA).views;
+  }
+
+  it('con la flota sana dice "Todo en orden" y cuenta libres sin llamarlos avería', () => {
+    const veredicto = fleetVerdict(
+      vistas([agent({ alias: 'zeus' }), agent({ alias: 'kant' })]),
+      { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
+    );
+    expect(veredicto.tone).toBe('ok');
+    expect(veredicto.frase).toBe('Todo en orden.');
+    expect(veredicto.apoyo).toContain('2 libres');
+    expect(veredicto.apoyo).toContain('ninguno trabado');
+    expect(veredicto.culpables).toEqual([]);
+  });
+
+  it('NUNCA sale verde si la última lectura falló, por sano que se vea el snapshot anterior', () => {
+    // Ésta es la regla innegociable de la vista. El snapshot que se está mostrando es de dos
+    // agentes perfectamente ociosos: si la comprobación del error no fuera lo PRIMERO, cualquier
+    // rama posterior devolvería "Todo en orden" sobre datos que ya nadie puede confirmar. Es
+    // exactamente la mentira de un `systemctl is-active` sobre un proceso que dejó de atender.
+    const veredicto = fleetVerdict(
+      vistas([agent({ alias: 'zeus' }), agent({ alias: 'kant' })]),
+      { error: new Error('actividad caída'), observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
+    );
+    expect(veredicto.tone).toBe('desconocido');
+    expect(veredicto.tone).not.toBe('ok');
+    expect(veredicto.frase).toMatch(/no lo sé/i);
+    expect(veredicto.apoyo).toMatch(/última lectura buena/i);
+  });
+
+  it('NUNCA sale verde con el snapshot rancio, aunque no haya habido ningún error', () => {
+    // Un fetch que nunca vuelve no produce `error`: produce silencio. Sin esta rama, la pantalla
+    // seguiría afirmando en verde algo que midió hace tres minutos.
+    const veredicto = fleetVerdict(
+      vistas([agent({ alias: 'zeus' })]),
+      { observedAt: RECIEN, nowMs: Date.parse(RECIEN) + 180_000, staleAfterMs: 12_000 },
+    );
+    expect(veredicto.tone).toBe('desconocido');
+    expect(veredicto.apoyo).toMatch(/Datos de hace/);
+  });
+
+  it('sin hora del servidor tampoco acredita nada: un snapshot sin fecha no es un snapshot fresco', () => {
+    const veredicto = fleetVerdict(vistas([agent({ alias: 'zeus' })]), {
+      observedAt: null, nowMs: AHORA, staleAfterMs: 12_000,
+    });
+    expect(veredicto.tone).toBe('desconocido');
+  });
+
+  it('nombra a los culpables con un motivo comprobable, no con un recuento anónimo', () => {
+    const veredicto = fleetVerdict(
+      vistas([
+        agent({ alias: 'zeus' }),
+        agent({ alias: 'kratos', work_state: 'stalled', in_flight: 1, oldest_in_flight_seconds: 1_320 }),
+      ]),
+      { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
+    );
+    expect(veredicto.tone).toBe('alerta');
+    expect(veredicto.frase).toBe('1 agente necesita atención.');
+    expect(veredicto.culpables).toHaveLength(1);
+    expect(veredicto.culpables[0].alias).toBe('kratos');
+    expect(veredicto.culpables[0].motivo).toBe('trabado hace 22 min');
+  });
+
+  it('un agente trabado sin una sola señal no se reporta como "hace 0 s"', () => {
+    const veredicto = fleetVerdict(
+      vistas([agent({
+        alias: 'hegel', work_state: 'working', in_flight: 2, flags: ['ack_stalled'],
+        oldest_in_flight_seconds: null, seconds_since_last_ack: null,
+      })]),
+      { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
+    );
+    expect(veredicto.culpables[0].motivo).toBe('trabado, sin una sola señal');
+    expect(veredicto.culpables[0].motivo).not.toContain('0 s');
+  });
+});
+
+describe('aggregateEdges', () => {
+  it('junta en UNA arista las N entregas del mismo par y se queda con la más vieja', () => {
+    const agregadas = aggregateEdges([
+      { from: 'Steven/zeus', to: 'Steven/kant', secondsInFlight: 40 },
+      { from: 'Steven/zeus', to: 'Steven/kant', secondsInFlight: 610 },
+      { from: 'Steven/argos', to: 'Steven/kant', secondsInFlight: 10 },
+    ]);
+    expect(agregadas.size).toBe(2);
+    const par = agregadas.get('Steven/zeus→Steven/kant');
+    expect(par?.inFlight).toBe(2);
+    expect(par?.oldestSeconds).toBe(610);
+    expect(par?.totalFromServer).toBe(false);
+  });
+
+  it('la ida y la vuelta son DOS aristas: contarlas juntas duplicaría cada conversación', () => {
+    const agregadas = aggregateEdges([
+      { from: 'Miguel/kratos', to: 'Miguel/janus', secondsInFlight: 10 },
+      { from: 'Miguel/janus', to: 'Miguel/kratos', secondsInFlight: 10 },
+    ]);
+    expect([...agregadas.keys()].sort()).toEqual([
+      'Miguel/janus→Miguel/kratos', 'Miguel/kratos→Miguel/janus',
+    ]);
+  });
+
+  it('el volumen de la ventana lo manda el servidor, y el "en vuelo" sigue siendo el del snapshot', () => {
+    const agregadas = aggregateEdges(
+      [{ from: 'Steven/zeus', to: 'Steven/kant', secondsInFlight: 40 }],
+      [{ from_tenant: 'Steven', from_alias: 'zeus', to_tenant: 'Steven', to_alias: 'kant', in_flight: 99, total_window: 47 }],
+    );
+    const par = agregadas.get('Steven/zeus→Steven/kant');
+    expect(par?.total).toBe(47);
+    expect(par?.totalFromServer).toBe(true);
+    // El 99 del servidor NO pisa al 1 del snapshot: los muñecos que se están dibujando en esta
+    // pasada salen del snapshot, y una flecha que no coincide con ellos es una flecha que miente.
+    expect(par?.inFlight).toBe(1);
+  });
+
+  it('una arista que sólo conoce el servidor existe igual, con cero en vuelo', () => {
+    const agregadas = aggregateEdges([], [
+      { from_tenant: 'Pablo', from_alias: 'midas', to_tenant: 'Pablo', to_alias: 'seneca', in_flight: 0, total_window: 12 },
+    ]);
+    const par = agregadas.get('Pablo/midas→Pablo/seneca');
+    expect(par?.inFlight).toBe(0);
+    expect(par?.total).toBe(12);
+  });
+});
+
+describe('humanOrigins', () => {
+  it('rescata el encargo que entró por un puente, que delegationEdges tira por from === to', () => {
+    // El puente de Telegram publica el mensaje del dueño CON EL ALIAS DEL PROPIO AGENTE. Como
+    // delegación es falsa —y por eso se descarta— pero descartarla entera pierde la procedencia:
+    // el trabajo aparece de la nada y el mapa sugiere que el agente se lo inventó solo.
+    const nieve = snapshot([agent({
+      tenant_id: 'Jhon', alias: 'hegel', in_flight: 1,
+      in_flight_items: [{
+        delivery_id: 'd-1', from_tenant: 'Jhon', from_alias: 'hegel',
+        origin_adapter: 'telegram', status: 'leased',
+      }],
+    })]);
+
+    expect(delegationEdges(nieve)).toEqual([]);
+    expect(humanOrigins(nieve)).toEqual([{ agentKey: 'Jhon/hegel', adapter: 'telegram', count: 1 }]);
+  });
+
+  it('el tráfico entre agentes ("bus") NO produce un nodo persona: ya lo cuenta la delegación', () => {
+    const nieve = snapshot([agent({
+      tenant_id: 'Steven', alias: 'kant', in_flight: 1,
+      in_flight_items: [{
+        delivery_id: 'd-2', from_tenant: 'Steven', from_alias: 'zeus',
+        origin_adapter: 'bus', status: 'started',
+      }],
+    })]);
+    expect(humanOrigins(nieve)).toEqual([]);
+  });
+});
+
+describe('buildLiveViews y el campo que el servidor puede no traer', () => {
+  it('closed_24h ausente NO se convierte en cero: queda undefined y la vista lo declara', () => {
+    // "No sé cuánto cerró" y "cerró cero" son afirmaciones distintas, y en una pantalla donde el
+    // tamaño del muñeco significa "cuánto trabajó", confundirlas es una acusación falsa.
+    const { views } = buildLiveViews(snapshot([agent({ alias: 'zeus' })]), {}, NOW);
+    expect(views[0].closed24h).toBeUndefined();
+
+    const conDato = buildLiveViews(snapshot([agent({ alias: 'zeus', closed_24h: 0 })]), {}, NOW);
+    expect(conDato.views[0].closed24h).toBe(0);
+  });
+});
+
+describe('radioDe', () => {
+  it('sin el campo en NINGÚN agente, todos miden lo mismo: no se inventa una escala', () => {
+    // `maxClosed === null` es "el servidor no informa el cierre de 24 h". Dibujar a toda la flota
+    // en el radio mínimo haría que "no lo sé" se vea idéntico a "no cerró nada", que en una
+    // pantalla donde el tamaño significa cuánto trabajó cada uno es una acusación falsa.
+    expect(radioDe(undefined, null)).toBe(AVATAR_UNIFORME);
+    expect(radioDe(41, null)).toBe(AVATAR_UNIFORME);
+  });
+
+  it('cerrar CERO es un dato y se dibuja en el mínimo; no traer el campo, no', () => {
+    expect(radioDe(0, 41)).toBe(AVATAR_MIN);
+    // El alias del que el servidor no informa dentro de una flota que sí informa: mínimo también,
+    // pero por otra razón — y el globo le quita el pie, que es donde se nota la diferencia.
+    expect(radioDe(undefined, 41)).toBe(AVATAR_MIN);
+  });
+
+  it('el máximo de la flota llega al tope y ninguno se pasa', () => {
+    expect(radioDe(41, 41)).toBe(AVATAR_MAX);
+    expect(radioDe(99, 41)).toBe(AVATAR_MAX);
+  });
+
+  it('escala por ÁREA, no por radio: el doble de trabajo no puede parecer el cuádruple', () => {
+    const mitad = radioDe(50, 100);
+    // Con escala lineal sobre el radio, 50/100 daría el punto medio exacto entre 22 y 34 (28).
+    // Con raíz, queda por encima — que es lo que hace que las áreas se comparen bien.
+    expect(mitad).toBeGreaterThan((AVATAR_MIN + AVATAR_MAX) / 2);
+    expect(mitad).toBeLessThan(AVATAR_MAX);
+  });
+});
+
+describe('grosorDe', () => {
+  it('una sola entrega es la línea más fina, y el máximo de la flota la más gruesa', () => {
+    expect(grosorDe(1, 1)).toBe(1.5);
+    expect(grosorDe(1, 8)).toBe(1.5);
+    expect(grosorDe(8, 8)).toBe(5);
+  });
+
+  it('tiene techo: una relación muy cargada no puede tapar el mapa', () => {
+    expect(grosorDe(500, 8)).toBe(5);
   });
 });

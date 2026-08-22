@@ -218,6 +218,125 @@
  * solo congelar: un punto detenido a mitad de una flecha se lee como "hay algo trabado ahí", y en
  * esta vista un falso indicio de estado es peor que no animar nada.
  */
+
+/* --- La PALABRA debajo del alias ------------------------------------------
+ *
+ * Tercer canal, redundante con el relleno y con el anillo, y el único que sobrevive a un monitor
+ * mal calibrado, a un daltonismo y a una captura de pantalla en blanco y negro. Existe por una
+ * razón medida: el estado NORMAL de esta flota son quince muñecos sin trabajo, y sin la palabra
+ * escrita eso se lee como quince muñecos muertos.
+ */
+.lhg-bot-word {
+  fill: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.lhg-bot[data-state='down'] .lhg-bot-word,
+.lhg-bot[data-state='blocked'] .lhg-bot-word { fill: var(--red); }
+.lhg-bot[data-state='unknown'] .lhg-bot-word { fill: var(--faint); font-style: italic; }
+.lhg-bot[data-state='thinking'] .lhg-bot-word,
+.lhg-bot[data-state='responding'] .lhg-bot-word { fill: var(--mint); }
+
+/* El anillo del muñeco es el SEGUNDO canal: continuo = conectado, hueco = caído, punteado = sin
+   reportar. Va en el contorno y no en la opacidad, porque bajar la opacidad esconde justo a los
+   agentes de los que no se sabe nada. */
+.lhg-bot[data-state='down'] .lhg-bot-hit {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 1.6;
+  stroke-dasharray: 5 5;
+  opacity: .8;
+}
+
+/* --- Flechas: el grosor lo pone el componente por volumen ------------------ */
+
+/* `stroke-width` viaja en el atributo `style` del nodo (es un dato, no un estado), así que acá
+   sólo queda lo que no depende del volumen. */
+.lhg-flow-line { transition: stroke-opacity .3s ease, stroke-width .3s ease; }
+
+/* --- Capa de permisos ------------------------------------------------------
+ *
+ * Violeta, punteada y quieta, para que NUNCA se confunda con una entrega en vuelo: son dos
+ * preguntas distintas y no pueden compartir vocabulario visual. Sin animación a propósito — un
+ * permiso no está "viajando" a ningún sitio.
+ */
+.lhg-flows-acl { color: var(--violet); }
+
+.lhg-flow-acl-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-dasharray: 7 6;
+  stroke-opacity: .8;
+}
+
+.lhg-flow-acl.is-denied { color: var(--faint); }
+.lhg-flow-acl.is-denied .lhg-flow-acl-line { stroke-opacity: .45; }
+
+.lhg-flow-acl-label {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* --- Nodo persona ----------------------------------------------------------
+ *
+ * Vive en el pasillo de la izquierda, FUERA de toda región, porque una persona no es miembro de
+ * ninguna sala. Sin esto, el trabajo que entra por el puente de Telegram parece un autoenvío: el
+ * puente publica con el alias del propio agente, así que la arista sale `from === to` y
+ * `delegationEdges()` la descarta entera — y con ella, la procedencia humana del encargo.
+ */
+.lhg-human-dot {
+  fill: var(--surface-3);
+  stroke: var(--blue);
+  stroke-width: 1.6;
+  stroke-dasharray: 4 3;
+}
+
+.lhg-human-glyph {
+  fill: var(--blue);
+  font-size: 15px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.lhg-human-name {
+  fill: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.lhg-human-line {
+  fill: none;
+  stroke: var(--blue);
+  stroke-width: 1.4;
+  stroke-dasharray: 3 5;
+  stroke-opacity: .55;
+}
+
+/*
+ * Con `prefers-reduced-motion` el punto NO se esconde: se queda fijo a mitad de la curva, que es
+ * lo que el componente ya coloca desde JS (`<animateMotion>` es SMIL y el CSS no lo apaga). Antes
+ * la regla era `display: none`, y así una flecha viva y una muerta se veían idénticas justo para
+ * quien pidió menos movimiento, no menos información.
+ */
 @media (prefers-reduced-motion: reduce) {
-  .lhg-flow-dot { display: none; }
+  .lhg-flow-dot { display: inline; }
 }

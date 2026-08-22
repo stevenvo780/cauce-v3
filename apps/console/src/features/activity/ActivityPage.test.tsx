@@ -76,10 +76,12 @@ it('renders agents from GET /v3/console/activity, sorted with the most urgent fi
   const dataRows = rows.filter((row) => within(row).queryAllByRole('cell').length > 0);
   expect(dataRows[0].textContent).toMatch(/midas/i);
 
-  expect(screen.getByText('Agentes visibles').nextElementSibling).toHaveTextContent('3');
-  // "En vuelo" también es el encabezado de una columna de la tabla; se busca el metric por su
-  // texto de detalle, que es único, para no ambigüar con el <th>.
-  expect(screen.getByText('leased + accepted + started').previousElementSibling).toHaveTextContent('50');
+  // El recuento de alias visibles vive ahora en la descripción de la cabecera, no en una tarjeta
+  // rotulada con la expresión SQL que lo produce.
+  expect(screen.getByText(/Los 3 alias que podés ver/)).toBeInTheDocument();
+  // Y las cifras bajaron a la línea de texto del veredicto, en castellano. La definición del
+  // servidor ("leased + accepted + started") sigue disponible: está en el tooltip.
+  expect(screen.getByText(/en vuelo$/)).toHaveTextContent('50 en vuelo');
 });
 
 it('shows an error state with a working retry button when the request fails', async () => {

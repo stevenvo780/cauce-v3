@@ -20,7 +20,6 @@ import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/Aut
 import type { AuthGateState } from './features/auth/auth-session';
 import { LiveFleetPage } from './features/live/LiveFleetPage';
 import { FleetAgentDetailPage } from './features/fleet/FleetAgentDetailPage';
-import { FleetPage } from './features/fleet/FleetPage';
 import { QuotasPage } from './features/quotas/QuotasPage';
 import { TopologyPage } from './features/topology/TopologyPage';
 import { MessagesPage } from './features/messages/MessagesPage';
@@ -71,21 +70,35 @@ interface Route {
  * fachada `visibleOriginRelays` y el snapshot NO (medido en `services/gateway/src/app.ts`), así que
  * el volcado mostraba relays de otros tenants. `/relays` redirige a `/observability`.
  *
- * Lo que NO se unificó, y por qué: "Sala de máquinas" y "Tenants & ACL" dibujan los dos un
- * hipergrafo de salas, pero responden preguntas distintas — *quién le está pasando trabajo a quién
- * ahora* (cambia cada cuatro segundos) contra *quién tiene permiso de hablarle a quién* (cambia
- * cuando alguien edita la configuración). Las flechas no significan lo mismo: una es una entrega en
- * vuelo, la otra es una arista ACL. Fundirlas obligaría a elegir cuál de las dos preguntas se
- * responde peor. Tampoco se fundieron "Cuotas y licencias" y "Cuentas de IA": la primera es de
- * lectura y depende del recolector externo; la segunda escribe el registro y tiene que funcionar
- * aunque el recolector esté caído.
+ * **"Fleet & presencia"** y **"Tenants & ACL"** dejaron el menú el 2026-08-22, y con ellas la
+ * consola pasó de trece entradas a **once**.
+ *
+ * "Fleet" no aportaba un solo dato de TRABAJO: cruzaba topología con leases, así que un agente con
+ * el lease impecable y cuarenta y una entregas colgadas salía verde — exactamente el fallo que la
+ * consola existe para no cometer. Sus cinco columnas exclusivas viven ahora en la pestaña
+ * "Conexión" del cajón de "La flota ahora", y cuatro de las cinco (epoch, instancia, latido, lease)
+ * ya venían dentro del snapshot de actividad que esa página pedía igual: absorberlas no costó un
+ * fetch nuevo.
+ *
+ * "Tenants & ACL" dibujaba el mismo hipergrafo de salas que la sala de máquinas. La objeción que
+ * estaba escrita ACÁ —que las flechas no significan lo mismo, una es una entrega en vuelo y la otra
+ * una arista ACL— sigue siendo cierta y por eso NO se fundieron las dos capas: se puso un
+ * conmutador. "Ahora" y "Permisos" nunca se dibujan a la vez, comparten salas y posiciones, y así
+ * comparar *quién puede* con *quién está* se hace con los ojos en vez de con dos pestañas del
+ * navegador. Sus dos tablas se extrajeron a `TenantCards` y `AclEdgeList` y se reusan tal cual.
+ *
+ * Los dos módulos siguen existiendo y siguen siendo alcanzables por URL: `/fleet` y `/topology`
+ * redirigen a `/live` (ver `ROUTE_ALIASES`), y `/fleet/:tenant/:alias` —que es el detalle de un
+ * bot, no una lista— sigue abriendo el workspace de terminal como siempre.
+ *
+ * Lo que NO se unificó: "Cuotas y licencias" y "Cuentas de IA". La primera es de lectura y depende
+ * del recolector externo; la segunda escribe el registro y tiene que funcionar aunque el recolector
+ * esté caído.
  */
 const routes: Route[] = [
-  { id: 'live', label: 'Sala de máquinas', icon: Sparkles, component: LiveFleetPage },
-  { id: 'fleet', label: 'Fleet', icon: RadioTower, component: FleetPage },
+  { id: 'live', label: 'La flota ahora', icon: Sparkles, component: LiveFleetPage },
   { id: 'quotas', label: 'Cuotas y licencias', icon: BatteryCharging, component: QuotasPage },
   { id: 'accounts', label: 'Cuentas de IA', icon: CreditCard, component: AccountsPage },
-  { id: 'topology', label: 'Tenants & ACL', icon: GitFork, component: TopologyPage },
   { id: 'messages', label: 'Messages', icon: MessageSquareText, component: MessagesPage },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, component: QueuesPage },
   { id: 'jobs', label: 'Jobs', icon: Boxes, component: JobsPage },
@@ -94,7 +107,21 @@ const routes: Route[] = [
   { id: 'observability', label: 'Observabilidad y relays', icon: Gauge, component: ObservabilityPage },
   { id: 'config', label: 'Configuration', icon: Settings2, component: ConfigPage },
   { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, component: TerminalPage },
+  /**
+   * Entrada OCULTA (sin `label`, excluida del render del menú).
+   *
+   * `/fleet` como lista dejó de existir, pero `/fleet/:tenant/:alias` NO: es el detalle de un bot
+   * y sigue siendo el destino del pie del cajón. Sin esta entrada, `matchRoute` no reconocería el
+   * id y la ruta caería al fallback, o sea que abrir un agente desde el cajón llevaría a la
+   * portada. Es la clase de defecto que sólo se descubre haciendo clic.
+   */
+  { id: 'fleet', label: '', icon: RadioTower, component: FleetRouteNotice },
+  /** Ídem: la vista de topología salió del menú, no del producto. Ver TopologyPage.tsx. */
+  { id: 'topology', label: '', icon: GitFork, component: TopologyPage },
 ];
+
+/** Lo que se dibuja en la barra lateral: las entradas con rótulo. Once, no trece. */
+const MENU = routes.filter((route) => route.label !== '');
 
 /**
  * Rutas retiradas que siguen vivas en marcadores, en enlaces pegados en un chat y en el historial
@@ -116,7 +143,46 @@ const ROUTE_ALIASES: Record<string, string> = {
    * todavía diciendo `/activity`. Es el mismo defecto que este mapa existe para evitar.
    */
   activity: 'live',
+  /**
+   * "Fleet & presencia" dejó de existir el 2026-08-22. No aportaba un solo dato de TRABAJO —un
+   * agente con el lease perfecto y 41 entregas colgadas lo pintaba verde— y su `agentStateBadge`
+   * era copia literal de `presenceBadge` de activity, con el comentario que lo admitía. Sus cinco
+   * columnas viven en la pestaña «Conexión» del cajón, y cuatro de ellas ya venían en el mismo
+   * snapshot que la vista pedía igual: absorberlas no costó un fetch nuevo.
+   *
+   * Su métrica "En cola" (pending + retry + claimed, de /v3/status) SE RETIRA en vez de mudarse:
+   * contradecía a la de activity (pending + retry). Dos rótulos iguales con dos números distintos
+   * en la misma consola es peor que no tener ninguno.
+   *
+   * OJO: este alias sólo aplica a `/fleet` a secas. `/fleet/:tenant/:alias` sigue resolviendo al
+   * detalle del bot — ver `matchRoute`.
+   */
+  fleet: 'live',
+  /** "Tenants & ACL" es ahora la capa «Permisos» del mapa y el desplegable de la misma página. */
+  topology: 'live',
 };
+
+/**
+ * Lo que queda de `/fleet` cuando la URL no alcanza para identificar a un bot.
+ *
+ * `/fleet` a secas redirige a `/live`, y `/fleet/:tenant/:alias` abre el detalle. Entre medio está
+ * `/fleet/:tenant`, que no es ninguna de las dos cosas: nombra un cliente, no un agente. Antes caía
+ * en la lista de la flota; ahora esa lista no existe, y mandarlo al fallback sin decir nada dejaría
+ * al operador en una página que no pidió — el mismo defecto que `ROUTE_ALIASES` existe para evitar.
+ */
+function FleetRouteNotice() {
+  return (
+    <div className="state-card">
+      <div>
+        <strong>Esa dirección ya no identifica a nadie</strong>
+        <p>
+          La lista de la flota es ahora <a href="/live" onClick={(event) => onNavClick(event, '/live')}>La flota ahora</a>.
+          El detalle de un bot sigue viviendo en <span className="mono">/fleet/:cliente/:alias</span>, con los dos datos.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 interface RouteMatch {
   id: string;
@@ -142,7 +208,12 @@ function decodeSegment(segment: string): string {
 function matchRoute(path: string): RouteMatch {
   const segments = path.split('/').filter(Boolean).map(decodeSegment);
   const requested = segments[0] ?? '';
-  const alias = ROUTE_ALIASES[requested];
+  /**
+   * El alias de `fleet` sólo vale para la LISTA. Con dos segmentos o más, `/fleet/:tenant/:alias`
+   * es el detalle de un bot y tiene que seguir resolviendo ahí: redirigirlo a `/live` rompería el
+   * pie del cajón, el enlace "volver" del propio detalle y cualquier marcador a un agente.
+   */
+  const alias = segments.length > 1 && requested === 'fleet' ? undefined : ROUTE_ALIASES[requested];
   const id = alias ?? requested;
   return routes.some((route) => route.id === id)
     ? { id, params: segments.slice(1), aliasedFrom: alias ? requested : undefined }
@@ -171,8 +242,11 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   }, [aliasedFrom, routeId]);
 
   const Page = route.component;
-  // Único sub-detalle soportado hoy: /fleet/:tenant/:alias reutiliza el workspace de terminal, no FleetPage.
-  const fleetAgentTarget = routeId === 'fleet' && params.length >= 2
+  // Único sub-detalle soportado hoy: /fleet/:tenant/:alias reutiliza el workspace de terminal.
+  // Se comprueba contra el primer segmento CRUDO y no contra `routeId`: ahora `fleet` es también
+  // un alias hacia `live`, así que preguntarle al id resuelto daría siempre `false`.
+  const requestedSegment = path.split('/').filter(Boolean).map(decodeSegment)[0] ?? '';
+  const fleetAgentTarget = requestedSegment === 'fleet' && params.length >= 2
     ? { tenantId: params[0], alias: params[1] }
     : undefined;
 
@@ -186,7 +260,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
         </div>
         <nav aria-label="Navegación principal">
           <ul>
-            {routes.map((item) => {
+            {MENU.map((item) => {
               const Icon = item.icon;
               return (
                 <li key={item.id}>

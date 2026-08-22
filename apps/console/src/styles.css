@@ -26,6 +26,7 @@
   --violet-dim: #2e2452;
   --lime: #c6f36a;
   --lime-dim: #2f3d16;
+  --tooltip-bg: #16243a;
   --radius: 16px;
   --shadow: 0 18px 50px rgb(0 0 0 / 24%);
 }
@@ -590,6 +591,42 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
 .quota-groups-line { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 12px; color: var(--muted); font-size: .72rem; }
 .chip-list.inline { display: inline-flex; margin-left: 6px; }
 
+/* --- Tooltip -------------------------------------------------------------------------------
+ * Vive acá y no en `live.css` porque lo usan la tabla, los chips, el veredicto y el grafo, y
+ * porque el bloque de modo claro de abajo tiene que poder redefinir sus tokens: un globo con el
+ * fondo hardcodeado en azul marino es invisible sobre papel blanco, que es el defecto que esta
+ * hoja ya arrastró una vez.
+ */
+.tooltip-anchor {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-bottom: 1px dotted var(--faint);
+  cursor: help;
+}
+/* Cuando envuelve un control que ya tiene su propia afordancia (un chip, un botón), el subrayado
+   punteado sobra y ensucia. `focusable=false` es exactamente ese caso. */
+.tooltip-anchor:not([tabindex]) { border-bottom: none; cursor: inherit; gap: 0; }
+
+.tooltip-bubble {
+  z-index: 90;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--tooltip-bg);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+.tooltip-bubble strong { color: var(--text); font-weight: 650; }
+.tooltip-bubble p { margin: 0 0 4px; }
+.tooltip-bubble p:last-child { margin-bottom: 0; }
+.tooltip-bubble .tooltip-foot { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11.5px; }
+.tooltip-bubble .tooltip-warn { color: var(--amber); }
+
 @media (max-width: 720px) {
   .auto-refresh-toggle { margin-top: 4px; }
   .quota-provider-head { flex-direction: column; }
@@ -620,6 +657,7 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
     --violet-dim: #e9e2fd;
     --lime: #4f7a10;
     --lime-dim: #eaf6d2;
+    --tooltip-bg: #ffffff;
     --shadow: 0 18px 45px rgb(38 63 92 / 12%);
   }
   body { background: radial-gradient(circle at 85% -10%, rgb(111 177 222 / 20%), transparent 35rem), var(--bg); }

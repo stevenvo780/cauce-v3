@@ -1,5 +1,6 @@
 import type {
   AdapterPage,
+  AgentChainSnapshot,
   AuditPage,
   CancelResult,
   ConsoleAccess,
@@ -299,6 +300,20 @@ export class CauceApi {
    */
   getFleetActivity(): Promise<FleetActivitySnapshot> {
     return this.request('/v3/console/activity');
+  }
+
+  /**
+   * Una cadena de delegación entera, por trace. El gateway lo sirve desde
+   * `GET /v3/console/chains/:traceId` con el MISMO par de permisos que la actividad
+   * (operator + read) y hasta ahora no lo consumía nadie: la única forma de seguir una cadena era
+   * leer la base a mano.
+   *
+   * La visibilidad ya está resuelta en el store, nodo por nodo: los extremos que el actor no puede
+   * ver llegan reducidos a un id opaco. Acá no se vuelve a filtrar —volver a filtrar sobre un grafo
+   * del lado del cliente es exactamente cómo se escapan datos de otro tenant— sólo se dibuja.
+   */
+  getAgentChain(traceId: string): Promise<AgentChainSnapshot> {
+    return this.request(`/v3/console/chains/${encodeURIComponent(traceId)}`);
   }
 
   /**

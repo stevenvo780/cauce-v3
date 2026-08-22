@@ -1,7 +1,8 @@
 import { delay, http, HttpResponse } from 'msw';
 import {
   adapters, agentAccountBindings, audit, mockActivity, mockJobs, mockMessages, mockQueues,
-  mockQuotas, mockStatus, originRelays, providerAccounts, registryAgents, routingCeiling, topology,
+  mockChain, mockQuotas, mockStatus, originRelays, providerAccounts, registryAgents, routingCeiling,
+  topology,
 } from './data';
 
 export const handlers = [
@@ -25,6 +26,8 @@ export const handlers = [
   http.get('*/v3/console/topology', () => HttpResponse.json(topology)),
   http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())),
   http.get('*/v3/console/quotas', () => HttpResponse.json(mockQuotas())),
+  // La cadena por trace: el endpoint existía en el gateway y no tenía un solo consumidor.
+  http.get('*/v3/console/chains/:traceId', ({ params }) => HttpResponse.json(mockChain(String(params.traceId)))),
   http.get('*/v3/console/messages', () => HttpResponse.json(mockMessages())),
   http.post('*/v3/console/messages', async ({ request }) => {
     const input = await request.json() as { body?: { text?: string } };

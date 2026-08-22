@@ -33,6 +33,8 @@ export interface FleetActivityTableProps {
   /** Nombre del estado filtrado, sólo para poder decirlo cuando el filtro deja la tabla vacía. */
   filterLabel?: string;
   onSelect?: (key: string | null) => void;
+  /** Clic en la fila: abre el cajón de ese agente sobre la misma página, sin navegar. */
+  onOpen?: (key: string) => void;
 }
 
 /**
@@ -42,7 +44,7 @@ export interface FleetActivityTableProps {
  * con quince muñecos en un dibujo, encontrar a *uno* concreto por nombre es lo único que el grafo
  * hace peor que una lista.
  */
-export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabel, onSelect }: FleetActivityTableProps) {
+export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabel, onSelect, onOpen }: FleetActivityTableProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
 
@@ -124,6 +126,7 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
                     ackLookbackSeconds={thresholds?.ack_lookback_seconds}
                     highlighted={selectedKey === agentKeyOf(agent)}
                     onHover={onSelect}
+                    onOpen={onOpen}
                   />
                 );
               })}
@@ -200,7 +203,7 @@ export function ActivityExplainers({ thresholds }: { thresholds: FleetActivityTh
   );
 }
 
-function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, onToggle, items, ackLookbackSeconds, highlighted, onHover }: {
+function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, onToggle, items, ackLookbackSeconds, highlighted, onHover, onOpen }: {
   agent: FleetActivityAgent;
   urgency: 'critical' | 'warning' | undefined;
   presenceLabel: string;
@@ -211,6 +214,7 @@ function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, on
   ackLookbackSeconds: number | null | undefined;
   highlighted?: boolean;
   onHover?: (key: string | null) => void;
+  onOpen?: (key: string) => void;
 }) {
   const state = agent.work_state ?? undefined;
   const stateLabel = state ? WORK_STATE_LABEL[state] : 'UNKNOWN';
@@ -228,17 +232,39 @@ function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, on
         className={urgency ? `row-${urgency}` : undefined}
         onMouseEnter={() => onHover?.(agentKeyOf(agent))}
         onMouseLeave={() => onHover?.(null)}
+        onClick={onOpen ? () => onOpen(agentKeyOf(agent)) : undefined}
+        data-clickable={onOpen ? 'true' : undefined}
       >
         <td>
           {hasItems ? (
-            <button type="button" className="row-toggle" onClick={onToggle} aria-expanded={expanded} aria-label={`Detalle de ${agent.alias}`}>
+            <button
+              type="button"
+              className="row-toggle"
+              // Desplegar las entregas y abrir el cajón son dos acciones distintas sobre la misma
+              // fila: sin frenar la burbuja, un clic en la flecha haría las dos.
+              onClick={(event) => { event.stopPropagation(); onToggle(); }}
+              aria-expanded={expanded}
+              aria-label={`Detalle de ${agent.alias}`}
+            >
               {expanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
             </button>
           ) : null}
         </td>
         <td>
           <div className="identity-cell">
-            <strong>{agentDisplayName(agent)}</strong>
+            {/* Un `<tr>` con `onClick` es una acción que sólo existe para el ratón. El nombre pasa
+                a ser un botón real para que la misma acción esté en el tabulador; el clic en la
+                fila se conserva como atajo, y por eso el botón frena la burbuja (si no, un clic
+                sobre el nombre abriría el cajón dos veces). */}
+            {onOpen ? (
+              <button
+                type="button"
+                className="row-open"
+                onClick={(event) => { event.stopPropagation(); onOpen(agentKeyOf(agent)); }}
+              >
+                {agentDisplayName(agent)}
+              </button>
+            ) : <strong>{agentDisplayName(agent)}</strong>}
           </div>
           <small className="subline">
             {agent.tenant_id}:{agent.alias} · <Unknown value={agent.harness_id} />

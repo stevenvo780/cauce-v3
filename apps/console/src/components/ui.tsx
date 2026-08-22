@@ -3,6 +3,10 @@ import type { ReactNode } from 'react';
 import type { ConsoleAccess, ConsolePermission } from '../api/types';
 import { display, permissionState, timestamp, UNKNOWN } from '../lib';
 
+// Re-export para que el resto de la consola siga importando su vocabulario visual de un solo sitio.
+export { FloatingTooltip, Tooltip, TOOLTIP_DELAY_MS } from './Tooltip';
+export type { FloatingTooltipProps, TooltipPlacement, TooltipProps } from './Tooltip';
+
 export function PageHeader({ eyebrow, title, description, actions }: {
   eyebrow: string;
   title: string;

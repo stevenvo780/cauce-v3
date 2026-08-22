@@ -307,3 +307,302 @@ tr[data-highlighted='true'] > td {
   .agent-avatar[data-state='thinking'] .av-think { opacity: 1; }
   .agent-avatar[data-state='responding'] .av-bubble { opacity: 1; transform: none; }
 }
+
+/* --- Composición con cajón -------------------------------------------------
+ *
+ * El cajón NO es un modal: el mapa se queda visible y se sigue refrescando detrás mientras se
+ * diagnostica. Ésa es toda la diferencia entre "abrir el detalle" y "irse a otra página", y es lo
+ * que permitió borrar dos entradas del menú sin perder un dato.
+ */
+.live-page.has-drawer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  align-items: start;
+  gap: 20px;
+}
+
+.live-main { display: grid; gap: 18px; min-width: 0; }
+
+@media (max-width: 1100px) {
+  /* Por debajo de este ancho, dos columnas dejan al mapa sin sitio para leerse. El cajón pasa a
+     ir debajo, que es peor que al lado pero mucho mejor que un mapa de 380 px. */
+  .live-page.has-drawer { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* --- La banda de veredicto -------------------------------------------------
+ *
+ * Es lo primero que se lee de la página y sustituye a una fila de cinco tarjetas cuyos rótulos
+ * eran expresiones SQL. Una frase grande responde "¿tengo que hacer algo?" en tres segundos; cinco
+ * números en jerga obligan a sumarlos de cabeza y a saber qué significa cada uno.
+ */
+.fleet-verdict {
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent, var(--faint));
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.fleet-verdict[data-tone='ok'] { --accent: var(--mint); }
+.fleet-verdict[data-tone='alerta'] { --accent: var(--red); }
+.fleet-verdict[data-tone='desconocido'] { --accent: var(--amber); }
+
+.fleet-verdict-main { display: flex; align-items: start; gap: 14px; }
+
+.fleet-verdict-light {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 10px;
+  border-radius: 50%;
+  background: var(--accent, var(--faint));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--faint)) 22%, transparent);
+}
+
+.fleet-verdict-phrase {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -.01em;
+}
+
+.fleet-verdict-support { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
+
+.fleet-verdict-culprits { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* El chip es CLICABLE: lleva el ojo al muñeco culpable dentro del mapa. Un resumen que nombra a
+   un agente y no te lleva hasta él te obliga a buscarlo a mano entre quince. */
+.fleet-verdict-chip {
+  padding: 6px 11px;
+  border: 1px solid var(--red);
+  border-radius: 999px;
+  background: var(--red-dim);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.fleet-verdict-chip:hover { border-color: var(--border-strong); }
+.fleet-verdict-chip strong { font-weight: 650; }
+
+.fleet-verdict-counts {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.fleet-verdict-counts strong { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* --- Barra superior: lo que se le sumó ------------------------------------- */
+
+.live-age strong { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.live-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.live-search input {
+  width: 150px;
+  border: none;
+  background: none;
+  color: var(--text);
+  outline: none;
+}
+
+/* Octavo chip: NO es un miembro del union de estados, es su ausencia. Anillo punteado y gris,
+   el mismo vocabulario que el muñeco «sin reportar» del mapa. */
+.live-tally-chip.is-unreported {
+  border-style: dashed;
+  color: var(--muted);
+  cursor: default;
+}
+.live-tally-chip.is-unreported .live-tally-swatch { background: var(--faint); }
+
+/* --- Conmutador de capa ---------------------------------------------------- */
+
+.live-layer-switch {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.live-layer-button {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.live-layer-button[aria-pressed='true'] { background: var(--surface-3); color: var(--text); }
+
+/* --- Estado vacío, diseñado PRIMERO ---------------------------------------
+ *
+ * El estado normal medido de esta flota es una entrega en vuelo y cero en cola. Una pantalla que
+ * sólo se ve bien cuando hay incendio se ve mal casi siempre, y la lectura por defecto de quince
+ * muñecos grises sin flechas no puede ser "está todo muerto".
+ */
+.live-empty-calm {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+.live-empty-calm strong { color: var(--text); }
+
+/* --- Desplegables ---------------------------------------------------------- */
+
+.live-fold {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.live-fold > summary {
+  padding: 14px 18px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.live-fold[open] > summary { border-bottom: 1px solid var(--border); }
+.live-fold > *:not(summary) { margin: 14px 18px; }
+
+.live-legend-lead { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.live-legend-lead strong { color: var(--text); }
+
+.live-legend-swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  background: var(--accent, var(--faint));
+}
+
+/* --- El cajón -------------------------------------------------------------- */
+
+.agent-drawer {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 0;
+  max-height: calc(100vh - 36px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.agent-drawer-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-drawer-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.agent-drawer-identity .agent-avatar { width: 52px; flex: none; }
+.agent-drawer-identity h2 { margin: 0; font-size: 1.05rem; }
+.agent-drawer-identity p { margin: 2px 0 0; font-size: 12px; }
+
+.agent-drawer-tabs { display: flex; gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+
+.agent-drawer-tab {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-drawer-tab[aria-selected='true'] { background: var(--surface-3); color: var(--text); }
+
+.agent-drawer-body { overflow-y: auto; padding: 16px 18px; }
+.agent-drawer-foot { padding: 12px 18px; border-top: 1px solid var(--border); }
+
+.drawer-deliveries { display: grid; gap: 12px; }
+
+.drawer-delivery {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.drawer-delivery > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+.drawer-delivery dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: 12.5px; }
+.drawer-delivery dt { color: var(--muted); }
+.drawer-delivery dd { margin: 0; }
+.drawer-delivery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+
+.drawer-chain { display: grid; gap: 12px; }
+.chain-trace, .chain-counters { margin: 0; font-size: 12px; }
+.chain-hops li[data-open='true'] { border-color: var(--blue); }
+.chain-hops li[data-rejected='true'] { border-color: var(--red); }
+
+.chip-button { border: 1px solid var(--border); cursor: pointer; }
+.chip-button.is-active { border-color: var(--blue); color: var(--text); }
+
+/* El nombre del agente como botón: misma acción que el clic en la fila, pero alcanzable con el
+   tabulador. Se dibuja como el texto que era, no como un botón, porque lo que cambia es la
+   afordancia de teclado y no la jerarquía visual de la tabla. */
+.row-open {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+.row-open:hover { text-decoration: underline; }
+
+/* Fila clicable de la tabla: abre el cajón. La afordancia tiene que existir o el clic es un
+   secreto que sólo conoce quien escribió el código. */
+tr[data-clickable='true'] { cursor: pointer; }
+
+/* --- El globo del muñeco --------------------------------------------------- */
+
+.agent-tip { display: grid; gap: 3px; }
+.agent-tip p { margin: 0; }
+
+@media (prefers-color-scheme: light) {
+  .fleet-verdict, .agent-drawer, .live-fold { background: #ffffff; }
+  .drawer-delivery, .live-empty-calm, .live-search, .live-layer-switch { background: #f8fafd; }
+  .agent-drawer-tab[aria-selected='true'], .live-layer-button[aria-pressed='true'] { background: #e6eef8; }
+}
+
+@media (max-width: 720px) {
+  .fleet-verdict-phrase { font-size: 24px; }
+  .live-search input { width: 110px; }
+}
