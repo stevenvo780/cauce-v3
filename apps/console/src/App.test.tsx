@@ -117,7 +117,7 @@ it('el menú tiene ONCE entradas: "Fleet" y "Tenants & ACL" dejaron de ser rutas
     'La flota ahora',
     'Cuotas y licencias',
     'Cuentas de IA',
-    'Messages',
+    'Mensajes',
     'Queues & DLQ',
     'Jobs',
     'Adapters',

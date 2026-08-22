@@ -109,7 +109,14 @@ const routes: Route[] = [
   { id: 'live', label: 'La flota ahora', icon: Sparkles, component: LiveFleetPage },
   { id: 'quotas', label: 'Cuotas y licencias', icon: BatteryCharging, component: QuotasPage },
   { id: 'accounts', label: 'Cuentas de IA', icon: CreditCard, component: AccountsPage },
-  { id: 'messages', label: 'Messages', icon: MessageSquareText, component: MessagesPage },
+  /**
+   * «Mensajes», no «Messages»: la entrada estaba en inglés y la vista que abre es la que el dueño
+   * de la flota usa en castellano todos los días. Es la misma ruta (`/messages`) y el mismo
+   * componente; lo único que cambia es el rótulo, y `/messages/:cliente/:alias` —la conversación
+   * abierta— la resuelve la propia página leyendo la barra de direcciones, igual que hace el
+   * cajón de "La flota ahora" con su enlace profundo.
+   */
+  { id: 'messages', label: 'Mensajes', icon: MessageSquareText, component: MessagesPage },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, component: QueuesPage },
   { id: 'jobs', label: 'Jobs', icon: Boxes, component: JobsPage },
   { id: 'adapters', label: 'Adapters', icon: Bot, component: AdaptersPage },
