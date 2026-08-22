@@ -246,10 +246,6 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .timeline li > div { display: grid; gap: 6px; padding-right: 8px; }
 .timeline time, .timeline small { color: var(--faint); font-size: .64rem; }
 
-.job-form { display: grid; grid-template-columns: 170px 1fr 130px; align-items: end; gap: 12px; }
-.job-payload { grid-column: 1 / -1; }
-.job-payload textarea { font-family: "SFMono-Regular", Consolas, monospace; }
-.job-form .button { justify-self: start; }
 .config-form { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 12px; }
 .config-json { grid-column: 1 / -1; }
 .config-json textarea, .config-preview, .config-records code { font-family: "SFMono-Regular", Consolas, monospace; }
@@ -290,14 +286,6 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .config-raw > summary { margin-bottom: 10px; }
 .config-editor { margin-bottom: 20px; }
 .config-editor > summary { margin-bottom: 6px; }
-.lane-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.lane-title-icon { display: grid; width: 38px; height: 38px; place-items: center; margin-top: -8px; border-radius: 10px; background: var(--blue-dim); color: var(--blue); }
-.lane-title-icon.batch { background: var(--amber-dim); color: var(--amber); }
-.job-list { display: grid; gap: 9px; margin: 14px 0 0; padding: 0; list-style: none; }
-.job-list li { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: #0c1421; }
-.job-list li > div strong, .job-list li > div span { display: block; }
-.job-list li > div span { margin-top: 5px; color: var(--muted); }
-.job-list dl { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(4, 1fr); gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
 
 .adapter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .adapter-card { margin-bottom: 0; }
@@ -309,6 +297,53 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .adapter-meta dt { display: flex; align-items: center; gap: 6px; }
 .capabilities { margin-top: 16px; }
 .capabilities > p { display: flex; align-items: center; gap: 6px; margin: 0 0 9px; color: var(--faint); font-size: .68rem; font-weight: 700; text-transform: uppercase; }
+
+/* --- Portada (features/landing) ------------------------------------------------------------ */
+.landing-alertas { display: grid; gap: 9px; margin-bottom: 18px; }
+.landing-veredicto, .landing-alerta {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px;
+  margin: 0; padding: 13px 15px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); font-size: .82rem;
+}
+.landing-veredicto { grid-template-columns: auto 1fr; border-color: #1f5346; background: var(--mint-dim); color: var(--mint); }
+.landing-alerta[data-tono="danger"] { border-color: #6d2b35; background: var(--red-dim); color: var(--red); }
+.landing-alerta[data-tono="warning"] { border-color: #725622; background: var(--amber-dim); color: var(--amber); }
+.landing-alerta[data-tono="desconocido"] { border-color: var(--border-strong); color: var(--muted); }
+.landing-alerta svg, .landing-veredicto svg { flex: none; }
+.landing-alerta > span { display: grid; gap: 3px; min-width: 0; }
+.landing-alerta strong { color: var(--text); }
+.landing-alerta small { color: var(--muted); font-size: .72rem; line-height: 1.5; }
+.landing-alerta > a { color: inherit; font-size: .74rem; font-weight: 700; white-space: nowrap; }
+
+.landing-atajos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+.landing-atajos a {
+  display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 11px;
+  padding: 13px; border: 1px solid var(--border); border-radius: 11px; background: #0b1320;
+  color: var(--blue); text-decoration: none;
+}
+.landing-atajos a:hover { border-color: var(--border-strong); }
+.landing-atajos span { display: grid; gap: 4px; min-width: 0; }
+.landing-atajos strong { color: var(--text); font-size: .82rem; }
+.landing-atajos small { color: var(--muted); font-size: .72rem; line-height: 1.5; }
+
+/* Un atajo de la portada que este usuario no puede abrir. Mismo trato que en la barra lateral —se
+   deja inerte, no se esconde— pero acá hay sitio para escribir el motivo a la vista en vez de
+   dejarlo en un `title` que sólo aparece con el ratón encima. */
+.landing-atajos a.atajo-inerte { cursor: not-allowed; opacity: .5; }
+.landing-atajos a.atajo-inerte:hover { border-color: var(--border); }
+.landing-atajos .atajo-motivo { margin-top: 4px; color: var(--amber); font-weight: 600; }
+
+.harness-strip { padding: 0; }
+.harness-strip > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 15px 18px; color: var(--text); cursor: pointer; font-size: .84rem; font-weight: 700;
+}
+.harness-strip > summary span { display: flex; align-items: center; gap: 8px; }
+.harness-strip > summary small { color: var(--muted); font-weight: 500; }
+.harness-strip > *:not(summary) { margin: 0 18px 18px; }
+.harness-note { color: var(--muted); font-size: .74rem; line-height: 1.55; }
+.harness-strip .adapter-card { padding: 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.harness-strip .adapter-head h3 { margin: 0; font-size: 1rem; }
 
 .search-field { display: flex; align-items: center; gap: 9px; }
 .search-field svg { color: var(--faint); }
@@ -534,12 +569,12 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .topbar-meta span:not(.mock-flag) { display: none; }
   main { padding: 29px 15px 45px; }
   .page-header { align-items: start; flex-direction: column; }
-  .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid, .lane-grid, .adapter-grid, .config-grid { grid-template-columns: 1fr; }
+  .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid, .adapter-grid, .landing-atajos, .config-grid { grid-template-columns: 1fr; }
   .metric { min-height: 115px; }
-  .publish-form, .job-form { grid-template-columns: 1fr; }
+  .publish-form { grid-template-columns: 1fr; }
   .config-form { grid-template-columns: 1fr; }
   .config-json { grid-column: auto; }
-  .publish-form .message-input, .job-payload { grid-column: auto; }
+  .publish-form .message-input { grid-column: auto; }
   .metadata-grid { grid-template-columns: 1fr 1fr; }
   .timeline { grid-template-columns: 1fr; gap: 0; }
   .timeline li { min-height: 65px; padding: 0 0 14px 27px; border-top: 0; border-left: 2px solid var(--border-strong); }
@@ -547,7 +582,6 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .timeline-node { top: 0; left: -7px; }
   .edge-list li { grid-template-columns: 1fr auto 1fr; }
   .edge-list li .badge { grid-column: 1 / -1; }
-  .job-list dl { grid-template-columns: repeat(2, 1fr); }
   .audit-row { grid-template-columns: auto 1fr; }
   .audit-row dl { grid-column: 1 / -1; padding-left: 48px; }
   .terminal-gate { grid-template-columns: auto 1fr; align-items: start; }
@@ -719,7 +753,7 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   .quota-provider { background: #ffffff; }
   .quota-provider[data-severity="critical"], .quota-provider[data-severity="exhausted"] { border-color: #e0a3ab; }
   .quota-provider[data-severity="warn"] { border-color: #e3c98d; }
-  .delivery, .config-records li, .job-list li, .adapter-meta { background: #f8fafd; }
+  .delivery, .config-records li, .adapter-meta, .landing-atajos a { background: #f8fafd; }
   .config-preview { background: #f4f7fb; color: #22344a; }
   /* Los cuatro tonos de `.notice` traían el texto pensado para fondo oscuro y en modo claro nadie
      los había mirado: MEDIDO en Chrome, el verde de «rollback aplicado» quedaba a contraste 1.16 y

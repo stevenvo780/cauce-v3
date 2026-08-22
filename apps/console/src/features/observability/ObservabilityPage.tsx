@@ -44,6 +44,12 @@ const TABS = [
  * fachada que deja pasar sólo los relays en los que el actor participa— mientras que
  * `/v3/console/observability` devuelve las filas **sin fachada**.
  *
+ * El recuento de jobs SE RETIRA el 2026-08-22, junto con la vista `/jobs` a la que enviaba. No se
+ * muda a ningún lado porque no contaba nada: medido en la base de producción, `jobs` tiene cero
+ * filas desde que existe la base (`n_tup_ins = 0`, estadísticas nunca reseteadas). "0 jobs en el
+ * snapshot" ocupaba la mitad de una tarjeta para afirmar siempre lo mismo. La tarjeta que ocupaba
+ * es ahora «Egress al origen», que cuenta los relays que la tabla de abajo detalla.
+ *
  * La auditoría se monta sólo cuando su pestaña está activa: `useResource` pide al montar, así que
  * `GET /v3/console/audit` no se dispara en cada visita a las señales. El texto del buscador vive
  * acá, no dentro del panel, para que cambiar de pestaña no lo pierda.
@@ -71,7 +77,6 @@ export function ObservabilityPage() {
   const data = resource.data;
   const status = data?.status ?? {};
   const queues = data?.queues;
-  const jobs = data?.jobs?.items ?? [];
   const relayItems = relays.data?.items ?? [];
 
   return <>
@@ -100,7 +105,11 @@ export function ObservabilityPage() {
             de colas. El detalle por entrega, con replay y cancel, vive SÓLO en «Queues & DLQ», y se
             va desde acá con un enlace en vez de con el nombre de la vista escrito en prosa. */}
         <article><Gauge /><div><strong>Queues</strong><p>pending {queues?.pending ?? 'UNKNOWN'}, retry {queues?.retrying ?? 'UNKNOWN'}, dead {queues?.dead ?? 'UNKNOWN'}. El detalle por delivery, con replay y cancel, está en <a href="/queues" onClick={(event) => onNavClick(event, '/queues')}>Queues &amp; DLQ</a>.</p></div></article>
-        <article><RadioTower /><div><strong>Workers</strong><p>{jobs.length} jobs en el snapshot del gateway; el detalle por lane está en <a href="/jobs" onClick={(event) => onNavClick(event, '/jobs')}>Jobs</a>. {relayItems.length} relays al origen, abajo.</p></div></article>
+        {/* Era «Workers», y contaba jobs. La vista `/jobs` se retiró el 2026-08-22 —cero filas en
+            la tabla desde que existe la base— así que este recuento no se muda: se retira con
+            ella, y el enlace a `/jobs` con él. La tarjeta pasa a contar lo que la tabla de abajo
+            detalla, que es lo que esta mitad de la vista sí sabe. */}
+        <article><RadioTower /><div><strong>Egress al origen</strong><p>{relayItems.length} relays hacia el canal de origen, con su estado durable en la tabla de abajo.</p></div></article>
       </div>
       <Panel title="Relays al canal de origen" subtitle="La consola observa; no ejecuta egress ni reintenta relays. Sólo los relays en los que este actor participa: GET /v3/console/origin-relays aplica la fachada de visibilidad que el snapshot de observabilidad no aplica.">
         {relays.error && !relays.data

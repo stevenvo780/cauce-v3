@@ -77,11 +77,11 @@ it('redirige /audit a «Señales y auditoría», donde la auditoría es una pest
   await waitFor(() => expect(window.location.pathname).toBe('/observability'));
 });
 
-it('falls back to the live fleet room for an unknown route id even with extra pathname segments', async () => {
+it('cae en la PORTADA para un id de ruta desconocido, aunque traiga segmentos de más', async () => {
   window.history.pushState({}, '', '/unknown/nested/segment');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
 });
 
 it('ignores extra pathname segments on non-fleet routes and keeps rendering the existing page', async () => {
@@ -97,12 +97,12 @@ it('navega dentro de la aplicación sin recargar la página al hacer clic en el 
   renderWithApi(<App />);
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
-  await user.click(screen.getByRole('link', { name: /^jobs$/i }));
+  await user.click(screen.getByRole('link', { name: /^queues & dlq$/i }));
 
   // Si el enlace no interceptara el clic, jsdom no cambiaría la ruta y seguiríamos donde estábamos:
   // el router escucha popstate, y pushState no lo dispara solo.
-  expect(window.location.pathname).toBe('/jobs');
-  expect(await screen.findByRole('heading', { level: 1, name: /jobs/i })).toBeInTheDocument();
+  expect(window.location.pathname).toBe('/queues');
+  expect(await screen.findByRole('heading', { level: 1, name: /queues/i })).toBeInTheDocument();
 });
 
 it('deja pasar ctrl+clic al navegador para poder abrir en otra pestaña', async () => {
@@ -112,18 +112,22 @@ it('deja pasar ctrl+clic al navegador para poder abrir en otra pestaña', async 
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
   await user.keyboard('{Control>}');
-  await user.click(screen.getByRole('link', { name: /^jobs$/i }));
+  await user.click(screen.getByRole('link', { name: /^queues & dlq$/i }));
   await user.keyboard('{/Control}');
 
   // Con modificador el clic es del navegador, no nuestro: la ruta no debe moverse.
   expect(window.location.pathname).toBe('/accounts');
 });
 
-it('el menú tiene NUEVE entradas: las tres fusiones del 2026-08-22 sacaron dos más', async () => {
-  // No es una cifra decorativa. El 2026-08-22 Steven señaló tres pares de vistas redundantes y las
-  // tres se fundieron sin perder un dato: «Audit» es la pestaña «Auditoría» de «Señales y
-  // auditoría», y «Cuotas y licencias» es la pestaña «Consumo» de «Cuentas y cuotas». De trece
-  // entradas en agosto a nueve.
+it('el menú es la portada más SIETE entradas: el menú final del 2026-08-22', async () => {
+  // No es una cifra decorativa: es el resultado de las cinco reformas del día, juntas.
+  //
+  // Se RETIRARON, con medición y no con opinión: «Jobs» (cero filas en la tabla desde que existe la
+  // base) y «Adapters» (seis tipos de arnés que casi nunca cambian → plegados en la portada).
+  // Se FUNDIERON: «Audit» es la pestaña «Auditoría» de «Señales y auditoría», y «Cuotas y
+  // licencias» es la pestaña «Consumo» de «Cuentas y cuotas».
+  // Se RENOMBRÓ: «Messages» → «Mensajes».
+  // De trece entradas el 2026-08-06 a la portada más siete.
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
@@ -131,23 +135,27 @@ it('el menú tiene NUEVE entradas: las tres fusiones del 2026-08-22 sacaron dos 
   const entradas = within(nav).getAllByRole('link').map((link) => link.textContent);
 
   expect(entradas).toEqual([
+    'Portada',
     'La flota ahora',
     'Cuentas y cuotas',
-    'Messages',
+    'Mensajes',
     'Queues & DLQ',
-    'Jobs',
-    'Adapters',
     'Señales y auditoría',
     'Configuración y altas',
     'Ultimate Terminal',
   ]);
   expect(entradas).not.toContain('Fleet');
   expect(entradas).not.toContain('Tenants & ACL');
-  // 🔴 CONTROL NEGATIVO de la fusión: si alguien devuelve cualquiera de las dos entradas retiradas,
-  // vuelve a haber dos sitios para el mismo dato y esto falla.
+  // 🔴 CONTROL NEGATIVO de las cinco reformas juntas: si alguien devuelve cualquiera de las cinco
+  // entradas que se fueron, vuelve a haber dos sitios para el mismo dato y esto falla. Está acá y
+  // no repartido por cinco ficheros porque el peligro de integrar cinco ramas es justamente que una
+  // reponga en silencio lo que otra retiró.
+  expect(entradas).not.toContain('Jobs');
+  expect(entradas).not.toContain('Adapters');
   expect(entradas).not.toContain('Audit');
   expect(entradas).not.toContain('Cuotas y licencias');
   expect(entradas).not.toContain('Cuentas de IA');
+  expect(entradas).not.toContain('Messages');
 });
 
 it('redirige /fleet y /topology a la vista que las absorbió, reescribiendo la barra de direcciones', async () => {
@@ -227,4 +235,44 @@ it('deja «Configuración y altas» navegable para quien SI tiene config.write',
   await waitFor(() => expect(entrada).not.toHaveAttribute('aria-disabled'));
   await userEvent.click(entrada);
   expect(window.location.pathname).toBe('/config');
+});
+
+/**
+ * 2026-08-22 — las dos retiradas de esta ronda, y por qué se tratan DISTINTO.
+ *
+ * `/adapters` tiene heredera (su contenido se plegó en la portada) → alias silencioso y la barra
+ * de direcciones se reescribe. `/jobs` no tiene ninguna: la tabla `jobs` medida en producción tenía
+ * cero filas desde que existe la base, así que la vista no se mudó, desapareció. Mandarla a la
+ * portada en silencio dejaría a quien abrió el marcador creyendo que la consola se equivocó de
+ * página, así que se le dice, y se le dan las dos puertas que sí responden su pregunta.
+ */
+it('/adapters redirige a la portada, donde su contenido está plegado', async () => {
+  window.history.pushState({}, '', '/adapters');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
+  expect(await screen.findByText(/arneses declarados/i)).toBeInTheDocument();
+  // El alias resuelve a la cadena vacía: si la comprobación fuera por veracidad en vez de por
+  // `!== undefined`, la página sería la correcta y la URL seguiría diciendo /adapters para siempre.
+  expect(window.location.pathname).toBe('/');
+});
+
+it('/jobs no da 404 ni una página que nadie pidió: dice que se retiró y adónde ir', async () => {
+  window.history.pushState({}, '', '/jobs');
+  renderWithApi(<App />);
+
+  expect(await screen.findByText(/ya no es una vista de esta consola/i)).toBeInTheDocument();
+  // Dentro del contenido, no en la barra lateral: los dos rótulos existen también en el menú.
+  const contenido = within(screen.getByRole('main'));
+  expect(contenido.getByRole('link', { name: /queues & dlq/i })).toHaveAttribute('href', '/queues');
+  expect(contenido.getByRole('link', { name: /la flota ahora/i })).toHaveAttribute('href', '/live');
+  // NO se redirige: la URL se queda donde está, porque no hay heredera a la que mandar.
+  expect(window.location.pathname).toBe('/jobs');
+});
+
+it('la raíz "/" abre la portada, no la vista viva', async () => {
+  window.history.pushState({}, '', '/');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
 });

@@ -4,7 +4,6 @@ import type {
   FleetActivityItem,
   FleetActivitySnapshot,
   FleetDelegationEdge,
-  JobPage,
   MessagePage,
   OriginRelayPage,
   QueueSnapshot,
@@ -202,13 +201,6 @@ export function mockQueues(): QueueSnapshot {
       { delivery_id: '72b24438-693d-4ae7-8746-6338cdaf1f46', message_id: '353bc0f7-3413-49fc-bfdb-f63ad7680fd0', tenant_id: 'Miguel', recipient_alias: 'kratos', lane: 'interactive', state: 'dead', attempts: 5, max_attempts: 5, available_at: iso(-420_000), last_error: 'max attempts exhausted' },
     ],
   };
-}
-
-export function mockJobs(): JobPage {
-  return { items: [
-    { job_id: '0e4c4ea7-aa3b-4f45-89f3-536243676bbf', tenant_id: 'Steven', lane: 'interactive', kind: 'agent.task', status: 'running', priority: 10, attempts: 1, claimed_by: 'dispatcher-a', created_at: iso(-32_000) },
-    { job_id: 'fc4836f6-af2c-4c38-b11e-92329ffdd671', tenant_id: 'Pablo', lane: 'batch', kind: 'report.index', status: 'queued', priority: 0, attempts: 0, claimed_by: null, created_at: iso(-190_000) },
-  ] };
 }
 
 export const adapters: AdapterPage = { items: [

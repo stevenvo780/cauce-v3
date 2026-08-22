@@ -1,43 +1,24 @@
 import {
   Activity,
-  Bot,
   Boxes,
-  CreditCard,
-  GitFork,
-  Settings2,
-  ListRestart,
-  MessageSquareText,
   RadioTower,
   ShieldCheck,
-  Gauge,
-  Sparkles,
-  TerminalSquare,
 } from 'lucide-react';
 import { useEffect, useSyncExternalStore, type ComponentType } from 'react';
 import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import type { AuthGateState } from './features/auth/auth-session';
 import { LiveFleetPage } from './features/live/LiveFleetPage';
 import { FleetAgentDetailPage } from './features/fleet/FleetAgentDetailPage';
-import { TopologyPage } from './features/topology/TopologyPage';
 import { MessagesPage } from './features/messages/MessagesPage';
 import { QueuesPage } from './features/queues/QueuesPage';
-import { JobsPage } from './features/jobs/JobsPage';
-import { AdaptersPage } from './features/adapters/AdaptersPage';
+import { LandingPage } from './features/landing/LandingPage';
+import { JobsRetiredNotice } from './features/landing/JobsRetiredNotice';
 import { TerminalPage } from './features/terminal/TerminalPage';
 import { ConfigPage } from './features/config/ConfigPage';
 import { AccountsPage } from './features/accounts/AccountsPage';
 import { ObservabilityPage } from './features/observability/ObservabilityPage';
-import { useApi } from './api/context';
-import { useResource } from './api/use-resource';
-import { permissionState } from './lib';
-import { useTerminalRelayStatus } from './features/terminal/relay-status';
-import {
-  configNavAvailability,
-  onNavClick,
-  redirect,
-  terminalNavAvailability,
-  type NavEntryAvailability,
-} from './navigation';
+import { NAV_ENTRIES, useNavAvailability } from './nav';
+import { onNavClick, redirect } from './navigation';
 
 interface Route {
   id: string;
@@ -93,24 +74,72 @@ interface Route {
  * comparar *quién puede* con *quién está* se hace con los ojos en vez de con dos pestañas del
  * navegador. Sus dos tablas se extrajeron a `TenantCards` y `AclEdgeList` y se reusan tal cual.
  *
- * Los dos módulos siguen existiendo y siguen siendo alcanzables por URL: `/fleet` y `/topology`
- * redirigen a `/live` (ver `ROUTE_ALIASES`), y `/fleet/:tenant/:alias` —que es el detalle de un
- * bot, no una lista— sigue abriendo el workspace de terminal como siempre.
+ * `/fleet` y `/topology` redirigen a `/live` (ver `ROUTE_ALIASES`), y `/fleet/:tenant/:alias` —que
+ * es el detalle de un bot, no una lista— sigue abriendo el workspace de terminal como siempre.
  *
- * Lo que NO se unificó: "Cuotas y licencias" y "Cuentas de IA". La primera es de lectura y depende
- * del recolector externo; la segunda escribe el registro y tiene que funcionar aunque el recolector
- * esté caído.
+ * **"Cuotas y licencias" SÍ se unificó con "Cuentas de IA" el 2026-08-22**, al revés de lo que
+ * decía este comentario. La objeción escrita acá —una es de lectura y depende del recolector
+ * externo, la otra escribe el registro y tiene que funcionar con el recolector caído— se resolvió
+ * sin volver a partir el menú: son dos PESTAÑAS de "Cuentas y cuotas" (`/accounts`), y el registro
+ * se sigue pudiendo escribir aunque la pestaña de consumo no tenga datos. Las dos pedían el mismo
+ * `GET /v3/console/config` con la misma clave de caché y las dos pintaban un panel titulado
+ * literalmente «Inventario de cuentas».
+ *
+ * **"Jobs" y "Adapters" dejaron el menú el 2026-08-22.**
+ *
+ * "Jobs" se retiró contra la base de PRODUCCIÓN, no contra una opinión: la tabla `jobs` tenía
+ * `n_tup_ins = 0` y `n_live_tup = 0` con las estadísticas nunca reseteadas, o sea CERO filas en
+ * toda la vida de la base, mientras el dispatcher acumulaba 373.146 `seq_scan` sobre ella. Su
+ * único escritor era el formulario de la propia vista. Ver `JobsRetiredNotice`.
+ *
+ * "Adapters" no se retiró: se mudó. `GET /v3/console/adapters` lista TIPOS de arnés —seis filas que
+ * casi nunca cambian—, no agentes, y eso es un dato de referencia, no una vista de trabajo. Vive
+ * plegado en la portada (`HarnessStrip`) y la API sigue intacta porque también la piden "Ultimate
+ * Terminal" y el detalle de un bot. `/adapters` redirige a `/`.
+ *
+ * **La portada (`/`) es nueva y no compite con "La flota ahora".** Resume —flota, colas, cuotas,
+ * alertas, y qué responde cada vista— y enlaza; `/live` sigue siendo la vista viva con el
+ * hipergrafo y el cajón. Ninguna de las dos dibuja lo que dibuja la otra.
+ *
+ * **"Audit" se fundió en "Señales y auditoría" el 2026-08-22**: es su pestaña «Auditoría», y cada
+ * relay trae un botón que la abre filtrada por su `trace_id`. El propio comentario de
+ * `ObservabilityPage` ya decía que esas dos claves bajaban a la tabla «para cruzarlos contra
+ * Audit», o sea que la consola documentaba una investigación partida en dos pantallas por
+ * accidente.
+ *
+ * **"Messages" pasó a llamarse "Mensajes" el 2026-08-22** —misma ruta, mismo componente— y dejó de
+ * ser un formulario para ser una conversación por agente.
+ *
+ * 🔴 **El resultado de las cinco reformas es UN menú de ocho entradas: la portada más siete.** El
+ * recuento no se escribe a mano en ningún rótulo (`rotuloDeVistas` lo deriva) y las invariantes que
+ * lo sostienen —cada entrada resuelve a una vista real, ningún alias apunta a otro alias, ningún id
+ * de ruta queda tapado por un alias— viven en `App.invariantes.test.tsx`, como tabla y no como
+ * casos sueltos.
  */
+/**
+ * Qué componente dibuja cada entrada CON rótulo. El rótulo, el icono y la pregunta que responde
+ * cada vista viven en `NAV_ENTRIES` (`./nav`), que es también lo que lee la portada: eran dos
+ * listas escritas a mano y ya habían divergido —«Configuration» contra «Configuración y altas»—
+ * el mismo día en que se escribieron.
+ */
+const PAGES: Record<string, ComponentType> = {
+  '': LandingPage,
+  live: LiveFleetPage,
+  accounts: AccountsPage,
+  messages: MessagesPage,
+  queues: QueuesPage,
+  observability: ObservabilityPage,
+  config: ConfigPage,
+  terminal: TerminalPage,
+};
+
 const routes: Route[] = [
-  { id: 'live', label: 'La flota ahora', icon: Sparkles, component: LiveFleetPage },
-  { id: 'accounts', label: 'Cuentas y cuotas', icon: CreditCard, component: AccountsPage },
-  { id: 'messages', label: 'Messages', icon: MessageSquareText, component: MessagesPage },
-  { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, component: QueuesPage },
-  { id: 'jobs', label: 'Jobs', icon: Boxes, component: JobsPage },
-  { id: 'adapters', label: 'Adapters', icon: Bot, component: AdaptersPage },
-  { id: 'observability', label: 'Señales y auditoría', icon: Gauge, component: ObservabilityPage },
-  { id: 'config', label: 'Configuración y altas', icon: Settings2, component: ConfigPage },
-  { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, component: TerminalPage },
+  ...NAV_ENTRIES.map((entry) => ({
+    id: entry.id,
+    label: entry.label,
+    icon: entry.icon,
+    component: PAGES[entry.id],
+  })),
   /**
    * Entrada OCULTA (sin `label`, excluida del render del menú).
    *
@@ -120,11 +149,19 @@ const routes: Route[] = [
    * portada. Es la clase de defecto que sólo se descubre haciendo clic.
    */
   { id: 'fleet', label: '', icon: RadioTower, component: FleetRouteNotice },
-  /** Ídem: la vista de topología salió del menú, no del producto. Ver TopologyPage.tsx. */
-  { id: 'topology', label: '', icon: GitFork, component: TopologyPage },
+  /**
+   * Entrada OCULTA: `/jobs` no tiene heredera, así que tampoco tiene alias. Ver
+   * `JobsRetiredNotice` para la medición que la retiró y para por qué es un aviso y no una
+   * redirección muda.
+   */
+  { id: 'jobs', label: '', icon: Boxes, component: JobsRetiredNotice },
 ];
 
-/** Lo que se dibuja en la barra lateral: las entradas con rótulo. Nueve, no trece. */
+/**
+ * Lo que se dibuja en la barra lateral: las entradas con rótulo. Ocho —la portada más siete—,
+ * cuando el 2026-08-06 eran trece. El número NO se escribe en ningún rótulo: se deriva de la lista
+ * (ver `rotuloDeVistas`), porque un recuento a mano envejece en silencio.
+ */
 const MENU = routes.filter((route) => route.label !== '');
 
 /**
@@ -186,8 +223,25 @@ const ROUTE_ALIASES: Record<string, string> = {
    * detalle del bot — ver `matchRoute`.
    */
   fleet: 'live',
-  /** "Tenants & ACL" es ahora la capa «Permisos» del mapa y el desplegable de la misma página. */
+  /**
+   * "Tenants & ACL" es ahora la capa «Permisos» del mapa y el desplegable de la misma página.
+   *
+   * 🔴 Hasta el 2026-08-22 convivía con una entrada OCULTA `{ id: 'topology', component:
+   * TopologyPage }` unas líneas más arriba, y `TopologyPage.tsx` prometía por escrito que la vista
+   * «sigue siendo alcanzable… para quien tenga la URL guardada». No lo era: `matchRoute` consulta
+   * este mapa ANTES de mirar `routes`, así que este alias ganaba siempre y la entrada nunca se
+   * podía resolver. Un componente inalcanzable con un comentario que jura lo contrario es peor que
+   * no tenerlo. Se retiró la entrada muerta y se dejó el alias, que es lo que producción hace y lo
+   * que su prueba exige.
+   */
   topology: 'live',
+  /**
+   * "Adapters" pasó a ser la tira plegable de la portada el 2026-08-22. Acá SÍ corresponde alias y
+   * no aviso —al revés que en `/jobs`—: su contenido no desapareció, se mudó, así que quien abre el
+   * marcador llega exactamente a donde está lo que buscaba. La regla es esa y no otra: alias cuando
+   * hay heredera, aviso cuando no la hay.
+   */
+  adapters: '',
 };
 
 /**
@@ -243,9 +297,16 @@ function matchRoute(path: string): RouteMatch {
    */
   const alias = segments.length > 1 && requested === 'fleet' ? undefined : ROUTE_ALIASES[requested];
   const id = alias ?? requested;
+  /**
+   * `alias !== undefined`, NO `alias ?`. Desde que la portada vive en `''`, un alias puede resolver
+   * a la cadena vacía —es el caso de `/adapters`— y una comprobación por veracidad la trataría como
+   * "no hubo alias": la página correcta se dibujaría igual, pero la barra de direcciones seguiría
+   * diciendo `/adapters` para siempre. Es exactamente el defecto que `ROUTE_ALIASES` existe para
+   * evitar, colado por la puerta de atrás de un valor falsy.
+   */
   return routes.some((route) => route.id === id)
-    ? { id, params: segments.slice(1), aliasedFrom: alias ? requested : undefined }
-    : { id: 'live', params: [] };
+    ? { id, params: segments.slice(1), aliasedFrom: alias !== undefined ? requested : undefined }
+    : { id: '', params: [] };
 }
 
 function subscribe(callback: () => void): () => void {
@@ -258,7 +319,8 @@ export function App() {
 }
 
 function ConsoleShell({ gate }: { gate: AuthGateState }) {
-  const path = useSyncExternalStore(subscribe, currentPath, () => 'live');
+  // El snapshot de servidor es la portada, que es también el fallback de `matchRoute`.
+  const path = useSyncExternalStore(subscribe, currentPath, () => '');
   /**
    * El menú tiene que decir la verdad ANTES del clic. Las dos funciones que deciden esto ya
    * existían —`terminalNavAvailability` desde el commit 0a1d0e3 y `useTerminalRelayStatus`, cuyo
@@ -270,14 +332,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
    * `console-access` comparte clave de caché con las páginas que ya lo piden, así que esto no
    * agrega una petición por navegación.
    */
-  const api = useApi();
-  const access = useResource('console-access', () => api.getConsoleAccess());
-  const relay = useTerminalRelayStatus();
-  const navAvailability = (id: string): NavEntryAvailability => {
-    if (id === 'terminal') return terminalNavAvailability(relay);
-    if (id === 'config') return configNavAvailability(permissionState(access.data, 'config.write'));
-    return { hidden: false, disabled: false };
-  };
+  const navAvailability = useNavAvailability();
   const { id: routeId, params, aliasedFrom } = matchRoute(path);
   const route = routes.find((candidate) => candidate.id === routeId) ?? routes[0];
 

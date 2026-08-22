@@ -11,11 +11,17 @@ import './hypergraph.css';
  * Cáscara. Su contenido vive ahora en `TenantCards` y `AclEdgeList`, que comparte con «La flota
  * ahora».
  *
- * Esta ruta salió del MENÚ el 2026-08-22 —`/topology` redirige a `/live`— pero el módulo sigue
- * existiendo entero y sigue siendo alcanzable, y eso es deliberado: lo que sobraba era una entrada
- * de menú que obligaba a elegir entre mirar el mapa y mirar los permisos del mismo mapa, no el
- * contenido. Ahora las dos capas conviven en una sola página con un conmutador, y acá quedan sus
- * tablas para quien tenga la URL guardada.
+ * 🔴 **Esta vista ya NO es alcanzable, y este comentario decía lo contrario.** Hasta el 2026-08-22
+ * prometía por escrito que «sigue siendo alcanzable… para quien tenga la URL guardada», mientras
+ * `ROUTE_ALIASES` mandaba `/topology` a `/live` y `matchRoute` consulta ese mapa ANTES de mirar
+ * `routes`: el alias ganaba siempre y la entrada oculta que la declaraba no se podía resolver
+ * nunca. La entrada muerta se retiró; el alias se quedó, porque es lo que producción hace y lo que
+ * su prueba exige.
+ *
+ * El componente se conserva por sus dos hijas —`TenantCards` y `AclEdgeList`—, que son las que «La
+ * flota ahora» monta en su capa «Permisos». Si algún día hay que volver a servir `/topology`, hay
+ * que quitar el alias Y devolver la entrada a `routes`: sólo una de las dos cosas no alcanza, y
+ * hacer sólo una no rompe ninguna prueba.
  */
 export function TopologyPage() {
   const api = useApi();
