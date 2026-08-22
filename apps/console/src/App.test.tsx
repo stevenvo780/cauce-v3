@@ -61,11 +61,11 @@ it('redirige /licenses a la vista fusionada en vez de dejar el enlace guardado e
   expect(window.location.pathname).toBe('/quotas');
 });
 
-it('falls back to the live fleet room for an unknown route id even with extra pathname segments', async () => {
+it('cae en la PORTADA para un id de ruta desconocido, aunque traiga segmentos de más', async () => {
   window.history.pushState({}, '', '/unknown/nested/segment');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
 });
 
 it('ignores extra pathname segments on non-fleet routes and keeps rendering the existing page', async () => {
@@ -103,7 +103,7 @@ it('deja pasar ctrl+clic al navegador para poder abrir en otra pestaña', async 
   expect(window.location.pathname).toBe('/quotas');
 });
 
-it('el menú tiene ONCE entradas: "Fleet" y "Tenants & ACL" dejaron de ser rutas propias', async () => {
+it('el menú es la portada más DIEZ entradas: "Jobs" y "Adapters" dejaron de ser rutas propias', async () => {
   // No es una cifra decorativa. Las dos vistas que se retiran no aportaban ningún dato que no
   // estuviera ya en el snapshot que "La flota ahora" pide igual, y el precio de tenerlas era
   // exactamente la queja del dueño: demasiadas entradas para responder la misma pregunta.
@@ -114,13 +114,12 @@ it('el menú tiene ONCE entradas: "Fleet" y "Tenants & ACL" dejaron de ser rutas
   const entradas = within(nav).getAllByRole('link').map((link) => link.textContent);
 
   expect(entradas).toEqual([
+    'Portada',
     'La flota ahora',
     'Cuotas y licencias',
     'Cuentas de IA',
     'Messages',
     'Queues & DLQ',
-    'Jobs',
-    'Adapters',
     'Audit',
     'Observabilidad y relays',
     'Configuración y altas',
@@ -128,6 +127,8 @@ it('el menú tiene ONCE entradas: "Fleet" y "Tenants & ACL" dejaron de ser rutas
   ]);
   expect(entradas).not.toContain('Fleet');
   expect(entradas).not.toContain('Tenants & ACL');
+  expect(entradas).not.toContain('Jobs');
+  expect(entradas).not.toContain('Adapters');
 });
 
 it('redirige /fleet y /topology a la vista que las absorbió, reescribiendo la barra de direcciones', async () => {
@@ -207,4 +208,44 @@ it('deja «Configuración y altas» navegable para quien SI tiene config.write',
   await waitFor(() => expect(entrada).not.toHaveAttribute('aria-disabled'));
   await userEvent.click(entrada);
   expect(window.location.pathname).toBe('/config');
+});
+
+/**
+ * 2026-08-22 — las dos retiradas de esta ronda, y por qué se tratan DISTINTO.
+ *
+ * `/adapters` tiene heredera (su contenido se plegó en la portada) → alias silencioso y la barra
+ * de direcciones se reescribe. `/jobs` no tiene ninguna: la tabla `jobs` medida en producción tenía
+ * cero filas desde que existe la base, así que la vista no se mudó, desapareció. Mandarla a la
+ * portada en silencio dejaría a quien abrió el marcador creyendo que la consola se equivocó de
+ * página, así que se le dice, y se le dan las dos puertas que sí responden su pregunta.
+ */
+it('/adapters redirige a la portada, donde su contenido está plegado', async () => {
+  window.history.pushState({}, '', '/adapters');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
+  expect(await screen.findByText(/arneses declarados/i)).toBeInTheDocument();
+  // El alias resuelve a la cadena vacía: si la comprobación fuera por veracidad en vez de por
+  // `!== undefined`, la página sería la correcta y la URL seguiría diciendo /adapters para siempre.
+  expect(window.location.pathname).toBe('/');
+});
+
+it('/jobs no da 404 ni una página que nadie pidió: dice que se retiró y adónde ir', async () => {
+  window.history.pushState({}, '', '/jobs');
+  renderWithApi(<App />);
+
+  expect(await screen.findByText(/ya no es una vista de esta consola/i)).toBeInTheDocument();
+  // Dentro del contenido, no en la barra lateral: los dos rótulos existen también en el menú.
+  const contenido = within(screen.getByRole('main'));
+  expect(contenido.getByRole('link', { name: /queues & dlq/i })).toHaveAttribute('href', '/queues');
+  expect(contenido.getByRole('link', { name: /la flota ahora/i })).toHaveAttribute('href', '/live');
+  // NO se redirige: la URL se queda donde está, porque no hay heredera a la que mandar.
+  expect(window.location.pathname).toBe('/jobs');
+});
+
+it('la raíz "/" abre la portada, no la vista viva', async () => {
+  window.history.pushState({}, '', '/');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
 });

@@ -82,10 +82,6 @@ export function safeJobLane(value: unknown): JobLane | undefined {
   return oneOf(value, ['interactive', 'batch'] as const);
 }
 
-export function safeJobState(value: unknown): 'queued' | 'running' | 'done' | 'failed' | 'dead' | undefined {
-  return oneOf(value, ['queued', 'running', 'done', 'failed', 'dead'] as const);
-}
-
 export function safeCapabilityState(value: unknown): CapabilityState | undefined {
   return oneOf(value, ['available', 'degraded', 'unavailable', 'unknown'] as const);
 }

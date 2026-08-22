@@ -20,10 +20,13 @@ import { compactId, safeOriginRelayState } from '../../lib';
  * El `<pre>` que se quitó estaba mostrando relays y jobs de otros tenants que las vistas propias
  * filtran a propósito. Por eso el volcado no se conserva ni "por si acaso": era el defecto.
  *
- * Los jobs quedan en su vista (`/jobs`), que los rinde por lane y también pasa por fachada
- * (`sameTenantRows`); acá se conserva sólo el recuento, que es lo que aporta un panel de señales.
+ * El recuento de jobs SE RETIRA el 2026-08-22, junto con la vista `/jobs` a la que enviaba. No se
+ * muda a ningún lado porque no contaba nada: medido en la base de producción, `jobs` tiene cero
+ * filas desde que existe la base (`n_tup_ins = 0`, estadísticas nunca reseteadas). "0 jobs en el
+ * snapshot" ocupaba la mitad de una tarjeta para afirmar siempre lo mismo.
+ *
  * Las cuatro métricas de arriba salen del MISMO instante (`observed_at`) — ésa es la única razón
- * por la que esta vista existe teniendo `/fleet` y `/queues` los mismos números por separado.
+ * por la que esta vista existe teniendo `/live` y `/queues` los mismos números por separado.
  */
 export function ObservabilityPage() {
   const api = useApi();
@@ -41,7 +44,6 @@ export function ObservabilityPage() {
   const data = resource.data;
   const status = data?.status ?? {};
   const queues = data?.queues;
-  const jobs = data?.jobs?.items ?? [];
   const relayItems = relays.data?.items ?? [];
 
   return <>
@@ -60,7 +62,7 @@ export function ObservabilityPage() {
     </div>
     <div className="trust-grid">
       <article><Gauge /><div><strong>Queues</strong><p>pending {queues?.pending ?? 'UNKNOWN'}, retry {queues?.retrying ?? 'UNKNOWN'}, dead {queues?.dead ?? 'UNKNOWN'}. El detalle por delivery, con replay y cancel, está en «Queues &amp; DLQ».</p></div></article>
-      <article><RadioTower /><div><strong>Workers</strong><p>{jobs.length} jobs en el snapshot del gateway; el detalle por lane está en «Jobs». {relayItems.length} relays al origen, abajo.</p></div></article>
+      <article><RadioTower /><div><strong>Egress al origen</strong><p>{relayItems.length} relays hacia el canal de origen, con su estado durable en la tabla de abajo.</p></div></article>
     </div>
     <Panel title="Relays al canal de origen" subtitle="La consola observa; no ejecuta egress ni reintenta relays. Sólo los relays en los que este actor participa: GET /v3/console/origin-relays aplica la fachada de visibilidad que el snapshot de observabilidad no aplica.">
       {relays.error && !relays.data

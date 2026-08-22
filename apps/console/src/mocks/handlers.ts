@@ -1,7 +1,7 @@
 import { delay, http, HttpResponse } from 'msw';
 import {
   adapters, agentAccountBindings, audit, configAclEdges, configMemberships, configRooms,
-  configTenants, mockActivity, mockJobs, mockMessages, mockQueues, mockChain, mockQuotas,
+  configTenants, mockActivity, mockMessages, mockQueues, mockChain, mockQuotas,
   mockStatus, originRelays, providerAccounts, registryAgents, routingCeiling, topology,
 } from './data';
 
@@ -37,8 +37,6 @@ export const handlers = [
   http.get('*/v3/console/queues', () => HttpResponse.json(mockQueues())),
   http.post('*/v3/console/deliveries/:deliveryId/replay', ({ params }) => HttpResponse.json({ delivery_id: params.deliveryId, state: 'pending', replayed: true }, { status: 202 })),
   http.post('*/v3/console/deliveries/:deliveryId/cancel', ({ params }) => HttpResponse.json({ delivery_id: params.deliveryId, state: 'dead', cancelled: true, cancelled_from_state: 'started', parent_notice: 'returned', origin_relayed: true, replayable: true }, { status: 200 })),
-  http.get('*/v3/console/jobs', () => HttpResponse.json(mockJobs())),
-  http.post('*/v3/console/jobs', () => HttpResponse.json({ job_id: crypto.randomUUID() }, { status: 202 })),
   http.get('*/v3/console/adapters', () => HttpResponse.json(adapters)),
   http.get('*/v3/console/audit', () => HttpResponse.json(audit)),
   http.get('*/v3/console/origin-relays', () => HttpResponse.json(originRelays)),
@@ -66,7 +64,7 @@ export const handlers = [
   http.post('*/v3/console/config/revisions/:revisionId/rollback', ({ params }) => HttpResponse.json({ applied: true, dry_run: false, revision: Number(params.revisionId) + 1 }, { status: 201 })),
   http.get('*/v3/console/observability', () => HttpResponse.json({
     observed_at: new Date().toISOString(), status: mockStatus(), queues: mockQueues(),
-    jobs: mockJobs(), origin_relays: originRelays
+    origin_relays: originRelays
   })),
   http.get('*/v3/console/terminal/capability', () => HttpResponse.json({ available: false, reason: 'Backend PTY no instalado en este entorno' })),
 ];

@@ -182,29 +182,6 @@ export interface CancelResult {
   replayable?: boolean | null;
 }
 
-export interface JobView {
-  job_id?: string | null;
-  tenant_id?: string | null;
-  lane?: JobLane | null;
-  kind?: string | null;
-  status?: 'queued' | 'running' | 'done' | 'failed' | 'dead' | null;
-  priority?: number | null;
-  attempts?: number | null;
-  claimed_by?: string | null;
-  created_at?: string | null;
-}
-
-export interface JobPage {
-  items?: JobView[] | null;
-}
-
-export interface CreateJobInput {
-  lane: JobLane;
-  priority: number;
-  kind: string;
-  payload: Record<string, unknown>;
-}
-
 export interface AdapterView {
   id?: string | null;
   label?: string | null;
@@ -341,7 +318,6 @@ export interface ObservabilitySnapshot {
   observed_at?: string | null;
   status?: Record<string, unknown> | null;
   queues?: QueueSnapshot | null;
-  jobs?: JobPage | null;
   origin_relays?: OriginRelayPage | null;
 }
 

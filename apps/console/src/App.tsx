@@ -1,9 +1,9 @@
 import {
   Activity,
   BatteryCharging,
-  Bot,
   Boxes,
   CreditCard,
+  LayoutDashboard,
   GitFork,
   History,
   Settings2,
@@ -24,8 +24,8 @@ import { QuotasPage } from './features/quotas/QuotasPage';
 import { TopologyPage } from './features/topology/TopologyPage';
 import { MessagesPage } from './features/messages/MessagesPage';
 import { QueuesPage } from './features/queues/QueuesPage';
-import { JobsPage } from './features/jobs/JobsPage';
-import { AdaptersPage } from './features/adapters/AdaptersPage';
+import { LandingPage } from './features/landing/LandingPage';
+import { JobsRetiredNotice } from './features/landing/JobsRetiredNotice';
 import { AuditPage } from './features/audit/AuditPage';
 import { TerminalPage } from './features/terminal/TerminalPage';
 import { ConfigPage } from './features/config/ConfigPage';
@@ -104,15 +104,31 @@ interface Route {
  * Lo que NO se unificó: "Cuotas y licencias" y "Cuentas de IA". La primera es de lectura y depende
  * del recolector externo; la segunda escribe el registro y tiene que funcionar aunque el recolector
  * esté caído.
+ *
+ * **"Jobs" y "Adapters" dejaron el menú el 2026-08-22, y con ellas la consola pasó de once entradas
+ * a diez — más la portada, que es nueva.**
+ *
+ * "Jobs" se retiró contra la base de PRODUCCIÓN, no contra una opinión: la tabla `jobs` tenía
+ * `n_tup_ins = 0` y `n_live_tup = 0` con las estadísticas nunca reseteadas, o sea CERO filas en
+ * toda la vida de la base, mientras el dispatcher acumulaba 373.146 `seq_scan` sobre ella. Su
+ * único escritor era el formulario de la propia vista. Ver `JobsRetiredNotice`.
+ *
+ * "Adapters" no se retiró: se mudó. `GET /v3/console/adapters` lista TIPOS de arnés —seis filas que
+ * casi nunca cambian—, no agentes, y eso es un dato de referencia, no una vista de trabajo. Vive
+ * plegado en la portada (`HarnessStrip`) y la API sigue intacta porque también la piden "Ultimate
+ * Terminal" y el detalle de un bot. `/adapters` redirige a `/`.
+ *
+ * **La portada (`/`) es nueva y no compite con "La flota ahora".** Resume —flota, colas, cuotas,
+ * alertas, y qué responde cada vista— y enlaza; `/live` sigue siendo la vista viva con el
+ * hipergrafo y el cajón. Ninguna de las dos dibuja lo que dibuja la otra.
  */
 const routes: Route[] = [
+  { id: '', label: 'Portada', icon: LayoutDashboard, component: LandingPage },
   { id: 'live', label: 'La flota ahora', icon: Sparkles, component: LiveFleetPage },
   { id: 'quotas', label: 'Cuotas y licencias', icon: BatteryCharging, component: QuotasPage },
   { id: 'accounts', label: 'Cuentas de IA', icon: CreditCard, component: AccountsPage },
   { id: 'messages', label: 'Messages', icon: MessageSquareText, component: MessagesPage },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, component: QueuesPage },
-  { id: 'jobs', label: 'Jobs', icon: Boxes, component: JobsPage },
-  { id: 'adapters', label: 'Adapters', icon: Bot, component: AdaptersPage },
   { id: 'audit', label: 'Audit', icon: History, component: AuditPage },
   { id: 'observability', label: 'Observabilidad y relays', icon: Gauge, component: ObservabilityPage },
   { id: 'config', label: 'Configuración y altas', icon: Settings2, component: ConfigPage },
@@ -128,9 +144,15 @@ const routes: Route[] = [
   { id: 'fleet', label: '', icon: RadioTower, component: FleetRouteNotice },
   /** Ídem: la vista de topología salió del menú, no del producto. Ver TopologyPage.tsx. */
   { id: 'topology', label: '', icon: GitFork, component: TopologyPage },
+  /**
+   * Entrada OCULTA: `/jobs` no tiene heredera, así que tampoco tiene alias. Ver
+   * `JobsRetiredNotice` para la medición que la retiró y para por qué es un aviso y no una
+   * redirección muda.
+   */
+  { id: 'jobs', label: '', icon: Boxes, component: JobsRetiredNotice },
 ];
 
-/** Lo que se dibuja en la barra lateral: las entradas con rótulo. Once, no trece. */
+/** Lo que se dibuja en la barra lateral: las entradas con rótulo. Diez, no once. */
 const MENU = routes.filter((route) => route.label !== '');
 
 /**
@@ -170,6 +192,13 @@ const ROUTE_ALIASES: Record<string, string> = {
   fleet: 'live',
   /** "Tenants & ACL" es ahora la capa «Permisos» del mapa y el desplegable de la misma página. */
   topology: 'live',
+  /**
+   * "Adapters" pasó a ser la tira plegable de la portada el 2026-08-22. Acá SÍ corresponde alias y
+   * no aviso —al revés que en `/jobs`—: su contenido no desapareció, se mudó, así que quien abre el
+   * marcador llega exactamente a donde está lo que buscaba. La regla es esa y no otra: alias cuando
+   * hay heredera, aviso cuando no la hay.
+   */
+  adapters: '',
 };
 
 /**
@@ -225,9 +254,16 @@ function matchRoute(path: string): RouteMatch {
    */
   const alias = segments.length > 1 && requested === 'fleet' ? undefined : ROUTE_ALIASES[requested];
   const id = alias ?? requested;
+  /**
+   * `alias !== undefined`, NO `alias ?`. Desde que la portada vive en `''`, un alias puede resolver
+   * a la cadena vacía —es el caso de `/adapters`— y una comprobación por veracidad la trataría como
+   * "no hubo alias": la página correcta se dibujaría igual, pero la barra de direcciones seguiría
+   * diciendo `/adapters` para siempre. Es exactamente el defecto que `ROUTE_ALIASES` existe para
+   * evitar, colado por la puerta de atrás de un valor falsy.
+   */
   return routes.some((route) => route.id === id)
-    ? { id, params: segments.slice(1), aliasedFrom: alias ? requested : undefined }
-    : { id: 'live', params: [] };
+    ? { id, params: segments.slice(1), aliasedFrom: alias !== undefined ? requested : undefined }
+    : { id: '', params: [] };
 }
 
 function subscribe(callback: () => void): () => void {
@@ -240,7 +276,8 @@ export function App() {
 }
 
 function ConsoleShell({ gate }: { gate: AuthGateState }) {
-  const path = useSyncExternalStore(subscribe, currentPath, () => 'live');
+  // El snapshot de servidor es la portada, que es también el fallback de `matchRoute`.
+  const path = useSyncExternalStore(subscribe, currentPath, () => '');
   /**
    * El menú tiene que decir la verdad ANTES del clic. Las dos funciones que deciden esto ya
    * existían —`terminalNavAvailability` desde el commit 0a1d0e3 y `useTerminalRelayStatus`, cuyo

@@ -8,9 +8,7 @@ import type {
   ConfigurationChangeResult,
   ConfigurationSnapshot,
   ConfigMutation,
-  CreateJobInput,
   FleetActivitySnapshot,
-  JobPage,
   MessagePage,
   OriginRelayPage,
   ObservabilitySnapshot,
@@ -230,20 +228,6 @@ export class CauceApi {
       method: 'POST',
       body: JSON.stringify(reason === undefined ? {} : { reason }),
     });
-  }
-
-  listJobs(): Promise<JobPage> {
-    return this.request('/v3/console/jobs');
-  }
-
-  createJob(input: CreateJobInput): Promise<{ job_id?: string | null }> {
-    const payload: CreateJobInput = {
-      lane: input.lane,
-      priority: input.priority,
-      kind: input.kind,
-      payload: input.payload,
-    };
-    return this.request('/v3/console/jobs', { method: 'POST', body: JSON.stringify(payload) });
   }
 
   listAdapters(): Promise<AdapterPage> {
