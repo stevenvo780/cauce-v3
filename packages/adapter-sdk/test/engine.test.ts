@@ -659,6 +659,58 @@ test("harness prompt receives authenticated origin context", async () => {
   assert.match(prompt, /status.*done.*retryable.*MUST be false/u);
 });
 
+test("el rol declarado llega entero al harness aunque mida 1300 unidades UTF-16", async () => {
+  // El caso exacto que dejaba sordo al alias: 1200 PUNTOS DE CÓDIGO y 1300 unidades UTF-16. La
+  // base lo acepta (`char_length`=1200), así que el adaptador tiene que poder recibirlo y pasarlo
+  // al harness sin recortarlo: recortarlo acá sería inventarle al agente un rol distinto del que
+  // el operador guardó por la pantalla.
+  const brief = `${"a".repeat(1100)}${"\u{1F389}".repeat(100)}`;
+  assert.equal([...brief].length, 1200);
+  assert.equal(brief.length, 1300);
+
+  const context = await setup("engine-self-role-emoji");
+  await context.engine.handleDelivery({ ...delivery("self-role-emoji"), self_role: brief });
+  const prompt = context.runner.requests[0]?.stdin ?? "";
+  assert.ok(prompt.includes(brief), "el rol llegó recortado o alterado al harness");
+});
+
+test("el rol se recorta por puntos de código: nunca sale un surrogate suelto al harness", async () => {
+  // 1199 letras + un emoji = 1200 puntos de código y 1201 unidades UTF-16. El `slice(0, 1200)`
+  // que había acá indexaba UTF-16 y partía el par suplente por la mitad; el surrogate alto suelto
+  // que quedaba no tiene representación en UTF-8 y viajaba a stdin del harness como U+FFFD. El
+  // agente leía su propio rol terminado en un carácter roto.
+  const justo = `${"a".repeat(1199)}\u{1F389}`;
+  assert.equal([...justo].length, 1200);
+  assert.equal(justo.length, 1201);
+  // CONTROL NEGATIVO: la línea vieja, ejecutada tal cual, SÍ rompe el emoji. Sin esto la aserción
+  // de abajo pasaría con cualquier implementación.
+  assert.ok(Buffer.from(justo.slice(0, 1200), "utf8").toString("utf8").includes("�"));
+
+  const context = await setup("engine-self-role-surrogate");
+  await context.engine.handleDelivery({ ...delivery("self-role-surrogate"), self_role: justo });
+  const prompt = context.runner.requests[0]?.stdin ?? "";
+  // El efecto medido donde duele: `Tu rol:` no va por JSON.stringify (que escaparía el surrogate
+  // suelto como \udXXX y lo escondería), sino como texto crudo. Serializarlo a UTF-8 y volver es
+  // exactamente lo que le pasa al cruzar a stdin del proceso del harness, y un surrogate suelto
+  // no sobrevive ese viaje: vuelve como U+FFFD.
+  const ida_y_vuelta = Buffer.from(prompt, "utf8").toString("utf8");
+  assert.ok(!ida_y_vuelta.includes("�"), "el harness recibió un carácter de reemplazo");
+  assert.equal(ida_y_vuelta, prompt);
+  assert.match(prompt, /Tu rol: a{1199}\u{1F389}\n/u);
+});
+
+test("un rol pasado de largo se recorta en el borde de un punto de código, no dentro", async () => {
+  // El SDK no asume que el único emisor sea un store de esta versión, así que el recorte defensivo
+  // sigue existiendo — pero ahora cae entre puntos de código.
+  const pasado = `${"a".repeat(1199)}\u{1F389}\u{1F389}`;
+  const context = await setup("engine-self-role-clamp");
+  await context.engine.handleDelivery({ ...delivery("self-role-clamp"), self_role: pasado });
+  const prompt = context.runner.requests[0]?.stdin ?? "";
+  assert.match(prompt, /Tu rol: a{1199}\u{1F389}\n/u);
+  assert.ok(!prompt.includes(pasado), "no se aplicó ningún recorte");
+  assert.equal(Buffer.from(prompt, "utf8").toString("utf8"), prompt);
+});
+
 test("agent-output delivery is identified as a real internal agent message", async () => {
   const context = await setup("engine-agent-output-context");
   const input: Delivery = {

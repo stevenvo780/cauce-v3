@@ -194,8 +194,8 @@ export const audit: AuditPage = { items: [
  * `credential_ref_kind` — acá se mantienen como `null` explícitos, no como claves ausentes.
  */
 export const registryAgents: Array<Record<string, unknown>> = [
-  { tenant_id: 'Steven', alias: 'kant', harness_id: 'claude-code', display_name: 'Kant', enabled: true, container_name: 'ws-kant', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/var/lib/kant', created_at: '2026-07-20T10:00:00.000Z', updated_at: '2026-07-22T10:00:00.000Z' },
-  { tenant_id: 'Miguel', alias: 'iza', harness_id: 'hermes', display_name: 'Iza', enabled: false, container_name: 'ws-humanizar', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/var/lib/iza', created_at: '2026-07-23T10:00:00.000Z', updated_at: '2026-07-23T10:00:00.000Z' },
+  { tenant_id: 'Steven', alias: 'kant', harness_id: 'claude-code', display_name: 'Kant', enabled: true, role_brief: 'Sos kant, el hub de coordinacion de la flota.', container_name: 'ws-kant', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/var/lib/kant', created_at: '2026-07-20T10:00:00.000Z', updated_at: '2026-07-22T10:00:00.000Z' },
+  { tenant_id: 'Miguel', alias: 'iza', harness_id: 'hermes', display_name: 'Iza', enabled: false, role_brief: null, container_name: 'ws-humanizar', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/var/lib/iza', created_at: '2026-07-23T10:00:00.000Z', updated_at: '2026-07-23T10:00:00.000Z' },
   { tenant_id: 'Pablo', alias: 'midas', harness_id: 'openclaw', display_name: null, enabled: true, container_name: 'ws-midas', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/var/lib/midas', created_at: '2026-07-19T10:00:00.000Z', updated_at: '2026-07-21T10:00:00.000Z' },
 ];
 

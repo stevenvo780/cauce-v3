@@ -41,6 +41,15 @@ ALTER TABLE agents
 -- El techo de 1200 no es estético: el preámbulo viaja en CADA entrega de CADA alias, y el sobre
 -- de la entrega lo valida un esquema estricto. 1200 caracteres son ~300 tokens, suficiente para
 -- "quién sos / qué es tuyo / qué NO hacés" y lo bastante chico para no competir con el trabajo.
+--
+-- ESTE número es el que MANDA, y esta es la única de las cuatro capas que no puede importarlo:
+-- SQL no importa TypeScript. Las otras tres lo comparten como `ROLE_BRIEF_MAX_CODE_POINTS` en
+-- packages/protocol/src/schemas.ts (esquema del sobre, store y adapter-sdk). Si se cambia acá,
+-- se cambia allá en el mismo lote — y al revés no: esta columna sólo se mueve con migración.
+--
+-- La unidad es `char_length`, o sea PUNTOS DE CÓDIGO, no unidades UTF-16. Un emoji fuera del BMP
+-- vale 1 acá y 2 para `String.length` de JS. Toda capa que cuente en UTF-16 abre una franja donde
+-- el brief se guarda pero el sobre de la entrega se rechaza entero y el alias queda SORDO.
 ALTER TABLE agents
   ADD CONSTRAINT agents_role_brief_len CHECK (
     role_brief IS NULL OR char_length(role_brief) BETWEEN 1 AND 1200

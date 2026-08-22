@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { isAgentToAgentBody, isAmbiguousAckErrorCode } from "@cauce/protocol";
+import {
+  clampToRoleBriefLimit, isAgentToAgentBody, isAmbiguousAckErrorCode,
+} from "@cauce/protocol";
 import type { InboxRecord, SessionOrigin } from "./durable-store.js";
 import { DurableStore, sanitizeSessionOrigin } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
@@ -1228,8 +1230,16 @@ function executionBudgetFor(
  * en el JSON del TRUSTED DELIVERY CONTEXT. Un rol nulo explícito le diría al agente que su rol es
  * "ninguno", que no es lo mismo que "este store todavía no lo manda".
  *
- * El recorte a 1200 espeja el CHECK de la migración y el tope del esquema: el sobre ya viene
- * validado, pero el SDK no asume que el único emisor sea un store de esta versión.
+ * El recorte espeja el CHECK de la migración y el tope del esquema a través de
+ * `clampToRoleBriefLimit` (@cauce/protocol), que es la MISMA constante que usan el store y el
+ * sobre: el sobre ya viene validado, pero el SDK no asume que el único emisor sea un store de
+ * esta versión.
+ *
+ * El recorte se delega en vez de hacerse acá con `trimmed.slice(0, 1200)` porque `slice` indexa
+ * unidades UTF-16: sobre un brief de 1199 letras + un emoji cortaba el par suplente por la mitad
+ * y dejaba un surrogate alto suelto, que al serializar el TRUSTED DELIVERY CONTEXT a UTF-8 viaja
+ * como U+FFFD. El agente leería su propio rol terminado en un carácter roto. `clampToRoleBriefLimit`
+ * recorta por puntos de código, donde el emoji es indivisible.
  */
 function selfRoleFromDelivery(delivery: Delivery): { self_role?: string } {
   const forwardCompatible = delivery as Delivery & { readonly self_role?: unknown };
@@ -1237,7 +1247,7 @@ function selfRoleFromDelivery(delivery: Delivery): { self_role?: string } {
   if (typeof candidate !== "string") return {};
   const trimmed = candidate.trim();
   if (trimmed.length === 0) return {};
-  return { self_role: trimmed.slice(0, 1200) };
+  return { self_role: clampToRoleBriefLimit(trimmed) };
 }
 
 function routingTargetsFromDelivery(delivery: Delivery): readonly {

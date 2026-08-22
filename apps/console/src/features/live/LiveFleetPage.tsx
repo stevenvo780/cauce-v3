@@ -135,6 +135,17 @@ export function LiveFleetPage() {
     () => leerQuery(),
   );
 
+  /**
+   * Los roles a medio redactar, POR ALIAS (`tenant/alias`), fuera del cajón.
+   *
+   * La pestaña «Rol» se desmonta al cambiar de pestaña y al cerrar el cajón —los dos gestos que
+   * un operador hace justamente mientras redacta, para ir a mirar qué está haciendo el bot—, así
+   * que el borrador no puede vivir dentro de ella: se perdía entero y sin aviso. Indexado por
+   * alias porque el texto es de un bot concreto: pasar a otro agente tiene que empezar en blanco,
+   * nunca heredar el rol que se estaba escribiendo para el anterior.
+   */
+  const [borradoresRol, setBorradoresRol] = useState<Record<string, string>>({});
+
   const memoryRef = useRef<FleetMemory>({});
   const [pulses, setPulses] = useState<PulseMap>({});
 
@@ -575,6 +586,17 @@ export function LiveFleetPage() {
           view={detail}
           tab={drawer.tab}
           traceId={drawer.trace}
+          borradorRol={borradoresRol[drawer.key]}
+          onBorradorRol={(texto) => setBorradoresRol((actuales) => {
+            // Descartar el borrador borra la entrada en vez de dejarla vacía: una cadena vacía
+            // guardada significaría «quiero dejar a este alias sin rol», que no es lo mismo.
+            if (texto === undefined) {
+              const resto = { ...actuales };
+              delete resto[drawer.key];
+              return resto;
+            }
+            return { ...actuales, [drawer.key]: texto };
+          })}
           onTab={(tab) => { setDrawer((current) => (current ? { ...current, tab } : current)); escribirQuery(drawer.key, tab, drawer.trace); }}
           onTrace={(trace) => { setDrawer((current) => (current ? { ...current, trace } : current)); escribirQuery(drawer.key, drawer.tab, trace); }}
           onClose={cerrarCajon}
@@ -619,7 +641,7 @@ function leerQuery(): { key: string; tab: DrawerTab; trace?: string } | null {
   const key = params.get('agente');
   if (!key) return null;
   const tab = params.get('pestana');
-  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'cadena'];
+  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'cadena', 'rol'];
   return {
     key,
     tab: valida.includes(tab as DrawerTab) ? tab as DrawerTab : 'ahora',
