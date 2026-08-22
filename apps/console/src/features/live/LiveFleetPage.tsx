@@ -393,6 +393,10 @@ export function LiveFleetPage() {
       for (const room of tenant.rooms ?? []) {
         for (const member of room.members ?? []) {
           if (!member.alias || !tenant.id) continue;
+          // Sólo las membresías HABILITADAS. Una deshabilitada es una baja que alguien dio a
+          // propósito y que la base conserva porque el historial de mensajes la referencia; no
+          // es deriva, y contarla convertiría cada retiro correcto en una alarma permanente.
+          if (member.enabled === false) continue;
           const key = `${tenant.id}/${member.alias}`;
           if (vistos.has(key) || conActividad.has(key)) continue;
           vistos.add(key);
