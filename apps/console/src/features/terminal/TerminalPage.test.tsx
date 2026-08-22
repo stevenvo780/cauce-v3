@@ -348,3 +348,38 @@ it('surfaces a 409 conflict from the gateway without opening any socket', async 
   expect(await within(dialog).findByText('agent_offline')).toBeInTheDocument();
   expect(StubWebSocket.instances).toHaveLength(0);
 });
+
+/**
+ * 🔴 **La peor de las tres mentiras del 2026-08-22.** Con una cuenta sin permiso `control`,
+ * `GET /v3/console/terminal/capability` responde 403 —el gate corre antes de mirar el backend— y
+ * la pantalla decía «El relay de terminales no está desplegado en este stack. (HTTP 403 al
+ * consultarlo.)» con el relay desplegado y sano. Se mide el aviso que el operador lee, no la
+ * función pura: el título del cartel contaba la misma mentira que el cuerpo.
+ */
+it('con un 403 dice que falta el permiso y NUNCA que el relay no está desplegado', async () => {
+  server.use(
+    http.get('http://localhost/v3/console/access', () => HttpResponse.json({
+      subject: 'Miguel:janus', roles: ['agent'], permissions: ['message.publish'],
+    })),
+    http.get('http://localhost/v3/console/terminal/capability', () => HttpResponse.json(
+      { error: 'forbidden', message: 'control permission is required' }, { status: 403 },
+    )),
+  );
+  renderWithApi(<TerminalPage />);
+
+  expect(await screen.findByText('Ultimate Terminal necesita permiso de control')).toBeInTheDocument();
+  expect(screen.getByText(/no tiene permiso de control sobre esta flota/)).toBeInTheDocument();
+  expect(screen.getByText(/lo que falta es el permiso/)).toBeInTheDocument();
+  expect(screen.queryByText(/no está desplegado en este stack/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/HTTP 403 al consultarlo/)).not.toBeInTheDocument();
+  expect(screen.queryByText('Canal PTY no disponible en este stack')).not.toBeInTheDocument();
+}, 20_000);
+
+/** El control positivo del caso anterior: un 501 SÍ significa que no está desplegado. */
+it('con un 501 sigue diciendo, con el título de siempre, que el canal no está en este stack', async () => {
+  server.use(http.get('http://localhost/v3/console/terminal/capability', () => new HttpResponse(null, { status: 501 })));
+  renderWithApi(<TerminalPage />);
+
+  expect(await screen.findByText('Canal PTY no disponible en este stack')).toBeInTheDocument();
+  expect(screen.queryByText('Ultimate Terminal necesita permiso de control')).not.toBeInTheDocument();
+}, 20_000);

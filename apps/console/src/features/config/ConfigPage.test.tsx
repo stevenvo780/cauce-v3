@@ -906,3 +906,52 @@ it('FAMILIA 6: un gateway que no publica el registro de agentes no inventa un ca
   expect(await screen.findByText(/no publica el registro de agentes/i)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /aplicar el rol a ese bot/i })).not.toBeInTheDocument();
 });
+
+/**
+ * 🔴 **`/config` abierto por marcador sin permiso `control`.**
+ *
+ * La barra lateral ya decía la verdad —entrada inerte con `CONFIG_SIN_CONTROL_REASON`— pero quien
+ * llega por URL directa se salta el menú entero, y la página le contestaba «No se pudo leer Cauce
+ * V3 / Forbidden / Reintentar». Cauce se leía perfectamente; lo que faltaba era el permiso.
+ */
+describe('llegar a /config por URL directa sin permiso de control', () => {
+  function servir403() {
+    server.use(
+      http.get('http://localhost/v3/console/config', () => HttpResponse.json(
+        { error: 'forbidden', message: 'control permission is required' }, { status: 403 },
+      )),
+      http.get('http://localhost/v3/console/access', () => HttpResponse.json({
+        subject: 'Miguel:janus', roles: ['agent'], permissions: ['message.publish'],
+      })),
+    );
+  }
+
+  it('dice LO MISMO que la barra lateral, y no que no se pudo leer Cauce', async () => {
+    servir403();
+    renderWithApi(<ConfigPage />);
+
+    expect(await screen.findByText(CONFIG_SIN_CONTROL_REASON)).toBeInTheDocument();
+    expect(screen.queryByText('No se pudo leer Cauce V3')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reintentar/i })).not.toBeInTheDocument();
+  });
+
+  it('cita el 403 crudo del servidor y ofrece una salida real en vez de un reintento imposible', async () => {
+    servir403();
+    renderWithApi(<ConfigPage />);
+
+    expect(await screen.findByText(/El servidor contestó 403/)).toBeInTheDocument();
+    expect(screen.getByText('control permission is required')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /ir a la portada/i })).toHaveAttribute('href', '/');
+  });
+
+  it('un fallo que NO es de permiso sigue cayendo en el error genérico con su reintento', async () => {
+    server.use(http.get('http://localhost/v3/console/config', () => HttpResponse.json(
+      { error: 'internal', message: 'la base no responde' }, { status: 500 },
+    )));
+    renderWithApi(<ConfigPage />);
+
+    expect(await screen.findByText('No se pudo leer Cauce V3')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
+    expect(screen.queryByText(CONFIG_SIN_CONTROL_REASON)).not.toBeInTheDocument();
+  });
+});

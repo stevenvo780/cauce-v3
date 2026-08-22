@@ -96,7 +96,15 @@ export function TerminalPage() {
       {relayUnavailable ? (
         <div className="terminal-relay-notice" role="status">
           <TerminalSquare size={17} aria-hidden="true" />
-          <div><strong>Canal PTY no disponible en este stack</strong><p>{relay.reason}</p></div>
+          {/* El TÍTULO también tiene que decir la verdad: con un 403 el canal existe y lo que falta
+              es el permiso, así que «no disponible en este stack» era la misma mentira que el
+              cuerpo. Ver `TerminalRelayCause` en relay-status.ts. */}
+          <div>
+            <strong>{relay.cause === 'sin-permiso'
+              ? 'Ultimate Terminal necesita permiso de control'
+              : 'Canal PTY no disponible en este stack'}</strong>
+            <p>{relay.reason}</p>
+          </div>
         </div>
       ) : null}
 

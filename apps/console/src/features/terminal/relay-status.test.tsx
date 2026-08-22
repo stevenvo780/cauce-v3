@@ -2,10 +2,12 @@ import { screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
+import { ApiError } from '../../api/client';
 import {
   CHECKING_RELAY_STATE,
   deriveTerminalRelayState,
   TERMINAL_RELAY_NOT_DEPLOYED_REASON,
+  TERMINAL_RELAY_SIN_PERMISO_REASON,
   useTerminalRelayStatus,
 } from './relay-status';
 
@@ -25,12 +27,12 @@ describe('deriveTerminalRelayState', () => {
 
   it('is unavailable on a clean available:false payload and keeps the server-declared reason', () => {
     expect(deriveTerminalRelayState({ available: false, reason: 'Backend PTY no instalado en este entorno' }, undefined))
-      .toEqual({ status: 'unavailable', reason: 'Backend PTY no instalado en este entorno' });
+      .toEqual({ status: 'unavailable', cause: 'no-desplegado', reason: 'Backend PTY no instalado en este entorno' });
   });
 
   it('falls back to the doctrine phrase when the server declares available:false with no reason', () => {
     expect(deriveTerminalRelayState({ available: false }, undefined))
-      .toEqual({ status: 'unavailable', reason: TERMINAL_RELAY_NOT_DEPLOYED_REASON });
+      .toEqual({ status: 'unavailable', cause: 'no-desplegado', reason: TERMINAL_RELAY_NOT_DEPLOYED_REASON });
   });
 
   it('treats a malformed/ambiguous available value as unavailable, never as available', () => {
@@ -46,6 +48,42 @@ describe('deriveTerminalRelayState', () => {
 
   it('never reports available on an error, even if a stale capability payload is also passed', () => {
     expect(deriveTerminalRelayState({ available: true }, new Error('network down')).status).toBe('unavailable');
+  });
+
+  /**
+   * El defecto medido el 2026-08-22: con una cuenta sin `control`, la ruta contesta 403 —el gate
+   * corre ANTES de mirar el backend PTY— y la consola lo contaba como «no está desplegado».
+   */
+  describe('un 403 es una falta de permiso, NUNCA una ausencia de relay', () => {
+    it('lo clasifica como sin-permiso y no dice que el relay no está desplegado', () => {
+      const state = deriveTerminalRelayState(undefined, new ApiError('control permission is required', 403, 'forbidden'));
+      expect(state.status).toBe('unavailable');
+      expect(state.cause).toBe('sin-permiso');
+      expect(state.reason).toBe(TERMINAL_RELAY_SIN_PERMISO_REASON);
+      expect(state.reason).not.toContain(TERMINAL_RELAY_NOT_DEPLOYED_REASON);
+      expect(state.reason).not.toContain('HTTP 403');
+    });
+
+    it('dice, con esas palabras, que el relay puede estar desplegado y que lo que falta es el permiso', () => {
+      const state = deriveTerminalRelayState(undefined, new ApiError('forbidden', 403));
+      expect(state.reason).toContain('no tiene permiso de control');
+      expect(state.reason).toContain('lo que falta es el permiso');
+    });
+
+    it('sigue diciendo «no desplegado» para el 501 que sí lo significa, ya normalizado a available:false', () => {
+      const state = deriveTerminalRelayState({ available: false, reason: 'Backend PTY no disponible' }, undefined);
+      expect(state.cause).toBe('no-desplegado');
+    });
+
+    it('un 404 y un 501 nunca se confunden con una falta de permiso', () => {
+      expect(deriveTerminalRelayState(undefined, new ApiError('not found', 404)).cause).toBe('no-desplegado');
+      expect(deriveTerminalRelayState(undefined, new ApiError('not implemented', 501)).cause).toBe('no-desplegado');
+    });
+
+    it('no declara causa cuando el relay está disponible ni mientras se está comprobando', () => {
+      expect(deriveTerminalRelayState({ available: true }, undefined).cause).toBeUndefined();
+      expect(deriveTerminalRelayState(undefined, undefined).cause).toBeUndefined();
+    });
   });
 });
 

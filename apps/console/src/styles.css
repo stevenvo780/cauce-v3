@@ -158,6 +158,9 @@ th { padding: 11px 12px; border-bottom: 1px solid var(--border-strong); color: v
 td { padding: 14px 12px; border-bottom: 1px solid rgb(34 50 76 / 65%); color: #c7d2e4; vertical-align: middle; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: rgb(27 43 67 / 35%); }
+/* La fila a la que llegó un enlace profundo (`/queues?delivery=`). El borde lateral es lo que la
+   distingue: el color de fondo solo no sobrevive al `:hover` de la fila de al lado. */
+tbody tr.fila-enfocada { background: var(--blue-dim); box-shadow: inset 3px 0 0 var(--blue); }
 .identity-cell, .inline-icon { display: flex; align-items: center; gap: 8px; }
 .icon-box { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; background: var(--blue-dim); color: var(--blue); }
 .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .75rem; }

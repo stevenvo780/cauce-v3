@@ -80,3 +80,18 @@ export function describeConfigError(
   }
   return { conflict: false, message: error instanceof Error ? error.message : fallback };
 }
+
+/**
+ * **Un 403 al LEER la configuración es una falta de permiso, no una caída del control plane.**
+ *
+ * `GET /v3/console/config` exige `requireOperatorPermission(actor,'control')`. La barra lateral ya
+ * lo sabía desde el 2026-08-22 y dejaba la entrada inerte con el motivo escrito
+ * (`configNavAvailability`), pero quien llegaba a `/config` por un marcador o pegando la URL se
+ * saltaba el menú entero y aterrizaba en el `ErrorState` genérico: «No se pudo leer Cauce V3 /
+ * Forbidden / Reintentar». Tres mentiras en una línea —Cauce se lee perfectamente, «Forbidden» no
+ * explica nada, y reintentar no puede cambiar un permiso— para el mismo hecho que la barra contaba
+ * bien tres centímetros a la izquierda.
+ */
+export function esNegativaDeControl(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 403;
+}

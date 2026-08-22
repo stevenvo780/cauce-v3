@@ -17,13 +17,45 @@ import type { TerminalCapability } from '../../api/types';
 
 export type TerminalRelayStatus = 'checking' | 'available' | 'unavailable';
 
+/**
+ * 🔴 **Por qué no se puede usar la terminal. Añadido el 2026-08-22, y por una mentira medida.**
+ *
+ * Con una cuenta SIN permiso `control`, `GET /v3/console/terminal/capability` responde **403**:
+ * la ruta exige `requireOperatorPermission(actor, 'control')` ANTES de mirar si el backend PTY
+ * está configurado (`services/gateway/src/app.ts`). Es el MISMO gate que `/v3/console/config`.
+ * Esta función leía cualquier error como ausencia y a Miguel le decía, palabra por palabra, «El
+ * relay de terminales no está desplegado en este stack. (HTTP 403 al consultarlo.)» con el relay
+ * desplegado y sano al otro lado. A `/config`, con el mismo 403, la consola ya le decía la verdad.
+ *
+ * Se distinguen sólo las dos causas que la respuesta permite distinguir:
+ * - `sin-permiso`: 403. Es del RBAC, no de la topología.
+ * - `no-desplegado`: 404/501 —ya normalizados a `available:false` por `getTerminalCapability`— y
+ *   un `available:false` declarado por el servidor.
+ *
+ * ⚠️ Un 502/503 o un fallo de red **siguen** leyéndose como `no-desplegado`, que es lo que esta
+ * función hacía desde `0a1d0e3`: esas respuestas no permiten saber si el relay existe. No se
+ * inventa una tercera causa para taparlo.
+ */
+export type TerminalRelayCause = 'no-desplegado' | 'sin-permiso';
+
 export interface TerminalRelayState {
   status: TerminalRelayStatus;
   /** Operator-facing, one-line explanation. Always set once `status` leaves `checking`. */
   reason: string;
+  /** Siempre presente cuando `status` es `unavailable`; nunca en los otros dos. */
+  cause?: TerminalRelayCause;
 }
 
 export const TERMINAL_RELAY_NOT_DEPLOYED_REASON = 'El relay de terminales no está desplegado en este stack.';
+
+/**
+ * Mismo reparto de palabras que `CONFIG_SIN_CONTROL_REASON` en `navigation.ts`, y a propósito:
+ * es el mismo permiso, negado por el mismo gate. Dos redacciones distintas para la misma negativa
+ * le harían creer al operador que son dos problemas.
+ */
+export const TERMINAL_RELAY_SIN_PERMISO_REASON =
+  'Tu cuenta no tiene permiso de control sobre esta flota: Ultimate Terminal es del dueño del bus. '
+  + 'El relay puede estar perfectamente desplegado; lo que falta es el permiso.';
 
 export const CHECKING_RELAY_STATE: TerminalRelayState = {
   status: 'checking',
@@ -43,8 +75,13 @@ export function deriveTerminalRelayState(
   if (error) {
     const status = error instanceof ApiError ? error.status : undefined;
     const detail = error instanceof Error && error.message ? error.message : undefined;
+    // El 403 es del RBAC y NO dice nada sobre si el relay está desplegado: el gate corre antes.
+    if (status === 403) {
+      return { status: 'unavailable', cause: 'sin-permiso', reason: TERMINAL_RELAY_SIN_PERMISO_REASON };
+    }
     return {
       status: 'unavailable',
+      cause: 'no-desplegado',
       reason: status
         ? `${TERMINAL_RELAY_NOT_DEPLOYED_REASON} (HTTP ${status} al consultarlo.)`
         : detail
@@ -54,7 +91,11 @@ export function deriveTerminalRelayState(
   }
   if (!capability) return CHECKING_RELAY_STATE;
   if (capability.available !== true) {
-    return { status: 'unavailable', reason: capability.reason?.trim() || TERMINAL_RELAY_NOT_DEPLOYED_REASON };
+    return {
+      status: 'unavailable',
+      cause: 'no-desplegado',
+      reason: capability.reason?.trim() || TERMINAL_RELAY_NOT_DEPLOYED_REASON,
+    };
   }
   return { status: 'available', reason: capability.reason?.trim() || 'Relay de terminales disponible.' };
 }

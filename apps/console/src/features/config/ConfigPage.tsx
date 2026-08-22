@@ -1,4 +1,4 @@
-import { Braces, RotateCcw, Save, SearchCheck } from 'lucide-react';
+import { Braces, RotateCcw, Save, SearchCheck, ShieldOff } from 'lucide-react';
 import { useMemo, useState, type SyntheticEvent } from 'react';
 import { useApi } from '../../api/context';
 import type { AnyConfigResource, ConfigAction, ConfigMutation, ConfigResource } from '../../api/types';
@@ -8,13 +8,13 @@ import {
   Time, Unknown
 } from '../../components/ui';
 import { permissionState } from '../../lib';
-import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
+import { CONFIG_SIN_CONTROL_REASON, onNavClick } from '../../navigation';
 import { AltaRapida } from './AltaRapida';
 import { AREA_POR_DEFECTO, agruparPorArea, type ConfigAreaId } from './areas';
 import { CollectionTable, type AccionPendiente, type AvisoDeColeccion } from './CollectionTable';
 import { configCollections } from './collections';
 import {
-  describeConfigError, textoRecarga,
+  describeConfigError, esNegativaDeControl, textoRecarga,
   type CaminoDeCambio, type ConfigChangeOutcome, type EstadoRecarga,
 } from './config-change';
 import { RolesPanel } from './RolesPanel';
@@ -375,7 +375,13 @@ export function ConfigPage() {
   }
 
   if (config.loading && !config.data) return <LoadingState label="Leyendo configuración versionada…" />;
-  if (config.error && !config.data) return <ErrorState error={config.error} onRetry={config.reload} />;
+  // Un 403 NO es una caída: es el mismo permiso que la barra lateral ya explica. Ver
+  // `esNegativaDeControl` y `SinPermisoDeControl`.
+  if (config.error && !config.data) {
+    return esNegativaDeControl(config.error)
+      ? <SinPermisoDeControl detalle={config.error.message} />
+      : <ErrorState error={config.error} onRetry={config.reload} />;
+  }
 
   return <>
     <PageHeader eyebrow="Atomic control plane" title="Configuración & rollback" description="Cada colección como tabla, las operaciones frecuentes a un clic con confirmación, y el JSON crudo detrás de un desplegable." actions={<RefreshButton onClick={config.reload} loading={config.loading} />} />
@@ -526,4 +532,32 @@ export function ConfigPage() {
       </> : null}
     </div>
   </>;
+}
+
+/**
+ * Lo que ve quien llega a `/config` por un marcador sin permiso `control`.
+ *
+ * Dice **exactamente** `CONFIG_SIN_CONTROL_REASON`, la misma frase que la barra lateral pone en la
+ * entrada inerte: dos redacciones distintas para la misma negativa le harían creer al operador que
+ * son dos problemas. No hay botón «Reintentar» —repetir la petición no puede conceder un permiso, y
+ * ofrecerlo es prometer una salida que no existe— y sí hay una salida real hacia la portada.
+ *
+ * El mensaje crudo del servidor se muestra igual, en segundo plano: es lo que hay que citar para
+ * pedir el permiso, y esconderlo dejaría al operador sin nada que llevarle a quien administra.
+ */
+function SinPermisoDeControl({ detalle }: { detalle: string }) {
+  return (
+    <div className="state-card" role="note">
+      <ShieldOff aria-hidden="true" />
+      <div>
+        <strong>«Configuración y altas» necesita permiso de control</strong>
+        <p>{CONFIG_SIN_CONTROL_REASON}</p>
+        <p className="muted">
+          El servidor contestó 403: <span className="mono">{detalle || 'sin mensaje'}</span>. Reintentar
+          no cambia nada: falta el permiso, no se cayó Cauce.
+        </p>
+      </div>
+      <a className="button secondary" href="/" onClick={(event) => onNavClick(event, '/')}>Ir a la portada</a>
+    </div>
+  );
 }

@@ -40,13 +40,19 @@ const cancellableStates: ReadonlySet<string> = new Set(['pending', 'retry', 'lea
  * siguiente fetch. Un replay «aplicado» pintado en el browser sin confirmación del servidor es
  * exactamente la clase de mentira que esta consola existe para no contar.
  */
-export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, caption }: {
+export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, caption, resaltada }: {
   rows: readonly QueueItem[];
   canReplay: boolean;
   canCancel: boolean;
   onChanged: () => void;
   empty?: string;
   caption?: string;
+  /**
+   * Entrega a la que llegó un enlace profundo (`/queues?delivery=`). La fila se marca con
+   * `aria-current="true"` además de la clase: filtrar la tabla a una sola fila deja al lector de
+   * pantalla sin forma de saber que ESA es la que se pidió, porque «una sola fila» no se anuncia.
+   */
+  resaltada?: string;
 }) {
   const api = useApi();
   const [replaying, setReplaying] = useState<string>();
@@ -99,7 +105,12 @@ export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, ca
                 const deliveryId = item.delivery_id;
                 const replayable = deliveryId != null && state != null && replayableStates.has(state);
                 const cancellable = deliveryId != null && state != null && cancellableStates.has(state);
-                return <tr key={deliveryId ?? index}>
+                const enfocada = resaltada != null && deliveryId === resaltada;
+                return <tr
+                  key={deliveryId ?? index}
+                  className={enfocada ? 'fila-enfocada' : undefined}
+                  aria-current={enfocada ? true : undefined}
+                >
                   <td><span className="mono">{compactId(deliveryId)}</span><small className="subline">msg {compactId(item.message_id)}</small></td>
                   <td><strong><Unknown value={item.recipient_alias} /></strong><small className="subline"><Unknown value={item.tenant_id} /></small></td>
                   <td><span className="inline-icon"><Rows3 size={15} aria-hidden="true" /><Unknown value={safeJobLane(item.lane)} /></span></td>
