@@ -28,6 +28,7 @@ import {
   type LiveState,
   type PulseMap,
 } from './agent-state';
+import { derivaDelRegistro } from './deriva';
 import { LiveHypergraph, type HypergraphLayer } from './LiveHypergraph';
 import './live.css';
 import './live-hypergraph.css';
@@ -376,36 +377,24 @@ export function LiveFleetPage() {
   }, [views, stateFilter, query, tenantFilter]);
 
   /**
-   * Membresías que el registro de agentes NO conoce. Ya no son muñecos: son DERIVA.
+   * **La deriva entre el registro y las salas, en las DOS direcciones.**
    *
-   * Antes esto contaba «los que el mapa dibuja y la actividad no reporta», porque el mapa se
-   * dibujaba desde las membresías. Ahora el mapa se dibuja desde el registro, así que esta cuenta
-   * cambió de significado sin cambiar de fórmula: es la diferencia simétrica entre `memberships` y
-   * `agents`, es decir la medida exacta del defecto que hizo falta arreglar. Se deja en pantalla
-   * a propósito — si vuelve a subir, alguien dio de alta o de baja tocando una sola de las dos
-   * tablas, y este número lo dice el mismo día y no dentro de un mes.
+   * Lo que había acá se llamaba `sinReportar`, decía en su propio comentario que era «la
+   * diferencia simétrica entre `memberships` y `agents`» y NO lo era: el bucle recorría sólo las
+   * membresías. La otra mitad —un alias del registro sin una sola membresía habilitada, que es
+   * literalmente el caso `gaia`— valía cero siempre. El defecto que obligó a rehacer este mapa
+   * quedaba, después del arreglo, sin nadie que lo contara, y un cero se lee como «no hay deriva»,
+   * no como «no se miró». La cuenta vive ahora en `derivaDelRegistro`, que se puede probar en las
+   * dos direcciones sin montar la página.
+   *
+   * Se mide sobre el ALCANCE y no sobre `views` entera: con un cliente elegido, contar los alias
+   * de los otros cuatro como «sin sala» inventaría deriva que no existe, porque sus salas están
+   * fuera de `topologiaEnAlcance` a propósito.
    */
-  const sinReportar = useMemo(() => {
-    const conActividad = new Set(views.map((view) => view.key));
-    let total = 0;
-    for (const tenant of topologiaEnAlcance?.tenants ?? []) {
-      const vistos = new Set<string>();
-      for (const room of tenant.rooms ?? []) {
-        for (const member of room.members ?? []) {
-          if (!member.alias || !tenant.id) continue;
-          // Sólo las membresías HABILITADAS. Una deshabilitada es una baja que alguien dio a
-          // propósito y que la base conserva porque el historial de mensajes la referencia; no
-          // es deriva, y contarla convertiría cada retiro correcto en una alarma permanente.
-          if (member.enabled === false) continue;
-          const key = `${tenant.id}/${member.alias}`;
-          if (vistos.has(key) || conActividad.has(key)) continue;
-          vistos.add(key);
-          total += 1;
-        }
-      }
-    }
-    return total;
-  }, [views, topologiaEnAlcance]);
+  const deriva = useMemo(
+    () => derivaDelRegistro(alcance, topologiaEnAlcance),
+    [alcance, topologiaEnAlcance],
+  );
 
   const staleAfterMs = (intervalMs > 0 ? intervalMs : 30000) * STALE_FACTOR;
   const verdict = useMemo(
@@ -579,14 +568,29 @@ export function LiveFleetPage() {
               </Tooltip>
             );
           })}
-          {sinReportar > 0 ? (
+          {/* Los dos chips de DERIVA, uno por dirección. Antes había uno solo y el otro lado
+              valía cero siempre — ver `derivaDelRegistro`. Ninguno de los dos es una avería por
+              sí mismo; los dos significan lo mismo cuando SUBEN: alguien dio un alta o una baja
+              tocando una sola de las dos tablas. */}
+          {deriva.sinRegistro > 0 ? (
             <Tooltip
               focusable={false}
-              label="Alias con membresía en una sala que NO están en el registro de agentes. No se dibujan en el mapa —no se puede pintar el estado de algo que el plano de estado no conoce— y no son una avería por sí solos: los principales de operador (por ejemplo el recolector de cuotas) viven así a propósito. Si este número sube tras un alta o una baja, es que se tocó una sola de las dos tablas."
+              label="Alias con membresía habilitada en una sala que NO tienen fila en el registro de agentes. No son una avería por sí solos: los principales de operador (por ejemplo el recolector de cuotas) viven así a propósito. Si este número sube tras un alta o una baja, es que se tocó una sola de las dos tablas."
             >
-              <span className="live-tally-chip is-unreported">
+              <span className="live-tally-chip is-unreported" data-testid="deriva-sin-registro">
                 <span className="live-tally-swatch" aria-hidden="true" />
-                Fuera del registro <strong>{sinReportar}</strong>
+                Fuera del registro <strong>{deriva.sinRegistro}</strong>
+              </span>
+            </Tooltip>
+          ) : null}
+          {deriva.sinSala > 0 ? (
+            <Tooltip
+              focusable={false}
+              label="Alias que SÍ están en el registro de agentes y no tienen ni una membresía habilitada. Se dibujan igual, en el recuadro «sin sala» —esconderlos fue el fallo que dejó a `gaia` invisible el día de su alta— pero nadie los contaba: alta en el registro sin sala es media alta."
+            >
+              <span className="live-tally-chip is-unreported" data-testid="deriva-sin-sala">
+                <span className="live-tally-swatch" aria-hidden="true" />
+                Sin sala <strong>{deriva.sinSala}</strong>
               </span>
             </Tooltip>
           ) : null}

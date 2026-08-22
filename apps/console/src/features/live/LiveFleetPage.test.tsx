@@ -203,6 +203,90 @@ describe('el mapa', () => {
     });
   });
 
+  /**
+   * Los dos chips de DERIVA, montados: uno por dirección.
+   *
+   * El contador anterior prometía en su comentario «la diferencia simétrica entre `memberships` y
+   * `agents`» y recorría SÓLO las membresías, así que `sinSala` valía cero para siempre. Ver
+   * `deriva.ts`.
+   *
+   * 🔴 La medida de cuánto importaba: el fixture de esta misma suite YA traía el caso —`vulcano`
+   * está en `agents` y ninguna sala lo declara— y ninguna prueba lo notaba, porque el chip que
+   * debía contarlo no miraba esa dirección.
+   */
+  it('«Sin sala» cuenta el alias del registro sin una sola membresía habilitada — el caso gaia', async () => {
+    conActividad(mockActivity());
+    renderWithApi(<LiveFleetPage />);
+    await screen.findByLabelText('Veredicto de la flota');
+
+    // Uno, y es `vulcano`: el caso que el fixture traía desde antes de este arreglo.
+    expect(await screen.findByTestId('deriva-sin-sala')).toHaveTextContent(/Sin sala\s*1/);
+  });
+
+  it('dar de alta en el registro y no darle sala sube «Sin sala» el mismo día', async () => {
+    // El caso `gaia` literal: alta en `agents`, cero membresías. Es un alta a medias, y hasta el
+    // 2026-08-22 la pantalla que existe para verla no decía una palabra.
+    const base = mockActivity();
+    const primero = (base.agents ?? [])[0];
+    conActividad({
+      ...base,
+      agents: [
+        ...(base.agents ?? []),
+        {
+          ...primero, alias: 'gaia', tenant_id: 'Miguel', display_name: 'gaia',
+          registered: true, agent_enabled: true, rooms: [], flags: [], in_flight: 0, queued: 0,
+        },
+      ],
+    });
+    renderWithApi(<LiveFleetPage />);
+    await screen.findByLabelText('Veredicto de la flota');
+
+    // Dos: el `vulcano` que ya estaba, más `gaia`.
+    expect(await screen.findByTestId('deriva-sin-sala')).toHaveTextContent(/Sin sala\s*2/);
+  });
+
+  it('«Fuera del registro» cuenta la membresía habilitada sin fila en el registro', async () => {
+    // La otra dirección: `quota-collector` es un principal de operador con membresía y sin fila en
+    // `agents`. No es una avería —vive así a propósito— pero si SUBE es que alguien dio un alta o
+    // una baja tocando una sola de las dos tablas.
+    conActividad(mockActivity());
+    server.use(http.get('http://localhost/v3/console/topology', () => HttpResponse.json({
+      ...topology,
+      tenants: (topology.tenants ?? []).map((tenant) => (tenant.id !== 'Steven' ? tenant : {
+        ...tenant,
+        rooms: (tenant.rooms ?? []).map((room, indice) => (indice !== 0 ? room : {
+          ...room,
+          members: [...(room.members ?? []), { alias: 'quota-collector', enabled: true }],
+        })),
+      })),
+    })));
+    renderWithApi(<LiveFleetPage />);
+    await screen.findByLabelText('Veredicto de la flota');
+
+    expect(await screen.findByTestId('deriva-sin-registro')).toHaveTextContent(/Fuera del registro\s*1/);
+    // Y no se contamina la otra dirección: `vulcano` sigue siendo uno solo.
+    expect(await screen.findByTestId('deriva-sin-sala')).toHaveTextContent(/Sin sala\s*1/);
+  });
+
+  it('un alta COMPLETA no produce deriva por ninguno de los dos lados', async () => {
+    // El control negativo de las tres pruebas de arriba: si los chips salieran por algo que no es
+    // la deriva, este caso los delataría. `janus` está en `agents` y en `grp.miguel`, y no hay
+    // ninguna otra membresía ni ningún otro participante.
+    const base = mockActivity();
+    const soloConSala = (base.agents ?? []).filter((agent) => agent.alias === 'janus');
+    conActividad({ ...base, agents: soloConSala });
+    server.use(http.get('http://localhost/v3/console/topology', () => HttpResponse.json({
+      ...topology,
+      tenants: [{ id: 'Miguel', label: 'Miguel', rooms: [{ id: 'grp.miguel', label: 'grp.miguel', members: [{ alias: 'janus', enabled: true }] }] }],
+    })));
+    renderWithApi(<LiveFleetPage />);
+    await screen.findByLabelText('Veredicto de la flota');
+
+    await waitFor(() => expect(document.querySelectorAll('.lhg-bot').length).toBe(1));
+    expect(screen.queryByTestId('deriva-sin-registro')).toBeNull();
+    expect(screen.queryByTestId('deriva-sin-sala')).toBeNull();
+  });
+
   it('el globo del muñeco se abre CON EL FOCO DE TECLADO y cierra con Esc', async () => {
     // A4 del expediente. El `title` nativo del SVG nunca aparecía al tabular, así que quien
     // recorre el mapa con el teclado no tenía forma de leer qué hace cada agente.
@@ -520,7 +604,9 @@ describe('el selector de Cliente', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
-    const sumaChips = () => [...document.querySelectorAll('.live-tally-chip strong')]
+    // `:not(.is-unreported)` deja fuera los dos chips de DERIVA: no son estados, y sumarlos a la
+    // cinta mezclaría «cuántos alias hay en cada estado» con «cuántas altas están a medias».
+    const sumaChips = () => [...document.querySelectorAll('.live-tally-chip:not(.is-unreported) strong')]
       .reduce((total, chip) => total + Number(chip.textContent ?? 0), 0);
     await waitFor(() => expect(sumaChips()).toBe(15));
 

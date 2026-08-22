@@ -245,6 +245,21 @@ const ROUTE_ALIASES: Record<string, string> = {
 };
 
 /**
+ * **El mapa de rutas, expuesto para que una prueba lo recorra entero.**
+ *
+ * No es una comodidad de test: es la única forma de comprobar por TABLA —y no con casos sueltos
+ * escritos a mano— que cada entrada del menú y cada alias declarado llegan a una vista real. Los
+ * fallos de este router no se ven: un id que no está en `routes` cae al `fallback` sin un error,
+ * sin un log y sin cambiar de aspecto, y un alias encadenado (a → b → c) hace exactamente lo
+ * mismo porque `matchRoute` resuelve el mapa UNA sola vez. Las dos cosas se descubren haciendo
+ * clic, y en producción.
+ *
+ * Ver `App.invariantes.test.tsx`. Sólo lectura: nadie debe escribir en estas listas desde fuera.
+ */
+export const ROUTE_TABLE: readonly Readonly<Route>[] = routes;
+export const ROUTE_ALIAS_TABLE: Readonly<Record<string, string>> = ROUTE_ALIASES;
+
+/**
  * Lo que queda de `/fleet` cuando la URL no alcanza para identificar a un bot.
  *
  * `/fleet` a secas redirige a `/live`, y `/fleet/:tenant/:alias` abre el detalle. Entre medio está
