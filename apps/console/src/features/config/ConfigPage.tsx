@@ -10,13 +10,16 @@ import {
 import { permissionState } from '../../lib';
 import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
 import { AltaRapida } from './AltaRapida';
+import { AREA_POR_DEFECTO, agruparPorArea, type ConfigAreaId } from './areas';
 import { CollectionTable, type AccionPendiente, type AvisoDeColeccion } from './CollectionTable';
 import { configCollections } from './collections';
 import {
   describeConfigError, textoRecarga,
   type CaminoDeCambio, type ConfigChangeOutcome, type EstadoRecarga,
 } from './config-change';
+import { RolesPanel } from './RolesPanel';
 import { SpaceWizard } from './SpaceWizard';
+import './config.css';
 
 const templates: Record<ConfigResource, ConfigMutation> = {
   tenant: { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },
@@ -130,6 +133,15 @@ export function ConfigPage() {
   // una escritura se pinta junto al control que la disparó y sin abrir nada.
   const [avisoDeRollback, setAvisoDeRollback] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
   const [previewDeRollback, setPreviewDeRollback] = useState<string>();
+  // Mismo criterio que `avisoDeRollback`: el desenlace de aplicar un rol se pinta DENTRO de la
+  // pestaña «Roles de agente», que es donde está mirando quien apretó el botón. Escribirlo en
+  // `notice` lo mandaría al `<details>` del editor crudo, en otra pestaña, cerrado.
+  const [avisoDeRoles, setAvisoDeRoles] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
+  // La pestaña abierta. `/config` era UN scroll con dieciséis paneles seguidos —el alta, el wizard,
+  // el editor crudo, doce tablas y el audit trail— y para tocar una arista de ACL había que pasar
+  // por delante del pool de suscripciones de IA. Lo que cambia es el ORDEN, no el alcance: no se
+  // esconde ninguna colección, cada una tiene su pestaña y las desconocidas caen en «Otros».
+  const [area, setArea] = useState<ConfigAreaId>(AREA_POR_DEFECTO);
   // Con el permiso `unknown` —no se pudo leer el RBAC— la pantalla queda HABILITADA: ante la duda
   // no se le quita nada a nadie, y el servidor rechaza igual si no corresponde. Mismo criterio que
   // `configNavAvailability` y que el editor de rol declarado.
@@ -142,7 +154,27 @@ export function ConfigPage() {
     ? chainedRevision
     : snapshotRevision;
   const groups = useMemo(() => configCollections(config.data), [config.data]);
+  const areas = useMemo(() => agruparPorArea(groups), [groups]);
+  // Una pestaña que el snapshot dejó de justificar («Otros», al desaparecer la colección
+  // desconocida) no debe dejar la pantalla en blanco: se cae a la de por defecto.
+  const areaVisible = areas.some((entrada) => entrada.area.id === area) ? area : AREA_POR_DEFECTO;
+  const activa = areas.find((entrada) => entrada.area.id === areaVisible);
   const politicasDeRol = config.data?.role_policies ?? undefined;
+
+  /**
+   * Cambiar de pestaña anula la confirmación pendiente y borra los carteles de desenlace.
+   *
+   * Una confirmación describe UNA fila de UNA tabla y se pinta junto a ella; si el operador se va a
+   * otra pestaña, el `<pre>` que estaba leyendo deja de estar a la vista y volver más tarde le
+   * mostraría un «Confirmar» cuyo contenido ya no recuerda. Lo mismo con los verdes: valen para la
+   * pantalla que los produjo.
+   */
+  function irAArea(siguiente: ConfigAreaId) {
+    setArea(siguiente);
+    setPendiente(undefined);
+    setAvisoDeAccion(undefined);
+    setAvisoDeRoles(undefined);
+  }
 
   function selectTemplate(nextResource: ConfigResource, nextAction: ConfigAction) {
     // Cambiar de recurso puede dejar la acción fuera de lo que ese recurso admite (chain_policy
@@ -269,6 +301,29 @@ export function ConfigPage() {
   }
 
   /**
+   * Copia el texto de un rol a otro bot, por el MISMO camino versionado que todo lo demás.
+   *
+   * No previsualiza y es a propósito: la mutación tiene un solo campo y el operador no escribió el
+   * JSON, así que no hay nada que revisar en él. Lo que sí hay es marcha atrás, y eso se le dice
+   * con todas las letras en el mensaje: dónde deshacerlo.
+   */
+  async function aplicarRol(mutation: ConfigMutation, descripcion: string) {
+    setAvisoDeRoles(undefined);
+    // `directo`: este botón no previsualiza, así que un 409 no puede mandar a «volver a
+    // previsualizar» — manda a releer el catálogo y volver a elegir.
+    const outcome = await change(mutation, false, 'directo');
+    if (!outcome.ok) {
+      setAvisoDeRoles({ text: `NO se aplicó «${descripcion}»: ${outcome.message}${textoRecarga(outcome.recarga)}`, tone: 'error' });
+      return;
+    }
+    setAvisoDeRoles({
+      tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
+      text: `${descripcion}: revisión ${outcome.result.revision ?? 'UNKNOWN'}`
+        + `${textoRecarga(outcome.recarga)} Se puede deshacer desde «Historial y JSON».`,
+    });
+  }
+
+  /**
    * Deshacer una revisión desde el audit trail. Todo lo que dice se escribe en `avisoDeRollback` y
    * `previewDeRollback`, que se pintan DENTRO del propio panel del audit trail, junto a los botones
    * que lo dispararon: `notice`/`preview` viven dentro del `<details>` del editor crudo y ahí un
@@ -341,8 +396,50 @@ export function ConfigPage() {
       ÚLTIMA lectura buena, no lo que el servidor tiene ahora.
     </p> : null}
 
-    <div className="config-grid">
-      {groups.map((coleccion) => {
+    {/* Las pestañas son botones de verdad con `role="tab"`, no anclas ni `<details>`: el teclado y
+        el lector de pantalla tienen que poder decir cuál está abierta. La lista sale de `areas.ts`,
+        que la deriva del snapshot — una colección nueva del servidor cae en «Otros» y se ve igual,
+        en vez de quedar invisible detrás de un allowlist de la consola. */}
+    <div className="config-tabs" role="tablist" aria-label="Áreas de configuración">
+      {areas.map(({ area: entrada }) => <button
+        key={entrada.id}
+        type="button"
+        role="tab"
+        aria-selected={entrada.id === areaVisible}
+        className="config-tab"
+        onClick={() => irAArea(entrada.id)}
+      >{entrada.label}</button>)}
+    </div>
+
+    {/* La descripción del área va abierta, no en un tooltip: es lo primero que hay que leer al
+        entrar, y esconder detrás de un signo de interrogación justo lo que orienta sería repetir el
+        defecto que este cambio corrige. */}
+    {activa ? <p className="config-area-descripcion">{activa.area.descripcion}</p> : null}
+
+    <div className="config-area" role="tabpanel" aria-label={activa?.area.label ?? 'Configuración'}>
+      {/* «Alta rápida» y el wizard viven en «Espacios y miembros»: son exactamente las altas de
+          tenant, room, membership y agente que esa pestaña describe. No se movieron de la página,
+          se movieron de sitio DENTRO de la página, y la prueba dice en qué pestaña están. */}
+      {areaVisible === 'espacios' ? <>
+        <AltaRapida soloLectura={soloLectura} busy={busy} onChange={change} />
+        <SpaceWizard canWrite={!soloLectura} busy={busy} onChange={change} />
+      </> : null}
+
+      {areaVisible === 'roles' ? <>
+        {avisoDeRoles ? <p
+          className={avisoDeRoles.tone === 'error' ? 'notice error' : avisoDeRoles.tone === 'parcial' ? 'notice parcial' : 'notice success'}
+          role={avisoDeRoles.tone === 'success' ? 'status' : 'alert'}
+        >{avisoDeRoles.text}</p> : null}
+        <RolesPanel
+          {...(config.data ? { snapshot: config.data } : {})}
+          canWrite={!soloLectura}
+          busy={busy}
+          motivoSinEscritura={CONFIG_SIN_CONTROL_REASON}
+          onMutar={(mutation, descripcion) => void aplicarRol(mutation, descripcion)}
+        />
+      </> : null}
+
+      {(activa?.colecciones ?? []).map((coleccion) => {
         const pedido = pendiente?.coleccion === coleccion.key ? pendiente : undefined;
         // Una confirmación pendiente vale para la revisión sobre la que se pidió. Si el snapshot se
         // movió debajo —«Actualizar», u otra escritura— la fila que el operador leyó en el `<pre>`
@@ -381,11 +478,8 @@ export function ConfigPage() {
           onCancelar={() => setPendiente(undefined)}
         />;
       })}
-    </div>
 
-    <AltaRapida soloLectura={soloLectura} busy={busy} onChange={change} />
-    <SpaceWizard canWrite={!soloLectura} busy={busy} onChange={change} />
-
+      {areaVisible === 'historial' ? <>
     <Panel title="Audit trail de configuración" subtitle="Rollback crea una nueva revisión; el historial nunca se reescribe.">
       {/* El `oldValue` que el store guarda como inversa es la FILA ENTERA que había antes, no el
           campo que se tocó, aunque la mutación que se mandó fuera parcial. El operador no puede
@@ -429,5 +523,7 @@ export function ConfigPage() {
         {notice ? <p className={notice.tone === 'error' ? 'notice error' : notice.tone === 'parcial' ? 'notice parcial' : 'notice success'} role={notice.tone === 'success' ? 'status' : 'alert'}>{notice.text}</p> : null}
       </Panel>
     </details>
+      </> : null}
+    </div>
   </>;
 }

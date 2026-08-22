@@ -1,0 +1,96 @@
+/*
+ * Configuración en pestañas. Sigue el mismo vocabulario visual que el cajón de la flota
+ * (`.agent-drawer-tabs`) a propósito: dos formas distintas de dibujar una pestaña en la misma
+ * consola es una forma barata de que el operador crea que son cosas distintas.
+ *
+ * Acá SÓLO viven las reglas nuevas de las pestañas y del catálogo de roles. Todo lo que ya estaba
+ * (`.config-grid`, `.config-editor`, `.config-preview`, `.config-confirm`…) sigue en `styles.css`
+ * y no se toca: redefinirlo desde un fichero de feature crearía dos sitios donde cambiar lo mismo
+ * y uno de los dos se quedaría atrás.
+ */
+
+.config-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0 0 10px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2, #0a111d);
+}
+
+.config-tab {
+  padding: 7px 13px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.config-tab:hover { color: var(--text); }
+.config-tab[aria-selected='true'] { background: var(--surface-3, #131c2b); color: var(--text); }
+.config-tab:focus-visible { outline: 2px solid var(--accent, #5b9dff); outline-offset: 1px; }
+
+.config-area-descripcion {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.config-area { display: grid; gap: 16px; }
+.config-area > .panel { margin-bottom: 0; }
+
+/* --- Roles -------------------------------------------------------------------------------- */
+
+.rol-lista { display: grid; gap: 12px; margin: 12px 0 0; padding: 0; list-style: none; }
+
+.rol-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px 13px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2, #0a111d);
+}
+
+.rol-card header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rol-card h3 { margin: 0; font-size: 13.5px; }
+.rol-resumen-nota { margin: 0; font-size: 11.5px; }
+.rol-portadores { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 0; font-size: 12px; }
+.rol-portador { padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; font-family: "SFMono-Regular", Consolas, monospace; font-size: .68rem; }
+.rol-medidor { display: grid; gap: 2px; margin: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.rol-medidor[data-tone='ok'] { color: var(--muted); }
+.rol-medidor[data-tone='cerca'] { color: var(--amber, #d08700); }
+.rol-medidor[data-tone='pasado'] { color: var(--danger, #d64545); font-weight: 600; }
+.rol-texto summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.rol-texto pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: .7rem;
+  white-space: pre-wrap;
+}
+.rol-asignar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.rol-asignar label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.rol-sin-rol { display: grid; gap: 5px; margin: 0 0 10px; padding: 0; list-style: none; font-size: 12.5px; }
+
+@media (max-width: 900px) {
+  .config-tabs { overflow-x: auto; flex-wrap: nowrap; }
+}
+
+@media (prefers-color-scheme: light) {
+  .config-tabs { background: #f4f7fb; }
+  .config-tab[aria-selected='true'] { background: #e6eef8; }
+  .rol-card { background: #f8fafd; }
+}
