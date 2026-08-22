@@ -154,10 +154,15 @@ verificar() {
   remoto "
     set -euo pipefail
     cd '${compose_dir}'
-    # El env se carga TAMBIÉN acá. Sin él no hay COMPOSE_PROJECT_NAME ni CAUCE_RUNTIME_IMAGE, y
-    # compose falla al interpolar o deduce un proyecto que no existe: en los dos casos `ps -q`
-    # devuelve vacío y esta comprobación acusa un despliegue roto que no lo está. Es un falso
-    # positivo de la verificación, que es la peor clase de fallo que puede tener una verificación.
+    # El env se carga TAMBIEN aca. Sin el no hay COMPOSE_PROJECT_NAME ni CAUCE_RUNTIME_IMAGE, y
+    # compose falla al interpolar o deduce un proyecto que no existe: en los dos casos el listado
+    # de contenedores sale vacio y esta comprobacion acusa un despliegue roto que no lo esta. Es
+    # un falso positivo de la verificacion, la peor clase de fallo que una verificacion puede
+    # tener, porque este script REVIERTE solo cuando la verificacion falla.
+    # OJO con las comillas invertidas en estos comentarios: van dentro de una cadena entre comillas
+    # dobles que se manda por ssh, asi que bash las ejecuta como sustitucion de orden ANTES de
+    # enviarlas. Un comentario que nombraba una orden entre comillas invertidas la corria de
+    # verdad en la maquina que despliega, y su salida se colaba dentro del propio comentario.
     set -a; . '${env_remoto}'; set +a
     id_corriendo=\$(docker inspect --format '{{.Image}}' \$(docker compose${compose_args} ps -q console))
     id_pineado=\$(docker image inspect --format '{{.Id}}' '${esperado}')
