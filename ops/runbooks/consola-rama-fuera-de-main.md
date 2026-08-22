@@ -220,3 +220,64 @@ sin error, sin aviso, sólo con menos cosas dentro. Dos guardas baratas lo cierr
   `/v3/console/auth/login` existe en el gateway desplegado. El § 4.2 dice cómo comprobarlo.
 - **No empujé nada.** La rama `desde-zeus/feat/consola-flota-ahora-20260822` ya estaba en `kratos`
   antes de esta tanda; los arreglos de los diez defectos van en una rama aparte.
+
+---
+
+## 9. «El bundle cambió» NO acredita que el dueño lo vea
+
+**Añadido el 2026-08-22, después de que Steven se quejara dos veces de un despliegue sano.**
+
+El 22-ago a las 20:20 se desplegó la consola. La verificación que se hizo fue la de siempre: el
+bundle cambió de hash y contiene la cadena nueva. Pasó. Steven siguió diciendo que no veía nada.
+
+No era caché, ni un service worker, ni un permiso. Su navegador **ya tenía el código nuevo** —
+`docker logs cauce-v3-prod-console-1` lo registra bajándose el bundle entero (200, no 304) cuatro
+minutos después del despliegue, y otra vez trece minutos más tarde. Lo que pasaba es que **todo lo
+que cambió vivía en `/config`** (14 selectores nuevos, todos con prefijo `.config-`; 18 textos
+nuevos, todos de `ConfigPage`) **y él estaba mirando `/live`**. Fuera de esa ruta el despliegue no
+movió un solo píxel. Y la entrada del menú que lleva allí se llamaba «Configuration», en inglés y
+la 10ª de 11, mientras que el panel de dentro se llama «Alta rápida»: nadie que busque «Alta
+rápida» pulsa «Configuration».
+
+**La verificación de un despliegue de consola tiene que decir en qué RUTA cae cada cambio.** Con
+eso escrito, la respuesta correcta a la primera queja habría sido «entrá a /config», no otro
+despliegue.
+
+### Cómo se comprueba
+
+```sh
+# 1. Sacar el dist de la imagen vieja y de la nueva.
+for T in IMAGEN_VIEJA IMAGEN_NUEVA; do
+  cid=$(docker create "$T"); docker cp "$cid":/usr/share/nginx/html/assets "/tmp/dist-$T"; docker rm "$cid"
+done
+
+# 2. Diff de lo que se VE, no de lo que cambió de hash.
+ops/scripts/diff-consola-visible.py \
+  /tmp/dist-IMAGEN_VIEJA/index-*.js  /tmp/dist-IMAGEN_NUEVA/index-*.js \
+  /tmp/dist-IMAGEN_VIEJA/index-*.css /tmp/dist-IMAGEN_NUEVA/index-*.css
+```
+
+El veredicto que importa es **el reparto de los selectores nuevos por prefijo**. Si salen todos con
+el mismo prefijo, el cambio se ve en una sola pantalla, y hay que decir cuál y avisar de que en las
+demás no cambió nada. Si no entra ningún texto ni ningún selector, **el cambio no llegó**: no se
+canta como hecho.
+
+Dos cosas medidas sobre el propio script, para que nadie lo dé por bueno sin mirar:
+
+- El listado de textos **arrastra ruido del minificador**, que al renombrar variables mueve tramos
+  de prosa que no cambiaron. En el caso del 22-ago daba 271 textos «nuevos» de los que sólo 38 eran
+  copy de verdad. Por eso separa los que llevan tilde o comillas latinas —copy del producto casi
+  seguro— del resto, que sólo se lista con `--todo`. **El diff de selectores CSS no tiene ese ruido:
+  es el que manda.**
+- Extraer las cadenas emparejando comillas **no funciona** y se probó: en un bundle minificado hay
+  plantillas con backticks y literales de expresión regular, y el emparejado se traga regiones
+  enteras. Esa versión sacaba 1193 «cadenas», casi todas mazacotes de código, y no veía un rótulo
+  que se acababa de desplegar. El script busca tramos de prosa sin mirar la sintaxis: mete ruido, y
+  no importa, porque el ruido idéntico en los dos ficheros se cancela al restar los conjuntos.
+
+### Y una cosa que el diff no ve
+
+Que el cambio se vea **no quiere decir que se encuentre**. Una entrada de menú en otro idioma que
+el panel que abre es invisible aunque esté pintada. Al desplegar una pantalla nueva, comprobá que
+el rótulo del menú y el título de dentro se parezcan lo bastante como para que quien busca lo uno
+pulse lo otro.
