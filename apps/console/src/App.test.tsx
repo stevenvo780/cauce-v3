@@ -123,7 +123,7 @@ it('el menú tiene ONCE entradas: "Fleet" y "Tenants & ACL" dejaron de ser rutas
     'Adapters',
     'Audit',
     'Observabilidad y relays',
-    'Configuration',
+    'Configuración y altas',
     'Ultimate Terminal',
   ]);
   expect(entradas).not.toContain('Fleet');
@@ -168,7 +168,7 @@ it('/fleet/:cliente sin alias no identifica a nadie y lo dice, en vez de caer en
  * producción con su sesión real. El permiso no se toca: lo que estaba mal era que el menú
  * prometiera una vista que ese usuario nunca va a poder abrir.
  */
-it('deja «Configuration» inerte, y con el motivo escrito, para quien no tiene config.write', async () => {
+it('deja «Configuración y altas» inerte, y con el motivo escrito, para quien no tiene config.write', async () => {
   server.use(
     http.get('http://localhost/v3/console/access', () =>
       HttpResponse.json({
@@ -181,7 +181,7 @@ it('deja «Configuration» inerte, y con el motivo escrito, para quien no tiene 
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
-  const entrada = await screen.findByRole('link', { name: /configuration/i });
+  const entrada = await screen.findByRole('link', { name: /configuración y altas/i });
   await waitFor(() => expect(entrada).toHaveAttribute('aria-disabled', 'true'));
   expect(entrada).toHaveAttribute('title', expect.stringContaining('permiso de control'));
 
@@ -190,7 +190,7 @@ it('deja «Configuration» inerte, y con el motivo escrito, para quien no tiene 
   expect(window.location.pathname).toBe('/live');
 });
 
-it('deja «Configuration» navegable para quien SI tiene config.write', async () => {
+it('deja «Configuración y altas» navegable para quien SI tiene config.write', async () => {
   server.use(
     http.get('http://localhost/v3/console/access', () =>
       HttpResponse.json({
@@ -203,7 +203,7 @@ it('deja «Configuration» navegable para quien SI tiene config.write', async ()
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
-  const entrada = await screen.findByRole('link', { name: /configuration/i });
+  const entrada = await screen.findByRole('link', { name: /configuración y altas/i });
   await waitFor(() => expect(entrada).not.toHaveAttribute('aria-disabled'));
   await userEvent.click(entrada);
   expect(window.location.pathname).toBe('/config');

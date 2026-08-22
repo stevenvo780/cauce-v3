@@ -115,7 +115,7 @@ const routes: Route[] = [
   { id: 'adapters', label: 'Adapters', icon: Bot, component: AdaptersPage },
   { id: 'audit', label: 'Audit', icon: History, component: AuditPage },
   { id: 'observability', label: 'Observabilidad y relays', icon: Gauge, component: ObservabilityPage },
-  { id: 'config', label: 'Configuration', icon: Settings2, component: ConfigPage },
+  { id: 'config', label: 'Configuración y altas', icon: Settings2, component: ConfigPage },
   { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, component: TerminalPage },
   /**
    * Entrada OCULTA (sin `label`, excluida del render del menú).
