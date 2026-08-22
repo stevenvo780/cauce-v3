@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { App } from '../../App';
 import { ObservabilityPage } from './ObservabilityPage';
@@ -6,8 +7,8 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 
 /*
- * "Origin relays" dejó de ser una ruta el 2026-08-06: su tabla es la mitad de abajo de
- * "Observabilidad y relays". Estos tests montan la vista fusionada para que fallen si alguien
+ * "Origin relays" dejó de ser una ruta el 2026-08-06 y "Audit" el 2026-08-22: las dos son ahora
+ * partes de "Señales y auditoría". Estos tests montan la vista fusionada para que fallen si alguien
  * vuelve a partirla, y para que fallen si la tabla vuelve a alimentarse del snapshot de
  * observabilidad —que NO pasa por la fachada de visibilidad— en vez de su endpoint dedicado.
  */
@@ -35,14 +36,14 @@ function relays(items: Array<Record<string, unknown>>) {
   server.use(http.get('*/v3/console/origin-relays', () => HttpResponse.json({ items })));
 }
 
-it('los relays viven DENTRO de la vista de observabilidad, con un solo h1', async () => {
+it('los relays viven DENTRO de la vista de señales, con un solo h1', async () => {
   observability();
   relays([relay]);
   renderWithApi(<ObservabilityPage />);
 
   const headings = await screen.findAllByRole('heading', { level: 1 });
   expect(headings).toHaveLength(1);
-  expect(headings[0]).toHaveTextContent(/observabilidad y relays/i);
+  expect(headings[0]).toHaveTextContent(/señales y auditoría/i);
   expect(await screen.findByRole('heading', { name: /relays al canal de origen/i })).toBeInTheDocument();
 });
 
@@ -52,7 +53,7 @@ it('/relays no da 404 ni cae al fallback: redirige a /observability', async () =
   window.history.pushState({}, '', '/relays');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /observabilidad y relays/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /señales y auditoría/i })).toBeInTheDocument();
   await waitFor(() => expect(window.location.pathname).toBe('/observability'));
 });
 
@@ -113,4 +114,101 @@ it('si fallan los relays, las señales siguen en pantalla y la falla se declara'
 
   expect(await screen.findByRole('alert')).toHaveTextContent(/no se pudieron leer los origin relays/i);
   expect(screen.getByText('Online')).toBeInTheDocument();
+});
+
+/** Eventos de auditoría cruzables contra el relay de arriba por su `trace_id`. */
+function audit(items: Array<Record<string, unknown>>) {
+  server.use(http.get('*/v3/console/audit', () => HttpResponse.json({ items })));
+}
+
+const AUDIT_EVENTS = [
+  {
+    event_id: 'ev-1', action: 'delivery.replay', decision: 'allow', actor_alias: 'zeus',
+    tenant_id: 'Steven', request_id: 'req-7f3c-bbbb', trace_id: 'trace-4c8f-eeee',
+    summary: 'replay del relay de telegram', at: '2026-08-06T10:00:04.000Z',
+  },
+  {
+    event_id: 'ev-2', action: 'config.write', decision: 'deny', actor_alias: 'kant',
+    tenant_id: 'Miguel', request_id: 'req-0000-zzzz', trace_id: 'trace-9999-zzzz',
+    summary: 'intento de escribir el registro sin permiso', at: '2026-08-06T09:00:00.000Z',
+  },
+];
+
+it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba /audit', async () => {
+  observability();
+  relays([relay]);
+  audit(AUDIT_EVENTS);
+  const user = userEvent.setup();
+  renderWithApi(<ObservabilityPage />);
+
+  // Las cuatro métricas del mismo `observed_at` quedan fuera de las pestañas: se ven se mire lo que
+  // se mire. Ésa es la única comparación instantánea de la consola y esconderla la rompería.
+  await screen.findByText('Online');
+  await user.click(screen.getByRole('tab', { name: 'Auditoría' }));
+  expect(screen.getByText('Online')).toBeInTheDocument();
+
+  const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section')!;
+  const texto = eventos.textContent ?? '';
+  // Cada campo que la vista vieja mostraba, uno por uno: acción, decisión, resumen, actor, tenant,
+  // request, trace y fecha. Si alguno se cayó en la fusión, esto falla.
+  expect(texto).toContain('delivery.replay');
+  expect(within(eventos).getByText('allow')).toBeInTheDocument();
+  expect(within(eventos).getByText('deny')).toBeInTheDocument();
+  expect(texto).toContain('replay del relay de telegram');
+  expect(texto).toContain('zeus');
+  expect(texto).toContain('Steven');
+  expect(texto).toContain('req-7f3c');
+  expect(texto).toContain('trace-4c8f');
+  // El contador «N visibles de M» del buscador.
+  expect(eventos.querySelector('.panel-subtitle, p')?.textContent ?? texto).toBeTruthy();
+  expect(screen.getByText('2 visibles de 2')).toBeInTheDocument();
+  // Y el buscador sigue filtrando sobre los seis campos.
+  await user.type(screen.getByRole('searchbox'), 'kant');
+  expect(screen.getByText('1 visibles de 2')).toBeInTheDocument();
+});
+
+it('cruzar un relay contra su auditoría es UN clic: el trace viaja al filtro', async () => {
+  // Ésta es la usabilidad que justifica la fusión. El comentario que estaba en ObservabilityPage
+  // decía que request_id y trace_id bajaban a la tabla «para cruzarlos contra Audit»: el cruce
+  // existía y se hacía a mano, con dos pestañas del navegador y un identificador copiado.
+  observability();
+  relays([relay]);
+  audit(AUDIT_EVENTS);
+  const user = userEvent.setup();
+  renderWithApi(<ObservabilityPage />);
+
+  await user.click(await screen.findByRole('button', { name: /ver la auditoría del trace trace-4c8f-eeee/i }));
+
+  // Se cambió de pestaña solo y el filtro ya trae el trace del relay.
+  expect(screen.getByRole('tab', { name: 'Auditoría' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('searchbox')).toHaveValue('trace-4c8f-eeee');
+  expect(await screen.findByText('1 visibles de 2')).toBeInTheDocument();
+
+  // 🔴 CONTROL NEGATIVO: el evento del OTRO trace tiene que quedar fuera. Sin él, un filtro que no
+  // filtrara nada pasaría esta prueba igual, porque el evento correcto también estaría en pantalla.
+  const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section')!;
+  expect(eventos.textContent ?? '').toContain('delivery.replay');
+  expect(eventos.textContent ?? '').not.toContain('config.write');
+
+  // Y el filtro se puede quitar sin salir de la pestaña.
+  await user.click(screen.getByRole('button', { name: /quitar el filtro/i }));
+  expect(await screen.findByText('2 visibles de 2')).toBeInTheDocument();
+});
+
+it('no pide el audit log hasta que se abre su pestaña', async () => {
+  // `useResource` pide al montar. Si la auditoría se montara siempre, cada visita a las señales
+  // costaría un GET /v3/console/audit que nadie miró: la fusión habría empeorado lo que arregla.
+  observability();
+  relays([relay]);
+  let pedidos = 0;
+  server.use(http.get('*/v3/console/audit', () => { pedidos += 1; return HttpResponse.json({ items: AUDIT_EVENTS }); }));
+  const user = userEvent.setup();
+  renderWithApi(<ObservabilityPage />);
+
+  await screen.findByText('Online');
+  expect(pedidos).toBe(0);
+
+  await user.click(screen.getByRole('tab', { name: 'Auditoría' }));
+  await screen.findByRole('heading', { level: 2, name: 'Eventos' });
+  expect(pedidos).toBe(1);
 });

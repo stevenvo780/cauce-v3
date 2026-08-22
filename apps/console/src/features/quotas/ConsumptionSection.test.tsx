@@ -1,16 +1,28 @@
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { QuotasPage } from './QuotasPage';
+import { AccountsPage } from '../accounts/AccountsPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import type { QuotaSnapshot } from '../../api/types';
 
 /**
- * "Cuotas y licencias" es UNA vista con dos fuentes: `/v3/console/quotas` (consumo) y
- * `/v3/console/config` (inventario). Estas pruebas existen sobre todo para que no vuelva a
+ * "Cuentas y cuotas" es UNA vista con dos fuentes: `/v3/console/quotas` (consumo) y
+ * `/v3/console/config` (inventario y ruteo). Estas pruebas existen sobre todo para que no vuelva a
  * partirse en dos: cada mitad tiene acá una afirmación que falla si alguien la muda a otra ruta o
  * la borra "porque ya estaba en la otra pantalla".
+ *
+ * Se montan contra `AccountsPage` —el contenedor real, con sus pestañas— y NO contra
+ * `ConsumptionSection` a solas: lo que Steven pidió fundir es la VISTA, y una prueba que renderice
+ * la sección suelta seguiría pasando el día que alguien la sacara de la página.
  */
+
+const ACCOUNTS_HEADING = 'Cuentas y cuotas';
+
+/** Abre una pestaña por su rótulo y espera a que su panel esté montado. */
+async function openTab(user: ReturnType<typeof userEvent.setup>, label: string) {
+  await user.click(screen.getByRole('tab', { name: label }));
+}
 
 const QUOTAS_URL = 'http://localhost/v3/console/quotas';
 const CONFIG_URL = 'http://localhost/v3/console/config';
@@ -107,59 +119,86 @@ function panel(name: string): HTMLElement {
   return screen.getByRole('heading', { level: 2, name }).closest('section')!;
 }
 
-/** Las etiquetas de métrica repiten títulos de panel ("Proveedores"): hay que acotar la búsqueda. */
+/**
+ * Las etiquetas de métrica repiten títulos de panel ("Proveedores"): hay que acotar la búsqueda.
+ *
+ * Y desde que la vista tiene pestañas hay DOS tiras de métricas montadas a la vez —la de consumo y
+ * la de inventario—, con la inactiva en `hidden`. Buscar la primera del documento leería siempre la
+ * misma: se busca dentro del panel abierto.
+ */
 function metrics(): HTMLElement {
-  return document.querySelector('.metrics-grid') as HTMLElement;
+  const visible = [...document.querySelectorAll('.view-tab-panel')]
+    .find((panel) => !panel.hasAttribute('hidden'));
+  return (visible ?? document).querySelector('.metrics-grid') as HTMLElement;
 }
 
-it('es UNA sola vista con las dos mitades: consumo de cuota e inventario de licencias', async () => {
+it('es UNA sola vista con las tres mitades: consumo, inventario y asignaciones', async () => {
   mockBoth();
-  renderWithApi(<QuotasPage />);
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
 
-  await screen.findByRole('heading', { level: 1, name: 'Cuotas y licencias' });
+  await screen.findByRole('heading', { level: 1, name: ACCOUNTS_HEADING });
 
-  // Un solo encabezado de página: si alguien vuelve a partir esto en dos rutas, la mitad que se
-  // vaya se lleva su panel y una de estas dos búsquedas deja de encontrarlo.
+  // Un solo encabezado de página: si alguien vuelve a partir esto en rutas separadas, la mitad que
+  // se vaya se lleva su panel y alguna de estas búsquedas deja de encontrarlo.
   expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   expect(panel('Proveedores')).toBeInTheDocument();
-  expect(panel('Inventario de cuentas')).toBeInTheDocument();
 
-  // Las métricas de las dos vistas originales conviven: ninguna se perdió en la fusión.
+  // Las ocho métricas de las vistas de cuota conviven: ninguna se perdió en la fusión.
   for (const label of [
     'Cuentas registradas', 'Con datos de cuota', 'Agentes', 'Recolectores conectados',
     'Proveedores', 'Peor remanente', 'Suscripciones pausadas', 'Grupos sin cuenta atada',
   ]) {
     expect(within(metrics()).getByText(label)).toBeInTheDocument();
   }
+
+  await openTab(user, 'Inventario');
+  expect(panel('Inventario de cuentas')).toBeInTheDocument();
+  // Y las cuatro que sólo traía "Cuentas de IA".
+  for (const label of [
+    'Cuentas visibles', 'Publicadas al pool', 'Habilitadas', 'Pagadas por otro tenant',
+  ]) {
+    expect(within(metrics()).getByText(label)).toBeInTheDocument();
+  }
+
+  await openTab(user, 'Asignaciones');
+  expect(screen.getByRole('heading', { level: 2, name: /techo por alias/i })).toBeInTheDocument();
 });
 
 it('conserva entero el inventario de licencias: identidad, pagador, asignaciones y techo de ruteo', async () => {
   mockBoth();
-  renderWithApi(<QuotasPage />);
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
 
-  await screen.findByRole('heading', { level: 1, name: 'Cuotas y licencias' });
+  await screen.findByRole('heading', { level: 1, name: ACCOUNTS_HEADING });
+  await openTab(user, 'Inventario');
   const inventory = panel('Inventario de cuentas');
   const text = inventory.textContent ?? '';
 
   expect(text).toContain('codex-pro-steven');
   expect(text).toContain('bengalfox@openai');
   // Una cuenta que paga otro tenant no expone su id externo, y eso se dice con todas las letras.
-  expect(text).toMatch(/Redactado: pagada por otro tenant/i);
-  expect(within(inventory).getAllByText('PUBLICADA AL POOL').length).toBeGreaterThan(0);
-  // Quién usa la cuenta y con qué prioridad: esto no existe en ninguna otra parte de la consola
-  // junto al saldo, y es la razón de ser de la fusión.
-  expect(text).toContain('zeus');
-  expect(text).toContain('claw-zeus');
-  expect(within(inventory).getAllByText('PRIMARIA').length).toBeGreaterThan(0);
-  expect(text).toMatch(/Techo de ruteo/);
-  expect(text).toMatch(/está limitado a esta cuenta/);
-  // El plan sale de la muestra de cuota, del lado del consumo: la fusión es lo que lo hace posible.
-  expect(text).toContain('pro');
+  expect(text).toMatch(/No visible: la paga Miguel/i);
+  expect(within(inventory).getAllByText('PUBLICADA').length).toBeGreaterThan(0);
+  // El plan sale de la muestra de cuota, del lado del consumo: la fusión es lo que lo hace posible
+  // que se lea en la MISMA fila que la cuenta que lo tiene.
+  expect(within(inventory).getByRole('row', { name: /codex-pro-steven/ })).toHaveTextContent('pro');
+
+  // Quién usa la cuenta y con qué prioridad, y el techo: no existen en ninguna otra parte de la
+  // consola junto al saldo, y son la razón de ser de la fusión. Viven en el detalle de la fila.
+  await user.click(within(inventory).getByRole('button', { name: /Detalle de ruteo de codex-pro-steven/ }));
+  const detail = panel('Inventario de cuentas').querySelector('.account-detail-row') as HTMLElement;
+  const detailText = detail.textContent ?? '';
+  expect(detailText).toContain('zeus');
+  expect(detailText).toContain('claw-zeus');
+  expect(within(detail).getAllByText('PRIMARIA').length).toBeGreaterThan(0);
+  expect(detailText).toMatch(/Techo de ruteo/);
+  expect(detailText).toMatch(/está limitado a esta cuenta/);
 });
 
 it('conserva entero el consumo: peor primero, una fila por grupo y el histórico de 24 h', async () => {
   mockBoth();
-  renderWithApi(<QuotasPage />);
+  renderWithApi(<AccountsPage />);
 
   const providers = await screen.findByRole('heading', { level: 2, name: 'Proveedores' }).then((h) => h.closest('section')!);
   const cards = within(providers).getAllByRole('heading', { level: 3 });
@@ -184,8 +223,8 @@ it('conserva entero el consumo: peor primero, una fila por grupo y el histórico
 
 it('la única representación gráfica es el sparkline: las barras duplicadas de licencias no volvieron', async () => {
   mockBoth();
-  renderWithApi(<QuotasPage />);
-  await screen.findByRole('heading', { level: 1, name: 'Cuotas y licencias' });
+  renderWithApi(<AccountsPage />);
+  await screen.findByRole('heading', { level: 1, name: ACCOUNTS_HEADING });
 
   // Las tarjetas de cuenta dibujaban su propia barra de porcentaje con menos datos que la tabla de
   // Proveedores: dos dibujos del mismo número en la misma página.
@@ -195,7 +234,7 @@ it('la única representación gráfica es el sparkline: las barras duplicadas de
 
 it('junta las tres direcciones de huérfano en un solo panel de hallazgos', async () => {
   mockBoth();
-  renderWithApi(<QuotasPage />);
+  renderWithApi(<AccountsPage />);
 
   const findings = await screen.findByRole('heading', { level: 2, name: 'Hallazgos' }).then((h) => h.closest('section')!);
   const text = findings.textContent ?? '';
@@ -219,7 +258,7 @@ it('marca desactualizado a un recolector viejo aunque el servidor lo declare fre
       { host: 'ws-midas', collector_tenant: 'Pablo', collector_alias: 'quota-collector', captured_at: '2026-07-27T13:00:00.000Z', received_at: '2026-07-27T13:00:01.000Z', age_seconds: 5_400, stale: false, schema_version: 2, app_version: '0.11.4', provider_count: 1, window_count: 1 },
     ],
   });
-  renderWithApi(<QuotasPage />);
+  renderWithApi(<AccountsPage />);
 
   const collectors = await screen.findByRole('heading', { level: 2, name: 'Recolectores' }).then((h) => h.closest('section')!);
   expect(within(within(collectors).getByRole('row', { name: /kratos/i })).getByText('FRESCO')).toBeInTheDocument();
@@ -239,23 +278,26 @@ it('sin recolector NO inventa porcentajes: muestra el inventario y declara que n
     unbound_groups: [],
     paused_accounts: [],
   });
-  renderWithApi(<QuotasPage />);
+  renderWithApi(<AccountsPage />);
 
-  await screen.findByRole('heading', { level: 1, name: 'Cuotas y licencias' });
+  await screen.findByRole('heading', { level: 1, name: ACCOUNTS_HEADING });
 
   // UNA sola vez. La causa es la misma para las tres cuentas, así que repetirla en cada tarjeta
   // —que es lo que hacía el `reason` de alcance global— sólo consigue que se lea menos.
   expect(screen.getAllByText(/Ningún recolector reportó/)).toHaveLength(1);
 
   // El inventario sigue siendo útil: la cuenta y a quién está asignada se ven igual.
+  const user = userEvent.setup();
+  await openTab(user, 'Inventario');
   const inventory = panel('Inventario de cuentas');
   expect(inventory).toHaveTextContent('codex-pro-steven');
-  expect(inventory).toHaveTextContent('claw-zeus');
   expect(inventory.textContent ?? '').not.toContain('Ningún recolector reportó');
+  await user.click(within(inventory).getByRole('button', { name: /Detalle de ruteo de codex-pro-steven/ }));
+  expect(panel('Inventario de cuentas')).toHaveTextContent('claw-zeus');
+  // El motivo GLOBAL no se repite en el detalle: ya se declaró arriba una sola vez.
   expect(document.querySelectorAll('.account-notice')).toHaveLength(0);
-  // Y el consumo está declarado como ausente, no como cero. (El alcance es el inventario: la
-  // tarjeta explicativa del pie cita porcentajes de ejemplo en texto fijo, que no son un dato.)
-  expect(inventory.textContent ?? '').not.toMatch(/\d+\s*%/);
+  // Y el consumo está declarado como ausente, no como cero.
+  expect(panel('Inventario de cuentas').textContent ?? '').not.toMatch(/\d+\s*%/);
 });
 
 it('una sonda caída no reaparece como un número: la cuenta queda en interrogante', async () => {
@@ -275,16 +317,24 @@ it('una sonda caída no reaparece como un número: la cuenta queda en interrogan
     unbound_groups: [],
     paused_accounts: [],
   });
-  renderWithApi(<QuotasPage />);
+  renderWithApi(<AccountsPage />);
 
-  await screen.findByRole('heading', { level: 1, name: 'Cuotas y licencias' });
+  await screen.findByRole('heading', { level: 1, name: ACCOUNTS_HEADING });
   expect(screen.getByText(/Sonda caída\./)).toBeInTheDocument();
   // El motivo aparece en el cartel agregado, en la tarjeta del proveedor y en la cuenta afectada:
   // las tres son lecturas distintas del mismo `ok:false`, ninguna sobra.
   expect(screen.getAllByText(/dejó de responder/).length).toBeGreaterThan(0);
 
+  expect(panel('Proveedores').textContent ?? '').not.toMatch(/\d+\s*%\s*libre/);
+
   // El motivo por cuenta SÍ se queda cuando dice algo que el cartel de arriba no dice: que a esta
-  // cuenta la dejó sin número la sonda de SU proveedor, y que a esas otras el recolector ni las trajo.
+  // cuenta la dejó sin número la sonda de SU proveedor, y que a esas otras el recolector ni las
+  // trajo. Vive en el detalle de cada fila del inventario, que es donde explica el hueco.
+  const user = userEvent.setup();
+  await openTab(user, 'Inventario');
+  for (const id of ['codex-pro-steven', 'minimax-pool', 'claude-max-saldantia']) {
+    await user.click(screen.getByRole('button', { name: `Detalle de ruteo de ${id}` }));
+  }
   const notices = [...document.querySelectorAll('.account-notice')].map((n) => n.textContent ?? '');
   expect(notices.filter((text) => text.includes('Sonda caída:'))).toHaveLength(1);
   expect(notices.filter((text) => text.includes('El recolector no reportó esta cuenta'))).toHaveLength(2);
@@ -293,7 +343,6 @@ it('una sonda caída no reaparece como un número: la cuenta queda en interrogan
   const inventory = panel('Inventario de cuentas');
   expect(inventory).toHaveTextContent('codex-pro-steven');
   expect(inventory.textContent ?? '').not.toMatch(/\d+\s*%/);
-  expect(panel('Proveedores').textContent ?? '').not.toMatch(/\d+\s*%\s*libre/);
 });
 
 it('si se cae el consumo, el inventario sigue en pantalla y hay un botón para reintentar', async () => {
@@ -301,15 +350,18 @@ it('si se cae el consumo, el inventario sigue en pantalla y hay un botón para r
     http.get(QUOTAS_URL, () => HttpResponse.json({ error: 'boom', message: 'cuotas caídas' }, { status: 500 })),
     http.get(CONFIG_URL, () => HttpResponse.json(CONFIG)),
   );
-  renderWithApi(<QuotasPage />);
+  renderWithApi(<AccountsPage />);
 
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(/cuotas caídas/i);
   expect(within(alert).getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
-  // Media consola caída no puede apagar la otra media: el inventario no depende de ese endpoint.
-  expect(panel('Inventario de cuentas')).toHaveTextContent('codex-pro-steven');
   // Y no se afirma "ningún recolector reportó" cuando lo que pasó es que la respuesta no llegó.
   expect(screen.queryByText(/Ningún recolector reportó/)).not.toBeInTheDocument();
+
+  // Media consola caída no puede apagar la otra media: el inventario no depende de ese endpoint.
+  const user = userEvent.setup();
+  await openTab(user, 'Inventario');
+  expect(panel('Inventario de cuentas')).toHaveTextContent('codex-pro-steven');
 });
 
 it('si se cae el inventario, el consumo sigue en pantalla y lo dice sin listar cuentas vacías', async () => {
@@ -317,10 +369,14 @@ it('si se cae el inventario, el consumo sigue en pantalla y lo dice sin listar c
     http.get(QUOTAS_URL, () => HttpResponse.json(BASE)),
     http.get(CONFIG_URL, () => HttpResponse.json({ error: 'boom', message: 'inventario caído' }, { status: 500 })),
   );
-  renderWithApi(<QuotasPage />);
+  renderWithApi(<AccountsPage />);
 
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(/inventario caído/i);
   expect(panel('Proveedores')).toHaveTextContent(/codex/i);
-  expect(panel('Inventario de cuentas')).toHaveTextContent(/no se pudo leer/i);
+
+  const user = userEvent.setup();
+  await openTab(user, 'Inventario');
+  // Sin snapshot no hay inventario que listar, y se dice en vez de mostrar una tabla vacía.
+  expect(panel('Inventario de cuentas')).toHaveTextContent(/No disponible/i);
 });

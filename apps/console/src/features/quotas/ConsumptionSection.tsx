@@ -1,28 +1,25 @@
 import {
   AlertCircle, BatteryCharging, ChevronDown, ChevronRight, Layers, PauseCircle, RefreshCw, Unplug,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-import { useApi } from '../../api/context';
-import { useResource } from '../../api/use-resource';
+import { useMemo, useState } from 'react';
+import type { Resource } from '../../api/use-resource';
 import type {
-  QuotaCollector, QuotaPausedAccount, QuotaProviderReport, QuotaThresholds, QuotaUnboundGroup,
+  ConfigurationSnapshot, QuotaCollector, QuotaPausedAccount, QuotaProviderReport, QuotaSnapshot,
+  QuotaThresholds, QuotaUnboundGroup,
 } from '../../api/types';
 import {
-  Badge, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, RefreshButton, Time, Unknown,
+  Badge, EmptyState, LoadingState, Metric, Panel, Time, Unknown,
 } from '../../components/ui';
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
 import '../licenses/licenses.css';
 import {
-  accountAssignments, accountConsumption, extractAgents, extractBindings, extractCeiling,
-  extractProviderAccounts, freshness, orphans,
+  extractAgents, extractBindings, extractProviderAccounts, freshness, orphans,
 } from '../licenses/licenses';
 import { Sparkline } from './Sparkline';
 import {
   SEVERITY_LABEL, SEVERITY_TONE, buildQuotaRows, formatResetIn, formatUnits, isAgeStale, sortProvidersBySeverity,
   type QuotaRow as QuotaRowType,
 } from './quotas';
-
-const REFRESH_MS = 60_000;
 
 /**
  * **Cuotas y licencias** — una sola vista, dos mitades del mismo hecho.
@@ -55,30 +52,19 @@ const REFRESH_MS = 60_000;
  * son los números de abajo. Y `accountConsumption` sigue alimentando el plan y el motivo por cuenta,
  * que es donde un `ok:false` deja de leerse como "esta cuenta no tiene ventanas".
  */
-export function QuotasPage() {
-  const api = useApi();
-  const quotas = useResource('quotas', () => api.getQuotas());
-  const config = useResource('registry-configuration', () => api.getConfiguration());
-  const [autoRefresh, setAutoRefresh] = useState(true);
+export function ConsumptionSection({ quotas, config }: {
+  quotas: Resource<QuotaSnapshot>;
+  config: Resource<ConfigurationSnapshot>;
+}) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const reloadQuotas = quotas.reload;
   const reloadConfig = config.reload;
 
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = window.setInterval(() => {
-      reloadQuotas();
-      reloadConfig();
-    }, REFRESH_MS);
-    return () => window.clearInterval(interval);
-  }, [autoRefresh, reloadQuotas, reloadConfig]);
-
   const snapshot = quotas.data;
   const accounts = useMemo(() => extractProviderAccounts(config.data), [config.data]);
   const agents = useMemo(() => extractAgents(config.data), [config.data]);
   const bindings = useMemo(() => extractBindings(config.data), [config.data]);
-  const ceiling = useMemo(() => extractCeiling(config.data), [config.data]);
   const orphanedItems = useMemo(
     () => orphans(accounts, snapshot, bindings, agents),
     [accounts, snapshot, bindings, agents],
@@ -97,18 +83,8 @@ export function QuotasPage() {
     });
   }
 
-  function reloadAll() {
-    reloadQuotas();
-    reloadConfig();
-  }
-
-  if ((quotas.loading && !quotas.data) || (config.loading && !config.data)) {
+  if ((quotas.loading && !quotas.data) && (config.loading && !config.data)) {
     return <LoadingState label="Leyendo cuotas y licencias…" />;
-  }
-  // Pantalla completa de error sólo si se cayeron las DOS mitades: con una viva, la vista se dibuja
-  // y cada mitad declara su propia falla, que es más información que un cartel único.
-  if (quotas.error && !quotas.data && config.error && !config.data) {
-    return <ErrorState error={quotas.error} onRetry={reloadAll} />;
   }
 
   const quotasDown = Boolean(quotas.error) && !quotas.data;
@@ -148,17 +124,12 @@ export function QuotasPage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow="Operación"
-        title="Cuotas y licencias"
-        description="Las dos mitades del mismo hecho en una sola vista: qué cuentas de IA existen y quién las usa (GET /v3/console/config), y cuánto saldo les queda (GET /v3/console/quotas). El consumo no es un dato en vivo del bus: es la última corrida del recolector externo (get_ai_quotas) que interroga los CLIs de claude/codex/antigravity/opencode en kratos y en los contenedores de agente, con su propia frescura (collectors[].stale) independiente de la actividad."
-        actions={<RefreshButton onClick={reloadAll} loading={quotas.loading || config.loading} />}
-      />
-
-      <label className="auto-refresh-toggle">
-        <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
-        Auto-refrescar cada {REFRESH_MS / 1000}s
-      </label>
+      <p className="page-description">
+        El consumo no es un dato en vivo del bus: es la última corrida del recolector externo
+        (<code>get_ai_quotas</code>) que interroga los CLIs de claude/codex/antigravity/opencode en
+        kratos y en los contenedores de agente, con su propia frescura (<code>collectors[].stale</code>)
+        independiente de la actividad.
+      </p>
 
       {quotasDown ? (
         <FailureBanner
@@ -303,126 +274,6 @@ export function QuotasPage() {
             staleAfterSeconds={thresholds?.stale_after_seconds}
           />
         ))}
-      </Panel>
-
-      <Panel title="Inventario de cuentas" subtitle="Suscripción, plan, quién tiene asignada cada cuenta y su techo de ruteo. El consumo de cada una está arriba, en Proveedores.">
-        {configDown ? (
-          <EmptyState>No se pudo leer /v3/console/config: no se sabe qué cuentas hay registradas.</EmptyState>
-        ) : accounts.length === 0 ? (
-          <EmptyState>No hay cuentas registradas en esta consola.</EmptyState>
-        ) : (
-          <div className="accounts-list">
-            {accounts.map((account) => {
-              const consumption = accountConsumption(account.id, snapshot, thresholds);
-              const assignments = accountAssignments(account.id, bindings, agents);
-              const accountCeiling = ceiling.find((entry) => entry.account_id === account.id);
-
-              return (
-                <div key={account.id} className="account-card">
-                  <div className="account-header">
-                    <div className="account-identity">
-                      <span className="account-id mono">{account.id}</span>
-                      <span className="account-label">
-                        {account.label ? `"${account.label}"` : <span className="unknown">sin etiqueta</span>}
-                      </span>
-                    </div>
-                    <div className="account-badges">
-                      <Badge tone={account.enabled ? 'online' : 'offline'}>
-                        {account.enabled ? 'HABILITADA' : 'DESHABILITADA'}
-                      </Badge>
-                      {account.shared_with_pool && <Badge tone="info">PUBLICADA AL POOL</Badge>}
-                    </div>
-                  </div>
-
-                  <div className="account-body">
-                    <div className="account-section">
-                      <h4>Detalles</h4>
-                      <dl className="account-details">
-                        <div className="detail-row">
-                          <dt>Proveedor</dt>
-                          <dd><span className="mono"><Unknown value={account.provider} /></span></dd>
-                        </div>
-                        <div className="detail-row">
-                          <dt>ID externo</dt>
-                          <dd>
-                            {account.external_account_id === null ? (
-                              <span className="unknown">Redactado: pagada por otro tenant</span>
-                            ) : (
-                              <span className="mono"><Unknown value={account.external_account_id} /></span>
-                            )}
-                          </dd>
-                        </div>
-                        <div className="detail-row">
-                          <dt>Pagador</dt>
-                          <dd><Unknown value={account.payer_tenant_id} /></dd>
-                        </div>
-                        <div className="detail-row">
-                          <dt>Plan</dt>
-                          <dd>
-                            {/* El motivo de por qué no hay consumo va UNA vez, en el aviso de abajo. */}
-                            {consumption.plan
-                              ? <span className="mono">{consumption.plan}</span>
-                              : <span className="unknown">desconocido</span>}
-                          </dd>
-                        </div>
-                      </dl>
-                    </div>
-
-                    {consumption.available === false && consumption.scope === 'account' && (
-                      /*
-                       * Sólo los motivos de ESTA cuenta. Los de alcance global —no hay muestra,
-                       * ningún recolector publicó nunca— ya se declaran una vez arriba, y ponerlos
-                       * además en cada tarjeta era el mismo cartel repetido N veces: no comunica
-                       * más, satura y consigue que se lea menos. Acá queda lo que el cartel de
-                       * arriba no puede decir: que a ESTA cuenta el recolector no la trajo, o que
-                       * murió la sonda de SU proveedor.
-                       */
-                      <div className="account-section">
-                        <div className="account-notice">
-                          <AlertCircle size={14} aria-hidden="true" />
-                          {consumption.reason || 'No disponible'}
-                        </div>
-                      </div>
-                    )}
-
-                    {assignments.length > 0 && (
-                      <div className="account-section">
-                        <h4>Asignada a</h4>
-                        <ul className="assignments-list">
-                          {assignments.map((assignment, index) => (
-                            <li key={index} className={`assignment-item ${assignment.isPrimary ? 'primary' : 'fallback'} ${!assignment.enabled ? 'disabled' : ''}`}>
-                              <div className="assignment-header">
-                                <span className="agent-alias mono">{assignment.alias || '?'}</span>
-                                <span className="agent-display">{assignment.display_name || '—'}</span>
-                                {assignment.isPrimary && <Badge tone="online">PRIMARIA</Badge>}
-                                {!assignment.enabled && <Badge tone="offline">INACTIVO</Badge>}
-                              </div>
-                              <div className="assignment-container">
-                                Contenedor: <span className="mono">{assignment.container_name || '?'}</span>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {accountCeiling && (
-                      <div className="account-section">
-                        <h4>Techo de ruteo</h4>
-                        <div className="ceiling-info">
-                          Alias <span className="mono">{accountCeiling.alias}</span> está limitado a esta cuenta.
-                          {accountCeiling.account_payer_tenant && accountCeiling.account_payer_tenant !== accountCeiling.created_by_tenant && (
-                            <div className="ceiling-note">Creado por tenant <span className="mono">{accountCeiling.created_by_tenant}</span></div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </Panel>
 
       <Panel title="Suscripciones pausadas" subtitle="paused_reason con prefijo quota_exhausted: la puso el recolector y sólo el recolector puede levantarla; el resto son pausas manuales de un operador.">
