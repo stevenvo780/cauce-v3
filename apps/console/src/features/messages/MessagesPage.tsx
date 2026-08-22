@@ -1,110 +1,183 @@
-import { Send, ShieldCheck } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { MessagesSquare, ShieldCheck } from 'lucide-react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useApi } from '../../api/context';
-import type { JobLane } from '../../api/types';
 import { useResource } from '../../api/use-resource';
-import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel, PermissionBadge, RefreshButton, Time, Unknown } from '../../components/ui';
-import { compactId, createId, permissionState, safeDeliveryState, safeJobLane } from '../../lib';
-import { MessageTimeline } from './MessageTimeline';
+import { EmptyState, PageHeader, PermissionBadge, RefreshButton } from '../../components/ui';
+import { permissionState } from '../../lib';
+import { navigate } from '../../navigation';
+import { fleetAgentId, type FleetAgent } from '../terminal/fleet';
+import { operatorRouteForAgent } from '../terminal/session';
+import { AgentRoster } from './AgentRoster';
+import { ConversationPane } from './ConversationPane';
+import './messages.css';
+import { saludDeColaPorAgente } from './queue-health';
+import { construirRosterDeMensajeria } from './roster';
 
-function parseRecipient(value: string): { tenant_id: string; alias: string } | undefined {
-  const [tenant, alias, ...extra] = value.split(':').map((part) => part.trim());
-  return tenant && alias && extra.length === 0 ? { tenant_id: tenant, alias } : undefined;
+function suscribirRuta(callback: () => void): () => void {
+  window.addEventListener('popstate', callback);
+  return () => window.removeEventListener('popstate', callback);
 }
 
+function rutaActual(): string {
+  return window.location.pathname;
+}
+
+function decodificar(segmento: string): string {
+  try {
+    return decodeURIComponent(segmento);
+  } catch {
+    return segmento;
+  }
+}
+
+/** `/messages/:tenant/:alias` identifica la conversación abierta; `/messages` a secas, ninguna. */
+function agenteDeLaRuta(path: string): { tenantId: string; alias: string } | undefined {
+  const segmentos = path.split('/').filter(Boolean).map(decodificar);
+  if (segmentos[0] !== 'messages' || segmentos.length < 3) return undefined;
+  return { tenantId: segmentos[1], alias: segmentos[2] };
+}
+
+/**
+ * Mensajería con la flota.
+ *
+ * Lo que había antes era un formulario en el que había que escribir a mano el room y un
+ * «Tenant:alias», más una lista plana de tarjetas ordenada por mensaje: para saber si un agente
+ * había contestado había que leer las tarjetas de arriba abajo, y el destinatario era un campo
+ * de texto libre que sólo fallaba al enviar. Steven lo resumió en una línea —«el de mensajes es
+ * horrible, debería ser una suerte de wpp con mejoras para este sistema»— y las mejoras que pide
+ * son exactamente las que un WhatsApp no puede dar: cómo va la cola de cada agente y un salto
+ * directo a su terminal.
+ *
+ * Nada de esto duplica Ultimate Terminal. La lógica de flota, ruta de publicación y transcripción
+ * es la MISMA (`features/terminal`), reutilizada; lo que cambia es la pantalla y lo único
+ * verdaderamente nuevo es la columna de cola, que sale de fundir `/activity` con `/queues`
+ * (ver `queue-health.ts`).
+ */
 export function MessagesPage() {
   const api = useApi();
-  const resource = useResource('messages', () => api.listMessages());
+  const status = useResource('messages-status', () => api.getStatus());
+  const topology = useResource('messages-topology', () => api.getTopology());
   const access = useResource('console-access', () => api.getConsoleAccess());
-  const [room, setRoom] = useState('grp.steven');
-  const [recipient, setRecipient] = useState('Steven:argos');
-  const [text, setText] = useState('');
-  const [lane, setLane] = useState<JobLane>('interactive');
-  const [submitting, setSubmitting] = useState(false);
-  const [notice, setNotice] = useState<string>();
-  const [formError, setFormError] = useState<string>();
-  const canPublish = permissionState(access.data, 'message.publish') === 'allowed';
+  const messages = useResource('messages-feed', () => api.listMessages());
+  const activity = useResource('messages-activity', () => api.getFleetActivity());
+  const queues = useResource('messages-queues', () => api.getQueues());
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canPublish) {
-      setFormError('Publicación bloqueada: permiso RBAC DENY o UNKNOWN.');
-      return;
-    }
-    const parsed = parseRecipient(recipient);
-    if (!parsed) {
-      setFormError('Usá el formato Tenant:alias.');
-      return;
-    }
-    if (!text.trim()) {
-      setFormError('El mensaje no puede estar vacío.');
-      return;
-    }
-    setSubmitting(true);
-    setFormError(undefined);
-    setNotice(undefined);
-    try {
-      const result = await api.publishMessage({
-        room_id: room.trim(),
-        recipients: [parsed],
-        body: { text: text.trim() },
-        lane,
-        priority: lane === 'interactive' ? 10 : 0,
-        idempotency_key: createId('console'),
-      });
-      setText('');
-      setNotice(`Publish aceptado: ${compactId(result.message_id)}`);
-      resource.reload();
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Error desconocido');
-    } finally {
-      setSubmitting(false);
-    }
+  useIntervalo(messages.reload, 2_500, messages.loading);
+  useIntervalo(status.reload, 5_000, status.loading);
+  useIntervalo(activity.reload, 5_000, activity.loading);
+  useIntervalo(queues.reload, 15_000, queues.loading);
+  useIntervalo(topology.reload, 30_000, topology.loading);
+
+  const path = useSyncExternalStore(suscribirRuta, rutaActual, () => '/messages');
+  /**
+   * El roster NO se construye sólo con `memberships ∪ presence`. Ver `roster.ts`: con esa única
+   * fuente, un mensaje dirigido a un alias sin membresía ni lease no aparecía en ninguna parte de
+   * esta pantalla —el caso `gaia`—, y el feed de mensajes entra acá justamente para que un hilo
+   * con historia no pueda desaparecer por una tabla que nadie tocó.
+   */
+  const agents = useMemo(
+    () => construirRosterDeMensajeria({
+      status: status.data,
+      topology: topology.data,
+      activity: activity.error ? undefined : activity.data,
+      messages: messages.data,
+    }),
+    [status.data, topology.data, activity.data, activity.error, messages.data],
+  );
+  const salud = useMemo(
+    () => saludDeColaPorAgente(activity.error ? undefined : activity.data, queues.error ? undefined : queues.data),
+    [activity.data, activity.error, queues.data, queues.error],
+  );
+
+  const pedido = agenteDeLaRuta(path);
+  const seleccionado = pedido ? agents.find((agent) => agent.id === fleetAgentId(pedido.tenantId, pedido.alias)) : undefined;
+  const accesoVerificado = access.error ? undefined : access.data;
+  const topologiaVerificada = topology.error ? undefined : topology.data;
+  const canPublish = permissionState(accesoVerificado, 'message.publish') === 'allowed';
+  // El feed de mensajes es AHORA una de las fuentes del roster, así que también gatea el aviso
+  // de «el servidor no observa a este alias»: afirmarlo con el feed a medio cargar sería otra
+  // negativa dicha antes de tener la evidencia.
+  const flotaCargando = (status.loading && !status.data)
+    || (topology.loading && !topology.data)
+    || (activity.loading && !activity.data)
+    || (messages.loading && !messages.data);
+  const flotaError = status.error ?? topology.error;
+
+  function abrir(agent: FleetAgent) {
+    navigate(`/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`);
+  }
+
+  function sincronizar() {
+    status.reload();
+    topology.reload();
+    access.reload();
+    messages.reload();
+    activity.reload();
+    queues.reload();
   }
 
   return (
     <>
-      <PageHeader eyebrow="Durable messaging" title="Messages & timeline" description="Seguimiento correlacionado desde publish hasta ACK terminal. Actor, tenant de origen y canal son autoridad del servidor." actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />} />
-      <PermissionBadge access={access.data} permission="message.publish" />
-      <Panel title="Publicar por Cauce" subtitle="El backend deriva la identidad de la cookie HttpOnly; este formulario no acepta actor, session ni channel.">
-        <form className="publish-form" onSubmit={(event) => void submit(event)}>
-          <label>Room<input value={room} onChange={(event) => setRoom(event.target.value)} required /></label>
-          <label>Destinatario <span className="label-hint">Tenant:alias</span><input value={recipient} onChange={(event) => setRecipient(event.target.value)} pattern="[^:]+:[^:]+" required /></label>
-          <label>Lane<select value={lane} onChange={(event) => setLane(event.target.value as JobLane)}><option value="interactive">Interactive</option><option value="batch">Batch</option></select></label>
-          <label className="message-input">Mensaje<textarea value={text} onChange={(event) => setText(event.target.value)} rows={3} maxLength={8000} required /></label>
-          <button className="button primary" type="submit" disabled={!canPublish || submitting}><Send size={16} aria-hidden="true" />{submitting ? 'Publicando…' : 'Publicar'}</button>
-        </form>
-        <div className="trust-callout"><ShieldCheck size={17} aria-hidden="true" /><span>Sin Authorization header manual, sin storage persistente y sin campos de identidad del cliente.</span></div>
-        {notice ? <p className="notice success" role="status">{notice}</p> : null}
-        {formError ? <p className="notice error" role="alert">{formError}</p> : null}
-      </Panel>
-      {resource.loading && !resource.data ? <LoadingState /> : null}
-      {resource.error && !resource.data ? <ErrorState error={resource.error} onRetry={resource.reload} /> : null}
-      {resource.data ? (
-        <div className="message-list" aria-label="Mensajes recientes">
-          {(resource.data.items ?? []).length === 0 ? <EmptyState>No hay mensajes visibles para la identidad autenticada.</EmptyState> : (resource.data.items ?? []).map((message, index) => (
-            <Panel className="message-card" key={message.message_id ?? index}>
-              <div className="message-card-head">
-                <div><p className="eyebrow"><Unknown value={message.room_id} /> · <Unknown value={safeJobLane(message.lane)} /></p><h2>{message.body_preview ?? 'Contenido UNKNOWN'}</h2></div>
-                <Badge tone="info">{compactId(message.message_id)}</Badge>
-              </div>
-              <dl className="metadata-grid">
-                <div><dt>Actor verificado</dt><dd><Unknown value={message.actor_alias} /></dd></div>
-                <div><dt>Tenant</dt><dd><Unknown value={message.tenant_id} /></dd></div>
-                <div><dt>Trace</dt><dd className="mono"><Unknown value={message.trace_id} /></dd></div>
-                <div><dt>Publicado</dt><dd><Time value={message.created_at} /></dd></div>
-              </dl>
-              {(message.deliveries ?? []).length === 0 ? <EmptyState>Deliveries: UNKNOWN.</EmptyState> : (message.deliveries ?? []).map((delivery, deliveryIndex) => {
-                const status = safeDeliveryState(delivery.status);
-                return <section className="delivery" key={delivery.delivery_id ?? deliveryIndex}>
-                  <header><strong><Unknown value={delivery.recipient_alias} /></strong><span><Unknown value={delivery.recipient_tenant} /></span><Badge tone={status === 'done' ? 'done' : status === 'failed' || status === 'dead' ? 'danger' : status ? 'running' : 'unknown'}><Unknown value={status} /></Badge></header>
-                  <MessageTimeline events={delivery.timeline} />
-                </section>;
-              })}
-            </Panel>
-          ))}
-        </div>
-      ) : null}
+      <PageHeader
+        eyebrow="Mensajería durable"
+        title="Mensajes"
+        description="Una conversación por agente, con el estado de su cola al lado del nombre y un salto directo a su terminal. El actor, el tenant de origen y el canal siguen siendo autoridad del servidor."
+        actions={<RefreshButton onClick={sincronizar} loading={messages.loading && !messages.data} />}
+      />
+      <PermissionBadge access={accesoVerificado} permission="message.publish" />
+
+      <div className="messenger-shell">
+        <AgentRoster
+          agents={agents}
+          salud={salud}
+          activeAgentId={seleccionado?.id}
+          onSelect={abrir}
+          loading={flotaCargando}
+          error={flotaError}
+        />
+        {seleccionado ? (
+          <ConversationPane
+            agent={seleccionado}
+            page={messages.data}
+            loading={messages.loading}
+            error={messages.error}
+            route={operatorRouteForAgent(topologiaVerificada, accesoVerificado, seleccionado)}
+            canPublish={canPublish}
+            salud={salud[seleccionado.id]}
+            onReload={messages.reload}
+          />
+        ) : (
+          <section className="messenger-empty" aria-label="Sin conversación abierta">
+            <span aria-hidden="true"><MessagesSquare size={30} /></span>
+            <h2>Elegí un agente</h2>
+            {pedido && !flotaCargando ? (
+              <EmptyState>
+                El servidor no observa a <strong>{pedido.tenantId}:{pedido.alias}</strong>: ni en topología, ni en
+                presencia, ni en el registro de agentes, ni como emisor o destinatario de un mensaje de la ventana.
+                Cauce no inventa un agente que no existe.
+              </EmptyState>
+            ) : (
+              <p>
+                Cada conversación muestra el historial durable con ese agente, cómo va su cola y el botón para abrir
+                su terminal. El room de origen lo deriva tu topología: no hay que escribirlo.
+              </p>
+            )}
+          </section>
+        )}
+      </div>
+
+      <p className="trust-callout">
+        <ShieldCheck size={17} aria-hidden="true" />
+        <span>Sin header Authorization escrito a mano, sin almacenamiento persistente y sin campos de identidad del cliente.</span>
+      </p>
     </>
   );
+}
+
+function useIntervalo(reload: () => void, milisegundos: number, cargando: boolean) {
+  useEffect(() => {
+    if (cargando) return;
+    const intervalo = window.setInterval(reload, milisegundos);
+    return () => window.clearInterval(intervalo);
+  }, [cargando, milisegundos, reload]);
 }

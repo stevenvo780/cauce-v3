@@ -98,7 +98,7 @@ export function buildFleetAgents(status?: SystemStatus, topology?: TopologySnaps
     });
 }
 
-export function filterFleetAgents(agents: FleetAgent[], filters: FleetFilters): FleetAgent[] {
+export function filterFleetAgents<T extends FleetAgent>(agents: readonly T[], filters: FleetFilters): T[] {
   const query = normalized(filters.query);
   return agents.filter((agent) => {
     if (filters.tenantId !== 'all' && agent.tenantId !== filters.tenantId) return false;

@@ -1,0 +1,237 @@
+/*
+ * Mensajería con la flota. Dos columnas fijas —roster y hilo— con el mismo vocabulario visual
+ * del resto de la consola: se reusan `--surface`, `--border`, `.badge`, `.terminal-composer` y
+ * `.terminal-transcript` en vez de inventar una paleta nueva para esta pantalla.
+ */
+
+.messenger-shell {
+  display: grid;
+  overflow: hidden;
+  min-height: 0;
+  grid-template-columns: 310px minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+/* ---------------------------------------------------------------- roster (columna izquierda) */
+
+.messenger-roster {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.messenger-roster-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 15px 12px;
+}
+
+.messenger-roster-head h2 { margin: 3px 0 0; font-size: 1rem; }
+
+.messenger-roster-filters { display: grid; gap: 9px; padding: 0 15px 11px; }
+
+.messenger-search { position: relative; display: block; }
+.messenger-search svg { position: absolute; z-index: 1; top: 13px; left: 10px; color: var(--faint); }
+.messenger-search input { margin-top: 0; padding-left: 32px; }
+
+.messenger-tenant-filter > span { display: inline-flex; align-items: center; gap: 5px; }
+
+.messenger-roster-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 15px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--faint);
+  font-size: .62rem;
+}
+
+.messenger-agent-list { display: grid; overflow-y: auto; align-content: start; gap: 3px; padding: 9px; }
+
+.messenger-agent {
+  display: grid;
+  width: 100%;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  text-align: left;
+}
+
+.messenger-agent:hover { border-color: var(--border); background: var(--surface); }
+.messenger-agent[data-active] { border-color: var(--blue); background: var(--surface); }
+/* Sangra: entregas muertas o en reintento. El borde izquierdo es la señal, no el color del texto. */
+.messenger-agent[data-attention] { border-left: 3px solid var(--red); }
+
+.messenger-presence { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: #16283c; color: var(--faint); }
+.messenger-presence.online { background: var(--mint-dim); color: var(--mint); }
+.messenger-presence.expired { background: var(--red-dim); color: var(--red); }
+
+.messenger-agent-copy { display: grid; min-width: 0; gap: 6px; }
+.messenger-agent-name { display: flex; align-items: baseline; gap: 7px; }
+.messenger-agent-name strong { font-size: .82rem; }
+.messenger-agent-name small { color: var(--faint); font-size: .62rem; }
+
+.messenger-queue-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.messenger-pill {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #101c2c;
+  color: var(--muted);
+  font-size: .6rem;
+  white-space: nowrap;
+}
+
+.messenger-pill[data-kind="retry"] { border-color: #7a5a24; color: #ffd9a0; }
+.messenger-pill[data-kind="dead"] { border-color: #74313c; background: var(--red-dim); color: #ffb7bc; }
+.messenger-pill[data-kind="unknown"] { border-style: dashed; color: var(--faint); }
+
+/* ------------------------------------------------------------------- hilo (columna derecha) */
+
+.messenger-thread { display: flex; min-width: 0; flex-direction: column; }
+
+.messenger-thread-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.messenger-thread-identity { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.messenger-thread-identity h2 { margin: 0; font-size: 1.02rem; }
+.messenger-thread-identity .eyebrow { margin: 3px 0 0; }
+
+.messenger-avatar {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  place-items: center;
+  border-radius: 11px;
+  background: #16283c;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.messenger-avatar.online { background: var(--mint-dim); color: var(--mint); }
+.messenger-avatar.expired { background: var(--red-dim); color: var(--red); }
+
+.messenger-thread-actions { display: flex; flex: none; gap: 7px; }
+
+.messenger-queue-strip {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.messenger-queue-strip > div { padding: 9px 14px; background: var(--surface); }
+.messenger-queue-strip dd { margin: 4px 0 0; font-size: .95rem; font-weight: 700; }
+.messenger-queue-strip > div[data-alarm] dd { color: var(--red); }
+
+.messenger-window-note {
+  margin: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--faint);
+  font-size: .63rem;
+}
+
+.messenger-window-note[data-truncated] { background: rgba(208, 135, 0, .1); color: #ffd9a0; }
+
+.messenger-delivery-detail { padding: 12px 16px 4px; border-top: 1px solid var(--border); }
+/*
+ * La rejilla es PROPIA, no `.metadata-grid`: esa regla salió de styles.css el 2026-08-22 con la
+ * lista plana de tarjetas que la usaba. Reusar el nombre de una clase que ya no existe deja un
+ * `dl` sin rejilla y no lo avisa nadie.
+ */
+.messenger-message-meta {
+  display: grid;
+  gap: 10px;
+  margin: 6px 0 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.messenger-message-meta > div { min-width: 0; }
+.messenger-message-meta dd.mono { overflow-wrap: anywhere; font-size: .66rem; }
+
+.messenger-fanout { margin: 10px 0 4px; padding-top: 9px; border-top: 1px dashed var(--border); }
+.messenger-fanout-none { margin: 4px 0 0; color: var(--faint); font-size: .64rem; }
+.messenger-fanout-list { display: grid; gap: 5px; margin: 5px 0 0; padding: 0; list-style: none; }
+.messenger-fanout-list li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: .66rem; }
+.messenger-fanout-list strong { font-weight: 650; }
+.messenger-fanout-list span { color: var(--faint); }
+
+/* Un alias sin sala se ROTULA, no se esconde: ver el porqué en roster.ts. */
+.messenger-loose-tag {
+  display: inline-flex; gap: 3px; align-items: center;
+  padding: 1px 5px; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--faint); font-size: .55rem; text-transform: uppercase; letter-spacing: .04em;
+}
+
+.messenger-loose-count { border-bottom: 1px dotted currentcolor; cursor: help; }
+
+.messenger-loose-note {
+  display: flex; gap: 7px; align-items: flex-start;
+  margin: 0; padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(208, 135, 0, .1);
+  color: #ffd9a0; font-size: .64rem;
+}
+
+.messenger-loose-note svg { flex: none; margin-top: 1px; }
+
+.messenger-lane-select { display: block; margin-bottom: 9px; }
+
+.messenger-composer { margin-top: auto; }
+.messenger-composer .room-select-wrap { position: relative; display: block; }
+.messenger-composer .room-select-wrap svg { position: absolute; top: 21px; right: 10px; pointer-events: none; }
+.messenger-room-fixed { margin: 0 0 8px; color: var(--faint); font-size: .62rem; }
+.messenger-room-select { display: block; margin-bottom: 9px; }
+
+.messenger-empty { display: grid; min-height: 420px; align-content: center; justify-items: center; gap: 9px; padding: 40px 30px; text-align: center; }
+.messenger-empty h2 { margin: 0; font-size: 1.05rem; }
+.messenger-empty > span { color: var(--faint); }
+.messenger-empty p { max-width: 460px; margin: 0; color: var(--muted); font-size: .76rem; }
+
+@media (max-width: 1100px) {
+  .messenger-shell { grid-template-columns: 250px minmax(0, 1fr); }
+}
+
+@media (max-width: 1100px) {
+  .messenger-message-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .messenger-shell { display: block; }
+  .messenger-roster { border-right: 0; border-bottom: 1px solid var(--border); }
+  .messenger-agent-list { max-height: 300px; }
+  .messenger-queue-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .messenger-message-meta { grid-template-columns: 1fr 1fr; }
+}
+
+@media (prefers-color-scheme: light) {
+  .messenger-loose-note { color: #7a4b00; }
+  .messenger-presence { background: #e6edf6; }
+  .messenger-avatar { background: #e6edf6; color: #3a4a60; }
+  .messenger-pill { background: #ffffff; }
+  .messenger-agent:hover, .messenger-agent[data-active] { background: #ffffff; }
+}

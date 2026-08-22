@@ -214,9 +214,11 @@ input, select, textarea { width: 100%; margin-top: 7px; border: 1px solid var(--
 input, select { min-height: 41px; padding: 8px 10px; }
 textarea { padding: 10px; line-height: 1.5; resize: vertical; }
 input::placeholder { color: #60728e; }
-.publish-form { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(180px, 1fr) 145px; align-items: end; gap: 12px; }
-.publish-form .message-input { grid-column: 1 / -1; }
-.publish-form .button { justify-self: start; }
+/*
+ * `.publish-form` se retiró el 2026-08-22 con el formulario que la usaba: pedía el room y un
+ * «Tenant:alias» escritos a mano, y los dos pasaron a derivarse del agente elegido en el hilo.
+ * Ver features/messages/messages.css.
+ */
 .trust-callout { display: flex; align-items: center; gap: 8px; margin-top: 16px; color: var(--muted); font-size: .72rem; }
 .trust-callout svg { color: var(--mint); }
 .notice { margin: 14px 0 0; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-2); color: #bfcee2; font-size: .78rem; }
@@ -225,19 +227,16 @@ input::placeholder { color: #60728e; }
 /* Guardé, pero no pude releer: ni verde (no está comprobado) ni rojo (el cambio SÍ se aplicó). */
 .notice.parcial { border-color: #7a5a24; background: rgba(208, 135, 0, 0.12); color: #ffd9a0; }
 .permission-line { display: flex; align-items: center; gap: 10px; width: fit-content; margin: -12px 0 18px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--muted); font-size: .72rem; }
-.message-list { display: grid; gap: 4px; }
-.message-card-head { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
-.message-card-head h2 { margin: 0; font-size: 1.05rem; }
-.metadata-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 17px 0; }
+/*
+ * `.message-list`, `.message-card-head` y `.metadata-grid` se retiraron el 2026-08-22 junto con
+ * la lista plana de tarjetas de Mensajes: no quedó ningún otro consumidor (comprobado por grep
+ * sobre .tsx/.ts/.css antes de borrarlas).
+ */
 dl { margin: 0; }
-.metadata-grid div, .adapter-meta div, .terminal-cap-meta div { min-width: 0; }
+.adapter-meta div, .terminal-cap-meta div { min-width: 0; }
 dt { color: var(--faint); font-size: .62rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
 dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere; }
-.delivery { padding: 15px; border: 1px solid var(--border); border-radius: 11px; background: #0a111d; }
-.delivery + .delivery { margin-top: 10px; }
-.delivery > header { display: flex; align-items: center; gap: 10px; }
-.delivery > header span:not(.badge) { color: var(--muted); font-size: .72rem; }
-.delivery > header .badge { margin-left: auto; }
+/* `.delivery` (la tarjeta por entrega de la lista plana) salió con ella el 2026-08-22. */
 .timeline { display: grid; grid-template-columns: repeat(4, 1fr); margin: 20px 0 0; padding: 0; list-style: none; }
 .timeline li { position: relative; min-width: 0; padding-top: 17px; border-top: 2px solid var(--border-strong); }
 .timeline li:not(:last-child)::after { position: absolute; z-index: 0; top: -2px; right: 0; left: 10px; height: 2px; background: #315574; content: ""; }
@@ -545,7 +544,6 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .sidebar nav a { justify-content: center; padding: 12px; }
   .authority-note { justify-content: center; }
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
-  .metadata-grid { grid-template-columns: repeat(2, 1fr); }
   .edge-list li { grid-template-columns: 1fr auto 1fr auto; }
   .edge-list li > span:last-child { grid-column: 1 / -1; }
   .terminal-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -571,11 +569,8 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .page-header { align-items: start; flex-direction: column; }
   .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid, .adapter-grid, .landing-atajos, .config-grid { grid-template-columns: 1fr; }
   .metric { min-height: 115px; }
-  .publish-form { grid-template-columns: 1fr; }
   .config-form { grid-template-columns: 1fr; }
   .config-json { grid-column: auto; }
-  .publish-form .message-input { grid-column: auto; }
-  .metadata-grid { grid-template-columns: 1fr 1fr; }
   .timeline { grid-template-columns: 1fr; gap: 0; }
   .timeline li { min-height: 65px; padding: 0 0 14px 27px; border-top: 0; border-left: 2px solid var(--border-strong); }
   .timeline li:not(:last-child)::after { top: 9px; right: auto; bottom: 0; left: -2px; width: 2px; height: auto; }
@@ -600,8 +595,7 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
 }
 
 @media (max-width: 460px) {
-  .metadata-grid, .adapter-meta, .audit-row dl { grid-template-columns: 1fr; }
-  .message-card-head { flex-direction: column; }
+  .adapter-meta, .audit-row dl { grid-template-columns: 1fr; }
   .terminal-gate { grid-template-columns: 1fr; }
   .terminal-cap-meta { flex-direction: column; gap: 9px; }
   .terminal-overview { grid-template-columns: 1fr; }
@@ -753,7 +747,7 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   .quota-provider { background: #ffffff; }
   .quota-provider[data-severity="critical"], .quota-provider[data-severity="exhausted"] { border-color: #e0a3ab; }
   .quota-provider[data-severity="warn"] { border-color: #e3c98d; }
-  .delivery, .config-records li, .adapter-meta, .landing-atajos a { background: #f8fafd; }
+  .config-records li, .adapter-meta, .landing-atajos a { background: #f8fafd; }
   .config-preview { background: #f4f7fb; color: #22344a; }
   /* Los cuatro tonos de `.notice` traían el texto pensado para fondo oscuro y en modo claro nadie
      los había mirado: MEDIDO en Chrome, el verde de «rollback aplicado» quedaba a contraste 1.16 y
