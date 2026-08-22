@@ -1,14 +1,15 @@
-import { Filter, Inbox, Search, Wifi, WifiOff } from 'lucide-react';
+import { DoorClosed, Filter, Inbox, Search, Wifi, WifiOff } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Badge, EmptyState, LoadingState } from '../../components/ui';
-import { filterFleetAgents, type FleetAgent } from '../terminal/fleet';
+import { filterFleetAgents } from '../terminal/fleet';
 import { colaNecesitaAtencion, ordenarPorSaludDeCola, textoDeCifra, type SaludDeCola } from './queue-health';
+import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
 
 interface AgentRosterProps {
-  agents: FleetAgent[];
+  agents: AgenteDeMensajeria[];
   salud: Record<string, SaludDeCola>;
   activeAgentId?: string;
-  onSelect: (agent: FleetAgent) => void;
+  onSelect: (agent: AgenteDeMensajeria) => void;
   loading: boolean;
   error?: Error;
 }
@@ -65,6 +66,9 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
     [agents, query, salud, tenantId],
   );
   const online = agents.filter((agent) => agent.leaseState === 'online').length;
+  // Cuántos alias del roster no viven en ninguna sala declarada. Se dice en pantalla: si sube
+  // tras un alta o una baja, alguien tocó una sola de las dos tablas y se nota el mismo día.
+  const sueltos = agents.filter(fueraDeLaTopologia).length;
 
   return (
     <aside className="messenger-roster" aria-label="Agentes">
@@ -93,6 +97,17 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
 
       <p className="messenger-roster-meta">
         <Inbox size={12} aria-hidden="true" /> {visibles.length} visibles · primero las colas con entregas muertas o en reintento
+        {sueltos > 0 ? (
+          <>
+            {' · '}
+            <span
+              className="messenger-loose-count"
+              title="Alias del roster que NO están en ninguna sala declarada: los trae el registro de agentes o el propio feed de mensajes. Se listan a propósito — esconderlos es lo que hizo desaparecer a gaia."
+            >
+              {sueltos} sin sala
+            </span>
+          </>
+        ) : null}
       </p>
 
       <div className="messenger-agent-list" aria-label="Lista de agentes">
@@ -108,14 +123,22 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
                   data-active={activeAgentId === agent.id || undefined}
                   data-attention={colaNecesitaAtencion(salud[agent.id]) || undefined}
                   onClick={() => onSelect(agent)}
-                  aria-label={`Conversación con ${agent.alias}, ${agent.tenantId}, lease ${agent.leaseState}`}
+                  aria-label={`Conversación con ${agent.alias}, ${agent.tenantId}, lease ${agent.leaseState}${fueraDeLaTopologia(agent) ? ', sin sala declarada' : ''}`}
                   aria-current={activeAgentId === agent.id ? 'true' : undefined}
                 >
                   <span className={`messenger-presence ${agent.leaseState}`} aria-hidden="true">
                     {agent.leaseState === 'online' ? <Wifi size={15} /> : <WifiOff size={15} />}
                   </span>
                   <span className="messenger-agent-copy">
-                    <span className="messenger-agent-name"><strong>{agent.alias}</strong><small>{agent.tenantId}</small></span>
+                    <span className="messenger-agent-name">
+                      <strong>{agent.alias}</strong>
+                      <small>{agent.tenantId}</small>
+                      {fueraDeLaTopologia(agent) ? (
+                        <span className="messenger-loose-tag" title={motivoDeAgenteSuelto(agent)}>
+                          <DoorClosed size={11} aria-hidden="true" /> sin sala
+                        </span>
+                      ) : null}
+                    </span>
                     <PildorasDeCola salud={salud[agent.id]} />
                   </span>
                 </button>

@@ -121,10 +121,10 @@ export function colaNecesitaAtencion(salud: SaludDeCola | undefined): boolean {
  * reordena la flota entera: sólo sube a la cabecera a quien tiene entregas muertas o en
  * reintento, que es lo que diferencia esta vista de una lista de contactos.
  */
-export function ordenarPorSaludDeCola(
-  agentes: readonly FleetAgent[],
+export function ordenarPorSaludDeCola<T extends FleetAgent>(
+  agentes: readonly T[],
   salud: Record<string, SaludDeCola>,
-): FleetAgent[] {
+): T[] {
   return agentes
     .map((agente, indice) => ({ agente, indice }))
     .sort((izquierda, derecha) => {

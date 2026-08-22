@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { mockActivity } from '../../mocks/data';
+import { mockActivity, mockMessages, mockStatus, topology } from '../../mocks/data';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { MessagesPage } from './MessagesPage';
@@ -148,3 +148,180 @@ it('declara el techo de 100 mensajes del servidor en vez de presentar el hilo co
   const hilo = await abrirConversacion(user, 'argos');
   expect(within(hilo).getByText(/sin filtro por par/i)).toBeInTheDocument();
 }, 20_000);
+
+// ---------------------------------------------------------------------------------------------
+// PÉRDIDAS DEL REDISEÑO, REPUESTAS. Las tres salieron de una verificación adversarial: la vista
+// funcionaba y aun así había dejado de mostrar cosas que la lista plana anterior sí mostraba.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Deja el servidor en el estado exacto del defecto: `Steven:gaia` recibe un mensaje y NO está en
+ * ninguna sala ni tiene lease. Cuánto la conoce el registro se elige con `enElRegistro`.
+ */
+function servidorConGaia({ enElRegistro }: { enElRegistro: boolean }) {
+  const actividad = mockActivity();
+  const feed = mockMessages();
+  const mensajeAGaia = {
+    message_id: 'c0ffee00-1111-4222-8333-444444444444',
+    request_id: 'c0ffee00-1111-4222-8333-555555555555',
+    trace_id: 'trace-gaia-000777',
+    tenant_id: 'Steven', room_id: 'ops.infra', actor_alias: 'kant',
+    body_preview: 'gaia, tomá el encargo del censo', lane: 'batch' as const,
+    created_at: new Date(Date.now() - 30_000).toISOString(),
+    deliveries: [{
+      delivery_id: 'dddddddd-1111-4222-8333-666666666666',
+      recipient_tenant: 'Steven', recipient_alias: 'gaia', status: 'pending' as const, attempt: 1,
+      timeline: [{ status: 'published' as const, at: new Date(Date.now() - 30_000).toISOString(), attempt: 1 }],
+    }],
+  };
+
+  server.use(
+    // La topología NO la declara: es una membresía que nadie creó (o que alguien deshabilitó).
+    http.get('*/v3/console/topology', () => HttpResponse.json(topology)),
+    // Tampoco tiene lease: no aparece en `presence`.
+    http.get('*/v3/console/status', () => HttpResponse.json(mockStatus())),
+    http.get('*/v3/status', () => HttpResponse.json(mockStatus())),
+    http.get('*/v3/console/activity', () => HttpResponse.json(enElRegistro
+      ? { ...actividad, agents: [...(actividad.agents ?? []), { tenant_id: 'Steven', alias: 'gaia', registered: true, agent_enabled: true }] }
+      : actividad)),
+    http.get('*/v3/console/messages', () => HttpResponse.json({ ...feed, items: [mensajeAGaia, ...(feed.items ?? [])] })),
+  );
+}
+
+it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso gaia', async () => {
+  const user = userEvent.setup();
+  servidorConGaia({ enElRegistro: true });
+  renderWithApi(<MessagesPage />);
+
+  // 1) Tiene fila en el roster, rotulada como lo que es: registrada y sin sala.
+  const fila = await screen.findByRole('button', { name: /conversación con gaia,.*sin sala declarada/i });
+  expect(within(fila).getByText('sin sala')).toBeInTheDocument();
+
+  // 2) Y el hilo se abre con su mensaje dentro. Esto es lo que antes NO existía en ningún sitio.
+  await user.click(fila);
+  const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
+  expect(await within(hilo).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
+  expect(within(hilo).getByRole('note')).toHaveTextContent(/registro de agentes y en NINGUNA sala/i);
+}, 25_000);
+
+it('con el registro caído, el hilo sigue existiendo porque el propio feed lo sostiene', async () => {
+  const user = userEvent.setup();
+  servidorConGaia({ enElRegistro: false });
+  renderWithApi(<MessagesPage />);
+
+  const fila = await screen.findByRole('button', { name: /conversación con gaia,/i });
+  await user.click(fila);
+  const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
+  expect(await within(hilo).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
+  expect(within(hilo).getByRole('note')).toHaveTextContent(/sólo porque el servidor publicó mensajes suyos/i);
+}, 25_000);
+
+/**
+ * CONTROL NEGATIVO del universo ampliado. El arreglo consiste en dibujar a más gente, y por eso
+ * hay que probar que NO dibuja a cualquiera: un alias que ninguna de las cuatro fuentes menciona
+ * tiene que seguir sin existir, y la pantalla tiene que decirlo con todas las fuentes nombradas.
+ */
+it('un alias que ninguna fuente menciona sigue sin existir, y se dice por qué', async () => {
+  servidorConGaia({ enElRegistro: true });
+  window.history.pushState({}, '', '/messages/Steven/fantasma');
+  renderWithApi(<MessagesPage />);
+
+  expect(await screen.findByText(/ni en el registro de agentes/i)).toBeInTheDocument();
+  expect(screen.getByText('Steven:fantasma')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /conversación con fantasma,/i })).not.toBeInTheDocument();
+  // Y gaia, que sí está, aparece: la negativa es del alias inexistente, no del arreglo entero.
+  expect(await screen.findByRole('button', { name: /conversación con gaia,/i })).toBeInTheDocument();
+}, 25_000);
+
+/** El mismo mensaje del hilo de argos, pero con una entrega HERMANA para Steven:jarvis. */
+function feedConFanOut() {
+  const feed = mockMessages();
+  const items = (feed.items ?? []).map((mensaje) => mensaje.message_id !== '8eac0520-6e1e-47e8-b7da-554e4bf850b4'
+    ? mensaje
+    : {
+      ...mensaje,
+      deliveries: [
+        ...(mensaje.deliveries ?? []),
+        {
+          delivery_id: 'ffffffff-2222-4333-8444-555555555555',
+          recipient_tenant: 'Steven', recipient_alias: 'jarvis', status: 'failed' as const, attempt: 2,
+          timeline: [{ status: 'published' as const, at: new Date(Date.now() - 95_000).toISOString(), attempt: 1 }],
+        },
+      ],
+    });
+  server.use(http.get('*/v3/console/messages', () => HttpResponse.json({ ...feed, items })));
+}
+
+it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del publish', async () => {
+  const user = userEvent.setup();
+  feedConFanOut();
+  renderWithApi(<MessagesPage />);
+
+  const hilo = await abrirConversacion(user, 'argos');
+  const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
+
+  const campo = (etiqueta: string) => within(detalle).getByText(etiqueta).closest('div')!;
+  expect(within(campo('Room')).getByText('grp.steven')).toBeInTheDocument();
+  expect(within(campo('Lane')).getByText('interactive')).toBeInTheDocument();
+  expect(within(campo('Actor verificado')).getByText('kant')).toBeInTheDocument();
+  expect(within(campo('Tenant de origen')).getByText('Steven')).toBeInTheDocument();
+  expect(within(campo('Tenant destino')).getByText('Steven')).toBeInTheDocument();
+  // El trace ENTERO, no el compacto: es lo que se pega en /chains/:traceId.
+  expect(within(campo('Trace')).getByText('trace-fleet-00042')).toBeInTheDocument();
+  expect(within(campo('Message id')).getByText('8eac0520-6e1e-47e8-b7da-554e4bf850b4')).toBeInTheDocument();
+
+  // Y la entrega hermana del fan-out, con su destinatario y su estado.
+  const fanout = within(hilo).getByRole('region', { name: /entregas hermanas/i });
+  expect(within(fanout).getByText('Steven:jarvis')).toBeInTheDocument();
+  expect(within(fanout).getByText('failed')).toBeInTheDocument();
+}, 25_000);
+
+/**
+ * CONTROL NEGATIVO del fan-out. Reponer las entregas hermanas no puede volver a mezclar los
+ * hilos: la hermana se LISTA en el detalle, pero el mensaje sigue apareciendo UNA sola vez en la
+ * conversación de argos y el hilo de jarvis es otro.
+ */
+it('la entrega hermana se lista en el detalle pero NO se convierte en una burbuja del hilo', async () => {
+  const user = userEvent.setup();
+  feedConFanOut();
+  renderWithApi(<MessagesPage />);
+
+  const hilo = await abrirConversacion(user, 'argos');
+  await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
+  const burbujas = within(hilo).getAllByText('Verificar estado del adapter Hermes');
+  expect(burbujas).toHaveLength(1);
+  // El otro mensaje del feed, que va a Miguel:kratos, sigue fuera de este hilo.
+  expect(within(hilo).queryByText('Indexar reporte operativo')).not.toBeInTheDocument();
+}, 25_000);
+
+it('vuelve a poder publicar en el lane batch, con la prioridad de ese carril', async () => {
+  const user = userEvent.setup();
+  const enviados = capturarPublish();
+  renderWithApi(<MessagesPage />);
+
+  const hilo = await abrirConversacion(user, 'argos');
+  await user.selectOptions(within(hilo).getByLabelText(/^lane$/i), 'batch');
+  await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'indexá el informe');
+  await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
+
+  await waitFor(() => expect(enviados).toHaveLength(1));
+  expect(enviados[0]).toMatchObject({ lane: 'batch', priority: 0 });
+}, 25_000);
+
+/**
+ * CONTROL NEGATIVO del selector de lane. Que exista el control no puede cambiar lo que se publica
+ * cuando nadie lo toca: sin tocarlo tiene que seguir saliendo `interactive` con prioridad 10, que
+ * es lo que publicaba el formulario anterior.
+ */
+it('sin tocar el selector sigue publicando interactive con prioridad 10', async () => {
+  const user = userEvent.setup();
+  const enviados = capturarPublish();
+  renderWithApi(<MessagesPage />);
+
+  const hilo = await abrirConversacion(user, 'argos');
+  await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisá la cola');
+  await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
+
+  await waitFor(() => expect(enviados).toHaveLength(1));
+  expect(enviados[0]).toMatchObject({ lane: 'interactive', priority: 10 });
+}, 25_000);

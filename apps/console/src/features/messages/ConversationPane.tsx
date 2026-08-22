@@ -1,18 +1,19 @@
-import { ChevronDown, CircleOff, LockKeyhole, RefreshCw, Send, TerminalSquare } from 'lucide-react';
+import { ChevronDown, CircleOff, DoorClosed, LockKeyhole, RefreshCw, Send, TerminalSquare } from 'lucide-react';
 import { useMemo, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useApi } from '../../api/context';
-import type { DeliveryView, MessagePage } from '../../api/types';
-import { Badge, EmptyState, LoadingState, Time } from '../../components/ui';
-import { compactId, createId } from '../../lib';
+import type { DeliveryView, JobLane, MessagePage } from '../../api/types';
+import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
+import { compactId, createId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../navigation';
-import type { FleetAgent } from '../terminal/fleet';
+import { fleetAgentId } from '../terminal/fleet';
 import { transcriptForSession, type OperatorRoute, type OperatorSession } from '../terminal/session';
 import { TerminalTranscript } from '../terminal/TerminalTranscript';
 import { MessageTimeline } from './MessageTimeline';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
+import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
 
 interface ConversationPaneProps {
-  agent: FleetAgent;
+  agent: AgenteDeMensajeria;
   page?: MessagePage;
   loading: boolean;
   error?: Error;
@@ -23,7 +24,7 @@ interface ConversationPaneProps {
 }
 
 /** Ruta del detalle del bot, que es donde vive su terminal (feed durable + PTY cuando existe). */
-function rutaDeTui(agent: FleetAgent): string {
+function rutaDeTui(agent: AgenteDeMensajeria): string {
   return `/fleet/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
 }
 
@@ -42,6 +43,12 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
   const [enviando, setEnviando] = useState(false);
   const [aviso, setAviso] = useState<{ tone: 'success' | 'error'; text: string }>();
   const [deliveryElegida, setDeliveryElegida] = useState<string>();
+  /**
+   * El lane vuelve a ser del operador. El formulario anterior lo dejaba elegir `batch` y esta
+   * pantalla lo había fijado en `interactive`: publicar una tarea larga por el carril interactivo
+   * la pone a competir con los turnos en vivo, y desde la consola no había forma de evitarlo.
+   */
+  const [lane, setLane] = useState<JobLane>('interactive');
 
   const sesion: OperatorSession = useMemo(() => ({
     id: `messenger:${agent.id}`, agent, sourceRoomId: '', openedAt: new Date(0).toISOString(), mode: 'transcript',
@@ -52,8 +59,17 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
     ? roomElegido
     : route.sourceRoomIds[0] ?? '';
   const puedeEnviar = canPublish && route.allowed && Boolean(roomOrigen);
-  const seleccionada = hilo.map((item) => item.delivery).find((delivery) => delivery?.delivery_id === deliveryElegida)
-    ?? hilo.at(-1)?.delivery;
+  // Se selecciona el ITEM, no la entrega suelta: el detalle tiene que poder decir el room, el
+  // lane, el actor y el trace del MENSAJE, y esos campos no viven en la entrega.
+  const itemSeleccionado = hilo.find((item) => item.delivery?.delivery_id === deliveryElegida) ?? hilo.at(-1);
+  const seleccionada = itemSeleccionado?.delivery;
+  const mensajeSeleccionado = itemSeleccionado?.message;
+  // Las entregas HERMANAS del mismo publish: el fan-out completo. La lista plana anterior las
+  // mostraba todas y el hilo por par las había dejado fuera, así que desde acá no se podía saber
+  // a quién más había ido el mismo mensaje ni cómo le fue.
+  const hermanas = (mensajeSeleccionado?.deliveries ?? []).filter((entrega) => (
+    fleetAgentId(entrega.recipient_tenant ?? '', entrega.recipient_alias ?? '') !== agent.id
+  ));
   const totalVisible = (page?.items ?? []).length;
 
   async function enviar(event: FormEvent<HTMLFormElement>) {
@@ -67,8 +83,10 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
         room_id: roomOrigen,
         recipients: [{ tenant_id: agent.tenantId, alias: agent.alias }],
         body: { text: texto },
-        lane: 'interactive',
-        priority: 10,
+        lane,
+        // La MISMA prioridad por carril que publicaba el formulario anterior: interactivo 10,
+        // batch 0. No es una constante nueva, es la que ya estaba y se perdió con el rediseño.
+        priority: lane === 'interactive' ? 10 : 0,
         idempotency_key: createId(`consola-mensajes-${agent.alias}`),
       });
       setDraft('');
@@ -111,6 +129,12 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
         </div>
       </header>
 
+      {fueraDeLaTopologia(agent) ? (
+        <p className="messenger-loose-note" role="note">
+          <DoorClosed size={14} aria-hidden="true" /> {motivoDeAgenteSuelto(agent)}
+        </p>
+      ) : null}
+
       <dl className="messenger-queue-strip" aria-label={`Cola de ${agent.alias}`}>
         <div><dt>En cola</dt><dd>{textoDeCifra(salud?.pendientes)}</dd></div>
         <div><dt>En curso</dt><dd>{textoDeCifra(salud?.enCurso)}</dd></div>
@@ -147,10 +171,64 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
         />
       )}
 
-      {seleccionada ? (
-        <div className="messenger-delivery-detail">
-          <p className="eyebrow">Entrega {compactId(seleccionada.delivery_id)} → {seleccionada.recipient_alias ?? 'UNKNOWN'}</p>
-          <MessageTimeline events={seleccionada.timeline} />
+      {/*
+        EL DETALLE DEL MENSAJE, COMPLETO.
+
+        La lista plana anterior mostraba por tarjeta el room, el lane, el actor verificado, el
+        tenant, el trace ENTERO y TODAS las entregas del publish con su tenant destino. El hilo
+        por par se quedó sólo con el cuerpo, el `msg` compacto y el `trace` compacto, y ninguno de
+        esos campos es decorativo: el trace es lo que se pega en `/chains/:traceId`, el actor es la
+        autoridad del servidor sobre quién publicó, y las entregas hermanas son la única forma de
+        ver a quién MÁS fue el mismo mensaje. Todo eso vuelve acá.
+      */}
+      {mensajeSeleccionado ? (
+        <div className="messenger-delivery-detail" role="group" aria-label="Detalle del mensaje seleccionado">
+          <p className="eyebrow">
+            {seleccionada
+              ? <>Entrega {compactId(seleccionada.delivery_id)} → {seleccionada.recipient_tenant ?? 'UNKNOWN'}:{seleccionada.recipient_alias ?? 'UNKNOWN'}</>
+              : <>Mensaje {compactId(mensajeSeleccionado.message_id)} · sin entrega para este par</>}
+          </p>
+          <dl className="metadata-grid messenger-message-meta">
+            <div><dt>Room</dt><dd><Unknown value={mensajeSeleccionado.room_id} /></dd></div>
+            <div><dt>Lane</dt><dd><Unknown value={safeJobLane(mensajeSeleccionado.lane)} /></dd></div>
+            <div><dt>Actor verificado</dt><dd><Unknown value={mensajeSeleccionado.actor_alias} /></dd></div>
+            <div><dt>Tenant de origen</dt><dd><Unknown value={mensajeSeleccionado.tenant_id} /></dd></div>
+            <div><dt>Publicado</dt><dd><Time value={mensajeSeleccionado.created_at} /></dd></div>
+            {/* Enteros y seleccionables: un trace recortado no sirve para buscar la cadena. */}
+            <div><dt>Trace</dt><dd className="mono">{mensajeSeleccionado.trace_id ?? 'UNKNOWN'}</dd></div>
+            <div><dt>Message id</dt><dd className="mono">{mensajeSeleccionado.message_id ?? 'UNKNOWN'}</dd></div>
+            {seleccionada ? (
+              <>
+                <div><dt>Tenant destino</dt><dd><Unknown value={seleccionada.recipient_tenant} /></dd></div>
+                <div><dt>Delivery id</dt><dd className="mono">{seleccionada.delivery_id ?? 'UNKNOWN'}</dd></div>
+              </>
+            ) : null}
+          </dl>
+          {seleccionada ? <MessageTimeline events={seleccionada.timeline} /> : null}
+          <section className="messenger-fanout" aria-label="Entregas hermanas del mismo publish">
+            <p className="eyebrow">Fan-out del publish</p>
+            {hermanas.length === 0 ? (
+              <p className="messenger-fanout-none">
+                Este publish sólo tiene la entrega de este hilo. No es lo mismo que «no se sabe»: el servidor
+                devolvió {(mensajeSeleccionado.deliveries ?? []).length} entrega(s) para el mensaje.
+              </p>
+            ) : (
+              <ul className="messenger-fanout-list">
+                {hermanas.map((entrega, indice) => (
+                  <li key={entrega.delivery_id ?? indice}>
+                    <strong>{entrega.recipient_tenant ?? 'UNKNOWN'}:{entrega.recipient_alias ?? 'UNKNOWN'}</strong>
+                    <Badge tone={safeDeliveryState(entrega.status) === 'done' ? 'done'
+                      : safeDeliveryState(entrega.status) === 'failed' || safeDeliveryState(entrega.status) === 'dead' ? 'danger'
+                        : entrega.status ? 'running' : 'unknown'}>
+                      <Unknown value={safeDeliveryState(entrega.status)} />
+                    </Badge>
+                    <span className="mono">{compactId(entrega.delivery_id)}</span>
+                    <span>intento {entrega.attempt ?? 'UNKNOWN'}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </div>
       ) : null}
 
@@ -168,6 +246,19 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
         ) : (
           <p className="messenger-room-fixed">Room de origen: <span className="mono">{roomOrigen || 'UNKNOWN'}</span> · derivado de tu topología, no escrito a mano.</p>
         )}
+        <label className="messenger-lane-select" htmlFor={`messenger-lane-${agent.id}`}>Lane
+          <span className="room-select-wrap">
+            <select
+              id={`messenger-lane-${agent.id}`}
+              value={lane}
+              onChange={(event) => setLane(event.target.value === 'batch' ? 'batch' : 'interactive')}
+            >
+              <option value="interactive">Interactive · prioridad 10</option>
+              <option value="batch">Batch · prioridad 0</option>
+            </select>
+            <ChevronDown size={14} aria-hidden="true" />
+          </span>
+        </label>
         <textarea
           id={`messenger-input-${agent.id}`}
           value={draft}

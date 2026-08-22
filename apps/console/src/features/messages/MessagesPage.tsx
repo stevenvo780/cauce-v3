@@ -5,12 +5,13 @@ import { useResource } from '../../api/use-resource';
 import { EmptyState, PageHeader, PermissionBadge, RefreshButton } from '../../components/ui';
 import { permissionState } from '../../lib';
 import { navigate } from '../../navigation';
-import { buildFleetAgents, fleetAgentId, type FleetAgent } from '../terminal/fleet';
+import { fleetAgentId, type FleetAgent } from '../terminal/fleet';
 import { operatorRouteForAgent } from '../terminal/session';
 import { AgentRoster } from './AgentRoster';
 import { ConversationPane } from './ConversationPane';
 import './messages.css';
 import { saludDeColaPorAgente } from './queue-health';
+import { construirRosterDeMensajeria } from './roster';
 
 function suscribirRuta(callback: () => void): () => void {
   window.addEventListener('popstate', callback);
@@ -68,7 +69,21 @@ export function MessagesPage() {
   useIntervalo(topology.reload, 30_000, topology.loading);
 
   const path = useSyncExternalStore(suscribirRuta, rutaActual, () => '/messages');
-  const agents = useMemo(() => buildFleetAgents(status.data, topology.data), [status.data, topology.data]);
+  /**
+   * El roster NO se construye sólo con `memberships ∪ presence`. Ver `roster.ts`: con esa única
+   * fuente, un mensaje dirigido a un alias sin membresía ni lease no aparecía en ninguna parte de
+   * esta pantalla —el caso `gaia`—, y el feed de mensajes entra acá justamente para que un hilo
+   * con historia no pueda desaparecer por una tabla que nadie tocó.
+   */
+  const agents = useMemo(
+    () => construirRosterDeMensajeria({
+      status: status.data,
+      topology: topology.data,
+      activity: activity.error ? undefined : activity.data,
+      messages: messages.data,
+    }),
+    [status.data, topology.data, activity.data, activity.error, messages.data],
+  );
   const salud = useMemo(
     () => saludDeColaPorAgente(activity.error ? undefined : activity.data, queues.error ? undefined : queues.data),
     [activity.data, activity.error, queues.data, queues.error],
@@ -79,7 +94,13 @@ export function MessagesPage() {
   const accesoVerificado = access.error ? undefined : access.data;
   const topologiaVerificada = topology.error ? undefined : topology.data;
   const canPublish = permissionState(accesoVerificado, 'message.publish') === 'allowed';
-  const flotaCargando = (status.loading && !status.data) || (topology.loading && !topology.data);
+  // El feed de mensajes es AHORA una de las fuentes del roster, así que también gatea el aviso
+  // de «el servidor no observa a este alias»: afirmarlo con el feed a medio cargar sería otra
+  // negativa dicha antes de tener la evidencia.
+  const flotaCargando = (status.loading && !status.data)
+    || (topology.loading && !topology.data)
+    || (activity.loading && !activity.data)
+    || (messages.loading && !messages.data);
   const flotaError = status.error ?? topology.error;
 
   function abrir(agent: FleetAgent) {
@@ -131,7 +152,8 @@ export function MessagesPage() {
             <h2>Elegí un agente</h2>
             {pedido && !flotaCargando ? (
               <EmptyState>
-                El servidor no observa a <strong>{pedido.tenantId}:{pedido.alias}</strong> ni en presencia ni en topología.
+                El servidor no observa a <strong>{pedido.tenantId}:{pedido.alias}</strong>: ni en topología, ni en
+                presencia, ni en el registro de agentes, ni como emisor o destinatario de un mensaje de la ventana.
                 Cauce no inventa un agente que no existe.
               </EmptyState>
             ) : (
