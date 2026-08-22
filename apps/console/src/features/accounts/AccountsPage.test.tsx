@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { AccountsPage } from './AccountsPage';
@@ -39,18 +39,31 @@ const borrowedAccount = {
   updated_at: '2026-07-20T10:00:00.000Z',
 };
 
-it('queda enrutada en /accounts y /assignments sin desplazar a las pantallas existentes', async () => {
+/**
+ * El alta de cuenta y la asignación tienen barras de escritura con botones del mismo texto desde
+ * que las dos mitades comparten pantalla. Este helper acota al formulario de cuenta.
+ */
+function accountActions() {
+  return within(screen.getByRole('group', { name: /acciones de (alta|edición) de cuenta/i }));
+}
+
+it('queda enrutada en /accounts sin desplazar a las pantallas existentes', async () => {
   window.history.pushState({}, '', '/accounts');
   renderWithApi(<App />);
   expect(await screen.findByRole('heading', { level: 1, name: /cuentas de ia/i })).toBeInTheDocument();
 
-  window.history.pushState({}, '', '/assignments');
-  window.dispatchEvent(new PopStateEvent('popstate'));
-  expect(await screen.findByRole('heading', { level: 1, name: /matriz agente × cuenta/i })).toBeInTheDocument();
-
   window.history.pushState({}, '', '/config');
   window.dispatchEvent(new PopStateEvent('popstate'));
   expect(await screen.findByRole('heading', { level: 1, name: /configuración/i })).toBeInTheDocument();
+});
+
+it('/assignments no da 404 ni cae al fallback: redirige a /accounts y reescribe la barra de direcciones', async () => {
+  window.history.pushState({}, '', '/assignments');
+  renderWithApi(<App />);
+
+  // La vista correcta se elige en el match, no después de un rebote: la matriz está en pantalla.
+  expect(await screen.findByRole('heading', { level: 1, name: /cuentas de ia/i })).toBeInTheDocument();
+  await waitFor(() => expect(window.location.pathname).toBe('/accounts'));
 });
 
 it('lista el inventario con pagador, publicación al pool y estado', async () => {
@@ -80,7 +93,11 @@ it('declara no disponible el inventario cuando el gateway no publica provider_ac
   configuration({ agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
   renderWithApi(<AccountsPage />);
 
-  expect(await screen.findByText(/no disponible: este gateway no publica/i)).toBeInTheDocument();
+  // Las DOS mitades lo declaran por separado, cada una con lo que a ella le falta: la de arriba no
+  // puede listar el inventario, la de abajo no puede formar la matriz. Fundir las vistas no fundió
+  // los avisos, porque no son el mismo hecho.
+  expect(await screen.findByText(/no se muestra inventario porque no hay dato que mostrar/i)).toBeInTheDocument();
+  expect(screen.getByText(/la matriz se muestra incompleta a propósito/i)).toBeInTheDocument();
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
 });
 
@@ -96,10 +113,10 @@ it('exige dry-run antes de aplicar el alta y manda la mutación de provider_acco
 
   // El apply no existe como camino paralelo: está deshabilitado hasta que el servidor validó
   // exactamente esta mutación en dry-run.
-  expect(screen.getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
+  expect(accountActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
   expect(changes).toHaveLength(0);
 
-  await user.click(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
   expect(await screen.findByLabelText(/dry-run de alta de cuenta/i)).toHaveTextContent('"dry_run": true');
   expect(changes[0]).toEqual({
     dry_run: true,
@@ -114,7 +131,7 @@ it('exige dry-run antes de aplicar el alta y manda la mutación de provider_acco
     },
   });
 
-  await user.click(screen.getByRole('button', { name: /^aplicar$/i }));
+  await user.click(accountActions().getByRole('button', { name: /^aplicar$/i }));
   expect(await screen.findByText(/aplicado en revisión 5/i)).toBeInTheDocument();
   expect(changes[1]?.dry_run).toBe(false);
 });
@@ -128,7 +145,7 @@ it('no reimprime el locator en el dry-run que el servidor devuelve', async () =>
 
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
-  await user.click(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   const preview = await screen.findByLabelText(/dry-run de alta de cuenta/i);
   expect(preview).not.toHaveTextContent('CAUCE_CODEX_STEVEN_PATH');
@@ -143,7 +160,7 @@ it('deshabilita sin borrar: la acción abre el update con enabled en false', asy
   renderWithApi(<AccountsPage />);
 
   await user.click(await screen.findByRole('button', { name: /deshabilitar/i }));
-  await user.click(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   expect(changes[0]?.mutation).toEqual({
     resource: 'provider_account', action: 'update', id: 'codex-steven',
@@ -167,7 +184,7 @@ it('explica la causa real cuando el servidor bloquea despublicar una cuenta pres
   renderWithApi(<AccountsPage />);
 
   await user.click(await screen.findByRole('button', { name: /despublicar/i }));
-  await user.click(screen.getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(/no se puede despublicar la cuenta «codex-steven» del pool/i);

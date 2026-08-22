@@ -6,6 +6,7 @@ import {
   Badge, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, PermissionBadge,
   RefreshButton, Time, Unknown,
 } from '../../components/ui';
+import { AssignmentMatrix } from './AssignmentMatrix';
 import { MutationBar } from './MutationBar';
 import {
   CREDENTIAL_REF_HINTS, CREDENTIAL_REF_KINDS, accountDraftError, createAccountMutation,
@@ -73,6 +74,22 @@ function PayerScoped({ account, children }: { account: ProviderAccount; children
   return <>{children}</>;
 }
 
+/**
+ * **Cuentas de IA** — el inventario y su ruteo, en una sola vista.
+ *
+ * Hasta el 2026-08-06 la consola tenía CUATRO rutas sobre el mismo puñado de cuentas: "Licencias y
+ * consumo", "Consumo de cuotas", "Cuentas de IA" y "Matriz agente × cuenta". Las dos primeras ya se
+ * fundieron en "Cuotas y licencias" (`/quotas`), que es la mitad de **lectura**: cuánto saldo queda.
+ * Ésta es la mitad de **escritura**, y absorbe la matriz (`/assignments`, ver `AssignmentMatrix`):
+ * las columnas de la matriz eran las filas de esta tabla, el snapshot era el mismo
+ * `GET /v3/console/config` y el camino de escritura el mismo `POST /v3/console/config/changes` con
+ * dry-run previo. `/assignments` redirige acá (ver `ROUTE_ALIASES` en `App.tsx`).
+ *
+ * Lo que NO se fusionó, y por qué: `/quotas` conserva su propio panel de inventario. No es la misma
+ * tabla — ahí cada cuenta se lee junto a su consumo, su plan y su frescura de muestra, y es de sólo
+ * lectura. Traer las mutaciones a esa vista mezclaría observar con escribir, y traer el consumo acá
+ * obligaría a esta pantalla a depender del recolector para poder editar una etiqueta.
+ */
 export function AccountsPage() {
   const api = useApi();
   const config = useResource('registry-configuration', () => api.getConfiguration());
@@ -137,7 +154,7 @@ export function AccountsPage() {
     <PageHeader
       eyebrow="Pool de suscripciones"
       title="Cuentas de IA"
-      description="Inventario de provider_accounts: una cuenta tiene UN pagador y sólo se presta si su pagador la publicó al pool. La credencial no vive en la base: credential_ref es siempre un locator y el servidor no lo devuelve, ni siquiera a quien paga."
+      description="Inventario de provider_accounts y su ruteo, en una sola vista: una cuenta tiene UN pagador y sólo se presta si su pagador la publicó al pool. La credencial no vive en la base: credential_ref es siempre un locator y el servidor no lo devuelve, ni siquiera a quien paga. El saldo de cada cuenta NO está acá: está en «Cuotas y licencias», que lo lee del recolector."
       actions={<RefreshButton onClick={config.reload} loading={config.loading} />}
     />
     <PermissionBadge access={access.data} permission="config.write" />
@@ -253,5 +270,7 @@ export function AccountsPage() {
         </button>
       </div>
     </Panel> : null}
+
+    <AssignmentMatrix config={config} access={access} />
   </>;
 }

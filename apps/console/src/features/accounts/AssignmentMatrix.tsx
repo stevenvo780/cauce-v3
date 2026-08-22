@@ -1,11 +1,8 @@
 import { ArrowDownUp, Ban, Cpu, Link2Off, ShieldQuestion } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useApi } from '../../api/context';
-import type { ConfigMutation } from '../../api/types';
-import { useResource } from '../../api/use-resource';
-import {
-  Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel, PermissionBadge, RefreshButton,
-} from '../../components/ui';
+import type { ConfigMutation, ConfigurationSnapshot, ConsoleAccess } from '../../api/types';
+import type { Resource } from '../../api/use-resource';
+import { Badge, EmptyState, Panel } from '../../components/ui';
 import { MutationBar } from './MutationBar';
 import {
   bindingMutation, buildAssignmentMatrix, ceilingMutation, readAgents, readBindings, readCeiling,
@@ -42,11 +39,24 @@ function agentKeyOf(tenantId: string, alias: string): string {
   return `${tenantId}/${alias}`;
 }
 
-export function AssignmentMatrixPage() {
-  const api = useApi();
-  const config = useResource('registry-configuration', () => api.getConfiguration());
-  const access = useResource('console-access', () => api.getConsoleAccess());
-
+/**
+ * **Mitad de escritura del ruteo**, dentro de "Cuentas de IA". Hasta el 2026-08-06 era la ruta
+ * `/assignments` ("Matriz agente × cuenta"), y era la tercera vista de la consola que dibujaba el
+ * mismo inventario de cuentas: sus COLUMNAS son exactamente las FILAS de la tabla de arriba, salían
+ * del mismo `GET /v3/console/config` y se escribían por el mismo `POST /v3/console/config/changes`.
+ * Dos rutas para leer un snapshot y escribirlo con el mismo pipeline eran dos pollings y dos
+ * entradas de menú del mismo hecho.
+ *
+ * `config` y `access` llegan **por props, no por `useResource` propio**: `useResource` no comparte
+ * caché entre componentes, así que montar esto con sus propias lecturas volvería a pedir
+ * `/v3/console/config` y `/v3/console/access` una segunda vez en la misma pantalla — que es
+ * exactamente el defecto que la fusión viene a cerrar. El runner de mutación SÍ es propio: hay dos
+ * formularios independientes en la vista y el dry-run de uno no puede habilitar el apply del otro.
+ */
+export function AssignmentMatrix({ config, access }: {
+  config: Resource<ConfigurationSnapshot>;
+  access: Resource<ConsoleAccess>;
+}) {
   const accounts = useMemo(() => readProviderAccounts(config.data), [config.data]);
   const agents = useMemo(() => readAgents(config.data), [config.data]);
   const ceiling = useMemo(() => readCeiling(config.data), [config.data]);
@@ -122,17 +132,15 @@ export function AssignmentMatrixPage() {
             { priority: priorityNumber, enabled: assignment.enabled },
           );
 
-  if (config.loading && !config.data) return <LoadingState label="Leyendo techos y orden de fallback…" />;
-  if (config.error && !config.data) return <ErrorState error={config.error} onRetry={config.reload} />;
-
   return <>
-    <PageHeader
-      eyebrow="Ruteo de cuentas"
-      title="Matriz agente × cuenta"
-      description="El techo (alias_routing_ceiling) es el conjunto exhaustivo de cuentas a las que un alias puede llegar a rutearse; el binding sólo ordena el fallback dentro de ese techo. Un binding no puede existir fuera del techo: referencia al techo, no a provider_accounts."
-      actions={<RefreshButton onClick={config.reload} loading={config.loading} />}
-    />
-    <PermissionBadge access={access.data} permission="config.write" />
+    <header className="section-header">
+      <h2>Ruteo: qué cuenta puede usar cada agente</h2>
+      <p>
+        El techo (<code>alias_routing_ceiling</code>) es el conjunto exhaustivo de cuentas a las que un
+        alias puede llegar a rutearse; el binding sólo ordena el fallback dentro de ese techo. Un
+        binding no puede existir fuera del techo: referencia al techo, no a <code>provider_accounts</code>.
+      </p>
+    </header>
 
     <p className="notice" role="note">
       El intento 1 de cada delivery corre <strong>sin ningún override de entorno</strong>: el CLI resuelve la credencial que ya tiene logueada dentro de su container. Por eso el main del harness no es una fila de estas tablas y el orden de abajo describe únicamente los <strong>reintentos</strong>.

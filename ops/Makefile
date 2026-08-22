@@ -6,7 +6,7 @@ ENV_PROD ?= config/prod.env
 ARTIFACT_DIR ?= artifacts
 
 .PHONY: help test test-contract test-doubles test-real test-compose test-compose-authentic test-runtime-authentic test-restarts test-container-supervisor test-container-reaping test-container-cutover smoke-cli smoke-adapters validate manifest verify-manifest \
-	dev-up dev-down dev-health prod-up prod-down prod-health migrate backup restore manifests release-build release-gate
+	dev-up dev-down dev-health prod-up prod-down prod-health migrate backup restore manifests release-build release-gate release-console release-console-rollback release-console-verify
 
 help: ## Lista objetivos
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_.-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -85,6 +85,22 @@ release-build: ## Construye runtime/consola y genera evidencia con IDs
 
 release-gate: ## Exige Compose v2, build y compose-authentic del mismo digest
 	CAUCE_ENV_FILE="$(ENV_PROD)" ./scripts/release-gate.sh
+
+# release-build construye SIEMPRE las dos imagenes y release-gate exige que los dos digests
+# coincidan con esa evidencia, asi que una correccion de consola arrastraba al runtime entero.
+# Este objetivo es el camino solo-consola escrito: no toca gateway, dispatcher ni outbox.
+release-console: ## Despliega SOLO la consola (build --target console) y verifica por efecto
+	CAUCE_CONSOLE_TAG="$${CAUCE_CONSOLE_TAG:?definir CAUCE_CONSOLE_TAG}" \
+	CAUCE_PROD_HOST="$${CAUCE_PROD_HOST:?definir CAUCE_PROD_HOST}" \
+	  ./scripts/release-console.sh desplegar
+
+release-console-rollback: ## Vuelve la consola al digest anterior guardado en el host
+	CAUCE_PROD_HOST="$${CAUCE_PROD_HOST:?definir CAUCE_PROD_HOST}" \
+	  ./scripts/release-console.sh revertir
+
+release-console-verify: ## No cambia nada: dice que bundle esta sirviendo la consola ahora
+	CAUCE_PROD_HOST="$${CAUCE_PROD_HOST:?definir CAUCE_PROD_HOST}" \
+	  ./scripts/release-console.sh verificar
 
 migrate: ## Aplica migraciones pendientes (DATABASE_URL o DATABASE_URL_FILE)
 	./scripts/migrate.sh

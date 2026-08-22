@@ -1,6 +1,6 @@
 import { screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { ActivityPage } from './ActivityPage';
+import { LiveFleetPage } from '../live/LiveFleetPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import type { FleetActivitySnapshot } from '../../api/types';
@@ -69,22 +69,24 @@ function mockActivityOnce(snapshot: FleetActivitySnapshot) {
 
 it('renders agents from GET /v3/console/activity, sorted with the most urgent first', async () => {
   mockActivityOnce(BASE);
-  renderWithApi(<ActivityPage />);
+  renderWithApi(<LiveFleetPage />);
 
   const rows = await screen.findAllByRole('row');
   // La primera fila de datos (después del header) tiene que ser la colgada, no la alfabética.
   const dataRows = rows.filter((row) => within(row).queryAllByRole('cell').length > 0);
   expect(dataRows[0].textContent).toMatch(/midas/i);
 
-  expect(screen.getByText('Agentes visibles').nextElementSibling).toHaveTextContent('3');
-  // "En vuelo" también es el encabezado de una columna de la tabla; se busca el metric por su
-  // texto de detalle, que es único, para no ambigüar con el <th>.
-  expect(screen.getByText('leased + accepted + started').previousElementSibling).toHaveTextContent('50');
+  // El recuento de alias visibles vive ahora en la descripción de la cabecera, no en una tarjeta
+  // rotulada con la expresión SQL que lo produce.
+  expect(screen.getByText(/Los 3 alias que podés ver/)).toBeInTheDocument();
+  // Y las cifras bajaron a la línea de texto del veredicto, en castellano. La definición del
+  // servidor ("leased + accepted + started") sigue disponible: está en el tooltip.
+  expect(screen.getByText(/en vuelo$/)).toHaveTextContent('50 en vuelo');
 });
 
 it('shows an error state with a working retry button when the request fails', async () => {
   server.use(http.get('http://localhost/v3/console/activity', () => HttpResponse.json({ error: 'boom', message: 'actividad caída' }, { status: 500 })));
-  renderWithApi(<ActivityPage />);
+  renderWithApi(<LiveFleetPage />);
 
   expect(await screen.findByRole('alert')).toHaveTextContent(/actividad caída/i);
   expect(screen.getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
@@ -92,7 +94,7 @@ it('shows an error state with a working retry button when the request fails', as
 
 it('makes the saturated agent stand out visually with its own badge and highlight class, distinct from a healthy one', async () => {
   mockActivityOnce(BASE);
-  renderWithApi(<ActivityPage />);
+  renderWithApi(<LiveFleetPage />);
 
   const jarvisRow = await screen.findByRole('row', { name: /jarvis/i });
   expect(within(jarvisRow).getByText('SATURADO')).toBeInTheDocument();
@@ -105,7 +107,7 @@ it('makes the saturated agent stand out visually with its own badge and highligh
 
 it('makes the stalled (incident) agent stand out even harder, and stacks its flags instead of hiding any of them', async () => {
   mockActivityOnce(BASE);
-  renderWithApi(<ActivityPage />);
+  renderWithApi(<LiveFleetPage />);
 
   const midasRow = await screen.findByRole('row', { name: /midas/i });
   expect(within(midasRow).getByText('COLGADO')).toBeInTheDocument();
@@ -118,7 +120,7 @@ it('makes the stalled (incident) agent stand out even harder, and stacks its fla
 
 it('never renders a null seconds_since_last_ack as zero or a dash: it reads as an explicit ACK gap', async () => {
   mockActivityOnce(BASE);
-  renderWithApi(<ActivityPage />);
+  renderWithApi(<LiveFleetPage />);
 
   const midasRow = await screen.findByRole('row', { name: /midas/i });
   const ackCell = within(midasRow).getAllByRole('cell')[7];
@@ -126,16 +128,18 @@ it('never renders a null seconds_since_last_ack as zero or a dash: it reads as a
   expect(ackCell.textContent?.toLowerCase()).toContain('ack');
 });
 
-it('reflects totals.by_state and totals.flagged without inventing zeroes for absent keys', async () => {
+it('reflects totals.flagged without inventing zeroes for absent keys, and keeps it separate from the seven states', async () => {
   mockActivityOnce(BASE);
-  renderWithApi(<ActivityPage />);
+  renderWithApi(<LiveFleetPage />);
 
-  const byStatePanel = (await screen.findByText('Por estado')).closest('section')!;
-  // by_state.working está ausente del fixture (0 agentes trabajando ahora), y el chip lo muestra
-  // como 0 real, no como una fila faltante.
-  expect(within(byStatePanel).getByText('TRABAJANDO').closest('.chip')).toHaveTextContent('0');
-  expect(within(byStatePanel).getByText('COLGADO').closest('.chip')).toHaveTextContent('1');
-
-  const flaggedPanel = screen.getByText('Señales activas').closest('section')!;
+  // `flagged` es acumulativo y NO se puede derivar del recuento por estado: midas está saturado Y
+  // colgado a la vez, así que suma en las dos columnas. Por eso este panel sobrevivió a la fusión
+  // mientras que "Por estado" —cinco baldes excluyentes del servidor, una versión más gruesa de
+  // los siete estados que la página ya dibuja— se quitó por redundante.
+  const flaggedPanel = (await screen.findByText('Señales activas')).closest('section')!;
   expect(within(flaggedPanel).getByText('Saturado').closest('.chip')).toHaveTextContent('2');
+  expect(within(flaggedPanel).getByText('Lease vencido').closest('.chip')).toHaveTextContent('1');
+  expect(within(flaggedPanel).queryByText('Nunca conectado')).not.toBeInTheDocument();
+
+  expect(screen.queryByText('Por estado')).not.toBeInTheDocument();
 });

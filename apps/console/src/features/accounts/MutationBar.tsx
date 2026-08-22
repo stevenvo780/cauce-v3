@@ -3,8 +3,14 @@ import type { ConfigMutation } from '../../api/types';
 import type { RegistryMutationRunner } from './use-registry-mutation';
 
 /**
- * Barra de escritura compartida por las dos pantallas del pool: dry-run primero, apply después, y
+ * Barra de escritura compartida por los dos formularios del pool: dry-run primero, apply después, y
  * el apply deshabilitado hasta que el servidor validó la mutación exacta que está en pantalla.
+ *
+ * Desde que el inventario y la matriz viven en la MISMA vista hay dos barras en pantalla a la vez,
+ * con botones de texto idéntico. Por eso los botones van dentro de un `role="group"` nombrado con
+ * `previewLabel`: sin eso, "Previsualizar (dry-run)" es ambiguo para un lector de pantalla, para el
+ * teclado y para los tests — y previsualizar el formulario equivocado manda una mutación que el
+ * operador no pidió.
  */
 export function MutationBar({ runner, mutation, invalid, previewLabel }: {
   runner: RegistryMutationRunner;
@@ -18,7 +24,7 @@ export function MutationBar({ runner, mutation, invalid, previewLabel }: {
 
   return <>
     {mutation ? <pre className="config-preview" aria-label={`Mutación pendiente de ${previewLabel}`}>{JSON.stringify(mutation, null, 2)}</pre> : null}
-    <div className="config-actions">
+    <div className="config-actions" role="group" aria-label={`Acciones de ${previewLabel}`}>
       <button className="button secondary" type="button" disabled={blocked} onClick={() => { if (mutation) void runner.run(mutation, true); }}>
         <SearchCheck size={16} aria-hidden="true" />Previsualizar (dry-run)
       </button>

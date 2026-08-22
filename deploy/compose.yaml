@@ -49,7 +49,14 @@ services:
       PGSSLMODE: verify-full
       PGSSLROOTCERT: /run/secrets/postgres_ca
       CAUCE_DEV_AUTH: "0"
-      CAUCE_AUTH_PROVIDER: ${CAUCE_AUTH_PROVIDER:?select oidc, mtls, or token-file}
+      CAUCE_AUTH_PROVIDER: ${CAUCE_AUTH_PROVIDER:?select password, oidc, mtls, or token-file}
+      # Login humano por correo + contraseña (tabla console_users). Sólo se lee cuando
+      # CAUCE_AUTH_PROVIDER=password; mientras tanto el secreto apunta a /dev/null y el gateway
+      # arranca exactamente como hoy. El fallback decide QUIÉN atiende lo que no trae cookie de
+      # consola: `mtls` deja a los agentes entrando por su certificado igual que siempre.
+      CAUCE_CONSOLE_JWT_KEY_FILE: /run/secrets/console_jwt_key
+      CAUCE_CONSOLE_PASSWORD_FALLBACK: ${CAUCE_CONSOLE_PASSWORD_FALLBACK:-mtls}
+      CAUCE_CONSOLE_SESSION_TTL_SECONDS: ${CAUCE_CONSOLE_SESSION_TTL_SECONDS:-28800}
       CAUCE_OIDC_ISSUER: ${CAUCE_OIDC_ISSUER:-}
       CAUCE_OIDC_AUDIENCE: ${CAUCE_OIDC_AUDIENCE:-}
       CAUCE_OIDC_JWKS_URL: ${CAUCE_OIDC_JWKS_URL:-}
@@ -121,6 +128,11 @@ services:
         mode: 0444
       - source: gateway_oidc_session_key
         target: gateway_oidc_session_key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: console_jwt_key
+        target: console_jwt_key
         uid: "1000"
         gid: "1000"
         mode: 0400
@@ -585,6 +597,11 @@ secrets:
   # gateway service, never as single-file secret mounts.
   gateway_oidc_session_key:
     file: ${CAUCE_GATEWAY_OIDC_SESSION_KEY_PATH:-/dev/null}
+  # Clave HMAC del JWT de sesión de la consola. Opt-in como las de arriba: sin la variable
+  # apunta a /dev/null y el stack levanta igual, porque nadie la lee salvo con
+  # CAUCE_AUTH_PROVIDER=password. En producción vive en /etc/cauce-v3/secrets/console_jwt_key.
+  console_jwt_key:
+    file: ${CAUCE_CONSOLE_JWT_KEY_PATH:-/dev/null}
   gateway_oidc_client_secret:
     file: ${CAUCE_GATEWAY_OIDC_CLIENT_SECRET_PATH:-/dev/null}
   console_tls_cert:

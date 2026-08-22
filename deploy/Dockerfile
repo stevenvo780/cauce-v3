@@ -112,7 +112,7 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1
 
 FROM console-base AS console
-COPY deploy/nginx-console-tls.conf /etc/nginx/conf.d/default.conf
+COPY --chmod=644 deploy/nginx-console-tls.conf /etc/nginx/conf.d/default.conf
 EXPOSE 8444
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=5 \
   CMD test -r /run/secrets/console_tls_ca && SSL_CERT_FILE=/run/secrets/console_tls_ca wget -q -O /dev/null https://console:8444/ || exit 1

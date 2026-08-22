@@ -118,6 +118,18 @@ export function agentRowKey(agent: FleetActivityAgent): string {
   return `${agent.tenant_id}:${agent.alias}`;
 }
 
+/**
+ * La MISMA clave que usa la sala de máquinas (`tenant/alias`).
+ *
+ * `agentRowKey` usa dos puntos y es la clave de React de la fila; ésta es la que viaja entre la
+ * tabla y el hipergrafo. Se derivan las dos del mismo par a propósito, pero no se mezclan: si la
+ * tabla emitiera su clave con dos puntos, el grafo nunca encontraría el nodo y el resaltado
+ * fallaría en silencio, que es la clase de fallo que nadie ve hasta que importa.
+ */
+export function agentKeyOf(agent: FleetActivityAgent): string {
+  return `${agent.tenant_id}/${agent.alias}`;
+}
+
 export function agentDisplayName(agent: FleetActivityAgent): string {
   return agent.display_name ?? agent.alias;
 }

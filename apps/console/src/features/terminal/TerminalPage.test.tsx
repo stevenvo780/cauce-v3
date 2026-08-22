@@ -84,7 +84,13 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
   renderWithApi(<TerminalPage />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Ultimate Terminal' })).toBeInTheDocument();
-  expect(await screen.findByText('12 agentes')).toBeInTheDocument();
+  // El encabezado tiene que contar lo MISMO que la lista que se ve debajo. El número exacto es del
+  // fixture y cambia cada vez que la topología de demostración se parece más a la flota real;
+  // clavarlo acá solo compraba un test que se rompe sin que se rompa nada. Lo que sí importa —y no
+  // depende del fixture— es que el contador no afirme un tamaño de flota distinto al que muestra.
+  const listed = await screen.findAllByRole('button', { name: /abrir sesión con/i });
+  expect(listed.length).toBeGreaterThan(1);
+  expect(await screen.findByText(`${listed.length} agentes`)).toBeInTheDocument();
   await user.click(await screen.findByRole('button', { name: /abrir sesión con kant/i }));
 
   const input = await screen.findByRole('textbox', { name: /entrada para kant/i });
@@ -94,7 +100,12 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
   expect(await screen.findByText(/Aceptado por el control plane/i)).toBeInTheDocument();
   expect(screen.getByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByText(/no crea workers remotos/i)).toBeInTheDocument();
-});
+  // Timeout explícito, y no por lentitud tolerada: este caso renderiza la barra lateral entera —15
+  // alias, cada uno resolviendo su estado de PTY— y encima escribe un mensaje carácter por carácter
+  // con userEvent. Aislado tarda ~2,7 s; corriendo detrás de los otros 31 archivos, con la máquina
+  // caliente, pasaba los 5 s por defecto y fallaba por reloj, no por conducta. Un test que falla
+  // según con quién comparta la corrida no está midiendo la aplicación.
+}, 20_000);
 
 it('keeps the durable feed operational on a real PTY 501 and disables only PTY', async () => {
   const user = userEvent.setup();

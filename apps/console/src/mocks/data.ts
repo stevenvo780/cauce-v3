@@ -1,7 +1,9 @@
 import type {
   AdapterPage,
   AuditPage,
+  FleetActivityItem,
   FleetActivitySnapshot,
+  FleetDelegationEdge,
   JobPage,
   MessagePage,
   OriginRelayPage,
@@ -13,6 +15,44 @@ import type {
 
 const iso = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
 const secondsAgo = (seconds: number) => iso(-seconds * 1_000);
+
+/**
+ * Una entrega en vuelo, escrita en la forma en que se la lee.
+ *
+ * `desde` es **quién mandó la entrega** (`tenant/alias`), y es el único dato del que sale una
+ * flecha en el hipergrafo vivo: `delegationEdges()` deriva la arista `desde → agente que la tiene`
+ * de `from_tenant`/`from_alias`. Un ítem sin ese par existe igual —el trabajo está en vuelo— pero
+ * no se sabe quién delegó, así que no se dibuja nada. Por eso acá es obligatorio y no opcional:
+ * un fixture con entregas anónimas produce una sala de máquinas sin una sola flecha, que es
+ * exactamente la pregunta que el panel existe para responder.
+ *
+ * `segundos` es la antigüedad en vuelo. Por encima de `stall_after_seconds` (300 en este snapshot)
+ * la flecha se pinta en ámbar: no es decoración, es la señal de "esto lleva demasiado", el fallo
+ * que se ve como un agente que tarda y no como un error.
+ */
+function enVuelo(id: string, desde: string, segundos: number, extra: Partial<FleetActivityItem> = {}): FleetActivityItem {
+  const corte = desde.indexOf('/');
+  return {
+    delivery_id: id,
+    message_id: `msg-${id}`,
+    trace_id: `trace-${id}`,
+    from_tenant: desde.slice(0, corte),
+    from_alias: desde.slice(corte + 1),
+    lane: 'interactive',
+    origin_adapter: 'bus',
+    published_at: secondsAgo(segundos + 2),
+    status: 'started',
+    attempt: 1,
+    claimed_at: secondsAgo(segundos),
+    // El deadline se mide contra el ACK, no contra el reloj de la entrega: una entrega vieja con
+    // ACKs frescos sigue viva. Se vence sólo cuando pasó el doble de la ventana de estancamiento.
+    ack_deadline_at: iso((600 - segundos) * 1_000),
+    seconds_in_flight: segundos,
+    last_ack_at: secondsAgo(Math.min(segundos, 25)),
+    last_ack_status: 'started',
+    ...extra,
+  };
+}
 
 export function mockStatus(): SystemStatus {
   return {
@@ -39,19 +79,61 @@ export function mockStatus(): SystemStatus {
   };
 }
 
+/**
+ * Topología de demostración, calcada de la flota real: 5 tenants y 15 alias.
+ *
+ * Está escrita para que se vea lo que un hipergrafo tiene de distinto a un grafo: hay tenants con
+ * MÁS DE UNA room y alias que pertenecen a dos rooms a la vez —los puentes—. Un alias así se
+ * dibuja una sola vez y las dos regiones se solapan sobre él; con una room por tenant ese
+ * solapamiento no existe y el dibujo degenera en cinco islas sueltas.
+ *
+ * Los puentes son SIEMPRE dentro del mismo tenant, y no por comodidad: en esta respuesta el
+ * miembro de una room es un alias suelto, sin tenant propio, así que el alias `kant` metido en una
+ * room de Miguel no significa "el kant de Steven entra a la sala de Miguel" — significa que existe
+ * un agente `Miguel:kant`, que es falso. El resto de la consola lee esta misma estructura y crea
+ * el agente (`terminal/fleet.ts` indexa por `tenant:alias`), así que el atajo no quedaría en el
+ * dibujo: inventaría destinos de terminal que no existen. El cruce entre tenants se declara donde
+ * el modelo sí lo admite y donde el backend realmente lo resuelve: las aristas ACL de abajo.
+ */
 export const topology: TopologySnapshot = {
   observed_at: '2026-07-22T16:12:08.000Z',
   tenants: [
-    { id: 'Steven', label: 'Steven', rooms: [{ id: 'grp.steven', label: 'grp.steven', members: [{ alias: 'kant', enabled: true }, { alias: 'argos', enabled: true }, { alias: 'socrates', enabled: true }, { alias: 'jarvis', enabled: true }] }] },
-    { id: 'Miguel', label: 'Miguel', rooms: [{ id: 'grp.miguel', label: 'grp.miguel', members: [{ alias: 'kratos', enabled: true }, { alias: 'janus', enabled: true }] }] },
+    {
+      id: 'Steven', label: 'Steven', rooms: [
+        // La sala del hub tiene a los cinco: es donde el operador comparte room con todos los suyos.
+        { id: 'grp.steven', label: 'grp.steven', members: [{ alias: 'zeus', enabled: true }, { alias: 'kant', enabled: true }, { alias: 'socrates', enabled: true }, { alias: 'jarvis', enabled: true }, { alias: 'argos', enabled: true }] },
+        // Sala de infraestructura: el médico de la flota y el PMO. Está contenida en la anterior, y
+        // ese anidamiento también es información: `zeus` y `argos` son los puentes entre las dos.
+        { id: 'ops.infra', label: 'ops.infra', members: [{ alias: 'zeus', enabled: true }, { alias: 'argos', enabled: true }] },
+      ],
+    },
+    {
+      id: 'Miguel', label: 'Miguel', rooms: [
+        { id: 'grp.miguel', label: 'grp.miguel', members: [{ alias: 'janus', enabled: true }, { alias: 'kratos', enabled: true }, { alias: 'iza', enabled: true }] },
+        // `atlas` es el caso real de un alias con trabajo encolado que nadie dio de alta.
+        { id: 'ops.miguel', label: 'ops.miguel', members: [{ alias: 'kratos', enabled: true }, { alias: 'atlas', enabled: false }] },
+      ],
+    },
+    {
+      id: 'Pablo', label: 'Pablo', rooms: [
+        { id: 'grp.pablo', label: 'grp.pablo', members: [{ alias: 'dedalo', enabled: true }, { alias: 'midas', enabled: true }, { alias: 'seneca', enabled: true }] },
+        { id: 'marcas.pablo', label: 'marcas.pablo', members: [{ alias: 'midas', enabled: true }, { alias: 'vulcano', enabled: false }] },
+      ],
+    },
     { id: 'Isa', label: 'Isa', rooms: [{ id: 'grp.isa', label: 'grp.isa', members: [{ alias: 'salva', enabled: true }] }] },
     { id: 'Jhon', label: 'Jhon', rooms: [{ id: 'grp.jhon', label: 'grp.jhon', members: [{ alias: 'hegel', enabled: true }] }] },
-    { id: 'Pablo', label: 'Pablo', rooms: [{ id: 'grp.pablo', label: 'grp.pablo', members: [{ alias: 'dedalo', enabled: true }, { alias: 'midas', enabled: true }, { alias: 'seneca', enabled: true }, { alias: 'vulcano', enabled: false }] }] },
   ],
   acl_edges: [
     { from_tenant: 'Steven', to_tenant: 'Miguel', enabled: true, allow_route: true, allow_read: true, allow_control: true, policy: 'explicit-cross-tenant' },
-    { from_tenant: 'Miguel', to_tenant: 'Steven', enabled: true, allow_route: true, allow_read: true, allow_control: true, policy: 'explicit-cross-tenant' },
+    { from_tenant: 'Miguel', to_tenant: 'Steven', enabled: true, allow_route: true, allow_read: true, allow_control: false, policy: 'explicit-cross-tenant' },
+    { from_tenant: 'Steven', to_tenant: 'Pablo', enabled: true, allow_route: true, allow_read: true, allow_control: true, policy: 'explicit-cross-tenant' },
+    { from_tenant: 'Pablo', to_tenant: 'Steven', enabled: true, allow_route: true, allow_read: true, allow_control: false, policy: 'explicit-cross-tenant' },
+    { from_tenant: 'Steven', to_tenant: 'Jhon', enabled: true, allow_route: true, allow_read: true, allow_control: true, policy: 'explicit-cross-tenant' },
+    // Entre tenants cliente no hay canal: lo impide un constraint del backend, no un olvido.
     { from_tenant: 'Miguel', to_tenant: 'Pablo', enabled: false, allow_route: false, allow_read: false, allow_control: false, policy: 'default-deny' },
+    // Isa NO tiene arista desde Steven a propósito, y no es un olvido del fixture: el cruce que
+    // nadie declaró queda denegado por default en el backend, y esa es justamente la fila que la
+    // consola tiene que saber mostrar (destino bloqueado con su motivo, no un botón muerto).
   ],
 };
 
@@ -147,9 +229,17 @@ export const originRelays: OriginRelayPage = { items: [
  * saturado + colgado + lease vencido + reintentando), un alias que nadie registró (atlas), y dos
  * variantes del null en seconds_since_last_ack — inactivo-sin-historia (vulcano) vs. colgado con
  * trabajo real pendiente (hegel) — porque son diagnósticos distintos y el mismo null los cubre a los dos.
+ *
+ * Cubre además —y esto es nuevo— **los 15 alias de la topología**, cada uno con sus entregas en
+ * vuelo y con el emisor declarado. De ahí salen las flechas de la sala de máquinas: sin
+ * `from_tenant`/`from_alias` la entrega existe pero es anónima, y el panel "quién le habla a
+ * quién" queda mudo, con los muñecos en su sala y ni una sola delegación dibujada.
  */
 export function mockActivity(): FleetActivitySnapshot {
-  return {
+  // `enriquecer` añade lo que el backend sumará en su fase: salas, cerradas en 24 h y aristas
+  // agregadas por par. Va como envoltorio y no a mano en cada agente para que un alias nuevo en el
+  // fixture no se quede sin los campos y produzca un falso "el servidor no lo informa".
+  return enriquecer({
     observed_at: iso(0),
     thresholds: {
       saturation_in_flight: 8,
@@ -158,19 +248,131 @@ export function mockActivity(): FleetActivitySnapshot {
       ack_lookback_seconds: 3600,
       items_per_agent: 10,
     },
+    // Los 15 alias de la topología, no un subconjunto. Un agente que la topología declara y la
+    // actividad calla no se dibuja como sano: sale apagado y marcado UNKNOWN. Eso es correcto
+    // como comportamiento, pero como *demostración* no muestra nada: la pregunta de Steven es
+    // "cómo están trabajando TODOS", y para responderla la actividad tiene que cubrirlos a todos.
     totals: {
-      agents: 7,
-      by_state: { idle: 2, queued: 1, working: 1, saturated: 1, stalled: 2 },
+      agents: 15,
+      by_state: { idle: 3, queued: 1, working: 8, saturated: 1, stalled: 2 },
       flagged: {
         saturated: 2, ack_stalled: 2, overdue_acks: 1, lease_expired: 2,
         never_connected: 1, unregistered: 1, queued_without_consumer: 1,
       },
-      in_flight: 55,
-      queued: 20,
+      in_flight: 63,
+      queued: 29,
       retrying: 3,
       overdue_in_flight: 41,
     },
     agents: [
+      {
+        // El orquestador residente. Es el que más delega, así que casi todas las flechas nacen
+        // acá; lo único que RECIBE es el informe de vuelta de socrates.
+        tenant_id: 'Steven', alias: 'zeus', display_name: 'Zeus', harness_id: 'claude-code',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'zeus-3d81c7f0', epoch: 204, last_heartbeat_at: secondsAgo(4), lease_until: iso(26_000) },
+        work_state: 'working', flags: [],
+        in_flight: 1, started: 1, claimed_not_started: 0, queued: 2, queued_ready: 2, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: secondsAgo(45), oldest_in_flight_seconds: 45,
+        nearest_ack_deadline_at: iso(555_000), max_attempt: 1,
+        last_ack_at: secondsAgo(8), seconds_since_last_ack: 8, acks_recent: 21,
+        in_flight_items_truncated: false,
+        in_flight_items: [enVuelo('1c0ffee0-0001-4000-8000-a1b2c3d4e5f6', 'Steven/socrates', 45)],
+      },
+      {
+        tenant_id: 'Steven', alias: 'socrates', display_name: 'Sócrates', harness_id: 'claude-code',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'socrates-29ce4b11', epoch: 37, last_heartbeat_at: secondsAgo(9), lease_until: iso(21_000) },
+        work_state: 'working', flags: [],
+        in_flight: 1, started: 1, claimed_not_started: 0, queued: 0, queued_ready: 0, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: secondsAgo(210), oldest_in_flight_seconds: 210,
+        nearest_ack_deadline_at: iso(390_000), max_attempt: 1,
+        last_ack_at: secondsAgo(25), seconds_since_last_ack: 25, acks_recent: 4,
+        in_flight_items_truncated: false,
+        // Cruce Miguel→Steven: la arista ACL existe y está habilitada, así que esta flecha cruza
+        // de una región de tenant a otra. Es el caso que un dibujo por tenant aislado esconde.
+        in_flight_items: [enVuelo('1c0ffee0-0002-4000-8000-a1b2c3d4e5f6', 'Miguel/janus', 210)],
+      },
+      {
+        tenant_id: 'Steven', alias: 'argos', display_name: 'Argos', harness_id: 'claude-code',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'argos-4e22a9c3', epoch: 88, last_heartbeat_at: secondsAgo(7), lease_until: iso(23_000) },
+        work_state: 'working', flags: [],
+        in_flight: 1, started: 1, claimed_not_started: 0, queued: 1, queued_ready: 1, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: secondsAgo(70), oldest_in_flight_seconds: 70,
+        nearest_ack_deadline_at: iso(530_000), max_attempt: 1,
+        last_ack_at: secondsAgo(15), seconds_since_last_ack: 15, acks_recent: 6,
+        in_flight_items_truncated: false,
+        in_flight_items: [enVuelo('1c0ffee0-0003-4000-8000-a1b2c3d4e5f6', 'Steven/kant', 70)],
+      },
+      {
+        tenant_id: 'Miguel', alias: 'janus', display_name: 'Janus', harness_id: 'openclaw',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'janus-29ad5f02', epoch: 51, last_heartbeat_at: secondsAgo(11), lease_until: iso(19_000) },
+        work_state: 'working', flags: [],
+        in_flight: 1, started: 1, claimed_not_started: 0, queued: 0, queued_ready: 0, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: secondsAgo(330), oldest_in_flight_seconds: 330,
+        nearest_ack_deadline_at: iso(270_000), max_attempt: 1,
+        last_ack_at: secondsAgo(25), seconds_since_last_ack: 25, acks_recent: 3,
+        in_flight_items_truncated: false,
+        // Pasó de los 300 s de stall_after_seconds: la flecha sale ámbar aunque el agente esté
+        // sano. El ámbar habla de la ENTREGA, no del agente, y son cosas distintas.
+        in_flight_items: [enVuelo('1c0ffee0-0004-4000-8000-a1b2c3d4e5f6', 'Steven/zeus', 330)],
+      },
+      {
+        tenant_id: 'Miguel', alias: 'kratos', display_name: 'Kratos', harness_id: 'claude-code',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'kratos-0b31d7e4', epoch: 76, last_heartbeat_at: secondsAgo(5), lease_until: iso(25_000) },
+        work_state: 'working', flags: [],
+        in_flight: 2, started: 2, claimed_not_started: 0, queued: 3, queued_ready: 3, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: secondsAgo(410), oldest_in_flight_seconds: 410,
+        nearest_ack_deadline_at: iso(190_000), max_attempt: 1,
+        last_ack_at: secondsAgo(18), seconds_since_last_ack: 18, acks_recent: 7,
+        in_flight_items_truncated: false,
+        in_flight_items: [
+          enVuelo('1c0ffee0-0005-4000-8000-a1b2c3d4e5f6', 'Steven/zeus', 410, { lane: 'batch' }),
+          enVuelo('1c0ffee0-0006-4000-8000-a1b2c3d4e5f6', 'Miguel/janus', 85),
+        ],
+      },
+      {
+        // Deshabilitada en el registro (`agent_enabled: false`) y sin trabajo: no recibe nada, y
+        // por eso no le entra ninguna flecha. Que aparezca igual en el dibujo, apagada, es el
+        // punto: un alias dado de baja sigue siendo parte de la sala hasta que alguien lo saque.
+        tenant_id: 'Miguel', alias: 'iza', display_name: 'Iza', harness_id: 'hermes',
+        registered: true, agent_enabled: false,
+        presence: { online: false, instance_id: 'iza-77b2e410', epoch: 12, last_heartbeat_at: secondsAgo(2_100), lease_until: secondsAgo(2_070) },
+        work_state: 'idle', flags: ['lease_expired'],
+        in_flight: 0, started: 0, claimed_not_started: 0, queued: 0, queued_ready: 0, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: null, oldest_in_flight_seconds: null, nearest_ack_deadline_at: null, max_attempt: null,
+        last_ack_at: secondsAgo(2_400), seconds_since_last_ack: 2_400, acks_recent: 0,
+        in_flight_items_truncated: false, in_flight_items: [],
+      },
+      {
+        tenant_id: 'Pablo', alias: 'dedalo', display_name: 'Dédalo', harness_id: 'openclaw',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'dedalo-9d2c1a75', epoch: 64, last_heartbeat_at: secondsAgo(12), lease_until: iso(18_000) },
+        work_state: 'working', flags: [],
+        in_flight: 1, started: 1, claimed_not_started: 0, queued: 0, queued_ready: 0, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: secondsAgo(150), oldest_in_flight_seconds: 150,
+        nearest_ack_deadline_at: iso(450_000), max_attempt: 1,
+        last_ack_at: secondsAgo(22), seconds_since_last_ack: 22, acks_recent: 5,
+        in_flight_items_truncated: false,
+        in_flight_items: [enVuelo('1c0ffee0-0007-4000-8000-a1b2c3d4e5f6', 'Steven/zeus', 150)],
+      },
+      {
+        tenant_id: 'Pablo', alias: 'seneca', display_name: 'Séneca', harness_id: 'openclaw',
+        registered: true, agent_enabled: true,
+        presence: { online: true, instance_id: 'seneca-5a90c3f8', epoch: 29, last_heartbeat_at: secondsAgo(14), lease_until: iso(16_000) },
+        work_state: 'working', flags: [],
+        in_flight: 1, started: 1, claimed_not_started: 0, queued: 2, queued_ready: 2, retrying: 0, overdue_in_flight: 0,
+        oldest_claimed_at: secondsAgo(520), oldest_in_flight_seconds: 520,
+        nearest_ack_deadline_at: iso(80_000), max_attempt: 1,
+        last_ack_at: secondsAgo(25), seconds_since_last_ack: 25, acks_recent: 2,
+        in_flight_items_truncated: false,
+        // Se la mandó midas, que está colgado: la cadena de un incidente se lee siguiendo la
+        // flecha hacia atrás, y por eso el emisor importa tanto como el receptor.
+        in_flight_items: [enVuelo('1c0ffee0-0008-4000-8000-a1b2c3d4e5f6', 'Pablo/midas', 520, { lane: 'batch' })],
+      },
       {
         tenant_id: 'Steven', alias: 'kant', display_name: 'Kant', harness_id: 'claude-code',
         registered: true, agent_enabled: true,
@@ -199,15 +401,17 @@ export function mockActivity(): FleetActivitySnapshot {
         nearest_ack_deadline_at: iso(15_000), max_attempt: 1,
         last_ack_at: secondsAgo(20), seconds_since_last_ack: 20, acks_recent: 12,
         in_flight_items_truncated: false,
-        in_flight_items: Array.from({ length: 9 }, (_unused, index) => ({
-          delivery_id: `9c9f9c9f-0000-4000-8000-00000000000${index}`,
-          message_id: `msg-jarvis-${index}`,
-          trace_id: `trace-jarvis-${index}`,
-          from_tenant: 'Steven', from_alias: 'kant', lane: 'batch' as const, origin_adapter: 'bus',
-          published_at: secondsAgo(340 - index * 10), status: 'started' as const, attempt: 1,
-          claimed_at: secondsAgo(338 - index * 10), ack_deadline_at: iso((15 + index * 10) * 1_000),
-          seconds_in_flight: 338 - index * 10, last_ack_at: secondsAgo(20), last_ack_status: 'started',
-        })),
+        // Las 9 entregas NO vienen todas del mismo emisor, y esa es justamente la razón por la
+        // que está saturado: media flota le está pasando trabajo a la vez. Con un único emisor el
+        // hipergrafo dibujaba nueve arcos calcados entre los mismos dos muñecos —una relación
+        // repetida nueve veces, que informa lo mismo que una— en vez de la convergencia real.
+        in_flight_items: ['kant', 'kant', 'zeus', 'kant', 'argos', 'zeus', 'socrates', 'argos', 'socrates']
+          .map((emisor, index) => enVuelo(
+            `9c9f9c9f-0000-4000-8000-00000000000${index}`,
+            `Steven/${emisor}`,
+            338 - index * 10,
+            { lane: 'batch', ack_deadline_at: iso((15 + index * 10) * 1_000), last_ack_at: secondsAgo(20) },
+          )),
       },
       {
         // El incidente real: 41 en vuelo, 0 ACKs recientes, deadline vencido y lease caído. Este
@@ -273,11 +477,22 @@ export function mockActivity(): FleetActivitySnapshot {
         last_ack_at: null, seconds_since_last_ack: null, acks_recent: 0,
         in_flight_items_truncated: false,
         in_flight_items: [
-          { delivery_id: 'e1a2b3c4-d5e6-4f70-8091-a2b3c4d5e6f7', message_id: 'msg-hegel-1', trace_id: 'trace-hegel-1', from_tenant: 'Jhon', from_alias: 'hegel', lane: 'interactive', origin_adapter: 'bus', published_at: secondsAgo(612), status: 'started', attempt: 1, claimed_at: secondsAgo(610), ack_deadline_at: secondsAgo(310), seconds_in_flight: 610, last_ack_at: null, last_ack_status: null },
+          // Delegación real desde el hub (Steven→Jhon está permitido por ACL) parada hace más de
+          // diez minutos: la flecha tiene que salir EN ÁMBAR. Es el caso que se ve como "hegel
+          // tarda" y en realidad es trabajo tomado que no avanza.
+          enVuelo('e1a2b3c4-d5e6-4f70-8091-a2b3c4d5e6f7', 'Steven/argos', 610, {
+            ack_deadline_at: secondsAgo(310), last_ack_at: null, last_ack_status: null,
+          }),
+          // Y una entrega que el propio alias publicó: es el dueño escribiéndole por Telegram, no
+          // una delegación. `delegationEdges()` la descarta (from === to) y por eso NO dibuja un
+          // lazo de hegel a sí mismo. Se deja en el fixture para que ese descarte esté ejercitado.
+          enVuelo('7d0c9b8a-1e2f-4a3b-9c4d-5e6f7a8b9c0d', 'Jhon/hegel', 240, {
+            origin_adapter: 'telegram', status: 'leased', last_ack_at: null, last_ack_status: null,
+          }),
         ],
       },
     ],
-  };
+  });
 }
 
 /**
@@ -384,5 +599,164 @@ export function mockQuotas(): QuotaSnapshot {
     paused_accounts: [
       { account_id: 'codex-pro-steven', provider: 'codex', label: 'Codex Pro (principal)', payer_tenant_id: 'Steven', paused_until: iso(447_970_000), paused_reason: 'quota_exhausted:codex/codex/codex_primary_10080', automatic: true },
     ],
+  };
+}
+
+/**
+ * Trabajo cerrado en 24 h por alias, para poder ejercitar el TAMAÑO del muñeco.
+ *
+ * `midas` no está en la tabla a propósito, y no es un descuido del fixture: es el caso de un alias
+ * del que el servidor no informa el cierre. La vista tiene que dibujarlo en el mínimo y quitarle el
+ * pie del globo, nunca inventarle un cero — que en una pantalla donde el tamaño significa "cuánto
+ * trabajó" sería una acusación falsa.
+ */
+const CERRADAS_24H: Record<string, number> = {
+  'Steven/zeus': 27, 'Steven/kant': 41, 'Steven/socrates': 12, 'Steven/argos': 19, 'Steven/jarvis': 33,
+  'Miguel/janus': 16, 'Miguel/kratos': 22, 'Miguel/iza': 0, 'Miguel/atlas': 0,
+  'Pablo/dedalo': 9, 'Pablo/seneca': 6, 'Pablo/vulcano': 0,
+  'Isa/salva': 3, 'Jhon/hegel': 1,
+};
+
+/** Salas por alias, derivadas de la MISMA topología de arriba: dos fixtures que se contradicen
+ *  producen una vista que se contradice, y el defecto parece del código. */
+function salasDe(tenantId: string, alias: string): string[] {
+  const tenant = topology.tenants?.find((candidate) => candidate.id === tenantId);
+  return (tenant?.rooms ?? [])
+    .filter((room) => (room.members ?? []).some((member) => member.alias === alias))
+    .map((room) => room.id ?? 'UNKNOWN');
+}
+
+/**
+ * Agrega por par lo que el backend agregará algún día en SQL.
+ *
+ * Se separa la ida de la vuelta: `kratos → janus` y `janus → kratos` son sentidos distintos del
+ * mismo par y contarlos juntos duplicaría cada conversación. El `total_window` se infla sobre el
+ * "en vuelo" a propósito, para que el grosor de la flecha no sea idéntico al color y las dos
+ * codificaciones se puedan distinguir en pantalla.
+ */
+function aristasDe(agents: FleetActivitySnapshot['agents']): FleetDelegationEdge[] {
+  const conocidos = new Set((agents ?? []).map((agent) => `${agent.tenant_id}/${agent.alias}`));
+  const acumulado = new Map<string, FleetDelegationEdge>();
+  for (const agent of agents ?? []) {
+    const destino = `${agent.tenant_id}/${agent.alias}`;
+    for (const item of agent.in_flight_items ?? []) {
+      if (!item.from_tenant || !item.from_alias) continue;
+      const origen = `${item.from_tenant}/${item.from_alias}`;
+      if (origen === destino || !conocidos.has(origen)) continue;
+      const clave = `${origen}->${destino}`;
+      const actual = acumulado.get(clave) ?? {
+        from_tenant: item.from_tenant, from_alias: item.from_alias,
+        to_tenant: agent.tenant_id, to_alias: agent.alias,
+        in_flight: 0, total_window: 0, last_at: iso(0),
+      };
+      actual.in_flight = (actual.in_flight ?? 0) + 1;
+      actual.total_window = (actual.total_window ?? 0) + 3;
+      acumulado.set(clave, actual);
+    }
+  }
+  return [...acumulado.values()];
+}
+
+function enriquecer(snapshot: FleetActivitySnapshot): FleetActivitySnapshot {
+  const agents = (snapshot.agents ?? []).map((agent) => {
+    const key = `${agent.tenant_id}/${agent.alias}`;
+    const cerradas = CERRADAS_24H[key];
+    return {
+      ...agent,
+      rooms: salasDe(agent.tenant_id, agent.alias),
+      // `undefined` cuando el alias no está en la tabla: el campo AUSENTE es un caso distinto del
+      // cero y la vista tiene que poder distinguirlos.
+      ...(typeof cerradas === 'number' ? { closed_24h: cerradas, failed_24h: 0 } : {}),
+    };
+  });
+  return { ...snapshot, agents, edges: aristasDe(agents) };
+}
+
+/**
+ * El escenario que de verdad se ve casi siempre: **la flota en reposo**.
+ *
+ * Medido en producción: una entrega en vuelo en toda la base y cero en cola. El fixture normal de
+ * arriba es un día de incendio —útil para ejercitar los siete estados de una vez, inútil para
+ * comprobar lo que Steven ve el 95 % del tiempo—. Si la vista sólo se lee bien con quince agentes
+ * trabajando a la vez, se lee mal casi siempre; y el riesgo concreto es que quince muñecos grises
+ * sin una flecha se interpreten como una flota muerta.
+ */
+export function mockActivityEnReposo(): FleetActivitySnapshot {
+  const base = mockActivity();
+  const agents = (base.agents ?? []).map((agent) => ({
+    ...agent,
+    // Reposo significa que TODOS están de alta y conectados, sin nada entre manos. El fixture
+    // normal trae a propósito dos alias dados de baja en el registro y uno sin registrar, que son
+    // casos legítimos de "necesita atención" — pero mezclarlos acá haría imposible comprobar lo
+    // único que este escenario existe para comprobar: que una flota sana no se lea como muerta.
+    registered: true,
+    agent_enabled: true,
+    work_state: 'idle' as const,
+    flags: [],
+    in_flight: 0, started: 0, claimed_not_started: 0,
+    queued: 0, queued_ready: 0, retrying: 0, overdue_in_flight: 0,
+    oldest_claimed_at: null, oldest_in_flight_seconds: null, nearest_ack_deadline_at: null,
+    in_flight_items: [], in_flight_items_truncated: false,
+    presence: { online: true, instance_id: agent.presence?.instance_id ?? null, epoch: agent.presence?.epoch ?? null, last_heartbeat_at: secondsAgo(4), lease_until: iso(25_000) },
+    last_ack_at: secondsAgo(120), seconds_since_last_ack: 120, acks_recent: 0,
+  }));
+  return {
+    ...base,
+    agents,
+    edges: [],
+    totals: {
+      agents: agents.length,
+      by_state: { idle: agents.length },
+      flagged: {},
+      in_flight: 0, queued: 0, retrying: 0, overdue_in_flight: 0,
+    },
+  };
+}
+
+/**
+ * GET /v3/console/chains/:traceId, con la forma EXACTA de `repository.agentChain()`.
+ *
+ * Trae a propósito un extremo `redacted`: la cadena cruza a un cliente que este operador no puede
+ * leer, y el store lo reduce a un id opaco estable en vez de borrar la arista. Un fixture que
+ * mostrara todos los extremos visibles nunca ejercitaría el único camino donde la consola puede
+ * filtrar datos de otro tenant por accidente.
+ */
+export function mockChain(traceId: string) {
+  return {
+    trace_id: traceId,
+    observed_at: iso(0),
+    truncated: false,
+    nodes: [
+      { tenant_id: 'Steven', alias: 'zeus', hop_count: 0, delegated: 2, received: 0, open_branches: 0 },
+      { tenant_id: 'Steven', alias: 'socrates', hop_count: 1, delegated: 1, received: 1, open_branches: 1 },
+      { tenant_id: 'Miguel', alias: 'janus', hop_count: 2, delegated: 0, received: 1, open_branches: 0 },
+    ],
+    edges: [
+      {
+        source: { tenant_id: 'Steven', alias: 'zeus', delivery_id: '1c0ffee0-0001-4000-8000-a1b2c3d4e5f6', attempt: 1, status: 'done' },
+        target: { tenant_id: 'Steven', alias: 'socrates', delivery_id: '1c0ffee0-0002-4000-8000-a1b2c3d4e5f6', attempt: 1, status: 'started', terminal_at: null },
+        output_index: 0, state: 'materialized', rejection_code: null,
+        hop_count: 1, hop_budget: 6, visited_depth: 1, open: true,
+        response: { decision: 'allow', reason: 'acl allow_route', outcome: 'delivered' },
+        root_message_id: 'msg-root-1', created_at: secondsAgo(220),
+      },
+      {
+        source: { tenant_id: 'Steven', alias: 'socrates', delivery_id: '1c0ffee0-0002-4000-8000-a1b2c3d4e5f6', attempt: 1, status: 'started' },
+        target: { redacted: true as const, node_id: 'opaque-9f31c0a4b7' },
+        output_index: 1, state: 'materialized', rejection_code: null,
+        hop_count: 2, hop_budget: 6, visited_depth: 2, open: false,
+        response: { decision: 'allow', reason: 'acl allow_route', outcome: 'delivered' },
+        root_message_id: 'msg-root-1', created_at: secondsAgo(140),
+      },
+      {
+        source: { tenant_id: 'Steven', alias: 'socrates', delivery_id: '1c0ffee0-0002-4000-8000-a1b2c3d4e5f6', attempt: 1, status: 'started' },
+        target: null,
+        output_index: 2, state: 'rejected', rejection_code: 'hop_budget_exhausted',
+        hop_count: 6, hop_budget: 6, visited_depth: 6, open: false,
+        response: null, root_message_id: 'msg-root-1', created_at: secondsAgo(90),
+      },
+    ],
+    origin_relays: [],
+    counters: { edges: 3, hidden_edges: 1, redacted_endpoints: 1, open_branches: 1, rejected_branches: 1 },
   };
 }

@@ -10,6 +10,8 @@ import {
 } from './auth.js';
 import { buildLoopbackHealthProbe } from './health.js';
 import { OidcBffAuthProvider, PostgresOidcSessionStore } from './oidc-bff.js';
+import { PostgresConsoleUserStore } from './console-users.js';
+import { PasswordAuthProvider } from './password-auth.js';
 import { loadTerminalConfig, terminalCapabilityAnnouncement } from './terminal/config.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
 
@@ -47,11 +49,72 @@ async function optionalTextFile(path: string | undefined): Promise<string | unde
   return value;
 }
 
+/**
+ * Clave de firma del JWT de consola. Acepta las tres formas en que sale de `openssl`
+ * (`openssl rand 32`, `-hex 32`, `-base64 48`) para que nadie tenga que adivinar el formato:
+ * el modo en que ese error aparece es un gateway que arranca y rechaza todos los logins.
+ * Techo por abajo, nunca por arriba: 32 bytes es el mínimo, más es bienvenido.
+ */
+async function readSigningKey(path: string): Promise<Buffer> {
+  const raw = await readFile(path);
+  const text = raw.toString('utf8').trim();
+  if (/^[a-f0-9]{64,}$/i.test(text)) {
+    const hex = Buffer.from(text, 'hex');
+    if (hex.byteLength >= 32) return hex;
+  }
+  if (/^[A-Za-z0-9+/=_-]{44,}$/.test(text)) {
+    const base64 = Buffer.from(text, 'base64');
+    if (base64.byteLength >= 32) return base64;
+  }
+  if (raw.byteLength >= 32) return raw;
+  throw new Error('CAUCE_CONSOLE_JWT_KEY_FILE debe contener al menos 32 bytes de clave');
+}
+
+/**
+ * Proveedor que atiende lo que NO trae cookie de consola cuando el login por contraseña está
+ * encendido. Por defecto `mtls`, que es como entran los agentes: el login humano se SUMA.
+ * `none` lo deja sin respaldo — sólo para un despliegue donde nada más habla con el gateway.
+ */
+async function configuredPasswordFallback(): Promise<AuthProvider | undefined> {
+  const selected = process.env.CAUCE_CONSOLE_PASSWORD_FALLBACK ?? 'mtls';
+  if (selected === 'none') return undefined;
+  if (selected === 'mtls') {
+    const path = process.env.CAUCE_MTLS_IDENTITY_FILE;
+    if (!path) throw new Error('CAUCE_MTLS_IDENTITY_FILE is required for mTLS auth');
+    return new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(path));
+  }
+  if (selected === 'token-file') {
+    const path = process.env.CAUCE_TOKEN_HASH_FILE;
+    if (!path) throw new Error('CAUCE_TOKEN_HASH_FILE is required for token-file auth');
+    return new HashedTokenFileAuthProvider({ path });
+  }
+  throw new Error('CAUCE_CONSOLE_PASSWORD_FALLBACK must be mtls, token-file or none');
+}
+
 async function configuredAuthProvider(pool: DatabasePool): Promise<AuthProvider> {
   const selected = process.env.CAUCE_AUTH_PROVIDER;
   const issuer = process.env.CAUCE_OIDC_ISSUER;
   const audience = process.env.CAUCE_OIDC_AUDIENCE;
   const jwksUrl = process.env.CAUCE_OIDC_JWKS_URL;
+  if (selected === 'password') {
+    const keyPath = process.env.CAUCE_CONSOLE_JWT_KEY_FILE;
+    if (!keyPath) throw new Error('CAUCE_CONSOLE_JWT_KEY_FILE is required for password auth');
+    const ttlSeconds = Number(process.env.CAUCE_CONSOLE_SESSION_TTL_SECONDS ?? 8 * 60 * 60);
+    if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 60 || ttlSeconds > 24 * 60 * 60) {
+      throw new Error('CAUCE_CONSOLE_SESSION_TTL_SECONDS must be between 60 and 86400');
+    }
+    const fallback = await configuredPasswordFallback();
+    const provider = new PasswordAuthProvider({
+      users: new PostgresConsoleUserStore(pool),
+      signingKey: await readSigningKey(keyPath),
+      sessionTtlMs: ttlSeconds * 1_000,
+      ...(fallback === undefined ? {} : { fallback })
+    });
+    // Falla el arranque si la migración 023 no corrió: una consola que muestra el login y
+    // devuelve 500 al primer intento es peor que una que no arranca.
+    await provider.ready();
+    return provider;
+  }
   if (selected === 'token-file') {
     const path = process.env.CAUCE_TOKEN_HASH_FILE;
     if (!path) throw new Error('CAUCE_TOKEN_HASH_FILE is required for token-file auth');
@@ -114,10 +177,21 @@ async function configuredHttps(authProvider: AuthProvider): Promise<{
     return undefined;
   }
   const [cert, key] = await Promise.all([readFile(certPath), readFile(keyPath)]);
-  if (!(authProvider instanceof MtlsAuthProvider)) return { cert, key };
+  if (!usesMtls(authProvider)) return { cert, key };
   const caPath = process.env.CAUCE_TLS_CLIENT_CA_FILE;
   if (!caPath) throw new Error('CAUCE_TLS_CLIENT_CA_FILE is required for mTLS auth');
   return { cert, key, ca: await readFile(caPath), requestCert: true, rejectUnauthorized: true };
+}
+
+/**
+ * mTLS puede estar directo o DEBAJO del login por contraseña (que sólo atiende lo que trae
+ * cookie y delega el resto). El listener necesita `requestCert` en los dos casos: si sólo se
+ * mirara la clase de arriba, encender el login humano apagaría en silencio el certificado de
+ * cliente y los agentes se quedarían afuera. Ese es exactamente el "no rompas el mTLS".
+ */
+function usesMtls(provider: AuthProvider): boolean {
+  if (provider instanceof MtlsAuthProvider) return true;
+  return provider instanceof PasswordAuthProvider && provider.fallback instanceof MtlsAuthProvider;
 }
 
 function configuredConsoleOrigins(): string[] | undefined {
@@ -130,7 +204,7 @@ function configuredConsoleOrigins(): string[] | undefined {
 const pool = createPool(databaseUrl);
 const consoleOrigins = configuredConsoleOrigins();
 const authProvider = await configuredAuthProvider(pool);
-const mtls = authProvider instanceof MtlsAuthProvider;
+const mtls = usesMtls(authProvider);
 const isolatedHealth = mtls || process.env.NODE_ENV === 'production';
 const https = await configuredHttps(authProvider);
 // --- PTY control plane (module M1-gateway-control-plane) -------------------------------

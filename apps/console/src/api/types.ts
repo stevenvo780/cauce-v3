@@ -14,10 +14,20 @@ export type ConsolePermission =
   | 'message.publish' | 'delivery.replay' | 'delivery.cancel' | 'job.create' | 'config.write'
   | 'config.rollback' | 'ultimate-terminal.connect';
 
+/**
+ * `password` = el gateway pide correo y contraseña en su propio formulario (POST /v3/auth/login).
+ * `redirect` = hay que mandar al navegador a /v3/auth/login (BFF OIDC). Ausente se lee como
+ * `redirect`, que es como se comportaba la consola antes de que existiera el login por
+ * contraseña: un gateway viejo no deja de funcionar por no conocer este campo.
+ */
+export type LoginMode = 'password' | 'redirect';
+
 export interface ConsoleAuthState {
   /** null means the selected legacy auth mode has no BFF session facade. */
   authenticated: boolean | null;
+  login_mode?: LoginMode | null;
   subject?: string | null;
+  name?: string | null;
   roles?: string[] | null;
   permissions?: string[] | null;
   expires_at?: string | null;
@@ -413,6 +423,20 @@ export interface FleetActivityAgent {
   acks_recent?: number | null;
   in_flight_items_truncated?: boolean | null;
   in_flight_items?: FleetActivityItem[] | null;
+  /**
+   * Salas del alias. Evita cruzar a mano contra la topología para saber dónde vive un agente.
+   * Opcional: hoy el SQL de /activity no lo trae (ver fase de backend del expediente).
+   */
+  rooms?: string[] | null;
+  /**
+   * Entregas CERRADAS en las últimas 24 h. Es el tamaño del muñeco en el mapa.
+   *
+   * `undefined` (campo ausente) y `0` NO son lo mismo y no pueden dibujarse igual: ausente
+   * significa "el servidor no informa el cierre de 24 h" y obliga a tamaño uniforme más una
+   * leyenda que lo declare; 0 significa "no cerró nada", que sí es un dato y sí se dibuja chico.
+   */
+  closed_24h?: number | null;
+  failed_24h?: number | null;
 }
 
 export interface FleetActivityTotals {
@@ -427,11 +451,97 @@ export interface FleetActivityTotals {
   overdue_in_flight?: number | null;
 }
 
+/**
+ * Delegación agregada por par, tal como la contaría el servidor sobre una ventana.
+ *
+ * El extremo que el actor no puede ver llega ya reducido a un id opaco desde el store (mismo
+ * vocabulario `redacted`/`opaqueNodeId` que `agentChain`): la arista NO se borra, porque un mapa
+ * al que le faltan flechas miente por omisión y no hay forma de notarlo desde la pantalla.
+ */
+export interface FleetDelegationEdge {
+  from_tenant?: string | null;
+  from_alias?: string | null;
+  to_tenant?: string | null;
+  to_alias?: string | null;
+  /** Entregas de ese par en vuelo AHORA. Es lo que pinta la flecha de azul. */
+  in_flight?: number | null;
+  /** Entregas de ese par en toda la ventana. Es lo que da el grosor. */
+  total_window?: number | null;
+  last_at?: string | null;
+}
+
 export interface FleetActivitySnapshot {
   observed_at?: string | null;
   thresholds?: FleetActivityThresholds | null;
   totals?: FleetActivityTotals | null;
   agents?: FleetActivityAgent[] | null;
+  /** Opcional: hasta la fase de backend, el grosor sale sólo de las entregas en vuelo. */
+  edges?: FleetDelegationEdge[] | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// GET /v3/console/chains/:traceId — una cadena de delegación completa, por trace.
+//
+// La forma está copiada de `repository.agentChain()` (packages/store), no inventada: el endpoint
+// existía en el gateway desde hace tiempo y no tenía UN SOLO consumidor en la consola. La
+// visibilidad ya la resolvió el store nodo por nodo; acá no se filtra nada, sólo se dibuja.
+
+/** Un extremo de arista: o es un agente que el actor puede ver, o es un id opaco y estable. */
+export type AgentChainEndpoint =
+  | {
+    tenant_id?: string | null;
+    alias?: string | null;
+    delivery_id?: string | null;
+    attempt?: number | null;
+    status?: DeliveryState | null;
+    terminal_at?: string | null;
+    redacted?: false;
+  }
+  | { redacted: true; node_id: string };
+
+export interface AgentChainNode {
+  tenant_id?: string | null;
+  alias?: string | null;
+  hop_count?: number | null;
+  delegated?: number | null;
+  received?: number | null;
+  open_branches?: number | null;
+}
+
+export interface AgentChainEdge {
+  source: AgentChainEndpoint;
+  /** `null` cuando la rama no llegó a materializarse (rechazada, o sin entrega producida). */
+  target: AgentChainEndpoint | null;
+  output_index?: number | null;
+  state?: string | null;
+  rejection_code?: string | null;
+  hop_count?: number | null;
+  hop_budget?: number | null;
+  visited_depth?: number | null;
+  /** La rama sigue viva: materializada y con el destino en un estado no terminal. */
+  open?: boolean | null;
+  response?: { decision?: string | null; reason?: string | null; outcome?: string | null } | null;
+  root_message_id?: string | null;
+  created_at?: string | null;
+}
+
+export interface AgentChainCounters {
+  edges?: number | null;
+  /** Aristas cuyos DOS extremos son invisibles para el actor. Se declaran, no se esconden. */
+  hidden_edges?: number | null;
+  redacted_endpoints?: number | null;
+  open_branches?: number | null;
+  rejected_branches?: number | null;
+}
+
+export interface AgentChainSnapshot {
+  trace_id?: string | null;
+  observed_at?: string | null;
+  truncated?: boolean | null;
+  nodes?: AgentChainNode[] | null;
+  edges?: AgentChainEdge[] | null;
+  origin_relays?: Record<string, unknown>[] | null;
+  counters?: AgentChainCounters | null;
 }
 
 // ---------------------------------------------------------------------------------------------

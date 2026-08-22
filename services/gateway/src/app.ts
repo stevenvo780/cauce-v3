@@ -29,6 +29,7 @@ import {
 } from './config.js';
 import { registerHealthRoutes } from './health.js';
 import { OidcBffAuthProvider, registerOidcBff } from './oidc-bff.js';
+import { PasswordAuthProvider, registerPasswordAuth } from './password-auth.js';
 import {
   sameTenantRows, visibleMessage, visibleMessageList, visibleOriginRelays, visibleQueue
 } from './facades.js';
@@ -469,6 +470,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     ...(options.consoleOrigins === undefined ? {} : { allowedOrigins: options.consoleOrigins })
   }));
   if (options.authProvider instanceof OidcBffAuthProvider) registerOidcBff(app, options.authProvider);
+  if (options.authProvider instanceof PasswordAuthProvider) registerPasswordAuth(app, options.authProvider);
   const exposeHealthRoutes = options.exposeHealthRoutes ?? !(options.authProvider instanceof MtlsAuthProvider);
   if (exposeHealthRoutes) {
     registerHealthRoutes(app, {

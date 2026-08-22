@@ -1,42 +1,62 @@
-import { ChevronDown, ChevronRight, Flame, ShieldAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { useApi } from '../../api/context';
-import { useResource } from '../../api/use-resource';
-import type { FleetActivityAgent, FleetActivityFlag, FleetWorkState } from '../../api/types';
-import {
-  Badge, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, RefreshButton, Time, Unknown,
-} from '../../components/ui';
+import { ChevronDown, ChevronRight, Flame, Search, ShieldAlert } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import type {
+  FleetActivityAgent, FleetActivityFlag, FleetActivitySnapshot, FleetActivityThresholds,
+} from '../../api/types';
+import { Badge, EmptyState, Panel, Time, Unknown } from '../../components/ui';
 import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import {
-  FLAG_LABEL, FLAG_TONE, WORK_STATE_LABEL, WORK_STATE_TONE, agentDisplayName, agentRowKey,
+  FLAG_LABEL, FLAG_TONE, WORK_STATE_LABEL, WORK_STATE_TONE, agentDisplayName, agentKeyOf, agentRowKey,
   formatAckAge, formatInFlightAge, inFlightItemTone, presenceBadge, rowUrgency, sortByUrgency,
 } from './activity';
 
-const REFRESH_MS = 10_000;
-const WORK_STATE_ORDER: FleetWorkState[] = ['stalled', 'saturated', 'working', 'queued', 'idle'];
+/**
+ * La lectura tabular de `GET /v3/console/activity`.
+ *
+ * Esto **era** una ruta propia ("Actividad de la flota") que leía exactamente el mismo endpoint que
+ * la sala de máquinas y lo dibujaba de otra forma: dos entradas de menú, dos pollings, una sola
+ * pregunta. Ahora es el panel de detalle de la sala de máquinas — el hipergrafo responde *quién le
+ * habla a quién*, y esta tabla responde *cuánto lleva cada entrega y si avanza*, que es la pregunta
+ * siguiente y no la misma. Se alimenta del snapshot que la página ya tiene: no vuelve a pedir nada.
+ */
+
 const FLAG_ORDER: FleetActivityFlag[] = [
   'saturated', 'ack_stalled', 'overdue_acks', 'lease_expired', 'never_connected', 'unregistered', 'queued_without_consumer',
 ];
 
-export function ActivityPage() {
-  const api = useApi();
-  const resource = useResource('fleet-activity', () => api.getFleetActivity());
-  const [autoRefresh, setAutoRefresh] = useState(true);
+export interface FleetActivityTableProps {
+  snapshot: FleetActivitySnapshot | undefined;
+  /** Alias resaltado en el hipergrafo, en formato `tenant/alias`. Sincroniza las dos mitades. */
+  selectedKey?: string | null;
+  /** Claves `tenant/alias` a las que el filtro de estado acota la tabla. `null` = sin filtro. */
+  onlyKeys?: Set<string> | null;
+  /** Nombre del estado filtrado, sólo para poder decirlo cuando el filtro deja la tabla vacía. */
+  filterLabel?: string;
+  onSelect?: (key: string | null) => void;
+  /** Clic en la fila: abre el cajón de ese agente sobre la misma página, sin navegar. */
+  onOpen?: (key: string) => void;
+}
+
+/**
+ * Tabla de agentes con búsqueda por alias y detalle por entrega.
+ *
+ * La búsqueda es la razón por la que esta tabla sobrevive a la grilla de tarjetas que había antes:
+ * con quince muñecos en un dibujo, encontrar a *uno* concreto por nombre es lo único que el grafo
+ * hace peor que una lista.
+ */
+export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabel, onSelect, onOpen }: FleetActivityTableProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
 
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = window.setInterval(resource.reload, REFRESH_MS);
-    return () => window.clearInterval(interval);
-  }, [autoRefresh, resource.reload]);
-
-  if (resource.loading && !resource.data) return <LoadingState label="Leyendo entregas en vuelo de toda la flota…" />;
-  if (resource.error && !resource.data) return <ErrorState error={resource.error} onRetry={resource.reload} />;
-
-  const snapshot = resource.data;
-  const agents = sortByUrgency(snapshot?.agents ?? []);
-  const totals = snapshot?.totals;
   const thresholds = snapshot?.thresholds;
+  const agents = useMemo(() => {
+    let ordered = sortByUrgency(snapshot?.agents ?? []);
+    if (onlyKeys) ordered = ordered.filter((agent) => onlyKeys.has(agentKeyOf(agent)));
+    const needle = query.trim().toLowerCase();
+    if (!needle) return ordered;
+    return ordered.filter((agent) => `${agent.tenant_id} ${agent.alias} ${agent.display_name ?? ''} ${agent.harness_id ?? ''}`
+      .toLowerCase().includes(needle));
+  }, [snapshot, query, onlyKeys]);
 
   function toggle(key: string) {
     setExpanded((current) => {
@@ -47,142 +67,143 @@ export function ActivityPage() {
   }
 
   return (
-    <>
-      <PageHeader
-        eyebrow="Runtime"
-        title="Actividad de la flota"
-        description="GET /v3/console/activity: entregas en vuelo, en cola y renovación de ACK por alias, agregadas en vivo desde deliveries/delivery_acks/connection_leases para los tenants que este actor puede leer (mismas aristas allow_read que Fleet & Topología). Nunca incluye el cuerpo de un mensaje, un resultado ni un error: para eso está Messages/Chains."
-        actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />}
-      />
-      {resource.error ? (
-        <p className="notice error" role="alert">
-          La última actualización falló ({resource.error.message}); mostrando el último snapshot bueno.
-        </p>
-      ) : null}
-      <label className="auto-refresh-toggle">
-        <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
-        Auto-refrescar cada {REFRESH_MS / 1000}s
+    <Panel
+      title="Agentes"
+      subtitle="Ordenados por urgencia (colgado > saturado > trabajando > en cola > inactivo), no alfabéticamente: lo que hace ruido tiene que quedar arriba. Es la misma lectura del hipergrafo de arriba, en números; no dibuja las delegaciones otra vez."
+    >
+      <label className="activity-search">
+        <Search size={15} aria-hidden="true" />
+        <input
+          type="search"
+          value={query}
+          placeholder="Buscar alias, tenant o arnés…"
+          aria-label="Buscar un agente por alias"
+          onChange={(event) => setQuery(event.target.value)}
+        />
       </label>
-
-      <div className="metrics-grid">
-        <Metric label="Agentes visibles" value={totals?.agents} detail="propio tenant + ACL allow_read" />
-        <Metric label="En vuelo" value={totals?.in_flight} tone="warning" detail="leased + accepted + started" />
-        <Metric label="En cola" value={totals?.queued} detail="pending + retry" />
-        <Metric label="Vencidas en vuelo" value={totals?.overdue_in_flight} tone="danger" detail="ack_deadline_at ya pasó" />
-      </div>
-
-      <Panel title="Por estado" subtitle="totals.by_state es excluyente: cada agente cuenta en exactamente un balde y suma a totals.agents.">
-        <div className="chip-list">
-          {WORK_STATE_ORDER.map((state) => (
-            <span className="chip" key={state}>
-              <Badge tone={WORK_STATE_TONE[state]}>{WORK_STATE_LABEL[state]}</Badge> {totals?.by_state?.[state] ?? 0}
-            </span>
-          ))}
+      {agents.length === 0 ? (
+        <EmptyState>
+          {query.trim()
+            ? `Ningún alias coincide con «${query.trim()}».`
+            : filterLabel
+              ? `Ningún agente en estado «${filterLabel}» ahora mismo.`
+              : 'Ningún alias visible: ni configurado, ni con entregas abiertas, ni con lease reciente.'}
+        </EmptyState>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <caption className="sr-only">Actividad en vuelo por agente</caption>
+            <thead>
+              <tr>
+                <th aria-hidden="true" />
+                <th>Agente</th>
+                <th>Estado</th>
+                <th>Presencia</th>
+                <th>En vuelo</th>
+                <th>Cola</th>
+                <th>Antigüedad</th>
+                <th>Último ACK</th>
+                <th>ACKs recientes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {agents.map((agent) => {
+                const key = agentRowKey(agent);
+                const urgency = rowUrgency(agent.work_state);
+                const presence = presenceBadge(agent);
+                const items = agent.in_flight_items ?? [];
+                const isExpanded = expanded.has(key);
+                return (
+                  <FragmentRow
+                    key={key}
+                    agent={agent}
+                    urgency={urgency}
+                    presenceLabel={presence.label}
+                    presenceTone={presence.tone}
+                    expanded={isExpanded}
+                    onToggle={() => toggle(key)}
+                    items={items}
+                    ackLookbackSeconds={thresholds?.ack_lookback_seconds}
+                    highlighted={selectedKey === agentKeyOf(agent)}
+                    onHover={onSelect}
+                    onOpen={onOpen}
+                  />
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-      </Panel>
-
-      <Panel title="Señales activas" subtitle="totals.flagged es acumulativo: un mismo agente saturado y con ACK detenido cuenta en las dos columnas, así que esto NO suma a totals.agents.">
-        {!totals?.flagged || FLAG_ORDER.every((flag) => !totals.flagged?.[flag]) ? (
-          <EmptyState>Ninguna señal activa: no hay agentes saturados, colgados ni con lease vencido.</EmptyState>
-        ) : (
-          <div className="chip-list">
-            {FLAG_ORDER.filter((flag) => (totals.flagged?.[flag] ?? 0) > 0).map((flag) => (
-              <span className="chip" key={flag}>
-                <Badge tone={FLAG_TONE[flag]}>{FLAG_LABEL[flag]}</Badge> {totals.flagged?.[flag]}
-              </span>
-            ))}
-          </div>
-        )}
-      </Panel>
-
-      <Panel
-        title="Agentes"
-        subtitle="Ordenados por urgencia (colgado > saturado > trabajando > en cola > inactivo), no alfabéticamente: lo que hace ruido tiene que quedar arriba."
-      >
-        {agents.length === 0 ? (
-          <EmptyState>Ningún alias visible: ni configurado, ni con entregas abiertas, ni con lease reciente.</EmptyState>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <caption className="sr-only">Actividad en vuelo por agente</caption>
-              <thead>
-                <tr>
-                  <th aria-hidden="true" />
-                  <th>Agente</th>
-                  <th>Estado</th>
-                  <th>Presencia</th>
-                  <th>En vuelo</th>
-                  <th>Cola</th>
-                  <th>Antigüedad</th>
-                  <th>Último ACK</th>
-                  <th>ACKs recientes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agents.map((agent) => {
-                  const key = agentRowKey(agent);
-                  const urgency = rowUrgency(agent.work_state);
-                  const presence = presenceBadge(agent);
-                  const items = agent.in_flight_items ?? [];
-                  const isExpanded = expanded.has(key);
-                  return (
-                    <FragmentRow
-                      key={key}
-                      agent={agent}
-                      urgency={urgency}
-                      presenceLabel={presence.label}
-                      presenceTone={presence.tone}
-                      expanded={isExpanded}
-                      onToggle={() => toggle(key)}
-                      items={items}
-                      ackLookbackSeconds={thresholds?.ack_lookback_seconds}
-                    />
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
-
-      <div className="explain-grid">
-        <article>
-          <Flame aria-hidden="true" />
-          <div>
-            <strong>En vuelo vs. avanzando</strong>
-            <p>
-              in_flight cuenta cuánto tomó el agente; acks_recent y "último ACK" dicen si avanza. 41 en vuelo con
-              acks_recent=0 es un incendio; 3 en vuelo con acks_recent=9 es sano — son los dos números que motivaron
-              este panel.
-            </p>
-          </div>
-        </article>
-        <article>
-          <ShieldAlert aria-hidden="true" />
-          <div>
-            <strong>Sin cuerpos, nunca</strong>
-            <p>
-              Esta consulta no selecciona el texto de ningún mensaje ni el detalle de ningún error: sólo
-              identificadores, estados y tiempos. Ni el operador del hub ve contenido ajeno acá.
-            </p>
-          </div>
-        </article>
-        <article>
-          <ChevronDown aria-hidden="true" />
-          <div>
-            <strong>Umbrales del servidor</strong>
-            <p>
-              Saturación desde {thresholds?.saturation_in_flight ?? 'UNKNOWN'} en vuelo; colgado tras{' '}
-              {thresholds?.stall_after_seconds ?? 'UNKNOWN'}s sin ACK aplicado. La UI no hardcodea estos números.
-            </p>
-          </div>
-        </article>
-      </div>
-    </>
+      )}
+    </Panel>
   );
 }
 
-function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, onToggle, items, ackLookbackSeconds }: {
+/**
+ * Señales activas: `totals.flagged`.
+ *
+ * Se conserva aparte de los siete estados de los muñecos porque **no es la misma partición**: un
+ * agente saturado Y con el ACK detenido cuenta en las dos columnas, así que esto no suma a
+ * `totals.agents` y no se puede derivar del recuento por estado.
+ */
+export function FleetSignals({ snapshot }: { snapshot: FleetActivitySnapshot | undefined }) {
+  const flagged = snapshot?.totals?.flagged;
+  return (
+    <Panel title="Señales activas" subtitle="totals.flagged es acumulativo: un mismo agente saturado y con ACK detenido cuenta en las dos columnas, así que esto NO suma a totals.agents.">
+      {!flagged || FLAG_ORDER.every((flag) => !flagged[flag]) ? (
+        <EmptyState>Ninguna señal activa: no hay agentes saturados, colgados ni con lease vencido.</EmptyState>
+      ) : (
+        <div className="chip-list">
+          {FLAG_ORDER.filter((flag) => (flagged[flag] ?? 0) > 0).map((flag) => (
+            <span className="chip" key={flag}>
+              <Badge tone={FLAG_TONE[flag]}>{FLAG_LABEL[flag]}</Badge> {flagged[flag]}
+            </span>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/** Las tres cosas que hay que saber para no malinterpretar la tabla. */
+export function ActivityExplainers({ thresholds }: { thresholds: FleetActivityThresholds | null | undefined }) {
+  return (
+    <div className="explain-grid">
+      <article>
+        <Flame aria-hidden="true" />
+        <div>
+          <strong>En vuelo vs. avanzando</strong>
+          <p>
+            in_flight cuenta cuánto tomó el agente; acks_recent y "último ACK" dicen si avanza. 41 en vuelo con
+            acks_recent=0 es un incendio; 3 en vuelo con acks_recent=9 es sano — son los dos números que motivaron
+            este panel.
+          </p>
+        </div>
+      </article>
+      <article>
+        <ShieldAlert aria-hidden="true" />
+        <div>
+          <strong>Sin cuerpos, nunca</strong>
+          <p>
+            Esta consulta no selecciona el texto de ningún mensaje ni el detalle de ningún error: sólo
+            identificadores, estados y tiempos. Ni el operador del hub ve contenido ajeno acá.
+          </p>
+        </div>
+      </article>
+      <article>
+        <ChevronDown aria-hidden="true" />
+        <div>
+          <strong>Umbrales del servidor</strong>
+          <p>
+            Saturación desde {thresholds?.saturation_in_flight ?? 'UNKNOWN'} en vuelo; colgado tras{' '}
+            {thresholds?.stall_after_seconds ?? 'UNKNOWN'}s sin ACK aplicado. La UI no hardcodea estos números.
+          </p>
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, onToggle, items, ackLookbackSeconds, highlighted, onHover, onOpen }: {
   agent: FleetActivityAgent;
   urgency: 'critical' | 'warning' | undefined;
   presenceLabel: string;
@@ -191,6 +212,9 @@ function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, on
   onToggle: () => void;
   items: NonNullable<FleetActivityAgent['in_flight_items']>;
   ackLookbackSeconds: number | null | undefined;
+  highlighted?: boolean;
+  onHover?: (key: string | null) => void;
+  onOpen?: (key: string) => void;
 }) {
   const state = agent.work_state ?? undefined;
   const stateLabel = state ? WORK_STATE_LABEL[state] : 'UNKNOWN';
@@ -199,17 +223,48 @@ function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, on
   const hasItems = items.length > 0;
   return (
     <>
-      <tr data-state={agent.work_state ?? 'unknown'} data-urgency={urgency} className={urgency ? `row-${urgency}` : undefined}>
+      {/* Pasar el puntero por la fila resalta al muñeco en el hipergrafo de arriba: es lo que ata
+          la lista al dibujo sin tener que dibujar la lista otra vez. */}
+      <tr
+        data-state={agent.work_state ?? 'unknown'}
+        data-urgency={urgency}
+        data-highlighted={highlighted ? 'true' : undefined}
+        className={urgency ? `row-${urgency}` : undefined}
+        onMouseEnter={() => onHover?.(agentKeyOf(agent))}
+        onMouseLeave={() => onHover?.(null)}
+        onClick={onOpen ? () => onOpen(agentKeyOf(agent)) : undefined}
+        data-clickable={onOpen ? 'true' : undefined}
+      >
         <td>
           {hasItems ? (
-            <button type="button" className="row-toggle" onClick={onToggle} aria-expanded={expanded} aria-label={`Detalle de ${agent.alias}`}>
+            <button
+              type="button"
+              className="row-toggle"
+              // Desplegar las entregas y abrir el cajón son dos acciones distintas sobre la misma
+              // fila: sin frenar la burbuja, un clic en la flecha haría las dos.
+              onClick={(event) => { event.stopPropagation(); onToggle(); }}
+              aria-expanded={expanded}
+              aria-label={`Detalle de ${agent.alias}`}
+            >
               {expanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
             </button>
           ) : null}
         </td>
         <td>
           <div className="identity-cell">
-            <strong>{agentDisplayName(agent)}</strong>
+            {/* Un `<tr>` con `onClick` es una acción que sólo existe para el ratón. El nombre pasa
+                a ser un botón real para que la misma acción esté en el tabulador; el clic en la
+                fila se conserva como atajo, y por eso el botón frena la burbuja (si no, un clic
+                sobre el nombre abriría el cajón dos veces). */}
+            {onOpen ? (
+              <button
+                type="button"
+                className="row-open"
+                onClick={(event) => { event.stopPropagation(); onOpen(agentKeyOf(agent)); }}
+              >
+                {agentDisplayName(agent)}
+              </button>
+            ) : <strong>{agentDisplayName(agent)}</strong>}
           </div>
           <small className="subline">
             {agent.tenant_id}:{agent.alias} · <Unknown value={agent.harness_id} />

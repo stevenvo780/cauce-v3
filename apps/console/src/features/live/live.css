@@ -1,0 +1,612 @@
+/*
+ * Vista viva de la flota. Toda la animación está acá y toda depende de `data-state` en el SVG:
+ * el componente no calcula estilos, sólo declara en qué estado está cada muñeco.
+ *
+ * Regla de oro del archivo: NINGUNA animación puede depender de un timer de JavaScript para
+ * seguir corriendo. Si el polling se cae, los muñecos se quedan quietos en su último estado
+ * conocido y la cabecera lo dice; nunca siguen moviéndose fingiendo que hay datos frescos.
+ */
+
+.live-page { display: grid; gap: 18px; }
+
+/* ---------------------------------------------------------------- cabecera y estado del feed */
+
+.live-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.live-toolbar label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.live-toolbar select { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-2); color: var(--text); }
+/* El aviso de topología caída trae su reintento dentro del propio aviso: el fallo y su salida
+   tienen que estar en el mismo sitio, no a dos pantallas de distancia. */
+.live-toolbar .notice { flex-basis: 100%; }
+.live-toolbar .notice button { margin-left: 10px; vertical-align: middle; }
+
+.live-feed-state { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.live-feed-state .live-feed-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 0 rgb(99 222 185 / 55%); animation: live-ping 2.4s ease-out infinite; }
+.live-feed-state[data-feed='paused'] { color: var(--muted); }
+.live-feed-state[data-feed='paused'] .live-feed-dot { background: var(--faint); animation: none; }
+.live-feed-state[data-feed='error'] { color: var(--red); }
+.live-feed-state[data-feed='error'] .live-feed-dot { background: var(--red); animation: none; }
+
+@keyframes live-ping {
+  0% { box-shadow: 0 0 0 0 rgb(99 222 185 / 55%); }
+  70% { box-shadow: 0 0 0 9px rgb(99 222 185 / 0%); }
+  100% { box-shadow: 0 0 0 0 rgb(99 222 185 / 0%); }
+}
+
+/* Aviso honesto: no hay websocket para la consola, esto es polling y hay que decirlo. */
+.live-transport-note { margin: 0; color: var(--faint); font-size: 12.5px; }
+
+/* ------------------------------------------------------------------------------- resumen */
+
+.live-tally { display: flex; flex-wrap: wrap; gap: 8px; }
+.live-tally-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+.live-tally-chip:hover { transform: translateY(-1px); border-color: var(--border-strong); }
+.live-tally-chip[aria-pressed='true'] { border-color: var(--accent, var(--border-strong)); background: var(--surface-3); }
+.live-tally-chip[data-empty='true'] { opacity: .45; }
+.live-tally-chip .live-tally-swatch { width: 12px; height: 12px; border-radius: 4px; background: var(--accent, var(--faint)); }
+.live-tally-chip strong { font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------- lista de agentes
+
+   Acá vivían `.live-stage`, `.live-links`, `.live-tenant`, `.live-grid`, `.live-card` y sus
+   animaciones: la segunda representación gráfica de la misma flota (los mismos muñecos agrupados
+   por tenant, con sus propios arcos de delegación) que se dibujaba justo debajo del hipergrafo.
+   Se eliminó entera junto con su JS de medición. Lo que queda es lo que el dibujo no da: una
+   tabla con búsqueda. — 2026-08-06 */
+
+.activity-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.activity-search input {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  min-width: 240px;
+  outline: none;
+}
+
+/* La fila que el hipergrafo está resaltando ahora mismo. Es el mismo estado, leído de los dos
+   lados: pasar el puntero por un muñeco marca su fila, y al revés. */
+tr[data-highlighted='true'] > td {
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+}
+
+/* =================================================================================
+   EL MUÑECO
+   ================================================================================= */
+
+.agent-avatar { width: 100%; max-width: 132px; height: auto; overflow: visible; }
+
+/* Un acento por estado. Todo lo demás del muñeco se pinta a partir de esta variable. */
+.agent-avatar { --accent: var(--faint); --accent-soft: rgb(100 117 143 / 22%); }
+.agent-avatar[data-state='receiving'] { --accent: var(--blue); --accent-soft: rgb(122 184 255 / 24%); }
+.agent-avatar[data-state='thinking'] { --accent: var(--mint); --accent-soft: rgb(99 222 185 / 24%); }
+.agent-avatar[data-state='delegating'] { --accent: var(--violet); --accent-soft: rgb(179 155 255 / 26%); }
+/* «Salió de vuelo» NO es una buena noticia: es una noticia sin desenlace. Por eso deja de ser
+   --lime (el verde de "terminó bien") y pasa al gris de lo neutro. Ver LIVE_STATE_META.settled. */
+.agent-avatar[data-state='settled'] { --accent: var(--muted); --accent-soft: rgb(145 161 186 / 22%); }
+.agent-avatar[data-state='blocked'] { --accent: var(--amber); --accent-soft: rgb(245 200 108 / 26%); }
+.agent-avatar[data-state='down'] { --accent: var(--red); --accent-soft: rgb(255 138 146 / 16%); }
+
+.av-halo { fill: var(--accent-soft); opacity: .5; animation: av-halo-breathe 4.2s ease-in-out infinite; transform-origin: 60px 66px; }
+.av-shadow { fill: #000; opacity: .34; animation: av-shadow-breathe 3.4s ease-in-out infinite; transform-origin: 60px 120px; }
+
+@keyframes av-halo-breathe { 0%, 100% { transform: scale(.9); opacity: .35; } 50% { transform: scale(1.02); opacity: .6; } }
+@keyframes av-shadow-breathe { 0%, 100% { transform: scaleX(1); opacity: .34; } 50% { transform: scaleX(.86); opacity: .24; } }
+
+.av-body { transform-origin: 60px 114px; animation: av-breathe 3.4s ease-in-out infinite; }
+@keyframes av-breathe { 0%, 100% { transform: translateY(0) scaleY(1); } 50% { transform: translateY(-2.5px) scaleY(1.012); } }
+
+.av-head-shell { fill: var(--surface-3); stroke: var(--accent); stroke-width: 2; }
+.av-visor { fill: #060a12; }
+.av-eyes { color: var(--accent); }
+.av-torso-shell { fill: var(--surface-3); stroke: var(--accent); stroke-width: 2; opacity: .96; }
+.av-arm { stroke: var(--accent); opacity: .85; }
+.av-antenna-stem { stroke: var(--accent); opacity: .8; }
+.av-bulb { fill: var(--accent); }
+.av-bulb-ring { stroke: var(--accent); opacity: 0; }
+.av-core { fill: var(--accent); opacity: .9; }
+.av-core-ring { stroke: var(--accent); opacity: 0; }
+
+.av-head { transform-origin: 60px 76px; transition: transform .35s ease; }
+.av-arm-right { transform-origin: 86px 88px; transition: transform .35s ease; }
+.av-arm-left { transform-origin: 34px 88px; transition: transform .35s ease; }
+
+/* Todos los accesorios apagados por defecto; cada estado enciende el suyo. */
+.av-fx { opacity: 0; visibility: hidden; }
+
+/* ---------------------------------------------------------------- OCIOSO: parpadea y respira */
+
+.agent-avatar[data-state='idle'] .av-eye,
+.agent-avatar[data-state='receiving'] .av-eye {
+  transform-origin: center;
+  animation: av-blink 5.6s infinite;
+}
+/* El segundo ojo parpadea con el mismo ciclo: un guiño desincronizado se lee como un tic. */
+@keyframes av-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(.12); }
+}
+
+/* -------------------------------------------------------- RECIBIENDO: le entra un sobre */
+
+.agent-avatar[data-state='receiving'] .av-fx-incoming { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='receiving'] .av-envelope {
+  fill: var(--blue);
+  stroke: #060a12;
+  animation: av-envelope-fly 1.5s cubic-bezier(.34, .8, .3, 1) infinite;
+}
+@keyframes av-envelope-fly {
+  0% { transform: translate(-6px, 74px) scale(.55); opacity: 0; }
+  22% { opacity: 1; }
+  72% { transform: translate(60px, 97px) scale(1); opacity: 1; }
+  86%, 100% { transform: translate(60px, 97px) scale(.15); opacity: 0; }
+}
+.agent-avatar[data-state='receiving'] .av-arm-left { transform: rotate(-24deg); }
+.agent-avatar[data-state='receiving'] .av-bulb { animation: av-bulb-flash .75s ease-in-out infinite; }
+.agent-avatar[data-state='receiving'] .av-bulb-ring { animation: av-bulb-ripple 1.5s ease-out infinite; }
+@keyframes av-bulb-flash { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes av-bulb-ripple {
+  0% { opacity: .9; transform: scale(1); transform-origin: 60px 14px; }
+  100% { opacity: 0; transform: scale(2.8); transform-origin: 60px 14px; }
+}
+
+/* ----------------------------------------------- TRABAJANDO: piensa, se inclina, late el pecho */
+
+.agent-avatar[data-state='thinking'] .av-fx-thinking { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='thinking'] .av-head { transform: rotate(-5deg) translateY(1px); }
+.agent-avatar[data-state='thinking'] .av-think { fill: var(--mint); }
+.agent-avatar[data-state='thinking'] .av-think-1 { animation: av-think-pop 1.9s ease-in-out infinite; }
+.agent-avatar[data-state='thinking'] .av-think-2 { animation: av-think-pop 1.9s ease-in-out .22s infinite; }
+.agent-avatar[data-state='thinking'] .av-think-3 { animation: av-think-pop 1.9s ease-in-out .44s infinite; }
+@keyframes av-think-pop {
+  0%, 100% { opacity: .12; transform: translateY(3px) scale(.72); }
+  45% { opacity: 1; transform: translateY(-2px) scale(1); }
+}
+.agent-avatar[data-state='thinking'] .av-core { animation: av-core-beat 1.25s ease-in-out infinite; }
+.agent-avatar[data-state='thinking'] .av-core-ring { animation: av-core-ripple 1.25s ease-out infinite; }
+@keyframes av-core-beat { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes av-core-ripple {
+  0% { opacity: .8; transform: scale(1); transform-origin: 60px 97px; }
+  100% { opacity: 0; transform: scale(2.6); transform-origin: 60px 97px; }
+}
+
+/* ---------------------------------------------- DELEGANDO: estira el brazo y suelta un paquete */
+
+.agent-avatar[data-state='delegating'] .av-fx-delegating { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='delegating'] .av-arm-right { transform: rotate(-46deg); }
+.agent-avatar[data-state='delegating'] .av-head { transform: rotate(6deg); }
+.agent-avatar[data-state='delegating'] .av-packet { fill: var(--violet); stroke: #060a12; animation: av-packet-fly 1.35s cubic-bezier(.4, 0, .7, 1) infinite; }
+@keyframes av-packet-fly {
+  0% { transform: translate(88px, 96px) scale(.4); opacity: 0; }
+  18% { transform: translate(92px, 94px) scale(1); opacity: 1; }
+  100% { transform: translate(136px, 78px) scale(.55); opacity: 0; }
+}
+.agent-avatar[data-state='delegating'] .av-trail { stroke: var(--violet); opacity: .35; stroke-dasharray: 4 6; animation: av-trail-flow .7s linear infinite; }
+@keyframes av-trail-flow { to { stroke-dashoffset: -20; } }
+
+/* --------------------------------------- SALIÓ DE VUELO: bocadillo con puntos suspensivos
+ *
+ * Antes acá había un tilde verde, un salto de festejo (`av-cheer`) y los dos brazos en alto. Los
+ * tres afirmaban lo mismo —terminó bien— sobre un hecho que la consola NO puede observar: lo único
+ * que se vio es que la entrega dejó de listarse, y de esa lista se sale igual cerrando `done` que
+ * muriendo por deadline. El bocadillo se queda (algo pasó y hay que poder verlo), el tilde se va
+ * y en su sitio van tres puntos: el resultado está pendiente de saber. */
+
+.agent-avatar[data-state='settled'] .av-fx-settled { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='settled'] .av-bubble { fill: var(--muted); animation: av-bubble-pop .55s cubic-bezier(.2, 1.5, .4, 1) both; transform-origin: 92px 42px; }
+.agent-avatar[data-state='settled'] .av-unknown-dots { fill: #0a1408; }
+@keyframes av-bubble-pop {
+  0% { transform: scale(0) translateY(8px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+/* --------------------------------------- BLOQUEADO: se desploma y le late la señal de alarma */
+
+.agent-avatar[data-state='blocked'] .av-fx-blocked { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='blocked'] .av-body { animation: av-slump 2.6s ease-in-out infinite; }
+@keyframes av-slump {
+  0%, 100% { transform: translateY(4px) rotate(-3deg); }
+  50% { transform: translateY(6px) rotate(-4.5deg); }
+}
+.agent-avatar[data-state='blocked'] .av-head { transform: rotate(-8deg) translateY(4px); }
+.agent-avatar[data-state='blocked'] .av-alarm { fill: var(--amber); stroke: #1a1204; animation: av-alarm-pulse 1s ease-in-out infinite; transform-origin: 60px 22px; }
+.agent-avatar[data-state='blocked'] .av-alarm-mark,
+.agent-avatar[data-state='blocked'] .av-alarm-dot { stroke: #1a1204; fill: #1a1204; }
+@keyframes av-alarm-pulse {
+  0%, 100% { transform: scale(1); opacity: .82; }
+  50% { transform: scale(1.13); opacity: 1; }
+}
+.agent-avatar[data-state='blocked'] .av-halo { animation: av-halo-alarm 1s ease-in-out infinite; }
+@keyframes av-halo-alarm { 0%, 100% { opacity: .18; transform: scale(.9); } 50% { opacity: .5; transform: scale(1); } }
+
+/* ------------------------------------------ CAÍDO: sin movimiento. La quietud ES la señal. */
+
+.agent-avatar[data-state='down'] .av-fx-down { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='down'] .av-body,
+.agent-avatar[data-state='down'] .av-halo,
+.agent-avatar[data-state='down'] .av-shadow { animation: none; }
+.agent-avatar[data-state='down'] .av-body { transform: translateY(7px) rotate(-7deg); opacity: .5; }
+.agent-avatar[data-state='down'] .av-head-shell,
+.agent-avatar[data-state='down'] .av-torso-shell { fill: #0a0e17; stroke: color-mix(in srgb, var(--red) 45%, var(--border)); }
+.agent-avatar[data-state='down'] .av-bulb { fill: var(--border-strong); }
+.agent-avatar[data-state='down'] .av-core { fill: var(--border-strong); opacity: .6; }
+.agent-avatar[data-state='down'] .av-halo { opacity: .12; }
+.agent-avatar[data-state='down'] .av-shadow { opacity: .1; }
+.agent-avatar[data-state='down'] .av-flatline { stroke: var(--red); opacity: .75; stroke-dasharray: 160; animation: av-flatline-sweep 2.6s linear infinite; }
+@keyframes av-flatline-sweep { 0% { stroke-dashoffset: 160; } 60%, 100% { stroke-dashoffset: 0; } }
+
+/* --------------------------------------------------- SATURADO: chispas encima de lo que haya */
+
+.agent-avatar[data-overloaded='true'] .av-fx-overloaded { opacity: 1; visibility: visible; }
+.av-spark { stroke: var(--amber); }
+.agent-avatar[data-overloaded='true'] .av-spark-1 { animation: av-spark-blink .55s steps(2, end) infinite; }
+.agent-avatar[data-overloaded='true'] .av-spark-2 { animation: av-spark-blink .55s steps(2, end) .27s infinite; }
+@keyframes av-spark-blink { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+
+/* ------------------------------------------------------------------------------ detalle */
+
+.live-detail { display: grid; gap: 14px; }
+.live-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.live-detail-head .agent-avatar { max-width: 108px; }
+.live-detail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 18px; margin: 0; font-size: 13.5px; }
+.live-detail dt { color: var(--muted); }
+.live-detail dd { margin: 0; }
+.live-reason { margin: 0; color: var(--text); font-size: 14px; }
+.live-flags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.live-legend { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.live-legend-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.live-legend-item .agent-avatar { width: 46px; flex: none; }
+.live-legend-item strong { display: block; font-size: 13px; }
+.live-legend-item span { color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+
+@media (max-width: 640px) {
+  .live-legend { grid-template-columns: 1fr; }
+  .activity-search input { min-width: 0; width: 100%; }
+  .activity-search { display: flex; }
+}
+
+/*
+ * Movimiento reducido: se apaga TODO lo que se mueve solo. El estado sigue siendo legible
+ * porque nunca depende únicamente del movimiento — hay color de acento, forma de ojos,
+ * accesorio y etiqueta de texto.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .agent-avatar *, .live-feed-dot, .live-tally-chip {
+    animation: none !important;
+    transition: none !important;
+  }
+  .agent-avatar[data-state='receiving'] .av-envelope { transform: translate(60px, 97px) scale(1); }
+  .agent-avatar[data-state='delegating'] .av-packet { transform: translate(104px, 88px) scale(1); }
+  .agent-avatar[data-state='thinking'] .av-think { opacity: 1; }
+  .agent-avatar[data-state='settled'] .av-bubble { opacity: 1; transform: none; }
+}
+
+/* --- Composición con cajón -------------------------------------------------
+ *
+ * El cajón NO es un modal: el mapa se queda visible y se sigue refrescando detrás mientras se
+ * diagnostica. Ésa es toda la diferencia entre "abrir el detalle" y "irse a otra página", y es lo
+ * que permitió borrar dos entradas del menú sin perder un dato.
+ */
+.live-page.has-drawer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  align-items: start;
+  gap: 20px;
+}
+
+.live-main { display: grid; gap: 18px; min-width: 0; }
+
+@media (max-width: 1100px) {
+  /* Por debajo de este ancho, dos columnas dejan al mapa sin sitio para leerse. El cajón pasa a
+     ir debajo, que es peor que al lado pero mucho mejor que un mapa de 380 px. */
+  .live-page.has-drawer { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* --- La banda de veredicto -------------------------------------------------
+ *
+ * Es lo primero que se lee de la página y sustituye a una fila de cinco tarjetas cuyos rótulos
+ * eran expresiones SQL. Una frase grande responde "¿tengo que hacer algo?" en tres segundos; cinco
+ * números en jerga obligan a sumarlos de cabeza y a saber qué significa cada uno.
+ */
+.fleet-verdict {
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent, var(--faint));
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.fleet-verdict[data-tone='ok'] { --accent: var(--mint); }
+.fleet-verdict[data-tone='alerta'] { --accent: var(--red); }
+.fleet-verdict[data-tone='desconocido'] { --accent: var(--amber); }
+
+.fleet-verdict-main { display: flex; align-items: start; gap: 14px; }
+
+.fleet-verdict-light {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 10px;
+  border-radius: 50%;
+  background: var(--accent, var(--faint));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--faint)) 22%, transparent);
+}
+
+.fleet-verdict-phrase {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -.01em;
+}
+
+.fleet-verdict-support { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
+
+.fleet-verdict-culprits { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* El chip es CLICABLE: lleva el ojo al muñeco culpable dentro del mapa. Un resumen que nombra a
+   un agente y no te lleva hasta él te obliga a buscarlo a mano entre quince. */
+.fleet-verdict-chip {
+  padding: 6px 11px;
+  border: 1px solid var(--red);
+  border-radius: 999px;
+  background: var(--red-dim);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.fleet-verdict-chip:hover { border-color: var(--border-strong); }
+.fleet-verdict-chip strong { font-weight: 650; }
+
+.fleet-verdict-counts {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.fleet-verdict-counts strong { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* --- Barra superior: lo que se le sumó ------------------------------------- */
+
+.live-age strong { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.live-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.live-search input {
+  width: 150px;
+  border: none;
+  background: none;
+  color: var(--text);
+  outline: none;
+}
+
+/* Octavo chip: NO es un miembro del union de estados, es su ausencia. Anillo punteado y gris,
+   el mismo vocabulario que el muñeco «sin reportar» del mapa. */
+.live-tally-chip.is-unreported {
+  border-style: dashed;
+  color: var(--muted);
+  cursor: default;
+}
+.live-tally-chip.is-unreported .live-tally-swatch { background: var(--faint); }
+
+/* --- Conmutador de capa ---------------------------------------------------- */
+
+.live-layer-switch {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.live-layer-button {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.live-layer-button[aria-pressed='true'] { background: var(--surface-3); color: var(--text); }
+
+/* --- Estado vacío, diseñado PRIMERO ---------------------------------------
+ *
+ * El estado normal medido de esta flota es una entrega en vuelo y cero en cola. Una pantalla que
+ * sólo se ve bien cuando hay incendio se ve mal casi siempre, y la lectura por defecto de quince
+ * muñecos grises sin flechas no puede ser "está todo muerto".
+ */
+.live-empty-calm {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+.live-empty-calm strong { color: var(--text); }
+
+/* --- Desplegables ---------------------------------------------------------- */
+
+.live-fold {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.live-fold > summary {
+  padding: 14px 18px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.live-fold[open] > summary { border-bottom: 1px solid var(--border); }
+.live-fold > *:not(summary) { margin: 14px 18px; }
+
+.live-legend-lead { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.live-legend-lead strong { color: var(--text); }
+
+.live-legend-swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  background: var(--accent, var(--faint));
+}
+
+/* --- El cajón -------------------------------------------------------------- */
+
+.agent-drawer {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 0;
+  max-height: calc(100vh - 36px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.agent-drawer-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-drawer-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.agent-drawer-identity .agent-avatar { width: 52px; flex: none; }
+.agent-drawer-identity h2 { margin: 0; font-size: 1.05rem; }
+.agent-drawer-identity p { margin: 2px 0 0; font-size: 12px; }
+
+.agent-drawer-tabs { display: flex; gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+
+.agent-drawer-tab {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-drawer-tab[aria-selected='true'] { background: var(--surface-3); color: var(--text); }
+
+.agent-drawer-body { overflow-y: auto; padding: 16px 18px; }
+.agent-drawer-foot { padding: 12px 18px; border-top: 1px solid var(--border); }
+
+.drawer-deliveries { display: grid; gap: 12px; }
+
+.drawer-delivery {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.drawer-delivery > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+.drawer-delivery dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: 12.5px; }
+.drawer-delivery dt { color: var(--muted); }
+.drawer-delivery dd { margin: 0; }
+.drawer-delivery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+
+.drawer-chain { display: grid; gap: 12px; }
+.chain-trace, .chain-counters { margin: 0; font-size: 12px; }
+.chain-hops li[data-open='true'] { border-color: var(--blue); }
+.chain-hops li[data-rejected='true'] { border-color: var(--red); }
+
+.chip-button { border: 1px solid var(--border); cursor: pointer; }
+.chip-button.is-active { border-color: var(--blue); color: var(--text); }
+
+/* El nombre del agente como botón: misma acción que el clic en la fila, pero alcanzable con el
+   tabulador. Se dibuja como el texto que era, no como un botón, porque lo que cambia es la
+   afordancia de teclado y no la jerarquía visual de la tabla. */
+.row-open {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+.row-open:hover { text-decoration: underline; }
+
+/* Fila clicable de la tabla: abre el cajón. La afordancia tiene que existir o el clic es un
+   secreto que sólo conoce quien escribió el código. */
+tr[data-clickable='true'] { cursor: pointer; }
+
+/* --- El globo del muñeco --------------------------------------------------- */
+
+.agent-tip { display: grid; gap: 3px; }
+.agent-tip p { margin: 0; }
+
+@media (prefers-color-scheme: light) {
+  .fleet-verdict, .agent-drawer, .live-fold { background: #ffffff; }
+  .drawer-delivery, .live-empty-calm, .live-search, .live-layer-switch { background: #f8fafd; }
+  .agent-drawer-tab[aria-selected='true'], .live-layer-button[aria-pressed='true'] { background: #e6eef8; }
+}
+
+@media (max-width: 720px) {
+  .fleet-verdict-phrase { font-size: 24px; }
+  .live-search input { width: 110px; }
+}

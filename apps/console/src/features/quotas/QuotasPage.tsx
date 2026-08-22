@@ -1,12 +1,21 @@
-import { BatteryCharging, ChevronDown, ChevronRight, Layers, PauseCircle, Unplug } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import {
+  AlertCircle, BatteryCharging, ChevronDown, ChevronRight, Layers, PauseCircle, RefreshCw, Unplug,
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import type { QuotaCollector, QuotaPausedAccount, QuotaProviderReport, QuotaUnboundGroup } from '../../api/types';
+import type {
+  QuotaCollector, QuotaPausedAccount, QuotaProviderReport, QuotaThresholds, QuotaUnboundGroup,
+} from '../../api/types';
 import {
   Badge, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, RefreshButton, Time, Unknown,
 } from '../../components/ui';
-import { formatDurationSeconds } from '../../lib';
+import { formatDurationSeconds, UNKNOWN } from '../../lib';
+import '../licenses/licenses.css';
+import {
+  accountAssignments, accountConsumption, extractAgents, extractBindings, extractCeiling,
+  extractProviderAccounts, freshness, orphans,
+} from '../licenses/licenses';
 import { Sparkline } from './Sparkline';
 import {
   SEVERITY_LABEL, SEVERITY_TONE, buildQuotaRows, formatResetIn, formatUnits, isAgeStale, sortProvidersBySeverity,
@@ -15,22 +24,96 @@ import {
 
 const REFRESH_MS = 60_000;
 
+/**
+ * **Cuotas y licencias** — una sola vista, dos mitades del mismo hecho.
+ *
+ * Hasta el 2026-08-06 esto eran dos rutas: "Consumo de cuotas" (`/quotas`) y "Licencias y consumo"
+ * (`/licenses`). Repetían el panel de recolectores, el porcentaje libre por cuenta y los grupos de
+ * cuota sin cuenta atada; sus dos entradas de menú se llamaban casi igual y ninguna de las dos
+ * respondía sola la pregunta que un operador hace de verdad —"¿a esta cuenta le queda saldo, y
+ * quién la está usando?"—, porque el saldo estaba en una y el dueño en la otra.
+ *
+ * Lo que se fusionó y con qué criterio:
+ *
+ * - **Recolectores**: se conservó la tabla de `/quotas` (superconjunto: identidad del recolector,
+ *   `captured_at` vs `received_at`, versión de esquema) y se le trasplantó el juicio de frescura de
+ *   `/licenses`, que es más estricto: una muestra con `stale:false` pero más vieja que
+ *   `stale_after_seconds` se marca DESACTUALIZADO igual. `stale` nulo *sin* edad sigue siendo
+ *   UNKNOWN: no saber no es estar fresco.
+ * - **Consumo por cuenta**: se conservó la tabla de `/quotas` (unidades, modelo, `reset_at`,
+ *   histórico de 24 h) y se quitaron las barras de porcentaje de `/licenses`, que mostraban menos
+ *   del mismo dato — y que además eran el segundo dibujo de la página; acá hay UNA sola
+ *   representación gráfica, el sparkline.
+ * - **Grupos sin cuenta atada**: una sola tabla, la de `/quotas` (trae `window_count`), movida
+ *   dentro de "Hallazgos", que es donde ya vivían las otras dos direcciones de huérfano.
+ * - **Inventario de cuentas**: es exclusivo de `/config` y no estaba en `/quotas`. Se conserva
+ *   entero: identidad, ID externo redactado, pagador, plan, asignaciones por prioridad y techo de
+ *   ruteo.
+ *
+ * La honestidad que traía `/licenses` —"si la sonda está caduca, todos los porcentajes son `?`"— no
+ * se perdió al quitar sus barras: se declara arriba, una vez, en un cartel que dice de qué muestra
+ * son los números de abajo. Y `accountConsumption` sigue alimentando el plan y el motivo por cuenta,
+ * que es donde un `ok:false` deja de leerse como "esta cuenta no tiene ventanas".
+ */
 export function QuotasPage() {
   const api = useApi();
-  const resource = useResource('quotas', () => api.getQuotas());
+  const quotas = useResource('quotas', () => api.getQuotas());
+  const config = useResource('registry-configuration', () => api.getConfiguration());
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
+  const reloadQuotas = quotas.reload;
+  const reloadConfig = config.reload;
+
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = window.setInterval(resource.reload, REFRESH_MS);
+    const interval = window.setInterval(() => {
+      reloadQuotas();
+      reloadConfig();
+    }, REFRESH_MS);
     return () => window.clearInterval(interval);
-  }, [autoRefresh, resource.reload]);
+  }, [autoRefresh, reloadQuotas, reloadConfig]);
 
-  if (resource.loading && !resource.data) return <LoadingState label="Leyendo la última corrida del recolector de cuotas…" />;
-  if (resource.error && !resource.data) return <ErrorState error={resource.error} onRetry={resource.reload} />;
+  const snapshot = quotas.data;
+  const accounts = useMemo(() => extractProviderAccounts(config.data), [config.data]);
+  const agents = useMemo(() => extractAgents(config.data), [config.data]);
+  const bindings = useMemo(() => extractBindings(config.data), [config.data]);
+  const ceiling = useMemo(() => extractCeiling(config.data), [config.data]);
+  const orphanedItems = useMemo(
+    () => orphans(accounts, snapshot, bindings, agents),
+    [accounts, snapshot, bindings, agents],
+  );
+  // `ok: false` es información, no ausencia: el CLI de ese proveedor dejó de responder.
+  const failedProbes = useMemo(
+    () => (snapshot?.providers ?? []).filter((provider) => provider.ok === false),
+    [snapshot],
+  );
 
-  const snapshot = resource.data;
+  function toggle(key: string) {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function reloadAll() {
+    reloadQuotas();
+    reloadConfig();
+  }
+
+  if ((quotas.loading && !quotas.data) || (config.loading && !config.data)) {
+    return <LoadingState label="Leyendo cuotas y licencias…" />;
+  }
+  // Pantalla completa de error sólo si se cayeron las DOS mitades: con una viva, la vista se dibuja
+  // y cada mitad declara su propia falla, que es más información que un cartel único.
+  if (quotas.error && !quotas.data && config.error && !config.data) {
+    return <ErrorState error={quotas.error} onRetry={reloadAll} />;
+  }
+
+  const quotasDown = Boolean(quotas.error) && !quotas.data;
+  const configDown = Boolean(config.error) && !config.data;
+
   const thresholds = snapshot?.thresholds;
   const providers = sortProvidersBySeverity(snapshot?.providers ?? []);
   const collectors = snapshot?.collectors ?? [];
@@ -41,61 +124,174 @@ export function QuotasPage() {
     return acc === null ? provider.effective_remaining_percent : Math.min(acc, provider.effective_remaining_percent);
   }, null);
 
-  function toggle(key: string) {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  }
+  /*
+   * "Ningún recolector reportó" sólo puede afirmarse cuando la respuesta LLEGÓ y vino vacía. Si la
+   * petición falló no sabemos nada del recolector, y decir que no reportó sería nombrar por encima
+   * de la evidencia.
+   */
+  const isCollectorAbsent = !quotasDown && collectors.length === 0;
+  const staleCollectors = collectors.filter((collector) => freshness(collector, thresholds).state !== 'fresh');
+  const totalAccounts = accounts.length;
+  const totalAgents = agents.length;
+  const accountsWithQuota = accounts.filter(
+    (account) => !orphanedItems.accountsWithoutQuotas.some((orphan) => orphan.id === account.id),
+  ).length;
+  /*
+   * "Registrada pero no reportada" es una conclusión sobre DOS fuentes. Si el consumo no se pudo
+   * leer, la conclusión no se puede sacar: todas las cuentas parecerían huérfanas por un fallo de
+   * red. Sin muestra no hay hallazgo, y se dice arriba por qué.
+   */
+  const accountsWithoutQuotas = quotasDown ? [] : orphanedItems.accountsWithoutQuotas;
+  const hasFindings = accountsWithoutQuotas.length > 0
+    || unbound.length > 0
+    || orphanedItems.agentsWithoutBindings.length > 0;
 
   return (
     <>
       <PageHeader
-        eyebrow="Consumo"
-        title="Cuotas de IA"
-        description="GET /v3/console/quotas: última corrida del recolector externo (get_ai_quotas) que interroga los CLIs de claude/codex/antigravity/opencode en kratos y en los contenedores de agente. No es un dato en vivo del bus: es una muestra fuera de banda, con su propia frescura (collectors[].stale) independiente de la actividad."
-        actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />}
+        eyebrow="Operación"
+        title="Cuotas y licencias"
+        description="Las dos mitades del mismo hecho en una sola vista: qué cuentas de IA existen y quién las usa (GET /v3/console/config), y cuánto saldo les queda (GET /v3/console/quotas). El consumo no es un dato en vivo del bus: es la última corrida del recolector externo (get_ai_quotas) que interroga los CLIs de claude/codex/antigravity/opencode en kratos y en los contenedores de agente, con su propia frescura (collectors[].stale) independiente de la actividad."
+        actions={<RefreshButton onClick={reloadAll} loading={quotas.loading || config.loading} />}
       />
-      {resource.error ? (
-        <p className="notice error" role="alert">
-          La última actualización falló ({resource.error.message}); mostrando el último snapshot bueno.
-        </p>
-      ) : null}
+
       <label className="auto-refresh-toggle">
         <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
         Auto-refrescar cada {REFRESH_MS / 1000}s
       </label>
 
+      {quotasDown ? (
+        <FailureBanner
+          title="No se pudo leer el consumo."
+          error={quotas.error!}
+          detail="GET /v3/console/quotas falló y no hay ningún snapshot previo en memoria: abajo no falta consumo, falta la respuesta."
+          onRetry={reloadQuotas}
+        />
+      ) : quotas.error ? (
+        <p className="notice error" role="alert">
+          La última actualización de cuotas falló ({quotas.error.message}); mostrando el último snapshot bueno.
+        </p>
+      ) : null}
+
+      {configDown ? (
+        <FailureBanner
+          title="No se pudo leer el inventario."
+          error={config.error!}
+          detail="GET /v3/console/config falló: no se sabe qué cuentas ni qué agentes hay registrados, así que no se listan."
+          onRetry={reloadConfig}
+        />
+      ) : config.error ? (
+        <p className="notice error" role="alert">
+          La última actualización del inventario falló ({config.error.message}); mostrando el último bueno.
+        </p>
+      ) : null}
+
+      {isCollectorAbsent && (
+        <div className="banner banner-error">
+          <AlertCircle size={18} aria-hidden="true" />
+          <span>
+            <strong>Ningún recolector reportó.</strong> Todos los porcentajes son <code>?</code>. El inventario de
+            cuentas y asignaciones sigue siendo visible, pero el consumo no está disponible. Verifica que el
+            recolector de kratos esté conectado.
+          </span>
+        </div>
+      )}
+
+      {staleCollectors.length > 0 && (
+        /*
+         * Ésta es la regla de honestidad que traía "Licencias y consumo" (`accountConsumption`
+         * enmascaraba a `?` todo porcentaje cuando algún recolector estaba caduco). Acá se declara
+         * una sola vez y arriba de todo, en vez de repetirla en cada barra: los números de abajo son
+         * los de esa muestra, con su edad al lado, y ninguno es de ahora.
+         */
+        <div className="banner banner-warning">
+          <AlertCircle size={18} aria-hidden="true" />
+          <span>
+            <strong>Muestra vieja.</strong> {staleCollectors.length === 1 ? 'Un recolector está' : `${staleCollectors.length} recolectores están`}{' '}
+            fuera de plazo ({staleCollectors.map((collector) => `${collector.host ?? UNKNOWN}: ${freshness(collector, thresholds).label}`).join(' · ')}).
+            Los porcentajes de abajo son de esa corrida, no del momento actual.
+          </span>
+        </div>
+      )}
+
       <div className="metrics-grid">
-        <Metric label="Proveedores" value={providers.length} detail="claude, codex, antigravity, opencode…" />
+        <Metric label="Cuentas registradas" value={configDown ? null : totalAccounts} detail="provider_accounts del inventario" />
+        <Metric
+          label="Con datos de cuota"
+          value={isCollectorAbsent || quotasDown || configDown ? null : accountsWithQuota}
+          tone={isCollectorAbsent || failedProbes.length > 0 ? 'warning' : 'positive'}
+          detail={quotasDown
+            ? 'no se pudo leer el consumo'
+            : isCollectorAbsent
+              ? 'sin recolector activo'
+              : failedProbes.length > 0
+                ? `${failedProbes.length} ${failedProbes.length === 1 ? 'sonda caída' : 'sondas caídas'}: sus cuentas van en ?`
+                : 'el recolector las conoce'}
+        />
+        <Metric label="Agentes" value={configDown ? null : totalAgents} detail="total de alias registrados" />
+        <Metric
+          label="Recolectores conectados"
+          value={quotasDown ? null : collectors.length}
+          tone={isCollectorAbsent ? 'danger' : 'positive'}
+          detail={isCollectorAbsent
+            ? 'crítico: sin datos de cuota'
+            : collectors.length > 0
+              ? `reportando desde ${collectors.map((collector) => collector.host ?? UNKNOWN).join(', ')}`
+              : 'sin respuesta del endpoint'}
+        />
+        <Metric label="Proveedores" value={quotasDown ? null : providers.length} detail="claude, codex, antigravity, opencode…" />
         <Metric
           label="Peor remanente"
           value={worstRemaining === null ? null : `${worstRemaining}%`}
           tone={worstRemaining !== null && worstRemaining <= (thresholds?.critical_remaining_percent ?? 10) ? 'danger' : 'neutral'}
           detail="mínimo de effective_remaining_percent entre proveedores"
         />
-        <Metric label="Suscripciones pausadas" value={paused.length} tone={paused.length ? 'warning' : 'neutral'} detail="por cuota agotada o a mano" />
-        <Metric label="Grupos sin cuenta atada" value={unbound.length} tone={unbound.length ? 'warning' : 'neutral'} detail="muestra guardada, no puede pausar nada" />
+        <Metric label="Suscripciones pausadas" value={quotasDown ? null : paused.length} tone={paused.length ? 'warning' : 'neutral'} detail="por cuota agotada o a mano" />
+        <Metric label="Grupos sin cuenta atada" value={quotasDown ? null : unbound.length} tone={unbound.length ? 'warning' : 'neutral'} detail="muestra guardada, no puede pausar nada" />
       </div>
 
       <Panel title="Recolectores" subtitle="Frescura medida contra received_at (reloj del servidor), no contra captured_at (reloj del recolector).">
         {collectors.length === 0 ? (
-          <EmptyState>Sin muestras: ningún recolector publicó nunca hacia POST /v3/quotas/samples.</EmptyState>
+          <EmptyState>
+            {quotasDown
+              ? 'No se pudo leer el endpoint de cuotas: no hay lista de recolectores que mostrar.'
+              : 'Sin muestras: ningún recolector publicó nunca hacia POST /v3/quotas/samples.'}
+          </EmptyState>
         ) : (
           <div className="table-wrap">
             <table>
               <caption className="sr-only">Recolectores de cuota y su frescura</caption>
               <thead><tr><th>Host</th><th>Identidad</th><th>Capturado</th><th>Recibido</th><th>Edad</th><th>Frescura</th><th>Versión</th><th>Proveedores</th><th>Ventanas</th></tr></thead>
               <tbody>
-                {collectors.map((collector) => <CollectorRow key={collector.host ?? Math.random()} collector={collector} />)}
+                {collectors.map((collector) => (
+                  <CollectorRow key={collector.host ?? Math.random()} collector={collector} thresholds={thresholds} />
+                ))}
               </tbody>
             </table>
           </div>
         )}
+        {failedProbes.length > 0 && (
+          /*
+           * Un recolector puede estar fresco y aun así traer proveedores con la sonda muerta.
+           * Sin esta lista, un `ok: false` se leería como "esta cuenta no tiene ventanas", que
+           * es la mentira exacta que hay que evitar: un dato viejo o ausente disfrazado de normal.
+           */
+          <div className="banner banner-error" style={{ marginTop: 12 }}>
+            <AlertCircle size={18} aria-hidden="true" />
+            <span>
+              <strong>Sonda caída.</strong> El recolector llegó, pero {failedProbes.length === 1 ? 'este proveedor no respondió' : 'estos proveedores no respondieron'}:{' '}
+              {failedProbes.map((provider) => (
+                <code key={`${provider.host}/${provider.provider}`}>
+                  {provider.provider ?? '?'}@{provider.host ?? '?'}{provider.note ? ` — ${provider.note}` : ''}
+                </code>
+              ))}
+              . Sus porcentajes se muestran como <code>?</code>, nunca con el último valor conocido.
+            </span>
+          </div>
+        )}
       </Panel>
 
-      <Panel title="Proveedores" subtitle="Ordenados por severidad: el que está por agotarse aparece primero, no en orden alfabético.">
+      <Panel title="Proveedores" subtitle="Ordenados por severidad: el que está por agotarse aparece primero, no en orden alfabético. Una fila por cuenta y familia de ventana: el consumo de cada cuenta se lee acá.">
         {providers.length === 0 ? (
           <EmptyState>Sin datos de cuota: el recolector nunca corrió, o la última corrida no trajo ningún proveedor.</EmptyState>
         ) : providers.map((provider) => (
@@ -109,18 +305,124 @@ export function QuotasPage() {
         ))}
       </Panel>
 
-      <Panel title="Grupos sin cuenta atada" subtitle="La muestra se guardó igual: no atar una cuenta no descarta el dato, sólo le impide pausar algo.">
-        {unbound.length === 0
-          ? <EmptyState>Todos los grupos observados tienen account_id.</EmptyState>
-          : <div className="table-wrap">
-            <table>
-              <caption className="sr-only">Grupos de cuota sin cuenta registrada</caption>
-              <thead><tr><th>Host</th><th>Proveedor</th><th>Grupo</th><th>Ventanas</th><th>Motivo</th></tr></thead>
-              <tbody>
-                {unbound.map((entry, index) => <UnboundRow key={`${entry.host}:${entry.provider}:${entry.group_key}:${index}`} entry={entry} />)}
-              </tbody>
-            </table>
-          </div>}
+      <Panel title="Inventario de cuentas" subtitle="Suscripción, plan, quién tiene asignada cada cuenta y su techo de ruteo. El consumo de cada una está arriba, en Proveedores.">
+        {configDown ? (
+          <EmptyState>No se pudo leer /v3/console/config: no se sabe qué cuentas hay registradas.</EmptyState>
+        ) : accounts.length === 0 ? (
+          <EmptyState>No hay cuentas registradas en esta consola.</EmptyState>
+        ) : (
+          <div className="accounts-list">
+            {accounts.map((account) => {
+              const consumption = accountConsumption(account.id, snapshot, thresholds);
+              const assignments = accountAssignments(account.id, bindings, agents);
+              const accountCeiling = ceiling.find((entry) => entry.account_id === account.id);
+
+              return (
+                <div key={account.id} className="account-card">
+                  <div className="account-header">
+                    <div className="account-identity">
+                      <span className="account-id mono">{account.id}</span>
+                      <span className="account-label">
+                        {account.label ? `"${account.label}"` : <span className="unknown">sin etiqueta</span>}
+                      </span>
+                    </div>
+                    <div className="account-badges">
+                      <Badge tone={account.enabled ? 'online' : 'offline'}>
+                        {account.enabled ? 'HABILITADA' : 'DESHABILITADA'}
+                      </Badge>
+                      {account.shared_with_pool && <Badge tone="info">PUBLICADA AL POOL</Badge>}
+                    </div>
+                  </div>
+
+                  <div className="account-body">
+                    <div className="account-section">
+                      <h4>Detalles</h4>
+                      <dl className="account-details">
+                        <div className="detail-row">
+                          <dt>Proveedor</dt>
+                          <dd><span className="mono"><Unknown value={account.provider} /></span></dd>
+                        </div>
+                        <div className="detail-row">
+                          <dt>ID externo</dt>
+                          <dd>
+                            {account.external_account_id === null ? (
+                              <span className="unknown">Redactado: pagada por otro tenant</span>
+                            ) : (
+                              <span className="mono"><Unknown value={account.external_account_id} /></span>
+                            )}
+                          </dd>
+                        </div>
+                        <div className="detail-row">
+                          <dt>Pagador</dt>
+                          <dd><Unknown value={account.payer_tenant_id} /></dd>
+                        </div>
+                        <div className="detail-row">
+                          <dt>Plan</dt>
+                          <dd>
+                            {/* El motivo de por qué no hay consumo va UNA vez, en el aviso de abajo. */}
+                            {consumption.plan
+                              ? <span className="mono">{consumption.plan}</span>
+                              : <span className="unknown">desconocido</span>}
+                          </dd>
+                        </div>
+                      </dl>
+                    </div>
+
+                    {consumption.available === false && consumption.scope === 'account' && (
+                      /*
+                       * Sólo los motivos de ESTA cuenta. Los de alcance global —no hay muestra,
+                       * ningún recolector publicó nunca— ya se declaran una vez arriba, y ponerlos
+                       * además en cada tarjeta era el mismo cartel repetido N veces: no comunica
+                       * más, satura y consigue que se lea menos. Acá queda lo que el cartel de
+                       * arriba no puede decir: que a ESTA cuenta el recolector no la trajo, o que
+                       * murió la sonda de SU proveedor.
+                       */
+                      <div className="account-section">
+                        <div className="account-notice">
+                          <AlertCircle size={14} aria-hidden="true" />
+                          {consumption.reason || 'No disponible'}
+                        </div>
+                      </div>
+                    )}
+
+                    {assignments.length > 0 && (
+                      <div className="account-section">
+                        <h4>Asignada a</h4>
+                        <ul className="assignments-list">
+                          {assignments.map((assignment, index) => (
+                            <li key={index} className={`assignment-item ${assignment.isPrimary ? 'primary' : 'fallback'} ${!assignment.enabled ? 'disabled' : ''}`}>
+                              <div className="assignment-header">
+                                <span className="agent-alias mono">{assignment.alias || '?'}</span>
+                                <span className="agent-display">{assignment.display_name || '—'}</span>
+                                {assignment.isPrimary && <Badge tone="online">PRIMARIA</Badge>}
+                                {!assignment.enabled && <Badge tone="offline">INACTIVO</Badge>}
+                              </div>
+                              <div className="assignment-container">
+                                Contenedor: <span className="mono">{assignment.container_name || '?'}</span>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {accountCeiling && (
+                      <div className="account-section">
+                        <h4>Techo de ruteo</h4>
+                        <div className="ceiling-info">
+                          Alias <span className="mono">{accountCeiling.alias}</span> está limitado a esta cuenta.
+                          {accountCeiling.account_payer_tenant && accountCeiling.account_payer_tenant !== accountCeiling.created_by_tenant && (
+                            <div className="ceiling-note">Creado por tenant <span className="mono">{accountCeiling.created_by_tenant}</span></div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Panel>
 
       <Panel title="Suscripciones pausadas" subtitle="paused_reason con prefijo quota_exhausted: la puso el recolector y sólo el recolector puede levantarla; el resto son pausas manuales de un operador.">
@@ -136,6 +438,60 @@ export function QuotasPage() {
             </table>
           </div>}
       </Panel>
+
+      {hasFindings && (
+        /*
+         * Las tres direcciones de huérfano viven juntas porque son la misma pregunta —qué par
+         * (inventario, muestra) no cierra—, aunque cada una se responda con una fuente distinta.
+         * Antes "grupos sin cuenta atada" era un panel propio en una vista y una lista pobre en la
+         * otra: acá es una sola tabla, la que trae window_count.
+         */
+        <Panel title="Hallazgos" subtitle="Datos inconsistentes o incompletos que deberían revisarse: el inventario y la muestra del recolector no cierran.">
+          {accountsWithoutQuotas.length > 0 && (
+            <div className="finding-section">
+              <h4><AlertCircle size={16} aria-hidden="true" /> Cuentas sin datos de cuota</h4>
+              <p>Registradas pero no reportadas por el recolector:</p>
+              <ul className="finding-list">
+                {accountsWithoutQuotas.map((account) => (
+                  <li key={account.id}>
+                    <span className="mono">{account.id}</span> ({account.provider}) — {account.label || 'sin etiqueta'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {unbound.length > 0 && (
+            <div className="finding-section">
+              <h4><AlertCircle size={16} aria-hidden="true" /> Grupos sin cuenta atada</h4>
+              <p>Reportados por el recolector pero sin account_id en el inventario. La muestra se guardó igual: no atar una cuenta no descarta el dato, sólo le impide pausar algo.</p>
+              <div className="table-wrap">
+                <table>
+                  <caption className="sr-only">Grupos de cuota sin cuenta registrada</caption>
+                  <thead><tr><th>Host</th><th>Proveedor</th><th>Grupo</th><th>Ventanas</th><th>Motivo</th></tr></thead>
+                  <tbody>
+                    {unbound.map((entry, index) => <UnboundRow key={`${entry.host}:${entry.provider}:${entry.group_key}:${index}`} entry={entry} />)}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {orphanedItems.agentsWithoutBindings.length > 0 && (
+            <div className="finding-section">
+              <h4><AlertCircle size={16} aria-hidden="true" /> Agentes sin bindings</h4>
+              <p>Registrados pero no asignados a ninguna cuenta:</p>
+              <ul className="finding-list">
+                {orphanedItems.agentsWithoutBindings.map((agent) => (
+                  <li key={agent.alias}>
+                    <span className="mono">{agent.alias}</span> — {agent.display_name || '—'} en {agent.container_name || '?'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Panel>
+      )}
 
       <div className="explain-grid">
         <article>
@@ -164,18 +520,53 @@ export function QuotasPage() {
   );
 }
 
-function CollectorRow({ collector }: { collector: QuotaCollector }) {
-  const stale = collector.stale;
+/** Falla dura de una de las dos mitades: dice cuál, con qué mensaje, y ofrece reintentar esa sola. */
+function FailureBanner({ title, error, detail, onRetry }: {
+  title: string;
+  error: Error;
+  detail: string;
+  onRetry: () => void;
+}) {
   return (
-    <tr data-stale={stale === true}>
+    <div className="banner banner-error" role="alert">
+      <AlertCircle size={18} aria-hidden="true" />
+      <span>
+        <strong>{title}</strong> {error.message || UNKNOWN}. {detail}
+      </span>
+      <button type="button" className="button secondary" onClick={onRetry}>
+        <RefreshCw size={16} aria-hidden="true" /> Reintentar
+      </button>
+    </div>
+  );
+}
+
+function CollectorRow({ collector, thresholds }: {
+  collector: QuotaCollector;
+  thresholds: QuotaThresholds | null | undefined;
+}) {
+  /*
+   * El servidor manda `stale`, pero una muestra con `stale:false` y más edad que
+   * `stale_after_seconds` tampoco es fresca: `freshness()` aplica las dos condiciones (era la
+   * lectura de la vista de licencias, más estricta que la de cuotas). Cuando no hay NI bandera NI
+   * edad no se decide nada: UNKNOWN, porque no saber no es estar fresco.
+   */
+  const undecidable = (collector.stale === null || collector.stale === undefined)
+    && (collector.age_seconds === null || collector.age_seconds === undefined);
+  const state = freshness(collector, thresholds);
+  const isFresh = state.state === 'fresh';
+  return (
+    <tr data-stale={!undecidable && !isFresh}>
       <td><span className="mono"><Unknown value={collector.host} /></span></td>
       <td><Unknown value={collector.collector_tenant} />:<Unknown value={collector.collector_alias} /></td>
       <td><Time value={collector.captured_at} /></td>
       <td><Time value={collector.received_at} /></td>
       <td>{formatDurationSeconds(collector.age_seconds)}</td>
-      <td>{stale === null || stale === undefined
-        ? <Badge tone="unknown">UNKNOWN</Badge>
-        : <Badge tone={stale ? 'danger' : 'done'}>{stale ? 'DESACTUALIZADO' : 'FRESCO'}</Badge>}</td>
+      <td>
+        {undecidable
+          ? <Badge tone="unknown">UNKNOWN</Badge>
+          : <Badge tone={isFresh ? 'done' : 'danger'}>{isFresh ? 'FRESCO' : 'DESACTUALIZADO'}</Badge>}
+        {!undecidable && !isFresh ? <small className="subline">{state.label}</small> : null}
+      </td>
       <td><span className="mono">v<Unknown value={collector.schema_version} /></span> <small className="subline"><Unknown value={collector.app_version} /></small></td>
       <td><Unknown value={collector.provider_count} /></td>
       <td><Unknown value={collector.window_count} /></td>

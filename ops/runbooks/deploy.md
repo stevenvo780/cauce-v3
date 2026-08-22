@@ -54,6 +54,22 @@ Profiles opt-in: `origin-relay`, `telegram`, `shadow`, `observability`. `telegra
 
 Todos los procesos propios corren non-root, filesystem read-only, `no-new-privileges`, capabilities vacías y restart `always` (migrator es one-shot). No relajar health o TLS para forzar un arranque.
 
+## Desplegar SÓLO la consola
+
+`release-build.sh` construye siempre las dos imágenes y `release-gate.sh` exige que los dos digests
+coincidan con esa evidencia, así que una corrección de pantalla arrastraba al runtime entero. El
+camino solo-consola está en `ops/scripts/release-console.sh` (`make -C ops release-console`):
+construye `--target console`, transfiere la imagen por SSH, **respalda** `/etc/cauce-v3/prod.env`
+antes de tocarlo, pinea `CAUCE_CONSOLE_IMAGE` por digest con escritura atómica y validada, recrea
+sólo el servicio `console` con `--no-deps` (gateway, dispatcher y outbox no se reinician, ninguna
+entrega en vuelo se pierde) y **verifica por efecto**: que el contenedor corra el digest pineado,
+que el bundle servido contenga la vista y que la consola conteste 200 con TLS. Si la verificación
+falla, revierte sola. La vuelta atrás manual es `release-console.sh revertir`, y
+`release-console.sh verificar` dice qué está sirviendo ahora sin cambiar nada.
+
+La consola desplegada vive hoy en una rama que no está en `main`: leer
+`runbooks/consola-rama-fuera-de-main.md` antes de construirla desde `main`.
+
 ## Gate posterior
 
 `stack-health.sh prod`, migrations completas, consumer único por alias, lease owner único, round-trip ACK auténtico, wake/outbox/relay bajo umbral, DLQ cero y dos ventanas de retry estables. Cutover usa confirmación explícita y jamás se ejecuta como parte de deploy.
