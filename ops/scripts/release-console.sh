@@ -86,10 +86,14 @@ compose_dir=${CAUCE_COMPOSE_DIR:-/datos/workspaces/cauce-v3}
 # fuente menos opinable que hay.
 compose_files=${CAUCE_COMPOSE_FILES:-}
 if [[ -z $compose_files ]]; then
-  compose_files=$(ssh -o BatchMode=yes -o ControlMaster=no -o ControlPath=none "$CAUCE_PROD_HOST" "
-    docker inspect --format '{{ index .Config.Labels \"com.docker.compose.project.config_files\" }}' \
-      \$(docker ps -q --filter label=com.docker.compose.service=console | head -n1) 2>/dev/null | tr ',' ' '
-  " || true)
+  # Sin `$(...)` anidado dentro de la orden remota: el `\$` sobrevive a las comillas de acá pero
+  # la sustitución acababa evaluándose antes de tiempo y al host remoto le llegaba `ps -q`, el ps
+  # del sistema, que contestaba «List of process IDs must follow -q» y dejaba la detección en nada
+  # sin que nadie lo notara, porque el `|| true` la tapaba y el respaldo funcionaba igual.
+  # Un detector que siempre falla en silencio y cae al respaldo es peor que no tener detector.
+  compose_files=$(ssh -o BatchMode=yes -o ControlMaster=no -o ControlPath=none "$CAUCE_PROD_HOST" \
+    "docker ps -q --filter label=com.docker.compose.service=console | head -n1 | xargs -r docker inspect --format '{{ index .Config.Labels \"com.docker.compose.project.config_files\" }}' | tr ',' ' '" \
+    2>/dev/null || true)
   compose_files=${compose_files:-${compose_dir}/deploy/compose.yaml}
 fi
 compose_args=''
