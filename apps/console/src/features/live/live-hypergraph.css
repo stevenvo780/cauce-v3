@@ -70,6 +70,11 @@
   line-height: 1.6;
 }
 
+/* El hueco del mapa cuando la lectura de la topología FALLÓ lleva su propio botón de reintento
+   dentro: sin este hueco el botón queda pegado al párrafo y se lee como parte de la frase. */
+.lhg-empty p { margin: 0 0 10px; }
+.lhg-empty strong { color: var(--text); font-weight: 600; }
+
 .lhg-legend strong { color: var(--text); font-weight: 600; }
 .lhg-note { color: var(--faint); }
 
@@ -242,7 +247,7 @@
 .lhg-bot[data-state='blocked'] .lhg-bot-word { fill: var(--red); }
 .lhg-bot[data-state='unknown'] .lhg-bot-word { fill: var(--faint); font-style: italic; }
 .lhg-bot[data-state='thinking'] .lhg-bot-word,
-.lhg-bot[data-state='responding'] .lhg-bot-word { fill: var(--mint); }
+.lhg-bot[data-state='settled'] .lhg-bot-word { fill: var(--muted); }
 
 /* El anillo del muñeco es el SEGUNDO canal: continuo = conectado, hueco = caído, punteado = sin
    reportar. Va en el contorno y no en la opacidad, porque bajar la opacidad esconde justo a los

@@ -30,14 +30,9 @@ function Eyes({ state }: EyeProps) {
       </g>
     );
   }
-  if (state === 'responding') {
-    return (
-      <g className="av-eyes" stroke="currentColor" strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round" fill="none">
-        <path d="M39 55 Q45 46 51 55" />
-        <path d="M69 55 Q75 46 81 55" />
-      </g>
-    );
-  }
+  // El estado que antes se llamaba `responding` tenía acá dos ojos SONRIENDO (dos arcos hacia
+  // arriba). Era la misma mentira que el tilde verde y el festejo: la consola no sabe si la
+  // entrega cerró bien. Sin rama propia, cae en los ojos neutros del final.
   if (state === 'thinking') {
     // Mirada baja y algo entrecerrada: está mirando su propio trabajo, no a vos.
     return (
@@ -129,12 +124,19 @@ export function AgentAvatar({ state, overloaded = false, label }: {
         <path className="av-trail" d="M92 100 L118 92" strokeWidth="2.5" strokeLinecap="round" fill="none" />
       </g>
 
-      {/* respondiendo: bocadillo con un tilde */}
-      <g className="av-fx av-fx-responding">
+      {/* salió de vuelo: bocadillo con puntos suspensivos. Era un TILDE, y el tilde afirmaba un
+          cierre correcto que la consola no puede ver: una entrega sale de `in_flight_items` igual
+          si cerró `done` que si se murió por deadline. Los tres puntos dicen lo que sí se sabe:
+          pasó algo, y el desenlace está pendiente. */}
+      <g className="av-fx av-fx-settled">
         <g className="av-bubble">
           <rect x="82" y="16" width="34" height="26" rx="9" />
           <path d="M92 42 L88 51 L101 42 Z" />
-          <path className="av-check" d="M90 29 L96.5 35.5 L108 23" fill="none" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+          <g className="av-unknown-dots">
+            <circle cx="91" cy="29" r="2.6" />
+            <circle cx="99" cy="29" r="2.6" />
+            <circle cx="107" cy="29" r="2.6" />
+          </g>
         </g>
       </g>
 

@@ -23,6 +23,10 @@
 }
 .live-toolbar label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .live-toolbar select { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-2); color: var(--text); }
+/* El aviso de topología caída trae su reintento dentro del propio aviso: el fallo y su salida
+   tienen que estar en el mismo sitio, no a dos pantallas de distancia. */
+.live-toolbar .notice { flex-basis: 100%; }
+.live-toolbar .notice button { margin-left: 10px; vertical-align: middle; }
 
 .live-feed-state { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
 .live-feed-state .live-feed-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 0 rgb(99 222 185 / 55%); animation: live-ping 2.4s ease-out infinite; }
@@ -107,7 +111,9 @@ tr[data-highlighted='true'] > td {
 .agent-avatar[data-state='receiving'] { --accent: var(--blue); --accent-soft: rgb(122 184 255 / 24%); }
 .agent-avatar[data-state='thinking'] { --accent: var(--mint); --accent-soft: rgb(99 222 185 / 24%); }
 .agent-avatar[data-state='delegating'] { --accent: var(--violet); --accent-soft: rgb(179 155 255 / 26%); }
-.agent-avatar[data-state='responding'] { --accent: var(--lime); --accent-soft: rgb(198 243 106 / 26%); }
+/* «Salió de vuelo» NO es una buena noticia: es una noticia sin desenlace. Por eso deja de ser
+   --lime (el verde de "terminó bien") y pasa al gris de lo neutro. Ver LIVE_STATE_META.settled. */
+.agent-avatar[data-state='settled'] { --accent: var(--muted); --accent-soft: rgb(145 161 186 / 22%); }
 .agent-avatar[data-state='blocked'] { --accent: var(--amber); --accent-soft: rgb(245 200 108 / 26%); }
 .agent-avatar[data-state='down'] { --accent: var(--red); --accent-soft: rgb(255 138 146 / 16%); }
 
@@ -208,23 +214,21 @@ tr[data-highlighted='true'] > td {
 .agent-avatar[data-state='delegating'] .av-trail { stroke: var(--violet); opacity: .35; stroke-dasharray: 4 6; animation: av-trail-flow .7s linear infinite; }
 @keyframes av-trail-flow { to { stroke-dashoffset: -20; } }
 
-/* ------------------------------------------------- RESPONDIENDO: bocadillo con tilde y rebote */
+/* --------------------------------------- SALIÓ DE VUELO: bocadillo con puntos suspensivos
+ *
+ * Antes acá había un tilde verde, un salto de festejo (`av-cheer`) y los dos brazos en alto. Los
+ * tres afirmaban lo mismo —terminó bien— sobre un hecho que la consola NO puede observar: lo único
+ * que se vio es que la entrega dejó de listarse, y de esa lista se sale igual cerrando `done` que
+ * muriendo por deadline. El bocadillo se queda (algo pasó y hay que poder verlo), el tilde se va
+ * y en su sitio van tres puntos: el resultado está pendiente de saber. */
 
-.agent-avatar[data-state='responding'] .av-fx-responding { opacity: 1; visibility: visible; }
-.agent-avatar[data-state='responding'] .av-bubble { fill: var(--lime); animation: av-bubble-pop .55s cubic-bezier(.2, 1.5, .4, 1) both; transform-origin: 92px 42px; }
-.agent-avatar[data-state='responding'] .av-check { stroke: #0a1408; fill: none; }
+.agent-avatar[data-state='settled'] .av-fx-settled { opacity: 1; visibility: visible; }
+.agent-avatar[data-state='settled'] .av-bubble { fill: var(--muted); animation: av-bubble-pop .55s cubic-bezier(.2, 1.5, .4, 1) both; transform-origin: 92px 42px; }
+.agent-avatar[data-state='settled'] .av-unknown-dots { fill: #0a1408; }
 @keyframes av-bubble-pop {
   0% { transform: scale(0) translateY(8px); opacity: 0; }
   100% { transform: scale(1) translateY(0); opacity: 1; }
 }
-.agent-avatar[data-state='responding'] .av-body { animation: av-cheer .75s cubic-bezier(.3, 1.4, .5, 1) 2; }
-@keyframes av-cheer {
-  0%, 100% { transform: translateY(0); }
-  35% { transform: translateY(-9px) scaleY(1.04); }
-  70% { transform: translateY(0) scaleY(.97); }
-}
-.agent-avatar[data-state='responding'] .av-arm-left { transform: rotate(-40deg); }
-.agent-avatar[data-state='responding'] .av-arm-right { transform: rotate(40deg); }
 
 /* --------------------------------------- BLOQUEADO: se desploma y le late la señal de alarma */
 
@@ -305,7 +309,7 @@ tr[data-highlighted='true'] > td {
   .agent-avatar[data-state='receiving'] .av-envelope { transform: translate(60px, 97px) scale(1); }
   .agent-avatar[data-state='delegating'] .av-packet { transform: translate(104px, 88px) scale(1); }
   .agent-avatar[data-state='thinking'] .av-think { opacity: 1; }
-  .agent-avatar[data-state='responding'] .av-bubble { opacity: 1; transform: none; }
+  .agent-avatar[data-state='settled'] .av-bubble { opacity: 1; transform: none; }
 }
 
 /* --- Composición con cajón -------------------------------------------------

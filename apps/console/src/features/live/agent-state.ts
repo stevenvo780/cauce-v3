@@ -1,4 +1,5 @@
 import type {
+  DeliveryState,
   FleetActivityAgent,
   FleetActivityItem,
   FleetActivitySnapshot,
@@ -21,13 +22,13 @@ export type LiveState =
   | 'down'
   | 'blocked'
   | 'delegating'
-  | 'responding'
+  | 'settled'
   | 'receiving'
   | 'thinking'
   | 'idle';
 
 export const LIVE_STATES: readonly LiveState[] = [
-  'down', 'blocked', 'delegating', 'responding', 'receiving', 'thinking', 'idle',
+  'down', 'blocked', 'delegating', 'settled', 'receiving', 'thinking', 'idle',
 ];
 
 export interface LiveStateMeta {
@@ -41,7 +42,21 @@ export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
   down: { label: 'Caído', hint: 'Sin lease vigente o nunca conectó: nadie va a tomar su trabajo.', tone: 'danger' },
   blocked: { label: 'Bloqueado', hint: 'Tomó trabajo y no avanza. Es el fallo que se ve como "tarda", no como error.', tone: 'danger' },
   delegating: { label: 'Delegando', hint: 'Le pasó trabajo a otro agente, que ya lo tiene en vuelo.', tone: 'info' },
-  responding: { label: 'Respondiendo', hint: 'Acaba de cerrar una entrega: terminó su turno.', tone: 'positive' },
+  /**
+   * Antes esto se llamaba «Respondiendo», decía «acaba de cerrar una entrega», iba en tono
+   * `positive` y se pintaba en `--lime`. Era falso, y del peor modo posible: la consola sólo ve
+   * que un `delivery_id` DESAPARECIÓ de `in_flight_items`, y esa lista la produce un SQL que trae
+   * `status IN ('leased','accepted','started')` (packages/store/src/fleet-activity.ts). Una entrega
+   * sale de ahí igual si cerró `done`, si fue a `failed`, si acabó en dead-letter o si le venció
+   * el `ack_deadline_at`. Con la etiqueta vieja, el fallo más caro de la flota se anunciaba como la
+   * mejor noticia de la pantalla. Ahora se declara lo único que se observó de verdad —la entrega
+   * dejó de estar en vuelo— y el resultado se declara desconocido.
+   */
+  settled: {
+    label: 'Salió de vuelo',
+    hint: 'Una entrega suya dejó de estar en vuelo. Si cerró bien o se murió NO se puede saber desde la consola.',
+    tone: 'neutral',
+  },
   receiving: { label: 'Recibiendo', hint: 'Le entró trabajo nuevo y todavía no empezó el turno.', tone: 'info' },
   thinking: { label: 'Trabajando', hint: 'Turno en curso: el arnés está masticando la entrega.', tone: 'positive' },
   idle: {
@@ -101,33 +116,51 @@ export function delegationEdges(snapshot: FleetActivitySnapshot | undefined): De
   return edges;
 }
 
+/**
+ * Lo que se recuerda de UNA entrega en vuelo, para poder decir algo cuando desaparezca.
+ *
+ * Antes acá sólo se guardaba el `delivery_id` (`itemIds()` tiraba el resto del ítem), y esa pérdida
+ * era la que dejaba a la vista sin nada que contrastar en el momento en que más falta hace: cuando
+ * la entrega ya no está. El `status` no alcanza para saber el desenlace —la entrega ya no se lista—
+ * pero el `ack_deadline_at` que se le vio por última vez sí acredita un hecho comprobable: si ya
+ * había pasado, esa entrega NO salió de vuelo por un cierre limpio.
+ */
+export interface ItemMemory {
+  deliveryId: string;
+  /** Último estado visto. Siempre uno de leased/accepted/started: es lo único que el SQL lista. */
+  status?: DeliveryState | null;
+  /** `ack_deadline_at` en ms, o `null` si el servidor no lo informó. Nunca se rellena con 0. */
+  ackDeadlineMs: number | null;
+}
+
 /** Lo que hay que recordar de un snapshot para detectar transiciones en el siguiente. */
 export interface AgentMemory {
-  inFlightIds: string[];
-  startedIds: string[];
+  items: ItemMemory[];
   queued: number;
   observedAtMs: number;
 }
 
 export type FleetMemory = Record<string, AgentMemory>;
 
-function itemIds(items: readonly FleetActivityItem[] | null | undefined): string[] {
-  return (items ?? []).map((item) => item.delivery_id).filter((id): id is string => typeof id === 'string');
-}
-
-function startedIds(items: readonly FleetActivityItem[] | null | undefined): string[] {
-  return (items ?? [])
-    .filter((item) => item.status === 'started')
-    .map((item) => item.delivery_id)
-    .filter((id): id is string => typeof id === 'string');
+function itemMemories(items: readonly FleetActivityItem[] | null | undefined): ItemMemory[] {
+  const salida: ItemMemory[] = [];
+  for (const item of items ?? []) {
+    if (typeof item.delivery_id !== 'string') continue;
+    const deadline = typeof item.ack_deadline_at === 'string' ? Date.parse(item.ack_deadline_at) : Number.NaN;
+    salida.push({
+      deliveryId: item.delivery_id,
+      status: item.status,
+      ackDeadlineMs: Number.isFinite(deadline) ? deadline : null,
+    });
+  }
+  return salida;
 }
 
 export function rememberFleet(snapshot: FleetActivitySnapshot | undefined, nowMs: number): FleetMemory {
   const memory: FleetMemory = {};
   for (const agent of snapshot?.agents ?? []) {
     memory[agentKey(agent)] = {
-      inFlightIds: itemIds(agent.in_flight_items),
-      startedIds: startedIds(agent.in_flight_items),
+      items: itemMemories(agent.in_flight_items),
       queued: agent.queued ?? 0,
       observedAtMs: nowMs,
     };
@@ -140,17 +173,31 @@ export function rememberFleet(snapshot: FleetActivitySnapshot | undefined, nowMs
  * nuevo contra el anterior. No es un estado del servidor, es una transición observada por el
  * cliente — y se etiqueta como tal para no hacerla pasar por un dato del backend.
  */
+/**
+ * Qué se sabe del desenlace de una entrega que salió de vuelo.
+ *
+ * `desconocido` es la respuesta honesta por defecto y no un caso raro: `/activity` sólo lista
+ * `leased`, `accepted` y `started`, así que `done`, `failed` y dead-letter se ven EXACTAMENTE
+ * igual desde el cliente — la desaparición no distingue. `deadline_vencido` es lo único que sí se
+ * puede afirmar: el `ack_deadline_at` que se le vio a esa entrega ya había pasado cuando dejó de
+ * listarse, y eso descarta el cierre limpio sin necesidad de suponer nada.
+ */
+export type PulseOutcome = 'desconocido' | 'deadline_vencido';
+
 export interface Pulse {
-  kind: 'received' | 'answered';
+  kind: 'received' | 'settled';
   atMs: number;
   deliveryId?: string;
+  /** Sólo en `settled`. */
+  outcome?: PulseOutcome;
 }
 
 export type PulseMap = Record<string, Pulse[]>;
 
 /**
  * Compara dos snapshots y devuelve los pulsos nuevos. Un `delivery_id` que aparece es trabajo que
- * ENTRÓ; uno que desaparece es un turno que SE CERRÓ. Si `previous` no tiene entrada para el
+ * ENTRÓ; uno que desaparece es una entrega que dejó de estar en vuelo —y nada más que eso: quién
+ * la cerró, y si la cerró bien, no está en el dato—. Si `previous` no tiene entrada para el
  * agente (primer snapshot, o alias recién aparecido) no se emite nada: al abrir la consola no
  * tiene que explotar una lluvia de animaciones falsas por trabajo que ya estaba en curso.
  */
@@ -164,15 +211,24 @@ export function detectPulses(
     const key = agentKey(agent);
     const before = previous[key];
     if (!before) continue;
-    const now = itemIds(agent.in_flight_items);
-    const beforeSet = new Set(before.inFlightIds);
+    const now = itemMemories(agent.in_flight_items).map((item) => item.deliveryId);
+    const beforeSet = new Set(before.items.map((item) => item.deliveryId));
     const nowSet = new Set(now);
     const emitted: Pulse[] = [];
     for (const id of now) {
       if (!beforeSet.has(id)) emitted.push({ kind: 'received', atMs: nowMs, deliveryId: id });
     }
-    for (const id of before.inFlightIds) {
-      if (!nowSet.has(id)) emitted.push({ kind: 'answered', atMs: nowMs, deliveryId: id });
+    for (const item of before.items) {
+      if (nowSet.has(item.deliveryId)) continue;
+      // El único hecho que la desaparición sí acredita. Todo lo demás queda en 'desconocido'
+      // ANTES que inventarle un final feliz a una entrega que pudo haberse muerto.
+      const vencido = item.ackDeadlineMs !== null && item.ackDeadlineMs <= nowMs;
+      emitted.push({
+        kind: 'settled',
+        atMs: nowMs,
+        deliveryId: item.deliveryId,
+        outcome: vencido ? 'deadline_vencido' : 'desconocido',
+      });
     }
     // Cola que crece sin que aparezca una entrega en vuelo: también entró trabajo, sólo que
     // todavía no lo tomó nadie. Vale el mismo pulso de "recibiendo".
@@ -209,6 +265,15 @@ export interface LiveAgentView {
    */
   closed24h?: number;
   rooms: string[];
+  /**
+   * Quién pidió cada entrega en vuelo, en el MISMO orden que `agent.in_flight_items`.
+   *
+   * Se calcula acá y no en cada componente porque hace falta el conjunto de alias de la flota
+   * ENTERA para decidirlo, y el globo y el cajón sólo tienen delante a un agente. Que los dos
+   * lean la misma lista es lo que impide que el globo diga "una persona por telegram" mientras el
+   * mapa dibuja la flecha de otro agente para ese mismo encargo.
+   */
+  origenes: OrigenEncargo[];
   agent: FleetActivityAgent;
 }
 
@@ -224,18 +289,37 @@ function humanSeconds(seconds: number): string {
   return minutes === 0 ? `${hours} h` : `${hours} h ${minutes} min`;
 }
 
+export interface LiveStateContext {
+  pulses?: readonly Pulse[];
+  delegatesTo?: readonly string[];
+  thresholds?: FleetActivityThresholds | null;
+  nowMs: number;
+}
+
 /**
  * El estado del muñeco. Precedencia explícita, de arriba abajo, y cada rama deja escrito POR QUÉ
  * decidió eso: si mañana un muñeco miente, el motivo dice contra qué campo contrastarlo.
+ *
+ * La nota de "sin registro" se pega al final del motivo en vez de repetirse rama por rama: es una
+ * salvedad sobre la PROCEDENCIA del alias, no un estado, y vale igual esté trabajando o caído.
  */
 export function liveState(
   agent: FleetActivityAgent,
-  context: {
-    pulses?: readonly Pulse[];
-    delegatesTo?: readonly string[];
-    thresholds?: FleetActivityThresholds | null;
-    nowMs: number;
-  },
+  context: LiveStateContext,
+): { state: LiveState; reason: string; overloaded: boolean } {
+  const decidido = decidirEstado(agent, context);
+  const flags = agent.flags ?? [];
+  const sinRegistro = flags.includes('unregistered') || agent.registered === false;
+  if (!sinRegistro) return decidido;
+  return {
+    ...decidido,
+    reason: `${decidido.reason} No está en el registro de agentes: apareció por entregas o por lease.`,
+  };
+}
+
+function decidirEstado(
+  agent: FleetActivityAgent,
+  context: LiveStateContext,
 ): { state: LiveState; reason: string; overloaded: boolean } {
   const flags = agent.flags ?? [];
   const saturation = context.thresholds?.saturation_in_flight ?? 8;
@@ -243,7 +327,19 @@ export function liveState(
   const inFlight = agent.in_flight ?? 0;
   const overloaded = inFlight >= saturation;
 
-  if (agent.agent_enabled === false) {
+  /**
+   * Un alias que no está en el registro NO tiene una decisión de registro que leer.
+   *
+   * El backend calcula `agent_enabled: COALESCE(ag.enabled, false)` y el LEFT JOIN no encuentra
+   * fila para un participante que entró por `deliveries` o por `connection_leases`. Ese `false`
+   * es el DEFAULT del COALESCE, no una baja que alguien dio: leerlo como "deshabilitado en el
+   * registro" convertía un alias sin dar de alta —trabajando, con lease vivo y tres entregas en
+   * vuelo— en un muñeco rojo con un motivo inventado. El propio servidor manda el flag
+   * `unregistered` para distinguirlo, y esta vista no lo miraba.
+   */
+  const sinRegistro = flags.includes('unregistered') || agent.registered === false;
+
+  if (agent.agent_enabled === false && !sinRegistro) {
     return { state: 'down', reason: 'Deshabilitado en el registro de agentes: no se le asigna trabajo.', overloaded };
   }
   if (flags.includes('never_connected')) {
@@ -281,11 +377,22 @@ export function liveState(
   }
 
   const pulses = context.pulses ?? [];
-  const answered = pulses.find((pulse) => pulse.kind === 'answered');
   const received = pulses.find((pulse) => pulse.kind === 'received');
+  // El vencido gana al desconocido: entre dos entregas que salieron de vuelo a la vez, la que se
+  // sabe que no cerró limpia es la que hay que contar.
+  const settled = pulses.find((pulse) => pulse.kind === 'settled' && pulse.outcome === 'deadline_vencido')
+    ?? pulses.find((pulse) => pulse.kind === 'settled');
 
-  if (answered && context.nowMs - answered.atMs < BURST_MS) {
-    return { state: 'responding', reason: 'Cerró una entrega en el último refresco: terminó el turno.', overloaded };
+  if (settled && context.nowMs - settled.atMs < BURST_MS) {
+    return {
+      state: 'settled',
+      reason: settled.outcome === 'deadline_vencido'
+        ? 'Una entrega suya salió de vuelo con el deadline de ACK ya vencido: no fue un cierre limpio.'
+        : 'Una entrega suya salió de vuelo en el último refresco. Si cerró bien o se murió no se puede '
+          + 'saber desde acá: /activity sólo lista leased, accepted y started, así que done, failed y '
+          + 'vencida por deadline se ven exactamente igual.',
+      overloaded,
+    };
   }
 
   const delegatesTo = context.delegatesTo ?? [];
@@ -336,7 +443,10 @@ export function buildLiveViews(
     incoming.set(edge.to, [...(incoming.get(edge.to) ?? []), edge.from]);
   }
 
-  const views = (snapshot?.agents ?? []).map((agent) => {
+  const agents = snapshot?.agents ?? [];
+  const known = new Set(agents.map(agentKey));
+
+  const views = agents.map((agent) => {
     const key = agentKey(agent);
     const delegatesTo = [...new Set(outgoing.get(key) ?? [])];
     const { state, reason, overloaded } = liveState(agent, {
@@ -363,6 +473,7 @@ export function buildLiveViews(
       flags: agent.flags ?? [],
       closed24h: typeof agent.closed_24h === 'number' ? agent.closed_24h : undefined,
       rooms: agent.rooms ?? [],
+      origenes: origenesDeAgente(agent, known),
       agent,
     } satisfies LiveAgentView;
   });
@@ -460,6 +571,24 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
       tone: 'desconocido',
       frase: input.error ? 'No lo sé: la última lectura falló.' : 'No lo sé: el dato está viejo.',
       apoyo: desde,
+      culpables: [],
+    };
+  }
+
+  /**
+   * Cero mediciones NO es cero problemas.
+   *
+   * `fleetVerdict([], {observedAt fresco})` devolvía «Todo en orden · 0 conectados · 0 trabajando»,
+   * que es un cartel verde sostenido por la nada. Y era alcanzable en producción sin ninguna
+   * avería: basta con elegir en el selector un cliente cuyos alias no aparezcan en `/activity`, o
+   * con que el servidor devuelva `agents: []`. La lectura puede haber llegado fresca y perfecta y
+   * seguir sin acreditar absolutamente nada sobre nadie.
+   */
+  if (views.length === 0) {
+    return {
+      tone: 'desconocido',
+      frase: 'No lo sé: no hay ni un alias que mirar.',
+      apoyo: 'La lectura llegó fresca pero no trae ningún agente en este alcance. Cero mediciones no es lo mismo que cero problemas.',
       culpables: [],
     };
   }
@@ -572,6 +701,74 @@ export interface HumanOrigin {
 }
 
 /**
+ * De dónde salió UN encargo concreto, ya desambiguado.
+ *
+ * `agente`: otro alias de la flota se lo pasó. `puente`: entró por un adaptador (Telegram y
+ * compañía) y detrás hay una persona o un canal. `actor`: hay un actor con nombre que no es
+ * ningún alias de la flota — se lo nombra sin afirmar que sea una persona. `desconocido`: el dato
+ * no alcanza para decir quién, y eso se declara en vez de rellenarse.
+ */
+export type OrigenEncargo =
+  | { tipo: 'agente'; tenant: string | null; alias: string }
+  | { tipo: 'puente'; adapter: string }
+  | { tipo: 'actor'; tenant: string | null; alias: string }
+  | { tipo: 'desconocido' };
+
+/**
+ * El emisor manda sobre `origin_adapter`, SIEMPRE, y ése es el arreglo.
+ *
+ * `origin` se copia byte a byte en cada salto de la cadena (ver el comentario largo de
+ * `AGENT_TO_AGENT_MESSAGE_TYPES` en packages/protocol/src/schemas.ts): una cadena de cinco agentes
+ * nacida en Telegram sigue diciendo `adapter:'telegram'` en el salto cinco — medido el 2026-07-27,
+ * 2.374 de 2.429 entregas de 12 h decían 'telegram'. Leer ese campo a secas, como se hacía acá,
+ * producía a la vez la arista `zeus → kant` (correcta) y la frase «se lo pidió una persona, por
+ * telegram» (falsa) para el MISMO ítem. Y como la frase falsa iba primero, tapaba a la verdadera.
+ *
+ * `from_tenant/from_alias` es `m.actor_alias`: dice quién publicó ESTA entrega, no de qué
+ * desciende. Por eso decide primero. La regla es la misma que ya aplicaba `delegationEdges` para
+ * no dibujar flechas inventadas, y ahora las dos lecturas del mismo ítem no pueden contradecirse.
+ *
+ * El caso `emisor === selfKey` no es una excepción arbitraria: el puente publica el mensaje del
+ * dueño CON EL ALIAS DEL PROPIO AGENTE, así que ahí `origin_adapter` sí es la única fuente que
+ * queda y sí dice la verdad.
+ */
+export function origenDeItem(
+  item: FleetActivityItem,
+  contexto: { selfKey: string; known: ReadonlySet<string> },
+): OrigenEncargo {
+  const tenant = item.from_tenant ?? null;
+  const alias = item.from_alias ?? null;
+  const emisor = tenant && alias ? `${tenant}/${alias}` : null;
+
+  if (emisor !== null && alias !== null && emisor !== contexto.selfKey && contexto.known.has(emisor)) {
+    return { tipo: 'agente', tenant, alias };
+  }
+
+  const adapter = item.origin_adapter;
+  // 'bus' es tráfico entre agentes: si llegó acá es que el emisor no se pudo identificar, y
+  // "vino por el bus" no nombra a nadie.
+  if (typeof adapter === 'string' && adapter.length > 0 && adapter !== 'bus') {
+    return { tipo: 'puente', adapter };
+  }
+
+  // Un actor con nombre que la flota no declara. Se lo nombra tal cual, sin ascenderlo a "persona".
+  if (alias !== null && emisor !== contexto.selfKey) return { tipo: 'actor', tenant, alias };
+
+  // Queda el alias publicándose a sí mismo por el bus, o un ítem sin emisor: ninguno nombra a
+  // quien pidió el trabajo, y eso se dice.
+  return { tipo: 'desconocido' };
+}
+
+/** Los orígenes de las entregas en vuelo de un agente, en el MISMO orden que `in_flight_items`. */
+export function origenesDeAgente(
+  agent: FleetActivityAgent,
+  known: ReadonlySet<string>,
+): OrigenEncargo[] {
+  const selfKey = agentKey(agent);
+  return (agent.in_flight_items ?? []).map((item) => origenDeItem(item, { selfKey, known }));
+}
+
+/**
  * Los encargos que NO vienen de otro agente.
  *
  * `delegationEdges()` los descarta, y con razón: el puente de Telegram publica el mensaje del
@@ -579,18 +776,21 @@ export interface HumanOrigin {
  * sería falsa. Pero descartarla entera pierde el dato entero: el trabajo aparece de la nada y el
  * mapa sugiere que el agente se lo inventó solo. Éstos son los mismos ítems leídos como lo que
  * son —una persona, por un canal— para poder dibujar un nodo aparte, fuera de las salas.
+ *
+ * Sólo cuentan los ítems que `origenDeItem` clasifica como `puente`: un ítem que otro alias de la
+ * flota mandó ya está contado como delegación, y contarlo además como "una persona por telegram"
+ * era dibujar dos veces el mismo encargo con dos historias incompatibles.
  */
 export function humanOrigins(snapshot: FleetActivitySnapshot | undefined): HumanOrigin[] {
+  const agents = snapshot?.agents ?? [];
+  const known = new Set(agents.map(agentKey));
   const conteo = new Map<string, HumanOrigin>();
-  for (const agent of snapshot?.agents ?? []) {
+  for (const agent of agents) {
     const key = agentKey(agent);
-    for (const item of agent.in_flight_items ?? []) {
-      const adapter = item.origin_adapter;
-      // 'bus' es tráfico entre agentes y eso ya lo cuenta `delegationEdges`. Todo lo demás entró
-      // por un puente, y detrás de un puente hay una persona o un canal.
-      if (!adapter || adapter === 'bus') continue;
-      const clave = `${key}|${adapter}`;
-      const actual = conteo.get(clave) ?? { agentKey: key, adapter, count: 0 };
+    for (const origen of origenesDeAgente(agent, known)) {
+      if (origen.tipo !== 'puente') continue;
+      const clave = `${key}|${origen.adapter}`;
+      const actual = conteo.get(clave) ?? { agentKey: key, adapter: origen.adapter, count: 0 };
       actual.count += 1;
       conteo.set(clave, actual);
     }

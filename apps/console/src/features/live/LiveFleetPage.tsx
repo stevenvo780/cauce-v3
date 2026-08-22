@@ -60,19 +60,22 @@ const INTERVALS = [
  * Orden de la cinta de triage: de lo que exige acción a lo que no.
  *
  * Deliberadamente distinto del orden de `LIVE_STATES`, que es la PRECEDENCIA con la que se decide
- * el estado de un agente (`down` gana a todo) y no una jerarquía de atención. Ahí `responding` va
+ * el estado de un agente (`down` gana a todo) y no una jerarquía de atención. Ahí `settled` va
  * antes que `receiving` porque es un pulso transitorio que tiene que ganarle al estado estable;
- * acá va al final, porque "acaba de cerrar un turno" es la mejor noticia de la fila.
+ * acá va casi al final, porque "una entrega dejó de estar en vuelo" no pide nada por sí solo.
  */
 const TALLY_ORDER: readonly LiveState[] = [
-  'down', 'blocked', 'delegating', 'receiving', 'thinking', 'responding', 'idle',
+  'down', 'blocked', 'delegating', 'receiving', 'thinking', 'settled', 'idle',
 ];
 
 const STATE_ACCENT: Record<LiveState, string> = {
   down: 'var(--red)',
   blocked: 'var(--amber)',
   delegating: 'var(--violet)',
-  responding: 'var(--lime)',
+  // Gris, no verde. El chip cuenta entregas que salieron de vuelo con desenlace desconocido; con
+  // el --lime de antes, la fila anunciaba como buena noticia lo que también cubre a las que se
+  // murieron por deadline.
+  settled: 'var(--muted)',
   receiving: 'var(--blue)',
   thinking: 'var(--mint)',
   idle: 'var(--faint)',
@@ -169,7 +172,6 @@ export function LiveFleetPage() {
     () => buildLiveViews(snapshot, pulses, now),
     [snapshot, pulses, now],
   );
-  const tally = useMemo(() => stateTally(views), [views]);
   const origins = useMemo(() => humanOrigins(snapshot), [snapshot]);
 
   // --- Acotamiento por cliente ---------------------------------------------------------------
@@ -184,6 +186,47 @@ export function LiveFleetPage() {
     () => (tenantFilter === 'todos' ? views : views.filter((view) => view.tenantId === tenantFilter)),
     [views, tenantFilter],
   );
+
+  /**
+   * El acotamiento por cliente llega hasta el DIBUJO, no sólo hasta el veredicto.
+   *
+   * Antes el mapa recibía `views` entera y la topología entera: con «Cliente = Miguel» seguían
+   * dibujados los muñecos de los otros cuatro clientes, con su globo completo y con clic que abría
+   * el cajón con sus entregas. El único rastro del filtro era el atenuado, que además se apagaba
+   * en cuanto el puntero rozaba cualquier nodo. La cabecera decía «los 3 alias que podés ver»
+   * mientras en el mismo pantallazo había quince muñecos: la frase contradecía al dibujo.
+   *
+   * Se filtra la TOPOLOGÍA y no sólo las vistas porque el mapa coloca los nodos desde la topología:
+   * pasarle sólo las vistas acotadas dejaría a los alias ajenos dibujados como «sin reportar», que
+   * es otra mentira —sí se sabe cómo están, sólo que no se están mirando—.
+   */
+  const topologiaEnAlcance = useMemo(() => {
+    const completa = topology.data;
+    if (!completa || tenantFilter === 'todos') return completa;
+    return {
+      ...completa,
+      tenants: (completa.tenants ?? []).filter((tenant) => tenant.id === tenantFilter),
+      acl_edges: (completa.acl_edges ?? []).filter(
+        (edge) => edge.from_tenant === tenantFilter || edge.to_tenant === tenantFilter,
+      ),
+    };
+  }, [topology.data, tenantFilter]);
+
+  // Las flechas también se acotan: una delegación cuyo emisor o receptor está fuera del alcance no
+  // se puede dibujar sin sacar del cajón al muñeco que se acaba de esconder.
+  const edgesEnAlcance = useMemo(() => {
+    if (tenantFilter === 'todos') return edges;
+    const dentro = new Set(alcance.map((view) => view.key));
+    return edges.filter((edge) => dentro.has(edge.from) && dentro.has(edge.to));
+  }, [edges, alcance, tenantFilter]);
+
+  // Cuántos alias quedan FUERA del recorte. Se declara en pantalla: un mapa que esconde sin
+  // decirlo miente por omisión, y desde el dibujo no hay forma de notarlo.
+  const fueraDeAlcance = views.length - alcance.length;
+
+  // La cinta cuenta lo mismo que el veredicto y que el mapa. Contando `views` enteras, con un
+  // cliente elegido, los chips seguían sumando agentes que la página decía no estar mostrando.
+  const tally = useMemo(() => stateTally(alcance), [alcance]);
 
   /**
    * Un SOLO conjunto de alias resaltados para el mapa y la tabla a la vez.
@@ -212,7 +255,7 @@ export function LiveFleetPage() {
   const sinReportar = useMemo(() => {
     const conActividad = new Set(views.map((view) => view.key));
     let total = 0;
-    for (const tenant of topology.data?.tenants ?? []) {
+    for (const tenant of topologiaEnAlcance?.tenants ?? []) {
       const vistos = new Set<string>();
       for (const room of tenant.rooms ?? []) {
         for (const member of room.members ?? []) {
@@ -225,7 +268,7 @@ export function LiveFleetPage() {
       }
     }
     return total;
-  }, [views, topology.data]);
+  }, [views, topologiaEnAlcance]);
 
   const staleAfterMs = (intervalMs > 0 ? intervalMs : 30000) * STALE_FACTOR;
   const verdict = useMemo(
@@ -248,6 +291,22 @@ export function LiveFleetPage() {
     escribirQuery(undefined);
   }, []);
 
+  /**
+   * «Refrescar ahora» vuelve a leer las DOS fuentes.
+   *
+   * La topología está fuera del polling porque cambia cuando alguien toca la configuración, no
+   * cada cuatro segundos — pero eso dejaba un fallo sin salida: si `GET /v3/console/topology`
+   * fallaba al montar, no había un solo control en la página capaz de reintentarlo. El botón
+   * llamaba únicamente a `activity.reload`, y las dos vistas que sí exponían ese fallo (Fleet y
+   * Tenants & ACL) se borraron en este mismo cambio. La única recuperación era recargar el
+   * navegador, sin un mensaje que lo sugiriera.
+   */
+  const { reload: recargarTopologia } = topology;
+  const refrescarTodo = useCallback(() => {
+    reload();
+    recargarTopologia();
+  }, [reload, recargarTopologia]);
+
   const enfocarCulpable = useCallback((key: string) => {
     setStateFilter(undefined);
     setSelected(key);
@@ -266,7 +325,13 @@ export function LiveFleetPage() {
         <PageHeader
           eyebrow="Flota"
           title="La flota ahora"
-          description={`Los ${alcance.length} alias que podés ver, qué tienen entre manos y quién se lo pidió.`}
+          // La cabecera tiene que describir lo que HAY EN PANTALLA. Con un cliente elegido decía
+          // «los N alias que podés ver» contando sólo los suyos mientras el mapa dibujaba los de
+          // todos: la frase y el dibujo se contradecían en el mismo pantallazo.
+          description={tenantFilter === 'todos'
+            ? `Los ${alcance.length} alias que podés ver, qué tienen entre manos y quién se lo pidió.`
+            : `Los ${alcance.length} alias de ${tenantFilter}, qué tienen entre manos y quién se lo pidió.`
+              + ' Todo lo de abajo —veredicto, cinta, mapa y lista— está acotado a este cliente.'}
         />
 
         <div className="live-toolbar">
@@ -290,7 +355,7 @@ export function LiveFleetPage() {
             </select>
           </label>
 
-          <button type="button" className="button secondary" onClick={activity.reload}>
+          <button type="button" className="button secondary" onClick={refrescarTodo}>
             {intervalMs <= 0 ? <Play size={15} aria-hidden="true" /> : <Pause size={15} aria-hidden="true" />}
             Refrescar ahora
           </button>
@@ -331,6 +396,20 @@ export function LiveFleetPage() {
           {activity.error ? (
             <span className="notice error">
               Última lectura falló: {activity.error.message}. Se muestra el snapshot anterior.
+            </span>
+          ) : null}
+
+          {/* El fallo de la topología tiene que VERSE y tiene que poder reintentarse desde acá.
+              Sin este aviso, un `GET /v3/console/topology` caído dejaba la página con el mapa
+              vacío, «Permisos y salas» vacío, el selector de Cliente desaparecido y «Sin
+              reportar» en cero, todo con la misma cara que tiene una flota sin salas declaradas. */}
+          {topology.error ? (
+            <span className="notice error">
+              No se pudo leer la topología: {topology.error.message}. Sin ella no hay salas, ni
+              mapa, ni selector de cliente, ni «sin reportar» — no es que no existan.
+              <button type="button" className="button small secondary" onClick={recargarTopologia}>
+                Reintentar la topología
+              </button>
             </span>
           ) : null}
         </div>
@@ -394,23 +473,37 @@ export function LiveFleetPage() {
             ))}
           </div>
 
+          {/* El recorte se DECLARA. Esconder muñecos sin decirlo convierte un mapa acotado en un
+              mapa incompleto, y desde el dibujo las dos cosas se ven idénticas. En la capa de
+              permisos hay además una omisión propia que hay que nombrar: los cruces ACL hacia los
+              otros clientes salen del dibujo junto con ellos. */}
+          {fueraDeAlcance > 0 ? (
+            <p className="notice" data-testid="aviso-recorte">
+              Mapa acotado a <strong>{tenantFilter}</strong>: {fueraDeAlcance} alias de otros
+              clientes, sus salas y las flechas que los tocan no se dibujan.
+              {layer === 'permisos' ? ' Tampoco se ven las aristas ACL hacia ellos.' : ''}
+              {' '}Elegí «todos» en Cliente para verlos.
+            </p>
+          ) : null}
+
           {/* Estado vacío, diseñado PRIMERO: el estado normal medido de esta flota es una entrega
               en vuelo y cero en cola. Si la pantalla sólo se ve bien cuando hay incendio, se ve mal
-              casi siempre. */}
-          {layer === 'ahora' && edges.length === 0 && views.length > 0 ? (
+              casi siempre. Se mide sobre el ALCANCE, no sobre la flota entera: con un cliente
+              elegido, "la flota está libre" tenía que hablar de lo que se está mirando. */}
+          {layer === 'ahora' && edgesEnAlcance.length === 0 && alcance.length > 0 ? (
             <p className="live-empty-calm">
-              <strong>La flota está libre.</strong> Nadie tiene trabajo entre manos ahora mismo — eso
-              no es una avería.
-              {typeof snapshot?.totals?.in_flight === 'number'
+              <strong>{tenantFilter === 'todos' ? 'La flota está libre.' : `Nadie de ${tenantFilter} tiene trabajo entre manos.`}</strong>
+              {' '}Nadie tiene trabajo entre manos ahora mismo — eso no es una avería.
+              {tenantFilter === 'todos' && typeof snapshot?.totals?.in_flight === 'number'
                 ? ` Hay ${snapshot.totals.in_flight} en vuelo y ${snapshot.totals.queued ?? 0} esperando turno.`
                 : null}
             </p>
           ) : null}
 
           <LiveHypergraph
-            topology={topology.data}
-            views={views}
-            edges={edges}
+            topology={topologiaEnAlcance}
+            views={alcance}
+            edges={edgesEnAlcance}
             serverEdges={snapshot?.edges}
             thresholds={snapshot?.thresholds}
             origins={origins}
@@ -418,6 +511,8 @@ export function LiveFleetPage() {
             focusKey={hovered ?? selected ?? null}
             spotlight={spotlight}
             loadingTopology={topology.loading && !topology.data}
+            topologyError={topology.error ?? null}
+            onRetryTopology={recargarTopologia}
             onFocus={(key) => setHovered(key ?? undefined)}
             onOpen={(view) => abrirCajon(view.key)}
             onHover={(key, anchor, view, alias) => {
@@ -446,9 +541,11 @@ export function LiveFleetPage() {
         <details className="live-fold">
           <summary>Permisos y salas</summary>
           {/* Comparten el `useResource('live-topology')` que el mapa ya pidió: cero fetch nuevo.
-              Esto era la ruta "Tenants & ACL" entera. */}
-          <TenantCards tenants={topology.data?.tenants ?? []} />
-          <AclEdgeList edges={topology.data?.acl_edges ?? []} />
+              Esto era la ruta "Tenants & ACL" entera. Va sobre la topología ACOTADA, igual que el
+              mapa: si el selector de Cliente no acotara también esto, el desplegable seguiría
+              contando salas y permisos que la cabecera dice no estar mostrando. */}
+          <TenantCards tenants={topologiaEnAlcance?.tenants ?? []} />
+          <AclEdgeList edges={topologiaEnAlcance?.acl_edges ?? []} />
         </details>
 
         <Panel title="Cómo se lee un muñeco" subtitle="Primero la distinción que más se confunde, y después los siete estados.">

@@ -1,4 +1,4 @@
-import { LIVE_STATE_META, humanSeconds, type LiveAgentView } from './agent-state';
+import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
  * Lo que dice un muñeco cuando le pasás el puntero por encima o lo enfocás con el teclado.
@@ -33,10 +33,11 @@ export function AgentTooltipCard({ view, alias }: AgentTooltipCardProps) {
   }
 
   const meta = LIVE_STATE_META[view.state];
-  const primerItem = view.agent.in_flight_items?.[0];
-  const porPuente = primerItem?.origin_adapter && primerItem.origin_adapter !== 'bus'
-    ? primerItem.origin_adapter
-    : null;
+  // El origen viene YA desambiguado desde `buildLiveViews`, que es el único sitio con el conjunto
+  // de alias de la flota entera delante. Acá no se vuelve a mirar `origin_adapter`: ese campo se
+  // copia byte a byte en cada salto y por sí solo convertía cualquier delegación entre agentes en
+  // «se lo pidió una persona, por telegram».
+  const origen = view.origenes[0];
   const vaMal = view.state === 'blocked' || view.state === 'down';
 
   return (
@@ -46,11 +47,17 @@ export function AgentTooltipCard({ view, alias }: AgentTooltipCardProps) {
       {/* 1 — qué está haciendo, y desde cuándo. */}
       <p>{lineaTrabajo(view)}</p>
 
-      {/* 2 — quién se lo pidió. Un encargo sin remitente visible es media respuesta. */}
-      {porPuente ? (
-        <p>Se lo pidió una persona, por {porPuente}.</p>
-      ) : primerItem?.from_alias ? (
-        <p>Se lo pidió <strong>{primerItem.from_alias}</strong>{primerItem.from_tenant ? ` (${primerItem.from_tenant})` : ''}.</p>
+      {/* 2 — quién se lo pidió. Un encargo sin remitente visible es media respuesta; uno con un
+             remitente INVENTADO es peor, así que el caso sin dato se declara en vez de omitirse. */}
+      <LineaOrigen origen={origen} />
+
+      {/* 2b — si hay más de un encargo, el globo habla de UNO y lo dice. Antes callaba, y quien
+              leía "se lo pidió X" con nueve entregas en vuelo se llevaba una atribución parcial
+              creyendo que era la del agente entero. El total sale de `inFlight` y no del largo de
+              la lista porque el servidor la trunca (`in_flight_items_truncated`): contar los ítems
+              recibidos diría "3 encargos" en un agente que tiene 41. */}
+      {view.inFlight > 1 && view.origenes.length > 0 ? (
+        <p className="muted">Es uno de {view.inFlight} encargos en vuelo, y cada uno tiene su propio remitente. Enter para verlos.</p>
       ) : null}
 
       {/* 3 — cuántos esperan turno detrás. Se omite entera en cero: una línea que dice "0" ocupa
@@ -73,6 +80,25 @@ export function AgentTooltipCard({ view, alias }: AgentTooltipCardProps) {
       </div>
     </div>
   );
+}
+
+/**
+ * La línea de "quién se lo pidió", una por cada forma de saberlo — y una para cuando no se sabe.
+ *
+ * Sin encargo en vuelo no hay nada que atribuir y la línea desaparece entera. Con encargo y sin
+ * remitente identificable se escribe que no se sabe: callarlo dejaría al lector suponiendo que se
+ * lo pidió el último nombre que vio.
+ */
+function LineaOrigen({ origen }: { origen: OrigenEncargo | undefined }) {
+  if (!origen) return null;
+  if (origen.tipo === 'puente') return <p>Se lo pidió una persona, por {origen.adapter}.</p>;
+  if (origen.tipo === 'agente') {
+    return <p>Se lo pidió <strong>{origen.alias}</strong>{origen.tenant ? ` (${origen.tenant})` : ''}, que es otro agente.</p>;
+  }
+  if (origen.tipo === 'actor') {
+    return <p>Lo publicó <strong>{origen.alias}</strong>{origen.tenant ? ` (${origen.tenant})` : ''}, que no es un alias de la flota.</p>;
+  }
+  return <p className="tooltip-warn">No se sabe quién se lo pidió: la entrega no trae remitente identificable.</p>;
 }
 
 function lineaTrabajo(view: LiveAgentView): string {

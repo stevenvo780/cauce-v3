@@ -103,8 +103,8 @@ describe('la flota en reposo', () => {
 
   it('la cinta de triage va de lo urgente a lo tranquilo, no en el orden del union', async () => {
     // El orden del union `LIVE_STATES` es la PRECEDENCIA con la que se decide el estado de un
-    // agente, no una jerarquía de atención: ahí `responding` va antes que `receiving`. En la cinta
-    // "acaba de cerrar un turno" es la mejor noticia de la fila y va al final.
+    // agente, no una jerarquía de atención: ahí `settled` va antes que `receiving`. En la cinta va
+    // casi al final, porque "una entrega dejó de estar en vuelo" no pide nada por sí solo.
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
 
@@ -114,8 +114,10 @@ describe('la flota en reposo', () => {
       .map((chip) => chip.textContent?.replace(/\d+$/, '').trim());
 
     expect(etiquetas.slice(0, 7)).toEqual([
-      'Caído', 'Bloqueado', 'Delegando', 'Recibiendo', 'Trabajando', 'Respondiendo', 'Libre',
+      'Caído', 'Bloqueado', 'Delegando', 'Recibiendo', 'Trabajando', 'Salió de vuelo', 'Libre',
     ]);
+    // Y el chip que antes decía «Respondiendo» ya no existe: no había forma de saber si respondió.
+    expect(etiquetas).not.toContain('Respondiendo');
   });
 
   it('el chip del estado sin trabajo se llama «Libre», no «Ocioso»', async () => {
@@ -351,6 +353,248 @@ describe('lo que absorbió del menú', () => {
     expect(screen.getAllByText('Tenant').length).toBeGreaterThan(0);
     // El mapa y el desplegable comparten el mismo `useResource('live-topology')`.
     expect(lecturas).toBe(1);
+  });
+});
+
+// ================================================================================================
+// D1 · quién pidió el trabajo, visto desde la pantalla y no desde la función pura.
+// ================================================================================================
+
+describe('quién pidió cada encargo', () => {
+  it('una delegación heredada de un puente NO se anuncia como «una persona, por telegram»', async () => {
+    // El fixture de kant trae el caso real: `argos` le delegó una entrega cuyo `origin_adapter`
+    // sigue diciendo 'telegram' porque el `origin` se copia byte a byte en cada salto. El mapa
+    // dibuja la flecha argos→kant y el cajón decía, del MISMO encargo, que se lo pidió una persona.
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    await user.click(await screen.findByRole('row', { name: /kant/i }));
+    const cajon = await screen.findByRole('complementary', { name: /detalle de kant/i });
+    await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
+
+    // Las tres entregas de kant vienen de otros agentes de la flota: ninguna es un encargo humano.
+    expect(within(cajon).queryByText(/una persona, por telegram/i)).not.toBeInTheDocument();
+    expect(within(cajon).getByText(/argos \(Steven\), otro agente/)).toBeInTheDocument();
+    expect(within(cajon).getAllByText(/zeus \(Steven\), otro agente/).length).toBe(2);
+  });
+
+  it('el puente de verdad sí se nombra: hegel recibe por telegram lo que le escribe su dueño', async () => {
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    await user.click(await screen.findByRole('row', { name: /hegel/i }));
+    const cajon = await screen.findByRole('complementary', { name: /detalle de hegel/i });
+    await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
+
+    expect(within(cajon).getByText(/una persona, por telegram/i)).toBeInTheDocument();
+  });
+});
+
+// ================================================================================================
+// D5, D6, D7 · el selector de Cliente. La suite anterior tenía veinte tests y NI UNA vez la
+// palabra 'tenant': el acotamiento por cliente era un requisito y era justo lo único sin prueba.
+// ================================================================================================
+
+/** Los alias que el mapa está dibujando, con su tenant delante. */
+function dibujados(): string[] {
+  return [...document.querySelectorAll('.lhg-bot')]
+    .map((nodo) => nodo.getAttribute('data-agent-key') ?? '');
+}
+
+async function elegirCliente(user: ReturnType<typeof userEvent.setup>, tenant: string) {
+  await user.selectOptions(screen.getByLabelText(/^Cliente/), tenant);
+}
+
+describe('el selector de Cliente', () => {
+  it('acota EL MAPA, no sólo el veredicto: no queda dibujado ni un muñeco de otro cliente', async () => {
+    // D5. El mapa recibía `views` entera y la topología entera, así que con Cliente = Miguel
+    // seguían dibujados los muñecos de los otros cuatro clientes, con globo completo y con clic
+    // que abría el cajón con SUS entregas.
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    await waitFor(() => expect(dibujados().length).toBeGreaterThan(5));
+    expect(dibujados().some((key) => key.startsWith('Steven/'))).toBe(true);
+
+    await elegirCliente(user, 'Miguel');
+
+    await waitFor(() => {
+      const claves = dibujados();
+      expect(claves.length).toBeGreaterThan(0);
+      expect(claves.every((key) => key.startsWith('Miguel/'))).toBe(true);
+    });
+  });
+
+  it('declara el recorte en pantalla: esconder muñecos sin decirlo es mentir por omisión', async () => {
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    expect(screen.queryByTestId('aviso-recorte')).not.toBeInTheDocument();
+
+    await elegirCliente(user, 'Miguel');
+
+    const aviso = await screen.findByTestId('aviso-recorte');
+    expect(aviso).toHaveTextContent(/Mapa acotado a/);
+    expect(aviso).toHaveTextContent(/11 alias de otros clientes/);
+  });
+
+  it('la cabecera no puede afirmar un alcance que el dibujo contradiga', async () => {
+    // D6. Decía «Los N alias que podés ver» con N ya acotado mientras el mapa seguía dibujando a
+    // los quince. La frase y el dibujo tienen que hablar del mismo conjunto.
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    await elegirCliente(user, 'Miguel');
+
+    const descripcion = await screen.findByText(/Los 4 alias de Miguel/);
+    expect(descripcion).toBeInTheDocument();
+    await waitFor(() => expect(dibujados().every((key) => key.startsWith('Miguel/'))).toBe(true));
+  });
+
+  it('la cinta de triage cuenta el ALCANCE, no la flota entera', async () => {
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    const sumaChips = () => [...document.querySelectorAll('.live-tally-chip strong')]
+      .reduce((total, chip) => total + Number(chip.textContent ?? 0), 0);
+    await waitFor(() => expect(sumaChips()).toBe(15));
+
+    await elegirCliente(user, 'Miguel');
+    // janus, kratos, iza y atlas: los cuatro alias de Miguel que la actividad reporta.
+    await waitFor(() => expect(sumaChips()).toBe(4));
+  });
+
+  it('un cliente del que la actividad no reporta NADA no sale verde: sale «no lo sé»', async () => {
+    // D2 visto desde la página: la lectura llegó fresca y perfecta, y no acredita nada sobre
+    // Miguel. Antes esto daba «Todo en orden · 0 conectados · 0 trabajando».
+    const user = userEvent.setup();
+    const soloSteven = mockActivity();
+    conActividad({
+      ...soloSteven,
+      agents: (soloSteven.agents ?? []).filter((agente) => agente.tenant_id === 'Steven'),
+    });
+    renderWithApi(<LiveFleetPage />);
+
+    const banda = await screen.findByLabelText('Veredicto de la flota');
+    await elegirCliente(user, 'Miguel');
+
+    await waitFor(() => expect(banda).toHaveAttribute('data-tone', 'desconocido'));
+    expect(banda).not.toHaveAttribute('data-tone', 'ok');
+    expect(within(banda).getByText(/no hay ni un alias que mirar/i)).toBeInTheDocument();
+  });
+
+  it('«Permisos y salas» también se acota: si no, contaría salas que la cabecera dice no mostrar', async () => {
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    await elegirCliente(user, 'Miguel');
+    await user.click(screen.getByText('Permisos y salas'));
+
+    const salas = await screen.findByLabelText('Aristas de control de acceso');
+    expect(salas).toBeInTheDocument();
+    expect(screen.queryByText('grp.pablo')).not.toBeInTheDocument();
+    expect(screen.getAllByText('grp.miguel').length).toBeGreaterThan(0);
+  });
+
+  it('el resaltado del buscador NO se apaga al pasar el puntero por otro muñeco', async () => {
+    // D5, segunda mitad: `focusKey` ganaba sobre `spotlight` en un if/else excluyente, así que
+    // rozar cualquier nodo borraba el resaltado del filtro y dejaba el mapa como si no hubiera
+    // ninguno puesto.
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    await user.type(screen.getByLabelText('Buscar un alias'), 'salva');
+
+    const salva = await waitFor(() => {
+      const nodo = document.querySelector('[data-agent-key="Isa/salva"]');
+      expect(nodo).toBeTruthy();
+      expect(nodo?.classList.contains('is-dim')).toBe(false);
+      return nodo as SVGGElement;
+    });
+
+    // `kant` no tiene ninguna relación con `salva`: bajo la regla vieja, enfocarlo dejaba a salva
+    // fuera del conjunto activo y por tanto atenuado.
+    const kant = document.querySelector('[data-agent-key="Steven/kant"]') as SVGGElement;
+    await user.hover(kant);
+
+    expect(salva.classList.contains('is-dim')).toBe(false);
+    expect(kant.classList.contains('is-dim')).toBe(false);
+  });
+});
+
+// ================================================================================================
+// D10 · un fallo de GET /v3/console/topology tiene que verse y tiene que poder reintentarse.
+// ================================================================================================
+
+describe('la topología caída', () => {
+  it('se dice, y no se disfraza de «no hay salas configuradas»', async () => {
+    conActividad(mockActivity());
+    server.use(http.get('http://localhost/v3/console/topology', () =>
+      HttpResponse.json({ error: 'boom', message: 'topología caída' }, { status: 500 })));
+
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    // Aparece dos veces a propósito: en la barra (donde vive el reintento) y en el hueco del
+    // mapa (donde el operador está mirando cuando nota que no hay dibujo).
+    expect(await screen.findAllByText(/No se pudo leer la topología/)).toHaveLength(2);
+    // Y NO el cartel de "el control plane todavía no informó ninguna sala", que afirma una
+    // configuración vacía a partir de una lectura que falló.
+    expect(screen.queryByText(/todavía no informó ninguna sala/)).not.toBeInTheDocument();
+  });
+
+  it('se puede reintentar sin recargar el navegador', async () => {
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    let falla = true;
+    server.use(http.get('http://localhost/v3/console/topology', () => (falla
+      ? HttpResponse.json({ error: 'boom', message: 'topología caída' }, { status: 500 })
+      : HttpResponse.json(topology))));
+
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    await screen.findAllByText(/No se pudo leer la topología/);
+    expect(document.querySelector('.lhg-svg')).toBeNull();
+
+    falla = false;
+    await user.click(screen.getAllByRole('button', { name: /reintentar la topología/i })[0]);
+
+    await waitFor(() => expect(document.querySelector('.lhg-svg')).toBeTruthy());
+    expect(screen.queryAllByText(/No se pudo leer la topología/)).toHaveLength(0);
+  });
+
+  it('«Refrescar ahora» vuelve a leer las DOS fuentes, no sólo la actividad', async () => {
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    let lecturas = 0;
+    server.use(http.get('http://localhost/v3/console/topology', () => {
+      lecturas += 1;
+      return HttpResponse.json(topology);
+    }));
+
+    renderWithApi(<LiveFleetPage />);
+    await screen.findByLabelText('Veredicto de la flota');
+    await waitFor(() => expect(lecturas).toBe(1));
+
+    await user.click(screen.getByRole('button', { name: /refrescar ahora/i }));
+    await waitFor(() => expect(lecturas).toBe(2));
   });
 });
 

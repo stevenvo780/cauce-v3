@@ -8,7 +8,7 @@ import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../navigation';
 import { AgentAvatar } from './AgentAvatar';
 import { ChainPanel } from './ChainPanel';
-import { LIVE_STATE_META, humanSeconds, type LiveAgentView } from './agent-state';
+import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
  * El cajón lateral: diagnosticar sin cambiar de vista.
@@ -209,7 +209,12 @@ function TabEntregas({ view, onTrace }: { view: LiveAgentView; onTrace: (traceId
   }
   return (
     <div className="drawer-deliveries">
-      {items.map((item, index) => <DeliveryCard item={item} key={item.delivery_id ?? index} onTrace={onTrace} />)}
+      {/* `view.origenes` va índice a índice con `in_flight_items`: es la MISMA lectura del origen
+          que usa el mapa para decidir si dibuja una flecha, así que la tarjeta y el dibujo no
+          pueden contarse historias distintas del mismo encargo. */}
+      {items.map((item, index) => (
+        <DeliveryCard item={item} key={item.delivery_id ?? index} origen={view.origenes[index]} onTrace={onTrace} />
+      ))}
       {view.agent.in_flight_items_truncated ? (
         <p className="notice">
           Se muestran las {items.length} más antiguas de {view.inFlight}: el resto comparte el mismo
@@ -220,8 +225,11 @@ function TabEntregas({ view, onTrace }: { view: LiveAgentView; onTrace: (traceId
   );
 }
 
-function DeliveryCard({ item, onTrace }: { item: FleetActivityItem; onTrace: (traceId: string) => void }) {
-  const porPuente = item.origin_adapter && item.origin_adapter !== 'bus';
+function DeliveryCard({ item, origen, onTrace }: {
+  item: FleetActivityItem;
+  origen: OrigenEncargo | undefined;
+  onTrace: (traceId: string) => void;
+}) {
   return (
     <article className="drawer-delivery">
       <header>
@@ -231,13 +239,7 @@ function DeliveryCard({ item, onTrace }: { item: FleetActivityItem; onTrace: (tr
       <dl>
         <dt>Mensaje</dt><dd><span className="mono">{compactId(item.message_id)}</span></dd>
         <dt>Se lo pidió</dt>
-        <dd>
-          {porPuente
-            ? `una persona, por ${item.origin_adapter}`
-            : item.from_alias
-              ? `${item.from_alias}${item.from_tenant ? ` (${item.from_tenant})` : ''}`
-              : UNKNOWN}
-        </dd>
+        <dd>{textoOrigen(origen)}</dd>
         <dt>Carril</dt><dd><Unknown value={safeJobLane(item.lane)} /></dd>
         <dt>Intento</dt><dd><Unknown value={item.attempt} /></dd>
         <dt>Deadline de ACK</dt><dd><Time value={item.ack_deadline_at} /></dd>
@@ -259,6 +261,24 @@ function DeliveryCard({ item, onTrace }: { item: FleetActivityItem; onTrace: (tr
       </div>
     </article>
   );
+}
+
+/**
+ * El remitente de UNA entrega.
+ *
+ * Antes se decidía acá con `item.origin_adapter !== 'bus'`, y esa lectura mentía por construcción:
+ * `origin` se copia entero en cada salto, así que una delegación de `zeus` a `kant` nacida hace
+ * cinco saltos en Telegram se leía como «una persona, por telegram». Ahora la clasificación es la
+ * misma que gobierna las flechas del mapa (`origenDeItem`), calculada una sola vez con la lista de
+ * alias de la flota delante.
+ */
+function textoOrigen(origen: OrigenEncargo | undefined): string {
+  if (!origen || origen.tipo === 'desconocido') return UNKNOWN;
+  if (origen.tipo === 'puente') return `una persona, por ${origen.adapter}`;
+  const donde = origen.tenant ? ` (${origen.tenant})` : '';
+  return origen.tipo === 'agente'
+    ? `${origen.alias}${donde}, otro agente`
+    : `${origen.alias}${donde}, que no es un alias de la flota`;
 }
 
 function TabCadena({ view, traceId, onTrace }: {

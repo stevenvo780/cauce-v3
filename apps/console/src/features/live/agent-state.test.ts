@@ -4,6 +4,7 @@ import { mockActivity, topology } from '../../mocks/data';
 import { layoutHypergraph } from '../topology/hypergraph-layout';
 import {
   BURST_MS,
+  LIVE_STATE_META,
   agentKey,
   buildLiveViews,
   delegationEdges,
@@ -17,6 +18,7 @@ import {
   radioDe,
   humanOrigins,
   liveState,
+  origenDeItem,
   ownerBucket,
   rememberFleet,
   stateTally,
@@ -92,9 +94,9 @@ describe('liveState', () => {
     expect(result.reason).toContain('midas');
   });
 
-  it('el pulso de respuesta vence solo: pasado BURST_MS vuelve al estado estable', () => {
-    const pulses = [{ kind: 'answered' as const, atMs: NOW }];
-    expect(liveState(agent(), { nowMs: NOW + 1000, pulses }).state).toBe('responding');
+  it('el pulso de cierre vence solo: pasado BURST_MS vuelve al estado estable', () => {
+    const pulses = [{ kind: 'settled' as const, atMs: NOW, outcome: 'desconocido' as const }];
+    expect(liveState(agent(), { nowMs: NOW + 1000, pulses }).state).toBe('settled');
     expect(liveState(agent(), { nowMs: NOW + BURST_MS + 1, pulses }).state).toBe('idle');
   });
 
@@ -154,13 +156,13 @@ describe('detectPulses', () => {
     expect(detectPulses({}, first, NOW)).toEqual({});
   });
 
-  it('un delivery_id nuevo es "recibido" y uno que desaparece es "respondido"', () => {
+  it('un delivery_id nuevo es "recibido" y uno que desaparece SALIÓ DE VUELO, sin decir cómo', () => {
     const before = rememberFleet(snapshot([agent({ in_flight_items: [{ delivery_id: 'd1' }] })]), NOW);
     const after = snapshot([agent({ in_flight_items: [{ delivery_id: 'd2' }] })]);
     const pulses = detectPulses(before, after, NOW + 4000);
     expect(pulses['Steven/zeus']).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'received', deliveryId: 'd2' }),
-      expect.objectContaining({ kind: 'answered', deliveryId: 'd1' }),
+      expect.objectContaining({ kind: 'settled', deliveryId: 'd1' }),
     ]));
   });
 
@@ -203,7 +205,7 @@ describe('buildLiveViews', () => {
     const { views } = buildLiveViews(snapshot([agent()]), {}, NOW);
     const tally = stateTally(views);
     expect(Object.keys(tally).sort()).toEqual(
-      ['blocked', 'delegating', 'down', 'idle', 'receiving', 'responding', 'thinking'],
+      ['blocked', 'delegating', 'down', 'idle', 'receiving', 'settled', 'thinking'],
     );
     expect(tally.idle).toBe(1);
     expect(tally.down).toBe(0);
@@ -264,7 +266,7 @@ describe('ownerBucket', () => {
     expect(ownerBucket('thinking')).toBe('trabajando');
     expect(ownerBucket('delegating')).toBe('trabajando');
     expect(ownerBucket('receiving')).toBe('trabajando');
-    expect(ownerBucket('responding')).toBe('trabajando');
+    expect(ownerBucket('settled')).toBe('trabajando');
   });
 });
 
@@ -476,5 +478,189 @@ describe('grosorDe', () => {
 
   it('tiene techo: una relación muy cargada no puede tapar el mapa', () => {
     expect(grosorDe(500, 8)).toBe(5);
+  });
+});
+
+// ================================================================================================
+// Los defectos de la revisión adversarial del 2026-08-22, cada uno con el caso concreto que lo
+// destapó. Todos estaban DESPLEGADOS en producción cuando se escribieron estos tests.
+// ================================================================================================
+
+describe('D1 · atribución de quién pidió el trabajo', () => {
+  // `origin` se copia byte a byte en cada salto (packages/protocol/src/schemas.ts): una cadena de
+  // cinco agentes nacida en Telegram sigue diciendo adapter:'telegram' en el salto cinco — 2.374
+  // de 2.429 entregas de 12 h medidas el 2026-07-27. Aceptar todo lo que no sea 'bus' como "una
+  // persona" convertía cada delegación heredada de un puente en un encargo humano inventado.
+  const cadenaHeredada = snapshot([
+    agent({ tenant_id: 'Steven', alias: 'zeus' }),
+    agent({
+      tenant_id: 'Steven', alias: 'kant', in_flight: 1,
+      in_flight_items: [{
+        delivery_id: 'd-heredada', from_tenant: 'Steven', from_alias: 'zeus',
+        origin_adapter: 'telegram', status: 'started',
+      }],
+    }),
+  ]);
+
+  it('el MISMO ítem no puede ser a la vez una delegación zeus→kant y un encargo humano', () => {
+    expect(delegationEdges(cadenaHeredada)).toEqual([
+      expect.objectContaining({ from: 'Steven/zeus', to: 'Steven/kant' }),
+    ]);
+    expect(humanOrigins(cadenaHeredada)).toEqual([]);
+  });
+
+  it('la vista de kant dice que se lo pidió zeus, no "una persona por telegram"', () => {
+    const { views } = buildLiveViews(cadenaHeredada, {}, NOW);
+    const kant = views.find((view) => view.alias === 'kant');
+    expect(kant?.origenes).toEqual([{ tipo: 'agente', tenant: 'Steven', alias: 'zeus' }]);
+  });
+
+  it('el puente de verdad SIGUE siendo un puente: from === to es el dueño escribiendo', () => {
+    const porTelegram = snapshot([agent({
+      tenant_id: 'Jhon', alias: 'hegel', in_flight: 1,
+      in_flight_items: [{
+        delivery_id: 'd-puente', from_tenant: 'Jhon', from_alias: 'hegel',
+        origin_adapter: 'telegram', status: 'leased',
+      }],
+    })]);
+    expect(humanOrigins(porTelegram)).toEqual([{ agentKey: 'Jhon/hegel', adapter: 'telegram', count: 1 }]);
+    expect(buildLiveViews(porTelegram, {}, NOW).views[0].origenes)
+      .toEqual([{ tipo: 'puente', adapter: 'telegram' }]);
+  });
+
+  it('un emisor que no es alias de la flota se nombra, pero no se asciende a "persona"', () => {
+    const known = new Set(['Steven/kant']);
+    expect(origenDeItem({ from_tenant: 'Steven', from_alias: 'una-persona' }, { selfKey: 'Steven/kant', known }))
+      .toEqual({ tipo: 'actor', tenant: 'Steven', alias: 'una-persona' });
+  });
+
+  it('sin emisor y por el bus no se atribuye a nadie: se declara desconocido', () => {
+    const known = new Set(['Steven/kant']);
+    expect(origenDeItem({ origin_adapter: 'bus' }, { selfKey: 'Steven/kant', known }))
+      .toEqual({ tipo: 'desconocido' });
+    expect(origenDeItem({ from_tenant: 'Steven', from_alias: 'kant', origin_adapter: 'bus' }, { selfKey: 'Steven/kant', known }))
+      .toEqual({ tipo: 'desconocido' });
+  });
+
+  it('el fixture real de kant trae el caso: argos le delegó con origin_adapter telegram', () => {
+    // No es un caso de laboratorio: está en los datos de demostración desde antes del arreglo.
+    const actividad = mockActivity();
+    const kant = (actividad.agents ?? []).find((a) => a.alias === 'kant');
+    const heredada = (kant?.in_flight_items ?? []).find((item) => item.origin_adapter === 'telegram');
+    expect(heredada?.from_alias).toBe('argos');
+    expect(humanOrigins(actividad).some((origen) => origen.agentKey === 'Steven/kant')).toBe(false);
+  });
+});
+
+describe('D2 · el veredicto sobre cero mediciones', () => {
+  const RECIEN = '2026-08-22T10:00:00.000Z';
+  const AHORA = Date.parse(RECIEN) + 2_000;
+
+  it('sin un solo agente NO dice "Todo en orden": dice que no lo sabe', () => {
+    // Alcanzable en producción sin ninguna avería: basta elegir en el selector un cliente cuyos
+    // alias no aparezcan en /activity, o que el servidor devuelva agents: [].
+    const veredicto = fleetVerdict([], { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 });
+    expect(veredicto.tone).toBe('desconocido');
+    expect(veredicto.tone).not.toBe('ok');
+    expect(veredicto.frase).not.toBe('Todo en orden.');
+    expect(veredicto.frase).toMatch(/no lo sé/i);
+    expect(veredicto.apoyo).not.toMatch(/0 conectados/);
+  });
+
+  it('y el snapshot vacío del servidor da lo mismo que la lista vacía', () => {
+    const veredicto = fleetVerdict(
+      buildLiveViews({ observed_at: RECIEN, agents: [] }, {}, AHORA).views,
+      { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
+    );
+    expect(veredicto.tone).toBe('desconocido');
+  });
+});
+
+describe('D3 · una entrega que desaparece no es una entrega cerrada', () => {
+  const conDeadline = (deadline: string) => snapshot([agent({
+    in_flight: 1,
+    in_flight_items: [{ delivery_id: 'd1', status: 'started', ack_deadline_at: deadline }],
+  })]);
+
+  it('la desaparición de un delivery_id NO se anuncia como cierre: el desenlace es desconocido', () => {
+    // El SQL de /activity trae status IN ('leased','accepted','started'): de esa lista se sale
+    // igual cerrando `done` que muriendo por deadline, yendo a `failed` o cayendo en dead-letter.
+    const antes = rememberFleet(conDeadline(new Date(NOW + 600_000).toISOString()), NOW);
+    const pulsos = detectPulses(antes, snapshot([agent({ in_flight_items: [] })]), NOW + 4_000);
+    expect(pulsos['Steven/zeus']).toEqual([
+      expect.objectContaining({ kind: 'settled', deliveryId: 'd1', outcome: 'desconocido' }),
+    ]);
+
+    const estado = liveState(agent(), { nowMs: NOW + 4_500, pulses: pulsos['Steven/zeus'] });
+    expect(estado.state).toBe('settled');
+    // Lo que no puede volver a aparecer: la afirmación de un cierre correcto.
+    expect(estado.reason).not.toMatch(/cerró una entrega/i);
+    expect(estado.reason).not.toMatch(/terminó el turno/i);
+    expect(estado.reason).toMatch(/no se puede saber/i);
+  });
+
+  it('el estado que produce ese pulso NO es de tono positivo ni dice "respondiendo"', () => {
+    // Éste era el fallo caro: el peor evento de la flota se anunciaba con el mismo verde y el
+    // mismo texto que el mejor.
+    expect(LIVE_STATE_META.settled.tone).not.toBe('positive');
+    expect(LIVE_STATE_META.settled.label).not.toMatch(/respond/i);
+    expect(LIVE_STATE_META.settled.hint).toMatch(/no se puede saber/i);
+  });
+
+  it('con el deadline de ACK ya vencido lo dice: eso NO fue un cierre limpio', () => {
+    const antes = rememberFleet(conDeadline(new Date(NOW - 30_000).toISOString()), NOW);
+    const pulsos = detectPulses(antes, snapshot([agent({ in_flight_items: [] })]), NOW + 4_000);
+    expect(pulsos['Steven/zeus']).toEqual([
+      expect.objectContaining({ kind: 'settled', outcome: 'deadline_vencido' }),
+    ]);
+
+    const estado = liveState(agent(), { nowMs: NOW + 4_500, pulses: pulsos['Steven/zeus'] });
+    expect(estado.reason).toMatch(/deadline de ACK ya vencido/i);
+    expect(estado.reason).not.toMatch(/terminó el turno/i);
+  });
+
+  it('sin ack_deadline_at del servidor no se inventa un vencimiento', () => {
+    const antes = rememberFleet(snapshot([agent({ in_flight_items: [{ delivery_id: 'd1' }] })]), NOW);
+    const pulsos = detectPulses(antes, snapshot([agent({ in_flight_items: [] })]), NOW + 4_000);
+    expect(pulsos['Steven/zeus'][0].outcome).toBe('desconocido');
+  });
+});
+
+describe('D4 · un alias fuera del registro no está "deshabilitado"', () => {
+  // El backend calcula agent_enabled: COALESCE(ag.enabled, false) y el LEFT JOIN no encuentra fila
+  // para un participante que entró por 'work' o por connection_leases. Ese false es el default del
+  // COALESCE, no una baja.
+  const sinRegistrar = agent({
+    tenant_id: 'Miguel', alias: 'atlas', registered: false, agent_enabled: false,
+    work_state: 'working', in_flight: 3, started: 3,
+    presence: { online: true }, flags: ['unregistered'],
+  });
+
+  it('trabajando con tres entregas en vuelo NO se pinta caído con un motivo inventado', () => {
+    const resultado = liveState(sinRegistrar, { nowMs: NOW });
+    expect(resultado.state).not.toBe('down');
+    expect(resultado.state).toBe('thinking');
+    expect(resultado.reason).not.toMatch(/Deshabilitado en el registro/);
+  });
+
+  it('pero la salvedad se dice: el alias no está en el registro', () => {
+    expect(liveState(sinRegistrar, { nowMs: NOW }).reason).toMatch(/no está en el registro/i);
+  });
+
+  it('una baja DE VERDAD en el registro sigue siendo caída', () => {
+    const dadoDeBaja = agent({ registered: true, agent_enabled: false });
+    const resultado = liveState(dadoDeBaja, { nowMs: NOW });
+    expect(resultado.state).toBe('down');
+    expect(resultado.reason).toMatch(/Deshabilitado en el registro/);
+  });
+
+  it('sin registro y con el lease vencido sigue estando caído, por el lease', () => {
+    const resultado = liveState(
+      agent({ registered: false, agent_enabled: false, flags: ['unregistered', 'lease_expired'] }),
+      { nowMs: NOW },
+    );
+    expect(resultado.state).toBe('down');
+    expect(resultado.reason).toMatch(/lease venció/i);
+    expect(resultado.reason).not.toMatch(/Deshabilitado en el registro/);
   });
 });

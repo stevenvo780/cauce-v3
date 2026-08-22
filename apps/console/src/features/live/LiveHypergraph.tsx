@@ -63,7 +63,7 @@ const WORD: Record<NodeState, string> = {
   down: 'caído',
   blocked: 'trabado',
   delegating: 'delegando',
-  responding: 'respondiendo',
+  settled: 'salió de vuelo',
   receiving: 'recibiendo',
   thinking: 'trabajando',
   idle: 'libre',
@@ -101,6 +101,13 @@ export interface LiveHypergraphProps {
   focusKey?: string | null;
   spotlight?: Set<string> | null;
   loadingTopology?: boolean;
+  /**
+   * La lectura de la topología FALLÓ. Es distinto de "no hay salas", y hasta ahora se veían igual:
+   * el mismo cartel de «el control plane todavía no informó ninguna sala» cubría los dos casos, así
+   * que un `GET /v3/console/topology` caído se leía como una flota sin configurar.
+   */
+  topologyError?: Error | null;
+  onRetryTopology?: () => void;
   onFocus?: (key: string | null) => void;
   onOpen?: (view: LiveAgentView) => void;
   /** Rectángulo del nodo en coordenadas de viewport, para colgarle el globo desde la página. */
@@ -118,7 +125,7 @@ interface Placed {
 
 export function LiveHypergraph({
   topology, views, edges, serverEdges, thresholds, origins, layer = 'ahora',
-  focusKey, spotlight, loadingTopology, onFocus, onOpen, onHover,
+  focusKey, spotlight, loadingTopology, topologyError, onRetryTopology, onFocus, onOpen, onHover,
 }: LiveHypergraphProps) {
   const byKey = useMemo(() => new Map(views.map((view) => [view.key, view])), [views]);
 
@@ -212,6 +219,24 @@ export function LiveHypergraph({
   }, []);
 
   if (model.edges.length === 0) {
+    // Tres causas distintas, tres carteles distintos. Antes las dos últimas compartían texto, y
+    // "no se pudo leer" quedaba disfrazado de "no hay nada configurado": el fallo desaparecía de
+    // la pantalla y con él la única pista de que había que reintentar.
+    if (topologyError) {
+      return (
+        <div className="lhg-empty">
+          <p>
+            <strong>No se pudo leer la topología</strong> ({topologyError.message}). El mapa no está
+            vacío porque no haya salas: está vacío porque esta lectura falló y no se sabe cuáles hay.
+          </p>
+          {onRetryTopology ? (
+            <button type="button" className="button small secondary" onClick={onRetryTopology}>
+              Reintentar la topología
+            </button>
+          ) : null}
+        </div>
+      );
+    }
     return loadingTopology ? (
       <p className="lhg-empty">Leyendo las salas de la topología…</p>
     ) : (
@@ -226,17 +251,30 @@ export function LiveHypergraph({
   const maxTotal = vivas.reduce((max, edge) => Math.max(max, edge.total), 1);
   const stallAfter = thresholds?.stall_after_seconds ?? 300;
 
-  const activos = new Set<string>();
+  /**
+   * El foco SUMA al filtro; no lo reemplaza.
+   *
+   * Antes esto era un `if/else` excluyente y `focusKey` ganaba: bastaba con que el puntero rozara
+   * cualquier muñeco para que el resaltado del filtro (estado, buscador, cliente) se apagara
+   * entero. El operador acababa mirando un mapa sin acotar creyendo que seguía acotado, que es
+   * justo el modo de fallo que el filtro existe para evitar.
+   *
+   * `atenuando` no se deriva del tamaño del conjunto: un filtro que no casa con nadie deja el
+   * conjunto vacío, y con la regla vieja eso apagaba el atenuado y dejaba TODO encendido —o sea,
+   * "ningún resultado" se veía igual que "todos los resultados".
+   */
+  const activos = new Set<string>(spotlight ?? []);
   if (focusKey) {
-    activos.add(focusKey);
+    const vecindario = new Set<string>([focusKey]);
     for (const edge of vivas) {
-      if (edge.from === focusKey) activos.add(edge.to);
-      if (edge.to === focusKey) activos.add(edge.from);
+      if (edge.from === focusKey) vecindario.add(edge.to);
+      if (edge.to === focusKey) vecindario.add(edge.from);
     }
-  } else if (spotlight) {
-    for (const key of spotlight) activos.add(key);
+    if (!spotlight) activos.clear();
+    for (const key of vecindario) activos.add(key);
   }
-  const atenuando = activos.size > 0;
+  // Un `Set` vacío es truthy: hay filtro puesto aunque no case con nadie, y ahí TODO va atenuado.
+  const atenuando = Boolean(spotlight) || Boolean(focusKey);
 
   const trabajando = placed.filter((item) => item.view && item.view.state !== 'idle' && item.view.state !== 'down').length;
   const descripcion = layer === 'permisos'
