@@ -1,11 +1,9 @@
 import {
   Activity,
-  BatteryCharging,
   Bot,
   Boxes,
   CreditCard,
   GitFork,
-  History,
   Settings2,
   ListRestart,
   MessageSquareText,
@@ -20,13 +18,11 @@ import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/Aut
 import type { AuthGateState } from './features/auth/auth-session';
 import { LiveFleetPage } from './features/live/LiveFleetPage';
 import { FleetAgentDetailPage } from './features/fleet/FleetAgentDetailPage';
-import { QuotasPage } from './features/quotas/QuotasPage';
 import { TopologyPage } from './features/topology/TopologyPage';
 import { MessagesPage } from './features/messages/MessagesPage';
 import { QueuesPage } from './features/queues/QueuesPage';
 import { JobsPage } from './features/jobs/JobsPage';
 import { AdaptersPage } from './features/adapters/AdaptersPage';
-import { AuditPage } from './features/audit/AuditPage';
 import { TerminalPage } from './features/terminal/TerminalPage';
 import { ConfigPage } from './features/config/ConfigPage';
 import { AccountsPage } from './features/accounts/AccountsPage';
@@ -107,14 +103,12 @@ interface Route {
  */
 const routes: Route[] = [
   { id: 'live', label: 'La flota ahora', icon: Sparkles, component: LiveFleetPage },
-  { id: 'quotas', label: 'Cuotas y licencias', icon: BatteryCharging, component: QuotasPage },
-  { id: 'accounts', label: 'Cuentas de IA', icon: CreditCard, component: AccountsPage },
+  { id: 'accounts', label: 'Cuentas y cuotas', icon: CreditCard, component: AccountsPage },
   { id: 'messages', label: 'Messages', icon: MessageSquareText, component: MessagesPage },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, component: QueuesPage },
   { id: 'jobs', label: 'Jobs', icon: Boxes, component: JobsPage },
   { id: 'adapters', label: 'Adapters', icon: Bot, component: AdaptersPage },
-  { id: 'audit', label: 'Audit', icon: History, component: AuditPage },
-  { id: 'observability', label: 'Observabilidad y relays', icon: Gauge, component: ObservabilityPage },
+  { id: 'observability', label: 'Señales y auditoría', icon: Gauge, component: ObservabilityPage },
   { id: 'config', label: 'Configuración y altas', icon: Settings2, component: ConfigPage },
   { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, component: TerminalPage },
   /**
@@ -130,7 +124,7 @@ const routes: Route[] = [
   { id: 'topology', label: '', icon: GitFork, component: TopologyPage },
 ];
 
-/** Lo que se dibuja en la barra lateral: las entradas con rótulo. Once, no trece. */
+/** Lo que se dibuja en la barra lateral: las entradas con rótulo. Nueve, no trece. */
 const MENU = routes.filter((route) => route.label !== '');
 
 /**
@@ -141,10 +135,34 @@ const MENU = routes.filter((route) => route.label !== '');
  * vuelve a la ruta muerta.
  */
 const ROUTE_ALIASES: Record<string, string> = {
-  /** Fusionada con "Consumo de cuotas" en "Cuotas y licencias" — 2026-08-06. */
-  licenses: 'quotas',
+  /**
+   * "Licencias y consumo" se fundió en "Cuotas y licencias" (`/quotas`) el 2026-08-06, y el
+   * 2026-08-22 "Cuotas y licencias" se fundió a su vez en "Cuentas y cuotas" (`/accounts`).
+   *
+   * 🔴 Apunta DIRECTO a `accounts`, no a `quotas`. `matchRoute` resuelve este mapa **una sola vez**:
+   * `licenses` → `quotas` habría devuelto un id que ya no existe entre las rutas, y la entrada
+   * habría caído al fallback de "La flota ahora" sin decir una palabra. Un alias encadenado no es
+   * un alias: es un 404 silencioso con otra cara.
+   */
+  licenses: 'accounts',
+  /**
+   * "Cuotas y licencias" es la pestaña «Consumo» de "Cuentas y cuotas" desde el 2026-08-22. Las dos
+   * vistas pedían el MISMO `GET /v3/console/config` con la MISMA clave de caché y las dos pintaban
+   * un panel titulado literalmente «Inventario de cuentas». Ver `AccountsPage`.
+   */
+  quotas: 'accounts',
   /** "Matriz agente × cuenta" pasó a ser la segunda mitad de "Cuentas de IA" — 2026-08-06. */
   assignments: 'accounts',
+  /**
+   * "Audit" es la pestaña «Auditoría» de "Señales y auditoría" desde el 2026-08-22. El propio
+   * comentario de `ObservabilityPage` decía que `request_id` y `trace_id` bajaban a la tabla de
+   * relays «para cruzarlos contra Audit»: la consola documentaba que la investigación normal cruza
+   * las dos pantallas, y obligaba a hacerlo con dos pestañas del navegador. Ahora es un botón.
+   *
+   * Gana `observability` y no `audit` porque `/relays` ya redirige a `observability` desde el
+   * 2026-08-06, y encadenar `relays` → `observability` → `audit` no funciona (ver `licenses`).
+   */
+  audit: 'observability',
   /** "Origin relays" pasó a ser la tabla de "Observabilidad y relays" — 2026-08-06. */
   relays: 'observability',
   /**

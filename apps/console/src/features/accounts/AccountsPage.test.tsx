@@ -47,10 +47,22 @@ function accountActions() {
   return within(screen.getByRole('group', { name: /acciones de (alta|edición) de cuenta/i }));
 }
 
+/**
+ * Desde la fusión del 2026-08-22, «Cuentas y cuotas» abre en la pestaña «Consumo»: el inventario y
+ * sus formularios están a un clic. Estas pruebas dan ese clic explícitamente en vez de arrancar en
+ * la pestaña que les convendría — si mañana se cambia cuál abre primero, hay que ver la prueba
+ * fallar y decidirlo, no descubrirlo en producción.
+ */
+async function openInventory(user: ReturnType<typeof userEvent.setup>) {
+  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
+  await user.click(screen.getByRole('tab', { name: 'Inventario' }));
+  return within(document.getElementById('view-panel-inventario') as HTMLElement);
+}
+
 it('queda enrutada en /accounts sin desplazar a las pantallas existentes', async () => {
   window.history.pushState({}, '', '/accounts');
   renderWithApi(<App />);
-  expect(await screen.findByRole('heading', { level: 1, name: /cuentas de ia/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i })).toBeInTheDocument();
 
   window.history.pushState({}, '', '/config');
   window.dispatchEvent(new PopStateEvent('popstate'));
@@ -62,16 +74,17 @@ it('/assignments no da 404 ni cae al fallback: redirige a /accounts y reescribe 
   renderWithApi(<App />);
 
   // La vista correcta se elige en el match, no después de un rebote: la matriz está en pantalla.
-  expect(await screen.findByRole('heading', { level: 1, name: /cuentas de ia/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i })).toBeInTheDocument();
   await waitFor(() => expect(window.location.pathname).toBe('/accounts'));
 });
 
 it('lista el inventario con pagador, publicación al pool y estado', async () => {
   configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /cuentas de ia/i })).toBeInTheDocument();
-  const row = (await screen.findByText('codex-steven')).closest('tr');
+  const inventario = await openInventory(user);
+  const row = (await inventario.findByText('codex-steven')).closest('tr');
   expect(row).not.toBeNull();
   expect(within(row!).getByText('Steven')).toBeInTheDocument();
   expect(within(row!).getByText('PUBLICADA')).toBeInTheDocument();
@@ -82,23 +95,29 @@ it('lista el inventario con pagador, publicación al pool y estado', async () =>
 
 it('dice que los campos del pagador no son visibles en vez de mostrarlos vacíos', async () => {
   configuration({ provider_accounts: [borrowedAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  const row = (await screen.findByText('minimax-pablo')).closest('tr');
+  const inventario = await openInventory(user);
+  const row = (await inventario.findByText('minimax-pablo')).closest('tr');
   expect(within(row!).getAllByText(/no visible: la paga pablo/i)).toHaveLength(2);
   expect(within(row!).queryByText('UNKNOWN')).not.toBeInTheDocument();
 });
 
 it('declara no disponible el inventario cuando el gateway no publica provider_accounts', async () => {
   configuration({ agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  // Las DOS mitades lo declaran por separado, cada una con lo que a ella le falta: la de arriba no
-  // puede listar el inventario, la de abajo no puede formar la matriz. Fundir las vistas no fundió
-  // los avisos, porque no son el mismo hecho.
-  expect(await screen.findByText(/no se muestra inventario porque no hay dato que mostrar/i)).toBeInTheDocument();
-  expect(screen.getByText(/la matriz se muestra incompleta a propósito/i)).toBeInTheDocument();
-  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  // Las DOS mitades lo declaran por separado, cada una con lo que a ella le falta: el inventario no
+  // se puede listar, la matriz no se puede formar. Fundir las vistas no fundió los avisos, porque
+  // no son el mismo hecho — y ahora que son pestañas de la misma página, sigue sin serlo.
+  const inventario = await openInventory(user);
+  expect(await inventario.findByText(/no se muestra inventario porque no hay dato que mostrar/i)).toBeInTheDocument();
+  expect(inventario.queryByRole('table')).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
+  expect(await screen.findByText(/la matriz se muestra incompleta a propósito/i)).toBeInTheDocument();
 });
 
 it('exige dry-run antes de aplicar el alta y manda la mutación de provider_account', async () => {
@@ -108,6 +127,7 @@ it('exige dry-run antes de aplicar el alta y manda la mutación de provider_acco
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
+  await openInventory(user);
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
 
@@ -143,6 +163,7 @@ it('no reimprime el locator en el dry-run que el servidor devuelve', async () =>
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
+  await openInventory(user);
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
@@ -159,6 +180,7 @@ it('deshabilita sin borrar: la acción abre el update con enabled en false', asy
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
+  await openInventory(user);
   await user.click(await screen.findByRole('button', { name: /deshabilitar/i }));
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
@@ -183,6 +205,7 @@ it('explica la causa real cuando el servidor bloquea despublicar una cuenta pres
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
+  await openInventory(user);
   await user.click(await screen.findByRole('button', { name: /despublicar/i }));
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
@@ -191,4 +214,79 @@ it('explica la causa real cuando el servidor bloquea despublicar una cuenta pres
   expect(alert).toHaveTextContent(/alias_routing_ceiling_borrow_requires_pool/);
   expect(alert).toHaveTextContent(/Miguel\/iza/);
   expect(alert).not.toHaveTextContent(/durable constraint/);
+});
+
+/**
+ * 🔴 El punto que decidió la fusión (b), y la objeción que estaba escrita en `App.tsx`: «Cuotas y
+ * licencias» es de LECTURA y depende del recolector externo; «Cuentas de IA» ESCRIBE el registro y
+ * tiene que funcionar aunque el recolector esté caído. La conclusión que se sacaba de ahí —que por
+ * eso tenían que ser dos vistas— era falsa: se resuelve degradando por RECURSO.
+ *
+ * Las dos pruebas van en pareja a propósito. La segunda es el control negativo de la primera: sin
+ * ella, una versión que pintara un `0%` inventado con el recolector muerto pasaría igual.
+ */
+it('con el recolector CAÍDO el registro se sigue escribiendo: alta con dry-run y apply', async () => {
+  const changes: ChangeRequest[] = [];
+  configuration({ provider_accounts: [], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  recordChanges(changes);
+  server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json(
+    { error: 'boom', message: 'el recolector no publicó nunca' }, { status: 500 },
+  )));
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+
+  // La vista NO se cae entera: una fuente muerta no apaga la otra.
+  await openInventory(user);
+  await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
+  await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
+  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  expect(changes[0]?.dry_run).toBe(true);
+
+  await user.click(accountActions().getByRole('button', { name: /^aplicar$/i }));
+  expect(await screen.findByText(/aplicado en revisión 5/i)).toBeInTheDocument();
+  expect(changes[1]?.dry_run).toBe(false);
+});
+
+it('🔴 CONTROL NEGATIVO: con el recolector caído el saldo dice «?», nunca un número', async () => {
+  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json(
+    { error: 'boom', message: 'el recolector no publicó nunca' }, { status: 500 },
+  )));
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+
+  const inventario = await openInventory(user);
+  const fila = (await inventario.findByText('codex-steven')).closest('tr')!;
+  // Plan y Consumo: los dos en interrogante. Un `0%` acá se leería como «esta cuenta está agotada»,
+  // que es una afirmación sobre un dato que no llegó.
+  expect(within(fila).getAllByText('?').length).toBeGreaterThanOrEqual(2);
+  expect(fila.textContent ?? '').not.toMatch(/\d+%/);
+  expect(fila.textContent ?? '').not.toMatch(/libre/);
+});
+
+it('con el recolector VIVO la misma columna sí trae el número: el «?» no es un cartel fijo', async () => {
+  // El otro brazo del control: si la celda dijera «?» siempre, la prueba de arriba pasaría sin
+  // demostrar nada. Acá el mismo componente, con muestra, tiene que dar el porcentaje.
+  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json({
+    observed_at: '2026-08-22T10:00:00.000Z',
+    thresholds: { stale_after_seconds: 900, warn_remaining_percent: 25, critical_remaining_percent: 10 },
+    collectors: [{ host: 'kratos', received_at: '2026-08-22T09:59:30.000Z', age_seconds: 30, stale: false }],
+    providers: [{
+      host: 'kratos', provider: 'codex', ok: true, available: true, plan: 'pro',
+      observed_at: '2026-08-22T09:59:30.000Z', age_seconds: 30, severity: 'ok',
+      groups: [{
+        group_key: 'codex', account_id: 'codex-steven', min_remaining_percent: 42, severity: 'ok',
+        windows: [{ window_key: 'semana', label: 'semana', used_percent: 58, remaining_percent: 42, reset_at: '2026-08-29T10:00:00.000Z', reset_in_seconds: 600_000, severity: 'ok' }],
+      }],
+    }],
+    unbound_groups: [], paused_accounts: [],
+  })));
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+
+  const inventario = await openInventory(user);
+  const fila = (await inventario.findByText('codex-steven')).closest('tr')!;
+  expect(within(fila).getByText('pro')).toBeInTheDocument();
+  expect(within(fila).getByText('42% libre')).toBeInTheDocument();
 });

@@ -41,24 +41,40 @@ it('routes /fleet/:tenant/:alias to the bot detail instead of the fleet list', a
   expect(window.location.pathname).toBe('/fleet/Steven/kant');
 });
 
-it('el menú tiene UNA sola entrada para cuotas y licencias, no dos que se llaman casi igual', async () => {
+it('el menú tiene UNA sola entrada para cuentas, cuotas y licencias, no tres que se llaman casi igual', async () => {
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
   const entries = within(nav).getAllByRole('link')
-    .filter((link) => /cuota|licencia/i.test(link.textContent ?? ''));
-  expect(entries.map((link) => link.textContent)).toEqual(['Cuotas y licencias']);
+    .filter((link) => /cuota|licencia|cuenta/i.test(link.textContent ?? ''));
+  expect(entries.map((link) => link.textContent)).toEqual(['Cuentas y cuotas']);
 });
 
-it('redirige /licenses a la vista fusionada en vez de dejar el enlace guardado en la nada', async () => {
-  // La ruta se retiró al fusionar las dos vistas: un marcador viejo tiene que llegar a la heredera,
-  // no caer en el fallback a "Sala de máquinas" —que es una página que nadie pidió—.
-  window.history.pushState({}, '', '/licenses');
+it.each([
+  ['/licenses'],
+  ['/quotas'],
+  ['/assignments'],
+])('redirige %s a «Cuentas y cuotas» en vez de dejar el enlace guardado en la nada', async (ruta) => {
+  // Las tres rutas se retiraron fusionando vistas: un marcador viejo tiene que llegar a la heredera,
+  // no caer en el fallback a "La flota ahora" —que es una página que nadie pidió—.
+  //
+  // 🔴 CONTROL: `/licenses` apuntaba a `/quotas`, que a su vez ya no existe. Si alguien deja el
+  // alias encadenado, ESTA prueba lo agarra: `matchRoute` resuelve el mapa una sola vez, así que
+  // `/licenses` terminaría en "La flota ahora" con la barra diciendo /licenses.
+  window.history.pushState({}, '', ruta);
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'Cuotas y licencias' })).toBeInTheDocument();
-  expect(window.location.pathname).toBe('/quotas');
+  expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas y cuotas' })).toBeInTheDocument();
+  await waitFor(() => expect(window.location.pathname).toBe('/accounts'));
+});
+
+it('redirige /audit a «Señales y auditoría», donde la auditoría es una pestaña', async () => {
+  window.history.pushState({}, '', '/audit');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: 'Señales y auditoría' })).toBeInTheDocument();
+  await waitFor(() => expect(window.location.pathname).toBe('/observability'));
 });
 
 it('falls back to the live fleet room for an unknown route id even with extra pathname segments', async () => {
@@ -76,37 +92,38 @@ it('ignores extra pathname segments on non-fleet routes and keeps rendering the 
 });
 
 it('navega dentro de la aplicación sin recargar la página al hacer clic en el menú', async () => {
-  window.history.pushState({}, '', '/quotas');
+  window.history.pushState({}, '', '/accounts');
   const user = userEvent.setup();
   renderWithApi(<App />);
 
-  await screen.findByRole('heading', { level: 1, name: /cuotas y licencias/i });
-  await user.click(screen.getByRole('link', { name: /^cuentas de ia$/i }));
+  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
+  await user.click(screen.getByRole('link', { name: /^jobs$/i }));
 
-  // Si el enlace no interceptara el clic, jsdom no cambiaría la ruta y seguiríamos en Fleet:
+  // Si el enlace no interceptara el clic, jsdom no cambiaría la ruta y seguiríamos donde estábamos:
   // el router escucha popstate, y pushState no lo dispara solo.
-  expect(window.location.pathname).toBe('/accounts');
-  expect(await screen.findByRole('heading', { level: 1, name: /cuentas de ia/i })).toBeInTheDocument();
+  expect(window.location.pathname).toBe('/jobs');
+  expect(await screen.findByRole('heading', { level: 1, name: /jobs/i })).toBeInTheDocument();
 });
 
 it('deja pasar ctrl+clic al navegador para poder abrir en otra pestaña', async () => {
-  window.history.pushState({}, '', '/quotas');
+  window.history.pushState({}, '', '/accounts');
   const user = userEvent.setup();
   renderWithApi(<App />);
 
-  await screen.findByRole('heading', { level: 1, name: /cuotas y licencias/i });
+  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
   await user.keyboard('{Control>}');
-  await user.click(screen.getByRole('link', { name: /^cuentas de ia$/i }));
+  await user.click(screen.getByRole('link', { name: /^jobs$/i }));
   await user.keyboard('{/Control}');
 
   // Con modificador el clic es del navegador, no nuestro: la ruta no debe moverse.
-  expect(window.location.pathname).toBe('/quotas');
+  expect(window.location.pathname).toBe('/accounts');
 });
 
-it('el menú tiene ONCE entradas: "Fleet" y "Tenants & ACL" dejaron de ser rutas propias', async () => {
-  // No es una cifra decorativa. Las dos vistas que se retiran no aportaban ningún dato que no
-  // estuviera ya en el snapshot que "La flota ahora" pide igual, y el precio de tenerlas era
-  // exactamente la queja del dueño: demasiadas entradas para responder la misma pregunta.
+it('el menú tiene NUEVE entradas: las tres fusiones del 2026-08-22 sacaron dos más', async () => {
+  // No es una cifra decorativa. El 2026-08-22 Steven señaló tres pares de vistas redundantes y las
+  // tres se fundieron sin perder un dato: «Audit» es la pestaña «Auditoría» de «Señales y
+  // auditoría», y «Cuotas y licencias» es la pestaña «Consumo» de «Cuentas y cuotas». De trece
+  // entradas en agosto a nueve.
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
@@ -115,19 +132,22 @@ it('el menú tiene ONCE entradas: "Fleet" y "Tenants & ACL" dejaron de ser rutas
 
   expect(entradas).toEqual([
     'La flota ahora',
-    'Cuotas y licencias',
-    'Cuentas de IA',
+    'Cuentas y cuotas',
     'Messages',
     'Queues & DLQ',
     'Jobs',
     'Adapters',
-    'Audit',
-    'Observabilidad y relays',
+    'Señales y auditoría',
     'Configuración y altas',
     'Ultimate Terminal',
   ]);
   expect(entradas).not.toContain('Fleet');
   expect(entradas).not.toContain('Tenants & ACL');
+  // 🔴 CONTROL NEGATIVO de la fusión: si alguien devuelve cualquiera de las dos entradas retiradas,
+  // vuelve a haber dos sitios para el mismo dato y esto falla.
+  expect(entradas).not.toContain('Audit');
+  expect(entradas).not.toContain('Cuotas y licencias');
+  expect(entradas).not.toContain('Cuentas de IA');
 });
 
 it('redirige /fleet y /topology a la vista que las absorbió, reescribiendo la barra de direcciones', async () => {

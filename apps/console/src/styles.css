@@ -753,3 +753,47 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
 .sidebar nav a.nav-inerte:hover {
   background: transparent;
 }
+
+/* Pestañas de vista — ver `ViewTabs` en components/ui.tsx (fusión de vistas redundantes, 2026-08-22). */
+.view-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 18px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgb(13 20 34 / 60%);
+  overflow-x: auto;
+}
+
+.view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 15px;
+  border: none;
+  border-radius: 9px;
+  background: none;
+  color: var(--muted);
+  font-size: .78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.view-tab:hover { color: var(--text); }
+.view-tab[aria-selected='true'] { background: var(--surface-3); color: var(--text); }
+
+.view-tab-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 10%);
+  font-size: .68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.view-tab-panel:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 12px; }
+
+/* Detalle de ruteo desplegable de una fila del inventario de cuentas (fusión cuotas+cuentas). */
+.account-detail-row > td { padding: 0 14px 14px; background: rgb(255 255 255 / 3%); }
+.account-detail-row .account-body { display: grid; gap: 14px; padding-top: 12px; }

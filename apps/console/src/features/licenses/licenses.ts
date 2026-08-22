@@ -1,8 +1,9 @@
 /**
  * Lecturas del inventario de licencias (`GET /v3/console/config`) cruzadas contra la muestra del
  * recolector de cuota. Este módulo tenía su propia página, `LicensesPage`; desde el 2026-08-06 la
- * página vive fusionada en `features/quotas/QuotasPage` —"Cuotas y licencias"— y acá queda sólo la
- * lógica: extractores, frescura, consumo por cuenta, asignaciones y huérfanos.
+ * página vive fusionada; desde el 2026-08-22 es la pestaña «Consumo» de "Cuentas y cuotas"
+ * (`features/quotas/ConsumptionSection`). Acá queda sólo la lógica: extractores, frescura, consumo
+ * por cuenta, asignaciones y huérfanos.
  */
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
 import type {
