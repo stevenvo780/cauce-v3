@@ -8249,7 +8249,11 @@ export class CauceRepository {
         seconds_since_last_ack: secondsSinceLastAck,
         acks_recent: Number(row.acks_recent ?? 0),
         in_flight_items_truncated: row.in_flight_items_truncated === true,
-        in_flight_items: Array.isArray(row.in_flight_items) ? row.in_flight_items : []
+        in_flight_items: Array.isArray(row.in_flight_items) ? row.in_flight_items : [],
+        // Las salas del alias, ya resueltas por el SQL. `[]` es un valor legítimo -- registrado y
+        // sin sala -- y la consola lo dibuja igual; no se colapsa a null ni se omite el campo,
+        // porque "no tiene sala" y "el servidor no informa salas" se renderizan distinto.
+        rooms: Array.isArray(row.rooms) ? (row.rooms as string[]) : []
       };
     });
 

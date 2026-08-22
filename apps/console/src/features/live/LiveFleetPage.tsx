@@ -2,7 +2,7 @@ import { Pause, Play, Search } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import type { FleetActivitySnapshot } from '../../api/types';
+import type { FleetActivitySnapshot, TenantNode, TopologySnapshot } from '../../api/types';
 import {
   ErrorState, FloatingTooltip, LoadingState, PageHeader, Panel, Time, Tooltip,
 } from '../../components/ui';
@@ -90,6 +90,15 @@ const STATE_ACCENT: Record<LiveState, string> = {
  * operador y no un síntoma.
  */
 const STALE_FACTOR = 3;
+
+/**
+ * Id de la sala sintética donde van los alias del registro que no tienen ninguna membresía.
+ *
+ * Lleva `__` a los dos lados a propósito: `rooms.id` en la base es un identificador tipo
+ * `grp.miguel` y ninguno puede colisionar con esto, así que un recuadro «sin sala» nunca se
+ * confunde con una sala real ni la pisa en el layout.
+ */
+const SIN_SALA = '__sin_sala__';
 
 /** Lo que la nota borrada explicaba, ahora colgado del punto «En vivo» donde sí se busca. */
 const FEED_HINT = (
@@ -223,6 +232,111 @@ export function LiveFleetPage() {
     };
   }, [topology.data, tenantFilter]);
 
+  /**
+   * EL DIBUJO SALE DEL REGISTRO DE AGENTES, NO DE LAS MEMBRESÍAS.
+   *
+   * Este `useMemo` es la corrección de un defecto arquitectónico, no un ajuste de presentación, y
+   * conviene dejar escrito el fallo entero porque desde la pantalla era imposible de adivinar.
+   *
+   * Esta página hace DOS lecturas y hasta ahora nadie las reconciliaba:
+   *
+   *   - `GET /v3/console/topology`  → decide QUIÉN se dibuja y en qué sala. Sale de `memberships`.
+   *   - `GET /v3/console/activity`  → decide CÓMO está cada uno. Su universo es
+   *     `agents ∪ entregas-abiertas ∪ connection_leases`.
+   *
+   * El "join" ocurría en el navegador (`LiveHypergraph` colocaba un muñeco por cada MIEMBRO y le
+   * pintaba encima `view?.state ?? 'unknown'`) y era ASIMÉTRICO en las dos direcciones:
+   *
+   *   - membresía SIN actividad  → muñeco dibujado y pintado «sin reportar». Así se veía
+   *     `quota-collector`, que es un principal `operator` y no un agente: no está en `agents` y
+   *     nunca lo estuvo, pero tenía membresía y por eso salía en el mapa de la flota.
+   *   - actividad SIN membresía  → el muñeco NO se dibujaba. Caía en `sinSala`, que era una lista
+   *     de nombres al pie. Así desapareció `gaia`: se dio de alta en `agents` y no se veía en
+   *     ninguna parte, mientras el operador miraba fijo la pantalla que debía mostrarla.
+   *
+   * Y el mismo defecto explicaba el tercer síntoma: los cuatro alias retirados seguían dibujados
+   * porque su baja se hizo en `agents` y sus membresías quedaron habilitadas. Tres fuentes de
+   * verdad para "quién es la flota", y la que mandaba en el dibujo era la que nadie tocaba.
+   *
+   * La regla, ahora, es una sola y se puede decir en una frase: **se dibuja un muñeco por cada
+   * participante que reporta actividad —cuyo núcleo es la tabla `agents`— y la membresía sólo
+   * decide DENTRO DE QUÉ RECUADRO va**. Consecuencias, todas deliberadas:
+   *
+   *   - un alias del registro sin ninguna membresía se dibuja igual, en un recuadro «sin sala».
+   *     No se esconde: "registrado y sin sala" es un dato operativo, y esconderlo fue el fallo;
+   *   - una membresía sin participante deja de existir para el mapa. No se puede pintar el estado
+   *     de algo que el plano de estado no conoce, y «sin reportar» era una respuesta inventada;
+   *   - dar de baja un alias vuelve a tener UN solo gesto que importa para esta vista: sacarlo del
+   *     registro de agentes. Lo que quede en `memberships` ya no puede resucitarlo en el dibujo.
+   *
+   * El recuadro sale de `view.rooms` cuando el servidor lo informa (ver el LATERAL de
+   * `FLEET_ACTIVITY_QUERY`); si ese campo no viene —gateway anterior—, se invierte el índice de
+   * la topología (`alias → sala`), que es la MISMA información leída al revés. Los dos caminos dan
+   * el mismo dibujo, así que la consola puede desplegarse sola, sin tocar el gateway.
+   */
+  const topologiaDelMapa = useMemo<TopologySnapshot | undefined>(() => {
+    const base = topologiaEnAlcance;
+    if (!base) return base;
+
+    // alias → sala, invirtiendo la topología. Es el respaldo para cuando `view.rooms` no viene.
+    const salaDeclarada = new Map<string, string>();
+    for (const tenant of base.tenants ?? []) {
+      for (const room of tenant.rooms ?? []) {
+        for (const member of room.members ?? []) {
+          if (!member.alias || !room.id || !tenant.id) continue;
+          const key = `${tenant.id}/${member.alias}`;
+          if (!salaDeclarada.has(key)) salaDeclarada.set(key, room.id);
+        }
+      }
+    }
+
+    const salasPorTenant = new Map<string, Map<string, string[]>>();
+    const etiquetaSala = new Map<string, string | null>();
+    for (const tenant of base.tenants ?? []) {
+      for (const room of tenant.rooms ?? []) {
+        if (room.id) etiquetaSala.set(`${tenant.id}/${room.id}`, room.label ?? room.id);
+      }
+    }
+
+    for (const view of alcance) {
+      const declaradas = view.rooms ?? [];
+      const sala = declaradas[0] ?? salaDeclarada.get(view.key) ?? SIN_SALA;
+      const porSala = salasPorTenant.get(view.tenantId) ?? new Map<string, string[]>();
+      const miembros = porSala.get(sala) ?? [];
+      miembros.push(view.alias);
+      porSala.set(sala, miembros);
+      salasPorTenant.set(view.tenantId, porSala);
+    }
+
+    const etiquetaTenant = new Map<string, string | null>(
+      (base.tenants ?? []).map((tenant) => [tenant.id ?? '', tenant.label ?? tenant.id ?? null]),
+    );
+
+    const tenants: TenantNode[] = [...salasPorTenant.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([tenantId, porSala]) => ({
+        id: tenantId,
+        label: etiquetaTenant.get(tenantId) ?? tenantId,
+        rooms: [...porSala.entries()]
+          // Las salas declaradas primero y en orden estable: el layout es determinista y no
+          // queremos que el dibujo salte de sitio porque cambió el orden de llegada de un alias.
+          .sort(([left], [right]) => Number(left === SIN_SALA) - Number(right === SIN_SALA)
+            || left.localeCompare(right))
+          .map(([roomId, miembros]) => ({
+            id: roomId,
+            label: roomId === SIN_SALA
+              ? 'sin sala'
+              : etiquetaSala.get(`${tenantId}/${roomId}`) ?? roomId,
+            // `enabled: true` NO es una afirmación sobre la membresía: es el campo que el layout
+            // usa para atenuar, y acá el muñeco ya trae su propio estado desde la actividad. La
+            // decisión de registro (`agent_enabled`) la pinta `liveState()`, no esto.
+            members: [...miembros].sort().map((alias) => ({ alias, enabled: true })),
+          })),
+      }));
+
+    return { ...base, tenants };
+  }, [topologiaEnAlcance, alcance]);
+
   // Las flechas también se acotan: una delegación cuyo emisor o receptor está fuera del alcance no
   // se puede dibujar sin sacar del cajón al muñeco que se acaba de esconder.
   const edgesEnAlcance = useMemo(() => {
@@ -261,8 +375,16 @@ export function LiveFleetPage() {
     );
   }, [views, stateFilter, query, tenantFilter]);
 
-  // `placed.filter(p => !p.view)` del grafo, calculado acá porque la cinta lo necesita: alias que
-  // la topología declara y la actividad no reporta. No es un octavo estado del union: es su ausencia.
+  /**
+   * Membresías que el registro de agentes NO conoce. Ya no son muñecos: son DERIVA.
+   *
+   * Antes esto contaba «los que el mapa dibuja y la actividad no reporta», porque el mapa se
+   * dibujaba desde las membresías. Ahora el mapa se dibuja desde el registro, así que esta cuenta
+   * cambió de significado sin cambiar de fórmula: es la diferencia simétrica entre `memberships` y
+   * `agents`, es decir la medida exacta del defecto que hizo falta arreglar. Se deja en pantalla
+   * a propósito — si vuelve a subir, alguien dio de alta o de baja tocando una sola de las dos
+   * tablas, y este número lo dice el mismo día y no dentro de un mes.
+   */
   const sinReportar = useMemo(() => {
     const conActividad = new Set(views.map((view) => view.key));
     let total = 0;
@@ -456,11 +578,11 @@ export function LiveFleetPage() {
           {sinReportar > 0 ? (
             <Tooltip
               focusable={false}
-              label="La topología los declara y la actividad no dice nada de ellos: UNKNOWN. No se asume que estén sanos, y tampoco se los acusa de estar caídos."
+              label="Alias con membresía en una sala que NO están en el registro de agentes. No se dibujan en el mapa —no se puede pintar el estado de algo que el plano de estado no conoce— y no son una avería por sí solos: los principales de operador (por ejemplo el recolector de cuotas) viven así a propósito. Si este número sube tras un alta o una baja, es que se tocó una sola de las dos tablas."
             >
               <span className="live-tally-chip is-unreported">
                 <span className="live-tally-swatch" aria-hidden="true" />
-                Sin reportar <strong>{sinReportar}</strong>
+                Fuera del registro <strong>{sinReportar}</strong>
               </span>
             </Tooltip>
           ) : null}
@@ -512,7 +634,7 @@ export function LiveFleetPage() {
           ) : null}
 
           <LiveHypergraph
-            topology={topologiaEnAlcance}
+            topology={topologiaDelMapa}
             views={alcance}
             edges={edgesEnAlcance}
             serverEdges={snapshot?.edges}

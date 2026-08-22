@@ -130,24 +130,77 @@ describe('la flota en reposo', () => {
 });
 
 describe('el mapa', () => {
-  it('un alias que la topología declara y la actividad NO reporta se dibuja «sin reportar», no caído', async () => {
-    // A3 del expediente, y era un bug real: `view?.state ?? 'down'` afirmaba una avería a partir
-    // de un silencio. No informado y roto son dos cosas distintas.
-    const soloUno = mockActivity();
-    conActividad({ ...soloUno, agents: (soloUno.agents ?? []).slice(0, 1) });
+  /**
+   * Los tres tests que siguen fijan LA regla del mapa, que antes no existía y por eso el dibujo
+   * contradecía a la base de datos en las dos direcciones a la vez.
+   *
+   * Regla: **se dibuja un muñeco por cada participante que la actividad reporta —cuyo núcleo es la
+   * tabla `agents`— y la membresía sólo decide en qué recuadro cae.** Antes era al revés: un
+   * muñeco por MEMBRESÍA, con el estado de la actividad pegado encima.
+   *
+   * Reemplazan al test de «sin reportar», que afirmaba justamente el comportamiento que resultó
+   * ser el defecto: aquel test comprobaba que una membresía sin actividad se dibujara igual, y era
+   * ese dibujo el que ponía en el mapa de la flota a un principal de operador que no es un agente.
+   * Un alias del que no se sabe nada ya no se pinta con un estado inventado: no se pinta.
+   */
+  it('un alias que la actividad reporta y NINGUNA sala declara se dibuja igual, en «sin sala»', async () => {
+    // El caso `gaia`: se dio de alta en `agents` y no aparecía en ninguna parte de la pantalla,
+    // porque el mapa colocaba nodos desde las membresías y ésta no tenía ninguna. Un alta que no
+    // se ve es indistinguible de un alta que no se hizo.
+    const base = mockActivity();
+    const primero = (base.agents ?? [])[0];
+    conActividad({
+      ...base,
+      agents: [
+        ...(base.agents ?? []),
+        // Registrado (`registered: true`), deshabilitado, y sin una sola sala: exactamente la
+        // fila que la vista escondía.
+        {
+          ...primero, alias: 'gaia', tenant_id: 'Miguel', display_name: 'gaia',
+          registered: true, agent_enabled: false, rooms: [], flags: [], in_flight: 0, queued: 0,
+        },
+      ],
+    });
     renderWithApi(<LiveFleetPage />);
-
     await screen.findByLabelText('Veredicto de la flota');
 
     await waitFor(() => {
-      const sinReportar = [...document.querySelectorAll('.lhg-bot[data-state="unknown"]')];
-      expect(sinReportar.length).toBeGreaterThan(0);
-      // El anillo punteado es el segundo canal; la palabra escrita, el tercero.
-      expect(sinReportar[0].querySelector('.lhg-bot-unknown-ring')).toBeTruthy();
-      expect(sinReportar[0].querySelector('.lhg-bot-word')?.textContent).toBe('sin reportar');
+      expect(document.querySelector('[data-agent-key="Miguel/gaia"]')).toBeTruthy();
     });
+    // Y con su estado real, no con uno inventado: el registro dice deshabilitado.
+    expect(document.querySelector('[data-agent-key="Miguel/gaia"]'))
+      .toHaveAttribute('data-state', 'down');
+  });
 
-    expect(document.querySelectorAll('.lhg-bot[data-state="down"]').length).toBe(0);
+  it('una membresía que la actividad NO reporta deja de dibujarse: no se inventa su estado', async () => {
+    // El caso `quota-collector`: un principal `operator` con membresía y sin fila en `agents`.
+    // Salía dibujado en el mapa de la flota, pintado «sin reportar», que es una respuesta
+    // inventada sobre algo que el plano de estado no conoce.
+    const base = mockActivity();
+    const soloSteven = (base.agents ?? []).filter((agent) => agent.tenant_id === 'Steven');
+    conActividad({ ...base, agents: soloSteven });
+    renderWithApi(<LiveFleetPage />);
+    await screen.findByLabelText('Veredicto de la flota');
+
+    await waitFor(() => {
+      expect(document.querySelectorAll('.lhg-bot').length).toBe(soloSteven.length);
+    });
+    // La topología del fixture declara a Pablo, Isa, Jhon y Miguel; ninguno se dibuja.
+    expect(document.querySelector('[data-agent-key="Isa/salva"]')).toBeNull();
+    expect(document.querySelector('.lhg-bot[data-state="unknown"]')).toBeNull();
+  });
+
+  it('el recuento de muñecos es EXACTAMENTE el de participantes reportados', async () => {
+    // El invariante en una línea. Si alguien vuelve a colgar el dibujo de una segunda fuente,
+    // este número deja de cuadrar el mismo día.
+    const base = mockActivity();
+    conActividad(base);
+    renderWithApi(<LiveFleetPage />);
+    await screen.findByLabelText('Veredicto de la flota');
+
+    await waitFor(() => {
+      expect(document.querySelectorAll('.lhg-bot').length).toBe((base.agents ?? []).length);
+    });
   });
 
   it('el globo del muñeco se abre CON EL FOCO DE TECLADO y cierra con Esc', async () => {

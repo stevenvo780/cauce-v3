@@ -211,7 +211,16 @@ SELECT p.tenant_id,
        -- La UI tiene que renderizarlo como UNKNOWN / ">1 h", jamás como 0.
        EXTRACT(EPOCH FROM (now() - ack.last_ack_at))::int      AS seconds_since_last_ack,
        COALESCE(inflight.items, '[]'::jsonb)                   AS in_flight_items,
-       (COALESCE(w.in_flight, 0) > $4)                         AS in_flight_items_truncated
+       (COALESCE(w.in_flight, 0) > $4)                         AS in_flight_items_truncated,
+       -- EN QUÉ SALAS vive el alias. Sale de acá y no de un cruce a mano contra
+       -- GET /v3/console/topology porque ese cruce era la avería: el mapa dibujaba un muñeco por
+       -- cada MEMBRESÍA y le pegaba encima el estado de esta consulta, así que un alias con
+       -- membresía y sin registro salía dibujado («sin reportar») y un alias registrado y sin
+       -- membresía no salía en absoluto. Con las salas colgando del participante, el dibujo se
+       -- puede construir desde ESTE conjunto —el registro de agentes— y la membresía queda
+       -- reducida a lo que es: en qué recuadro va, no si existe.
+       -- Vacío = registrado y sin sala. Es un dato, no una ausencia: se dibuja igual.
+       COALESCE(salas.rooms, ARRAY[]::text[])                   AS rooms
   FROM participants p
   LEFT JOIN agents ag              ON ag.tenant_id    = p.tenant_id AND ag.alias    = p.alias
   LEFT JOIN connection_leases lease ON lease.tenant_id = p.tenant_id AND lease.alias = p.alias
@@ -256,5 +265,12 @@ SELECT p.tenant_id,
          LIMIT $4
       ) top
   ) inflight ON true
+  LEFT JOIN LATERAL (
+    -- Sólo membresías HABILITADAS: una membresía deshabilitada no coloca al alias en esa sala,
+    -- y dibujarlo dentro afirmaría una pertenencia que el control plane ya retiró.
+    SELECT array_agg(mem.room_id ORDER BY mem.room_id) AS rooms
+      FROM memberships mem
+     WHERE mem.tenant_id = p.tenant_id AND mem.alias = p.alias AND mem.enabled
+  ) salas ON true
  ORDER BY p.tenant_id, p.alias;
 `;
