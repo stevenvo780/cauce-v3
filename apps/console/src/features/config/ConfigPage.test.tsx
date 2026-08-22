@@ -8,6 +8,27 @@ import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
 
 interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }
 
+type Usuario = ReturnType<typeof userEvent.setup>;
+
+/**
+ * Abre una pestaña de `/config`.
+ *
+ * `/config` era UN scroll con dieciséis paneles seguidos y ahora son seis pestañas. Nada se
+ * escondió: lo que cambió es que hay que decir a cuál se entra, y estas pruebas lo dicen — así
+ * queda escrito en el propio test EN QUÉ pestaña vive cada cosa, que es la pregunta que el dueño
+ * hizo cuando no encontraba «Alta rápida».
+ */
+async function irA(user: Usuario, pestana: RegExp) {
+  await user.click(await screen.findByRole('tab', { name: pestana }));
+}
+
+const ESPACIOS = /espacios y miembros/i;
+const PERMISOS = /^permisos$/i;
+const ROLES = /roles de agente/i;
+const AGENTES = /agentes y cuentas/i;
+const AVISOS = /avisos y cadena/i;
+const HISTORIAL = /historial y json/i;
+
 function recordChanges(sink: ChangeRequest[]) {
   server.use(http.post('http://localhost/v3/console/config/changes', async ({ request }) => {
     const input = await request.json() as ChangeRequest;
@@ -25,6 +46,7 @@ it('previews and applies a default-deny ACL mutation through the protected API',
   expect(await screen.findByRole('heading', { level: 1, name: /configuración/i })).toBeInTheDocument();
   expect(await screen.findByText(/RBAC/i)).toBeInTheDocument();
 
+  await irA(user, HISTORIAL);
   await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
   expect(await screen.findByLabelText(/resultado de preview/i)).toHaveTextContent('"dry_run": true');
   expect(screen.getByLabelText(/resultado de preview/i)).toHaveTextContent('"allow_route": false');
@@ -72,6 +94,7 @@ it('distingue el 409 por revisión vencida y pide volver a previsualizar', async
   )));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
+  await irA(user, HISTORIAL);
   await user.click(await screen.findByRole('button', { name: /preview \/ dry-run/i }));
 
   const alert = await screen.findByRole('alert');
@@ -82,7 +105,11 @@ it('distingue el 409 por revisión vencida y pide volver a previsualizar', async
 });
 
 it('muestra las colecciones que el servidor publica más allá de las seis históricas', async () => {
+  const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
+  // Las dos viven en «Avisos y cadena»: es la pestaña que agrupa lo que un bot ve de su propia
+  // cadena y a qué conversaciones humanas se le permite escribir sin que nadie le pregunte.
+  await irA(user, AVISOS);
 
   // Las dos que la lista fija de ConfigPage dejaba invisibles aunque el snapshot las trae.
   expect(await screen.findByRole('heading', { name: /chain visibility policy/i })).toBeInTheDocument();
@@ -97,10 +124,12 @@ it('no confunde una clave que el gateway no publica con una colección vacía', 
   server.use(http.get('*/v3/console/config', () => HttpResponse.json({
     revision: 1, observed_at: new Date().toISOString(), tenants: [], revisions: [],
   })));
+  const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
   const tenants = (await screen.findByRole('heading', { name: 'Tenants' })).closest('section');
   expect(tenants).toHaveTextContent(/sin registros/i);
+  await irA(user, AVISOS);
   const chain = screen.getByRole('heading', { name: /chain visibility policy/i }).closest('section');
   expect(chain).toHaveTextContent(/no publica esta colección/i);
 });
@@ -111,6 +140,7 @@ it('acepta en el editor los recursos que el servidor acepta y la lista fija rech
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await irA(user, HISTORIAL);
 
   await user.selectOptions(screen.getByLabelText('Resource'), 'chain_policy');
   // `chain_policy` es un singleton que sólo admite update: la UI no debe ofrecer create ni delete.
@@ -140,6 +170,7 @@ it('no convierte los demás 409 en el mensaje de revisión ni los vuelve genéri
   )));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
+  await irA(user, HISTORIAL);
   await user.click(await screen.findByRole('button', { name: /preview \/ dry-run/i }));
 
   expect(await screen.findByText('ACL edge already exists')).toBeInTheDocument();
@@ -253,6 +284,9 @@ it('sin config.write se ve TODO en solo lectura y lo dice, en vez de esconder la
   expect(within(panelDe(/memberships/i)).getByText('janus')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: MEMBERSHIP_JANUS })).toBeDisabled();
   expect(screen.getByLabelText('Rol de Miguel/grp.miguel/janus')).toBeDisabled();
+  // Las pestañas NO se apagan ni se esconden con el permiso denegado: navegar no escribe nada, y
+  // un menú de áreas mutilado no distingue «no tengo permiso» de «esto no existe».
+  await irA(userEvent.setup(), HISTORIAL);
   expect(screen.getByRole('button', { name: /aplicar atómico/i })).toBeDisabled();
 });
 
@@ -391,6 +425,7 @@ it('FAMILIA 1: el desenlace de un rollback aplicado se lee SIN abrir ningún des
   servirConfig(() => snapshotConAudit(1));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
+  await irA(user, HISTORIAL);
 
   await user.click(await screen.findByRole('button', { name: /^Rollback$/ }));
 
@@ -409,6 +444,7 @@ it('FAMILIA 1: un rollback que FALLA no se ve igual que uno que funciona', async
   )));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
+  await irA(user, HISTORIAL);
 
   await user.click(await screen.findByRole('button', { name: /^Rollback$/ }));
 
@@ -422,6 +458,7 @@ it('FAMILIA 1: el preview de un rollback también se pinta junto al botón que l
   servirConfig(() => snapshotConAudit(1));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
+  await irA(user, HISTORIAL);
 
   await user.click(await screen.findByRole('button', { name: /^Preview$/ }));
 
@@ -466,6 +503,7 @@ it('FAMILIA 2: tocar el JSON del editor crudo se lleva puestos el verde y el pre
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await irA(user, HISTORIAL);
   const editor = screen.getByLabelText('Mutación JSON');
 
   await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
@@ -569,8 +607,10 @@ it('FAMILIA 3: sin tenant_id el selector de rol no se queda mudo: se apaga y DIC
 
 it('FAMILIA 3: la interfaz dice que deshacer revierte la FILA entera, no el campo que se tocó', async () => {
   servirConfig(() => snapshotConAudit(1));
+  const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await irA(user, HISTORIAL);
 
   const nota = within(panelDe(/audit trail/i))
     .getByText(/restituye la FILA COMPLETA que había antes de esa revisión/i);
@@ -622,7 +662,9 @@ it('FAMILIA 4: el 409 no manda a «volver a previsualizar» a los caminos que no
   expect(deLaTabla).toHaveTextContent(/volvé a pedir el cambio sobre la revisión nueva/i);
   expect(deLaTabla).not.toHaveTextContent(/volvé a previsualizar/i);
 
-  // Rollback: tampoco previsualiza para aplicar.
+  // Rollback: tampoco previsualiza para aplicar. Vive en «Historial y JSON», que es también donde
+  // el propio aviso manda a volver a elegir la revisión.
+  await irA(user, HISTORIAL);
   await user.click(screen.getByRole('button', { name: /^Rollback$/ }));
   const delAudit = await within(panelDe(/audit trail/i)).findByRole('alert');
   expect(delAudit).toHaveTextContent(/pediste el rollback sobre la revisión 1/i);
@@ -638,12 +680,229 @@ it('FAMILIA 4: el role_brief de «Agent registry» se ve RESUMIDO, no 1200 carac
     ...snapshotDeConfig(1),
     agents: [{ tenant_id: 'Steven', alias: 'kant', role_brief: brief, enabled: true }],
   }));
+  const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await irA(user, AGENTES);
 
   const registro = panelDe(/agent registry/i);
   const celda = within(registro).getByTitle(brief);
   expect(celda.textContent).toBe(`${brief.slice(0, 120)}…`);
   // El texto entero no se pierde —queda en el `title` y en «Ver crudo»— pero no se derrama.
   expect(within(registro).queryByText(brief)).not.toBeInTheDocument();
+});
+
+// ---------------------------------------------------------------------------------------------
+// FAMILIA 5: `/config` en pestañas.
+//
+// La queja del dueño no fue «faltan cosas» sino «no encuentro nada»: la pantalla era UN scroll con
+// dieciséis paneles seguidos —el alta, el wizard, el editor crudo, doce tablas y el audit trail— y
+// para tocar una arista de ACL había que pasar por delante del pool de suscripciones de IA. Lo que
+// sigue prueba que ahora hay seis áreas, que se entra a UNA por vez, y —sobre todo— que NADA se
+// perdió por el camino: «Alta rápida» es exactamente lo que el dueño buscaba y no encontraba.
+
+it('FAMILIA 5: /config son SEIS pestañas reales, en el orden en que se monta una flota', async () => {
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+
+  const pestanas = within(screen.getByRole('tablist', { name: /áreas de configuración/i }))
+    .getAllByRole('tab');
+  expect(pestanas.map((boton) => boton.textContent)).toEqual([
+    'Espacios y miembros', 'Permisos', 'Roles de agente', 'Agentes y cuentas',
+    'Avisos y cadena', 'Historial y JSON',
+  ]);
+  // Se entra por «Espacios y miembros»: la primera pregunta de un operador es «quién hay».
+  expect(pestanas[0]).toHaveAttribute('aria-selected', 'true');
+  expect(pestanas.filter((boton) => boton.getAttribute('aria-selected') === 'true')).toHaveLength(1);
+});
+
+it('FAMILIA 5: el render es CONDICIONAL, no un scroll con todo pintado y un ancla', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+
+  // Estando en «Espacios y miembros», lo de las otras áreas NO está en el documento. Si estuviera
+  // —oculto por CSS, o simplemente más abajo— esto seguiría siendo el scroll de dieciséis paneles
+  // con pestañas de adorno, que es exactamente lo que se vino a arreglar.
+  expect(screen.getByRole('heading', { name: /memberships/i })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /directed acl/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /agent registry/i })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Mutación JSON')).not.toBeInTheDocument();
+
+  await irA(user, PERMISOS);
+  expect(screen.getByRole('heading', { name: /directed acl/i })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /memberships/i })).not.toBeInTheDocument();
+});
+
+it('FAMILIA 5: «Alta rápida» NO se perdió: vive en «Espacios y miembros» y sigue dando de alta', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+
+  // Está montada en la pestaña de entrada, sin tener que buscarla: es lo que el dueño no encontraba.
+  const alta = panelDe(/alta rápida/i);
+  expect(alta).toBeInTheDocument();
+  expect(within(alta).getByLabelText('Recurso a crear')).toBeInTheDocument();
+
+  // Y no es un cartel: da de alta de verdad, por el mismo camino versionado.
+  await user.type(within(alta).getByLabelText('Tenant'), 'Miguel');
+  await user.type(within(alta).getByLabelText('Room'), 'grp.miguel');
+  await user.type(within(alta).getByLabelText('Alias'), 'atlas');
+  await user.click(within(alta).getByRole('button', { name: /^Crear$/ }));
+  expect(changes[0]?.mutation).toEqual({
+    resource: 'membership', action: 'create', tenant_id: 'Miguel', room_id: 'grp.miguel',
+    alias: 'atlas', value: { role: 'agent', enabled: true },
+  });
+
+  // Y se fue de las demás pestañas: si estuviera repetida, dos formularios distintos escribirían
+  // lo mismo y el operador no sabría cuál acaba de usar.
+  await irA(user, HISTORIAL);
+  expect(screen.queryByLabelText('Recurso a crear')).not.toBeInTheDocument();
+  await irA(user, ESPACIOS);
+  expect(screen.getByLabelText('Recurso a crear')).toBeInTheDocument();
+});
+
+it('FAMILIA 5: el cambio de rol por columna y el JSON crudo por fila siguen en «Espacios y miembros»', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+
+  const memberships = panelDe(/memberships/i);
+  // El JSON crudo por fila: no se borró al ordenar la pantalla, sigue un escalón más abajo.
+  expect(within(memberships).getByText(/ver crudo/i)).toBeInTheDocument();
+
+  // Y el rol se cambia desde su propia columna, con confirmación y con la mutación exacta.
+  await user.selectOptions(
+    within(memberships).getByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator',
+  );
+  await user.click(within(memberships).getByRole('button', { name: 'Confirmar' }));
+  expect(changes[0]?.mutation).toEqual({
+    resource: 'membership', action: 'update', tenant_id: 'Miguel', room_id: 'grp.miguel',
+    alias: 'janus', value: { role: 'operator' },
+  });
+});
+
+it('FAMILIA 5: cambiar de pestaña con una confirmación pendiente la ANULA, no la deja escondida', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  expect(screen.getByRole('button', { name: 'Confirmar' })).toBeInTheDocument();
+
+  // Si la confirmación sobreviviera al cambio de pestaña, el operador volvería mucho después a un
+  // «Confirmar» cuyo `<pre>` ya no recuerda haber leído, y lo firmaría igual.
+  await irA(user, PERMISOS);
+  await irA(user, ESPACIOS);
+  expect(screen.queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument();
+  expect(changes).toEqual([]);
+});
+
+it('FAMILIA 5: una colección que la consola no sabe clasificar aparece en «Otros», no desaparece', async () => {
+  servirConfig(() => ({ ...snapshotDeConfig(1), gizmos: [{ id: 'g1', enabled: true }] }));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+
+  // La pestaña sólo existe porque hay algo que no se supo clasificar: sin `gizmos` no sale, y una
+  // pestaña vacía permanente enseña a ignorarla justo antes del día en que importa.
+  await irA(user, /^otros$/i);
+  expect(screen.getByRole('heading', { name: 'gizmos' })).toBeInTheDocument();
+});
+
+// --- FAMILIA 6: la pestaña «Roles de agente» ---------------------------------------------------
+
+/** Un snapshot con registro de agentes: sin él no hay roles que catalogar. */
+function snapshotConAgentes() {
+  return {
+    ...snapshotDeConfig(1),
+    agents: [
+      { tenant_id: 'Steven', alias: 'zeus', role_brief: 'Sos el orquestador de la flota.', enabled: true },
+      { tenant_id: 'Steven', alias: 'kant', role_brief: 'Sos el orquestador de la flota.', enabled: true },
+      { tenant_id: 'Steven', alias: 'argos', role_brief: null, enabled: true },
+    ],
+  };
+}
+
+it('FAMILIA 6: «Roles de agente» cataloga los roles en uso y dice quién lleva cada uno', async () => {
+  servirConfig(snapshotConAgentes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, ROLES);
+
+  const enUso = panelDe(/roles en uso/i);
+  expect(within(enUso).getByRole('heading', { name: /sos el orquestador de la flota/i })).toBeInTheDocument();
+  expect(within(enUso).getByText('Steven/zeus')).toBeInTheDocument();
+  expect(within(enUso).getByText('Steven/kant')).toBeInTheDocument();
+  // El título es un RESUMEN del texto, no un nombre guardado: decir lo contrario mandaría al
+  // operador a buscar «orquestador» en una tabla que hoy no existe.
+  expect(within(enUso).getByText(/no un nombre guardado/i)).toBeInTheDocument();
+  // Y el bot sin rol declarado no se pierde: se lista aparte, que es de donde sale el trabajo.
+  expect(within(panelDe(/bots sin rol declarado/i)).getByText('Steven/argos')).toBeInTheDocument();
+});
+
+it('FAMILIA 6: aplicar un rol a otro bot manda la mutación versionada exacta y dice dónde deshacerla', async () => {
+  const changes: ChangeRequest[] = [];
+  servirConfig(snapshotConAgentes);
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, ROLES);
+
+  await user.selectOptions(
+    await screen.findByLabelText(/bot que recibirá el rol/i), 'Steven/argos',
+  );
+  await user.click(screen.getByRole('button', { name: /aplicar el rol a ese bot/i }));
+
+  expect(changes[0]).toEqual({
+    dry_run: false,
+    expected_revision: 1,
+    mutation: {
+      resource: 'agent', action: 'update', tenant_id: 'Steven', alias: 'argos',
+      value: { role_brief: 'Sos el orquestador de la flota.' },
+    },
+  });
+  const aviso = await screen.findByText(/rol aplicado a Steven\/argos/i);
+  // El desenlace se lee EN la pestaña de roles, sin abrir nada, y dice dónde está la marcha atrás.
+  expect(aviso.closest('details')).toBeNull();
+  expect(aviso).toHaveTextContent(/se puede deshacer desde «Historial y JSON»/i);
+});
+
+it('FAMILIA 6: un rol pasado del tope NO se puede aplicar a otro bot: lo dejaría SORDO', async () => {
+  const changes: ChangeRequest[] = [];
+  // 1150 puntos de código pero 2300 unidades UTF-16: la base lo acepta y el adaptador desplegado
+  // rechaza cada sobre de ese alias en silencio. Es el fallo que no da ningún error.
+  const conEmojis = '🙂'.repeat(1150);
+  servirConfig(() => ({
+    ...snapshotDeConfig(1),
+    agents: [
+      { tenant_id: 'Steven', alias: 'zeus', role_brief: conEmojis, enabled: true },
+      { tenant_id: 'Steven', alias: 'argos', role_brief: null, enabled: true },
+    ],
+  }));
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, ROLES);
+
+  await user.selectOptions(await screen.findByLabelText(/bot que recibirá el rol/i), 'Steven/argos');
+  expect(screen.getByRole('button', { name: /aplicar el rol a ese bot/i })).toBeDisabled();
+  expect(screen.getByText(/lo dejaría SORDO/i)).toBeInTheDocument();
+  expect(changes).toEqual([]);
+});
+
+it('FAMILIA 6: un gateway que no publica el registro de agentes no inventa un catálogo vacío', async () => {
+  servirConfig(() => snapshotDeConfig(1));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, ROLES);
+
+  // Clave ausente no es lista vacía: «ningún bot tiene rol» sería una afirmación que nadie midió.
+  expect(await screen.findByText(/no publica el registro de agentes/i)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /aplicar el rol a ese bot/i })).not.toBeInTheDocument();
 });
