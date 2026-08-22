@@ -34,6 +34,14 @@ export interface PtySessionOptions {
   sessionId: string;
   websocketPath: string;
   ticket: string;
+  /**
+   * Observación en solo lectura: la consola NO manda teclas por este canal.
+   *
+   * Es una traba de este cliente, no una frontera de seguridad: el candado real es el
+   * `attach-session -r` con el que el agente PTY se engancha a la tmux del alias, del lado del
+   * servidor. Se dicen las dos cosas para que nadie confunda una con la otra.
+   */
+  readOnly?: boolean;
   onClosed?: (view: PtySessionView) => void;
 }
 
@@ -84,6 +92,7 @@ interface PtyEntry {
   worker?: Worker;
   decoder?: TextDecoder;
   view: PtySessionView;
+  readOnly: boolean;
   inputChunks: string[];
   inputTimer?: number;
   resizeObserver?: ResizeObserver;
@@ -116,6 +125,8 @@ function publish(entry: PtyEntry, patch: Partial<PtySessionView>): void {
 
 /** The input buffer coalesces keystrokes over 8 ms so a burst is one frame, not one frame per key. */
 function queueInput(entry: PtyEntry, data: string): void {
+  // Canal de observación: la tecla se descarta acá, nunca llega al socket.
+  if (entry.readOnly) return;
   entry.inputChunks.push(data);
   if (entry.inputTimer !== undefined) return;
   entry.inputTimer = window.setTimeout(() => {
@@ -271,7 +282,8 @@ export function ensurePtySession(options: PtySessionOptions): void {
 
   const colorScheme = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: light)') : undefined;
   const terminal = new Terminal({
-    cursorBlink: true,
+    cursorBlink: options.readOnly !== true,
+    disableStdin: options.readOnly === true,
     convertEol: false,
     fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace",
     fontSize: 13,
@@ -287,6 +299,7 @@ export function ensurePtySession(options: PtySessionOptions): void {
     fitAddon,
     container,
     view: { state: 'connecting', notices: [] },
+    readOnly: options.readOnly === true,
     inputChunks: [],
     disposers: [],
     onClosed: options.onClosed,

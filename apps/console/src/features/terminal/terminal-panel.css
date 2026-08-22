@@ -36,6 +36,13 @@
 .terminal-channel-state[data-status="denied"] strong, .terminal-channel-state[data-status="blocked"] strong { background: var(--red-dim); color: var(--red); }
 .terminal-channel-state[data-status="offline"] { color: var(--amber); }
 .terminal-channel-state[data-status="offline"] strong { background: var(--amber-dim); color: var(--amber); }
+/* TUI en vivo. `no_tui` es ámbar, nunca verde: el alias existe pero no tiene pantalla que emitir. */
+.terminal-live-tui-state[data-status="available"] { color: var(--mint); }
+.terminal-live-tui-state[data-status="available"] strong { background: var(--mint-dim); color: var(--mint); }
+.terminal-live-tui-state[data-status="no_tui"], .terminal-live-tui-state[data-status="unknown"] { color: var(--amber); }
+.terminal-live-tui-state[data-status="no_tui"] strong, .terminal-live-tui-state[data-status="unknown"] strong { background: var(--amber-dim); color: var(--amber); }
+.pty-session-bar[data-read-only] { border-color: var(--mint-dim); }
+.pty-bar-readonly { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; background: var(--mint-dim); color: var(--mint); font-size: .56rem; letter-spacing: .04em; text-transform: uppercase; }
 
 /* Permanent bar over the terminal: alias, container, user, mode, countdown, hard close. */
 .pty-session-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 8px; padding: 8px 11px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--terminal-raised); color: var(--muted); font-size: .63rem; }

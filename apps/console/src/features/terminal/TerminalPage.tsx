@@ -1,11 +1,11 @@
-import { Activity, RadioTower, RefreshCw, ShieldCheck, TerminalSquare, Wifi } from 'lucide-react';
+import { Activity, MonitorPlay, RadioTower, RefreshCw, ShieldCheck, TerminalSquare, Wifi } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Badge, PageHeader } from '../../components/ui';
 import { permissionState } from '../../lib';
 import { listTerminalTargets } from './api';
-import { buildFleetAgents, countOnlinePtyTargets } from './fleet';
+import { buildFleetAgents, countLiveTuiTargets, countOnlinePtyTargets } from './fleet';
 import { OperatorWorkspace } from './OperatorWorkspace';
 import { ultimateTerminalGate } from './plugin';
 import { deriveTerminalRelayState } from './relay-status';
@@ -44,6 +44,7 @@ export function TerminalPage() {
   const connectState = permissionState(verifiedAccess, 'ultimate-terminal.connect');
   const ptyEnabled = ultimateTerminalGate(verifiedCapability, verifiedAccess).enabled;
   const ptyOnline = countOnlinePtyTargets(verifiedTargets?.items);
+  const tuiOnline = countLiveTuiTargets(verifiedTargets?.items);
   const fleetLoading = (status.loading && !status.data) || (topology.loading && !topology.data);
   const fleetError = status.error ?? topology.error;
   const fleetLabel = fleetLoading
@@ -79,7 +80,7 @@ export function TerminalPage() {
       <PageHeader
         eyebrow={fleetLabel}
         title="Ultimate Terminal"
-        description="Control operativo multiagente sobre mensajes durables, leases y ACK del servidor. PTY se activa únicamente cuando el backend declara un target exacto."
+        description="Transmisión en vivo de la TUI de cada agente —la sesión tmux que está corriendo ahora— en solo lectura. Un alias sólo emite si el servidor publica su modo harness; el resto queda con su motivo escrito, nunca en verde."
         actions={<button className="button secondary" type="button" onClick={refreshAll} disabled={status.loading && !status.data}><RefreshCw size={16} aria-hidden="true" /> Sincronizar todo</button>}
       />
 
@@ -89,6 +90,7 @@ export function TerminalPage() {
         <article><span className="overview-icon"><ShieldCheck size={17} aria-hidden="true" /></span><div><small>Terminal access</small><strong>{connectState.toUpperCase()}</strong></div><Badge tone={connectState === 'allowed' ? 'online' : connectState === 'denied' ? 'danger' : 'unknown'}>RBAC</Badge></article>
         <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Interactive channel</small><strong>{ptyEnabled ? 'PTY + FEED' : 'DURABLE FEED'}</strong></div><Badge tone={ptyEnabled ? 'online' : 'info'}>CLIENT</Badge></article>
         <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Alias con PTY online</small><strong>{ptyOnline === undefined ? 'UNKNOWN' : `${ptyOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={ptyOnline ? 'online' : ptyOnline === 0 ? 'warning' : 'unknown'}>TARGETS</Badge></article>
+        <article><span className="overview-icon"><MonitorPlay size={17} aria-hidden="true" /></span><div><small>Alias que emiten su TUI</small><strong>{tuiOnline === undefined ? 'UNKNOWN' : `${tuiOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={tuiOnline ? 'online' : tuiOnline === 0 ? 'warning' : 'unknown'}>TUI</Badge></article>
       </div>
 
       {relayUnavailable ? (

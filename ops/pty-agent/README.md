@@ -114,11 +114,39 @@ PKI_DIR=/home/stev/.config/cauce-v3/pty-pki/jarvis
 ALIAS_KEY_FILE=/home/stev/.config/cauce-v3/pty-pki/jarvis/alias-key.hex
 # Opcional. Sólo si el cert del relay NO trae SAN de IP:
 # RELAY_SERVER_NAME=relay.cauce.internal
-# Opcional. Modo harness: argv FIJO, en JSON, para adjuntarse a la TUI del agente:
+# Opcional. Modo harness: argv FIJO, en JSON, para adjuntarse a la TUI del agente.
+# Si NO se declara, el lanzador lo DERIVA de la sesión tmux viva del alias (ver abajo).
 # HARNESS_COMMAND=["/usr/local/bin/openclaw","attach","--session","jarvis"]
 # Opcional. Por defecto: [["/bin/bash","-l"],["/bin/sh","-l"]]
 # SHELL_CANDIDATES=[["/bin/bash","-l"],["/bin/sh","-l"]]
 ```
+
+#### Modo `harness` = la TUI que el agente ya está corriendo
+
+Cada agente de la flota vive dentro de una sesión tmux `cauce-<alias>` **en el socket `cauce`**
+(`tmux -L cauce`, no el socket por defecto: `tmux ls` a secas no la ve, y por eso durante meses
+pareció que esa TUI no existía). El modo `harness` es lo único que emite esa pantalla; `shell`
+abre una terminal nueva, que no es lo que se pide cuando se quiere *ver qué está haciendo*.
+
+Desde 2026-08-22, si `HARNESS_COMMAND` no está declarado, `cauce-pty-launcher.sh` lo **deriva**
+midiendo dentro del contenedor, como el usuario del agente:
+
+```
+tmux -L cauce attach-session -r -f ignore-size -t cauce-<alias>
+```
+
+* `-r` → cliente de **solo lectura**: desde la consola no se puede teclear en la TUI ajena. Éste
+  es el candado real; que la consola no mande teclas es una traba adicional del navegador.
+* `-f ignore-size` → el tamaño del navegador no renegocia el de la sesión, así mirar no le
+  encoge el panel a la persona que está trabajando en esa misma tmux.
+
+Si el contenedor **no tiene tmux** o **no hay sesión `cauce-<alias>` viva**, no se deriva nada:
+el agente sigue anunciando sólo `shell` y la consola dice *"Sin TUI que emitir"* con el motivo.
+Nunca se anuncia una TUI que no existe. En el journal del alias queda la línea
+`harness derived from tmux ...` o `no live tmux session for alias=...`.
+
+Para que la consola pueda pedirlo, el `grants.json` del gateway tiene que listar `harness`
+además de `shell` en los modos de ese alias.
 
 Recordá que **kratos usa fish**: los heredocs y las comillas anidadas fallan por ssh. Para ejecutar
 algo remoto, empaquetá el comando y decodificalo del otro lado:

@@ -9,7 +9,9 @@ import {
   Clock3,
   Container,
   LockKeyhole,
+  Eye,
   MessageSquareText,
+  MonitorPlay,
   PowerOff,
   RefreshCw,
   Send,
@@ -33,11 +35,19 @@ import {
   type TerminalTargetsSnapshot,
 } from './api';
 import type { FleetAgent } from './fleet';
-import { TERMINAL_ACCESS_LABELS, terminalTargetForAgent, type TerminalTargetResolution } from './fleet';
+import {
+  LIVE_TUI_LABELS,
+  LIVE_TUI_MODE,
+  SHELL_MODE,
+  TERMINAL_ACCESS_LABELS,
+  terminalTargetForAgent,
+  type TerminalTargetResolution,
+} from './fleet';
 import { closePtySession, readPtySession, subscribePtySession } from './pty-session';
-import { terminalChannelGate } from './plugin';
+import { liveTuiGate, terminalChannelGate } from './plugin';
 import {
   formatCountdown,
+  liveTuiReason,
   operatorRouteForAgent,
   ptyReasonProblem,
   ptySecondsLeft,
@@ -168,17 +178,20 @@ function PtySessionDialog({ agent, resolution, pending, error, onCancel, onConfi
   );
 }
 
-function PtySessionBar({ agent, grant, secondsLeft, ticketConsumed, closing, onClose }: {
+function PtySessionBar({ agent, grant, secondsLeft, readOnly, ticketConsumed, closing, onClose }: {
   agent: FleetAgent;
   grant: TerminalSessionGrant;
   secondsLeft?: number;
+  /** El canal es una observación de la TUI: la consola no manda teclas. */
+  readOnly: boolean;
   ticketConsumed: boolean;
   closing: boolean;
   onClose: () => void;
 }) {
   return (
-    <div className="pty-session-bar" aria-label="Sesión PTY activa">
-      <span className="pty-bar-alias"><TerminalSquare size={14} aria-hidden="true" /> <strong>{agent.alias}</strong></span>
+    <div className="pty-session-bar" aria-label="Sesión PTY activa" data-read-only={readOnly || undefined}>
+      <span className="pty-bar-alias">{readOnly ? <MonitorPlay size={14} aria-hidden="true" /> : <TerminalSquare size={14} aria-hidden="true" />} <strong>{agent.alias}</strong></span>
+      {readOnly ? <span className="pty-bar-readonly"><Eye size={13} aria-hidden="true" /> TUI en vivo · solo lectura</span> : null}
       <span><Container size={13} aria-hidden="true" /> <span className="mono"><Unknown value={grant.target.container} /></span></span>
       <span><UserCog size={13} aria-hidden="true" /> <span className="mono"><Unknown value={grant.target.runtime_user} /></span></span>
       <span><Braces size={13} aria-hidden="true" /> <span className="mono">{grant.target.mode}</span></span>
@@ -258,6 +271,8 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   const [closingChannel, setClosingChannel] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [showInspector, setShowInspector] = useState(false);
+  /** Panel que ya intentó abrir su TUI sola. Es por panel y no se reintenta. */
+  const autoOpenedRef = useRef<string>(undefined);
 
   const currentAgent = agents.find((agent) => agent.id === session.agent.id) ?? session.agent;
   const liveSession = { ...session, agent: currentAgent };
@@ -284,6 +299,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
     return () => window.clearInterval(interval);
   }, [channelView?.state, ptyChannelLive]);
 
+
   const transcript = transcriptForSession(messages.data, liveSession);
   const deliveries = sessionDeliveries(transcript);
   const selectedDelivery = deliveries.find((delivery) => delivery.delivery_id === selectedDeliveryId) ?? deliveries.at(-1);
@@ -297,6 +313,35 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   const channel = terminalChannelGate(capability, access, targets, liveSession.agent);
   const channelLabel = channel && channel.status !== 'blocked' ? TERMINAL_ACCESS_LABELS[channel.status] : 'PTY no habilitado';
   const channelTarget = terminalTargetForAgent(targets?.items, liveSession.agent);
+  const liveTui = liveTuiGate(capability, access, targets, liveSession.agent);
+  const liveTuiLabel = liveTui.status === 'blocked' ? 'TUI no habilitada' : LIVE_TUI_LABELS[liveTui.status];
+  // Cuando la TUI cae por el mismo motivo que el canal PTY, no se repite la frase: repetirla
+  // hace parecer que son dos hallazgos y ensucia la lectura. Se dice que es el mismo y se apunta.
+  const liveTuiDetail = liveTui.reason === channel?.reason
+    ? 'Sin canal PTY no hay TUI que emitir: el motivo es el mismo del canal, acá arriba.'
+    : liveTui.reason;
+  // El canal abierto puede ser la TUI (observación) o una shell (escribe). Manda lo que otorgó
+  // el servidor en el grant, no lo que la pestaña creía haber pedido.
+  const channelIsLiveTui = (grant?.target.mode ?? liveSession.channelMode) === LIVE_TUI_MODE;
+  /**
+   * La vista por defecto de una pestaña es la TUI viva del agente, no el feed.
+   *
+   * Steven lo pidió así: abrir la vista, elegir un agente y VER lo que está haciendo ahora —
+   * sin elegir modo y sin escribir un motivo. Se intenta UNA sola vez por panel: un 403 o un
+   * 409 del gateway no puede convertirse en un bucle de pedidos contra el plano de control.
+   * Si el alias no publica `harness`, no se pide nada y la pestaña se queda en el feed con el
+   * motivo medido a la vista.
+   */
+  useEffect(() => {
+    if (!liveTui.enabled) return;
+    if (autoOpenedRef.current === liveSession.id) return;
+    if (grants[liveSession.id] || closedChannels[liveSession.id]) return;
+    autoOpenedRef.current = liveSession.id;
+    void requestChannel(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
+    // `requestChannel` se recrea en cada render; incluirlo acá volvería a disparar la apertura.
+    // La guarda real es `autoOpenedRef`, que es por panel y sobrevive a los renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveTui.enabled]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -340,27 +385,49 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
     messages.reload();
   }
 
-  async function requestChannel(reason: string) {
-    if (!channel?.enabled) return;
+  async function requestChannel(reason: string, mode: string) {
+    if (mode === LIVE_TUI_MODE ? !liveTui.enabled : !channel?.enabled) return;
     setRequesting(true);
     setRequestError(undefined);
     try {
+      // Un grant es de UN modo. Pasar de la TUI a una shell (o al revés) no es cambiar de
+      // pestaña: es otra autorización, con su motivo y su fila de auditoría. La sesión anterior
+      // se suelta contra el servidor primero, para no dejarla colgada del otro lado.
+      const current = grants[liveSession.id];
+      if (current && current.target.mode !== mode) await onReleaseChannel(liveSession.id);
       const issued = await createTerminalSession({
         tenant_id: liveSession.agent.tenantId,
         alias: liveSession.agent.alias,
-        mode: channelTarget?.modes[0] ?? 'shell',
+        mode,
         reason,
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
       });
       onGrant(liveSession.id, issued);
-      onUpdate({ ...liveSession, mode: 'pty' });
+      onUpdate({ ...liveSession, mode: 'pty', channelMode: mode, liveTuiAttempted: true });
       setShowPtyDialog(false);
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : 'El servidor rechazó la sesión PTY.');
+      // Un rechazo se cuenta como intento: la apertura automática no vuelve a golpear al gateway.
+      if (mode === LIVE_TUI_MODE) onUpdate({ ...liveSession, liveTuiAttempted: true });
     } finally {
       setRequesting(false);
     }
+  }
+
+  /**
+   * La TUI se abre de un clic: no hay diálogo de motivo porque no se está abriendo una shell,
+   * se está mirando la pantalla que el agente ya tiene pintada. El motivo igual viaja y queda
+   * auditado, y dice que fue automático.
+   */
+  function openLiveTui() {
+    if (!liveTui.enabled) return;
+    if (grant && !closedChannels[liveSession.id] && grant.target.mode === LIVE_TUI_MODE) {
+      onUpdate({ ...liveSession, mode: 'pty' });
+      return;
+    }
+    setRequestError(undefined);
+    void requestChannel(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
   }
 
   async function releaseChannel() {
@@ -375,7 +442,8 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
 
   function selectPtyMode() {
     if (!channel?.enabled) return;
-    if (grants[liveSession.id] && !closedChannels[liveSession.id]) {
+    const current = grants[liveSession.id];
+    if (current && !closedChannels[liveSession.id] && current.target.mode !== LIVE_TUI_MODE) {
       onUpdate({ ...liveSession, mode: 'pty' });
     } else {
       setRequestError(undefined);
@@ -402,8 +470,16 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
                <button type="button" aria-pressed={liveSession.mode === 'transcript'} data-active={liveSession.mode === 'transcript' || undefined} onClick={() => onUpdate({ ...liveSession, mode: 'transcript' })}><MessageSquareText size={14} aria-hidden="true" /> Feed</button>
                <button
                  type="button"
-                 aria-pressed={liveSession.mode === 'pty'}
-                 data-active={liveSession.mode === 'pty' || undefined}
+                 aria-pressed={liveSession.mode === 'pty' && channelIsLiveTui}
+                 data-active={(liveSession.mode === 'pty' && channelIsLiveTui) || undefined}
+                 disabled={!liveTui.enabled}
+                 onClick={openLiveTui}
+                 title={liveTui.reason}
+               ><MonitorPlay size={14} aria-hidden="true" /> TUI</button>
+               <button
+                 type="button"
+                 aria-pressed={liveSession.mode === 'pty' && !channelIsLiveTui}
+                 data-active={(liveSession.mode === 'pty' && !channelIsLiveTui) || undefined}
                  disabled={!channel?.enabled}
                  onClick={selectPtyMode}
                  title={channel?.reason}
@@ -424,6 +500,12 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
           <span>{channel?.reason ?? 'Canal PTY UNKNOWN.'}</span>
         </p>
 
+        <p className="terminal-channel-state terminal-live-tui-state" data-status={liveTui.status}>
+          <MonitorPlay size={13} aria-hidden="true" />
+          <strong>{liveTuiLabel}</strong>
+          <span>{liveTuiDetail}</span>
+        </p>
+
         <div className="terminal-connection-bar" role="status">
           <span className={`connection-dot ${messages.error ? 'error' : ptyChannelLive ? 'open' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
           <strong>{messages.error ? 'FEED DEGRADADO' : ptyChannelLive ? 'POLLING EN PAUSA' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
@@ -438,6 +520,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
                  agent={liveSession.agent}
                  grant={grant}
                  secondsLeft={ptySecondsLeft(grant.expires_at, now)}
+                 readOnly={channelIsLiveTui}
                  ticketConsumed={channelView?.state === 'open'}
                  closing={closingChannel}
                  onClose={() => void releaseChannel()}
@@ -447,6 +530,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
                    websocketPath={grant.websocket_path || channel.websocketPath}
                    sessionId={grant.session_id}
                    ticket={grant.ticket}
+                   readOnly={channelIsLiveTui}
                    onClosed={() => onChannelClosed(liveSession.id)}
                    onRequestNewSession={() => { void onReleaseChannel(liveSession.id).then(() => { setRequestError(undefined); setShowPtyDialog(true); }); }}
                  />
@@ -511,7 +595,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
           pending={requesting}
           error={requestError}
           onCancel={() => setShowPtyDialog(false)}
-          onConfirm={(reason) => void requestChannel(reason)}
+          onConfirm={(reason) => void requestChannel(reason, channelTarget?.modes.includes(SHELL_MODE) ? SHELL_MODE : channelTarget?.modes[0] ?? SHELL_MODE)}
         />
       ) : null}
     </div>
