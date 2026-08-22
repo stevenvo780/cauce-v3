@@ -1,7 +1,10 @@
 import type { TerminalTarget } from './api';
 import {
   buildFleetAgents,
+  countLiveTuiTargets,
   countOnlinePtyTargets,
+  preferredTerminalMode,
+  resolveLiveTui,
   resolveTerminalTarget,
   terminalTargetForAgent,
   terminalTargetMatchesAgent,
@@ -100,4 +103,44 @@ it('never resolves a duplicated alias without its tenant', () => {
   ] });
   expect(agents.every((agent) => !terminalTargetMatchesAgent('operator', agent))).toBe(true);
   expect(terminalTargetMatchesAgent('Miguel:operator', agents.find((agent) => agent.tenantId === 'Miguel')!)).toBe(true);
+});
+
+/* -------------------------------------------------------------------------- */
+/* TUI en vivo                                                                */
+/* -------------------------------------------------------------------------- */
+
+const zeus = { id: 'steven:zeus', tenantId: 'Steven', alias: 'zeus', roomIds: [], roomMembership: {}, leaseState: 'online' as const };
+
+it('sólo declara TUI en vivo cuando el servidor publica el modo harness', () => {
+  expect(resolveLiveTui([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })], zeus))
+    .toMatchObject({ status: 'available' });
+
+  // CONTROL NEGATIVO: mismo destino, autorizado y online, pero sin el modo. No hay TUI.
+  const sinTui = resolveLiveTui([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell'] })], zeus);
+  expect(sinTui.status).toBe('no_tui');
+  expect(sinTui.reason).toMatch(/no publica el modo harness/i);
+  expect(sinTui.reason).toMatch(/Modos publicados: shell/);
+});
+
+it('propaga el motivo del destino cuando la puerta se cierra antes de llegar al modo', () => {
+  expect(resolveLiveTui(null, zeus)).toMatchObject({ status: 'unknown' });
+  expect(resolveLiveTui([], zeus)).toMatchObject({ status: 'unknown' });
+  expect(resolveLiveTui([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['harness'], authorized: false, reason: 'no_grant' })], zeus))
+    .toMatchObject({ status: 'blocked', reason: 'no_grant' });
+  expect(resolveLiveTui([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['harness'], pty_state: 'agent_offline', reason: 'sin agente.' })], zeus).status)
+    .toBe('blocked');
+});
+
+it('prefiere la TUI viva sobre la shell y cuenta sólo los destinos que pueden emitirla', () => {
+  expect(preferredTerminalMode(target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] }))).toBe('harness');
+  expect(preferredTerminalMode(target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell'] }))).toBe('shell');
+  expect(preferredTerminalMode(undefined)).toBe('shell');
+
+  expect(countLiveTuiTargets(null)).toBeUndefined();
+  expect(countLiveTuiTargets([
+    target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] }),
+    target({ tenant_id: 'Steven', alias: 'kant', modes: ['shell'] }),
+    target({ tenant_id: 'Steven', alias: 'argos', modes: ['shell', 'harness'], pty_state: 'agent_offline' }),
+    target({ tenant_id: 'Isa', alias: 'salva', modes: ['harness'], authorized: false }),
+  ])).toBe(1);
 });

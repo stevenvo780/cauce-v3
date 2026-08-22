@@ -1,7 +1,7 @@
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
 import { permissionState } from '../../lib';
 import type { TerminalTargetsSnapshot } from './api';
-import { resolveTerminalTarget, type FleetAgent, type TerminalAccessStatus } from './fleet';
+import { resolveLiveTui, resolveTerminalTarget, type FleetAgent, type LiveTuiStatus, type TerminalAccessStatus } from './fleet';
 
 export const ULTIMATE_TERMINAL_PLUGIN_ID = 'ultimate-terminal.client';
 export const ULTIMATE_TERMINAL_CAPABILITY = 'terminal.pty.client';
@@ -80,5 +80,35 @@ export function terminalChannelGate(
     status: resolution.status,
     reason: resolution.reason,
     websocketPath: declared,
+  };
+}
+
+/** Igual que `terminalChannelGate`, pero para la TUI viva del agente (modo `harness`). */
+export interface LiveTuiGate {
+  enabled: boolean;
+  status: LiveTuiStatus | 'blocked';
+  reason: string;
+  websocketPath?: string;
+}
+
+/**
+ * Puerta completa de la TUI en vivo: la puerta del plugin (RBAC + capability + endpoint
+ * same-origin), la autoridad por destino Y que el servidor publique el modo `harness`.
+ * Cualquier eslabón que no sea un permiso explícito deja la TUI cerrada, con su motivo.
+ */
+export function liveTuiGate(
+  capability: TerminalCapability | undefined,
+  access: ConsoleAccess | undefined,
+  targets: TerminalTargetsSnapshot | undefined,
+  agent: FleetAgent,
+): LiveTuiGate {
+  const channel = terminalChannelGate(capability, access, targets, agent);
+  if (channel.status === 'blocked') return { enabled: false, status: 'blocked', reason: channel.reason };
+  const live = resolveLiveTui(targets?.items, agent);
+  return {
+    enabled: live.status === 'available',
+    status: live.status,
+    reason: live.reason,
+    ...(channel.websocketPath ? { websocketPath: channel.websocketPath } : {}),
   };
 }

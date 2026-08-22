@@ -174,10 +174,56 @@ publish_agent() {
   docker_control exec --user 0 "$container_id" chmod 0555 "$agent_path" || die 'cannot secure the published PTY agent'
 }
 
+# Socket de tmux de la flota. NO es el socket por defecto: `tmux ls` a secas no ve estas
+# sesiones, que es por lo que la TUI de los agentes parecia no existir.
+TMUX_SOCKET=${CAUCE_PTY_TMUX_SOCKET:-cauce}
+
+# El modo `harness` del agente PTY es lo unico que emite la TUI que el agente YA esta corriendo;
+# `shell` abre una terminal nueva, que no es lo que se pidio ver. Si el operador no declaro un
+# HARNESS_COMMAND, se deriva de la sesion tmux viva del alias, MEDIDA dentro del contenedor y
+# como el usuario del agente (el socket es por uid). Si no hay tmux o no hay sesion, se devuelve
+# vacio y el agente sigue anunciando solo `shell`: no se inventa una TUI que no existe.
+#
+#   -r              cliente de SOLO LECTURA: desde la consola no se puede teclear en la TUI ajena.
+#   -f ignore-size  el tamano del navegador no renegocia el de la sesion, asi mirar no le encoge
+#                   el panel al humano que esta trabajando en esa misma tmux.
+derive_harness_command() {
+  local tmux_path session probe
+  tmux_path=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+    sh -c 'command -v tmux' 2>/dev/null) || return 1
+  tmux_path=${tmux_path//[$'\r\n']/}
+  [[ -n $tmux_path ]] || return 1
+  valid_absolute_path "$tmux_path" || return 1
+  session="cauce-$alias_name"
+  # `has-session` es la comprobacion por EFECTO: existe el binario Y existe la sesion.
+  probe=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+    "$tmux_path" -L "$TMUX_SOCKET" has-session -t "=$session" 2>&1) || return 1
+  [[ -z ${probe//[$'\r\n']/} ]] || return 1
+  TMUX_PATH_FOUND=$tmux_path
+  TMUX_SESSION_FOUND=$session
+  return 0
+}
+
 publish_bundle() {
   local shell_candidates harness_command
   shell_candidates=${CONFIG[SHELL_CANDIDATES]:-'[["/bin/bash","-l"],["/bin/sh","-l"]]'}
-  harness_command=${CONFIG[HARNESS_COMMAND]:-null}
+  harness_command=${CONFIG[HARNESS_COMMAND]:-}
+  if [[ -z $harness_command ]]; then
+    TMUX_PATH_FOUND=''
+    TMUX_SESSION_FOUND=''
+    if derive_harness_command; then
+      harness_command=$(CAUCE_TMUX_PATH=$TMUX_PATH_FOUND CAUCE_TMUX_SOCKET=$TMUX_SOCKET \
+        CAUCE_TMUX_SESSION=$TMUX_SESSION_FOUND PYTHONDONTWRITEBYTECODE=1 python3 -c \
+        'import json,os;print(json.dumps([os.environ["CAUCE_TMUX_PATH"],"-L",os.environ["CAUCE_TMUX_SOCKET"],"attach-session","-r","-f","ignore-size","-t",os.environ["CAUCE_TMUX_SESSION"]]))') \
+        || die "cannot assemble the derived harness command"
+      printf 'cauce-pty-launcher: harness derived from tmux alias=%s socket=%s session=%s\n' \
+        "$alias_name" "$TMUX_SOCKET" "$TMUX_SESSION_FOUND" >&2
+    else
+      harness_command=null
+      printf 'cauce-pty-launcher: no live tmux session for alias=%s socket=%s; agent will publish shell only\n' \
+        "$alias_name" "$TMUX_SOCKET" >&2
+    fi
+  fi
   local_bundle=$(mktemp "${TMPDIR:-/tmp}/.cauce-pty-bundle-$alias_name.XXXXXX")
   chmod 0600 "$local_bundle"
   CAUCE_PTY_BUNDLE_TENANT=$tenant \

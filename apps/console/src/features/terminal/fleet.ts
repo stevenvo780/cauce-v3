@@ -181,3 +181,75 @@ export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefin
 export function countOnlinePtyTargets(targets: TerminalTarget[] | null | undefined): number | undefined {
   return targets ? targets.filter((target) => target.authorized && target.pty_state === 'online').length : undefined;
 }
+
+/* -------------------------------------------------------------------------- */
+/* TUI en vivo                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * El modo `harness` del agente PTY es el que se engancha a la TUI que el agente YA está
+ * corriendo (su `tmux`), en vez de abrir una shell nueva. Es lo que Steven pidió ver: no una
+ * terminal más, sino la pantalla del agente ahora mismo.
+ *
+ * Que ese modo exista es una decisión del servidor: el agente sólo lo anuncia si tiene un
+ * `HARNESS_COMMAND` configurado, y el gateway sólo lo lista si además hay grant. La consola no
+ * lo infiere nunca; si no está publicado, lo dice con esas palabras.
+ */
+export const LIVE_TUI_MODE = 'harness';
+
+/** Modo de shell nueva. Escribe: sigue exigiendo motivo escrito a mano. */
+export const SHELL_MODE = 'shell';
+
+export type LiveTuiStatus = 'available' | 'no_tui' | 'blocked' | 'unknown';
+
+export interface LiveTuiResolution {
+  status: LiveTuiStatus;
+  /** Siempre poblado: un botón gris sin motivo es lo mismo que no decir nada. */
+  reason: string;
+  target?: TerminalTarget;
+}
+
+export const LIVE_TUI_LABELS: Readonly<Record<LiveTuiStatus, string>> = {
+  available: 'TUI en vivo',
+  no_tui: 'Sin TUI que emitir',
+  blocked: 'TUI bloqueada',
+  unknown: 'TUI desconocida',
+};
+
+/**
+ * ¿Puede este alias emitir su TUI? Se apoya en la misma autoridad por destino que el resto del
+ * plano PTY y agrega una sola pregunta: ¿el servidor publicó el modo `harness` para él?
+ */
+export function resolveLiveTui(targets: TerminalTarget[] | null | undefined, agent: FleetAgent): LiveTuiResolution {
+  const base = resolveTerminalTarget(targets, agent);
+  if (base.status !== 'allowed') {
+    return {
+      status: base.status === 'unknown' ? 'unknown' : 'blocked',
+      reason: base.reason,
+      ...(base.target ? { target: base.target } : {}),
+    };
+  }
+  const target = base.target;
+  if (!target) return { status: 'unknown', reason: base.reason };
+  if (target.modes.includes(LIVE_TUI_MODE)) {
+    return { status: 'available', reason: 'El servidor publica el modo harness: hay TUI en vivo para este alias.', target };
+  }
+  return {
+    status: 'no_tui',
+    reason: `El agente PTY de ${agent.alias} no publica el modo ${LIVE_TUI_MODE}: no hay TUI que emitir, sólo shell nueva. Modos publicados: ${target.modes.length ? target.modes.join(', ') : 'ninguno'}.`,
+    target,
+  };
+}
+
+/** Modo preferido para este destino: la TUI viva si existe; si no, lo que el servidor publique. */
+export function preferredTerminalMode(target: TerminalTarget | undefined): string {
+  if (target?.modes.includes(LIVE_TUI_MODE)) return LIVE_TUI_MODE;
+  return target?.modes[0] ?? SHELL_MODE;
+}
+
+/** Cuántos destinos pueden emitir su TUI. Inventario ausente sigue siendo UNKNOWN. */
+export function countLiveTuiTargets(targets: TerminalTarget[] | null | undefined): number | undefined {
+  return targets
+    ? targets.filter((target) => target.authorized && target.pty_state === 'online' && target.modes.includes(LIVE_TUI_MODE)).length
+    : undefined;
+}

@@ -8,6 +8,10 @@ export interface OperatorSession {
   sourceRoomId: string;
   openedAt: string;
   mode: 'transcript' | 'pty';
+  /** Canal PTY pedido para esta pestaña: `harness` es la TUI viva, `shell` es una shell nueva. */
+  channelMode?: string;
+  /** La apertura automática de la TUI se intenta UNA vez por pestaña; un 403 no se reintenta en bucle. */
+  liveTuiAttempted?: boolean;
 }
 
 export interface OperatorRoute {
@@ -146,6 +150,18 @@ export function sessionDeliveries(items: TranscriptItem[]): DeliveryView[] {
 /** A PTY grant is worthless without a written justification: it is what lands in the audit row. */
 export const PTY_REASON_MIN_LENGTH = 8;
 export const PTY_REASON_MAX_LENGTH = 280;
+
+/**
+ * Motivo de una observación de TUI en solo lectura.
+ *
+ * Mirar la pantalla que el agente ya está pintando no es lo mismo que abrirle una shell: no se
+ * le pide al operador que escriba una justificación a mano para mirar. Pero la fila de auditoría
+ * NO queda vacía ni mentida: dice exactamente qué se abrió, sobre quién, y que fue automático.
+ * Una shell (`shell`) sigue exigiendo motivo escrito a mano, porque escribe.
+ */
+export function liveTuiReason(alias: string): string {
+  return `Observacion automatica de la TUI en vivo de ${alias} (solo lectura) desde Ultimate Terminal.`;
+}
 
 /** Returns the operator-facing problem with a justification, or undefined when it is acceptable. */
 export function ptyReasonProblem(reason: string): string | undefined {

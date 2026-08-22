@@ -14,6 +14,8 @@ interface PtyTerminalProps {
   sessionId: string;
   /** Single-use, 30 s grant. It is held in memory only and never persisted. */
   ticket: string;
+  /** Observación de la TUI del agente: no se manda una sola tecla por este canal. */
+  readOnly?: boolean;
   onClosed?: (view: PtySessionView) => void;
   /** A new channel needs a new session: that re-runs authorisation and audit server-side. */
   onRequestNewSession?: () => void;
@@ -31,7 +33,7 @@ const STATE_LABELS: Readonly<Record<PtySessionView['state'], string>> = {
  * The component owns no terminal state: it lends a wrapper and the session manager reparents
  * the live node into it. Unmounting hides the terminal, it does not kill the session.
  */
-export default function PtyTerminal({ websocketPath, sessionId, ticket, onClosed, onRequestNewSession }: PtyTerminalProps) {
+export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly, onClosed, onRequestNewSession }: PtyTerminalProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const closedRef = useRef(onClosed);
   closedRef.current = onClosed;
@@ -45,9 +47,10 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, onClosed
       sessionId,
       websocketPath,
       ticket,
+      readOnly,
       onClosed: (closedView) => closedRef.current?.(closedView),
     });
-  }, [sessionId, ticket, websocketPath]);
+  }, [readOnly, sessionId, ticket, websocketPath]);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -58,10 +61,11 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, onClosed
 
   const finished = view.state === 'closed' || view.state === 'error';
   return (
-    <div className="pty-shell">
+    <div className="pty-shell" data-read-only={readOnly || undefined}>
       <div className="pty-status" role="status">
         <span>
           <span className={`connection-dot ${view.state}`} aria-hidden="true" /> Conexión: {STATE_LABELS[view.state]}
+          {readOnly ? ' · SOLO LECTURA' : ''}
           {view.message ? ` · ${view.message}` : ''}
           {view.closeCode !== undefined ? ` (código ${view.closeCode})` : ''}
         </span>
