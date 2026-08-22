@@ -57,6 +57,12 @@
 #   CAUCE_PROD_HOST      host SSH de producción. Obligatoria.
 #   CAUCE_PROD_ENV_FILE  ruta del env en el host (default /etc/cauce-v3/prod.env).
 #   CAUCE_COMPOSE_DIR    dónde vive deploy/compose.yaml en el host (default /datos/workspaces/cauce-v3).
+#   CAUCE_COMPOSE_FILES  juego COMPLETO de ficheros de compose con el que producción está
+#                        levantada, separados por espacios. Si no se declara, se pregunta al
+#                        propio contenedor (label com.docker.compose.project.config_files).
+#                        Producción se mudó de kratos a agora y allí son dos ficheros y el
+#                        proyecto se llama `cauce-v3-prod`: con un solo fichero y sin cargar el
+#                        env, `ps -q console` devuelve vacío y la verificación miente.
 #   CAUCE_CONSOLE_PROBE  URL con la que se comprueba el 200 (default https://console:8444/ desde
 #                        dentro del propio contenedor, con la CA montada — la misma sonda que ya usa
 #                        el healthcheck de compose, para no inventar una comprobación paralela).
@@ -73,6 +79,21 @@ accion=${1:-ayuda}
 : "${CAUCE_PROD_HOST:?definí CAUCE_PROD_HOST: el host SSH de producción}"
 env_remoto=${CAUCE_PROD_ENV_FILE:-/etc/cauce-v3/prod.env}
 compose_dir=${CAUCE_COMPOSE_DIR:-/datos/workspaces/cauce-v3}
+# Los ficheros de compose con los que producción está LEVANTADA, relativos a compose_dir.
+# Tiene que ser el juego completo: preguntar por un subconjunto le cambia el modelo a compose y
+# `ps -q console` puede devolver vacío aunque el contenedor esté corriendo. Se lee del propio host
+# si no se declara: `docker inspect` sabe con qué ficheros se creó el contenedor, y esa es la
+# fuente menos opinable que hay.
+compose_files=${CAUCE_COMPOSE_FILES:-}
+if [[ -z $compose_files ]]; then
+  compose_files=$(ssh -o BatchMode=yes -o ControlMaster=no -o ControlPath=none "$CAUCE_PROD_HOST" "
+    docker inspect --format '{{ index .Config.Labels \"com.docker.compose.project.config_files\" }}' \
+      \$(docker ps -q --filter label=com.docker.compose.service=console | head -n1) 2>/dev/null | tr ',' ' '
+  " || true)
+  compose_files=${compose_files:-${compose_dir}/deploy/compose.yaml}
+fi
+compose_args=''
+for archivo in $compose_files; do compose_args+=" -f '${archivo}'"; done
 marca=${CAUCE_CONSOLE_MARCA:-La flota ahora}
 # Un ControlPath por host: compartir uno entre hosts distintos ya enrutó órdenes al servidor
 # equivocado en esta flota, y una orden de despliegue no puede depender de esa lotería.
@@ -113,7 +134,7 @@ recrear_console() {
     set -euo pipefail
     cd '${compose_dir}'
     set -a; . '${env_remoto}'; set +a
-    docker compose -f deploy/compose.yaml up -d --no-deps --no-build console
+    docker compose${compose_args} up -d --no-deps --no-build console
   "
 }
 
@@ -129,7 +150,12 @@ verificar() {
   remoto "
     set -euo pipefail
     cd '${compose_dir}'
-    id_corriendo=\$(docker inspect --format '{{.Image}}' \$(docker compose -f deploy/compose.yaml ps -q console))
+    # El env se carga TAMBIÉN acá. Sin él no hay COMPOSE_PROJECT_NAME ni CAUCE_RUNTIME_IMAGE, y
+    # compose falla al interpolar o deduce un proyecto que no existe: en los dos casos `ps -q`
+    # devuelve vacío y esta comprobación acusa un despliegue roto que no lo está. Es un falso
+    # positivo de la verificación, que es la peor clase de fallo que puede tener una verificación.
+    set -a; . '${env_remoto}'; set +a
+    id_corriendo=\$(docker inspect --format '{{.Image}}' \$(docker compose${compose_args} ps -q console))
     id_pineado=\$(docker image inspect --format '{{.Id}}' '${esperado}')
     [ \"\$id_corriendo\" = \"\$id_pineado\" ] || { echo \"el contenedor corre \$id_corriendo y el env pinea \$id_pineado\" >&2; exit 1; }
   " || { printf 'VERIFICACIÓN (a) FALLÓ: el contenedor no corre la imagen pineada\n' >&2; return 1; }
@@ -142,7 +168,7 @@ verificar() {
     set -euo pipefail
     cd '${compose_dir}'
     set -a; . '${env_remoto}'; set +a
-    docker compose -f deploy/compose.yaml exec -T console sh -c '
+    docker compose${compose_args} exec -T console sh -c '
       set -eu
       export SSL_CERT_FILE=/run/secrets/console_tls_ca
       html=\$(wget -q -O - https://console:8444/)
@@ -160,7 +186,7 @@ verificar() {
     set -euo pipefail
     cd '${compose_dir}'
     set -a; . '${env_remoto}'; set +a
-    docker compose -f deploy/compose.yaml exec -T console sh -c '
+    docker compose${compose_args} exec -T console sh -c '
       SSL_CERT_FILE=/run/secrets/console_tls_ca wget -q -S -O /dev/null https://console:8444/ 2>&1 | grep -q \"HTTP/1.1 200\"'
   " || { printf 'VERIFICACIÓN (c) FALLÓ: la consola no contesta 200\n' >&2; return 1; }
 
