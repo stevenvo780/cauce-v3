@@ -4,6 +4,7 @@ export * from "./sdk/backoff.js";
 export * from "./sdk/durable-store.js";
 export * from "./sdk/output-parser.js";
 export * from "./sdk/fanin-synthesizer.js";
+export * from "./sdk/artifact-inliner.js";
 export * from "./sdk/process-runner.js";
 export * from "./sdk/secure-files.js";
 export * from "./sdk/account-credentials.js";

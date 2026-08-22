@@ -19,6 +19,7 @@ import { systemClock } from "./backoff.js";
 import { synthesizeFaninOutput } from "./fanin-synthesizer.js";
 import { validateDeliveryOutput } from "./output-parser.js";
 import { materializeAttachments, type MaterializedAttachments } from "./attachments.js";
+import { inlineLocalArtifacts } from "./artifact-inliner.js";
 
 export type EventPublisher = (event: DeliveryEvent) => Promise<void>;
 
@@ -523,6 +524,16 @@ export class AdapterEngine {
       );
       return;
     }
+
+    // Los adjuntos locales se convierten a `data:` ACÁ, en el único punto donde el turno se
+    // convierte en ACK: el sobre ya está validado, es el que de verdad va a viajar y se pasa una
+    // sola vez por entrega. El parser NO es el sitio —es puro, síncrono y corre sobre candidatos
+    // que muchas veces se descartan—; el porqué completo está en `artifact-inliner.ts`.
+    //
+    // Va antes de la bifurcación 'failed'/'done' a propósito: un turno fallido también persiste y
+    // publica su `output`, y el pantallazo que explica POR QUÉ falló es justo el que hay que poder
+    // ver. `inlineLocalArtifacts` no tira nunca y devuelve el sobre intacto si algo no se pudo.
+    output = await inlineLocalArtifacts(output);
 
     if (output.status === "failed") {
       const error = new AdapterError("HARNESS_REPORTED_FAILURE", output.reply ?? "Harness reported failure", output.retryable);
