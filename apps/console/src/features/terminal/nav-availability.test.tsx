@@ -4,7 +4,13 @@
  * and importing across that boundary keeps the new test file itself inside the granted directory.
  */
 import { fireEvent, render, screen } from '@testing-library/react';
-import { navigate, onNavClick, terminalNavAvailability } from '../../navigation';
+import {
+  CONFIG_SIN_CONTROL_REASON,
+  configNavAvailability,
+  navigate,
+  onNavClick,
+  terminalNavAvailability,
+} from '../../navigation';
 import type { TerminalRelayState } from './relay-status';
 
 function relay(status: TerminalRelayState['status'], reason = ''): TerminalRelayState {
@@ -54,5 +60,23 @@ describe('onNavClick with disabledReason', () => {
   it('leaves plain navigate() calls unaffected — only onNavClick gates on the reason', () => {
     navigate('/terminal');
     expect(window.location.pathname).toBe('/terminal');
+  });
+});
+
+describe('configNavAvailability', () => {
+  it('no toca la entrada cuando el permiso está concedido', () => {
+    expect(configNavAvailability('allowed')).toEqual({ hidden: false, disabled: false });
+  });
+
+  it('tampoco la toca cuando el RBAC no se pudo leer: ante la duda no se le quita nada a nadie', () => {
+    expect(configNavAvailability('unknown')).toEqual({ hidden: false, disabled: false });
+  });
+
+  it('la deja inerte y con motivo cuando el permiso está denegado', () => {
+    expect(configNavAvailability('denied')).toEqual({
+      hidden: false,
+      disabled: true,
+      reason: CONFIG_SIN_CONTROL_REASON,
+    });
   });
 });

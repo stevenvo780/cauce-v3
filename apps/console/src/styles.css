@@ -702,3 +702,14 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Entrada de menú visible pero inerte: existe, no está disponible para vos, y dice por qué en el
+   `title`. Se prefiere a esconderla porque un menú más corto no distingue "no está desplegado"
+   de "no tengo permiso". Ver `configNavAvailability` en navigation.ts. */
+.sidebar nav a.nav-inerte {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.sidebar nav a.nav-inerte:hover {
+  background: transparent;
+}
