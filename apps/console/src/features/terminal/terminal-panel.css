@@ -24,7 +24,8 @@
 .agent-pty-state[data-status="allowed"] { border-color: #2b685b; background: var(--mint-dim); color: var(--mint); }
 .agent-pty-state[data-status="denied"] { border-color: #6d3038; background: var(--red-dim); color: var(--red); }
 .agent-pty-state[data-status="offline"] { border-color: #725622; background: var(--amber-dim); color: var(--amber); }
-.agent-pty-state[data-status="not_installed"], .agent-pty-state[data-status="unknown"] { border-color: var(--border-strong); background: var(--surface-2); }
+/* `no_tui`: hay PTY pero el servidor no publica el modo harness. Gris con motivo, NUNCA verde. */
+.agent-pty-state[data-status="not_installed"], .agent-pty-state[data-status="unknown"], .agent-pty-state[data-status="no_tui"] { border-color: var(--border-strong); background: var(--surface-2); }
 
 /* Channel authority, spelled out above the session. The motive is visible, not only a title. */
 .terminal-channel-state { display: flex; align-items: center; gap: 7px; margin: 0; padding: 7px 12px; border-bottom: 1px solid var(--border); background: #0b1320; color: var(--muted); font-size: .62rem; }
@@ -41,6 +42,17 @@
 .terminal-live-tui-state[data-status="available"] strong { background: var(--mint-dim); color: var(--mint); }
 .terminal-live-tui-state[data-status="no_tui"], .terminal-live-tui-state[data-status="unknown"] { color: var(--amber); }
 .terminal-live-tui-state[data-status="no_tui"] strong, .terminal-live-tui-state[data-status="unknown"] strong { background: var(--amber-dim); color: var(--amber); }
+/*
+ * Rechazo del servidor al abrir el canal. Existe porque el 403 se lo tragaba la interfaz: sin
+ * esta fila, un fallo de la consola se veía EXACTAMENTE igual que un clic que todavía no pasó.
+ * `data-consola` lo pinta en rojo y dice que la culpa no es del operador.
+ */
+.terminal-channel-refusal { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--amber-dim); color: var(--amber); font-size: .62rem; }
+.terminal-channel-refusal strong { flex: none; padding: 2px 7px; border: 1px solid currentcolor; border-radius: 999px; background: var(--surface); color: inherit; font-size: .56rem; letter-spacing: .06em; text-transform: uppercase; }
+.terminal-channel-refusal span { min-width: 0; flex: 1; color: var(--text); }
+.terminal-channel-refusal button { flex: none; padding: 2px 8px; border: 1px solid var(--border-strong); border-radius: 999px; background: transparent; color: inherit; font-size: .56rem; cursor: pointer; }
+.terminal-channel-refusal[data-consola] { border-color: #6d3038; background: var(--red-dim); color: var(--red); }
+
 .pty-session-bar[data-read-only] { border-color: var(--mint-dim); }
 .pty-bar-readonly { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; background: var(--mint-dim); color: var(--mint); font-size: .56rem; letter-spacing: .04em; text-transform: uppercase; }
 
@@ -103,10 +115,18 @@
 
 @media (prefers-color-scheme: light) {
   .terminal-channel-state, .pty-session-bar, .pty-dialog { background: #f8fafc; }
-  .agent-pty-state[data-status="not_installed"], .agent-pty-state[data-status="unknown"] { background: #eef2f7; }
+  .agent-pty-state[data-status="not_installed"], .agent-pty-state[data-status="unknown"], .agent-pty-state[data-status="no_tui"] { background: #eef2f7; }
   .pty-dialog-reason textarea { background: #ffffff; }
   .pty-dialog-backdrop { background: rgb(23 35 51 / 45%); }
 }
+
+/*
+ * La copia del inspector, que ahora cuelga del propio shell y no de la rejilla de sesiones: antes
+ * vivía dentro de `GridContainer`, que corta antes cuando no hay ninguna sesión abierta, así que
+ * en un portátil recién entrado a la vista el estado del control plane no existía en ninguna
+ * parte de la página. `display` lo sigue gobernando `styles.css`.
+ */
+.terminal-adapter-mobile { margin-top: 12px; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface); }
 
 /* Grid layout and panel styles for Phase 1 terminal consolidation */
 .terminal-grid-wrapper {

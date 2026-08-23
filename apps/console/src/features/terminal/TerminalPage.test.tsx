@@ -175,18 +175,53 @@ it('derives the operator ACL from /v3/console/topology and never calls a route t
 it('labels every alias with an explicit PTY state instead of a spinner or a bare grey button', async () => {
   enableCapability();
   serveTargets([
-    target({ tenant_id: 'Steven', alias: 'jarvis' }),
+    target({ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness'] }),
     target({ tenant_id: 'Steven', alias: 'argos', pty_state: 'not_installed', reason: 'El agente PTY no está instalado en ctrl-infra.' }),
     target({ tenant_id: 'Isa', alias: 'salva', authorized: false, reason: 'attribution_required: falta identidad por persona.' }),
   ]);
   renderWithApi(<TerminalPage />);
 
-  expect(await screen.findByRole('button', { name: /abrir sesión con jarvis.*PTY: PTY online/i })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /abrir sesión con jarvis.*PTY: TUI en vivo/i })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /abrir sesión con argos.*PTY: Agente PTY no instalado/i })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /abrir sesión con salva.*PTY: Sin autoridad/i })).toBeInTheDocument();
   // An alias the inventory never mentioned is UNKNOWN, never silently "available".
   expect(screen.getByRole('button', { name: /abrir sesión con kant.*PTY: PTY desconocido/i })).toBeInTheDocument();
-  expect(await screen.findByText('1 / 3')).toBeInTheDocument();
+  // Los dos KPI cuentan 1 de 3: uno con PTY online y —al publicar jarvis su `harness`— uno que
+  // además emite su TUI.
+  expect(await screen.findAllByText('1 / 3')).toHaveLength(2);
+});
+
+/**
+ * 🔴 **La vista rompía su propia promesa. Medido el 2026-08-23 contra producción.**
+ *
+ * `/v3/console/terminal/targets` publicaba `modes:["shell"]` y `reason:"ok"` para argos, hegel,
+ * iza, janus y jarvis. Los cinco se pintaban con el MISMO chip verde «PTY online» que los ocho
+ * que sí traen `harness`, y sin motivo, mientras la cabecera prometía que «el resto queda con su
+ * motivo escrito, nunca en verde» y el KPI decía «8/14». El operador no tenía forma de saber
+ * cuáles seis de los catorce le iban a fallar antes de hacer clic.
+ */
+it('un alias con PTY pero SIN modo harness no se pinta en verde: lleva su motivo, como gaia', async () => {
+  enableCapability();
+  serveTargets([
+    target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] }),
+    target({ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'], reason: 'ok' }),
+  ]);
+  renderWithApi(<TerminalPage />);
+
+  const conTui = await screen.findByRole('button', { name: /abrir sesión con zeus/i });
+  const sinTui = screen.getByRole('button', { name: /abrir sesión con jarvis/i });
+
+  // El que emite: verde, con el estado que el servidor sí publica.
+  expect(within(conTui).getByText('TUI en vivo')).toHaveAttribute('data-status', 'allowed');
+  // El que no: gris (`no_tui`, la misma familia que `unknown`/`not_installed`) y con el motivo
+  // del servidor en el chip, no escondido detrás de un clic.
+  const chip = within(sinTui).getByText('Sin TUI que emitir');
+  expect(chip).toHaveAttribute('data-status', 'no_tui');
+  expect(chip).toHaveAttribute('title', expect.stringContaining('no publica el modo harness'));
+  // Y NO comparte el estado verde con el que sí emite.
+  expect(chip.getAttribute('data-status')).not.toBe('allowed');
+  // El KPI que ya contaba bien (8/14 en producción) sigue contando lo mismo: 1 de 2 acá.
+  expect(await screen.findByText('1 / 2')).toBeInTheDocument();
 });
 
 it('disables PTY for a denied destination and shows the server motive, not an empty tooltip', async () => {
@@ -345,7 +380,9 @@ it('surfaces a 409 conflict from the gateway without opening any socket', async 
   await user.type(within(dialog).getByRole('textbox'), 'intento contra un agente caido');
   await user.click(within(dialog).getByRole('button', { name: /abrir sesión pty/i }));
 
-  expect(await within(dialog).findByText('agent_offline')).toBeInTheDocument();
+  // El motivo del servidor sigue viajando literal; lo que se le suma es el código y una frase que
+  // el operador pueda usar. Un `agent_offline` a secas no le dice a nadie qué hacer con eso.
+  expect(await within(dialog).findByText(/HTTP 409.*agent_offline/)).toBeInTheDocument();
   expect(StubWebSocket.instances).toHaveLength(0);
 });
 
@@ -383,3 +420,35 @@ it('con un 501 sigue diciendo, con el título de siempre, que el canal no está 
   expect(await screen.findByText('Canal PTY no disponible en este stack')).toBeInTheDocument();
   expect(screen.queryByText('Ultimate Terminal necesita permiso de control')).not.toBeInTheDocument();
 }, 20_000);
+
+/**
+ * 🔴 **Jerga cruda en la cara del operador, y un contador que sugería una avería.**
+ *
+ * Medido el 2026-08-23 en producción: seis badges del panel de adaptadores imprimían, literal,
+ * `<UNKNOWN VALUE=AVAILABLE />` y `<UNKNOWN VALUE=UNKNOWN />` —un `&lt;Unknown value={...} /&gt;`
+ * escapado que el navegador pintaba como texto—. «UNKNOWN VALUE=AVAILABLE» no contesta si el
+ * adaptador está o no. Encima el KPI decía «ADAPTERS AVAILABLE 3/6», que se lee como «3 rotos»
+ * cuando eran 3 disponibles y 3 sin reportar.
+ */
+describe('los adaptadores se dicen en palabras, no en pseudo-etiquetas', () => {
+  it('pinta el estado de cada adaptador y NUNCA un tag sin renderizar', async () => {
+    renderWithApi(<TerminalPage />);
+
+    // El inspector se pinta dos veces (columna derecha y tira de abajo); CSS decide cuál se ve.
+    expect(await screen.findAllByText('Disponible')).not.toHaveLength(0);
+    expect(screen.getAllByText('Degradado')).not.toHaveLength(0);
+    expect(screen.getAllByText('Sin reportar')).not.toHaveLength(0);
+    // El defecto exacto, por si alguien vuelve a escapar el JSX.
+    expect(screen.queryByText(/UNKNOWN VALUE=/i)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/<Unknown value/i);
+  });
+
+  it('cuenta disponibles, con fallo y sin reportar en vez de una fracción que sugiere avería', async () => {
+    renderWithApi(<TerminalPage />);
+
+    // El fixture trae 2 available, 1 degraded y 1 unknown.
+    // Dos veces: el KPI de arriba y la tira de salud de la lista de flota. Las dos cuentan igual.
+    expect(await screen.findAllByText('2 disponibles · 1 con fallo · 1 sin reportar')).toHaveLength(2);
+    expect(screen.queryByText('2 / 4')).not.toBeInTheDocument();
+  });
+});

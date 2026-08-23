@@ -6,9 +6,19 @@
  * faithful copy of the shared client (same credentials, same headers, same base URL rules,
  * same content-type parsing, same typed error) so the two never drift in what they send.
  *
+ * 🔴 **Y no lo era.** Medido contra producción el 2026-08-23: este módulo mandaba cookie,
+ * `X-Cauce-Console`, `Origin` y `Referer`… y ninguna cabecera CSRF. El gateway exige una en toda
+ * escritura, así que `POST /v3/console/terminal/sessions` volvía **403 `se requiere un token CSRF
+ * válido`** siempre — 3 de 3 intentos, con zeus y con kant. La pantalla de acceso promete, con
+ * esas palabras, que «toda escritura viaja además con un token CSRF de un solo origen»; ésta no
+ * viajaba. Por eso ahora toda petición insegura le pide el token a la sesión compartida
+ * (`CauceApi.csrfTokenForWrite`), que es quien lo tiene en memoria. La copia de la higiene volvió
+ * a ser fiel; el comentario de arriba ya no es una promesa sin comprobar.
+ *
  * Doctrine: 404 and 501 on optional endpoints are NOT errors, they are a typed UNKNOWN.
  * Absent data is UNKNOWN, never "allowed".
  */
+import { cauceApi, type CauceApi } from '../../api/client';
 
 export type PtyTargetState = 'online' | 'agent_offline' | 'not_installed' | 'unknown';
 
@@ -101,13 +111,27 @@ function errorBody(value: unknown): { message?: string; error?: string; reason?:
   };
 }
 
-export async function terminalRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+const METODOS_SEGUROS = ['GET', 'HEAD', 'OPTIONS'];
+
+/**
+ * `session` es la sesión que tiene el token CSRF en memoria. Por defecto la compartida; los
+ * componentes pasan la suya (`useApi()`) para que una consola con dos clientes —los tests, sin ir
+ * más lejos— no escriba con el token del otro.
+ */
+export async function terminalRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  session: Pick<CauceApi, 'csrfTokenForWrite'> = cauceApi,
+): Promise<T> {
+  const method = init.method?.toUpperCase() ?? 'GET';
+  const csrfToken = METODOS_SEGUROS.includes(method) ? undefined : await session.csrfTokenForWrite();
   const response = await fetch(`${safeBase(import.meta.env.VITE_CAUCE_API_BASE ?? '')}${path}`, {
     ...init,
     credentials: 'include',
     headers: {
       Accept: 'application/json',
       'X-Cauce-Console': '1',
+      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
       ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...init.headers,
     },
@@ -193,7 +217,10 @@ export async function listTerminalTargets(): Promise<TerminalTargetsSnapshot> {
  * Requests the single-use ticket. Errors are surfaced verbatim: 403 means the server refused
  * the destination and 409 means the container/agent cannot take the session right now.
  */
-export function createTerminalSession(input: CreateTerminalSessionInput): Promise<TerminalSessionGrant> {
+export function createTerminalSession(
+  input: CreateTerminalSessionInput,
+  session?: Pick<CauceApi, 'csrfTokenForWrite'>,
+): Promise<TerminalSessionGrant> {
   const payload: CreateTerminalSessionInput = {
     tenant_id: input.tenant_id,
     alias: input.alias,
@@ -202,9 +229,16 @@ export function createTerminalSession(input: CreateTerminalSessionInput): Promis
     cols: input.cols,
     rows: input.rows,
   };
-  return terminalRequest('/v3/console/terminal/sessions', { method: 'POST', body: JSON.stringify(payload) });
+  return terminalRequest('/v3/console/terminal/sessions', { method: 'POST', body: JSON.stringify(payload) }, session);
 }
 
-export function deleteTerminalSession(sessionId: string): Promise<void> {
-  return terminalRequest(`/v3/console/terminal/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+export function deleteTerminalSession(
+  sessionId: string,
+  session?: Pick<CauceApi, 'csrfTokenForWrite'>,
+): Promise<void> {
+  return terminalRequest(
+    `/v3/console/terminal/sessions/${encodeURIComponent(sessionId)}`,
+    { method: 'DELETE' },
+    session,
+  );
 }

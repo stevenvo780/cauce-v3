@@ -116,3 +116,71 @@ it('exposes TerminalApiError so callers can branch on status without parsing str
   const error = await listTerminalTargets().catch((cause: unknown) => cause);
   expect(error).toBeInstanceOf(TerminalApiError);
 });
+
+/**
+ * 🔴 El defecto BLOQUEANTE medido contra producción el 2026-08-23.
+ *
+ * `POST /v3/console/terminal/sessions` volvía `403 {"error":"forbidden","message":"se requiere un
+ * token CSRF válido"}` en los 3 intentos, con dos alias distintos, porque este módulo no mandaba
+ * ninguna cabecera CSRF. No era la máquina estrangulada: el rechazo volvía en 1,9-3,7 s mientras
+ * el resto de endpoints tardaba entre 4 y 56 s, determinista y siempre igual. Con esto, la TUI no
+ * abría NUNCA.
+ */
+describe('el token CSRF viaja en toda escritura del plano PTY', () => {
+  const sesion = { csrfTokenForWrite: () => Promise.resolve('token-de-la-sesion') };
+
+  it('adjunta X-CSRF-Token al POST que abre la sesión', async () => {
+    let csrf: string | null = 'ausente';
+    server.use(http.post('*/v3/console/terminal/sessions', ({ request }) => {
+      csrf = request.headers.get('X-CSRF-Token');
+      return HttpResponse.json({
+        session_id: 'sess-csrf', ticket: 'one-shot', websocket_path: '/v3/console/terminal/ws',
+        expires_at: '2026-08-23T12:00:30.000Z', ttl_seconds: 30,
+        target: { tenant_id: 'Steven', alias: 'zeus', container: 'claw', runtime_user: 'claw', mode: 'harness', shares_container_with: [] },
+      }, { status: 201 });
+    }));
+
+    await createTerminalSession(
+      { tenant_id: 'Steven', alias: 'zeus', mode: 'harness', reason: 'ver la TUI', cols: 80, rows: 24 },
+      sesion,
+    );
+
+    expect(csrf).toBe('token-de-la-sesion');
+  });
+
+  it('adjunta X-CSRF-Token al DELETE que suelta la sesión', async () => {
+    let csrf: string | null = 'ausente';
+    server.use(http.delete('*/v3/console/terminal/sessions/sess-csrf', ({ request }) => {
+      csrf = request.headers.get('X-CSRF-Token');
+      return new HttpResponse(null, { status: 204 });
+    }));
+
+    await deleteTerminalSession('sess-csrf', sesion);
+
+    expect(csrf).toBe('token-de-la-sesion');
+  });
+
+  it('no le pide token a la sesión para una lectura: el inventario es un GET', async () => {
+    let pedidos = 0;
+    const contadora = { csrfTokenForWrite: () => { pedidos += 1; return Promise.resolve('token'); } };
+    server.use(http.get('*/v3/console/terminal/targets', () => HttpResponse.json({ items: [] })));
+
+    await terminalRequest('/v3/console/terminal/targets', {}, contadora);
+
+    expect(pedidos).toBe(0);
+  });
+
+  it('toma el token de la sesión compartida cuando el llamador no pasa ninguna', async () => {
+    // El singleton `cauceApi` lo resuelve contra `/v3/auth/session`, igual que el resto de la
+    // consola: `mock-csrf-token` sale del handler global de MSW.
+    let csrf: string | null = 'ausente';
+    server.use(http.post('*/v3/console/terminal/probe', ({ request }) => {
+      csrf = request.headers.get('X-CSRF-Token');
+      return HttpResponse.json({ ok: true });
+    }));
+
+    await terminalRequest('/v3/console/terminal/probe', { method: 'POST', body: '{}' });
+
+    expect(csrf).toBe('mock-csrf-token');
+  });
+});

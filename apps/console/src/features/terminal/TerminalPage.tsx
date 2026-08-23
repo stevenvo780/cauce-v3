@@ -5,10 +5,10 @@ import { useResource } from '../../api/use-resource';
 import { Badge, PageHeader } from '../../components/ui';
 import { permissionState } from '../../lib';
 import { listTerminalTargets } from './api';
-import { buildFleetAgents, countLiveTuiTargets, countOnlinePtyTargets } from './fleet';
+import { adapterBreakdown, adapterBreakdownText, buildFleetAgents, countLiveTuiTargets, countOnlinePtyTargets } from './fleet';
 import { OperatorWorkspace } from './OperatorWorkspace';
 import { ultimateTerminalGate } from './plugin';
-import { deriveTerminalRelayState } from './relay-status';
+import { deriveTerminalRelayState, TERMINAL_RELAY_SIN_COMPROBAR_TITULO } from './relay-status';
 import './terminal-panel.css';
 
 function useRefreshInterval(reload: () => void, milliseconds: number, loading: boolean) {
@@ -37,7 +37,8 @@ export function TerminalPage() {
 
   const agents = useMemo(() => buildFleetAgents(status.data, topology.data), [status.data, topology.data]);
   const online = agents.filter((agent) => agent.leaseState === 'online').length;
-  const healthyAdapters = (adapters.data?.items ?? []).filter((adapter) => adapter.state === 'available').length;
+  const adapterItems = adapters.data?.items ?? [];
+  const adapterCuenta = adapterBreakdown(adapterItems);
   const verifiedAccess = access.error ? undefined : access.data;
   const verifiedCapability = capability.error ? undefined : capability.data;
   const verifiedTargets = targets.error ? undefined : targets.data;
@@ -86,7 +87,11 @@ export function TerminalPage() {
 
       <div className="terminal-overview" aria-label="Estado de Ultimate Terminal">
         <article><span className="overview-icon online"><Wifi size={17} aria-hidden="true" /></span><div><small>Fleet leases</small><strong>{online} / {agents.length || 'UNKNOWN'}</strong></div><Badge tone={online ? 'online' : agents.length ? 'warning' : 'unknown'}>LIVE</Badge></article>
-        <article><span className="overview-icon"><RadioTower size={17} aria-hidden="true" /></span><div><small>Adapters available</small><strong>{adapters.data?.items ? `${healthyAdapters} / ${adapters.data.items.length}` : 'UNKNOWN'}</strong></div><Badge tone={healthyAdapters ? 'info' : 'unknown'}>SERVER</Badge></article>
+        {/*
+          «3 / 6» se leía como «3 rotos». Son 3 disponibles y 3 que no reportaron estado, que no
+          es lo mismo: el contador ahora cuenta cada grupo por su nombre.
+        */}
+        <article><span className="overview-icon"><RadioTower size={17} aria-hidden="true" /></span><div><small>Adaptadores</small><strong>{adapters.data?.items ? adapterBreakdownText(adapterItems) : 'UNKNOWN'}</strong></div><Badge tone={adapterCuenta.conFallo ? 'warning' : adapterCuenta.disponibles ? 'info' : 'unknown'}>SERVER</Badge></article>
         <article><span className="overview-icon"><ShieldCheck size={17} aria-hidden="true" /></span><div><small>Terminal access</small><strong>{connectState.toUpperCase()}</strong></div><Badge tone={connectState === 'allowed' ? 'online' : connectState === 'denied' ? 'danger' : 'unknown'}>RBAC</Badge></article>
         <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Interactive channel</small><strong>{ptyEnabled ? 'PTY + FEED' : 'DURABLE FEED'}</strong></div><Badge tone={ptyEnabled ? 'online' : 'info'}>CLIENT</Badge></article>
         <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Alias con PTY online</small><strong>{ptyOnline === undefined ? 'UNKNOWN' : `${ptyOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={ptyOnline ? 'online' : ptyOnline === 0 ? 'warning' : 'unknown'}>TARGETS</Badge></article>
@@ -102,7 +107,9 @@ export function TerminalPage() {
           <div>
             <strong>{relay.cause === 'sin-permiso'
               ? 'Ultimate Terminal necesita permiso de control'
-              : 'Canal PTY no disponible en este stack'}</strong>
+              : relay.cause === 'sin-comprobar'
+                ? TERMINAL_RELAY_SIN_COMPROBAR_TITULO
+                : 'Canal PTY no disponible en este stack'}</strong>
             <p>{relay.reason}</p>
           </div>
         </div>

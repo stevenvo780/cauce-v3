@@ -36,7 +36,25 @@ export type TerminalRelayStatus = 'checking' | 'available' | 'unavailable';
  * función hacía desde `0a1d0e3`: esas respuestas no permiten saber si el relay existe. No se
  * inventa una tercera causa para taparlo.
  */
-export type TerminalRelayCause = 'no-desplegado' | 'sin-permiso';
+/**
+ * 🔴 **`sin-comprobar` añadido el 2026-08-23, y por la MISMA clase de mentira.**
+ *
+ * Medido en producción: la vista mostraba «Canal PTY no disponible en este stack — El relay de
+ * terminales no está desplegado en este stack. (HTTP 400 al consultarlo.)». Ninguna de las dos
+ * frases se seguía de un 400: un 400 sólo prueba que la ruta EXISTE y que rechazó la petición.
+ * Culpar al despliegue manda al operador a mirar contenedores mientras el fallo está en la
+ * consola —que fue exactamente lo que pasó— así que cualquier respuesta que no signifique
+ * ausencia se dice como lo que es: no se pudo comprobar.
+ *
+ * Qué sí significa cada cosa, y nada más que eso:
+ * - `no-desplegado`: 404/501 —ya normalizados a `available:false` por `getTerminalCapability`—,
+ *   un `available:false` declarado por el servidor, y 502/503/504 o un fallo de red, donde no
+ *   hay upstream que conteste (es lo que este módulo hace desde `0a1d0e3`).
+ * - `sin-permiso`: 403. Es del RBAC, no de la topología; el gate corre ANTES de mirar el backend.
+ * - `sin-comprobar`: TODO lo demás (400, 401, 405, 409, 422, 429, 500…). La ruta contestó, así
+ *   que no está ausente; y contestó algo que no permite afirmar nada sobre el relay.
+ */
+export type TerminalRelayCause = 'no-desplegado' | 'sin-permiso' | 'sin-comprobar';
 
 export interface TerminalRelayState {
   status: TerminalRelayStatus;
@@ -56,6 +74,18 @@ export const TERMINAL_RELAY_NOT_DEPLOYED_REASON = 'El relay de terminales no est
 export const TERMINAL_RELAY_SIN_PERMISO_REASON =
   'Tu cuenta no tiene permiso de control sobre esta flota: Ultimate Terminal es del dueño del bus. '
   + 'El relay puede estar perfectamente desplegado; lo que falta es el permiso.';
+
+/** Estados que sí prueban ausencia de upstream: no hay nadie del otro lado que conteste. */
+const SIN_UPSTREAM = [502, 503, 504];
+
+export const TERMINAL_RELAY_SIN_COMPROBAR_TITULO = 'No se pudo comprobar el canal PTY';
+
+export function terminalRelaySinComprobarReason(status: number, detalle?: string): string {
+  return `El servidor respondió HTTP ${status} al preguntar por el relay de terminales`
+    + `${detalle ? `: ${detalle}` : ''}. Eso no dice que el relay falte —la ruta contestó—, `
+    + 'sólo que esa consulta no se pudo completar. Reintentá; si sigue igual, es de la consola o '
+    + 'del gateway, no de tu permiso.';
+}
 
 export const CHECKING_RELAY_STATE: TerminalRelayState = {
   status: 'checking',
@@ -78,6 +108,15 @@ export function deriveTerminalRelayState(
     // El 403 es del RBAC y NO dice nada sobre si el relay está desplegado: el gate corre antes.
     if (status === 403) {
       return { status: 'unavailable', cause: 'sin-permiso', reason: TERMINAL_RELAY_SIN_PERMISO_REASON };
+    }
+    // Una respuesta que NO es 404/501 ni un corte de upstream prueba que la ruta existe: decir
+    // «no está desplegado» ahí es inventar una causa que la respuesta no sostiene.
+    if (status !== undefined && status !== 404 && status !== 501 && !SIN_UPSTREAM.includes(status)) {
+      return {
+        status: 'unavailable',
+        cause: 'sin-comprobar',
+        reason: terminalRelaySinComprobarReason(status, detail),
+      };
     }
     return {
       status: 'unavailable',

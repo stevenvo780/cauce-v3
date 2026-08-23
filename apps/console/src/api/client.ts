@@ -128,6 +128,22 @@ export class CauceApi {
     return this.csrfToken;
   }
 
+  /**
+   * El MISMO token CSRF que este cliente adjunta a sus escrituras, para una escritura que no
+   * pasa por acá.
+   *
+   * Existe por un defecto medido el 2026-08-23 contra producción: `features/terminal/api.ts`
+   * declara ser «una copia fiel de la higiene del cliente compartido» y no lo era — mandaba
+   * cookie, `X-Cauce-Console` y `Origin`, pero NINGUNA cabecera CSRF. Consecuencia: TODO
+   * `POST /v3/console/terminal/sessions` volvía 403 `se requiere un token CSRF válido`, 3 de 3
+   * intentos en dos alias distintos, y la TUI no abría nunca. El token vive en memoria y sólo en
+   * memoria (nunca en `localStorage`), así que el plano PTY no puede tenerlo por su cuenta: tiene
+   * que pedírselo a la sesión, que es este objeto.
+   */
+  csrfTokenForWrite(): Promise<string | undefined> {
+    return this.csrfForMutation();
+  }
+
   getLoginUrl(): string {
     return `${this.baseUrl}/v3/auth/login`;
   }

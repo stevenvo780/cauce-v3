@@ -4,6 +4,7 @@ import {
   operatorRouteForAgent,
   ptyReasonProblem,
   ptySecondsLeft,
+  terminalSessionRefusal,
   transcriptForSession,
   type OperatorSession,
 } from './session';
@@ -92,4 +93,42 @@ it('counts down to the grant expiry and shows UNKNOWN instead of a fake clock', 
   expect(formatCountdown(ptySecondsLeft(null, now))).toBe('UNKNOWN');
   expect(formatCountdown(95)).toBe('1:35');
   expect(formatCountdown(5)).toBe('0:05');
+});
+
+
+/**
+ * La traducción del rechazo, sin navegador de por medio. El caso que la hizo nacer: un 403 cuyo
+ * mensaje dice «se requiere un token CSRF válido» NO es una falta de permiso del operador.
+ */
+describe('terminalSessionRefusal', () => {
+  class Fallo extends Error {
+    constructor(mensaje: string, readonly status: number, readonly code?: string) { super(mensaje); }
+  }
+
+  it('llama al fallo de CSRF por su nombre y lo atribuye a la consola', () => {
+    const refusal = terminalSessionRefusal(new Fallo('se requiere un token CSRF válido', 403, 'forbidden'));
+    expect(refusal.esDefectoDeLaConsola).toBe(true);
+    expect(refusal.detalle).toMatch(/falta el token CSRF/i);
+    expect(refusal.detalle).toMatch(/no de tu permiso ni del alias/i);
+    expect(refusal.detalle).toMatch(/quien mantiene la consola/i);
+  });
+
+  it('un 403 cualquiera repite el motivo del servidor y NO acusa a la consola', () => {
+    const refusal = terminalSessionRefusal(new Fallo('attribution_required', 403, 'forbidden'));
+    expect(refusal.esDefectoDeLaConsola).toBe(false);
+    expect(refusal.detalle).toContain('attribution_required');
+    expect(refusal.detalle).toContain('403');
+  });
+
+  it('distingue el 409 del destino y el 401 de la sesión', () => {
+    expect(terminalSessionRefusal(new Fallo('agent_offline', 409, 'conflict')).detalle).toMatch(/409.*agent_offline/);
+    expect(terminalSessionRefusal(new Fallo('unauthorized', 401)).detalle).toMatch(/caducó|401/i);
+  });
+
+  it('un error sin status no inventa una causa: dice lo que sabe', () => {
+    const refusal = terminalSessionRefusal(new Error('Failed to fetch'));
+    expect(refusal.esDefectoDeLaConsola).toBe(false);
+    expect(refusal.detalle).toContain('Failed to fetch');
+    expect(refusal.titulo).toBe('No se pudo abrir el canal');
+  });
 });

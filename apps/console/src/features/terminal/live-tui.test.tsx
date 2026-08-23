@@ -133,7 +133,9 @@ it('CONTROL NEGATIVO: el mismo alias sin el modo harness no abre ninguna sesión
   await waitFor(() => expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled());
 
   expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled();
-  expect(screen.getByText('Sin TUI que emitir')).toBeInTheDocument();
+  // Dicho DOS veces a propósito, igual que «Sin autoridad»: en el chip de la lista de flota y
+  // sobre la sesión abierta. Antes el chip de la lista decía «PTY online», en verde.
+  expect(screen.getAllByText('Sin TUI que emitir')).toHaveLength(2);
   expect(screen.getByText(/no publica el modo harness.*Modos publicados: shell/i)).toBeInTheDocument();
   // Nada se pidió al gateway y ningún socket se abrió: la ausencia del modo cierra la puerta.
   expect(calls).toHaveLength(0);
@@ -195,4 +197,70 @@ it('la shell sigue exigiendo motivo escrito a mano aunque la TUI se abra sola', 
   const dialog = await screen.findByRole('dialog');
   expect(within(dialog).getByRole('button', { name: /abrir sesión pty/i })).toBeDisabled();
   expect(within(dialog).getByText(/al menos 8 caracteres/i)).toBeInTheDocument();
+});
+
+/**
+ * 🔴 **El 403 se lo tragaba la interfaz. Medido el 2026-08-23 contra producción.**
+ *
+ * Con kant: dos `403 {"error":"forbidden","message":"se requiere un token CSRF válido"}` seguidos
+ * y el panel siguió diciendo «PTY ONLINE / ok» y «TUI EN VIVO». Cero cambio visible y cero aviso
+ * —se buscaron nodos de texto con `/403|denegad|permiso|no autoriz|error/` y no apareció ninguno
+ * nuevo—. La TUI se abre de un clic, sin diálogo, y el único sitio donde este error se pintaba
+ * era… dentro del diálogo. El operador pulsaba y no pasaba nada.
+ */
+describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la culpa', () => {
+  function rechazaSesiones(status: number, cuerpo: Record<string, unknown>) {
+    server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(cuerpo, { status })));
+  }
+
+  it('pinta el 403 por CSRF como lo que es: un fallo de la consola, no del permiso ni del alias', async () => {
+    const user = userEvent.setup();
+    enableCapability();
+    serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })]);
+    rechazaSesiones(403, { error: 'forbidden', message: 'se requiere un token CSRF válido' });
+    renderWithApi(<TerminalPage />);
+
+    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+
+    const aviso = await screen.findByRole('alert');
+    expect(aviso).toHaveTextContent(/falta el token CSRF/i);
+    expect(aviso).toHaveTextContent(/fallo de la consola/i);
+    expect(aviso).toHaveTextContent(/no de tu permiso ni del alias/i);
+    // Y se marca como defecto de la consola, que es lo que decide el color y el tono.
+    expect(aviso).toHaveAttribute('data-consola', 'true');
+    // No se culpa al despliegue ni se manda al operador a mirar contenedores.
+    expect(screen.queryByText(/no está desplegado en este stack/i)).not.toBeInTheDocument();
+  });
+
+  it('un 403 que NO es de CSRF se muestra con el motivo del servidor y sin acusar a la consola', async () => {
+    const user = userEvent.setup();
+    enableCapability();
+    serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })]);
+    rechazaSesiones(403, { error: 'forbidden', reason: 'attribution_required: falta identidad por persona.' });
+    renderWithApi(<TerminalPage />);
+
+    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+
+    const aviso = await screen.findByRole('alert');
+    expect(aviso).toHaveTextContent(/attribution_required/i);
+    expect(aviso).toHaveTextContent(/HTTP 403/);
+    expect(aviso).not.toHaveAttribute('data-consola');
+  });
+
+  it('CONTROL NEGATIVO: cuando el servidor SÍ abre la sesión no aparece ningún aviso de rechazo', async () => {
+    const user = userEvent.setup();
+    const calls: SessionCall[] = [];
+    enableCapability();
+    serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })]);
+    recordSessions(calls);
+    renderWithApi(<TerminalPage />);
+
+    await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+
+    // Se busca el aviso de rechazo por su texto: el `role="alert"` de `.pty-render-error` (xterm
+    // no monta en jsdom) es otro cartel y no tiene nada que ver con esto.
+    expect(screen.queryByText(/rechazó la apertura de sesión|falta el token CSRF|No se pudo abrir el canal/i))
+      .not.toBeInTheDocument();
+  });
 });
