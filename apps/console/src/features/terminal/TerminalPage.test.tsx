@@ -127,7 +127,9 @@ it('keeps the durable feed operational on a real PTY 501 and disables only PTY',
   await user.type(input, 'El feed no depende del PTY');
   await user.click(screen.getByRole('button', { name: /^enviar$/i }));
   expect(await screen.findByText(/Aceptado por el control plane/i)).toBeInTheDocument();
-  expect(screen.getByText('DENIED')).toBeInTheDocument();
+  // El rótulo de la tarjeta «Tu permiso de terminal», en castellano: era `connectState` en
+  // mayúsculas, o sea el valor crudo del RBAC.
+  expect(screen.getByText('DENEGADO')).toBeInTheDocument();
 });
 
 it('publishes cross-tenant from the operator source room and blocks destinations without ACL', async () => {
@@ -234,8 +236,12 @@ it('disables PTY for a denied destination and shows the server motive, not an em
 
   const ptyButton = await screen.findByRole('button', { name: /^PTY$/i });
   await waitFor(() => expect(ptyButton).toBeDisabled());
-  expect(ptyButton).toHaveAttribute('title', expect.stringContaining('attribution_required'));
-  expect(screen.getByText(/attribution_required: falta identidad por persona\./i)).toBeInTheDocument();
+  // 🔴 El motivo del servidor trae el código DENTRO de la prosa. Se traduce, y se conserva lo
+  // que el servidor sí dijo en castellano. Ver `denegaciones.ts`.
+  expect(ptyButton).toHaveAttribute('title', expect.stringContaining('Falta decir qué persona está entrando'));
+  expect(screen.getByText(/falta identidad por persona/i)).toBeInTheDocument();
+  expect(screen.getByText(/Lo levanta:/i)).toBeInTheDocument();
+  expect(document.body.textContent).not.toContain('attribution_required');
   // The motive is stated twice on purpose: in the fleet list and over the open session.
   expect(screen.getAllByText('Sin autoridad')).toHaveLength(2);
 });
@@ -380,9 +386,11 @@ it('surfaces a 409 conflict from the gateway without opening any socket', async 
   await user.type(within(dialog).getByRole('textbox'), 'intento contra un agente caido');
   await user.click(within(dialog).getByRole('button', { name: /abrir sesión pty/i }));
 
-  // El motivo del servidor sigue viajando literal; lo que se le suma es el código y una frase que
-  // el operador pueda usar. Un `agent_offline` a secas no le dice a nadie qué hacer con eso.
-  expect(await within(dialog).findByText(/HTTP 409.*agent_offline/)).toBeInTheDocument();
+  // El 409 se explica: qué pasó, por qué, y quién puede levantarlo. Antes el `[role=alert]`
+  // contenía exactamente la palabra `agent_offline` y nada más.
+  expect(await within(dialog).findByText(/El agente PTY del contenedor no está conectado/i)).toBeInTheDocument();
+  expect(within(dialog).getByText(/HTTP 409/)).toBeInTheDocument();
+  expect(document.body.textContent).not.toContain('agent_offline');
   expect(StubWebSocket.instances).toHaveLength(0);
 });
 

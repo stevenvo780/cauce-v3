@@ -102,6 +102,9 @@ it('makes the saturated agent stand out visually with its own badge and highligh
   // «SATURADO» dos veces, una en cada sitio, y ninguna de las dos coincidía con la leyenda.
   expect(within(jarvisRow).getByText('Trabajando')).toBeInTheDocument();
   expect(within(jarvisRow).getByText('Saturado')).toBeInTheDocument();
+  // UNA sola vez. `work_state: 'saturated'` y `flags: ['saturated']` son dos campos del servidor
+  // para el mismo hecho, y la celda los pintaba los dos: «SATURADO SATURADO».
+  expect(within(jarvisRow).getAllByText('Saturado')).toHaveLength(1);
   expect(jarvisRow.className).toContain('row-warning');
 
   const salvaRow = screen.getByRole('row', { name: /salva/i });
@@ -126,11 +129,22 @@ it('makes the stalled (incident) agent stand out even harder, and stacks its fla
   expect(midasRow.className).toContain('row-critical');
   // El agente está saturado Y sin acusar recibo a la vez: las señales conviven, no se pisan.
   expect(within(midasRow).getByText('Saturado')).toBeInTheDocument();
-  expect(within(midasRow).getByText('Sin ACK')).toBeInTheDocument();
-  expect(within(midasRow).getByText('ACK vencido')).toBeInTheDocument();
-  // Y el lease vencido NO se dice tres veces: el chip `lease_expired` se cae cuando la columna de
-  // presencia ya emite esa misma palabra.
+  // «Caído» lo dice la columna «Presencia», UNA vez en toda la fila.
+  // «Caído» sale DOS veces en la fila y son dos preguntas distintas cuya respuesta coincide:
+  // la columna «Estado» dice el estado derivado —el mismo que su muñeco, que para un lease
+  // vencido es «Caído» y gana al estancamiento— y la columna «Presencia» dice la presencia.
+  // Lo que sí desaparece es el TERCER «Caído»: el chip `lease_expired` del recuadro de señales.
   expect(within(midasRow).getAllByText('Caído')).toHaveLength(2);
+
+  // 🔴 Pero NO se apilan las cinco. «Sin ACK» y «ACK vencido» son la definición de estar trabado,
+  // y «Caído» ya lo dice la columna de al lado: repetirlas no informa cinco veces, informa menos.
+  // Lo medido en producción eran CINCO insignias en una celda para decir «está trabado».
+  const insignias = celdaEstado.querySelectorAll('.badge');
+  expect(insignias.length).toBeLessThanOrEqual(3);
+  // Y no se pierde ni una señal medida: el `title=` de la celda las nombra todas.
+  for (const palabra of ['Sin ACK', 'ACK vencido', 'Saturado', 'Caído']) {
+    expect(celdaEstado.getAttribute('title')).toContain(palabra);
+  }
 });
 
 it('never renders a null seconds_since_last_ack as zero or a dash: it reads as an explicit ACK gap', async () => {
@@ -151,10 +165,14 @@ it('reflects totals.flagged without inventing zeroes for absent keys, and keeps 
   // colgado a la vez, así que suma en las dos columnas. Por eso este panel sobrevivió a la fusión
   // mientras que "Por estado" —cinco baldes excluyentes del servidor, una versión más gruesa de
   // los siete estados que la página ya dibuja— se quitó por redundante.
-  const flaggedPanel = (await screen.findByText('Señales activas')).closest('section')!;
-  expect(within(flaggedPanel).getByText('Saturado').closest('.chip')).toHaveTextContent('2');
-  expect(within(flaggedPanel).getByText('Caído').closest('.chip')).toHaveTextContent('1');
-  expect(within(flaggedPanel).queryByText('Nunca conectó')).not.toBeInTheDocument();
+  // El `<summary>` del desplegable y el título del panel se llaman igual, así que se busca el
+  // panel por su título dentro del desplegable, no por un texto que aparece dos veces.
+  const fold = (await screen.findAllByText('Señales activas'))
+    .map((nodo) => nodo.closest('section'))
+    .find((seccion): seccion is HTMLElement => seccion !== null)!;
+  expect(within(fold).getByText('Saturado').closest('.chip')).toHaveTextContent('2');
+  expect(within(fold).getByText('Caído').closest('.chip')).toHaveTextContent('1');
+  expect(within(fold).queryByText('Nunca conectó')).not.toBeInTheDocument();
 
   expect(screen.queryByText('Por estado')).not.toBeInTheDocument();
 });

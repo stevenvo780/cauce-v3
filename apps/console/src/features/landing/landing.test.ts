@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EntradaPortada } from './landing';
-import { puedeDecirSinIncidencias, resumenPortada, rotuloDeVistas } from './landing';
+import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './landing';
 
 /**
  * Una flota sana, leída entera. Es el CONTROL NEGATIVO de todo este fichero: si `resumenPortada`
@@ -147,22 +147,74 @@ describe('lo que no se leyó no se afirma', () => {
 });
 
 /**
- * El recuento del panel de atajos. Se prueba porque el rótulo escrito a mano ya mintió una vez
- * («Ocho vistas» cuando eran nueve) y una frase que miente no rompe nada: sólo se lee mal.
+ * `rotuloDeVistas` se retiró junto con el panel «El resto de la consola» (2026-08-23): era el
+ * recuento de una lista que la portada ya no dibuja, porque era el menú lateral repetido. Sus
+ * pruebas se van con él; el menú lo siguen guardando las invariantes de `App.invariantes.test.tsx`.
  */
-describe('rotuloDeVistas', () => {
-  it('deriva el numeral y concuerda el sustantivo', () => {
-    expect(rotuloDeVistas(9)).toBe('Nueve vistas');
-    expect(rotuloDeVistas(1)).toBe('Una vista');
-    expect(rotuloDeVistas(0)).toBe('Ninguna vista');
+
+describe('agruparAlertas — una fila por vista, no una por hallazgo', () => {
+  it('junta los avisos que se resuelven en el mismo sitio, sin perder ninguno', () => {
+    const resumen = resumenPortada({
+      queues: { observed_at: 'x', pending: 0, retrying: 0, dead: 3 },
+      activity: {
+        observed_at: 'x',
+        totals: {
+          agents: 5, in_flight: 1, queued: 0, retrying: 0, overdue_in_flight: 7,
+          by_state: { stalled: 2 }, flagged: { queued_without_consumer: 1 },
+        },
+        agents: [],
+      },
+      quotas: {
+        observed_at: 'x',
+        collectors: [{ host: 'kratos', stale: true, age_seconds: 9000 }],
+        providers: [{ provider: 'codex', severity: 'exhausted' }],
+        paused_accounts: [{ account_id: 'a-1' }],
+      },
+      status: { online: 5, queued: 0, dead_letters: 3, outbox_pending: 0 },
+    });
+    const grupos = agruparAlertas(resumen.alertas);
+
+    // Siete hallazgos, TRES destinos: /queues, /live y /accounts.
+    expect(resumen.alertas.length).toBe(7);
+    expect(grupos.map((grupo) => grupo.ruta)).toEqual(['/queues', '/live', '/accounts']);
+    // Ni uno se pierde por el camino.
+    expect(grupos.flatMap((grupo) => grupo.alertas).map((alerta) => alerta.id).sort())
+      .toEqual(resumen.alertas.map((alerta) => alerta.id).sort());
+    // Y el grupo hereda el PEOR tono de los suyos: un `warning` no puede tapar un `danger`.
+    expect(grupos.find((grupo) => grupo.ruta === '/accounts')?.tono).toBe('danger');
   });
 
-  it('pasa a cifra cuando se sale de los numerales escritos', () => {
-    expect(rotuloDeVistas(13)).toBe('13 vistas');
+  it('sin alertas no inventa grupos', () => {
+    expect(agruparAlertas([])).toEqual([]);
   });
+});
 
-  it('no inventa un rótulo con una entrada absurda', () => {
-    expect(rotuloDeVistas(-1)).toBe('Ninguna vista');
-    expect(rotuloDeVistas(Number.NaN)).toBe('Ninguna vista');
+describe('ninguna alerta imprime la ruta del endpoint en su texto visible', () => {
+  it('la ruta vive en `fuente`, que la portada cuelga del title=', () => {
+    const resumen = resumenPortada({
+      queues: { observed_at: 'x', pending: 0, retrying: 0, dead: 1 },
+      activity: {
+        observed_at: 'x',
+        totals: {
+          agents: 1, in_flight: 1, queued: 0, retrying: 0, overdue_in_flight: 1,
+          by_state: { stalled: 1 }, flagged: { queued_without_consumer: 1 },
+        },
+        agents: [],
+      },
+      quotas: {
+        observed_at: 'x',
+        collectors: [{ host: 'kratos', stale: true, age_seconds: 9000 }],
+        providers: [{ provider: 'codex', severity: 'exhausted' }, { provider: 'claude', severity: 'warn' }],
+        paused_accounts: [{ account_id: 'a-1' }],
+      },
+      status: { online: 1, queued: 0, dead_letters: 1, outbox_pending: 0 },
+    });
+    expect(resumen.alertas.length).toBeGreaterThan(0);
+    for (const alerta of resumen.alertas) {
+      expect(alerta.titulo, `${alerta.id}.titulo`).not.toMatch(/GET \/v3\//);
+      expect(alerta.detalle, `${alerta.id}.detalle`).not.toMatch(/GET \/v3\//);
+      // Pero la fuente NO se pierde: sigue habiendo con qué contrastar el número.
+      expect(alerta.fuente, `${alerta.id}.fuente`).toMatch(/^GET \/v3\/console\//);
+    }
   });
 });

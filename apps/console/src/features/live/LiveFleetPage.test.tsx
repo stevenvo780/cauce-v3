@@ -487,7 +487,8 @@ describe('lo que absorbió del menú', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
-    await user.click(screen.getByText('Permisos y salas'));
+    // El resumen del desplegable dice CUÁNTO hay detrás: sin eso es una puerta ciega.
+    await user.click(screen.getByText(/^Permisos y salas · /));
 
     expect(await screen.findByLabelText('Aristas de control de acceso')).toBeInTheDocument();
     expect(screen.getAllByText('Tenant').length).toBeGreaterThan(0);
@@ -644,7 +645,8 @@ describe('el selector de Cliente', () => {
 
     await screen.findByLabelText('Veredicto de la flota');
     await elegirCliente(user, 'Miguel');
-    await user.click(screen.getByText('Permisos y salas'));
+    // El resumen del desplegable dice CUÁNTO hay detrás: sin eso es una puerta ciega.
+    await user.click(screen.getByText(/^Permisos y salas · /));
 
     const salas = await screen.findByLabelText('Aristas de control de acceso');
     expect(salas).toBeInTheDocument();

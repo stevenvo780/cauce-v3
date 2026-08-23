@@ -97,8 +97,8 @@ describe('formatResetIn', () => {
     expect(formatResetIn(-10)).toBe('vencido');
   });
 
-  it('stays UNKNOWN when the server did not provide a reset countdown', () => {
-    expect(formatResetIn(null)).toBe('UNKNOWN');
+  it('dice que no hay dato cuando el servidor no manda cuenta atrás de reset', () => {
+    expect(formatResetIn(null)).toBe('sin dato');
   });
 
   it('renders a coarse human duration for a real countdown', () => {

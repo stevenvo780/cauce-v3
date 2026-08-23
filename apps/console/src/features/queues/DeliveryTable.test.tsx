@@ -80,8 +80,10 @@ it('dice qué pasó cuando el servidor rechaza el replay, en vez de callarse', a
   const user = userEvent.setup();
   renderWithApi(<DeliveryTable rows={[DEAD]} canReplay canCancel onChanged={() => undefined} />);
 
+  // La confirmación sigue en medio (consola/real-1) y el texto del desenlace es el castellano
+  // único de la vista (consola/fix-vocabulario): «El reinyectado falló», no «Replay falló».
   await confirmar(user, screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
-  expect(await screen.findByText(/Replay falló/)).toHaveTextContent(/ya fue reencolada/i);
+  expect(await screen.findByText(/El reinyectado falló/)).toHaveTextContent(/ya fue reencolada/i);
 });
 
 it('con cero filas dice el vacío que le pasa quien la monta, no uno genérico', async () => {

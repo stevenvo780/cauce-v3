@@ -34,10 +34,10 @@ function sameOriginWebsocketPath(value: unknown): value is string {
 /** Client plugin gate: it grants no broker/runtime capability and defaults closed on ambiguity. */
 export function ultimateTerminalGate(capability: TerminalCapability | undefined, access: ConsoleAccess | undefined): PluginGate {
   if (permissionState(access, 'ultimate-terminal.connect') !== 'allowed') {
-    return { enabled: false, reason: 'Permiso RBAC DENY o UNKNOWN.' };
+    return { enabled: false, reason: 'Tu cuenta no tiene concedido el permiso de conectar a la terminal, o no se pudo leer el permiso. Ante la duda, cerrado.' };
   }
-  if (capability?.available !== true) return { enabled: false, reason: capability?.reason ?? 'Capability server-side UNKNOWN.' };
-  if (capability.plugin_id !== ULTIMATE_TERMINAL_PLUGIN_ID) return { enabled: false, reason: 'Plugin identity UNKNOWN.' };
+  if (capability?.available !== true) return { enabled: false, reason: capability?.reason ?? 'El servidor no dijo si el canal PTY está disponible en este stack.' };
+  if (capability.plugin_id !== ULTIMATE_TERMINAL_PLUGIN_ID) return { enabled: false, reason: 'El servidor anunció otro cliente de terminal, no éste: la consola no se conecta a un canal que no reconoce.' };
   if (!Array.isArray(capability.capabilities) || !capability.capabilities.every((item) => typeof item === 'string')) {
     return { enabled: false, reason: 'Payload de capabilities inválido.' };
   }

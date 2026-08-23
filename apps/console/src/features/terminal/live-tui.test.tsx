@@ -223,9 +223,12 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
 
     const aviso = await screen.findByRole('alert');
-    expect(aviso).toHaveTextContent(/falta el token CSRF/i);
-    expect(aviso).toHaveTextContent(/fallo de la consola/i);
-    expect(aviso).toHaveTextContent(/no de tu permiso ni del alias/i);
+    // La redacción sale de `TERMINAL_DENY_MESSAGES.csrf_missing`, que es el ÚNICO sitio donde vive
+    // el castellano de las negativas del plano PTY. Lo que la prueba fija son los tres hechos, no
+    // una frase copiada a mano: qué falta, que la culpa es de la consola, y que no es tu permiso.
+    expect(aviso).toHaveTextContent(/token CSRF/i);
+    expect(aviso).toHaveTextContent(/es la consola/i);
+    expect(aviso).toHaveTextContent(/no es tu permiso ni el alias/i);
     // Y se marca como defecto de la consola, que es lo que decide el color y el tono.
     expect(aviso).toHaveAttribute('data-consola', 'true');
     // No se culpa al despliegue ni se manda al operador a mirar contenedores.
@@ -242,7 +245,11 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
 
     const aviso = await screen.findByRole('alert');
-    expect(aviso).toHaveTextContent(/attribution_required/i);
+    // El código crudo NO se pinta: se traduce. Sigue disponible en `data-codigo`, que es lo que se
+    // pega en un informe. Esta es la regla que `denegaciones.test.tsx` guarda para los ocho.
+    expect(aviso).toHaveAttribute('data-codigo', 'attribution_required');
+    expect(aviso).not.toHaveTextContent('attribution_required');
+    expect(aviso).toHaveTextContent(/persona con nombre/i);
     expect(aviso).toHaveTextContent(/HTTP 403/);
     expect(aviso).not.toHaveAttribute('data-consola');
   });

@@ -56,10 +56,10 @@ export function operatorRouteForAgent(
   agent: FleetAgent,
 ): OperatorRoute {
   const actor = actorIdentity(access);
-  if (!actor) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'Identidad del operador UNKNOWN; no se puede derivar un room de origen.' };
+  if (!actor) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'No se pudo leer tu identidad de operador, así que no hay de dónde derivar un room de origen.' };
 
   const actorTenant = (topology?.tenants ?? []).find((tenant) => same(tenant.id, actor.tenantId));
-  if (!actorTenant) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'Topología de acceso del tenant operador UNKNOWN.' };
+  if (!actorTenant) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'No se pudo leer la topología de tu cliente, así que no se sabe a qué salas pertenecés.' };
 
   const sameTenant = same(actor.tenantId, agent.tenantId);
   if (!sameTenant) {
@@ -74,7 +74,7 @@ export function operatorRouteForAgent(
         sourceRoomIds: [],
         membership: recipientMembership,
         reason: recipientMembership === undefined
-          ? 'Membership del destinatario UNKNOWN en la topología autorizada.'
+          ? 'No se pudo comprobar si el destinatario es miembro de una sala compartida con vos.'
           : 'El destinatario no tiene membership habilitada en su tenant.',
       };
     }
@@ -99,7 +99,7 @@ export function operatorRouteForAgent(
 
   if (!sourceRoomIds.length) {
     const reason = membership === undefined
-      ? 'Membership del operador o destinatario UNKNOWN; publicación bloqueada.'
+      ? 'No se pudo comprobar la membresía tuya o del destinatario; la publicación queda bloqueada.'
       : sameTenant
         ? 'El operador y el destinatario no comparten un room habilitado.'
         : 'El operador no pertenece a un room de origen habilitado en su tenant.';
@@ -184,7 +184,7 @@ export function ptySecondsLeft(expiresAt: string | null | undefined, now = Date.
 }
 
 export function formatCountdown(seconds: number | undefined): string {
-  if (seconds === undefined) return 'UNKNOWN';
+  if (seconds === undefined) return 'sin dato';
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }
@@ -193,83 +193,14 @@ export function formatCountdown(seconds: number | undefined): string {
 /* Por qué NO se abrió el canal                                               */
 /* -------------------------------------------------------------------------- */
 
-/**
- * 🔴 **Traducción del rechazo del servidor. Añadida el 2026-08-23, y por un fallo que se comió a
- * sí mismo.**
- *
- * Medido contra producción: dos `403 {"error":"forbidden","message":"se requiere un token CSRF
- * válido"}` seguidos sobre el alias kant, y el panel siguió diciendo «PTY ONLINE / ok» y «TUI EN
- * VIVO». Ni un aviso, ni un cambio de estado: se buscaron nodos de texto con
- * `/403|denegad|permiso|no autoriz|error/` y no apareció ninguno nuevo. El operador pulsa TUI, no
- * pasa nada, y no tiene forma de saber si el problema es suyo, del alias o de la consola.
- *
- * Reglas de esta función, en orden de importancia:
- * 1. **El fallo de la consola se llama fallo de la consola.** Un 403 por CSRF no es una falta de
- *    permiso del operador ni un problema del alias: es que la consola no mandó su propio token.
- *    Decir «no autorizado» ahí manda al operador a pedir un permiso que ya tiene.
- * 2. **Nunca se inventa una causa.** Si el servidor mandó un motivo, ese motivo se muestra tal
- *    cual, con su código HTTP al lado para que se pueda citar.
- * 3. **Siempre dice qué hacer después**, aunque sea «avisale a quien mantiene la consola».
+/*
+ * La traducción del rechazo del plano PTY NO vive acá. Vivió, entre el 2026-08-23 y la fusión de
+ * ese mismo día: `terminalSessionRefusal` ramificaba por estado HTTP y `explicarDenegacionPty`
+ * (`denegaciones.ts`) por código del gateway, y las dos redactaban el MISMO 403 con palabras
+ * distintas. Dos vocabularios para una negativa es el defecto que el trabajo de ese día vino a
+ * cerrar, así que quedó uno: `denegaciones.ts`, que además dice quién puede levantarla y nunca
+ * devuelve el código crudo. Lo que este módulo aportaba —que un 403 por CSRF es un fallo de la
+ * consola y no una falta de permiso, y que un 401 es la cookie vencida— está allí, como los
+ * códigos `csrf_missing` y `unauthorized`.
  */
-export interface TerminalSessionRefusal {
-  /** Titular corto, para el aviso sobre la sesión. */
-  titulo: string;
-  /** Frase completa, con el motivo del servidor dentro cuando lo hay. */
-  detalle: string;
-  /** `true` cuando la culpa es de la consola y NO del permiso del operador ni del alias. */
-  esDefectoDeLaConsola: boolean;
-}
 
-function esFalloDeCsrf(mensaje: string, codigo: string | undefined): boolean {
-  return /csrf/i.test(mensaje) || /csrf/i.test(codigo ?? '');
-}
-
-export function terminalSessionRefusal(error: unknown): TerminalSessionRefusal {
-  const status = typeof (error as { status?: unknown })?.status === 'number'
-    ? (error as { status: number }).status
-    : undefined;
-  const codigo = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : undefined;
-  const mensaje = error instanceof Error && error.message.trim() ? error.message.trim() : '';
-
-  if (status === 403 && esFalloDeCsrf(mensaje, codigo)) {
-    return {
-      titulo: 'La consola no mandó su token CSRF',
-      detalle: 'El servidor rechazó la apertura de sesión: falta el token CSRF. Es un fallo de la '
-        + 'consola, no de tu permiso ni del alias. Avisale a quien mantiene la consola.',
-      esDefectoDeLaConsola: true,
-    };
-  }
-  if (status === 403) {
-    return {
-      titulo: 'El servidor rechazó la sesión (403)',
-      detalle: mensaje
-        ? `El servidor rechazó la apertura de sesión (HTTP 403): ${mensaje}`
-        : 'El servidor rechazó la apertura de sesión (HTTP 403) sin dar un motivo.',
-      esDefectoDeLaConsola: false,
-    };
-  }
-  if (status === 409) {
-    return {
-      titulo: 'El destino no puede tomar la sesión ahora',
-      detalle: mensaje
-        ? `El servidor no pudo abrir el canal ahora mismo (HTTP 409): ${mensaje}`
-        : 'El servidor no pudo abrir el canal ahora mismo (HTTP 409).',
-      esDefectoDeLaConsola: false,
-    };
-  }
-  if (status === 401) {
-    return {
-      titulo: 'La sesión de la consola caducó',
-      detalle: 'El servidor no reconoció la sesión de la consola (HTTP 401). Volvé a entrar y reintentá.',
-      esDefectoDeLaConsola: false,
-    };
-  }
-  return {
-    titulo: status ? `El servidor rechazó la sesión (${status})` : 'No se pudo abrir el canal',
-    detalle: [
-      status ? `El servidor respondió HTTP ${status} al abrir el canal.` : 'No se pudo abrir el canal.',
-      mensaje,
-    ].filter(Boolean).join(' '),
-    esDefectoDeLaConsola: false,
-  };
-}

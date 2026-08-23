@@ -40,7 +40,7 @@ function filaDelAgente(
 
 /** La revisión de un snapshot recién leído, para poder decirle al operador cuál es la buena. */
 function revisionDe(snapshot: ConfigurationSnapshot | undefined): string {
-  return typeof snapshot?.revision === 'number' ? String(snapshot.revision) : 'UNKNOWN';
+  return typeof snapshot?.revision === 'number' ? String(snapshot.revision) : 'sin dato';
 }
 
 export interface RoleBriefTabProps {
@@ -98,7 +98,7 @@ export function RoleBriefTab({ tenantId, alias, borrador, onBorrador }: RoleBrie
   if (config.error && !config.data) {
     return (
       <EmptyState>
-        No se pudo leer la configuración, así que el rol de este alias es UNKNOWN —no «vacío»—:
+        No se pudo leer la configuración, así que el rol de este alias es un dato que no tenemos —no «vacío»—:
         {' '}{config.error.message}
       </EmptyState>
     );
@@ -146,7 +146,7 @@ export function RoleBriefTab({ tenantId, alias, borrador, onBorrador }: RoleBrie
       if (recarga.error) {
         setAviso({
           tone: 'parcial',
-          text: `Guardé el rol en la revisión ${result.revision ?? 'UNKNOWN'}, pero NO pude releer la `
+          text: `Guardé el rol en la revisión ${result.revision ?? 'una revisión que el servidor no informó'}, pero NO pude releer la `
             + `configuración (${recarga.error.message}): lo que ves es lo que envié, no lo que el `
             + 'servidor tiene. El borrador se conserva; volvé a abrir esta pestaña cuando la lectura funcione.',
         });
@@ -155,13 +155,13 @@ export function RoleBriefTab({ tenantId, alias, borrador, onBorrador }: RoleBrie
       onBorrador(undefined);
       setAviso({
         tone: 'success',
-        text: `Rol guardado en la revisión ${result.revision ?? 'UNKNOWN'} y releído del servidor: esto es lo `
+        text: `Rol guardado en la revisión ${result.revision ?? 'una revisión que el servidor no informó'} y releído del servidor: esto es lo `
           + 'que hay en la base. Se puede deshacer desde el audit trail de Configuración.',
       });
     } catch (error) {
       // Un botón que no dice nada al fallar es peor que no tenerlo: el operador cree que guardó y
       // el alias sigue con el rol viejo. El mensaje del servidor se muestra entero.
-      const descripcion = describeConfigError(error, 'Guardado rechazado: UNKNOWN');
+      const descripcion = describeConfigError(error, 'El servidor rechazó el guardado y no dijo por qué');
       if (!descripcion.conflict) {
         setAviso({ tone: 'error', text: descripcion.message });
         return;
@@ -170,7 +170,7 @@ export function RoleBriefTab({ tenantId, alias, borrador, onBorrador }: RoleBrie
       // esperarla— la revisión de esta pestaña queda congelada y cada reintento vuelve a mandar la
       // misma revisión vencida: un bucle del que el operador no puede salir. Por eso se relee, se
       // espera el dato, y recién entonces se le dice que reintente.
-      const crudo = error instanceof Error ? error.message : 'UNKNOWN';
+      const crudo = error instanceof Error ? error.message : 'el servidor no dijo por qué';
       const recarga: RecargaResultado<ConfigurationSnapshot> = await config.reload();
       setAviso({
         tone: 'error',

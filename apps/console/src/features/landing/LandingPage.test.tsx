@@ -24,18 +24,62 @@ function todoSano() {
   ];
 }
 
-it('resume la consola entera: flota, colas, cuotas y a qué sirve cada vista', async () => {
+it('resume la consola entera: flota, colas y cuotas, con los números PRIMERO', async () => {
   renderWithApi(<LandingPage />);
 
   expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
   // Las métricas de conjunto, con su número real del snapshot (mockStatus.online = 99).
   expect(await screen.findByText('99')).toBeInTheDocument();
-  // Y las puertas a las vistas completas: la portada enlaza, no redibuja. Se busca dentro del
-  // panel de atajos y no en toda la página, porque una alerta puede enlazar al mismo destino.
-  const atajos = within(screen.getByRole('list', { name: /el resto de la consola/i }));
-  expect(atajos.getByRole('link', { name: /la flota ahora/i })).toHaveAttribute('href', '/live');
-  expect(atajos.getByRole('link', { name: /queues & dlq/i })).toHaveAttribute('href', '/queues');
-  expect(atajos.getByRole('link', { name: /cuentas y cuotas/i })).toHaveAttribute('href', '/accounts');
+
+  // 🔴 Y van ANTES de la banda de avisos en el orden del documento. Medido el 2026-08-23 a
+  // 1280×900, las ocho bandas de aviso ocupaban ~580 px y empujaban los cuatro números fuera del
+  // borde inferior: el resumen de conjunto no se veía al entrar al resumen de conjunto.
+  const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
+  const numeros = screen.getByText('99').closest('.metrics-grid')!;
+  // `compareDocumentPosition` con FOLLOWING = los números están antes que la banda.
+  expect(numeros.compareDocumentPosition(banda) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it('no imprime rutas de endpoint en la pantalla del operador: van al title=', async () => {
+  renderWithApi(<LandingPage />);
+
+  const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
+  await within(banda).findByText(/entrega muerta en la DLQ/i);
+  // La ruta hace falta para contrastar un número dudoso; no hace falta para leer la pantalla.
+  expect(banda.textContent).not.toMatch(/GET \/v3\/console\//);
+});
+
+it('agrupa los avisos por la vista que los resuelve: una fila por destino, no una por hallazgo', async () => {
+  server.use(
+    http.get('http://localhost/v3/console/queues', () => HttpResponse.json({ observed_at: new Date().toISOString(), pending: 0, retrying: 0, dead: 0, items: [] })),
+    http.get('http://localhost/v3/console/quotas', () => HttpResponse.json({
+      observed_at: new Date().toISOString(),
+      collectors: [{ host: 'kratos', stale: true, age_seconds: 9000 }],
+      providers: [
+        { provider: 'codex', severity: 'exhausted', effective_remaining_percent: 0 },
+        { provider: 'claude', severity: 'warn', effective_remaining_percent: 12 },
+      ],
+      paused_accounts: [{ account_id: 'a-1', provider: 'codex' }],
+    })),
+    http.get('http://localhost/v3/console/activity', () => HttpResponse.json({
+      observed_at: new Date().toISOString(),
+      totals: {
+        agents: 15, in_flight: 3, queued: 1, retrying: 0, overdue_in_flight: 41,
+        by_state: { stalled: 5 }, flagged: { queued_without_consumer: 2 },
+      },
+      agents: [],
+    })),
+  );
+  renderWithApi(<LandingPage />);
+
+  const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
+  // Siete hallazgos —tres en «La flota ahora», cuatro en «Cuentas y cuotas»— y DOS filas.
+  await within(banda).findByText(/cosas que atender en La flota ahora/i);
+  const filas = banda.querySelectorAll('.landing-alerta');
+  expect(filas.length).toBeLessThanOrEqual(3);
+  const enlaces = within(banda).getAllByRole('link').map((enlace) => enlace.getAttribute('href'));
+  // Ni un destino repetido: era lo que hacía que cuatro bandas idénticas apuntaran al mismo sitio.
+  expect(new Set(enlaces).size).toBe(enlaces.length);
 });
 
 it('los arneses siguen estando, plegados: es lo que era la vista «Adapters»', async () => {

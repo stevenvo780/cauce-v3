@@ -2,7 +2,7 @@ import { Search } from 'lucide-react';
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { ErrorState, LoadingState, PageHeader, Panel, PermissionBadge, RefreshButton } from '../../components/ui';
+import { ErrorState, LoadingState, PageHeader, Panel, PermissionBadge, RefreshButton, Time } from '../../components/ui';
 import { compactId, display, permissionState } from '../../lib';
 import { DeliveryTable, EXPLICACION_CANCEL, EXPLICACION_REPLAY } from './DeliveryTable';
 import { enfocarEntrega, leerEntregaPedida, TEXTO_AUSENTE } from './foco-de-entrega';
@@ -130,7 +130,11 @@ export function QueuesPage() {
         </p>
       ) : null}
 
-      <Panel title="Deliveries" subtitle={`Snapshot: ${snapshot?.observed_at ?? 'UNKNOWN'}`}>
+      {/* El `observed_at` se volcaba tal cual —«2026-08-23T02:02:29.830Z»— y era uno de los tres
+          formatos de fecha que convivían en el producto. Ahora pasa por el mismo `<Time>` que el
+          resto: relativa a la vista, exacta en el `title=`. */}
+      <Panel title="Entregas" subtitle={undefined}>
+        <p className="observation-line">Leído del servidor: <Time value={snapshot?.observed_at} relativo /></p>
         {conFoco ? null : (
           <div className="queues-filtros">
             <label className="queues-busqueda">

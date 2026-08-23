@@ -12,7 +12,10 @@ import { EmptyState, Unknown } from '../../components/ui';
  * página original siguen valiendo como prueba de esto.
  */
 export function TenantCards({ tenants }: { tenants: readonly TenantNode[] }) {
-  if (tenants.length === 0) return <EmptyState>Topología no disponible: UNKNOWN.</EmptyState>;
+  if (tenants.length === 0) return <EmptyState>
+    El servidor no devolvió ningún cliente para esta lista. No es «no hay clientes configurados»: si la
+    lectura falló, el mapa de arriba lo dice — esta lista sale de esa misma lectura y no la repite.
+  </EmptyState>;
   return (
     <div className="tenant-grid">
       {tenants.map((tenant, tenantIndex) => (
@@ -22,11 +25,11 @@ export function TenantCards({ tenants }: { tenants: readonly TenantNode[] }) {
             <div><p>Tenant</p><h3><Unknown value={tenant.label ?? tenant.id} /></h3></div>
           </header>
           <div className="room-stack">
-            {(tenant.rooms ?? []).length === 0 ? <span className="unknown">ROOMS UNKNOWN</span> : (tenant.rooms ?? []).map((room, roomIndex) => (
+            {(tenant.rooms ?? []).length === 0 ? <span className="unknown">sin salas informadas</span> : (tenant.rooms ?? []).map((room, roomIndex) => (
               <section className="room" key={room.id ?? roomIndex}>
                 <strong># <Unknown value={room.label ?? room.id} /></strong>
                 <div className="member-list">
-                  {(room.members ?? []).length === 0 ? <span className="unknown">MEMBERS UNKNOWN</span> : (room.members ?? []).map((member, memberIndex) => (
+                  {(room.members ?? []).length === 0 ? <span className="unknown">sin miembros informados</span> : (room.members ?? []).map((member, memberIndex) => (
                     <span className={member.enabled === false ? 'member disabled' : 'member'} key={member.alias ?? memberIndex}>
                       <Unknown value={member.alias} />
                     </span>

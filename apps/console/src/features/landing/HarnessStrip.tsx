@@ -16,6 +16,13 @@ import { safeCapabilityState } from '../../lib';
  * arriba que la portada le debe a las alertas.
  */
 
+/** El estado del arnés, en castellano: era el valor crudo del campo `state` de la API. */
+const ESTADO_ARNES: Readonly<Record<string, string | undefined>> = {
+  available: 'Disponible',
+  degraded: 'Degradado',
+  unavailable: 'No disponible',
+};
+
 function tone(state?: CapabilityState | null): 'online' | 'warning' | 'danger' | 'unknown' {
   if (state === 'available') return 'online';
   if (state === 'degraded') return 'warning';
@@ -41,7 +48,7 @@ export function HarnessStrip({ adapters, error }: { adapters: AdapterView[]; err
       {error
         ? <p className="notice error" role="alert">No se pudo leer el manifest de arneses: {error.message}</p>
         : adapters.length === 0
-          ? <EmptyState>No hay manifest de arneses. Estado: UNKNOWN.</EmptyState>
+          ? <EmptyState>El servidor no publicó ningún arnés. No es «no hay ninguno»: es que no se pudo leer la lista.</EmptyState>
           : (
             <div className="adapter-grid">
               {adapters.map((adapter, index) => (
@@ -49,7 +56,7 @@ export function HarnessStrip({ adapters, error }: { adapters: AdapterView[]; err
                   <div className="adapter-head">
                     <span className="adapter-icon"><Bot aria-hidden="true" /></span>
                     <div><p className="eyebrow"><Unknown value={adapter.id} /></p><h3><Unknown value={adapter.label} /></h3></div>
-                    <Badge tone={tone(safeCapabilityState(adapter.state))}><Unknown value={safeCapabilityState(adapter.state)} /></Badge>
+                    <Badge tone={tone(safeCapabilityState(adapter.state))}><Unknown value={ESTADO_ARNES[safeCapabilityState(adapter.state) ?? '']} /></Badge>
                   </div>
                   <p className="adapter-detail"><Unknown value={adapter.detail} /></p>
                   <dl className="adapter-meta">
@@ -61,7 +68,7 @@ export function HarnessStrip({ adapters, error }: { adapters: AdapterView[]; err
                     <div className="chip-list">
                       {adapter.capabilities?.length
                         ? adapter.capabilities.map((capability) => <span className="chip" key={capability}>{capability}</span>)
-                        : <span className="unknown">UNKNOWN</span>}
+                        : <span className="unknown">sin dato</span>}
                     </div>
                   </div>
                 </article>

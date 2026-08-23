@@ -63,6 +63,14 @@ export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
     hint: 'Una entrega suya dejó de estar en vuelo. Si cerró bien o se murió NO se puede saber desde la consola.',
     tone: 'neutral',
   },
+  /*
+   * «Recibiendo», y NO «Esperando turno», aunque las dos ramas de vocabulario lo propusieran: esa
+   * frase ya está tomada en esta misma pantalla por la cifra de ENTREGAS `pending` + `retry` del
+   * veredicto, cuyo tooltip dice literalmente «es la única definición de "en cola" que queda en la
+   * consola». Ponerla también acá dejaría la MISMA frase con dos números distintos a un palmo de
+   * distancia, que es exactamente el defecto que este trabajo venía a cerrar. La tabla de
+   * `/activity` dice esta misma palabra para `work_state: 'queued'` (`WORK_STATE_LABEL`).
+   */
   receiving: { label: 'Recibiendo', hint: 'Le entró trabajo nuevo y todavía no empezó el turno.', tone: 'info' },
   thinking: { label: 'Trabajando', hint: 'Turno en curso: el arnés está masticando la entrega.', tone: 'positive' },
   idle: {

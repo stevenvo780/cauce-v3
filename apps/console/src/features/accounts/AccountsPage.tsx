@@ -89,7 +89,7 @@ export function AccountsPage() {
     <PageHeader
       eyebrow="Pool de suscripciones"
       title="Cuentas y cuotas"
-      description="Qué cuentas de IA existen, cuánto saldo les queda y quién las usa, en una sola vista. El inventario y el ruteo salen de GET /v3/console/config y se escriben por POST /v3/console/config/changes; el consumo sale de GET /v3/console/quotas, que es la última corrida del recolector externo y tiene su propia frescura. Si el recolector está caído, el inventario se sigue leyendo y editando: el saldo dice ?, no cero."
+      description="Qué cuentas de IA existen, cuánto saldo les queda y quién las usa, en una sola vista. El inventario y el ruteo se leen y se escriben contra la configuración; el saldo sale de la última corrida del recolector externo y tiene su propia frescura. Si el recolector está caído, el inventario se sigue leyendo y editando, y el saldo se declara desconocido en vez de cero."
       actions={<RefreshButton onClick={reloadAll} loading={quotas.loading || config.loading} />}
     />
 

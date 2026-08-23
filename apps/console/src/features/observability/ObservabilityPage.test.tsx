@@ -82,7 +82,7 @@ it('conserva request_id, message_id y trace_id, que sólo estaban en el volcado 
   expect(within(row!).getByText(/trace-4c8f/)).toBeInTheDocument();
   expect(within(row!).getByText(/msg-91ab/)).toBeInTheDocument();
   expect(within(row!).getByText(/del-22de/)).toBeInTheDocument();
-  expect(within(row!).getByText('SENT')).toBeInTheDocument();
+  expect(within(row!).getByText('ENVIADO')).toBeInTheDocument();
 });
 
 it('no presenta como enviado un relay que dice sent sin sent_at', async () => {
@@ -91,9 +91,11 @@ it('no presenta como enviado un relay que dice sent sin sent_at', async () => {
   renderWithApi(<ObservabilityPage />);
 
   const row = (await screen.findByText(/relay-0001/)).closest('tr');
-  // Columna "Estado", no cualquier UNKNOWN de la fila: la de "Enviado" también dice UNKNOWN, y
-  // confundirlas dejaría pasar justamente el caso que este test cuida.
-  expect(row!.querySelectorAll('td')[4]).toHaveTextContent('UNKNOWN');
+  // Columna "Estado". `sent` sin `sent_at` NO es una ausencia de dato: es una CONTRADICCIÓN del
+  // servidor, y decirle «sin dato» la escondería detrás del mismo gris que un campo que nunca
+  // llegó. Se nombra lo que pasa, y sigue sin decir «enviado» a secas.
+  expect(row!.querySelectorAll('td')[4]).toHaveTextContent('DICE ENVIADO, SIN HORA');
+  expect(within(row!).queryByText('ENVIADO')).not.toBeInTheDocument();
   expect(within(row!).queryByText('SENT')).not.toBeInTheDocument();
 });
 
@@ -211,4 +213,19 @@ it('no pide el audit log hasta que se abre su pestaña', async () => {
   await user.click(screen.getByRole('tab', { name: 'Auditoría' }));
   await screen.findByRole('heading', { level: 2, name: 'Eventos' });
   expect(pedidos).toBe(1);
+});
+
+
+it('ninguna fila de relay grita UNKNOWN, ni dice el mismo hecho dos veces', async () => {
+  observability();
+  // Un relay sin petición, sin traza y sin mensaje: el caso que hacía a la fila decir
+  // «req UNKNOWN · trace UNKNOWN», «msg UNKNOWN» y, en la columna de al lado, «sin trace».
+  relays([{ ...relay, request_id: null, trace_id: null, message_id: null }]);
+  renderWithApi(<ObservabilityPage />);
+
+  const row = (await screen.findByText(/relay-0001/)).closest('tr')!;
+  expect(row.textContent).not.toContain('UNKNOWN');
+  // El hecho «no hay traza» se dice UNA vez, y en la columna donde importa (la de auditoría).
+  const menciones = (row.textContent ?? '').match(/traza/gi) ?? [];
+  expect(menciones.length).toBeLessThanOrEqual(1);
 });

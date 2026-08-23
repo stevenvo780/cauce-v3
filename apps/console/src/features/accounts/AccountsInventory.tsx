@@ -176,9 +176,9 @@ export function AccountsInventory({ config, access, quotas }: {
     <PermissionBadge access={access.data} permission="config.write" />
 
     <div className="metrics-grid">
-      <Metric label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias más las publicadas al pool' : 'GET /v3/console/config no publica provider_accounts'} />
-      <Metric label="Publicadas al pool" value={pooled} tone="positive" detail="shared_with_pool = consentimiento del pagador" />
-      <Metric label="Habilitadas" value={enabled} detail="enabled arranca en false: default-deny" />
+      <Metric label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias más las publicadas al pool' : 'el servidor no publica el inventario de cuentas'} />
+      <Metric label="Publicadas al pool" value={pooled} tone="positive" detail="quien paga consintió prestarlas" />
+      <Metric label="Habilitadas" value={enabled} detail="una cuenta nueva nace deshabilitada" />
       <Metric label="Pagadas por otro tenant" value={foreign} tone="warning" detail={actorTenant ? `pagador ≠ ${actorTenant}` : 'el servidor no informó el tenant del actor'} />
     </div>
 
@@ -212,10 +212,10 @@ export function AccountsInventory({ config, access, quotas }: {
                       : null}
                   </td>
                   <td>{account.sharedWithPool === null
-                    ? <Badge tone="unknown">UNKNOWN</Badge>
+                    ? <Badge tone="unknown">SIN DATO</Badge>
                     : <Badge tone={account.sharedWithPool ? 'info' : 'offline'}>{account.sharedWithPool ? 'PUBLICADA' : 'PRIVADA'}</Badge>}</td>
                   <td>{account.enabled === null
-                    ? <Badge tone="unknown">UNKNOWN</Badge>
+                    ? <Badge tone="unknown">SIN DATO</Badge>
                     : <Badge tone={account.enabled ? 'online' : 'offline'}>{account.enabled ? 'HABILITADA' : 'DESHABILITADA'}</Badge>}</td>
                   {/* Plan y Consumo salen de `GET /v3/console/quotas`, que puede estar caído sin
                       que eso impida editar el registro: por eso dicen «?» en vez de tumbar la

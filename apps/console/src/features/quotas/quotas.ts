@@ -6,7 +6,7 @@ export const SEVERITY_LABEL: Record<QuotaSeverity, string> = {
   warn: 'ATENCIÓN',
   critical: 'CRÍTICO',
   exhausted: 'AGOTADO',
-  unknown: 'UNKNOWN',
+  unknown: 'SIN DATO',
 };
 
 export const SEVERITY_TONE: Record<QuotaSeverity, BadgeTone> = {
@@ -89,7 +89,7 @@ export function groupWindowsByFamily(windows: readonly QuotaWindow[]): WindowFam
     const worst = worstWindow(group);
     return {
       key,
-      label: group[0]?.family ?? group[0]?.label ?? group[0]?.window_key ?? 'UNKNOWN',
+      label: group[0]?.family ?? group[0]?.label ?? group[0]?.window_key ?? 'sin nombre',
       windows: group,
       worst: worst ?? group[0],
       collapsible: group.length > 1,
@@ -117,7 +117,7 @@ export function buildQuotaRows(groups: readonly QuotaGroup[]): QuotaRow[] {
 /** reset_in_seconds <= 0 se muestra explícitamente "vencido": un reloj de recolector atrasado
  *  no debe leerse como "resetea en -3s". null se queda UNKNOWN, nunca "ahora mismo". */
 export function formatResetIn(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return 'UNKNOWN';
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return 'sin dato';
   if (seconds <= 0) return 'vencido';
   return `en ${humanDuration(seconds)}`;
 }
@@ -144,4 +144,50 @@ export function isAgeStale(ageSeconds: number | null | undefined, staleAfterSeco
 export function formatUnits(used: number | null | undefined, limit: number | null | undefined): string | undefined {
   if (limit === null || limit === undefined) return undefined;
   return `${used ?? '?'} / ${limit}`;
+}
+
+/* ============================================================================================ *
+ * El porcentaje de la cabecera de un proveedor.
+ * ============================================================================================ */
+
+/**
+ * 🔴 **«AGOTADO» y «100% libre», en la misma línea.** Medido el 2026-08-23 en `/accounts`: la
+ * tarjeta de `codex` pintaba la severidad PEOR de sus grupos (AGOTADO) al lado del
+ * `effective_remaining_percent` que manda el servidor (100%), mientras sus propias filas decían
+ * «Codex Pro 0% libre» y «codex_bengalfox 100% libre». Un operador que lee la cabecera y se va
+ * concluye que hay saldo justo donde no lo hay.
+ *
+ * Lo peor no es el defecto: es que el equipo YA LO SABÍA. Tres tarjetas más abajo, en «Un número
+ * por proveedor miente», hay un párrafo que describe EXACTAMENTE este riesgo, con estos números.
+ * Se escribió la explicación y se dejó el número engañoso en 20 px azules. **Explicar un defecto
+ * no es arreglarlo.**
+ *
+ * La regla, ahora: la cabecera muestra el PEOR porcentaje de las ventanas del proveedor, que es el
+ * que va con la severidad que ya se pinta al lado. Si no se puede calcular ninguno —ningún grupo
+ * informa porcentaje— no se muestra ninguno: no hay un número honesto que poner ahí.
+ *
+ * `effective_remaining_percent` no se tira: pasa al `title=` con su nombre, porque es lo que el
+ * enrutador usa para elegir cuenta y hay que poder contrastarlo.
+ */
+export function peorPorcentajeDelProveedor(provider: QuotaProviderReport): number | undefined {
+  let peor: number | undefined;
+  for (const group of provider.groups ?? []) {
+    for (const window of group.windows ?? []) {
+      const valor = window.remaining_percent;
+      if (typeof valor !== 'number' || !Number.isFinite(valor)) continue;
+      peor = peor === undefined ? valor : Math.min(peor, valor);
+    }
+  }
+  return peor;
+}
+
+/**
+ * `true` cuando el porcentaje efectivo del servidor y el peor de las ventanas NO cuentan la misma
+ * historia. Se usa para decirlo en la cabecera en vez de dejar que el operador lo descubra.
+ */
+export function porcentajesEnConflicto(provider: QuotaProviderReport): boolean {
+  const efectivo = provider.effective_remaining_percent;
+  const peor = peorPorcentajeDelProveedor(provider);
+  if (typeof efectivo !== 'number' || peor === undefined) return false;
+  return Math.abs(efectivo - peor) >= 10;
 }

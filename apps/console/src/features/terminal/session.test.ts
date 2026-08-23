@@ -4,7 +4,6 @@ import {
   operatorRouteForAgent,
   ptyReasonProblem,
   ptySecondsLeft,
-  terminalSessionRefusal,
   transcriptForSession,
   type OperatorSession,
 } from './session';
@@ -40,7 +39,7 @@ it('publishes cross-tenant only from an operator room allowed by directed ACL', 
   });
 });
 
-it('fails closed on UNKNOWN membership and does not borrow the recipient room', () => {
+it('falla cerrado cuando no se pudo leer la membresía, y no toma prestada la sala del destinatario', () => {
   const route = operatorRouteForAgent({
     tenants: [
       { id: 'Steven', rooms: [{ id: 'grp.steven', members: [{ alias: 'kant' }] }] },
@@ -52,7 +51,9 @@ it('fails closed on UNKNOWN membership and does not borrow the recipient room', 
   expect(route.allowed).toBe(false);
   expect(route.membership).toBeUndefined();
   expect(route.sourceRoomIds).not.toContain('grp.miguel');
-  expect(route.reason).toMatch(/UNKNOWN/);
+  expect(route.reason).toMatch(/no se pudo comprobar la membresía/i);
+  // Y sigue sin llevar la palabra en inglés a la pantalla.
+  expect(route.reason).not.toContain('UNKNOWN');
 });
 
 it('projects a recipient transcript across server-authorized rooms', () => {
@@ -84,51 +85,15 @@ it('demands a hand-written justification between 8 and 280 characters', () => {
   expect(ptyReasonProblem('x'.repeat(281))).toMatch(/no puede pasar de 280/);
 });
 
-it('counts down to the grant expiry and shows UNKNOWN instead of a fake clock', () => {
+it('cuenta atrás hasta el vencimiento del permiso y dice «sin dato» en vez de un reloj inventado', () => {
   const now = Date.parse('2026-07-25T12:00:00.000Z');
   expect(ptySecondsLeft('2026-07-25T12:00:30.000Z', now)).toBe(30);
   expect(ptySecondsLeft('2026-07-25T11:59:00.000Z', now)).toBe(0);
   expect(ptySecondsLeft(undefined, now)).toBeUndefined();
   expect(ptySecondsLeft('no es una fecha', now)).toBeUndefined();
-  expect(formatCountdown(ptySecondsLeft(null, now))).toBe('UNKNOWN');
+  expect(formatCountdown(ptySecondsLeft(null, now))).toBe('sin dato');
   expect(formatCountdown(95)).toBe('1:35');
   expect(formatCountdown(5)).toBe('0:05');
 });
 
 
-/**
- * La traducción del rechazo, sin navegador de por medio. El caso que la hizo nacer: un 403 cuyo
- * mensaje dice «se requiere un token CSRF válido» NO es una falta de permiso del operador.
- */
-describe('terminalSessionRefusal', () => {
-  class Fallo extends Error {
-    constructor(mensaje: string, readonly status: number, readonly code?: string) { super(mensaje); }
-  }
-
-  it('llama al fallo de CSRF por su nombre y lo atribuye a la consola', () => {
-    const refusal = terminalSessionRefusal(new Fallo('se requiere un token CSRF válido', 403, 'forbidden'));
-    expect(refusal.esDefectoDeLaConsola).toBe(true);
-    expect(refusal.detalle).toMatch(/falta el token CSRF/i);
-    expect(refusal.detalle).toMatch(/no de tu permiso ni del alias/i);
-    expect(refusal.detalle).toMatch(/quien mantiene la consola/i);
-  });
-
-  it('un 403 cualquiera repite el motivo del servidor y NO acusa a la consola', () => {
-    const refusal = terminalSessionRefusal(new Fallo('attribution_required', 403, 'forbidden'));
-    expect(refusal.esDefectoDeLaConsola).toBe(false);
-    expect(refusal.detalle).toContain('attribution_required');
-    expect(refusal.detalle).toContain('403');
-  });
-
-  it('distingue el 409 del destino y el 401 de la sesión', () => {
-    expect(terminalSessionRefusal(new Fallo('agent_offline', 409, 'conflict')).detalle).toMatch(/409.*agent_offline/);
-    expect(terminalSessionRefusal(new Fallo('unauthorized', 401)).detalle).toMatch(/caducó|401/i);
-  });
-
-  it('un error sin status no inventa una causa: dice lo que sabe', () => {
-    const refusal = terminalSessionRefusal(new Error('Failed to fetch'));
-    expect(refusal.esDefectoDeLaConsola).toBe(false);
-    expect(refusal.detalle).toContain('Failed to fetch');
-    expect(refusal.titulo).toBe('No se pudo abrir el canal');
-  });
-});

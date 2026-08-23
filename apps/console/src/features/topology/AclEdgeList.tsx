@@ -10,7 +10,7 @@ import { Badge, EmptyState, Unknown } from '../../components/ui';
  * blanco que se leería como "sin restricciones".
  */
 export function AclEdgeList({ edges }: { edges: readonly AclEdge[] }) {
-  if (edges.length === 0) return <EmptyState>No se informaron aristas. Política: UNKNOWN.</EmptyState>;
+  if (edges.length === 0) return <EmptyState>El servidor no informó ninguna arista de permisos. No es «nadie puede hablar con nadie»: es que no se pudo leer la política.</EmptyState>;
   return (
     <ul className="edge-list" aria-label="Aristas de control de acceso">
       {edges.map((edge, index) => (
@@ -19,7 +19,7 @@ export function AclEdgeList({ edges }: { edges: readonly AclEdge[] }) {
           <ArrowRight size={17} aria-hidden="true" />
           <strong><Unknown value={edge.to_tenant} /></strong>
           <Badge tone={edge.enabled === true ? 'online' : edge.enabled === false ? 'danger' : 'unknown'}>
-            {edge.enabled === true ? 'ENABLED' : edge.enabled === false ? 'DISABLED' : 'UNKNOWN'}
+            {edge.enabled === true ? 'HABILITADA' : edge.enabled === false ? 'DESHABILITADA' : 'SIN DATO'}
           </Badge>
           <span>route=<Unknown value={edge.allow_route} /> read=<Unknown value={edge.allow_read} /> control=<Unknown value={edge.allow_control} /></span>
         </li>

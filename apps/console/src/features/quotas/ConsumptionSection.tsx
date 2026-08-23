@@ -17,7 +17,8 @@ import {
 } from '../licenses/licenses';
 import { Sparkline } from './Sparkline';
 import {
-  SEVERITY_LABEL, SEVERITY_TONE, buildQuotaRows, formatResetIn, formatUnits, isAgeStale, sortProvidersBySeverity,
+  SEVERITY_LABEL, SEVERITY_TONE, buildQuotaRows, formatResetIn, formatUnits, isAgeStale,
+  peorPorcentajeDelProveedor, porcentajesEnConflicto, sortProvidersBySeverity,
   type QuotaRow as QuotaRowType,
 } from './quotas';
 
@@ -126,16 +127,15 @@ export function ConsumptionSection({ quotas, config }: {
     <>
       <p className="page-description">
         El consumo no es un dato en vivo del bus: es la última corrida del recolector externo
-        (<code>get_ai_quotas</code>) que interroga los CLIs de claude/codex/antigravity/opencode en
-        kratos y en los contenedores de agente, con su propia frescura (<code>collectors[].stale</code>)
-        independiente de la actividad.
+        que interroga a los CLIs de claude, codex, antigravity y opencode en kratos y en los contenedores
+        de agente, con su propia frescura, independiente de la actividad.
       </p>
 
       {quotasDown ? (
         <FailureBanner
           title="No se pudo leer el consumo."
           error={quotas.error!}
-          detail="GET /v3/console/quotas falló y no hay ningún snapshot previo en memoria: abajo no falta consumo, falta la respuesta."
+          detail="La lectura del consumo falló y no hay ninguna anterior en memoria: abajo no falta consumo, falta la respuesta."
           onRetry={reloadQuotas}
         />
       ) : quotas.error ? (
@@ -148,7 +148,7 @@ export function ConsumptionSection({ quotas, config }: {
         <FailureBanner
           title="No se pudo leer el inventario."
           error={config.error!}
-          detail="GET /v3/console/config falló: no se sabe qué cuentas ni qué agentes hay registrados, así que no se listan."
+          detail="La lectura de la configuración falló: no se sabe qué cuentas ni qué agentes hay registrados, así que no se listan."
           onRetry={reloadConfig}
         />
       ) : config.error ? (
@@ -186,7 +186,7 @@ export function ConsumptionSection({ quotas, config }: {
       )}
 
       <div className="metrics-grid">
-        <Metric label="Cuentas registradas" value={configDown ? null : totalAccounts} detail="provider_accounts del inventario" />
+        <Metric label="Cuentas registradas" value={configDown ? null : totalAccounts} detail="cuentas del inventario" />
         <Metric
           label="Con datos de cuota"
           value={isCollectorAbsent || quotasDown || configDown ? null : accountsWithQuota}
@@ -215,18 +215,18 @@ export function ConsumptionSection({ quotas, config }: {
           label="Peor remanente"
           value={worstRemaining === null ? null : `${worstRemaining}%`}
           tone={worstRemaining !== null && worstRemaining <= (thresholds?.critical_remaining_percent ?? 10) ? 'danger' : 'neutral'}
-          detail="mínimo de effective_remaining_percent entre proveedores"
+          detail="el proveedor con menos saldo"
         />
         <Metric label="Suscripciones pausadas" value={quotasDown ? null : paused.length} tone={paused.length ? 'warning' : 'neutral'} detail="por cuota agotada o a mano" />
         <Metric label="Grupos sin cuenta atada" value={quotasDown ? null : unbound.length} tone={unbound.length ? 'warning' : 'neutral'} detail="muestra guardada, no puede pausar nada" />
       </div>
 
-      <Panel title="Recolectores" subtitle="Frescura medida contra received_at (reloj del servidor), no contra captured_at (reloj del recolector).">
+      <Panel title="Recolectores" subtitle="La frescura se mide contra la hora en que el servidor RECIBIÓ la muestra, no contra la hora que declara el recolector: el reloj del recolector puede estar corrido.">
         {collectors.length === 0 ? (
           <EmptyState>
             {quotasDown
               ? 'No se pudo leer el endpoint de cuotas: no hay lista de recolectores que mostrar.'
-              : 'Sin muestras: ningún recolector publicó nunca hacia POST /v3/quotas/samples.'}
+              : 'Sin muestras: ningún recolector publicó nunca una.'}
           </EmptyState>
         ) : (
           <div className="table-wrap">
@@ -276,7 +276,7 @@ export function ConsumptionSection({ quotas, config }: {
         ))}
       </Panel>
 
-      <Panel title="Suscripciones pausadas" subtitle="paused_reason con prefijo quota_exhausted: la puso el recolector y sólo el recolector puede levantarla; el resto son pausas manuales de un operador.">
+      <Panel title="Suscripciones pausadas" subtitle="Las que pausó el recolector por cuota agotada sólo las levanta el recolector; el resto son pausas que puso una persona a mano.">
         {paused.length === 0
           ? <EmptyState>Ninguna suscripción pausada ahora mismo.</EmptyState>
           : <div className="table-wrap">
@@ -349,7 +349,14 @@ export function ConsumptionSection({ quotas, config }: {
           <Layers aria-hidden="true" />
           <div>
             <strong>Un número por proveedor miente</strong>
-            <p>codex hoy reporta el grupo 'codex' agotado al 100% y 'codex_bengalfox' libre al 0%: aplastarlos a un solo effective_remaining_percent haría creer que hay saldo en la cuenta que justo no lo tiene.</p>
+            <p>
+              codex reporta el grupo <span className="mono">codex</span> agotado y
+              <span className="mono"> codex_bengalfox</span> libre al 100%: aplastarlos a un solo porcentaje efectivo
+              haría creer que hay saldo en la cuenta que justo no lo tiene. Por eso la cabecera de cada proveedor
+              muestra el <strong>peor</strong> porcentaje de sus ventanas y no el efectivo — el efectivo queda en el
+              <code>title=</code> de esa misma cifra. Este párrafo existía desde antes y el número engañoso seguía
+              ahí: explicar un defecto no es arreglarlo.
+            </p>
           </div>
         </article>
         <article>
@@ -414,7 +421,7 @@ function CollectorRow({ collector, thresholds }: {
       <td>{formatDurationSeconds(collector.age_seconds)}</td>
       <td>
         {undecidable
-          ? <Badge tone="unknown">UNKNOWN</Badge>
+          ? <Badge tone="unknown">SIN DATO</Badge>
           : <Badge tone={isFresh ? 'done' : 'danger'}>{isFresh ? 'FRESCO' : 'DESACTUALIZADO'}</Badge>}
         {!undecidable && !isFresh ? <small className="subline">{state.label}</small> : null}
       </td>
@@ -434,25 +441,46 @@ function ProviderCard({ provider, expanded, onToggle, staleAfterSeconds }: {
   const rows = buildQuotaRows(provider.groups ?? []);
   const severity = provider.severity ?? 'unknown';
   const providerStale = isAgeStale(provider.age_seconds, staleAfterSeconds);
+  const peor = peorPorcentajeDelProveedor(provider);
+  const conflicto = porcentajesEnConflicto(provider);
+  const efectivo = provider.effective_remaining_percent;
+  const efectivoTitulo = typeof efectivo === 'number'
+    ? `El servidor publica effective_remaining_percent = ${efectivo}%, que es lo que el enrutador usa para elegir cuenta. `
+      + 'Acá se muestra el peor porcentaje de las ventanas, que es el que va con la severidad de al lado.'
+    : 'El peor porcentaje de las ventanas de este proveedor.';
   return (
     <section className={`quota-provider quota-severity-${severity}`} data-severity={severity}>
       <header className="quota-provider-head">
         <div>
           <h3>
-            <span className="mono">{provider.host ?? 'UNKNOWN'}</span> · {provider.provider ?? 'UNKNOWN'}
+            <span className="mono"><Unknown value={provider.host} /></span> · <Unknown value={provider.provider} />
           </h3>
           <p>
-            {provider.source ?? 'UNKNOWN'} · {provider.plan ?? 'sin plan declarado'}
+            <Unknown value={provider.source} /> · {provider.plan ?? 'sin plan declarado'}
             {providerStale ? <span className="unknown"> · muestra vieja ({formatDurationSeconds(provider.age_seconds)})</span> : null}
           </p>
         </div>
         <div className="quota-provider-head-right">
           <Badge tone={SEVERITY_TONE[severity]}>{SEVERITY_LABEL[severity]}</Badge>
-          <strong className="quota-effective">
-            {typeof provider.effective_remaining_percent === 'number' ? `${provider.effective_remaining_percent}% libre` : <span className="unknown">UNKNOWN</span>}
-          </strong>
+          {/* 🔴 Ver `peorPorcentajeDelProveedor`: acá convivían «AGOTADO» y «100% libre». */}
+          {peor === undefined ? (
+            <span className="unknown" title="Ninguna ventana de este proveedor informa porcentaje: no hay un número honesto que poner acá.">
+              sin porcentaje informado
+            </span>
+          ) : (
+            <strong className="quota-effective" title={efectivoTitulo}>
+              {peor}% libre en la peor ventana
+            </strong>
+          )}
         </div>
       </header>
+      {conflicto ? (
+        <p className="notice" role="status">
+          El porcentaje efectivo que publica el servidor es <strong>{efectivo}%</strong> y su peor ventana está al{' '}
+          <strong>{peor}%</strong>: el efectivo mira el conjunto, la severidad mira la cuenta que se agotó. Arriba va el
+          peor, que es el que puede dejarte sin turno.
+        </p>
+      ) : null}
       {provider.ok === false ? (
         <p className="notice error" role="alert">
           El CLI de {provider.provider ?? 'este proveedor'} no respondió en la última corrida{provider.note ? `: ${provider.note}` : '.'}
@@ -520,15 +548,20 @@ function QuotaRow({ rowKey, row, expanded, onToggle }: {
             <div><Badge tone="danger"><PauseCircle size={12} aria-hidden="true" /> PAUSADA</Badge></div>
           ) : null}
         </td>
+        {/* 🔴 «semana / semana», «sesión / sesión»: la sublínea repetía literalmente la etiqueta de
+            arriba cuando la familia tiene una sola ventana y las dos se llaman igual. Sólo se
+            escribe la sublínea cuando AÑADE algo. */}
         <td>
           {family.label}
           {family.collapsible ? <span className="chip window-count-chip">{family.windows.length} ventanas</span> : null}
-          <small className="subline"><Unknown value={worst.label} /></small>
+          {worst.label && worst.label.trim().toLowerCase() !== family.label.trim().toLowerCase()
+            ? <small className="subline">{worst.label}</small>
+            : null}
         </td>
         <td><Badge tone={SEVERITY_TONE[severity]}>{SEVERITY_LABEL[severity]}</Badge></td>
         <td>
           <strong className="mono">
-            {typeof worst.remaining_percent === 'number' ? `${worst.remaining_percent}% libre` : <span className="unknown">UNKNOWN</span>}
+            {typeof worst.remaining_percent === 'number' ? `${worst.remaining_percent}% libre` : <span className="unknown">sin dato</span>}
           </strong>
           {units ? <small className="subline">{units}</small> : null}
         </td>
@@ -551,7 +584,7 @@ function QuotaRow({ rowKey, row, expanded, onToggle }: {
                     <tr key={window.window_key}>
                       <td><Unknown value={window.label ?? window.window_key} /></td>
                       <td><Badge tone={SEVERITY_TONE[window.severity ?? 'unknown']}>{SEVERITY_LABEL[window.severity ?? 'unknown']}</Badge></td>
-                      <td>{typeof window.remaining_percent === 'number' ? `${window.remaining_percent}% libre` : <span className="unknown">UNKNOWN</span>}</td>
+                      <td>{typeof window.remaining_percent === 'number' ? `${window.remaining_percent}% libre` : <span className="unknown">sin dato</span>}</td>
                       <td><Unknown value={window.model} /></td>
                       <td>{formatResetIn(window.reset_in_seconds)}</td>
                       <td><Sparkline history={window.history} /></td>
@@ -574,7 +607,7 @@ function UnboundRow({ entry }: { entry: QuotaUnboundGroup }) {
       <td><Unknown value={entry.provider} /></td>
       <td><span className="mono"><Unknown value={entry.group_key} /></span></td>
       <td><Unknown value={entry.window_count} /></td>
-      <td>{entry.detail ?? entry.reason ?? 'UNKNOWN'}</td>
+      <td><Unknown value={entry.detail ?? entry.reason} /></td>
     </tr>
   );
 }
@@ -588,7 +621,7 @@ function PausedRow({ entry }: { entry: QuotaPausedAccount }) {
       <td><Time value={entry.paused_until} /></td>
       <td className="error-copy"><Unknown value={entry.paused_reason} /></td>
       <td>{entry.automatic === null || entry.automatic === undefined
-        ? <Badge tone="unknown">UNKNOWN</Badge>
+        ? <Badge tone="unknown">SIN DATO</Badge>
         : <Badge tone={entry.automatic ? 'warning' : 'offline'}>{entry.automatic ? 'AUTOMÁTICA' : 'MANUAL'}</Badge>}</td>
     </tr>
   );

@@ -223,7 +223,7 @@ function TabConexion({ view }: { view: LiveAgentView }) {
             : status.error ? <span className="unknown">no se pudo leer /v3/status: {status.error.message}</span>
               : capabilities?.length
                 ? <div className="chip-list">{capabilities.map((cap) => <span className="chip" key={cap}>{cap}</span>)}</div>
-                : <span className="unknown">UNKNOWN</span>}
+                : <span className="unknown">sin dato</span>}
         </dd>
       </dl>
       <p className="muted">

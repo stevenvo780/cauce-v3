@@ -268,3 +268,136 @@ export function inFlightItemTone(status: string | null | undefined): BadgeTone {
   if (status === 'leased' || status === 'accepted') return 'info';
   return 'unknown';
 }
+
+/* ============================================================================================ *
+ * Resumen de señales por fila: UNA etiqueta por hecho, no cinco por el mismo.
+ * ============================================================================================ */
+
+export interface SenalPintada {
+  clave: string;
+  label: string;
+  tone: BadgeTone;
+}
+
+export interface ResumenDeSenales {
+  /** El titular de la celda. Siempre exactamente uno. */
+  estado: SenalPintada;
+  /** Las señales que AÑADEN algo al titular. Como mucho `TOPE_DE_SENALES`. */
+  senales: SenalPintada[];
+  /** Cuántas quedaron fuera del recuadro por el tope. 0 cuando entran todas. */
+  ocultas: number;
+  /**
+   * TODAS las señales medidas, en castellano y sin deduplicar. Va al `title=` del titular: se
+   * resume lo que se PINTA, nunca lo que se sabe.
+   */
+  detalle: string;
+}
+
+/**
+ * Lo que la columna «Presencia» de la misma fila ya está diciendo. Se pasa para no repetirlo.
+ * `sin-presencia` significa «no se sabe / no se está mostrando», y entonces no se deduplica nada.
+ */
+export type PresenciaDeLaFila = 'conectado' | 'caido' | 'nunca' | 'sin-presencia';
+
+/** Traduce la insignia de presencia que ya se pinta al vocabulario de la deduplicación. */
+export function presenciaDeLaFila(agent: FleetActivityAgent): PresenciaDeLaFila {
+  const estado = leaseState(agent.presence?.lease_until);
+  if (estado === 'online') return 'conectado';
+  if (estado === 'expired') return 'caido';
+  return agent.presence ? 'sin-presencia' : 'nunca';
+}
+
+/** Cuántas señales caben al lado del estado antes de plegarse en un «+N». */
+export const TOPE_DE_SENALES = 2;
+
+/**
+ * Qué señal deja de pintarse porque otra cosa ya visible la implica.
+ *
+ * 🔴 Medido el 2026-08-23: `jarvis` mostraba «SATURADO» DOS VECES en la misma celda —una desde
+ * `work_state` y otra desde `flags`, que son dos campos del servidor para el mismo hecho— y
+ * `midas` apilaba CINCO insignias (COLGADO, ACK DETENIDO, SATURADO, ACK VENCIDO, LEASE VENCIDO)
+ * para decir «está trabado». Cinco palabras no informan cinco veces más: informan menos, porque
+ * ninguna se lee.
+ *
+ * Las implicaciones son las del propio servidor, no un criterio estético:
+ *  - `stalled` ES «pasó el umbral sin ACK aplicado», así que repetir `ack_stalled` y
+ *    `overdue_acks` al lado no agrega un hecho: agrega la misma frase en tres idiomas.
+ *  - `saturated` como estado y `saturated` como señal son literalmente el mismo campo.
+ *  - Un alias `never_connected` no puede además tener un lease que «venció»: nunca tuvo uno.
+ *  - Una cola sin consumidor es lo que le pasa a un alias caído que tiene entregas esperando; con
+ *    «Caído» ya dicho, es la consecuencia, no una segunda avería.
+ *
+ * Lo implicado NO se pierde: sigue entero en `detalle`, que es el `title=` de la celda.
+ */
+function implicadas(
+  state: FleetWorkState | undefined,
+  flags: readonly FleetActivityFlag[],
+  presencia: PresenciaDeLaFila,
+): Set<FleetActivityFlag> {
+  const fuera = new Set<FleetActivityFlag>();
+  // La columna «Presencia» de la MISMA fila ya dice «Caído» o «Nunca conectó». Repetirlo tres
+  // centímetros a la izquierda no es una segunda señal: es la misma palabra dos veces en la
+  // misma fila, que es justo lo que este resumen existe para evitar.
+  if (presencia === 'caido') fuera.add('lease_expired');
+  if (presencia === 'nunca') { fuera.add('never_connected'); fuera.add('lease_expired'); }
+  if (state === 'stalled') { fuera.add('ack_stalled'); fuera.add('overdue_acks'); }
+  if (state === 'saturated') fuera.add('saturated');
+  if (flags.includes('never_connected')) fuera.add('lease_expired');
+  if (flags.includes('lease_expired') || flags.includes('never_connected')) fuera.add('queued_without_consumer');
+  // Sin el estado `stalled`, «sin ACK» y «ACK vencido» siguen siendo la misma familia: se pinta el
+  // más concreto de los dos y el otro queda en el detalle.
+  if (state !== 'stalled' && flags.includes('overdue_acks') && flags.includes('ack_stalled')) fuera.add('ack_stalled');
+  return fuera;
+}
+
+/**
+ * Lo que se pinta en la celda «Estado» de una fila: un titular y, como mucho, dos señales que
+ * añadan algo. El resto se pliega en «+N» y el `title=` lo dice todo.
+ */
+export function resumirSenales(
+  state: FleetWorkState | null | undefined,
+  flags: readonly FleetActivityFlag[] | null | undefined,
+  presencia: PresenciaDeLaFila = 'sin-presencia',
+  titular?: SenalPintada,
+): ResumenDeSenales {
+  const estadoValido = state ?? undefined;
+  const activas = (flags ?? []).filter((flag) => Object.hasOwn(FLAG_LABEL, flag));
+
+  const estado: SenalPintada = titular
+    ?? (estadoValido
+      ? { clave: estadoValido, label: WORK_STATE_LABEL[estadoValido], tone: WORK_STATE_TONE[estadoValido] }
+      // El servidor no mandó `work_state`. Se dice, no se rellena con «inactivo».
+      : { clave: 'sin-estado', label: 'Sin dato de estado', tone: 'unknown' });
+
+  const fuera = implicadas(estadoValido, activas, presencia);
+  /*
+   * `saturated` sólo se pliega si el TITULAR lo está diciendo.
+   *
+   * El titular ya no sale siempre de `work_state`: la fila pinta el estado derivado
+   * (`estadoDeFila`), que para un alias saturado dice «Trabajando» —la saturación no es uno de los
+   * siete estados del muñeco, es una señal—. Plegar el chip mirando sólo `work_state` habría
+   * borrado el único sitio donde la fila decía «Saturado», que es justo lo contrario de lo que
+   * este resumen existe para hacer: quita lo repetido, nunca lo único.
+   */
+  if (estado.label !== FLAG_LABEL.saturated) fuera.delete('saturated');
+
+  const visibles = activas
+    .filter((flag) => !fuera.has(flag))
+    // Y lo que el titular ya dice con esas mismas palabras tampoco se repite al lado.
+    .filter((flag) => FLAG_LABEL[flag] !== estado.label)
+    .map((flag): SenalPintada => ({ clave: flag, label: FLAG_LABEL[flag], tone: FLAG_TONE[flag] }));
+
+  const partes = [
+    `Estado del servidor: ${estado.label}.`,
+    activas.length
+      ? `Señales medidas: ${activas.map((flag) => FLAG_LABEL[flag]).join(', ')}.`
+      : 'Sin ninguna señal activa.',
+  ];
+
+  return {
+    estado,
+    senales: visibles.slice(0, TOPE_DE_SENALES),
+    ocultas: Math.max(0, visibles.length - TOPE_DE_SENALES),
+    detalle: partes.join(' '),
+  };
+}

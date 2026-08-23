@@ -3,98 +3,91 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { expect, it } from 'vitest';
 import { App } from '../../App';
+import { NAV_ENTRIES } from '../../nav';
 import { renderWithApi } from '../../test/render';
 import { server } from '../../mocks/server';
 
 /**
- * Las dos pruebas que dejó la verificación adversarial del 2026-08-22 sobre
- * `consola/retiradas-20260822`, INVERTIDAS: allí afirmaban el defecto —pasaban contra el código
- * averiado— y acá afirman la conducta correcta, así que fallan contra aquel código y sólo pasan
- * con el arreglo puesto.
+ * **El menú se dibuja UNA vez, y la portada no lo repite.**
  *
- * El defecto: el commit 252cf3c («el menú deja de prometer vistas que ese usuario no puede abrir»)
- * dejó «Configuración y altas» inerte, con su motivo, para quien no tiene `config.write`. La
- * portada nueva —que ahora es la PRIMERA pantalla de todo el mundo— volvía a prometerla como
- * enlace vivo, porque su lista de atajos estaba escrita a mano y no pasaba por `navAvailability`.
- * El verificador hizo clic y navegó. Y el panel decía «Ocho vistas» omitiendo «Ultimate Terminal»,
- * que sí es entrada de menú.
+ * Historia, porque explica por qué estas pruebas dicen ahora lo contrario de lo que decían:
  *
- * El arreglo es de FUENTE, no de rótulo: las dos listas son ahora una sola (`NAV_ENTRIES` en
- * `src/nav.ts`) y la portada pregunta por la misma `useNavAvailability()` que la barra lateral.
+ *  1. El commit 252cf3c dejó «Configuración y altas» inerte —con su motivo— para quien no tiene
+ *     `config.write`. La portada volvía a prometerla como enlace VIVO, porque su lista de atajos
+ *     estaba escrita a mano. El verificador hizo clic y navegó.
+ *  2. La ronda siguiente arregló el síntoma por la fuente: la portada pasó a leer `NAV_ENTRIES` y
+ *     `useNavAvailability()`, las MISMAS que la barra. Estas pruebas comparaban las dos copias
+ *     entre sí para que no volvieran a divergir.
+ *  3. El 2026-08-23, midiendo la portada a 1280×900: ese panel es **el menú lateral otra vez**,
+ *     cinco centímetros a la derecha del menú lateral, con los mismos siete rótulos y los mismos
+ *     siete iconos, ocupando media pantalla de la vista que existe para resumir. Dos copias que no
+ *     pueden divergir siguen siendo dos copias.
+ *
+ * Así que se retira el panel, y la invariante se vuelve MÁS fuerte, no más débil: ya no es «las dos
+ * copias coinciden», es «no hay una segunda copia». Estas pruebas fallan si alguien la reintroduce.
+ * La defensa original —el atajo inerte con su motivo— no se pierde: se comprueba donde vive de
+ * verdad, que es la barra lateral.
  */
-it('la portada NO ofrece /config a quien la barra lateral se lo niega: mismo veredicto en las dos', async () => {
-  server.use(
-    http.get('http://localhost/v3/console/access', () =>
-      HttpResponse.json({
-        subject: 'Miguel:janus', roles: [], permissions: ['message.publish'],
-        observed_at: new Date().toISOString(),
-      })),
-  );
+
+const SIN_CONFIG = http.get('http://localhost/v3/console/access', () =>
+  HttpResponse.json({
+    subject: 'Miguel:janus', roles: [], permissions: ['message.publish'],
+    observed_at: new Date().toISOString(),
+  }));
+
+/** Los rótulos del menú, menos la portada: lo que NO puede aparecer dos veces en la pantalla. */
+const ROTULOS = NAV_ENTRIES.filter((entrada) => entrada.id !== '').map((entrada) => entrada.label);
+
+it('la portada NO vuelve a dibujar el menú: el bloque «el resto de la consola» ya no existe', async () => {
+  window.history.pushState({}, '', '/');
+  renderWithApi(<App />);
+
+  await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i });
+  expect(screen.queryByRole('list', { name: /el resto de la consola/i })).not.toBeInTheDocument();
+
+  // Y ningún rótulo del menú aparece como enlace FUERA de la barra: si alguien reintroduce la
+  // lista con otro `aria-label`, esto la encuentra igual.
+  const nav = await screen.findByRole('navigation', { name: /principal/i });
+  for (const rotulo of ROTULOS) {
+    const enlaces = screen.queryAllByRole('link', { name: new RegExp(`^${rotulo}`, 'i') })
+      .filter((enlace) => !nav.contains(enlace));
+    expect(enlaces, `«${rotulo}» está dibujado dos veces: en la barra y en la portada`).toHaveLength(0);
+  }
+});
+
+it('la barra lateral SIGUE negando /config a quien no lo puede abrir, con el motivo a la vista', async () => {
+  server.use(SIN_CONFIG);
   window.history.pushState({}, '', '/');
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
   const lateral = within(nav).getByRole('link', { name: /configuración y altas/i });
   await waitFor(() => expect(lateral).toHaveAttribute('aria-disabled', 'true'));
-
-  // El MISMO rótulo en la portada, con el MISMO veredicto y el motivo a la vista.
-  const lista = within(await screen.findByRole('list', { name: /el resto de la consola/i }));
-  const atajo = lista.getByRole('link', { name: /configuración y altas/i });
-  await waitFor(() => expect(atajo).toHaveAttribute('aria-disabled', 'true'));
-  expect(atajo).toHaveAttribute('title', expect.stringContaining('permiso de control'));
-  expect(atajo.textContent).toMatch(/permiso de control/i);
+  expect(lateral).toHaveAttribute('title', expect.stringContaining('permiso de control'));
 
   // Y el clic NO navega. Es lo que el verificador midió al revés: hizo clic y llegó a /config.
-  await userEvent.click(atajo);
+  await userEvent.click(lateral);
   expect(window.location.pathname).toBe('/');
 });
 
-it('la portada SÍ ofrece /config a quien la barra lateral se lo permite', async () => {
-  // Control negativo del control: sin esto, esconder o inutilizar el atajo SIEMPRE también pasaría
-  // la prueba de arriba, y la portada quedaría rota para el operador que sí tiene el permiso.
-  window.history.pushState({}, '', '/');
-  renderWithApi(<App />);
-
-  const lista = within(await screen.findByRole('list', { name: /el resto de la consola/i }));
-  const atajo = lista.getByRole('link', { name: /configuración y altas/i });
-  await waitFor(() => expect(atajo).not.toHaveAttribute('aria-disabled'));
-  await userEvent.click(atajo);
-  expect(window.location.pathname).toBe('/config');
-});
-
-it('«el resto de la consola» son las SIETE entradas del menú, «Ultimate Terminal» incluida', async () => {
-  window.history.pushState({}, '', '/');
-  renderWithApi(<App />);
-
-  const lista = await screen.findByRole('list', { name: /el resto de la consola/i });
-  const rotulos = within(lista).getAllByRole('link').map((enlace) => enlace.querySelector('strong')?.textContent);
-  expect(rotulos).toEqual([
-    'La flota ahora',
-    'Cuentas y cuotas',
-    'Mensajes',
-    'Queues & DLQ',
-    'Señales y auditoría',
-    'Configuración y altas',
-    'Ultimate Terminal',
-  ]);
-  // La portada no se ofrece a sí misma como atajo, y el rótulo del recuento SE DERIVA de la lista.
-  expect(rotulos).not.toContain('Portada');
-  expect(await screen.findByText(/Siete vistas, cada una con la pregunta que responde/)).toBeInTheDocument();
-});
-
-/**
- * La barra lateral y la portada dibujan el MISMO menú. Esta es la prueba que impide que vuelvan a
- * divergir: no compara contra una lista escrita a mano —eso es justo lo que falló— sino a las dos
- * copias entre sí.
- */
-it('los rótulos de la portada son exactamente los de la barra lateral, menos la portada misma', async () => {
+it('control negativo: con el permiso puesto, esa misma entrada sí navega', async () => {
+  // Sin esto, inutilizar la entrada SIEMPRE también pasaría la prueba de arriba, y el menú
+  // quedaría roto para el operador que sí tiene el permiso.
   window.history.pushState({}, '', '/');
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
-  const lateral = within(nav).getAllByRole('link').map((enlace) => enlace.textContent);
-  const lista = await screen.findByRole('list', { name: /el resto de la consola/i });
-  const portada = within(lista).getAllByRole('link').map((enlace) => enlace.querySelector('strong')?.textContent);
+  const lateral = within(nav).getByRole('link', { name: /configuración y altas/i });
+  await waitFor(() => expect(lateral).not.toHaveAttribute('aria-disabled'));
+  await userEvent.click(lateral);
+  expect(window.location.pathname).toBe('/config');
+});
 
-  expect(portada).toEqual(lateral.filter((rotulo) => rotulo !== 'Portada'));
+it('la barra sigue teniendo las SIETE entradas, «Ultimate Terminal» incluida', async () => {
+  window.history.pushState({}, '', '/');
+  renderWithApi(<App />);
+
+  const nav = await screen.findByRole('navigation', { name: /principal/i });
+  const rotulos = within(nav).getAllByRole('link').map((enlace) => enlace.textContent);
+  expect(rotulos).toEqual(['Portada', ...ROTULOS]);
 });

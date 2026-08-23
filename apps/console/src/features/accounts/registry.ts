@@ -486,7 +486,7 @@ function constraintCause(mutation: ConfigMutation, context: RegistryContext): st
       ? context.accounts.find((entry) => entry.provider === provider && entry.externalAccountId === external)
       : undefined;
     if (duplicate) {
-      return `Esa suscripción externa ya está registrada como «${duplicate.id}» y la paga ${duplicate.payerTenant ?? 'UNKNOWN'}. UNIQUE (provider, external_account_id) existe para que "quién paga qué" tenga una sola respuesta: no se puede registrar dos veces con dos pagadores.`;
+      return `Esa suscripción externa ya está registrada como «${duplicate.id}» y la paga ${duplicate.payerTenant ?? 'un cliente que el servidor no informó'}. UNIQUE (provider, external_account_id) existe para que "quién paga qué" tenga una sola respuesta: no se puede registrar dos veces con dos pagadores.`;
     }
     if (payer !== undefined && context.tenantIds.length > 0 && !context.tenantIds.includes(payer)) {
       return `El tenant pagador «${payer}» no existe en la configuración visible, y payer_tenant_id es un foreign key contra tenants. Creá el tenant antes de registrar la cuenta.`;
@@ -544,7 +544,7 @@ export function describeRegistryError(
   mutation: ConfigMutation,
   context: RegistryContext,
 ): { message: string; conflict: boolean } {
-  const base = describeConfigError(error, 'Cambio rechazado: UNKNOWN');
+  const base = describeConfigError(error, 'El servidor rechazó el cambio y no dijo por qué');
   if (base.conflict) return base;
   if (!(error instanceof ApiError)) return base;
   if (error.status === 403) {

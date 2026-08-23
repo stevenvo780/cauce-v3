@@ -6,6 +6,30 @@ import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { leerUltimoError } from './ultimo-error';
 
+/**
+ * Los ocho estados de una entrega, en castellano. Eran los nombres de la columna `state` de la
+ * base, en inglés y en mayúsculas, en una interfaz en castellano.
+ */
+const ESTADO_ENTREGA: Readonly<Record<DeliveryState, string>> = {
+  pending: 'PENDIENTE',
+  leased: 'TOMADA',
+  accepted: 'ACEPTADA',
+  started: 'EN CURSO',
+  done: 'HECHA',
+  failed: 'FALLÓ',
+  retry: 'EN REINTENTO',
+  dead: 'MUERTA',
+};
+
+/**
+ * Estados en los que TODAVÍA no puede haber un último error, porque la entrega aún no falló.
+ *
+ * 🔴 Medido el 2026-08-23: una entrega `pending` mostraba «UNKNOWN» en naranja bajo «Último
+ * error». «Todavía no hay error» NO es un desconocido — es la única noticia buena de la fila, y
+ * pintarla del color de la alarma es lo que hace que las alarmas de verdad dejen de leerse.
+ */
+const SIN_FALLO_TODAVIA: ReadonlySet<string> = new Set(['pending', 'leased', 'accepted', 'started', 'done']);
+
 function stateTone(state?: DeliveryState | null): 'done' | 'danger' | 'warning' | 'running' | 'unknown' {
   if (state === 'done') return 'done';
   if (state === 'dead' || state === 'failed') return 'danger';
@@ -97,7 +121,7 @@ export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, ca
       setNotice(result.replayed ? `Replay encolado para ${compactId(deliveryId)}` : `Replay no aplicado: ${compactId(deliveryId)}`);
       onChanged();
     } catch (error) {
-      setNotice(`Replay falló: ${error instanceof Error ? error.message : 'UNKNOWN'}`);
+      setNotice(`El reinyectado falló: ${error instanceof Error ? error.message : 'el servidor no dijo por qué'}`);
     } finally {
       setReplaying(undefined);
     }
@@ -115,7 +139,7 @@ export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, ca
         : `Cancelación no aplicada: ${compactId(deliveryId)}`);
       onChanged();
     } catch (error) {
-      setNotice(`Cancelación falló: ${error instanceof Error ? error.message : 'UNKNOWN'}`);
+      setNotice(`La cancelación falló: ${error instanceof Error ? error.message : 'el servidor no dijo por qué'}`);
     } finally {
       setCancelling(undefined);
     }
@@ -181,18 +205,32 @@ export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, ca
                   <td data-label="Delivery"><span className="mono">{compactId(deliveryId)}</span><small className="subline">msg {compactId(item.message_id)}</small></td>
                   <td data-label="Destino"><strong><Unknown value={item.recipient_alias} /></strong><small className="subline"><Unknown value={item.tenant_id} /></small></td>
                   <td data-label="Lane"><span className="inline-icon"><Rows3 size={15} aria-hidden="true" /><Unknown value={safeJobLane(item.lane)} /></span></td>
-                  <td data-label="Estado"><Badge tone={stateTone(state)}><Unknown value={state} /></Badge></td>
+                  {/* El estado se dice en castellano (`ESTADO_ENTREGA`), igual que el resto de la
+                      pantalla. Un valor que esta consola no conoce NO se inventa: sale UNKNOWN y el
+                      `title=` dice qué mandó el servidor. */}
+                  <td data-label="Estado"><Badge tone={stateTone(state)}><Unknown
+                    value={state ? ESTADO_ENTREGA[state] : undefined}
+                    motivo={item.state ? `El servidor mandó un estado que esta consola no conoce: ${String(item.state)}` : undefined}
+                  /></Badge></td>
                   <td data-label="Intentos"><Unknown value={item.attempts} /> / <Unknown value={item.max_attempts} /></td>
-                  <td data-label="Disponible"><span className="inline-icon"><Clock size={15} aria-hidden="true" /><Time value={item.available_at} /></span></td>
+                  <td data-label="Disponible"><span className="inline-icon"><Clock size={15} aria-hidden="true" /><Time value={item.available_at} relativo /></span></td>
                   {/*
                     «Sin error» NO es UNKNOWN. Ver `ultimo-error.ts`: 31 de las 38 filas de
                     producción pintaban un UNKNOWN ámbar sobre entregas terminadas BIEN, y el ojo
-                    del operador iba ahí en vez de a las 7 dead letters.
+                    del operador iba ahí en vez de a las 7 dead letters. `SIN_FALLO_TODAVIA` cubre
+                    el otro lado: una entrega que todavía no llegó a fallar dice «todavía no» y
+                    explica por qué en el `title=`, en vez de un UNKNOWN que parece una avería.
                   */}
                   <td data-label="Último error" className="error-copy">
                     {error.clase === 'texto' ? error.texto
                       : error.clase === 'sin-error' ? <span className="sin-error">sin error</span>
-                        : <Unknown value={null} />}
+                        : <Unknown
+                          value={null}
+                          ausente={state && SIN_FALLO_TODAVIA.has(state) ? 'todavia-no' : 'sin-dato'}
+                          motivo={state && SIN_FALLO_TODAVIA.has(state)
+                            ? 'Esta entrega no falló todavía, así que no hay ningún error que mostrar.'
+                            : 'El servidor no informó ningún error para esta entrega.'}
+                        />}
                   </td>
                   <td data-label="Acción">
                     {replayable ? (
