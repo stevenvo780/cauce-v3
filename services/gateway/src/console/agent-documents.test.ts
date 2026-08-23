@@ -10,7 +10,11 @@ import {
  * que `GET /v3/console/agents` devolvía ese mismo día: donde no coincide con `harness`, la base
  * miente, y esa discrepancia es el motivo de que este módulo exista.
  */
-const MEDIDO: Record<string, RuntimeFacts & { harness_bd: string; contenedor: string }> = {
+// `satisfies` y no una anotación `Record<string, …>`: con `noUncheckedIndexedAccess`, indexar un
+// `Record<string, T>` da `T | undefined`, y `MEDIDO.zeus` —que es una clave literal que está
+// escrita ahí abajo— dejaba de typecheckear en 21 sitios. Con `satisfies` se comprueba la forma
+// igual y las claves siguen siendo literales, así que no hace falta un `!` por uso.
+const MEDIDO = {
   zeus:      { harness: 'claude',   harness_bd: 'claude',   contenedor: 'ws-zeus',                home: '/home/dev',  cwd: '/workspace/cauce-v3' },
   socrates:  { harness: 'codex',    harness_bd: 'codex',    contenedor: 'ws-prizma',              home: '/home/dev',  cwd: '/workspace' },
   atlas:     { harness: 'codex',    harness_bd: 'codex',    contenedor: 'ws-humanizar',           home: '/home/dev',  cwd: '/workspace', codexHome: '/home/dev/.codex/cuenta-b' },
@@ -21,7 +25,7 @@ const MEDIDO: Record<string, RuntimeFacts & { harness_bd: string; contenedor: st
   tales:     { harness: 'codex',    harness_bd: 'codex',    contenedor: 'agv2-jhon-tales-oc',     home: '/home/claw', cwd: '/home/claw' },
   salva:     { harness: 'claude',   harness_bd: 'codex',    contenedor: 'ws-isa',                 home: '/home/dev',  cwd: '/workspace' },
   kant:      { harness: 'claude',   harness_bd: 'codex',    contenedor: 'host:kratos',            home: '/home/stev', cwd: '/home/stev' }
-};
+} satisfies Record<string, RuntimeFacts & { harness_bd: string; contenedor: string }>;
 
 function directivePath(facts: RuntimeFacts): string | undefined {
   return documentForKind(facts, 'directive')?.path;
@@ -63,7 +67,11 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
    */
   it('respeta CODEX_HOME (atlas) y CLAUDE_CONFIG_DIR', () => {
     expect(directivePath(MEDIDO.atlas)).toBe('/home/dev/.codex/cuenta-b/AGENTS.md');
-    expect(directivePath({ ...MEDIDO.atlas, codexHome: undefined })).toBe('/home/dev/.codex/AGENTS.md');
+    // El control negativo es SIN la clave, no con la clave puesta a `undefined`: con
+    // `exactOptionalPropertyTypes` no son lo mismo, y el segundo ni siquiera es un valor legal
+    // de `RuntimeFacts`. Lo que se quiere medir es «los mismos hechos, pero sin CODEX_HOME».
+    const { harness, home, cwd } = MEDIDO.atlas;
+    expect(directivePath({ harness, home, cwd })).toBe('/home/dev/.codex/AGENTS.md');
     expect(directivePath({ harness: 'claude', home: '/home/dev', claudeConfigDir: '/home/dev/.claude-steven' }))
       .toBe('/home/dev/.claude-steven/CLAUDE.md');
   });
