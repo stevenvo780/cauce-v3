@@ -1,13 +1,16 @@
-import { ChevronDown, CircleOff, DoorClosed, LockKeyhole, RefreshCw, Send, TerminalSquare } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { ArrowDownToLine, ChevronDown, CircleOff, DoorClosed, LockKeyhole, RefreshCw, Send, TerminalSquare } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useApi } from '../../api/context';
-import type { DeliveryView, JobLane, MessagePage } from '../../api/types';
+import { ApiError } from '../../api/client';
+import type { JobLane, MessagePage } from '../../api/types';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
 import { compactId, createId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../navigation';
+import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada, textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
 import { fleetAgentId } from '../terminal/fleet';
-import { transcriptForSession, type OperatorRoute, type OperatorSession } from '../terminal/session';
+import { transcriptForSession, type OperatorRoute, type OperatorSession, type TranscriptItem } from '../terminal/session';
 import { TerminalTranscript } from '../terminal/TerminalTranscript';
+import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
 import { MessageTimeline } from './MessageTimeline';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
@@ -38,6 +41,12 @@ function rutaDeTui(agent: AgenteDeMensajeria): string {
   return `/fleet/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
 }
 
+/** Lo que la consola sabe del cuerpo entero de un mensaje: nada, pidiéndolo, el texto, o el fallo. */
+type CuerpoEntero =
+  | { estado: 'pidiendo' }
+  | { estado: 'listo'; texto: string }
+  | { estado: 'fallo'; motivo: string };
+
 /**
  * El hilo con UN agente: cabecera con su estado y su cola, historial, y el campo para escribirle.
  *
@@ -52,7 +61,22 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
   const [roomElegido, setRoomElegido] = useState<string>();
   const [enviando, setEnviando] = useState(false);
   const [aviso, setAviso] = useState<{ tone: 'success' | 'error'; text: string }>();
-  const [deliveryElegida, setDeliveryElegida] = useState<string>();
+  /**
+   * 🔴 Se elige por MESSAGE_ID, no por delivery.
+   *
+   * Antes esto era `deliveryElegida` y el ítem se buscaba con
+   * `hilo.find(i => i.delivery?.delivery_id === deliveryElegida) ?? hilo.at(-1)`. Con nada
+   * seleccionado, `deliveryElegida` es `undefined` y `i.delivery?.delivery_id` también lo es en
+   * todo mensaje de salida: el `find` devolvía el PRIMER mensaje sin entrega del hilo, o sea el
+   * más viejo, y el `?? hilo.at(-1)` —«abrí en el último»— no llegaba a ejecutarse nunca. Medido
+   * en producción: el detalle se abría solo sobre un mensaje de las 2:02:52, catorce horas viejo,
+   * que nadie había elegido. Y por el mismo motivo, clicar una burbuja SIN entrega no cambiaba
+   * nada: no había delivery_id que guardar.
+   */
+  const [mensajeElegido, setMensajeElegido] = useState<string>();
+  const [cuerpos, setCuerpos] = useState<Record<string, CuerpoEntero>>({});
+  /** El detalle nace CERRADO y lo abre el operador —o su propio clic en una burbuja—. */
+  const [detalleAbierto, setDetalleAbierto] = useState(false);
   /**
    * El lane vuelve a ser del operador. El formulario anterior lo dejaba elegir `batch` y esta
    * pantalla lo había fijado en `interactive`: publicar una tarea larga por el carril interactivo
@@ -71,7 +95,10 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
   const puedeEnviar = canPublish && route.allowed && Boolean(roomOrigen);
   // Se selecciona el ITEM, no la entrega suelta: el detalle tiene que poder decir el room, el
   // lane, el actor y el trace del MENSAJE, y esos campos no viven en la entrega.
-  const itemSeleccionado = hilo.find((item) => item.delivery?.delivery_id === deliveryElegida) ?? hilo.at(-1);
+  const elegidoPorElOperador = hilo.find((item) => (
+    mensajeElegido != null && item.message.message_id === mensajeElegido
+  ));
+  const itemSeleccionado = elegidoPorElOperador ?? hilo.at(-1);
   const seleccionada = itemSeleccionado?.delivery;
   const mensajeSeleccionado = itemSeleccionado?.message;
   // Las entregas HERMANAS del mismo publish: el fan-out completo. La lista plana anterior las
@@ -108,6 +135,80 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
     return () => observador.disconnect();
   }, []);
 
+  /*
+   * ------------------------------------------------------------------ EL HILO EMPIEZA POR EL FINAL
+   *
+   * Un mensajero abre por lo último dicho. Este abría por lo primero: ver `desplazamiento.ts`,
+   * donde está la medida. Hay UNA sola caja con scroll —`.messenger-thread-scroll`, que envuelve
+   * la transcripción y nada más— justamente para que «ir al final» tenga un único destino: antes
+   * la transcripción tenía su propio `max-height` con scroll DENTRO del scroll de la página, y
+   * ninguno de los dos empezaba donde hacía falta.
+   *
+   * El detalle del mensaje queda FUERA de la caja a propósito: si estuviera dentro, «ir al
+   * último» aterrizaría al pie del detalle y no en la última burbuja.
+   */
+  const cajaRef = useRef<HTMLDivElement | null>(null);
+  const pegadoRef = useRef(true);
+  const [pegado, setPegado] = useState(true);
+  const [vistosHastaAqui, setVistosHastaAqui] = useState(0);
+
+  const alFinal = useCallback((suave: boolean) => {
+    const caja = cajaRef.current;
+    if (!caja) return;
+    irAlFinal(caja, suave);
+    pegadoRef.current = true;
+    setPegado(true);
+    setVistosHastaAqui(hilo.length);
+  }, [hilo.length]);
+
+  const ultimoId = hilo.at(-1)?.message.message_id;
+  useEffect(() => {
+    // Al montar (o al cambiar de agente, que remonta por la `key`) y cada vez que llega un mensaje
+    // nuevo, PERO sólo si el operador estaba mirando el final: arrastrarlo desde donde está
+    // leyendo sería el defecto contrario.
+    if (!pegadoRef.current) return;
+    const caja = cajaRef.current;
+    if (!caja) return;
+    irAlFinal(caja, false);
+    setVistosHastaAqui(hilo.length);
+  }, [ultimoId, hilo.length]);
+
+  function alDesplazar() {
+    const caja = cajaRef.current;
+    if (!caja) return;
+    const abajo = estaPegadoAlFinal(caja);
+    pegadoRef.current = abajo;
+    setPegado(abajo);
+    if (abajo) setVistosHastaAqui(hilo.length);
+  }
+
+  const nuevosSinVer = Math.max(0, hilo.length - vistosHastaAqui);
+
+  /** Pide el cuerpo entero de un mensaje. El recorte a 240 lo hace el servidor, no la vista. */
+  const pedirCuerpo = useCallback(async (messageId: string) => {
+    setCuerpos((previo) => ({ ...previo, [messageId]: { estado: 'pidiendo' } }));
+    try {
+      const detalle = await api.getMessage(messageId);
+      const texto = textoDelCuerpo(detalle.body);
+      setCuerpos((previo) => ({
+        ...previo,
+        [messageId]: texto === undefined
+          ? { estado: 'fallo', motivo: 'El servidor devolvió el mensaje sin cuerpo.' }
+          : { estado: 'listo', texto },
+      }));
+    } catch (causa) {
+      /*
+       * Un 404 acá no significa «no existe el mensaje»: significa que el gateway desplegado
+       * todavía no publica esta ruta. Se dice con esas palabras en vez de acusar al dato, que es
+       * el error que esta consola comete cuando algo no está: culpar a lo que se ve.
+       */
+      const motivo = causa instanceof ApiError && (causa.status === 404 || causa.status === 501)
+        ? 'El gateway desplegado no publica todavía GET /v3/console/messages/:id, así que el cuerpo entero no se puede pedir desde acá.'
+        : causa instanceof Error ? causa.message : 'No se pudo leer el cuerpo del mensaje.';
+      setCuerpos((previo) => ({ ...previo, [messageId]: { estado: 'fallo', motivo } }));
+    }
+  }, [api]);
+
   async function enviar(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const texto = draft.trim();
@@ -127,6 +228,9 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
       });
       setDraft('');
       setAviso({ tone: 'success', text: `Aceptado por el control plane · ${compactId(resultado.message_id)}. El ACK llega por polling.` });
+      // Lo que uno acaba de escribir se mira: publicar vuelve a pegar el hilo al final.
+      pegadoRef.current = true;
+      setPegado(true);
       onReload();
     } catch (causa) {
       setAviso({ tone: 'error', text: causa instanceof Error ? causa.message : 'No se pudo publicar el mensaje.' });
@@ -140,6 +244,17 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
     event.preventDefault();
     event.currentTarget.form?.requestSubmit();
   }
+
+  function elegir(item: TranscriptItem) {
+    if (!item.message.message_id) return;
+    setMensajeElegido(item.message.message_id);
+    // Clicar una burbuja ES pedir su detalle: abrirlo acá no es «abrirse solo».
+    setDetalleAbierto(true);
+  }
+
+  const idSeleccionado = mensajeSeleccionado?.message_id ?? undefined;
+  const cuerpoEntero = idSeleccionado ? cuerpos[idSeleccionado] : undefined;
+  const recorteSeleccionado = previsualizacionRecortada(mensajeSeleccionado?.body_preview);
 
   return (
     <section className="messenger-thread" ref={hiloRef} aria-label={`Conversación con ${agent.alias}`}>
@@ -188,24 +303,45 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
         vacío sin que eso pruebe que no hay historia. Un hilo vacío mudo sería una afirmación
         falsa, y de esas ya hubo demasiadas en esta consola.
       */}
-      <p className="messenger-window-note" data-truncated={totalVisible >= LIMITE_MENSAJES || undefined}>
-        {totalVisible >= LIMITE_MENSAJES
-          ? `Ventana llena: el servidor devuelve como máximo ${LIMITE_MENSAJES} mensajes de TODA la flota y este hilo se filtra sobre ellos. Puede haber historia anterior que no entra.`
-          : `Hilo filtrado sobre los ${totalVisible} mensajes que el servidor publica para tu identidad (tope ${LIMITE_MENSAJES}, sin filtro por par).`}
-      </p>
+      <div className="messenger-thread-scroll" ref={cajaRef} onScroll={alDesplazar}>
+        {/*
+          El aviso del techo del servidor va DENTRO de la caja con scroll y la tira de cola se
+          queda fuera. No es un capricho de maquetación: medido en Chrome a 1280x900, con el panel
+          acotado quedaban 42 px de conversación visible, y este párrafo de tres líneas era 30 de
+          los que faltaban. La tira de cola sí se queda fija porque es la mitad de esta pantalla
+          que el recorrido llamó «genuinamente útil»: verla siempre es el punto.
+        */}
+        <p className="messenger-window-note" data-truncated={totalVisible >= LIMITE_MENSAJES || undefined}>
+          {totalVisible >= LIMITE_MENSAJES
+            ? `Ventana llena: el servidor devuelve como máximo ${LIMITE_MENSAJES} mensajes de TODA la flota y este hilo se filtra sobre ellos. Puede haber historia anterior que no entra.`
+            : `Hilo filtrado sobre los ${totalVisible} mensajes que el servidor publica para tu identidad (tope ${LIMITE_MENSAJES}, sin filtro por par).`}
+        </p>
+        {error && !page ? (
+          <div role="alert"><EmptyState>No se pudo leer el feed de mensajes: {error.message}</EmptyState></div>
+        ) : loading && !page ? (
+          <LoadingState label="Abriendo el feed durable de mensajes…" />
+        ) : (
+          <TerminalTranscript
+            key={agent.id}
+            items={hilo}
+            selectedMessageId={elegidoPorElOperador?.message.message_id ?? undefined}
+            onSelectItem={elegir}
+          />
+        )}
+      </div>
 
-      {error && !page ? (
-        <div role="alert"><EmptyState>No se pudo leer el feed de mensajes: {error.message}</EmptyState></div>
-      ) : loading && !page ? (
-        <LoadingState label="Abriendo el feed durable de mensajes…" />
-      ) : (
-        <TerminalTranscript
-          key={agent.id}
-          items={hilo}
-          selectedDeliveryId={seleccionada?.delivery_id ?? undefined}
-          onSelectDelivery={(delivery: DeliveryView) => delivery.delivery_id && setDeliveryElegida(delivery.delivery_id)}
-        />
-      )}
+      {/*
+        «Ir al último», con el conteo de lo que llegó mientras el operador leía más arriba. Sólo
+        aparece cuando hace falta: si ya está abajo, un botón que no lleva a ningún sitio.
+      */}
+      {!pegado && hilo.length > 0 ? (
+        <div className="messenger-al-final">
+          <button className="button small" type="button" onClick={() => alFinal(true)}>
+            <ArrowDownToLine size={14} aria-hidden="true" />
+            {nuevosSinVer > 0 ? `Ir al último · ${nuevosSinVer} nuevo${nuevosSinVer === 1 ? '' : 's'}` : 'Ir al último'}
+          </button>
+        </div>
+      ) : null}
 
       {/*
         EL DETALLE DEL MENSAJE, COMPLETO.
@@ -218,12 +354,66 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
         ver a quién MÁS fue el mismo mensaje. Todo eso vuelve acá.
       */}
       {mensajeSeleccionado ? (
-        <div className="messenger-delivery-detail" role="group" aria-label="Detalle del mensaje seleccionado">
+        /*
+          🔴 EL DETALLE YA NO SE ABRE SOLO.
+          
+          Dos motivos, los dos medidos. El primero es la queja textual del recorrido: «el panel de
+          detalle se abre solo sobre un mensaje que nadie eligió». El segundo apareció al abrir la
+          página arreglada en Chrome a 1280x900: con el panel acotado y el detalle desplegado de
+          oficio, quedaban 42 px de conversación visible — o sea que arreglar el compositor había
+          creado un defecto nuevo del mismo tipo. Ahora el resumen dice qué mensaje es y ocupa una
+          línea; el cuerpo y los metadatos se abren cuando el operador los pide, o solos en cuanto
+          clica una burbuja.
+        */
+        <details
+          className="messenger-delivery-detail"
+          role="group"
+          aria-label="Detalle del mensaje seleccionado"
+          open={detalleAbierto}
+          onToggle={(evento) => setDetalleAbierto(evento.currentTarget.open)}
+        >
+          <summary className="messenger-detalle-origen">
+            {elegidoPorElOperador
+              ? <>Mensaje que elegiste · <span className="mono">{compactId(mensajeSeleccionado.message_id)}</span></>
+              : <>Último mensaje del hilo · <span className="mono">{compactId(mensajeSeleccionado.message_id)}</span> · clicá una burbuja para ver la suya</>}
+          </summary>
           <p className="eyebrow">
             {seleccionada
               ? <>Entrega {compactId(seleccionada.delivery_id)} → {seleccionada.recipient_tenant ?? 'UNKNOWN'}:{seleccionada.recipient_alias ?? 'UNKNOWN'}</>
               : <>Mensaje {compactId(mensajeSeleccionado.message_id)} · sin entrega para este par</>}
           </p>
+
+          {/*
+            EL CUERPO. Que faltara era el defecto más silencioso de esta pantalla: el detalle
+            mostraba room, lane, actor, tenant, trace y message id —seis campos de metadatos— y no
+            el mensaje, mientras la burbuja de arriba lo mostraba cortado a 240 sin decirlo.
+          */}
+          <section className="messenger-cuerpo" aria-label="Cuerpo del mensaje">
+            <p className="eyebrow">Cuerpo</p>
+            {cuerpoEntero?.estado === 'listo' ? (
+              <pre className="messenger-cuerpo-texto">{cuerpoEntero.texto}</pre>
+            ) : (
+              <pre className="messenger-cuerpo-texto" data-recortado={recorteSeleccionado || undefined}>
+                {mensajeSeleccionado.body_preview ?? 'Contenido no incluido por el servidor.'}{recorteSeleccionado ? '…' : ''}
+              </pre>
+            )}
+            {cuerpoEntero?.estado === 'fallo' ? (
+              <p className="messenger-cuerpo-aviso" role="alert">{cuerpoEntero.motivo}</p>
+            ) : null}
+            {recorteSeleccionado && cuerpoEntero?.estado !== 'listo' ? (
+              <p className="messenger-cuerpo-aviso">
+                La lista publica sólo los primeros {CARACTERES_DE_PREVISUALIZACION} caracteres de cada mensaje
+                (<span className="mono">left(body,{CARACTERES_DE_PREVISUALIZACION})</span> en el servidor).{' '}
+                <button
+                  className="button small secondary"
+                  type="button"
+                  disabled={!idSeleccionado || cuerpoEntero?.estado === 'pidiendo'}
+                  onClick={() => idSeleccionado && void pedirCuerpo(idSeleccionado)}
+                >{cuerpoEntero?.estado === 'pidiendo' ? 'Pidiendo…' : 'Ver el mensaje completo'}</button>
+              </p>
+            ) : null}
+          </section>
+
           <dl className="messenger-message-meta">
             <div><dt>Room</dt><dd><Unknown value={mensajeSeleccionado.room_id} /></dd></div>
             <div><dt>Lane</dt><dd><Unknown value={safeJobLane(mensajeSeleccionado.lane)} /></dd></div>
@@ -265,7 +455,7 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
               </ul>
             )}
           </section>
-        </div>
+        </details>
       ) : null}
 
       <form className="terminal-composer messenger-composer" ref={compositorRef} onSubmit={(event) => void enviar(event)}>

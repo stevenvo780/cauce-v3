@@ -22,7 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { useApi } from '../../api/context';
-import type { AdapterView, ConsoleAccess, DeliveryView, TerminalCapability, TopologySnapshot } from '../../api/types';
+import type { AdapterView, ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
 import { compactId, createId, permissionState } from '../../lib';
@@ -302,7 +302,19 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
 
   const transcript = transcriptForSession(messages.data, liveSession);
   const deliveries = sessionDeliveries(transcript);
-  const selectedDelivery = deliveries.find((delivery) => delivery.delivery_id === selectedDeliveryId) ?? deliveries.at(-1);
+  const selectedDelivery = deliveries.find((delivery) => (
+    selectedDeliveryId != null && delivery.delivery_id === selectedDeliveryId
+  )) ?? deliveries.at(-1);
+  /*
+   * `TerminalTranscript` marca por MENSAJE desde el 2026-08-23 (ver el comentario de ese fichero:
+   * comparar dos `undefined` ponía el anillo azul en todas las burbujas de salida). Este panel
+   * sigue razonando por entrega —su inspector de ACK sólo existe para una entrega—, así que acá se
+   * traduce: qué mensaje contiene la entrega elegida. Sin entregas en el hilo no hay mensaje
+   * marcado, en vez de estar marcados todos.
+   */
+  const selectedMessageId = transcript.find((item) => (
+    selectedDelivery?.delivery_id != null && item.delivery?.delivery_id === selectedDelivery.delivery_id
+  ))?.message.message_id ?? undefined;
   const canPublish = permissionState(access, 'message.publish') === 'allowed';
   const route = operatorRouteForAgent(topologyAccess, access, liveSession.agent);
   const sourceRoomId = route.sourceRoomIds.includes(liveSession.sourceRoomId)
@@ -543,8 +555,8 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
                <TerminalTranscript
                  key={liveSession.id}
                  items={transcript}
-                 selectedDeliveryId={selectedDelivery?.delivery_id ?? undefined}
-                 onSelectDelivery={(delivery: DeliveryView) => delivery.delivery_id && setSelectedDeliveryId(delivery.delivery_id)}
+                 selectedMessageId={selectedMessageId}
+                 onSelectItem={(item) => item.delivery?.delivery_id && setSelectedDeliveryId(item.delivery.delivery_id)}
               />
             )}
             <form className="terminal-composer" onSubmit={(event) => void submit(event)}>

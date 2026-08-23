@@ -31,6 +31,20 @@ async function abrirConversacion(user: ReturnType<typeof userEvent.setup>, alias
   return screen.findByRole('region', { name: new RegExp(`conversación con ${alias}`, 'i') });
 }
 
+/**
+ * Las BURBUJAS, sin el panel de detalle.
+ *
+ * Hace falta desde que el detalle muestra el cuerpo del mensaje: antes no lo mostraba —seis campos
+ * de metadatos y ni una línea del texto— y por eso un `getByText` sobre el hilo entero encontraba
+ * una sola coincidencia. Que ahora haya dos es el arreglo, no un defecto, pero una prueba que
+ * quiere afirmar «este mensaje NO está en este hilo» tiene que mirar las burbujas.
+ */
+function historial(hilo: HTMLElement): HTMLElement {
+  const caja = hilo.querySelector<HTMLElement>('.terminal-transcript');
+  if (!caja) throw new Error('el hilo no tiene transcripción');
+  return caja;
+}
+
 it('lista a los agentes con el estado de su cola al lado del nombre', async () => {
   renderWithApi(<MessagesPage />);
 
@@ -72,7 +86,7 @@ it('abre el hilo del agente elegido y NO mezcla los mensajes de los demás', asy
   const hilo = await abrirConversacion(user, 'argos');
 
   // El mensaje cuya entrega es para argos.
-  expect(await within(hilo).findByText('Verificar estado del adapter Hermes')).toBeInTheDocument();
+  expect(await within(historial(hilo)).findByText('Verificar estado del adapter Hermes')).toBeInTheDocument();
   // CONTROL NEGATIVO: el otro mensaje del feed va a Miguel:kratos. Si el hilo fuera la lista
   // plana de antes —o si el filtro no filtrara— aparecería acá igual.
   expect(within(hilo).queryByText('Indexar reporte operativo')).not.toBeInTheDocument();
@@ -200,7 +214,7 @@ it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso g
   // 2) Y el hilo se abre con su mensaje dentro. Esto es lo que antes NO existía en ningún sitio.
   await user.click(fila);
   const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
-  expect(await within(hilo).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
+  expect(await within(historial(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
   expect(within(hilo).getByRole('note')).toHaveTextContent(/registro de agentes y en NINGUNA sala/i);
 }, 25_000);
 
@@ -212,7 +226,7 @@ it('con el registro caído, el hilo sigue existiendo porque el propio feed lo so
   const fila = await screen.findByRole('button', { name: /conversación con gaia,/i });
   await user.click(fila);
   const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
-  expect(await within(hilo).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
+  expect(await within(historial(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
   expect(within(hilo).getByRole('note')).toHaveTextContent(/sólo porque el servidor publicó mensajes suyos/i);
 }, 25_000);
 
@@ -288,7 +302,7 @@ it('la entrega hermana se lista en el detalle pero NO se convierte en una burbuj
 
   const hilo = await abrirConversacion(user, 'argos');
   await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
-  const burbujas = within(hilo).getAllByText('Verificar estado del adapter Hermes');
+  const burbujas = within(historial(hilo)).getAllByText('Verificar estado del adapter Hermes');
   expect(burbujas).toHaveLength(1);
   // El otro mensaje del feed, que va a Miguel:kratos, sigue fuera de este hilo.
   expect(within(hilo).queryByText('Indexar reporte operativo')).not.toBeInTheDocument();

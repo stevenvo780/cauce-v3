@@ -1,10 +1,15 @@
-import { useSyncExternalStore } from 'react';
+import { Search } from 'lucide-react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { ErrorState, LoadingState, Metric, PageHeader, Panel, PermissionBadge, RefreshButton } from '../../components/ui';
-import { compactId, permissionState } from '../../lib';
-import { DeliveryTable } from './DeliveryTable';
+import { ErrorState, LoadingState, PageHeader, Panel, PermissionBadge, RefreshButton } from '../../components/ui';
+import { compactId, display, permissionState } from '../../lib';
+import { DeliveryTable, EXPLICACION_CANCEL, EXPLICACION_REPLAY } from './DeliveryTable';
 import { enfocarEntrega, leerEntregaPedida, TEXTO_AUSENTE } from './foco-de-entrega';
+import {
+  contarPorGrupo, filtrarEntregas, FILTRO_VACIO, ROTULO_DEL_GRUPO, type GrupoDeEstado,
+} from './filtro-de-colas';
+import './queues.css';
 
 /**
  * **Queues, retries & DLQ** — el único sitio donde una entrega se mira de a una y se rescata.
@@ -31,11 +36,18 @@ import { enfocarEntrega, leerEntregaPedida, TEXTO_AUSENTE } from './foco-de-entr
  * ahora» lo enlazaba desde `d3411de` y esta página no leía `location.search`: se aterrizaba en la
  * lista genérica, sin el id por ningún lado y sin una fila marcada. Ver `foco-de-entrega.ts`, que
  * es también donde está escrito lo que la consola NO puede saber cuando la entrega no figura.
+ *
+ * 🔴 **Las tarjetas LLEVAN a las filas desde el 2026-08-23.** Recorriendo la consola de producción:
+ * las tres tarjetas contestan bien la pregunta con la que un operador entra —«Dead letters 7,
+ * requieren revisión»— y después no había forma de llegar a esas 7. Cero controles de filtro
+ * medidos, 38 filas, y las 7 sueltas entre 31 entregas terminadas bien. Decir dónde mirar y no
+ * llevar ahí es media respuesta.
  */
 export function QueuesPage() {
   const api = useApi();
   const resource = useResource('queues', () => api.getQueues());
   const access = useResource('console-access', () => api.getConsoleAccess());
+  const [filtro, setFiltro] = useState(FILTRO_VACIO);
   /**
    * `useSyncExternalStore` y no una lectura suelta: `App` se re-renderiza cuando cambia el
    * *pathname*, y llegar acá desde otro `?delivery=` NO lo cambia. Sin suscribirse a `popstate`,
@@ -46,21 +58,61 @@ export function QueuesPage() {
   const search = useSyncExternalStore(suscribirseAlHistorial, () => window.location.search, () => '');
   const pedida = leerEntregaPedida(search);
 
+  const items = useMemo(() => resource.data?.items ?? [], [resource.data]);
+  const porGrupo = useMemo(() => contarPorGrupo(items), [items]);
+
   if (resource.loading && !resource.data) return <LoadingState label="Leyendo queues, retries y DLQ…" />;
   if (resource.error && !resource.data) return <ErrorState error={resource.error} onRetry={resource.reload} />;
   const snapshot = resource.data;
-  const items = snapshot?.items ?? [];
   const foco = enfocarEntrega(items, pedida);
+  /*
+   * El enlace profundo GANA sobre el filtro. Si se combinaran, un `?delivery=` de una entrega en
+   * `done` mientras el filtro está en «revisión» daría cero filas y el aviso «filtrado a la
+   * entrega» sobre una tabla vacía: el operador vería que la consola encontró su entrega y a la
+   * vez que no está. Con foco, el filtro se apaga y se dice que se apagó.
+   */
+  const conFoco = foco.estado !== 'sin-foco';
+  const filas = conFoco ? foco.filas : filtrarEntregas(items, filtro);
+
+  function elegirGrupo(grupo: GrupoDeEstado) {
+    setFiltro((previo) => ({ ...previo, grupo: previo.grupo === grupo ? 'todas' : grupo }));
+  }
 
   return (
     <>
       <PageHeader eyebrow="Delivery control" title="Queues, retries & DLQ" description="Observa backoff, intentos y terminales dead. Replay y cancel solicitan una transición al servidor; nunca mutan estado local como verdad." actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />} />
       <PermissionBadge access={access.data} permission="delivery.replay" />
-      <div className="metrics-grid three">
-        <Metric label="Pendientes" value={snapshot?.pending} tone="neutral" detail="disponibles o claimed" />
-        <Metric label="En retry" value={snapshot?.retrying} tone="warning" detail="backoff durable" />
-        <Metric label="Dead letters" value={snapshot?.dead} tone="danger" detail="requieren revisión" />
+
+      {/*
+        Las tarjetas son BOTONES. El número sigue siendo el del servidor —`snapshot.pending`,
+        `retrying`, `dead`, calculados sobre el mismo snapshot— y debajo va, cuando difieren,
+        cuántas filas de ese grupo caben en esta página: la diferencia significa que el `LIMIT` del
+        servidor recortó, y taparla prometería filas que no están.
+      */}
+      <div className="metrics-grid three metricas-de-cola" role="group" aria-label="Filtrar por estado">
+        <TarjetaFiltro
+          etiqueta="Pendientes" valor={snapshot?.pending} tono="neutral" detalle="disponibles o claimed"
+          grupo="pendientes" activo={filtro.grupo === 'pendientes'} enPagina={porGrupo.pendientes}
+          bloqueado={conFoco} onElegir={elegirGrupo}
+        />
+        <TarjetaFiltro
+          etiqueta="En retry" valor={snapshot?.retrying} tono="warning" detalle="backoff durable"
+          grupo="retry" activo={filtro.grupo === 'retry'} enPagina={porGrupo.retry}
+          bloqueado={conFoco} onElegir={elegirGrupo}
+        />
+        <TarjetaFiltro
+          etiqueta="Dead letters" valor={snapshot?.dead} tono="danger" detalle="requieren revisión"
+          grupo="revision" activo={filtro.grupo === 'revision'} enPagina={porGrupo.revision}
+          bloqueado={conFoco} onElegir={elegirGrupo}
+        />
       </div>
+
+      {/* Qué hace cada botón, ANTES de apretarlo. Las dos frases son las mismas que repite la
+          confirmación, importadas del propio componente para que no puedan divergir. */}
+      <p className="queues-ayuda">
+        <strong>Replay:</strong> {EXPLICACION_REPLAY} <strong>Cancelar:</strong> {EXPLICACION_CANCEL} Las dos
+        piden confirmación antes de salir al servidor.
+      </p>
 
       {/* El id pedido se escribe COMPLETO, no compactado: es lo que el operador tiene que poder
           comparar contra el que traía en el enlace, y `compactId` le come el medio. */}
@@ -79,18 +131,89 @@ export function QueuesPage() {
       ) : null}
 
       <Panel title="Deliveries" subtitle={`Snapshot: ${snapshot?.observed_at ?? 'UNKNOWN'}`}>
+        {conFoco ? null : (
+          <div className="queues-filtros">
+            <label className="queues-busqueda">
+              <Search size={15} aria-hidden="true" />
+              <span className="sr-only">Buscar entrega</span>
+              <input
+                type="search"
+                value={filtro.texto}
+                placeholder="Alias, tenant, delivery id, message id o texto del error"
+                onChange={(evento) => setFiltro((previo) => ({ ...previo, texto: evento.target.value }))}
+              />
+            </label>
+            <p className="queues-conteo" role="status">
+              {filas.length === items.length
+                ? `${items.length} entregas en este snapshot.`
+                : `${filas.length} de ${items.length} entregas · ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` que dicen «${filtro.texto.trim()}»` : ''}.`}
+              {filtro.grupo !== 'todas' || filtro.texto.trim() ? (
+                <>{' '}<button type="button" className="button small secondary" onClick={() => setFiltro(FILTRO_VACIO)}>Quitar el filtro</button></>
+              ) : null}
+            </p>
+          </div>
+        )}
         <DeliveryTable
-          rows={foco.filas}
+          rows={filas}
           resaltada={foco.deliveryId}
           canReplay={permissionState(access.data, 'delivery.replay') === 'allowed'}
           canCancel={permissionState(access.data, 'delivery.cancel') === 'allowed'}
           onChanged={resource.reload}
           empty={foco.estado === 'ausente'
             ? 'Este snapshot no trae ninguna fila para la entrega pedida.'
-            : 'No hay deliveries informadas.'}
+            : filas.length === 0 && items.length > 0
+              ? `Ninguna de las ${items.length} entregas de este snapshot es ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` y dice «${filtro.texto.trim()}»` : ''}.`
+              : 'No hay deliveries informadas.'}
         />
       </Panel>
     </>
+  );
+}
+
+/**
+ * Una de las tres tarjetas de arriba, ahora pulsable.
+ *
+ * No reusa `<Metric>` porque `Metric` es un `<article>` y esto tiene que ser un `<button>` de
+ * verdad: un `div` con `onClick` no se alcanza con el teclado, no se anuncia como control y no
+ * puede llevar `aria-pressed`. La clase `.metric` sí se reusa —el aspecto es el mismo a propósito,
+ * lo único que cambia es que ahora lleva a algún sitio.
+ */
+function TarjetaFiltro({ etiqueta, valor, tono, detalle, grupo, activo, enPagina, bloqueado, onElegir }: {
+  etiqueta: string;
+  valor: unknown;
+  tono: 'neutral' | 'warning' | 'danger';
+  detalle: string;
+  grupo: GrupoDeEstado;
+  activo: boolean;
+  enPagina: number;
+  bloqueado: boolean;
+  onElegir: (grupo: GrupoDeEstado) => void;
+}) {
+  const cifra = display(valor);
+  return (
+    <button
+      className={`metric metric-${tono} metrica-filtro`}
+      type="button"
+      aria-pressed={activo}
+      disabled={bloqueado}
+      onClick={() => onElegir(grupo)}
+      title={bloqueado ? 'Hay un enlace profundo abierto: quitá el foco para filtrar' : `Ver ${ROTULO_DEL_GRUPO[grupo]}`}
+    >
+      <p>{etiqueta}</p>
+      <strong>{cifra}</strong>
+      <span>{detalle}</span>
+      {/*
+        La cifra de arriba la calcula el SERVIDOR sobre todo lo que ve; la de acá es cuántas filas
+        de ese grupo trae esta página. Sólo se escribe cuando NO coinciden, y entonces dice el
+        porqué: el `LIMIT` del snapshot dejó fuera al resto.
+      */}
+      {String(enPagina) !== cifra ? (
+        <span
+          className="metrica-en-pagina"
+          title={`El servidor cuenta ${cifra} en total; en esta página caben ${enPagina} porque el snapshot viene recortado por su LIMIT.`}
+        >{enPagina} acá · snapshot recortado</span>
+      ) : null}
+    </button>
   );
 }
 

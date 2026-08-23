@@ -631,6 +631,37 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   });
   app.post('/v3/console/messages', publishHandler);
 
+  /**
+   * El mensaje ENTERO, con su cuerpo sin recortar.
+   *
+   * `GET /v3/console/messages` devuelve `left(body,240)`: en la consola se leía «…El dominio real
+   * es stevenvallejo» cortado a mitad de palabra y no había ninguna forma de ver el resto — cero
+   * coincidencias de «ver más» en el bundle desplegado, y un panel de detalle con seis campos de
+   * metadatos y ni una línea del cuerpo.
+   *
+   * 🔴 **Por qué esta ruta existe si `GET /v3/messages/:messageId` ya hacía exactamente esto.**
+   * Porque `consola.humanizar.tech` publica una LISTA BLANCA en el borde
+   * (`ops/console-login/patch-caddy-lista-blanca.py`): sólo pasan `/v3/auth/*`, `/v3/status` y
+   * `/v3/console/*`, y todo el resto de `/v3/*` —que es superficie máquina-a-máquina del bus— se
+   * corta con 404 antes de llegar acá. Esa lista blanca no es un accidente que convenga rodear:
+   * se puso el 2026-08-06 porque el nginx del contenedor presenta su certificado mTLS en TODO lo
+   * que proxea, y sin ella `GET /v3/accounts/selection` respondía 200 con rutas de credenciales
+   * desde internet y sin sesión. O sea que la SPA no puede llamar a `/v3/messages/:id`: se
+   * publica la MISMA lectura por la superficie de consola, con el mismo permiso y el mismo
+   * `visibleMessage`, y la lista blanca sigue fallando cerrado para el resto del bus.
+   */
+  app.get<{ Params: { messageId: string } }>('/v3/console/messages/:messageId', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requirePermission(actor, 'read');
+      const row = visibleMessage(await repository.getMessage(request.params.messageId, actor.tenant_id, actor.alias), actor);
+      // `not_found` y NO `forbidden`: responder «prohibido» confirmaría que el mensaje existe a
+      // quien no puede verlo, que es el mismo criterio que ya usan replay y cancel.
+      if (!row) throw new StoreError('not_found', 'message not found or not visible');
+      return row;
+    } catch (error) { replyError(reply, error); }
+  });
+
   app.get('/v3/console/queues', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);

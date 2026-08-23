@@ -1,5 +1,5 @@
 import { MessagesSquare, ShieldCheck } from 'lucide-react';
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { EmptyState, PageHeader, PermissionBadge, RefreshButton } from '../../components/ui';
@@ -12,6 +12,16 @@ import { ConversationPane } from './ConversationPane';
 import './messages.css';
 import { saludDeColaPorAgente } from './queue-health';
 import { construirRosterDeMensajeria } from './roster';
+
+/**
+ * El nombre de la variable CSS con el tope del bloque de mensajería dentro del documento.
+ *
+ * Se exporta por lo mismo que `VAR_ALTO_COMPOSITOR`: la hoja la LEE y el componente la ESCRIBE, y
+ * si las dos cadenas se separan no falla el typecheck, ni el lint, ni una prueba de DOM — el
+ * síntoma sería el compositor volviendo a caer fuera de pantalla en escritorio, que es el defecto
+ * que esto viene a cerrar. `messenger-css.test.ts` exige que sean la misma.
+ */
+export const VAR_TOPE_MENSAJERIA = '--messenger-tope';
 
 function suscribirRuta(callback: () => void): () => void {
   window.addEventListener('popstate', callback);
@@ -103,6 +113,38 @@ export function MessagesPage() {
     || (messages.loading && !messages.data);
   const flotaError = status.error ?? topology.error;
 
+  /*
+   * -------------------------------------------------- EL COMPOSITOR, TAMBIÉN EN ESCRITORIO
+   *
+   * Medido en producción a 1280x900: el `textarea` estaba en y=1546 y el botón «Enviar» en
+   * y=1633, o sea 646 px POR DEBAJO del pliegue, con `position: static` en el compositor. El
+   * arreglo del teléfono (commit c2a75d0) no toca este caso: su `position: fixed` vive dentro del
+   * corte de 760 px. Acá el compositor se ancla al pie del PANEL, y para eso el panel necesita un
+   * alto: `.messenger-shell` crecía con su contenido, así que `margin-top: auto` no empujaba nada.
+   *
+   * El alto se MIDE en vez de escribirse a mano porque depende de lo que hay encima —la cabecera
+   * de página, la descripción y el chip de permiso ocupan distinto según el ancho y según el texto
+   * del servidor—, y un número fijo en la hoja volvería a dejar el botón fuera en cuanto alguien
+   * agregue una línea. Se escribe el tope real del bloque en el documento y la hoja resta.
+   */
+  const envolturaRef = useRef<HTMLDivElement | null>(null);
+  const medirElTope = useCallback(() => {
+    const envoltura = envolturaRef.current;
+    if (!envoltura) return;
+    // `+ scrollY` para que sea el tope en el DOCUMENTO y no en la ventana: sin eso la medida
+    // cambia con cada scroll y el panel se estiraría y encogería mientras el operador lee.
+    const tope = Math.round(envoltura.getBoundingClientRect().top + window.scrollY);
+    envoltura.style.setProperty(VAR_TOPE_MENSAJERIA, `${tope}px`);
+  }, []);
+  // Sin lista de dependencias a propósito: lo que hay ENCIMA del bloque cambia de alto con el
+  // texto que devuelve el servidor (el chip de permiso, la descripción), así que se remide en
+  // cada pintada. El oyente de `resize`, en cambio, se registra una sola vez.
+  useEffect(medirElTope);
+  useEffect(() => {
+    window.addEventListener('resize', medirElTope);
+    return () => window.removeEventListener('resize', medirElTope);
+  }, [medirElTope]);
+
   function abrir(agent: FleetAgent) {
     navigate(`/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`);
   }
@@ -132,7 +174,7 @@ export function MessagesPage() {
         que el hilo y su compositor anclado no arranquen a dos pantallas del borde. Ver el bloque
         de 760 px de `messages.css`, que explica por qué el anclaje es a 66 px y no a 0.
       */}
-      <div className="messenger-shell" data-conversacion={seleccionado ? 'abierta' : undefined}>
+      <div className="messenger-shell" ref={envolturaRef} data-conversacion={seleccionado ? 'abierta' : undefined}>
         <AgentRoster
           agents={agents}
           salud={salud}
@@ -143,6 +185,13 @@ export function MessagesPage() {
         />
         {seleccionado ? (
           <ConversationPane
+            /*
+              La `key` es del ARREGLO, no decorativa: sin ella, cambiar de agente conserva el
+              borrador, el mensaje seleccionado y la posición del hilo del agente anterior — un
+              borrador escrito para zeus quedaba en la caja de kant— y el efecto que abre el hilo
+              por el final no se vuelve a ejecutar, porque el componente no se monta otra vez.
+            */
+            key={seleccionado.id}
             agent={seleccionado}
             page={messages.data}
             loading={messages.loading}
