@@ -100,18 +100,38 @@ export function contraste(frente: string, fondo: string): number {
   return (Math.max(uno, otro) + 0.05) / (Math.min(uno, otro) + 0.05);
 }
 
-const PASTILLAS = ['.badge-online', '.badge-done', '.badge-running', '.badge-info', '.badge-danger', '.badge-warning', '.badge-offline'];
+/**
+ * Cada pastilla, con el TOKEN del que saca su texto y el fondo sobre el que se pinta.
+ *
+ * La regla de la pastilla se declara UNA vez, fuera de los temas, con `color: var(--on-*)`; lo que
+ * cambia por tema es el token. Antes cada pastilla se redefinía entera dentro del bloque claro con
+ * un hex escrito a mano, y ese es justo el modo en que el defecto entró: se corrigió `.badge-offline`
+ * y se olvidaron las otras seis, porque no había NADA que atara las siete a un mismo sitio. Un token
+ * se redefine una vez por tema; siete literales no se redefinen nunca del todo.
+ */
+const PASTILLAS: ReadonlyArray<[string, string, string]> = [
+  ['.badge-online', '--on-mint', '--mint-dim'],
+  ['.badge-done', '--on-mint', '--mint-dim'],
+  ['.badge-running', '--on-blue', '--blue-dim'],
+  ['.badge-info', '--on-blue', '--blue-dim'],
+  ['.badge-danger', '--on-red', '--red-dim'],
+  ['.badge-warning', '--on-amber', '--amber-dim'],
+  ['.badge-offline', '--on-neutral', '#eceff4'],
+];
 
 describe('las pastillas de estado en modo claro', () => {
   const claro = sinComentarios(bloqueClaro(sinComentarios(GLOBAL)));
   const vars = variables(claro);
 
-  it.each(PASTILLAS)('%s se lee: contraste AA (>= 4,5:1) sobre su propio fondo', (clase) => {
-    const regla = declaraciones(claro, clase);
-    expect(Object.keys(regla), `${clase} no tiene regla propia en el modo claro`).not.toEqual([]);
-    const texto = resolver(regla.color, vars);
-    const fondo = resolver(regla.background, vars);
-    expect(contraste(texto, fondo)).toBeGreaterThanOrEqual(4.5);
+  it.each(PASTILLAS)('%s se lee: contraste AA (>= 4,5:1) sobre su propio fondo', (clase, token, fondo) => {
+    // La pastilla tiene que sacar su color de ESE token y no de un hex suelto: si alguien vuelve a
+    // escribir el color a mano, el tema claro deja de alcanzarlo y el defecto vuelve entero.
+    const base = declaraciones(sinComentarios(GLOBAL), clase);
+    expect(base.color, `${clase} no toma su color de un token`).toBe(`var(${token})`);
+    const texto = vars.get(token);
+    expect(texto, `${token} no está redefinido en el modo claro`).toBeDefined();
+    expect(contraste(texto!, resolver(fondo.startsWith('#') ? fondo : `var(${fondo})`, vars)))
+      .toBeGreaterThanOrEqual(4.5);
   });
 
   it('la pastilla es de un tamaño con el que se puede exigir contraste (>= 12px)', () => {
@@ -140,21 +160,43 @@ describe('las pastillas de estado en modo claro', () => {
 describe('el texto del tema claro', () => {
   const claro = sinComentarios(bloqueClaro(sinComentarios(GLOBAL)));
   const vars = variables(claro);
-  /** El fondo más oscuro sobre el que ese texto se pinta en modo claro: el caso peor. */
+  /**
+   * El fondo más oscuro sobre el que ese texto se pinta en modo claro: el caso peor.
+   *
+   * Los tres del final —rótulos, botón secundario y el JSON de «Ver crudo»— traían cada uno su hex
+   * del tema oscuro escrito a mano (#c4d0e1, #c6d2e6, #b9cae0). Ahora los tres son `--text-2`, un
+   * solo token que el bloque claro redefine una vez. Por eso acá se comprueba el token, y aparte se
+   * comprueba que esos tres selectores sigan atados a él.
+   */
   const SOBRE: ReadonlyArray<[string, string, string]> = [
     ['--faint', 'var(--surface-2)', 'cabeceras de columna (`th`) y `.muted`'],
-    ['label', 'var(--surface)', 'rótulos de formulario'],
-    ['.button.secondary', 'var(--surface)', '«Actualizar» y «Cerrar sesión»'],
-    ['.config-records code', '#f8fafd', 'el JSON de «Ver crudo»'],
+    ['--text-2', 'var(--surface)', 'rótulos, botón secundario y el JSON de «Ver crudo»'],
   ];
 
   it.each(SOBRE)('%s se lee sobre %s (%s)', (que, fondo) => {
-    const texto = que.startsWith('--')
-      ? vars.get(que)
-      : declaraciones(claro, que.split(' ').pop()!).color;
+    const texto = vars.get(que);
     expect(texto, `${que} no está redefinido en el modo claro`).toBeDefined();
     expect(contraste(resolver(texto!, vars), resolver(fondo, vars))).toBeGreaterThanOrEqual(4.5);
   });
+
+  /** Lo que ataba al token: si uno vuelve a un hex, el tema claro deja de alcanzarlo. */
+  it.each(['label', '.button.secondary', '.config-records code'])(
+    '%s toma su color de `--text-2` y no de un hex suelto',
+    (selector) => {
+      // Se busca el selector COMPLETO y la regla que declara `color`: `.config-records code`
+      // aparece antes en una regla de `font-family` que no dice nada del color, y quedarse con esa
+      // haría pasar la prueba por mirar la regla equivocada.
+      const escapado = selector.replace(/[.[\]()="^$*+?|\\/{}-]/g, (caracter) => `\\${caracter}`);
+      const patron = new RegExp(`(?:^|[},])\\s*${escapado}\\s*\\{([^{}]*)\\}`, 'g');
+      const colores = [...sinComentarios(GLOBAL).matchAll(patron)]
+        .map((regla) => /(?:^|;)\s*color\s*:\s*([^;]+)/.exec(regla[1])?.[1]?.trim())
+        .filter((color): color is string => color !== undefined);
+      expect(colores, `${selector} no declara ningún color propio`).not.toEqual([]);
+      for (const color of colores) {
+        expect(color, `${selector} no toma su color de --text-2`).toBe('var(--text-2)');
+      }
+    },
+  );
 
   /**
    * El tema OSCURO es el de por defecto (`:root { color-scheme: dark }`), así que su `--faint`
