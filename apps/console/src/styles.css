@@ -709,11 +709,11 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
    * página. `env(safe-area-inset-bottom)` es por la barra de gestos de los teléfonos.
    */
   .app-shell { display: block; padding-bottom: calc(var(--nav-inferior-alto) + 14px); }
-  .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: var(--nav-inferior-alto); padding: 6px; border-top: 1px solid var(--border); border-right: 0; }
+  .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: var(--nav-inferior-alto); padding: 6px; border-top: 1px solid var(--border); border-right: 0; box-sizing: border-box; }
   .brand, .authority-note { display: none; }
   .sidebar nav ul { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 57px; overflow: visible; gap: 2px; }
   .sidebar nav li { min-width: 0; }
-  .sidebar nav a { min-width: 0; height: 100%; justify-content: center; gap: 3px; padding: 5px 3px; font-size: .58rem; line-height: 1.15; text-align: center; }
+  .sidebar nav a { min-width: 0; height: 100%; justify-content: center; gap: 3px; padding: 5px 3px; font-size: .6875rem; line-height: 1.15; text-align: center; }
   /* Los dos renglones se RESERVAN aunque el rótulo ocupe uno solo: si no, la altura de la barra
      depende de qué palabras entren y el ancla del compositor deja de ser un número. */
   .sidebar nav a span { display: block; min-width: 0; max-width: 100%; min-height: 2.3em; overflow-wrap: break-word; white-space: normal; }
