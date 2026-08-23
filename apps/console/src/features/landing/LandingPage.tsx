@@ -1,11 +1,10 @@
 import { AlertTriangle, CheckCircle2, CircleHelp, Gauge } from 'lucide-react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { LoadingState, Metric, PageHeader, Panel, RefreshButton, Time } from '../../components/ui';
-import { NAV_ENTRIES, useNavAvailability } from '../../nav';
+import { LoadingState, Metric, PageHeader, RefreshButton, Time } from '../../components/ui';
 import { onNavClick } from '../../navigation';
 import { HarnessStrip } from './HarnessStrip';
-import { puedeDecirSinIncidencias, resumenPortada, rotuloDeVistas } from './landing';
+import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './landing';
 
 /**
  * **La portada.** Lo que se ve al entrar a la consola, y lo único que hace falta leer para saber
@@ -44,16 +43,6 @@ import { puedeDecirSinIncidencias, resumenPortada, rotuloDeVistas } from './land
 
 export function LandingPage() {
   const api = useApi();
-  const navAvailability = useNavAvailability();
-  /**
-   * «El resto de la consola» = todas las entradas del menú MENOS la portada, que es esta misma
-   * pantalla. El recuento del rótulo se deriva de acá: escrito a mano decía «Ocho vistas» cuando
-   * ya eran nueve.
-   */
-  const atajos = NAV_ENTRIES
-    .filter((entrada) => entrada.id !== '')
-    .map((entrada) => ({ entrada, disponible: navAvailability(entrada.id) }))
-    .filter(({ disponible }) => !disponible.hidden);
   const status = useResource('status', () => api.getStatus());
   const queues = useResource('queues', () => api.getQueues());
   const quotas = useResource('quotas', () => api.getQuotas());
@@ -94,24 +83,56 @@ export function LandingPage() {
         actions={<RefreshButton onClick={recargarTodo} loading={cargando} />}
       />
 
+      {/*
+        🔴 **Los números van PRIMERO.** Medido el 2026-08-23 a 1280×900: las bandas de aviso —ocho,
+        ~580 px— ocupaban la primera pantalla entera y los cuatro números quedaban CORTADOS por el
+        borde inferior. Un resumen de conjunto cuyo resumen no se ve al entrar no es un resumen.
+        Los avisos no se pierden ni se esconden: bajan una fila y se agrupan por destino.
+      */}
+      <div className="metrics-grid">
+        <Metric label="Agentes en línea" value={status.data?.online} tone="positive" detail="leases vigentes" />
+        <Metric label="En vuelo" value={totals?.in_flight} detail="tomadas por un agente" />
+        <Metric label="Esperando turno" value={totals?.queued} tone="warning" detail="pendientes y en reintento" />
+        <Metric label="Entregas muertas" value={queues.data?.dead} tone="danger" detail="nadie las va a contestar" />
+      </div>
+
       <section className="landing-alertas" aria-label="Lo que exige atención">
         {!asentadas ? <LoadingState label="Leyendo flota, colas y cuotas…" /> : null}
 
         {asentadas && resumen.alertas.length === 0 && puedeDecirSinIncidencias(resumen) ? (
           <p className="landing-veredicto" data-tono="ok">
             <CheckCircle2 size={18} aria-hidden="true" />
-            <span>Sin incidencias: la DLQ está vacía, ningún ACK vencido, ningún agente detenido y ninguna cuenta sin saldo.</span>
+            <span>Sin incidencias: ninguna entrega muerta, ningún ACK vencido, ningún agente detenido y ninguna cuenta sin saldo.</span>
           </p>
         ) : null}
 
-        {asentadas ? resumen.alertas.map((alerta) => (
-          <p className="landing-alerta" data-tono={alerta.tono} key={alerta.id}>
+        {/* Una fila por VISTA, no una por hallazgo: cuatro avisos que se resuelven en «La flota
+            ahora» eran cuatro bandas idénticas con cuatro enlaces al mismo sitio. */}
+        {asentadas ? agruparAlertas(resumen.alertas).map((grupo) => (
+          <p className="landing-alerta" data-tono={grupo.tono} key={grupo.ruta}>
             <AlertTriangle size={18} aria-hidden="true" />
             <span>
-              <strong>{alerta.titulo}</strong>
-              <small>{alerta.detalle}</small>
+              <strong>
+                {grupo.alertas.length === 1
+                  ? grupo.alertas[0].titulo
+                  : `${grupo.alertas.length} cosas que atender en ${grupo.rutaLabel}`}
+              </strong>
+              {grupo.alertas.length === 1 ? (
+                <small title={grupo.alertas[0].fuente}>{grupo.alertas[0].detalle}</small>
+              ) : (
+                <small>
+                  {grupo.alertas.map((alerta, indice) => (
+                    // La ruta del endpoint va al `title=`: hace falta para contrastar un número
+                    // dudoso, y no hace falta para nada más.
+                    <span key={alerta.id}>
+                      {indice > 0 ? <span aria-hidden="true"> · </span> : null}
+                      <span title={`${alerta.detalle} · ${alerta.fuente}`}>{alerta.titulo}</span>
+                    </span>
+                  ))}
+                </small>
+              )}
             </span>
-            <a href={alerta.ruta} onClick={(event) => onNavClick(event, alerta.ruta)}>{alerta.rutaLabel}</a>
+            <a href={grupo.ruta} onClick={(event) => onNavClick(event, grupo.ruta)}>{grupo.rutaLabel}</a>
           </p>
         )) : null}
 
@@ -128,13 +149,6 @@ export function LandingPage() {
         ) : null}
       </section>
 
-      <div className="metrics-grid">
-        <Metric label="Agentes en línea" value={status.data?.online} tone="positive" detail="leases vigentes" />
-        <Metric label="En vuelo" value={totals?.in_flight} detail="tomadas por un agente" />
-        <Metric label="Esperando turno" value={totals?.queued} tone="warning" detail="pending + retry" />
-        <Metric label="DLQ" value={queues.data?.dead} tone="danger" detail="entregas muertas" />
-      </div>
-
       <div className="observation-line">
         <Gauge size={16} aria-hidden="true" />
         Flota observada: <Time value={activity.data?.observed_at} />
@@ -144,35 +158,15 @@ export function LandingPage() {
         Cuotas: <Time value={quotas.data?.observed_at} />
       </div>
 
-      <Panel
-        title="El resto de la consola"
-        subtitle={`${rotuloDeVistas(atajos.length)}, cada una con la pregunta que responde. La portada no las repite: las enlaza.`}
-      >
-        <ul className="landing-atajos" aria-label="El resto de la consola">
-          {atajos.map(({ entrada, disponible }) => {
-            const Icon = entrada.icon;
-            const ruta = `/${entrada.id}`;
-            return (
-              <li key={entrada.id}>
-                <a
-                  href={ruta}
-                  onClick={(event) => onNavClick(event, ruta, disponible.reason)}
-                  aria-disabled={disponible.disabled ? true : undefined}
-                  className={disponible.disabled ? 'atajo-inerte' : undefined}
-                  title={disponible.reason}
-                >
-                  <Icon size={18} aria-hidden={true} />
-                  <span>
-                    <strong>{entrada.label}</strong>
-                    <small>{entrada.que}</small>
-                    {disponible.disabled ? <small className="atajo-motivo">{disponible.reason}</small> : null}
-                  </span>
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-      </Panel>
+      {/*
+        🔴 Acá vivía el panel «El resto de la consola»: una lista con las siete entradas del menú,
+        su icono, su rótulo y su motivo de inhabilitación… o sea, el MENÚ LATERAL otra vez, cinco
+        centímetros a la derecha del menú lateral, ocupando media pantalla de la portada. Se retira.
+        La lista vivía en `NAV_ENTRIES` (`nav.ts`) y la barra la sigue dibujando desde ahí, con la
+        misma `useNavAvailability()`: no se pierde ni una entrada ni un motivo, se deja de escribir
+        dos veces. La pregunta que responde cada vista sigue en `NAV_ENTRIES.que`, que es de donde
+        la barra la lee para su `title=`.
+      */}
 
       <HarnessStrip adapters={adapters.data?.items ?? []} error={adapters.data ? undefined : adapters.error} />
     </>

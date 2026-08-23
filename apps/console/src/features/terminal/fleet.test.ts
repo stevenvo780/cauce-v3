@@ -79,7 +79,7 @@ it('resolves PTY authority per destination from the server inventory', () => {
 it('treats an absent inventory as UNKNOWN and authorises nothing', () => {
   const [agent] = buildFleetAgents({ presence: [{ tenant_id: 'Steven', alias: 'jarvis' }] });
   expect(resolveTerminalTarget(undefined, agent)).toMatchObject({ status: 'unknown' });
-  expect(resolveTerminalTarget(null, agent).reason).toMatch(/UNKNOWN/);
+  expect(resolveTerminalTarget(null, agent).reason).toMatch(/no publicó el inventario/i);
   expect(countOnlinePtyTargets(null)).toBeUndefined();
   expect(countOnlinePtyTargets([])).toBe(0);
 });

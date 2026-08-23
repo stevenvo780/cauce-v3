@@ -40,7 +40,10 @@ export interface LiveStateMeta {
 
 export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
   down: { label: 'Caído', hint: 'Sin lease vigente o nunca conectó: nadie va a tomar su trabajo.', tone: 'danger' },
-  blocked: { label: 'Bloqueado', hint: 'Tomó trabajo y no avanza. Es el fallo que se ve como "tarda", no como error.', tone: 'danger' },
+  // «Trabado» y no «Bloqueado»: es la palabra que ya usaba el veredicto de arriba («trabado hace
+  // 22 min») y la que ahora usa la tabla para `work_state: 'stalled'`. Eran tres palabras para el
+  // mismo hecho en la misma pantalla.
+  blocked: { label: 'Trabado', hint: 'Tomó trabajo y no avanza. Es el fallo que se ve como "tarda", no como error.', tone: 'danger' },
   delegating: { label: 'Delegando', hint: 'Le pasó trabajo a otro agente, que ya lo tiene en vuelo.', tone: 'info' },
   /**
    * Antes esto se llamaba «Respondiendo», decía «acaba de cerrar una entrega», iba en tono
@@ -57,11 +60,18 @@ export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
     hint: 'Una entrega suya dejó de estar en vuelo. Si cerró bien o se murió NO se puede saber desde la consola.',
     tone: 'neutral',
   },
-  receiving: { label: 'Recibiendo', hint: 'Le entró trabajo nuevo y todavía no empezó el turno.', tone: 'info' },
+  // Mismo hecho que `work_state: 'queued'` en la tabla y que «esperando turno» en el veredicto.
+  receiving: { label: 'Esperando turno', hint: 'Le entró trabajo nuevo y todavía no empezó el turno.', tone: 'info' },
   thinking: { label: 'Trabajando', hint: 'Turno en curso: el arnés está masticando la entrega.', tone: 'positive' },
   idle: {
+    /**
+     * El texto dice ahora la PRECEDENCIA, y no por gusto: desde que la tabla de abajo usa este
+     * mismo vocabulario, «Libre» aparece también en la columna «Estado» de un alias cuyo lease
+     * venció —porque el servidor manda `work_state: 'idle'` (no tiene trabajo) y `Caído` en la
+     * columna de presencia—. Sin decir cuál gana, el glosario contradiría a la fila.
+     */
     label: 'Libre',
-    hint: 'Conectado, con lease vigente y nada en vuelo. NO es un fallo.',
+    hint: 'Nada en vuelo. En el mapa, además, con lease vigente: un alias sin trabajo Y sin lease se dibuja Caído, que gana.',
     tone: 'neutral',
   },
 };

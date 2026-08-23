@@ -56,10 +56,10 @@ export function operatorRouteForAgent(
   agent: FleetAgent,
 ): OperatorRoute {
   const actor = actorIdentity(access);
-  if (!actor) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'Identidad del operador UNKNOWN; no se puede derivar un room de origen.' };
+  if (!actor) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'No se pudo leer tu identidad de operador, así que no hay de dónde derivar un room de origen.' };
 
   const actorTenant = (topology?.tenants ?? []).find((tenant) => same(tenant.id, actor.tenantId));
-  if (!actorTenant) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'Topología de acceso del tenant operador UNKNOWN.' };
+  if (!actorTenant) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'No se pudo leer la topología de tu cliente, así que no se sabe a qué salas pertenecés.' };
 
   const sameTenant = same(actor.tenantId, agent.tenantId);
   if (!sameTenant) {
@@ -74,7 +74,7 @@ export function operatorRouteForAgent(
         sourceRoomIds: [],
         membership: recipientMembership,
         reason: recipientMembership === undefined
-          ? 'Membership del destinatario UNKNOWN en la topología autorizada.'
+          ? 'No se pudo comprobar si el destinatario es miembro de una sala compartida con vos.'
           : 'El destinatario no tiene membership habilitada en su tenant.',
       };
     }
@@ -99,7 +99,7 @@ export function operatorRouteForAgent(
 
   if (!sourceRoomIds.length) {
     const reason = membership === undefined
-      ? 'Membership del operador o destinatario UNKNOWN; publicación bloqueada.'
+      ? 'No se pudo comprobar la membresía tuya o del destinatario; la publicación queda bloqueada.'
       : sameTenant
         ? 'El operador y el destinatario no comparten un room habilitado.'
         : 'El operador no pertenece a un room de origen habilitado en su tenant.';
@@ -184,7 +184,7 @@ export function ptySecondsLeft(expiresAt: string | null | undefined, now = Date.
 }
 
 export function formatCountdown(seconds: number | undefined): string {
-  if (seconds === undefined) return 'UNKNOWN';
+  if (seconds === undefined) return 'sin dato';
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }

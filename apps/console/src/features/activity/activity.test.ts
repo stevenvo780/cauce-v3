@@ -1,18 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetActivityAgent } from '../../api/types';
+import { UNKNOWN } from '../../lib';
 import {
-  agentRowKey, formatAckAge, formatDurationSeconds, formatInFlightAge, presenceBadge, rowUrgency, sortByUrgency,
+  FLAG_LABEL, WORK_STATE_LABEL, agentRowKey, formatAckAge, formatDurationSeconds, formatInFlightAge,
+  presenceBadge, resumirSenales, rowUrgency, sortByUrgency,
 } from './activity';
+import { LIVE_STATE_META } from '../live/agent-state';
 
 function agent(overrides: Partial<FleetActivityAgent>): FleetActivityAgent {
   return { tenant_id: 'Steven', alias: 'kant', ...overrides };
 }
 
 describe('formatDurationSeconds', () => {
-  it('renders UNKNOWN for null/undefined/non-finite input, never a bare number', () => {
-    expect(formatDurationSeconds(null)).toBe('UNKNOWN');
-    expect(formatDurationSeconds(undefined)).toBe('UNKNOWN');
-    expect(formatDurationSeconds(Number.NaN)).toBe('UNKNOWN');
+  it('dice que no hay dato en vez de un número desnudo, para null/undefined/no-finito', () => {
+    expect(formatDurationSeconds(null)).toBe(UNKNOWN);
+    expect(formatDurationSeconds(undefined)).toBe(UNKNOWN);
+    expect(formatDurationSeconds(Number.NaN)).toBe(UNKNOWN);
+    // La palabra concreta, para que un cambio de vocabulario tenga que ser deliberado.
+    expect(UNKNOWN).toBe('sin dato');
   });
 
   it('scales the unit to the magnitude', () => {
@@ -35,8 +40,12 @@ describe('formatAckAge — el caso que no puede leerse como "recién ackeado"', 
     expect(text).toContain('1h 0m');
   });
 
-  it('falls back to UNKNOWN when even the lookback threshold is missing', () => {
-    expect(formatAckAge(null, null)).toBe('UNKNOWN (sin ACK)');
+  it('sin ni siquiera el umbral de búsqueda, lo dice con palabras y sigue nombrando el ACK', () => {
+    const texto = formatAckAge(null, null);
+    expect(texto.toLowerCase()).toContain('ack');
+    expect(texto).not.toContain('UNKNOWN');
+    expect(texto).not.toBe('0');
+    expect(texto).not.toBe('—');
   });
 
   it('renders a real elapsed time when the ACK is known', () => {
@@ -99,20 +108,98 @@ describe('presenceBadge', () => {
   it('distinguishes never-connected (no presence object) from a lease with unreadable expiry', () => {
     const neverConnected = agent({ presence: undefined });
     const unreadableLease = agent({ presence: { lease_until: null } });
-    expect(presenceBadge(neverConnected).label).toBe('NUNCA CONECTADO');
-    expect(presenceBadge(unreadableLease).label).toBe('UNKNOWN');
+    expect(presenceBadge(neverConnected).label).toBe('Nunca conectó');
+    expect(presenceBadge(unreadableLease).label).toBe('Sin dato');
   });
 
   it('reads ONLINE and EXPIRADO from lease_until against the clock', () => {
     const online = agent({ presence: { lease_until: new Date(Date.now() + 60_000).toISOString() } });
     const expired = agent({ presence: { lease_until: new Date(Date.now() - 60_000).toISOString() } });
-    expect(presenceBadge(online).label).toBe('ONLINE');
-    expect(presenceBadge(expired).label).toBe('EXPIRADO');
+    expect(presenceBadge(online).label).toBe('Conectado');
+    // Un lease vencido se llama «Caído» en TODA la pantalla: es lo que dice el veredicto de
+    // arriba, lo que dice el glosario del pie y ahora también lo que dice esta insignia.
+    expect(presenceBadge(expired).label).toBe('Caído');
   });
 });
 
 describe('agentRowKey', () => {
   it('is stable and unique per tenant+alias', () => {
     expect(agentRowKey(agent({ tenant_id: 'Pablo', alias: 'midas' }))).toBe('Pablo:midas');
+  });
+});
+
+
+/* ============================================================================================ *
+ * Control negativo del vocabulario: UNA etiqueta por hecho, y las mismas palabras en toda la
+ * pantalla. Ver `resumirSenales` y `WORK_STATE_LABEL` en `activity.ts`.
+ * ============================================================================================ */
+
+describe('un solo vocabulario en toda la vista', () => {
+  it('la tabla y el glosario del mapa llaman IGUAL a lo mismo', () => {
+    // Estas cuatro son las coincidencias que el operador ve una al lado de la otra. Si alguien
+    // renombra una punta y no la otra, vuelven las tres palabras para el mismo estado.
+    expect(WORK_STATE_LABEL.idle).toBe(LIVE_STATE_META.idle.label);
+    expect(WORK_STATE_LABEL.working).toBe(LIVE_STATE_META.thinking.label);
+    expect(WORK_STATE_LABEL.stalled).toBe(LIVE_STATE_META.blocked.label);
+    expect(WORK_STATE_LABEL.queued).toBe(LIVE_STATE_META.receiving.label);
+    // Y el lease vencido se dice «Caído», igual que el estado del mapa.
+    expect(FLAG_LABEL.lease_expired).toBe(LIVE_STATE_META.down.label);
+  });
+
+  it('ninguna etiqueta va en MAYÚSCULAS SOSTENIDAS ni en inglés crudo', () => {
+    for (const [clave, texto] of [...Object.entries(WORK_STATE_LABEL), ...Object.entries(FLAG_LABEL)]) {
+      expect(texto, `${clave} está en mayúsculas sostenidas`).not.toBe(texto.toUpperCase());
+      expect(texto, `${clave} lleva un identificador crudo`).not.toMatch(/[a-z]+_[a-z]+/);
+    }
+  });
+});
+
+describe('resumirSenales — el control negativo de las insignias apiladas', () => {
+  it('jarvis: SATURADO no se pinta dos veces en la misma celda', () => {
+    const resumen = resumirSenales('saturated', ['saturated']);
+    const pintadas = [resumen.estado.label, ...resumen.senales.map((s) => s.label)];
+    expect(pintadas).toEqual(['Saturado']);
+    expect(new Set(pintadas).size).toBe(pintadas.length);
+    // Lo implicado no se pierde: sigue entero en el `title=`.
+    expect(resumen.detalle).toContain('Saturado');
+  });
+
+  it('midas: cinco insignias para decir «está trabado» pasan a tres', () => {
+    const resumen = resumirSenales('stalled', ['ack_stalled', 'saturated', 'overdue_acks', 'lease_expired']);
+    const pintadas = [resumen.estado.label, ...resumen.senales.map((s) => s.label)];
+    expect(pintadas.length).toBeLessThanOrEqual(3);
+    expect(pintadas[0]).toBe('Trabado');
+    // Ninguna señal medida se pierde: las cuatro siguen nombradas en el detalle.
+    for (const flag of ['ack_stalled', 'saturated', 'overdue_acks', 'lease_expired'] as const) {
+      expect(resumen.detalle).toContain(FLAG_LABEL[flag]);
+    }
+  });
+
+  it('NINGUNA combinación pinta la misma palabra dos veces, ni pasa de cuatro insignias', () => {
+    const estados = [undefined, 'idle', 'queued', 'working', 'saturated', 'stalled'] as const;
+    const banderas = [
+      'saturated', 'ack_stalled', 'overdue_acks', 'lease_expired',
+      'never_connected', 'unregistered', 'queued_without_consumer',
+    ] as const;
+    // Las 2^7 combinaciones de señales por cada estado: 384 celdas posibles.
+    for (const estado of estados) {
+      for (let mascara = 0; mascara < 1 << banderas.length; mascara += 1) {
+        const flags = banderas.filter((_, indice) => mascara & (1 << indice));
+        const resumen = resumirSenales(estado, flags);
+        const pintadas = [resumen.estado.label, ...resumen.senales.map((s) => s.label)];
+        expect(new Set(pintadas).size, `duplicado con ${estado}/${flags.join('+')}: ${pintadas.join(', ')}`)
+          .toBe(pintadas.length);
+        expect(pintadas.length + (resumen.ocultas > 0 ? 1 : 0),
+          `demasiadas insignias con ${estado}/${flags.join('+')}`).toBeLessThanOrEqual(4);
+        // Y NUNCA se pierde una señal medida: el detalle las nombra todas.
+        for (const flag of flags) expect(resumen.detalle).toContain(FLAG_LABEL[flag]);
+      }
+    }
+  });
+
+  it('sin `work_state` del servidor se DICE, no se rellena con «Libre»', () => {
+    const resumen = resumirSenales(undefined, []);
+    expect(resumen.estado.label).toBe('Sin dato de estado');
+    expect(resumen.estado.tone).toBe('unknown');
   });
 });

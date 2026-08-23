@@ -6,8 +6,43 @@
 /* Off-screen home for terminals whose panel is hidden. Kept rendered so the node survives. */
 .pty-detached-holder { position: absolute; top: 0; left: -10000px; width: 900px; height: 480px; overflow: hidden; visibility: hidden; pointer-events: none; }
 
-/* The overview grew a fifth card (PTY targets). */
-.ultimate-terminal-page .terminal-overview { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+/*
+ * Las seis tarjetas del resumen.
+ *
+ * 🔴 Estaban forzadas a `repeat(5, 1fr)`: a 1280 px cada una queda en ~130 px y los rótulos se
+ * truncaban en mitad de la palabra («TU PERMISO DE TERMINAL / CONCE…»). Un rótulo cortado a la
+ * mitad no es un rótulo. Con `auto-fit` y un mínimo, se reparten en las columnas que quepan y
+ * cada tarjeta conserva el ancho que su texto necesita.
+ */
+.ultimate-terminal-page .terminal-overview { grid-template-columns: repeat(auto-fit, minmax(184px, 1fr)); }
+.ultimate-terminal-page .terminal-overview article > div { min-width: 0; }
+/*
+ * Y el VALOR envuelve en vez de recortarse. `styles.css` le pone `white-space: nowrap` con
+ * puntos suspensivos: a 1366 px eso dejaba «CONCEDIDO» cortado dentro de 70 px. Una cifra o un
+ * veredicto recortados no se pueden leer, y aquí no hay nada tan largo como para necesitar el
+ * recorte: envolver a dos líneas cuesta 14 px y se lee entero.
+ */
+.ultimate-terminal-page .terminal-overview strong { overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+
+/*
+ * 🔴 **El inspector de la derecha quedaba RECORTADO a 1280 px, y el corte era invisible.**
+ *
+ * `.ultimate-terminal-shell` es una rejilla de `272px minmax(460px, 1fr) 286px`, o sea que pide
+ * 1.018 px como mínimo, y a 1280 el contenedor mide 941 (barra lateral 248 + relleno). Con
+ * `overflow: hidden` en la rejilla, el exceso no produce barra de desplazamiento: simplemente
+ * desaparece por el borde. Medido: las insignias de permisos terminaban en «ALLO…».
+ *
+ * `styles.css` ya baja a dos columnas, pero a `max-width: 1100px` — un umbral que mira el ANCHO
+ * DE LA VENTANA y no el del contenedor, así que entre 1100 y 1342 la rejilla no cabe y nadie la
+ * baja. Se corrige acá, al ancho en el que deja de caber de verdad, y no en `styles.css`, que
+ * tiene dueño en otro carril. El inspector no se pierde: `.terminal-adapter-mobile` lo vuelve a
+ * montar dentro de la columna central, que es lo que ese bloque ya hacía por debajo de 1100.
+ */
+@media (max-width: 1342px) {
+  .ultimate-terminal-page .ultimate-terminal-shell { grid-template-columns: 250px minmax(0, 1fr); }
+  .ultimate-terminal-page .terminal-control-inspector { display: none; }
+  .ultimate-terminal-page .terminal-adapter-mobile { display: block; }
+}
 
 /*
  * The PTY relay is opt-in per stack (see 0a1d0e3): its absence is expected topology, not an
@@ -252,3 +287,48 @@
   }
 }
 
+
+/* ------------------------------------------------------------------------------------------- *
+ * La cabecera de la sesión, medida a 1280 px el 2026-08-23.
+ *
+ * 🔴 El `.eyebrow` con «Steven · epoch 14» medía 11 px de ANCHO por 190 px de alto: una letra por
+ * línea, corriendo en vertical por encima de «ROOM DE ORIGEN». `.session-identity` ya tenía
+ * `min-width: 0` en styles.css, pero el `<div>` de dentro no, y a 1280 el panel del centro se
+ * queda en 428 px: los controles (selector de room + cuatro botones de modo) se llevan casi todo y
+ * al bloque de identidad no le sobra nada donde ponerse.
+ *
+ * Se arregla en DOS partes, porque una sola no alcanza:
+ *  1. la cabecera envuelve (`flex-wrap`) en vez de aplastar a un hijo hasta 9 px;
+ *  2. el bloque de texto recorta con puntos suspensivos en vez de partir palabra por palabra.
+ *
+ * Va en este fichero y no en `styles.css`: `styles.css` tiene dueño en otro carril.
+ * ------------------------------------------------------------------------------------------- */
+.terminal-session-head { flex-wrap: wrap; }
+.terminal-session-head .session-identity { min-width: 0; flex: 1 1 200px; }
+.session-identity-text { min-width: 0; flex: 1 1 auto; }
+.session-identity-text .eyebrow,
+.session-identity-text h2 { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.terminal-session-head .session-controls { min-width: 0; flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+.terminal-session-head .terminal-mode-switch { flex-wrap: wrap; }
+
+/* ------------------------------------------------------------------------------------------- *
+ * La negativa del PTY: qué pasó, por qué, y quién puede levantar la puerta.
+ * Antes era un `<p class="notice error">` con el `reason` crudo del gateway dentro — o sea, la
+ * palabra `no_grant` y nada más. Ver `denegaciones.ts`.
+ * ------------------------------------------------------------------------------------------- */
+.pty-negativa { margin: 0 0 10px; padding: 10px 12px; border: 1px solid #6d3038; border-left-width: 3px; border-radius: 9px; background: var(--red-dim); }
+.terminal-console > .pty-negativa { margin: 8px 12px; }
+.pty-negativa strong { display: block; color: var(--text); font-size: .76rem; line-height: 1.35; }
+.pty-negativa p { margin: 5px 0 0; color: var(--muted); font-size: .68rem; line-height: 1.55; }
+.pty-negativa .pty-negativa-quien { display: flex; align-items: start; gap: 6px; margin-top: 7px; padding-top: 7px; border-top: 1px solid rgb(109 48 56 / 60%); color: var(--amber); }
+.pty-negativa .pty-negativa-quien svg { flex: none; margin-top: 2px; }
+
+@media (prefers-color-scheme: light) {
+  .pty-negativa { background: #fdf2f4; }
+  /*
+   * El `--amber` del tema claro sobre este fondo da 4,48:1 — medido con el navegador— y el texto
+   * es de 0.68rem, o sea que necesita 4,5:1. Se oscurece SÓLO acá: `styles.css` tiene dueño en
+   * otro carril y el token global lo usan otras diez cosas con otros fondos.
+   */
+  .pty-negativa .pty-negativa-quien { color: #8a5a00; }
+}

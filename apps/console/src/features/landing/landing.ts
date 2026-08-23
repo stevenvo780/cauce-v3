@@ -19,8 +19,16 @@ export interface Alerta {
   tono: AlertaTono;
   /** La frase, en castellano y con el número adentro. */
   titulo: string;
-  /** De dónde salió el número, para poder contrastarlo. */
+  /** Qué significa, en castellano. Es lo que se lee. */
   detalle: string;
+  /**
+   * De qué lectura del servidor sale el número.
+   *
+   * 🔴 Esto iba DENTRO de `detalle` —«GET /v3/console/activity → totals.overdue_in_flight»— y se
+   * pintaba en la primera pantalla del operador, ocho veces. Una ruta de API es depuración: hace
+   * falta para poder contrastar un número dudoso y no hace falta para nada más. Va al `title=`.
+   */
+  fuente: string;
   /** Adónde se va a resolver. Siempre una ruta viva de la consola. */
   ruta: string;
   rutaLabel: string;
@@ -76,7 +84,8 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       id: 'dlq',
       tono: 'danger',
       titulo: `${muertas} ${muertas === 1 ? 'entrega muerta' : 'entregas muertas'} en la DLQ`,
-      detalle: 'GET /v3/console/queues → dead. Cada una es un encargo que nadie va a contestar hasta que alguien la reinyecte.',
+      detalle: 'Cada una es un encargo que nadie va a contestar hasta que alguien la reinyecte.',
+      fuente: 'GET /v3/console/queues → dead',
       ruta: '/queues',
       rutaLabel: 'Queues & DLQ',
     });
@@ -89,7 +98,8 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       id: 'ack-vencido',
       tono: 'danger',
       titulo: `${vencidas} ${vencidas === 1 ? 'entrega' : 'entregas'} con el ACK vencido`,
-      detalle: 'GET /v3/console/activity → totals.overdue_in_flight: el agente que las tomó dejó pasar su ack_deadline_at.',
+      detalle: 'El agente que las tomó dejó pasar el plazo para acusar recibo.',
+      fuente: 'GET /v3/console/activity → totals.overdue_in_flight',
       ruta: '/live',
       rutaLabel: 'La flota ahora',
     });
@@ -101,7 +111,8 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       id: 'agentes-detenidos',
       tono: 'danger',
       titulo: `${detenidos} ${detenidos === 1 ? 'agente detenido' : 'agentes detenidos'}`,
-      detalle: 'GET /v3/console/activity → totals.by_state.stalled: tomaron trabajo y dejaron de acusar recibo.',
+      detalle: 'Tomaron trabajo y dejaron de acusar recibo.',
+      fuente: 'GET /v3/console/activity → totals.by_state.stalled',
       ruta: '/live',
       rutaLabel: 'La flota ahora',
     });
@@ -113,7 +124,8 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       id: 'cola-sin-consumidor',
       tono: 'danger',
       titulo: `${sinConsumidor} ${sinConsumidor === 1 ? 'alias con cola y sin quien la consuma' : 'alias con cola y sin quien la consuma'}`,
-      detalle: 'GET /v3/console/activity → totals.flagged.queued_without_consumer. Libre y sordo se ven igual desde afuera; esto los separa.',
+      detalle: 'Libre y sordo se ven igual desde afuera; esto los separa.',
+      fuente: 'GET /v3/console/activity → totals.flagged.queued_without_consumer',
       ruta: '/live',
       rutaLabel: 'La flota ahora',
     });
@@ -126,7 +138,8 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       id: 'cuota-agotada',
       tono: 'danger',
       titulo: `${agotados.length} ${agotados.length === 1 ? 'proveedor sin saldo' : 'proveedores sin saldo'}`,
-      detalle: `Sin cuota: ${agotados.map((provider) => provider.provider ?? 'UNKNOWN').join(', ')}. GET /v3/console/quotas → severity=exhausted.`,
+      detalle: `Sin cuota: ${agotados.map((provider) => provider.provider ?? 'un proveedor sin nombre').join(', ')}.`,
+      fuente: 'GET /v3/console/quotas → severity=exhausted',
       ruta: '/accounts',
       rutaLabel: 'Cuentas y cuotas',
     });
@@ -138,7 +151,8 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       id: 'cuota-en-aviso',
       tono: 'warning',
       titulo: `${enAviso.length} ${enAviso.length === 1 ? 'proveedor cerca del tope' : 'proveedores cerca del tope'}`,
-      detalle: `En aviso: ${enAviso.map((provider) => provider.provider ?? 'UNKNOWN').join(', ')}. GET /v3/console/quotas → severity=warn.`,
+      detalle: `En aviso: ${enAviso.map((provider) => provider.provider ?? 'un proveedor sin nombre').join(', ')}.`,
+      fuente: 'GET /v3/console/quotas → severity=warn',
       ruta: '/accounts',
       rutaLabel: 'Cuentas y cuotas',
     });
@@ -154,7 +168,8 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       id: 'recolector-rancio',
       tono: 'warning',
       titulo: `${rancios.length} ${rancios.length === 1 ? 'recolector de cuotas rancio' : 'recolectores de cuotas rancios'}`,
-      detalle: `Sin datos frescos de: ${rancios.map((collector) => collector.host ?? 'UNKNOWN').join(', ')}. Los porcentajes de esos hosts son viejos, no actuales.`,
+      detalle: `Sin datos frescos de: ${rancios.map((collector) => collector.host ?? 'un host sin nombre').join(', ')}. Los porcentajes de esos hosts son viejos, no actuales.`,
+      fuente: 'GET /v3/console/quotas → collectors[].stale',
       ruta: '/accounts',
       rutaLabel: 'Cuentas y cuotas',
     });
@@ -166,7 +181,8 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
       id: 'cuentas-pausadas',
       tono: 'warning',
       titulo: `${pausadas} ${pausadas === 1 ? 'cuenta pausada' : 'cuentas pausadas'}`,
-      detalle: 'GET /v3/console/quotas → paused_accounts: mientras dure la pausa, el enrutado no las va a elegir.',
+      detalle: 'Mientras dure la pausa, el enrutado no las va a elegir.',
+      fuente: 'GET /v3/console/quotas → paused_accounts',
       ruta: '/accounts',
       rutaLabel: 'Cuentas y cuotas',
     });
@@ -183,25 +199,38 @@ export function puedeDecirSinIncidencias(resumen: ResumenPortada): boolean {
   return resumen.alertas.length === 0 && resumen.fuentesAusentes.length === 0;
 }
 
-/**
- * El recuento del panel «El resto de la consola», derivado de la lista y no contado con el dedo.
- *
- * El rótulo decía «Ocho vistas» cuando ya eran nueve: el atajo a «Ultimate Terminal» faltaba y
- * nadie volvió a contar. Un número escrito a mano en una frase envejece en cuanto se agrega una
- * entrada, y envejece en silencio —no rompe ninguna prueba, no tira ningún error: sólo miente—.
- *
- * En letras hasta doce porque es una frase, no una tabla; de ahí en adelante en cifra, que es como
- * se escribe un número grande en castellano corrido.
- */
-const NUMERALES = [
-  'Ninguna', 'Una', 'Dos', 'Tres', 'Cuatro', 'Cinco', 'Seis',
-  'Siete', 'Ocho', 'Nueve', 'Diez', 'Once', 'Doce',
-];
+/* ============================================================================================ *
+ * Agrupar las alertas por su destino.
+ * ============================================================================================ */
 
-export function rotuloDeVistas(cantidad: number): string {
-  if (!Number.isFinite(cantidad) || cantidad < 0) return 'Ninguna vista';
-  const entero = Math.trunc(cantidad);
-  const palabra = NUMERALES[entero] ?? String(entero);
-  // «Ninguna vista» y «Una vista» en singular; de dos en adelante, plural.
-  return `${palabra} ${entero <= 1 ? 'vista' : 'vistas'}`;
+export interface GrupoDeAlertas {
+  ruta: string;
+  rutaLabel: string;
+  /** El peor tono del grupo: si una sola es `danger`, el grupo es `danger`. */
+  tono: AlertaTono;
+  alertas: Alerta[];
+}
+
+/**
+ * 🔴 **La portada gastaba la primera pantalla entera en avisos.** Medido el 2026-08-23 a
+ * 1280×900: ocho bandas de aviso ocupaban ~580 px y empujaban los CUATRO números —99/63/29/1—
+ * fuera del borde inferior. Y de esas ocho, cuatro apuntaban al mismo sitio («La flota ahora») y
+ * tres a otro («Cuentas y cuotas»): siete bandas para dos destinos.
+ *
+ * Se agrupan por destino, en el orden en que aparecieron —que es el orden de gravedad con el que
+ * `resumenPortada` las produce— y sin perder ni una: cada una sigue con su frase y su cifra, pero
+ * la fila, el icono y el enlace se escriben UNA vez por vista en vez de una por alerta.
+ */
+export function agruparAlertas(alertas: readonly Alerta[]): GrupoDeAlertas[] {
+  const grupos: GrupoDeAlertas[] = [];
+  for (const alerta of alertas) {
+    const existente = grupos.find((grupo) => grupo.ruta === alerta.ruta);
+    if (existente) {
+      existente.alertas.push(alerta);
+      if (alerta.tono === 'danger') existente.tono = 'danger';
+      continue;
+    }
+    grupos.push({ ruta: alerta.ruta, rutaLabel: alerta.rutaLabel, tono: alerta.tono, alertas: [alerta] });
+  }
+  return grupos;
 }

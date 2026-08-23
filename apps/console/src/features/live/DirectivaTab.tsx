@@ -190,10 +190,10 @@ function CapaDeFicheros({ recurso }: { recurso: RecursoDirectiva }) {
       {ficheros.map((fichero, indice) => (
         <li key={fichero.path ?? indice}>
           <div className="directiva-fichero-head">
-            <code>{fichero.path ?? 'UNKNOWN'}</code>
-            <span className="chip">{fichero.scope === 'user' ? 'nivel usuario' : fichero.scope === 'workspace' ? 'espacio de trabajo' : 'nivel UNKNOWN'}</span>
+            <code>{fichero.path ?? 'ruta sin informar'}</code>
+            <span className="chip">{fichero.scope === 'user' ? 'nivel usuario' : fichero.scope === 'workspace' ? 'espacio de trabajo' : 'nivel sin informar'}</span>
             <span className="directiva-fichero-meta">
-              {typeof fichero.bytes === 'number' ? `${fichero.bytes} bytes` : 'tamaño UNKNOWN'}
+              {typeof fichero.bytes === 'number' ? `${fichero.bytes} bytes` : 'tamaño sin informar'}
               {' · '}<Time value={fichero.modified_at} />
             </span>
           </div>
@@ -224,7 +224,7 @@ function CapaDeMemoria({ recurso }: { recurso: RecursoDirectiva }) {
     return (
       <EmptyState>
         Este gateway publica los ficheros del alias pero no su índice de memoria, así que cuánto
-        recuerda es UNKNOWN. No es cero.
+        recuerda es un dato que no tenemos. No es cero.
       </EmptyState>
     );
   }
@@ -233,7 +233,7 @@ function CapaDeMemoria({ recurso }: { recurso: RecursoDirectiva }) {
   return (
     <div className="directiva-memoria">
       <p className="directiva-memoria-resumen">
-        <strong>{total}</strong> entrada(s) en <code>{memoria.root ?? 'raíz UNKNOWN'}</code>
+        <strong>{total}</strong> entrada(s) en <code>{memoria.root ?? 'raíz sin informar'}</code>
         {memoria.truncated ? ` · se listan las ${entradas.length} primeras` : ''}
       </p>
       {entradas.length === 0 ? (
@@ -242,9 +242,9 @@ function CapaDeMemoria({ recurso }: { recurso: RecursoDirectiva }) {
         <ul className="directiva-memoria-lista">
           {entradas.map((entrada, indice) => (
             <li key={entrada.path ?? indice}>
-              <code>{entrada.path ?? 'UNKNOWN'}</code>
+              <code>{entrada.path ?? 'ruta sin informar'}</code>
               <span className="directiva-fichero-meta">
-                {typeof entrada.bytes === 'number' ? `${entrada.bytes} bytes` : 'tamaño UNKNOWN'}
+                {typeof entrada.bytes === 'number' ? `${entrada.bytes} bytes` : 'tamaño sin informar'}
                 {' · '}<Time value={entrada.modified_at} />
               </span>
             </li>

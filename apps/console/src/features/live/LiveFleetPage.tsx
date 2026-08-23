@@ -396,6 +396,22 @@ export function LiveFleetPage() {
     [alcance, topologiaEnAlcance],
   );
 
+  /**
+   * Lo que hay detrás del desplegable «Permisos y salas», contado antes de abrirlo.
+   *
+   * Un `<details>` cerrado sin recuento es una puerta ciega: no se sabe si esconde tres filas o
+   * trescientas, así que o se abre siempre (y la página crece 855 px) o no se abre nunca.
+   */
+  const resumenDePermisos = useMemo(() => {
+    if (topology.error && !topology.data) return 'no se pudo leer';
+    const tenants = topologiaEnAlcance?.tenants ?? [];
+    if (tenants.length === 0) return 'sin datos';
+    const salas = tenants.reduce((total, tenant) => total + (tenant.rooms ?? []).length, 0);
+    const permisos = (topologiaEnAlcance?.acl_edges ?? []).length;
+    return `${tenants.length} ${tenants.length === 1 ? 'cliente' : 'clientes'}, `
+      + `${salas} ${salas === 1 ? 'sala' : 'salas'}, ${permisos} ${permisos === 1 ? 'permiso' : 'permisos'}`;
+  }, [topologiaEnAlcance, topology.data, topology.error]);
+
   const staleAfterMs = (intervalMs > 0 ? intervalMs : 30000) * STALE_FACTOR;
   const verdict = useMemo(
     () => fleetVerdict(alcance, { error: activity.error, observedAt, nowMs: now, staleAfterMs }),
@@ -671,16 +687,32 @@ export function LiveFleetPage() {
           onOpen={(key) => abrirCajon(key)}
         />
 
-        {/* Lo explicativo se pliega. Es información que hace falta la primera vez y estorba las
-            cien siguientes; dejarla siempre abierta era parte de por qué la vista se sentía larga. */}
-        <details className="live-fold">
-          <summary>Señales activas y cómo leer los números</summary>
+        {/*
+          🔴 **La prioridad estaba al revés, y se midió el 2026-08-23.** El glosario de abajo —381 px
+          de alto— estaba SIEMPRE abierto, y las dos únicas secciones con datos medidos («Señales
+          activas» y «Permisos y salas») SIEMPRE plegadas. O sea que la pantalla dedicaba el pie
+          entero a explicar cómo leerse a sí misma y escondía lo que hay que leer.
+
+          Ahora: los datos abren, la explicación se pliega. Las señales activas se abren con
+          `open` —no se quitan del `<details>` para que se puedan cerrar cuando ya se conocen— y el
+          glosario pasa a ser el único desplegable cerrado de la vista.
+        */}
+        <details className="live-fold" open>
+          <summary>Señales activas</summary>
           <FleetSignals snapshot={snapshot} />
-          <ActivityExplainers thresholds={snapshot?.thresholds} />
         </details>
 
+
+        {/*
+          Queda PLEGADO, y no por descuido. Medido a 1280×900: abierto añade 855 px a una página
+          que ya medía 3.948 y que Steven dice que no puede usar. Y a diferencia de las señales de
+          arriba, esto no cambia cada cuatro segundos: es la configuración —era la ruta «Tenants &
+          ACL» entera— y sólo se mueve cuando alguien la edita. Lo que sí se arregla es que el
+          desplegable deje de ser una puerta ciega: el resumen dice CUÁNTO hay detrás, así que se
+          abre sabiendo qué se va a encontrar.
+        */}
         <details className="live-fold">
-          <summary>Permisos y salas</summary>
+          <summary>Permisos y salas · {resumenDePermisos}</summary>
           {/* Comparten el `useResource('live-topology')` que el mapa ya pidió: cero fetch nuevo.
               Esto era la ruta "Tenants & ACL" entera. Va sobre la topología ACOTADA, igual que el
               mapa: si el selector de Cliente no acotara también esto, el desplegable seguiría
@@ -689,7 +721,14 @@ export function LiveFleetPage() {
           <AclEdgeList edges={topologiaEnAlcance?.acl_edges ?? []} />
         </details>
 
-        <Panel title="Cómo se lee un muñeco" subtitle="Primero la distinción que más se confunde, y después los siete estados.">
+        <details className="live-fold">
+          <summary>Cómo se lee un muñeco, y cómo leer los números</summary>
+          <p className="live-legend-lead">
+            Estas son las MISMAS palabras que usan el veredicto de arriba y la columna «Estado» de
+            la tabla: si el veredicto dice <strong>caído</strong>, la tabla dice <strong>Caído</strong>{' '}
+            y acá abajo se explica <strong>Caído</strong>. Hasta el 2026-08-23 eran tres palabras
+            distintas para lo mismo.
+          </p>
           <p className="live-legend-lead">
             <strong>Libre</strong> no es <strong>caído</strong> ni es <strong>sin reportar</strong>.
             Libre es un agente conectado y sin trabajo, que es el estado normal de casi toda la
@@ -708,7 +747,8 @@ export function LiveFleetPage() {
               </div>
             ))}
           </div>
-        </Panel>
+          <ActivityExplainers thresholds={snapshot?.thresholds} />
+        </details>
       </div>
 
       {drawer && detail ? (

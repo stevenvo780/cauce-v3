@@ -101,7 +101,7 @@ export function AckInspector({ delivery, access, onReplay, onCancel }: {
               <Ban size={14} aria-hidden="true" /> {cancelling ? 'Cancelando…' : 'Cancelar'}
             </button>
           </div>
-          {!canReplay ? <p className="inspector-warning"><ShieldAlert size={14} aria-hidden="true" /> Replay bloqueado: RBAC DENY o UNKNOWN.</p> : null}
+          {!canReplay ? <p className="inspector-warning"><ShieldAlert size={14} aria-hidden="true" /> No podés reinyectar: tu cuenta no tiene ese permiso, o no se pudo leer.</p> : null}
           {notice ? <p className={`notice ${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p> : null}
         </>
       )}

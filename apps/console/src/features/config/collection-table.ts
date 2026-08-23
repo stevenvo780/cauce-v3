@@ -30,6 +30,20 @@ const COLUMNAS_FIJAS: Record<string, readonly string[]> = {
  * crudo del servidor a propósito: inventarle un título castellano a un campo que no conocemos sería
  * afirmar que sabemos qué significa.
  */
+/**
+ * El rótulo de cada columna, en castellano.
+ *
+ * 🔴 **Lo que no está acá se pinta con el nombre de la columna de la base.** Medido el 2026-08-23:
+ * las tablas mostraban cabeceras como `PROTOCOL_VERSION`, `LAST_SEEN_AT`, `CONTAINER_NAME`,
+ * `RUNTIME_USER`, `HOME_DIRECTORY`, `PAYER_TENANT_ID`, `SHARED_WITH_POOL` y `EXTERNAL_ACCOUNT_ID`
+ * —snake_case en inglés, en una interfaz en castellano— porque `columnasDe` cae al nombre crudo
+ * cuando no hay entrada acá. No es una decisión: es el valor por defecto, y el valor por defecto
+ * de una tabla que se alimenta del esquema es siempre el esquema.
+ *
+ * Los cuatro `allow_*` se dejan a propósito con su nombre técnico: son los nombres EXACTOS de las
+ * columnas de `acl_edges` que se citan en los runbooks y en las consultas de diagnóstico, y
+ * traducirlos rompería el puente entre lo que se ve y lo que se escribe en un `psql`.
+ */
 const ETIQUETAS: Record<string, string> = {
   id: 'Id', tenant_id: 'Tenant', room_id: 'Room', alias: 'Alias', role: 'Rol',
   display_name: 'Nombre', is_hub: 'Hub', enabled: 'Habilitado',
@@ -40,6 +54,15 @@ const ETIQUETAS: Record<string, string> = {
   capabilities: 'Capacidades', handle: 'Handle', adapter: 'Adaptador', channel: 'Canal',
   provider: 'Proveedor', account_id: 'Cuenta', agent_alias: 'Alias', priority: 'Prioridad',
   role_brief: 'Rol declarado', label: 'Etiqueta',
+  // Añadidos el 2026-08-23: los ocho que salían con el nombre de la columna de la base.
+  container_name: 'Contenedor', runtime_user: 'Usuario', home_directory: 'Carpeta personal',
+  image_id: 'Imagen', generation: 'Generación',
+  protocol_version: 'Protocolo', last_seen_at: 'Última señal', connected_since: 'Conectado desde',
+  payer_tenant_id: 'Paga', shared_with_pool: 'En el pool', external_account_id: 'Id externo',
+  credential_ref: 'Credencial', credential_ref_kind: 'Tipo de credencial', plan: 'Plan',
+  account_label: 'Cuenta', window_key: 'Ventana', group_key: 'Grupo',
+  max_priority: 'Prioridad máxima', rank: 'Orden', notes: 'Notas', reason: 'Motivo',
+  expires_at: 'Vence', paused_until: 'Pausada hasta', paused_reason: 'Motivo de la pausa',
 };
 
 export interface ColumnaTabla {

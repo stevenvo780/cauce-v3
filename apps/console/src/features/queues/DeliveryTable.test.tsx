@@ -69,7 +69,7 @@ it('dice qué pasó cuando el servidor rechaza el replay, en vez de callarse', a
   renderWithApi(<DeliveryTable rows={[DEAD]} canReplay canCancel onChanged={() => undefined} />);
 
   await user.click(screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
-  expect(await screen.findByText(/Replay falló/)).toHaveTextContent(/ya fue reencolada/i);
+  expect(await screen.findByText(/El reinyectado falló/)).toHaveTextContent(/ya fue reencolada/i);
 });
 
 it('con cero filas dice el vacío que le pasa quien la monta, no uno genérico', async () => {

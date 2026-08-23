@@ -48,22 +48,22 @@ export function TerminalPage() {
   const fleetLoading = (status.loading && !status.data) || (topology.loading && !topology.data);
   const fleetError = status.error ?? topology.error;
   const fleetLabel = fleetLoading
-    ? 'Privileged operations · fleet loading'
+    ? 'Operación privilegiada · leyendo la flota'
     : fleetError && agents.length === 0
-      ? 'Privileged operations · fleet unavailable'
-      : `Privileged operations · ${agents.length}-agent fleet`;
+      ? 'Operación privilegiada · no se pudo leer la flota'
+      : `Operación privilegiada · ${agents.length} agentes`;
   // El relay PTY es opt-in por stack (ver 0a1d0e3): su ausencia tiene un aviso propio, calmo y
   // con motivo explícito, en vez de sumarse como un "PTY: Bad Gateway" al banner de incidentes.
   const relay = deriveTerminalRelayState(capability.data, capability.error);
   const relayUnavailable = relay.status === 'unavailable';
   const failures = [
-    status.error ? `Presence: ${status.error.message}` : undefined,
-    topology.error ? `Rooms: ${topology.error.message}` : undefined,
-    adapters.error ? `Adapters: ${adapters.error.message}` : undefined,
-    access.error ? `RBAC: ${access.error.message}` : undefined,
+    status.error ? `Presencia: ${status.error.message}` : undefined,
+    topology.error ? `Salas: ${topology.error.message}` : undefined,
+    adapters.error ? `Adaptadores: ${adapters.error.message}` : undefined,
+    access.error ? `Permisos: ${access.error.message}` : undefined,
     // El inventario de targets depende del mismo relay; si ya sabemos que está ausente, no
     // duplicamos el aviso con su propio error técnico.
-    targets.error && !relayUnavailable ? `Targets PTY: ${targets.error.message}` : undefined,
+    targets.error && !relayUnavailable ? `Destinos PTY: ${targets.error.message}` : undefined,
   ].filter((value): value is string => Boolean(value));
 
   function refreshAll() {
@@ -85,12 +85,12 @@ export function TerminalPage() {
       />
 
       <div className="terminal-overview" aria-label="Estado de Ultimate Terminal">
-        <article><span className="overview-icon online"><Wifi size={17} aria-hidden="true" /></span><div><small>Fleet leases</small><strong>{online} / {agents.length || 'UNKNOWN'}</strong></div><Badge tone={online ? 'online' : agents.length ? 'warning' : 'unknown'}>LIVE</Badge></article>
-        <article><span className="overview-icon"><RadioTower size={17} aria-hidden="true" /></span><div><small>Adapters available</small><strong>{adapters.data?.items ? `${healthyAdapters} / ${adapters.data.items.length}` : 'UNKNOWN'}</strong></div><Badge tone={healthyAdapters ? 'info' : 'unknown'}>SERVER</Badge></article>
-        <article><span className="overview-icon"><ShieldCheck size={17} aria-hidden="true" /></span><div><small>Terminal access</small><strong>{connectState.toUpperCase()}</strong></div><Badge tone={connectState === 'allowed' ? 'online' : connectState === 'denied' ? 'danger' : 'unknown'}>RBAC</Badge></article>
-        <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Interactive channel</small><strong>{ptyEnabled ? 'PTY + FEED' : 'DURABLE FEED'}</strong></div><Badge tone={ptyEnabled ? 'online' : 'info'}>CLIENT</Badge></article>
-        <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Alias con PTY online</small><strong>{ptyOnline === undefined ? 'UNKNOWN' : `${ptyOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={ptyOnline ? 'online' : ptyOnline === 0 ? 'warning' : 'unknown'}>TARGETS</Badge></article>
-        <article><span className="overview-icon"><MonitorPlay size={17} aria-hidden="true" /></span><div><small>Alias que emiten su TUI</small><strong>{tuiOnline === undefined ? 'UNKNOWN' : `${tuiOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={tuiOnline ? 'online' : tuiOnline === 0 ? 'warning' : 'unknown'}>TUI</Badge></article>
+        <article><span className="overview-icon online"><Wifi size={17} aria-hidden="true" /></span><div><small>Leases vigentes</small><strong>{online} / {agents.length || 'sin dato'}</strong></div><Badge tone={online ? 'online' : agents.length ? 'warning' : 'unknown'}>LIVE</Badge></article>
+        <article><span className="overview-icon"><RadioTower size={17} aria-hidden="true" /></span><div><small>Adaptadores</small><strong>{adapters.data?.items ? `${healthyAdapters} / ${adapters.data.items.length}` : 'sin dato'}</strong></div><Badge tone={healthyAdapters ? 'info' : 'unknown'}>SERVER</Badge></article>
+        <article><span className="overview-icon"><ShieldCheck size={17} aria-hidden="true" /></span><div><small>Tu permiso</small><strong>{connectState === 'allowed' ? 'CONCEDIDO' : connectState === 'denied' ? 'DENEGADO' : 'SIN DATO'}</strong></div><Badge tone={connectState === 'allowed' ? 'online' : connectState === 'denied' ? 'danger' : 'unknown'}>RBAC</Badge></article>
+        <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Canal</small><strong>{ptyEnabled ? 'PTY + FEED' : 'SÓLO FEED'}</strong></div><Badge tone={ptyEnabled ? 'online' : 'info'}>CLIENT</Badge></article>
+        <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Con PTY online</small><strong>{ptyOnline === undefined ? 'sin dato' : `${ptyOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={ptyOnline ? 'online' : ptyOnline === 0 ? 'warning' : 'unknown'}>TARGETS</Badge></article>
+        <article><span className="overview-icon"><MonitorPlay size={17} aria-hidden="true" /></span><div><small>Emiten su TUI</small><strong>{tuiOnline === undefined ? 'sin dato' : `${tuiOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={tuiOnline ? 'online' : tuiOnline === 0 ? 'warning' : 'unknown'}>TUI</Badge></article>
       </div>
 
       {relayUnavailable ? (
@@ -111,7 +111,7 @@ export function TerminalPage() {
       {failures.length ? (
         <div className="terminal-degraded" role="alert">
           <Activity size={17} aria-hidden="true" />
-          <div><strong>Control plane parcialmente degradado</strong><p>{failures.join(' · ')}</p></div>
+          <div><strong>El plano de control contestó a medias</strong><p>{failures.join(' · ')}</p></div>
           <button className="button small secondary" type="button" onClick={refreshAll}><RefreshCw size={14} aria-hidden="true" /> Reintentar</button>
         </div>
       ) : null}

@@ -26,7 +26,9 @@ it('gates replay by terminal delivery state and server permission', async () => 
 it('does not expose replay when RBAC is unknown', () => {
   render(<AckInspector delivery={{ delivery_id: 'delivery-dead-2', status: 'dead' }} onReplay={vi.fn()} onCancel={vi.fn()} />);
   expect(screen.getByRole('button', { name: /^replay$/i })).toBeDisabled();
-  expect(screen.getByText(/RBAC DENY o UNKNOWN/i)).toBeInTheDocument();
+  expect(screen.getByText(/no tiene ese permiso, o no se pudo leer/i)).toBeInTheDocument();
+  // Y ya no se lo dice con las siglas del esquema de permisos.
+  expect(document.body.textContent).not.toContain('RBAC DENY');
 });
 
 // Una entrega 'failed' no tenía botón de rescate, ni acá ni en el store. Cuál de los dos finales

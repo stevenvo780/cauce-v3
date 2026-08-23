@@ -111,7 +111,7 @@ interface Route {
  * ser un formulario para ser una conversación por agente.
  *
  * 🔴 **El resultado de las cinco reformas es UN menú de ocho entradas: la portada más siete.** El
- * recuento no se escribe a mano en ningún rótulo (`rotuloDeVistas` lo deriva) y las invariantes que
+ * recuento no se escribe a mano en ningún rótulo y las invariantes que
  * lo sostienen —cada entrada resuelve a una vista real, ningún alias apunta a otro alias, ningún id
  * de ruta queda tapado por un alias— viven en `App.invariantes.test.tsx`, como tabla y no como
  * casos sueltos.
@@ -160,7 +160,7 @@ const routes: Route[] = [
 /**
  * Lo que se dibuja en la barra lateral: las entradas con rótulo. Ocho —la portada más siete—,
  * cuando el 2026-08-06 eran trece. El número NO se escribe en ningún rótulo: se deriva de la lista
- * (ver `rotuloDeVistas`), porque un recuento a mano envejece en silencio.
+ * porque un recuento a mano envejece en silencio.
  */
 const MENU = routes.filter((route) => route.label !== '');
 

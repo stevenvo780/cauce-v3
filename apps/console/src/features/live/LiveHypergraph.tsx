@@ -242,7 +242,7 @@ export function LiveHypergraph({
     ) : (
       <p className="lhg-empty">
         El control plane todavía no informó ninguna sala, así que no hay grupos que dibujar. La
-        topología es <strong>UNKNOWN</strong>; los muñecos siguen abajo, en la lista.
+        topología no se pudo leer; los muñecos siguen abajo, en la lista.
       </p>
     );
   }
@@ -303,11 +303,11 @@ export function LiveHypergraph({
         <g className="lhg-rooms">
           {model.edges.map((room) => (
             <g className={`lhg-room lhg-hue-${room.hue}`} key={room.key}>
-              <title>{`#${room.roomLabel ?? 'ROOM UNKNOWN'} — ${room.members.length} miembros`}</title>
+              <title>{`#${room.roomLabel ?? 'sala sin nombre'} — ${room.members.length} miembros`}</title>
               <path className="lhg-room-fill" d={room.outline} />
               <path className="lhg-room-line" d={room.outline} />
               <text className="lhg-room-label" x={room.labelAnchor.x} y={room.labelAnchor.y} textAnchor="middle">
-                #{room.roomLabel ?? 'UNKNOWN'}
+                #{room.roomLabel ?? 'sala sin nombre'}
               </text>
             </g>
           ))}
@@ -383,7 +383,7 @@ export function LiveHypergraph({
             const r = item.radius;
             const detalle = view
               ? `${item.alias} — ${meta.label}: ${view.reason}`
-              : `${item.alias} — la actividad no lo reporta: estado UNKNOWN. No se asume que esté sano.`;
+              : `${item.alias} — la actividad no lo reporta, así que su estado no se sabe. No se asume que esté sano.`;
             return (
               <g
                 key={item.key}

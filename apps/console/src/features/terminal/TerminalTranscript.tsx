@@ -22,7 +22,7 @@ function DeliveryProgress({ delivery, onSelect }: { delivery: DeliveryView; onSe
       </span>
       <Badge tone={deliveryTone(state)}><Unknown value={state} /></Badge>
       <span className="mono">{compactId(delivery.delivery_id)}</span>
-      <span>{events.length} ACK · intento {delivery.attempt ?? last?.attempt ?? 'UNKNOWN'}</span>
+      <span>{events.length} ACK · intento {delivery.attempt ?? last?.attempt ?? 'sin dato'}</span>
     </button>
   );
 }

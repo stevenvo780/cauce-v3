@@ -6,8 +6,9 @@ import type {
 import { Badge, EmptyState, Panel, Time, Unknown } from '../../components/ui';
 import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import {
-  FLAG_LABEL, FLAG_TONE, WORK_STATE_LABEL, WORK_STATE_TONE, agentDisplayName, agentKeyOf, agentRowKey,
-  formatAckAge, formatInFlightAge, inFlightItemTone, presenceBadge, rowUrgency, sortByUrgency,
+  FLAG_LABEL, FLAG_TONE, agentDisplayName, agentKeyOf, agentRowKey,
+  formatAckAge, formatInFlightAge, inFlightItemTone, presenceBadge, presenciaDeLaFila, resumirSenales, rowUrgency,
+  sortByUrgency,
 } from './activity';
 
 /**
@@ -69,7 +70,7 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
   return (
     <Panel
       title="Agentes"
-      subtitle="Ordenados por urgencia (colgado > saturado > trabajando > en cola > inactivo), no alfabéticamente: lo que hace ruido tiene que quedar arriba. Es la misma lectura del hipergrafo de arriba, en números; no dibuja las delegaciones otra vez."
+      subtitle="De lo más urgente a lo más tranquilo: trabado, saturado, trabajando, esperando turno, libre. Es la misma lectura del mapa de arriba, en números."
     >
       <label className="activity-search">
         <Search size={15} aria-hidden="true" />
@@ -171,11 +172,11 @@ export function ActivityExplainers({ thresholds }: { thresholds: FleetActivityTh
       <article>
         <Flame aria-hidden="true" />
         <div>
-          <strong>En vuelo vs. avanzando</strong>
+          <strong>Tener trabajo no es avanzar</strong>
           <p>
-            in_flight cuenta cuánto tomó el agente; acks_recent y "último ACK" dicen si avanza. 41 en vuelo con
-            acks_recent=0 es un incendio; 3 en vuelo con acks_recent=9 es sano — son los dos números que motivaron
-            este panel.
+            «En vuelo» cuenta lo que el agente TOMÓ; «ACKs recientes» y «Último ACK» dicen si avanza. 41 en vuelo
+            con cero acuses es un incendio; 3 en vuelo con nueve acuses es sano — son los dos números que
+            motivaron este panel.
           </p>
         </div>
       </article>
@@ -194,8 +195,9 @@ export function ActivityExplainers({ thresholds }: { thresholds: FleetActivityTh
         <div>
           <strong>Umbrales del servidor</strong>
           <p>
-            Saturación desde {thresholds?.saturation_in_flight ?? 'UNKNOWN'} en vuelo; colgado tras{' '}
-            {thresholds?.stall_after_seconds ?? 'UNKNOWN'}s sin ACK aplicado. La UI no hardcodea estos números.
+            Saturado desde {thresholds?.saturation_in_flight ?? 'un número que el servidor no informó'} en vuelo;
+            trabado tras {thresholds?.stall_after_seconds ?? 'un tiempo que el servidor no informó'}
+            {thresholds?.stall_after_seconds ? 's' : ''} sin ACK aplicado. La consola no inventa estos números.
           </p>
         </div>
       </article>
@@ -217,9 +219,9 @@ function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, on
   onOpen?: (key: string) => void;
 }) {
   const state = agent.work_state ?? undefined;
-  const stateLabel = state ? WORK_STATE_LABEL[state] : 'UNKNOWN';
-  const stateTone = state ? WORK_STATE_TONE[state] : 'unknown';
-  const flags = agent.flags ?? [];
+  // Una etiqueta por hecho. Ver `resumirSenales`: acá se pintaban hasta CINCO insignias para
+  // decir «está trabado», y `SATURADO` salía dos veces en la misma celda.
+  const senales = resumirSenales(state, agent.flags, presenciaDeLaFila(agent));
   const hasItems = items.length > 0;
   return (
     <>
@@ -271,11 +273,12 @@ function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, on
           </small>
           {agent.registered === false ? <div><Badge tone="unknown">{FLAG_LABEL.unregistered}</Badge></div> : null}
         </td>
-        <td>
-          <Badge tone={stateTone}>{stateLabel}</Badge>
-          {flags.length > 0 ? (
+        <td title={senales.detalle}>
+          <Badge tone={senales.estado.tone}>{senales.estado.label}</Badge>
+          {senales.senales.length > 0 || senales.ocultas > 0 ? (
             <div className="chip-list flag-chip-list">
-              {flags.map((flag) => <Badge tone={FLAG_TONE[flag]} key={flag}>{FLAG_LABEL[flag]}</Badge>)}
+              {senales.senales.map((senal) => <Badge tone={senal.tone} key={senal.clave}>{senal.label}</Badge>)}
+              {senales.ocultas > 0 ? <Badge tone="unknown">+{senales.ocultas}</Badge> : null}
             </div>
           ) : null}
         </td>
@@ -317,13 +320,13 @@ function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, on
                   {items.map((item, index) => (
                     <tr key={item.delivery_id ?? index}>
                       <td><span className="mono">{compactId(item.delivery_id)}</span><small className="subline">msg {compactId(item.message_id)}</small></td>
-                      <td><Unknown value={item.from_alias} />@<Unknown value={item.from_tenant} /><small className="subline">{item.origin_adapter ?? 'UNKNOWN'}</small></td>
+                      <td><Unknown value={item.from_alias} />@<Unknown value={item.from_tenant} /><small className="subline"><Unknown value={item.origin_adapter} /></small></td>
                       <td><Unknown value={safeJobLane(item.lane)} /></td>
                       <td><Badge tone={inFlightItemTone(item.status)}><Unknown value={safeDeliveryState(item.status)} /></Badge></td>
                       <td><Unknown value={item.attempt} /></td>
                       <td>{formatInFlightAge(item.seconds_in_flight)}</td>
-                      <td><Time value={item.ack_deadline_at} /></td>
-                      <td>{item.last_ack_at ? <Time value={item.last_ack_at} /> : <span className="unknown">sin ACK</span>}</td>
+                      <td><Time value={item.ack_deadline_at} relativo /></td>
+                      <td>{item.last_ack_at ? <Time value={item.last_ack_at} relativo /> : <span className="unknown">sin ACK</span>}</td>
                     </tr>
                   ))}
                 </tbody>

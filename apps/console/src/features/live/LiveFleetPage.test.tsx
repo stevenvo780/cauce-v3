@@ -114,7 +114,9 @@ describe('la flota en reposo', () => {
       .map((chip) => chip.textContent?.replace(/\d+$/, '').trim());
 
     expect(etiquetas.slice(0, 7)).toEqual([
-      'Caído', 'Bloqueado', 'Delegando', 'Recibiendo', 'Trabajando', 'Salió de vuelo', 'Libre',
+      // Vocabulario unificado el 2026-08-23: «Trabado» y «Esperando turno» son las palabras que
+      // usan también la columna «Estado» de la tabla y el veredicto de arriba. Ver `activity.ts`.
+      'Caído', 'Trabado', 'Delegando', 'Esperando turno', 'Trabajando', 'Salió de vuelo', 'Libre',
     ]);
     // Y el chip que antes decía «Respondiendo» ya no existe: no había forma de saber si respondió.
     expect(etiquetas).not.toContain('Respondiendo');
@@ -484,7 +486,8 @@ describe('lo que absorbió del menú', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
-    await user.click(screen.getByText('Permisos y salas'));
+    // El resumen del desplegable dice CUÁNTO hay detrás: sin eso es una puerta ciega.
+    await user.click(screen.getByText(/^Permisos y salas · /));
 
     expect(await screen.findByLabelText('Aristas de control de acceso')).toBeInTheDocument();
     expect(screen.getAllByText('Tenant').length).toBeGreaterThan(0);
@@ -641,7 +644,8 @@ describe('el selector de Cliente', () => {
 
     await screen.findByLabelText('Veredicto de la flota');
     await elegirCliente(user, 'Miguel');
-    await user.click(screen.getByText('Permisos y salas'));
+    // El resumen del desplegable dice CUÁNTO hay detrás: sin eso es una puerta ciega.
+    await user.click(screen.getByText(/^Permisos y salas · /));
 
     const salas = await screen.findByLabelText('Aristas de control de acceso');
     expect(salas).toBeInTheDocument();

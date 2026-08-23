@@ -33,7 +33,7 @@ export function HyperGraph({ snapshot }: { snapshot: TopologySnapshot | undefine
   if (model.edges.length === 0) {
     return (
       <p className="hg-empty">
-        Sin rooms informadas por el control plane: no hay hipergrafo que dibujar. La topología es <strong>UNKNOWN</strong>.
+        Sin rooms informadas por el control plane: no hay hipergrafo que dibujar. La topología no se pudo leer.
       </p>
     );
   }
@@ -186,7 +186,7 @@ function EdgeShape({ edge, uid, active, dimmed, onEnter, onLeave }: {
   onEnter: () => void;
   onLeave: () => void;
 }) {
-  const label = edge.roomLabel ?? 'ROOM UNKNOWN';
+  const label = edge.roomLabel ?? 'sala sin nombre';
   const unknownSuffix = edge.unknownMembers > 0 ? ` · ${edge.unknownMembers} sin alias` : '';
   return (
     <g
@@ -216,10 +216,10 @@ function NodeShape({ node, uid, active, dimmed, onEnter, onLeave }: {
 }) {
   const bridge = node.edges.length > 1;
   const state = node.enabled === false ? 'off' : node.enabled === true ? 'on' : 'unknown';
-  const label = node.label ?? 'UNKNOWN';
+  const label = node.label ?? 'sin nombre';
   const detail = `${label} — ${node.edges.length} room${node.edges.length === 1 ? '' : 's'}`
     + `, tenant${node.tenants.length === 1 ? '' : 's'}: ${node.tenants.join(', ')}`
-    + `, estado: ${state === 'on' ? 'habilitado' : state === 'off' ? 'deshabilitado' : 'UNKNOWN'}`;
+    + `, estado: ${state === 'on' ? 'habilitado' : state === 'off' ? 'deshabilitado' : 'sin dato'}`;
 
   return (
     <g

@@ -127,6 +127,20 @@ export function terminalTargetMatchesAgent(targetLabel: unknown, agent: FleetAge
     || target === normalized(agent.id);
 }
 
+/**
+ * El estado del lease, con las MISMAS palabras que `/live`.
+ *
+ * Se pintaba el valor crudo del campo —`online` / `expired` / `unknown`, en inglés y en
+ * mayúsculas por CSS— en las insignias del listado de flota y de la cabecera de sesión. Es el
+ * mismo hecho que en «La flota ahora» se llama «Conectado» y «Caído»: dos vistas del mismo
+ * producto no pueden llamarlo distinto. Ver `presenceBadge` en `../activity/activity.ts`.
+ */
+export const LEASE_STATE_LABEL: Readonly<Record<LeaseState, string>> = {
+  online: 'Conectado',
+  expired: 'Caído',
+  unknown: 'Sin dato',
+};
+
 /** Explicit PTY states. There is no implicit "available": absent data is UNKNOWN. */
 export type TerminalAccessStatus = 'allowed' | 'denied' | 'offline' | 'not_installed' | 'unknown';
 
@@ -156,7 +170,7 @@ export function terminalTargetForAgent(targets: TerminalTarget[] | null | undefi
  */
 export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefined, agent: FleetAgent): TerminalTargetResolution {
   if (!targets) {
-    return { status: 'unknown', reason: 'El gateway no publicó el inventario de targets PTY; estado UNKNOWN.' };
+    return { status: 'unknown', reason: 'El gateway no publicó el inventario de destinos PTY, así que no se sabe si este alias tiene canal. No se asume que sí.' };
   }
   const target = terminalTargetForAgent(targets, agent);
   if (!target) {
@@ -169,12 +183,12 @@ export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefin
   if (target.pty_state === 'agent_offline') {
     return {
       status: 'offline',
-      reason: `${target.reason} Última presencia: ${target.last_seen ?? 'UNKNOWN'}.`,
+      reason: `${target.reason} Última presencia: ${target.last_seen ?? 'nunca se registró una'}.`,
       target,
     };
   }
   if (target.pty_state === 'online') return { status: 'allowed', reason: target.reason, target };
-  return { status: 'unknown', reason: `Estado PTY UNKNOWN para ${agent.alias}. ${target.reason}`, target };
+  return { status: 'unknown', reason: `No se pudo determinar el estado del agente PTY de ${agent.alias}. ${target.reason}`, target };
 }
 
 /** How many destinations the server reports as reachable. UNKNOWN inventory stays UNKNOWN. */

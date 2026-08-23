@@ -3,7 +3,8 @@ import { useMemo, useState } from 'react';
 import type { AdapterView } from '../../api/types';
 import { Badge, EmptyState, LoadingState, Time } from '../../components/ui';
 import type { TerminalTargetsSnapshot } from './api';
-import { adapterSummary, filterFleetAgents, resolveTerminalTarget, TERMINAL_ACCESS_LABELS, type FleetAgent } from './fleet';
+import { traducirCodigosEnTexto } from './denegaciones';
+import { adapterSummary, filterFleetAgents, resolveTerminalTarget, LEASE_STATE_LABEL, TERMINAL_ACCESS_LABELS, type FleetAgent } from './fleet';
 
 interface FleetSidebarProps {
   agents: FleetAgent[];
@@ -46,7 +47,7 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
       <div className="fleet-health-strip" aria-label="Salud de adapters">
         <Bot size={15} aria-hidden="true" />
         <span>Adapters</span>
-        <strong>{adapterHealth.total ? `${adapterHealth.healthy}/${adapterHealth.total}` : 'UNKNOWN'}</strong>
+        <strong>{adapterHealth.total ? `${adapterHealth.healthy}/${adapterHealth.total}` : 'sin dato'}</strong>
       </div>
 
       <div className="fleet-filters">
@@ -93,7 +94,7 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
               key={agent.id}
               type="button"
               onClick={() => onOpenAgent(agent)}
-              aria-label={`Abrir sesión con ${agent.alias}, ${agent.tenantId}, ${agent.leaseState}, PTY: ${TERMINAL_ACCESS_LABELS[pty.status]}`}
+              aria-label={`Abrir sesión con ${agent.alias}, ${agent.tenantId}, ${LEASE_STATE_LABEL[agent.leaseState]}, PTY: ${TERMINAL_ACCESS_LABELS[pty.status]}`}
             >
               <span className={`agent-presence ${agent.leaseState}`} aria-hidden="true">
                 {agent.leaseState === 'online' ? <Wifi size={15} /> : <WifiOff size={15} />}
@@ -101,15 +102,15 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
               <span className="agent-copy">
                 <span className="agent-name"><strong>{agent.alias}</strong><small>{agent.tenantId}</small></span>
                 <span className="agent-lease">
-                  <Badge tone={agentTone(agent.leaseState)}>{agent.leaseState}</Badge>
-                  <span>epoch {agent.presence?.epoch ?? 'UNKNOWN'}</span>
+                  <Badge tone={agentTone(agent.leaseState)}>{LEASE_STATE_LABEL[agent.leaseState]}</Badge>
+                  <span>epoch {agent.presence?.epoch ?? 'sin dato'}</span>
                 </span>
                 <span className="agent-expiry">Lease <Time value={expiry} /></span>
-                <span className="agent-pty-state" data-status={pty.status} title={pty.reason}>
+                <span className="agent-pty-state" data-status={pty.status} title={traducirCodigosEnTexto(pty.reason)}>
                   <TerminalSquare size={12} aria-hidden="true" /> {TERMINAL_ACCESS_LABELS[pty.status]}
                 </span>
                 <span className="agent-capabilities">
-                  {capabilities.length ? capabilities.slice(0, 2).map((capability) => <span className="chip" key={capability}>{capability}</span>) : <span className="unknown">CAPS UNKNOWN</span>}
+                  {capabilities.length ? capabilities.slice(0, 2).map((capability) => <span className="chip" key={capability}>{capability}</span>) : <span className="unknown">sin capacidades informadas</span>}
                   {capabilities.length > 2 ? <span className="chip">+{capabilities.length - 2}</span> : null}
                 </span>
               </span>

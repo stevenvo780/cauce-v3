@@ -63,7 +63,7 @@ export function ptyCloseMessage(code?: number, reason?: string | null): string {
   if (mapped) return mapped;
   if (code === 1000) return 'Canal PTY cerrado.';
   const detail = typeof reason === 'string' && reason.trim() ? ` · ${reason.trim()}` : '';
-  return `Canal PTY cerrado por el servidor (código ${code ?? 'UNKNOWN'})${detail}.`;
+  return `El servidor cerró el canal PTY${code === undefined ? ' sin decir con qué código' : ` con el código ${code}`}${detail}.`;
 }
 
 /** Same-origin validation kept from the original component: no credentials, no query, no fragment. */
@@ -200,7 +200,7 @@ function handleControlFrame(entry: PtyEntry, raw: string): void {
     return;
   }
   publish(entry, {
-    notices: [...entry.view.notices, { level: 'warn', message: `Frame de control desconocido: ${String(payload.type ?? 'UNKNOWN')}` }],
+    notices: [...entry.view.notices, { level: 'warn', message: `El relay mandó una trama de control que esta consola no conoce: ${String(payload.type ?? 'sin tipo')}` }],
   });
 }
 

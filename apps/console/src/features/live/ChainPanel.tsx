@@ -93,7 +93,7 @@ function ChainHop({ edge }: { edge: AgentChainEdge }) {
       <ArrowRight size={16} aria-hidden="true" />
       <strong>{edge.target ? nombreDe(edge.target) : 'no llegó a nadie'}</strong>
       <Badge tone={rechazada ? 'danger' : abierta ? 'running' : 'done'}>
-        {rechazada ? (edge.rejection_code ?? 'RECHAZADA') : abierta ? 'EN VUELO' : (edge.state ?? 'UNKNOWN')}
+        {rechazada ? (edge.rejection_code ?? 'RECHAZADA') : abierta ? 'EN VUELO' : (edge.state ?? 'SIN DATO')}
       </Badge>
       <span>
         salto {edge.hop_count ?? '?'} de {edge.hop_budget ?? '?'}
@@ -117,5 +117,5 @@ function nombreDe(endpoint: AgentChainEndpoint): string {
     return `otro cliente (${endpoint.node_id.slice(0, 8)})`;
   }
   const visible = endpoint as Extract<AgentChainEndpoint, { alias?: string | null }>;
-  return visible.alias ? `${visible.alias}` : 'UNKNOWN';
+  return visible.alias ? `${visible.alias}` : 'sin dato';
 }

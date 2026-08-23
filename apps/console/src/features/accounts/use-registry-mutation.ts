@@ -61,7 +61,7 @@ export function useRegistryMutation(options: {
 
   async function run(mutation: ConfigMutation, dryRun: boolean): Promise<boolean> {
     if (!canWrite) {
-      setNotice({ text: 'Cambio bloqueado: el permiso RBAC config.write está en DENY o UNKNOWN.', tone: 'error' });
+      setNotice({ text: 'Cambio bloqueado: no tenés permiso para escribir configuración, o no se pudo leer el permiso. Ante la duda, cerrado.', tone: 'error' });
       return false;
     }
     const mutationKey = key(mutation);
@@ -86,7 +86,7 @@ export function useRegistryMutation(options: {
       setPreview(undefined);
       if (typeof result.revision === 'number') setChainedRevision(result.revision);
       options.config.reload();
-      setNotice({ text: `Aplicado en revisión ${result.revision ?? 'UNKNOWN'}: ${result.summary ?? 'el servidor no devolvió resumen'}.`, tone: 'success' });
+      setNotice({ text: `Aplicado en revisión ${result.revision ?? 'una revisión que el servidor no informó'}: ${result.summary ?? 'el servidor no devolvió resumen'}.`, tone: 'success' });
       return true;
     } catch (error) {
       const described = describeRegistryError(error, mutation, options.context);

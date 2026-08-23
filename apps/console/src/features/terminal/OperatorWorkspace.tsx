@@ -8,6 +8,7 @@ import {
   CircleOff,
   Clock3,
   Container,
+  KeyRound,
   LockKeyhole,
   Eye,
   MessageSquareText,
@@ -29,6 +30,7 @@ import { compactId, createId, permissionState } from '../../lib';
 import { AckInspector } from './AckInspector';
 import { FleetSidebar } from './FleetSidebar';
 import {
+  TerminalApiError,
   createTerminalSession,
   deleteTerminalSession,
   type TerminalSessionGrant,
@@ -36,6 +38,7 @@ import {
 } from './api';
 import type { FleetAgent } from './fleet';
 import {
+  LEASE_STATE_LABEL,
   LIVE_TUI_LABELS,
   LIVE_TUI_MODE,
   SHELL_MODE,
@@ -43,6 +46,7 @@ import {
   terminalTargetForAgent,
   type TerminalTargetResolution,
 } from './fleet';
+import { explicarDenegacionPty, traducirCodigosEnTexto, type DenegacionExplicada } from './denegaciones';
 import { closePtySession, readPtySession, subscribePtySession } from './pty-session';
 import { liveTuiGate, terminalChannelGate } from './plugin';
 import {
@@ -59,6 +63,24 @@ import {
 import { TerminalTranscript } from './TerminalTranscript';
 
 const PtyTerminal = lazy(() => import('./PtyTerminal'));
+
+/**
+ * Estado del adaptador, en castellano.
+ *
+ * 🔴 Acá vivía el defecto más tonto y más visible de la vista: el componente `<Unknown>` estaba
+ * ESCAPADO en el JSX (`&lt;Unknown value=… /&gt;`), así que el DOM de `/terminal` decía, textual,
+ * «<UNKNOWN VALUE=AVAILABLE />» en cada tarjeta de adaptador. Cuatro veces, medido en el navegador.
+ * Los 646 tests pasaban con eso en pantalla porque nadie compara el TEXTO de ese badge.
+ *
+ * De paso deja de ser una palabra en inglés en mayúsculas: `available` no es un estado, es un
+ * campo de la API.
+ */
+const ADAPTER_STATE_LABEL: Readonly<Record<string, string>> = {
+  available: 'Disponible',
+  degraded: 'Degradado',
+  unavailable: 'No disponible',
+  unknown: 'Sin dato',
+};
 
 /** Geometry declared when asking for the grant; the real size is renegotiated on `ready`. */
 const DEFAULT_COLS = 80;
@@ -100,11 +122,31 @@ function PermissionState({ access, permission }: { access?: ConsoleAccess; permi
   );
 }
 
+/**
+ * **La negativa, dicha entera.**
+ *
+ * Antes acá se pintaba `{error}` a secas, y ese `error` era el `reason` crudo del gateway: el
+ * `[role=alert]` de producción contenía EXACTAMENTE «no_grant». Ahora se pintan las tres cosas que
+ * hacen falta para poder hacer algo al respecto: qué pasó, por qué, y a quién pedírselo.
+ *
+ * El código crudo NO desaparece —sigue en `data-codigo`, que es lo que se pega en un informe— pero
+ * deja de ser lo único que el operador ve.
+ */
+function NegativaPty({ negativa }: { negativa: DenegacionExplicada }) {
+  return (
+    <div className="pty-negativa" role="alert" data-codigo={negativa.codigo}>
+      <strong>{negativa.titulo}</strong>
+      <p>{negativa.porQue}</p>
+      {negativa.quienLoLevanta ? <p className="pty-negativa-quien"><KeyRound size={13} aria-hidden="true" /> Lo levanta: {negativa.quienLoLevanta}</p> : null}
+    </div>
+  );
+}
+
 function PtySessionDialog({ agent, resolution, pending, error, onCancel, onConfirm }: {
   agent: FleetAgent;
   resolution: TerminalTargetResolution;
   pending: boolean;
-  error?: string;
+  error?: DenegacionExplicada;
   onCancel: () => void;
   onConfirm: (reason: string) => void;
 }) {
@@ -159,7 +201,7 @@ function PtySessionDialog({ agent, resolution, pending, error, onCancel, onConfi
         </label>
         <p className="pty-dialog-hint" id="pty-dialog-reason-hint">{problem ?? `Motivo válido · ${reason.trim().length}/${PTY_REASON_MAX_LENGTH}`}</p>
 
-        {error ? <p className="notice error" role="alert">{error}</p> : null}
+        {error ? <NegativaPty negativa={error} /> : null}
 
         <div className="pty-dialog-actions">
           <button className="button secondary" type="button" onClick={onCancel} disabled={pending}>Cancelar</button>
@@ -218,7 +260,7 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
           <PermissionState access={access} permission="message.publish" />
           <PermissionState access={access} permission="delivery.replay" />
         </div>
-        <p className="inspector-footnote">Roles: {access?.roles?.length ? access.roles.join(', ') : 'UNKNOWN'}. La UI no eleva permisos faltantes.</p>
+        <p className="inspector-footnote">Roles: {access?.roles?.length ? access.roles.join(', ') : 'sin dato'}. La UI no eleva permisos faltantes.</p>
       </section>
       <section className="terminal-inspector-section">
         <header className="inspector-title"><div><p className="eyebrow">Transport plane</p><h3>Adapters</h3></div><Bot size={18} aria-hidden="true" /></header>
@@ -226,8 +268,8 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
           {adapters.length ? adapters.map((adapter, index) => (
             <article key={adapter.id ?? index}>
               <span className={`adapter-state-dot ${adapter.state ?? 'unknown'}`} aria-hidden="true" />
-              <div><strong><Unknown value={adapter.label ?? adapter.id} /></strong><small>{adapter.capabilities?.length ?? 'UNKNOWN'} capabilities</small></div>
-              <Badge tone={adapter.state === 'available' ? 'online' : adapter.state === 'degraded' ? 'warning' : adapter.state === 'unavailable' ? 'offline' : 'unknown'}>&lt;Unknown value={adapter.state} /&gt;</Badge>
+              <div><strong><Unknown value={adapter.label ?? adapter.id} /></strong><small>{adapter.capabilities?.length ?? 'sin dato de'} capacidades</small></div>
+              <Badge tone={adapter.state === 'available' ? 'online' : adapter.state === 'degraded' ? 'warning' : adapter.state === 'unavailable' ? 'offline' : 'unknown'}>{ADAPTER_STATE_LABEL[adapter.state ?? 'unknown'] ?? adapter.state}</Badge>
             </article>
           )) : <EmptyState>Adapters no informados.</EmptyState>}
         </div>
@@ -235,7 +277,7 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
       <section className="terminal-inspector-section terminal-pty-capability">
         <header className="inspector-title"><div><p className="eyebrow">Optional channel</p><h3>PTY directo</h3></div><TerminalSquare size={18} aria-hidden="true" /></header>
         <dl>
-          <div><dt>Estado</dt><dd>{capability?.available === true ? 'Disponible' : capability?.available === false ? 'No disponible' : 'UNKNOWN'}</dd></div>
+          <div><dt>Estado</dt><dd>{capability?.available === true ? 'Disponible' : capability?.available === false ? 'No disponible' : 'sin dato'}</dd></div>
           <div><dt>Target</dt><dd><Unknown value={capability?.target_label} /></dd></div>
           <div><dt>Endpoint</dt><dd className="mono"><Unknown value={capability?.websocket_path} /></dd></div>
         </dl>
@@ -267,7 +309,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string }>();
   const [showPtyDialog, setShowPtyDialog] = useState(false);
   const [requesting, setRequesting] = useState(false);
-  const [requestError, setRequestError] = useState<string>();
+  const [requestError, setRequestError] = useState<DenegacionExplicada>();
   const [closingChannel, setClosingChannel] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [showInspector, setShowInspector] = useState(false);
@@ -319,7 +361,13 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   // hace parecer que son dos hallazgos y ensucia la lectura. Se dice que es el mismo y se apunta.
   const liveTuiDetail = liveTui.reason === channel?.reason
     ? 'Sin canal PTY no hay TUI que emitir: el motivo es el mismo del canal, acá arriba.'
-    : liveTui.reason;
+    : traducirCodigosEnTexto(liveTui.reason);
+  // El inventario de destinos manda el código DENTRO de la prosa («attribution_required: falta
+  // identidad por persona.»), así que la traducción tiene que pasar también por acá y no sólo
+  // por el rechazo del POST.
+  const channelReason = channel?.reason
+    ? traducirCodigosEnTexto(channel.reason)
+    : 'Todavía no se pudo leer si hay canal PTY para este alias.';
   // El canal abierto puede ser la TUI (observación) o una shell (escribe). Manda lo que otorgó
   // el servidor en el grant, no lo que la pestaña creía haber pedido.
   const channelIsLiveTui = (grant?.target.mode ?? liveSession.channelMode) === LIVE_TUI_MODE;
@@ -407,7 +455,14 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
       onUpdate({ ...liveSession, mode: 'pty', channelMode: mode, liveTuiAttempted: true });
       setShowPtyDialog(false);
     } catch (error) {
-      setRequestError(error instanceof Error ? error.message : 'El servidor rechazó la sesión PTY.');
+      // El rechazo se TRADUCE acá, en el único sitio por el que pasan los ocho códigos del
+      // gateway. `TerminalApiError` trae el estado HTTP y el `error` del cuerpo; los dos hacían
+      // falta y ninguno se estaba mostrando.
+      setRequestError(explicarDenegacionPty({
+        texto: error instanceof Error ? error.message : undefined,
+        estado: error instanceof TerminalApiError ? error.status : undefined,
+        codigo: error instanceof TerminalApiError ? error.code : undefined,
+      }));
       // Un rechazo se cuenta como intento: la apertura automática no vuelve a golpear al gateway.
       if (mode === LIVE_TUI_MODE) onUpdate({ ...liveSession, liveTuiAttempted: true });
     } finally {
@@ -457,8 +512,8 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
         <header className="terminal-session-head">
           <div className="session-identity">
             <span className={`session-avatar ${liveSession.agent.leaseState}`}><Braces size={20} aria-hidden="true" /></span>
-            <div><p className="eyebrow">{liveSession.agent.tenantId} · epoch {liveSession.agent.presence?.epoch ?? 'UNKNOWN'}</p><h2>{liveSession.agent.alias}</h2></div>
-            <Badge tone={liveSession.agent.leaseState === 'online' ? 'online' : liveSession.agent.leaseState === 'expired' ? 'offline' : 'unknown'}>{liveSession.agent.leaseState}</Badge>
+            <div className="session-identity-text"><p className="eyebrow">{liveSession.agent.tenantId} · epoch <Unknown value={liveSession.agent.presence?.epoch} /></p><h2>{liveSession.agent.alias}</h2></div>
+            <Badge tone={liveSession.agent.leaseState === 'online' ? 'online' : liveSession.agent.leaseState === 'expired' ? 'offline' : 'unknown'}>{LEASE_STATE_LABEL[liveSession.agent.leaseState]}</Badge>
           </div>
           <div className="session-controls">
              <label>Room de origen
@@ -474,7 +529,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
                  data-active={(liveSession.mode === 'pty' && channelIsLiveTui) || undefined}
                  disabled={!liveTui.enabled}
                  onClick={openLiveTui}
-                 title={liveTui.reason}
+                 title={traducirCodigosEnTexto(liveTui.reason)}
                ><MonitorPlay size={14} aria-hidden="true" /> TUI</button>
                <button
                  type="button"
@@ -482,7 +537,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
                  data-active={(liveSession.mode === 'pty' && !channelIsLiveTui) || undefined}
                  disabled={!channel?.enabled}
                  onClick={selectPtyMode}
-                 title={channel?.reason}
+                 title={channelReason}
                ><TerminalSquare size={14} aria-hidden="true" /> PTY</button>
                <button
                  type="button"
@@ -497,7 +552,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
         <p className="terminal-channel-state" data-status={channel?.status ?? 'blocked'}>
           <ShieldCheck size={13} aria-hidden="true" />
           <strong>{channelLabel}</strong>
-          <span>{channel?.reason ?? 'Canal PTY UNKNOWN.'}</span>
+          <span>{channelReason}</span>
         </p>
 
         <p className="terminal-channel-state terminal-live-tui-state" data-status={liveTui.status}>
@@ -505,6 +560,15 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
           <strong>{liveTuiLabel}</strong>
           <span>{liveTuiDetail}</span>
         </p>
+
+        {/*
+          🔴 El rechazo del gateway se veía SÓLO dentro del diálogo de motivo, y la TUI se pide
+          sola al abrir la pestaña, sin diálogo. O sea que el camino por el que Steven entra —clic
+          en un alias— recibía el 403 y no pintaba absolutamente nada: la pestaña se quedaba en el
+          feed y el motivo moría en un `useState` que nadie renderiza. Ahora el motivo sale acá,
+          en la propia sesión, con la misma redacción que en el diálogo.
+        */}
+        {requestError ? <NegativaPty negativa={requestError} /> : null}
 
         <div className="terminal-connection-bar" role="status">
           <span className={`connection-dot ${messages.error ? 'error' : ptyChannelLive ? 'open' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
@@ -536,7 +600,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
                  />
                </Suspense>
             </div>
-          ) : <div className="terminal-channel-unavailable"><CircleOff aria-hidden="true" /><h3>{channelLabel}</h3><p>{channel?.reason ?? 'Canal PTY UNKNOWN.'}</p></div>
+          ) : <div className="terminal-channel-unavailable"><CircleOff aria-hidden="true" /><h3>{channelLabel}</h3><p>{channelReason}</p></div>
         ) : (
           <>
             {messages.loading && !messages.data ? <LoadingState label="Abriendo feed durable de mensajes…" /> : (
@@ -566,7 +630,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
                 </button>
               </div>
                {!canPublish ? <p className="composer-blocked"><LockKeyhole size={14} aria-hidden="true" /> Requiere message.publish.</p> : null}
-               {route.membership === undefined ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> Membership UNKNOWN; no se asume acceso al room de origen.</p> : null}
+               {route.membership === undefined ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> No se pudo leer si sos miembro del room de origen; no se asume que lo seas.</p> : null}
                {route.membership === false ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> Membership deshabilitada o sin room compartido.</p> : null}
                {route && !route.allowed ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> {route.reason}</p> : null}
               {notice ? <p className={`notice ${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p> : null}

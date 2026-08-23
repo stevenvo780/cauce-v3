@@ -1,7 +1,7 @@
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { ConsoleAccess, ConsolePermission } from '../api/types';
-import { display, permissionState, timestamp, UNKNOWN } from '../lib';
+import { display, haceCuanto, permissionState, timestamp, timestampExacto, NO_APLICA, TODAVIA_NO, UNKNOWN } from '../lib';
 
 // Re-export para que el resto de la consola siga importando su vocabulario visual de un solo sitio.
 export { FloatingTooltip, Tooltip, TOOLTIP_DELAY_MS } from './Tooltip';
@@ -66,16 +66,60 @@ export function Badge({ children, tone = 'unknown' }: {
   return <span className={`badge badge-${tone}`}>{children}</span>;
 }
 
-export function Unknown({ value }: { value: unknown }) {
+/**
+ * Un valor del servidor, o la palabra exacta con la que se dice que no está.
+ *
+ * `ausente` existe porque «no lo sé», «todavía no toca» y «no aplica» NO son lo mismo y la consola
+ * los decía todos igual. La LÓGICA no se toca: sigue siendo una ausencia, sigue sin ser un permiso
+ * y sigue llevando la clase `.unknown` para que se vea. Lo que se elige es la palabra.
+ *
+ *  - `sin-dato` (por defecto) — nunca hubo dato o no se pudo leer.
+ *  - `todavia-no` — el dato aún no existe porque el hecho no ocurrió: una entrega `pending` no
+ *    tiene «último error» porque todavía no falló, y pintar eso de naranja como si fuera un
+ *    desconocido es exactamente el falso positivo que sube el umbral y ciega al resto.
+ *  - `no-aplica` — no existe para esta fila. Un guión, en gris apagado y no en ámbar: no
+ *    tiene nada que reclamar.
+ */
+export function Unknown({ value, ausente = 'sin-dato', motivo }: {
+  value: unknown;
+  ausente?: 'sin-dato' | 'todavia-no' | 'no-aplica';
+  /** Se cuelga del `title=` cuando el valor falta: por qué falta, si se sabe. */
+  motivo?: string;
+}) {
   const text = display(value);
-  return <span className={text === UNKNOWN ? 'unknown' : undefined}>{text}</span>;
+  if (text !== UNKNOWN) return <span>{text}</span>;
+  const palabra = ausente === 'todavia-no' ? TODAVIA_NO : ausente === 'no-aplica' ? NO_APLICA : UNKNOWN;
+  return (
+    <span
+      className={ausente === 'no-aplica' ? 'muted' : 'unknown'}
+      title={motivo}
+      // El guión es decorativo para quien escucha: se anuncia la frase, no el carácter.
+      aria-label={ausente === 'no-aplica' ? 'no aplica' : undefined}
+    >
+      {palabra}
+    </span>
+  );
 }
 
-export function Time({ value }: { value: unknown }) {
+/**
+ * Una fecha del servidor. Sin segundos a la vista, con el instante exacto en el `title=`.
+ *
+ * `relativo` es para las columnas cuya pregunta real es *cuánto hace*: ahí un reloj de pared
+ * obliga a restar de cabeza. La fecha absoluta no se pierde nunca — va al `title=` junto con los
+ * segundos y la zona, que es donde los segundos sí sirven para cruzar contra un registro.
+ */
+export function Time({ value, relativo = false }: { value: unknown; relativo?: boolean }) {
   const formatted = timestamp(value);
+  const exacto = timestampExacto(value);
+  const relativa = relativo ? haceCuanto(value) : undefined;
+  const visible = relativa ?? formatted;
   return (
-    <time className={formatted === UNKNOWN ? 'unknown' : undefined} dateTime={typeof value === 'string' ? value : undefined}>
-      {formatted}
+    <time
+      className={formatted === UNKNOWN ? 'unknown' : undefined}
+      dateTime={typeof value === 'string' ? value : undefined}
+      title={formatted === UNKNOWN ? undefined : relativa ? `${exacto}` : exacto}
+    >
+      {visible}
     </time>
   );
 }
