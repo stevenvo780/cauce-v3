@@ -1,8 +1,9 @@
-import { ArrowLeft, ArrowRight, CircleCheck, RotateCcw, Save, SearchCheck } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Braces, CircleCheck, RotateCcw, Save, SearchCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { ConfigMutation } from '../../api/types';
 import { Badge, EmptyState, Panel } from '../../components/ui';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
+import './toggles.css';
 
 type SpaceStep = 'tenant' | 'room' | 'membership' | 'harness';
 type WizardStep = SpaceStep | 'review';
@@ -207,26 +208,26 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
     </div>
 
     {step === 'tenant' ? <div className="config-form">
-      <label className="config-json"><input type="checkbox" checked={draft.withTenant} onChange={(event) => edit({ withTenant: event.target.checked })} /> Crear el tenant <span className="label-hint">destildá si ya existe; el id se sigue usando en los pasos siguientes</span></label>
+      <label className="config-json casilla"><input type="checkbox" checked={draft.withTenant} onChange={(event) => edit({ withTenant: event.target.checked })} /> Crear el tenant <span className="label-hint">destildá si ya existe; el id se sigue usando en los pasos siguientes</span></label>
       <label>Tenant id<input value={draft.tenantId} onChange={(event) => edit({ tenantId: event.target.value })} /></label>
       <label>Display name <span className="label-hint">opcional</span><input value={draft.tenantLabel} onChange={(event) => edit({ tenantLabel: event.target.value })} /></label>
-      <label><input type="checkbox" checked={draft.tenantIsHub} onChange={(event) => edit({ tenantIsHub: event.target.checked })} /> Es hub</label>
+      <label className="casilla"><input type="checkbox" checked={draft.tenantIsHub} onChange={(event) => edit({ tenantIsHub: event.target.checked })} /> Es hub</label>
     </div> : null}
 
     {step === 'room' ? <div className="config-form">
-      <label className="config-json"><input type="checkbox" checked={draft.withRoom} onChange={(event) => edit({ withRoom: event.target.checked })} /> Crear el room</label>
+      <label className="config-json casilla"><input type="checkbox" checked={draft.withRoom} onChange={(event) => edit({ withRoom: event.target.checked })} /> Crear el room</label>
       <label>Room id<input value={draft.roomId} onChange={(event) => edit({ roomId: event.target.value })} /></label>
       <label>Display name <span className="label-hint">opcional</span><input value={draft.roomLabel} onChange={(event) => edit({ roomLabel: event.target.value })} /></label>
     </div> : null}
 
     {step === 'membership' ? <div className="config-form">
-      <label className="config-json"><input type="checkbox" checked={draft.withMembership} onChange={(event) => edit({ withMembership: event.target.checked })} /> Crear la membership</label>
+      <label className="config-json casilla"><input type="checkbox" checked={draft.withMembership} onChange={(event) => edit({ withMembership: event.target.checked })} /> Crear la membership</label>
       <label>Alias<input value={draft.alias} onChange={(event) => edit({ alias: event.target.value })} /></label>
       <label>Rol <span className="label-hint">route/read/control salen de role_policies</span><input value={draft.role} onChange={(event) => edit({ role: event.target.value })} /></label>
     </div> : null}
 
     {step === 'harness' ? <div className="config-form">
-      <label className="config-json"><input type="checkbox" checked={draft.withHarness} onChange={(event) => edit({ withHarness: event.target.checked })} /> Registrar el harness</label>
+      <label className="config-json casilla"><input type="checkbox" checked={draft.withHarness} onChange={(event) => edit({ withHarness: event.target.checked })} /> Registrar el harness</label>
       <label>Harness id<input value={draft.harnessId} onChange={(event) => edit({ harnessId: event.target.value })} /></label>
       <label>Display name<input value={draft.harnessLabel} onChange={(event) => edit({ harnessLabel: event.target.value })} /></label>
       <label>Command <span className="label-hint">opcional, null si queda vacío</span><input value={draft.harnessCommand} onChange={(event) => edit({ harnessCommand: event.target.value })} /></label>
@@ -240,7 +241,12 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
           <code>{JSON.stringify(entry.mutation)}</code>
         </li>)}
       </ul>}
-      {pendingText !== undefined ? <pre className="config-preview" aria-label="Mutación pendiente del wizard">{pendingText}</pre> : null}
+      {/* El JSON del paso pendiente no se pierde: deja de estar abierto. Lo que hace falta leer
+          para decidir es la lista de arriba —qué paso va y en qué estado—, no cómo se codifica. */}
+      {pendingText !== undefined ? <details className="config-crudo">
+        <summary><Braces size={13} aria-hidden="true" /> Ver la mutación del paso pendiente</summary>
+        <pre className="config-preview" aria-label="Mutación pendiente del wizard">{pendingText}</pre>
+      </details> : null}
       {plan.length > 0 && !pending ? <p className="notice success" role="status">Espacio completo: los {plan.length} pasos quedaron aplicados.</p> : null}
       <div className="config-actions">
         <button className="button secondary" type="button" disabled={!canWrite || busy || !pending || Boolean(invalid)} onClick={() => void run(true)}><SearchCheck size={16} aria-hidden="true" />Previsualizar paso</button>

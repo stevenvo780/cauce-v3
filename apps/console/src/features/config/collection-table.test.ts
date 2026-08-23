@@ -1,5 +1,5 @@
 import {
-  accionDeRol, accionesDeFila, claveDeFila, columnasDe, rolesDisponibles,
+  accionDeRol, claveDeFila, columnasDe, identidadFundida, rolesDisponibles,
 } from './collection-table';
 
 const membership = {
@@ -26,43 +26,28 @@ it('deriva la tabla de una colección sin forma conocida a partir de las propias
     .toEqual(['role', 'allow_route']);
 });
 
-it('arma el toggle de una membership con la mutación exacta y sólo el campo que cambia', () => {
-  const [accion] = accionesDeFila('memberships', membership);
-  expect(accion.etiqueta).toBe('Deshabilitar');
-  expect(accion.mutation).toEqual({
-    resource: 'membership', action: 'update', tenant_id: 'Miguel', room_id: 'grp.miguel',
-    alias: 'janus', value: { enabled: false },
-  });
-  // El store hace merge campo por campo: mandar sólo `enabled` no pisa el `role` de otro operador.
-  expect(Object.keys(accion.mutation.value as object)).toEqual(['enabled']);
+/*
+ * Los toggles de `enabled` y de los tres permisos de una arista dejaron de ser botones de texto en
+ * una columna «Acciones»: son interruptores, y sus mutaciones se prueban en `interruptores.test.ts`.
+ */
+
+it('funde «Desde» y «Hacia» en una sola columna de arista, que se lee de un golpe', () => {
+  const filas = [{ from_tenant: 'Steven', to_tenant: 'Miguel', enabled: true, allow_route: true }];
+  expect(columnasDe('acl_edges', filas).map((columna) => columna.etiqueta))
+    .toEqual(['Arista', 'Habilitado', 'Ruta']);
+  expect(identidadFundida('acl_edges', filas[0])).toBe('Steven → Miguel');
 });
 
-it('propone habilitar —y no deshabilitar— la fila que está apagada', () => {
-  const [accion] = accionesDeFila('memberships', { ...membership, enabled: false });
-  expect(accion.etiqueta).toBe('Habilitar');
-  expect(accion.mutation.value).toEqual({ enabled: true });
+it('no funde una arista a medias: sin los dos extremos se siguen viendo las columnas del servidor', () => {
+  // «Steven → » sin saber hacia dónde sería peor que dos columnas separadas.
+  const filas = [{ from_tenant: 'Steven', enabled: true }];
+  expect(columnasDe('acl_edges', filas).map((columna) => columna.clave)).toEqual(['from_tenant', 'enabled']);
+  expect(identidadFundida('acl_edges', filas[0])).toBeUndefined();
 });
 
-it('no ofrece ningún botón cuando `enabled` no es booleano', () => {
-  // No se puede escribir «el contrario» de un valor que no se conoce: antes que apagar algo por
-  // suponer que estaba encendido, la fila se queda sin acciones.
-  expect(accionesDeFila('memberships', { ...membership, enabled: null })).toEqual([]);
-  expect(accionesDeFila('tenants', { id: 'Isa', enabled: 'sí' })).toEqual([]);
-});
-
-it('da a una arista ACL el toggle de enabled más uno por cada permiso, con la dirección puesta', () => {
-  const acciones = accionesDeFila('acl_edges', {
-    from_tenant: 'Steven', to_tenant: 'Miguel', enabled: true,
-    allow_route: true, allow_read: true, allow_control: false,
-  });
-  expect(acciones.map((accion) => accion.id)).toEqual(['enabled', 'allow_route', 'allow_read', 'allow_control']);
-  expect(acciones[1].descripcion).toBe('Quitar allow_route en la arista Steven → Miguel');
-  expect(acciones[1].mutation).toEqual({
-    resource: 'acl_edge', action: 'update', from_tenant: 'Steven', to_tenant: 'Miguel',
-    value: { allow_route: false },
-  });
-  expect(acciones[3].descripcion).toBe('Conceder allow_control en la arista Steven → Miguel');
-  expect(acciones[3].mutation).toMatchObject({ value: { allow_control: true } });
+it('los permisos dejan de rotularse con el nombre de la columna de Postgres', () => {
+  const columnas = columnasDe('role_policies', [{ role: 'agent', allow_route: true, allow_control: false }]);
+  expect(columnas.map((columna) => columna.etiqueta)).toEqual(['Rol', 'Ruta', 'Control']);
 });
 
 it('arma el cambio de rol y rechaza lo que el gateway rechazaría igual', () => {

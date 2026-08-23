@@ -1,4 +1,4 @@
-import { Plus, SearchCheck } from 'lucide-react';
+import { Braces, Plus, SearchCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { ConfigMutation } from '../../api/types';
 import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
@@ -8,6 +8,7 @@ import {
   type BorradorAlta, type RecursoAlta,
 } from './alta-rapida';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
+import './toggles.css';
 
 /**
  * Alta de un recurso con formulario. Reemplaza al «tipeá la mutación a mano en JSON» para los
@@ -116,22 +117,29 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
           <input {...inerte} aria-label="Nombre" value={borrador.nombre} onChange={(event) => editar({ nombre: event.target.value })} /></label>
         : null}
       {recurso === 'tenant'
-        ? <label><input {...inerte} type="checkbox" checked={borrador.esHub} onChange={(event) => editar({ esHub: event.target.checked })} /> Es hub</label>
+        ? <label className="casilla"><input {...inerte} type="checkbox" aria-label="Es hub" checked={borrador.esHub} onChange={(event) => editar({ esHub: event.target.checked })} /> Es hub</label>
         : null}
       {recurso === 'acl_edge' ? <>
         <label>Desde el tenant<input {...inerte} aria-label="Desde el tenant" value={borrador.desde} onChange={(event) => editar({ desde: event.target.value })} /></label>
         <label>Hacia el tenant<input {...inerte} aria-label="Hacia el tenant" value={borrador.hacia} onChange={(event) => editar({ hacia: event.target.value })} /></label>
         {/* Los tres permisos arrancan en NO: el default del backend es deny, y el formulario no
             debe abrir un cruce entre tenants por omisión. */}
-        <label><input {...inerte} type="checkbox" checked={borrador.allowRoute} onChange={(event) => editar({ allowRoute: event.target.checked })} /> allow_route</label>
-        <label><input {...inerte} type="checkbox" checked={borrador.allowRead} onChange={(event) => editar({ allowRead: event.target.checked })} /> allow_read</label>
-        <label><input {...inerte} type="checkbox" checked={borrador.allowControl} onChange={(event) => editar({ allowControl: event.target.checked })} /> allow_control</label>
+        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Ruta" checked={borrador.allowRoute} onChange={(event) => editar({ allowRoute: event.target.checked })} /> Ruta <span className="label-hint">allow_route: dejar que le mande mensajes</span></label>
+        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Lectura" checked={borrador.allowRead} onChange={(event) => editar({ allowRead: event.target.checked })} /> Lectura <span className="label-hint">allow_read: dejar que lea su actividad</span></label>
+        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Control" checked={borrador.allowControl} onChange={(event) => editar({ allowControl: event.target.checked })} /> Control <span className="label-hint">allow_control: dejar que le escriba la configuración</span></label>
       </> : null}
-      <label><input {...inerte} type="checkbox" checked={borrador.habilitado} onChange={(event) => editar({ habilitado: event.target.checked })} /> Habilitado</label>
+      <label className="casilla"><input {...inerte} type="checkbox" aria-label="Habilitado" checked={borrador.habilitado} onChange={(event) => editar({ habilitado: event.target.checked })} /> Habilitado</label>
     </div>
 
-    {/* Lo que se va a enviar, a la vista antes de enviarlo. */}
-    <pre className="config-preview" aria-label="Mutación del alta">{JSON.stringify(mutation, null, 2)}</pre>
+    {/* Lo que se va a enviar, a UN CLIC de la vista.
+        Estaba abierto por defecto y ocupaba once líneas de JSON crudo entre el formulario y sus
+        botones: para llegar a «Crear» había que pasar por delante de `{"resource":"membership"…}`,
+        que no es lo que se está por hacer sino cómo se codifica. No se esconde —sigue estando
+        entero, y es lo que hay que leer antes de firmar algo raro—: deja de ser lo primero. */}
+    <details className="config-crudo">
+      <summary><Braces size={13} aria-hidden="true" /> Ver la mutación que se va a enviar</summary>
+      <pre className="config-preview" aria-label="Mutación del alta">{JSON.stringify(mutation, null, 2)}</pre>
+    </details>
 
     <div className="config-actions">
       <button

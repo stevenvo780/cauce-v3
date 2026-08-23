@@ -1,18 +1,25 @@
 import { Braces } from 'lucide-react';
+import { Fragment } from 'react';
 import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
-import { Badge, EmptyState, Panel, Time, Unknown } from '../../components/ui';
+import { Badge, EmptyState, Panel, Unknown } from '../../components/ui';
 import type { ConfigCollection } from './collections';
 import {
-  accionDeRol, accionesDeFila, claveDeFila, columnasDe, COLECCIONES_CON_ACCIONES, esColumnaDeFecha,
-  esColumnaLarga, motivoSinCambioDeRol, resumirTextoLargo, rolesDisponibles,
-  type AccionDeFila, type ColumnaTabla,
+  accionDeRol, claveDeFila, columnasDe, esColumnaDeFecha, esColumnaFundida, esColumnaLarga,
+  identidadFundida, motivoSinCambioDeRol, resumirTextoLargo, rolesDisponibles,
+  type AccionDeRol, type ColumnaTabla,
 } from './collection-table';
+import {
+  CabeceraConAyuda, ConfirmarQuitarControl, FechaRelativa, FilaDeFallo, InterruptorDeCelda,
+} from './Interruptor';
+import { esCampoConmutable, explicacionDeCampo, interruptorDeFila } from './interruptores';
+import type { ControlDeInterruptores } from './use-interruptores';
+import './toggles.css';
 
-/** Qué botón de qué fila está esperando el «Confirmar». Sólo hay uno a la vez en toda la página. */
+/** Qué cambio de ROL de qué fila está esperando el «Confirmar». Sólo hay uno a la vez. */
 export interface AccionPendiente {
   coleccion: string;
   filaId: string;
-  accion: AccionDeFila;
+  accion: AccionDeRol;
 }
 
 export interface AvisoDeColeccion {
@@ -21,21 +28,29 @@ export interface AvisoDeColeccion {
 }
 
 /**
- * Una colección del snapshot como TABLA con columnas de verdad, con las operaciones frecuentes a un
- * clic y con el JSON crudo detrás de un desplegable para quien lo necesite.
+ * Una colección del snapshot como TABLA, con los booleanos como INTERRUPTORES.
  *
- * Antes esto era `<code>{JSON.stringify(row)}</code>` por fila y nada más: para deshabilitar una
- * membership había que tipear la mutación a mano en el textarea de abajo. El JSON no se borró
- * —sigue siendo la verdad literal del servidor— pero dejó de ser lo primero que se ve.
+ * Lo que había antes de este cambio, medido en Chrome sobre la pantalla real:
+ *  - `Directed ACL`: 24 botones de texto para 6 filas —«Deshabilitar», «Quitar allow_route»,
+ *    «Quitar allow_read», «Quitar allow_control»— apilados en una columna «Acciones», con la fila
+ *    a 147 px de alto;
+ *  - el mismo dato dicho DOS veces por permiso: la píldora decía «SÍ» y el botón de al lado decía
+ *    «Deshabilitar»;
+ *  - «Espacios y miembros»: 30 botones con el texto exacto «Deshabilitar» y 3.769 px de alto.
+ *
+ * Ahora cada booleano escribible es un interruptor en su propia columna: dice el estado y lo cambia
+ * en el mismo sitio. La columna «Acciones» desapareció porque no le quedaba nada que hacer.
  */
 export function CollectionTable({
-  coleccion, politicasDeRol, soloLectura, busy, pendiente, aviso, onPedir, onConfirmar, onCancelar,
+  coleccion, politicasDeRol, soloLectura, busy, control, pendiente, aviso,
+  onPedir, onConfirmar, onCancelar,
 }: {
   coleccion: ConfigCollection;
   /** `role_policies` del snapshot: alimenta el selector de rol de las memberships. */
   politicasDeRol: ReadonlyArray<Record<string, unknown>> | undefined;
   soloLectura: boolean;
   busy: boolean;
+  control: ControlDeInterruptores;
   pendiente?: AccionPendiente;
   aviso?: AvisoDeColeccion;
   onPedir: (pendiente: AccionPendiente) => void;
@@ -45,7 +60,8 @@ export function CollectionTable({
   const { key, title, rows } = coleccion;
   const filas = rows ?? [];
   const columnas = columnasDe(key, filas);
-  const conAcciones = COLECCIONES_CON_ACCIONES.has(key);
+  const avisoDeInterruptor = control.avisoDe(key);
+  const confirmandoAqui = control.confirmacion?.interruptor.coleccion === key;
 
   return <Panel title={title} subtitle="Datos efectivos del servidor">
     {/* Clave ausente y lista vacía NO son lo mismo: un gateway anterior a una migración no publica
@@ -53,25 +69,48 @@ export function CollectionTable({
     {!rows ? <EmptyState>UNKNOWN: este gateway no publica esta colección ({key}).</EmptyState>
       : !filas.length ? <EmptyState>Sin registros.</EmptyState>
         : <>
+          {/* El desenlace de un interruptor se anuncia acá arriba, en un `role="status"` que el
+              lector de pantalla lee solo: el interruptor moviéndose es una señal visual, y sin esto
+              quien no ve la pantalla no se entera de que la escritura llegó. */}
+          {avisoDeInterruptor ? <p
+            className={avisoDeInterruptor.tone === 'parcial' ? 'notice parcial' : 'notice success'}
+            role="status"
+          >{avisoDeInterruptor.text}</p> : null}
+
+          {confirmandoAqui ? <ConfirmarQuitarControl control={control} busy={busy} /> : null}
+
           <div className="table-wrap"><table><thead><tr>
-            {columnas.map((columna) => <th key={columna.clave}>{columna.etiqueta}</th>)}
-            {conAcciones ? <th>Acciones</th> : null}
+            {columnas.map((columna) => <th key={columna.clave}>
+              <CabeceraConAyuda
+                etiqueta={columna.etiqueta}
+                {...(() => {
+                  const ayuda = explicacionDeCampo(key, columna.clave);
+                  return ayuda === undefined ? {} : { explicacion: ayuda };
+                })()}
+              />
+            </th>)}
           </tr></thead><tbody>
             {filas.map((fila, indice) => {
               const filaId = claveDeFila(key, fila, indice);
-              return <tr key={filaId}>
-                {columnas.map((columna) => <td key={columna.clave}>
-                  <Celda
-                    coleccion={key} columna={columna} fila={fila} filaId={filaId}
-                    politicasDeRol={politicasDeRol} soloLectura={soloLectura} busy={busy}
-                    onPedir={onPedir}
-                  />
-                </td>)}
-                {conAcciones ? <td><Acciones
-                  coleccion={key} fila={fila} filaId={filaId} soloLectura={soloLectura} busy={busy}
-                  onPedir={onPedir}
-                /></td> : null}
-              </tr>;
+              // Un fallo por fila: el `busy` global serializa las escrituras, así que no puede
+              // haber dos interruptores de la misma fila rechazados a la vez.
+              const fallo = columnas
+                .map((columna) => control.fallo(`${key}|${filaId}|${columna.clave}`))
+                .find((encontrado) => encontrado !== undefined);
+              return <Fragment key={filaId}>
+                <tr>
+                  {columnas.map((columna) => <td key={columna.clave}>
+                    <Celda
+                      coleccion={key} columna={columna} fila={fila} filaId={filaId} indice={indice}
+                      politicasDeRol={politicasDeRol} soloLectura={soloLectura} busy={busy}
+                      control={control} onPedir={onPedir}
+                    />
+                  </td>)}
+                </tr>
+                {fallo ? <FilaDeFallo
+                  fallo={fallo} columnas={columnas.length} control={control} busy={busy}
+                /> : null}
+              </Fragment>;
             })}
           </tbody></table></div>
 
@@ -96,21 +135,42 @@ export function CollectionTable({
   </Panel>;
 }
 
-function Celda({ coleccion, columna, fila, filaId, politicasDeRol, soloLectura, busy, onPedir }: {
+function Celda({
+  coleccion, columna, fila, filaId, indice, politicasDeRol, soloLectura, busy, control, onPedir,
+}: {
   coleccion: string;
   columna: ColumnaTabla;
   fila: Record<string, unknown>;
   filaId: string;
+  indice: number;
   politicasDeRol: ReadonlyArray<Record<string, unknown>> | undefined;
   soloLectura: boolean;
   busy: boolean;
+  control: ControlDeInterruptores;
   onPedir: (pendiente: AccionPendiente) => void;
 }) {
+  // La columna de identidad fundida: `Desde` + `Hacia` se leen como una sola arista.
+  if (esColumnaFundida(coleccion, columna.clave)) {
+    const arista = identidadFundida(coleccion, fila);
+    return arista === undefined ? <Unknown value={null} /> : <span className="mono">{arista}</span>;
+  }
+
   const valor = fila[columna.clave];
 
-  // El rol de una membership se cambia acá mismo, en su propia columna. El `value` sigue atado al
-  // dato del servidor: si el operador cancela la confirmación, el selector vuelve solo a lo que la
-  // fila dice, sin que la pantalla llegue a mostrar un rol que nadie guardó.
+  // **El interruptor.** Sólo sale si se puede armar la mutación con lo que la fila trae: si no,
+  // se cae a la píldora de sólo lectura, que dice el dato sin prometer que se pueda cambiar.
+  if (esCampoConmutable(coleccion, columna.clave)) {
+    const interruptor = interruptorDeFila(coleccion, fila, columna.clave, indice);
+    if (interruptor) {
+      return <InterruptorDeCelda
+        interruptor={interruptor} control={control} soloLectura={soloLectura} busy={busy}
+      />;
+    }
+  }
+
+  // El rol de una membership se cambia acá mismo, en su propia columna. No es un booleano —es una
+  // elección entre varios valores—, así que sigue siendo un `<select>` y sigue confirmando: cambiar
+  // de rol reescribe qué puede hacer ese agente, y no hay «el contrario» al que volver de un clic.
   if (coleccion === 'memberships' && columna.clave === 'role') {
     const actual = typeof valor === 'string' ? valor : '';
     const opciones = rolesDisponibles(politicasDeRol, actual === '' ? undefined : actual);
@@ -146,7 +206,7 @@ function Celda({ coleccion, columna, fila, filaId, politicasDeRol, soloLectura, 
   if (typeof valor === 'boolean') {
     return <Badge tone={valor ? 'online' : 'offline'}>{valor ? 'Sí' : 'No'}</Badge>;
   }
-  if (esColumnaDeFecha(columna.clave)) return <Time value={valor} />;
+  if (esColumnaDeFecha(columna.clave)) return <FechaRelativa value={valor} />;
   if (Array.isArray(valor)) {
     // Una lista vacía es un dato conocido —«no tiene ninguna»—, no un UNKNOWN.
     return valor.length ? <span>{valor.map((item) => String(item)).join(', ')}</span> : <span className="unknown">(vacío)</span>;
@@ -155,37 +215,13 @@ function Celda({ coleccion, columna, fila, filaId, politicasDeRol, soloLectura, 
   return <Unknown value={valor} />;
 }
 
-function Acciones({ coleccion, fila, filaId, soloLectura, busy, onPedir }: {
-  coleccion: string;
-  fila: Record<string, unknown>;
-  filaId: string;
-  soloLectura: boolean;
-  busy: boolean;
-  onPedir: (pendiente: AccionPendiente) => void;
-}) {
-  const acciones = accionesDeFila(coleccion, fila);
-  if (!acciones.length) {
-    // Sin `enabled` booleano no se sabe cuál es «el contrario»: es preferible una fila sin botones a
-    // una que apague algo por suponer que estaba encendido.
-    return <span className="unknown">UNKNOWN: sin datos para armar la mutación</span>;
-  }
-  return <span className="config-actions">
-    {acciones.map((accion) => <button
-      key={accion.id}
-      type="button"
-      className="button small"
-      aria-label={accion.descripcion}
-      title={soloLectura ? CONFIG_SIN_CONTROL_REASON : accion.descripcion}
-      disabled={soloLectura || busy}
-      onClick={() => onPedir({ coleccion, filaId, accion })}
-    >{accion.etiqueta}</button>)}
-  </span>;
-}
-
 /**
- * Confirmación con la mutación EXACTA a la vista. No alcanza con un «¿seguro?»: lo que se firma es
- * una escritura versionada en `config_revisions`, y el operador tiene derecho a leer el JSON que va
- * a viajar antes de que viaje.
+ * Confirmación con la mutación EXACTA a la vista. Queda SÓLO para el cambio de rol: lo que se firma
+ * es una escritura versionada en `config_revisions` y el rol no tiene «el contrario» al que volver
+ * con otro clic, así que acá el JSON sí se lee antes de que viaje.
+ *
+ * Los booleanos ya no pasan por acá. Confirmar veinte veces seguidas no protege de nada: enseña a
+ * apretar «Confirmar» sin leer, y el día que aparece el que importa ya nadie lo lee.
  */
 function ConfirmacionDeAccion({ pendiente, busy, onConfirmar, onCancelar }: {
   pendiente: AccionPendiente;

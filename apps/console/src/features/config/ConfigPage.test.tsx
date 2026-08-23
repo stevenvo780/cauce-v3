@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { ConfigPage } from './ConfigPage';
@@ -60,6 +60,9 @@ it('lleva el wizard hasta el dry-run y aplica el primer paso del espacio contra 
   recordChanges(changes);
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
+  // El wizard dejó de estar desplegado al lado del alta rápida: son dos modos del MISMO alta y se
+  // ve uno a la vez. Que la prueba tenga que elegirlo es la diferencia que se buscaba.
+  await user.click(await screen.findByRole('tab', { name: /espacio completo/i }));
   await user.click(await screen.findByRole('button', { name: /5\. dry-run y aplicar/i }));
 
   expect(screen.getByRole('button', { name: /aplicar paso/i })).toBeDisabled();
@@ -182,7 +185,15 @@ it('no convierte los demás 409 en el mensaje de revisión ni los vuelve genéri
 // comportamiento, que se ve como tabla, que las operaciones frecuentes están a un clic, y —sobre
 // todo— que la pantalla NO afirma nada que no haya comprobado contra el servidor.
 
-const MEMBERSHIP_JANUS = 'Deshabilitar la membership Miguel/grp.miguel/janus';
+/**
+ * El interruptor de `enabled` de la membresía de janus. Era un botón —«Deshabilitar la membership
+ * Miguel/grp.miguel/janus»— con confirmación detrás; ahora es un interruptor que se aplica al
+ * pulsarlo. Ver `Interruptores.test.tsx` para el comportamiento propio del control.
+ */
+const MEMBERSHIP_JANUS = 'Habilitado en la membresía Miguel/grp.miguel/janus';
+
+/** Lo que el aviso afirma después de apagar esa membresía. */
+const JANUS_APAGADA = /Quitar Habilitado en la membresía Miguel\/grp\.miguel\/janus: aplicado/i;
 
 /** Snapshot mínimo con la forma real del gateway, para los tests que necesitan mover la revisión. */
 function snapshotDeConfig(revision: number) {
@@ -198,6 +209,11 @@ function snapshotDeConfig(revision: number) {
   };
 }
 
+/** El rótulo de una cabecera, sin la ayuda que la acompaña. */
+function rotulo(celda: HTMLElement): string {
+  return (celda.textContent ?? '').replace(/[?:].*/s, '').trim();
+}
+
 function panelDe(nombre: RegExp): HTMLElement {
   const seccion = screen.getByRole('heading', { name: nombre }).closest('section');
   if (!seccion) throw new Error(`El panel ${String(nombre)} no tiene sección`);
@@ -209,30 +225,30 @@ it('pinta cada colección como TABLA con columnas de verdad y deja el JSON crudo
   await screen.findByRole('heading', { level: 1, name: /configuración/i });
 
   const memberships = panelDe(/memberships/i);
-  expect(within(memberships).getAllByRole('columnheader').map((celda) => celda.textContent))
-    .toEqual(['Tenant', 'Room', 'Alias', 'Rol', 'Habilitado', 'Alta', 'Acciones']);
+  // La columna «Acciones» desapareció: no le quedaba nada que hacer desde que `enabled` es un
+  // interruptor en su propia columna. El recorte del texto se lleva la ayuda de la cabecera.
+  expect(within(memberships).getAllByRole('columnheader').map((celda) => rotulo(celda)))
+    .toEqual(['Tenant', 'Room', 'Alias', 'Rol', 'Habilitado', 'Alta']);
   // El alias se lee como celda, no dentro de un `{"tenant_id":"Miguel",...}`.
   expect(within(memberships).getByText('janus')).toBeInTheDocument();
 
   const tenants = panelDe(/^Tenants$/);
-  expect(within(tenants).getAllByRole('columnheader').map((celda) => celda.textContent))
-    .toEqual(['Id', 'Nombre', 'Hub', 'Habilitado', 'Alta', 'Acciones']);
+  expect(within(tenants).getAllByRole('columnheader').map((celda) => rotulo(celda)))
+    .toEqual(['Id', 'Nombre', 'Hub', 'Habilitado', 'Alta']);
   // El crudo no se borró: sigue estando, un escalón más abajo.
   expect(within(tenants).getByText(/ver crudo/i)).toBeInTheDocument();
 });
 
-it('deshabilita una membership a un clic: confirma primero, manda la mutación exacta y recién después lo afirma', async () => {
+it('deshabilita una membership a un clic, manda la mutación exacta y recién después lo afirma', async () => {
   const changes: ChangeRequest[] = [];
   recordChanges(changes);
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
-  // Nada viajó todavía: primero la confirmación, con la mutación exacta a la vista.
-  expect(changes).toEqual([]);
-  expect(screen.getByLabelText('Mutación a aplicar')).toHaveTextContent('"enabled": false');
-
-  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+  // Un interruptor no pregunta «¿seguro?»: escribe al pulsarlo y se deshace con otro clic.
+  await user.click(await screen.findByRole('switch', { name: MEMBERSHIP_JANUS }));
+  expect(screen.queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument();
+  await waitFor(() => expect(changes).toHaveLength(1));
   expect(changes[0]).toEqual({
     dry_run: false,
     expected_revision: 1,
@@ -259,17 +275,21 @@ it('cambia el rol de una membership desde su propia columna, con el mismo camino
   });
 });
 
-it('cancela sin escribir nada y deja la fila como estaba', async () => {
+it('cancela un cambio de rol sin escribir nada y deja la fila como estaba', async () => {
   const changes: ChangeRequest[] = [];
   recordChanges(changes);
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  // El rol no es un booleano: no hay «el contrario» al que volver de un clic, así que es el único
+  // cambio de la tabla que sigue pasando por confirmación con la mutación a la vista.
+  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
   await user.click(screen.getByRole('button', { name: 'Cancelar' }));
   expect(changes).toEqual([]);
   expect(screen.queryByLabelText('Mutación a aplicar')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: MEMBERSHIP_JANUS })).toBeInTheDocument();
+  // El selector vuelve solo a lo que la fila dice: la pantalla nunca llega a mostrar un rol que
+  // nadie guardó.
+  expect(screen.getByLabelText('Rol de Miguel/grp.miguel/janus')).toHaveValue('agent');
 });
 
 it('sin config.write se ve TODO en solo lectura y lo dice, en vez de esconder la vista', async () => {
@@ -282,7 +302,7 @@ it('sin config.write se ve TODO en solo lectura y lo dice, en vez de esconder la
     .toBeInTheDocument();
   // Los datos siguen a la vista; lo que queda inerte es todo lo que escribe.
   expect(within(panelDe(/memberships/i)).getByText('janus')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: MEMBERSHIP_JANUS })).toBeDisabled();
+  expect(screen.getByRole('switch', { name: MEMBERSHIP_JANUS })).toBeDisabled();
   expect(screen.getByLabelText('Rol de Miguel/grp.miguel/janus')).toBeDisabled();
   // Las pestañas NO se apagan ni se esconden con el permiso denegado: navegar no escribe nada, y
   // un menú de áreas mutilado no distingue «no tengo permiso» de «esto no existe».
@@ -298,13 +318,14 @@ it('muestra el rechazo del servidor en la propia colección y no dice que aplic�
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
-  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+  await user.click(await screen.findByRole('switch', { name: MEMBERSHIP_JANUS }));
 
   const aviso = await within(panelDe(/memberships/i)).findByRole('alert');
   expect(aviso).toHaveTextContent('membership has active deliveries or a live lease');
   expect(aviso).toHaveTextContent(/NO se aplicó/i);
   expect(screen.queryByText(/aplicado en la revisión/i)).not.toBeInTheDocument();
+  // Y el interruptor volvió solo: nunca queda pintado un estado que la base no tiene.
+  expect(screen.getByRole('switch', { name: MEMBERSHIP_JANUS })).toBeChecked();
 });
 
 it('ante un 409 de revisión relee el snapshot y ESPERA el dato antes de afirmar que recargó', async () => {
@@ -322,8 +343,7 @@ it('ante un 409 de revisión relee el snapshot y ESPERA el dato antes de afirmar
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
-  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+  await user.click(await screen.findByRole('switch', { name: MEMBERSHIP_JANUS }));
 
   const aviso = await within(panelDe(/memberships/i)).findByRole('alert');
   expect(aviso).toHaveTextContent(/conflicto de revisión/i);
@@ -346,11 +366,10 @@ it('si la relectura posterior falla lo DICE, en vez de afirmar que recargó', as
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
-  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+  await user.click(await screen.findByRole('switch', { name: MEMBERSHIP_JANUS }));
 
-  const aviso = await within(panelDe(/memberships/i)).findByRole('alert');
-  expect(aviso).toHaveTextContent(/aplicado en la revisión 2/i);
+  const aviso = await within(panelDe(/memberships/i)).findByRole('status');
+  expect(aviso).toHaveTextContent(/el servidor lo aplicó en la revisión 2/i);
   expect(aviso).toHaveTextContent(/la relectura del snapshot NO llegó/i);
   expect(aviso).toHaveTextContent(/pueden estar vencidas/i);
 });
@@ -364,7 +383,7 @@ it('crea una arista ACL desde el formulario, sin que el operador tipee una sola 
   await user.selectOptions(await screen.findByLabelText('Recurso a crear'), 'acl_edge');
   await user.type(screen.getByLabelText('Desde el tenant'), 'Steven');
   await user.type(screen.getByLabelText('Hacia el tenant'), 'Isa');
-  await user.click(screen.getByRole('checkbox', { name: 'allow_route' }));
+  await user.click(screen.getByRole('checkbox', { name: 'Ruta' }));
   await user.click(screen.getByRole('button', { name: /^Crear$/ }));
 
   expect(changes[0]).toEqual({
@@ -482,9 +501,9 @@ it('FAMILIA 2: el aviso de una acción de tabla NO sobrevive a otra escritura qu
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
-  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
-  const aviso = await screen.findByText(/Deshabilitar la membership Miguel\/grp\.miguel\/janus: aplicado en la revisión 2/i);
+  await user.click(await screen.findByRole('switch', { name: MEMBERSHIP_JANUS }));
+  const aviso = await screen.findByText(JANUS_APAGADA);
+  expect(aviso).toHaveTextContent(/aplicado en la revisión 2/i);
   expect(aviso).toHaveTextContent(/las tablas de abajo están en la revisión 2/i);
 
   // Otra escritura, por otro camino, mueve el snapshot a la 3: el cartel afirmaba «revisión 2»
@@ -495,8 +514,7 @@ it('FAMILIA 2: el aviso de una acción de tabla NO sobrevive a otra escritura qu
   await user.click(screen.getByRole('button', { name: /^Crear$/ }));
   await screen.findByText(/creado en la revisión 2/i);
 
-  expect(screen.queryByText(/Deshabilitar la membership Miguel\/grp\.miguel\/janus: aplicado/i))
-    .not.toBeInTheDocument();
+  expect(screen.queryByText(JANUS_APAGADA)).not.toBeInTheDocument();
 });
 
 it('FAMILIA 2: tocar el JSON del editor crudo se lleva puestos el verde y el preview anteriores', async () => {
@@ -575,7 +593,7 @@ it('FAMILIA 3: la confirmación pendiente se anula cuando «Actualizar» mueve e
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
   expect(screen.getByRole('button', { name: 'Confirmar' })).toBeInTheDocument();
 
   await user.click(screen.getByRole('button', { name: 'Actualizar' }));
@@ -654,9 +672,8 @@ it('FAMILIA 4: el 409 no manda a «volver a previsualizar» a los caminos que no
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  // Botón de un clic: no hay dry-run en este camino.
-  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
-  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+  // Interruptor: no hay dry-run en este camino.
+  await user.click(await screen.findByRole('switch', { name: MEMBERSHIP_JANUS }));
   const deLaTabla = await within(panelDe(/memberships/i)).findByRole('alert');
   expect(deLaTabla).toHaveTextContent(/pediste el cambio sobre la revisión 1/i);
   expect(deLaTabla).toHaveTextContent(/volvé a pedir el cambio sobre la revisión nueva/i);
@@ -792,7 +809,7 @@ it('FAMILIA 5: cambiar de pestaña con una confirmación pendiente la ANULA, no 
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.click(await screen.findByRole('button', { name: MEMBERSHIP_JANUS }));
+  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
   expect(screen.getByRole('button', { name: 'Confirmar' })).toBeInTheDocument();
 
   // Si la confirmación sobreviviera al cambio de pestaña, el operador volvería mucho después a un
