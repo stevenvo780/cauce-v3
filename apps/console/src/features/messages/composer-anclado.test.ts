@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { VAR_ALTO_COMPOSITOR } from './ConversationPane';
+import { VAR_TOPE_MENSAJERIA } from './MessagesPage';
 
 /**
  * EL COMPOSITOR ANCLADO EN PANTALLA ESTRECHA, COMPROBADO SOBRE LA HOJA.
@@ -165,5 +166,168 @@ describe('el compositor de /messages en pantalla estrecha', () => {
     // Sin conversación abierta el roster ES el contenido y conserva sus 300 px.
     expect(valor(declaraciones(estrecho, '.messenger-agent-list'), 'max-height')).toBe('300px');
     expect(estrecho).toContain('.messenger-shell[data-conversacion="abierta"] .messenger-agent-list');
+  });
+});
+
+/**
+ * ------------------------------------------------------------------ EL MISMO DEFECTO, EN ESCRITORIO
+ *
+ * El arreglo de arriba vive dentro del corte de 760 px, así que en escritorio el compositor seguía
+ * exactamente igual que antes. Medido en la consola de producción a 1280x900, con la sesión de
+ * Steven y sin tocar nada: el `textarea` en y=1546 y el botón «Enviar» en y=1633, con la ventana
+ * de 900 — 646 px por debajo del pliegue. `getComputedStyle` del compositor: `position: static`.
+ *
+ * `.messenger-composer { margin-top: auto }` ya estaba y no servía para nada: empuja al pie del
+ * contenedor, y el contenedor no tenía alto. El arreglo es darle alto al bloque, restándole al
+ * viewport el tope MEDIDO (`--messenger-tope`, que escribe `MessagesPage`).
+ */
+export function defectosDelCompositorEnEscritorio(mensajes: string): string[] {
+  const defectos: string[] = [];
+  const ancho = bloqueMedia(mensajes, '@media (min-width: 761px)');
+  if (!ancho) return ['no hay bloque @media (min-width: 761px) en messages.css: el escritorio sigue sin acotar'];
+
+  /*
+   * TODAS las declaraciones de `height`, no la primera. La hoja escribe dos —una con `vh` como red
+   * para un navegador sin `dvh` y otra con `dvh`— y la que MANDA es la última que el navegador
+   * entiende. Un comprobador que mirase sólo la primera aprobaría una hoja en la que alguien
+   * arregló la de arriba y dejó rota la de abajo, que es justo la que se aplica en Chrome.
+   */
+  const envoltura = declaraciones(ancho, '.messenger-shell');
+  const altos = [...envoltura.matchAll(/(?:^|;)\s*height\s*:\s*([^;]+)/g)].map((encontrado) => encontrado[1].trim());
+  if (altos.length === 0) {
+    defectos.push('.messenger-shell no tiene alto en escritorio: crece con su contenido y el pie del panel queda donde termina el contenido, o sea fuera de pantalla');
+  }
+  for (const alto of altos) {
+    if (!alto.includes('vh')) {
+      defectos.push(`.messenger-shell se acota a ${alto}, que no depende de la ventana: con una pantalla más baja el compositor vuelve a caer fuera`);
+    } else if (!alto.includes(`var(${VAR_TOPE_MENSAJERIA}`)) {
+      defectos.push(
+        '.messenger-shell resta un número fijo en vez del tope medido: en cuanto la cabecera de la '
+        + 'página crezca una línea, el compositor vuelve a quedar debajo del pliegue',
+      );
+    }
+  }
+
+  // Un panel acotado sin `overflow: hidden` desborda por abajo y el pie se va igual.
+  if (valor(declaraciones(ancho, '.messenger-thread'), 'overflow') !== 'hidden') {
+    defectos.push('.messenger-thread no recorta: el contenido desborda el panel acotado y el compositor se va con él');
+  }
+
+  // Y el compositor no puede encogerse ni crecer: es lo último que tiene que quedar entero.
+  if (!/flex\s*:\s*none/.test(declaraciones(sinComentarios(mensajes), '.messenger-composer'))) {
+    defectos.push('.messenger-composer no es `flex: none`: en un panel acotado se encoge y el botón Enviar se corta');
+  }
+
+  /*
+   * La caja de scroll es la que absorbe el alto sobrante. Sin `min-height: 0` un hijo flex NO se
+   * encoge por debajo de su contenido —regla de manual— y el panel acotado desborda igual: el
+   * `height` de arriba quedaría de adorno.
+   */
+  const caja = declaraciones(sinComentarios(mensajes), '.messenger-thread-scroll');
+  if (valor(caja, 'overflow-y') !== 'auto' || valor(caja, 'min-height') !== '0') {
+    defectos.push('.messenger-thread-scroll no es la caja con scroll (`overflow-y: auto` + `min-height: 0`): el hilo empuja al compositor fuera del panel');
+  }
+  return defectos;
+}
+
+/**
+ * LA CABECERA DEL HILO EN EL TELÉFONO, que se pintaba en vertical.
+ *
+ * Medido a 360x800: `.messenger-thread-identity` con `scrollWidth 136` y `clientWidth 46`, el
+ * alias saliendo «z e u s» y el estado «S T E V E N . E P O C H 8 …», unos 570 px de alto. No es
+ * lentitud: es la fila flex de tres columnas compitiendo con `.messenger-thread-actions`, que es
+ * `flex: none`, más el `overflow-wrap: anywhere` que `styles.css` le pone a todo h2/p.
+ */
+export function defectosDeLaCabeceraEstrecha(mensajes: string): string[] {
+  const defectos: string[] = [];
+  const estrecho = bloqueMedia(mensajes, `@media (max-width: ${CORTE_ESTRECHO}px)`);
+  if (!estrecho) return [`no hay bloque @media (max-width: ${CORTE_ESTRECHO}px) en messages.css`];
+
+  if (valor(declaraciones(estrecho, '.messenger-thread-head'), 'flex-direction') !== 'column') {
+    defectos.push(
+      '.messenger-thread-head sigue siendo una fila en el teléfono: los botones se llevan el ancho '
+      + 'y a la identidad le quedan 46 px, o sea una letra por línea',
+    );
+  }
+  const texto = declaraciones(estrecho, '.messenger-thread-identity h2, .messenger-thread-identity .eyebrow');
+  if (valor(texto, 'overflow-wrap') !== 'break-word') {
+    defectos.push(
+      'el texto de la identidad hereda `overflow-wrap: anywhere` de styles.css: si el hueco vuelve '
+      + 'a estrecharse, vuelve a partir DENTRO de la palabra',
+    );
+  }
+  return defectos;
+}
+
+describe('el compositor de /messages en ESCRITORIO', () => {
+  it('queda al pie del panel, con el alto restado del tope medido', () => {
+    expect(defectosDelCompositorEnEscritorio(MENSAJES_CSS)).toEqual([]);
+  });
+
+  it('la variable del tope que el componente escribe es la MISMA que la hoja lee', () => {
+    expect(VAR_TOPE_MENSAJERIA).toBe('--messenger-tope');
+    expect(sinComentarios(MENSAJES_CSS)).toContain(`var(${VAR_TOPE_MENSAJERIA}`);
+  });
+
+  it('CONTROL NEGATIVO — marca la vuelta al panel sin alto, que es el defecto medido en producción', () => {
+    const roto = MENSAJES_CSS.replace(/@media \(min-width: 761px\) \{[\s\S]*?\n\}\n/, '');
+    expect(roto).not.toBe(MENSAJES_CSS);
+    expect(defectosDelCompositorEnEscritorio(roto)).toContainEqual(expect.stringContaining('sin acotar'));
+  });
+
+  it('CONTROL NEGATIVO — marca un alto con un número fijo en vez del tope medido', () => {
+    const roto = MENSAJES_CSS.replace(
+      'height: clamp(430px, calc(100dvh - var(--messenger-tope, 330px) - 34px), 980px);',
+      'height: clamp(430px, calc(100dvh - 330px), 980px);',
+    );
+    expect(roto).not.toBe(MENSAJES_CSS);
+    expect(defectosDelCompositorEnEscritorio(roto)).toContainEqual(expect.stringContaining('número fijo'));
+  });
+
+  /**
+   * CONTROL NEGATIVO DEL PROPIO COMPROBADOR. La hoja declara `height` dos veces y la que se aplica
+   * en Chrome es la SEGUNDA: si el comprobador mirase sólo la primera, esta mutación —arreglada
+   * arriba, rota abajo— pasaría en verde y la consola volvería al defecto sin que nadie lo viera.
+   */
+  it('CONTROL NEGATIVO — marca la hoja arreglada arriba y rota abajo, que es la que manda', () => {
+    const roto = MENSAJES_CSS.replace(
+      'height: clamp(430px, calc(100dvh - var(--messenger-tope, 330px) - 34px), 980px);',
+      'height: 620px;',
+    );
+    expect(roto).not.toBe(MENSAJES_CSS);
+    expect(defectosDelCompositorEnEscritorio(roto)).toContainEqual(expect.stringContaining('no depende de la ventana'));
+  });
+
+  it('CONTROL NEGATIVO — marca la caja de scroll sin `min-height: 0`, que deja el `height` de adorno', () => {
+    const roto = MENSAJES_CSS.replace(
+      '.messenger-thread-scroll { display: flex; min-height: 0;',
+      '.messenger-thread-scroll { display: flex;',
+    );
+    expect(roto).not.toBe(MENSAJES_CSS);
+    expect(defectosDelCompositorEnEscritorio(roto)).toContainEqual(expect.stringContaining('no es la caja con scroll'));
+  });
+});
+
+describe('la cabecera del hilo en el teléfono', () => {
+  it('se apila en vez de escribir el alias en vertical', () => {
+    expect(defectosDeLaCabeceraEstrecha(MENSAJES_CSS)).toEqual([]);
+  });
+
+  it('CONTROL NEGATIVO — marca la vuelta a la fila de tres columnas', () => {
+    const roto = MENSAJES_CSS.replace(
+      '.messenger-thread-head { align-items: stretch; flex-direction: column; gap: 10px; }',
+      '.messenger-thread-head { gap: 10px; }',
+    );
+    expect(roto).not.toBe(MENSAJES_CSS);
+    expect(defectosDeLaCabeceraEstrecha(roto)).toContainEqual(expect.stringContaining('sigue siendo una fila'));
+  });
+
+  it('CONTROL NEGATIVO — marca el texto sin `break-word`, que vuelve a partir dentro de la palabra', () => {
+    const roto = MENSAJES_CSS.replace(
+      '.messenger-thread-identity h2, .messenger-thread-identity .eyebrow { overflow-wrap: break-word; }',
+      '',
+    );
+    expect(roto).not.toBe(MENSAJES_CSS);
+    expect(defectosDeLaCabeceraEstrecha(roto)).toContainEqual(expect.stringContaining('DENTRO de la palabra'));
   });
 });

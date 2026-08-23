@@ -10,6 +10,7 @@ import type {
   ConfigurationSnapshot,
   ConfigMutation,
   FleetActivitySnapshot,
+  MessageDetail,
   MessagePage,
   OriginRelayPage,
   ObservabilitySnapshot,
@@ -196,6 +197,23 @@ export class CauceApi {
 
   listMessages(): Promise<MessagePage> {
     return this.request('/v3/console/messages');
+  }
+
+  /**
+   * El mensaje ENTERO, con su cuerpo sin recortar.
+   *
+   * `listMessages` devuelve `left(body,240)`: en el hilo se leía «…El dominio real es
+   * stevenvallejo» cortado en seco y no había forma de ver el resto. El detalle lo pide acá.
+   *
+   * 🔴 Va por `/v3/console/...` y NO por `/v3/messages/:id`, que existe en el gateway desde antes y
+   * devuelve lo mismo. El motivo no es de gusto: `consola.humanizar.tech` publica una LISTA BLANCA
+   * en el borde (`ops/console-login/patch-caddy-lista-blanca.py`) que sólo deja pasar `/v3/auth/*`,
+   * `/v3/status` y `/v3/console/*`; todo el resto de `/v3/*` es superficie máquina-a-máquina del
+   * bus y se corta con 404 antes de llegar al gateway. Llamar a `/v3/messages/:id` desde la SPA
+   * daría 404 en producción y 200 en desarrollo, que es la peor de las dos.
+   */
+  getMessage(messageId: string): Promise<MessageDetail> {
+    return this.request(`/v3/console/messages/${encodeURIComponent(messageId)}`);
   }
 
   publishMessage(input: PublishMessageInput): Promise<PublishResult> {

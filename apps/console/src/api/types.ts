@@ -122,6 +122,26 @@ export interface MessageView {
   deliveries?: DeliveryView[] | null;
 }
 
+/**
+ * `GET /v3/console/messages/:messageId` — el mensaje entero, con el cuerpo SIN recortar.
+ *
+ * `body` es `jsonb` en la base y su forma depende de quién publicó (`text` en los adaptadores,
+ * `prompt` en los encargos, y filas con otra forma). Se tipa como `unknown` a propósito: la
+ * consola lo interpreta en `features/terminal/cuerpo-del-mensaje.ts` y ahí está escrito qué hace
+ * cuando la forma no es ninguna de las conocidas.
+ */
+export interface MessageDetail {
+  id?: string | null;
+  message_id?: string | null;
+  trace_id?: string | null;
+  tenant_id?: string | null;
+  room_id?: string | null;
+  actor_alias?: string | null;
+  body?: unknown;
+  lane?: JobLane | null;
+  created_at?: string | null;
+}
+
 export interface MessagePage {
   items?: MessageView[] | null;
   next_cursor?: string | null;

@@ -481,7 +481,13 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .transcript-delivery { display: flex; width: 100%; align-items: center; gap: 6px; margin-top: 10px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: #09111d; color: var(--faint); font-size: .56rem; text-align: left; cursor: pointer; }
 .transcript-delivery > span:last-child { margin-left: auto; }
 .delivery-state-icon { color: var(--blue); }
-.transcript-output-note { display: inline-block; margin-top: 7px; color: var(--faint); font-size: .57rem; }
+/* Botón, no `span`: hasta el 2026-08-23 la mitad del hilo —todo lo que escribe el agente, que no
+   tiene entrega para este par— no se podía seleccionar y clicarla no cambiaba el detalle. */
+.transcript-output-note { display: inline-block; margin-top: 7px; padding: 0; border: 0; border-bottom: 1px dotted var(--border-strong); background: none; color: var(--faint); font-size: .57rem; text-align: left; cursor: pointer; }
+.transcript-output-note:hover { color: var(--muted); }
+/* El corte del servidor, rotulado en la burbuja: `left(body,240)` en `listMessages`. */
+.transcript-truncado { display: flex; gap: 5px; align-items: flex-start; margin: -4px 0 8px; color: var(--amber); font-size: .57rem; line-height: 1.5; }
+.transcript-truncado svg { flex: none; margin-top: 2px; }
 .terminal-composer { padding: 12px 14px 14px; border-top: 1px solid var(--border); background: #0b1320; }
 .terminal-composer > label { display: block; margin-bottom: 6px; color: var(--faint); font-size: .58rem; letter-spacing: .06em; text-transform: uppercase; }
 .terminal-composer textarea { min-height: 74px; margin: 0; border-color: #2a4565; background: #070d16; font-family: "SFMono-Regular", Consolas, monospace; font-size: .74rem; }

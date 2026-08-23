@@ -7,6 +7,18 @@ import { renderWithApi } from '../../test/render';
 import type { QueueItem } from '../../api/types';
 
 /**
+ * Aprieta el botón y CONFIRMA. Desde el 2026-08-23 ninguna de las dos acciones sale al servidor
+ * con un solo clic: es producción viva y un replay reinyecta trabajo en la cola de un agente que
+ * está corriendo. La confirmación se prueba de frente más abajo («un solo clic NO reinyecta»);
+ * este ayudante existe para que las pruebas de la ACCIÓN sigan hablando de la acción.
+ */
+async function confirmar(user: ReturnType<typeof userEvent.setup>, boton: HTMLElement) {
+  await user.click(boton);
+  const dialogo = await screen.findByRole('alertdialog');
+  await user.click(within(dialogo).getByRole('button', { name: /^sí,/i }));
+}
+
+/**
  * `DeliveryTable` se extrajo de `QueuesPage` el 2026-08-22 para que la vista de mensajes pueda
  * montar la MISMA tabla —con las mismas acciones— en vez de una copia. Estas pruebas fijan el
  * contrato de esa reutilización: quien la monta pasa las filas y los permisos, y recibe el aviso de
@@ -29,7 +41,7 @@ it('la monta cualquier vista con sus propias filas y avisa a su dueño que hay q
     <DeliveryTable rows={[DEAD, LIVE]} canReplay canCancel onChanged={() => { recargas += 1; }} />,
   );
 
-  await user.click(screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
+  await confirmar(user, screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
 
   expect(await screen.findByText(/Replay encolado/)).toBeInTheDocument();
   expect(replayed).toBe('delivery-dead-1');
@@ -68,7 +80,7 @@ it('dice qué pasó cuando el servidor rechaza el replay, en vez de callarse', a
   const user = userEvent.setup();
   renderWithApi(<DeliveryTable rows={[DEAD]} canReplay canCancel onChanged={() => undefined} />);
 
-  await user.click(screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
+  await confirmar(user, screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
   expect(await screen.findByText(/Replay falló/)).toHaveTextContent(/ya fue reencolada/i);
 });
 
@@ -94,7 +106,7 @@ it('🔴 ofrece replay en «failed», no sólo en «dead»: la extracción no pu
   renderWithApi(<DeliveryTable rows={[FAILED]} canReplay canCancel onChanged={() => undefined} />);
 
   const fila = screen.getByRole('row', { name: /socrates/ });
-  await user.click(within(fila).getByRole('button', { name: /replay delivery delivery-failed-1/i }));
+  await confirmar(user, within(fila).getByRole('button', { name: /replay delivery delivery-failed-1/i }));
   expect(await screen.findByText(/Replay encolado/)).toBeInTheDocument();
   expect(replayed).toBe('delivery-failed-1');
   // Y no se le ofrece cancelar: una entrega fallida ya no está viva.
