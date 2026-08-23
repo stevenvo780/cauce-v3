@@ -2,6 +2,10 @@ import type {
   AdapterPage,
   AgentChainSnapshot,
   AgentDirective,
+  AgentDocumentContent,
+  AgentDocumentGuardado,
+  AgentDocumentKind,
+  AgentDocumentsMap,
   RoleBriefHistory,
   AuditPage,
   CancelResult,
@@ -488,6 +492,64 @@ export class CauceApi {
       }
       throw error;
     }
+  }
+
+  /**
+   * El INVENTARIO de ficheros que gobiernan a un alias: qué fichero es cuál y dónde vive.
+   *
+   * Como `getAgentDirective`, un gateway que todavía no publica la ruta baja a
+   * `publicado: false` y NO a lista vacía. La diferencia importa: «no se miró» y «no tiene» se
+   * pintan igual de seguros y sólo uno de los dos es un hecho.
+   */
+  async getAgentDocuments(alias: string): Promise<AgentDocumentsMap> {
+    const ruta = `/v3/console/agents/${encodeURIComponent(alias)}/documents`;
+    try {
+      const cuerpo = await this.request<Omit<AgentDocumentsMap, 'publicado'>>(ruta);
+      return { ...cuerpo, publicado: true };
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
+        return {
+          publicado: false,
+          motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
+        };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * El CONTENIDO de un documento. Se pide por `kind`, NUNCA por ruta: la ruta la deriva el
+   * servidor de hechos medidos dentro del contenedor, y que el navegador no pueda nombrar un
+   * fichero es justamente lo que impide pedir `/etc/shadow`.
+   *
+   * Los errores NO se tragan aquí y es deliberado: un 409 («no está medido»), un 503 («no hay
+   * canal hasta el agente») y un 403 («este fichero no se sirve») dicen tres cosas distintas y la
+   * pantalla tiene que poder repetir cuál fue. Convertirlos todos en «no disponible» sería
+   * borrar justo la información que hace falta para arreglarlo.
+   */
+  async getAgentDocumentContent(alias: string, kind: AgentDocumentKind): Promise<AgentDocumentContent> {
+    return this.request<AgentDocumentContent>(
+      `/v3/console/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
+    );
+  }
+
+  /**
+   * Guarda un documento. `expectedSha` es la huella de lo que se abrió: si el fichero cambió
+   * mientras se editaba, el servidor contesta 409 y NO escribe, en vez de dejar que gane el
+   * último en pulsar guardar. Es la misma lección que `expected_revision` en la configuración,
+   * y aquí pesa más porque lo que se pierde es prosa que no está en ningún otro sitio.
+   */
+  async putAgentDocumentContent(
+    alias: string, kind: AgentDocumentKind, content: string, expectedSha?: string,
+  ): Promise<AgentDocumentGuardado> {
+    return this.request<AgentDocumentGuardado>(
+      `/v3/console/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, ...(expectedSha ? { expected_sha: expectedSha } : {}) }),
+      },
+    );
   }
 
   async getTerminalCapability(): Promise<TerminalCapability> {

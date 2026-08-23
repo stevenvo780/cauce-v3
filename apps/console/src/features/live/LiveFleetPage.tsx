@@ -833,7 +833,7 @@ function leerQuery(): { key: string; tab: DrawerTab; trace?: string } | null {
   const key = params.get('agente');
   if (!key) return null;
   const tab = params.get('pestana');
-  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'cadena', 'rol'];
+  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'cadena', 'rol', 'ficheros'];
   return {
     key,
     tab: valida.includes(tab as DrawerTab) ? tab as DrawerTab : 'ahora',

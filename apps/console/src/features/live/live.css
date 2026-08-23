@@ -797,3 +797,143 @@ tr[data-clickable='true'] { cursor: pointer; }
 .directiva-pendiente-falta { margin: 6px 0 0; color: var(--mint); font-size: .69rem; }
 .directiva-pendiente-donde { margin: 0; color: var(--faint); font-size: .67rem; }
 .directiva-pendiente-donde code { font-size: .65rem; }
+
+/* ============================================================================================
+   LOS FICHEROS QUE GOBIERNAN A UN AGENTE
+   ============================================================================================
+   Usa los MISMOS tokens que el resto del cajón (`--surface-2`, `--border`, `--mint`, `--amber`)
+   y ni un hex suelto salvo donde ya lo hacía `.directiva-aviso`: el contrato de color de esta
+   consola es por tokens y por tema, no por selector, y un hex nuevo aquí se vería bien en oscuro
+   y se rompería en claro sin que nadie lo notara.
+
+   La reja de la cabecera es `auto minmax(0,1fr) auto` con la RUTA en la columna elástica y
+   `min-width: 0`: sin eso, una ruta larga como
+   `/home/dev/.codex/cuenta-b/AGENTS.md` ensancha la fila y saca la barra horizontal al cajón
+   entero, que es el defecto que ya se corrigió dos veces en esta misma consola. */
+
+.ficheros { display: grid; gap: 12px; }
+
+.ficheros-caveat,
+.ficheros-aviso,
+.ficheros-nota {
+  display: grid;
+  align-items: start;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid #7a5a24;
+  border-radius: 10px;
+  background: rgba(208, 135, 0, .12);
+  color: #ffd9a0;
+  font-size: .71rem;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.ficheros-nota { border-color: var(--border-strong); background: var(--surface-2); color: var(--muted); grid-template-columns: minmax(0, 1fr); }
+
+.ficheros-lista { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+
+.ficheros-fila {
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.ficheros-cabecera {
+  display: grid;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.ficheros-rotulo { font-size: .78rem; font-weight: 600; }
+
+/* La ruta puede ser larga y NO debe ensanchar el cajón: se recorta con puntos suspensivos y el
+   título completo queda en el propio texto, que es seleccionable. */
+.ficheros-ruta {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--faint);
+  font-size: .64rem;
+  grid-column: 1 / -1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ficheros-modo {
+  padding: 2px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: .6rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.ficheros-modo-entero { color: var(--mint); }
+.ficheros-modo-proyectado { color: var(--amber); }
+.ficheros-modo-solo-lectura { color: var(--faint); }
+
+.ficheros-razon { margin: 7px 0 0; color: var(--muted); font-size: .7rem; }
+
+.ficheros-editor { display: grid; gap: 9px; margin-top: 10px; }
+
+.ficheros-texto {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .72rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.ficheros-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .68rem; }
+.ficheros-pie .button { margin-left: auto; }
+.ficheros-pie .button + .button { margin-left: 0; }
+
+.ficheros-ok { color: var(--mint); }
+.ficheros-fallo-linea { color: #ffb7bc; }
+
+.ficheros-fallo {
+  padding: 11px 12px;
+  border: 1px solid #74313c;
+  border-radius: 10px;
+  background: var(--red-dim);
+  color: #ffb7bc;
+  font-size: .72rem;
+}
+.ficheros-fallo p { margin: 4px 0 0; }
+
+/* El hueco declarado. Se pinta apagado a propósito: es contexto permanente, no una alarma. */
+.ficheros-hueco {
+  padding: 11px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  color: var(--muted);
+}
+.ficheros-hueco h4 { margin: 0 0 7px; color: var(--text); font-size: .74rem; }
+.ficheros-hueco ul { display: grid; gap: 7px; margin: 0; padding-left: 16px; font-size: .7rem; }
+.ficheros-hueco strong { color: var(--text); }
+
+/* Modo claro. Sin este bloque, los tres avisos de arriba quedan en su color de tema oscuro
+   —naranja pálido sobre naranja pálido, rosa sobre granate— y sobre papel blanco no se leen.
+   Es exactamente el defecto que esta hoja ya arrastró una vez con el globo del tooltip, y el que
+   `.directiva-aviso` corrige unas líneas más arriba: se copia su criterio, no sólo su forma. */
+@media (prefers-color-scheme: light) {
+  .ficheros-caveat,
+  .ficheros-aviso { border-color: #d9b978; background: #fdf2df; color: #7a4d05; }
+  .ficheros-nota { border-color: var(--border-strong); background: var(--surface-2); color: var(--muted); }
+  .ficheros-fallo { border-color: #d99aa2; background: #fdeaec; color: #8f2230; }
+  .ficheros-fallo-linea { color: #8f2230; }
+  .ficheros-texto { background: var(--surface); color: var(--text); }
+}

@@ -9,6 +9,7 @@ import { onNavClick } from '../../navigation';
 import { AgentAvatar } from './AgentAvatar';
 import { ChainPanel } from './ChainPanel';
 import { DirectivaTab } from './DirectivaTab';
+import { FicherosTab } from './FicherosTab';
 import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
@@ -28,7 +29,7 @@ import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo }
  * su propia confirmación.
  */
 
-export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'cadena' | 'rol';
+export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'cadena' | 'rol' | 'ficheros';
 
 /**
  * «Directiva» va acá y no en una vista propia: es el sitio donde el operador YA mira al bot, y el
@@ -45,6 +46,14 @@ const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
   { id: 'entregas', label: 'Entregas' },
   { id: 'cadena', label: 'Cadena' },
   { id: 'rol', label: 'Directiva' },
+  /*
+   * «Ficheros» va JUNTO a «Directiva» y no en una vista aparte, por lo mismo que «Directiva» vive
+   * en este cajón: el `role_brief` y el `CLAUDE.md` son dos capas de lo que gobierna al MISMO
+   * bot. Tenerlas en dos sitios distintos de la consola es lo que hizo que nadie notara durante
+   * meses que la autonomía estaba escrita por duplicado en los 14 alias. Steven pidió un solo
+   * sitio; esto es ese sitio.
+   */
+  { id: 'ficheros', label: 'Ficheros' },
 ];
 
 export interface AgentDrawerProps {
@@ -127,6 +136,7 @@ export function AgentDrawer({ view, tab, traceId, borradorRol, onBorradorRol, on
             onBorrador={onBorradorRol}
           />
         ) : null}
+        {tab === 'ficheros' ? <FicherosTab key={view.key} tenantId={view.tenantId} alias={view.alias} /> : null}
       </div>
 
       <footer className="agent-drawer-foot">

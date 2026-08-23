@@ -715,6 +715,78 @@ export interface AgentMemoryIndex {
   }> | null;
 }
 
+// ------------------------------------------------------------------------------------------
+// LOS FICHEROS QUE GOBIERNAN A UN AGENTE
+//
+// `GET /v3/console/agents/:alias/documents` da el INVENTARIO (qué fichero es cuál y dónde vive)
+// y `.../documents/:kind/content` da y recibe el CONTENIDO.
+//
+// La honestidad de esta pantalla depende de leer bien tres campos, porque los tres significan
+// cosas distintas y los tres se parecen a «no se puede»:
+//
+//   `facts_source`   de dónde salió la RUTA. Sólo `measured` es de fiar; el registro se equivocaba
+//                    de arnés en 5 de los 14 alias, así que con cualquier otro valor la ruta es
+//                    una pista y no un hecho, y no se sirve contenido.
+//   `editable`       el fichero ENTERO se puede escribir.
+//   `projected_fields` el fichero entero NO sale nunca, pero estos campos suyos sí. Es el caso de
+//                    `openclaw.json`, que lleva `auth` y `secrets` en el mismo documento.
+//
+// Un documento sin `editable` y sin `projected_fields` es de sólo lectura, y `reason` dice por
+// qué CON PALABRAS, que es lo que pidió Steven: un hueco explicado vale más que un botón muerto.
+// ------------------------------------------------------------------------------------------
+
+export type AgentDocumentKind = 'directive' | 'tools' | 'prompts' | 'mcp';
+
+export interface AgentDocumentItem {
+  kind: AgentDocumentKind;
+  label: string;
+  path: string;
+  format: string;
+  editable: boolean;
+  reason?: string;
+  warning?: string;
+  projected_fields?: string[] | null;
+}
+
+export interface AgentDocumentsMap {
+  /** false = este gateway no publica la ruta. NO es «este agente no tiene ficheros». */
+  publicado: boolean;
+  motivo?: string;
+  tenant_id?: string;
+  alias?: string;
+  facts_source?: 'measured' | 'registry' | 'database';
+  harness?: string;
+  home?: string | null;
+  /** Aviso de arriba del todo cuando la fuente no es una medición. */
+  caveat?: string;
+  items?: AgentDocumentItem[];
+}
+
+export interface AgentDocumentContent {
+  tenant_id: string;
+  alias: string;
+  kind: AgentDocumentKind;
+  path: string;
+  format: string;
+  /** false = el fichero todavía no existe. Se puede crear; NO es lo mismo que estar vacío. */
+  exists: boolean;
+  content: string;
+  /** Huella de lo servido. Se devuelve al guardar para que dos personas no se pisen en silencio. */
+  sha: string;
+  bytes: number;
+  editable: boolean;
+  /** true = lo que se ve es una PROYECCIÓN, no el fichero entero. */
+  projected: boolean;
+  warning?: string;
+}
+
+export interface AgentDocumentGuardado {
+  ok: boolean;
+  path: string;
+  sha: string;
+  bytes: number;
+}
+
 export interface AgentDirective {
   /**
    * false = este gateway no publica el endpoint. NO significa «el agente no tiene ficheros»:

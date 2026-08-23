@@ -76,6 +76,81 @@ export const handlers = [
    * Cuando el gateway lo publique, se cambia por el JSON real y la pantalla se llena sola: las
    * pruebas de `DirectivaTab.test.tsx` ya cubren las dos ramas.
    */
+  // ------------------------------------------------------------------------------------------
+  // LOS FICHEROS QUE GOBIERNAN A UN AGENTE
+  //
+  // El fixture enseña los DOS estados a propósito, porque los dos son reales y la pantalla tiene
+  // que distinguirlos: `kant` sirve su CLAUDE.md; el resto de los alias contesta 503, que es lo
+  // que hace hoy producción entera —el gateway todavía no tiene camino hasta el disco de un
+  // agente—. Un fixture que sirviera contenido para todos escondería justo el caso que hay que
+  // mirar antes de dar esto por bueno.
+  // ------------------------------------------------------------------------------------------
+  http.get('*/v3/console/agents/:alias/documents', ({ params }) => HttpResponse.json({
+    tenant_id: 'Steven',
+    alias: String(params.alias),
+    facts_source: 'measured',
+    harness: 'claude',
+    home: '/home/stev',
+    items: [
+      {
+        kind: 'directive',
+        label: 'CLAUDE.md (manual del sitio)',
+        path: '/home/stev/.claude/CLAUDE.md',
+        format: 'markdown',
+        editable: true,
+      },
+      {
+        kind: 'tools',
+        label: 'Herramientas y permisos (settings.json)',
+        path: '/home/stev/.claude/settings.json',
+        format: 'json',
+        editable: true,
+        warning: 'Este fichero puede contener `hooks`: órdenes que el arnés ejecuta solo. Cambiarlo equivale a ejecutar código dentro del contenedor del agente.',
+      },
+      {
+        kind: 'prompts',
+        label: 'Subagentes (~/.claude/agents)',
+        path: '/home/stev/.claude/agents',
+        format: 'markdown',
+        editable: false,
+        reason: 'Es un directorio; v1 sólo lista lo que hay, no edita fichero a fichero.',
+      },
+      {
+        kind: 'mcp',
+        label: 'Servidores MCP',
+        path: '/home/stev/.claude.json',
+        format: 'json',
+        editable: false,
+        reason: 'Los MCP viven en `.claude.json`, junto al OAuth de la cuenta y al historial de todos los proyectos. No se sirve: habría que proyectar sólo `mcpServers`.',
+      },
+    ],
+  })),
+  http.get('*/v3/console/agents/:alias/documents/:kind/content', ({ params }) => {
+    if (params.alias !== 'kant') {
+      return HttpResponse.json({
+        error: 'no_channel',
+        message: 'La consola no tiene todavía ningún camino hasta el disco de este agente. El gateway no monta el socket de docker, el relay de terminal sólo llama al gateway y nunca al revés, y kant y salva ni siquiera corren en la misma máquina.',
+      }, { status: 503 });
+    }
+    const esDirectiva = params.kind === 'directive';
+    const contenido = esDirectiva
+      ? '# Manual del sitio — kant\n\nEste fichero dice CÓMO SE TRABAJA AQUÍ: rutas, comandos y\nconvenciones. No repite quién sos ni qué podés decidir: eso es el rol declarado, y\nescribirlo dos veces es como se llega a que nadie sepa cuál manda.\n'
+      : '{\n  "permissions": {\n    "allow": ["Bash(git status)"]\n  }\n}\n';
+    return HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: params.kind,
+      path: esDirectiva ? '/home/stev/.claude/CLAUDE.md' : '/home/stev/.claude/settings.json',
+      format: esDirectiva ? 'markdown' : 'json',
+      exists: true, content: contenido, sha: 'sha-de-lo-servido',
+      bytes: contenido.length, editable: true, projected: false,
+    });
+  }),
+  http.put('*/v3/console/agents/:alias/documents/:kind/content', async ({ request }) => {
+    const cuerpo = await request.json() as { content?: string };
+    return HttpResponse.json({
+      ok: true, path: '/home/stev/.claude/CLAUDE.md',
+      sha: 'sha-nueva', bytes: (cuerpo.content ?? '').length,
+    });
+  }),
   http.get('*/v3/console/agents/:tenantId/:alias/directive', () => HttpResponse.json(
     { error: 'not_found', message: 'agent directive files are not published by this gateway yet' },
     { status: 404 },
