@@ -132,7 +132,16 @@ h1 { margin: 0; font-size: clamp(1.85rem, 4vw, 2.8rem); line-height: 1.08; lette
 .button:hover:not(:disabled) { transform: translateY(-1px); border-color: #4c6b91; background: #1b2b43; }
 .button:disabled { cursor: not-allowed; opacity: .55; }
 .button.primary { border-color: #2d7b69; background: linear-gradient(135deg, #1a6b59, #24516e); color: white; box-shadow: 0 8px 22px rgb(36 139 111 / 18%); }
-.button.secondary { background: var(--surface); color: #c6d2e6; }
+/* El color va por la variable del tema, NO literal.
+   Estaba fijo en `#c6d2e6` —un gris azulado pensado para el fondo oscuro— y el bloque de
+   `prefers-color-scheme: light` nunca lo pisaba, así que en tema claro TODOS los botones
+   secundarios de la consola quedaban con un contraste de 1.53:1 sobre blanco: ilegibles, y con
+   toda la pinta de estar deshabilitados aunque funcionaran. Medido en Chrome el 2026-08-23 sobre
+   «Cerrar sesión», «Refrescar ahora» y «Descartar los cambios», que son anteriores a este cambio:
+   no es un defecto de una pantalla concreta, es de la hoja de estilos.
+   Con `var(--text)` el botón sigue al tema en los dos sentidos; en oscuro pasa de #c6d2e6 a
+   #e9f0fc, que es el mismo tono un punto más claro. */
+.button.secondary { background: var(--surface); color: var(--text); }
 .button.small { min-height: 34px; padding: 6px 10px; font-size: .78rem; }
 
 .panel { margin-bottom: 18px; padding: 22px; border: 1px solid var(--border); border-radius: var(--radius); background: linear-gradient(145deg, rgb(16 25 42 / 96%), rgb(11 18 31 / 96%)); box-shadow: var(--shadow); }

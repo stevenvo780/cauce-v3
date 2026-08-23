@@ -721,3 +721,79 @@ tr[data-clickable='true'] { cursor: pointer; }
   .directiva-aviso[data-tono="hueco"] { background: #fdf2df; color: #7a4d05; }
   .directiva-fichero-texto { background: #ffffff; color: #33455c; }
 }
+
+/* --- El diario del rol y la vuelta atrás (dentro de la capa 1) -------------------------------
+   Va plegado y debajo del editor: el gesto normal es escribir, no auditar. Abierto empujaría el
+   botón de guardar fuera de la vista, que es como se pierde un cambio a medio redactar. */
+.historial-rol-caja > summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: .7rem;
+  font-weight: 700;
+}
+.historial-rol { display: grid; gap: 10px; margin-top: 10px; }
+
+/* «No consta quién» es un hueco del registro, no un adorno: se dice una vez, arriba, y con el
+   mismo peso que el resto del texto. Repetirlo en cada fila lo convertiría en ruido. */
+.historial-nota-actor { margin: 0; color: var(--muted); font-size: .7rem; }
+
+.historial-lista { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+
+.historial-entrada {
+  display: grid;
+  gap: 6px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+/* Quitarle el rol a un alias es lo único de esta vista que puede dejarlo sin identidad en cada
+   entrega. Se marca distinto para que no se lea como un cambio más de la lista. */
+.historial-entrada[data-clase="borrado"] { border-color: #74313c; background: var(--red-dim); }
+.historial-entrada[data-clase="sin-texto"] { opacity: .82; }
+
+.historial-entrada-head { display: grid; align-items: start; gap: 8px; grid-template-columns: auto minmax(0, 1fr); }
+.historial-entrada-head strong { font-size: .76rem; }
+.historial-entrada-icono { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 7px; background: var(--surface-2); color: var(--mint); }
+.historial-entrada-cuando { margin: 3px 0 0; color: var(--faint); font-size: .63rem; }
+.historial-entrada-cuando code { font-size: .63rem; }
+.historial-entrada-detalle { margin: 0; color: var(--muted); font-size: .71rem; }
+.historial-entrada-plantilla { margin: 0; color: var(--amber, #d08700); font-size: .68rem; }
+
+.historial-entrada-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* La ayuda va PEGADA al botón y no en un tooltip: dice que restaurar no guarda, y eso tiene que
+   leerse antes de pulsar, no después. */
+.historial-entrada-ayuda { color: var(--faint); font-size: .63rem; }
+
+.historial-rol summary { margin-top: 4px; color: var(--muted); cursor: pointer; font-size: .66rem; }
+.historial-texto {
+  max-height: 240px;
+  overflow: auto;
+  margin: 7px 0 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #070b13;
+  color: #bad0e9;
+  font-size: .65rem;
+  white-space: pre-wrap;
+}
+
+@media (prefers-color-scheme: light) {
+  .historial-texto { background: #ffffff; color: #33455c; }
+  .historial-entrada[data-clase="borrado"] { background: #fdeaec; }
+}
+
+/* --- Capa 4: lo que todavía NO se puede editar desde aquí ------------------------------------
+   Se pinta apagada y SIN botones: es un hueco rotulado, no una función a medias. Un botón que no
+   hace nada promete un efecto; este bloque promete una explicación y la cumple. */
+.directiva-pendientes { border-style: dashed; background: transparent; }
+.directiva-pendiente-lista { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.directiva-pendiente-lista > li { padding: 10px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.directiva-pendiente-lista strong { font-size: .76rem; }
+.directiva-pendiente-pedido { margin: 4px 0 0; color: var(--muted); font-size: .7rem; font-style: italic; }
+.directiva-pendiente-porque { margin: 6px 0 0; font-size: .71rem; }
+.directiva-pendiente-falta { margin: 6px 0 0; color: var(--mint); font-size: .69rem; }
+.directiva-pendiente-donde { margin: 0; color: var(--faint); font-size: .67rem; }
+.directiva-pendiente-donde code { font-size: .65rem; }

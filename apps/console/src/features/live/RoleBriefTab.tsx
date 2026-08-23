@@ -7,6 +7,7 @@ import { EmptyState } from '../../components/ui';
 import { permissionState } from '../../lib';
 import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
 import { describeConfigError } from '../config/config-change';
+import { HistorialRol } from './HistorialRol';
 import { ROLE_BRIEF_MAX, bloqueoPorRuntimeDesplegado, contarRoleBrief, tonoRoleBrief } from './role-brief';
 
 /**
@@ -270,6 +271,24 @@ export function RoleBriefTab({ tenantId, alias, borrador, onBorrador }: RoleBrie
           {aviso.text}
         </p>
       ) : null}
+
+      {/*
+       * El diario va DEBAJO del editor y plegado, no en una pestaña aparte: deshacer un cambio
+       * termina en el textarea de arriba, y mandar al operador a otra vista para volver con un
+       * texto en la mano es el mismo defecto que se corrigió trayendo el rol a este cajón.
+       *
+       * Plegado porque el gesto normal es escribir, no auditar; abierto ocuparía más que el propio
+       * editor y empujaría el botón de guardar fuera de la vista.
+       */}
+      <details className="historial-rol-caja">
+        <summary>Historial y vuelta atrás</summary>
+        <HistorialRol
+          tenantId={tenantId}
+          alias={alias}
+          soloLectura={soloLectura}
+          onRestaurar={(restaurado) => onBorrador(restaurado)}
+        />
+      </details>
     </div>
   );
 }

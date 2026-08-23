@@ -708,3 +708,57 @@ export interface AgentDirective {
   files?: AgentDirectiveFile[] | null;
   memory?: AgentMemoryIndex | null;
 }
+
+// ------------------------------------------------------------------------------------------
+// EL DIARIO DEL ROL DECLARADO — de dónde viene y qué NO trae.
+//
+// `agent_role_brief_history` la escribe un TRIGGER de la base, no el gateway. Eso importa para
+// leerla bien: atrapa TODO camino de escritura, incluidos los `UPDATE` crudos por psql que fueron
+// durante meses la única forma de tocar un rol. Es la razón por la que este diario vale como
+// registro, y no sólo lo que pasó por la consola.
+//
+// Medido contra producción el 2026-08-23 con `GET /v3/console/role-assignments/Steven/zeus/history`:
+// las entradas traen `id`, `tenant_id`, `alias`, `operation`, `previous_brief`, `new_brief`,
+// `previous_template_slug`, `new_template_slug`, `actor_tenant`, `actor_alias` y `changed_at`.
+//
+// LO QUE NO TRAE, Y HAY QUE DECIRLO EN PANTALLA: `actor_tenant` y `actor_alias` llegan NULL. Sólo
+// se rellenan si el camino de escritura declara `SET LOCAL cauce.actor_*`, y la mutación de
+// configuración —que es justamente la que usa este editor— no lo declara. O sea: el diario dice
+// QUÉ cambió y CUÁNDO, y no dice QUIÉN. Pintar un autor inventado ahí sería peor que el hueco.
+// ------------------------------------------------------------------------------------------
+
+/** Una entrada del diario: un cambio concreto del rol declarado de un alias. */
+export interface RoleBriefHistoryEntry {
+  id?: string | null;
+  tenant_id?: string | null;
+  alias?: string | null;
+  /** `update`, `insert`, `delete`… lo que declare el trigger. No se asume el juego de valores. */
+  operation?: string | null;
+  /** El texto que había ANTES. `null` = no había rol (alta), que no es lo mismo que cadena vacía. */
+  previous_brief?: string | null;
+  /** El texto que quedó DESPUÉS. `null` = se borró el rol. */
+  new_brief?: string | null;
+  previous_template_slug?: string | null;
+  new_template_slug?: string | null;
+  /** Quién lo cambió. Hoy llega NULL por todos los caminos: ver el comentario de arriba. */
+  actor_tenant?: string | null;
+  actor_alias?: string | null;
+  changed_at?: string | null;
+}
+
+export interface RoleBriefHistory {
+  /**
+   * false = este gateway no publica el diario. NO significa «este alias nunca cambió de rol».
+   * Mismo criterio que `AgentDirective.publicado`, y por la misma razón: un negativo que nadie
+   * midió no es un hecho del sistema.
+   */
+  publicado: boolean;
+  /** Por qué no se pudo leer, cuando `publicado` es false. */
+  motivo?: string;
+  observed_at?: string | null;
+  /**
+   * Las entradas tal como las mandó el servidor, SIN ordenar acá. El orden se decide en
+   * `historial-rol.ts`, que es donde se puede probar: ver `entradasMasNuevasPrimero`.
+   */
+  entries?: RoleBriefHistoryEntry[] | null;
+}

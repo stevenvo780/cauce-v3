@@ -2,7 +2,8 @@ import { delay, http, HttpResponse } from 'msw';
 import {
   adapters, agentAccountBindings, audit, configAclEdges, configMemberships, configRooms,
   configTenants, mockActivity, mockMessages, mockQueues, mockChain, mockQuotas,
-  mockStatus, originRelays, providerAccounts, registryAgents, routingCeiling, topology,
+  mockStatus, originRelays, providerAccounts, registryAgents, roleBriefHistoryKant, routingCeiling,
+  topology,
 } from './data';
 
 export const handlers = [
@@ -79,5 +80,19 @@ export const handlers = [
     { error: 'not_found', message: 'agent directive files are not published by this gateway yet' },
     { status: 404 },
   )),
+  /*
+   * El diario del rol. A diferencia de las capas 2 y 3, éste SÍ está desplegado: comprobado el
+   * 2026-08-23 contra producción, responde 200 con las entradas, y 200 con `entries: []` para un
+   * alias que nunca cambió de rol. Las dos respuestas dicen cosas distintas y las dos son ciertas.
+   *
+   * Sólo kant tiene historia acá: el resto devuelve la lista vacía, que es lo que hoy pasa en la
+   * flota de verdad —el disparador se instaló el 23 de agosto y sólo llegó a anotar dos cambios—.
+   */
+  http.get('*/v3/console/role-assignments/:tenantId/:alias/history', ({ params }) => HttpResponse.json({
+    observed_at: new Date().toISOString(),
+    tenant_id: params.tenantId,
+    alias: params.alias,
+    entries: params.alias === 'kant' ? roleBriefHistoryKant : [],
+  })),
   http.get('*/v3/console/terminal/capability', () => HttpResponse.json({ available: false, reason: 'Backend PTY no instalado en este entorno' })),
 ];
