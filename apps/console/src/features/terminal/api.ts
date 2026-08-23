@@ -8,7 +8,18 @@
  *
  * Doctrine: 404 and 501 on optional endpoints are NOT errors, they are a typed UNKNOWN.
  * Absent data is UNKNOWN, never "allowed".
+ *
+ * LA COPIA SE HABÍA DESVIADO EN LA ÚNICA CABECERA QUE DECIDE SI UNA ESCRITURA ENTRA.
+ * El gateway exige `X-CSRF-Token` a todo `/v3/` que no sea GET/HEAD/OPTIONS y venga con la cookie
+ * de consola (`registerPasswordAuth`, gancho `onRequest`). Este módulo copiaba Accept,
+ * X-Cauce-Console y Content-Type, y no copiaba esa. Resultado medido contra producción el
+ * 2026-08-23: `POST /v3/console/terminal/sessions` = 403 `se requiere un token CSRF válido`, 3 de
+ * 3, en dos alias, y la TUI no abría NUNCA. La misma petición con el token = 201 con el grant.
+ * El token es el de la sesión, así que sale del cliente compartido: duplicarlo acá sería volver a
+ * abrir la misma vía de deriva.
  */
+
+import { ApiError, cauceApi } from '../../api/client';
 
 export type PtyTargetState = 'online' | 'agent_offline' | 'not_installed' | 'unknown';
 
@@ -101,13 +112,38 @@ function errorBody(value: unknown): { message?: string; error?: string; reason?:
   };
 }
 
+/** Escritura = lo que el gancho `onRequest` del gateway considera inseguro. Misma lista, misma fuente. */
+function esEscritura(method: string | undefined): boolean {
+  return !['GET', 'HEAD', 'OPTIONS'].includes((method ?? 'GET').toUpperCase());
+}
+
+/**
+ * El token que abre la puerta CSRF, pedido al cliente compartido porque es de la SESIÓN, no del
+ * módulo. Sólo se pide en las escrituras: en una lectura el gateway no lo exige y pedirlo
+ * costaría un viaje de más contra `/v3/auth/session` por cada refresco de la lista de destinos.
+ *
+ * Un fallo de sesión sale como `TerminalApiError` y no como `ApiError`: quien llama a este módulo
+ * ramifica por `TerminalApiError`, y dejar escapar otro tipo convertiría un 401 legible en un
+ * error suelto que el panel pinta como fallo desconocido.
+ */
+async function csrfParaEscritura(): Promise<string | undefined> {
+  try {
+    return await cauceApi.csrfForMutation();
+  } catch (error) {
+    if (error instanceof ApiError) throw new TerminalApiError(error.message, error.status, error.code);
+    throw error;
+  }
+}
+
 export async function terminalRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const csrf = esEscritura(init.method) ? await csrfParaEscritura() : undefined;
   const response = await fetch(`${safeBase(import.meta.env.VITE_CAUCE_API_BASE ?? '')}${path}`, {
     ...init,
     credentials: 'include',
     headers: {
       Accept: 'application/json',
       'X-Cauce-Console': '1',
+      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
       ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...init.headers,
     },
