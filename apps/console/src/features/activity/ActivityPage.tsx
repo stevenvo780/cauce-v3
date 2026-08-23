@@ -6,8 +6,9 @@ import type {
 import { Badge, EmptyState, Panel, Time, Unknown } from '../../components/ui';
 import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import {
-  FLAG_LABEL, FLAG_TONE, WORK_STATE_LABEL, WORK_STATE_TONE, agentDisplayName, agentKeyOf, agentRowKey,
+  FLAG_LABEL, FLAG_TONE, agentDisplayName, agentKeyOf, agentRowKey, estadoDeFila,
   formatAckAge, formatInFlightAge, inFlightItemTone, presenceBadge, rowUrgency, sortByUrgency,
+  type EstadosVivos,
 } from './activity';
 
 /**
@@ -32,6 +33,14 @@ export interface FleetActivityTableProps {
   onlyKeys?: Set<string> | null;
   /** Nombre del estado filtrado, sólo para poder decirlo cuando el filtro deja la tabla vacía. */
   filterLabel?: string;
+  /**
+   * El estado del muñeco por alias (`tenant/alias`), tal y como lo derivó la página.
+   *
+   * Es lo que impide que la fila y el chip digan cosas distintas del mismo agente: sin esto, la
+   * columna ESTADO tenía que traducir el `work_state` del servidor por su cuenta y un alias
+   * caído salía «Libre» porque no tenía trabajo. Ver `estadoDeFila`.
+   */
+  estados?: EstadosVivos;
   onSelect?: (key: string | null) => void;
   /** Clic en la fila: abre el cajón de ese agente sobre la misma página, sin navegar. */
   onOpen?: (key: string) => void;
@@ -44,19 +53,19 @@ export interface FleetActivityTableProps {
  * con quince muñecos en un dibujo, encontrar a *uno* concreto por nombre es lo único que el grafo
  * hace peor que una lista.
  */
-export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabel, onSelect, onOpen }: FleetActivityTableProps) {
+export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabel, estados, onSelect, onOpen }: FleetActivityTableProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
 
   const thresholds = snapshot?.thresholds;
   const agents = useMemo(() => {
-    let ordered = sortByUrgency(snapshot?.agents ?? []);
+    let ordered = sortByUrgency(snapshot?.agents ?? [], estados);
     if (onlyKeys) ordered = ordered.filter((agent) => onlyKeys.has(agentKeyOf(agent)));
     const needle = query.trim().toLowerCase();
     if (!needle) return ordered;
     return ordered.filter((agent) => `${agent.tenant_id} ${agent.alias} ${agent.display_name ?? ''} ${agent.harness_id ?? ''}`
       .toLowerCase().includes(needle));
-  }, [snapshot, query, onlyKeys]);
+  }, [snapshot, query, onlyKeys, estados]);
 
   function toggle(key: string) {
     setExpanded((current) => {
@@ -69,7 +78,7 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
   return (
     <Panel
       title="Agentes"
-      subtitle="Ordenados por urgencia (colgado > saturado > trabajando > en cola > inactivo), no alfabéticamente: lo que hace ruido tiene que quedar arriba. Es la misma lectura del hipergrafo de arriba, en números; no dibuja las delegaciones otra vez."
+      subtitle="En el MISMO orden que los chips de arriba (caído > trabado > delegando > recibiendo > trabajando > salió de vuelo > libre), no alfabéticamente: lo que hace ruido tiene que quedar arriba. La columna «Estado» dice exactamente lo que dice el muñeco de ese alias; el subtítulo traía antes un tercer juego de rótulos. Es la misma lectura del hipergrafo, en números; no dibuja las delegaciones otra vez."
     >
       <label className="activity-search">
         <Search size={15} aria-hidden="true" />
@@ -109,7 +118,8 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
             <tbody>
               {agents.map((agent) => {
                 const key = agentRowKey(agent);
-                const urgency = rowUrgency(agent.work_state);
+                const estado = estadoDeFila(agent, estados);
+                const urgency = rowUrgency(agent.work_state, estado.live);
                 const presence = presenceBadge(agent);
                 const items = agent.in_flight_items ?? [];
                 const isExpanded = expanded.has(key);
@@ -117,6 +127,7 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
                   <FragmentRow
                     key={key}
                     agent={agent}
+                    estado={estado}
                     urgency={urgency}
                     presenceLabel={presence.label}
                     presenceTone={presence.tone}
@@ -194,7 +205,9 @@ export function ActivityExplainers({ thresholds }: { thresholds: FleetActivityTh
         <div>
           <strong>Umbrales del servidor</strong>
           <p>
-            Saturación desde {thresholds?.saturation_in_flight ?? 'UNKNOWN'} en vuelo; colgado tras{' '}
+            {/* «Trabado», la misma palabra que el chip, el veredicto, la leyenda y esta tabla.
+                Decía «colgado», que era el rótulo viejo de la columna ESTADO. */}
+            Saturación desde {thresholds?.saturation_in_flight ?? 'UNKNOWN'} en vuelo; trabado tras{' '}
             {thresholds?.stall_after_seconds ?? 'UNKNOWN'}s sin ACK aplicado. La UI no hardcodea estos números.
           </p>
         </div>
@@ -203,8 +216,9 @@ export function ActivityExplainers({ thresholds }: { thresholds: FleetActivityTh
   );
 }
 
-function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, onToggle, items, ackLookbackSeconds, highlighted, onHover, onOpen }: {
+function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expanded, onToggle, items, ackLookbackSeconds, highlighted, onHover, onOpen }: {
   agent: FleetActivityAgent;
+  estado: ReturnType<typeof estadoDeFila>;
   urgency: 'critical' | 'warning' | undefined;
   presenceLabel: string;
   presenceTone: 'online' | 'done' | 'running' | 'warning' | 'danger' | 'offline' | 'unknown' | 'info';
@@ -216,17 +230,25 @@ function FragmentRow({ agent, urgency, presenceLabel, presenceTone, expanded, on
   onHover?: (key: string | null) => void;
   onOpen?: (key: string) => void;
 }) {
-  const state = agent.work_state ?? undefined;
-  const stateLabel = state ? WORK_STATE_LABEL[state] : 'UNKNOWN';
-  const stateTone = state ? WORK_STATE_TONE[state] : 'unknown';
-  const flags = agent.flags ?? [];
+  const stateLabel = estado.label;
+  const stateTone = estado.tone;
+  /**
+   * Una señal que dice EXACTAMENTE lo que ya dice la columna de al lado se cae del recuadro.
+   *
+   * Desde que toda la fila habla el mismo idioma, `lease_expired` («Caído») y `never_connected`
+   * («Nunca conectó») emitían la misma palabra que la insignia de presencia, a una celda de
+   * distancia. Dos chips iguales no son dos hechos: son uno escrito dos veces, y el recuadro de
+   * señales existe para lo que AÑADE algo. Se comparan los rótulos y no los nombres de los flags
+   * a propósito: si mañana la presencia cambia de palabra, el chip vuelve solo.
+   */
+  const flags = (agent.flags ?? []).filter((flag) => FLAG_LABEL[flag] !== presenceLabel);
   const hasItems = items.length > 0;
   return (
     <>
       {/* Pasar el puntero por la fila resalta al muñeco en el hipergrafo de arriba: es lo que ata
           la lista al dibujo sin tener que dibujar la lista otra vez. */}
       <tr
-        data-state={agent.work_state ?? 'unknown'}
+        data-state={estado.live ?? agent.work_state ?? 'unknown'}
         data-urgency={urgency}
         data-highlighted={highlighted ? 'true' : undefined}
         className={urgency ? `row-${urgency}` : undefined}

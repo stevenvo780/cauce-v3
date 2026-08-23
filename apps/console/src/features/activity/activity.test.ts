@@ -35,8 +35,11 @@ describe('formatAckAge — el caso que no puede leerse como "recién ackeado"', 
     expect(text).toContain('1h 0m');
   });
 
-  it('falls back to UNKNOWN when even the lookback threshold is missing', () => {
-    expect(formatAckAge(null, null)).toBe('UNKNOWN (sin ACK)');
+  it('sin ventana de búsqueda lo dice en castellano, no con un UNKNOWN de base de datos', () => {
+    // Sigue siendo el mismo hecho —no hay ACK y no se sabe desde cuándo— dicho con palabras que
+    // el operador entiende sin saber qué es un `ack_lookback_seconds`.
+    expect(formatAckAge(null, null)).toBe('ningún ACK, y el servidor no dice desde cuándo');
+    expect(formatAckAge(null, null).toLowerCase()).toContain('ack');
   });
 
   it('renders a real elapsed time when the ACK is known', () => {
@@ -99,15 +102,19 @@ describe('presenceBadge', () => {
   it('distinguishes never-connected (no presence object) from a lease with unreadable expiry', () => {
     const neverConnected = agent({ presence: undefined });
     const unreadableLease = agent({ presence: { lease_until: null } });
-    expect(presenceBadge(neverConnected).label).toBe('NUNCA CONECTADO');
-    expect(presenceBadge(unreadableLease).label).toBe('UNKNOWN');
+    // Las mismas palabras que el resto de la consola: «Nunca conectó» es también el rótulo de la
+    // señal `never_connected`, y «Sin dato» no se confunde con «no hay».
+    expect(presenceBadge(neverConnected).label).toBe('Nunca conectó');
+    expect(presenceBadge(unreadableLease).label).toBe('Sin dato');
   });
 
-  it('reads ONLINE and EXPIRADO from lease_until against the clock', () => {
+  it('lee conectado/caído de lease_until contra el reloj, con la palabra del veredicto', () => {
     const online = agent({ presence: { lease_until: new Date(Date.now() + 60_000).toISOString() } });
     const expired = agent({ presence: { lease_until: new Date(Date.now() - 60_000).toISOString() } });
-    expect(presenceBadge(online).label).toBe('ONLINE');
-    expect(presenceBadge(expired).label).toBe('EXPIRADO');
+    expect(presenceBadge(online).label).toBe('Conectado');
+    // «Caído» y no «EXPIRADO»: es exactamente lo que el veredicto de arriba llama caído y lo que
+    // la leyenda del pie explica como caído. Eran tres palabras para el mismo hecho.
+    expect(presenceBadge(expired).label).toBe('Caído');
   });
 });
 

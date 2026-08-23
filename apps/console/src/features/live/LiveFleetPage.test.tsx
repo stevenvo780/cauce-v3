@@ -114,7 +114,10 @@ describe('la flota en reposo', () => {
       .map((chip) => chip.textContent?.replace(/\d+$/, '').trim());
 
     expect(etiquetas.slice(0, 7)).toEqual([
-      'Caído', 'Bloqueado', 'Delegando', 'Recibiendo', 'Trabajando', 'Salió de vuelo', 'Libre',
+      // «Trabado» y no «Bloqueado»: es la palabra que ya usaba el veredicto («trabado hace 22
+      // min»), la que usa la columna ESTADO de la tabla de abajo y la que usa el aviso de la
+      // portada. Eran cuatro palabras para el mismo hecho repartidas por tres pantallas.
+      'Caído', 'Trabado', 'Delegando', 'Recibiendo', 'Trabajando', 'Salió de vuelo', 'Libre',
     ]);
     // Y el chip que antes decía «Respondiendo» ya no existe: no había forma de saber si respondió.
     expect(etiquetas).not.toContain('Respondiendo');

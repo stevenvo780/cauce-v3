@@ -64,7 +64,26 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
     esperandoRef.current = [];
     const generation = generationRef.current;
     let resultado: RecargaResultado<T> | undefined;
-    setState((current) => ({ ...current, loading: true, error: undefined }));
+    /**
+     * 🔴 **Un reintento NO borra el fallo mientras no haya un solo dato que mostrar.**
+     *
+     * Medido en Chrome el 2026-08-23 contra un gateway que no contesta: `/live` refresca cada 4 s
+     * y la lectura vence a los 30. Cuando vencía, el `finally` de más abajo arrancaba en el acto
+     * el reintento que estaba encolado, y esta línea —que ponía `error: undefined`— borraba el
+     * fallo en el mismo tick en que se había producido. La pantalla nunca llegaba a pintar el
+     * error: volvía al cartel de carga y se quedaba ahí **para siempre**, exactamente el defecto
+     * que el vencimiento venía a arreglar. 36 s de reloj y ni una alerta, ni un botón.
+     *
+     * Con dato en mano sí se limpia: ahí el fallo ya se está contando aparte («la última lectura
+     * falló, se muestra el snapshot anterior») y la pantalla tiene algo que enseñar. Sin dato, el
+     * error es lo ÚNICO que se sabe, y esconderlo detrás de un spinner es afirmar «estoy
+     * leyendo» cuando lo comprobado es «no se pudo leer».
+     */
+    setState((current) => ({
+      ...current,
+      loading: true,
+      error: current.data === undefined ? current.error : undefined,
+    }));
     void Promise.resolve().then(() => loaderRef.current()).then(
       (data) => {
         resultado = { data };
@@ -103,8 +122,30 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
     return promesa;
   }, []);
 
+  /**
+   * 🔴 **La generación sólo avanza cuando cambia la CLAVE, no cada vez que corre el efecto.**
+   *
+   * La generación existe para tirar el resultado de una lectura que ya no interesa: la que se
+   * pidió para OTRA clave. Subirla en cada pasada del efecto convertía eso en otra cosa muy
+   * distinta —tirar el resultado de la lectura EN VUELO, aunque nadie hubiera cambiado nada— y
+   * este efecto corre dos veces por montaje.
+   *
+   * Medido en Chrome el 2026-08-23, y **también sobre el build de producción**, no sólo en dev:
+   * la petición arrancaba con `generation = 1`, el efecto volvía a correr y dejaba
+   * `generationRef` en 2, y cuando la lectura vencía a los 30 s su `setState` quedaba descartado
+   * por no coincidir. Resultado: el vencimiento funcionaba —`net::ERR_ABORTED` en el registro de
+   * red, a los 30 s clavados— y la pantalla no se enteraba nunca. 40 s de reloj sin una sola
+   * alerta, con el error ya producido y tirado a la basura.
+   *
+   * Es el mismo fallo de fondo que el resto de esta ronda: algo que se mide, se sabe y no llega
+   * a decirse.
+   */
+  const claveRef = useRef(key);
   useEffect(() => {
-    generationRef.current += 1;
+    if (claveRef.current !== key) {
+      claveRef.current = key;
+      generationRef.current += 1;
+    }
     void queueReload();
   }, [key, queueReload]);
 

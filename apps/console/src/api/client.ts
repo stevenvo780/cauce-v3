@@ -57,6 +57,64 @@ function errorBody(value: unknown): { message?: string; error?: string } {
   };
 }
 
+/**
+ * **Cuánto espera la consola a una petición antes de darla por perdida.**
+ *
+ * 🔴 Medido el 2026-08-23 contra producción, con el hipervisor robándole el 90% de la CPU a la
+ * máquina del gateway: `/live` se quedó **180 segundos** en «Leyendo la actividad de la flota…»
+ * con un panel en blanco y NADA más — sin error, sin botón, sin límite. El cuerpo de la página
+ * eran 329 caracteres: sólo el rótulo de carga.
+ *
+ * La causa no era la lentitud. Era que este fichero no tenía ni un `timeout`, ni un
+ * `AbortController`, ni un `AbortSignal`: una petición que nunca cierra deja a la vista en su
+ * rama de carga **para siempre, por construcción**. `LiveFleetPage` ya tenía escrita la salida
+ * —`if (activity.error && !snapshot) return <ErrorState onRetry={activity.reload} />`— y era
+ * inalcanzable, porque sin vencimiento nunca hay `error`.
+ *
+ * Que la máquina vaya lenta es de la máquina. Que no haya salida era del diseño.
+ *
+ * El tope es GENEROSO a propósito: con la referencia medida (`/v3/console/messages` tardó 4,9 s
+ * estrangulada) treinta segundos no corta ninguna lectura sana, y sí corta la que no va a llegar.
+ */
+export const TIEMPO_MAXIMO_MS = 30_000;
+
+function segundos(ms: number): string {
+  return `${Math.round(ms / 1000)} s`;
+}
+
+/**
+ * El error de una espera vencida. Es un `ApiError` y no un `AbortError` crudo por dos razones:
+ * cae en la MISMA rama de error que ya manejan todas las vistas, y su mensaje se lee en pantalla
+ * —`ErrorState` pinta `error.message`—, así que tiene que estar escrito en castellano y decir lo
+ * único que se puede afirmar: que no se pudo leer, no que no haya nada.
+ */
+function esperaVencida(method: string, path: string, tope: number): ApiError {
+  return new ApiError(
+    `El servidor no contestó en ${segundos(tope)} y la consola cortó la espera (${method} ${path}). `
+    + 'No quiere decir que no haya datos: quiere decir que no se pudieron leer.',
+    504,
+    'timeout',
+  );
+}
+
+/**
+ * La mitad "reloj" de la carrera contra el fetch.
+ *
+ * Pasar la señal a `fetch` no alcanza: el `fetcher` es inyectable (las pruebas y los adaptadores
+ * pasan el suyo) y un fetch que IGNORE la señal dejaría la promesa colgada igual que hoy, con el
+ * agravante de que el aborto ya habría ocurrido y nadie se enteraría. Se corre la carrera además
+ * de abortar, para que el vencimiento se note aunque quien haga la petición no lo respete.
+ */
+function corteAlVencer(signal: AbortSignal, method: string, path: string, tope: number): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    if (signal.aborted) {
+      reject(esperaVencida(method, path, tope));
+      return;
+    }
+    signal.addEventListener('abort', () => reject(esperaVencida(method, path, tope)), { once: true });
+  });
+}
+
 export class CauceApi {
   private readonly baseUrl: string;
   private readonly developmentIdentity?: { tenant: string; alias: string };
@@ -69,6 +127,8 @@ export class CauceApi {
     developmentIdentity = ['true', '1'].includes(import.meta.env.VITE_CAUCE_DEV_AUTH ?? '')
       ? { tenant: import.meta.env.VITE_CAUCE_DEV_TENANT ?? '', alias: import.meta.env.VITE_CAUCE_DEV_ALIAS ?? '' }
       : undefined,
+    /** Tope de espera por petición. Se inyecta para poder PROBARLO sin esperar medio minuto. */
+    private readonly tiempoMaximoMs: number = TIEMPO_MAXIMO_MS,
   ) {
     this.baseUrl = safeBase(baseUrl);
     if (developmentIdentity && (!developmentIdentity.tenant || !developmentIdentity.alias)) {
@@ -88,21 +148,47 @@ export class CauceApi {
     const method = init.method?.toUpperCase() ?? 'GET';
     const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(method);
     const csrfToken = unsafe && requireCsrf ? await this.csrfForMutation() : undefined;
-    const response = await (this.fetcher ?? fetch)(`${this.baseUrl}${path}`, {
-      ...init,
-      credentials: 'include',
-      headers: {
-        Accept: 'application/json',
-        'X-Cauce-Console': '1',
-        ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
-        ...(this.developmentIdentity ? {
-          'X-Cauce-Tenant': this.developmentIdentity.tenant,
-          'X-Cauce-Alias': this.developmentIdentity.alias,
-        } : {}),
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        ...init.headers,
-      },
-    });
+
+    /**
+     * El vencimiento es NUESTRO sólo si quien llama no trajo el suyo: una señal de fuera
+     * (el cierre de una vista, por ejemplo) es una cancelación deliberada y no un servidor
+     * que no contesta, y confundirlas escribiría «el servidor no contestó» cada vez que el
+     * operador cambia de pantalla.
+     */
+    const propio = init.signal || !(this.tiempoMaximoMs > 0) ? undefined : new AbortController();
+    const reloj = propio ? setTimeout(() => propio.abort(), this.tiempoMaximoMs) : undefined;
+
+    let response: Response;
+    try {
+      const peticion = (this.fetcher ?? fetch)(`${this.baseUrl}${path}`, {
+        ...init,
+        credentials: 'include',
+        signal: init.signal ?? propio?.signal,
+        headers: {
+          Accept: 'application/json',
+          'X-Cauce-Console': '1',
+          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+          ...(this.developmentIdentity ? {
+            'X-Cauce-Tenant': this.developmentIdentity.tenant,
+            'X-Cauce-Alias': this.developmentIdentity.alias,
+          } : {}),
+          ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+          ...init.headers,
+        },
+      });
+      response = propio
+        ? await Promise.race([peticion, corteAlVencer(propio.signal, method, path, this.tiempoMaximoMs)])
+        : await peticion;
+    } catch (cause) {
+      if (cause instanceof ApiError) throw cause;
+      // El fetch que SÍ respeta la señal rechaza con un `AbortError` sin traducir. Se convierte
+      // acá para que la pantalla no muestre «The operation was aborted», que no le dice nada a
+      // nadie y encima suena a que la consola hizo algo mal.
+      if (propio?.signal.aborted) throw esperaVencida(method, path, this.tiempoMaximoMs);
+      throw cause;
+    } finally {
+      if (reloj !== undefined) clearTimeout(reloj);
+    }
 
     const contentType = response.headers.get('content-type') ?? '';
     const body: unknown = response.status === 204

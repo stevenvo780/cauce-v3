@@ -97,7 +97,11 @@ it('makes the saturated agent stand out visually with its own badge and highligh
   renderWithApi(<LiveFleetPage />);
 
   const jarvisRow = await screen.findByRole('row', { name: /jarvis/i });
-  expect(within(jarvisRow).getByText('SATURADO')).toBeInTheDocument();
+  // La saturación es una SEÑAL, no un octavo estado: el estado dice «Trabajando» —la misma
+  // palabra que el chip y la leyenda— y el chip de señal dice «Saturado». Antes la fila emitía
+  // «SATURADO» dos veces, una en cada sitio, y ninguna de las dos coincidía con la leyenda.
+  expect(within(jarvisRow).getByText('Trabajando')).toBeInTheDocument();
+  expect(within(jarvisRow).getByText('Saturado')).toBeInTheDocument();
   expect(jarvisRow.className).toContain('row-warning');
 
   const salvaRow = screen.getByRole('row', { name: /salva/i });
@@ -110,12 +114,23 @@ it('makes the stalled (incident) agent stand out even harder, and stacks its fla
   renderWithApi(<LiveFleetPage />);
 
   const midasRow = await screen.findByRole('row', { name: /midas/i });
-  expect(within(midasRow).getByText('COLGADO')).toBeInTheDocument();
+  /*
+   * midas está `stalled` Y con el lease vencido. La fila dice «Caído» porque es lo que dice su
+   * muñeco: la precedencia de `liveState` pone el lease vencido por encima del estancamiento —un
+   * agente sin lease no va a desatascar nada— y el chip de la cinta lo cuenta como caído. La fila
+   * y el chip tienen que decir LO MISMO; antes decían `COLGADO` y «Caído».
+   */
+  const celdaEstado = within(midasRow).getAllByRole('cell')[2];
+  expect(celdaEstado).toHaveTextContent('Caído');
+  expect(midasRow).toHaveAttribute('data-state', 'down');
   expect(midasRow.className).toContain('row-critical');
-  // El agente está saturado Y colgado a la vez: las dos señales tienen que convivir, no pisarse.
+  // El agente está saturado Y sin acusar recibo a la vez: las señales conviven, no se pisan.
   expect(within(midasRow).getByText('Saturado')).toBeInTheDocument();
-  expect(within(midasRow).getByText('ACK detenido')).toBeInTheDocument();
-  expect(within(midasRow).getByText('Lease vencido')).toBeInTheDocument();
+  expect(within(midasRow).getByText('Sin ACK')).toBeInTheDocument();
+  expect(within(midasRow).getByText('ACK vencido')).toBeInTheDocument();
+  // Y el lease vencido NO se dice tres veces: el chip `lease_expired` se cae cuando la columna de
+  // presencia ya emite esa misma palabra.
+  expect(within(midasRow).getAllByText('Caído')).toHaveLength(2);
 });
 
 it('never renders a null seconds_since_last_ack as zero or a dash: it reads as an explicit ACK gap', async () => {
@@ -138,8 +153,8 @@ it('reflects totals.flagged without inventing zeroes for absent keys, and keeps 
   // los siete estados que la página ya dibuja— se quitó por redundante.
   const flaggedPanel = (await screen.findByText('Señales activas')).closest('section')!;
   expect(within(flaggedPanel).getByText('Saturado').closest('.chip')).toHaveTextContent('2');
-  expect(within(flaggedPanel).getByText('Lease vencido').closest('.chip')).toHaveTextContent('1');
-  expect(within(flaggedPanel).queryByText('Nunca conectado')).not.toBeInTheDocument();
+  expect(within(flaggedPanel).getByText('Caído').closest('.chip')).toHaveTextContent('1');
+  expect(within(flaggedPanel).queryByText('Nunca conectó')).not.toBeInTheDocument();
 
   expect(screen.queryByText('Por estado')).not.toBeInTheDocument();
 });

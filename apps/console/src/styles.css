@@ -32,6 +32,15 @@
   --tooltip-bg: #16243a;
   --radius: 16px;
   --shadow: 0 18px 50px rgb(0 0 0 / 24%);
+  /*
+   * Alto de la barra de navegación inferior en pantalla estrecha (dos filas de cuatro entradas).
+   * Es un TOKEN y no un número suelto porque hay otra hoja que tiene que anclarse justo encima:
+   * `.messenger-composer` de `features/messages/messages.css` vive `position: fixed` a esta misma
+   * altura, y cuando el número estaba copiado a mano en los dos sitios, cambiar uno metía el botón
+   * «Enviar» debajo del menú. Lo comprueba `features/messages/composer-anclado.test.ts`, que lee
+   * las dos hojas y exige que digan LO MISMO.
+   */
+  --nav-inferior-alto: 130px;
 }
 
 * { box-sizing: border-box; }
@@ -186,6 +195,10 @@ tbody tr.fila-enfocada { background: var(--blue-dim); box-shadow: inset 3px 0 0 
 .empty-state { margin: 0; padding: 28px; border: 1px dashed var(--border-strong); border-radius: 11px; color: var(--muted); text-align: center; }
 .state-card { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 12px; padding: 30px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--muted); }
 .state-card p { margin: 0; }
+.state-card-texto { display: grid; gap: 6px; max-width: 52ch; text-align: center; }
+/* La segunda línea de una espera larga: es una explicación, no un titular, y no puede competir
+   con el rótulo que ya está ahí. Ver `LoadingState` en components/ui.tsx. */
+.state-card-lento { color: var(--faint); font-size: .78rem; }
 .state-error { flex-wrap: wrap; color: var(--red); }
 .state-error div p { margin-top: 5px; color: var(--muted); }
 .spinner { width: 22px; height: 22px; border: 2px solid var(--border-strong); border-top-color: var(--mint); border-radius: 50%; animation: spin .8s linear infinite; }
@@ -633,19 +646,32 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
 }
 
 @media (max-width: 760px) {
-  .app-shell { display: block; padding-bottom: 70px; }
-  .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: 66px; padding: 7px 8px; border-top: 1px solid var(--border); border-right: 0; }
+  /*
+   * 🔴 LA BARRA DE NAVEGACIÓN DE MÓVIL, MEDIDA A 360 px EL 2026-08-23.
+   *
+   * Los ocho rótulos se PISABAN unos con otros y se leían como texto corrupto: «Portada  La flota
+   * ahoCuentas y cuotaMensajesQueues &SDBlQles y a». Sólo «Portada» quedaba legible. Cinco pares
+   * de rótulos adyacentes se solapaban (getBoundingClientRect: hasta 42,2 px de solape entre
+   * «Señales y auditoría» y «Configuración y altas»), porque cada `<a>` medía 54 px de caja con
+   * 62–81 px de texto en `nowrap` dentro y sin recorte. Y como la tira sumaba 493 px de contenido
+   * en 344 de hueco, «Configuración y altas» y «Ultimate Terminal» sólo se alcanzaban
+   * arrastrando, sin una sola señal de que se pudiera arrastrar. Es la navegación primaria de
+   * TODAS las vistas, y el dueño entra desde el móvil.
+   *
+   * Cuatro columnas de reja, el rótulo con permiso para partirse en dos renglones y ni un píxel
+   * de scroll: las ocho entradas caben, se leen enteras y se ven todas a la vez. La barra pasa de
+   * 66 a ~128 px de alto, y `padding-bottom` del shell la acompaña para que no tape el pie de la
+   * página.
+   */
+  .app-shell { display: block; padding-bottom: calc(var(--nav-inferior-alto) + 14px); }
+  .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: var(--nav-inferior-alto); padding: 6px; border-top: 1px solid var(--border); border-right: 0; }
   .brand, .authority-note { display: none; }
-  .sidebar nav ul { display: flex; overflow-x: auto; gap: 4px; }
-  /* `flex: 1` a secas es `1 1 0%`: cada entrada arranca en cero y se reparte el ancho, así que el
-     rótulo —que va `nowrap`— se sale de su propia celda y se monta encima del de al lado. MEDIDO a
-     360px: 5 solapes y 6 rótulos más anchos que su `li`. Con `1 0 auto` cada entrada mide lo que
-     mide su texto y la tira scrollea (ya declaraba `overflow-x: auto`), que es lo que hacía falta
-     para ocho entradas en un móvil. Se veía sólo desde que `/config` dejó de desbordar la página:
-     antes el documento medía 2859px y la barra tenía sitio de sobra. */
-  .sidebar nav li { min-width: 56px; flex: 1 0 auto; }
-  .sidebar nav a { gap: 2px; padding: 6px 4px; font-size: .56rem; }
-  .sidebar nav a span { display: block; white-space: nowrap; }
+  .sidebar nav ul { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 57px; overflow: visible; gap: 2px; }
+  .sidebar nav li { min-width: 0; }
+  .sidebar nav a { min-width: 0; height: 100%; justify-content: center; gap: 3px; padding: 5px 3px; font-size: .58rem; line-height: 1.15; text-align: center; }
+  /* Los dos renglones se RESERVAN aunque el rótulo ocupe uno solo: si no, la altura de la barra
+     depende de qué palabras entren y el ancla del compositor deja de ser un número. */
+  .sidebar nav a span { display: block; min-width: 0; max-width: 100%; min-height: 2.3em; overflow-wrap: break-word; white-space: normal; }
   .sidebar nav a { flex-direction: column; }
   .topbar { padding: 0 16px; }
   .topbar-meta span:not(.mock-flag) { display: none; }

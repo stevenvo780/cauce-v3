@@ -1,5 +1,6 @@
 import { AlertTriangle, RefreshCw } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { TIEMPO_MAXIMO_MS } from '../api/client';
 import type { ConsoleAccess, ConsolePermission } from '../api/types';
 import { display, permissionState, timestamp, UNKNOWN } from '../lib';
 
@@ -80,22 +81,83 @@ export function Time({ value }: { value: unknown }) {
   );
 }
 
-export function LoadingState({ label = 'Cargando datos del servidor…' }: { label?: string }) {
+/**
+ * A partir de cuándo un rótulo de carga deja de ser informativo y pasa a ser un spinner mudo.
+ *
+ * No es un número de gusto: la referencia medida contra producción estrangulada (90% de steal
+ * time) es `/v3/console/activity` en 0,8 s y `/v3/console/messages` en 4,9 s. Doce segundos no
+ * interrumpen ninguna lectura sana y sí llegan mucho antes que el corte de `TIEMPO_MAXIMO_MS`,
+ * que es justo lo que hace falta para poder anunciarlo.
+ */
+export const PACIENCIA_MS = 12_000;
+
+/**
+ * **Una espera que dice cuánto lleva esperando y qué va a pasar si no llega.**
+ *
+ * 🔴 Lo que había era un `<p>` y un spinner, y con el gateway lento eso es una pantalla que no
+ * dice nada durante minutos: medido el 2026-08-23, `/live` estuvo 180 s así. El operador no
+ * puede distinguir «va lento» de «se colgó», y las dos se ven exactamente igual.
+ *
+ * Ahora, pasada `PACIENCIA_MS`, la tarjeta añade la segunda línea: qué está pasando y que la
+ * espera tiene final. El corte de verdad lo pone el cliente HTTP (`TIEMPO_MAXIMO_MS`), y esta
+ * frase promete exactamente eso y ni un segundo más — el número sale de la misma constante, no
+ * de una copia a mano que un día deje de ser cierta.
+ */
+export function LoadingState({ label = 'Cargando datos del servidor…', paciencia = PACIENCIA_MS }: {
+  label?: string;
+  /** Sólo para las pruebas y para quien tenga una espera legítimamente más larga. `0` la apaga. */
+  paciencia?: number;
+}) {
+  const [tardando, setTardando] = useState(false);
+  useEffect(() => {
+    setTardando(false);
+    if (!(paciencia > 0)) return undefined;
+    const reloj = setTimeout(() => setTardando(true), paciencia);
+    return () => clearTimeout(reloj);
+  }, [paciencia]);
+
   return (
     <div className="state-card" role="status" aria-live="polite">
       <span className="spinner" aria-hidden="true" />
-      <p>{label}</p>
+      <div className="state-card-texto">
+        <p>{label}</p>
+        {tardando ? (
+          <p className="state-card-lento">
+            Está tardando más de lo normal: el gateway va lento. La espera se corta sola a los{' '}
+            {Math.round(TIEMPO_MAXIMO_MS / 1000)} s y vas a poder reintentar.
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-export function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
+export function ErrorState({ error, onRetry, reintentando = false }: {
+  error: Error;
+  onRetry: () => void;
+  /**
+   * Hay una lectura en curso ahora mismo.
+   *
+   * Medido en Chrome el 2026-08-23 contra un gateway mudo: al pulsar «Reintentar» la vista ya
+   * tenía otra lectura en vuelo, así que la nueva se encola y **no pasa nada visible hasta 30 s
+   * después** — comprobado que al final SÍ se recupera, pero medio minuto mirando un botón que
+   * parece muerto es indistinguible de un botón que no hace nada. El botón no se deshabilita
+   * (con el refresco automático estaría inerte casi siempre): se dice lo que está pasando.
+   */
+  reintentando?: boolean;
+}) {
   return (
     <div className="state-card state-error" role="alert">
       <AlertTriangle aria-hidden="true" />
       <div>
         <strong>No se pudo leer Cauce V3</strong>
         <p>{error.message || UNKNOWN}</p>
+        {reintentando ? (
+          <p className="state-card-lento">
+            Hay una lectura en curso. Si el servidor tampoco contesta a ésta, se corta a los{' '}
+            {Math.round(TIEMPO_MAXIMO_MS / 1000)} s y este mensaje se queda.
+          </p>
+        ) : null}
       </div>
       <button type="button" className="button secondary" onClick={onRetry}>
         <RefreshCw size={16} aria-hidden="true" /> Reintentar

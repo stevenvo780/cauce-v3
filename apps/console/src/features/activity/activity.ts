@@ -1,17 +1,64 @@
 import type { FleetActivityAgent, FleetActivityFlag, FleetWorkState } from '../../api/types';
 import { formatDurationSeconds, leaseState } from '../../lib';
+import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
 
 export { formatDurationSeconds } from '../../lib';
 
 /** Mismo vocabulario de tonos que ya usa <Badge>; no se agrega ninguno nuevo. */
 export type BadgeTone = 'online' | 'done' | 'running' | 'warning' | 'danger' | 'offline' | 'unknown' | 'info';
 
+/**
+ * **UN SOLO VOCABULARIO PARA TODA LA PANTALLA.**
+ *
+ * 🔴 Medido el 2026-08-23 en `/live` con 18 alias: la MISMA situación se llamaba de tres maneras
+ * en el mismo scroll. Arriba —veredicto, chips, muñecos y la leyenda del pie— siete palabras en
+ * castellano (`LIVE_STATE_META`, en `../live/agent-state.ts`). Abajo, esta tabla, cinco palabras
+ * en mayúsculas que sólo coincidían con aquéllas en una. Choques concretos que se veían a la vez:
+ *
+ *   - `idle` era «Libre» en el chip y en la leyenda —que además dedica un párrafo a enseñar la
+ *     palabra: «Libre no es caído ni es sin reportar»— y `INACTIVO` en la tabla, donde «Libre»
+ *     no aparecía nunca.
+ *   - `stalled` era «Bloqueado» en el chip, `COLGADO` en la tabla, «detenido» en el aviso de la
+ *     portada y `stalled` crudo en el detalle de ese aviso: cuatro nombres para una condición.
+ *   - `queued` era `EN COLA` acá y «Recibiendo» arriba.
+ *
+ * El operador no puede saber si son estados distintos o el mismo. Estas etiquetas se eligen para
+ * COINCIDIR, palabra por palabra, con las que explica la leyenda:
+ *
+ *     servidor      esta tabla      chip, mapa y leyenda
+ *     ────────      ──────────      ────────────────────
+ *     idle          Libre           Libre
+ *     queued        Recibiendo      Recibiendo
+ *     working       Trabajando      Trabajando
+ *     saturated     Trabajando      Trabajando + la señal «Saturado»
+ *     stalled       Trabado         Trabado
+ *
+ * `saturated` dice «Trabajando» y no «Saturado» porque entre los siete estados del muñeco no hay
+ * ninguno que se llame así: la saturación es una SEÑAL (`FLAG_LABEL.saturated`), y el servidor la
+ * manda por separado en `flags`. Poniendo «Saturado» en la columna de estado, la misma fila decía
+ * «Saturado» dos veces —una en el estado y otra en la señal— y encima inventaba un octavo estado
+ * que la leyenda no explica. No se pierde nada: la señal sigue en su chip, la fila sigue
+ * pintándose de ámbar (`rowUrgency`) y el orden de triage sigue poniéndola por encima de las que
+ * sólo trabajan (`STATE_RANK`).
+ *
+ * No se pierde ninguna distinción: `work_state` (cinco valores del servidor) y `LiveState`
+ * (siete, derivados) siguen siendo particiones distintas y se calculan igual que antes. Lo que se
+ * unifica es la PALABRA con la que se nombra un mismo hecho.
+ *
+ * `queued` NO se llama «Esperando turno» a propósito, por tentador que sea: esa frase ya está
+ * tomada en esta misma pantalla por la cifra de ENTREGAS `pending` + `retry` del veredicto, cuyo
+ * tooltip dice literalmente «es la única definición de "en cola" que queda en la consola».
+ * Reutilizarla acá pondría la misma frase con dos números distintos a un palmo de distancia, que
+ * es exactamente el defecto de al lado.
+ *
+ * Dejan de ir en MAYÚSCULAS: la mayúscula sostenida se lee más despacio y acá hay quince filas.
+ */
 export const WORK_STATE_LABEL: Record<FleetWorkState, string> = {
-  idle: 'INACTIVO',
-  queued: 'EN COLA',
-  working: 'TRABAJANDO',
-  saturated: 'SATURADO',
-  stalled: 'COLGADO',
+  idle: 'Libre',
+  queued: 'Recibiendo',
+  working: 'Trabajando',
+  saturated: 'Trabajando',
+  stalled: 'Trabado',
 };
 
 export const WORK_STATE_TONE: Record<FleetWorkState, BadgeTone> = {
@@ -22,14 +69,25 @@ export const WORK_STATE_TONE: Record<FleetWorkState, BadgeTone> = {
   stalled: 'danger',
 };
 
+/**
+ * Las señales, con las MISMAS palabras que el resto de la pantalla.
+ *
+ * `lease_expired` pasa a decirse «Caído» porque es exactamente lo que el veredicto de arriba
+ * llama caído (`motivoDe`, en `agent-state.ts`) y lo que la leyenda explica como caído: «Lease
+ * vencido» era una tercera palabra para el mismo hecho. `ack_stalled` deja de decir «ACK
+ * detenido» porque «detenido» estaba tomado por el aviso de la portada para OTRA cosa —un agente
+ * trabado—, y dos cosas distintas con la misma palabra en dos pantallas es un homónimo, no un
+ * vocabulario. `unregistered` pasa a «Fuera del registro», que es como ya se llama el chip de
+ * deriva de la cinta de triage.
+ */
 export const FLAG_LABEL: Record<FleetActivityFlag, string> = {
   saturated: 'Saturado',
-  ack_stalled: 'ACK detenido',
+  ack_stalled: 'Sin ACK',
   overdue_acks: 'ACK vencido',
-  lease_expired: 'Lease vencido',
-  never_connected: 'Nunca conectado',
-  unregistered: 'No registrado',
-  queued_without_consumer: 'Cola sin consumidor',
+  lease_expired: 'Caído',
+  never_connected: 'Nunca conectó',
+  unregistered: 'Fuera del registro',
+  queued_without_consumer: 'Cola sin quien la consuma',
 };
 
 export const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
@@ -42,9 +100,62 @@ export const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
   queued_without_consumer: 'warning',
 };
 
-/** Traduce un work_state a la forma en que la fila lo grita: usado como data-attribute y para
- *  aplicar el resaltado visual de "saturado"/"colgado" definido en styles.css. */
-export function rowUrgency(state: FleetWorkState | null | undefined): 'critical' | 'warning' | undefined {
+/**
+ * **El estado que se pinta en la fila es el MISMO que el del muñeco, no otro.**
+ *
+ * 🔴 Renombrar `WORK_STATE_LABEL` no bastaba, y medirlo en Chrome lo demostró: `iza` salía
+ * «Caído» en el chip y «LIBRE» en su fila, porque el servidor manda `work_state: 'idle'` (no
+ * tiene trabajo) para un alias cuyo lease venció. Antes decía `INACTIVO`; con el rótulo nuevo
+ * pasaba a decir «Libre», que para un agente caído es peor, no mejor. Lo mismo con `atlas`
+ * («Recibiendo» en la fila, «Caído» en el chip) y con los que delegan («Libre» en la fila,
+ * «Delegando» en el chip).
+ *
+ * `work_state` (cinco baldes del servidor, sobre el TRABAJO) y `LiveState` (siete, derivados,
+ * que además miran la presencia y las delegaciones) son particiones distintas: ninguna traducción
+ * de rótulos podía hacerlas coincidir. La fila consume ahora el estado ya derivado por la página
+ * —el mismo objeto que pinta el muñeco y cuenta el chip—, así que decir cosas distintas dejó de
+ * ser posible por construcción.
+ *
+ * No se pierde nada del `work_state`: la saturación y el estancamiento siguen llegando como
+ * SEÑALES en `flags`, la fila sigue mostrando en vuelo, en cola, antigüedad y edad del ACK —los
+ * números de los que sale— y el orden de triage los sigue usando de desempate.
+ */
+export type EstadosVivos = ReadonlyMap<string, LiveState>;
+
+/** Tono de insignia por estado. Deriva del `tone` de `LIVE_STATE_META`, sin inventar ninguno. */
+export const LIVE_STATE_TONE: Record<LiveState, BadgeTone> = {
+  down: 'danger',
+  blocked: 'danger',
+  delegating: 'info',
+  settled: 'unknown',
+  receiving: 'info',
+  thinking: 'running',
+  idle: 'offline',
+};
+
+/**
+ * El rótulo de la columna ESTADO. Con el estado derivado disponible manda ése; sin él se cae al
+ * `work_state` del servidor, que ya habla el mismo vocabulario — un `undefined` silencioso no
+ * puede dejar la celda en blanco.
+ */
+export function estadoDeFila(
+  agent: FleetActivityAgent, estados?: EstadosVivos,
+): { label: string; tone: BadgeTone; live?: LiveState } {
+  const live = estados?.get(agentKeyOf(agent));
+  if (live) return { label: LIVE_STATE_META[live].label, tone: LIVE_STATE_TONE[live], live };
+  const state = agent.work_state ?? undefined;
+  return {
+    label: state ? WORK_STATE_LABEL[state] : 'sin dato',
+    tone: state ? WORK_STATE_TONE[state] : 'unknown',
+  };
+}
+
+/** Traduce el estado de una fila a la forma en que se grita: `data-urgency` y el resaltado de
+ *  styles.css. Mira PRIMERO el estado del muñeco, que es el que también decide su color. */
+export function rowUrgency(
+  state: FleetWorkState | null | undefined, live?: LiveState,
+): 'critical' | 'warning' | undefined {
+  if (live === 'down' || live === 'blocked') return 'critical';
   if (state === 'stalled') return 'critical';
   if (state === 'saturated') return 'warning';
   return undefined;
@@ -60,7 +171,7 @@ export function formatAckAge(secondsSinceLastAck: number | null | undefined, ack
   if (secondsSinceLastAck === null || secondsSinceLastAck === undefined) {
     return ackLookbackSeconds !== null && ackLookbackSeconds !== undefined
       ? `> ${formatDurationSeconds(ackLookbackSeconds)} sin ACK`
-      : 'UNKNOWN (sin ACK)';
+      : 'ningún ACK, y el servidor no dice desde cuándo';
   }
   return `hace ${formatDurationSeconds(secondsSinceLastAck)}`;
 }
@@ -93,11 +204,28 @@ function stateRank(state: FleetWorkState | null | undefined): number {
   return -1;
 }
 
+/**
+ * El orden de los chips de la cinta, de izquierda a derecha. La tabla ordena por lo MISMO: si la
+ * cinta dice que lo primero que hay que mirar son los caídos y la lista de abajo los pone entre
+ * medias, el subtítulo «ordenados por urgencia» deja de ser cierto.
+ */
+const ORDEN_VIVO: readonly LiveState[] = [
+  'down', 'blocked', 'delegating', 'receiving', 'thinking', 'settled', 'idle',
+];
+
 /** Orden de triage: lo más urgente arriba, para que 71 entregas en vuelo no pasen inadvertidas
  *  entre quince filas alfabéticas. */
-export function sortByUrgency(agents: readonly FleetActivityAgent[]): FleetActivityAgent[] {
+export function sortByUrgency(
+  agents: readonly FleetActivityAgent[], estados?: EstadosVivos,
+): FleetActivityAgent[] {
+  const rango = (agent: FleetActivityAgent): number => {
+    const live = estados?.get(agentKeyOf(agent));
+    // Sin estado derivado se ordena por el del servidor, desplazado para no cruzar las escalas.
+    if (!live) return estados ? -1 : stateRank(agent.work_state);
+    return ORDEN_VIVO.indexOf(live);
+  };
   return [...agents].sort((left, right) => {
-    const rankDiff = stateRank(left.work_state) - stateRank(right.work_state);
+    const rankDiff = rango(left) - rango(right);
     if (rankDiff !== 0) return rankDiff;
     const inFlightDiff = (right.in_flight ?? 0) - (left.in_flight ?? 0);
     if (inFlightDiff !== 0) return inFlightDiff;
@@ -109,9 +237,9 @@ export function sortByUrgency(agents: readonly FleetActivityAgent[]): FleetActiv
  *  distinguiendo "nunca hubo presencia" (presence ausente) de "presence con epoch/expiry ilegibles". */
 export function presenceBadge(agent: FleetActivityAgent): { tone: BadgeTone; label: string } {
   const state = leaseState(agent.presence?.lease_until);
-  if (state === 'online') return { tone: 'online', label: 'ONLINE' };
-  if (state === 'expired') return { tone: 'offline', label: 'EXPIRADO' };
-  return { tone: 'unknown', label: agent.presence ? 'UNKNOWN' : 'NUNCA CONECTADO' };
+  if (state === 'online') return { tone: 'online', label: 'Conectado' };
+  if (state === 'expired') return { tone: 'offline', label: 'Caído' };
+  return { tone: 'unknown', label: agent.presence ? 'Sin dato' : 'Nunca conectó' };
 }
 
 export function agentRowKey(agent: FleetActivityAgent): string {

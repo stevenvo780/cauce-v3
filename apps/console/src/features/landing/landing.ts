@@ -100,8 +100,15 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     alertas.push({
       id: 'agentes-detenidos',
       tono: 'danger',
-      titulo: `${detenidos} ${detenidos === 1 ? 'agente detenido' : 'agentes detenidos'}`,
-      detalle: 'GET /v3/console/activity → totals.by_state.stalled: tomaron trabajo y dejaron de acusar recibo.',
+      /*
+       * «Trabado», que es como se llama este estado en `/live` —chip, veredicto, leyenda y la
+       * columna «Estado» de la tabla—. Decía «detenido», que además chocaba con «ACK detenido»
+       * de la señal `ack_stalled`: la misma palabra para dos hechos distintos en dos pantallas.
+       * El `id` de la alerta NO se toca: es una clave, no un rótulo, y renombrarla rompería los
+       * enlaces y las pruebas que la identifican sin arreglarle la frase a nadie.
+       */
+      titulo: `${detenidos} ${detenidos === 1 ? 'agente trabado' : 'agentes trabados'}`,
+      detalle: 'GET /v3/console/activity → totals.by_state.stalled: tomaron trabajo y dejaron de acusar recibo. En «La flota ahora» son los que salen como «Trabado».',
       ruta: '/live',
       rutaLabel: 'La flota ahora',
     });
