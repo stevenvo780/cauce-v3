@@ -235,6 +235,32 @@ export function accionesDeFila(clave: string, fila: Record<string, unknown>): Ac
   return [];
 }
 
+/**
+ * La acción que corresponde a una COLUMNA booleana de la fila, si la hay.
+ *
+ * El `id` de cada acción es a propósito el nombre del campo que alterna (`enabled`, `allow_route`,
+ * `allow_read`, `allow_control`), así que la columna y su botón son el MISMO hecho: la celda decía
+ * «SÍ» y el botón de al lado decía «Deshabilitar». Medido en producción: 61 pares idénticos —5 en
+ * tenants, 5 en rooms, 19 en memberships y 8×4 = 32 en la ACL dirigida—. Con esto la celda pasa a
+ * ser un `role="switch"` y el botón desaparece: un hecho, un control.
+ */
+export function accionDeColumna(
+  acciones: readonly AccionDeFila[], clave: string,
+): AccionDeFila | undefined {
+  return acciones.find((accion) => accion.id === clave);
+}
+
+/**
+ * Lo que queda para la columna «Acciones» una vez que cada booleano se dibuja como interruptor en
+ * su propia columna. Cuando no queda nada para NINGUNA fila, la columna entera sobra: son cuatro
+ * columnas menos en la tabla de ACL, que es la que más desbordaba.
+ */
+export function accionesFueraDeColumnas(
+  acciones: readonly AccionDeFila[], columnas: readonly ColumnaTabla[],
+): AccionDeFila[] {
+  return acciones.filter((accion) => !columnas.some((columna) => columna.clave === accion.id));
+}
+
 function alternar(id: string, habilitado: boolean, sujeto: string, mutation: ConfigMutation): AccionDeFila {
   const verbo = habilitado ? 'Deshabilitar' : 'Habilitar';
   return { id, etiqueta: verbo, descripcion: `${verbo} ${sujeto}`, mutation };

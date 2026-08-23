@@ -45,8 +45,10 @@
   color: var(--muted);
 }
 
-.config-area { display: grid; gap: 16px; }
-.config-area > .panel { margin-bottom: 0; }
+/* El layout de `.config-area` (grid de una columna con `minmax(0, 1fr)` y el `min-width: 0` de sus
+   paneles) vive en `styles.css` y SÓLO ahí. Estaba duplicado acá sin el `minmax(0, …)`, y como esta
+   hoja se carga después, la de acá ganaba: la tabla no scrolleaba y el documento entero desbordaba
+   en horizontal. Dos sitios donde definir lo mismo es un sitio que se queda atrás. */
 
 /* --- Roles -------------------------------------------------------------------------------- */
 

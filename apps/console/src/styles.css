@@ -11,7 +11,10 @@
   --border-strong: #304766;
   --text: #e9f0fc;
   --muted: #91a1ba;
-  --faint: #64758f;
+  /* #64758f daba 4,20:1 sobre `--surface` MEDIDO en Chrome: por debajo de AA para texto pequeño,
+     y es el color de TODAS las cabeceras de columna y de `.muted`. Se corrige en LOS DOS temas a
+     la vez: arreglar sólo el claro deja el mismo defecto vivo en el tema por defecto. */
+  --faint: #7d8da8;
   --mint: #63deb9;
   --mint-dim: #183f39;
   --blue: #7ab8ff;
@@ -169,7 +172,9 @@ tbody tr.fila-enfocada { background: var(--blue-dim); box-shadow: inset 3px 0 0 
 .muted { display: inline-flex; align-items: center; gap: 5px; color: var(--faint); font-size: .75rem; }
 .unknown { color: var(--amber); font-family: "SFMono-Regular", Consolas, monospace; font-size: .74rem; font-weight: 700; }
 
-.badge { display: inline-flex; align-items: center; width: fit-content; min-height: 23px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: .64rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+/* `.64rem` son 10,24px MEDIDOS: por debajo del mínimo con el que se puede exigir un contraste
+   AA y por debajo de lo que se lee cómodo en una rejilla de permisos de ocho filas. .75rem = 12px. */
+.badge { display: inline-flex; align-items: center; width: fit-content; min-height: 23px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: .75rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
 .badge-online, .badge-done { border-color: #286353; background: var(--mint-dim); color: #8ff0d3; }
 .badge-running, .badge-info { border-color: #315a81; background: var(--blue-dim); color: #a8d1ff; }
 .badge-warning { border-color: #725622; background: var(--amber-dim); color: var(--amber); }
@@ -254,33 +259,136 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .config-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .config-preview { max-height: 440px; overflow: auto; margin: 16px 0 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: #070b13; color: #bad0e9; font-size: .72rem; white-space: pre-wrap; }
 /* Una columna, no dos: desde que cada colección es una TABLA de hasta siete columnas, media
-   pantalla la obligaba a hacer scroll horizontal dentro del panel para leer una fila. */
-.config-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
-.config-grid .panel { min-width: 0; margin-bottom: 0; }
+   pantalla la obligaba a hacer scroll horizontal dentro del panel para leer una fila.
+ *
+ * El contenedor se llama `.config-area` y NO `.config-grid`: cuando la vista pasó a pestañas
+ * (2026-08-22) el `<div>` cambió de clase y estas seis reglas se quedaron apuntando a una clase que
+ * ya no existe en ningún `.tsx`. Quedaron INERTES sin un solo error, y con ellas se fue el
+ * `min-width: 0` — que es justo lo que dejaba de funcionar el `overflow-x: auto` del envoltorio de
+ * tabla. MEDIDO en Chrome contra el snapshot real de producción: «Avisos y cadena» producía un
+ * documento de 3130px en un viewport de 1280 y la barra lateral se quedaba atrás al arrastrar.
+ *
+ * Las dos piezas son necesarias y ninguna alcanza sola: `minmax(0, 1fr)` baja el mínimo de la PISTA
+ * (un `1fr` pelado es `minmax(auto, 1fr)`, y ese `auto` es el min-content del panel), y
+ * `min-width: 0` baja el mínimo automático del ITEM. Con las dos, el `.table-wrap` se queda del
+ * ancho de la columna y la tabla scrollea DENTRO de su caja. */
+.config-area { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.config-area .panel { min-width: 0; margin-bottom: 0; }
 .config-records { display: grid; gap: 7px; max-height: 350px; overflow: auto; margin: 0; padding: 0; list-style: none; }
 .config-records li { padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: #0a111d; }
 .config-records code { color: #b9cae0; font-size: .68rem; overflow-wrap: anywhere; }
 
 /* Tablas de configuración: la vista dejó de ser JSON crudo por fila y pasó a ser una tabla con
    columnas de verdad, con las operaciones frecuentes a un clic. */
-.config-grid table { font-size: .74rem; }
-.config-grid td .config-actions { gap: 5px; }
-.config-grid td select { max-width: 150px; padding: 3px 6px; font-size: .72rem; }
+.config-area table { font-size: .74rem; }
+/* Tabla densa: una fila de configuración es una LÍNEA de datos, no una tarjeta. Con los 14px de
+   arriba y abajo del `td` general, una membership medía 77px MEDIDOS y diecinueve filas ya no
+   entraban en una pantalla. */
+.config-area td { padding: 9px 12px; }
+/* Una casilla NO es un campo de texto. La regla general `input, select, textarea { width: 100%;
+   min-height: 41px; margin-top: 7px }` la estiraba a 910px MEDIDOS y la empujaba a su propia línea,
+   así que en «Alta rápida» y en el wizard la casilla aparecía como una barra separada de la frase
+   que la nombra y no se sabía a qué pertenecía. (Defecto anterior a esta rama: se comprobó también
+   sobre el CSS desplegado.) */
+.config-area input[type="checkbox"], .config-area input[type="radio"] {
+  width: auto;
+  min-height: 0;
+  margin: 0 7px 0 0;
+  padding: 0;
+  vertical-align: middle;
+  accent-color: var(--mint);
+}
+.config-area td .config-actions { gap: 5px; }
+.config-area td select { max-width: 150px; padding: 3px 6px; font-size: .72rem; }
 /* El motivo por el que un control de la tabla quedó apagado va DEBAJO del control, no en un tooltip
    que hay que descubrir con el ratón. */
-.config-grid td select + .unknown { display: block; max-width: 260px; margin-top: 5px; font-size: .68rem; font-weight: 600; line-height: 1.4; }
+.config-area td select + .unknown { display: block; max-width: 260px; margin-top: 5px; font-size: .68rem; font-weight: 600; line-height: 1.4; }
 /* Resumen de un campo de párrafo (`role_brief`): recortado a 120 caracteres y con el texto entero
    en el `title`. Sin el ancho máximo, una sola celda empuja las otras once columnas de «Agent
    registry» fuera de la pantalla. */
-.config-resumen { display: inline-block; max-width: 340px; line-height: 1.45; }
+/* Dos líneas y punto. A 120 caracteres en 340px el `role_brief` ocupaba cinco líneas y la fila de
+   «Agent registry» llegaba a 214px MEDIDOS: catorce agentes son 2.740px de tabla que no se pueden
+   comparar de un vistazo. El texto entero sigue en el `title` y en «Ver crudo». */
+.config-resumen {
+  display: -webkit-box;
+  max-width: 340px;
+  overflow: hidden;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
 /* El audit trail queda dentro de una pantalla: el aviso del rollback se pinta arriba de la tabla y
    tiene que seguir a la vista aunque el historial tenga cincuenta revisiones. */
 .config-audit { max-height: 420px; overflow-y: auto; }
-/* La confirmación es un bloque destacado: lo que se firma es una escritura versionada, y el
-   operador tiene que poder leer la mutación exacta antes de que viaje. */
-.config-confirm { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--amber); border-radius: 10px; background: var(--amber-dim); }
-.config-confirm p { margin: 0 0 8px; font-size: .78rem; }
-.config-confirm .config-preview { max-height: 200px; margin: 0 0 10px; }
+/* La confirmación es un DIÁLOGO centrado, no un bloque colgado debajo del botón: sus dos botones no
+   pueden quedar debajo del pliegue, y el fondo no puede seguir siendo pulsable mientras se decide.
+   Ver `ConfirmacionDeAccion` en `CollectionTable.tsx`. */
+.config-modal-fondo {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  padding: 20px;
+  inset: 0;
+  background: rgb(4 8 15 / 62%);
+  place-items: center;
+}
+.config-modal {
+  display: flex;
+  width: min(560px, 100%);
+  max-height: min(80vh, 640px);
+  flex-direction: column;
+  border: 1px solid var(--amber);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 26px 70px rgb(0 0 0 / 45%);
+}
+/* Sólo el cuerpo scrollea. El pie con «Confirmar» y «Cancelar» queda fijo: por largo que sea el
+   JSON, la decisión nunca sale de la pantalla. */
+.config-modal-cuerpo { min-height: 0; padding: 16px 18px; overflow-y: auto; }
+.config-modal-cuerpo > p { margin: 0; font-size: .84rem; line-height: 1.55; }
+.config-modal-detalle { margin-top: 12px; }
+.config-modal-detalle > summary { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-size: .74rem; }
+.config-modal-detalle .config-preview { max-height: 260px; margin: 10px 0 0; }
+.config-modal-pie { flex: none; padding: 12px 18px; border-top: 1px solid var(--border); border-radius: 0 0 12px 12px; background: var(--amber-dim); }
+/* Interruptor de una celda booleana. Sustituye al par «columna que dice SÍ» + «botón que dice
+   Deshabilitar»: el estado es la POSICIÓN, no una palabra, y el hecho se escribe una sola vez.
+   No escribe al tocarlo — abre la misma confirmación de siempre. */
+.config-switch {
+  display: inline-flex;
+  padding: 3px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.config-switch:disabled { cursor: not-allowed; opacity: .5; }
+.config-switch-pista {
+  display: block;
+  width: 36px;
+  height: 20px;
+  border: 1px solid #414c5e;
+  border-radius: 999px;
+  background: #1c2533;
+  transition: .16s ease;
+}
+.config-switch-perilla {
+  display: block;
+  width: 14px;
+  height: 14px;
+  margin: 2px 0 0 2px;
+  border-radius: 50%;
+  background: #8e9aad;
+  transition: .16s ease;
+}
+.config-switch[aria-checked="true"] .config-switch-pista { border-color: #2d7b69; background: var(--mint-dim); }
+.config-switch[aria-checked="true"] .config-switch-perilla { margin-left: 18px; background: var(--mint); }
+.config-switch:focus-visible { border-radius: 999px; outline: 3px solid var(--blue); outline-offset: 2px; }
+
+/* Las acciones que quedan en una celda van en HORIZONTAL. Apiladas, una fila de la ACL medía 199px
+   —cuatro botones uno encima de otro— y ocho reglas de permiso no entraban en pantalla y media. La
+   tabla ya scrollea dentro de su caja, así que ensanchar la celda no desborda la página. */
+.config-area td .config-actions { flex-wrap: nowrap; }
+.config-area td .button.small { white-space: nowrap; }
+
 /* Desplegables: el JSON crudo de cada colección y el editor de mutaciones. Siguen estando —son la
    verdad literal del servidor y la válvula de escape— pero ya no son lo primero que se ve. */
 .config-raw { margin-top: 14px; }
@@ -562,7 +670,13 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: 66px; padding: 7px 8px; border-top: 1px solid var(--border); border-right: 0; }
   .brand, .authority-note { display: none; }
   .sidebar nav ul { display: flex; overflow-x: auto; gap: 4px; }
-  .sidebar nav li { min-width: 56px; flex: 1; }
+  /* `flex: 1` a secas es `1 1 0%`: cada entrada arranca en cero y se reparte el ancho, así que el
+     rótulo —que va `nowrap`— se sale de su propia celda y se monta encima del de al lado. MEDIDO a
+     360px: 5 solapes y 6 rótulos más anchos que su `li`. Con `1 0 auto` cada entrada mide lo que
+     mide su texto y la tira scrollea (ya declaraba `overflow-x: auto`), que es lo que hacía falta
+     para ocho entradas en un móvil. Se veía sólo desde que `/config` dejó de desbordar la página:
+     antes el documento medía 2859px y la barra tenía sitio de sobra. */
+  .sidebar nav li { min-width: 56px; flex: 1 0 auto; }
   .sidebar nav a { gap: 2px; padding: 6px 4px; font-size: .56rem; }
   .sidebar nav a span { display: block; white-space: nowrap; }
   .sidebar nav a { flex-direction: column; }
@@ -570,7 +684,10 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .topbar-meta span:not(.mock-flag) { display: none; }
   main { padding: 29px 15px 45px; }
   .page-header { align-items: start; flex-direction: column; }
-  .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid, .adapter-grid, .landing-atajos, .config-grid { grid-template-columns: 1fr; }
+  .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid, .adapter-grid, .landing-atajos { grid-template-columns: 1fr; }
+  /* `.config-area` NO baja a `1fr` pelado: ese `auto` implícito es el min-content del panel y es
+     exactamente lo que desbordaba el documento a 2859px en un viewport de 360. */
+  .config-area { grid-template-columns: minmax(0, 1fr); }
   .metric { min-height: 115px; }
   .config-form { grid-template-columns: 1fr; }
   .config-json { grid-column: auto; }
@@ -707,7 +824,9 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
     --border-strong: #b8c7d9;
     --text: #142033;
     --muted: #57677c;
-    --faint: #718198;
+    /* #718198 daba 3,66:1 sobre el panel blanco MEDIDO en Chrome: por debajo de AA para texto
+       pequeño, y es el color de TODAS las cabeceras de columna (`th`) y de `.muted`. */
+    --faint: #5a6a80;
     --mint: #087c63;
     --mint-dim: #d8f3ea;
     --blue: #176ab6;
@@ -729,6 +848,18 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   .panel { background: linear-gradient(145deg, rgb(255 255 255 / 98%), rgb(245 248 252 / 98%)); }
   input, select, textarea { background: #fbfcfe; color: var(--text); }
   td { color: #34445a; }
+  /*
+   * Misma avería que la de las pastillas, en el resto de la hoja: estos colores están escritos con
+   * hex del tema OSCURO y en modo claro nadie los había medido. Barrido en Chrome sobre `/config`
+   * con el snapshot real, contando sólo nodos con texto propio y visible:
+   *   label            #c4d0e1 → 1,44:1   (todos los rótulos de formulario)
+   *   .button.secondary#c6d2e6 → 1,53:1   («Actualizar» y «Cerrar sesión» de la cabecera)
+   *   .config-records code #b9cae0 → 1,60:1 (el JSON de «Ver crudo», 122 nodos en una pestaña)
+   * Un rótulo que no se lee deja al campo sin nombre; un botón que no se lee no se encuentra.
+   */
+  label { color: var(--muted); }
+  .button.secondary { color: #22344a; }
+  .config-records code { color: #22344a; }
   .ultimate-terminal-page { --terminal-inset: #f6f8fb; --terminal-raised: #ffffff; --terminal-soft: #34455d; }
   .terminal-overview article, .terminal-fleet-sidebar, .terminal-session-tabs, .terminal-session-head, .terminal-composer, .terminal-inspector, .terminal-control-inspector, .pty-status { background: #f8fafc; }
   .fleet-health-strip, .terminal-connection-bar, .transcript-delivery, .terminal-composer textarea { background: #ffffff; }
@@ -745,6 +876,20 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
    * salían gris sobre negro y no se distinguía ni el nombre del proveedor.
    */
   .chip { background: #eef3f9; color: #3a4a60; }
+  /*
+   * Las pastillas llevaban el color de texto pensado para fondo oscuro y en modo claro sólo se
+   * había corregido `.badge-offline` —la del «NO»—. Resultado MEDIDO en Chrome sobre el snapshot
+   * real: el «SÍ» daba 1,15:1 (menta sobre menta) y el «NO» 4,98:1, o sea que el operador que
+   * barría la rejilla de permisos veía TODOS los negativos y NINGUNO de los positivos, que es
+   * justo el estado que importa. 195 instancias ilegibles repartidas por las seis pestañas de
+   * `/config`, más 14 de `.badge-info` a 1,33:1 (los números de revisión).
+   *
+   * No es un matiz de gusto: una pastilla que no se lee afirma lo mismo que una celda vacía.
+   */
+  .badge-online, .badge-done { border-color: #7bc9b0; background: var(--mint-dim); color: #0f5132; }
+  .badge-running, .badge-info { border-color: #93bfe6; background: var(--blue-dim); color: #0f4c81; }
+  .badge-danger { border-color: #e0a3ab; background: var(--red-dim); color: #8f2230; }
+  .badge-warning { border-color: #d8b25f; background: var(--amber-dim); color: #7a4d05; }
   .badge-offline { border-color: #ccd4de; background: #eceff4; color: #5b6779; }
   .button:hover:not(:disabled) { border-color: #9ab8d6; background: #e9f0f8; }
   .quota-provider { background: #ffffff; }
@@ -752,6 +897,12 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   .quota-provider[data-severity="warn"] { border-color: #e3c98d; }
   .config-records li, .adapter-meta, .landing-atajos a { background: #f8fafd; }
   .config-preview { background: #f4f7fb; color: #22344a; }
+  .config-modal { background: #ffffff; }
+  .config-modal-fondo { background: rgb(30 45 66 / 42%); }
+  .config-switch-pista { border-color: #b8c7d9; background: #e4e9f0; }
+  .config-switch-perilla { background: #77869b; }
+  .config-switch[aria-checked="true"] .config-switch-pista { border-color: #4aa287; background: #d8f3ea; }
+  .config-switch[aria-checked="true"] .config-switch-perilla { background: #0f5132; }
   /* Los cuatro tonos de `.notice` traían el texto pensado para fondo oscuro y en modo claro nadie
      los había mirado: MEDIDO en Chrome, el verde de «rollback aplicado» quedaba a contraste 1.16 y
      el gris del aviso a 1.42 — invisibles. Es exactamente el fallo que este trabajo venía a cerrar:
