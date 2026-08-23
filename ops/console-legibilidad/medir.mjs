@@ -91,17 +91,41 @@ try {
     await pagina.setViewport(vp.w, vp.h, vp.movil);
     for (const ruta of RUTAS) {
       const clave = `${ruta}@${vp.nombre}`;
-      // 1800 ms de asiento: hay animaciones y un refresco de datos. Midiendo a los 0 ms uno se
+      // 2200 ms de asiento: hay animaciones y un refresco de datos. Midiendo a los 0 ms uno se
       // cree defectos que no existen, y eso cuesta el turno entero.
-      await pagina.goto(BASE + (ruta === '/' ? '/' : `/${ruta}`), 1800);
-      const r = await pagina.eval(PROBE);
+      await pagina.goto(BASE + (ruta === '/' ? '/' : `/${ruta}`), 2200);
+      /*
+       * TRES muestras separadas medio segundo, y sólo cuenta lo que sale en las tres.
+       *
+       * MEDIDO, y costó dos horas de intermitencia: «Sincronizar todo» empieza `disabled` (los
+       * datos aún no llegaron) con `opacity: .55`, y `.button` transiciona en 180 ms. En el
+       * fotograma en que React quita el atributo pero la opacidad todavía no subió, la sonda ve un
+       * control ACTIVO al 55% —2,9:1— y lo denuncia. Por eso la huella incluye `inerte`: el
+       * registro «deshabilitado» y el registro «en transición» son cosas distintas y ninguno de
+       * los dos sobrevive a la intersección. Un guardia que grita en falso tapa el fallo real.
+       */
+      const muestras = [];
+      for (let i = 0; i < 3; i += 1) {
+        muestras.push(await pagina.eval(PROBE));
+        if (i < 2) await new Promise((res) => setTimeout(res, 500));
+      }
+      const r = muestras[muestras.length - 1];
+      const huella = (x) => `${x.tag}|${x.cls}|${x.text}|${x.color}|${x.bg}|${x.inerte}`;
+      const previas = muestras.slice(0, -1).map((m) => new Set(m.subAA.map(huella)));
+      r.subAA = r.subAA.filter((x) => previas.every((set) => set.has(huella(x))));
       if (CAPTURAS) await pagina.screenshot(`${CAPTURAS}/${ruta === '/' ? 'portada' : ruta}-${vp.nombre}.png`, true);
 
       const activos = r.subAA.filter((x) => !x.inerte);
       const inertes = r.subAA.length - activos.length;
       informe[clave] = { ...r, subAA: activos, subAAInertes: inertes };
 
-      if (activos.length) problemas.push(`${clave}: ${activos.length} textos por debajo de AA (peor: ${activos.map((a) => a.ratio).sort((a, b) => a - b)[0]}:1)`);
+      if (activos.length) {
+        // El detalle va en el problema, no en un JSON aparte: un aviso que no dice QUÉ elemento es
+        // obliga a reproducirlo para saberlo, y lo intermitente no siempre se deja reproducir.
+        const peores = [...activos].sort((a, b) => a.ratio - b.ratio).slice(0, 3)
+          .map((a) => `${a.tag}${a.cls ? `.${a.cls.split(' ').join('.')}` : ''} «${a.text}» ${a.color} sobre ${a.bg} = ${a.ratio}:1 op=${a.opacidad}`);
+        problemas.push(`${clave}: ${activos.length} textos por debajo de AA — ${peores.join(' | ')}`);
+      }
       if (r.doc.desborda) problemas.push(`${clave}: el documento mide ${r.doc.scrollWidth}px en una ventana de ${r.doc.clientWidth}`);
       if (r.panelesDesbordados.length) problemas.push(`${clave}: ${r.panelesDesbordados.length} paneles no caben en sí mismos`);
       if (r.fueraDePantalla.length) problemas.push(`${clave}: ${r.fueraDePantalla.length} elementos fuera de la pantalla`);
