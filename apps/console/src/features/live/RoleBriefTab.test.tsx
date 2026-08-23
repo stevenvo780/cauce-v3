@@ -8,6 +8,10 @@ import { renderWithApi } from '../../test/render';
 import { LiveFleetPage } from './LiveFleetPage';
 
 /**
+ * La pestaña pasó a llamarse «Directiva» cuando dejó de enseñar sólo el rol y pasó a enseñar las
+ * tres capas (`DirectivaTab`); el editor de acá abajo es el MISMO y sigue siendo la capa 1. El
+ * identificador de la pestaña sigue siendo `rol`, así que los enlaces `?tab=rol` no se rompen.
+ *
  * El editor del rol declarado se prueba DESDE la página viva, no aislado, porque la mitad del
  * encargo es dónde vive: el requisito era editar el rol donde ya se mira al bot, y un test del
  * componente suelto pasaría igual si la pestaña no estuviera enganchada al cajón.
@@ -29,7 +33,7 @@ async function abrirRolDeKant() {
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('complementary', { name: /detalle de kant/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Rol' }));
+  await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
   const textarea = await within(cajon).findByLabelText(/rol declarado de kant/i);
   return { user, cajon, textarea: textarea as HTMLTextAreaElement };
 }
@@ -150,7 +154,7 @@ async function abrirRolDeZeus() {
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: /zeus/i }));
   const cajon = await screen.findByRole('complementary', { name: /detalle de zeus/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Rol' }));
+  await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
   return { user, cajon };
 }
 
@@ -302,19 +306,19 @@ it('el borrador sobrevive al cambio de pestaña y al cierre del cajón, pero no 
   fireEvent.change(textarea, { target: { value: 'Redactando el rol de kant.' } });
 
   await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
-  await user.click(within(cajon).getByRole('tab', { name: 'Rol' }));
+  await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
   expect(await within(cajon).findByLabelText(/rol declarado de kant/i)).toHaveValue('Redactando el rol de kant.');
 
   await user.click(within(cajon).getByRole('button', { name: /cerrar el detalle/i }));
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const reabierto = await screen.findByRole('complementary', { name: /detalle de kant/i });
-  await user.click(within(reabierto).getByRole('tab', { name: 'Rol' }));
+  await user.click(within(reabierto).getByRole('tab', { name: 'Directiva' }));
   expect(await within(reabierto).findByLabelText(/rol declarado de kant/i)).toHaveValue('Redactando el rol de kant.');
 
   // Otro agente empieza LIMPIO: el borrador es de un bot concreto y no se hereda.
   await user.click(await screen.findByRole('row', { name: /iza/i }));
   const otro = await screen.findByRole('complementary', { name: /detalle de iza/i });
-  await user.click(within(otro).getByRole('tab', { name: 'Rol' }));
+  await user.click(within(otro).getByRole('tab', { name: 'Directiva' }));
   expect(await within(otro).findByLabelText(/rol declarado de iza/i)).toHaveValue('');
 });
 

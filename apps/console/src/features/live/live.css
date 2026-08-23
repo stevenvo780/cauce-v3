@@ -640,3 +640,84 @@ tr[data-clickable='true'] { cursor: pointer; }
 .role-brief-count[data-tone='pasado'] + .role-brief-warn { color: var(--danger, #d64545); }
 
 .role-brief-actions { display: flex; align-items: center; gap: 8px; }
+
+/* --- Las TRES capas de directiva (pestaña «Directiva» del cajón) -----------------------------
+   Cada capa es una tarjeta con su fin escrito arriba. Lo que hace visible la duplicación no es
+   ningún color: es que las tres estén una debajo de otra y cada una diga a qué pregunta responde.
+   Ver `directiva.ts` y /workspace/DISENO-TRES-CAPAS-DE-DIRECTIVA.md. */
+.directiva { display: grid; gap: 18px; }
+
+.directiva-capa {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.directiva-capa-head { display: grid; align-items: start; gap: 10px; grid-template-columns: auto minmax(0, 1fr); }
+.directiva-capa-head h3 { margin: 0; font-size: .92rem; }
+.directiva-capa-icono { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; background: var(--surface); color: var(--mint); }
+
+/* El FIN de la capa se lee antes que su nombre técnico: es la pregunta que decide dónde va cada
+   frase, y es exactamente lo que hoy nadie tiene delante cuando escribe un brief. */
+.directiva-capa-fin { margin: 4px 0 0; color: var(--mint); font-size: .62rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.directiva-capa-fuente { margin: 3px 0 0; color: var(--faint); font-size: .64rem; }
+.directiva-porque { margin: 0; color: var(--muted); font-size: .73rem; }
+
+.directiva-avisos { display: grid; gap: 9px; }
+
+.directiva-aviso {
+  display: grid;
+  align-items: start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-2);
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+/* «Choque» = la misma regla escrita dos veces; «hueco» = una capa que no dice lo que le toca.
+   Los dos avisan y NINGUNO bloquea: el diseño dice literalmente «no bloquear: avisar». */
+.directiva-aviso[data-tono="choque"] { border-color: #74313c; background: var(--red-dim); color: #ffb7bc; }
+.directiva-aviso[data-tono="hueco"] { border-color: #7a5a24; background: rgba(208, 135, 0, .12); color: #ffd9a0; }
+.directiva-aviso strong { font-size: .78rem; }
+.directiva-aviso p { margin: 4px 0 0; font-size: .71rem; }
+.directiva-aviso > span { margin-top: 2px; }
+
+.directiva-evidencia { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 0; padding: 0; list-style: none; }
+.directiva-evidencia code { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5px; font-size: .62rem; }
+
+.directiva-ficheros { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.directiva-ficheros > li { padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.directiva-fichero-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.directiva-fichero-head code { font-size: .69rem; overflow-wrap: anywhere; }
+.directiva-fichero-meta { color: var(--faint); font-size: .62rem; }
+.directiva-ficheros summary { margin-top: 7px; color: var(--muted); cursor: pointer; font-size: .66rem; }
+
+.directiva-fichero-texto {
+  max-height: 320px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #070b13;
+  color: #bad0e9;
+  font-size: .66rem;
+  white-space: pre-wrap;
+}
+
+.directiva-memoria { display: grid; gap: 8px; }
+.directiva-memoria-resumen { margin: 0; color: var(--muted); font-size: .73rem; }
+.directiva-memoria-lista { display: grid; gap: 5px; max-height: 260px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.directiva-memoria-lista li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.directiva-memoria-lista code { font-size: .65rem; overflow-wrap: anywhere; }
+
+@media (prefers-color-scheme: light) {
+  .directiva-aviso[data-tono="choque"] { color: #8f2230; }
+  .directiva-aviso[data-tono="hueco"] { background: #fdf2df; color: #7a4d05; }
+  .directiva-fichero-texto { background: #ffffff; color: #33455c; }
+}

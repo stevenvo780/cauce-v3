@@ -1,6 +1,7 @@
 import type {
   AdapterPage,
   AgentChainSnapshot,
+  AgentDirective,
   AuditPage,
   CancelResult,
   ConsoleAccess,
@@ -306,6 +307,37 @@ export class CauceApi {
    */
   getQuotas(): Promise<QuotaSnapshot> {
     return this.request('/v3/console/quotas');
+  }
+
+  /**
+   * Las capas 2 y 3 de la directiva de un alias: sus `CLAUDE.md` y el índice de su memoria.
+   *
+   * Son FICHEROS dentro del contenedor del agente, no filas de la base, así que sólo el gateway
+   * puede mirarlos. Mientras no publique el endpoint, esto NO lanza: devuelve `publicado: false`
+   * con el motivo, y la pantalla dice «no se pudo mirar» en vez de «no hay».
+   *
+   * La diferencia no es de estilo. Si un 404 se pintara como lista vacía, la consola afirmaría
+   * que gaia no tiene `CLAUDE.md` —que resulta ser cierto— y que janus tampoco tiene dos —que es
+   * falso—, con la misma cara de seguridad en los dos casos. Un negativo que no se midió no es
+   * un hecho del sistema.
+   *
+   * Mismo patrón que `getTerminalCapability`, que es el precedente de esta consola para «el
+   * servidor todavía no sabe hacer esto».
+   */
+  async getAgentDirective(tenantId: string, alias: string): Promise<AgentDirective> {
+    const ruta = `/v3/console/agents/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}/directive`;
+    try {
+      const cuerpo = await this.request<Omit<AgentDirective, 'publicado'>>(ruta);
+      return { ...cuerpo, publicado: true };
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
+        return {
+          publicado: false,
+          motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
+        };
+      }
+      throw error;
+    }
   }
 
   async getTerminalCapability(): Promise<TerminalCapability> {

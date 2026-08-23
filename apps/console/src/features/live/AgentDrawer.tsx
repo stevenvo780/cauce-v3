@@ -8,7 +8,7 @@ import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../navigation';
 import { AgentAvatar } from './AgentAvatar';
 import { ChainPanel } from './ChainPanel';
-import { RoleBriefTab } from './RoleBriefTab';
+import { DirectivaTab } from './DirectivaTab';
 import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
@@ -31,15 +31,20 @@ import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo }
 export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'cadena' | 'rol';
 
 /**
- * «Rol» va acá y no en una vista propia: es el sitio donde el operador YA mira al bot, y el texto
- * que edita es el que explica lo que ese bot está haciendo en las otras cuatro pestañas.
+ * «Directiva» va acá y no en una vista propia: es el sitio donde el operador YA mira al bot, y el
+ * texto que gobierna a ese bot es el que explica lo que hace en las otras cuatro pestañas.
+ *
+ * Se llamaba «Rol» mientras enseñaba una sola capa. Ahora enseña las tres —rol declarado, manual
+ * del sitio y memoria—, y seguir llamándola «Rol» sería nombrar la pestaña por la única capa que
+ * ya se veía. El identificador de la pestaña sigue siendo `rol` a propósito: es lo que va en el
+ * enlace profundo `?tab=rol` y romperlo invalidaría los enlaces que ya se pegaron por ahí.
  */
 const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
   { id: 'ahora', label: 'Ahora' },
   { id: 'conexion', label: 'Conexión' },
   { id: 'entregas', label: 'Entregas' },
   { id: 'cadena', label: 'Cadena' },
-  { id: 'rol', label: 'Rol' },
+  { id: 'rol', label: 'Directiva' },
 ];
 
 export interface AgentDrawerProps {
@@ -114,7 +119,7 @@ export function AgentDrawer({ view, tab, traceId, borradorRol, onBorradorRol, on
             indexado por alias, así que cambiar de agente empieza limpio por construcción y volver
             al primero recupera lo que se estaba escribiendo. */}
         {tab === 'rol' ? (
-          <RoleBriefTab
+          <DirectivaTab
             key={view.key}
             tenantId={view.tenantId}
             alias={view.alias}

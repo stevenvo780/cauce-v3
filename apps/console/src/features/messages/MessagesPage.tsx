@@ -126,7 +126,13 @@ export function MessagesPage() {
       />
       <PermissionBadge access={accesoVerificado} permission="message.publish" />
 
-      <div className="messenger-shell">
+      {/*
+        `data-conversacion` es para la hoja de estilo, no para la lógica: en pantalla estrecha el
+        roster pasa de ser el contenido a ser el conmutador de agente y se encoge a dos filas, para
+        que el hilo y su compositor anclado no arranquen a dos pantallas del borde. Ver el bloque
+        de 760 px de `messages.css`, que explica por qué el anclaje es a 66 px y no a 0.
+      */}
+      <div className="messenger-shell" data-conversacion={seleccionado ? 'abierta' : undefined}>
         <AgentRoster
           agents={agents}
           salud={salud}

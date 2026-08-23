@@ -647,3 +647,64 @@ export interface QuotaSnapshot {
   unbound_groups?: QuotaUnboundGroup[] | null;
   paused_accounts?: QuotaPausedAccount[] | null;
 }
+
+// ------------------------------------------------------------------------------------------
+// LAS TRES CAPAS DE DIRECTIVA DE UN AGENTE
+//
+// Medido sobre producción el 23-ago-2026 (/workspace/DISENO-TRES-CAPAS-DE-DIRECTIVA.md): lo que
+// gobierna a un alias no vive en un sitio, vive en tres, y la consola sólo veía uno.
+//
+//   Capa 1 · `agents.role_brief` — QUIÉN SOS y QUÉ PODÉS DECIDIR. Está en la base, viaja en cada
+//            entrega, y es la única que la consola ya sabía editar. Llega por `/v3/console/config`.
+//   Capa 2 · `CLAUDE.md` / `AGENTS.md` — CÓMO SE TRABAJA AQUÍ. Es un FICHERO dentro del
+//            contenedor del alias, en dos niveles posibles (usuario y espacio de trabajo). Hoy
+//            sólo se toca por `docker exec`, que es exactamente por lo que nadie lo mantiene:
+//            janus tiene DOS a la vez y gaia no tiene NINGUNO.
+//   Capa 3 · La memoria — LO QUE ESE AGENTE APRENDIÓ. `~/.claude/projects`, `~/.openclaw/memory`.
+//            zeus tiene 18.212 ficheros ahí y gaia 2, y nadie lo ve desde el panel.
+//
+// Las capas 2 y 3 son ficheros de un contenedor, no filas de la base: el gateway tiene que
+// publicarlas. Estos tipos son el contrato con el que la consola las va a leer; mientras el
+// gateway no lo sirva, `getAgentDirective` devuelve `publicado: false` y la pantalla lo DICE con
+// esas palabras, en vez de pintar «sin CLAUDE.md» sobre una lectura que nunca ocurrió.
+// ------------------------------------------------------------------------------------------
+
+/** Un `CLAUDE.md` / `AGENTS.md` concreto dentro del contenedor de un alias. */
+export interface AgentDirectiveFile {
+  path?: string | null;
+  /** `user` = `~/.claude/CLAUDE.md`; `workspace` = `~/CLAUDE.md` o `/workspace/CLAUDE.md`. */
+  scope?: 'user' | 'workspace' | string | null;
+  bytes?: number | null;
+  modified_at?: string | null;
+  /** El texto del fichero, si el servidor lo publica. Sin él sólo se puede listar, no cotejar. */
+  text?: string | null;
+  /** true si el servidor recortó el texto: lo que se ve NO es el fichero entero. */
+  truncated?: boolean | null;
+}
+
+/** El índice de la memoria de un agente. Índice, no contenido: es lo que pidió Steven. */
+export interface AgentMemoryIndex {
+  root?: string | null;
+  /** Cuántas entradas hay DE VERDAD, aunque `entries` venga recortado. */
+  total?: number | null;
+  truncated?: boolean | null;
+  entries?: Array<{
+    path?: string | null;
+    bytes?: number | null;
+    modified_at?: string | null;
+  }> | null;
+}
+
+export interface AgentDirective {
+  /**
+   * false = este gateway no publica el endpoint. NO significa «el agente no tiene ficheros»:
+   * significa que no se miró. La pantalla tiene que decir una cosa y no la otra.
+   */
+  publicado: boolean;
+  /** Por qué no se pudo leer, cuando `publicado` es false. */
+  motivo?: string;
+  observed_at?: string | null;
+  container_id?: string | null;
+  files?: AgentDirectiveFile[] | null;
+  memory?: AgentMemoryIndex | null;
+}

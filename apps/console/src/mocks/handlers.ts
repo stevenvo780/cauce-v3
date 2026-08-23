@@ -66,5 +66,18 @@ export const handlers = [
     observed_at: new Date().toISOString(), status: mockStatus(), queues: mockQueues(),
     origin_relays: originRelays
   })),
+  /*
+   * Las capas 2 y 3 de la directiva. El gateway TODAVÍA NO sirve este endpoint: acá se devuelve
+   * un 404 a propósito, que es lo que la consola se va a encontrar en producción hoy. Así el
+   * modo mock enseña lo que Steven va a ver de verdad —«no se pudo mirar»— y no una pantalla
+   * llena de ficheros inventados que en producción no existen.
+   *
+   * Cuando el gateway lo publique, se cambia por el JSON real y la pantalla se llena sola: las
+   * pruebas de `DirectivaTab.test.tsx` ya cubren las dos ramas.
+   */
+  http.get('*/v3/console/agents/:tenantId/:alias/directive', () => HttpResponse.json(
+    { error: 'not_found', message: 'agent directive files are not published by this gateway yet' },
+    { status: 404 },
+  )),
   http.get('*/v3/console/terminal/capability', () => HttpResponse.json({ available: false, reason: 'Backend PTY no instalado en este entorno' })),
 ];

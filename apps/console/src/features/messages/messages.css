@@ -220,12 +220,79 @@
   .messenger-message-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/*
+ * ------------------------------------------------------------------ pantalla estrecha (teléfono)
+ *
+ * Steven, textual: «es horrible… toca scrollear un montón para ver dónde está el envío de
+ * mensaje». No era una exageración: a 360 px la envoltura pasa a `display: block`, así que el
+ * roster (buscador + filtro + hasta 300 px de lista) se apila ENCIMA del hilo, y detrás del hilo
+ * vienen la tira de cola, el aviso de ventana, la transcripción y el detalle del mensaje. El
+ * compositor —lo único que el operador viene a usar— quedaba a más de dos pantallas del borde
+ * superior, y volvía a irse abajo cada vez que llegaba un mensaje.
+ *
+ * El arreglo es el de cualquier mensajería: el compositor se ancla al borde inferior y el hilo se
+ * desplaza por detrás. Cuatro cosas hay que hacer bien, y las cuatro son fáciles de romper sin que
+ * nada avise:
+ *
+ * 1. `position: FIXED`, no `sticky`. Es el segundo intento, y el primero se descartó MIDIÉNDOLO en
+ *    un Chrome a 360×740: con `sticky` el compositor quedaba en `top: 778` con la ventana de 740,
+ *    o sea seguía fuera de pantalla al abrir el hilo. El motivo es de manual y no se ve en jsdom:
+ *    una caja pegajosa no puede salir de su bloque contenedor, y `.messenger-thread` empieza a
+ *    778 px del borde (cabecera de página ≈ 370 + roster ≈ 350). O sea: el `sticky` sólo empezaba
+ *    a servir DESPUÉS de scrollear, que es exactamente lo que Steven pidió no tener que hacer.
+ *    `fixed` se ancla a la ventana y no depende de dónde empiece el hilo.
+ * 2. El anclaje es a 66 px, no a 0: en este mismo corte `.sidebar` (styles.css) se convierte en
+ *    una barra de navegación FIJA de 66 px pegada abajo. Con `bottom: 0` el botón «Enviar» queda
+ *    debajo del menú, tapado, que es peor que el defecto original.
+ * 3. Un elemento fijo SALE DEL FLUJO: sin colchón, el final del hilo —la última burbuja y el
+ *    detalle del mensaje— queda permanentemente debajo de la barra, y no hay scroll que lo saque.
+ *    Por eso `.messenger-thread` reserva abajo la altura REAL del compositor, que `ConversationPane`
+ *    mide y escribe en `--messenger-composer-alto`. El valor por defecto es para el navegador que
+ *    no traiga `ResizeObserver`: de más, nunca de menos.
+ * 4. El compositor fijo compite por altura con el teclado del teléfono, así que en este corte se
+ *    le quitan los adornos que ahí no sirven: el atajo «Enter enviar» (no hay Enter físico) y el
+ *    apilado en columna del pie que el corte de 460 px impone al compositor de la terminal.
+ */
 @media (max-width: 760px) {
-  .messenger-shell { display: block; }
+  .messenger-shell { display: block; overflow: visible; }
   .messenger-roster { border-right: 0; border-bottom: 1px solid var(--border); }
   .messenger-agent-list { max-height: 300px; }
+  /*
+   * Con una conversación abierta el roster deja de ser el contenido y pasa a ser el conmutador de
+   * agente: se queda, porque esconderlo dejaría al teléfono sin forma de cambiar de hilo, pero
+   * ocupa dos filas y se desplaza dentro de sí mismo. `data-conversacion` lo pone `MessagesPage`.
+   */
+  .messenger-shell[data-conversacion="abierta"] .messenger-agent-list { max-height: 124px; }
   .messenger-queue-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .messenger-message-meta { grid-template-columns: 1fr 1fr; }
+
+  .messenger-composer {
+    position: fixed;
+    z-index: 6;
+    right: 0;
+    bottom: 66px;
+    left: 0;
+    margin-top: 0;
+    border-top: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    box-shadow: 0 -16px 30px rgb(0 0 0 / 38%);
+  }
+
+  /* El colchón del punto 3 de arriba: sin él el final del hilo vive debajo del compositor. */
+  .messenger-thread { padding-bottom: calc(var(--messenger-composer-alto, 300px) + 16px); }
+
+  .messenger-composer .composer-footer > span { display: none; }
+  .messenger-composer textarea { min-height: 54px; }
+}
+
+@media (max-width: 460px) {
+  /*
+   * El corte de 460 px de styles.css apila el pie del compositor en columna y estira el botón al
+   * 100 %: en un compositor anclado eso son dos filas más de alto robadas al hilo. Acá se
+   * devuelve a una sola fila; el pie de esta vista sólo tiene el atajo (ya oculto) y el botón.
+   */
+  .messenger-composer .composer-footer { align-items: center; flex-direction: row; }
+  .messenger-composer .composer-footer .button { width: auto; }
 }
 
 @media (prefers-color-scheme: light) {

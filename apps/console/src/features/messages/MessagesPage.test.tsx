@@ -325,3 +325,24 @@ it('sin tocar el selector sigue publicando interactive con prioridad 10', async 
   await waitFor(() => expect(enviados).toHaveLength(1));
   expect(enviados[0]).toMatchObject({ lane: 'interactive', priority: 10 });
 }, 25_000);
+
+/**
+ * EL GANCHO DEL ARREGLO DE PANTALLA ESTRECHA, comprobado en el DOM.
+ *
+ * La regla que encoge el roster a conmutador vive en `messages.css` y sólo se activa con este
+ * atributo. La hoja se comprueba aparte (`composer-anclado.test.ts`); lo que se comprueba acá es
+ * lo único que jsdom sí puede ver: que el atributo se pone cuando hay conversación abierta y NO
+ * antes —si se pusiera siempre, el roster nacería recortado a dos filas siendo el contenido
+ * principal de la pantalla, que es el defecto contrario—.
+ */
+it('marca la envoltura con data-conversacion sólo cuando hay un hilo abierto', async () => {
+  const user = userEvent.setup();
+  const { container } = renderWithApi(<MessagesPage />);
+
+  const envoltura = container.querySelector('.messenger-shell');
+  await screen.findByRole('button', { name: /conversación con argos,/i });
+  expect(envoltura).not.toHaveAttribute('data-conversacion');
+
+  await abrirConversacion(user, 'argos');
+  expect(envoltura).toHaveAttribute('data-conversacion', 'abierta');
+}, 20_000);

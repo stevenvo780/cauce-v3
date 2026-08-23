@@ -1,5 +1,5 @@
 import { ChevronDown, CircleOff, DoorClosed, LockKeyhole, RefreshCw, Send, TerminalSquare } from 'lucide-react';
-import { useMemo, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useApi } from '../../api/context';
 import type { DeliveryView, JobLane, MessagePage } from '../../api/types';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
@@ -11,6 +11,16 @@ import { TerminalTranscript } from '../terminal/TerminalTranscript';
 import { MessageTimeline } from './MessageTimeline';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
+
+/**
+ * El nombre de la variable CSS que reserva, al pie del hilo, el hueco del compositor fijo.
+ *
+ * Se exporta para que la prueba pueda exigir que la hoja y el componente digan LA MISMA cadena.
+ * Un `style.setProperty` con un nombre que ningún `var()` lee no es un error para nadie —ni para
+ * el typecheck, ni para el lint, ni para las pruebas de DOM— y el síntoma sería el final del hilo
+ * viviendo debajo del compositor, en el teléfono, sin una línea en ninguna consola.
+ */
+export const VAR_ALTO_COMPOSITOR = '--messenger-composer-alto';
 
 interface ConversationPaneProps {
   agent: AgenteDeMensajeria;
@@ -72,6 +82,32 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
   ));
   const totalVisible = (page?.items ?? []).length;
 
+  /*
+   * En pantalla estrecha el compositor es `position: fixed` y por tanto SALE DEL FLUJO: sin
+   * reservar su alto al pie del hilo, la última burbuja y el detalle del mensaje quedan debajo de
+   * la barra para siempre. El alto no se puede escribir a mano en la hoja porque es variable —el
+   * selector de room aparece sólo con más de un room, y los avisos de permiso, de ruta y de
+   * publicación suman filas—, así que se MIDE. En escritorio la variable existe igual y no la lee
+   * nadie: el `var()` sólo está dentro del corte de 760 px.
+   */
+  const hiloRef = useRef<HTMLElement | null>(null);
+  const compositorRef = useRef<HTMLFormElement | null>(null);
+  useEffect(() => {
+    const hilo = hiloRef.current;
+    const compositor = compositorRef.current;
+    if (!hilo || !compositor) return;
+    const anotar = () => {
+      hilo.style.setProperty(VAR_ALTO_COMPOSITOR, `${Math.ceil(compositor.getBoundingClientRect().height)}px`);
+    };
+    anotar();
+    // jsdom no trae `ResizeObserver`, y tampoco lo traen navegadores viejos. Sin observador queda
+    // la medida inicial, que es mejor que nada y nunca peor que el valor por defecto de la hoja.
+    if (typeof ResizeObserver !== 'function') return;
+    const observador = new ResizeObserver(anotar);
+    observador.observe(compositor);
+    return () => observador.disconnect();
+  }, []);
+
   async function enviar(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const texto = draft.trim();
@@ -106,7 +142,7 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
   }
 
   return (
-    <section className="messenger-thread" aria-label={`Conversación con ${agent.alias}`}>
+    <section className="messenger-thread" ref={hiloRef} aria-label={`Conversación con ${agent.alias}`}>
       <header className="messenger-thread-head">
         <div className="messenger-thread-identity">
           <span className={`messenger-avatar ${agent.leaseState}`} aria-hidden="true">{agent.alias.slice(0, 2).toUpperCase()}</span>
@@ -232,7 +268,7 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
         </div>
       ) : null}
 
-      <form className="terminal-composer messenger-composer" onSubmit={(event) => void enviar(event)}>
+      <form className="terminal-composer messenger-composer" ref={compositorRef} onSubmit={(event) => void enviar(event)}>
         <label htmlFor={`messenger-input-${agent.id}`}>Mensaje para {agent.alias}</label>
         {route.sourceRoomIds.length > 1 ? (
           <label className="messenger-room-select">Room de origen
