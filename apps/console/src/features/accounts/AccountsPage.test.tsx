@@ -66,7 +66,7 @@ it('queda enrutada en /accounts sin desplazar a las pantallas existentes', async
 
   window.history.pushState({}, '', '/config');
   window.dispatchEvent(new PopStateEvent('popstate'));
-  expect(await screen.findByRole('heading', { level: 1, name: /configuración/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /ajustes/i })).toBeInTheDocument();
 });
 
 it('/assignments no da 404 ni cae al fallback: redirige a /accounts y reescribe la barra de direcciones', async () => {

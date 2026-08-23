@@ -43,7 +43,7 @@ function recordChanges(sink: ChangeRequest[]) {
 it('previews and applies a default-deny ACL mutation through the protected API', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  expect(await screen.findByRole('heading', { level: 1, name: /configuración/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /ajustes/i })).toBeInTheDocument();
   expect(await screen.findByText(/RBAC/i)).toBeInTheDocument();
 
   await irA(user, HISTORIAL);
@@ -142,7 +142,7 @@ it('acepta en el editor los recursos que el servidor acepta y la lista fija rech
   recordChanges(changes);
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
   await irA(user, HISTORIAL);
 
   await user.selectOptions(screen.getByLabelText('Resource'), 'chain_policy');
@@ -222,7 +222,7 @@ function panelDe(nombre: RegExp): HTMLElement {
 
 it('pinta cada colección como TABLA con columnas de verdad y deja el JSON crudo detrás del desplegable', async () => {
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
   const memberships = panelDe(/memberships/i);
   // La columna «Acciones» desapareció: no le quedaba nada que hacer desde que `enabled` es un
@@ -520,7 +520,7 @@ it('FAMILIA 2: el aviso de una acción de tabla NO sobrevive a otra escritura qu
 it('FAMILIA 2: tocar el JSON del editor crudo se lleva puestos el verde y el preview anteriores', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
   await irA(user, HISTORIAL);
   const editor = screen.getByLabelText('Mutación JSON');
 
@@ -627,7 +627,7 @@ it('FAMILIA 3: la interfaz dice que deshacer revierte la FILA entera, no el camp
   servirConfig(() => snapshotConAudit(1));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
   await irA(user, HISTORIAL);
 
   const nota = within(panelDe(/audit trail/i))
@@ -699,7 +699,7 @@ it('FAMILIA 4: el role_brief de «Agent registry» se ve RESUMIDO, no 1200 carac
   }));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
   await irA(user, AGENTES);
 
   const registro = panelDe(/agent registry/i);
@@ -720,7 +720,7 @@ it('FAMILIA 4: el role_brief de «Agent registry» se ve RESUMIDO, no 1200 carac
 
 it('FAMILIA 5: /config son SEIS pestañas reales, en el orden en que se monta una flota', async () => {
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
   const pestanas = within(screen.getByRole('tablist', { name: /áreas de configuración/i }))
     .getAllByRole('tab');
@@ -736,7 +736,7 @@ it('FAMILIA 5: /config son SEIS pestañas reales, en el orden en que se monta un
 it('FAMILIA 5: el render es CONDICIONAL, no un scroll con todo pintado y un ancla', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
   // Estando en «Espacios y miembros», lo de las otras áreas NO está en el documento. Si estuviera
   // —oculto por CSS, o simplemente más abajo— esto seguiría siendo el scroll de dieciséis paneles
@@ -756,7 +756,7 @@ it('FAMILIA 5: «Alta rápida» NO se perdió: vive en «Espacios y miembros» y
   recordChanges(changes);
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
   // Está montada en la pestaña de entrada, sin tener que buscarla: es lo que el dueño no encontraba.
   const alta = panelDe(/alta rápida/i);
@@ -786,7 +786,7 @@ it('FAMILIA 5: el cambio de rol por columna y el JSON crudo por fila siguen en �
   recordChanges(changes);
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
   const memberships = panelDe(/memberships/i);
   // El JSON crudo por fila: no se borró al ordenar la pantalla, sigue un escalón más abajo.
@@ -826,7 +826,7 @@ it('FAMILIA 5: una colección que la consola no sabe clasificar aparece en «Otr
   servirConfig(() => ({ ...snapshotDeConfig(1), gizmos: [{ id: 'g1', enabled: true }] }));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { level: 1, name: /configuración/i });
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
   // La pestaña sólo existe porque hay algo que no se supo clasificar: sin `gizmos` no sale, y una
   // pestaña vacía permanente enseña a ignorarla justo antes del día en que importa.

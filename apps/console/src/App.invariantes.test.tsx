@@ -51,7 +51,7 @@ const DESTINOS: Record<string, Destino> = {
   messages: { encabezado: /^mensajes$/i },
   queues: { encabezado: /queues, retries & dlq/i },
   observability: { encabezado: /^señales y auditoría$/i },
-  config: { encabezado: /configuración & rollback/i },
+  config: { encabezado: /ajustes & rollback/i },
   terminal: { encabezado: /^ultimate terminal$/i },
   /** Sin `<h1>`: son avisos, no vistas. Ver `FleetRouteNotice` y `JobsRetiredNotice`. */
   fleet: { marca: /esa dirección ya no identifica a nadie/i },

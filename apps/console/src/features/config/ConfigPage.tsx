@@ -398,7 +398,7 @@ export function ConfigPage() {
   }
 
   return <>
-    <PageHeader eyebrow="Atomic control plane" title="Configuración & rollback" description="Cada colección como tabla, los permisos como interruptores que se aplican al pulsarlos, y el JSON crudo detrás de un desplegable." actions={<RefreshButton onClick={config.reload} loading={config.loading} />} />
+    <PageHeader eyebrow="Atomic control plane" title="Ajustes & rollback" description="Cada colección como tabla, los permisos como interruptores que se aplican al pulsarlos, y el JSON crudo detrás de un desplegable." actions={<RefreshButton onClick={config.reload} loading={config.loading} />} />
     <PermissionBadge access={access.data} permission="config.write" />
 
     {/* Sin permiso NO se esconde nada: las tablas se ven igual y los botones quedan inertes con el

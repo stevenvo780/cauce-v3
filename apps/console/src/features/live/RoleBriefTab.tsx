@@ -15,7 +15,7 @@ import { ROLE_BRIEF_MAX, bloqueoPorRuntimeDesplegado, contarRoleBrief, tonoRoleB
  *
  * Hasta ahora este texto —el preámbulo «Tu rol: …» que el adaptador antepone al contrato— sólo se
  * LEÍA: la única forma de cambiarlo era un `UPDATE` crudo contra la base, sin revisión y sin vuelta
- * atrás. Acá se escribe por la MISMA mutación de configuración que usa «Configuración & rollback»,
+ * atrás. Acá se escribe por la MISMA mutación de configuración que usa «Ajustes & rollback»,
  * que deja su mutación inversa en `config_revisions`; sin inverso no hay marcha atrás y el cambio
  * no vale.
  *
