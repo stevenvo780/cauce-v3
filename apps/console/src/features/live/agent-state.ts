@@ -40,7 +40,13 @@ export interface LiveStateMeta {
 
 export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
   down: { label: 'Caído', hint: 'Sin lease vigente o nunca conectó: nadie va a tomar su trabajo.', tone: 'danger' },
-  blocked: { label: 'Bloqueado', hint: 'Tomó trabajo y no avanza. Es el fallo que se ve como "tarda", no como error.', tone: 'danger' },
+  /*
+   * «Trabado» y no «Bloqueado»: es la palabra que ya usaba el veredicto de arriba («trabado hace
+   * 22 min», ver `motivoDe`), la que usa la tabla de abajo para `work_state: 'stalled'` y la que
+   * usa el aviso de la portada. Eran cuatro palabras para el mismo hecho —«Bloqueado», «COLGADO»,
+   * «detenido» y `stalled` crudo— repartidas por tres pantallas.
+   */
+  blocked: { label: 'Trabado', hint: 'Tomó trabajo y no avanza. Es el fallo que se ve como "tarda", no como error.', tone: 'danger' },
   delegating: { label: 'Delegando', hint: 'Le pasó trabajo a otro agente, que ya lo tiene en vuelo.', tone: 'info' },
   /**
    * Antes esto se llamaba «Respondiendo», decía «acaba de cerrar una entrega», iba en tono
@@ -60,8 +66,14 @@ export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
   receiving: { label: 'Recibiendo', hint: 'Le entró trabajo nuevo y todavía no empezó el turno.', tone: 'info' },
   thinking: { label: 'Trabajando', hint: 'Turno en curso: el arnés está masticando la entrega.', tone: 'positive' },
   idle: {
+    /**
+     * El texto dice ahora la PRECEDENCIA, y no por gusto: desde que la tabla de abajo usa este
+     * mismo vocabulario, «Libre» aparece también en la columna «Estado» de un alias cuyo lease
+     * venció —porque el servidor manda `work_state: 'idle'` (no tiene trabajo) y la columna de
+     * presencia dice «Caído»—. Sin decir cuál gana, la leyenda contradiría a la fila.
+     */
     label: 'Libre',
-    hint: 'Conectado, con lease vigente y nada en vuelo. NO es un fallo.',
+    hint: 'Nada en vuelo. En el mapa, además, con lease vigente: un alias sin trabajo Y sin lease se dibuja Caído, que gana.',
     tone: 'neutral',
   },
 };
@@ -501,13 +513,29 @@ export { humanSeconds };
  * saber si tiene que hacer algo. La partición gruesa existe para poder escribir UNA frase arriba
  * de todo, y se DERIVA de los siete — no los reemplaza ni los reordena.
  */
-export type OwnerBucket = 'problema' | 'trabajando' | 'libre';
+export type OwnerBucket = 'problema' | 'ocupado' | 'libre';
 
 export function ownerBucket(state: LiveState): OwnerBucket {
   if (state === 'down' || state === 'blocked') return 'problema';
   if (state === 'idle') return 'libre';
-  return 'trabajando';
+  return 'ocupado';
 }
+
+/**
+ * **La palabra del veredicto NO puede ser el rótulo de un chip.**
+ *
+ * 🔴 Medido el 2026-08-23 en producción con 18 alias: el veredicto decía «13 conectados · 4
+ * trabajando · 9 libres» y el chip a 140 px por debajo decía «Trabajando 2». Las dos cifras eran
+ * correctas y contaban cosas distintas —el 4 agrupa `thinking` + `delegating` + `receiving` +
+ * `settled`; el 2 es sólo `thinking`— pero con la MISMA palabra, y las otras dos cifras del
+ * veredicto sí cuadraban con su chip (9 libres = Libre 9; 13 conectados = 18 − Caído 5). Ese es
+ * el modo más caro de mentir: el operador comprueba dos, le cuadran, y se fía de la tercera.
+ *
+ * «Con trabajo entre manos» es la frase que esta misma pantalla ya usa para el conjunto —la
+ * cabecera dice «qué tienen entre manos» y el estado vacío del mapa dice «Nadie tiene trabajo
+ * entre manos»— y no es el rótulo de ningún estado, así que no se puede confundir con uno.
+ */
+export const ROTULO_OCUPADOS = 'con trabajo entre manos';
 
 export interface VerdictCulprit {
   key: string;
@@ -594,7 +622,10 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
   }
 
   const problemas = views.filter((view) => ownerBucket(view.state) === 'problema');
-  const trabajando = views.filter((view) => ownerBucket(view.state) === 'trabajando').length;
+  // «1 libres» y «1 conectados» se leían en pantalla: la cifra se pegaba a un plural fijo. Medido
+  // en Chrome el 2026-08-23 sobre la consola con datos, con un solo alias libre.
+  const plural = (cuantos: number, uno: string, varios: string) => `${cuantos} ${cuantos === 1 ? uno : varios}`;
+  const ocupados = views.filter((view) => ownerBucket(view.state) === 'ocupado').length;
   const libres = views.filter((view) => ownerBucket(view.state) === 'libre').length;
   const conectados = views.filter((view) => view.state !== 'down').length;
 
@@ -604,7 +635,7 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
       frase: problemas.length === 1
         ? '1 agente necesita atención.'
         : `${problemas.length} agentes necesitan atención.`,
-      apoyo: `${conectados} conectados · ${trabajando} trabajando · ${libres} libres.`,
+      apoyo: `${plural(conectados, 'conectado', 'conectados')} · ${ocupados} ${ROTULO_OCUPADOS} · ${plural(libres, 'libre', 'libres')}.`,
       culpables: problemas.map((view) => ({ key: view.key, alias: view.alias, motivo: motivoDe(view) })),
     };
   }
@@ -612,7 +643,7 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
   return {
     tone: 'ok',
     frase: 'Todo en orden.',
-    apoyo: `${conectados} conectados · ${trabajando} trabajando · ${libres} libres · ninguno trabado.`,
+    apoyo: `${plural(conectados, 'conectado', 'conectados')} · ${ocupados} ${ROTULO_OCUPADOS} · ${plural(libres, 'libre', 'libres')} · ninguno trabado.`,
     culpables: [],
   };
 }

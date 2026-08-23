@@ -354,6 +354,13 @@ export function LiveFleetPage() {
   // cliente elegido, los chips seguían sumando agentes que la página decía no estar mostrando.
   const tally = useMemo(() => stateTally(alcance), [alcance]);
 
+  /** alias → estado del muñeco. Se calcula sobre `views` ENTERA y no sobre el alcance: la tabla
+   *  recibe el snapshot completo y se acota con `onlyKeys`, no quitándole el estado a nadie. */
+  const estadosVivos = useMemo(
+    () => new Map(views.map((view) => [view.key, view.state])),
+    [views],
+  );
+
   /**
    * Un SOLO conjunto de alias resaltados para el mapa y la tabla a la vez.
    *
@@ -442,8 +449,19 @@ export function LiveFleetPage() {
       ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, []);
 
+  /**
+   * El fallo va PRIMERO, y no es un detalle de orden.
+   *
+   * Esta vista refresca sola cada 4 s. Con el error debajo del `loading`, el reintento que se
+   * dispara en cuanto una lectura vence vuelve a poner `loading: true` y la pantalla regresa al
+   * cartel de carga sin haber enseñado nunca el error: medido en Chrome el 2026-08-23 contra un
+   * gateway mudo, 36 s sin una sola alerta. Mientras no haya un solo dato que mostrar, lo último
+   * COMPROBADO es que la lectura falló, y eso es lo que se dice — con su botón.
+   */
+  if (activity.error && !snapshot) {
+    return <ErrorState error={activity.error} onRetry={activity.reload} reintentando={activity.loading} />;
+  }
   if (activity.loading && !snapshot) return <LoadingState label="Leyendo la actividad de la flota…" />;
-  if (activity.error && !snapshot) return <ErrorState error={activity.error} onRetry={activity.reload} />;
 
   return (
     <div className={`live-page${drawer && detail ? ' has-drawer' : ''}`}>
@@ -667,6 +685,10 @@ export function LiveFleetPage() {
           selectedKey={selected ?? null}
           onlyKeys={spotlight}
           filterLabel={stateFilter ? LIVE_STATE_META[stateFilter].label : undefined}
+          /* La tabla NO vuelve a decidir el estado de nadie: consume el que ya decidió esta
+             página, el mismo que pinta cada muñeco y cuenta cada chip. Es lo que hace imposible
+             que la fila diga «Libre» de un alias que el chip cuenta como «Caído». */
+          estados={estadosVivos}
           onSelect={(key) => setHovered(key ?? undefined)}
           onOpen={(key) => abrirCajon(key)}
         />

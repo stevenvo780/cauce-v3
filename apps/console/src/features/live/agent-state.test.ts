@@ -263,10 +263,13 @@ describe('ownerBucket', () => {
     expect(ownerBucket('down')).toBe('problema');
     expect(ownerBucket('blocked')).toBe('problema');
     expect(ownerBucket('idle')).toBe('libre');
-    expect(ownerBucket('thinking')).toBe('trabajando');
-    expect(ownerBucket('delegating')).toBe('trabajando');
-    expect(ownerBucket('receiving')).toBe('trabajando');
-    expect(ownerBucket('settled')).toBe('trabajando');
+    // El cubo se llama `ocupado` y NO `trabajando`: «Trabajando» es el rótulo del chip de
+    // `thinking`, y usar la misma palabra para el cubo que agrupa cuatro estados es lo que hacía
+    // que el veredicto dijera «4 trabajando» encima de un chip «Trabajando 2».
+    expect(ownerBucket('thinking')).toBe('ocupado');
+    expect(ownerBucket('delegating')).toBe('ocupado');
+    expect(ownerBucket('receiving')).toBe('ocupado');
+    expect(ownerBucket('settled')).toBe('ocupado');
   });
 });
 
