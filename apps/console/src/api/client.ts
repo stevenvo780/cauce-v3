@@ -2,6 +2,7 @@ import type {
   AdapterPage,
   AgentChainSnapshot,
   AgentDirective,
+  RoleBriefHistory,
   AuditPage,
   CancelResult,
   ConsoleAccess,
@@ -444,6 +445,39 @@ export class CauceApi {
     const ruta = `/v3/console/agents/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}/directive`;
     try {
       const cuerpo = await this.request<Omit<AgentDirective, 'publicado'>>(ruta);
+      return { ...cuerpo, publicado: true };
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
+        return {
+          publicado: false,
+          motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
+        };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * El diario del rol declarado de un alias: qué decía antes, qué dice ahora y cuándo cambió.
+   *
+   * Lo escribe un TRIGGER de la base (`agent_role_brief_history`), así que registra también los
+   * `UPDATE` crudos por psql —que hasta esta consola eran la ÚNICA forma de tocar un rol—. Por eso
+   * vale como registro de lo que pasó, y no sólo de lo que pasó por acá.
+   *
+   * Comprobado contra producción el 2026-08-23: `GET .../Steven/zeus/history` responde 200 con las
+   * entradas, y un alias sin historia responde 200 con `entries: []`. Esas dos respuestas dicen
+   * cosas DISTINTAS y las dos son ciertas: `[]` es «se miró y no cambió nunca». El 404 —que es lo
+   * que devuelve un gateway anterior— no dice eso, dice que no se miró, y por eso baja a
+   * `publicado: false` en vez de a lista vacía. Mismo criterio que `getAgentDirective`.
+   *
+   * OJO con la profundidad: el trigger se instaló el 2026-08-23 02:35. Todo lo anterior a esa
+   * fecha NO está, y la pantalla tiene que decirlo —un diario corto se lee como «este rol casi no
+   * cambió», que es falso—. Ver `HistorialRol`.
+   */
+  async getRoleBriefHistory(tenantId: string, alias: string): Promise<RoleBriefHistory> {
+    const ruta = `/v3/console/role-assignments/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}/history`;
+    try {
+      const cuerpo = await this.request<Omit<RoleBriefHistory, 'publicado'>>(ruta);
       return { ...cuerpo, publicado: true };
     } catch (error) {
       if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {

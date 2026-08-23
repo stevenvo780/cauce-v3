@@ -1,10 +1,11 @@
-import { AlertTriangle, BookOpen, Brain, FileWarning, IdCard } from 'lucide-react';
+import { AlertTriangle, BookOpen, Brain, FileWarning, IdCard, Wrench } from 'lucide-react';
 import { useMemo, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import type { AgentDirective, ConfigurationSnapshot } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { EmptyState, Time } from '../../components/ui';
 import { RoleBriefTab, type RoleBriefTabProps } from './RoleBriefTab';
+import { CAPAS_PENDIENTES, ubicacionDeclarada, type UbicacionDeclarada } from './capas-pendientes';
 import { avisosDeCapas, totalDeMemoria, type AvisoDeCapas } from './directiva';
 
 /**
@@ -106,7 +107,62 @@ export function DirectivaTab({ tenantId, alias, borrador, onBorrador }: Directiv
         </p>
         <CapaDeMemoria recurso={directiva} />
       </section>
+
+      <CapasPendientes ubicacion={ubicacionDeclarada(config.data, tenantId, alias)} alias={alias} />
     </div>
+  );
+}
+
+/**
+ * Las dos partes del encargo que TODAVÍA no se pueden tocar, dichas en vez de omitidas.
+ *
+ * Steven pidió cuatro cosas y esta pestaña resuelve dos. Callar las otras dos dejaría al operador
+ * eligiendo entre dos conclusiones falsas —que se olvidaron, o que este agente no tiene
+ * herramientas configuradas—. Con el hueco rotulado sabe que existen, dónde viven y qué falta.
+ *
+ * No lleva ningún botón a propósito. Un botón que no hace nada es peor que este texto: promete un
+ * efecto, y en la única capa donde todavía no está decidido dónde vive el dato, ese efecto podría
+ * escribirse en un fichero que nadie lee.
+ */
+function CapasPendientes({ ubicacion, alias }: { ubicacion: UbicacionDeclarada; alias: string }) {
+  return (
+    <section className="directiva-capa directiva-pendientes" aria-label="Lo que todavía no se puede editar desde aquí">
+      <CapaCabecera
+        icono={<Wrench size={15} aria-hidden="true" />}
+        numero={4}
+        titulo="Todavía no se puede desde aquí"
+        fin="LO QUE FALTA DEL ENCARGO"
+        fuente="ni la base ni el gateway lo publican · no hay dónde escribirlo con efecto"
+      />
+      <p className="directiva-porque">
+        Del pedido original —directiva, manual, herramientas y prompts— esto es lo que queda fuera.
+        Se enseña para que no se lea como un olvido ni como un «este agente no tiene».
+      </p>
+
+      <ul className="directiva-pendiente-lista">
+        {CAPAS_PENDIENTES.map((capa) => (
+          <li key={capa.id}>
+            <strong>{capa.titulo}</strong>
+            <p className="directiva-pendiente-pedido">{capa.pedido}</p>
+            <p className="directiva-pendiente-porque">{capa.porQueNo}</p>
+            <p className="directiva-pendiente-falta">Para que esto tenga editor: {capa.queFalta}</p>
+          </li>
+        ))}
+      </ul>
+
+      {/* La ubicación NO se inventa: si el registro no la declara se dice que es UNKNOWN, en vez
+          de rellenarla con el `/home/dev` que tienen casi todos —que mandaría a mirar el fichero
+          equivocado justo en el alias que se sale de la norma—. */}
+      <p className="directiva-pendiente-donde">
+        Mientras tanto, la configuración de {alias} vive en{' '}
+        {ubicacion.contenedor ? <code>{ubicacion.contenedor}</code> : <span className="unknown">contenedor UNKNOWN</span>}
+        {', '}
+        {ubicacion.home ? <code>{ubicacion.home}</code> : <span className="unknown">$HOME UNKNOWN</span>}
+        {'. '}
+        Se toca por la TUI o por <code>docker exec</code>, con lo que eso implica: sin revisión y
+        sin vuelta atrás.
+      </p>
+    </section>
   );
 }
 

@@ -789,3 +789,34 @@ export function mockChain(traceId: string) {
     counters: { edges: 3, hidden_edges: 1, redacted_endpoints: 1, open_branches: 1, rejected_branches: 1 },
   };
 }
+
+/**
+ * El diario del rol declarado de kant, para el modo mock.
+ *
+ * Reproduce lo que devuelve producción de verdad —medido el 2026-08-23 contra
+ * `GET /v3/console/role-assignments/Steven/zeus/history`—, incluidos sus dos huecos, que son la
+ * mitad de lo que la pantalla tiene que saber pintar: `actor_tenant` y `actor_alias` llegan NULL
+ * (el disparador sólo los rellena si el camino de escritura los declara, y ninguno lo hace), y la
+ * entrada más vieja es un alta, con `previous_brief` en NULL.
+ *
+ * Van a propósito en orden INVERSO al de la pantalla: si el servidor los mandara ya ordenados, un
+ * fallo en `entradasMasNuevasPrimero` pasaría desapercibido en todas las pruebas.
+ */
+export const roleBriefHistoryKant: Array<Record<string, unknown>> = [
+  {
+    id: '1', tenant_id: 'Steven', alias: 'kant', operation: 'insert',
+    previous_brief: null,
+    new_brief: 'Sos kant.',
+    previous_template_slug: null, new_template_slug: null,
+    actor_tenant: null, actor_alias: null,
+    changed_at: '2026-08-23T03:00:00.000Z',
+  },
+  {
+    id: '2', tenant_id: 'Steven', alias: 'kant', operation: 'update',
+    previous_brief: 'Sos kant.',
+    new_brief: 'Sos kant, el hub de coordinacion de la flota.',
+    previous_template_slug: 'orquestador', new_template_slug: null,
+    actor_tenant: null, actor_alias: null,
+    changed_at: '2026-08-23T04:00:00.000Z',
+  },
+];
