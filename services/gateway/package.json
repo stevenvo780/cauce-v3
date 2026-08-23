@@ -5,7 +5,7 @@
   "type": "module",
   "exports": "./src/app.ts",
   "scripts": {
-    "test": "vitest run src/*.test.ts",
+    "test": "vitest run src",
     "typecheck": "tsc --noEmit -p ../../tsconfig.json"
   },
   "dependencies": {
