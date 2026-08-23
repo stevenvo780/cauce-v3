@@ -35,12 +35,41 @@ const ETIQUETAS: Record<string, string> = {
   display_name: 'Nombre', is_hub: 'Hub', enabled: 'Habilitado',
   created_at: 'Alta', updated_at: 'Última edición',
   from_tenant: 'Desde', to_tenant: 'Hacia',
-  allow_route: 'allow_route', allow_read: 'allow_read', allow_control: 'allow_control',
-  allow_notify: 'allow_notify', harness_id: 'Harness', command: 'Comando',
+  // Los cuatro permisos se llamaban como la columna de Postgres —`allow_route`, en inglés, en una
+  // pantalla en castellano— y encima con la cabecera en mayúsculas: `ALLOW_ROUTE`. El nombre de la
+  // columna no es una explicación de lo que concede, y quien la lee no puede deducirlo. Ahora se
+  // llaman por lo que hacen, y QUÉ hacen se explica en el tooltip de la cabecera
+  // (`EXPLICACION_DE_CAMPO` en `interruptores.ts`).
+  allow_route: 'Ruta', allow_read: 'Lectura', allow_control: 'Control',
+  allow_notify: 'Aviso proactivo', harness_id: 'Harness', command: 'Comando',
   capabilities: 'Capacidades', handle: 'Handle', adapter: 'Adaptador', channel: 'Canal',
   provider: 'Proveedor', account_id: 'Cuenta', agent_alias: 'Alias', priority: 'Prioridad',
   role_brief: 'Rol declarado', label: 'Etiqueta',
 };
+
+/**
+ * Columnas que se funden en UNA de identidad.
+ *
+ * `Desde` y `Hacia` son dos columnas para un solo hecho —la arista— y separarlas obliga a leer dos
+ * celdas y a reconstruir la dirección con la cabeza. Fundidas se leen de un golpe («Steven →
+ * Miguel») y devuelven a la tabla el ancho que los interruptores necesitan.
+ */
+const IDENTIDAD_FUNDIDA: Record<string, { clave: string; etiqueta: string; campos: readonly string[]; union: string }> = {
+  acl_edges: { clave: '__arista', etiqueta: 'Arista', campos: ['from_tenant', 'to_tenant'], union: ' → ' },
+};
+
+/** El texto de una columna fundida, o `undefined` si esta fila no trae los campos que la componen. */
+export function identidadFundida(clave: string, fila: Record<string, unknown>): string | undefined {
+  const fusion = Object.hasOwn(IDENTIDAD_FUNDIDA, clave) ? IDENTIDAD_FUNDIDA[clave] : undefined;
+  if (!fusion) return undefined;
+  const partes = fusion.campos.map((campo) => texto(fila, campo));
+  return partes.every((parte) => parte !== undefined) ? partes.join(fusion.union) : undefined;
+}
+
+export function esColumnaFundida(clave: string, columna: string): boolean {
+  const fusion = Object.hasOwn(IDENTIDAD_FUNDIDA, clave) ? IDENTIDAD_FUNDIDA[clave] : undefined;
+  return fusion !== undefined && fusion.clave === columna;
+}
 
 export interface ColumnaTabla {
   clave: string;
@@ -96,9 +125,18 @@ export function columnasDe(clave: string, filas: ReadonlyArray<Record<string, un
       if (!presentes.includes(campo) && !extra.includes(campo)) extra.push(campo);
     }
   }
-  return [...presentes, ...extra].map((campo) => ({
+  const fusion = Object.hasOwn(IDENTIDAD_FUNDIDA, clave) ? IDENTIDAD_FUNDIDA[clave] : undefined;
+  // La fusión sólo se aplica si el servidor publica TODOS los campos que la componen: con uno solo
+  // la columna quedaría a medias y el operador leería «Steven → » sin saber hacia dónde.
+  const fundir = fusion !== undefined && fusion.campos.every((campo) => presentes.includes(campo));
+  const orden = fundir && fusion
+    ? [fusion.clave, ...presentes.filter((campo) => !fusion.campos.includes(campo)), ...extra]
+    : [...presentes, ...extra];
+  return orden.map((campo) => ({
     clave: campo,
-    etiqueta: Object.hasOwn(ETIQUETAS, campo) ? ETIQUETAS[campo] : campo,
+    etiqueta: fundir && fusion && campo === fusion.clave
+      ? fusion.etiqueta
+      : Object.hasOwn(ETIQUETAS, campo) ? ETIQUETAS[campo] : campo,
   }));
 }
 
@@ -134,136 +172,21 @@ function texto(fila: Record<string, unknown>, campo: string): string | undefined
   return typeof valor === 'string' && valor.trim() !== '' ? valor : undefined;
 }
 
-function booleano(fila: Record<string, unknown>, campo: string): boolean | undefined {
-  const valor = fila[campo];
-  return typeof valor === 'boolean' ? valor : undefined;
-}
+/**
+ * Lo que el operador puede cambiar de una fila SIN salir de la tabla.
+ *
+ * Los booleanos —`enabled` y los tres permisos de una arista— ya no son botones: son interruptores,
+ * y su lógica vive en `interruptores.ts`. Acá queda lo que no es un booleano y por lo tanto no es un
+ * interruptor: el ROL de una membresía, que es una elección entre varios valores y para eso está el
+ * `<select>` de su propia columna.
+ */
 
-export interface AccionDeFila {
-  /** Estable dentro de la fila: identifica qué botón está esperando confirmación. */
+export interface AccionDeRol {
+  /** Estable dentro de la fila: identifica qué cambio está esperando confirmación. */
   id: string;
-  /** Texto del botón. */
-  etiqueta: string;
-  /** Frase completa; sirve de `aria-label` del botón y de encabezado de la confirmación. */
+  /** Frase completa; sirve de encabezado de la confirmación y del cartel del desenlace. */
   descripcion: string;
   mutation: ConfigMutation;
-}
-
-/** Colecciones que tienen botones de un clic. El resto se ve, pero se edita por el editor crudo. */
-export const COLECCIONES_CON_ACCIONES: ReadonlySet<string> = new Set([
-  'tenants', 'rooms', 'memberships', 'acl_edges',
-]);
-
-/**
- * Las acciones frecuentes de una fila, ya con la mutación armada. Van por el MISMO
- * `api.changeConfiguration` que el editor crudo, así que quedan en `config_revisions` con su
- * inversa y se deshacen desde el audit trail.
- *
- * `update` con un `value` PARCIAL es lo correcto y no un atajo: el store hace merge campo por campo
- * contra la fila que leyó `FOR UPDATE` (`has(value,'enabled') ? ... : old.enabled`), así que mandar
- * sólo `enabled` no pisa el `role` que otro operador acaba de cambiar.
- *
- * Lo que el ENVÍO es parcial no lo es el DESHACER: la inversa que el store guarda en
- * `config_revisions` lleva como `oldValue` la fila ENTERA que había antes, no el campo que se tocó.
- * Deshacer esa revisión desde el audit trail restituye toda la fila, así que si dos operadores
- * tocaron campos distintos de la misma arista, deshacer el de A revierte también lo de B. Está
- * dicho en la interfaz —en el panel del audit trail— porque el operador no puede deducirlo de un
- * botón que dice «Rollback».
- *
- * Si `enabled` no viene como booleano no se ofrece el botón: no se puede escribir "el contrario"
- * de un valor que no se conoce. Es preferible una fila sin acciones a una que apague algo por
- * suponer que estaba encendido.
- */
-export function accionesDeFila(clave: string, fila: Record<string, unknown>): AccionDeFila[] {
-  if (clave === 'tenants') {
-    const id = texto(fila, 'id');
-    const habilitado = booleano(fila, 'enabled');
-    if (id === undefined || habilitado === undefined) return [];
-    return [alternar('enabled', habilitado, `el tenant ${id}`, {
-      resource: 'tenant', action: 'update', id, value: { enabled: !habilitado },
-    })];
-  }
-  if (clave === 'rooms') {
-    const tenantId = texto(fila, 'tenant_id');
-    const id = texto(fila, 'id');
-    const habilitado = booleano(fila, 'enabled');
-    if (tenantId === undefined || id === undefined || habilitado === undefined) return [];
-    return [alternar('enabled', habilitado, `la room ${tenantId}/${id}`, {
-      resource: 'room', action: 'update', tenant_id: tenantId, id, value: { enabled: !habilitado },
-    })];
-  }
-  if (clave === 'memberships') {
-    const tenantId = texto(fila, 'tenant_id');
-    const roomId = texto(fila, 'room_id');
-    const alias = texto(fila, 'alias');
-    const habilitado = booleano(fila, 'enabled');
-    if (tenantId === undefined || roomId === undefined || alias === undefined) return [];
-    if (habilitado === undefined) return [];
-    return [alternar('enabled', habilitado, `la membership ${tenantId}/${roomId}/${alias}`, {
-      resource: 'membership', action: 'update', tenant_id: tenantId, room_id: roomId, alias,
-      value: { enabled: !habilitado },
-    })];
-  }
-  if (clave === 'acl_edges') {
-    const desde = texto(fila, 'from_tenant');
-    const hacia = texto(fila, 'to_tenant');
-    if (desde === undefined || hacia === undefined) return [];
-    const arista = `la arista ${desde} → ${hacia}`;
-    const acciones: AccionDeFila[] = [];
-    const habilitado = booleano(fila, 'enabled');
-    if (habilitado !== undefined) {
-      acciones.push(alternar('enabled', habilitado, arista, {
-        resource: 'acl_edge', action: 'update', from_tenant: desde, to_tenant: hacia,
-        value: { enabled: !habilitado },
-      }));
-    }
-    for (const permiso of ['allow_route', 'allow_read', 'allow_control'] as const) {
-      const actual = booleano(fila, permiso);
-      if (actual === undefined) continue;
-      acciones.push({
-        id: permiso,
-        etiqueta: `${actual ? 'Quitar' : 'Conceder'} ${permiso}`,
-        descripcion: `${actual ? 'Quitar' : 'Conceder'} ${permiso} en ${arista}`,
-        mutation: {
-          resource: 'acl_edge', action: 'update', from_tenant: desde, to_tenant: hacia,
-          value: { [permiso]: !actual },
-        },
-      });
-    }
-    return acciones;
-  }
-  return [];
-}
-
-/**
- * La acción que corresponde a una COLUMNA booleana de la fila, si la hay.
- *
- * El `id` de cada acción es a propósito el nombre del campo que alterna (`enabled`, `allow_route`,
- * `allow_read`, `allow_control`), así que la columna y su botón son el MISMO hecho: la celda decía
- * «SÍ» y el botón de al lado decía «Deshabilitar». Medido en producción: 61 pares idénticos —5 en
- * tenants, 5 en rooms, 19 en memberships y 8×4 = 32 en la ACL dirigida—. Con esto la celda pasa a
- * ser un `role="switch"` y el botón desaparece: un hecho, un control.
- */
-export function accionDeColumna(
-  acciones: readonly AccionDeFila[], clave: string,
-): AccionDeFila | undefined {
-  return acciones.find((accion) => accion.id === clave);
-}
-
-/**
- * Lo que queda para la columna «Acciones» una vez que cada booleano se dibuja como interruptor en
- * su propia columna. Cuando no queda nada para NINGUNA fila, la columna entera sobra: son cuatro
- * columnas menos en la tabla de ACL, que es la que más desbordaba.
- */
-export function accionesFueraDeColumnas(
-  acciones: readonly AccionDeFila[], columnas: readonly ColumnaTabla[],
-): AccionDeFila[] {
-  return acciones.filter((accion) => !columnas.some((columna) => columna.clave === accion.id));
-}
-
-function alternar(id: string, habilitado: boolean, sujeto: string, mutation: ConfigMutation): AccionDeFila {
-  const verbo = habilitado ? 'Deshabilitar' : 'Habilitar';
-  return { id, etiqueta: verbo, descripcion: `${verbo} ${sujeto}`, mutation };
 }
 
 /** Igual que `AliasSchema`/rol en `packages/protocol/src/schemas.ts`. */
@@ -292,7 +215,7 @@ export function motivoSinCambioDeRol(fila: Record<string, unknown>): string | un
  * expresión que el zod del gateway, o cuando es el que la fila ya tiene: mandar una mutación que el
  * servidor va a rechazar —o que no cambia nada pero igual gasta una revisión— no es una acción.
  */
-export function accionDeRol(fila: Record<string, unknown>, rol: string): AccionDeFila | undefined {
+export function accionDeRol(fila: Record<string, unknown>, rol: string): AccionDeRol | undefined {
   const tenantId = texto(fila, 'tenant_id');
   const roomId = texto(fila, 'room_id');
   const alias = texto(fila, 'alias');
@@ -302,7 +225,6 @@ export function accionDeRol(fila: Record<string, unknown>, rol: string): AccionD
   if (!ROL.test(pedido) || pedido === actual) return undefined;
   return {
     id: 'role',
-    etiqueta: `Rol ${pedido}`,
     descripcion: `Cambiar el rol de ${tenantId}/${roomId}/${alias} de ${actual ?? 'UNKNOWN'} a ${pedido}`,
     mutation: {
       resource: 'membership', action: 'update', tenant_id: tenantId, room_id: roomId, alias,

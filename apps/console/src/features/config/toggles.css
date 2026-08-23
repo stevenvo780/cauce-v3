@@ -1,0 +1,250 @@
+/*
+ * Interruptores de `/config`. Hoja PROPIA de esta feature: `styles.css` tiene dueño en otro carril
+ * y redefinir ahí lo de acá crearía dos sitios donde cambiar lo mismo, con uno de los dos siempre
+ * atrasado. Todo lo de este fichero cuelga de `.config-area`, así que no puede alcanzar a ninguna
+ * otra vista de la consola.
+ */
+
+/* --- La fila -------------------------------------------------------------------------------
+ *
+ * MEDIDO en Chrome antes de tocar nada: la fila de `Directed ACL` medía 147 px porque la columna
+ * «Acciones» apilaba cuatro botones de texto. Sin esa columna la fila la gobierna el padding
+ * general de `td` (14 px arriba y abajo). Acá se baja a 8 px, que con el interruptor de 20 px deja
+ * la fila en ~44 px — la medida que se pidió.
+ */
+/*
+ * **La página entera scrolleaba en horizontal en vez de la tabla.**
+ *
+ * MEDIDO en Chrome a 390 px de ancho: el `<section class="panel">` de `Directed ACL` medía 891 px
+ * dentro de una ventana de 390 (y 684 los de «Espacios»), así que quien scrolleaba de lado era el
+ * documento y no la tabla — con la barra lateral y la cabecera desplazándose también. El
+ * `.table-wrap` ya tenía `overflow-x: auto` y NO servía de nada: un item de grid tiene
+ * `min-width: auto`, o sea que el panel crece hasta el ancho mínimo de su contenido en vez de
+ * quedarse en el de la columna, y entonces el `.table-wrap` nunca llega a desbordarse.
+ *
+ * Viene de antes de este cambio (medido sobre `consola/ronda2-20260823 @ c2a75d0`), pero se arregla
+ * acá porque es la misma tabla y la corrección es de una línea.
+ */
+.config-area > * { min-width: 0; }
+/*
+ * `position: relative` no es decorativo: sin un bloque contenedor propio, el desbordamiento de la
+ * tabla se PROPAGA a la región de scroll de la raíz y la página sigue moviéndose de lado aunque el
+ * `.table-wrap` ya tenga su barra. MEDIDO a 390 px con `window.scrollTo(9999,0)` y leyendo
+ * `window.scrollX`: 309 px de deriva en la base, 166 px con sólo el `min-width`, y 0 px con esto.
+ * (`contain: paint` y `transform: translateZ(0)` lo arreglan igual; se elige el más barato.)
+ */
+.config-area .table-wrap { position: relative; min-width: 0; max-width: 100%; }
+
+.config-area td { padding: 8px 12px; }
+
+/*
+ * El `<select>` del rol heredaba `min-height: 41px` de la regla global de campos de texto y dejaba
+ * la fila de memberships en 65 px cuando el resto de las tablas ya estaba en 40. Un control de una
+ * sola línea dentro de una celda no necesita la altura de un campo de formulario.
+ */
+.config-area td select { min-height: 30px; padding: 4px 8px; }
+.config-area th { padding: 9px 12px; }
+.config-area td .badge { white-space: nowrap; }
+
+/* Una columna de fecha no tiene por qué reservar el ancho de `1 jul 2026, 10:00:00`. */
+.fecha-relativa { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* --- El interruptor ------------------------------------------------------------------------ */
+
+.interruptor-caja { display: inline-flex; align-items: center; gap: 8px; }
+
+/*
+ * Un `<input type="checkbox">` de verdad, repintado. No es un `<div>` con `onClick`: así el
+ * tabulador lo alcanza, la barra espaciadora lo activa y el lector de pantalla lo anuncia como
+ * interruptor sin que haya que reimplementar nada de eso a mano.
+ *
+ * El `width`/`min-height`/`margin-top` explícitos son necesarios: la regla global
+ * `input, select { width: 100%; min-height: 41px; margin-top: 7px }` de `styles.css` está pensada
+ * para campos de texto y a una casilla la estira a lo ancho del formulario. Es el mismo motivo por
+ * el que la casilla «Es hub» del alta salía flotando lejos de su rótulo.
+ */
+.config-area input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.config-area input.interruptor {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-3);
+  appearance: none;
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+
+.config-area input.interruptor::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  content: "";
+  transition: transform .12s ease, background-color .12s ease;
+}
+
+.config-area input.interruptor:checked {
+  border-color: var(--mint);
+  background: var(--mint-dim);
+}
+
+.config-area input.interruptor:checked::after { transform: translateX(16px); background: var(--mint); }
+.config-area input.interruptor:hover:not(:disabled) { border-color: var(--blue); }
+.config-area input.interruptor:disabled { cursor: not-allowed; opacity: .45; }
+
+/* Mientras la escritura vuela: el estado que se ve todavía no lo confirmó nadie, y se nota. */
+.config-area input.interruptor[aria-busy="true"] { border-color: var(--amber); }
+.config-area input.interruptor[aria-busy="true"]::after { background: var(--amber); animation: interruptor-latido .7s ease-in-out infinite; }
+.config-area input.interruptor[aria-invalid="true"] { border-color: var(--red); }
+
+@keyframes interruptor-latido { 50% { opacity: .35; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .config-area input.interruptor,
+  .config-area input.interruptor::after { transition: none; animation: none; }
+}
+
+.interruptor-estado {
+  min-width: 1.4em;
+  color: var(--muted);
+  font-size: .68rem;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+/* --- Cabecera con ayuda -------------------------------------------------------------------- */
+
+.cabecera-ayuda { cursor: help; }
+.cabecera-ayuda > span { display: inline-flex; align-items: center; gap: 4px; }
+
+.cabecera-ayuda-marca {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: .58rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.cabecera-ayuda:hover .cabecera-ayuda-marca,
+.cabecera-ayuda:focus-visible .cabecera-ayuda-marca { border-color: var(--blue); color: var(--blue); }
+
+/* --- El fallo de un interruptor, pegado a su fila ------------------------------------------- */
+
+.interruptor-fallo > td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--red);
+  background: var(--red-dim);
+}
+
+.interruptor-fallo p {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: #ffb7bc;
+  font-size: .74rem;
+  line-height: 1.5;
+}
+
+.interruptor-fallo svg { flex: none; margin-top: 2px; }
+
+/* --- La única confirmación que queda -------------------------------------------------------- */
+
+.interruptor-confirmacion {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--amber);
+  border-radius: 10px;
+  background: var(--amber-dim);
+}
+
+.interruptor-confirmacion p {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: .78rem;
+  line-height: 1.55;
+}
+
+.interruptor-confirmacion svg { flex: none; margin-top: 2px; }
+
+/* --- Casillas de los formularios de alta ---------------------------------------------------- */
+
+/*
+ * MEDIDO: en «Alta rápida» la casilla «Habilitado» salía a 130 px de su propio rótulo y a otra
+ * altura, porque heredaba `width: 100%` de la regla de campos de texto. Se leía como un control
+ * suelto sin etiqueta. Acá el rótulo pasa a ser una fila: casilla, después texto.
+ */
+.config-area .config-form label.casilla {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  align-self: end;
+  min-height: 41px;
+  font-weight: 600;
+}
+
+.config-area .config-form label.casilla .label-hint { flex: 1 1 auto; }
+
+/*
+ * MEDIDO en Chrome, modo claro: las pistas de los formularios de alta salían con `--faint`
+ * (#718198 sobre #f3f6fa) = contraste 3.66, por debajo del 4.5 que exige WCAG AA para texto normal.
+ * `--muted` sube a >5 en los dos temas y no le quita jerarquía a la pista.
+ */
+.config-area .label-hint,
+.config-area .config-form ~ .muted,
+.config-area .panel > .muted { color: var(--muted); }
+
+/* --- Alta: un solo formulario, no dos ------------------------------------------------------- */
+
+.alta-modos { display: flex; flex-wrap: wrap; gap: 2px; margin: 0 0 14px; padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+
+.alta-modo {
+  padding: 7px 13px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.alta-modo:hover { color: var(--text); }
+.alta-modo[aria-selected="true"] { background: var(--surface-3); color: var(--text); }
+.alta-modo:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+/* El JSON crudo deja de estar abierto por defecto: es la verdad literal, no lo primero que mirar. */
+.config-crudo > summary { display: flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--muted); cursor: pointer; font-size: .74rem; }
+.config-crudo[open] > summary { margin-bottom: 2px; }
+
+@media (prefers-color-scheme: light) {
+  .config-area input.interruptor { background: #e4eaf2; }
+  .config-area input.interruptor::after { background: #7d8ca0; }
+  .config-area input.interruptor:checked { background: var(--mint-dim); }
+  .config-area input.interruptor:checked::after { background: var(--mint); }
+  .interruptor-fallo p { color: #8f2734; }
+  .alta-modos { background: #f4f7fb; }
+  .alta-modo[aria-selected="true"] { background: #e6eef8; }
+}

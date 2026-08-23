@@ -350,39 +350,6 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .config-modal-detalle > summary { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-size: .74rem; }
 .config-modal-detalle .config-preview { max-height: 260px; margin: 10px 0 0; }
 .config-modal-pie { flex: none; padding: 12px 18px; border-top: 1px solid var(--border); border-radius: 0 0 12px 12px; background: var(--amber-dim); }
-/* Interruptor de una celda booleana. Sustituye al par «columna que dice SÍ» + «botón que dice
-   Deshabilitar»: el estado es la POSICIÓN, no una palabra, y el hecho se escribe una sola vez.
-   No escribe al tocarlo — abre la misma confirmación de siempre. */
-.config-switch {
-  display: inline-flex;
-  padding: 3px;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-.config-switch:disabled { cursor: not-allowed; opacity: .5; }
-.config-switch-pista {
-  display: block;
-  width: 36px;
-  height: 20px;
-  border: 1px solid #414c5e;
-  border-radius: 999px;
-  background: #1c2533;
-  transition: .16s ease;
-}
-.config-switch-perilla {
-  display: block;
-  width: 14px;
-  height: 14px;
-  margin: 2px 0 0 2px;
-  border-radius: 50%;
-  background: #8e9aad;
-  transition: .16s ease;
-}
-.config-switch[aria-checked="true"] .config-switch-pista { border-color: #2d7b69; background: var(--mint-dim); }
-.config-switch[aria-checked="true"] .config-switch-perilla { margin-left: 18px; background: var(--mint); }
-.config-switch:focus-visible { border-radius: 999px; outline: 3px solid var(--blue); outline-offset: 2px; }
-
 /* Las acciones que quedan en una celda van en HORIZONTAL. Apiladas, una fila de la ACL medía 199px
    —cuatro botones uno encima de otro— y ocho reglas de permiso no entraban en pantalla y media. La
    tabla ya scrollea dentro de su caja, así que ensanchar la celda no desborda la página. */
@@ -899,10 +866,6 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   .config-preview { background: #f4f7fb; color: #22344a; }
   .config-modal { background: #ffffff; }
   .config-modal-fondo { background: rgb(30 45 66 / 42%); }
-  .config-switch-pista { border-color: #b8c7d9; background: #e4e9f0; }
-  .config-switch-perilla { background: #77869b; }
-  .config-switch[aria-checked="true"] .config-switch-pista { border-color: #4aa287; background: #d8f3ea; }
-  .config-switch[aria-checked="true"] .config-switch-perilla { background: #0f5132; }
   /* Los cuatro tonos de `.notice` traían el texto pensado para fondo oscuro y en modo claro nadie
      los había mirado: MEDIDO en Chrome, el verde de «rollback aplicado» quedaba a contraste 1.16 y
      el gris del aviso a 1.42 — invisibles. Es exactamente el fallo que este trabajo venía a cerrar:

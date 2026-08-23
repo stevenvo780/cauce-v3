@@ -9,7 +9,7 @@ import {
 } from '../../components/ui';
 import { permissionState } from '../../lib';
 import { CONFIG_SIN_CONTROL_REASON, onNavClick } from '../../navigation';
-import { AltaRapida } from './AltaRapida';
+import { AltaDeEspacios } from './AltaDeEspacios';
 import { AREA_POR_DEFECTO, agruparPorArea, type ConfigAreaId } from './areas';
 import { CollectionTable, type AccionPendiente, type AvisoDeColeccion } from './CollectionTable';
 import { configCollections } from './collections';
@@ -18,7 +18,7 @@ import {
   type CaminoDeCambio, type ConfigChangeOutcome, type EstadoRecarga,
 } from './config-change';
 import { RolesPanel } from './RolesPanel';
-import { SpaceWizard } from './SpaceWizard';
+import { useInterruptores } from './use-interruptores';
 import './config.css';
 
 const templates: Record<ConfigResource, ConfigMutation> = {
@@ -160,6 +160,19 @@ export function ConfigPage() {
   const areaVisible = areas.some((entrada) => entrada.area.id === area) ? area : AREA_POR_DEFECTO;
   const activa = areas.find((entrada) => entrada.area.id === areaVisible);
   const politicasDeRol = config.data?.role_policies ?? undefined;
+  /**
+   * Los interruptores de las tablas. Escriben por el MISMO `change()` que el editor crudo, el
+   * wizard y el alta —o sea, `POST /v3/console/config/changes` con `expected_revision`—, así que no
+   * hay un segundo camino de escritura que pueda quedarse atrás del primero. Lo que el hook agrega
+   * es el comportamiento optimista y, sobre todo, la REVERSIÓN cuando el servidor rechaza.
+   *
+   * `camino: 'directo'`: un interruptor no previsualiza nada, así que un 409 no puede mandar a
+   * «volver a previsualizar».
+   */
+  const interruptores = useInterruptores(
+    (mutation) => change(mutation, false, 'directo'),
+    snapshotRevision,
+  );
 
   /**
    * Cambiar de pestaña anula la confirmación pendiente y borra los carteles de desenlace.
@@ -174,6 +187,7 @@ export function ConfigPage() {
     setPendiente(undefined);
     setAvisoDeAccion(undefined);
     setAvisoDeRoles(undefined);
+    interruptores.limpiar();
   }
 
   function selectTemplate(nextResource: ConfigResource, nextAction: ConfigAction) {
@@ -384,7 +398,7 @@ export function ConfigPage() {
   }
 
   return <>
-    <PageHeader eyebrow="Atomic control plane" title="Configuración & rollback" description="Cada colección como tabla, las operaciones frecuentes a un clic con confirmación, y el JSON crudo detrás de un desplegable." actions={<RefreshButton onClick={config.reload} loading={config.loading} />} />
+    <PageHeader eyebrow="Atomic control plane" title="Configuración & rollback" description="Cada colección como tabla, los permisos como interruptores que se aplican al pulsarlos, y el JSON crudo detrás de un desplegable." actions={<RefreshButton onClick={config.reload} loading={config.loading} />} />
     <PermissionBadge access={access.data} permission="config.write" />
 
     {/* Sin permiso NO se esconde nada: las tablas se ven igual y los botones quedan inertes con el
@@ -426,10 +440,9 @@ export function ConfigPage() {
       {/* «Alta rápida» y el wizard viven en «Espacios y miembros»: son exactamente las altas de
           tenant, room, membership y agente que esa pestaña describe. No se movieron de la página,
           se movieron de sitio DENTRO de la página, y la prueba dice en qué pestaña están. */}
-      {areaVisible === 'espacios' ? <>
-        <AltaRapida soloLectura={soloLectura} busy={busy} onChange={change} />
-        <SpaceWizard canWrite={!soloLectura} busy={busy} onChange={change} />
-      </> : null}
+      {areaVisible === 'espacios'
+        ? <AltaDeEspacios soloLectura={soloLectura} busy={busy} onChange={change} />
+        : null}
 
       {areaVisible === 'roles' ? <>
         {avisoDeRoles ? <p
@@ -474,6 +487,7 @@ export function ConfigPage() {
           politicasDeRol={politicasDeRol}
           soloLectura={soloLectura}
           busy={busy}
+          control={interruptores}
           {...(vigente && pedido ? { pendiente: pedido } : {})}
           {...(aviso ? { aviso } : {})}
           onPedir={(siguiente) => {
