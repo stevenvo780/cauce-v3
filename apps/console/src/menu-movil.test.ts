@@ -13,8 +13,8 @@ import { NAV_ENTRIES } from './nav';
  *     «Portada  La flota ahoCuentas y cuotaMensajesQueues &SDBlQles y a»
  *
  * Sólo «Portada» quedaba legible. Cinco pares de rótulos adyacentes se solapaban, medido con
- * `getBoundingClientRect`: «Señales y auditoría»↔«Configuración y altas» 42,2 px ·
- * «Configuración y altas»↔«Ultimate Terminal» 38,4 px · «Queues & DLQ»↔«Señales y auditoría»
+ * `getBoundingClientRect`: «Señales y auditoría»↔«Ajustes y altas» 42,2 px ·
+ * «Ajustes y altas»↔«Ultimate Terminal» 38,4 px · «Queues & DLQ»↔«Señales y auditoría»
  * 25,0 px · «La flota ahora»↔«Cuentas y cuotas» 18,5 px · «Cuentas y cuotas»↔«Mensajes» 6,9 px.
  * Cada `<a>` medía 54 px de caja con 62–81 px de texto dentro, y el `<ul>` sumaba 493 px en una
  * barra de 344. El CSS servido en producción era

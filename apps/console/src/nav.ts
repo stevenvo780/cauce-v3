@@ -18,7 +18,7 @@ import {
  *
  * Existía por duplicado: la barra lateral lo declaraba en `App.tsx` y la portada volvía a
  * escribirlo a mano en `LandingPage.tsx`. Las dos copias ya habían divergido el mismo día en que
- * nacieron —la portada llamaba «Configuration» a lo que el menú llama «Configuración y altas», y
+ * nacieron —la portada llamaba «Configuration» a lo que el menú llama «Ajustes y altas», y
  * se olvidaba entera de «Ultimate Terminal»—, y el rótulo del panel decía «Ocho vistas» porque
  * alguien las contó con el dedo. Un rótulo contado a mano miente en cuanto se agrega una entrada,
  * y el recuento de acá se DERIVA de la lista.
@@ -55,7 +55,14 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'messages', label: 'Mensajes', icon: MessageSquareText, que: 'La conversación con cada agente y el estado de cada entrega.' },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, que: 'Cada entrega pendiente, en reintento o muerta, con reinyectar y cancelar.' },
   { id: 'observability', label: 'Señales y auditoría', icon: Gauge, que: 'Las señales del gateway, el egress al origen y quién autorizó cada cosa.' },
-  { id: 'config', label: 'Configuración y altas', icon: Settings2, que: 'Tenants, salas, membresías, roles y altas — con reversión por revisión.' },
+  // 'Configuración y altas' -> 'Ajustes y altas' (2026-08-23). Con la letra de la barra movil
+  // a 11 px, 'Configuración' sola mide 85,8 px y la celda da 68/78/85 px en 320/360/390: NO
+  // entra en NINGUN ancho, asi que el navegador la partia a mitad de palabra ('Configurac' /
+  // 'ión y altas'). 'Ajustes' mide 45,9 px y entra en los tres con holgura.
+  // OJO AL METODO: esto NO lo caza scrollWidth > clientWidth, porque `overflow-wrap:break-word`
+  // evita el desborde partiendo la palabra. La prueba automatica siempre dara 0. Se vio MIRANDO
+  // la barra renderizada. Si volves a tocar el tamano de letra, mira la barra, no midas el ancho.
+  { id: 'config', label: 'Ajustes y altas', icon: Settings2, que: 'Tenants, salas, membresías, roles y altas — con reversión por revisión.' },
   { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, que: 'La terminal de cada bot, con su feed durable aunque el relay PTY no esté.' },
 ];
 

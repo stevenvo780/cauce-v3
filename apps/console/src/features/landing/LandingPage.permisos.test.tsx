@@ -12,7 +12,7 @@ import { server } from '../../mocks/server';
  *
  * Historia, porque explica por qué estas pruebas dicen ahora lo contrario de lo que decían:
  *
- *  1. El commit 252cf3c dejó «Configuración y altas» inerte —con su motivo— para quien no tiene
+ *  1. El commit 252cf3c dejó «Ajustes y altas» inerte —con su motivo— para quien no tiene
  *     `config.write`. La portada volvía a prometerla como enlace VIVO, porque su lista de atajos
  *     estaba escrita a mano. El verificador hizo clic y navegó.
  *  2. La ronda siguiente arregló el síntoma por la fuente: la portada pasó a leer `NAV_ENTRIES` y
@@ -61,7 +61,7 @@ it('la barra lateral SIGUE negando /config a quien no lo puede abrir, con el mot
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
-  const lateral = within(nav).getByRole('link', { name: /configuración y altas/i });
+  const lateral = within(nav).getByRole('link', { name: /ajustes y altas/i });
   await waitFor(() => expect(lateral).toHaveAttribute('aria-disabled', 'true'));
   expect(lateral).toHaveAttribute('title', expect.stringContaining('permiso de control'));
 
@@ -77,7 +77,7 @@ it('control negativo: con el permiso puesto, esa misma entrada sí navega', asyn
   renderWithApi(<App />);
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
-  const lateral = within(nav).getByRole('link', { name: /configuración y altas/i });
+  const lateral = within(nav).getByRole('link', { name: /ajustes y altas/i });
   await waitFor(() => expect(lateral).not.toHaveAttribute('aria-disabled'));
   await userEvent.click(lateral);
   expect(window.location.pathname).toBe('/config');

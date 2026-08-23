@@ -564,7 +564,7 @@ function SinPermisoDeControl({ detalle }: { detalle: string }) {
     <div className="state-card" role="note">
       <ShieldOff aria-hidden="true" />
       <div>
-        <strong>«Configuración y altas» necesita permiso de control</strong>
+        <strong>«Ajustes y altas» necesita permiso de control</strong>
         <p>{CONFIG_SIN_CONTROL_REASON}</p>
         <p className="muted">
           El servidor contestó 403: <span className="mono">{detalle || 'sin mensaje'}</span>. Reintentar

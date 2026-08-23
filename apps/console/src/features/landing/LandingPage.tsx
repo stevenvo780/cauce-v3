@@ -32,7 +32,7 @@ import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './land
  * disponible para QUIEN está mirando.
  *
  * Estaban escritos a mano, y el precio se midió el 2026-08-22: con un acceso sin `config.write`,
- * la barra lateral dejaba «Configuración y altas» inerte con su motivo —el arreglo del commit
+ * la barra lateral dejaba «Ajustes y altas» inerte con su motivo —el arreglo del commit
  * 252cf3c— y la portada, que es la primera pantalla de todo el mundo, ofrecía el mismo rótulo como
  * enlace vivo. El verificador hizo clic y navegó. Además la copia se llamaba «Configuration», que
  * ya no es el rótulo de nadie, y se olvidaba de «Ultimate Terminal».

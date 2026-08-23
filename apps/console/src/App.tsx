@@ -119,7 +119,7 @@ interface Route {
 /**
  * Qué componente dibuja cada entrada CON rótulo. El rótulo, el icono y la pregunta que responde
  * cada vista viven en `NAV_ENTRIES` (`./nav`), que es también lo que lee la portada: eran dos
- * listas escritas a mano y ya habían divergido —«Configuration» contra «Configuración y altas»—
+ * listas escritas a mano y ya habían divergido —«Configuration» contra «Ajustes y altas»—
  * el mismo día en que se escribieron.
  */
 const PAGES: Record<string, ComponentType> = {

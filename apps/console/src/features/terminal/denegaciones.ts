@@ -86,7 +86,7 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
   control_permission_required: {
     titulo: 'Tu cuenta no tiene permiso de control',
     porQue: 'La terminal es una operación de control sobre la flota y tu sesión no lo tiene concedido en la base. '
-      + 'Es el MISMO permiso que pide «Configuración y altas».',
+      + 'Es el MISMO permiso que pide «Ajustes y altas».',
     quienLoLevanta: `${DUENO_DEL_BUS}: te tiene que conceder el permiso «control» a tu alias de operador.`,
   },
   attribution_required: {
