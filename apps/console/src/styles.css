@@ -1014,6 +1014,15 @@ input, select, textarea { min-width: 0; }
   .terminal-session-head .session-identity { flex: 1 1 auto; }
 }
 
+/*
+ * La fila del agente SELECCIONADO en /terminal cambia su fondo a un degradado verde (`#15352f`)
+ * que sólo se ve con una sesión abierta —por eso no salía en un barrido de rutas—, y sobre él
+ * `--faint` cae a 3,93:1: el tenant, el epoch y el vencimiento del lease del agente que estás
+ * mirando eran lo MENOS legible de toda la lista. La fila sube un escalón de énfasis, que además
+ * es lo que corresponde: la que elegiste merece más contraste, no menos.
+ */
+.terminal-agent[data-active="true"] { --faint: var(--muted); }
+
 .terminal-adapter-list article { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
 .terminal-adapter-list article > .badge { grid-column: 2; justify-self: start; margin-top: 3px; }
 /* La insignia de un permiso es UNA palabra («allowed», «denied»): partirla en «ALLOWE/D» es peor

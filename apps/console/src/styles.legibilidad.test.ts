@@ -230,12 +230,14 @@ function tintesDelFondo(cuerpoBody: string, tabla: Record<string, string>): Rgb[
  * hay texto verde sobre esa superficie en ninguna vista. Un guardia que inventa parejas obliga a
  * oscurecer colores que nadie usa, y eso ES bajar la calidad para que pase una prueba.
  *
- * `fondos` admite `TINTE`, que es «`--bg` más el degradado decorativo del body».
+ * `fondos` admite `TINTE` («`--bg` más el degradado decorativo del body») y colores literales,
+ * para las superficies que no salen de un token —una parada de degradado, por ejemplo—. Un
+ * literal casi siempre pertenece a UN tema: para eso está `soloTema`.
  */
 const TINTE = '@tinte';
 const AA_TEXTO_NORMAL = 4.5;
 
-interface Pareja { texto: string; fondos: string[]; minimo?: number; porque: string }
+interface Pareja { texto: string; fondos: string[]; minimo?: number; soloTema?: 'claro' | 'oscuro'; porque: string }
 
 const PAREJAS: Pareja[] = [
   {
@@ -270,10 +272,23 @@ const PAREJAS: Pareja[] = [
   { texto: '--red', fondos: ['--bg', '--surface', TINTE], porque: 'errores y `.error-copy`' },
   { texto: '--violet', fondos: ['--bg', TINTE], porque: 'la delegación en el hipergrafo de /live' },
   { texto: '--lime', fondos: ['--bg', TINTE], porque: 'la respuesta cerrada en el hipergrafo de /live' },
+  /*
+   * La fila del agente SELECCIONADO en /terminal. Su fondo es un degradado literal, no un token, y
+   * sólo existe con una sesión abierta: por eso un barrido de rutas no lo ve. MEDIDO en tema
+   * oscuro: `--faint` caía a 3,93:1 ahí, o sea que el tenant, el epoch y el vencimiento del lease
+   * del agente que estás mirando eran lo MENOS legible de la lista. La fila sube un escalón de
+   * énfasis (`--faint: var(--muted)` dentro de ella), así que lo que hay que exigir es `--muted`.
+   */
+  { texto: '--muted', fondos: ['#15352f', '#102035'], soloTema: 'oscuro', porque: 'la fila del agente seleccionado en /terminal' },
+  { texto: '--muted', fondos: ['#dff3ed', '#eaf3fb'], soloTema: 'claro', porque: 'la fila del agente seleccionado en /terminal' },
 ];
 
 function fondosDe(nombre: string, tema: Tema): Rgb[] {
   if (nombre === TINTE) return tema.tintes;
+  if (nombre.startsWith('#')) {
+    const literal = leerColor(nombre);
+    return literal ? [literal] : [];
+  }
   const color = resolver(`var(${nombre})`, tema.tokens);
   return color ? [color] : [];
 }
@@ -283,6 +298,7 @@ export function parejasBajoAA(css: string): string[] {
   const fallos: string[] = [];
   for (const tema of temas(css)) {
     for (const pareja of PAREJAS) {
+      if (pareja.soloTema && pareja.soloTema !== tema.nombre) continue;
       const texto = resolver(`var(${pareja.texto})`, tema.tokens);
       if (!texto) {
         fallos.push(`[${tema.nombre}] ${pareja.texto} no está declarado o no resuelve a un color`);
@@ -332,6 +348,13 @@ describe('contraste de los tokens de color (WCAG 2.1 AA)', () => {
     const roto = GLOBAL.replace(/\s*--text-2: #[0-9a-f]{6};/g, '');
     expect(roto).not.toBe(GLOBAL);
     expect(parejasBajoAA(roto)).toContainEqual(expect.stringContaining('--text-2 no está declarado'));
+  });
+
+  it('la fila del agente seleccionado sube el énfasis de su texto secundario', () => {
+    const limpio = sinComentarios(GLOBAL);
+    // Sin esta redefinición, el `--muted` que la tabla de arriba exige no llega a ese texto: lo
+    // que llegaría es `--faint`, que sobre ese verde da 3,93:1.
+    expect(valor(declaraciones(limpio, '.terminal-agent[data-active="true"]'), '--faint')).toBe('var(--muted)');
   });
 
   it('el degradado decorativo del body ENTRA en la cuenta: es un fondo real de la página', () => {
