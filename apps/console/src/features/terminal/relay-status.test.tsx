@@ -85,6 +85,37 @@ describe('deriveTerminalRelayState', () => {
       expect(deriveTerminalRelayState(undefined, undefined).cause).toBeUndefined();
     });
   });
+
+  /**
+   * 🔴 **El cartel del 2026-08-23: «Canal PTY no disponible en este stack — El relay de terminales
+   * no está desplegado en este stack. (HTTP 400 al consultarlo.)».** Ninguna de las dos frases se
+   * sigue de un 400: un 400 prueba que la ruta EXISTE y que rechazó la petición. Culpar al
+   * despliegue mandó al operador a mirar contenedores mientras el fallo estaba en la consola.
+   */
+  describe('una respuesta que no significa ausencia no se cuenta como ausencia', () => {
+    it.each([400, 401, 405, 409, 422, 429, 500])('con %s dice que no se pudo comprobar, no que falte el relay', (status) => {
+      const state = deriveTerminalRelayState(undefined, new ApiError('bad request', status));
+      expect(state.status).toBe('unavailable');
+      expect(state.cause).toBe('sin-comprobar');
+      expect(state.reason).not.toContain(TERMINAL_RELAY_NOT_DEPLOYED_REASON);
+      expect(state.reason).toContain(`HTTP ${status}`);
+    });
+
+    it('cita el motivo del servidor sin inventar una causa', () => {
+      const state = deriveTerminalRelayState(undefined, new ApiError('cabecera CSRF ausente', 400));
+      expect(state.reason).toContain('cabecera CSRF ausente');
+      expect(state.reason).toMatch(/no dice que el relay falte/i);
+    });
+
+    /** CONTROL NEGATIVO: los estados que SÍ prueban ausencia siguen diciendo «no desplegado». */
+    it.each([404, 501, 502, 503, 504])('con %s la causa sigue siendo no-desplegado', (status) => {
+      expect(deriveTerminalRelayState(undefined, new ApiError('x', status)).cause).toBe('no-desplegado');
+    });
+
+    it('un fallo de red sin código sigue siendo no-desplegado, como desde 0a1d0e3', () => {
+      expect(deriveTerminalRelayState(undefined, new Error('Failed to fetch')).cause).toBe('no-desplegado');
+    });
+  });
 });
 
 describe('useTerminalRelayStatus', () => {

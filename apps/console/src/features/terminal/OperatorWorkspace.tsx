@@ -25,7 +25,7 @@ import { useApi } from '../../api/context';
 import type { AdapterView, ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
-import { compactId, createId, permissionState } from '../../lib';
+import { compactId, createId, permissionState, safeCapabilityState } from '../../lib';
 import { AckInspector } from './AckInspector';
 import { FleetSidebar } from './FleetSidebar';
 import {
@@ -36,6 +36,7 @@ import {
 } from './api';
 import type { FleetAgent } from './fleet';
 import {
+  ADAPTER_STATE_LABELS,
   LIVE_TUI_LABELS,
   LIVE_TUI_MODE,
   SHELL_MODE,
@@ -53,8 +54,10 @@ import {
   ptySecondsLeft,
   PTY_REASON_MAX_LENGTH,
   sessionDeliveries,
+  terminalSessionRefusal,
   transcriptForSession,
   type OperatorSession,
+  type TerminalSessionRefusal,
 } from './session';
 import { TerminalTranscript } from './TerminalTranscript';
 
@@ -227,7 +230,15 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
             <article key={adapter.id ?? index}>
               <span className={`adapter-state-dot ${adapter.state ?? 'unknown'}`} aria-hidden="true" />
               <div><strong><Unknown value={adapter.label ?? adapter.id} /></strong><small>{adapter.capabilities?.length ?? 'UNKNOWN'} capabilities</small></div>
-              <Badge tone={adapter.state === 'available' ? 'online' : adapter.state === 'degraded' ? 'warning' : adapter.state === 'unavailable' ? 'offline' : 'unknown'}>&lt;Unknown value={adapter.state} /&gt;</Badge>
+              {/*
+                Acá se imprimía, literalmente y en pantalla, «<UNKNOWN VALUE=AVAILABLE />»: un
+                `&lt;Unknown value={...} /&gt;` escapado que el navegador pintaba como texto. Además
+                de ser jerga cruda, se contradecía: «UNKNOWN VALUE=AVAILABLE» no le dice a nadie si
+                el adaptador está o no. Ahora se pinta el estado, en palabras.
+              */}
+              <Badge tone={adapter.state === 'available' ? 'online' : adapter.state === 'degraded' ? 'warning' : adapter.state === 'unavailable' ? 'offline' : 'unknown'}>
+                {ADAPTER_STATE_LABELS[safeCapabilityState(adapter.state) ?? 'unknown']}
+              </Badge>
             </article>
           )) : <EmptyState>Adapters no informados.</EmptyState>}
         </div>
@@ -267,7 +278,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string }>();
   const [showPtyDialog, setShowPtyDialog] = useState(false);
   const [requesting, setRequesting] = useState(false);
-  const [requestError, setRequestError] = useState<string>();
+  const [requestError, setRequestError] = useState<TerminalSessionRefusal>();
   const [closingChannel, setClosingChannel] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [showInspector, setShowInspector] = useState(false);
@@ -414,12 +425,14 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
         reason,
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
-      });
+      }, api);
       onGrant(liveSession.id, issued);
       onUpdate({ ...liveSession, mode: 'pty', channelMode: mode, liveTuiAttempted: true });
       setShowPtyDialog(false);
     } catch (error) {
-      setRequestError(error instanceof Error ? error.message : 'El servidor rechazó la sesión PTY.');
+      // El rechazo se traduce a algo que un operador pueda usar y, si la culpa es de la consola,
+      // lo dice con esas palabras en vez de mandarlo a pedir un permiso que ya tiene.
+      setRequestError(terminalSessionRefusal(error));
       // Un rechazo se cuenta como intento: la apertura automática no vuelve a golpear al gateway.
       if (mode === LIVE_TUI_MODE) onUpdate({ ...liveSession, liveTuiAttempted: true });
     } finally {
@@ -518,6 +531,20 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
           <span>{liveTuiDetail}</span>
         </p>
 
+        {/*
+          El rechazo del servidor se PINTA. Antes vivía sólo dentro del diálogo de motivo, así que
+          la TUI —que se abre de un clic, sin diálogo— fallaba en absoluto silencio: dos 403 y el
+          panel seguía diciendo «PTY ONLINE» y «TUI EN VIVO».
+        */}
+        {requestError ? (
+          <p className="terminal-channel-refusal" role="alert" data-consola={requestError.esDefectoDeLaConsola || undefined}>
+            <AlertTriangle size={13} aria-hidden="true" />
+            <strong>{requestError.titulo}</strong>
+            <span>{requestError.detalle}</span>
+            <button type="button" onClick={() => setRequestError(undefined)}>Descartar</button>
+          </p>
+        ) : null}
+
         <div className="terminal-connection-bar" role="status">
           <span className={`connection-dot ${messages.error ? 'error' : ptyChannelLive ? 'open' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
           <strong>{messages.error ? 'FEED DEGRADADO' : ptyChannelLive ? 'POLLING EN PAUSA' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
@@ -605,7 +632,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
           agent={liveSession.agent}
           resolution={{ status: channel.status === 'blocked' ? 'unknown' : channel.status, reason: channel.reason, target: channelTarget }}
           pending={requesting}
-          error={requestError}
+          error={requestError?.detalle}
           onCancel={() => setShowPtyDialog(false)}
           onConfirm={(reason) => void requestChannel(reason, channelTarget?.modes.includes(SHELL_MODE) ? SHELL_MODE : channelTarget?.modes[0] ?? SHELL_MODE)}
         />
@@ -618,7 +645,6 @@ interface GridContainerProps {
   sessions: OperatorSession[];
   activeId?: string;
   agents: FleetAgent[];
-  adapters: AdapterView[];
   access?: ConsoleAccess;
   topologyAccess?: TopologySnapshot;
   capability?: TerminalCapability;
@@ -637,7 +663,6 @@ function GridContainer({
   sessions,
   activeId,
   agents,
-  adapters,
   access,
   topologyAccess,
   capability,
@@ -715,12 +740,13 @@ function GridContainer({
         ))}
       </div>
       <footer className="terminal-doctrine"><ShieldCheck size={14} aria-hidden="true" /> Cliente de transporte: no crea workers remotos, no ejecuta adapters y no persiste sesiones.</footer>
-      <div className="terminal-adapter-mobile"><AdapterInspector adapters={adapters} access={access} capability={capability} /></div>
     </div>
   );
 }
 
 export function OperatorWorkspace({ agents, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError }: OperatorWorkspaceProps) {
+  // La sesión que tiene el token CSRF en memoria: sin ella toda escritura del plano PTY vuelve 403.
+  const api = useApi();
   const [sessions, setSessions] = useState<OperatorSession[]>([]);
   const [activeId, setActiveId] = useState<string>();
   const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
@@ -747,7 +773,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
     const grant = grants[id];
     if (!grant) return;
     try {
-      await deleteTerminalSession(grant.session_id);
+      await deleteTerminalSession(grant.session_id, api);
     } catch {
       // The socket still has to go: a client-side failure must not leave a shell attached here.
     } finally {
@@ -778,7 +804,8 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   }
 
   return (
-    <div className="ultimate-terminal-shell">
+    <>
+      <div className="ultimate-terminal-shell">
       <FleetSidebar
         agents={agents}
         adapters={adapters}
@@ -792,7 +819,6 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
         sessions={liveSessions}
         activeId={activeId}
         agents={agents}
-        adapters={adapters}
         access={access}
         topologyAccess={topologyAccess}
         capability={terminalCapability}
@@ -809,6 +835,17 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
       <aside className="terminal-control-inspector" aria-label="Estado del control plane">
         <AdapterInspector adapters={adapters} access={access} capability={terminalCapability} />
       </aside>
-    </div>
+      </div>
+      {/*
+        La misma información que la columna de la derecha, para cuando esa columna no cabe (por
+        debajo de 1400 px). Vive FUERA de la rejilla de sesiones a propósito: estaba dentro, y
+        `GridContainer` corta antes cuando no hay ninguna sesión abierta — así que en un portátil
+        recién entrado a la vista el estado del control plane no existía en ninguna parte de la
+        página. Un panel que sólo aparece si ya hiciste clic en algo no está disponible.
+      */}
+      <div className="terminal-adapter-mobile" aria-label="Estado del control plane">
+        <AdapterInspector adapters={adapters} access={access} capability={terminalCapability} />
+      </div>
+    </>
   );
 }

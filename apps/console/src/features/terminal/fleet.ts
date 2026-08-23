@@ -117,6 +117,47 @@ export function adapterSummary(adapters: AdapterView[]): { healthy: number; tota
 }
 
 /**
+ * 🔴 **Por qué «3 / 6» estaba mal.** Medido en producción: el contador decía «ADAPTERS AVAILABLE
+ * 3/6» con 3 adaptadores disponibles y 3 que no habían reportado estado. Una fracción se lee como
+ * «3 de 6 funcionan, 3 están rotos», y eso mandaba a buscar una avería que no existía. Un
+ * adaptador que no reportó NO es un adaptador caído: es un adaptador del que no se sabe nada, y
+ * la diferencia entre las dos cosas es justamente el trabajo del operador.
+ */
+export interface AdapterBreakdown {
+  disponibles: number;
+  /** `degraded` + `unavailable`: el servidor SÍ reportó, y reportó un problema. */
+  conFallo: number;
+  /** `unknown`, ausente o malformado: no hay dato, que no es lo mismo que un fallo. */
+  sinReportar: number;
+  total: number;
+}
+
+export function adapterBreakdown(adapters: AdapterView[]): AdapterBreakdown {
+  const disponibles = adapters.filter((adapter) => adapter.state === 'available').length;
+  const conFallo = adapters.filter((adapter) => adapter.state === 'degraded' || adapter.state === 'unavailable').length;
+  return { disponibles, conFallo, sinReportar: adapters.length - disponibles - conFallo, total: adapters.length };
+}
+
+/** Texto del contador: cuenta cada grupo por su nombre y no inventa una fracción. */
+export function adapterBreakdownText(adapters: AdapterView[]): string {
+  const { disponibles, conFallo, sinReportar, total } = adapterBreakdown(adapters);
+  if (total === 0) return 'UNKNOWN';
+  return [
+    `${disponibles} disponibles`,
+    conFallo ? `${conFallo} con fallo` : undefined,
+    sinReportar ? `${sinReportar} sin reportar` : undefined,
+  ].filter(Boolean).join(' · ');
+}
+
+/** Estado de un adaptador en palabras del operador. `unknown` NO se dice «no disponible». */
+export const ADAPTER_STATE_LABELS: Readonly<Record<'available' | 'degraded' | 'unavailable' | 'unknown', string>> = {
+  available: 'Disponible',
+  degraded: 'Degradado',
+  unavailable: 'No disponible',
+  unknown: 'Sin reportar',
+};
+
+/**
  * Legacy single-target check against the capability's `target_label`. Kept for the capability
  * card; per-destination authority now comes from the targets inventory below.
  */
@@ -252,4 +293,48 @@ export function countLiveTuiTargets(targets: TerminalTarget[] | null | undefined
   return targets
     ? targets.filter((target) => target.authorized && target.pty_state === 'online' && target.modes.includes(LIVE_TUI_MODE)).length
     : undefined;
+}
+
+/* -------------------------------------------------------------------------- */
+/* El chip de la lista de flota                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 🔴 **La vista rompía su propia promesa. Medido el 2026-08-23 contra producción.**
+ *
+ * La cabecera dice, con estas palabras: «Un alias sólo emite si el servidor publica su modo
+ * harness; el resto queda con su motivo escrito, **nunca en verde**». En la lista de flota,
+ * argos, hegel, iza, janus y jarvis —`modes:["shell"]`, sin `harness`— se pintaban con el MISMO
+ * chip verde «PTY online» que los 8 que sí emiten, y sin motivo. Al lado, el KPI decía «ALIAS QUE
+ * EMITEN SU TUI 8/14». Es decir: el operador tenía que adivinar cuáles 6 de los 14 le iban a
+ * fallar, y el único camino era hacer clic y ver.
+ *
+ * El chip ahora contesta la pregunta que el operador se está haciendo —«¿voy a ver su pantalla si
+ * hago clic?»— y no una distinta: verde sólo si hay TUI; gris con el motivo del servidor si sólo
+ * hay shell. Los estados que ya se pintaban bien (sin autoridad, offline, no instalado,
+ * desconocido) no cambian.
+ */
+export interface FleetTerminalChip {
+  status: TerminalAccessStatus | 'no_tui';
+  label: string;
+  /** Siempre poblado: un chip sin motivo es exactamente el defecto que esto arregla. */
+  reason: string;
+}
+
+export function fleetTerminalChip(
+  targets: TerminalTarget[] | null | undefined,
+  agent: FleetAgent,
+): FleetTerminalChip {
+  const base = resolveTerminalTarget(targets, agent);
+  if (base.status !== 'allowed') {
+    return { status: base.status, label: TERMINAL_ACCESS_LABELS[base.status], reason: base.reason };
+  }
+  const live = resolveLiveTui(targets, agent);
+  if (live.status === 'available') {
+    return { status: 'allowed', label: LIVE_TUI_LABELS.available, reason: live.reason };
+  }
+  if (live.status === 'no_tui') {
+    return { status: 'no_tui', label: LIVE_TUI_LABELS.no_tui, reason: live.reason };
+  }
+  return { status: 'unknown', label: TERMINAL_ACCESS_LABELS.unknown, reason: live.reason };
 }

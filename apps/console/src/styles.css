@@ -971,6 +971,27 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
 
 .view-tab-panel:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 12px; }
 
+/*
+ * 🔴 **En tema claro las pestañas que NO están activas eran invisibles. Medido en Chrome el
+ * 2026-08-23, a 1280x900, sobre /accounts.**
+ *
+ * `.view-tabs` pinta su fondo con un azul de noche fijo —`rgb(13 20 34 / 60%)`— que no tiene
+ * override para `prefers-color-scheme: light`. Sobre una página clara eso queda en un gris pizarra
+ * (105,110,120) y el texto de las pestañas inactivas, que es `--muted` (87,103,124), da **1,13:1**.
+ * No es «poco contraste»: es que no se ven. En /accounts eso esconde «Inventario» y
+ * «Asignaciones» —dos tercios de la vista, y justamente la mitad que sigue funcionando cuando el
+ * recolector de cuotas está caído— y en /observability esconde «Auditoría».
+ *
+ * La barra pasa a `--surface-2` y la pestaña activa a `--surface` (blanco) con una sombra mínima:
+ * el contraste del texto inactivo sube a ~4,9:1 (AA) y la activa se sigue distinguiendo de la
+ * barra, que es lo que la pestaña activa tiene que hacer.
+ */
+@media (prefers-color-scheme: light) {
+  .view-tabs { background: var(--surface-2); }
+  .view-tab[aria-selected='true'] { background: var(--surface); box-shadow: 0 1px 2px rgb(20 32 51 / 12%); }
+  .view-tab-badge { background: rgb(20 32 51 / 10%); }
+}
+
 /* Detalle de ruteo desplegable de una fila del inventario de cuentas (fusión cuotas+cuentas). */
 .account-detail-row > td { padding: 0 14px 14px; background: rgb(255 255 255 / 3%); }
 .account-detail-row .account-body { display: grid; gap: 14px; padding-top: 12px; }
