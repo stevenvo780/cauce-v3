@@ -720,7 +720,14 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .sidebar nav a { flex-direction: column; }
   .topbar { padding: 0 16px; }
   .topbar-meta span:not(.mock-flag) { display: none; }
-  main { padding: 29px 15px 45px; }
+  /* La barra inferior es `position: fixed` y de 130 px: NO la ve el flujo, asi que el
+     `padding-bottom` del shell no basta -- medido en el navegador a 360x800, el final de
+     cada pagina quedaba DEBAJO de la barra y no se podia revelar con scroll (el documento
+     ya estaba en su tope). Se tapaban 85 px, y lo tapado era justo lo que hay que ver: en
+     /messages las filas de los agentes caidos, en /live el ultimo alias.
+     Comprobado por hit-test (elementFromPoint devolvia un elemento DENTRO del aside), no
+     por aritmetica de rectangulos. Por eso `main` reserva el alto de la barra el tambien. */
+  main { padding: 29px 15px calc(var(--nav-inferior-alto) + 16px + env(safe-area-inset-bottom, 0px)); }
   .page-header { align-items: start; flex-direction: column; }
   .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid, .adapter-grid, .landing-atajos { grid-template-columns: 1fr; }
   /* `.config-area` NO baja a `1fr` pelado: ese `auto` implícito es el min-content del panel y es
