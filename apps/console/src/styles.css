@@ -10,8 +10,29 @@
   --border: #22324c;
   --border-strong: #304766;
   --text: #e9f0fc;
-  --muted: #91a1ba;
-  --faint: #64758f;
+  --muted: #97a6be;
+  --faint: #7d8da4;
+  /*
+   * `--text-2` es el texto SECUNDARIO sobre superficie: celdas de tabla, `dd`, rótulos de
+   * formulario y el botón secundario. Existe porque esos cinco sitios traían el mismo azul claro
+   * escrito a mano (#c6d2e6, #c4d0e1, #c5d1e3, #c7d2e4, #b9cae0) y el bloque de modo claro no
+   * redefinía ninguno: sobre papel blanco quedaban entre 1,44:1 y 1,60:1 —invisibles—, y el peor
+   * caso era «Previsualizar el alta», o sea el camino SEGURO de /config y /accounts, al lado de un
+   * «Crear» verde sólido. Un token se redefine una vez por tema; cinco literales no se redefinen
+   * nunca. MEDIDO en Chrome: claro 9,78:1 sobre blanco, oscuro 12,07:1 sobre `--surface`.
+   */
+  --text-2: #c7d2e4;
+  /*
+   * Texto sobre los fondos teñidos (`--*-dim`): las insignias, el cartel MOCK API, las píldoras de
+   * Mensajes. Mismo defecto y misma cura: `.badge-online` era #8ff0d3 sobre `--mint-dim`, que en
+   * claro es #d8f3ea → 1,15:1 en 135 elementos de las ocho vistas. La insignia es el único sitio
+   * donde la consola dice ONLINE / EN COLA / COLGADO: ilegible ahí es ilegible el estado.
+   */
+  --on-mint: #8ff0d3;
+  --on-blue: #a8d1ff;
+  --on-amber: #f5c86c;
+  --on-red: #ffafb5;
+  --on-neutral: #8e9aad;
   --mint: #63deb9;
   --mint-dim: #183f39;
   --blue: #7ab8ff;
@@ -29,6 +50,15 @@
   --tooltip-bg: #16243a;
   --radius: 16px;
   --shadow: 0 18px 50px rgb(0 0 0 / 24%);
+  /*
+   * Alto de la barra de navegación inferior en pantalla estrecha (dos filas de cuatro entradas).
+   * Es un TOKEN y no un número suelto porque hay otra hoja que tiene que anclarse justo encima:
+   * `.messenger-composer` de `features/messages/messages.css` vive `position: fixed` a esta misma
+   * altura, y cuando el número estaba copiado a mano en los dos sitios, cambiar uno metía el botón
+   * «Enviar» debajo del menú. Lo comprueba `features/messages/composer-anclado.test.ts`, que lee
+   * las dos hojas y exige que digan LO MISMO.
+   */
+  --nav-inferior-alto: 130px;
 }
 
 * { box-sizing: border-box; }
@@ -106,7 +136,7 @@ a { color: inherit; }
 .topbar > div { display: flex; align-items: center; gap: 9px; }
 .topbar-meta { gap: 15px !important; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 5px rgb(99 222 185 / 10%), 0 0 14px var(--mint); }
-.mock-flag { padding: 4px 8px; border: 1px solid #785c23; border-radius: 999px; background: var(--amber-dim); color: var(--amber); font-size: .68rem; font-weight: 800; letter-spacing: .08em; }
+.mock-flag { padding: 4px 8px; border: 1px solid #785c23; border-radius: 999px; background: var(--amber-dim); color: var(--on-amber); font-size: .68rem; font-weight: 800; letter-spacing: .08em; }
 .auth-state { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
 .auth-state.authenticated > span { display: grid; line-height: 1.25; text-align: right; }
 .auth-state.authenticated strong { color: var(--mint); font-size: .65rem; letter-spacing: .06em; text-transform: uppercase; }
@@ -132,7 +162,16 @@ h1 { margin: 0; font-size: clamp(1.85rem, 4vw, 2.8rem); line-height: 1.08; lette
 .button:hover:not(:disabled) { transform: translateY(-1px); border-color: #4c6b91; background: #1b2b43; }
 .button:disabled { cursor: not-allowed; opacity: .55; }
 .button.primary { border-color: #2d7b69; background: linear-gradient(135deg, #1a6b59, #24516e); color: white; box-shadow: 0 8px 22px rgb(36 139 111 / 18%); }
-.button.secondary { background: var(--surface); color: #c6d2e6; }
+/*
+ * El botón secundario NO está deshabilitado, y tiene que verse así. Con #c6d2e6 sobre
+ * `--surface` blanco daba 1,53:1 —MEDIDO `disabled:false` en «Cerrar sesión», «Actualizar»,
+ * «Refrescar ahora» y «Sincronizar todo»— y en /config y /accounts caían ahí también
+ * «Previsualizar el alta» y «Previsualizar (dry-run)». Eso no es un matiz estético: deja el
+ * camino seguro invisible al lado de un «Crear» verde sólido, que es exactamente la trampa que
+ * un botón de previsualización existe para evitar. El borde también se sube a `--border-strong`
+ * para que la caja se distinga del panel sin depender del color del texto.
+ */
+.button.secondary { border-color: var(--border-strong); background: var(--surface); color: var(--text-2); }
 .button.small { min-height: 34px; padding: 6px 10px; font-size: .78rem; }
 
 .panel { margin-bottom: 18px; padding: 22px; border: 1px solid var(--border); border-radius: var(--radius); background: linear-gradient(145deg, rgb(16 25 42 / 96%), rgb(11 18 31 / 96%)); box-shadow: var(--shadow); }
@@ -155,7 +194,7 @@ h1 { margin: 0; font-size: clamp(1.85rem, 4vw, 2.8rem); line-height: 1.08; lette
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .8rem; }
 th { padding: 11px 12px; border-bottom: 1px solid var(--border-strong); color: var(--faint); font-size: .68rem; letter-spacing: .08em; text-align: left; text-transform: uppercase; white-space: nowrap; }
-td { padding: 14px 12px; border-bottom: 1px solid rgb(34 50 76 / 65%); color: #c7d2e4; vertical-align: middle; }
+td { padding: 14px 12px; border-bottom: 1px solid rgb(34 50 76 / 65%); color: var(--text-2); vertical-align: middle; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: rgb(27 43 67 / 35%); }
 /* La fila a la que llegó un enlace profundo (`/queues?delivery=`). El borde lateral es lo que la
@@ -165,19 +204,19 @@ tbody tr.fila-enfocada { background: var(--blue-dim); box-shadow: inset 3px 0 0 
 .icon-box { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; background: var(--blue-dim); color: var(--blue); }
 .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .75rem; }
 .subline { display: block; margin-top: 4px; color: var(--faint); }
-.error-copy { max-width: 270px; color: #e7a4aa; }
+.error-copy { max-width: 270px; color: var(--red); }
 .muted { display: inline-flex; align-items: center; gap: 5px; color: var(--faint); font-size: .75rem; }
 .unknown { color: var(--amber); font-family: "SFMono-Regular", Consolas, monospace; font-size: .74rem; font-weight: 700; }
 
 .badge { display: inline-flex; align-items: center; width: fit-content; min-height: 23px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: .64rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
-.badge-online, .badge-done { border-color: #286353; background: var(--mint-dim); color: #8ff0d3; }
-.badge-running, .badge-info { border-color: #315a81; background: var(--blue-dim); color: #a8d1ff; }
-.badge-warning { border-color: #725622; background: var(--amber-dim); color: var(--amber); }
-.badge-danger { border-color: #74313c; background: var(--red-dim); color: #ffafb5; }
-.badge-offline { border-color: #414c5e; background: #1c2533; color: #8e9aad; }
+.badge-online, .badge-done { border-color: #286353; background: var(--mint-dim); color: var(--on-mint); }
+.badge-running, .badge-info { border-color: #315a81; background: var(--blue-dim); color: var(--on-blue); }
+.badge-warning { border-color: #725622; background: var(--amber-dim); color: var(--on-amber); }
+.badge-danger { border-color: #74313c; background: var(--red-dim); color: var(--on-red); }
+.badge-offline { border-color: #414c5e; background: #1c2533; color: var(--on-neutral); }
 
 .chip-list { display: flex; flex-wrap: wrap; gap: 5px; }
-.chip { padding: 4px 7px; border: 1px solid var(--border); border-radius: 6px; background: #121e30; color: #aebed6; font-size: .68rem; }
+.chip { padding: 4px 7px; border: 1px solid var(--border); border-radius: 6px; background: #121e30; color: var(--text-2); font-size: .68rem; }
 .empty-state { margin: 0; padding: 28px; border: 1px dashed var(--border-strong); border-radius: 11px; color: var(--muted); text-align: center; }
 .state-card { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 12px; padding: 30px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--muted); }
 .state-card p { margin: 0; }
@@ -211,7 +250,7 @@ tbody tr.fila-enfocada { background: var(--blue-dim); box-shadow: inset 3px 0 0 
 .edge-list li { display: grid; grid-template-columns: minmax(80px, 1fr) auto minmax(80px, 1fr) auto 2fr; align-items: center; gap: 11px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 9px; background: #0d1625; font-size: .77rem; }
 .edge-list li > span:last-child { color: var(--muted); }
 
-label { color: #c4d0e1; font-size: .74rem; font-weight: 700; }
+label { color: var(--text-2); font-size: .74rem; font-weight: 700; }
 .label-hint { color: var(--faint); font-weight: 400; }
 input, select, textarea { width: 100%; margin-top: 7px; border: 1px solid var(--border-strong); border-radius: 8px; background: #090f1a; color: var(--text); }
 input, select { min-height: 41px; padding: 8px 10px; }
@@ -238,7 +277,7 @@ input::placeholder { color: #60728e; }
 dl { margin: 0; }
 .adapter-meta div, .terminal-cap-meta div { min-width: 0; }
 dt { color: var(--faint); font-size: .62rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
-dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere; }
+dd { margin: 5px 0 0; color: var(--text-2); font-size: .74rem; overflow-wrap: anywhere; }
 /* `.delivery` (la tarjeta por entrega de la lista plana) salió con ella el 2026-08-22. */
 .timeline { display: grid; grid-template-columns: repeat(4, 1fr); margin: 20px 0 0; padding: 0; list-style: none; }
 .timeline li { position: relative; min-width: 0; padding-top: 17px; border-top: 2px solid var(--border-strong); }
@@ -252,14 +291,14 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .config-json { grid-column: 1 / -1; }
 .config-json textarea, .config-preview, .config-records code { font-family: "SFMono-Regular", Consolas, monospace; }
 .config-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.config-preview { max-height: 440px; overflow: auto; margin: 16px 0 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: #070b13; color: #bad0e9; font-size: .72rem; white-space: pre-wrap; }
+.config-preview { max-height: 440px; overflow: auto; margin: 16px 0 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: #070b13; color: var(--text-2); font-size: .72rem; white-space: pre-wrap; }
 /* Una columna, no dos: desde que cada colección es una TABLA de hasta siete columnas, media
    pantalla la obligaba a hacer scroll horizontal dentro del panel para leer una fila. */
 .config-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .config-grid .panel { min-width: 0; margin-bottom: 0; }
 .config-records { display: grid; gap: 7px; max-height: 350px; overflow: auto; margin: 0; padding: 0; list-style: none; }
 .config-records li { padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: #0a111d; }
-.config-records code { color: #b9cae0; font-size: .68rem; overflow-wrap: anywhere; }
+.config-records code { color: var(--text-2); font-size: .68rem; overflow-wrap: anywhere; }
 
 /* Tablas de configuración: la vista dejó de ser JSON crudo por fila y pasó a ser una tabla con
    columnas de verdad, con las operaciones frecuentes a un clic. */
@@ -389,7 +428,21 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .terminal-degraded strong { display: block; color: var(--text); font-size: .78rem; }
 .terminal-degraded p { margin: 3px 0 0; font-size: .7rem; }
 
-.ultimate-terminal-shell { display: grid; grid-template-columns: 272px minmax(460px, 1fr) 286px; min-height: 690px; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface); box-shadow: 0 26px 80px rgb(0 0 0 / 30%); }
+/*
+ * 🔴 Las tres columnas NO pueden tener un mínimo mayor que el hueco que les queda.
+ *
+ * Era `272px minmax(460px, 1fr) 286px` = 1018 px de mínimo. En un viewport de 1280 el hueco real
+ * es 939 px (1280 − 248 de barra lateral − 76 de padding de `main`), así que el inspector de la
+ * derecha terminaba en x=1305: 25 px FUERA de la pantalla, y «ALLOWED» se leía «ALLO…». El
+ * `overflow: hidden` de este mismo bloque lo tapaba en vez de avisar.
+ *
+ * Con `minmax(0, …)` en las tres la reja no puede empujar más allá de su contenedor A NINGÚN
+ * ancho, y las dos laterales se estrechan (272→236, 286→264) para que a 1280 le queden ~440 px a
+ * la del medio en vez de −64. No se sube el corte de dos columnas: por debajo de 1100 ya estaba,
+ * y plegar antes escondería las «Capability gates», que sin sesión abierta NO tienen dónde
+ * mudarse — `.terminal-adapter-mobile` sólo existe cuando hay una sesión abierta.
+ */
+.ultimate-terminal-shell { display: grid; grid-template-columns: minmax(0, 236px) minmax(0, 1fr) minmax(0, 264px); min-height: 690px; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface); box-shadow: 0 26px 80px rgb(0 0 0 / 30%); }
 .terminal-fleet-sidebar { display: flex; min-width: 0; flex-direction: column; border-right: 1px solid var(--border); background: linear-gradient(180deg, #0e1726, #0a111c); }
 .terminal-fleet-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 18px 16px 12px; }
 .terminal-fleet-head h2 { margin: 0; font-size: 1.05rem; }
@@ -446,7 +499,7 @@ dd { margin: 5px 0 0; color: #c5d1e3; font-size: .74rem; overflow-wrap: anywhere
 .terminal-lock-icon { background: var(--red-dim); color: var(--red); }
 .terminal-no-session h2, .terminal-lock h2 { margin: 0; font-size: 1.15rem; }
 .terminal-no-session > p:not(.eyebrow), .terminal-lock > p:not(.eyebrow) { max-width: 460px; margin: 10px 0 17px; color: var(--muted); font-size: .76rem; line-height: 1.6; }
-.terminal-active-grid { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1fr) 254px; }
+.terminal-active-grid { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1fr) minmax(0, 254px); }
 .terminal-console { display: flex; min-width: 0; flex-direction: column; border-right: 1px solid var(--border); }
 .terminal-session-head { display: flex; min-height: 73px; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: #0b1320; }
 .session-identity { display: flex; min-width: 0; align-items: center; gap: 9px; }
@@ -550,7 +603,7 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .edge-list li { grid-template-columns: 1fr auto 1fr auto; }
   .edge-list li > span:last-child { grid-column: 1 / -1; }
   .terminal-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ultimate-terminal-shell { grid-template-columns: 250px minmax(0, 1fr); }
+  .ultimate-terminal-shell { grid-template-columns: minmax(0, 250px) minmax(0, 1fr); }
   .terminal-control-inspector { display: none; }
   .terminal-adapter-mobile { display: block; }
   .terminal-adapter-mobile .terminal-inspector-section { display: none; }
@@ -558,13 +611,30 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
 }
 
 @media (max-width: 760px) {
-  .app-shell { display: block; padding-bottom: 70px; }
-  .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: 66px; padding: 7px 8px; border-top: 1px solid var(--border); border-right: 0; }
+  /*
+   * 🔴 **El menú de móvil: dos filas de cuatro, y todo se lee.**
+   *
+   * Era una tira `flex` de OCHO entradas con `min-width: 56px` y el rótulo en `white-space:
+   * nowrap` sin recorte. MEDIDO a 360 px: cada `<a>` medía 56 px y su `<span>` entre 70 y 107, así
+   * que los rótulos se salían de su enlace y se PISABAN con el de al lado — se leía literalmente
+   * «La flota ahoCuentas y cuotaMensajesQueues &SDLQles y au». Y como la tira sumaba 493 px de
+   * contenido en 344 de hueco, «Configuración y altas» y «Ultimate Terminal» sólo se alcanzaban
+   * arrastrando, sin una sola señal de que se pudiera arrastrar.
+   *
+   * Cuatro columnas de reja, el rótulo con permiso para partirse en dos renglones y ni un píxel
+   * de scroll: las ocho entradas caben, se leen enteras y se ven todas a la vez. La barra pasa de
+   * 66 a ~112 px de alto, y `padding-bottom` del shell la acompaña para que no tape el pie de la
+   * página. `env(safe-area-inset-bottom)` es por la barra de gestos de los teléfonos.
+   */
+  .app-shell { display: block; padding-bottom: calc(var(--nav-inferior-alto) + 14px); }
+  .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: var(--nav-inferior-alto); padding: 6px; border-top: 1px solid var(--border); border-right: 0; }
   .brand, .authority-note { display: none; }
-  .sidebar nav ul { display: flex; overflow-x: auto; gap: 4px; }
-  .sidebar nav li { min-width: 56px; flex: 1; }
-  .sidebar nav a { gap: 2px; padding: 6px 4px; font-size: .56rem; }
-  .sidebar nav a span { display: block; white-space: nowrap; }
+  .sidebar nav ul { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 57px; overflow: visible; gap: 2px; }
+  .sidebar nav li { min-width: 0; }
+  .sidebar nav a { min-width: 0; height: 100%; justify-content: center; gap: 3px; padding: 5px 3px; font-size: .58rem; line-height: 1.15; text-align: center; }
+  /* Los dos renglones se RESERVAN aunque el rótulo ocupe uno solo: si no, la altura de la barra
+     depende de qué palabras entren y el ancla del compositor deja de ser un número. */
+  .sidebar nav a span { display: block; min-width: 0; max-width: 100%; min-height: 2.3em; overflow-wrap: break-word; white-space: normal; }
   .sidebar nav a { flex-direction: column; }
   .topbar { padding: 0 16px; }
   .topbar-meta span:not(.mock-flag) { display: none; }
@@ -592,7 +662,9 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .terminal-active-grid { grid-template-columns: minmax(0, 1fr); }
   .terminal-console { border-right: 0; }
   .terminal-inspector { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--border); }
-  .terminal-session-head { align-items: start; flex-direction: column; }
+  /* En columna, un `wrap` NO parte renglones: parte COLUMNAS, y los controles se van de lado.
+     El `wrap` de escritorio se apaga acá a propósito. */
+  .terminal-session-head { align-items: start; flex-direction: column; flex-wrap: nowrap; }
   .session-controls { width: 100%; justify-content: space-between; }
   .terminal-transcript { max-height: 500px; }
 }
@@ -707,18 +779,36 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
     --border-strong: #b8c7d9;
     --text: #142033;
     --muted: #57677c;
-    --faint: #718198;
-    --mint: #087c63;
+    /*
+     * `--faint` era #718198: MEDIDO en Chrome daba 3,66:1 en las cabeceras de tabla (10,88 px),
+     * 3,97:1 en los pies de las tarjetas de número y 3,52:1 sobre `--surface-2`. Es el color de
+     * MÁS elementos de toda la consola (más de 500 en las ocho vistas) y estaba por debajo de AA
+     * en todos. #5b697d da 4,60:1 en el peor de sus fondos reales (`--surface-3`) y 5,58:1 sobre
+     * blanco, sin cambiar de tono.
+     */
+    --faint: #59677a;
+    --text-2: #33455c;
+    --on-mint: #087860;
+    --on-blue: #1668b2;
+    --on-amber: #8c5c00;
+    --on-red: #b72d3a;
+    --on-neutral: #5b6779;
+    --mint: #07735c;
     --mint-dim: #d8f3ea;
-    --blue: #176ab6;
+    --blue: #1668b2;
     --blue-dim: #dfedfb;
-    --amber: #9a6500;
+    /* #9a6500 se quedaba en 4,45:1 sobre `--amber-dim` (el cartel MOCK API y las insignias de
+       aviso, en las ocho vistas): a cinco centésimas de AA, que es igual de suspenso. El valor de
+       acá se eligió contra el PEOR fondo real, que no es `--bg` sino `--bg` MÁS el degradado
+       decorativo del `body`: en la esquina superior derecha ese tinte azul le come ~0,35 de
+       ratio a todo lo que caiga encima, y ahí es justo donde vive el estado de sesión. */
+    --amber: #8c5c00;
     --amber-dim: #fff2cf;
     --red: #b72d3a;
     --red-dim: #fde3e5;
     --violet: #6742c9;
     --violet-dim: #e9e2fd;
-    --lime: #4f7a10;
+    --lime: #49710f;
     --lime-dim: #eaf6d2;
     --tooltip-bg: #ffffff;
     --shadow: 0 18px 45px rgb(38 63 92 / 12%);
@@ -728,7 +818,6 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   .sidebar nav a[aria-current="page"] { border-color: #97c9bc; background: linear-gradient(90deg, #dff4ee, #edf5fb); color: #075f4d; }
   .panel { background: linear-gradient(145deg, rgb(255 255 255 / 98%), rgb(245 248 252 / 98%)); }
   input, select, textarea { background: #fbfcfe; color: var(--text); }
-  td { color: #34445a; }
   .ultimate-terminal-page { --terminal-inset: #f6f8fb; --terminal-raised: #ffffff; --terminal-soft: #34455d; }
   .terminal-overview article, .terminal-fleet-sidebar, .terminal-session-tabs, .terminal-session-head, .terminal-composer, .terminal-inspector, .terminal-control-inspector, .pty-status { background: #f8fafc; }
   .fleet-health-strip, .terminal-connection-bar, .transcript-delivery, .terminal-composer textarea { background: #ffffff; }
@@ -744,14 +833,14 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
    * oscuro— deja de leerse. No es un matiz: en "Consumo de cuotas" las tarjetas de proveedor
    * salían gris sobre negro y no se distinguía ni el nombre del proveedor.
    */
-  .chip { background: #eef3f9; color: #3a4a60; }
-  .badge-offline { border-color: #ccd4de; background: #eceff4; color: #5b6779; }
+  .chip { background: #eef3f9; }
+  .badge-offline { border-color: #ccd4de; background: #eceff4; }
   .button:hover:not(:disabled) { border-color: #9ab8d6; background: #e9f0f8; }
   .quota-provider { background: #ffffff; }
   .quota-provider[data-severity="critical"], .quota-provider[data-severity="exhausted"] { border-color: #e0a3ab; }
   .quota-provider[data-severity="warn"] { border-color: #e3c98d; }
   .config-records li, .adapter-meta, .landing-atajos a { background: #f8fafd; }
-  .config-preview { background: #f4f7fb; color: #22344a; }
+  .config-preview { background: #f4f7fb; }
   /* Los cuatro tonos de `.notice` traían el texto pensado para fondo oscuro y en modo claro nadie
      los había mirado: MEDIDO en Chrome, el verde de «rollback aplicado» quedaba a contraste 1.16 y
      el gris del aviso a 1.42 — invisibles. Es exactamente el fallo que este trabajo venía a cerrar:
@@ -793,7 +882,7 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgb(13 20 34 / 60%);
+  background: var(--surface-2);
   overflow-x: auto;
 }
 
@@ -818,7 +907,7 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
 .view-tab-badge {
   padding: 1px 7px;
   border-radius: 999px;
-  background: rgb(255 255 255 / 10%);
+  background: var(--surface-3);
   font-size: .68rem;
   font-variant-numeric: tabular-nums;
 }
@@ -826,5 +915,129 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
 .view-tab-panel:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 12px; }
 
 /* Detalle de ruteo desplegable de una fila del inventario de cuentas (fusión cuotas+cuentas). */
-.account-detail-row > td { padding: 0 14px 14px; background: rgb(255 255 255 / 3%); }
+.account-detail-row > td { padding: 0 14px 14px; background: var(--surface-2); }
 .account-detail-row .account-body { display: grid; gap: 14px; padding-top: 12px; }
+
+/* =================================================================================================
+ * LEGIBILIDAD — que se pueda LEER y que quepa en la pantalla (2026-08-23)
+ *
+ * Este bloque cierra cinco defectos que MEDÍ con Chrome sobre la consola servida por vite en modo
+ * mock, no leyendo el código: contraste calculado en el DOM, `getBoundingClientRect`, y
+ * `scrollWidth` contra `clientWidth`, a 1280 y a 360. Los 445 tests de jsdom pasaban con los cinco
+ * puestos, porque jsdom NO TIENE LAYOUT: un rótulo que se pisa con el de al lado y un panel que
+ * sobresale 324 px de la pantalla son, para jsdom, exactamente lo mismo que uno que no.
+ *
+ * Las reglas que tocan selectores de una hoja de `features/` viven acá a propósito: el dueño de
+ * `styles.css` es un solo carril y así no hay dos manos sobre el mismo fichero. `styles.css` se
+ * importa la última (MEDIDO en `document.styleSheets`), así que con igual especificidad gana.
+ * ============================================================================================== */
+
+/*
+ * 🔴 **Un control de formulario NO puede decidir el ancho de la página.**
+ *
+ * `input, select, textarea` traían `width: 100%` pero no `min-width`, así que su mínimo automático
+ * seguía siendo el intrínseco: el de un `<select>` es el de su opción más larga. Metido en una reja
+ * o en un flex, ese mínimo se convierte en el mínimo de la pista, y la pista arrastra a la página.
+ * No es lo que rompía /config (eso era `.config-area`), pero es la misma familia de fallo y ya
+ * estaba armada en cuatro formularios más.
+ */
+input, select, textarea { min-width: 0; }
+
+/*
+ * 🔴 **La vista /config se iba 339 px de lado en un móvil.**
+ *
+ * MEDIDO a 360 px de viewport: el documento entero medía 699 px de ancho, y el panel «Alta rápida»
+ * 684 dentro de un `main` de 330. La causa no estaba en el panel ni en `.config-form` —ésa sí
+ * colapsa a una columna—, sino en `.config-area`, que es `display: grid` SIN `grid-template-
+ * columns`. Una pista implícita `auto` tiene mínimo `auto`, o sea el mínimo de contenido del ítem;
+ * cuando ese mínimo es mayor que el contenedor, la pista crece y desborda sin que nada avise.
+ * `minmax(0, 1fr)` le devuelve el derecho a encogerse. COMPROBADO: 699 → 360.
+ */
+.config-area { grid-template-columns: minmax(0, 1fr); }
+.config-area > .panel, .config-grid > .panel, .panel { min-width: 0; }
+
+/*
+ * La línea «Flota observada: …» era un flex de tres piezas sin `wrap`: a 360 px pedía 364 de
+ * mínimo sobre 330 de hueco y empujaba el documento a 379. Es la única causa del desborde de la
+ * portada. Que la marca de tiempo caiga al renglón de abajo no cuesta nada.
+ */
+.observation-line, .permission-line, .auto-refresh-toggle, .trust-callout { flex-wrap: wrap; }
+
+/*
+ * 🔴 **Las seis fichas de /terminal se leían MEJOR en un móvil que en un escritorio.**
+ *
+ * A 1280 px la reja era de cinco columnas fijas (`repeat(5, minmax(0, 1fr))`, terminal-panel.css):
+ * ~180 px por ficha, de los que la insignia constante (LIVE / SERVER / RBAC / CLIENT / TARGETS /
+ * TUI) se llevaba unos 60. Con `text-overflow: ellipsis` el que se recortaba era el VALOR —el
+ * único dato de la ficha—: «TERMINAL ACCESS ALLO…», «INTERACTIVE CHANNEL DURABL…». A 360 px, con
+ * una ficha por fila, las mismas seis se veían enteras.
+ *
+ * Ahora la reja se ajusta al hueco (`auto-fit`) con un mínimo que da sitio al valor, la insignia
+ * baja a su propio renglón en vez de disputarle el ancho, y el valor puede partirse antes que
+ * recortarse. Una elipsis en un dato es una mentira corta: no dice cuánto falta.
+ */
+.ultimate-terminal-page .terminal-overview { grid-template-columns: repeat(auto-fit, minmax(272px, 1fr)); }
+.terminal-overview article { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+.terminal-overview article > .badge { grid-column: 2; justify-self: start; }
+.terminal-overview strong { overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+/*
+ * La lista de adapters del inspector tenía el mismo reparto injusto: `auto minmax(0,1fr) auto`, y
+ * la insignia de la derecha se lleva `max-content`. MEDIDO: con la insignia pidiendo 177 px de los
+ * 259 de la columna, al NOMBRE del adapter le quedaban 21 px y se leía «Herm…», «Open…». Misma
+ * cura que en las fichas: la insignia baja a su renglón y deja de disputarle el ancho al dato.
+ * (Que esas insignias digan literalmente «<Unknown value=available />» es un defecto del
+ * componente, no de la hoja: queda para el carril de componentes.)
+ */
+/*
+ * `repeat(auto-fill, minmax(420px, 1fr))` NO se encoge: si el hueco es menor que 420, la pista se
+ * queda en 420 y desborda. MEDIDO a 360 px con una sesión abierta: caja de 328 px con 452 de
+ * contenido, y como `overflow-y: auto` obliga a `overflow-x: auto`, el panel de la sesión sólo se
+ * leía entero arrastrándolo de lado. `min(420px, 100%)` es la misma reja con permiso para caber.
+ */
+.terminal-grid-container { grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); }
+/* Y el panel de la sesión traía además `min-width: 420px` fijo, que vuelve a imponer los 420 por
+   detrás de la reja. Los 420 siguen siendo el ancho que una terminal necesita para leerse; lo que
+   no puede es ser mayor que la pantalla que la muestra. */
+.terminal-panel { min-width: min(420px, 100%); }
+/*
+ * La cabecera de la sesión es un flex de dos mitades sin `wrap`: el nombre del alias (que lleva
+ * `min-width: 0`) cede TODO su ancho a los controles. MEDIDO dentro de un panel de 422 px: la
+ * identidad quedaba en 3 px de ancho con 130 de contenido, o sea el alias al que le estás
+ * escribiendo era invisible. Que los controles bajen un renglón cuesta 30 px de alto.
+ */
+/* En `min-width` a propósito: por debajo de 761 la cabecera ya es una columna, y un `wrap` sobre
+   una columna no parte renglones sino COLUMNAS —MEDIDO: los controles se iban 190 px de lado—.
+   Y va en una consulta y no suelto porque esta hoja se concatena la última: una regla suelta acá
+   pisaría al bloque de 760 aunque aquél esté escrito para ese ancho. */
+@media (min-width: 761px) {
+  .terminal-session-head { flex-wrap: wrap; }
+  .terminal-session-head .session-identity { flex: 1 1 auto; }
+}
+
+.terminal-adapter-list article { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+.terminal-adapter-list article > .badge { grid-column: 2; justify-self: start; margin-top: 3px; }
+/* La insignia de un permiso es UNA palabra («allowed», «denied»): partirla en «ALLOWE/D» es peor
+   que estrecharla. Lo que cede es el nombre del permiso, que sí puede ocupar dos renglones. */
+.terminal-adapter-list .badge { white-space: normal; overflow-wrap: anywhere; }
+.terminal-permission-row .mono { white-space: normal; overflow-wrap: anywhere; }
+.terminal-permission-row .badge { flex: none; }
+.terminal-adapter-list strong { overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+
+/*
+ * Colores de hojas de `features/` que se quedaron sin redefinir en modo claro (o sin redefinir en
+ * ninguno de los dos). Cada uno MEDIDO por debajo de AA en Chrome; van a los mismos tokens que el
+ * resto para que la próxima vez se arreglen una sola vez.
+ */
+.finding-section p, .finding-reason { color: var(--muted); }
+/*
+ * El chip de triage con cuenta cero era el defecto 1 otra vez, disfrazado de opacidad: un
+ * `<button>` VIVO —cambia el filtro de la tabla al pulsarlo— atenuado al 45%, o sea 3,29:1 sobre
+ * `--surface-2`. «Cero ahora» no es «no se puede pulsar»: si la única forma de decir que está
+ * vacío es apagarlo hasta que no se lea, el operador cree que no hay nada que hacer ahí.
+ * Lo vacío se dice con color, y el punto de color —que sí es decoración— se apaga.
+ */
+.live-tally-chip[data-empty='true'] { opacity: 1; color: var(--faint); }
+.live-tally-chip[data-empty='true'] .live-tally-swatch { opacity: .45; }
+.messenger-pill[data-kind="retry"] { color: var(--on-amber); }
+.messenger-pill[data-kind="dead"] { color: var(--on-red); }
+.directiva-fichero-texto { background: var(--bg); color: var(--text-2); }

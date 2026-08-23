@@ -112,6 +112,23 @@ export function defectosDelCompositorAnclado(mensajes: string, global: string): 
       `.messenger-composer se ancla a ${valor(compositor, 'bottom') ?? 'nada'} y la barra de navegación `
       + `fija mide ${alturaNav}: el botón Enviar queda tapado por el menú`,
     );
+  } else {
+    /*
+     * Decir lo mismo no basta si lo que dicen no existe: dos `var(--inventada)` son idénticas y
+     * las dos resuelven a nada, o sea `bottom: auto` y el compositor de vuelta al fondo del hilo.
+     * Si el ancla es un token, tiene que estar declarado —con una longitud— en el `:root` global.
+     */
+    const token = /^var\(\s*(--[\w-]+)/.exec(alturaNav)?.[1];
+    if (token) {
+      const raiz = declaraciones(sinComentarios(global), ':root');
+      const declarado = valor(raiz, token);
+      if (!declarado || !/^-?[\d.]+(px|rem|em|vh)$/.test(declarado)) {
+        defectos.push(
+          `la barra y el compositor se anclan a ${token}, pero ese token no está declarado como `
+          + `longitud en el :root de styles.css (vale ${declarado ?? 'nada'}): los dos resolverían a auto`,
+        );
+      }
+    }
   }
 
   return defectos;
@@ -153,7 +170,10 @@ describe('el compositor de /messages en pantalla estrecha', () => {
   });
 
   it('CONTROL NEGATIVO — marca el anclaje a 0, que mete el botón Enviar debajo del menú', () => {
-    const roto = MENSAJES_CSS.replace(/(\.messenger-composer \{[^}]*?)bottom: 66px;/, '$1bottom: 0;');
+    // La mutación NO cita el valor: el ancla dejó de ser un `66px` copiado a mano y pasó a ser
+    // `var(--nav-inferior-alto)` (2026-08-23, la barra inferior es de dos filas). Un control
+    // negativo que sólo sabe mutar el número de ayer deja de mutar nada y aprueba cualquier cosa.
+    const roto = MENSAJES_CSS.replace(/(\.messenger-composer \{[^}]*?)bottom: [^;]+;/, '$1bottom: 0;');
     expect(roto).not.toBe(MENSAJES_CSS);
     expect(defectosDelCompositorAnclado(roto, GLOBAL_CSS)).toContainEqual(
       expect.stringContaining('tapado por el menú'),

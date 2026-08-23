@@ -270,7 +270,10 @@
     position: fixed;
     z-index: 6;
     right: 0;
-    bottom: 66px;
+    /* El ancla sale del MISMO token que dimensiona la barra inferior (`styles.css`). Era un 66
+       copiado a mano, y el 2026-08-23 la barra pasó a dos filas —los ocho rótulos se pisaban a
+       360 px— y ese 66 habría metido el botón «Enviar» debajo del menú. */
+    bottom: var(--nav-inferior-alto);
     left: 0;
     margin-top: 0;
     border-top: 1px solid var(--border-strong);
