@@ -119,7 +119,19 @@ export class CauceApi {
     return body as T;
   }
 
-  private async csrfForMutation(): Promise<string | undefined> {
+  /**
+   * El token CSRF de la sesión de consola, para una escritura.
+   *
+   * Es público porque el panel PTY —que a propósito NO usa este cliente, para que la ausencia de
+   * los endpoints opcionales degrade sólo ese panel— necesita el MISMO token: la puerta CSRF del
+   * gateway no distingue de qué módulo salió el `fetch`, sólo mira la cabecera. Cuando era
+   * privado, `features/terminal/api.ts` no tenía forma de pedirlo y mandaba sus POST y DELETE sin
+   * cabecera; el gateway contestaba 403 y la TUI no abría nunca.
+   *
+   * Devuelve `undefined` sólo cuando este gateway no usa sesión de navegador (mTLS de
+   * desarrollo, o un gateway anterior al BFF): ahí no hay token que mandar y tampoco se exige.
+   */
+  async csrfForMutation(): Promise<string | undefined> {
     if (this.developmentIdentity || this.bffSessionSupported === false) return undefined;
     if (this.csrfToken) return this.csrfToken;
     const state = await this.getAuthSession();

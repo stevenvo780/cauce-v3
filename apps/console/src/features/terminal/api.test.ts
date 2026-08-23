@@ -116,3 +116,74 @@ it('exposes TerminalApiError so callers can branch on status without parsing str
   const error = await listTerminalTargets().catch((cause: unknown) => cause);
   expect(error).toBeInstanceOf(TerminalApiError);
 });
+
+/*
+ * EL 403 QUE MANTENÍA LA TUI CERRADA.
+ *
+ * Medido contra el gateway desplegado el 2026-08-23, con la credencial de consola y el MISMO
+ * cuerpo en las dos corridas: sin la cabecera `X-CSRF-Token` el gateway contesta
+ * 403 {"error":"forbidden","message":"se requiere un token CSRF válido"}; con ella contesta
+ * 201 y entrega el grant. Con un token inventado vuelve a ser 403, así que no es "mandar la
+ * cabecera": es mandar EL token de la sesión.
+ *
+ * La trampa que hacía irreconocible el fallo es que la autoridad del PTY también deniega con
+ * 403. Los dos cuerpos se distinguen por la clave: la puerta CSRF contesta en `message`, la ruta
+ * contesta en `reason`. Por eso "403 siempre, 3 de 3" parecía un permiso que faltaba.
+ *
+ * Estos casos reproducen esa puerta en el servidor de pruebas: fallan mientras `terminalRequest`
+ * mande las mismas cabeceras que mandaba (Accept, X-Cauce-Console, Content-Type) y pasan cuando
+ * adjunta el token de la sesión, igual que hace el cliente compartido.
+ */
+
+/** La puerta CSRF del gateway, tal cual: 403 sin token, y sólo el token de la sesión abre. */
+function puertaCsrf(token: string, alOk: () => Response) {
+  return ({ request }: { request: Request }) => {
+    const presentado = request.headers.get('X-CSRF-Token');
+    if (presentado !== token) {
+      return HttpResponse.json({ error: 'forbidden', message: 'se requiere un token CSRF válido' }, { status: 403 });
+    }
+    return alOk();
+  };
+}
+
+it('adjunta el token CSRF de la sesión al pedir un grant: sin él el gateway responde 403 y la TUI no abre', async () => {
+  const vistos: Array<string | null> = [];
+  server.use(http.post('*/v3/console/terminal/sessions', (info) => {
+    vistos.push(info.request.headers.get('X-CSRF-Token'));
+    return puertaCsrf('mock-csrf-token', () => HttpResponse.json({
+      session_id: 'sess-csrf', ticket: 'one-shot', websocket_path: '/v3/console/terminal/ws',
+      expires_at: '2026-08-23T18:00:30.000Z', ttl_seconds: 30,
+      target: { tenant_id: 'Steven', alias: 'zeus', container: 'ws-zeus', runtime_user: 'dev', mode: 'harness', shares_container_with: [] },
+    }, { status: 201 }))(info);
+  }));
+
+  const grant = await createTerminalSession({
+    tenant_id: 'Steven', alias: 'zeus', mode: 'harness', reason: 'abrir la TUI', cols: 80, rows: 24,
+  });
+
+  expect(vistos).toEqual(['mock-csrf-token']);
+  expect(grant).toMatchObject({ session_id: 'sess-csrf', ttl_seconds: 30 });
+});
+
+it('adjunta el token CSRF también al soltar la sesión: un DELETE sin token deja la shell colgada del otro lado', async () => {
+  const vistos: Array<string | null> = [];
+  server.use(http.delete('*/v3/console/terminal/sessions/sess-csrf', (info) => {
+    vistos.push(info.request.headers.get('X-CSRF-Token'));
+    return puertaCsrf('mock-csrf-token', () => new HttpResponse(null, { status: 204 }))(info);
+  }));
+
+  await expect(deleteTerminalSession('sess-csrf')).resolves.toBeUndefined();
+  expect(vistos).toEqual(['mock-csrf-token']);
+});
+
+it('no manda el token en las lecturas: el gateway no lo exige a un GET y pedirlo sería un viaje de más', async () => {
+  const vistos: Array<string | null> = [];
+  server.use(http.get('*/v3/console/terminal/targets', ({ request }) => {
+    vistos.push(request.headers.get('X-CSRF-Token'));
+    return HttpResponse.json({ items: [] });
+  }));
+
+  await listTerminalTargets();
+
+  expect(vistos).toEqual([null]);
+});
