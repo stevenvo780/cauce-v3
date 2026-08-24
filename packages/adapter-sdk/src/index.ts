@@ -12,6 +12,7 @@ export * from "./sdk/openclaw-api-runner.js";
 export * from "./sdk/engine.js";
 export * from "./sdk/client.js";
 export * from "./sdk/websocket-transport.js";
+export * from "./context/perfil-a-contexto.js";
 export * from "./harnesses/index.js";
 export * from "./harnesses/shared.js";
 export * from "./shared-session/index.js";
