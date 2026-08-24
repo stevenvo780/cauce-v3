@@ -217,6 +217,68 @@ derive_harness_command() {
   return 0
 }
 
+# Entrada real de OpenClaw dentro del contenedor, y donde guarda sus conversaciones.
+#
+# Se invoca la entrada y no el envoltorio `openclaw`: ese re-ejecuta y deja su argv en «openclaw»
+# a secas —por eso el supervisor del gateway tampoco lo usa— y un argv que no se puede reconocer
+# no se puede supervisar ni auditar.
+OPENCLAW_ENTRY=${CAUCE_PTY_OPENCLAW_ENTRY:-/usr/lib/node_modules/openclaw/dist/index.js}
+OPENCLAW_SESSIONS_DIR=${CAUCE_PTY_OPENCLAW_SESSIONS_DIR:-.openclaw/agents/main/sessions}
+OPENCLAW_HISTORY_LIMIT=${CAUCE_PTY_OPENCLAW_HISTORY_LIMIT:-200}
+
+# La TUI NATIVA de OpenClaw, para los alias que no tienen panel tmux y no pueden tenerlo.
+#
+# El panel que hoy emiten 7 alias es el de la SESION COMPARTIDA, y esa existe solo para `claude` y
+# `codex` (`SharedSessionHarness = Extract<HarnessId, "claude" | "codex">`). Un alias `openclaw` no
+# levanta `cauce-<alias>` en tmux, y en sus imagenes ni siquiera hay tmux: su proceso es un demonio
+# (`node .../openclaw/dist/index.js gateway`), no una pantalla. Por eso `derive_harness_command`
+# devuelve vacio para siempre y la consola dice «Sin TUI que emitir».
+#
+# Pero OpenClaw SI trae una TUI, y es un CLIENTE del gateway que ese mismo alias ya corre en
+# loopback. O sea que no hace falta tmux, ni una imagen nueva, ni un proceso supervisado mas: se
+# lanza en el pty del agente como cualquier otro `harness_command`.
+#
+# El candado de solo lectura NO esta aca: la TUI de openclaw no tiene equivalente de `tmux -r`.
+# Lo pone el agente PTY, que no escribe en el pty de un modo de visor (READ_ONLY_MODES).
+#
+# Todo se mide DENTRO del contenedor y como el usuario del alias. Cualquier duda devuelve vacio y
+# el alias sigue anunciando solo `shell`, que es como esta hoy: el fallo caro no es quedarse sin
+# TUI, es ANUNCIAR una que abre en negro y mandar al operador a creer que el agente esta colgado.
+derive_openclaw_tui_command() {
+  local node_path tui_help session_file session_key sessions_dir
+  node_path=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+    sh -c 'command -v node' 2>/dev/null) || return 1
+  node_path=${node_path//[$'\r\n']/}
+  valid_absolute_path "$node_path" || return 1
+
+  docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+    test -f "$OPENCLAW_ENTRY" >/dev/null 2>&1 || return 1
+
+  # Se le pregunta al binario INSTALADO si tiene la TUI y si acepta `--session`. openclaw se
+  # actualiza solo, asi que la memoria de nadie sirve como fuente: el dia que el subcomando o el
+  # flag cambien, esto deja de anunciar la TUI en vez de anunciar una pantalla vacia.
+  tui_help=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+    "$node_path" "$OPENCLAW_ENTRY" tui --help 2>/dev/null) || return 1
+  [[ $tui_help == *"--session"* ]] || return 1
+
+  # Cual sesion: la que el agente esta escribiendo AHORA, medida por fecha de modificacion sobre
+  # su propio almacen. No sale de la configuracion porque no hay ninguna que la fije — openclaw no
+  # tiene sesion compartida, asi que sus claves son una por conversacion.
+  sessions_dir="$container_home/$OPENCLAW_SESSIONS_DIR"
+  session_file=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+    sh -c "ls -1t '$sessions_dir'/*.jsonl 2>/dev/null | head -n 1") || return 1
+  session_file=${session_file//[$'\r\n']/}
+  [[ -n $session_file ]] || return 1
+  session_key=${session_file##*/}
+  session_key=${session_key%.jsonl}
+  # El nombre entra en un argv: un fichero llamado `; rm -rf /` no puede convertirse en argumento.
+  [[ $session_key =~ ^[A-Za-z0-9._-]{1,200}$ ]] || return 1
+
+  OPENCLAW_NODE_FOUND=$node_path
+  OPENCLAW_SESSION_FOUND=$session_key
+  return 0
+}
+
 publish_bundle() {
   local shell_candidates harness_command
   shell_candidates=${CONFIG[SHELL_CANDIDATES]:-'[["/bin/bash","-l"],["/bin/sh","-l"]]'}
@@ -232,9 +294,24 @@ publish_bundle() {
       printf 'cauce-pty-launcher: harness derived from tmux alias=%s socket=%s session=%s\n' \
         "$alias_name" "$TMUX_SOCKET" "$TMUX_SESSION_FOUND" >&2
     else
-      harness_command=null
-      printf 'cauce-pty-launcher: no live tmux session for alias=%s socket=%s; agent will publish shell only\n' \
-        "$alias_name" "$TMUX_SOCKET" >&2
+      # Sin panel tmux se prueba la TUI nativa de OpenClaw. El orden importa y no se puede
+      # invertir: un alias con sesion compartida tiene que seguir emitiendo el panel que su dueno
+      # esta mirando, no otra cosa.
+      OPENCLAW_NODE_FOUND=''
+      OPENCLAW_SESSION_FOUND=''
+      if derive_openclaw_tui_command; then
+        harness_command=$(CAUCE_OPENCLAW_NODE=$OPENCLAW_NODE_FOUND CAUCE_OPENCLAW_ENTRY=$OPENCLAW_ENTRY \
+          CAUCE_OPENCLAW_SESSION=$OPENCLAW_SESSION_FOUND CAUCE_OPENCLAW_HISTORY=$OPENCLAW_HISTORY_LIMIT \
+          PYTHONDONTWRITEBYTECODE=1 python3 -c \
+          'import json,os;print(json.dumps([os.environ["CAUCE_OPENCLAW_NODE"],os.environ["CAUCE_OPENCLAW_ENTRY"],"tui","--session",os.environ["CAUCE_OPENCLAW_SESSION"],"--history-limit",os.environ["CAUCE_OPENCLAW_HISTORY"]]))') \
+          || die "cannot assemble the derived openclaw harness command"
+        printf 'cauce-pty-launcher: harness derived from openclaw tui alias=%s session=%s\n' \
+          "$alias_name" "$OPENCLAW_SESSION_FOUND" >&2
+      else
+        harness_command=null
+        printf 'cauce-pty-launcher: no live tmux session and no openclaw tui for alias=%s socket=%s; agent will publish shell only\n' \
+          "$alias_name" "$TMUX_SOCKET" >&2
+      fi
     fi
   fi
   local_bundle=$(mktemp "${TMPDIR:-/tmp}/.cauce-pty-bundle-$alias_name.XXXXXX")
