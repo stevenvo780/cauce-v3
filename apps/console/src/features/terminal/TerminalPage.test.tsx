@@ -317,9 +317,16 @@ it('sends attach as the first frame and renders binary PTY output', async () => 
   expect(bar).toHaveTextContent('shell');
   // The ticket is spent once the relay is ready; the bar says so instead of freezing at 0:00.
   expect(bar).toHaveTextContent(/Ticket consumido · sesión activa/);
-  expect(within(bar).getByRole('button', { name: /cerrar sesión/i })).toBeInTheDocument();
+  /*
+   * El botón se llama «Cerrar la terminal» y NO «Cerrar sesión»: arriba a la derecha, en la barra
+   * de la consola, hay otro «Cerrar sesión» que te echa de la aplicación. La comprobación es doble
+   * a propósito —el rótulo correcto Y la ausencia del ambiguo dentro de la barra— porque sin la
+   * segunda mitad este caso volvería a pasar en verde el día que alguien deshaga el cambio.
+   */
+  expect(within(bar).getByRole('button', { name: /cerrar la terminal/i })).toBeInTheDocument();
+  expect(within(bar).queryByRole('button', { name: /^cerrar sesión$/i })).not.toBeInTheDocument();
   // An open PTY is the live source, so the redundant 2.5 s feed polling stands down.
-  expect(screen.getByText('POLLING EN PAUSA')).toBeInTheDocument();
+  expect(within(bar).getByText('POLLING EN PAUSA')).toBeInTheDocument();
 });
 
 it.each([
@@ -365,7 +372,7 @@ it('releases the grant server-side when the operator closes the session', async 
   const socket = await openPtyChannel(user, 'jarvis', 'cerrar despues de revisar');
   act(() => { socket.acceptOpen(); socket.emitControl({ type: 'ready' }); });
 
-  await user.click(within(screen.getByLabelText('Sesión PTY activa')).getByRole('button', { name: /cerrar sesión/i }));
+  await user.click(within(screen.getByLabelText('Sesión PTY activa')).getByRole('button', { name: /cerrar la terminal/i }));
 
   await waitFor(() => expect(deleted).toBe(PTY_SESSION_ID));
   await waitFor(() => expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true'));

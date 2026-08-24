@@ -12,6 +12,10 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
+// 🔴 La piel del terminal, EMPAQUETADA. Sin este import la CSS que xterm inyecta en tiempo de
+// ejecución la tira la CSP (`style-src 'self'`) y la TUI se ve negro sobre negro y en serif. El
+// porqué entero está en la cabecera del fichero.
+import './xterm-csp.css';
 
 export type PtyChannelState = 'connecting' | 'attaching' | 'open' | 'closed' | 'error';
 
@@ -28,6 +32,18 @@ export interface PtySessionView {
   notices: PtyNotice[];
   /** The DOM renderer refused to start (headless/jsdom); the channel may still be live. */
   renderError?: string;
+  /**
+   * `false` cuando el operador subió a leer y hay salida nueva más abajo. La vista lo usa para
+   * ofrecer «volver al final» en vez de arrastrarlo hacia abajo a mitad de una lectura.
+   */
+  seguirAlFinal: boolean;
+  /**
+   * Columnas que caben de verdad en esta pantalla. Se publica porque cuando son menos de
+   * `COLUMNAS_MINIMAS` el espejo NO es fiel: el agente PTY se engancha con `-f ignore-size`, la
+   * ventana remota conserva su ancho, y lo que sobra por la derecha simplemente no se ve. Callarlo
+   * sería lo peor de todo: el operador leería una TUI recortada creyendo que la está viendo entera.
+   */
+  columnas?: number;
 }
 
 export interface PtySessionOptions {
@@ -77,11 +93,69 @@ export function websocketUrl(path: string): string {
   return url.toString();
 }
 
-function terminalTheme(light: boolean) {
-  return light
-    ? { background: '#f6f8fb', foreground: '#203149', cursor: '#087c63', selectionBackground: '#c8ddef' }
-    : { background: '#070b13', foreground: '#d8e4f7', cursor: '#7ce7c5', selectionBackground: '#244f61' };
-}
+/**
+ * **El terminal es OSCURO siempre, y a propósito.**
+ *
+ * Esto NO es una preferencia estética: es lo único correcto. Lo que se pinta acá no lo compone la
+ * consola, lo compone la TUI del agente —tmux, Claude Code, codex— con la paleta ANSI de 16
+ * colores pensada para fondo oscuro. Con el tema claro puesto (que es lo que hereda un navegador
+ * recién abierto, sin tocar nada), el fondo pasaba a `#f6f8fb` y esos mismos ANSI quedaban en
+ * amarillos y cianes ilegibles sobre blanco. Se vio MIRANDO la captura: el texto del panel de
+ * salva sobre fondo casi blanco, con los colores del agente desaparecidos.
+ *
+ * Un espejo no reinterpreta lo que refleja. El resto de la consola sigue su tema; la superficie
+ * del terminal, no.
+ */
+export const TEMA_TERMINAL = {
+  background: '#0a0e16',
+  foreground: '#d8e4f7',
+  cursor: '#7ce7c5',
+  cursorAccent: '#0a0e16',
+  selectionBackground: '#2c5468',
+} as const;
+
+/**
+ * La familia monoespaciada del terminal.
+ *
+ * `ui-monospace` y `SFMono-Regular` primero: son las monoespaciadas del sistema y están SIEMPRE.
+ * `JetBrains Mono` iba primera y no viaja en el bundle, así que en cualquier navegador sin ella
+ * instalada la cadena caía en la `monospace` genérica del navegador.
+ *
+ * 🔴 Se declara UNA vez y se usa DOS: como opción de xterm (de ahí sale la medición de la celda) y
+ * como variable `--pty-fuente` en el atributo `style` del nodo (de ahí sale lo que se PINTA, ver
+ * `xterm-csp.css`). Si las dos no dijeran lo mismo, la geometría se calcularía con una letra y se
+ * dibujaría con otra: columnas que no cuadran con lo que se lee.
+ */
+export const FUENTE_TERMINAL =
+  "ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono', monospace";
+
+/**
+ * Columnas por debajo de las cuales el espejo deja de servir.
+ *
+ * El agente PTY se engancha con `attach-session -r -f ignore-size`, o sea que la ventana remota NO
+ * se adapta a nosotros (y bien que hace: redimensionar la tmux de un agente que está trabajando
+ * sería tocarle el escritorio). La consecuencia es que un terminal estrecho no reflowea el
+ * contenido: lo CORTA. Medido a 360x800: `"tenan`, `"socr`, `mes` — cada línea partida por la
+ * mitad en el borde derecho. Antes que cortar se baja el cuerpo de letra, que es reversible y no
+ * pierde nada.
+ */
+const COLUMNAS_MINIMAS = 80;
+const CUERPO_BASE = 13;
+/**
+ * El suelo del cuerpo de letra, y por qué es 10 y no 7.
+ *
+ * 🔴 Bajar la letra para no perder columnas sólo paga MIENTRAS SE PUEDA LEER. Con el suelo en 7 px,
+ * medido en Chrome a 360x800 contra producción: el terminal quedaba a 7 px y entraban 65 columnas
+ * —o sea que la TUI se cortaba IGUAL (hacen falta 80), y encima ya no se leía—. Se perdía por los
+ * dos lados: ni se veía entero ni se veía. Con el suelo en 10 px entran ~43 columnas, se corta lo
+ * mismo, y lo que queda SÍ se lee; el aviso `.pty-estrecho` sigue diciendo cuántas caben, que es
+ * el hueco dicho en voz alta.
+ *
+ * 10 y no 11: medido a 1400 px de ventana, el hueco del terminal mide 535 px y a 10 px de cuerpo
+ * entran exactamente 80 columnas. Subir a 11 dejaría 72 y haría aparecer el aviso de recorte en un
+ * escritorio normal, que es justo lo que no hay que romper.
+ */
+const CUERPO_MINIMO = 10;
 
 interface PtyEntry {
   id: string;
@@ -96,12 +170,14 @@ interface PtyEntry {
   inputChunks: string[];
   inputTimer?: number;
   resizeObserver?: ResizeObserver;
+  /** Falso en cuanto el operador sube a leer; verdadero mientras esté pegado al final. */
+  pegadoAbajo: boolean;
   disposers: Array<() => void>;
   onClosed?: (view: PtySessionView) => void;
   closed: boolean;
 }
 
-const IDLE_VIEW: PtySessionView = { state: 'connecting', notices: [] };
+const IDLE_VIEW: PtySessionView = { state: 'connecting', notices: [], seguirAlFinal: true };
 const entries = new Map<string, PtyEntry>();
 /** Kept out of the entry so React can subscribe before the session exists. */
 const listeners = new Map<string, Set<() => void>>();
@@ -116,6 +192,36 @@ function holder(): HTMLDivElement {
     document.body.appendChild(detachedHolder);
   }
   return detachedHolder;
+}
+
+/**
+ * **Pinta la piel del terminal como ATRIBUTO `style` del nodo, y hay que hacerlo desde acá.**
+ *
+ * El renderer DOM de xterm no trae sus colores en un `.css`: los compone y los mete en un
+ * `<style>` que crea con `createElement`. La consola se sirve con `style-src 'self'` (ver
+ * `deploy/nginx-console-tls.conf`), así que ese `<style>` es «estilo en línea» sin permiso y el
+ * navegador lo RECHAZA entero: la etiqueta queda en el DOM con su texto dentro y sin aplicar una
+ * sola regla. Medido en Chrome con la cabecera puesta, la TUI quedaba a 1,18:1 —negro sobre
+ * negro— y en la serif por defecto del navegador.
+ *
+ * Las reglas viven ahora en `xterm-csp.css`, que va en el bundle y la CSP sí permite. Lo único que
+ * ese fichero no puede saber es lo que cambia por sesión: el cuerpo de letra baja solo cuando la
+ * pantalla estrecha lo pide. Eso viaja en variables CSS puestas en el atributo `style` del nodo,
+ * que la CSP permite aparte (`style-src-attr 'unsafe-inline'`) y que es el mismo camino por el que
+ * xterm ya fija anchos, altos e interletraje.
+ *
+ * Se llama al crear la sesión y en cada reajuste de geometría: si el cuerpo baja de 13 a 9, la
+ * variable baja con él y lo pintado sigue cuadrando con lo medido.
+ */
+function pintarPiel(entry: PtyEntry): void {
+  const estilo = entry.container.style;
+  estilo.setProperty('--pty-fuente', FUENTE_TERMINAL);
+  estilo.setProperty('--pty-cuerpo', `${entry.terminal.options.fontSize ?? CUERPO_BASE}px`);
+  estilo.setProperty('--pty-tinta', TEMA_TERMINAL.foreground);
+  estilo.setProperty('--pty-fondo', TEMA_TERMINAL.background);
+  estilo.setProperty('--pty-cursor', TEMA_TERMINAL.cursor);
+  estilo.setProperty('--pty-cursor-tinta', TEMA_TERMINAL.cursorAccent);
+  estilo.setProperty('--pty-seleccion', TEMA_TERMINAL.selectionBackground);
 }
 
 function publish(entry: PtyEntry, patch: Partial<PtySessionView>): void {
@@ -145,14 +251,73 @@ function cancelPendingInput(entry: PtyEntry): void {
   entry.inputTimer = undefined;
 }
 
-function sendResize(entry: PtyEntry): void {
-  if (entry.socket?.readyState !== WebSocket.OPEN) return;
+/**
+ * Ajusta el terminal al hueco que tiene, bajando el cuerpo de letra antes que perder columnas.
+ *
+ * `proposeDimensions()` dice cuántas columnas entran CON EL CUERPO ACTUAL. Si no llegan a
+ * `COLUMNAS_MINIMAS`, se baja proporcionalmente y se vuelve a preguntar (dos pasadas alcanzan: la
+ * relación ancho/cuerpo es lineal, la segunda sólo corrige el redondeo). El suelo es
+ * `CUERPO_MINIMO`: por debajo de eso no se gana legibilidad, se pierde, y entonces sí se acepta
+ * quedarse corto de columnas.
+ */
+function ajustarGeometria(entry: PtyEntry): void {
+  let cuerpo = CUERPO_BASE;
   try {
+    for (let intento = 0; intento < 3; intento += 1) {
+      entry.terminal.options.fontSize = cuerpo;
+      const propuesta = entry.fitAddon.proposeDimensions();
+      if (!propuesta || !Number.isFinite(propuesta.cols) || propuesta.cols <= 0) break;
+      if (propuesta.cols >= COLUMNAS_MINIMAS || cuerpo <= CUERPO_MINIMO) break;
+      const siguiente = Math.max(CUERPO_MINIMO, Math.floor((cuerpo * propuesta.cols) / COLUMNAS_MINIMAS));
+      if (siguiente >= cuerpo) break;
+      cuerpo = siguiente;
+    }
     entry.fitAddon.fit();
   } catch {
     // Headless or hidden panel: keep the last known geometry instead of crashing the channel.
   }
+  // El cuerpo de letra que acaba de decidirse tiene que llegar a lo que se PINTA, no sólo a lo que
+  // se mide: la regla que lo aplica está en el bundle y lee `--pty-cuerpo` (ver `pintarPiel`).
+  pintarPiel(entry);
+  if (entry.terminal.cols !== entry.view.columnas) publish(entry, { columnas: entry.terminal.cols });
+}
+
+function sendResize(entry: PtyEntry): void {
+  ajustarGeometria(entry);
+  mantenerElFinal(entry);
+  if (entry.socket?.readyState !== WebSocket.OPEN) return;
   entry.socket.send(JSON.stringify({ type: 'resize', cols: entry.terminal.cols, rows: entry.terminal.rows }));
+}
+
+/** ¿La vista está mirando el final del búfer, o el operador subió a leer? */
+function alFinal(entry: PtyEntry): boolean {
+  try {
+    const buffer = entry.terminal.buffer.active;
+    return buffer.viewportY >= buffer.baseY;
+  } catch {
+    // Sin renderer no hay viewport: se comporta como si estuviera al final, que es lo inocuo.
+    return true;
+  }
+}
+
+/**
+ * **Un cambio de geometría no te mueve del sitio en el que estabas leyendo.**
+ *
+ * Sobre el scroll de la SALIDA no hace falta nada: xterm ya sigue el final mientras estés al final
+ * y ya te deja quieto si subiste (`isUserScrolling` en su `BufferService`). Se comprobó quitando
+ * el código y viendo que las dos mitades seguían cumpliéndose, así que forzarlo sería código
+ * muerto con una prueba incapaz de dar rojo. Lo que xterm NO garantiza es el REDIMENSIONADO: un
+ * `fit()` cambia las filas, recoloca el búfer y ahí sí te puede dejar en otro sitio. Como acá el
+ * ancho se reajusta solo (bajando el cuerpo de letra hasta que entren 80 columnas), eso pasa sin
+ * que el operador toque nada.
+ */
+function mantenerElFinal(entry: PtyEntry): void {
+  if (!entry.pegadoAbajo) return;
+  try {
+    entry.terminal.scrollToBottom();
+  } catch {
+    // Headless: no hay viewport que mover.
+  }
 }
 
 function writeOutput(entry: PtyEntry, data: ArrayBuffer | string): void {
@@ -280,15 +445,15 @@ export function ensurePtySession(options: PtySessionOptions): void {
   container.setAttribute('aria-label', 'Terminal PTY interactiva');
   holder().appendChild(container);
 
-  const colorScheme = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: light)') : undefined;
   const terminal = new Terminal({
     cursorBlink: options.readOnly !== true,
     disableStdin: options.readOnly === true,
     convertEol: false,
-    fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace",
-    fontSize: 13,
+    fontFamily: FUENTE_TERMINAL,
+    fontSize: CUERPO_BASE,
+    lineHeight: 1.15,
     scrollback: 5000,
-    theme: terminalTheme(colorScheme?.matches ?? false),
+    theme: TEMA_TERMINAL,
   });
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
@@ -298,14 +463,17 @@ export function ensurePtySession(options: PtySessionOptions): void {
     terminal,
     fitAddon,
     container,
-    view: { state: 'connecting', notices: [] },
+    view: { state: 'connecting', notices: [], seguirAlFinal: true },
     readOnly: options.readOnly === true,
     inputChunks: [],
+    pegadoAbajo: true,
     disposers: [],
     onClosed: options.onClosed,
     closed: false,
   };
   entries.set(options.sessionId, entry);
+  // Antes de abrir el renderer: el primer frame ya sale con la tinta y la letra puestas.
+  pintarPiel(entry);
 
   try {
     terminal.open(container);
@@ -326,18 +494,30 @@ export function ensurePtySession(options: PtySessionOptions): void {
   const input = terminal.onData((data) => queueInput(entry, data));
   entry.disposers.push(() => input.dispose());
 
-  if (typeof ResizeObserver === 'function') {
-    entry.resizeObserver = new ResizeObserver(() => sendResize(entry));
-    entry.resizeObserver.observe(container);
-  }
 
-  if (colorScheme) {
-    const updateTheme = (event: MediaQueryListEvent) => { terminal.options.theme = terminalTheme(event.matches); };
-    colorScheme.addEventListener('change', updateTheme);
-    entry.disposers.push(() => colorScheme.removeEventListener('change', updateTheme));
-  }
+  // Cada movimiento del viewport —del operador o nuestro— reevalúa si seguimos pegados al final.
+  const scroll = terminal.onScroll(() => {
+    const abajo = alFinal(entry);
+    if (abajo === entry.pegadoAbajo) return;
+    entry.pegadoAbajo = abajo;
+    publish(entry, { seguirAlFinal: abajo });
+  });
+  entry.disposers.push(() => scroll.dispose());
 
   openSocket(entry, options);
+}
+
+/** Vuelve al final y reengancha el seguimiento. Lo llama el botón «volver al final» de la vista. */
+export function ptySessionVolverAlFinal(sessionId: string): void {
+  const entry = entries.get(sessionId);
+  if (!entry) return;
+  entry.pegadoAbajo = true;
+  try {
+    entry.terminal.scrollToBottom();
+  } catch {
+    // Sin renderer no hay nada que mover; el estado igual queda pegado.
+  }
+  publish(entry, { seguirAlFinal: true });
 }
 
 export function subscribePtySession(sessionId: string, listener: () => void): () => void {
@@ -354,11 +534,26 @@ export function readPtySession(sessionId: string): PtySessionView {
   return entries.get(sessionId)?.view ?? IDLE_VIEW;
 }
 
-/** Moves the live terminal node into the panel React just rendered. */
+/**
+ * Moves the live terminal node into the panel React just rendered.
+ *
+ * 🔴 **Y observa el HUECO, no el terminal.** El `ResizeObserver` vigilaba `entry.container`, que
+ * es el nodo del propio terminal — y el alto de ese nodo lo decide xterm a partir de sus filas,
+ * no el layout. O sea que se estaba observando la consecuencia en vez de la causa: el nodo nunca
+ * encogía solo, el observador no disparaba nunca, y el terminal se quedaba con las filas de la
+ * primera medición para siempre. Medido a 1280x900: el hueco (`.pty-mount`) medía 230 px y el
+ * terminal seguía midiendo 500, desbordándolo por abajo. Vigilando el hueco, que sí lo decide el
+ * layout, `fit()` se entera y las filas se ajustan.
+ */
 export function attachPtySession(sessionId: string, wrapper: HTMLElement): void {
   const entry = entries.get(sessionId);
   if (!entry) return;
   wrapper.appendChild(entry.container);
+  entry.resizeObserver?.disconnect();
+  if (typeof ResizeObserver === 'function') {
+    entry.resizeObserver ??= new ResizeObserver(() => sendResize(entry));
+    entry.resizeObserver.observe(wrapper);
+  }
   sendResize(entry);
 }
 
@@ -366,6 +561,9 @@ export function attachPtySession(sessionId: string, wrapper: HTMLElement): void 
 export function detachPtySession(sessionId: string): void {
   const entry = entries.get(sessionId);
   if (!entry) return;
+  // El hueco se va con el panel: seguir observándolo mediría un elemento que ya no está en la
+  // página y devolvería 0 columnas, que es peor que no medir.
+  entry.resizeObserver?.disconnect();
   holder().appendChild(entry.container);
 }
 
@@ -391,6 +589,30 @@ export function closePtySession(sessionId: string, reason = 'console terminal cl
  */
 export function ptySessionType(sessionId: string, data: string): void {
   entries.get(sessionId)?.terminal.input(data);
+}
+
+/**
+ * Mueve el viewport como lo movería la rueda del operador, por el camino real de xterm.
+ * Diagnóstico y pruebas: la vista nunca llama a esto.
+ */
+export const PTY_COLUMNAS_MINIMAS = COLUMNAS_MINIMAS;
+/** Diagnóstico y pruebas: el suelo del cuerpo de letra. Ver `CUERPO_MINIMO`. */
+export const PTY_CUERPO_MINIMO = CUERPO_MINIMO;
+export const PTY_CUERPO_BASE = CUERPO_BASE;
+
+export function ptySessionScroll(sessionId: string, lineas: number): void {
+  entries.get(sessionId)?.terminal.scrollLines(lineas);
+}
+
+/**
+ * Dónde está el viewport respecto del final del búfer. `viewportY === baseY` es «pegado abajo».
+ * Diagnóstico y pruebas: es lo único con lo que se puede afirmar que la vista NO se movió.
+ */
+export function ptySessionPosicion(sessionId: string): { viewportY: number; baseY: number } {
+  const entry = entries.get(sessionId);
+  if (!entry) return { viewportY: 0, baseY: 0 };
+  const buffer = entry.terminal.buffer.active;
+  return { viewportY: buffer.viewportY, baseY: buffer.baseY };
 }
 
 /**

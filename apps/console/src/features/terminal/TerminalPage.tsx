@@ -1,5 +1,5 @@
 import { Activity, MonitorPlay, RadioTower, RefreshCw, ShieldCheck, TerminalSquare, Wifi } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Badge, PageHeader } from '../../components/ui';
@@ -21,6 +21,12 @@ function useRefreshInterval(reload: () => void, milliseconds: number, loading: b
 
 export function TerminalPage() {
   const api = useApi();
+  /**
+   * Con una sesión abierta la página entra en modo observación: el terminal se queda con el alto
+   * y los seis contadores se repliegan a una tira. Sin esto el terminal empezaba en y=856 sobre
+   * una ventana de 900 —44 px visibles— y en el móvil, en y=1.952: fuera de la pantalla entera.
+   */
+  const [sesionesAbiertas, setSesionesAbiertas] = useState(0);
   const status = useResource('ultimate-terminal-status', () => api.getStatus());
   const topology = useResource('ultimate-terminal-topology', () => api.getTopology());
   const adapters = useResource('ultimate-terminal-adapters', () => api.listAdapters());
@@ -77,7 +83,7 @@ export function TerminalPage() {
   }
 
   return (
-    <div className="ultimate-terminal-page">
+    <div className="ultimate-terminal-page" data-tui={sesionesAbiertas > 0 ? 'abierta' : undefined}>
       <PageHeader
         eyebrow={fleetLabel}
         title="Ultimate Terminal"
@@ -132,6 +138,7 @@ export function TerminalPage() {
         terminalTargets={verifiedTargets}
         fleetLoading={fleetLoading}
         fleetError={fleetError}
+        onSesionesAbiertas={setSesionesAbiertas}
       />
     </div>
   );

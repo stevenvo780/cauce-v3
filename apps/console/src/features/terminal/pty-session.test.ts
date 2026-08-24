@@ -5,8 +5,11 @@ import {
   detachPtySession,
   ensurePtySession,
   ptyCloseMessage,
+  ptySessionPosicion,
+  ptySessionScroll,
   ptySessionText,
   ptySessionType,
+  ptySessionVolverAlFinal,
   readPtySession,
   subscribePtySession,
   websocketUrl,
@@ -172,4 +175,61 @@ it('rejects endpoints that are not a bare same-origin path', () => {
   expect(() => websocketUrl('/v3/console/terminal/ws?ticket=leaked')).toThrow(/query/);
   expect(() => websocketUrl('/v3/console/terminal/ws#fragment')).toThrow(/fragment/);
   expect(websocketUrl('/v3/console/terminal/ws')).toMatch(/^ws:\/\/localhost/);
+});
+
+/* ============================================================================================= *
+ * EL SCROLL. Steven, textual: «scroll que se queda abajo si estabas abajo y NO te arrastra si
+ * habías subido a leer».
+ *
+ * Son DOS afirmaciones y hacen falta las dos pruebas: una sola no distingue «sigue el final» de
+ * «siempre salta al final», que es justo el defecto. La segunda es el control negativo de la
+ * primera: mismo canal, misma salida, lo único que cambia es que el operador subió a leer.
+ * ============================================================================================= */
+
+it('mientras estás al final, la vista sigue el final y NO se ofrece «volver al final»', async () => {
+  const socket = open();
+  socket.emitControl({ type: 'ready' });
+  socket.emitOutput(Array.from({ length: 120 }, (_, i) => `linea ${i}`).join('\r\n') + '\r\n');
+  await settle();
+
+  const antes = ptySessionPosicion(SESSION);
+  expect(antes.baseY).toBeGreaterThan(0);
+  expect(antes.viewportY).toBe(antes.baseY);
+  expect(readPtySession(SESSION).seguirAlFinal).toBe(true);
+
+  socket.emitOutput('lo ultimo que dijo el agente\r\n');
+  await settle();
+  const despues = ptySessionPosicion(SESSION);
+  expect(despues.baseY).toBeGreaterThan(antes.baseY);
+  expect(despues.viewportY).toBe(despues.baseY);
+  // Y la vista lo sabe: sin esto el aviso de «hay salida nueva abajo» saldría estando ya abajo.
+  expect(readPtySession(SESSION).seguirAlFinal).toBe(true);
+});
+
+it('si subiste a leer, la salida nueva NO te arrastra — y se te ofrece volver al final', async () => {
+  const socket = open();
+  socket.emitControl({ type: 'ready' });
+  socket.emitOutput(Array.from({ length: 120 }, (_, i) => `linea ${i}`).join('\r\n') + '\r\n');
+  await settle();
+
+  // El operador sube 40 filas a leer algo.
+  ptySessionScroll(SESSION, -40);
+  await settle();
+  const arriba = ptySessionPosicion(SESSION);
+  expect(arriba.viewportY).toBeLessThan(arriba.baseY);
+  expect(readPtySession(SESSION).seguirAlFinal).toBe(false);
+
+  // Llega salida nueva: el búfer crece y la vista se queda EXACTAMENTE donde estaba.
+  socket.emitOutput('mas salida del agente\r\n');
+  await settle();
+  const tras = ptySessionPosicion(SESSION);
+  expect(tras.baseY).toBeGreaterThan(arriba.baseY);
+  expect(tras.viewportY).toBe(arriba.viewportY);
+
+  // Y el botón devuelve el seguimiento.
+  ptySessionVolverAlFinal(SESSION);
+  await settle();
+  const final = ptySessionPosicion(SESSION);
+  expect(final.viewportY).toBe(final.baseY);
+  expect(readPtySession(SESSION).seguirAlFinal).toBe(true);
 });

@@ -220,4 +220,10 @@ export const handlers = [
     entries: params.alias === 'kant' ? roleBriefHistoryKant : [],
   })),
   http.get('*/v3/console/terminal/capability', () => HttpResponse.json({ available: false, reason: 'Backend PTY no instalado en este entorno' })),
+  /*
+   * Las sesiones de terminal del operador. La consola las lee para poder CERRAR las que quedaron
+   * colgadas: sin este manejador cada prueba de la vista escupía «intercepted a request without a
+   * matching request handler» y la trampa que este listado destraba quedaba sin cubrir.
+   */
+  http.get('*/v3/console/terminal/sessions', () => HttpResponse.json({ items: [] })),
 ];
