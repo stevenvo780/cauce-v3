@@ -28,6 +28,19 @@ die() {
   exit "${2:-2}"
 }
 
+# Fallo TRANSITORIO: 75 (EX_TEMPFAIL) y, sobre todo, un codigo que NO esta en el
+# `RestartPreventExitStatus=2 78` de la unit.
+#
+# Se separa de `die` porque los dos fallos NO son el mismo fallo. Un artefacto del release que no
+# viajo (el agente, y cualquier fichero que se le sume) se arregla volviendo a desplegar, sin
+# tocar systemd: si sale 2, las 15 unidades de PTY quedan PARADAS PARA SIEMPRE y ya no reintentan
+# ni cuando el fichero vuelve. Un fallo de configuracion —un alias que no es un alias— si es
+# permanente, y ese sigue saliendo por `die`.
+die_transient() {
+  printf '%s\n' "$1" >&2
+  exit 75
+}
+
 # Every short-lived control-plane Docker call is bounded so a hung daemon cannot wedge the
 # launcher. The final `docker exec` that becomes the agent is intentionally NOT wrapped.
 docker_control() { timeout -k 5 "$DOCKER_CALL_TIMEOUT" docker "$@"; }
@@ -64,7 +77,7 @@ command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
 command -v flock >/dev/null 2>&1 || die 'flock is unavailable' 127
 command -v timeout >/dev/null 2>&1 || die 'timeout is unavailable' 127
 [[ $DOCKER_CALL_TIMEOUT =~ ^[0-9]{1,4}$ && $DOCKER_CALL_TIMEOUT -ge 1 ]] || die 'docker call timeout is invalid'
-[[ -f $AGENT_SOURCE && ! -L $AGENT_SOURCE ]] || die 'PTY agent source is unavailable'
+[[ -f $AGENT_SOURCE && ! -L $AGENT_SOURCE ]] || die_transient 'PTY agent source is unavailable'
 
 # 1. Alias -> container tuple. Read-only use of the fleet mapping owned by ops/scripts.
 mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS_ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
