@@ -19,6 +19,8 @@
  * decorado que responde lo justo para que la geometría se pueda medir.
  */
 import { http, HttpResponse } from 'msw';
+/* La constante, no una copia del literal: es exactamente la copia lo que estaba mal (ver abajo). */
+import { LIVE_TUI_MODE } from '../features/terminal/fleet';
 
 const RUTA_WS = '/v3/console/terminal/stream';
 const TENANT = 'Steven';
@@ -43,7 +45,15 @@ export const terminalDemoHandlers = [
       runtime_user: 'dev',
       harness: 'claude-code',
       shares_container_with: [],
-      modes: ['shell', 'live-tui'],
+      /*
+       * 🔴 Acá decía `'live-tui'`, y el cliente busca `'harness'` (`LIVE_TUI_MODE`, en `fleet.ts`).
+       * O sea que el banco de pruebas publicaba un modo que la consola no reconoce: el botón «TUI»
+       * salía DESHABILITADO, el contador decía «EMITEN SU TUI 0 / 1» y el único modo que se podía
+       * abrir era una shell nueva. Justo el modo que esta vista existe para dar —mirar en solo
+       * lectura la TUI que el agente ya tiene pintada— no se probaba nunca, ni a mano ni con el
+       * arnés. Se descubrió midiendo: la sonda pedía TUI y no montaba nada.
+       */
+      modes: ['shell', LIVE_TUI_MODE],
       pty_state: 'online',
       last_seen: new Date().toISOString(),
       authorized: true,
