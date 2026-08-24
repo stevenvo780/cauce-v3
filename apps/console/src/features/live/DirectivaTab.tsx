@@ -1,312 +1,138 @@
-import { AlertTriangle, BookOpen, Brain, FileWarning, IdCard, Wrench } from 'lucide-react';
-import { useMemo, type ReactNode } from 'react';
+import { Maximize2 } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { useApi } from '../../api/context';
-import type { AgentDirective, ConfigurationSnapshot } from '../../api/types';
+import type { ConfigurationSnapshot } from '../../api/types';
 import { useResource } from '../../api/use-resource';
-import { EmptyState, Time } from '../../components/ui';
-import { RoleBriefTab, type RoleBriefTabProps } from './RoleBriefTab';
-import { CAPAS_PENDIENTES, ubicacionDeclarada, type UbicacionDeclarada } from './capas-pendientes';
-import { avisosDeCapas, totalDeMemoria, type AvisoDeCapas } from './directiva';
+import { DirectivaModal } from './DirectivaModal';
+import type { RoleBriefTabProps } from './RoleBriefTab';
+import { primerasLineas } from './directiva';
+import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
 
 /**
- * LAS TRES CAPAS DE DIRECTIVA DE UN ALIAS, JUNTAS Y ROTULADAS POR SU FIN.
+ * LA PESTAÑA «DIRECTIVA» DEL CAJÓN: UN RESUMEN DE DOS RENGLONES Y UNA PUERTA.
  *
- * Steven señaló que la consola sólo editaba «los prompts que llegan en el mensaje» y no veía el
- * `CLAUDE.md` del agente. Al medirlo apareció algo peor que un olvido (el diseño entero está en
- * `/workspace/DISENO-TRES-CAPAS-DE-DIRECTIVA.md`): no son dos capas sino TRES, sólo una era
- * visible, y las otras dos están desordenadas justamente porque nadie las ve —janus tiene DOS
- * `CLAUDE.md` a la vez, gaia no tiene ninguno, y la autonomía está escrita por duplicado en los
- * 14 alias—.
+ * Hasta esta ronda, esta pestaña metía las cuatro secciones enteras dentro del cajón. MEDIDO en
+ * Chrome contra producción, sobre `zeus`: 686 px (capa 1) + 387 (capa 2) + 368 (capa 3) + 679
+ * (capa 4) = **2.120 px** de contenido dentro de una columna de **420 px** de la que se ven
+ * **1.000**. Steven lo dijo antes de que nadie lo midiera: «tienen demasiados datos».
  *
- * Ver las tres al lado ES el arreglo: la duplicación no se descubre leyendo un fichero, se
- * descubre poniéndolo al lado del otro. Por eso esta pestaña no es una vista nueva sino la de
- * «Rol» ensanchada, en el mismo cajón donde el operador ya mira al bot.
+ * Así que las capas se van a un diálogo ancho (`DirectivaModal`) y acá queda lo único que se
+ * responde de un vistazo: **quién dice que es** este bot y **cuánto le queda de tope**. Las dos
+ * cosas caben en la parte visible del cajón sin desplazarse, que es la diferencia entre un dato y
+ * un dato que hay que ir a buscar.
  *
- * QUÉ FALTA, Y SE DICE EN PANTALLA: las capas 2 y 3 son ficheros DENTRO del contenedor del alias,
- * y sólo el gateway puede mirarlos. El endpoint todavía no existe. Mientras no exista, esta
- * pestaña muestra el contrato y declara que NO SE MIRÓ. Lo que no hace —y es la mitad del
- * trabajo— es pintar «este alias no tiene CLAUDE.md» sobre una lectura que nunca ocurrió: sería
- * cierto para gaia y falso para janus, con la misma cara de seguridad en los dos casos.
+ * Lo que NO queda acá, y es a propósito: ni el editor, ni el manual, ni la memoria, ni los avisos
+ * de solapamiento. Un resumen que además edita es un editor pequeño, y un editor de 420 px es
+ * justamente lo que había.
  */
 
 export type DirectivaTabProps = RoleBriefTabProps;
 
-/** Sólo para el aviso de solapamiento: el texto del rol tal y como está GUARDADO. */
-function briefGuardado(snapshot: ConfigurationSnapshot | undefined, tenantId: string, alias: string): string | undefined {
+/**
+ * Los tres desenlaces de buscar un alias en el registro, que NO son el mismo hecho.
+ *
+ * `sin-registro` = este gateway no publica la lista de agentes. `sin-fila` = la publica y este
+ * alias no está en ella —apareció por entregas o por lease—. `fila` = está, con o sin texto. Los
+ * tres se resolvían antes con un `undefined` y por eso `zeus`, que no tiene fila, se leía igual
+ * que un alias con el rol en blanco: dos cosas distintas con la misma cara.
+ */
+type Registro =
+  | { estado: 'sin-registro' }
+  | { estado: 'sin-fila' }
+  | { estado: 'fila'; brief: string };
+
+function buscarEnRegistro(snapshot: ConfigurationSnapshot | undefined, tenantId: string, alias: string): Registro {
   const agents = snapshot?.agents;
-  if (!Array.isArray(agents)) return undefined;
+  if (!Array.isArray(agents)) return { estado: 'sin-registro' };
   const fila = agents.find((row) => row.tenant_id === tenantId && row.alias === alias);
-  return typeof fila?.role_brief === 'string' ? fila.role_brief : undefined;
+  if (!fila) return { estado: 'sin-fila' };
+  return { estado: 'fila', brief: typeof fila.role_brief === 'string' ? fila.role_brief : '' };
 }
 
 export function DirectivaTab({ tenantId, alias, borrador, onBorrador }: DirectivaTabProps) {
   const api = useApi();
-  /*
-   * Dos lecturas de `/v3/console/config` cuando se abre la pestaña: ésta y la de `RoleBriefTab`.
-   * Es a propósito y es el precio de NO tocar el editor del rol, que tiene su propio manejo de
-   * revisión, de conflicto optimista y de relectura tras guardar —siete casos de prueba que
-   * describen fallos ya cometidos—. Refactorizarlo para ahorrar un GET de configuración sería
-   * cambiar algo que funciona por algo que hay que volver a demostrar.
-   */
   const config = useResource(`directiva-config-${tenantId}-${alias}`, () => api.getConfiguration());
-  const directiva = useResource(
-    `directiva-ficheros-${tenantId}-${alias}`,
-    () => api.getAgentDirective(tenantId, alias),
-  );
+  const [abierto, setAbierto] = useState(false);
+  const abridor = useRef<HTMLButtonElement>(null);
 
-  const avisos = useMemo(
-    () => avisosDeCapas(briefGuardado(config.data, tenantId, alias), directiva.error ? undefined : directiva.data),
-    [config.data, tenantId, alias, directiva.data, directiva.error],
-  );
+  const registro = buscarEnRegistro(config.data, tenantId, alias);
+  /*
+   * El resumen habla del texto que el operador tiene DELANTE, no del que hay en la base: si dejó
+   * un borrador a medias en el diálogo y volvió al cajón, enseñar el guardado diría que sus
+   * cambios se perdieron. Por eso se dice cuál de los dos es, en vez de elegir en silencio.
+   */
+  const texto = borrador ?? (registro.estado === 'fila' ? registro.brief : '');
+  const lineas = primerasLineas(texto, 2);
+  const largo = contarRoleBrief(texto);
+  const tono = tonoRoleBrief(largo);
+  // El contador sólo se pinta sobre una lectura que ocurrió: «0 / 1200» encima de un GET que
+  // falló, o de un alias que ni siquiera está en el registro, es una cifra inventada.
+  const hayRol = registro.estado === 'fila' || borrador !== undefined;
 
   return (
-    <div className="directiva">
-      <AvisosDeSolapamiento avisos={avisos} />
+    <div className="directiva-resumen">
+      <p className="directiva-resumen-rotulo">Rol declarado de {alias}</p>
 
-      <section className="directiva-capa" aria-label="Capa 1: rol declarado">
-        <CapaCabecera
-          icono={<IdCard size={15} aria-hidden="true" />}
-          numero={1}
-          titulo="Rol declarado"
-          fin="QUIÉN SOS y QUÉ PODÉS DECIDIR"
-          fuente="agents.role_brief · base de datos · viaja en CADA entrega"
-        />
-        <p className="directiva-porque">
-          Es la única capa que sigue siendo verdad si se recrea el contenedor o cambia el arnés, así
-          que es la única que debe fijar identidad, límites de autonomía y a quién se escala.
+      {registro.estado === 'sin-registro' ? (
+        /* Sin snapshot no hay rol que resumir. El botón sigue estando: el diálogo explica el fallo
+           con las palabras del servidor, que es más de lo que cabe acá. */
+        <p className="directiva-resumen-vacio">
+          {config.loading && !config.data
+            ? 'Leyendo el rol declarado desde la configuración versionada…'
+            : `No se pudo leer el registro de agentes, así que el rol de este alias es un dato que no tenemos —no «vacío»—${config.error ? `: ${config.error.message}` : '.'}`}
         </p>
-        <RoleBriefTab tenantId={tenantId} alias={alias} borrador={borrador} onBorrador={onBorrador} />
-      </section>
-
-      <section className="directiva-capa" aria-label="Capa 2: manual del sitio">
-        <CapaCabecera
-          icono={<BookOpen size={15} aria-hidden="true" />}
-          numero={2}
-          titulo="Manual del sitio · CLAUDE.md"
-          fin="CÓMO SE TRABAJA AQUÍ"
-          fuente="fichero dentro del contenedor del alias · no viaja con la entrega"
-        />
-        <p className="directiva-porque">
-          Rutas, comandos, convenciones, qué no tocar, cómo se despliega. No repite identidad ni
-          autonomía: si empieza con «Sos…», está invadiendo la capa 1.
+      ) : registro.estado === 'sin-fila' ? (
+        <p className="directiva-resumen-vacio">
+          {alias} no está en el registro de agentes de {tenantId}: apareció por entregas o por
+          lease. Un alias sin fila en el registro no tiene rol declarado que resumir, que no es lo
+          mismo que tenerlo en blanco.
         </p>
-        <CapaDeFicheros recurso={directiva} />
-      </section>
-
-      <section className="directiva-capa" aria-label="Capa 3: memoria">
-        <CapaCabecera
-          icono={<Brain size={15} aria-hidden="true" />}
-          numero={3}
-          titulo="Memoria"
-          fin="LO QUE ESE AGENTE APRENDIÓ"
-          fuente="~/.claude/projects · ~/.openclaw/memory · sólo lectura"
-        />
-        <p className="directiva-porque">
-          Hechos que midió él mismo. Ni identidad ni manual. Desde acá se lee el índice: el
-          contenido se edita donde se escribió, no desde la consola.
+      ) : lineas.length === 0 ? (
+        <p className="directiva-resumen-vacio">
+          El registro lo publica VACÍO: {alias} sale a trabajar sin ninguna línea de identidad.
         </p>
-        <CapaDeMemoria recurso={directiva} />
-      </section>
-
-      <CapasPendientes ubicacion={ubicacionDeclarada(config.data, tenantId, alias)} alias={alias} />
-    </div>
-  );
-}
-
-/**
- * Las dos partes del encargo que TODAVÍA no se pueden tocar, dichas en vez de omitidas.
- *
- * Steven pidió cuatro cosas y esta pestaña resuelve dos. Callar las otras dos dejaría al operador
- * eligiendo entre dos conclusiones falsas —que se olvidaron, o que este agente no tiene
- * herramientas configuradas—. Con el hueco rotulado sabe que existen, dónde viven y qué falta.
- *
- * No lleva ningún botón a propósito. Un botón que no hace nada es peor que este texto: promete un
- * efecto, y en la única capa donde todavía no está decidido dónde vive el dato, ese efecto podría
- * escribirse en un fichero que nadie lee.
- */
-function CapasPendientes({ ubicacion, alias }: { ubicacion: UbicacionDeclarada; alias: string }) {
-  return (
-    <section className="directiva-capa directiva-pendientes" aria-label="Lo que todavía no se puede editar desde aquí">
-      <CapaCabecera
-        icono={<Wrench size={15} aria-hidden="true" />}
-        numero={4}
-        titulo="Todavía no se puede desde aquí"
-        fin="LO QUE FALTA DEL ENCARGO"
-        fuente="ni la base ni el gateway lo publican · no hay dónde escribirlo con efecto"
-      />
-      <p className="directiva-porque">
-        Del pedido original —directiva, manual, herramientas y prompts— esto es lo que queda fuera.
-        Se enseña para que no se lea como un olvido ni como un «este agente no tiene».
-      </p>
-
-      <ul className="directiva-pendiente-lista">
-        {CAPAS_PENDIENTES.map((capa) => (
-          <li key={capa.id}>
-            <strong>{capa.titulo}</strong>
-            <p className="directiva-pendiente-pedido">{capa.pedido}</p>
-            <p className="directiva-pendiente-porque">{capa.porQueNo}</p>
-            <p className="directiva-pendiente-falta">Para que esto tenga editor: {capa.queFalta}</p>
-          </li>
-        ))}
-      </ul>
-
-      {/* La ubicación NO se inventa: si el registro no la declara se dice que es UNKNOWN, en vez
-          de rellenarla con el `/home/dev` que tienen casi todos —que mandaría a mirar el fichero
-          equivocado justo en el alias que se sale de la norma—. */}
-      <p className="directiva-pendiente-donde">
-        Mientras tanto, la configuración de {alias} vive en{' '}
-        {ubicacion.contenedor ? <code>{ubicacion.contenedor}</code> : <span className="unknown">contenedor UNKNOWN</span>}
-        {', '}
-        {ubicacion.home ? <code>{ubicacion.home}</code> : <span className="unknown">$HOME UNKNOWN</span>}
-        {'. '}
-        Se toca por la TUI o por <code>docker exec</code>, con lo que eso implica: sin revisión y
-        sin vuelta atrás.
-      </p>
-    </section>
-  );
-}
-
-function CapaCabecera({ icono, numero, titulo, fin, fuente }: {
-  icono: ReactNode; numero: number; titulo: string; fin: string; fuente: string;
-}) {
-  return (
-    <header className="directiva-capa-head">
-      <span className="directiva-capa-icono" aria-hidden="true">{icono}</span>
-      <div>
-        <h3>Capa {numero} · {titulo}</h3>
-        {/* El fin va ARRIBA del nombre técnico: la pregunta que resuelve cada capa es lo que
-            decide dónde va a parar cada frase, y es justo lo que hoy nadie tiene delante. */}
-        <p className="directiva-capa-fin">{fin}</p>
-        <p className="directiva-capa-fuente">{fuente}</p>
-      </div>
-    </header>
-  );
-}
-
-function AvisosDeSolapamiento({ avisos }: { avisos: AvisoDeCapas[] }) {
-  if (avisos.length === 0) return null;
-  return (
-    <div className="directiva-avisos" role="group" aria-label="Avisos de solapamiento entre capas">
-      {avisos.map((aviso) => (
-        <div key={aviso.id} className="directiva-aviso" data-tono={aviso.tono} role={aviso.tono === 'choque' ? 'alert' : 'note'}>
-          <span aria-hidden="true">
-            {aviso.tono === 'choque' ? <AlertTriangle size={15} /> : <FileWarning size={15} />}
-          </span>
-          <div>
-            <strong>{aviso.titulo}</strong>
-            <p>{aviso.detalle}</p>
-            {aviso.evidencia.length > 0 ? (
-              <ul className="directiva-evidencia">
-                {aviso.evidencia.map((dato) => <li key={dato}><code>{dato}</code></li>)}
-              </ul>
-            ) : null}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/**
- * El texto EXACTO con el que se declara que una capa no se pudo mirar.
- *
- * Es una función y no una cadena suelta porque las capas 2 y 3 tienen que decir lo mismo: que la
- * consola no vio nada, no que no haya nada. La diferencia es la que separa un diagnóstico de una
- * invención, y en esta consola ya costó caro confundirlas.
- */
-function NoSeMiro({ motivo, que }: { motivo: string | undefined; que: string }) {
-  return (
-    <EmptyState>
-      No se pudo mirar {que} de este alias: {motivo ?? 'el servidor no dio un motivo.'} Eso NO
-      significa que no exista —significa que la consola no lo vio—. El día que el gateway publique
-      {' '}<code>GET /v3/console/agents/:tenant/:alias/directive</code>, esta sección se llena sola.
-    </EmptyState>
-  );
-}
-
-type RecursoDirectiva = { data?: AgentDirective; error?: Error; loading: boolean };
-
-function CapaDeFicheros({ recurso }: { recurso: RecursoDirectiva }) {
-  if (recurso.loading && !recurso.data) return <p className="muted">Buscando los CLAUDE.md del contenedor…</p>;
-  if (recurso.error && !recurso.data) return <NoSeMiro que="el manual del sitio" motivo={recurso.error.message} />;
-  if (!recurso.data?.publicado) return <NoSeMiro que="el manual del sitio" motivo={recurso.data?.motivo} />;
-
-  const ficheros = recurso.data.files ?? [];
-  if (ficheros.length === 0) {
-    return (
-      <EmptyState>
-        El servidor miró el contenedor{recurso.data.container_id ? ` (${recurso.data.container_id})` : ''} y no
-        hay ningún <code>CLAUDE.md</code>. Este alias arranca cada sesión sin manual del sitio.
-      </EmptyState>
-    );
-  }
-
-  return (
-    <ul className="directiva-ficheros">
-      {ficheros.map((fichero, indice) => (
-        <li key={fichero.path ?? indice}>
-          <div className="directiva-fichero-head">
-            <code>{fichero.path ?? 'ruta sin informar'}</code>
-            <span className="chip">{fichero.scope === 'user' ? 'nivel usuario' : fichero.scope === 'workspace' ? 'espacio de trabajo' : 'nivel sin informar'}</span>
-            <span className="directiva-fichero-meta">
-              {typeof fichero.bytes === 'number' ? `${fichero.bytes} bytes` : 'tamaño sin informar'}
-              {' · '}<Time value={fichero.modified_at} />
-            </span>
-          </div>
-          {typeof fichero.text === 'string' ? (
-            <details>
-              <summary>Ver el contenido{fichero.truncated ? ' (recortado por el servidor)' : ''}</summary>
-              <pre className="directiva-fichero-texto">{fichero.text}</pre>
-            </details>
-          ) : (
-            <p className="directiva-fichero-meta">
-              El servidor lo lista pero no publica su contenido: no se puede cotejar con el rol.
-            </p>
-          )}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function CapaDeMemoria({ recurso }: { recurso: RecursoDirectiva }) {
-  if (recurso.loading && !recurso.data) return <p className="muted">Leyendo el índice de memoria…</p>;
-  if (recurso.error && !recurso.data) return <NoSeMiro que="la memoria" motivo={recurso.error.message} />;
-  if (!recurso.data?.publicado) return <NoSeMiro que="la memoria" motivo={recurso.data?.motivo} />;
-
-  const memoria = recurso.data.memory;
-  const total = totalDeMemoria(recurso.data);
-  if (!memoria || total === undefined) {
-    return (
-      <EmptyState>
-        Este gateway publica los ficheros del alias pero no su índice de memoria, así que cuánto
-        recuerda es un dato que no tenemos. No es cero.
-      </EmptyState>
-    );
-  }
-
-  const entradas = memoria.entries ?? [];
-  return (
-    <div className="directiva-memoria">
-      <p className="directiva-memoria-resumen">
-        <strong>{total}</strong> entrada(s) en <code>{memoria.root ?? 'raíz sin informar'}</code>
-        {memoria.truncated ? ` · se listan las ${entradas.length} primeras` : ''}
-      </p>
-      {entradas.length === 0 ? (
-        <EmptyState>El índice llegó vacío: el servidor miró y este alias no tiene memoria escrita.</EmptyState>
       ) : (
-        <ul className="directiva-memoria-lista">
-          {entradas.map((entrada, indice) => (
-            <li key={entrada.path ?? indice}>
-              <code>{entrada.path ?? 'ruta sin informar'}</code>
-              <span className="directiva-fichero-meta">
-                {typeof entrada.bytes === 'number' ? `${entrada.bytes} bytes` : 'tamaño sin informar'}
-                {' · '}<Time value={entrada.modified_at} />
-              </span>
-            </li>
-          ))}
-        </ul>
+        <div className="directiva-resumen-lineas">
+          {lineas.map((linea, indice) => <p key={indice}>{linea}</p>)}
+        </div>
       )}
+
+      {hayRol ? (
+        <p className="directiva-resumen-contador" data-tono={tono}>
+          <strong>{largo}</strong> / {ROLE_BRIEF_MAX} caracteres
+          {borrador === undefined ? '' : ' · borrador sin guardar'}
+        </p>
+      ) : null}
+
+      <button
+        type="button"
+        className="button primary directiva-abrir"
+        ref={abridor}
+        onClick={() => setAbierto(true)}
+      >
+        <Maximize2 size={16} aria-hidden="true" /> Abrir directiva completa
+      </button>
+
+      {abierto ? (
+        <DirectivaModal
+          tenantId={tenantId}
+          alias={alias}
+          snapshot={config.data}
+          borrador={borrador}
+          onBorrador={onBorrador}
+          devolverFocoA={abridor}
+          onCerrar={() => {
+            setAbierto(false);
+            /*
+             * El editor del rol vive dentro del diálogo y tiene su PROPIO recurso de configuración
+             * (`drawer-config`). Cuando guarda, releé ése y no éste: sin esta relectura el resumen
+             * del cajón se quedaría enseñando el texto anterior con cara de actual, que es
+             * exactamente el defecto que `RoleBriefTab` se cuida de no cometer por dentro.
+             */
+            void config.reload();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

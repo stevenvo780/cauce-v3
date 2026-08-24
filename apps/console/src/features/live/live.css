@@ -672,12 +672,153 @@ tr[data-clickable='true'] { cursor: pointer; }
 
 .role-brief-actions { display: flex; align-items: center; gap: 8px; }
 
-/* --- Las TRES capas de directiva (pestaña «Directiva» del cajón) -----------------------------
-   Cada capa es una tarjeta con su fin escrito arriba. Lo que hace visible la duplicación no es
-   ningún color: es que las tres estén una debajo de otra y cada una diga a qué pregunta responde.
-   Ver `directiva.ts` y /workspace/DISENO-TRES-CAPAS-DE-DIRECTIVA.md. */
-.directiva { display: grid; gap: 18px; }
+/* --- El resumen de «Directiva» dentro del cajón ----------------------------------------------
+ *
+ * Lo único que queda en los 420 px del cajón: quién dice que es el bot y cuánto le queda de tope.
+ * Todo lo demás se fue al diálogo de acá abajo. MEDIDO en Chrome contra producción, sobre `zeus`:
+ * las cuatro secciones sumaban 2.120 px dentro de un área visible de 1.000.
+ *
+ * Las dos líneas se recortan con puntos suspensivos en vez de envolver. No es cosmética: envolver
+ * hace que la altura del resumen dependa del largo del brief —un rol con una primera línea de 300
+ * caracteres empujaba el botón fuera de la vista, que es el mismo defecto en pequeño—. Con el
+ * recorte, el alto es el mismo para los 14 alias y los puntos suspensivos DICEN que hay más.
+ */
+.directiva-resumen { display: grid; gap: 10px; align-content: start; }
 
+.directiva-resumen-rotulo {
+  margin: 0;
+  color: var(--faint);
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.directiva-resumen-lineas {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-2);
+}
+
+.directiva-resumen-lineas p {
+  overflow: hidden;
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directiva-resumen-vacio {
+  margin: 0;
+  padding: 11px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 11px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.directiva-resumen-contador { margin: 0; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.directiva-resumen-contador[data-tono='cerca'] { color: var(--amber); }
+.directiva-resumen-contador[data-tono='pasado'] { color: var(--red); }
+
+/* Grande y de ancho completo: es la ÚNICA acción de la pestaña y el gesto que sustituye a bajar
+   1.100 px de scroll. Un botón secundario del tamaño de «Ver en Queues» no se leería como la
+   puerta principal, que es lo que es. */
+.directiva-abrir { width: 100%; min-height: 44px; font-size: 14px; }
+
+/* --- El diálogo de la directiva --------------------------------------------------------------
+ *
+ * «todo ese menú debería ser un modal, tienen demasiados datos» —Steven, 2026-08-24—.
+ *
+ * Ancho a propósito: las tres capas están juntas para poder COMPARARLAS, y comparar es poner al
+ * lado. Apiladas en 420 px, la capa 1 y la 2 nunca coincidían en pantalla, así que la única razón
+ * por la que se juntaron no llegaba a ocurrir nunca.
+ *
+ * `max-height: 90vh` con cuerpo scrollable y pie fijo, igual que la confirmación de /config: por
+ * larga que sea una capa, el pliegue de la capa 4 no puede quedar debajo del borde.
+ */
+.directiva-modal-fondo {
+  position: fixed;
+  z-index: 70;
+  display: grid;
+  padding: 16px;
+  inset: 0;
+  background: rgb(4 8 15 / 68%);
+  place-items: center;
+}
+
+.directiva-modal {
+  display: flex;
+  width: min(1100px, 100%);
+  max-height: 90vh;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 26px 70px rgb(0 0 0 / 45%);
+}
+
+.directiva-modal-head {
+  display: flex;
+  flex: none;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.directiva-modal-head h2 { margin: 0; font-size: 1.05rem; }
+.directiva-modal-head p { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; }
+
+.directiva-modal-cuerpo {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  gap: 14px;
+  padding: 16px 20px;
+  align-content: start;
+  overflow-y: auto;
+}
+
+.directiva-modal-pie {
+  flex: none;
+  padding: 11px 20px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 14px 14px;
+  background: var(--surface-2);
+}
+
+/*
+ * Tres columnas cuando hay sitio, apiladas cuando no, con UNA regla y sin media queries: el
+ * navegador cuenta cuántas columnas caben y reparte el resto.
+ *
+ * 275 px y no 290 por una resta que sólo aparece MIDIENDO. A 1000 px de ventana quedan: −15 de la
+ * barra de la página, −32 del velo, −2 del borde, −40 del relleno del cuerpo y **−15 más de la
+ * barra del propio cuerpo del diálogo**, que aparece justo cuando el contenido no cabe, o sea
+ * siempre que hay algo que mirar. Quedan 896 px reales. Con un mínimo de 290 hacen falta 902 y a
+ * 1000 px daba DOS columnas: seis píxeles de diferencia, y la barra que se los come es
+ * consecuencia de lo que se está midiendo. Con 275 hacen falta 857 y sobran 39.
+ *
+ * MEDIDO en Chrome sobre el diálogo real: 3 columnas a 1600, 1280 y 1000; 2 a 800; 1 a 360.
+ */
+.directiva-columnas {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 275px), 1fr));
+}
+
+/* --- Las TRES capas de directiva (dentro del diálogo) ----------------------------------------
+   Cada capa es una tarjeta con su fin escrito arriba. Lo que hace visible la duplicación no es
+   ningún color: es que las tres estén una AL LADO de otra y cada una diga a qué pregunta responde.
+   Ver `directiva.ts` y /workspace/DISENO-TRES-CAPAS-DE-DIRECTIVA.md. */
 .directiva-capa {
   display: grid;
   gap: 10px;
@@ -693,9 +834,49 @@ tr[data-clickable='true'] { cursor: pointer; }
 
 /* El FIN de la capa se lee antes que su nombre técnico: es la pregunta que decide dónde va cada
    frase, y es exactamente lo que hoy nadie tiene delante cuando escribe un brief. */
-.directiva-capa-fin { margin: 4px 0 0; color: var(--mint); font-size: .62rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-.directiva-capa-fuente { margin: 3px 0 0; color: var(--faint); font-size: .64rem; }
-.directiva-porque { margin: 0; color: var(--muted); font-size: .73rem; }
+.directiva-capa-fin { margin: 4px 0 0; color: var(--mint); font-size: 12.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.directiva-capa-fuente { margin: 3px 0 0; color: var(--faint); font-size: 12.5px; overflow-wrap: anywhere; }
+
+/* El PORQUÉ se pliega: contesta «por qué existe esta capa», que se lee una vez en la vida. Los
+   cuatro párrafos abiertos valían ~600 px de los 2.120 que no cabían en el cajón. Lo que queda
+   siempre visible es lo que se necesita para decidir en qué capa va una frase: número, título,
+   fin y fuente. */
+.directiva-porque-caja { margin-top: 7px; }
+.directiva-porque-caja > summary { color: var(--faint); cursor: pointer; font-size: 12.5px; }
+.directiva-porque { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+
+/*
+ * «NO SE MIRÓ» y «MIRÉ Y NO HAY» tienen que verse distintos, no sólo leerse distintos.
+ *
+ * Compartían el recuadro punteado gris de `.empty-state`, así que la única diferencia entre un
+ * hecho medido y una lectura que nunca ocurrió estaba enterrada dentro del párrafo. Hoy, en
+ * producción, la ruta devuelve 404 en los 14 alias: el estado que se ve SIEMPRE es el de arriba.
+ * El día que el gateway publique la lectura van a convivir los dos en la misma flota, y ese es
+ * justo el día en el que confundirlos cuesta caro —gaia no tiene manual, janus tiene dos—.
+ *
+ * Punteado + ámbar = incertidumbre; sólido + menta = medido. Los dos usan tokens que el bloque de
+ * modo claro ya redefine, así que ninguno se rompe sobre papel blanco.
+ */
+.directiva-lectura { display: grid; gap: 6px; padding: 12px 13px; border-radius: 11px; font-size: 12.5px; line-height: 1.55; }
+.directiva-lectura p { margin: 0; }
+/* `break-word` y no `anywhere`: la ruta larga del endpoint se lleva a un renglón propio antes de
+   partirse, en vez de cortarse a mitad de palabra en el borde de la columna. MIRADO en Chrome, que
+   es la única forma de ver una partidura: `…/:alias/dir` + `ective` no se lee. */
+.directiva-lectura code { overflow-wrap: break-word; }
+
+.directiva-lectura-rotulo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.directiva-lectura[data-medicion='no-medida'] { border: 1px dashed var(--amber); background: var(--amber-dim); color: var(--text-2); }
+.directiva-lectura[data-medicion='no-medida'] .directiva-lectura-rotulo { color: var(--on-amber); }
+.directiva-lectura[data-medicion='medida-vacia'] { border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted); }
+.directiva-lectura[data-medicion='medida-vacia'] .directiva-lectura-rotulo { color: var(--mint); }
 
 .directiva-avisos { display: grid; gap: 9px; }
 
@@ -714,19 +895,19 @@ tr[data-clickable='true'] { cursor: pointer; }
    Los dos avisan y NINGUNO bloquea: el diseño dice literalmente «no bloquear: avisar». */
 .directiva-aviso[data-tono="choque"] { border-color: #74313c; background: var(--red-dim); color: #ffb7bc; }
 .directiva-aviso[data-tono="hueco"] { border-color: #7a5a24; background: rgba(208, 135, 0, .12); color: #ffd9a0; }
-.directiva-aviso strong { font-size: .78rem; }
-.directiva-aviso p { margin: 4px 0 0; font-size: .71rem; }
+.directiva-aviso strong { font-size: 13px; }
+.directiva-aviso p { margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; }
 .directiva-aviso > span { margin-top: 2px; }
 
 .directiva-evidencia { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 0; padding: 0; list-style: none; }
-.directiva-evidencia code { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5px; font-size: .62rem; }
+.directiva-evidencia code { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5px; font-size: 12.5px; }
 
 .directiva-ficheros { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .directiva-ficheros > li { padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
 .directiva-fichero-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-.directiva-fichero-head code { font-size: .69rem; overflow-wrap: anywhere; }
-.directiva-fichero-meta { color: var(--faint); font-size: .62rem; }
-.directiva-ficheros summary { margin-top: 7px; color: var(--muted); cursor: pointer; font-size: .66rem; }
+.directiva-fichero-head code { font-size: 12.5px; overflow-wrap: anywhere; }
+.directiva-fichero-meta { color: var(--faint); font-size: 12.5px; }
+.directiva-ficheros summary { margin-top: 7px; color: var(--muted); cursor: pointer; font-size: 12.5px; }
 
 .directiva-fichero-texto {
   max-height: 320px;
@@ -742,15 +923,95 @@ tr[data-clickable='true'] { cursor: pointer; }
 }
 
 .directiva-memoria { display: grid; gap: 8px; }
-.directiva-memoria-resumen { margin: 0; color: var(--muted); font-size: .73rem; }
+.directiva-memoria-resumen { margin: 0; color: var(--muted); font-size: 12.5px; }
 .directiva-memoria-lista { display: grid; gap: 5px; max-height: 260px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
 .directiva-memoria-lista li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
-.directiva-memoria-lista code { font-size: .65rem; overflow-wrap: anywhere; }
+.directiva-memoria-lista code { font-size: 12.5px; overflow-wrap: anywhere; }
+
+/*
+ * SUELO DE 12,5 px PARA TODO LO QUE SE VE DENTRO DEL DIÁLOGO.
+ *
+ * El diálogo hereda componentes de toda la consola —el editor del rol, su diario, los avisos, los
+ * chips— y muchos de ellos están dimensionados en `rem` para caber en 420 px de cajón: `.muted`
+ * son 12 px, `.chip` 10,9, el resumen del diario 11,2. Achicar era la respuesta correcta a un
+ * cajón estrecho; acá sobran 1.060 px de ancho y lo que sobra hay que gastarlo en que se lea.
+ *
+ * Es el mismo suelo que ya fijó la tira de pestañas del cajón (`.agent-drawer-tab`, 12,5 px), así
+ * que no es un número inventado para este diálogo: es el que ya rige en la consola.
+ */
+.directiva-modal .muted,
+.directiva-modal .mono,
+.directiva-modal .chip,
+.directiva-modal .unknown,
+.directiva-modal .notice,
+.directiva-modal .empty-state,
+.directiva-modal summary,
+.directiva-modal code,
+.directiva-modal .button.small,
+.directiva-modal .role-brief > p,
+.directiva-modal .role-brief-warn,
+.directiva-modal .historial-rol-caja > summary,
+.directiva-modal .historial-nota-actor,
+.directiva-modal .historial-entrada-head strong,
+.directiva-modal .historial-entrada-cuando,
+.directiva-modal .historial-entrada-cuando code,
+.directiva-modal .historial-entrada-detalle,
+.directiva-modal .historial-entrada-plantilla,
+.directiva-modal .historial-entrada-ayuda,
+.directiva-modal .historial-texto { font-size: 12.5px; }
+
+/*
+ * EL FONDO NO SE DESPLAZA MIENTRAS EL DIÁLOGO ESTÁ ABIERTO.
+ *
+ * `inert` sobre `.app-shell` apaga el ratón, el tabulador y el lector de pantalla, pero NO la
+ * rueda. MEDIDO en Chrome sobre el bundle de producción, con la CSP de producción, a 1600x900 y
+ * con una rueda DE VERDAD (`Input.dispatchMouseEvent`, no `window.scrollTo`, que mueve igual un
+ * contenedor con `overflow: hidden` y por eso no puede dar verde nunca): sin la guarda, un giro
+ * sobre el velo movía la página de detrás de 0 a **600 px** —tiene 2.894 de recorrido—; con la
+ * guarda se queda en 0; al cerrar vuelve a moverse los 600. Ese ida y vuelta es el control
+ * negativo: la comprobación puede dar rojo.
+ *
+ * `scrollbar-gutter: stable` es la otra mitad y no es cosmética: sin ella, quitar la barra de la
+ * página devuelve 15 px de ancho al documento y el diálogo —centrado— salta 7 px al abrirse.
+ * Reservando el hueco, el diálogo se queda donde estaba. Los dos números están medidos abajo, en
+ * `medir-scroll-fondo.mjs`.
+ *
+ * Lo del cajón es una GUARDA, no un arreglo de algo observado: con el resumen de tres renglones
+ * que quedó en la pestaña, `.agent-drawer-body` no desborda ni a 560 px de alto —comprobado, y por
+ * eso el control negativo de esa regla sale vacío—. Está para que deje de ser verdad con ruido, no
+ * en silencio, el día que la pestaña vuelva a crecer.
+ *
+ * Todo por CSS y nada por un `style` inyectado desde JS: la CSP de producción es
+ * `style-src 'self'` y un estilo en línea funcionaría en desarrollo y no se aplicaría en
+ * producción.
+ */
+html.directiva-modal-abierta { overflow: hidden; scrollbar-gutter: stable; }
+html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
+
+/*
+ * El editor encoge cuando la PANTALLA es baja, y sólo entonces.
+ *
+ * `min-height: 260px` fijo daba un textarea de 285 px reales, y con eso la columna 1 medía 647.
+ * MEDIDO en Chrome sobre el estado que hoy da producción (rol editable + los ficheros en 404):
+ * a 1600x1000 el diálogo cabía entero, pero a **1280x800 «Guardar el rol» caía 68 px por debajo
+ * del pliegue** del cuerpo. Un botón de guardar que hay que ir a buscar es exactamente el defecto
+ * que ya se corrigió en la confirmación de /config.
+ *
+ * Con `clamp`, a 800 px de alto el editor mide 208 y el botón entra; a 1000 y en adelante vuelve a
+ * los 285 de siempre. Sigue teniendo `resize: vertical` heredado, así que quien quiera más lo
+ * agranda. Se toca la HOJA y no `RoleBriefTab`: ese componente tiene siete casos de prueba que
+ * describen fallos ya cometidos y no se reescribe para ganar píxeles.
+ */
+.directiva-modal .role-brief-field textarea { min-height: 0; height: clamp(150px, 26vh, 285px); }
 
 @media (prefers-color-scheme: light) {
   .directiva-aviso[data-tono="choque"] { color: #8f2230; }
   .directiva-aviso[data-tono="hueco"] { background: #fdf2df; color: #7a4d05; }
   .directiva-fichero-texto { background: #ffffff; color: #33455c; }
+  /* Sobre papel blanco, el velo negro al 68 % apaga la página entera; el azul translúcido deja
+     ver que la consola sigue ahí detrás. Mismo criterio que `.config-modal-fondo`. */
+  .directiva-modal-fondo { background: rgb(30 45 66 / 42%); }
+  .directiva-modal { box-shadow: 0 26px 70px rgb(20 32 51 / 22%); }
 }
 
 /* --- El diario del rol y la vuelta atrás (dentro de la capa 1) -------------------------------
@@ -816,18 +1077,36 @@ tr[data-clickable='true'] { cursor: pointer; }
   .historial-entrada[data-clase="borrado"] { background: #fdeaec; }
 }
 
-/* --- Capa 4: lo que todavía NO se puede editar desde aquí ------------------------------------
-   Se pinta apagada y SIN botones: es un hueco rotulado, no una función a medias. Un botón que no
-   hace nada promete un efecto; este bloque promete una explicación y la cumple. */
-.directiva-pendientes { border-style: dashed; background: transparent; }
-.directiva-pendiente-lista { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+/* --- Lo que todavía NO se puede editar desde aquí: una línea plegable en el PIE ---------------
+ *
+ * Era la «capa 4», abierta y con el mismo rótulo que las tres de verdad. MEDIDO: 679 px, casi los
+ * 686 de la capa 1 —la única que se puede editar—. No es una capa: es una nota de alcance sobre
+ * el encargo, y estaba cobrando un tercio del alto cada vez que alguien venía a corregir una
+ * línea del rol.
+ *
+ * Sigue SIN botones, por lo de siempre: un botón que no hace nada promete un efecto, y en estas
+ * dos capas ni siquiera está decidido dónde vive el dato. Se sigue diciendo entero, a un clic.
+ */
+.directiva-pendientes > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.directiva-pendientes[open] > summary { margin-bottom: 12px; }
+/* Dos huecos rotulados, uno al lado del otro cuando hay sitio: en el pie del diálogo hay 1.060 px
+   y apilarlos volvería a alargar lo que se acaba de acortar. */
+.directiva-pendiente-lista { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
 .directiva-pendiente-lista > li { padding: 10px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
-.directiva-pendiente-lista strong { font-size: .76rem; }
-.directiva-pendiente-pedido { margin: 4px 0 0; color: var(--muted); font-size: .7rem; font-style: italic; }
-.directiva-pendiente-porque { margin: 6px 0 0; font-size: .71rem; }
-.directiva-pendiente-falta { margin: 6px 0 0; color: var(--mint); font-size: .69rem; }
-.directiva-pendiente-donde { margin: 0; color: var(--faint); font-size: .67rem; }
-.directiva-pendiente-donde code { font-size: .65rem; }
+.directiva-pendiente-lista strong { font-size: 13px; }
+.directiva-pendiente-pedido { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; font-style: italic; }
+.directiva-pendiente-porque { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; }
+.directiva-pendiente-falta { margin: 6px 0 0; color: var(--mint); font-size: 12.5px; line-height: 1.5; }
+.directiva-pendiente-donde { margin: 10px 0 0; color: var(--faint); font-size: 12.5px; line-height: 1.5; }
+.directiva-pendiente-donde code { font-size: 12.5px; }
 
 /* ============================================================================================
    LOS FICHEROS QUE GOBIERNAN A UN AGENTE
