@@ -368,15 +368,121 @@
  * seis contadores) vuelve entero al cerrar la sesión.
  * ============================================================================================= */
 
-.ultimate-terminal-page[data-tui="abierta"] .page-header { margin-bottom: 10px; }
 /* El explicador de la vista se lee una vez; mientras mirás una TUI es alto robado al terminal. */
 .ultimate-terminal-page[data-tui="abierta"] .page-description { display: none; }
-.ultimate-terminal-page[data-tui="abierta"] .terminal-overview { gap: 6px; margin-bottom: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-.ultimate-terminal-page[data-tui="abierta"] .terminal-overview article { grid-template-columns: auto minmax(0, 1fr); align-items: center; padding: 6px 9px; }
-.ultimate-terminal-page[data-tui="abierta"] .terminal-overview article > .badge,
-.ultimate-terminal-page[data-tui="abierta"] .terminal-overview .overview-icon { display: none; }
-.ultimate-terminal-page[data-tui="abierta"] .terminal-overview small { font-size: .55rem; }
-.ultimate-terminal-page[data-tui="abierta"] .terminal-overview strong { font-size: .72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ============================================================================================= *
+ * EL ALTO. «El terminal se queda con 408 px de 1080», midió Steven en producción; en esta rama,
+ * con el arreglo de ancho ya puesto, medí 584 de 1080 — el 54,1 % — y a 1280x720 **11 filas**, que
+ * no alcanzan para leer una TUI.
+ *
+ * El reparto vertical medido a 1920x1080 ANTES (Chrome, `ops/console-legibilidad/medir-terminal.mjs`):
+ *
+ *     barra superior de la consola      58
+ *     .page-header                      68   ← antetítulo + «Ultimate Terminal» + botón de 40 px
+ *     .terminal-overview                40   ← los seis contadores, + 10 de margen
+ *     .ultimate-terminal-shell         860
+ *       .terminal-session-tabs          53
+ *       .terminal-grid-container       775
+ *         .terminal-session-head        73   ← avatar, alias otra vez, «Room de origen», modos
+ *         .pty-session-bar              52
+ *         .pty-status                   32
+ *         .pty-mount                   584   ← lo único que se vino a mirar
+ *       .terminal-doctrine              30   ← una frase que no cambia nunca
+ *
+ * Esto NO se arregla achicando letra: la escala tipográfica de la consola es de hace dos días y
+ * bajarla desharía ese arreglo. Se arregla preguntándole a cada franja si dice algo que cambie
+ * MIENTRAS mirás una terminal. Las que no, se repliegan a un sitio que ya existía y siguen a un
+ * clic. Cada bloque de acá abajo dice cuál y cuánto.
+ * ============================================================================================= */
+
+/* ── 1. La cabecera de la página, en UNA línea ─────────────────────────────────────────────────
+ *
+ * El `h1` global ya es de 26 px (la escala de `:root`, 2026-08-24), pero encima de él vive el
+ * antetítulo y al lado un botón de 40: la fila entera medía 68 px para decir el nombre que el menú
+ * lateral ya dice. En modo observación las tres piezas se ponen en la misma línea y el botón baja
+ * al alto de un control, no al de una llamada a la acción. 68 + 10 de margen → 32 + 8. */
+.ultimate-terminal-page[data-tui="abierta"] .page-header { align-items: center; gap: 14px; margin-bottom: 8px; }
+.ultimate-terminal-page[data-tui="abierta"] .page-header > div:first-child { display: flex; min-width: 0; align-items: baseline; gap: 10px; }
+.ultimate-terminal-page[data-tui="abierta"] .page-header h1 { flex: none; font-size: var(--tipo-panel); letter-spacing: -.02em; }
+/* El antetítulo («Operación privilegiada · N agentes») pasa al costado del título, no encima. */
+.ultimate-terminal-page[data-tui="abierta"] .page-header .eyebrow { order: 2; min-width: 0; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ultimate-terminal-page[data-tui="abierta"] .page-actions .button { min-height: 32px; padding: 5px 11px; font-size: var(--tipo-rotulo); }
+
+/* ── 2. Los seis contadores y la doctrina, plegados en la misma fila de la cabecera ────────────
+ *
+ * Ver el porqué en `TerminalPage.tsx`: los seis contestan «¿puedo abrir una terminal, y de quién?»,
+ * que es una pregunta de ANTES, y ninguno cambia mientras mirás un alias. El desplegable vive en
+ * `.page-actions`, así que no gasta un renglón propio, y el panel se abre FLOTANDO: desplegarlo
+ * tampoco le quita alto al terminal. −50 px (tira + margen) y −30 (el pie de doctrina). */
+.ultimate-terminal-page .page-actions { display: flex; align-items: center; gap: 10px; }
+.terminal-resumen { position: relative; flex: none; }
+.terminal-resumen > summary { display: inline-flex; min-height: 32px; align-items: center; gap: 7px; padding: 5px 11px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); color: var(--text-2); font-size: var(--tipo-rotulo); font-weight: 700; cursor: pointer; list-style: none; }
+.terminal-resumen > summary::-webkit-details-marker { display: none; }
+.terminal-resumen > summary:hover { border-color: #4c6b91; color: var(--text); }
+.terminal-resumen[open] > summary { border-color: var(--blue); color: var(--text); }
+.terminal-resumen[open] > summary > svg:last-child { transform: rotate(180deg); }
+.terminal-resumen-cifra { color: var(--mint); font-variant-numeric: tabular-nums; }
+.terminal-resumen-panel { position: absolute; z-index: 20; top: calc(100% + 7px); right: 0; width: min(780px, calc(100vw - 72px)); padding: 12px; border: 1px solid var(--border-strong); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
+.terminal-resumen-panel .terminal-overview { margin-bottom: 0; }
+.terminal-resumen-doctrina { display: flex; align-items: center; gap: 6px; margin: 11px 0 0; color: var(--faint); font-size: var(--tipo-apunte); }
+/* Y el pie de la rejilla se repliega: su frase está, palabra por palabra y desde la misma
+   constante, en el panel de acá arriba. Ver `doctrina.ts`. */
+.ultimate-terminal-page[data-tui="abierta"] .terminal-doctrine { display: none; }
+
+/* ── 3. La cabecera de la sesión deja de repetir lo que dice su propia pestaña ─────────────────
+ *
+ * Medido: 73 px a 1920 y 123 a 1280 (ahí se parte en dos filas), justo debajo de una franja de
+ * pestañas de 53 px que ya dice el alias, su tenant y su punto de estado. Lo que la hacía tan alta,
+ * en ese orden: el selector «Room de origen» (rótulo + `select` de 33 px = 52), el avatar
+ * decorativo (37) y el antetítulo puesto ENCIMA del alias en vez de al lado.
+ *
+ * No se borra nada: el avatar es `aria-hidden` (repite el punto de color de la pestaña), el
+ * «tenant · epoch» pasa a la misma línea que el alias, y el selector de room vuelve entero en la
+ * pestaña «Feed» — ver el bloque de abajo. 73 → ~46 px, y a 1280 deja de partirse. */
+.ultimate-terminal-page[data-tui="abierta"] .terminal-session-head { min-height: 0; gap: 8px; padding: 5px 10px; }
+.ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-avatar { display: none; }
+.ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-identity-text { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+.ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-identity-text .eyebrow { order: 2; min-width: 0; margin: 0; }
+.ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-identity h2 { flex: none; font-size: var(--tipo-rotulo); }
+
+/*
+ * El «Room de origen» dice por dónde SALE una instrucción escrita a mano, o sea que gobierna el
+ * compositor de la pestaña «Feed» y no tiene nada que ver con la TUI que se está mirando. Con el
+ * terminal en pantalla se llevaba la franja más alta de la cabecera de sesión — y a 1280 px la
+ * partía en dos —. Se repliega mientras el panel del PTY está montado y vuelve, entero y en su
+ * sitio, al pulsar «Feed». Es el mismo argumento por el que ya se replegaba por debajo de 900 px
+ * (ver el bloque de móvil), aplicado también al ancho donde el defecto igual existe.
+ *
+ * `:has()` y no una prop de React: el dato que decide es «hay un panel de PTY montado», que es
+ * exactamente lo que el selector pregunta, y así la regla vive al lado de la que la explica.
+ */
+.terminal-console:has(.terminal-pty-pane) .terminal-room-label { display: none; }
+
+/* ── 4. La barra de la sesión deja de decir el alias por TERCERA vez ───────────────────────────
+ *
+ * Medido a 1280x720: la barra se partía en dos renglones —73 px— y el segundo tenía dentro un solo
+ * botón. Con el alias puesto arriba en la pestaña Y en la cabecera de la sesión, el de la barra es
+ * la tercera copia del mismo nombre en 90 px de pantalla.
+ *
+ * Lo que NO se toca son el contenedor, el usuario y el modo (`.pty-bar-dato`): son lo único de la
+ * pantalla que dice DÓNDE está abierta la shell, no se repiten en ningún otro sitio de la vista
+ * —el panel «Detalles» no los trae— y el diálogo que los enseña ya se cerró. Un dato que sólo está
+ * acá no se repliega por 30 px.
+ */
+.ultimate-terminal-page[data-tui="abierta"] .pty-session-bar { gap: 6px 11px; }
+.ultimate-terminal-page[data-tui="abierta"] .pty-session-bar > .pty-bar-alias { display: none; }
+/* Cerrar el canal es un control secundario, no la llamada a la acción de la página: baja al alto de
+   un control (30) desde el de un botón principal (40). */
+.ultimate-terminal-page[data-tui="abierta"] .pty-bar-close { min-height: 30px; padding: 4px 10px; font-size: var(--tipo-rotulo); }
+/*
+ * ⚠️ Probé quitarle el `margin-left: auto` a este botón, con la teoría de que en un flex que
+ * ENVUELVE ese `auto` se come el hueco del renglón y empuja el botón a una segunda línea. MEDIDO:
+ * no cambia nada — a 1280x720 la barra sigue midiendo 69 px con o sin él. Queda anotado para que
+ * nadie vuelva a gastar el intento: lo que la parte en dos es el ancho del CONTENIDO, no la
+ * alineación. Los tres datos que sobran serían contenedor, usuario y modo, y ésos son el único
+ * sitio de la pantalla que dice dónde está abierta la shell.
+ */
 
 /*
  * La copia móvil del inspector de adaptadores mide 900 px y vive DEBAJO del terminal. Existe por
