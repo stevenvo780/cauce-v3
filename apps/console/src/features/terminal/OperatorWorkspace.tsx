@@ -33,9 +33,12 @@ import {
   TerminalApiError,
   createTerminalSession,
   deleteTerminalSession,
+  listTerminalSessions,
   type TerminalSessionGrant,
+  type TerminalSessionListItem,
   type TerminalTargetsSnapshot,
 } from './api';
+import { minutosParaLiberar, plazasColgadas, plazasOcupadas } from './plazas';
 import type { FleetAgent } from './fleet';
 import {
   ADAPTER_STATE_LABELS,
@@ -79,6 +82,12 @@ interface OperatorWorkspaceProps {
   terminalTargets?: TerminalTargetsSnapshot;
   fleetLoading: boolean;
   fleetError?: Error;
+  /**
+   * Cuántas sesiones hay abiertas. La página lo necesita para entrar en modo observación: con una
+   * sesión abierta el terminal es el contenido y los seis contadores se repliegan. La cuenta la
+   * tiene este componente, no la página.
+   */
+  onSesionesAbiertas?: (cantidad: number) => void;
 }
 
 function sessionId(agent: FleetAgent): string {
@@ -224,17 +233,39 @@ function PtySessionBar({ agent, grant, secondsLeft, readOnly, ticketConsumed, cl
     <div className="pty-session-bar" aria-label="Sesión PTY activa" data-read-only={readOnly || undefined}>
       <span className="pty-bar-alias">{readOnly ? <MonitorPlay size={14} aria-hidden="true" /> : <TerminalSquare size={14} aria-hidden="true" />} <strong>{agent.alias}</strong></span>
       {readOnly ? <span className="pty-bar-readonly"><Eye size={13} aria-hidden="true" /> TUI en vivo · solo lectura</span> : null}
-      <span><Container size={13} aria-hidden="true" /> <span className="mono"><Unknown value={grant.target.container} /></span></span>
-      <span><UserCog size={13} aria-hidden="true" /> <span className="mono"><Unknown value={grant.target.runtime_user} /></span></span>
-      <span><Braces size={13} aria-hidden="true" /> <span className="mono">{grant.target.mode}</span></span>
+      {/*
+        El id de contenedor es de 64 caracteres y se pintaba ENTERO: se llevaba una línea de la
+        barra él solo, y la barra crecía a 95 px de alto por encima del terminal. Se recorta como
+        el resto de identificadores de la consola y el completo queda en el `title`, que es donde
+        hace falta cuando hay que copiarlo.
+      */}
+      {/* `pty-bar-dato`: los tres datos de contexto. Se repliegan en pantalla estrecha, donde la
+          barra se partía en cinco renglones y empujaba el terminal fuera de la pantalla. */}
+      <span className="pty-bar-dato" title={grant.target.container ?? undefined}><Container size={13} aria-hidden="true" /> <span className="mono">{grant.target.container ? compactId(grant.target.container) : <Unknown value={grant.target.container} />}</span></span>
+      <span className="pty-bar-dato"><UserCog size={13} aria-hidden="true" /> <span className="mono"><Unknown value={grant.target.runtime_user} /></span></span>
+      <span className="pty-bar-dato"><Braces size={13} aria-hidden="true" /> <span className="mono">{grant.target.mode}</span></span>
       <span className="pty-bar-countdown" data-expiring={!ticketConsumed && secondsLeft !== undefined && secondsLeft <= 10 ? 'true' : undefined}>
         <Timer size={13} aria-hidden="true" />
         {ticketConsumed
           ? <>Ticket consumido · <strong>sesión activa</strong></>
           : <>Ticket vence en <strong>{formatCountdown(secondsLeft)}</strong></>}
       </span>
-      <button className="button small secondary pty-bar-close" type="button" onClick={onClose} disabled={closing}>
-        <PowerOff size={13} aria-hidden="true" /> {closing ? 'Cerrando…' : 'Cerrar sesión'}
+      {/*
+        Que el polling del feed se haya parado se decía en una barra propia de 32 px por encima
+        del terminal («POLLING EN PAUSA · el canal PTY es la fuente en vivo»). El dato es cierto y
+        vale, el renglón entero no: acá cabe en la barra que ya existe, sin robarle alto a lo que
+        se está mirando.
+      */}
+      <span className="pty-bar-feed"><MessageSquareText size={13} aria-hidden="true" /> POLLING EN PAUSA</span>
+      {/*
+        🔴 SE LLAMABA IGUAL QUE EL BOTÓN QUE TE ECHA DE LA CONSOLA. Arriba a la derecha, en la barra
+        de la aplicación, hay un «Cerrar sesión» que cierra la SESIÓN DE STEVEN. Éste cerraba el
+        canal PTY y decía exactamente lo mismo; en el móvil quedaba además a ancho completo y bien
+        visible. Dos botones con el mismo rótulo y consecuencias distintas es una trampa, no un
+        detalle de redacción.
+      */}
+      <button className="button small secondary pty-bar-close" type="button" onClick={onClose} disabled={closing} title="Cierra el canal PTY de este alias. No cierra tu sesión de la consola.">
+        <PowerOff size={13} aria-hidden="true" /> {closing ? 'Cerrando…' : 'Cerrar la terminal'}
       </button>
     </div>
   );
@@ -285,7 +316,7 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
   );
 }
 
-function SessionStage({ session, agents, access, topologyAccess, capability, targets, grants, closedChannels, onUpdate, onGrant, onChannelClosed, onReleaseChannel }: {
+function SessionStage({ session, agents, access, topologyAccess, capability, targets, grants, closedChannels, onUpdate, onGrant, onChannelClosed, onReleaseChannel, onPlazaAgotada }: {
   session: OperatorSession;
   agents: FleetAgent[];
   access?: ConsoleAccess;
@@ -298,6 +329,8 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   onGrant: (sessionId: string, grant: TerminalSessionGrant) => void;
   onChannelClosed: (sessionId: string) => void;
   onReleaseChannel: (sessionId: string) => Promise<void>;
+  /** El gateway contestó `session_limit`: hay plazas colgadas y hay que ir a buscarlas. */
+  onPlazaAgotada: () => void;
 }) {
   const api = useApi();
   const messages = useResource('terminal-message-feed', () => api.listMessages());
@@ -318,6 +351,8 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   const liveSession = { ...session, agent: currentAgent };
   const grant = grants[liveSession.id];
   const ptyChannelLive = Boolean(liveSession.mode === 'pty' && grant && !closedChannels[liveSession.id]);
+  /** El terminal está a la vista y pintando: lo accesorio deja de robarle alto. */
+  const mostrandoTui = ptyChannelLive && liveSession.mode === 'pty';
 
   const channelSessionId = grant?.session_id;
   const subscribeChannel = useCallback(
@@ -468,11 +503,15 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
       // El rechazo se TRADUCE acá, en el único sitio por el que pasan los ocho códigos del
       // gateway. `TerminalApiError` trae el estado HTTP y el `error` del cuerpo; los dos hacían
       // falta y ninguno se estaba mostrando.
-      setRequestError(explicarDenegacionPty({
+      const explicada = explicarDenegacionPty({
         texto: error instanceof Error ? error.message : undefined,
         estado: error instanceof TerminalApiError ? error.status : undefined,
         codigo: error instanceof TerminalApiError ? error.code : undefined,
-      }));
+      });
+      setRequestError(explicada);
+      // «Cerrá alguna de las sesiones que tenés abiertas» sólo es una instrucción si el operador
+      // PUEDE verlas: acá es donde se van a buscar, en el único momento en que hacen falta.
+      if (explicada.codigo === 'session_limit') onPlazaAgotada();
       // Un rechazo se cuenta como intento: la apertura automática no vuelve a golpear al gateway.
       if (mode === LIVE_TUI_MODE) onUpdate({ ...liveSession, liveTuiAttempted: true });
     } finally {
@@ -526,7 +565,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
             <Badge tone={liveSession.agent.leaseState === 'online' ? 'online' : liveSession.agent.leaseState === 'expired' ? 'offline' : 'unknown'}>{LEASE_STATE_LABEL[liveSession.agent.leaseState]}</Badge>
           </div>
           <div className="session-controls">
-             <label>Room de origen
+             <label className="terminal-room-label">Room de origen
                <span className="room-select-wrap"><select value={sourceRoomId} onChange={(event) => onUpdate({ ...liveSession, sourceRoomId: event.target.value })} disabled={!route.sourceRoomIds.length}>
                  {route.sourceRoomIds.length ? route.sourceRoomIds.map((room) => <option key={room} value={room}>{room}</option>) : <option value="">No autorizado</option>}
                </select><ChevronDown size={14} aria-hidden="true" /></span>
@@ -559,17 +598,29 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
           </div>
         </header>
 
-        <p className="terminal-channel-state" data-status={channel?.status ?? 'blocked'}>
-          <ShieldCheck size={13} aria-hidden="true" />
-          <strong>{channelLabel}</strong>
-          <span>{channelReason}</span>
-        </p>
+        {/*
+          Las dos filas de estado del canal («PTY online: ok» y «El servidor publica el modo
+          harness: hay TUI en vivo para este alias») valen ORO mientras la TUI no se ve: son el
+          motivo escrito de por qué no emite. Con el terminal ya pintando, son 56 px de alto que
+          repiten lo que se está viendo, y ese alto sale del único sitio del que puede salir: del
+          terminal. Medido a 1280x900: con las dos filas y la barra del feed, al terminal le
+          quedaban 12 filas de texto. Se muestran exactamente cuando informan.
+        */}
+        {mostrandoTui ? null : (
+          <>
+            <p className="terminal-channel-state" data-status={channel?.status ?? 'blocked'}>
+              <ShieldCheck size={13} aria-hidden="true" />
+              <strong>{channelLabel}</strong>
+              <span>{channelReason}</span>
+            </p>
 
-        <p className="terminal-channel-state terminal-live-tui-state" data-status={liveTui.status}>
-          <MonitorPlay size={13} aria-hidden="true" />
-          <strong>{liveTuiLabel}</strong>
-          <span>{liveTuiDetail}</span>
-        </p>
+            <p className="terminal-channel-state terminal-live-tui-state" data-status={liveTui.status}>
+              <MonitorPlay size={13} aria-hidden="true" />
+              <strong>{liveTuiLabel}</strong>
+              <span>{liveTuiDetail}</span>
+            </p>
+          </>
+        )}
 
         {/*
           🔴 El rechazo del gateway se veía SÓLO dentro del diálogo de motivo, y la TUI se pide
@@ -586,12 +637,16 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
           </div>
         ) : null}
 
-        <div className="terminal-connection-bar" role="status">
-          <span className={`connection-dot ${messages.error ? 'error' : ptyChannelLive ? 'open' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
-          <strong>{messages.error ? 'FEED DEGRADADO' : ptyChannelLive ? 'POLLING EN PAUSA' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
-          <span>{messages.error?.message ?? (ptyChannelLive ? 'el canal PTY es la fuente en vivo de esta sesión' : 'deliveries + ACK cada 2.5 s')}</span>
-          <button type="button" onClick={messages.reload} disabled={messages.loading}><RefreshCw size={13} aria-hidden="true" /> Sincronizar</button>
-        </div>
+        {/* La barra del feed describe el POLLING de mensajes; con la TUI en pantalla decía, ella
+            sola, «POLLING EN PAUSA · el canal PTY es la fuente en vivo». Cierto e inútil ahí. */}
+        {mostrandoTui ? null : (
+          <div className="terminal-connection-bar" role="status">
+            <span className={`connection-dot ${messages.error ? 'error' : ptyChannelLive ? 'open' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
+            <strong>{messages.error ? 'FEED DEGRADADO' : ptyChannelLive ? 'POLLING EN PAUSA' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
+            <span>{messages.error?.message ?? (ptyChannelLive ? 'el canal PTY es la fuente en vivo de esta sesión' : 'deliveries + ACK cada 2.5 s')}</span>
+            <button type="button" onClick={messages.reload} disabled={messages.loading}><RefreshCw size={13} aria-hidden="true" /> Sincronizar</button>
+          </div>
+        )}
 
         {liveSession.mode === 'pty' ? (
            channel?.enabled && grant && channel.websocketPath ? (
@@ -682,6 +737,80 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   );
 }
 
+/**
+ * **Las sesiones que te están gastando las plazas y no ves.**
+ *
+ * El gateway topea las sesiones de terminal POR OPERADOR y una sesión consumida sigue contando
+ * 900 s aunque su pestaña ya no exista. Cuando eso pasaba, la consola mostraba «cerrá alguna de
+ * las sesiones que tenés abiertas» y no había, en toda la pantalla, una sola sesión que cerrar:
+ * Ultimate Terminal quedaba muerta un cuarto de hora sin un error que lo dijera. Esta tira es la
+ * salida: las nombra, dice cuánto les falta para soltarse solas, y las cierra de un clic.
+ */
+function PlazasColgadas({ items, aLaVista, topeAlcanzado, revisando, cerrando, onRevisar, onCerrar }: {
+  /** Las que ocupan plaza y esta pestaña NO gobierna: las colgadas de verdad. */
+  items: TerminalSessionListItem[];
+  /** Cuántas de las que ocupan plaza sí están a la vista como pestañas de esta pantalla. */
+  aLaVista: number;
+  /** El gateway acaba de contestar `session_limit`: hay que decir con QUÉ se gastó el tope. */
+  topeAlcanzado: boolean;
+  revisando: boolean;
+  cerrando: Record<string, true>;
+  onRevisar: () => void;
+  onCerrar: (sessionId: string) => void;
+}) {
+  if (items.length === 0 && !topeAlcanzado) return null;
+  const ahora = Date.now();
+  /*
+   * Dos situaciones distintas y una sola tira, porque para el operador el problema es el mismo
+   * («no puedo abrir otra») y la salida NO es la misma:
+   *  · si hay colgadas, la salida es cerrarlas desde acá, que es lo único que no podía hacer;
+   *  · si todas están a la vista, la salida es cerrar una pestaña — y entonces lo que hay que
+   *    decir es exactamente eso, no repetir «cerrá alguna de las que tenés abiertas».
+   */
+  const total = items.length + aLaVista;
+  return (
+    <section className="pty-plazas" aria-label="Sesiones de terminal que siguen ocupando plaza">
+      <header>
+        <AlertTriangle size={15} aria-hidden="true" />
+        <div>
+          <strong>
+            {items.length === 0
+              ? `Tope de sesiones alcanzado: las ${total} que lo gastan están abiertas acá`
+              : items.length === 1
+                ? 'Una sesión tuya sigue ocupando plaza fuera de esta pantalla'
+                : `${items.length} sesiones tuyas siguen ocupando plaza fuera de esta pantalla`}
+          </strong>
+          <p>
+            {items.length === 0
+              ? 'El tope de sesiones simultáneas es por operador y ya lo gastaste con las pestañas de arriba. '
+                + 'Cerrá una con su aspa y volvé a pedir la que querías: se libera al instante.'
+              : 'El tope de sesiones simultáneas es por operador, así que estas cuentan aunque su pestaña ya no exista '
+                + '—otra ventana, un cierre a lo bruto, una recarga a destiempo—. Mientras sigan vivas, abrir otra TUI '
+                + 'devuelve 409. Se sueltan solas al vencer; el botón las suelta ahora.'}
+          </p>
+        </div>
+        <button className="button small secondary" type="button" onClick={onRevisar} disabled={revisando}>
+          <RefreshCw size={13} aria-hidden="true" /> {revisando ? 'Revisando…' : 'Revisar'}
+        </button>
+      </header>
+      {items.length === 0 ? null : (
+      <ul>
+        {items.map((item) => (
+          <li key={item.session_id}>
+            <span className="pty-plazas-alias"><Bot size={12} aria-hidden="true" /> <strong>{item.alias}</strong> <small>{item.tenant_id}</small></span>
+            <span className="pty-plazas-modo">{item.mode === LIVE_TUI_MODE ? 'TUI en vivo' : item.mode === SHELL_MODE ? 'shell' : item.mode}</span>
+            <span className="pty-plazas-resto"><Timer size={12} aria-hidden="true" /> se suelta sola en {minutosParaLiberar(item, ahora)} min</span>
+            <button className="button small" type="button" onClick={() => onCerrar(item.session_id)} disabled={Boolean(cerrando[item.session_id])}>
+              <PowerOff size={13} aria-hidden="true" /> {cerrando[item.session_id] ? 'Cerrando…' : 'Cerrar ahora'}
+            </button>
+          </li>
+        ))}
+      </ul>
+      )}
+    </section>
+  );
+}
+
 interface GridContainerProps {
   sessions: OperatorSession[];
   activeId?: string;
@@ -698,6 +827,7 @@ interface GridContainerProps {
   onGrant: (sessionId: string, grant: TerminalSessionGrant) => void;
   onChannelClosed: (sessionId: string) => void;
   onReleaseChannel: (sessionId: string) => Promise<void>;
+  onPlazaAgotada: () => void;
 }
 
 function GridContainer({
@@ -715,7 +845,8 @@ function GridContainer({
   onUpdate,
   onGrant,
   onChannelClosed,
-  onReleaseChannel
+  onReleaseChannel,
+  onPlazaAgotada
 }: GridContainerProps) {
   if (sessions.length === 0) {
     return (
@@ -728,44 +859,56 @@ function GridContainer({
     );
   }
 
+  /*
+   * 🔴 UNA SESIÓN A LA VISTA, NO TODAS APILADAS.
+   *
+   * La rejilla pintaba TODOS los paneles abiertos, cada uno con `height: 600px`, uno debajo de
+   * otro. Medido a 1280x900 con cuatro sesiones: la página medía 3.058 px para una ventana de
+   * 1.000, las cabeceras caían en y=545/1161/1777/2393 y del terminal de 500 px se veían 144.
+   * Activar una pestaña no movía el scroll ni un píxel (scrollTop 0 antes y después), así que
+   * hacer clic en un agente no mostraba nada: había que ir a buscarlo con la rueda.
+   *
+   * Ahora las sesiones abiertas son PESTAÑAS y el escenario es uno solo, que se queda con todo el
+   * alto disponible. Desmontar el panel no mata la sesión: el nodo del terminal, su socket y su
+   * scrollback los gobierna `pty-session.ts` fuera de React, que es exactamente para lo que ese
+   * módulo existe.
+   */
+  const visible = sessions.find((session) => session.id === activeId) ?? sessions[0];
   return (
     <div className="terminal-grid-wrapper">
-      <div className="terminal-grid-container">
+      <nav className="terminal-session-tabs" role="tablist" aria-label="Sesiones abiertas">
         {sessions.map((session) => (
-          <div
-            className="terminal-panel"
-            key={session.id}
-            data-active={session.id === activeId || undefined}
-            onClick={() => onActivate(session.id)}
-          >
-            <header className="terminal-panel-header">
-              <button
-                className="terminal-panel-title-btn"
-                type="button"
-                role="tab"
-                aria-selected={session.id === activeId}
-                onClick={() => onActivate(session.id)}
-              >
-                <span className={`tab-live-dot ${session.agent.leaseState}`} aria-hidden="true" />
-                <span><strong>{session.agent.alias}</strong><small>{session.agent.tenantId}</small></span>
-              </button>
-              <button
-                className="terminal-panel-close"
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose(session.id);
-                }}
-                aria-label={`Cerrar sesión ${session.agent.alias}`}
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
-            </header>
-          <div className="terminal-panel-body">
-            <SessionStage
-              session={session}
-              agents={agents}
-              access={access}
+          <span className="terminal-session-tab" key={session.id} data-active={session.id === visible?.id || undefined}>
+            <button
+              className="terminal-panel-title-btn"
+              type="button"
+              role="tab"
+              aria-selected={session.id === visible?.id}
+              aria-controls={`terminal-session-${session.id}`}
+              onClick={() => onActivate(session.id)}
+            >
+              <span className={`tab-live-dot ${session.agent.leaseState}`} aria-hidden="true" />
+              <span><strong>{session.agent.alias}</strong><small>{session.agent.tenantId}</small></span>
+            </button>
+            <button
+              className="terminal-panel-close"
+              type="button"
+              onClick={(event) => { event.stopPropagation(); onClose(session.id); }}
+              aria-label={`Cerrar sesión ${session.agent.alias}`}
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          </span>
+        ))}
+      </nav>
+      <div className="terminal-grid-container">
+        {visible ? (
+          <div className="terminal-panel" data-active="true" key={visible.id}>
+            <div className="terminal-panel-body">
+              <SessionStage
+                session={visible}
+                agents={agents}
+                access={access}
                 topologyAccess={topologyAccess}
                 capability={capability}
                 targets={targets}
@@ -775,23 +918,97 @@ function GridContainer({
                 onGrant={onGrant}
                 onChannelClosed={onChannelClosed}
                 onReleaseChannel={onReleaseChannel}
+                onPlazaAgotada={onPlazaAgotada}
               />
             </div>
           </div>
-        ))}
+        ) : null}
       </div>
       <footer className="terminal-doctrine"><ShieldCheck size={14} aria-hidden="true" /> Cliente de transporte: no crea workers remotos, no ejecuta adapters y no persiste sesiones.</footer>
     </div>
   );
 }
 
-export function OperatorWorkspace({ agents, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError }: OperatorWorkspaceProps) {
+export function OperatorWorkspace({ agents, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas }: OperatorWorkspaceProps) {
   // La sesión que tiene el token CSRF en memoria: sin ella toda escritura del plano PTY vuelve 403.
   const api = useApi();
   const [sessions, setSessions] = useState<OperatorSession[]>([]);
   const [activeId, setActiveId] = useState<string>();
   const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
   const [closedChannels, setClosedChannels] = useState<Record<string, true>>({});
+  const [plazas, setPlazas] = useState<TerminalSessionListItem[]>([]);
+  const [plazasAlaVista, setPlazasAlaVista] = useState(0);
+  const [topeAlcanzado, setTopeAlcanzado] = useState(false);
+  const [revisandoPlazas, setRevisandoPlazas] = useState(false);
+  const [cerrandoPlaza, setCerrandoPlaza] = useState<Record<string, true>>({});
+
+  /*
+   * 🔴 LA SESIÓN NO PUEDE SOBREVIVIR A LA VISTA QUE LA ABRIÓ.
+   *
+   * Medido contra producción el 2026-08-23, con la auditoría del propio gateway: abrir la TUI de
+   * dos alias y navegar a Portada dejaba `.terminal-session-head` = 0 y `.pty-host` = 2 nodos
+   * VIVOS colgando del `<body>`, con sus dos sockets abiertos y sus dos filas `active` en
+   * `terminal_sessions`. El tercer alias devolvía 409 `session_limit`. Al desmontar, este
+   * componente perdía el mapa de `grants`, así que ni siquiera quedaba manera de soltarlas.
+   *
+   * El `ref` es imprescindible: la limpieza de un `useEffect` con lista vacía captura el valor
+   * del PRIMER render, y en el primer render no hay un solo grant. Sin él la limpieza sería una
+   * prueba que no puede dar rojo: correría siempre sobre un objeto vacío.
+   */
+  const grantsRef = useRef(grants);
+  grantsRef.current = grants;
+  const apiRef = useRef(api);
+  apiRef.current = api;
+
+  useEffect(() => () => {
+    for (const grant of Object.values(grantsRef.current)) {
+      closePtySession(grant.session_id, 'la vista de terminal se cerró');
+      // El DELETE puede fallar (la vista se está yendo); el socket local ya se cortó igual, y el
+      // relay cierra la fila del servidor en cuanto se le cae el navegador.
+      void deleteTerminalSession(grant.session_id, apiRef.current).catch(() => undefined);
+    }
+  }, []);
+
+  const revisarPlazas = useCallback(async () => {
+    setRevisandoPlazas(true);
+    try {
+      const items = await listTerminalSessions(apiRef.current);
+      const propias = Object.values(grantsRef.current).map((grant) => grant.session_id);
+      const ocupadas = plazasOcupadas(items);
+      const colgadas = plazasColgadas(items, propias);
+      setPlazas(colgadas);
+      setPlazasAlaVista(ocupadas.length - colgadas.length);
+    } catch {
+      // Que no se pueda leer el listado no puede tapar la vista: se deja como estaba.
+    } finally {
+      setRevisandoPlazas(false);
+    }
+  }, []);
+
+  useEffect(() => { void revisarPlazas(); }, [revisarPlazas]);
+
+  async function cerrarPlaza(id: string) {
+    setCerrandoPlaza((current) => ({ ...current, [id]: true }));
+    try {
+      await deleteTerminalSession(id, apiRef.current);
+      setPlazas((current) => current.filter((item) => item.session_id !== id));
+      setTopeAlcanzado(false);
+    } catch {
+      // Se relee: si el servidor ya no la tiene, desaparece sola de la lista.
+      await revisarPlazas();
+    } finally {
+      setCerrandoPlaza((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+    }
+  }
+
+  const avisarRef = useRef(onSesionesAbiertas);
+  avisarRef.current = onSesionesAbiertas;
+  useEffect(() => { avisarRef.current?.(sessions.length); }, [sessions.length]);
+
   const liveSessions = sessions.map((session) => ({
     ...session,
     agent: agents.find((agent) => agent.id === session.agent.id) ?? session.agent,
@@ -833,6 +1050,8 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   }
 
   function closeSession(id: string) {
+    // Cerrar una pestaña libera una plaza: el cartel del tope deja de tener razón de ser.
+    setTopeAlcanzado(false);
     const index = sessions.findIndex((session) => session.id === id);
     const next = sessions.filter((session) => session.id !== id);
     void releaseChannel(id);
@@ -846,6 +1065,15 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
 
   return (
     <>
+      <PlazasColgadas
+        items={plazas}
+        aLaVista={plazasAlaVista}
+        topeAlcanzado={topeAlcanzado}
+        revisando={revisandoPlazas}
+        cerrando={cerrandoPlaza}
+        onRevisar={() => { void revisarPlazas(); }}
+        onCerrar={(id) => { void cerrarPlaza(id); }}
+      />
       <div className="ultimate-terminal-shell">
       <FleetSidebar
         agents={agents}
@@ -872,6 +1100,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
         onGrant={(id, grant) => setGrants((current) => ({ ...current, [id]: grant }))}
         onChannelClosed={(id) => setClosedChannels((current) => ({ ...current, [id]: true }))}
         onReleaseChannel={releaseChannel}
+        onPlazaAgotada={() => { setTopeAlcanzado(true); void revisarPlazas(); }}
       />
       <aside className="terminal-control-inspector" aria-label="Estado del control plane">
         <AdapterInspector adapters={adapters} access={access} capability={terminalCapability} />

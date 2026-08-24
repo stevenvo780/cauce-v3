@@ -352,3 +352,225 @@
    */
   .pty-negativa .pty-negativa-quien { color: #8a5a00; }
 }
+
+/* ============================================================================================= *
+ * LA VISTA DEL TERMINAL, REHECHA. Steven: «el stream de la TUI nunca ha llegado a funcionar
+ * aparte de ser una vista horrorosa».
+ *
+ * Lo medido a 1280x900 antes de esto, con una sola sesión abierta:
+ *   página 3.537 px para una ventana de 900 · el terminal empezaba en y=856 · de sus 500 px de
+ *   alto se veían 44 sin tocar la rueda. A 360x800: el terminal empezaba en y=1.952 y se veían
+ *   CERO píxeles. Con cuatro sesiones, cuatro paneles de 600 px apilados y el clic en una pestaña
+ *   no movía el scroll (scrollTop 0 antes y después del clic).
+ *
+ * Con una sesión abierta la página entra en modo observación: el terminal es el contenido, no un
+ * recuadro al final de una ficha técnica. Lo que se repliega (la descripción de la página, los
+ * seis contadores) vuelve entero al cerrar la sesión.
+ * ============================================================================================= */
+
+.ultimate-terminal-page[data-tui="abierta"] .page-header { margin-bottom: 10px; }
+/* El explicador de la vista se lee una vez; mientras mirás una TUI es alto robado al terminal. */
+.ultimate-terminal-page[data-tui="abierta"] .page-description { display: none; }
+.ultimate-terminal-page[data-tui="abierta"] .terminal-overview { gap: 6px; margin-bottom: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.ultimate-terminal-page[data-tui="abierta"] .terminal-overview article { grid-template-columns: auto minmax(0, 1fr); align-items: center; padding: 6px 9px; }
+.ultimate-terminal-page[data-tui="abierta"] .terminal-overview article > .badge,
+.ultimate-terminal-page[data-tui="abierta"] .terminal-overview .overview-icon { display: none; }
+.ultimate-terminal-page[data-tui="abierta"] .terminal-overview small { font-size: .55rem; }
+.ultimate-terminal-page[data-tui="abierta"] .terminal-overview strong { font-size: .72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/*
+ * La copia móvil del inspector de adaptadores mide 900 px y vive DEBAJO del terminal. Existe por
+ * una razón buena —por debajo de 1.342 px la columna de la derecha no cabe, y sin ella el estado
+ * del control plane no estaba en ninguna parte— pero mientras mirás una TUI es lo que hace que la
+ * página siga midiendo 1.875 px con una ventana de 900. Se repliega SÓLO en modo observación:
+ * cerrar la sesión la devuelve entera, y sus dos datos (tu permiso y los adaptadores) siguen a la
+ * vista arriba, en la tira de contadores.
+ */
+.ultimate-terminal-page[data-tui="abierta"] .terminal-adapter-mobile { display: none; }
+
+/*
+ * El alto REAL: sin esto `.terminal-grid-container` tiene `overflow-y: auto` sobre una caja que
+ * crece sin tope, así que el que scrollea es el documento entero y el terminal se va de pantalla.
+ */
+.ultimate-terminal-page[data-tui="abierta"] .ultimate-terminal-shell {
+  height: clamp(430px, calc(100dvh - 190px), 1180px);
+  min-height: 0;
+  /*
+   * `grid-template-rows` explícito: sin él la ÚNICA fila de esta rejilla es `auto`, o sea que se
+   * dimensiona por su contenido y se desborda de los 665 px que la caja declara. Medido: la caja
+   * decía 665 y su hijo `.terminal-grid-wrapper` medía 2.078. `minmax(0, 1fr)` es lo que le da
+   * permiso a la fila para encogerse; `1fr` a secas NO alcanza, porque su mínimo también es `auto`.
+   */
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/*
+ * Un solo panel a la vista, y la CADENA DE ALTOS entera.
+ *
+ * `min-height: 0` no es cosmético: un hijo de `flex`/`grid` arranca con `min-height: auto`, o sea
+ * que se niega a encogerse por debajo de su contenido. Con la primera versión de este arreglo el
+ * `.ultimate-terminal-shell` medía los 665 px que se le pidieron y `.terminal-grid-wrapper`, hijo
+ * suyo, medía 2.078: se desbordaba y volvía a scrollear el documento entero. Medido, no supuesto.
+ * Cada eslabón de aquí abajo tuvo que declararlo.
+ */
+.terminal-grid-wrapper { min-height: 0; overflow: hidden; }
+.terminal-grid-container { display: block; min-height: 0; height: 100%; padding: 0; overflow: hidden; }
+.terminal-panel { height: 100%; min-height: 0; min-width: 0; resize: none; border: 0; border-radius: 0; box-shadow: none; }
+.terminal-panel[data-active="true"] { box-shadow: none; border: 0; }
+.terminal-panel-body { min-height: 0; }
+.terminal-panel-body .terminal-active-grid,
+.terminal-panel-body .terminal-console { min-height: 0; overflow: hidden; }
+
+/* La franja de pestañas de sesiones abiertas. Sustituye a la cabecera por panel. */
+.terminal-session-tab { display: inline-flex; align-items: stretch; flex: none; gap: 0; overflow: hidden; border: 1px solid var(--border); border-bottom: 0; border-radius: 9px 9px 0 0; background: rgb(255 255 255 / 3%); }
+.terminal-session-tab[data-active] { border-color: var(--mint); background: var(--surface); }
+.terminal-session-tab .terminal-panel-title-btn { border: 0; background: transparent; }
+.terminal-session-tab .terminal-panel-close { border: 0; background: transparent; padding: 0 8px; }
+
+/* ---------------------------------------------------------------------------------------------
+ * La superficie del terminal.
+ * ------------------------------------------------------------------------------------------ */
+.terminal-pty-pane { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; padding: 8px 10px 10px; }
+/*
+ * `.ultimate-terminal-page .pty-shell` y no `.pty-shell` a secas: `styles.css` pinta esta caja de
+ * BLANCO bajo `prefers-color-scheme: light`, que es lo que trae un navegador recién abierto. Lo
+ * que se ve acá no lo compone la consola sino la TUI del agente, con la paleta ANSI de 16 colores
+ * pensada para fondo oscuro: sobre blanco los amarillos y los cianes del agente desaparecían. Con
+ * la especificidad de dos clases gana esta regla haya cargado antes o después el otro fichero,
+ * que tiene dueño en otro carril.
+ */
+.ultimate-terminal-page .pty-shell {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  border-color: #1b2a41;
+  background: #0a0e16;
+}
+.ultimate-terminal-page .pty-status { flex: none; background: #10192a; color: #9fb2cc; }
+.ultimate-terminal-page .pty-status button { color: #7ce7c5; }
+
+/* El hueco del terminal: lo que crece es ESTO, y lo accesorio va debajo con alto acotado. */
+/*
+ * `min-width: 0` en el hueco del terminal, y no es cosmético tampoco.
+ *
+ * Un hijo de `flex` arranca con `min-width: auto`: se niega a encogerse por debajo de su
+ * contenido. Y el contenido acá es el `.xterm-screen`, que tiene un ancho EN PÍXELES fijado por
+ * el renderer (columnas × ancho de celda). Medido a 360x800: el `.pty-host` medía 648 px dentro
+ * de una ventana de 360 y el texto salía cortado por el borde derecho —`"tenan`, `"socr`, `mes`—
+ * sin barra de desplazamiento que avisara. Con esto el hueco encoge, `fit()` recalcula y el
+ * cuerpo de letra baja hasta que entran las columnas (ver `ajustarGeometria`).
+ */
+.pty-viewport { position: relative; display: flex; min-width: 0; min-height: 0; flex: 1; }
+.pty-mount { min-width: 0; min-height: 0; flex: 1; overflow: hidden; padding: 6px 4px 4px 8px; }
+/*
+ * El nodo del terminal se ciñe al hueco: su alto lo manda el layout, no sus filas.
+ *
+ * Los dos selectores hacen falta. `styles.css` fija el alto del terminal a mano en DOS sitios
+ * —`.pty-host { height: min(560px, 65vh) }` y `.terminal-pty-pane .pty-host { height: min(500px,
+ * 57vh) }`— y ese `min(500px, 57vh)` es exactamente el «500» que medí desbordando un hueco de
+ * 230 px. Con una sola clase de ventaja empatan y gana el otro por orden de fichero, así que la
+ * regla lleva la cadena entera. `styles.css` tiene dueño en otro carril y no se toca desde acá.
+ */
+.pty-mount > .pty-host,
+.terminal-pty-pane .pty-mount > .pty-host { height: 100%; padding: 0; }
+.pty-mount .xterm { height: 100%; }
+.pty-mount .xterm-viewport { overflow-y: auto; scrollbar-width: thin; }
+
+/*
+ * «Volver al final»: aparece SÓLO cuando el operador subió a leer y hay salida nueva. Flota sobre
+ * el terminal en vez de empujarlo, porque un cartel que reacomoda el texto que estás leyendo es
+ * exactamente el salto que había que quitar.
+ */
+.pty-volver-al-final {
+  position: absolute;
+  z-index: 2;
+  right: 16px;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--mint);
+  border-radius: 999px;
+  background: #10261f;
+  color: #7ce7c5;
+  font-size: .63rem;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 45%);
+}
+.pty-volver-al-final:hover { background: #16382d; }
+
+/* Los avisos no pueden crecer sin tope: si crecen, mueven el terminal. */
+.ultimate-terminal-page .pty-notices { max-height: 78px; overflow-y: auto; flex: none; border-top: 1px solid var(--border); border-bottom: 0; }
+.ultimate-terminal-page .pty-render-error,
+.ultimate-terminal-page .pty-reconnect-note { flex: none; }
+
+/* ---------------------------------------------------------------------------------------------
+ * Las plazas colgadas. Ver `plazas.ts`: es la salida de la trampa que dejaba muerta la vista.
+ * ------------------------------------------------------------------------------------------ */
+/* Una sola línea: el detalle entero vive en el `title`. Un aviso que se lleva 50 px del terminal
+   que viene a describir se convierte él mismo en el problema. */
+.pty-estrecho { flex: none; margin: 0; padding: 4px 11px; border-top: 1px solid var(--border); background: var(--amber-dim); color: var(--amber); font-size: .58rem; line-height: 1.4; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.pty-bar-feed { display: inline-flex; align-items: center; gap: 5px; color: var(--faint); font-size: .58rem; letter-spacing: .04em; }
+
+.pty-plazas { margin: 0 0 12px; padding: 12px 14px; border: 1px solid var(--amber); border-left-width: 3px; border-radius: 12px; background: var(--amber-dim); }
+.pty-plazas > header { display: flex; align-items: start; gap: 10px; }
+.pty-plazas > header > svg { flex: none; margin-top: 2px; color: var(--amber); }
+.pty-plazas > header > div { min-width: 0; flex: 1; }
+.pty-plazas strong { display: block; color: var(--text); font-size: .82rem; line-height: 1.35; }
+.pty-plazas p { margin: 5px 0 0; color: var(--muted); font-size: .68rem; line-height: 1.55; }
+.pty-plazas ul { display: grid; gap: 6px; margin: 11px 0 0; padding: 0; list-style: none; }
+.pty-plazas li { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; padding: 7px 10px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); font-size: .68rem; }
+.pty-plazas li > button { margin-left: auto; }
+.pty-plazas-alias { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+.pty-plazas-alias small { color: var(--faint); }
+.pty-plazas-modo { padding: 1px 8px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); font-size: .58rem; letter-spacing: .04em; text-transform: uppercase; }
+.pty-plazas-resto { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: .63rem; }
+
+/* ---------------------------------------------------------------------------------------------
+ * Móvil. A 360x800 el terminal estaba a y=1.952: fuera de la pantalla por completo. En vertical
+ * el escenario va primero y se queda con algo más de media pantalla.
+ * ------------------------------------------------------------------------------------------ */
+@media (width <= 900px) {
+  .ultimate-terminal-page[data-tui="abierta"] .ultimate-terminal-shell { height: auto; display: flex; flex-direction: column; }
+  /* El terminal ARRIBA: en vertical, la lista de 14 agentes por encima lo mandaba a y=1.952. */
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-grid-wrapper { order: -1; }
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-fleet-sidebar { max-height: 320px; }
+  /*
+   * Los seis contadores envolvían a 132 px de alto en tres filas. En una pantalla de 800 px eso
+   * es un sexto de la pantalla gastado en repetir lo que ya se sabe: pasan a una sola fila que se
+   * arrastra de lado, y siguen estando los seis.
+   */
+  .ultimate-terminal-page[data-tui="abierta"] .page-header { margin-bottom: 6px; }
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-overview { display: flex; flex-wrap: nowrap; overflow-x: auto; }
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-overview article { flex: none; }
+  /*
+   * La cabecera de la sesión medía 282 px en vertical: `styles.css` la pone en columna y el
+   * conmutador de cuatro modos se parte en dos filas. Sumada a la barra del canal (88 px) y a las
+   * pestañas, dejaba el terminal empezando en y=736 de una pantalla de 800. Acá vuelve a ser una
+   * fila: el avatar y el «tenant · epoch» se van (el alias ya está en la pestaña de arriba) y el
+   * conmutador se arrastra de lado en vez de envolver.
+   */
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head { min-height: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 9px; }
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-avatar { display: none; }
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-identity-text .eyebrow { display: none; }
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-identity-text h2 { font-size: .95rem; }
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-controls { flex: 1 1 100%; justify-content: flex-start; }
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-mode-switch { flex-wrap: nowrap; overflow-x: auto; }
+  /* El selector de room de origen es del FEED (por dónde sale una instrucción escrita), no de la
+     TUI. En vertical se llevaba una fila entera —y dejaba huérfano su rótulo— por encima de lo
+     único que se vino a mirar. Vuelve al girar el teléfono o al pasar a la pestaña Feed. */
+  .ultimate-terminal-page[data-tui="abierta"] .terminal-room-label { display: none; }
+  .ultimate-terminal-page[data-tui="abierta"] .pty-bar-dato,
+  .ultimate-terminal-page[data-tui="abierta"] .pty-bar-feed,
+  /* «TUI en vivo · solo lectura» ya lo dice, en la línea de abajo, la barra de conexión. */
+  .ultimate-terminal-page[data-tui="abierta"] .pty-bar-readonly { display: none; }
+  .ultimate-terminal-page[data-tui="abierta"] .pty-bar-countdown { font-size: .58rem; }
+  .ultimate-terminal-page[data-tui="abierta"] .pty-session-bar { gap: 5px 10px; margin-bottom: 5px; padding: 6px 9px; }
+  .terminal-panel { height: auto; }
+  .pty-viewport { min-height: 52vh; }
+  .terminal-pty-pane { padding: 6px; }
+  .pty-plazas li > button { margin-left: 0; width: 100%; justify-content: center; }
+}

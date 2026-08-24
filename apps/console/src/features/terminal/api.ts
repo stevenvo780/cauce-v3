@@ -269,3 +269,47 @@ export function deleteTerminalSession(
     session,
   );
 }
+
+/**
+ * Una sesión de terminal tal como la lista el gateway para ESTE operador.
+ *
+ * `expires_at` no es decorativo: es el mismo instante con el que el servidor decide si la sesión
+ * sigue ocupando una de las plazas del operador (`openPredicate` en el plugin del gateway). Sin
+ * ese campo la consola no puede distinguir una sesión que ocupa plaza de un ticket que caducó
+ * hace horas, y las dos llegan con `state` distinto de `closed`.
+ */
+export interface TerminalSessionListItem {
+  session_id: string;
+  tenant_id: string;
+  alias: string;
+  mode: string;
+  opened_at: string;
+  expires_at: string;
+  state: 'issued' | 'active' | 'closed';
+}
+
+/**
+ * Las sesiones del operador. Es la ÚNICA salida de la trampa que dejó sordo a Ultimate Terminal:
+ * el tope del gateway es por operador, las sesiones sobreviven a la vista que las abrió, y sin
+ * este listado el operador recibe «cerrá alguna de las sesiones que tenés abiertas» sin tener a
+ * la vista ni una sola sesión que cerrar.
+ */
+export async function listTerminalSessions(session?: SesionConToken): Promise<TerminalSessionListItem[]> {
+  const payload = await terminalRequest<Record<string, unknown>>('/v3/console/terminal/sessions', {}, session);
+  if (!Array.isArray(payload?.items)) return [];
+  return payload.items.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const record = item as Record<string, unknown>;
+    if (typeof record.session_id !== 'string' || typeof record.alias !== 'string') return [];
+    const state = record.state === 'active' || record.state === 'issued' ? record.state : 'closed';
+    return [{
+      session_id: record.session_id,
+      tenant_id: typeof record.tenant_id === 'string' ? record.tenant_id : '',
+      alias: record.alias,
+      mode: typeof record.mode === 'string' ? record.mode : '',
+      opened_at: typeof record.opened_at === 'string' ? record.opened_at : '',
+      expires_at: typeof record.expires_at === 'string' ? record.expires_at : '',
+      state,
+    }];
+  });
+}
