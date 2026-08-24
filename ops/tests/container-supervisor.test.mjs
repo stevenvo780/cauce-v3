@@ -570,6 +570,76 @@ try {
   await writeConfig("kant");
   process.stdout.write("shared session: switch exported with TERM for claude/codex, rejected elsewhere and for non-1 values\n");
 
+  // ---- Configuración por alias: cada alias con SU directorio de configuración. ----
+  // kratos y atlas corren en el MISMO contenedor con el mismo HOME, y su ~/.codex/AGENTS.md es el
+  // mismo INODO: por fichero es imposible darles identidades distintas. CODEX_HOME/CLAUDE_CONFIG_DIR
+  // ya gobiernan dónde busca cada CLI, así que el supervisor puede apuntar a cada alias al suyo.
+  //
+  // EL CONTROL QUE MÁS IMPORTA ES EL PRIMERO: apagado por defecto. Los ficheros hay que copiarlos
+  // ANTES (ops/scripts/aplicar-separacion-config.sh); encender la variable apuntando a un
+  // directorio vacío deja al alias sin identidad y —en claude— sin un solo MCP, sin ningún error.
+  await writeConfig("kant");
+  await clearLog();
+  result = runSupervisor("start", "kant", await dockerState("kant"));
+  assert.equal(result.status, 0, result.stderr);
+  const sinInterruptor = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
+  assert(!sinInterruptor?.argv.some((value) => value.startsWith("CODEX_HOME=") || value.startsWith("CLAUDE_CONFIG_DIR=")),
+    "sin CONFIG_POR_ALIAS el entorno del adaptador no cambia ni un byte");
+
+  await writeConfig("kant", ["CONFIG_POR_ALIAS=1"]);
+  await clearLog();
+  result = runSupervisor("start", "kant", await dockerState("kant"));
+  assert.equal(result.status, 0, `config por alias debe arrancar: ${result.stderr}`);
+  const conInterruptor = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
+  // kant es codex y su home mapeado es /home/dev. La ruta se DERIVA del alias: es la misma que
+  // calcula ops/scripts/separar-config-alias.mjs, que es quien copia los ficheros ahí.
+  assert(conInterruptor?.argv.includes("CODEX_HOME=/home/dev/.cauce/kant/.codex"),
+    "el interruptor tiene que exportar el directorio derivado del alias");
+  assert(!conInterruptor?.argv.some((value) => value.startsWith("CLAUDE_CONFIG_DIR=")),
+    "un alias codex no puede recibir además la variable de claude");
+
+  for (const [name, extra, expected] of [
+    ["valor distinto de 1", ["CONFIG_POR_ALIAS=true"], /CONFIG_POR_ALIAS must be exactly 1/u],
+    ["valor 0", ["CONFIG_POR_ALIAS=0"], /CONFIG_POR_ALIAS must be exactly 1/u],
+  ]) {
+    await writeConfig("kant", extra);
+    await clearLog();
+    result = runSupervisor("start", "kant", await dockerState("kant"));
+    assert.notEqual(result.status, 0, `${name} debe fallar`);
+    assert.match(result.stderr, expected);
+    assert.equal((await records()).length, 0, `${name} debe fallar antes de tocar Docker`);
+  }
+
+  // Un arnés que no lee ningún directorio gobernado por una variable no puede declarar el
+  // interruptor: exportarle la variable movería un directorio que nadie lee y dejaría a alguien
+  // convencido de que ese alias ya está separado.
+  await writeConfig("argos", [
+    "HERMES_HOME=/home/dev/.hermes", "HERMES_INFERENCE_MODEL=approved/model-v1", "CONFIG_POR_ALIAS=1",
+  ]);
+  await clearLog();
+  result = runSupervisor("start", "argos", await dockerState("argos"));
+  assert.notEqual(result.status, 0, "hermes no lee ~/.codex ni ~/.claude");
+  assert.match(result.stderr, /config key is not allowed for hermes: CONFIG_POR_ALIAS/u);
+  await writeConfig("argos", ["HERMES_HOME=/home/dev/.hermes", "HERMES_INFERENCE_MODEL=approved/model-v1"]);
+
+  await writeConfig("jarvis", [
+    "OPENCLAW_TRANSPORT=api",
+    "OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions",
+    "OPENCLAW_TOKEN_FILE=/opt/cauce-v3-secrets/jarvis/openclaw-token",
+    "CONFIG_POR_ALIAS=1",
+  ]);
+  await clearLog();
+  result = runSupervisor("start", "jarvis", await dockerState("jarvis"));
+  assert.notEqual(result.status, 0, "openclaw no lee ~/.codex ni ~/.claude");
+  assert.match(result.stderr, /config key is not allowed for openclaw: CONFIG_POR_ALIAS/u);
+  await writeConfig("jarvis", [
+    "OPENCLAW_TRANSPORT=api",
+    "OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions",
+    "OPENCLAW_TOKEN_FILE=/opt/cauce-v3-secrets/jarvis/openclaw-token",
+  ]);
+  await writeConfig("kant");
+  process.stdout.write("config por alias: apagado por defecto, exporta el directorio derivado con el interruptor, rechazado fuera de claude/codex\n");
+
   // ---- Bundle layout regression guard: mini-monorepo vs legacy root layout. ----
   // The real production bundle ships adapters at packages/adapter-sdk/dist/src/bin/<harness>.js;
   // the supervisor must resolve exactly that path. Positive: the standard fixture uses that
