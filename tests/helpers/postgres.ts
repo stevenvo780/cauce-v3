@@ -26,7 +26,69 @@ async function waitForDatabase(pool: DatabasePool): Promise<void> {
   throw lastError;
 }
 
+/**
+ * El nombre de base que un `CAUCE_TEST_DATABASE_URL` TIENE que llevar para ser aceptado.
+ *
+ * No es una convención: es lo único que separa «correr la suite» de «truncar producción». Estas
+ * pruebas llaman a `resetTestDatabase()`, que hace `TRUNCATE ... CASCADE` sobre 30 tablas. Si
+ * alguien exporta por error la URL de la base real, sin esta guarda la suite la vacía y el
+ * mensaje de error llegaría DESPUÉS. Por eso la comprobación es sobre el nombre y falla cerrado.
+ */
+const PREFIJO_BASE_DE_PRUEBAS = 'cauce_test';
+
+/** Extrae el nombre de la base de una URL de postgres, sin traer dependencias. */
+export function nombreDeBase(url: string): string {
+  const ruta = new URL(url).pathname;
+  return ruta.startsWith('/') ? ruta.slice(1) : ruta;
+}
+
+/**
+ * ¿Esta URL apunta a una base de pruebas desechable?
+ *
+ * Exportada a propósito para poder probar la guarda sola, con la URL de producción como control
+ * negativo. Una guarda que nunca se prueba con el caso que viene a impedir no es una guarda.
+ */
+export function esBaseDePruebas(url: string): boolean {
+  try {
+    return nombreDeBase(url).startsWith(PREFIJO_BASE_DE_PRUEBAS);
+  } catch {
+    return false;
+  }
+}
+
 export async function startTestDatabase(): Promise<TestDatabase> {
+  /*
+   * Camino sin Docker. Los contenedores de agente de esta flota NO tienen demonio de Docker
+   * dentro (medido el 24-ago-2026: `docker ps` falla en `ws-zeus`), así que toda prueba que
+   * dependa de `testcontainers` es IMPOSIBLE de correr desde donde se escribe el código. El
+   * resultado práctico era que se escribían pruebas de base y nadie las veía pasar nunca.
+   *
+   * Con `CAUCE_TEST_DATABASE_URL` la misma suite corre contra una base desechable ya levantada
+   * (por ejemplo, una en el VPS alcanzada por un túnel SSH). El contrato de retorno es idéntico;
+   * `container` queda con un `stop()` que no hace nada, porque esta suite no la creó y no le
+   * toca apagarla.
+   */
+  const externa = process.env.CAUCE_TEST_DATABASE_URL;
+  if (externa) {
+    if (!esBaseDePruebas(externa)) {
+      throw new Error(
+        `CAUCE_TEST_DATABASE_URL apunta a la base "${nombreDeBase(externa)}" y las pruebas ` +
+          `TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por ` +
+          `"${PREFIJO_BASE_DE_PRUEBAS}". Rechazado antes de abrir la conexión.`,
+      );
+    }
+    const pool = createPool(externa);
+    try {
+      await waitForDatabase(pool);
+      await applyMigrations(pool);
+      const container = { stop: async () => undefined } as unknown as StartedTestContainer;
+      return { container, pool, url: externa };
+    } catch (error) {
+      await pool.end();
+      throw error;
+    }
+  }
+
   const password = randomUUID();
   const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
   let builder = new GenericContainer('postgres:16-alpine')
