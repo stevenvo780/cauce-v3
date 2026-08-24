@@ -536,9 +536,39 @@ tr[data-highlighted='true'] > td {
 .agent-drawer-identity h2 { margin: 0; font-size: 1.05rem; }
 .agent-drawer-identity p { margin: 2px 0 0; font-size: 12px; }
 
-.agent-drawer-tabs { display: flex; gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+/* La tira de pestañas del cajón: ENVUELVE, no se sale ------------------------
+ *
+ * Venía `flex-wrap: nowrap` con `overflow-x: visible` dentro de un cajón de 420 px. Eso no es una
+ * tira que quepa: es una tira que **no tiene ningún mecanismo** para caber. Con cinco pestañas ya
+ * pedía 434 px y una —«Directiva»— ya se salía del borde del cajón; con «Ficheros» pasó a 519.
+ * MEDIDO en Chrome a 1280x900: «Directiva» y «Ficheros» se dibujaban ENTERAS fuera del borde del
+ * cajón (x=1242) y el documento entero ganaba barra horizontal (`scrollWidth` 1342 contra 1280 de
+ * ventana). A 360 px era peor: la tira pedía los mismos 519 px dentro de un cajón de 330, el
+ * navegador ensanchaba el viewport a 535 para que cupiera y la consola entera se veía al 67%.
+ *
+ * El defecto no era de la pestaña nueva: era de la tira. Con cinco pestañas ya se salía —a 360 px
+ * el viewport ya se estiraba a 450, la consola al 80%— y cualquier séptima lo repetiría.
+ *
+ * `wrap` y no `overflow-x: auto`, mirando las dos: con `wrap` las seis pestañas se leen A LA VEZ
+ * en dos filas y ninguna queda escondida detrás de un borde. Con scroll horizontal, tres de las
+ * seis —«Cadena», «Directiva», «Ficheros»— quedan fuera de la vista tras un gesto que en un ratón
+ * no existe, y el indicio de que hay más es justo lo que nadie mira. Un tablist de seis rótulos
+ * cortos no se navega: se ojea. Envolver cuesta una fila de 30 px; esconder cuesta descubrirlas.
+ *
+ * `flex: none` + `white-space: nowrap` en la pestaña son la otra mitad: sin ellos, envolver
+ * traslada el problema al rótulo —el navegador encoge el botón y parte «Conexión» a mitad de
+ * palabra— que es exactamente lo que ya nos mordió con «Configuración y altas».
+ */
+.agent-drawer-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
 
 .agent-drawer-tab {
+  flex: none;
   padding: 6px 12px;
   border: none;
   border-radius: 8px;
@@ -546,6 +576,7 @@ tr[data-highlighted='true'] > td {
   color: var(--muted);
   font-size: 12.5px;
   font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
 }
 
