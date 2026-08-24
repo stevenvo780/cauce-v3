@@ -3,14 +3,23 @@
  * y redefinir ahí lo de acá crearía dos sitios donde cambiar lo mismo, con uno de los dos siempre
  * atrasado. Todo lo de este fichero cuelga de `.config-area`, así que no puede alcanzar a ninguna
  * otra vista de la consola.
+ *
+ * **Los tamaños de letra de acá no son números sueltos: citan la escala de `config.css`**
+ * (`--tipo-cuerpo`, `--tipo-rotulo`, `--tipo-apunte`). Cuando eran `.68rem` y `.74rem` escritos a
+ * mano no había forma de subir «el cuerpo» de la vista sin ir elemento por elemento por tres
+ * hojas, y por eso dos rondas de arreglos de legibilidad no lo tocaron.
  */
 
 /* --- La fila -------------------------------------------------------------------------------
  *
  * MEDIDO en Chrome antes de tocar nada: la fila de `Directed ACL` medía 147 px porque la columna
  * «Acciones» apilaba cuatro botones de texto. Sin esa columna la fila la gobierna el padding
- * general de `td` (14 px arriba y abajo). Acá se baja a 8 px, que con el interruptor de 20 px deja
- * la fila en ~44 px — la medida que se pidió.
+ * general de `td` (14 px arriba y abajo), y se bajó a 8 px para dejarla en ~44 px.
+ *
+ * 2026-08-24: con la letra de la celda a 14 px (antes 11,84) esos 8 px dejan la fila apretada —29
+ * filas seguidas se leen como una parrilla, que es la queja—. Sube a 11 px: la fila queda en ~46
+ * px, que es aire suficiente para seguir un renglón con la vista sin apoyar el dedo, y la tabla de
+ * 29 filas sigue entrando en un scroll.
  */
 /*
  * **La página entera scrolleaba en horizontal en vez de la tabla.**
@@ -35,7 +44,7 @@
  */
 .config-area .table-wrap { position: relative; min-width: 0; max-width: 100%; }
 
-.config-area td { padding: 8px 12px; }
+.config-area td { padding: 11px 12px; }
 
 /*
  * El `<select>` del rol heredaba `min-height: 41px` de la regla global de campos de texto y dejaba
@@ -43,7 +52,7 @@
  * sola línea dentro de una celda no necesita la altura de un campo de formulario.
  */
 .config-area td select { min-height: 30px; padding: 4px 8px; }
-.config-area th { padding: 9px 12px; }
+.config-area th { padding: 10px 12px; }
 .config-area td .badge { white-space: nowrap; }
 
 /* Una columna de fecha no tiene por qué reservar el ancho de `1 jul 2026, 10:00:00`. */
@@ -62,6 +71,22 @@
  * `input, select { width: 100%; min-height: 41px; margin-top: 7px }` de `styles.css` está pensada
  * para campos de texto y a una casilla la estira a lo ancho del formulario. Es el mismo motivo por
  * el que la casilla «Es hub» del alta salía flotando lejos de su rótulo.
+ *
+ * 🔴 **`[type="checkbox"]` en el selector NO es decorativo: sin él el interruptor medía 2 px.**
+ *
+ * MEDIDO en Chrome sobre el bundle de producción (`getComputedStyle(...).width`): `2px`, no 36. El
+ * carril de la pastilla no se veía por ningún lado y lo único que quedaba en pantalla era el punto
+ * de 14 px del `::after` — o sea, el control central de esta pantalla («los permisos como
+ * interruptores») no se leía como un interruptor ni decía de qué lado estaba.
+ *
+ * La causa: `styles.css` declara `.config-area input[type="checkbox"] { width: auto }`, que tiene
+ * EXACTAMENTE la misma especificidad que `.config-area input.interruptor` (dos clases y un tipo en
+ * las dos), y vite concatena `styles.css` la ÚLTIMA — comprobado sobre el bundle, las dos reglas
+ * están a 30 KB de distancia y gana la de abajo. Con `[type="checkbox"]` en el selector la cuenta
+ * pasa a tres y deja de depender del orden de las hojas.
+ *
+ * Es anterior a este cambio (medido igual sobre `consola/tira-de-pestanas-20260824`) y no lo veía
+ * nadie: `getComputedStyle` en jsdom no resuelve la cascada.
  */
 .config-area input[type="checkbox"] {
   width: auto;
@@ -70,7 +95,7 @@
   padding: 0;
 }
 
-.config-area input.interruptor {
+.config-area input[type="checkbox"].interruptor {
   position: relative;
   flex: none;
   width: 36px;
@@ -83,7 +108,7 @@
   transition: background-color .12s ease, border-color .12s ease;
 }
 
-.config-area input.interruptor::after {
+.config-area input[type="checkbox"].interruptor::after {
   position: absolute;
   top: 2px;
   left: 2px;
@@ -95,31 +120,31 @@
   transition: transform .12s ease, background-color .12s ease;
 }
 
-.config-area input.interruptor:checked {
+.config-area input[type="checkbox"].interruptor:checked {
   border-color: var(--mint);
   background: var(--mint-dim);
 }
 
-.config-area input.interruptor:checked::after { transform: translateX(16px); background: var(--mint); }
-.config-area input.interruptor:hover:not(:disabled) { border-color: var(--blue); }
-.config-area input.interruptor:disabled { cursor: not-allowed; opacity: .45; }
+.config-area input[type="checkbox"].interruptor:checked::after { transform: translateX(16px); background: var(--mint); }
+.config-area input[type="checkbox"].interruptor:hover:not(:disabled) { border-color: var(--blue); }
+.config-area input[type="checkbox"].interruptor:disabled { cursor: not-allowed; opacity: .45; }
 
 /* Mientras la escritura vuela: el estado que se ve todavía no lo confirmó nadie, y se nota. */
-.config-area input.interruptor[aria-busy="true"] { border-color: var(--amber); }
-.config-area input.interruptor[aria-busy="true"]::after { background: var(--amber); animation: interruptor-latido .7s ease-in-out infinite; }
-.config-area input.interruptor[aria-invalid="true"] { border-color: var(--red); }
+.config-area input[type="checkbox"].interruptor[aria-busy="true"] { border-color: var(--amber); }
+.config-area input[type="checkbox"].interruptor[aria-busy="true"]::after { background: var(--amber); animation: interruptor-latido .7s ease-in-out infinite; }
+.config-area input[type="checkbox"].interruptor[aria-invalid="true"] { border-color: var(--red); }
 
 @keyframes interruptor-latido { 50% { opacity: .35; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .config-area input.interruptor,
-  .config-area input.interruptor::after { transition: none; animation: none; }
+  .config-area input[type="checkbox"].interruptor,
+  .config-area input[type="checkbox"].interruptor::after { transition: none; animation: none; }
 }
 
 .interruptor-estado {
   min-width: 1.4em;
   color: var(--muted);
-  font-size: .68rem;
+  font-size: var(--tipo-apunte);
   font-variant-numeric: tabular-nums;
   text-transform: uppercase;
   letter-spacing: .06em;
@@ -134,12 +159,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   border: 1px solid var(--border-strong);
   border-radius: 50%;
   color: var(--muted);
-  font-size: .58rem;
+  /* MEDIDO: era `.58rem` = 9,28 px, el texto más chico de toda la página. Una marca de ayuda que
+     no se lee no invita a nada; el círculo crece con ella para que la letra no lo desborde. */
+  font-size: var(--tipo-apunte);
   font-weight: 700;
   letter-spacing: 0;
 }
@@ -161,7 +188,7 @@
   gap: 8px;
   margin: 0 0 8px;
   color: #ffb7bc;
-  font-size: .74rem;
+  font-size: var(--tipo-rotulo);
   line-height: 1.5;
 }
 
@@ -182,7 +209,7 @@
   align-items: start;
   gap: 8px;
   margin: 0 0 10px;
-  font-size: .78rem;
+  font-size: var(--tipo-rotulo);
   line-height: 1.55;
 }
 
@@ -215,36 +242,18 @@
 .config-area .config-form ~ .muted,
 .config-area .panel > .muted { color: var(--muted); }
 
-/* --- Alta: un solo formulario, no dos ------------------------------------------------------- */
-
-.alta-modos { display: flex; flex-wrap: wrap; gap: 2px; margin: 0 0 14px; padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
-
-.alta-modo {
-  padding: 7px 13px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.alta-modo:hover { color: var(--text); }
-.alta-modo[aria-selected="true"] { background: var(--surface-3); color: var(--text); }
-.alta-modo:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+/* El elegir-modo del alta (`.alta-segmento`) vive en `config.css`, con el resto de la escala
+   tipográfica: dejó de ser una tira de pestañas —que era idéntica a la de las áreas y se leía como
+   navegación de la página— y pasó a ser un segmentado dentro del panel. Ver `AltaDeEspacios`. */
 
 /* El JSON crudo deja de estar abierto por defecto: es la verdad literal, no lo primero que mirar. */
-.config-crudo > summary { display: flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--muted); cursor: pointer; font-size: .74rem; }
+.config-crudo > summary { display: flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
 .config-crudo[open] > summary { margin-bottom: 2px; }
 
 @media (prefers-color-scheme: light) {
-  .config-area input.interruptor { background: #e4eaf2; }
-  .config-area input.interruptor::after { background: #7d8ca0; }
-  .config-area input.interruptor:checked { background: var(--mint-dim); }
-  .config-area input.interruptor:checked::after { background: var(--mint); }
+  .config-area input[type="checkbox"].interruptor { background: #e4eaf2; }
+  .config-area input[type="checkbox"].interruptor::after { background: #7d8ca0; }
+  .config-area input[type="checkbox"].interruptor:checked { background: var(--mint-dim); }
+  .config-area input[type="checkbox"].interruptor:checked::after { background: var(--mint); }
   .interruptor-fallo p { color: #8f2734; }
-  .alta-modos { background: #f4f7fb; }
-  .alta-modo[aria-selected="true"] { background: #e6eef8; }
 }

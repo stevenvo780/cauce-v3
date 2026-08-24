@@ -21,22 +21,36 @@ import './toggles.css';
  *
  * No se retiró ninguno de los dos. El wizard sigue siendo la única forma de encadenar los cuatro
  * pasos con dry-run por paso, y el alta rápida la única de crear una arista ACL sin tipear JSON.
+ *
+ * ---
+ *
+ * **2026-08-24 — el elegir-modo dejó de ser una segunda fila de pestañas.**
+ *
+ * MEDIDO en Chrome a 1600×1000: la página dibujaba DOS tiras con `role="tablist"` apiladas, la de
+ * las áreas de configuración a y=307 y ésta a y=389, con la misma forma exacta —mismo alto, mismo
+ * radio, mismo fondo, mismo 12,5 px de letra—. Dos controles que se dibujan igual dicen que hacen
+ * lo mismo, y no lo hacen: el de arriba cambia de ÁREA de la configuración; éste elige un MODO
+ * dentro de un solo formulario.
+ *
+ * Ahora es un control segmentado, y vive DENTRO del panel del alta —se le pasa al hijo como
+ * `encabezado`, así que se pinta junto al formulario que gobierna—. Y dejó de ser un `tablist`:
+ * un `role="group"` de botones con `aria-pressed` no le promete al teclado una navegación por
+ * flechas que este control nunca implementó, y las pestañas de arriba dejan de tener un gemelo
+ * falso debajo.
  */
 
 type ModoDeAlta = 'rapida' | 'guiada';
 
-const MODOS: ReadonlyArray<{ id: ModoDeAlta; label: string; descripcion: string }> = [
+const MODOS: ReadonlyArray<{ id: ModoDeAlta; label: string; nota: string }> = [
   {
     id: 'rapida',
     label: 'Un solo recurso',
-    descripcion: 'Para dar de alta una cosa: un cliente, una sala, una membresía o una arista de '
-      + 'permisos. Un formulario, un envío.',
+    nota: 'Un cliente, una sala, una membresía o una arista de permisos. Un envío.',
   },
   {
     id: 'guiada',
     label: 'Espacio completo, paso a paso',
-    descripcion: 'Para montar un cliente entero de cero: cliente → sala → membresía → harness, con '
-      + 'previsualización antes de cada paso.',
+    nota: 'Un cliente de cero: cliente → sala → membresía → harness, con dry-run por paso.',
   },
 ];
 
@@ -48,24 +62,20 @@ export function AltaDeEspacios({ soloLectura, busy, onChange }: {
   const [modo, setModo] = useState<ModoDeAlta>('rapida');
   const activo = MODOS.find((entrada) => entrada.id === modo) ?? MODOS[0];
 
-  return <section className="alta-unificada">
-    {/* Botones de verdad con `role="tab"`, igual que las pestañas de la página: el teclado y el
-        lector de pantalla tienen que poder decir cuál de los dos modos está abierto. */}
-    <div className="alta-modos" role="tablist" aria-label="Modo de alta">
+  const encabezado = <>
+    <div className="alta-segmento" role="group" aria-label="Modo de alta">
       {MODOS.map((entrada) => <button
         key={entrada.id}
         type="button"
-        role="tab"
-        aria-selected={entrada.id === activo.id}
-        className="alta-modo"
+        aria-pressed={entrada.id === activo.id}
+        className="alta-segmento-boton"
         onClick={() => setModo(entrada.id)}
       >{entrada.label}</button>)}
     </div>
-    <p className="config-area-descripcion">{activo.descripcion}</p>
-    <div role="tabpanel" aria-label={activo.label}>
-      {activo.id === 'rapida'
-        ? <AltaRapida soloLectura={soloLectura} busy={busy} onChange={onChange} />
-        : <SpaceWizard canWrite={!soloLectura} busy={busy} onChange={onChange} />}
-    </div>
-  </section>;
+    <p className="alta-modo-nota">{activo.nota}</p>
+  </>;
+
+  return activo.id === 'rapida'
+    ? <AltaRapida soloLectura={soloLectura} busy={busy} onChange={onChange} encabezado={encabezado} />
+    : <SpaceWizard canWrite={!soloLectura} busy={busy} onChange={onChange} encabezado={encabezado} />;
 }

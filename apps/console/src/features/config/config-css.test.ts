@@ -27,6 +27,7 @@ import { describe, expect, it } from 'vitest';
 const RAIZ = resolve(process.cwd(), 'src');
 const GLOBAL = readFileSync(join(RAIZ, 'styles.css'), 'utf8');
 const PROPIA = readFileSync(join(RAIZ, 'features', 'config', 'config.css'), 'utf8');
+const INTERRUPTORES = readFileSync(join(RAIZ, 'features', 'config', 'toggles.css'), 'utf8');
 
 function sinComentarios(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, ' ');
@@ -282,5 +283,365 @@ describe('las reglas `.config-*` de las hojas', () => {
   it('`.config-grid` ya no existe en ninguna hoja, y `.config-area` sí', () => {
     expect(clasesDeLaHoja().has('config-grid')).toBe(false);
     expect(clasesDeLaHoja().has('config-area')).toBe(true);
+  });
+});
+
+
+/* ═══ La escala tipográfica de /config ══════════════════════════════════════════════════════════
+ *
+ * Steven, por SEGUNDA vez: «la vista de configuraciones aún hay mucho que mejorar, también es muy
+ * ilegible». La primera vez se arregló la barra de móvil y la letra de la NAVEGACIÓN; la página en
+ * sí quedó igual. MEDIDO en Chrome a 1600×1000 sobre el bundle de producción servido con la CSP de
+ * `nginx.conf`, contando los elementos hoja con texto:
+ *
+ *     11,84px --text-2  97 · 11,84px --muted 69 · 10,88px --muted 32 · 10,88px --text-2 32
+ *     10,88px --faint   19 · 12,5px  --muted  8 · 9,28px  --muted  3
+ *     → 255 de 288 elementos por debajo de 12 px. Y el `h1` a 44,8 px.
+ *
+ * 🔴 **Ninguna prueba de React Testing Library puede ver esto.** jsdom no hace layout ni resuelve
+ * la cascada: las 985 pruebas de esta consola pasaban con la página entera a 11,8 px. Lo que sí lo
+ * atrapa es leer la HOJA, que es lo que hace este bloque — el mismo método con el que se cazaron
+ * la pastilla invisible y la clase huérfana de más arriba.
+ *
+ * Lo que este bloque NO prueba, y hay que decirlo: que en un navegador de verdad la página se lea.
+ * Eso se mide abriendo Chrome y mirándola, y el resultado va en el informe del cambio.
+ */
+
+/** Todas las declaraciones `font-size` de una hoja, con el selector que las lleva. */
+function tamanosDeLetra(css: string): Array<{ selector: string; valor: string }> {
+  const salida: Array<{ selector: string; valor: string }> = [];
+  for (const regla of sinComentarios(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    for (const declaracion of regla[2].matchAll(/(?:^|;)\s*font-size\s*:\s*([^;]+)/g)) {
+      salida.push({ selector: regla[1].trim().replace(/\s+/g, ' '), valor: declaracion[1].trim() });
+    }
+  }
+  return salida;
+}
+
+/**
+ * Los cinco escalones, en el orden en que tienen que ir de mayor a menor.
+ *
+ * `--tipo-mono` NO está en la lista y no es un descuido: no es un escalón, es cómo se renderiza el
+ * escalón de rótulo cuando el dato es monoespaciado (a igual `px` una monoespaciada se ve más
+ * grande). Se comprueba aparte, contra el cuerpo y contra el suelo.
+ */
+const ESCALA = ['--tipo-titulo', '--tipo-panel', '--tipo-cuerpo', '--tipo-rotulo', '--tipo-apunte'];
+
+/** `14px`, `.74rem`, `var(--tipo-cuerpo)` → píxeles. `undefined` si no se sabe resolver. */
+export function enPixeles(valor: string, escala: Map<string, string>): number | undefined {
+  const referencia = /^var\(\s*(--[\w-]+)\s*\)$/.exec(valor.trim());
+  if (referencia) {
+    const destino = escala.get(referencia[1]);
+    return destino === undefined ? undefined : enPixeles(destino, escala);
+  }
+  const px = /^(\d*\.?\d+)px$/.exec(valor.trim());
+  if (px) return Number(px[1]);
+  const rem = /^(\d*\.?\d+)rem$/.exec(valor.trim());
+  if (rem) return Number(rem[1]) * 16;
+  return undefined;
+}
+
+/** El suelo: nada de esta vista baja de acá. Es la cifra que Steven puso en el encargo. */
+const SUELO = 12.5;
+/** Cuerpo y rótulos no bajan de acá. */
+const SUELO_CUERPO = 13;
+
+/**
+ * Toda la letra chica de las hojas de `/config`, para el informe del aserto.
+ *
+ * Se le pasa la hoja como TEXTO —no se lee de disco dentro— justamente para poder darle de comer
+ * una hoja mutada y exigir que la repruebe. Un guardia que sólo sabe mirar el fichero de verdad no
+ * se puede probar a sí mismo.
+ */
+export function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[] {
+  const escala = variables(sinComentarios(hojas.join('\n')));
+  const fallos: string[] = [];
+  for (const hoja of hojas) {
+    for (const { selector, valor } of tamanosDeLetra(hoja)) {
+      // `inherit`/`0` no declaran un tamaño: no hay nada que juzgar.
+      if (/^(inherit|initial|unset|revert)$/.test(valor)) continue;
+      const px = enPixeles(valor, escala);
+      if (px === undefined) {
+        fallos.push(`${selector} { font-size: ${valor} } no se sabe resolver a píxeles`);
+        continue;
+      }
+      if (px + 0.001 < suelo) fallos.push(`${selector} { font-size: ${valor} } = ${px}px, el suelo es ${suelo}px`);
+    }
+  }
+  return fallos;
+}
+
+describe('la escala tipográfica de /config', () => {
+  /*
+   * La escala se lee del bloque BASE de `.config-pagina`, no de la hoja entera. `variables()` se
+   * queda con la última coincidencia y `--medida` está redefinida dentro del `@media` de móvil: la
+   * hoja entera devolvería `100%` para un tope que arriba es `74ch`. Es el mismo error de método
+   * que este fichero existe para atrapar — un dato fresco medido contra el objeto equivocado.
+   */
+  const escala = new Map(Object.entries(declaraciones(sinComentarios(PROPIA), '.config-pagina')));
+
+  it('declara los seis escalones y van de mayor a menor, sin dos iguales', () => {
+    const pixeles = ESCALA.map((nombre) => {
+      const bruto = escala.get(nombre);
+      expect(bruto, `${nombre} no está declarada en config.css`).toBeDefined();
+      const px = enPixeles(bruto!, escala);
+      expect(px, `${nombre} = ${bruto} no es un tamaño en píxeles`).toBeDefined();
+      return px!;
+    });
+    // Estrictamente decreciente: dos escalones iguales no son una escala, son un número repetido
+    // dos veces, y el operador no puede ver la diferencia entre un rótulo y un dato.
+    for (let i = 1; i < pixeles.length; i += 1) {
+      expect(pixeles[i], `${ESCALA[i]} (${pixeles[i]}px) no baja de ${ESCALA[i - 1]} (${pixeles[i - 1]}px)`)
+        .toBeLessThan(pixeles[i - 1]);
+    }
+  });
+
+  it('el cuerpo y los rótulos no bajan de 13px, y el suelo de todo es 12,5px', () => {
+    expect(enPixeles(escala.get('--tipo-cuerpo')!, escala)).toBeGreaterThanOrEqual(SUELO_CUERPO);
+    expect(enPixeles(escala.get('--tipo-rotulo')!, escala)).toBeGreaterThanOrEqual(SUELO_CUERPO);
+    expect(enPixeles(escala.get('--tipo-apunte')!, escala)).toBeGreaterThanOrEqual(SUELO);
+  });
+
+  it('el monoespaciado no se sale de la escala: ni más grande que el cuerpo ni por debajo del suelo', () => {
+    const mono = enPixeles(escala.get('--tipo-mono')!, escala);
+    expect(mono, '--tipo-mono no está declarada').toBeDefined();
+    expect(mono!).toBeGreaterThanOrEqual(SUELO);
+    expect(mono!).toBeLessThanOrEqual(enPixeles(escala.get('--tipo-cuerpo')!, escala)!);
+  });
+
+  /**
+   * El título tenía `clamp(1.85rem, 4vw, 2.8rem)` = 44,8 px a 1600, contra un cuerpo de 11,84: casi
+   * cuatro veces. La jerarquía estaba INVERTIDA —lo grande era el envase— y ése es medio encargo.
+   * El tope de 3× no es estético: por encima de ahí el título vuelve a ser lo único que se ve.
+   */
+  it('el título no puede volver a ser tres veces el cuerpo', () => {
+    const titulo = enPixeles(escala.get('--tipo-titulo')!, escala)!;
+    const cuerpo = enPixeles(escala.get('--tipo-cuerpo')!, escala)!;
+    expect(titulo / cuerpo).toBeLessThanOrEqual(3);
+    expect(titulo).toBeGreaterThan(cuerpo);
+  });
+
+  it('ninguna regla de las hojas de /config declara letra por debajo del suelo', () => {
+    expect(letraPorDebajoDelSuelo([PROPIA, INTERRUPTORES])).toEqual([]);
+  });
+
+  /**
+   * CONTROL NEGATIVO POR MUTACIÓN. Se le da de comer al guardia la hoja con los valores EXACTOS que
+   * estaban desplegados —`.68rem` en las pastillas de rol, `.58rem` en la marca de ayuda— y se
+   * exige que los marque. Sin esto, `letraPorDebajoDelSuelo()` podría estar devolviendo `[]` porque
+   * no encuentra ninguna regla, y aprobaría cualquier hoja.
+   */
+  it('CONTROL NEGATIVO — marca los tamaños que estaban desplegados (.68rem = 10,88px, .58rem = 9,28px)', () => {
+    const roto = PROPIA.replace('font-size: var(--tipo-apunte);', 'font-size: .68rem;');
+    expect(roto).not.toBe(PROPIA);
+    expect(letraPorDebajoDelSuelo([roto])).toContainEqual(expect.stringContaining('.68rem'));
+    expect(letraPorDebajoDelSuelo(['.x { font-size: .58rem; }'])).toHaveLength(1);
+    // Y que el suelo sea el que se dijo: 12px NO alcanza, 12,5 sí.
+    expect(letraPorDebajoDelSuelo(['.x { font-size: 12px; }'])).toHaveLength(1);
+    expect(letraPorDebajoDelSuelo(['.x { font-size: 12.5px; }'])).toEqual([]);
+  });
+
+  /**
+   * CONTROL NEGATIVO de la escala: una escala aplanada —cuerpo y rótulo al mismo tamaño— tiene que
+   * fallar. Es la regresión más probable, porque «subir todo a 13» parece la solución obvia y deja
+   * la página sin jerarquía ninguna.
+   */
+  it('CONTROL NEGATIVO — una escala aplanada no es una escala', () => {
+    const plana = variables(sinComentarios(PROPIA.replace('--tipo-rotulo: 13px', '--tipo-rotulo: 14px')));
+    const cuerpo = enPixeles(plana.get('--tipo-cuerpo')!, plana)!;
+    const rotulo = enPixeles(plana.get('--tipo-rotulo')!, plana)!;
+    expect(rotulo).not.toBeLessThan(cuerpo);
+  });
+});
+
+/* ═══ El tope de medida ════════════════════════════════════════════════════════════════════════
+ *
+ * MEDIDO a 1600: `main` es `width: min(1500px, 100%)`, menos 248 px de barra lateral y 76 de
+ * padding = 1276 px de caja, y la prosa los cruzaba enteros. Son ~200 caracteres por renglón: el
+ * ojo pierde el principio de la línea siguiente. Eso solo ya es ilegible aunque la letra fuera
+ * grande, que es exactamente lo que pasaba.
+ */
+describe('el tope de medida de /config', () => {
+  const propia = sinComentarios(PROPIA);
+
+  it('la página tiene un tope de ancho de entre 1000 y 1250 px', () => {
+    const ancho = enPixeles(declaraciones(propia, '.config-pagina')['max-width'] ?? '', new Map());
+    expect(ancho, '.config-pagina no declara max-width').toBeDefined();
+    expect(ancho).toBeGreaterThanOrEqual(1000);
+    expect(ancho).toBeLessThanOrEqual(1250);
+  });
+
+  /**
+   * Cada bloque de texto corrido tiene que citar `--medida`. La lista es la de los que EXISTEN y
+   * llevan prosa; si mañana aparece otro y no la cita, esta prueba no lo ve — por eso hay además
+   * la comprobación en Chrome, que mide el renglón de verdad.
+   */
+  it.each([
+    ['.config-intro', 'la frase de la cabecera'],
+    ['.config-area-descripcion', 'la frase que orienta cada pestaña'],
+    ['.config-detalle', 'lo que se pliega'],
+    ['.config-permiso', 'el permiso dicho en castellano'],
+  ])('%s tiene tope de renglón (%s)', (selector) => {
+    expect(declaraciones(propia, selector)['max-width']).toBe('var(--medida)');
+  });
+
+  it('`--medida` está declarada y es un tope de caracteres, no de píxeles', () => {
+    // `ch` y no `px`: el renglón se mide en caracteres, y si la letra sube el tope tiene que subir
+    // con ella. Un tope en píxeles se queda atrás en cuanto alguien toca la escala.
+    // Del bloque BASE: en el `@media` de móvil `--medida` es `100%` a propósito, porque ahí el
+    // ancho lo manda la pantalla y un tope en `ch` haría creer que hay tope donde no lo hay.
+    expect(declaraciones(propia, '.config-pagina')['--medida']).toMatch(/^\d+ch$/);
+  });
+
+  /** CONTROL NEGATIVO: sin el tope, la prosa vuelve a cruzar el ancho entero. */
+  it('CONTROL NEGATIVO — detecta que se le quite el tope a la descripción del área', () => {
+    const roto = sinComentarios(PROPIA).replace(
+      /\.config-area-descripcion\s*\{[^{}]*\}/,
+      '.config-area-descripcion { margin: 0 0 8px; }',
+    );
+    expect(roto).not.toBe(sinComentarios(PROPIA));
+    expect(declaraciones(roto, '.config-area-descripcion')['max-width']).toBeUndefined();
+  });
+});
+
+/* ═══ Una sola tira de pestañas ════════════════════════════════════════════════════════════════
+ *
+ * MEDIDO en Chrome: la página dibujaba DOS tiras `role="tablist"` apiladas —la de las áreas a
+ * y=307 y la del modo de alta a y=389— con la misma forma exacta: mismo `padding`, mismo
+ * `border-radius`, mismo fondo, mismo 12,5 px. Dos controles idénticos dicen que hacen lo mismo, y
+ * no lo hacen: uno cambia de ÁREA de la configuración y el otro elige un MODO dentro de un solo
+ * formulario. La segunda pasó a ser un segmentado DENTRO del panel del alta.
+ */
+describe('el elegir-modo del alta ya no es una segunda tira de pestañas', () => {
+  const todas = sinComentarios(GLOBAL) + sinComentarios(PROPIA) + sinComentarios(INTERRUPTORES);
+
+  it('las clases de la tira vieja no existen en ninguna hoja', () => {
+    expect(todas).not.toMatch(/\.alta-modos\b/);
+    expect(todas).not.toMatch(/\.alta-modo(?![\w-])/);
+  });
+
+  /**
+   * Y no se parecen. Un `padding` + `border-radius` + `background` idénticos es exactamente lo que
+   * las hacía indistinguibles: se comparan los tres a la vez porque coincidir en uno solo no dice
+   * nada (todo el resto de la consola usa `border-radius: 10px`).
+   */
+  it('el segmentado del alta no se dibuja igual que las pestañas de la página', () => {
+    const tira = declaraciones(sinComentarios(PROPIA), '.config-tabs');
+    const segmento = declaraciones(sinComentarios(PROPIA), '.alta-segmento');
+    expect(segmento['display'], '.alta-segmento no existe en la hoja').toBeDefined();
+    const firma = (d: Record<string, string>) => [d['padding'], d['border-radius'], d['display']].join('|');
+    expect(firma(segmento)).not.toBe(firma(tira));
+    // Y es compacto: un `flex` a secas volvería a ocupar el ancho del panel, que es la mitad de
+    // por qué se leían como lo mismo.
+    expect(segmento['display']).toBe('inline-flex');
+  });
+
+  /** CONTROL NEGATIVO: si alguien le copia la firma de la tira, se marca. */
+  it('CONTROL NEGATIVO — detecta que el segmentado vuelva a copiar la forma de la tira', () => {
+    const tira = declaraciones(sinComentarios(PROPIA), '.config-tabs');
+    const clonado = { padding: tira['padding'], 'border-radius': tira['border-radius'], display: tira['display'] };
+    const firma = (d: Record<string, string>) => [d['padding'], d['border-radius'], d['display']].join('|');
+    expect(firma(clonado)).toBe(firma(tira));
+  });
+});
+
+
+/**
+ * El otro extremo del cable de `data-numero`. `CollectionTable` marca la columna (y su prueba de
+ * DOM lo comprueba); acá se comprueba que la marca DESEMBOQUE en algo. Sin las dos, la marca puede
+ * estar puesta y no alinear nada, o la regla puede existir y no alcanzar a ninguna celda.
+ */
+describe('las columnas de números se alinean a la derecha', () => {
+  it('la hoja tiene una regla atada a `data-numero` que alinea a la derecha', () => {
+    const regla = declaraciones(sinComentarios(PROPIA), "td[data-numero='true']");
+    expect(regla['text-align'], "no hay regla para td[data-numero='true']").toBe('right');
+    expect(regla['font-variant-numeric']).toBe('tabular-nums');
+  });
+
+  /** CONTROL NEGATIVO: sin la regla, la marca del componente no alinea nada. */
+  it('CONTROL NEGATIVO — detecta que se borre la regla', () => {
+    const roto = sinComentarios(PROPIA).replace(/text-align: right;/, 'text-align: left;');
+    expect(roto).not.toBe(sinComentarios(PROPIA));
+    expect(declaraciones(roto, "td[data-numero='true']")['text-align']).not.toBe('right');
+  });
+});
+
+
+/**
+ * **Un párrafo de texto no puede ser un contenedor de flex.**
+ *
+ * MEDIDO en Chrome a 1600×1000 sobre la pestaña «Roles de agente»: `.muted` global es
+ * `display: inline-flex` —pensado para una marca de una línea junto a un icono— y los tres
+ * párrafos de esa pestaña lo llevan en un `<p>` con un `<strong>` dentro. Cada trozo de texto se
+ * volvía un ítem de flex y la frase salía en tres columnas de 340, 150 y 730 px, para leer en
+ * zigzag. Es anterior a este cambio y no lo veía nadie: jsdom no hace layout.
+ */
+describe('los párrafos de /config son párrafos', () => {
+  it('un `<p class="muted">` vuelve a ser bloque dentro de la vista', () => {
+    const regla = declaraciones(sinComentarios(PROPIA), 'p.muted');
+    expect(regla['display'], 'no hay regla para p.muted dentro de .config-pagina').toBe('block');
+    expect(regla['max-width']).toBe('var(--medida)');
+  });
+
+  /**
+   * CONTROL NEGATIVO: el valor EXACTO que tiene `.muted` en la hoja global es el que rompe. Si
+   * alguien «simplifica» la regla de arriba a `display: inline-flex`, o la borra, esto lo marca.
+   */
+  it('CONTROL NEGATIVO — `.muted` global sigue siendo inline-flex, que es lo que hay que tapar', () => {
+    expect(declaraciones(sinComentarios(GLOBAL), '.muted')['display']).toBe('inline-flex');
+    const roto = sinComentarios(PROPIA).replace(/p\.muted \{[^{}]*\}/, 'p.muted { color: red; }');
+    expect(roto).not.toBe(sinComentarios(PROPIA));
+    expect(declaraciones(roto, 'p.muted')['display']).not.toBe('block');
+  });
+});
+
+
+/* ═══ El interruptor medía 2 px ════════════════════════════════════════════════════════════════
+ *
+ * MEDIDO en Chrome sobre el bundle de producción, `getComputedStyle(input).width` = `2px`. La
+ * pastilla de 36×20 no se dibujaba: en pantalla quedaba sólo el punto de 14 px del `::after`, así
+ * que el control central de esta vista —«los permisos como interruptores»— no se leía como un
+ * interruptor ni decía de qué lado estaba. Anterior a este cambio y a la vista de todos.
+ *
+ * La causa es de CASCADA, no de valor: `styles.css` declara `.config-area input[type="checkbox"] {
+ * width: auto }` con la MISMA especificidad que `.config-area input.interruptor`, y vite concatena
+ * `styles.css` la última. Un `width: 36px` correcto, escrito antes, y perdiendo por el orden.
+ */
+/**
+ * Especificidad de un selector simple, como un solo número comparable: ids × 10 000, más
+ * clases/atributos/pseudo-clases × 100, más tipos. Alcanza para los selectores de esta hoja, que
+ * no tienen combinadores raros ni `:is()`.
+ */
+export function especificidad(selector: string): number {
+  const ids = (selector.match(/#[\w-]+/g) ?? []).length;
+  const clases = (selector.match(/\.[\w-]+|\[[^\]]+\]|:[\w-]+(?:\([^)]*\))?/g) ?? []).length;
+  const tipos = (selector.replace(/\[[^\]]+\]|[#.:][\w-]+(?:\([^)]*\))?/g, ' ').match(/[a-zA-Z][\w-]*/g) ?? []).length;
+  return ids * 10000 + clases * 100 + tipos;
+}
+
+describe('el interruptor le gana a la regla de casilla de la hoja global', () => {
+  it('el selector del interruptor es MÁS específico que el de la casilla genérica', () => {
+    const propio = /(\.config-area\s+input(?:\[[^\]]+\])?\.interruptor)\s*\{[^{}]*width:\s*36px/
+      .exec(sinComentarios(INTERRUPTORES));
+    expect(propio, 'no hay ninguna regla que le dé 36px de ancho al interruptor').not.toBeNull();
+
+    const ajeno = /(\.config-area\s+input\[type="checkbox"\][^{]*)\{[^{}]*width:\s*auto/
+      .exec(sinComentarios(GLOBAL));
+    expect(ajeno, 'la regla de `width: auto` de styles.css ya no existe: revisá si hace falta esto').not.toBeNull();
+
+    // Empate de especificidad = gana la de abajo, y `styles.css` va la ÚLTIMA en el bundle (está
+    // escrito en `HOJAS_DE_LA_CONSOLA`, de `styles.legibilidad.test.ts`, y comprobado sobre el
+    // bundle). Por eso no alcanza con que el valor sea el correcto: tiene que GANAR.
+    expect(especificidad(propio![1])).toBeGreaterThan(especificidad('.config-area input[type="checkbox"]'));
+  });
+
+  /**
+   * CONTROL NEGATIVO: el selector EXACTO que estaba desplegado. Empata, y empatar es perder porque
+   * `styles.css` va después. Sin este control, la prueba de arriba podría estar comparando dos
+   * números que siempre difieren y aprobaría cualquier cosa.
+   */
+  it('CONTROL NEGATIVO — el selector que estaba desplegado empata, y empatar es perder', () => {
+    expect(especificidad('.config-area input.interruptor'))
+      .toBe(especificidad('.config-area input[type="checkbox"]'));
   });
 });

@@ -1,5 +1,5 @@
 import {
-  accionDeRol, claveDeFila, columnasDe, identidadFundida, rolesDisponibles,
+  accionDeRol, claveDeFila, columnaNumerica, columnasDe, identidadFundida, rolesDisponibles,
 } from './collection-table';
 
 const membership = {
@@ -73,4 +73,30 @@ it('identifica la fila por su clave primaria y sólo cae al índice si le falta 
   expect(claveDeFila('memberships', membership, 3)).toBe('Miguel/grp.miguel/janus');
   expect(claveDeFila('acl_edges', { from_tenant: 'Steven', to_tenant: 'Isa' }, 0)).toBe('Steven/Isa');
   expect(claveDeFila('memberships', { alias: 'janus' }, 7)).toBe('fila-7');
+});
+
+
+/* --- Columnas de números ----------------------------------------------------------------------
+ *
+ * Una columna de números alineada a la izquierda obliga a comparar magnitudes contando dígitos:
+ * `8` y `120` empiezan en el mismo píxel y el que PARECE más grande es el que tiene más
+ * caracteres. `/config` tiene unas cuantas —`max_per_hour`, `contact_ttl_days`, `priority`— y
+ * todas se leen para comparar.
+ */
+it('reconoce una columna de números y no se deja engañar por lo que sólo se le parece', () => {
+  expect(columnaNumerica([{ n: 1 }, { n: 120 }], 'n')).toBe(true);
+  // Los nulos y las claves ausentes no desmienten nada: sigue siendo la columna de un número.
+  expect(columnaNumerica([{ n: 1 }, { n: null }, {}], 'n')).toBe(true);
+
+  // Un booleano NO es un número aunque se le parezca desde lejos, y una columna mixta alineada a
+  // la derecha se lee PEOR que a la izquierda: «12» y «sin límite» dejan de compartir margen.
+  expect(columnaNumerica([{ n: true }, { n: false }], 'n')).toBe(false);
+  expect(columnaNumerica([{ n: 1 }, { n: 'sin límite' }], 'n')).toBe(false);
+  expect(columnaNumerica([{ n: '12' }], 'n')).toBe(false);
+  expect(columnaNumerica([{ n: Number.NaN }], 'n')).toBe(false);
+
+  // Y sin ningún número no hay columna numérica: si no, una tabla vacía alinearía todo a la
+  // derecha y una columna de puros `null` se leería como si tuviera cifras.
+  expect(columnaNumerica([], 'n')).toBe(false);
+  expect(columnaNumerica([{ n: null }, {}], 'n')).toBe(false);
 });

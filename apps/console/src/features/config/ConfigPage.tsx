@@ -1,11 +1,12 @@
 import { Braces, RotateCcw, Save, SearchCheck, ShieldOff } from 'lucide-react';
 import { useMemo, useState, type SyntheticEvent } from 'react';
 import { useApi } from '../../api/context';
-import type { AnyConfigResource, ConfigAction, ConfigMutation, ConfigResource } from '../../api/types';
+import type {
+  AnyConfigResource, ConfigAction, ConfigMutation, ConfigResource, ConsoleAccess,
+} from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import {
-  Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel, PermissionBadge, RefreshButton,
-  Time, Unknown
+  Badge, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown
 } from '../../components/ui';
 import { permissionState } from '../../lib';
 import { CONFIG_SIN_CONTROL_REASON, onNavClick } from '../../navigation';
@@ -397,16 +398,27 @@ export function ConfigPage() {
       : <ErrorState error={config.error} onRetry={config.reload} />;
   }
 
-  return <>
-    <PageHeader eyebrow="Atomic control plane" title="Ajustes & rollback" description="Cada colección como tabla, los permisos como interruptores que se aplican al pulsarlos, y el JSON crudo detrás de un desplegable." actions={<RefreshButton onClick={config.reload} loading={config.loading} />} />
-    <PermissionBadge access={access.data} permission="config.write" />
+  return <div className="config-pagina">
+    {/* UN nombre para la pantalla, y es el del menú lateral. Antes eran tres a la vez: el menú
+        decía «Ajustes y altas», el `h1` decía «Ajustes & rollback» y encima había un antetítulo
+        en inglés, «ATOMIC CONTROL PLANE», en una consola que está entera en castellano. Tres
+        nombres para una pantalla es tres veces la pregunta «¿es esto lo que buscaba?». */}
+    <header className="config-encabezado">
+      <div>
+        <h1>Ajustes y altas</h1>
+        <p className="config-intro">
+          Cada colección es una tabla y cada permiso un interruptor que se aplica al pulsarlo.
+        </p>
+      </div>
+      <RefreshButton onClick={config.reload} loading={config.loading} />
+    </header>
 
     {/* Sin permiso NO se esconde nada: las tablas se ven igual y los botones quedan inertes con el
-        motivo escrito. Un panel ausente no distingue «no tengo permiso» de «esto no existe». */}
-    {soloLectura ? <p className="notice" role="note">
-      Solo lectura: {CONFIG_SIN_CONTROL_REASON} Los datos se muestran igual; lo que está apagado es
-      todo lo que escribe.
-    </p> : null}
+        motivo escrito. Un panel ausente no distingue «no tengo permiso» de «esto no existe».
+        El motivo va DENTRO de la línea del permiso y no en un cartel aparte debajo: eran dos
+        avisos apilados diciendo lo mismo con distintas palabras, y dos carteles seguidos que dicen
+        lo mismo enseñan a saltarse los dos. */}
+    <PermisoDeEscritura access={access.data} />
 
     {/* `useResource` conserva el último dato bueno cuando una relectura falla: sin este cartel, un
         GET caído no se notaba en ningún sitio y la pantalla seguía mostrando datos viejos con cara
@@ -433,8 +445,19 @@ export function ConfigPage() {
 
     {/* La descripción del área va abierta, no en un tooltip: es lo primero que hay que leer al
         entrar, y esconder detrás de un signo de interrogación justo lo que orienta sería repetir el
-        defecto que este cambio corrige. */}
-    {activa ? <p className="config-area-descripcion">{activa.area.descripcion}</p> : null}
+        defecto que este cambio corrige.
+
+        Abierta va UNA frase. El resto —lo que explica por qué la pestaña importa— va plegado: el
+        operador que entra veinte veces al día ya lo sabe y pagaba el scroll veinte veces. Es un
+        `<details>` y no un tooltip a propósito: lo plegado se puede leer con el teclado, se puede
+        copiar y no depende del ratón. */}
+    {activa ? <>
+      <p className="config-area-descripcion">{activa.area.descripcion}</p>
+      <details className="config-detalle">
+        <summary>Qué es exactamente «{activa.area.label}»</summary>
+        <p>{activa.area.detalle}</p>
+      </details>
+    </> : null}
 
     <div className="config-area" role="tabpanel" aria-label={activa?.area.label ?? 'Configuración'}>
       {/* «Alta rápida» y el wizard viven en «Espacios y miembros»: son exactamente las altas de
@@ -545,7 +568,39 @@ export function ConfigPage() {
     </details>
       </> : null}
     </div>
-  </>;
+  </div>;
+}
+
+/**
+ * El permiso de escritura, dicho en castellano.
+ *
+ * Lo primero que se leía en `/config` era `RBAC config.write ALLOW Roles: operator`: cuatro jergas
+ * seguidas, a 11,52 px, encima de todo lo demás. Eso no le contesta al operador la única pregunta
+ * que tiene al entrar —«¿puedo tocar esto?»— y encima ocupa el sitio de la respuesta.
+ *
+ * El identificador crudo NO se tira: es lo que hay que citar para pedir el permiso a quien
+ * administra, y esconderlo dejaría a quien lo necesita sin nada que llevar. Va detrás de la frase
+ * y en un escalón secundario.
+ *
+ * `unknown` —no se pudo leer el RBAC— dice que la pantalla queda habilitada, que es lo que hace:
+ * ante la duda no se le quita nada a nadie y el servidor rechaza igual si no corresponde. Mismo
+ * criterio que `configNavAvailability` y que `soloLectura`.
+ */
+function PermisoDeEscritura({ access }: { access?: ConsoleAccess }) {
+  const estado = permissionState(access, 'config.write');
+  const texto = estado === 'allowed'
+    ? 'Podés cambiar la configuración; todo cambio se deshace desde «Historial y JSON».'
+    : estado === 'denied'
+      // La frase EXACTA de la barra lateral (`CONFIG_SIN_CONTROL_REASON`): dos redacciones
+      // distintas para la misma negativa le harían creer al operador que son dos problemas.
+      ? `Solo lectura: ${CONFIG_SIN_CONTROL_REASON} Los datos se muestran igual; lo que está `
+        + 'apagado es todo lo que escribe.'
+      : 'No se pudo leer tu permiso. La pantalla queda habilitada y decide el servidor.';
+  const roles = access?.roles?.length ? access.roles.join(', ') : 'UNKNOWN';
+  return <p className="config-permiso" data-estado={estado} role="note">
+    {texto}
+    <span className="config-permiso-jerga">RBAC config.write · roles {roles}</span>
+  </p>;
 }
 
 /**

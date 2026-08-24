@@ -314,7 +314,8 @@ it('«Alta rápida» y el wizard dejan de estar los dos abiertos: son dos modos 
   expect(await screen.findByRole('heading', { name: /alta rápida/i })).toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: /wizard de espacios/i })).not.toBeInTheDocument();
 
-  await user.click(screen.getByRole('tab', { name: /espacio completo/i }));
+  // Segmentado, no pestaña: ver `AltaDeEspacios`.
+  await user.click(screen.getByRole('button', { name: /espacio completo/i }));
   expect(await screen.findByRole('heading', { name: /wizard de espacios/i })).toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: /alta rápida/i })).not.toBeInTheDocument();
 });
