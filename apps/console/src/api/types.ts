@@ -793,6 +793,14 @@ export interface AgentDirective {
    * significa que no se miró. La pantalla tiene que decir una cosa y no la otra.
    */
   publicado: boolean;
+  /**
+   * ¿El servidor MIDIÓ de verdad el contenedor? `publicado: true` sólo dice que la ruta existe;
+   * puede contestar 200 sin haber mirado nada (sin hechos de entorno, o con rutas deducidas del
+   * registro, que falla en 5 de 14 alias). Sin este campo la consola no puede distinguir «no hay
+   * fichero» de «no se miró», y llegó a afirmar lo primero cuando pasaba lo segundo.
+   * Los gateways anteriores no lo mandan: ahí vale la regla del `null` en `files`/`memory`.
+   */
+  medido?: boolean;
   /** Por qué no se pudo leer, cuando `publicado` es false. */
   motivo?: string;
   observed_at?: string | null;

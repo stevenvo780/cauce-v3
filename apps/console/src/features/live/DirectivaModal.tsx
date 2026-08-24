@@ -7,7 +7,7 @@ import { useResource } from '../../api/use-resource';
 import { Time } from '../../components/ui';
 import { RoleBriefTab, type RoleBriefTabProps } from './RoleBriefTab';
 import { CAPAS_PENDIENTES, ubicacionDeclarada, type UbicacionDeclarada } from './capas-pendientes';
-import { avisosDeCapas, totalDeMemoria, type AvisoDeCapas } from './directiva';
+import { avisosDeCapas, medicionDeCapa, totalDeMemoria, type AvisoDeCapas } from './directiva';
 
 /**
  * LAS TRES CAPAS DE DIRECTIVA, EN UN DIÁLOGO ANCHO Y NO DENTRO DEL CAJÓN.
@@ -395,20 +395,27 @@ function MiroYNoHay({ children }: { children: ReactNode }) {
 type RecursoDirectiva = { data?: AgentDirective; error?: Error; loading: boolean };
 
 function CapaDeFicheros({ recurso }: { recurso: RecursoDirectiva }) {
-  if (recurso.loading && !recurso.data) return <p className="muted">Buscando los CLAUDE.md del contenedor…</p>;
-  if (recurso.error && !recurso.data) return <NoSeMiro que="el manual del sitio" motivo={recurso.error.message} />;
-  if (!recurso.data?.publicado) return <NoSeMiro que="el manual del sitio" motivo={recurso.data?.motivo} />;
-
-  const ficheros = recurso.data.files ?? [];
-  if (ficheros.length === 0) {
+  /*
+   * Quién decide qué se pinta es `medicionDeCapa`, y no una cadena de guardas aquí, porque el
+   * criterio —«¿ocurrió la lectura?»— tiene que poder probarse solo. Esta columna llegó a
+   * afirmar «no hay ningún CLAUDE.md» sobre respuestas en las que el servidor no había mirado
+   * nada; ver la cabecera de `medicionDeCapa` en `directiva.ts`.
+   */
+  const medicion = medicionDeCapa(recurso, 'files');
+  if (medicion === 'cargando') return <p className="muted">Buscando los CLAUDE.md del contenedor…</p>;
+  if (medicion === 'no-se-miro') {
+    return <NoSeMiro que="el manual del sitio" motivo={recurso.error?.message ?? recurso.data?.motivo} />;
+  }
+  if (medicion === 'miro-y-no-hay') {
     return (
       <MiroYNoHay>
-        Miró el contenedor{recurso.data.container_id ? ` (${recurso.data.container_id})` : ''} y no
+        Miró el contenedor{recurso.data?.container_id ? ` (${recurso.data.container_id})` : ''} y no
         hay ningún <code>CLAUDE.md</code>. Este alias arranca cada sesión sin manual del sitio.
       </MiroYNoHay>
     );
   }
 
+  const ficheros = recurso.data?.files ?? [];
   return (
     <ul className="directiva-ficheros">
       {ficheros.map((fichero, indice) => (
@@ -438,11 +445,28 @@ function CapaDeFicheros({ recurso }: { recurso: RecursoDirectiva }) {
 }
 
 function CapaDeMemoria({ recurso }: { recurso: RecursoDirectiva }) {
-  if (recurso.loading && !recurso.data) return <p className="muted">Leyendo el índice de memoria…</p>;
-  if (recurso.error && !recurso.data) return <NoSeMiro que="la memoria" motivo={recurso.error.message} />;
-  if (!recurso.data?.publicado) return <NoSeMiro que="la memoria" motivo={recurso.data?.motivo} />;
+  const medicion = medicionDeCapa(recurso, 'memory');
+  if (medicion === 'cargando') return <p className="muted">Leyendo el índice de memoria…</p>;
+  if (medicion === 'no-se-miro') {
+    /*
+     * Dos cosas distintas caen aquí y las dos son «no se miró»: que el gateway no publique la
+     * ruta, y que la publique sin haber medido el contenedor. La segunda es la que llegaba antes
+     * hasta el «el índice llegó vacío», que afirma un cero que nadie contó.
+     */
+    const publicaFicherosPeroNoMemoria =
+      recurso.data?.publicado === true && recurso.data.medido !== false && recurso.data.files != null;
+    if (publicaFicherosPeroNoMemoria) {
+      return (
+        <SinMedir>
+          Este gateway publica los ficheros del alias pero no su índice de memoria, así que cuánto
+          recuerda es un dato que no tenemos. No es cero.
+        </SinMedir>
+      );
+    }
+    return <NoSeMiro que="la memoria" motivo={recurso.error?.message ?? recurso.data?.motivo} />;
+  }
 
-  const memoria = recurso.data.memory;
+  const memoria = recurso.data?.memory;
   const total = totalDeMemoria(recurso.data);
   if (!memoria || total === undefined) {
     return (

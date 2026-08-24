@@ -206,6 +206,50 @@ export function primerasLineas(texto: string | null | undefined, cuantas: number
     .slice(0, cuantas);
 }
 
+/**
+ * ¿La lectura de esta capa OCURRIÓ, y qué encontró?
+ *
+ * Esto existe porque la consola llegó a afirmar una ausencia que nadie había medido. El gateway
+ * degrada bien —`{publicado: true, motivo: 'contenedor no medido todavía', files: null}`— pero
+ * la columna sólo enseñaba el aviso cuando `publicado` era FALSO, así que ese motivo no se veía
+ * nunca y en su lugar salía «miró el contenedor y no hay ningún CLAUDE.md». Medido el 24-ago-2026
+ * dentro de los contenedores, eso era falso en 11 de los 12 alias que pude mirar.
+ *
+ * El discriminante correcto no es «¿publica el endpoint?». Es «¿ocurrió la lectura?»:
+ *
+ *   `null`      → NO se miró. Prohibido afirmar la ausencia; hay que enseñar el motivo.
+ *   `[]` / `0`  → se miró y no hay. Ahí sí se puede afirmar.
+ *
+ * `medido` manda sobre todo lo demás para que un gateway que degrade rellenando listas vacías
+ * —en vez de con `null`— tampoco pueda arrastrarnos a la afirmación. Los gateways viejos no
+ * mandan ese campo: para ellos vale la regla del `null`, que es la que ya cumplían.
+ */
+export type MedicionDeCapa = 'cargando' | 'no-se-miro' | 'miro-y-no-hay' | 'hay-datos';
+
+export interface RecursoDeCapa {
+  data?: AgentDirective;
+  error?: Error;
+  loading?: boolean;
+}
+
+export function medicionDeCapa(recurso: RecursoDeCapa, campo: 'files' | 'memory'): MedicionDeCapa {
+  if (!recurso.data) return recurso.loading ? 'cargando' : 'no-se-miro';
+  if (!recurso.data.publicado) return 'no-se-miro';
+  if (recurso.data.medido === false) return 'no-se-miro';
+
+  if (campo === 'files') {
+    const ficheros = recurso.data.files;
+    if (ficheros === null || ficheros === undefined) return 'no-se-miro';
+    return ficheros.length === 0 ? 'miro-y-no-hay' : 'hay-datos';
+  }
+
+  const memoria = recurso.data.memory;
+  if (memoria === null || memoria === undefined) return 'no-se-miro';
+  const total = totalDeMemoria(recurso.data);
+  if (total === undefined) return 'no-se-miro';
+  return total === 0 ? 'miro-y-no-hay' : 'hay-datos';
+}
+
 /** Cuántas entradas de memoria hay DE VERDAD, aunque la lista venga recortada. */
 export function totalDeMemoria(directiva: AgentDirective | undefined): number | undefined {
   const memoria = directiva?.memory;
