@@ -51,6 +51,7 @@ import {
   type TerminalTargetResolution,
 } from './fleet';
 import { explicarDenegacionPty, traducirCodigosEnTexto, type DenegacionExplicada } from './denegaciones';
+import { TEXTO_DOCTRINA } from './doctrina';
 import { closePtySession, readPtySession, subscribePtySession } from './pty-session';
 import { liveTuiGate, terminalChannelGate } from './plugin';
 import {
@@ -924,7 +925,12 @@ function GridContainer({
           </div>
         ) : null}
       </div>
-      <footer className="terminal-doctrine"><ShieldCheck size={14} aria-hidden="true" /> Cliente de transporte: no crea workers remotos, no ejecuta adapters y no persiste sesiones.</footer>
+      {/*
+        El pie se repliega en modo observación (ver `terminal-panel.css`): 30 px que dicen una
+        frase que no cambia nunca, tomados del único sitio del que pueden salir —el terminal—. La
+        frase no se pierde: la misma constante se escribe en el desplegable de la cabecera.
+      */}
+      <footer className="terminal-doctrine"><ShieldCheck size={14} aria-hidden="true" /> {TEXTO_DOCTRINA}</footer>
     </div>
   );
 }

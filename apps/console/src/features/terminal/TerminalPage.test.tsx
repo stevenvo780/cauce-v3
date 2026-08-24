@@ -99,7 +99,11 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
 
   expect(await screen.findByText(/Aceptado por el control plane/i)).toBeInTheDocument();
   expect(screen.getByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.getByText(/no crea workers remotos/i)).toBeInTheDocument();
+  // `getAllByText` y no `getByText`: desde que el pie de doctrina se repliega en modo observación,
+  // la misma frase se escribe TAMBIÉN en el desplegable «Estado de la flota» de la cabecera —desde
+  // una sola constante, `doctrina.ts`— para que replegarlo no la haga desaparecer de la vista. Lo
+  // que este caso afirma sigue siendo lo mismo: la doctrina está escrita en la página.
+  expect(screen.getAllByText(/no crea workers remotos/i).length).toBeGreaterThan(0);
   // Timeout explícito, y no por lentitud tolerada: este caso renderiza la barra lateral entera —15
   // alias, cada uno resolviendo su estado de PTY— y encima escribe un mensaje carácter por carácter
   // con userEvent. Aislado tarda ~2,7 s; corriendo detrás de los otros 31 archivos, con la máquina

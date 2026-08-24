@@ -1,10 +1,11 @@
-import { Activity, MonitorPlay, RadioTower, RefreshCw, ShieldCheck, TerminalSquare, Wifi } from 'lucide-react';
+import { Activity, ChevronDown, MonitorPlay, RadioTower, RefreshCw, ShieldCheck, TerminalSquare, Wifi } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Badge, PageHeader } from '../../components/ui';
 import { permissionState } from '../../lib';
 import { listTerminalTargets } from './api';
+import { TEXTO_DOCTRINA } from './doctrina';
 import { adapterBreakdown, adapterBreakdownText, buildFleetAgents, countLiveTuiTargets, countOnlinePtyTargets } from './fleet';
 import { OperatorWorkspace } from './OperatorWorkspace';
 import { ultimateTerminalGate } from './plugin';
@@ -82,27 +83,69 @@ export function TerminalPage() {
     targets.reload();
   }
 
+  /*
+   * ═══ MODO OBSERVACIÓN: LO QUE SE MIRA ANTES DE ABRIR NO OCUPA ALTO MIENTRAS SE MIRA UNA TUI ═══
+   *
+   * Los seis contadores contestan una sola pregunta, y es de ANTES: «¿puedo abrir una terminal, y
+   * de quién?». Ninguno habla del alias que estás mirando y ninguno cambia mientras lo mirás. Con
+   * una sesión abierta pasan a un desplegable que vive en la fila de la cabecera —o sea que cuesta
+   * CERO renglones— y vuelven enteros de un clic. MEDIDO a 1920x1080 antes de esto: la tira se
+   * llevaba 40 px más 10 de margen, y el pie de doctrina otros 30, sobre un terminal que se quedaba
+   * con el 54,1 % de la ventana.
+   *
+   * Sin ninguna sesión abierta NO se pliega nada: ahí esos seis datos son justamente lo que se vino
+   * a leer. Lo comprueba `densidad-observacion.test.tsx`, con su control negativo.
+   */
+  const observando = sesionesAbiertas > 0;
+  const contadores = (
+    <div className="terminal-overview" aria-label="Estado de Ultimate Terminal">
+      <article><span className="overview-icon online"><Wifi size={17} aria-hidden="true" /></span><div><small>Leases vigentes</small><strong>{online} / {agents.length || 'sin dato'}</strong></div><Badge tone={online ? 'online' : agents.length ? 'warning' : 'unknown'}>LIVE</Badge></article>
+      {/*
+        «3 / 6» se leía como «3 rotos». Son 3 disponibles y 3 que no reportaron estado, que no
+        es lo mismo: el contador ahora cuenta cada grupo por su nombre.
+      */}
+      <article><span className="overview-icon"><RadioTower size={17} aria-hidden="true" /></span><div><small>Adaptadores</small><strong>{adapters.data?.items ? adapterBreakdownText(adapterItems) : 'sin dato'}</strong></div><Badge tone={adapterCuenta.conFallo ? 'warning' : adapterCuenta.disponibles ? 'info' : 'unknown'}>SERVER</Badge></article>
+      <article><span className="overview-icon"><ShieldCheck size={17} aria-hidden="true" /></span><div><small>Tu permiso</small><strong>{connectState === 'allowed' ? 'CONCEDIDO' : connectState === 'denied' ? 'DENEGADO' : 'SIN DATO'}</strong></div><Badge tone={connectState === 'allowed' ? 'online' : connectState === 'denied' ? 'danger' : 'unknown'}>RBAC</Badge></article>
+      <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Canal</small><strong>{ptyEnabled ? 'PTY + FEED' : 'SÓLO FEED'}</strong></div><Badge tone={ptyEnabled ? 'online' : 'info'}>CLIENT</Badge></article>
+      <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Con PTY online</small><strong>{ptyOnline === undefined ? 'sin dato' : `${ptyOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={ptyOnline ? 'online' : ptyOnline === 0 ? 'warning' : 'unknown'}>TARGETS</Badge></article>
+      <article><span className="overview-icon"><MonitorPlay size={17} aria-hidden="true" /></span><div><small>Emiten su TUI</small><strong>{tuiOnline === undefined ? 'sin dato' : `${tuiOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={tuiOnline ? 'online' : tuiOnline === 0 ? 'warning' : 'unknown'}>TUI</Badge></article>
+    </div>
+  );
+
   return (
-    <div className="ultimate-terminal-page" data-tui={sesionesAbiertas > 0 ? 'abierta' : undefined}>
+    <div className="ultimate-terminal-page" data-tui={observando ? 'abierta' : undefined}>
       <PageHeader
         eyebrow={fleetLabel}
         title="Ultimate Terminal"
         description="Transmisión en vivo de la TUI de cada agente —la sesión tmux que está corriendo ahora— en solo lectura. Un alias sólo emite si el servidor publica su modo harness; el resto queda con su motivo escrito, nunca en verde."
-        actions={<button className="button secondary" type="button" onClick={refreshAll} disabled={status.loading && !status.data}><RefreshCw size={16} aria-hidden="true" /> Sincronizar todo</button>}
+        actions={
+          <>
+            {observando ? (
+              <details className="terminal-resumen">
+                {/*
+                  El rótulo lleva la cifra que de verdad se mira de reojo —leases vigentes— para que
+                  el desplegable cerrado no sea un botón mudo: se abre cuando hace falta el detalle,
+                  no para averiguar si pasa algo.
+                */}
+                <summary title="Los seis contadores de la flota y la doctrina de la vista. Se repliegan mientras mirás una TUI porque no cambian mientras la mirás.">
+                  <Wifi size={14} aria-hidden="true" />
+                  Estado de la flota
+                  <span className="terminal-resumen-cifra">{online} / {agents.length || '?'}</span>
+                  <ChevronDown size={13} aria-hidden="true" />
+                </summary>
+                <div className="terminal-resumen-panel">
+                  {contadores}
+                  {/* La misma constante que el pie de la rejilla, que en este modo se repliega. */}
+                  <p className="terminal-resumen-doctrina"><ShieldCheck size={13} aria-hidden="true" /> {TEXTO_DOCTRINA}</p>
+                </div>
+              </details>
+            ) : null}
+            <button className="button secondary" type="button" onClick={refreshAll} disabled={status.loading && !status.data}><RefreshCw size={16} aria-hidden="true" /> Sincronizar todo</button>
+          </>
+        }
       />
 
-      <div className="terminal-overview" aria-label="Estado de Ultimate Terminal">
-        <article><span className="overview-icon online"><Wifi size={17} aria-hidden="true" /></span><div><small>Leases vigentes</small><strong>{online} / {agents.length || 'sin dato'}</strong></div><Badge tone={online ? 'online' : agents.length ? 'warning' : 'unknown'}>LIVE</Badge></article>
-        {/*
-          «3 / 6» se leía como «3 rotos». Son 3 disponibles y 3 que no reportaron estado, que no
-          es lo mismo: el contador ahora cuenta cada grupo por su nombre.
-        */}
-        <article><span className="overview-icon"><RadioTower size={17} aria-hidden="true" /></span><div><small>Adaptadores</small><strong>{adapters.data?.items ? adapterBreakdownText(adapterItems) : 'sin dato'}</strong></div><Badge tone={adapterCuenta.conFallo ? 'warning' : adapterCuenta.disponibles ? 'info' : 'unknown'}>SERVER</Badge></article>
-        <article><span className="overview-icon"><ShieldCheck size={17} aria-hidden="true" /></span><div><small>Tu permiso</small><strong>{connectState === 'allowed' ? 'CONCEDIDO' : connectState === 'denied' ? 'DENEGADO' : 'SIN DATO'}</strong></div><Badge tone={connectState === 'allowed' ? 'online' : connectState === 'denied' ? 'danger' : 'unknown'}>RBAC</Badge></article>
-        <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Canal</small><strong>{ptyEnabled ? 'PTY + FEED' : 'SÓLO FEED'}</strong></div><Badge tone={ptyEnabled ? 'online' : 'info'}>CLIENT</Badge></article>
-        <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Con PTY online</small><strong>{ptyOnline === undefined ? 'sin dato' : `${ptyOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={ptyOnline ? 'online' : ptyOnline === 0 ? 'warning' : 'unknown'}>TARGETS</Badge></article>
-        <article><span className="overview-icon"><MonitorPlay size={17} aria-hidden="true" /></span><div><small>Emiten su TUI</small><strong>{tuiOnline === undefined ? 'sin dato' : `${tuiOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={tuiOnline ? 'online' : tuiOnline === 0 ? 'warning' : 'unknown'}>TUI</Badge></article>
-      </div>
+      {observando ? null : contadores}
 
       {relayUnavailable ? (
         <div className="terminal-relay-notice" role="status">
