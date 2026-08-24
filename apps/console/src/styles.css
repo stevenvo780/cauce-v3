@@ -799,6 +799,24 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
    * 66 a 130 px de alto, y `padding-bottom` del shell la acompaña para que no tape el pie de la
    * página. `env(safe-area-inset-bottom)` es por la barra de gestos de los teléfonos.
    */
+  /*
+   * 🔴 **La insignia se parte en dos renglones en pantalla estrecha.**
+   *
+   * `.badge` es `white-space: nowrap`, y en escritorio tiene que serlo: «EN REINTENTO» partido en
+   * dos es una pastilla deforme. Pero a 360 px el rótulo más largo que emite la consola —«Cola sin
+   * quien la consuma»— EXIGE 249 px de una pieza, y un `nowrap` es un mínimo intrínseco que ningún
+   * `max-width` de los padres puede negociar: empuja al contenedor entero.
+   *
+   * MEDIDO, y lo causé yo al subir la insignia de 12 a 12,5 px: `/live` pasó de caber a pedir
+   * 364 px en una ventana de 360, y con el documento desbordado los 794 elementos de la vista
+   * quedaban 4 px corridos. Cuatro píxeles, pero es la barra de scroll horizontal en un teléfono y
+   * la vista entera moviéndose de lado.
+   *
+   * Dejarla envolver acá es la misma decisión que ya se tomó tres reglas más abajo para los rótulos
+   * del menú, y por el mismo motivo: en un teléfono sobra sitio hacia abajo y no hacia el costado.
+   * El `nowrap` de escritorio no se toca.
+   */
+  .badge { white-space: normal; }
   .app-shell { display: block; padding-bottom: calc(var(--nav-inferior-alto) + 14px); }
   .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: var(--nav-inferior-alto); padding: 6px; border-top: 1px solid var(--border); border-right: 0; box-sizing: border-box; }
   .brand, .authority-note { display: none; }
