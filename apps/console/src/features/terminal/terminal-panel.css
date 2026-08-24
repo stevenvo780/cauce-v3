@@ -389,11 +389,65 @@
 .ultimate-terminal-page[data-tui="abierta"] .terminal-adapter-mobile { display: none; }
 
 /*
- * El alto REAL: sin esto `.terminal-grid-container` tiene `overflow-y: auto` sobre una caja que
- * crece sin tope, así que el que scrollea es el documento entero y el terminal se va de pantalla.
+ * ---------------------------------------------------------------------------------------------
+ * LA PÁGINA DEL TERMINAL SE CIÑE A LA VENTANA. NO ES UN TEXTO.
+ * ---------------------------------------------------------------------------------------------
+ *
+ * 🔴 `styles.css` le pone a `main` la anchura de LECTURA de la consola: `width: min(1500px, 100%)`
+ * centrado. Está bien para una tabla o un formulario y está mal para un espejo de una TUI, que es
+ * una rejilla de caracteres: cada píxel que no se le da es una columna que no se ve. MEDIDO en
+ * Chrome a 1920x1080, con una sesión abierta y la vista real: `main` medía 1.500 px de los 1.920
+ * de pantalla, `.ultimate-terminal-page` 1.424 y el hueco del terminal (`.pty-mount`) 804 x 614.
+ * O sea **496 px —el 25,8 % del ancho— sin usar**, y la PTY resultante de 99 columnas.
+ *
+ * `:has()` en vez de tocar `styles.css`: esa hoja tiene dueño en otro carril y la regla de `main`
+ * la comparten todas las vistas. Con `:has()` el cambio queda acotado a esta página y viaja en el
+ * fichero de esta página, que es donde alguien lo va a buscar.
  */
+main:has(> .ultimate-terminal-page) { width: 100%; }
+
+/*
+ * Y EL ALTO, SIN NÚMERO MÁGICO.
+ *
+ * 🔴 Aquí había `height: clamp(430px, calc(100dvh - 190px), 1180px)`. Ese 190 pretendía ser todo
+ * lo que hay ENCIMA de la caja —barra superior, relleno de `main`, cabecera de página, la tira de
+ * seis contadores, el aviso de plazas—. MEDIDO: son **228 px**, no 190. La caja se pasaba de la
+ * ventana por 38 px, el documento medía 1.188 en una pantalla de 1.080 y el borde de abajo del
+ * terminal quedaba debajo del pliegue. Un número que hay que adivinar vuelve a estar mal en cuanto
+ * la cabecera cambie de renglón, así que se quita: la caja pasa a ser lo que SOBRA.
+ *
+ * La cadena entera —`.workspace` a la altura de la ventana, `main` como hueco que crece, la página
+ * como columna flex y la caja con `flex: 1`— es lo que convierte «lo que sobra» en un alto de
+ * verdad. Cada `min-height: 0` es obligatorio: un hijo de flex se niega por defecto a encoger por
+ * debajo de su contenido, y con la caja llena de terminal ese contenido es enorme.
+ *
+ * Sólo con una sesión abierta. Sin ella la página es una página normal y tiene que poder crecer.
+ */
+.app-shell:has(.ultimate-terminal-page[data-tui="abierta"]) .workspace {
+  display: flex;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+}
+main:has(> .ultimate-terminal-page[data-tui="abierta"]) {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  /* El relleno de lectura (42/38/70) es un lujo que aquí se paga en columnas y filas perdidas. */
+  padding: 16px 18px 18px;
+}
+.ultimate-terminal-page[data-tui="abierta"] {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
 .ultimate-terminal-page[data-tui="abierta"] .ultimate-terminal-shell {
-  height: clamp(430px, calc(100dvh - 190px), 1180px);
+  height: auto;
+  flex: 1;
   min-height: 0;
   /*
    * `grid-template-rows` explícito: sin él la ÚNICA fila de esta rejilla es `auto`, o sea que se
@@ -420,6 +474,22 @@
 .terminal-panel-body { min-height: 0; }
 .terminal-panel-body .terminal-active-grid,
 .terminal-panel-body .terminal-console { min-height: 0; overflow: hidden; }
+/*
+ * 🔴 **Y `flex: 1` en la consola, que es donde se perdía el ancho ganado.**
+ *
+ * `.terminal-active-grid` lleva `display: flex` en un `style` en línea (OperatorWorkspace), así
+ * que `.terminal-console` NO es una celda de rejilla sino un hijo de flex, y `styles.css` no le
+ * da `flex`: se queda en `0 1 auto`, o sea del ancho de SU CONTENIDO. Y su contenido es el
+ * terminal, cuyo ancho lo fija el renderer en píxeles a partir de las columnas que ya tenía. La
+ * pescadilla: el hueco mide lo que mide el terminal y el terminal mide lo que mide el hueco, así
+ * que se queda clavado donde estaba y ensanchar la página no le llega nunca.
+ *
+ * MEDIDO a 1920x1080 tras darle a `main` el ancho de la ventana: `.terminal-grid-wrapper` pasó de
+ * 922 a 1.134 px y `.terminal-console` se quedó en 831 —los mismos 831 de antes—. Los 212 px
+ * ganados no llegaban al terminal. Con `flex: 1` el hueco lo manda el layout y el terminal lo
+ * sigue; `min-width: 0` es lo que le da permiso a encoger cuando la ventana se estrecha.
+ */
+.terminal-panel-body .terminal-active-grid > .terminal-console { min-width: 0; flex: 1; }
 
 /* La franja de pestañas de sesiones abiertas. Sustituye a la cabecera por panel. */
 .terminal-session-tab { display: inline-flex; align-items: stretch; flex: none; gap: 0; overflow: hidden; border: 1px solid var(--border); border-bottom: 0; border-radius: 9px 9px 0 0; background: rgb(255 255 255 / 3%); }
