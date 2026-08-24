@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -163,6 +163,53 @@ test("CONTROL NEGATIVO: un fichero sin bloque gestionado NO recorta nada", async
     const stdin = await correrUnTurno(home, "zeus");
     assert.ok(stdin.includes(PRIMARY_DUTY_HEADER));
   } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("con la siembra ENCENDIDA, el segundo turno ya va recortado", async () => {
+  /*
+   * Esto es lo que hace que el ahorro ocurra en producción sin ventana de mantenimiento: el
+   * primer turno tras una actualización escribe el bloque y manda el sobre entero; del segundo en
+   * adelante va recortado. Se cura solo.
+   */
+  const home = mkdtempSync(join(tmpdir(), "cauce-home-siembra-"));
+  const previo = process.env.CAUCE_SEMBRAR_CONTEXTO;
+  process.env.CAUCE_SEMBRAR_CONTEXTO = "1";
+  try {
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    /*
+     * MEDIDO: recorta ya en el PRIMER turno, no en el segundo. La siembra ocurre antes de armar
+     * el sobre, y en el camino headless el proceso del arnés arranca después de escribir: lee el
+     * fichero recién sembrado en esa misma invocación. Yo esperaba dos turnos y son cero.
+     */
+    const primero = await correrUnTurno(home, "zeus");
+    assert.ok(!primero.includes(PRIMARY_DUTY_HEADER), "no recortó ni siquiera tras sembrar");
+    assert.ok(existsSync(join(home, ".claude", "CLAUDE.md")), "no escribió el fichero");
+    const segundo = await correrUnTurno(home, "zeus");
+    assert.ok(!segundo.includes(PRIMARY_DUTY_HEADER), "el segundo turno dejó de recortar");
+    assert.equal(primero.length, segundo.length, "dos turnos iguales tendrían que dar el mismo sobre");
+  } finally {
+    if (previo === undefined) delete process.env.CAUCE_SEMBRAR_CONTEXTO;
+    else process.env.CAUCE_SEMBRAR_CONTEXTO = previo;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("CONTROL NEGATIVO: con la siembra APAGADA, el segundo turno sigue yendo entero", async () => {
+  const home = mkdtempSync(join(tmpdir(), "cauce-home-sin-siembra-"));
+  const previo = process.env.CAUCE_SEMBRAR_CONTEXTO;
+  delete process.env.CAUCE_SEMBRAR_CONTEXTO;
+  try {
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    await correrUnTurno(home, "zeus");
+    const segundo = await correrUnTurno(home, "zeus");
+    assert.ok(segundo.includes(PRIMARY_DUTY_HEADER), "recortó con la siembra apagada");
+    assert.equal(existsSync(join(home, ".claude", "CLAUDE.md")), false, "escribió el fichero estando apagada");
+  } finally {
+    if (previo !== undefined) process.env.CAUCE_SEMBRAR_CONTEXTO = previo;
     rmSync(home, { recursive: true, force: true });
   }
 });

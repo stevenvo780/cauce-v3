@@ -18,12 +18,13 @@ import type {
   StructuredOutput,
 } from "../sdk/types.js";
 import { PROTOCOL_VERSION } from "../sdk/types.js";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import {
   elFicheroYaLoDice,
   renglonDeContextoFijo,
   rutaDelContextoFijo,
   selloDesdeElDisco,
+  sembrarContextoFijo,
   type SelloDeContextoFijo,
 } from "./contexto-fijo.js";
 import { validateDeliveryOutput } from "../sdk/output-parser.js";
@@ -630,19 +631,54 @@ export class HarnessAdapter {
     if (!context) return context;
     // Un sello que ya venga en el sobre manda sobre el nuestro: lo puso quien mide desde fuera.
     if (context.context_seal) return context;
+    /*
+     * EN SESIÓN COMPARTIDA NO SE RECORTA, y esto no es prudencia: es corrección.
+     *
+     * El recorte se apoya en que el arnés cargue sus instrucciones del fichero. En el camino
+     * headless eso es cierto por construcción: el proceso arranca DESPUÉS de que escribimos, en
+     * este mismo turno. En sesión compartida no: la TUI se lanzó al crear el panel —horas o días
+     * antes— y leyó su `CLAUDE.md` entonces. Escribir el fichero ahora no se lo cuenta a nadie.
+     *
+     * Si recortáramos igual, el agente se quedaría sin contrato y NO daría error: contestaría mal
+     * y parecería que el modelo empeoró. Es exactamente el fallo que el sello venía a impedir.
+     *
+     * Lo que falta para levantar esta guarda es comparar la fecha del fichero con el arranque del
+     * proceso del panel (`/proc/<pid>/stat`). Mientras eso no esté medido, aquí se manda todo.
+     */
+    if (this.sharedSession) return context;
     const home = process.env.HOME;
     if (!home) return context;
     const ruta = rutaDelContextoFijo(this.definition.id, home);
     if (!ruta) return context;
-    let marca: number;
+    /*
+     * Que el fichero NO exista no es una salida: es justamente el caso de un alias recién creado,
+     * que es el que más necesita la siembra. Se sigue con marca -1, que nunca coincide con una
+     * caché previa y por tanto fuerza el intento.
+     */
+    let marca = -1;
     try {
       marca = statSync(ruta).mtimeMs;
     } catch {
-      this.selloEnCache = undefined;
-      return context;
+      marca = -1;
     }
     if (this.selloEnCache?.ruta !== ruta || this.selloEnCache.marca !== marca) {
-      const sello = selloDesdeElDisco(ruta, (r) => readFileSync(r, "utf8"));
+      let sello = selloDesdeElDisco(ruta, (r) => readFileSync(r, "utf8"));
+      if (!sello) {
+        /*
+         * No hay bloque, o el que hay no es éste. Se intenta sembrar y se vuelve a leer. La
+         * siembra decide sola si le toca (ver `sembrarContextoFijo`): apagada, sin ruta, o con un
+         * bloque que es de otro alias, no escribe nada y esto queda igual que antes.
+         *
+         * Va detrás de un interruptor porque escribir en el fichero de un alias es una acción con
+         * efecto fuera de este proceso, y encenderla es una decisión de despliegue, no del código.
+         */
+        const motivo = sembrarContextoFijo(ruta, textoFijoDelSobre(context), {
+          habilitado: process.env.CAUCE_SEMBRAR_CONTEXTO === "1",
+          leer: (r) => readFileSync(r, "utf8"),
+          escribir: (r, contenido) => writeFileSync(r, contenido, "utf8"),
+        });
+        if (motivo === "sembrado") sello = selloDesdeElDisco(ruta, (r) => readFileSync(r, "utf8"));
+      }
       this.selloEnCache = { ruta, marca, sello };
     }
     const sello = this.selloEnCache.sello;
