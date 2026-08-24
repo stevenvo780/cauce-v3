@@ -72,17 +72,38 @@ export const CONFIG_AREAS: readonly ConfigArea[] = [
   },
   {
     id: 'agentes',
+    /*
+     * La frase decía «El registro de bots, CON QUÉ PROGRAMA CORRE CADA UNO y a qué cuentas de IA
+     * llega», y esa mitad del medio era falsa: `agents.harness_id` no elige el arnés. El arnés real
+     * se deduce del binario en ejecución (`harnessFromCommand`,
+     * services/gateway/src/console/agent-documents.ts:280), y el 23-ago-2026 la columna se
+     * equivocaba en 5 de los 14 alias. El rótulo de entrada de la pestaña era el primer sitio donde
+     * la consola prometía algo que la tabla de abajo no cumple.
+     */
     label: 'Agentes y cuentas',
-    descripcion: 'El registro de bots, con qué programa corre cada uno y a qué cuentas de IA llega.',
-    detalle: 'Esto NO decide a quién se le entrega: eso son las membresías, en «Espacios y '
-      + 'miembros».',
+    descripcion: 'El registro de bots declarados y a qué cuentas de IA llega cada uno.',
+    detalle: 'Es un registro declarado, no un mando: el programa que corre cada bot sale del '
+      + 'binario en ejecución y no de la columna «Harness». Y esto NO decide a quién se le entrega: '
+      + 'eso son las membresías, en «Espacios y miembros».',
   },
   {
     id: 'avisos',
     label: 'Avisos y cadena',
     descripcion: 'Qué ve un bot de la cadena que él disparó y a qué humanos puede escribirle.',
+    /*
+     * La segunda mitad es el defecto ESPEJO del que persigue este cambio, y hay que decirlo aunque
+     * todavía no se pueda arreglar acá: `agent_chain_policies` tiene cinco columnas más (migración
+     * 019) que el servidor SÍ aplica —`loadChainPolicy`, packages/store/src/repository.ts:3068, y
+     * su uso en :3314 y :3503— y que ni el esquema de mutación
+     * (packages/protocol/src/schemas.ts:544) ni el `SELECT` del snapshot
+     * (packages/store/src/configuration.ts:185) incluyen. Callar un tope que gobierna la flota es
+     * la misma mentira que enseñar un campo que no gobierna nada, con el signo cambiado.
+     */
     detalle: 'Un aviso proactivo es un mensaje que nadie pidió: por eso cada destino declara a qué '
-      + 'conversación va, cada cuánto y cuántas veces por día.',
+      + 'conversación va, cada cuánto y cuántas veces por día. OJO: el servidor aplica además cinco '
+      + 'topes de delegación y la compuerta humana (abanico por turno 6, repeticiones de arista 3, '
+      + 'delegaciones por raíz 64) que ni se ven ni se editan desde acá — el protocolo todavía no '
+      + 'los expone. Hoy sólo se cambian por SQL.',
   },
   {
     id: 'historial',

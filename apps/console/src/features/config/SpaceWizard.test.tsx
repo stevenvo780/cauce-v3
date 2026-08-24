@@ -36,7 +36,7 @@ it('encadena tenant, room, membership y harness con las formas exactas del proto
     { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },
     { resource: 'room', action: 'create', tenant_id: 'Acme', id: 'grp.acme', value: { display_name: 'Acme room', enabled: true } },
     { resource: 'membership', action: 'create', tenant_id: 'Acme', room_id: 'grp.acme', alias: 'agent', value: { role: 'agent', enabled: true } },
-    { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', command: null, capabilities: [], enabled: true } },
+    { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', capabilities: [], enabled: true } },
   ]);
   expect(calls).toHaveLength(8);
   expect(await screen.findByText(/espacio completo/i)).toBeInTheDocument();
@@ -78,7 +78,7 @@ it('devuelve a pendiente los pasos cuyo contenido cambió después de aplicar el
     { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },
     { resource: 'room', action: 'create', tenant_id: 'Acme', id: 'grp.acme', value: { display_name: 'Acme room', enabled: true } },
     { resource: 'membership', action: 'create', tenant_id: 'Acme', room_id: 'grp.acme', alias: 'agent', value: { role: 'agent', enabled: true } },
-    { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', command: null, capabilities: [], enabled: true } },
+    { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', capabilities: [], enabled: true } },
     { resource: 'tenant', action: 'create', id: 'Beta', value: { display_name: 'Acme', is_hub: false, enabled: true } },
     { resource: 'room', action: 'create', tenant_id: 'Beta', id: 'grp.acme', value: { display_name: 'Acme room', enabled: true } },
     { resource: 'membership', action: 'create', tenant_id: 'Beta', room_id: 'grp.acme', alias: 'agent', value: { role: 'agent', enabled: true } },
@@ -171,4 +171,52 @@ it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO 
   expect(aviso).toHaveTextContent(/pueden estar vencidas/i);
   // Ni verde ni rojo: se aplicó, pero lo que se ve abajo puede estar vencido.
   expect(aviso).toHaveClass('notice', 'parcial');
+});
+
+/**
+ * **El paso de harness dejó de ofrecer «Command».**
+ *
+ * `harness_definitions.command` no lo lee nadie: `listAdapters` ni siquiera lo selecciona
+ * (packages/store/src/repository.ts:7566) y el adaptador toma su orden de su propia tabla compilada
+ * (packages/adapter-sdk/src/harnesses/index.ts:12) o del `harness_command` de su fichero local
+ * (packages/adapter-sdk/src/bin/config.ts:184). Un campo de formulario que escribe una columna que
+ * nadie obedece es la promesa exacta que este trabajo vino a retirar.
+ *
+ * No se pierde capacidad: el esquema del protocolo lo sigue aceptando y el editor de mutaciones
+ * crudas de «Historial y JSON» lo sigue admitiendo. Lo que se retira es la INVITACIÓN.
+ */
+it('no ofrece «Command» en el paso de harness, porque esa columna no la lee nadie', async () => {
+  const user = userEvent.setup();
+  renderWizard();
+  await user.click(screen.getByRole('button', { name: /4\. harness/i }));
+
+  // `/^command/i` y no `/^command$/i`: el rótulo llevaba una pista pegada («opcional, null si queda
+  // vacío»), así que su nombre accesible NUNCA fue exactamente «Command» y el aserto anclado al
+  // final habría pasado con el campo todavía en pantalla. Se comprobó: con la versión anclada, esta
+  // prueba quedaba verde ANTES de quitar nada.
+  expect(screen.queryByLabelText(/^command/i)).not.toBeInTheDocument();
+
+  // CONTROL NEGATIVO: el paso sigue entero. Si quitar el campo hubiera vaciado la pantalla, esto
+  // se pondría rojo en vez de dejar pasar un «no está» que en realidad es «no hay nada».
+  expect(screen.getByLabelText(/^harness id$/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/^display name$/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/capabilities/i)).toBeInTheDocument();
+});
+
+it('la mutación del harness no lleva la clave `command`', async () => {
+  const user = userEvent.setup();
+  const calls = renderWizard();
+  await user.click(screen.getByRole('button', { name: review }));
+  await applyEveryStep(user, 4);
+
+  const harness = calls.filter((call) => !call.dryRun).at(-1)?.mutation;
+  expect(harness?.resource).toBe('harness');
+  const value = (harness as { value?: Record<string, unknown> }).value ?? {};
+  expect(Object.hasOwn(value, 'command'), 'la clave inerte volvió a viajar').toBe(false);
+  // CONTROL NEGATIVO: las claves que SÍ tienen lector siguen viajando. `capabilities` y `enabled`
+  // los lee `listAdapters` (packages/store/src/repository.ts:7566) para decidir el estado del
+  // arnés; borrarlos de paso habría sido perder capacidad real.
+  expect(Object.hasOwn(value, 'display_name')).toBe(true);
+  expect(Object.hasOwn(value, 'capabilities')).toBe(true);
+  expect(Object.hasOwn(value, 'enabled')).toBe(true);
 });

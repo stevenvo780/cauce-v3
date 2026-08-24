@@ -17,18 +17,32 @@ const stepTitles: Record<WizardStep, string> = {
 const TENANT_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
 
+/**
+ * `harnessCommand` YA NO EXISTE, y su ausencia es el cambio.
+ *
+ * `harness_definitions.command` se guardaba, se auditaba y se podía deshacer… y no lo lee nadie:
+ * `listAdapters` ni siquiera lo selecciona (packages/store/src/repository.ts:7566), y el adaptador
+ * toma la orden que ejecuta de su propia tabla compilada
+ * (packages/adapter-sdk/src/harnesses/index.ts:12) o del `harness_command` de su fichero de
+ * configuración local (packages/adapter-sdk/src/bin/config.ts:184). Un campo de alta que escribe una
+ * columna que nadie obedece es justo la promesa falsa que este cambio retira.
+ *
+ * No se pierde capacidad: `HarnessConfigMutationSchema` lo sigue admitiendo
+ * (packages/protocol/src/schemas.ts:503) y el editor de mutaciones crudas lo puede mandar. Lo que
+ * desaparece es la invitación a rellenarlo.
+ */
 interface SpaceDraft {
   tenantId: string; tenantLabel: string; tenantIsHub: boolean; withTenant: boolean;
   roomId: string; roomLabel: string; withRoom: boolean;
   alias: string; role: string; withMembership: boolean;
-  harnessId: string; harnessLabel: string; harnessCommand: string; harnessCapabilities: string; withHarness: boolean;
+  harnessId: string; harnessLabel: string; harnessCapabilities: string; withHarness: boolean;
 }
 
 const emptyDraft: SpaceDraft = {
   tenantId: 'Acme', tenantLabel: 'Acme', tenantIsHub: false, withTenant: true,
   roomId: 'grp.acme', roomLabel: 'Acme room', withRoom: true,
   alias: 'agent', role: 'agent', withMembership: true,
-  harnessId: 'custom', harnessLabel: 'Custom harness', harnessCommand: '', harnessCapabilities: '', withHarness: true,
+  harnessId: 'custom', harnessLabel: 'Custom harness', harnessCapabilities: '', withHarness: true,
 };
 
 function capabilityList(value: string): string[] {
@@ -72,8 +86,11 @@ function planFor(draft: SpaceDraft): PlanEntry[] {
   if (draft.withHarness) {
     plan.push({ step: 'harness', mutation: {
       resource: 'harness', action: 'create', id: draft.harnessId.trim(),
+      // Sin `command`: la clave no viaja, no se manda `null` «por si acaso». Mandar `null` haría
+      // que un alta pisara con NULL el valor que otro operador hubiera puesto por el editor crudo,
+      // y eso es escribir un campo que este formulario ya no dice gobernar.
       value: {
-        display_name: draft.harnessLabel.trim(), command: draft.harnessCommand.trim() || null,
+        display_name: draft.harnessLabel.trim(),
         capabilities: capabilityList(draft.harnessCapabilities), enabled: true,
       },
     } });
@@ -233,8 +250,14 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
       <label className="config-json casilla"><input type="checkbox" checked={draft.withHarness} onChange={(event) => edit({ withHarness: event.target.checked })} /> Registrar el harness</label>
       <label>Harness id<input value={draft.harnessId} onChange={(event) => edit({ harnessId: event.target.value })} /></label>
       <label>Display name<input value={draft.harnessLabel} onChange={(event) => edit({ harnessLabel: event.target.value })} /></label>
-      <label>Command <span className="label-hint">opcional, null si queda vacío</span><input value={draft.harnessCommand} onChange={(event) => edit({ harnessCommand: event.target.value })} /></label>
       <label>Capabilities <span className="label-hint">separadas por coma</span><input value={draft.harnessCapabilities} onChange={(event) => edit({ harnessCapabilities: event.target.value })} /></label>
+      {/* Dónde se fue «Command». Quitar un campo sin decirlo deja al operador buscándolo y creyendo
+          que la pantalla se rompió; decir que no lo lee nadie contesta la pregunta de una vez. */}
+      <p className="muted">
+        «Command» ya no se pide: esa columna se guarda pero no la lee ningún camino de ejecución —el
+        adaptador toma su orden de su propio paquete o de su fichero local—. Sigue admitida por el
+        editor de mutaciones JSON de «Historial y JSON» para quien la necesite.
+      </p>
     </div> : null}
 
     {step === 'review' ? <>

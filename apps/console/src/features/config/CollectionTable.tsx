@@ -9,6 +9,7 @@ import {
   esColumnaLarga, identidadFundida, motivoSinCambioDeRol, resumirTextoLargo, rolesDisponibles,
   type AccionDeRol, type ColumnaTabla,
 } from './collection-table';
+import { columnasInertesDe, motivoInerte } from './campos-inertes';
 import {
   CabeceraConAyuda, ConfirmarQuitarControl, FechaRelativa, FilaDeFallo, InterruptorDeCelda,
 } from './Interruptor';
@@ -65,6 +66,9 @@ export function CollectionTable({
   // lista de nombres: `max_per_hour` es numérico acá y podría no serlo en un gateway que publique
   // otra cosa con ese nombre. Ver `columnaNumerica`.
   const numericas = new Set(columnas.filter((columna) => columnaNumerica(filas, columna.clave)).map((columna) => columna.clave));
+  // Las columnas inertes QUE ESTA TABLA ESTÁ PINTANDO, no las que el catálogo conoce de esta
+  // colección: el aviso de arriba tiene que aparecer y desaparecer con lo que el gateway publica.
+  const inertesPresentes = columnasInertesDe(key, columnas.map((columna) => columna.clave));
   const avisoDeInterruptor = control.avisoDe(key);
   const confirmandoAqui = control.confirmacion?.interruptor.coleccion === key;
 
@@ -84,16 +88,36 @@ export function CollectionTable({
 
           {confirmandoAqui ? <ConfirmarQuitarControl control={control} busy={busy} /> : null}
 
+          {/* El aviso de la tabla, UNA vez y arriba. Marcar columna por columna contesta «¿esta
+              sirve?» pero no «¿qué hago entonces?», y esa segunda pregunta es la que trae al
+              operador hasta acá. No se esconden las columnas: el servidor las publica, y esconder
+              un dato que existe es la otra forma de mentir sobre lo que hay configurado. */}
+          {inertesPresentes.length ? <p className="notice config-inertes" role="note">
+            {inertesPresentes.length === 1 ? 'Una columna de esta tabla se guarda' : `${inertesPresentes.length} columnas de esta tabla se guardan`},
+            {inertesPresentes.length === 1 ? ' se audita y se puede deshacer' : ' se auditan y se pueden deshacer'}, pero
+            <strong> no {inertesPresentes.length === 1 ? 'la lee' : 'las lee'} ningún camino de ejecución</strong>:
+            {inertesPresentes.length === 1 ? ' va marcada' : ' van marcadas'} «sin efecto» y cada una dice de dónde sale
+            el valor que sí manda.
+          </p> : null}
+
           <div className="table-wrap"><table><thead><tr>
-            {columnas.map((columna) => <th key={columna.clave} data-numero={numericas.has(columna.clave) ? 'true' : undefined}>
-              <CabeceraConAyuda
-                etiqueta={columna.etiqueta}
-                {...(() => {
-                  const ayuda = explicacionDeCampo(key, columna.clave);
-                  return ayuda === undefined ? {} : { explicacion: ayuda };
-                })()}
-              />
-            </th>)}
+            {columnas.map((columna) => {
+              const inerte = motivoInerte(key, columna.clave);
+              return <th
+                key={columna.clave}
+                data-numero={numericas.has(columna.clave) ? 'true' : undefined}
+                data-inerte={inerte === undefined ? undefined : 'true'}
+              >
+                <CabeceraConAyuda
+                  etiqueta={columna.etiqueta}
+                  {...(() => {
+                    const ayuda = explicacionDeCampo(key, columna.clave);
+                    return ayuda === undefined ? {} : { explicacion: ayuda };
+                  })()}
+                  {...(inerte === undefined ? {} : { inerte })}
+                />
+              </th>;
+            })}
           </tr></thead><tbody>
             {filas.map((fila, indice) => {
               const filaId = claveDeFila(key, fila, indice);
@@ -104,7 +128,14 @@ export function CollectionTable({
                 .find((encontrado) => encontrado !== undefined);
               return <Fragment key={filaId}>
                 <tr>
-                  {columnas.map((columna) => <td key={columna.clave} data-numero={numericas.has(columna.clave) ? 'true' : undefined}>
+                  {/* La celda de una columna inerte se apaga con el mismo `data-inerte` que su
+                      cabecera: el valor sigue legible —es lo que hay declarado— pero deja de
+                      competir por la atención con las columnas que sí gobiernan algo. */}
+                  {columnas.map((columna) => <td
+                    key={columna.clave}
+                    data-numero={numericas.has(columna.clave) ? 'true' : undefined}
+                    data-inerte={motivoInerte(key, columna.clave) === undefined ? undefined : 'true'}
+                  >
                     <Celda
                       coleccion={key} columna={columna} fila={fila} filaId={filaId} indice={indice}
                       politicasDeRol={politicasDeRol} soloLectura={soloLectura} busy={busy}

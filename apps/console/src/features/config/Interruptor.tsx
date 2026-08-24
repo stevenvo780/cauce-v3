@@ -2,6 +2,7 @@ import { AlertTriangle, RotateCcw } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { Tooltip } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
+import { MARCA_INERTE } from './campos-inertes';
 import { fechaRelativa } from './fecha-relativa';
 import type { Interruptor } from './interruptores';
 import type { ControlDeInterruptores, FalloDeInterruptor } from './use-interruptores';
@@ -73,17 +74,41 @@ export function InterruptorDeCelda({ interruptor, control, soloLectura, busy }: 
 }
 
 /**
- * La cabecera de una columna de permiso, con el tooltip que explica QUÉ concede.
+ * La cabecera de una columna, con el tooltip que explica QUÉ concede — o que AVISA de que no
+ * concede nada.
  *
  * El dueño los pidió con esa palabra. Y hacían falta: la cabecera decía `ALLOW_CONTROL` —el nombre
  * de una columna de Postgres, en inglés, en mayúsculas— y en ningún sitio de la pantalla se decía
  * que es el permiso que deja a un cliente escribir la configuración de otro.
+ *
+ * `inerte` es el caso opuesto y por eso se pinta distinto: no es una ayuda que se ofrece a quien la
+ * busque, es una corrección que hay que leer sin buscarla. Va con la palabra a la vista —no detrás
+ * de un «?» que hay que provocar con el ratón— porque el defecto que arregla es exactamente que la
+ * columna PARECÍA gobernar algo. El motivo entero viaja además en el árbol accesible: un globo que
+ * sólo abre al pasar por encima deja fuera a quien navega con teclado o con lector de pantalla.
+ *
+ * Cuando una columna es inerte, su motivo DESPLAZA a la explicación: son dos frases sobre el mismo
+ * campo y la que importa es la que dice que no tiene efecto. Hoy los dos mapas son disjuntos
+ * (`campos-inertes.ts` no puede tocar nada conmutable, y lo guarda una prueba), así que este caso
+ * no se da; se resuelve igual para que un futuro solapamiento no imprima dos frases que se
+ * contradicen.
  */
-export function CabeceraConAyuda({ etiqueta, explicacion }: { etiqueta: string; explicacion?: string }) {
-  if (!explicacion) return <>{etiqueta}</>;
-  return <Tooltip label={explicacion} placement="bottom" className="cabecera-ayuda">
-    <span>{etiqueta}<span className="cabecera-ayuda-marca" aria-hidden="true">?</span></span>
-    <span className="sr-only">: {explicacion}</span>
+export function CabeceraConAyuda({ etiqueta, explicacion, inerte }: {
+  etiqueta: string;
+  explicacion?: string;
+  /** Por qué esta columna no tiene efecto. Ver `campos-inertes.ts`. */
+  inerte?: string;
+}) {
+  const ayuda = inerte ?? explicacion;
+  if (!ayuda) return <>{etiqueta}</>;
+  return <Tooltip label={ayuda} placement="bottom" className="cabecera-ayuda">
+    <span>
+      {etiqueta}
+      {inerte
+        ? <span className="cabecera-inerte">{MARCA_INERTE}</span>
+        : <span className="cabecera-ayuda-marca" aria-hidden="true">?</span>}
+    </span>
+    <span className="sr-only">: {ayuda}</span>
   </Tooltip>;
 }
 
