@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { request as httpsRequest } from 'node:https';
+import type { AgentConnection } from './agent-leg.js';
 import { errorLabel, logEvent } from './log.js';
 
 /**
@@ -244,4 +246,150 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
       request.end();
     });
   }
+}
+
+/**
+ * Lectura de un fichero de gobierno dentro del contenedor de un alias.
+ *
+ * El relay no decide NADA sobre qué se puede leer: la ruta la resuelve el gateway desde hechos
+ * medidos y el pty-agent la vuelve a validar contra su propia lista antes de abrir el fichero.
+ * Lo que sí es responsabilidad del relay, y está aquí, es que una lectura no pueda hacerle daño
+ * al resto: que no se le pregunte a un agente que no sabe contestar, que no se cuelgue para
+ * siempre, que no se acumule un volcado en memoria, y que la respuesta sea del alias que se pidió.
+ */
+
+/** Tope de lo que se acumula en memoria. Coincide con `MAX_DOCUMENT_BYTES` del pty-agent. */
+export const MAX_GOVERNANCE_BYTES = 256 * 1024;
+/**
+ * A 65.500 B por trama, 256 KB entran en 5. Se admiten 8 por holgura: más tramas anunciadas que
+ * eso no es un documento grande, es un agente diciendo algo que no cuadra con su propio tope.
+ */
+const MAX_GOVERNANCE_CHUNKS = 8;
+
+export type GovernanceReadCode =
+  | 'not_found' | 'permission_denied' | 'invalid_path' | 'symlink_detected'
+  | 'too_large' | 'timeout' | 'unavailable' | 'unknown';
+
+const READ_CODES: readonly GovernanceReadCode[] = [
+  'not_found', 'permission_denied', 'invalid_path', 'symlink_detected',
+  'too_large', 'timeout', 'unavailable', 'unknown'
+];
+
+export interface GovernanceFileRead {
+  readonly path: string;
+  /** Tamaño REAL del fichero, aunque `content` venga recortado. */
+  readonly bytes: number;
+  readonly truncated: boolean;
+  readonly modified_at: string;
+  readonly content: string;
+}
+
+export interface GovernanceReadFailure {
+  readonly error: GovernanceReadCode;
+  readonly reason: string;
+}
+
+export type FileReadOutcome = GovernanceFileRead | GovernanceReadFailure;
+
+/** Un código que no reconocemos es `unknown`, nunca se propaga tal cual. */
+function normalizeCode(value: string): GovernanceReadCode {
+  return READ_CODES.includes(value as GovernanceReadCode) ? (value as GovernanceReadCode) : 'unknown';
+}
+
+export async function requestFileRead(
+  connection: AgentConnection,
+  tenantId: string,
+  alias: string,
+  path: string,
+  timeoutMs = 5_000
+): Promise<FileReadOutcome> {
+  if (!connection.alive) {
+    return { error: 'unavailable', reason: 'el pty-agent de ese alias no está conectado' };
+  }
+  // La conexión la busca quien llama. Si lo que vuelve no es del alias pedido, esto es una fuga
+  // entre inquilinos, no un fallo de lectura: se corta aquí y no se pregunta nada.
+  if (connection.hello.tenant_id !== tenantId || connection.hello.alias !== alias) {
+    return { error: 'permission_denied', reason: 'la conexión no es la de ese alias' };
+  }
+  if (!connection.supportsGovernanceRead) {
+    return { error: 'unavailable', reason: 'el pty-agent de ese alias no sabe leer ficheros de gobierno' };
+  }
+
+  const requestId = randomUUID();
+  return new Promise<FileReadOutcome>((resolve) => {
+    const chunks: Buffer[] = [];
+    let metadata: Omit<GovernanceFileRead, 'content'> | undefined;
+    let expected: number | undefined;
+    let received = 0;
+    let accumulated = 0;
+    let settled = false;
+
+    const finish = (outcome: FileReadOutcome): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      connection.detachRead(requestId);
+      resolve(outcome);
+    };
+
+    const complete = (): void => {
+      if (metadata === undefined || expected === undefined || received < expected) return;
+      finish({ ...metadata, content: Buffer.concat(chunks).toString('utf8') });
+    };
+
+    const timer = setTimeout(() => {
+      logEvent('terminal_relay_read_timeout', { tenant_id: tenantId, alias, request_id: requestId });
+      finish({ error: 'timeout', reason: `el pty-agent no contestó en ${timeoutMs} ms` });
+    }, timeoutMs);
+    timer.unref?.();
+
+    connection.attachRead(requestId, {
+      onReadOk(body) {
+        if (body.kind !== 'file') {
+          finish({ error: 'unknown', reason: 'el agente contestó una lectura que no es de fichero' });
+          return;
+        }
+        const answered = stringField(body, 'path');
+        const modifiedAt = stringField(body, 'modified_at');
+        const bytes = integerField(body, 'bytes');
+        const count = integerField(body, 'chunks');
+        if (answered === undefined || modifiedAt === undefined || bytes === undefined || count === undefined) {
+          finish({ error: 'unknown', reason: 'el agente contestó sin los metadatos de la lectura' });
+          return;
+        }
+        // Contestar por otra ruta sería servir un fichero que nadie pidió.
+        if (answered !== path) {
+          finish({ error: 'unknown', reason: 'el agente contestó por una ruta distinta de la pedida' });
+          return;
+        }
+        if (count < 0 || count > MAX_GOVERNANCE_CHUNKS) {
+          finish({ error: 'too_large', reason: 'el agente anuncia más tramas de las que cabe un documento' });
+          return;
+        }
+        metadata = { path: answered, bytes, truncated: body.truncated === true, modified_at: modifiedAt };
+        expected = count;
+        complete();
+      },
+      onReadData(chunk) {
+        accumulated += chunk.byteLength;
+        // El tope se comprueba ANTES de guardar: si no, un agente que ignore su propio límite
+        // llena la memoria del relay antes de que nadie cuente las tramas.
+        if (accumulated > MAX_GOVERNANCE_BYTES) {
+          finish({ error: 'too_large', reason: 'el agente mandó más bytes de los que esta vía sirve' });
+          return;
+        }
+        chunks.push(chunk);
+        received += 1;
+        complete();
+      },
+      onReadErr(failure) {
+        finish({ error: normalizeCode(failure.code), reason: failure.reason });
+      },
+      onAgentGone(reason) {
+        finish({ error: 'unavailable', reason: `el pty-agent se desconectó: ${reason}` });
+      }
+    });
+
+    connection.sendRead(requestId, 'file', path);
+  });
 }

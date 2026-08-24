@@ -27,11 +27,84 @@ import {
 
 export type FactsSource = 'measured' | 'registry' | 'database';
 
+export interface GovernanceDocumentContent {
+  /** El contenido del fichero (puede estar truncado a MAX_DOCUMENT_BYTES). */
+  readonly text: string;
+  /** Tamaño real del fichero (aunque text esté truncado). */
+  readonly bytes: number;
+  /** true si `text` fue recortado. */
+  readonly truncated: boolean;
+  /** Timestamp ISO de la última modificación. */
+  readonly modified_at: string;
+}
+
+export interface MemoryDirectoryListing {
+  /** Raíz del directorio de memoria (~/.claude/projects, etc.) */
+  readonly root: string;
+  /** Total de ficheros en el directorio, aunque entries venga recortado. */
+  readonly total: number;
+  /** true si la lista fue recortada. */
+  readonly truncated: boolean;
+  /** Entrada de fichero: ruta relativa a root. */
+  readonly entries: Array<{
+    readonly path: string;
+    readonly bytes: number;
+    readonly modified_at: string;
+  }>;
+}
+
+/**
+ * Fallos en lectura de fichero de gobierno (no son HTTP 404, son lecturas que erraron).
+ * Estos se devuelven al probe, que decide cómo responder al HTTP.
+ */
+export interface GovernanceReadError {
+  readonly error:
+    | 'not_found' | 'permission_denied' | 'invalid_path' | 'symlink_detected'
+    | 'too_large' | 'timeout'
+    /** No hay por dónde preguntar: sin pty-agent conectado, o el que hay no sabe leer. */
+    | 'unavailable'
+    | 'unknown';
+  readonly reason: string;
+}
+
 export interface AgentFactsProbe {
   /** Hechos del alias, o `undefined` si nadie los ha medido todavía. */
   factsFor(tenantId: string, alias: string): Promise<
     { facts: RuntimeFacts; source: FactsSource } | undefined
   >;
+
+  /**
+   * Leer un fichero de gobierno del alias (CLAUDE.md, AGENTS.md, memoria, etc.).
+   * La ruta DEBE estar en el juego cerrado de resolveAgentDocuments().
+   *
+   * Seguridad crítica:
+   * - NUNCA leer fuera de {resolveAgentDocuments(facts)}.paths
+   * - NUNCA seguir symlinks (verificar realpath)
+   * - NUNCA leer NEVER_SERVE_BASENAMES ni archivos que terminen en NEVER_SERVE_SUFFIXES
+   * - Limitar a MAX_DOCUMENT_BYTES (256 KB) — truncar si es mayor
+   * - Timeout de lectura (~5 segundos)
+   *
+   * Devuelve GovernanceDocumentContent o error si no se pudo leer.
+   */
+  readGovernanceDocument(
+    path: string,
+    facts: RuntimeFacts,
+    tenantId: string,
+    alias: string,
+  ): Promise<GovernanceDocumentContent | GovernanceReadError>;
+
+  /**
+   * Listar el directorio de memoria del alias (SIN leer contenido, sólo metadata).
+   * La raíz debe ser válida para este arnés (ej: ~/.claude/projects).
+   *
+   * Seguridad: NUNCA listar fuera de la raíz de memoria permitida.
+   */
+  listMemoryDirectory(
+    memoryRoot: string,
+    facts: RuntimeFacts,
+    tenantId: string,
+    alias: string,
+  ): Promise<MemoryDirectoryListing | GovernanceReadError>;
 }
 
 export interface AgentDocumentsDeps {

@@ -40,6 +40,29 @@ export interface AgentHello {
   readonly harness: string;
   readonly agent_version: string;
   readonly modes: readonly TerminalMode[];
+  /**
+   * Capacidades OPCIONALES que el agente declara. Un agente anterior a la lectura de gobierno no
+   * manda el campo, y entonces esto es `[]`: nadie le manda nunca un READ. No es cosmética —
+   * `_dispatch` del pty-agent trata un tag desconocido como violación de protocolo y se tira la
+   * conexión encima, con TODAS sus terminales abiertas. Desplegar el relay antes que el agente
+   * sin esta comprobación dejaría la flota sin terminales.
+   */
+  readonly features: readonly string[];
+}
+
+/** El agente declara esto cuando sabe contestar TAG_READ. Sin la marca, no se le pregunta. */
+export const FEATURE_READ_GOVERNANCE = 'read_governance';
+
+/**
+ * Una lectura en vuelo. Es una transacción suelta, no una sesión: el agente contesta un READ_OK
+ * con los metadatos (incluido cuántos READ_DATA vienen detrás), luego los datos, y ahí acaba.
+ */
+export interface AgentReadHandlers {
+  onReadOk(metadata: Record<string, unknown>): void;
+  onReadData(chunk: Buffer): void;
+  onReadErr(failure: { readonly code: string; readonly reason: string }): void;
+  /** La conexión murió con la lectura a medias; no va a llegar ni OK ni ERR. */
+  onAgentGone(reason: string): void;
 }
 
 export interface AgentSessionHandlers {
@@ -78,6 +101,17 @@ function modesField(source: Record<string, unknown>): readonly TerminalMode[] | 
     modes.push(entry);
   }
   return modes;
+}
+
+/**
+ * A diferencia de `modesField`, esto NO invalida el hello: un agente viejo no manda `features` y
+ * tiene que seguir entrando. Ausente o mal formado se lee como «ninguna capacidad», que es el
+ * lado seguro — a ese agente no se le manda un READ jamás.
+ */
+function featuresField(source: Record<string, unknown>): readonly string[] {
+  const value: unknown = source.features;
+  if (!Array.isArray(value)) return [];
+  return (value as readonly unknown[]).filter((entry): entry is string => typeof entry === 'string');
 }
 
 /**
@@ -150,7 +184,8 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
     runtime_uid: runtimeUid,
     harness,
     agent_version: agentVersion,
-    modes
+    modes,
+    features: featuresField(source)
   };
 }
 
@@ -161,6 +196,8 @@ export class AgentConnection {
   readonly connectedAt: Date;
   private readonly socket: TLSSocket;
   private readonly sessions = new Map<string, AgentSessionHandlers>();
+  /** Lecturas de gobierno en vuelo, por `request_id`. Vacío casi siempre. */
+  private readonly reads = new Map<string, AgentReadHandlers>();
   private readonly ping: NodeJS.Timeout;
   private lastPongAt: number;
   private paused = false;
@@ -223,6 +260,28 @@ export class AgentConnection {
     return this.sessions.has(sessionId);
   }
 
+  /** Falso para todo agente que no lo anuncie, incluido cualquiera anterior a esta versión. */
+  get supportsGovernanceRead(): boolean {
+    return this.hello.features.includes(FEATURE_READ_GOVERNANCE);
+  }
+
+  attachRead(requestId: string, handlers: AgentReadHandlers): void {
+    this.reads.set(requestId, handlers);
+  }
+
+  detachRead(requestId: string): void {
+    this.reads.delete(requestId);
+  }
+
+  /**
+   * Pide un fichero de gobierno. El `requestId` viaja también como prefijo de 36 bytes de los
+   * READ_DATA, así que tiene que ser un UUID en minúsculas con guiones o el agente no podrá
+   * codificar la respuesta.
+   */
+  sendRead(requestId: string, kind: 'file' | 'dir', path: string): void {
+    this.write(encodeJsonFrame(FRAME_TAGS.READ, { request_id: requestId, kind, path }));
+  }
+
   sendOpen(sessionId: string, ticket: string, mode: TerminalMode, cols: number, rows: number): void {
     this.write(encodeJsonFrame(FRAME_TAGS.OPEN, { session_id: sessionId, ticket, mode, cols, rows }));
   }
@@ -259,8 +318,11 @@ export class AgentConnection {
     if (this.closed) return;
     this.closed = true;
     clearInterval(this.ping);
-    const handlers = [...this.sessions.values()];
+    // Las lecturas en vuelo se avisan igual que las sesiones: si no, se quedan esperando hasta
+    // que venza su temporizador y el que pregunta ve «tardó» donde lo que pasó fue «se cayó».
+    const handlers = [...this.sessions.values(), ...this.reads.values()];
     this.sessions.clear();
+    this.reads.clear();
     this.socket.destroy();
     for (const handler of handlers) {
       try {
@@ -309,8 +371,43 @@ export class AgentConnection {
       }));
       return;
     }
+    if (frame.tag === FRAME_TAGS.READ_OK) {
+      const body = decodeJsonFrame(frame.payload);
+      const requestId = stringField(body, 'request_id');
+      if (requestId === undefined) throw new FramingError('READ_OK without a request id');
+      this.dispatchRead(requestId, (handlers) => handlers.onReadOk(body));
+      return;
+    }
+    if (frame.tag === FRAME_TAGS.READ_ERR) {
+      const body = decodeJsonFrame(frame.payload);
+      const requestId = stringField(body, 'request_id');
+      if (requestId === undefined) throw new FramingError('READ_ERR without a request id');
+      this.dispatchRead(requestId, (handlers) => handlers.onReadErr({
+        code: stringField(body, 'error') ?? 'unknown',
+        reason: stringField(body, 'reason') ?? 'read_failed'
+      }));
+      return;
+    }
+    if (frame.tag === FRAME_TAGS.READ_DATA) {
+      // Mismo prefijo de 36 bytes que STDOUT, pero lo que lleva es el `request_id`.
+      const data = decodeDataFrame(frame.payload);
+      this.dispatchRead(data.sessionId, (handlers) => handlers.onReadData(data.data));
+      return;
+    }
     // AGENT_HELLO after the handshake, or any frame only the relay may send, is a violation.
     throw new FramingError('unexpected frame from the agent');
+  }
+
+  private dispatchRead(requestId: string, apply: (handlers: AgentReadHandlers) => void): void {
+    const handlers = this.reads.get(requestId);
+    // Una lectura que ya venció por tiempo se desenganchó: lo que llegue tarde se tira, no mata
+    // la conexión. Un agente comprometido no consigue nada mandando request_ids inventados.
+    if (!handlers) return;
+    try {
+      apply(handlers);
+    } catch (error) {
+      logEvent('terminal_relay_read_handler_failed', { request_id: requestId, error: errorLabel(error) });
+    }
   }
 
   private dispatch(sessionId: string, apply: (handlers: AgentSessionHandlers) => void): void {

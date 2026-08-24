@@ -18,6 +18,14 @@ function probe(entradas: Record<string, { facts: RuntimeFacts; source: FactsSour
     async factsFor(tenantId, alias) {
       return entradas[`${tenantId}:${alias}`];
     },
+    // Esta ruta es el INVENTARIO: dice qué fichero es cada cosa y dónde vive, nunca su contenido.
+    // El doble los rechaza para que un día en que la ruta empiece a leer, el test lo note.
+    async readGovernanceDocument() {
+      return { error: 'unavailable', reason: 'el inventario no lee contenido' };
+    },
+    async listMemoryDirectory() {
+      return { error: 'unavailable', reason: 'el inventario no lee memoria' };
+    },
   };
 }
 

@@ -46,12 +46,22 @@ TAG_CLOSE = 0x30
 TAG_CLOSED = 0x31
 TAG_PING = 0x40
 TAG_PONG = 0x41
+# Lectura de ficheros de gobierno (CLAUDE.md / AGENTS.md y el indice de memoria). Es una
+# transaccion suelta, no una sesion: por eso no reusa TAG_OPEN, que abre un PTY con estado.
+TAG_READ = 0x50
+TAG_READ_OK = 0x51
+TAG_READ_ERR = 0x52
+TAG_READ_DATA = 0x53
 
 MAX_FRAME = 65536
 # DATA frames (0x20/0x21) carry the 36 ASCII bytes of the session UUID before the raw bytes.
 SESSION_ID_BYTES = 36
 MAX_DATA = MAX_FRAME - SESSION_ID_BYTES
 DATA_TAGS = frozenset({TAG_STDIN, TAG_STDOUT})
+# Tags cuyo payload empieza por un identificador de 36 bytes ASCII. READ_DATA lleva el
+# `request_id` de la peticion, no una sesion, pero el formato del prefijo es el mismo a proposito:
+# asi el relay reusa su decodificador de tramas de datos sin una segunda ruta de codigo.
+PREFIXED_TAGS = DATA_TAGS | frozenset({TAG_READ_DATA})
 
 MAX_SESSIONS = 2
 # A TUI over the network is unusable if every keystroke echo becomes its own packet, so output is
@@ -78,6 +88,40 @@ SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 TICKET_RE = re.compile(r"^v1\.([A-Za-z0-9_-]{1,4096})\.([A-Za-z0-9_-]{43})$")
 IDENTITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 MODES = ("shell", "harness")
+
+# --- Lectura de ficheros de gobierno ----------------------------------------------------------
+#
+# El agente NO conoce el juego cerrado del gateway (no sabe que arnes corre de verdad ni cual es
+# el HOME del arnes, que puede no ser el suyo). Por eso no puede comprobar "esta ruta es la que el
+# gateway resolvio". Lo que SI puede hacer, y hace, es no ser nunca la pieza que entrega algo
+# distinto de un manual: una lista BLANCA de nombres base, contencion dentro de su propio home, y
+# nada de enlaces. Con eso, un gateway comprometido no consigue `/etc/passwd` ni `~/.ssh/id_ed25519`
+# aunque los pida: el peor caso es leer un CLAUDE.md, que es exactamente el proposito de la via.
+FEATURES = ("read_governance",)
+
+# Unicos nombres que esta via sirve. Cualquier otro se rechaza aunque el gateway lo pida.
+READ_ALLOWED_BASENAMES = frozenset({"CLAUDE.md", "AGENTS.md"})
+
+# Nunca se sirven ni se listan, esten donde esten. Espejo de NEVER_SERVE_BASENAMES del gateway
+# (`services/gateway/src/console/agent-documents.ts`): las dos listas se defienden por separado a
+# proposito, porque un fallo en una sola no debe bastar para filtrar una credencial.
+NEVER_SERVE_BASENAMES = frozenset({
+    ".credentials.json", "auth.json", ".claude.json", "openclaw.json", ".env", ".netrc",
+    "id_ed25519", "id_rsa", "known_hosts", "authorized_keys",
+})
+NEVER_SERVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
+
+READ_KINDS = ("file", "dir")
+MAX_READ_PATH = 4096
+# 256 KB: el CLAUDE.md mas grande medido en la flota es el de zeus (10.733 B) y el AGENTS.md de
+# hermes llega a 75 KB. Sobra margen sin convertir la via en un canal de volcado.
+MAX_DOCUMENT_BYTES = 256 * 1024
+# Indice de memoria: sale metadato, nunca contenido.
+MAX_DIR_ENTRIES = 200
+MAX_DIR_DEPTH = 3
+DIR_SCAN_CAP = 5000
+# Presupuesto en bytes para las entradas del indice dentro de su UNICA trama (MAX_FRAME = 64 KiB).
+READ_INDEX_BUDGET = 48 * 1024
 
 BUNDLE_KEYS = (
     "tenant_id", "alias", "container_id", "generation", "image_id", "runtime_user", "runtime_uid",
@@ -132,8 +176,8 @@ def encode_json(tag: int, document: dict[str, Any]) -> bytes:
 
 
 def encode_data(tag: int, session_id: str, data: bytes) -> bytes:
-    if tag not in DATA_TAGS:
-        raise ProtocolError("only STDIN/STDOUT carry a session prefix")
+    if tag not in PREFIXED_TAGS:
+        raise ProtocolError("only STDIN/STDOUT/READ_DATA carry a 36 byte prefix")
     identifier = session_id.encode("ascii")
     if len(identifier) != SESSION_ID_BYTES:
         raise ProtocolError("session id must be a 36 byte UUID")
@@ -498,6 +542,11 @@ class PtyAgent:
             "harness": self.bundle["harness"],
             "agent_version": self.bundle["agent_version"],
             "modes": self.modes,
+            # El relay NO manda TAG_READ a un agente que no lo anuncie. Un agente viejo trata un
+            # tag desconocido como violacion de protocolo y se tira la conexion encima (ver
+            # `_dispatch`), asi que sin esta declaracion desplegar el relay antes que el agente
+            # dejaria terminales caidas por toda la flota.
+            "features": list(FEATURES),
         }))
         while not self.stopping:
             self._pump_writes()
@@ -590,6 +639,8 @@ class PtyAgent:
             raise ProtocolError("relay sent traffic before the hello was acknowledged")
         if tag == TAG_OPEN:
             self._on_open(document)
+        elif tag == TAG_READ:
+            self._on_read(document)
         elif tag == TAG_RESIZE:
             self._on_resize(document)
         elif tag == TAG_CLOSE:
@@ -663,6 +714,187 @@ class PtyAgent:
         if detail:
             document["detail"] = detail
         self._queue(encode_json(TAG_OPEN_ERR, document))
+
+    # -- lectura de ficheros de gobierno -------------------------------------------------------
+
+    def _on_read(self, request: dict[str, Any]) -> None:
+        """TAG_READ: entrega un manual del sitio, o el indice de memoria. Falla CERRADO.
+
+        Nada de lo que llega por aqui abre un proceso ni pasa por un shell: se valida una ruta y se
+        lee. Un rechazo se contesta con TAG_READ_ERR y la conexion sigue viva; solo un
+        `request_id` mal formado es violacion de protocolo, porque sin el no hay a quien contestar.
+        """
+        request_id = request.get("request_id")
+        if not isinstance(request_id, str) or not SESSION_ID_RE.fullmatch(request_id):
+            raise ProtocolError("READ carries an invalid request id")
+        kind = request.get("kind")
+        if kind not in READ_KINDS:
+            self._read_error(request_id, "invalid_path", "kind must be file or dir")
+            return
+        # La respuesta puede pesar 256 KB. Si la cola de salida ya va cargada se rechaza en vez de
+        # invertir la presion sobre las terminales, que son lo que de verdad no puede esperar.
+        if len(self.outbound) > OUTBOUND_HIGH_WATER:
+            self._read_error(request_id, "unavailable", "outbound queue is congested")
+            return
+        path = request.get("path")
+        verdict = self._validate_read_path(path, kind)
+        if verdict is not None:
+            self._read_error(request_id, verdict[0], verdict[1])
+            return
+        try:
+            if kind == "file":
+                self._send_document(request_id, path)
+            else:
+                self._send_memory_index(request_id, path)
+        except PermissionError:
+            self._read_error(request_id, "permission_denied", "permission denied")
+        except FileNotFoundError:
+            # Carrera legitima: existia al validar y ya no. Se cuenta como lo que es.
+            self._read_error(request_id, "not_found", "vanished while being read")
+        except OSError as error:
+            self._read_error(request_id, "unknown", f"read failed: {type(error).__name__}")
+
+    def _validate_read_path(self, path: Any, kind: str) -> tuple[str, str] | None:
+        """`None` = se puede leer. Si no, `(codigo, motivo)`.
+
+        El orden importa: primero lo sintactico (barato y sin tocar el disco), despues la lista
+        blanca, despues la contencion, y solo al final se pregunta al sistema de ficheros. Asi una
+        ruta prohibida se rechaza sin que su existencia se pueda deducir del tiempo de respuesta.
+        """
+        if not isinstance(path, str) or not path:
+            return ("invalid_path", "path is required")
+        if len(path) > MAX_READ_PATH:
+            return ("invalid_path", "path is too long")
+        if "\0" in path:
+            return ("invalid_path", "path carries a null byte")
+        if not path.startswith("/"):
+            return ("invalid_path", "path is not absolute")
+        segments = path.split("/")
+        # Se exige forma canonica: ni `..`, ni `.`, ni barras dobles, ni barra final. Cualquier
+        # otra forma se rechaza en vez de normalizarse, porque normalizar es justo donde aparecen
+        # las diferencias entre lo que valida el gateway y lo que abre el agente.
+        if ".." in segments or "." in segments or "" in segments[1:]:
+            return ("invalid_path", "path is not canonical")
+        base = segments[-1]
+        if base in NEVER_SERVE_BASENAMES:
+            return ("permission_denied", f"{base} is never served")
+        if base.endswith(NEVER_SERVE_SUFFIXES):
+            return ("permission_denied", "looks like credential material")
+        if kind == "file" and base not in READ_ALLOWED_BASENAMES:
+            return ("permission_denied", f"{base} is not a governance document")
+        # Contencion: el agente no sirve nada fuera de su propio home, lo pida quien lo pida.
+        home = str(self.bundle["home"]).rstrip("/")
+        if not home.startswith("/") or (path != home and not path.startswith(home + "/")):
+            return ("permission_denied", "path is outside the agent home")
+        # `realpath` resuelve TODOS los componentes, asi que esto tambien caza un directorio padre
+        # enlazado — que es exactamente el vector que una lista negra de nombres no ve.
+        try:
+            resolved = os.path.realpath(path)
+        except OSError:
+            return ("unknown", "path could not be resolved")
+        if resolved != path:
+            return ("symlink_detected", "path resolves somewhere else")
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            return ("not_found", "no such file")
+        except PermissionError:
+            return ("permission_denied", "permission denied")
+        except OSError:
+            return ("unknown", "stat failed")
+        if kind == "file" and not stat.S_ISREG(info.st_mode):
+            return ("invalid_path", "not a regular file")
+        if kind == "dir" and not stat.S_ISDIR(info.st_mode):
+            return ("invalid_path", "not a directory")
+        return None
+
+    def _send_document(self, request_id: str, path: str) -> None:
+        with open(path, "rb") as handle:
+            raw = handle.read(MAX_DOCUMENT_BYTES + 1)
+            info = os.fstat(handle.fileno())
+        truncated = len(raw) > MAX_DOCUMENT_BYTES
+        if truncated:
+            raw = raw[:MAX_DOCUMENT_BYTES]
+        # Se manda UTF-8 valido SIEMPRE: el corte por bytes puede partir un caracter por la mitad y
+        # el relay y el gateway decodifican sin red. Un fichero que no sea texto sale con
+        # reemplazos, no revienta la lectura.
+        payload = raw.decode("utf-8", "replace").encode("utf-8")
+        chunks = [payload[offset:offset + MAX_DATA] for offset in range(0, len(payload), MAX_DATA)]
+        self._queue(encode_json(TAG_READ_OK, {
+            "request_id": request_id,
+            "kind": "file",
+            "path": path,
+            # Tamaño REAL del fichero, aunque el texto vaya recortado: el que mira tiene que poder
+            # ver que lo que lee no es todo.
+            "bytes": info.st_size,
+            "truncated": truncated,
+            "modified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(info.st_mtime)),
+            "chunks": len(chunks),
+        }))
+        for chunk in chunks:
+            self._queue(encode_data(TAG_READ_DATA, request_id, chunk))
+
+    def _send_memory_index(self, request_id: str, root: str) -> None:
+        """Indice de memoria: sale METADATO, nunca contenido."""
+        found: list[tuple[str, int, float]] = []
+        capped = False
+        stack = [(root, 0)]
+        while stack and not capped:
+            current, depth = stack.pop()
+            try:
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        if len(found) >= DIR_SCAN_CAP:
+                            capped = True
+                            break
+                        # Ni se siguen los enlaces ni se nombran: el nombre de un enlace ya dice
+                        # que algo existe al otro lado.
+                        if entry.is_symlink():
+                            continue
+                        if entry.name in NEVER_SERVE_BASENAMES or entry.name.endswith(NEVER_SERVE_SUFFIXES):
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            if depth + 1 < MAX_DIR_DEPTH:
+                                stack.append((entry.path, depth + 1))
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        info = entry.stat(follow_symlinks=False)
+                        found.append((entry.path, info.st_size, info.st_mtime))
+            except OSError:
+                # Un subdirectorio ilegible no invalida el indice: se omite y se sigue.
+                continue
+        found.sort(key=lambda item: item[2], reverse=True)
+        # El indice viaja en UNA trama y una trama tiene tope duro (MAX_FRAME). 200 rutas de 4 KB
+        # no caben, y pasarse no seria un indice recortado sino una ProtocolError que tira la
+        # conexion y con ella las terminales abiertas. Se corta por PRESUPUESTO, no solo por conteo.
+        rows: list[dict[str, Any]] = []
+        budget = READ_INDEX_BUDGET
+        for item in found[:MAX_DIR_ENTRIES]:
+            cost = len(item[0].encode("utf-8")) + 80
+            if cost > budget:
+                break
+            budget -= cost
+            rows.append({
+                "path": item[0],
+                "bytes": item[1],
+                "modified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(item[2])),
+            })
+        self._queue(encode_json(TAG_READ_OK, {
+            "request_id": request_id,
+            "kind": "dir",
+            "path": root,
+            # `total` es lo que se encontro. Cuando `truncated` es cierto es un SUELO, no el total
+            # del disco: el barrido para en DIR_SCAN_CAP.
+            "total": len(found),
+            "truncated": capped or len(rows) < len(found),
+            "entries": rows,
+        }))
+
+    def _read_error(self, request_id: str, code: str, reason: str) -> None:
+        self._queue(encode_json(TAG_READ_ERR, {
+            "request_id": request_id, "error": code, "reason": reason,
+        }))
 
     def _resolve_command(self, mode: str) -> list[str] | None:
         if mode == "harness":

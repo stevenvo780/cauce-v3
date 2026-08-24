@@ -18,14 +18,26 @@ export const FRAME_TAGS = {
   CLOSE: 0x30,
   CLOSED: 0x31,
   PING: 0x40,
-  PONG: 0x41
+  PONG: 0x41,
+  // Lectura de ficheros de gobierno. Es una transacción suelta, no una sesión, así que no reusa
+  // OPEN. Añadirlos aquí es lo que impide que la respuesta del agente sea un `unknown frame tag`:
+  // el decodificador trata un tag desconocido como violación y tira la conexión ENTERA, con
+  // todas las terminales abiertas encima.
+  READ: 0x50,
+  READ_OK: 0x51,
+  READ_ERR: 0x52,
+  READ_DATA: 0x53
 } as const;
 
 export type FrameTag = (typeof FRAME_TAGS)[keyof typeof FRAME_TAGS];
 
 /** A frame payload never exceeds this; a longer declared length is a protocol violation. */
 export const MAX_FRAME_PAYLOAD_BYTES = 65_536;
-/** DATA payloads carry the session UUID (with dashes) as 36 leading ASCII bytes. */
+/**
+ * DATA payloads carry the session UUID (with dashes) as 36 leading ASCII bytes. READ_DATA uses
+ * the same prefix for the `request_id` of the read on purpose: el agente lo genera con el mismo
+ * formato para que `decodeDataFrame` valga para los dos y no haya una segunda ruta de código.
+ */
 export const SESSION_ID_BYTES = 36;
 export const MAX_DATA_BYTES = MAX_FRAME_PAYLOAD_BYTES - SESSION_ID_BYTES;
 
