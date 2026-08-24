@@ -7056,7 +7056,52 @@ export class CauceRepository {
       if (['pending', 'leased', 'accepted', 'started'].includes(String(row.state))) value.pending += 1;
       return value;
     }, { pending: 0, retrying: 0, dead: 0 });
-    return { observed_at: new Date().toISOString(), ...counts, items: result.rows };
+
+    /*
+     * EL TOTAL, aparte de lo contado en la ventana.
+     *
+     * Los contadores de arriba salen de las `limit` filas más recientes. Eso está bien para la
+     * lista, y está MAL como cifra: medido en producción el 2026-08-24, la consola enseñaba
+     * «Entregas muertas: 1» en la portada y «DLQ: 413» en Señales, para la misma pregunta. La
+     * primera contaba la ventana; la segunda, la base entera. Ninguna mentía y el operador no
+     * podía saber cuál creer.
+     *
+     * El total lleva EL MISMO predicado de visibilidad que la lista, no un `COUNT(*)` pelado: la
+     * cifra de un cliente no puede incluir las entregas muertas de otro. La cifra global de toda
+     * la flota existe y tiene su sitio, que es `/v3/status`; no es ésta.
+     */
+    const totales = await this.pool.query<{ pending: string; retrying: string; dead: string; total: string }>(
+      `SELECT count(*) FILTER (WHERE d.status IN ('pending','leased','accepted','started')) AS pending,
+              count(*) FILTER (WHERE d.status = 'retry') AS retrying,
+              count(*) FILTER (WHERE d.status IN ('dead','failed')) AS dead,
+              count(*) AS total
+       FROM deliveries d JOIN messages m ON m.id=d.message_id
+       WHERE EXISTS (SELECT 1 FROM memberships source_member
+                     WHERE source_member.tenant_id=$1 AND source_member.room_id=m.room_id
+                       AND source_member.alias=$2 AND source_member.enabled AND m.tenant_id=$1)
+          OR (d.recipient_tenant=$1 AND d.recipient_alias=$2
+              AND (m.tenant_id=$1 OR EXISTS (
+                SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1 AND edge.to_tenant=m.tenant_id
+                  AND edge.enabled AND edge.allow_read
+              )))`, [actorTenant, actorAlias]
+    );
+    const fila = totales.rows[0];
+    const totals = {
+      pending: Number(fila?.pending ?? 0),
+      retrying: Number(fila?.retrying ?? 0),
+      dead: Number(fila?.dead ?? 0),
+    };
+    // «Recortada» se decide comparando con el total, no con `items.length === limit`: si hubiera
+    // exactamente `limit` entregas, esa comprobación diría que falta algo cuando no falta nada.
+    const muestra_recortada = Number(fila?.total ?? 0) > result.rows.length;
+
+    return {
+      observed_at: new Date().toISOString(),
+      ...counts,
+      totals,
+      muestra_recortada,
+      items: result.rows,
+    };
   }
 
   /**
