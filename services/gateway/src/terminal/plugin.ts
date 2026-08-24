@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { CauceRepository, StoreError, type DatabasePool } from '@cauce/store';
 import type { Tenant } from '@cauce/protocol';
@@ -6,6 +7,11 @@ import {
   AuthError, AuthorizationError, requireOperatorPermission, validatePrincipal,
   type AuthProvider, type Principal
 } from '../auth.js';
+import { registerAgentDirectiveRoutes } from '../console/agent-directive.routes.js';
+import {
+  TerminalRelayFactsProbe, type GovernanceRelayClient, type MeasuredFactsSource
+} from '../console/agent-documents.js';
+import { HttpGovernanceRelayClient } from '../console/relay-governance-client.js';
 import { recordTerminalAudit, terminalAuditMetadata, type TerminalAuditContext } from './audit.js';
 import {
   FLEET_PLACEMENTS, GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort,
@@ -53,6 +59,47 @@ export interface TerminalControlPlaneOptions {
   /** Injectable for tests; production uses a fresh in-memory registry per process. */
   readonly registry?: AgentRegistry;
   readonly repository?: { assertPermission(tenantId: Tenant, alias: string, permission: 'control'): Promise<void> };
+  /**
+   * De dónde salen los hechos MEDIDOS de cada alias (arnés, HOME, CODEX_HOME) para resolver la
+   * ruta de su manual del sitio.
+   *
+   * Hoy nadie los mide: el pty-agent conoce su `home` y su `harness` por el bundle con el que
+   * arranca, pero no los publica ni en el hello ni en la presencia, así que no hay ninguna fuente
+   * en producción. El default es honesto —«no medido»— y la ruta lo dice con esas palabras en vez
+   * de deducir la ruta del registro, que el 23-ago-2026 se equivocaba de arnés en 5 de 14 alias.
+   */
+  readonly measuredFacts?: MeasuredFactsSource;
+  /** Inyectable para los tests; en producción sale de `config.relayUrl`. */
+  readonly governanceRelay?: GovernanceRelayClient;
+}
+
+/**
+ * El cliente hacia el terminal-relay, o uno que explica por qué no hay ninguno.
+ *
+ * El material TLS se lee AQUÍ, al registrar el plugin, y no en la primera lectura: un fichero de
+ * certificado que no se puede leer tiene que matar el arranque, no descubrirse cuando un operador
+ * abre el modal.
+ */
+async function buildGovernanceRelay(config: TerminalConfig): Promise<GovernanceRelayClient> {
+  if (config.relayUrl === undefined) {
+    return {
+      readFile: async () => ({
+        error: 'unavailable',
+        reason: 'el gateway no tiene configurada la dirección del terminal-relay (CAUCE_TERMINAL_RELAY_URL)'
+      })
+    };
+  }
+  const [ca, clientCert, clientKey] = await Promise.all([
+    config.relayCaFile === undefined ? undefined : readFile(config.relayCaFile),
+    config.relayClientCertFile === undefined ? undefined : readFile(config.relayClientCertFile),
+    config.relayClientKeyFile === undefined ? undefined : readFile(config.relayClientKeyFile)
+  ]);
+  return new HttpGovernanceRelayClient({
+    relayUrl: config.relayUrl,
+    token: config.relayToken,
+    ...(ca === undefined ? {} : { ca }),
+    ...(clientCert === undefined || clientKey === undefined ? {} : { clientCert, clientKey })
+  });
 }
 
 interface SessionRequestBody {
@@ -458,6 +505,55 @@ export async function registerTerminalControlPlane(
       }
       return await reply.code(204).send();
     } catch (error) { replyError(reply, error); }
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Browser route: la DIRECTIVA de un alias                             */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * `GET /v3/console/agents/:tenant/:alias/directive` vive aquí, y no en app.ts, porque su
+   * contenido sólo existe cuando existe el plano de terminal: el texto sale del pty-agent y viaja
+   * por el terminal-relay. Con `CAUCE_TERMINAL_ENABLED` apagado no hay por dónde leer nada, y una
+   * ruta que sólo sabría contestar «no disponible» es peor que una ruta que no está.
+   *
+   * Al colgar de `/v3/console/` hereda el gancho de seguridad de consola (Origin, Sec-Fetch-Site)
+   * que app.ts instala ANTES de este plugin, igual que el resto de rutas de navegador.
+   */
+  const relayGovernance = options.governanceRelay ?? await buildGovernanceRelay(config);
+  const measuredFacts: MeasuredFactsSource = options.measuredFacts ?? { factsFor: async () => undefined };
+
+  async function authorizeDirective(raw: unknown): Promise<{ tenant_id: string; alias: string }> {
+    const request = raw as FastifyRequest<{ Params: { tenant?: string; alias?: string } }>;
+    const actor = await principal(request);
+    // Mismo permiso que `GET /v3/console/agents`: leer el manual de un alias es leer la flota.
+    requireOperatorPermission(actor, 'read');
+    // El `:tenant` de la URL es parte del contrato y la ruta NO lo usa para resolver: resuelve
+    // siempre contra el inquilino del actor. Sin esta comprobación, pedir `/Miguel/kratos/directive`
+    // devolvería el manual de `Steven:kratos` con la URL diciendo otra cosa — un identificador sin
+    // marco de referencia, que es como se sirve el fichero de otro sin que nadie lo note.
+    if (request.params.tenant !== actor.tenant_id) {
+      throw new AuthorizationError('ese inquilino no es el tuyo');
+    }
+    // Y con el inquilino ya clavado al del actor, «poder ver ese alias» ES el permiso `read`: la
+    // visibilidad de `listAgents` es el propio inquilino más los que tenga por ACL, así que dentro
+    // del propio inquilino no hay ninguna fila que el permiso deje ver y esta ruta no. Una consulta
+    // extra a la base no cambiaría ni un resultado.
+    if (typeof request.params.alias !== 'string' || !/^[a-z][a-z0-9_-]{1,63}$/.test(request.params.alias)) {
+      throw new Error('alias is invalid');
+    }
+    return { tenant_id: actor.tenant_id, alias: actor.alias };
+  }
+
+  // Encapsulado en su propio ámbito para poder darle un manejador de errores: la ruta de directiva
+  // no atrapa nada por dentro, así que sin esto un `AuthError` saldría como 500 y un operador sin
+  // sesión vería «error interno» en vez de «no estás autenticado».
+  await app.register(async (scope) => {
+    scope.setErrorHandler((error, _request, reply) => { replyError(reply, error); });
+    registerAgentDirectiveRoutes(scope, {
+      authorize: authorizeDirective,
+      probe: new TerminalRelayFactsProbe(measuredFacts, relayGovernance)
+    });
   });
 
   /* ------------------------------------------------------------------ */

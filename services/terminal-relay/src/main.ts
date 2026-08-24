@@ -3,6 +3,7 @@ import { AgentLeg, createAgentTlsServer } from './agent-leg.js';
 import { BrowserLeg, createBrowserHttpsServer } from './browser-leg.js';
 import { loadRelayConfig } from './config.js';
 import { HttpsTerminalGatewayClient } from './gateway-client.js';
+import { setupGovernanceRelay } from './governance-relay.js';
 import { errorLabel, logEvent } from './log.js';
 import { CLOSE_CODES, SessionManager } from './sessions.js';
 
@@ -69,6 +70,15 @@ const browser = new BrowserLeg({
   gateway,
   agents,
   sessions
+});
+// La lectura de gobierno comparte el listener del lado navegador: es HTTP normal, no un WebSocket,
+// así que convive con `BrowserLeg` (que sólo escucha `upgrade`) sin pisarle nada. El token es el
+// MISMO fichero con el que el relay se autentica contra el gateway, sólo que en el sentido
+// contrario, y se lee en cada llamada para que rotarlo no obligue a reiniciar.
+setupGovernanceRelay({
+  server: browserServer,
+  agents,
+  token: async () => (await readFile(config.tokenFile, 'utf8')).trim()
 });
 
 // A refused handshake is routine on a listener published to the tailnet: log it, never crash.

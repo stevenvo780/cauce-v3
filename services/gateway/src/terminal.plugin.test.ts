@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { DatabasePool } from '@cauce/store';
-import type { AuthProvider, Principal } from './auth.js';
+import { AuthError, type AuthProvider, type Principal } from './auth.js';
+import type { RelayFileRead, RuntimeFacts } from './console/agent-documents.js';
+import type { FactsSource, GovernanceReadError } from './console/agent-documents.routes.js';
 import { createConsoleSecurityHook } from './console-security.js';
 import type { TerminalConfig } from './terminal/config.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
@@ -170,6 +172,11 @@ describe('terminal control plane', () => {
   let app: FastifyInstance;
   let config: TerminalConfig;
   let controlPermission: () => Promise<void>;
+  /** Hechos MEDIDOS por alias. Vacío = nadie midió ese contenedor, que es el estado de hoy. */
+  let hechos: Map<string, { facts: RuntimeFacts; source: FactsSource }>;
+  /** Todo lo que el gateway le pidió al terminal-relay, en orden. */
+  let pedidas: Array<{ tenant_id: string; alias: string; path: string }>;
+  let leer: (path: string) => RelayFileRead | GovernanceReadError;
 
   async function build(overrides: Partial<TerminalConfig> = {}, provider = consoleAuthProvider()): Promise<void> {
     // A test that rebuilds with another config must not leak the instance beforeEach created.
@@ -195,7 +202,17 @@ describe('terminal control plane', () => {
       authProvider: provider,
       config,
       registry,
-      repository: { assertPermission: async () => { await controlPermission(); } }
+      repository: { assertPermission: async () => { await controlPermission(); } },
+      measuredFacts: { factsFor: async (tenantId, alias) => hechos.get(`${tenantId}:${alias}`) },
+      // El terminal-relay es lo único sustituido: montar el relay entero aquí probaría el relay,
+      // no el plugin. Lo que sí se registra es QUÉ rutas se le llegan a pedir, que es la parte
+      // que el gateway decide.
+      governanceRelay: {
+        readFile: async (tenantId, alias, path) => {
+          pedidas.push({ tenant_id: tenantId, alias, path });
+          return leer(path);
+        }
+      }
     });
     await app.ready();
   }
@@ -235,6 +252,11 @@ describe('terminal control plane', () => {
     database = fakeDatabase();
     registry = new AgentRegistry();
     controlPermission = async () => undefined;
+    hechos = new Map();
+    pedidas = [];
+    leer = (path) => ({
+      path, bytes: 9, truncated: false, modified_at: '2026-08-24T10:00:00Z', content: '# Manual\n'
+    });
     await grant([{ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness'] }]);
     await build();
   });
@@ -522,5 +544,122 @@ describe('terminal control plane', () => {
       headers: { authorization: `Bearer ${RELAY_TOKEN}` }, payload: { agents: [] }
     });
     expect(relay.statusCode).toBe(200);
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* GET /v3/console/agents/:tenant/:alias/directive                     */
+  /* ------------------------------------------------------------------ */
+
+  const CLAUDE = { facts: { harness: 'claude', home: '/home/dev' } as RuntimeFacts, source: 'measured' as FactsSource };
+  const DIRECTIVA = '/v3/console/agents/Steven/jarvis/directive';
+  const MANUAL = '/home/dev/.claude/CLAUDE.md';
+
+  interface DirectiveBody {
+    publicado: boolean;
+    motivo?: string;
+    files: Array<{ path: string; text: string | null; bytes: number | null; modified_at: string | null; truncated: boolean }> | null;
+    memory: { root: string; entries: unknown[] } | null;
+  }
+
+  it('sirve el manual del sitio que el pty-agent devolvió', async () => {
+    hechos.set('Steven:jarvis', CLAUDE);
+
+    const response = await app.inject({ method: 'GET', url: DIRECTIVA });
+
+    expect(response.statusCode).toBe(200);
+    const manual = response.json<DirectiveBody>().files?.find((file) => file.path === MANUAL);
+    expect(manual).toMatchObject({
+      text: '# Manual\n', bytes: 9, truncated: false, modified_at: '2026-08-24T10:00:00Z'
+    });
+  });
+
+  it('sólo le pide al relay el manual del sitio, nunca settings.json ni .claude.json', async () => {
+    hechos.set('Steven:jarvis', CLAUDE);
+
+    const response = await app.inject({ method: 'GET', url: DIRECTIVA });
+
+    // Los cuatro documentos del alias salen en la respuesta: la ruta los recorrió todos. Sin esto,
+    // un cambio que dejara la lista en un solo documento haría pasar la comprobación de abajo sin
+    // que la puerta de lectura estuviera filtrando nada.
+    const files = response.json<DirectiveBody>().files ?? [];
+    expect(files.map((file) => file.path)).toEqual([
+      MANUAL, '/home/dev/.claude/settings.json', '/home/dev/.claude/agents', '/home/dev/.claude.json'
+    ]);
+    expect(files.filter((file) => file.text !== null).map((file) => file.path)).toEqual([MANUAL]);
+    // El juego cerrado de un alias claude tiene CUATRO documentos y la ruta los recorre todos; la
+    // puerta de lectura (`verifyReadablePath`) deja pasar uno solo. `settings.json` lleva `hooks`,
+    // que son órdenes de shell, y `.claude.json` lleva el OAuth de la cuenta: si algún día alguno
+    // de los dos se cuela hasta el cable, esta lista lo enseña.
+    expect(pedidas).toEqual([{ tenant_id: 'Steven', alias: 'jarvis', path: MANUAL }]);
+  });
+
+  it('marca el fichero como no disponible cuando la lectura falla, sin inventar texto', async () => {
+    hechos.set('Steven:jarvis', CLAUDE);
+    leer = () => ({ error: 'unavailable', reason: 'no hay ningún pty-agent conectado para ese alias' });
+
+    const response = await app.inject({ method: 'GET', url: DIRECTIVA });
+
+    expect(response.statusCode).toBe(200);
+    const manual = response.json<DirectiveBody>().files?.find((file) => file.path === MANUAL);
+    expect(manual).toMatchObject({ text: null, bytes: null, modified_at: null, truncated: false });
+  });
+
+  it('degrada con un motivo cuando nadie midió ese contenedor, y no molesta al relay', async () => {
+    const response = await app.inject({ method: 'GET', url: DIRECTIVA });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<DirectiveBody>();
+    expect(body).toMatchObject({ publicado: true, files: null, memory: null });
+    expect(body.motivo).toContain('no medido');
+    // Sin hechos no se sabe dónde vive el manual, así que preguntar sería pedir una ruta inventada.
+    expect(pedidas).toEqual([]);
+  });
+
+  it('no sirve contenido cuando las rutas están deducidas del registro y no medidas', async () => {
+    hechos.set('Steven:jarvis', { ...CLAUDE, source: 'database' });
+
+    const response = await app.inject({ method: 'GET', url: DIRECTIVA });
+
+    const body = response.json<DirectiveBody>();
+    expect(body.files).toBeNull();
+    expect(body.motivo).toContain('no medidas');
+    expect(pedidas).toEqual([]);
+  });
+
+  it('rechaza pedir la directiva de un alias nombrando otro inquilino', async () => {
+    hechos.set('Steven:jarvis', CLAUDE);
+
+    const response = await app.inject({ method: 'GET', url: '/v3/console/agents/Miguel/jarvis/directive' });
+
+    // La ruta resuelve contra el inquilino del ACTOR, así que sin esta puerta la URL diría «Miguel»
+    // y el cuerpo sería el manual de Steven:jarvis. Un identificador sin marco de referencia.
+    expect(response.statusCode).toBe(403);
+    expect(pedidas).toEqual([]);
+  });
+
+  it('exige el permiso de lectura de consola', async () => {
+    await build({}, consoleAuthProvider({ permissions: ['route', 'control'] }));
+    hechos.set('Steven:jarvis', CLAUDE);
+
+    const response = await app.inject({ method: 'GET', url: DIRECTIVA });
+
+    expect(response.statusCode).toBe(403);
+    expect(pedidas).toEqual([]);
+  });
+
+  it('contesta 401 —no 500— al que no está autenticado', async () => {
+    await build({}, {
+      name: 'test-sin-sesion', mode: 'test',
+      authenticateHttp: async () => { throw new AuthError(); },
+      authenticateHello: async () => { throw new AuthError(); }
+    });
+    hechos.set('Steven:jarvis', CLAUDE);
+
+    const response = await app.inject({ method: 'GET', url: DIRECTIVA });
+
+    // La ruta de directiva no atrapa nada por dentro: sin el manejador de errores del ámbito, un
+    // operador con la sesión caducada vería «error interno» y buscaría el fallo donde no está.
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ error: 'unauthorized' });
   });
 });
