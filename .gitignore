@@ -1,6 +1,12 @@
 # ── deps / build ────────────────────────────────────────────────
 node_modules/
 **/node_modules/
+# Sin la barra final, para que también atrape un ENLACE llamado node_modules. Con barra, git
+# ignora directorios pero NO symlinks: los worktrees de esta flota enlazan `node_modules` al árbol
+# principal para no reinstalar, y ese enlace se coló como blob 120000 con una ruta absoluta dentro.
+# Un clon en otra máquina se lo habría encontrado apuntando a un sitio que no existe.
+node_modules
+**/node_modules
 dist/
 **/dist/
 build/
