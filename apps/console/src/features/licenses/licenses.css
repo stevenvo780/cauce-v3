@@ -6,7 +6,7 @@
   padding: 14px 16px;
   border-radius: 6px;
   margin-bottom: 20px;
-  font-size: 13px;
+  font-size: var(--tipo-rotulo);
   line-height: 1.5;
 }
 
@@ -81,11 +81,11 @@
 
 .account-id {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--tipo-cuerpo);
 }
 
 .account-label {
-  font-size: 12px;
+  font-size: var(--tipo-rotulo);
   color: hsl(0 0% 50%);
 }
 
@@ -115,7 +115,7 @@
 
 .account-section h4 {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--tipo-rotulo);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -138,7 +138,7 @@
   display: grid;
   grid-template-columns: 120px 1fr;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--tipo-rotulo);
 }
 
 .detail-row dt {
@@ -172,7 +172,7 @@
   border: 1px solid hsl(0 0% 80%);
   border-radius: 4px;
   background-color: hsl(0 0% 98%);
-  font-size: 12px;
+  font-size: var(--tipo-rotulo);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -228,7 +228,7 @@
 }
 
 .assignment-container {
-  font-size: 11px;
+  font-size: var(--tipo-apunte);
   color: hsl(0 0% 55%);
 }
 
@@ -240,7 +240,7 @@
 
 /* Techo de ruteo */
 .ceiling-info {
-  font-size: 12px;
+  font-size: var(--tipo-rotulo);
   padding: 8px;
   border-left: 3px solid hsl(240 100% 50%);
   background-color: hsl(240 100% 97%);
@@ -255,7 +255,7 @@
 }
 
 .ceiling-note {
-  font-size: 11px;
+  font-size: var(--tipo-apunte);
   color: hsl(0 0% 55%);
   margin-top: 4px;
 }
@@ -274,7 +274,7 @@
   border-left: 3px solid hsl(0 100% 50%);
   background-color: hsl(0 100% 97%);
   border-radius: 0 4px 4px 0;
-  font-size: 12px;
+  font-size: var(--tipo-rotulo);
   color: hsl(0 70% 30%);
 }
 
@@ -310,7 +310,7 @@
   align-items: center;
   gap: 8px;
   margin: 0 0 8px 0;
-  font-size: 13px;
+  font-size: var(--tipo-rotulo);
   font-weight: 600;
   color: hsl(0 70% 40%);
 }
@@ -323,7 +323,7 @@
 
 .finding-section p {
   margin: 0 0 8px 0;
-  font-size: 12px;
+  font-size: var(--tipo-rotulo);
   color: hsl(0 0% 55%);
 }
 
@@ -343,7 +343,7 @@
 }
 
 .finding-list li {
-  font-size: 12px;
+  font-size: var(--tipo-rotulo);
   padding: 6px 8px;
   background-color: hsl(0 0% 97%);
   border-left: 3px solid hsl(40 100% 50%);
@@ -358,7 +358,7 @@
 }
 
 .finding-reason {
-  font-size: 11px;
+  font-size: var(--tipo-apunte);
   color: hsl(0 0% 55%);
   margin-top: 2px;
   margin-left: 16px;
@@ -371,7 +371,7 @@
 }
 
 .finding-detail {
-  font-size: 10px;
+  font-size: var(--tipo-apunte);
   color: hsl(0 0% 60%);
   margin-top: 1px;
   margin-left: 16px;
