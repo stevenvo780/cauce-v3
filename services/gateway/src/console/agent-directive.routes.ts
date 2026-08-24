@@ -79,6 +79,44 @@ function isReadError(result: unknown): result is GovernanceReadError {
   return result !== null && typeof result === 'object' && 'error' in result;
 }
 
+/**
+ * La respuesta cuando la lectura NO ocurrió, o `undefined` si sí ocurrió.
+ *
+ * Está fuera del handler para poder probarla sola, y porque los dos caminos degradados tenían
+ * el mismo defecto: devolvían `publicado: true` con `files: null` sin decir en ningún campo que
+ * no se había mirado nada. Quien pinta lo interpretaba como «se miró y no hay» y afirmaba que el
+ * alias arranca sin manual — falso en 11 de los 12 alias medidos dentro de sus contenedores el
+ * 24-ago-2026.
+ *
+ * `publicado` responde «¿existe la ruta?». `medido` responde «¿ocurrió la lectura?». Son
+ * preguntas distintas y hacía falta la segunda.
+ */
+export function construirRespuestaDegradada(
+  source: 'measured' | 'registry' | 'database' | undefined,
+): AgentDirective | undefined {
+  if (source === undefined) {
+    return {
+      publicado: true,
+      medido: false,
+      motivo: 'contenedor no medido todavía (sin hechos de entorno)',
+      files: null,
+      memory: null,
+    };
+  }
+  if (source !== 'measured') {
+    // La ruta que da el registro falla en 5 de 14 alias: servir contenido desde ahí abriría el
+    // fichero de OTRO agente sin dar un solo error. Se declara no medida y no se sirve nada.
+    return {
+      publicado: true,
+      medido: false,
+      motivo: 'rutas deducidas del registro, no medidas (sin garantía de corrección)',
+      files: null,
+      memory: null,
+    };
+  }
+  return undefined;
+}
+
 export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDirectiveDeps): void {
   app.get<{ Params: { tenant: string; alias: string } }>(
     '/v3/console/agents/:tenant/:alias/directive',
@@ -93,29 +131,13 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
 
       // 2. FACTS: ¿se midieron los hechos del alias?
       const medido = await deps.probe.factsFor(actor.tenant_id, alias);
-      if (!medido) {
-        // 🚩 Degradar honesto: no sabemos dónde está la directiva.
-        return {
-          publicado: true,
-          motivo: 'contenedor no medido todavía (sin hechos de entorno)',
-          files: null,
-          memory: null,
-        };
-      }
+      const degradada = construirRespuestaDegradada(medido?.source);
+      // Los dos caminos degradados —sin hechos, y con hechos deducidos del registro— dicen ahora
+      // `medido: false`, para que quien pinta no tenga que adivinarlo por la forma de los datos.
+      if (!medido || degradada) return degradada;
 
-      const { facts, source } = medido;
+      const { facts } = medido;
       const timestamp = new Date().toISOString();
-
-      // Si la fuente no es MEDIDA, no servir contenido — es demasiado arriesgado.
-      // (La ruta que la BD da falla en 5 de 14 alias.)
-      if (source !== 'measured') {
-        return {
-          publicado: true,
-          motivo: 'rutas deducidas del registro, no medidas (sin garantía de corrección)',
-          files: null,
-          memory: null,
-        };
-      }
 
       // 3. RESOLVER RUTAS: ¿cuál es el juego cerrado de ficheros para este alias?
       const allowedDirectivePaths = directivePathsForHarness(facts);
@@ -174,19 +196,24 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
             })),
           };
         } else {
-          // 🚩 La memoria no está disponible — devolver índice vacío pero marcar error.
-          memory = {
-            root: memoryRoot,
-            total: 0,
-            truncated: false,
-            entries: [],
-          };
+          /*
+           * La memoria NO se pudo listar. Antes esto devolvía `{total: 0, entries: []}`, y ese
+           * cero viajaba hasta la pantalla como «miró y este alias no tiene memoria escrita».
+           * Es la misma mentira que la capa 2: un cero que nadie contó. Medido el 23-ago, `zeus`
+           * tiene 18.212 ficheros en `~/.claude/projects` y `janus` 639.
+           *
+           * `null` significa «no se miró», y la consola ya sabe pintar eso con su motivo.
+           */
+          memory = null;
         }
       }
 
       // 6. RESPUESTA FINAL
       const resultado: AgentDirective = {
         publicado: true,
+        // Este es el único camino en el que la lectura ocurrió de verdad, sobre hechos medidos
+        // dentro del contenedor. Sólo aquí la pantalla puede afirmar una ausencia.
+        medido: true,
         observed_at: timestamp,
         // `RuntimeFacts` no lleva el contenedor: los hechos que mide el pty-agent son del PROCESO
         // del arnés (arnés, HOME, CODEX_HOME, cwd), no del contenedor que lo envuelve. Va `null`
