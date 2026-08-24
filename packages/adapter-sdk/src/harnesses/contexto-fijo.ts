@@ -34,6 +34,21 @@ import { createHash } from "node:crypto";
 /** Versión del contrato del bloque gestionado. Cambiarla invalida todos los sellos a la vez. */
 export const VERSION_CONTEXTO_FIJO = "1";
 
+/**
+ * Las marcas del bloque gestionado dentro del fichero del arnés.
+ *
+ * El fichero NO es de Cauce: es del alias, y una persona escribe ahí. Todo lo que Cauce genera
+ * vive entre estas dos marcas y **lo de fuera se conserva byte a byte**. Sin eso, la primera
+ * siembra pisaría el manual que alguien escribió a mano — que es exactamente lo que hace hoy
+ * `scripts/genera-contexto-harness.sh`, que promete una copia de seguridad en su cabecera y no
+ * hace ninguna.
+ *
+ * Van en comentario HTML porque en Markdown no se ven al leer, y `openclaw.json` no usa este
+ * camino (ahí el bloque es un campo del JSON, ver `rutaDelContextoFijo`).
+ */
+export const MARCA_INICIO = `<!-- CAUCE:CONTEXTO-FIJO v${VERSION_CONTEXTO_FIJO} — generado, no editar dentro de este bloque -->`;
+export const MARCA_FIN = "<!-- CAUCE:FIN-CONTEXTO-FIJO -->";
+
 export interface SelloDeContextoFijo {
   /** `VERSION_CONTEXTO_FIJO` con el que se escribió el fichero. */
   readonly version: string;
@@ -101,4 +116,91 @@ export function renglonDeContextoFijo(): string {
     `desde el fichero de instrucciones de tu arnés (contexto Cauce v${VERSION_CONTEXTO_FIJO}). ` +
     "Rige igual. Si no lo tenés delante, decilo en tu \"reply\" y seguí con lo que puedas."
   );
+}
+
+// ── Leer el sello del disco, desde DENTRO del contenedor ────────────────────────────────────
+
+/**
+ * Dónde vive el fichero de instrucciones de cada arnés.
+ *
+ * Las rutas salen de lo MEDIDO en producción el 2026-08-24, contenedor por contenedor, no del
+ * registro de la base —que estaba equivocado en 5 de los 14 alias—:
+ *   claude   → `<CLAUDE_CONFIG_DIR|~/.claude>/CLAUDE.md`
+ *   codex    → `<CODEX_HOME|~/.codex>/AGENTS.md`
+ *   openclaw → `<home>/.openclaw/openclaw.json`, y ahí NO es el fichero: es el campo `agents`.
+ *
+ * `openclaw.json` devuelve `undefined` a propósito: ese fichero guarda `auth` y `secrets` junto a
+ * la directiva, está en la lista de «nunca se sirve» del pty-agent y del gateway, y tratarlo como
+ * un fichero de texto llevaría a escribirlo entero. Su siembra necesita proyección campo a campo,
+ * que es otro camino.
+ */
+export function rutaDelContextoFijo(
+  harness: string,
+  home: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const absoluta = (valor: string | undefined): string | undefined =>
+    valor && valor.startsWith("/") ? valor : undefined;
+  if (harness === "claude") {
+    return `${absoluta(environment.CLAUDE_CONFIG_DIR) ?? `${home}/.claude`}/CLAUDE.md`;
+  }
+  if (harness === "codex") {
+    return `${absoluta(environment.CODEX_HOME) ?? `${home}/.codex`}/AGENTS.md`;
+  }
+  return undefined;
+}
+
+/**
+ * El bloque gestionado dentro del texto de un fichero, o `undefined` si no está.
+ *
+ * Devuelve el contenido SIN las marcas: lo que se resume es el texto, no su envoltorio, para que
+ * cambiar la redacción de una marca no invalide todos los sellos de la flota a la vez.
+ */
+export function bloqueGestionado(texto: string): string | undefined {
+  const par = parDeMarcas(texto);
+  if (!par) return undefined;
+  return texto.slice(par.desde, par.fin).trim();
+}
+
+/**
+ * El par de marcas que delimita el bloque VIGENTE, o `undefined` si no hay ninguno cerrado.
+ *
+ * Busca la ÚLTIMA apertura que tenga cierre detrás, no la primera. La diferencia la destapó una
+ * prueba: si una siembra se cortó a medias queda una apertura huérfana, y leer desde la primera
+ * devolvía el texto roto MÁS la apertura siguiente MÁS el bloque nuevo — un «bloque» que no es
+ * ninguno de los dos y cuyo resumen no coincidiría nunca con nada. Con la última, el fichero a
+ * medio escribir queda como texto inerte y el bloque vigente se lee limpio.
+ */
+function parDeMarcas(texto: string): { inicio: number; desde: number; fin: number } | undefined {
+  let inicio = -1;
+  for (let busca = texto.indexOf(MARCA_INICIO); busca !== -1; busca = texto.indexOf(MARCA_INICIO, busca + 1)) {
+    if (texto.indexOf(MARCA_FIN, busca + MARCA_INICIO.length) !== -1) inicio = busca;
+  }
+  if (inicio === -1) return undefined;
+  const desde = inicio + MARCA_INICIO.length;
+  const fin = texto.indexOf(MARCA_FIN, desde);
+  if (fin === -1) return undefined;
+  return { inicio, desde, fin };
+}
+
+/**
+ * Escribe el bloque gestionado dentro de un fichero, conservando lo de fuera BYTE A BYTE.
+ *
+ * Si no había bloque, lo añade al final separado por una línea en blanco: nunca al principio,
+ * porque lo primero de un `CLAUDE.md` suele ser el título que escribió una persona.
+ */
+export function conBloqueGestionado(textoOriginal: string, bloque: string): string {
+  const nuevo = `${MARCA_INICIO}\n${bloque.trim()}\n${MARCA_FIN}`;
+  const par = parDeMarcas(textoOriginal);
+  if (!par) {
+    /*
+     * No hay bloque cerrado. Puede que no haya nada, o que haya una apertura huérfana de una
+     * siembra cortada. En los dos casos se conserva TODO lo anterior y el bloque nuevo va detrás:
+     * adivinar dónde terminaba un bloque a medio escribir es exactamente cómo se borra texto
+     * ajeno, y ese texto puede ser el manual que escribió una persona.
+     */
+    const base = textoOriginal.trimEnd();
+    return base.length === 0 ? `${nuevo}\n` : `${base}\n\n${nuevo}\n`;
+  }
+  return textoOriginal.slice(0, par.inicio) + nuevo + textoOriginal.slice(par.fin + MARCA_FIN.length);
 }
