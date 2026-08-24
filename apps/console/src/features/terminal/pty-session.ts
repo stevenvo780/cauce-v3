@@ -224,6 +224,49 @@ function pintarPiel(entry: PtyEntry): void {
   estilo.setProperty('--pty-seleccion', TEMA_TERMINAL.selectionBackground);
 }
 
+/**
+ * **Un documento que le niega a xterm el `<style>`, y nada más que eso.**
+ *
+ * 🔴 `pintarPiel` y `xterm-csp.css` arreglaron el CONTENIDO —lo que esas reglas decían viaja ahora
+ * en un fichero que la CSP permite— pero no la INYECCIÓN. El renderer DOM de xterm crea dos
+ * `<style>` (`_injectCss` para tema y letra, `_updateDimensions` para la celda) y los reescribe
+ * con cada cambio de tema, de fuente o de cuerpo. Con `style-src 'self'` puesta el navegador los
+ * rechaza uno por uno: MEDIDO contra producción, abrir la terminal dejaba **22 violaciones**
+ * `style-src` en la consola de Chrome, todas desde `assets/xterm-*.js`. Ya no rompían nada —la
+ * piel viene del bundle— pero una página peleándose con su propia política tapa, entre su ruido,
+ * las violaciones que sí habría que ver.
+ *
+ * Relajar la política estaba descartado y un hash es imposible: el texto de esos `<style>` lleva
+ * el número de instancia del renderer (`.xterm-dom-renderer-owner-N`, `@keyframes blink_..._N`),
+ * o sea que cambia con cada terminal que se abre. xterm 5.5 tampoco admite un `nonce` (no aparece
+ * la palabra en su bundle). Lo que sí ofrece es `documentOverride`: el documento del que saca los
+ * nodos que crea. Se le pasa este proxy, que devuelve un `<template>` —inerte por hoja de estilos
+ * del navegador, nunca se pinta ni se interpreta como CSS— cuando le piden un `<style>`, y el
+ * elemento de verdad para todo lo demás. Así no hay nada que bloquear: la política se queda como
+ * está y el terminal se sigue vistiendo desde `xterm-csp.css`.
+ *
+ * Sólo se intercepta `createElement`; el resto de la API del documento pasa tal cual al real, con
+ * `this` puesto en él (un método del DOM invocado sobre el proxy lanza «Illegal invocation»).
+ */
+let documentoSinEstilos: Document | undefined;
+
+function documentoQueNiegaLosEstilos(): Document {
+  documentoSinEstilos ??= new Proxy(document, {
+    get(real, propiedad) {
+      if (propiedad === 'createElement') {
+        return (etiqueta: string, opciones?: ElementCreationOptions) => (
+          String(etiqueta).toLowerCase() === 'style'
+            ? real.createElement('template')
+            : real.createElement(etiqueta, opciones)
+        );
+      }
+      const valor = Reflect.get(real, propiedad, real) as unknown;
+      return typeof valor === 'function' ? (valor as (...args: unknown[]) => unknown).bind(real) : valor;
+    },
+  });
+  return documentoSinEstilos;
+}
+
 function publish(entry: PtyEntry, patch: Partial<PtySessionView>): void {
   entry.view = { ...entry.view, ...patch };
   for (const listener of listeners.get(entry.id) ?? []) listener();
@@ -449,6 +492,8 @@ export function ensurePtySession(options: PtySessionOptions): void {
     cursorBlink: options.readOnly !== true,
     disableStdin: options.readOnly === true,
     convertEol: false,
+    // La CSP de produccion no admite el `<style>` que xterm inyecta. Ver `documentoQueNiegaLosEstilos`.
+    documentOverride: documentoQueNiegaLosEstilos(),
     fontFamily: FUENTE_TERMINAL,
     fontSize: CUERPO_BASE,
     lineHeight: 1.15,
