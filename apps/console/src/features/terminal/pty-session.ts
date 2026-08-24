@@ -12,6 +12,10 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
+// 🔴 La piel del terminal, EMPAQUETADA. Sin este import la CSS que xterm inyecta en tiempo de
+// ejecución la tira la CSP (`style-src 'self'`) y la TUI se ve negro sobre negro y en serif. El
+// porqué entero está en la cabecera del fichero.
+import './xterm-csp.css';
 
 export type PtyChannelState = 'connecting' | 'attaching' | 'open' | 'closed' | 'error';
 
@@ -102,13 +106,28 @@ export function websocketUrl(path: string): string {
  * Un espejo no reinterpreta lo que refleja. El resto de la consola sigue su tema; la superficie
  * del terminal, no.
  */
-const TEMA_TERMINAL = {
+export const TEMA_TERMINAL = {
   background: '#0a0e16',
   foreground: '#d8e4f7',
   cursor: '#7ce7c5',
   cursorAccent: '#0a0e16',
   selectionBackground: '#2c5468',
 } as const;
+
+/**
+ * La familia monoespaciada del terminal.
+ *
+ * `ui-monospace` y `SFMono-Regular` primero: son las monoespaciadas del sistema y están SIEMPRE.
+ * `JetBrains Mono` iba primera y no viaja en el bundle, así que en cualquier navegador sin ella
+ * instalada la cadena caía en la `monospace` genérica del navegador.
+ *
+ * 🔴 Se declara UNA vez y se usa DOS: como opción de xterm (de ahí sale la medición de la celda) y
+ * como variable `--pty-fuente` en el atributo `style` del nodo (de ahí sale lo que se PINTA, ver
+ * `xterm-csp.css`). Si las dos no dijeran lo mismo, la geometría se calcularía con una letra y se
+ * dibujaría con otra: columnas que no cuadran con lo que se lee.
+ */
+export const FUENTE_TERMINAL =
+  "ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono', monospace";
 
 /**
  * Columnas por debajo de las cuales el espejo deja de servir.
@@ -122,7 +141,21 @@ const TEMA_TERMINAL = {
  */
 const COLUMNAS_MINIMAS = 80;
 const CUERPO_BASE = 13;
-const CUERPO_MINIMO = 7;
+/**
+ * El suelo del cuerpo de letra, y por qué es 10 y no 7.
+ *
+ * 🔴 Bajar la letra para no perder columnas sólo paga MIENTRAS SE PUEDA LEER. Con el suelo en 7 px,
+ * medido en Chrome a 360x800 contra producción: el terminal quedaba a 7 px y entraban 65 columnas
+ * —o sea que la TUI se cortaba IGUAL (hacen falta 80), y encima ya no se leía—. Se perdía por los
+ * dos lados: ni se veía entero ni se veía. Con el suelo en 10 px entran ~43 columnas, se corta lo
+ * mismo, y lo que queda SÍ se lee; el aviso `.pty-estrecho` sigue diciendo cuántas caben, que es
+ * el hueco dicho en voz alta.
+ *
+ * 10 y no 11: medido a 1400 px de ventana, el hueco del terminal mide 535 px y a 10 px de cuerpo
+ * entran exactamente 80 columnas. Subir a 11 dejaría 72 y haría aparecer el aviso de recorte en un
+ * escritorio normal, que es justo lo que no hay que romper.
+ */
+const CUERPO_MINIMO = 10;
 
 interface PtyEntry {
   id: string;
@@ -159,6 +192,36 @@ function holder(): HTMLDivElement {
     document.body.appendChild(detachedHolder);
   }
   return detachedHolder;
+}
+
+/**
+ * **Pinta la piel del terminal como ATRIBUTO `style` del nodo, y hay que hacerlo desde acá.**
+ *
+ * El renderer DOM de xterm no trae sus colores en un `.css`: los compone y los mete en un
+ * `<style>` que crea con `createElement`. La consola se sirve con `style-src 'self'` (ver
+ * `deploy/nginx-console-tls.conf`), así que ese `<style>` es «estilo en línea» sin permiso y el
+ * navegador lo RECHAZA entero: la etiqueta queda en el DOM con su texto dentro y sin aplicar una
+ * sola regla. Medido en Chrome con la cabecera puesta, la TUI quedaba a 1,18:1 —negro sobre
+ * negro— y en la serif por defecto del navegador.
+ *
+ * Las reglas viven ahora en `xterm-csp.css`, que va en el bundle y la CSP sí permite. Lo único que
+ * ese fichero no puede saber es lo que cambia por sesión: el cuerpo de letra baja solo cuando la
+ * pantalla estrecha lo pide. Eso viaja en variables CSS puestas en el atributo `style` del nodo,
+ * que la CSP permite aparte (`style-src-attr 'unsafe-inline'`) y que es el mismo camino por el que
+ * xterm ya fija anchos, altos e interletraje.
+ *
+ * Se llama al crear la sesión y en cada reajuste de geometría: si el cuerpo baja de 13 a 9, la
+ * variable baja con él y lo pintado sigue cuadrando con lo medido.
+ */
+function pintarPiel(entry: PtyEntry): void {
+  const estilo = entry.container.style;
+  estilo.setProperty('--pty-fuente', FUENTE_TERMINAL);
+  estilo.setProperty('--pty-cuerpo', `${entry.terminal.options.fontSize ?? CUERPO_BASE}px`);
+  estilo.setProperty('--pty-tinta', TEMA_TERMINAL.foreground);
+  estilo.setProperty('--pty-fondo', TEMA_TERMINAL.background);
+  estilo.setProperty('--pty-cursor', TEMA_TERMINAL.cursor);
+  estilo.setProperty('--pty-cursor-tinta', TEMA_TERMINAL.cursorAccent);
+  estilo.setProperty('--pty-seleccion', TEMA_TERMINAL.selectionBackground);
 }
 
 function publish(entry: PtyEntry, patch: Partial<PtySessionView>): void {
@@ -213,6 +276,9 @@ function ajustarGeometria(entry: PtyEntry): void {
   } catch {
     // Headless or hidden panel: keep the last known geometry instead of crashing the channel.
   }
+  // El cuerpo de letra que acaba de decidirse tiene que llegar a lo que se PINTA, no sólo a lo que
+  // se mide: la regla que lo aplica está en el bundle y lee `--pty-cuerpo` (ver `pintarPiel`).
+  pintarPiel(entry);
   if (entry.terminal.cols !== entry.view.columnas) publish(entry, { columnas: entry.terminal.cols });
 }
 
@@ -383,10 +449,7 @@ export function ensurePtySession(options: PtySessionOptions): void {
     cursorBlink: options.readOnly !== true,
     disableStdin: options.readOnly === true,
     convertEol: false,
-    // `ui-monospace` y `SFMono-Regular` primero: son las monoespaciadas del sistema y están
-    // SIEMPRE. `JetBrains Mono` iba primera y no viaja en el bundle, así que en cualquier
-    // navegador sin ella instalada la cadena caía en la `monospace` genérica del navegador.
-    fontFamily: "ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+    fontFamily: FUENTE_TERMINAL,
     fontSize: CUERPO_BASE,
     lineHeight: 1.15,
     scrollback: 5000,
@@ -409,6 +472,8 @@ export function ensurePtySession(options: PtySessionOptions): void {
     closed: false,
   };
   entries.set(options.sessionId, entry);
+  // Antes de abrir el renderer: el primer frame ya sale con la tinta y la letra puestas.
+  pintarPiel(entry);
 
   try {
     terminal.open(container);
@@ -531,6 +596,9 @@ export function ptySessionType(sessionId: string, data: string): void {
  * Diagnóstico y pruebas: la vista nunca llama a esto.
  */
 export const PTY_COLUMNAS_MINIMAS = COLUMNAS_MINIMAS;
+/** Diagnóstico y pruebas: el suelo del cuerpo de letra. Ver `CUERPO_MINIMO`. */
+export const PTY_CUERPO_MINIMO = CUERPO_MINIMO;
+export const PTY_CUERPO_BASE = CUERPO_BASE;
 
 export function ptySessionScroll(sessionId: string, lineas: number): void {
   entries.get(sessionId)?.terminal.scrollLines(lineas);
