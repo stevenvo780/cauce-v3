@@ -66,7 +66,7 @@
 .lhg-note {
   margin: 12px 2px 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--tipo-rotulo);
   line-height: 1.6;
 }
 
@@ -103,7 +103,7 @@
   fill: var(--muted);
   /* El lienzo se dibuja a ~0,8 del tamaño del viewBox, así que estos px NO son los px que se ven:
      hay que compensar o los nombres quedan en 9 px reales, que es donde deja de leerse. */
-  font-size: 15px;
+  font-size: var(--tipo-cuerpo);
   font-weight: 600;
   letter-spacing: .02em;
   paint-order: stroke;
@@ -166,7 +166,7 @@
 
 .lhg-bot-name {
   fill: var(--text);
-  font-size: 14px;
+  font-size: var(--tipo-cuerpo);
   font-weight: 600;
   paint-order: stroke;
   stroke: var(--surface-2);
@@ -214,7 +214,7 @@
 
 .lhg-bot-queue text {
   fill: var(--amber);
-  font-size: 11.5px;
+  font-size: var(--tipo-rotulo);
   font-weight: 700;
 }
 
@@ -233,7 +233,7 @@
  */
 .lhg-bot-word {
   fill: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--tipo-rotulo);
   font-weight: 600;
   letter-spacing: .01em;
   paint-order: stroke;
@@ -287,7 +287,7 @@
 
 .lhg-flow-acl-label {
   fill: var(--muted);
-  font-size: 11px;
+  font-size: var(--tipo-apunte);
   font-weight: 600;
   paint-order: stroke;
   stroke: var(--surface-2);
@@ -312,14 +312,14 @@
 
 .lhg-human-glyph {
   fill: var(--blue);
-  font-size: 15px;
+  font-size: var(--tipo-cuerpo);
   font-weight: 700;
   pointer-events: none;
 }
 
 .lhg-human-name {
   fill: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--tipo-rotulo);
   font-weight: 600;
   paint-order: stroke;
   stroke: var(--surface-2);

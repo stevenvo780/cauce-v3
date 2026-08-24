@@ -21,14 +21,14 @@
   border-radius: var(--radius);
   background: var(--surface);
 }
-.live-toolbar label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.live-toolbar label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--tipo-rotulo); }
 .live-toolbar select { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-2); color: var(--text); }
 /* El aviso de topología caída trae su reintento dentro del propio aviso: el fallo y su salida
    tienen que estar en el mismo sitio, no a dos pantallas de distancia. */
 .live-toolbar .notice { flex-basis: 100%; }
 .live-toolbar .notice button { margin-left: 10px; vertical-align: middle; }
 
-.live-feed-state { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.live-feed-state { display: inline-flex; align-items: center; gap: 8px; font-size: var(--tipo-rotulo); font-weight: 600; }
 .live-feed-state .live-feed-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 0 rgb(99 222 185 / 55%); animation: live-ping 2.4s ease-out infinite; }
 .live-feed-state[data-feed='paused'] { color: var(--muted); }
 .live-feed-state[data-feed='paused'] .live-feed-dot { background: var(--faint); animation: none; }
@@ -42,7 +42,7 @@
 }
 
 /* Aviso honesto: no hay websocket para la consola, esto es polling y hay que decirlo. */
-.live-transport-note { margin: 0; color: var(--faint); font-size: 12.5px; }
+.live-transport-note { margin: 0; color: var(--faint); font-size: var(--tipo-apunte); }
 
 /* ------------------------------------------------------------------------------- resumen */
 
@@ -55,7 +55,7 @@
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface-2);
-  font-size: 13px;
+  font-size: var(--tipo-rotulo);
   cursor: pointer;
   transition: border-color .16s ease, background .16s ease, transform .16s ease;
 }
@@ -278,17 +278,17 @@ tr[data-highlighted='true'] > td {
 .live-detail { display: grid; gap: 14px; }
 .live-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .live-detail-head .agent-avatar { max-width: 108px; }
-.live-detail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 18px; margin: 0; font-size: 13.5px; }
+.live-detail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 18px; margin: 0; font-size: var(--tipo-rotulo); }
 .live-detail dt { color: var(--muted); }
 .live-detail dd { margin: 0; }
-.live-reason { margin: 0; color: var(--text); font-size: 14px; }
+.live-reason { margin: 0; color: var(--text); font-size: var(--tipo-cuerpo); }
 .live-flags { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .live-legend { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
 .live-legend-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
 .live-legend-item .agent-avatar { width: 46px; flex: none; }
-.live-legend-item strong { display: block; font-size: 13px; }
-.live-legend-item span { color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+.live-legend-item strong { display: block; font-size: var(--tipo-rotulo); }
+.live-legend-item span { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.35; }
 
 @media (max-width: 640px) {
   .live-legend { grid-template-columns: 1fr; }
@@ -373,7 +373,7 @@ tr[data-highlighted='true'] > td {
   letter-spacing: -.01em;
 }
 
-.fleet-verdict-support { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
+.fleet-verdict-support { margin: 6px 0 0; color: var(--muted); font-size: var(--tipo-cuerpo); }
 
 .fleet-verdict-culprits { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
@@ -385,7 +385,7 @@ tr[data-highlighted='true'] > td {
   border-radius: 999px;
   background: var(--red-dim);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--tipo-apunte);
   cursor: pointer;
 }
 
@@ -397,7 +397,7 @@ tr[data-highlighted='true'] > td {
   padding-top: 12px;
   border-top: 1px solid var(--border);
   color: var(--muted);
-  font-size: 13.5px;
+  font-size: var(--tipo-rotulo);
 }
 
 .fleet-verdict-counts strong { color: var(--text); font-variant-numeric: tabular-nums; }
@@ -452,7 +452,7 @@ tr[data-highlighted='true'] > td {
   border-radius: 8px;
   background: none;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--tipo-rotulo);
   font-weight: 600;
   cursor: pointer;
 }
@@ -472,7 +472,7 @@ tr[data-highlighted='true'] > td {
   border-radius: 12px;
   background: var(--surface-2);
   color: var(--muted);
-  font-size: 15px;
+  font-size: var(--tipo-cuerpo);
   line-height: 1.55;
 }
 .live-empty-calm strong { color: var(--text); }
@@ -488,7 +488,7 @@ tr[data-highlighted='true'] > td {
 .live-fold > summary {
   padding: 14px 18px;
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--tipo-cuerpo);
   font-weight: 600;
   cursor: pointer;
 }
@@ -496,7 +496,7 @@ tr[data-highlighted='true'] > td {
 .live-fold[open] > summary { border-bottom: 1px solid var(--border); }
 .live-fold > *:not(summary) { margin: 14px 18px; }
 
-.live-legend-lead { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.live-legend-lead { margin: 0 0 14px; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
 .live-legend-lead strong { color: var(--text); }
 
 .live-legend-swatch {
@@ -533,8 +533,8 @@ tr[data-highlighted='true'] > td {
 
 .agent-drawer-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .agent-drawer-identity .agent-avatar { width: 52px; flex: none; }
-.agent-drawer-identity h2 { margin: 0; font-size: 1.05rem; }
-.agent-drawer-identity p { margin: 2px 0 0; font-size: 12px; }
+.agent-drawer-identity h2 { margin: 0; font-size: var(--tipo-panel); }
+.agent-drawer-identity p { margin: 2px 0 0; font-size: var(--tipo-rotulo); }
 
 /* La tira de pestañas del cajón: ENVUELVE, no se sale ------------------------
  *
@@ -574,7 +574,7 @@ tr[data-highlighted='true'] > td {
   border-radius: 8px;
   background: none;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--tipo-apunte);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -595,13 +595,13 @@ tr[data-highlighted='true'] > td {
 }
 
 .drawer-delivery > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
-.drawer-delivery dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: 12.5px; }
+.drawer-delivery dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: var(--tipo-apunte); }
 .drawer-delivery dt { color: var(--muted); }
 .drawer-delivery dd { margin: 0; }
 .drawer-delivery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
 
 .drawer-chain { display: grid; gap: 12px; }
-.chain-trace, .chain-counters { margin: 0; font-size: 12px; }
+.chain-trace, .chain-counters { margin: 0; font-size: var(--tipo-rotulo); }
 .chain-hops li[data-open='true'] { border-color: var(--blue); }
 .chain-hops li[data-rejected='true'] { border-color: var(--red); }
 
@@ -646,7 +646,7 @@ tr[data-clickable='true'] { cursor: pointer; }
    El brief real mide entre 770 y 1134 caracteres: un textarea de una o dos líneas obligaría a
    leerlo por una mirilla, que es justo lo que se venía haciendo con `psql`. */
 .role-brief { display: grid; gap: 12px; }
-.role-brief-field { display: grid; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.role-brief-field { display: grid; gap: 6px; font-size: var(--tipo-apunte); font-weight: 600; color: var(--muted); }
 .role-brief-field textarea {
   min-height: 260px;
   padding: 10px 12px;
@@ -662,12 +662,12 @@ tr[data-clickable='true'] { cursor: pointer; }
 .role-brief-field textarea[readonly] { opacity: 0.75; cursor: default; }
 
 .role-brief-meter { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.role-brief-count { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 13px; }
+.role-brief-count { font-variant-numeric: tabular-nums; font-weight: 700; font-size: var(--tipo-rotulo); }
 /* El aviso NO es sólo color: al lado va siempre la frase que dice qué pasa si se pasa del tope. */
 .role-brief-count[data-tone='ok'] { color: var(--muted); }
 .role-brief-count[data-tone='cerca'] { color: var(--amber, #d08700); }
 .role-brief-count[data-tone='pasado'] { color: var(--danger, #d64545); }
-.role-brief-warn { font-size: 12px; color: var(--amber, #d08700); }
+.role-brief-warn { font-size: var(--tipo-rotulo); color: var(--amber, #d08700); }
 .role-brief-count[data-tone='pasado'] + .role-brief-warn { color: var(--danger, #d64545); }
 
 .role-brief-actions { display: flex; align-items: center; gap: 8px; }
@@ -688,7 +688,7 @@ tr[data-clickable='true'] { cursor: pointer; }
 .directiva-resumen-rotulo {
   margin: 0;
   color: var(--faint);
-  font-size: 12.5px;
+  font-size: var(--tipo-apunte);
   font-weight: 800;
   letter-spacing: .06em;
   text-transform: uppercase;
@@ -707,7 +707,7 @@ tr[data-clickable='true'] { cursor: pointer; }
   overflow: hidden;
   margin: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--tipo-rotulo);
   line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -719,18 +719,18 @@ tr[data-clickable='true'] { cursor: pointer; }
   border: 1px dashed var(--border-strong);
   border-radius: 11px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--tipo-rotulo);
   line-height: 1.5;
 }
 
-.directiva-resumen-contador { margin: 0; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.directiva-resumen-contador { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); font-variant-numeric: tabular-nums; }
 .directiva-resumen-contador[data-tono='cerca'] { color: var(--amber); }
 .directiva-resumen-contador[data-tono='pasado'] { color: var(--red); }
 
 /* Grande y de ancho completo: es la ÚNICA acción de la pestaña y el gesto que sustituye a bajar
    1.100 px de scroll. Un botón secundario del tamaño de «Ver en Queues» no se leería como la
    puerta principal, que es lo que es. */
-.directiva-abrir { width: 100%; min-height: 44px; font-size: 14px; }
+.directiva-abrir { width: 100%; min-height: 44px; font-size: var(--tipo-cuerpo); }
 
 /* --- El diálogo de la directiva --------------------------------------------------------------
  *
@@ -774,8 +774,8 @@ tr[data-clickable='true'] { cursor: pointer; }
   border-bottom: 1px solid var(--border);
 }
 
-.directiva-modal-head h2 { margin: 0; font-size: 1.05rem; }
-.directiva-modal-head p { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; }
+.directiva-modal-head h2 { margin: 0; font-size: var(--tipo-panel); }
+.directiva-modal-head p { margin: 3px 0 0; color: var(--muted); font-size: var(--tipo-apunte); }
 
 .directiva-modal-cuerpo {
   display: grid;
@@ -829,21 +829,21 @@ tr[data-clickable='true'] { cursor: pointer; }
 }
 
 .directiva-capa-head { display: grid; align-items: start; gap: 10px; grid-template-columns: auto minmax(0, 1fr); }
-.directiva-capa-head h3 { margin: 0; font-size: .92rem; }
+.directiva-capa-head h3 { margin: 0; font-size: var(--tipo-panel); }
 .directiva-capa-icono { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; background: var(--surface); color: var(--mint); }
 
 /* El FIN de la capa se lee antes que su nombre técnico: es la pregunta que decide dónde va cada
    frase, y es exactamente lo que hoy nadie tiene delante cuando escribe un brief. */
-.directiva-capa-fin { margin: 4px 0 0; color: var(--mint); font-size: 12.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-.directiva-capa-fuente { margin: 3px 0 0; color: var(--faint); font-size: 12.5px; overflow-wrap: anywhere; }
+.directiva-capa-fin { margin: 4px 0 0; color: var(--mint); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.directiva-capa-fuente { margin: 3px 0 0; color: var(--faint); font-size: var(--tipo-apunte); overflow-wrap: anywhere; }
 
 /* El PORQUÉ se pliega: contesta «por qué existe esta capa», que se lee una vez en la vida. Los
    cuatro párrafos abiertos valían ~600 px de los 2.120 que no cabían en el cajón. Lo que queda
    siempre visible es lo que se necesita para decidir en qué capa va una frase: número, título,
    fin y fuente. */
 .directiva-porque-caja { margin-top: 7px; }
-.directiva-porque-caja > summary { color: var(--faint); cursor: pointer; font-size: 12.5px; }
-.directiva-porque { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.directiva-porque-caja > summary { color: var(--faint); cursor: pointer; font-size: var(--tipo-rotulo); }
+.directiva-porque { margin: 6px 0 0; color: var(--muted); font-size: var(--tipo-apunte); line-height: 1.55; }
 
 /*
  * «NO SE MIRÓ» y «MIRÉ Y NO HAY» tienen que verse distintos, no sólo leerse distintos.
@@ -857,7 +857,7 @@ tr[data-clickable='true'] { cursor: pointer; }
  * Punteado + ámbar = incertidumbre; sólido + menta = medido. Los dos usan tokens que el bloque de
  * modo claro ya redefine, así que ninguno se rompe sobre papel blanco.
  */
-.directiva-lectura { display: grid; gap: 6px; padding: 12px 13px; border-radius: 11px; font-size: 12.5px; line-height: 1.55; }
+.directiva-lectura { display: grid; gap: 6px; padding: 12px 13px; border-radius: 11px; font-size: var(--tipo-apunte); line-height: 1.55; }
 .directiva-lectura p { margin: 0; }
 /* `break-word` y no `anywhere`: la ruta larga del endpoint se lleva a un renglón propio antes de
    partirse, en vez de cortarse a mitad de palabra en el borde de la columna. MIRADO en Chrome, que
@@ -895,19 +895,19 @@ tr[data-clickable='true'] { cursor: pointer; }
    Los dos avisan y NINGUNO bloquea: el diseño dice literalmente «no bloquear: avisar». */
 .directiva-aviso[data-tono="choque"] { border-color: #74313c; background: var(--red-dim); color: #ffb7bc; }
 .directiva-aviso[data-tono="hueco"] { border-color: #7a5a24; background: rgba(208, 135, 0, .12); color: #ffd9a0; }
-.directiva-aviso strong { font-size: 13px; }
-.directiva-aviso p { margin: 4px 0 0; font-size: 12.5px; line-height: 1.5; }
+.directiva-aviso strong { font-size: var(--tipo-rotulo); }
+.directiva-aviso p { margin: 4px 0 0; font-size: var(--tipo-apunte); line-height: 1.5; }
 .directiva-aviso > span { margin-top: 2px; }
 
 .directiva-evidencia { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 0; padding: 0; list-style: none; }
-.directiva-evidencia code { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5px; font-size: 12.5px; }
+.directiva-evidencia code { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5px; font-size: var(--tipo-apunte); }
 
 .directiva-ficheros { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .directiva-ficheros > li { padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
 .directiva-fichero-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-.directiva-fichero-head code { font-size: 12.5px; overflow-wrap: anywhere; }
-.directiva-fichero-meta { color: var(--faint); font-size: 12.5px; }
-.directiva-ficheros summary { margin-top: 7px; color: var(--muted); cursor: pointer; font-size: 12.5px; }
+.directiva-fichero-head code { font-size: var(--tipo-apunte); overflow-wrap: anywhere; }
+.directiva-fichero-meta { color: var(--faint); font-size: var(--tipo-apunte); }
+.directiva-ficheros summary { margin-top: 7px; color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
 
 .directiva-fichero-texto {
   max-height: 320px;
@@ -918,15 +918,15 @@ tr[data-clickable='true'] { cursor: pointer; }
   border-radius: 8px;
   background: #070b13;
   color: #bad0e9;
-  font-size: .66rem;
+  font-size: var(--tipo-apunte);
   white-space: pre-wrap;
 }
 
 .directiva-memoria { display: grid; gap: 8px; }
-.directiva-memoria-resumen { margin: 0; color: var(--muted); font-size: 12.5px; }
+.directiva-memoria-resumen { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); }
 .directiva-memoria-lista { display: grid; gap: 5px; max-height: 260px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
 .directiva-memoria-lista li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
-.directiva-memoria-lista code { font-size: 12.5px; overflow-wrap: anywhere; }
+.directiva-memoria-lista code { font-size: var(--tipo-apunte); overflow-wrap: anywhere; }
 
 /*
  * SUELO DE 12,5 px PARA TODO LO QUE SE VE DENTRO DEL DIÁLOGO.
@@ -958,7 +958,7 @@ tr[data-clickable='true'] { cursor: pointer; }
 .directiva-modal .historial-entrada-detalle,
 .directiva-modal .historial-entrada-plantilla,
 .directiva-modal .historial-entrada-ayuda,
-.directiva-modal .historial-texto { font-size: 12.5px; }
+.directiva-modal .historial-texto { font-size: var(--tipo-mono); }
 
 /*
  * EL FONDO NO SE DESPLAZA MIENTRAS EL DIÁLOGO ESTÁ ABIERTO.
@@ -1020,14 +1020,14 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
 .historial-rol-caja > summary {
   color: var(--muted);
   cursor: pointer;
-  font-size: .7rem;
+  font-size: var(--tipo-rotulo);
   font-weight: 700;
 }
 .historial-rol { display: grid; gap: 10px; margin-top: 10px; }
 
 /* «No consta quién» es un hueco del registro, no un adorno: se dice una vez, arriba, y con el
    mismo peso que el resto del texto. Repetirlo en cada fila lo convertiría en ruido. */
-.historial-nota-actor { margin: 0; color: var(--muted); font-size: .7rem; }
+.historial-nota-actor { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); }
 
 .historial-lista { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
 
@@ -1046,19 +1046,19 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
 .historial-entrada[data-clase="sin-texto"] { opacity: .82; }
 
 .historial-entrada-head { display: grid; align-items: start; gap: 8px; grid-template-columns: auto minmax(0, 1fr); }
-.historial-entrada-head strong { font-size: .76rem; }
+.historial-entrada-head strong { font-size: var(--tipo-rotulo); }
 .historial-entrada-icono { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 7px; background: var(--surface-2); color: var(--mint); }
-.historial-entrada-cuando { margin: 3px 0 0; color: var(--faint); font-size: .63rem; }
-.historial-entrada-cuando code { font-size: .63rem; }
-.historial-entrada-detalle { margin: 0; color: var(--muted); font-size: .71rem; }
-.historial-entrada-plantilla { margin: 0; color: var(--amber, #d08700); font-size: .68rem; }
+.historial-entrada-cuando { margin: 3px 0 0; color: var(--faint); font-size: var(--tipo-apunte); }
+.historial-entrada-cuando code { font-size: var(--tipo-apunte); }
+.historial-entrada-detalle { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); }
+.historial-entrada-plantilla { margin: 0; color: var(--amber, #d08700); font-size: var(--tipo-apunte); }
 
 .historial-entrada-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 /* La ayuda va PEGADA al botón y no en un tooltip: dice que restaurar no guarda, y eso tiene que
    leerse antes de pulsar, no después. */
-.historial-entrada-ayuda { color: var(--faint); font-size: .63rem; }
+.historial-entrada-ayuda { color: var(--faint); font-size: var(--tipo-apunte); }
 
-.historial-rol summary { margin-top: 4px; color: var(--muted); cursor: pointer; font-size: .66rem; }
+.historial-rol summary { margin-top: 4px; color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
 .historial-texto {
   max-height: 240px;
   overflow: auto;
@@ -1068,7 +1068,7 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
   border-radius: 8px;
   background: #070b13;
   color: #bad0e9;
-  font-size: .65rem;
+  font-size: var(--tipo-apunte);
   white-space: pre-wrap;
 }
 
@@ -1093,7 +1093,7 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
   gap: 7px;
   color: var(--muted);
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--tipo-rotulo);
   font-weight: 700;
 }
 .directiva-pendientes[open] > summary { margin-bottom: 12px; }
@@ -1101,12 +1101,12 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
    y apilarlos volvería a alargar lo que se acaba de acortar. */
 .directiva-pendiente-lista { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
 .directiva-pendiente-lista > li { padding: 10px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
-.directiva-pendiente-lista strong { font-size: 13px; }
-.directiva-pendiente-pedido { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; font-style: italic; }
-.directiva-pendiente-porque { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; }
-.directiva-pendiente-falta { margin: 6px 0 0; color: var(--mint); font-size: 12.5px; line-height: 1.5; }
-.directiva-pendiente-donde { margin: 10px 0 0; color: var(--faint); font-size: 12.5px; line-height: 1.5; }
-.directiva-pendiente-donde code { font-size: 12.5px; }
+.directiva-pendiente-lista strong { font-size: var(--tipo-rotulo); }
+.directiva-pendiente-pedido { margin: 4px 0 0; color: var(--muted); font-size: var(--tipo-apunte); font-style: italic; }
+.directiva-pendiente-porque { margin: 6px 0 0; font-size: var(--tipo-apunte); line-height: 1.5; }
+.directiva-pendiente-falta { margin: 6px 0 0; color: var(--mint); font-size: var(--tipo-apunte); line-height: 1.5; }
+.directiva-pendiente-donde { margin: 10px 0 0; color: var(--faint); font-size: var(--tipo-apunte); line-height: 1.5; }
+.directiva-pendiente-donde code { font-size: var(--tipo-apunte); }
 
 /* ============================================================================================
    LOS FICHEROS QUE GOBIERNAN A UN AGENTE
@@ -1135,7 +1135,7 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
   border-radius: 10px;
   background: rgba(208, 135, 0, .12);
   color: #ffd9a0;
-  font-size: .71rem;
+  font-size: var(--tipo-apunte);
   grid-template-columns: auto minmax(0, 1fr);
 }
 .ficheros-nota { border-color: var(--border-strong); background: var(--surface-2); color: var(--muted); grid-template-columns: minmax(0, 1fr); }
@@ -1163,7 +1163,7 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
-.ficheros-rotulo { font-size: .78rem; font-weight: 600; }
+.ficheros-rotulo { font-size: var(--tipo-rotulo); font-weight: 600; }
 
 /* La ruta puede ser larga y NO debe ensanchar el cajón: se recorta con puntos suspensivos y el
    título completo queda en el propio texto, que es seleccionable. */
@@ -1171,7 +1171,7 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
   overflow: hidden;
   min-width: 0;
   color: var(--faint);
-  font-size: .64rem;
+  font-size: var(--tipo-apunte);
   grid-column: 1 / -1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1181,7 +1181,7 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
   padding: 2px 7px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  font-size: .6rem;
+  font-size: var(--tipo-apunte);
   font-weight: 700;
   letter-spacing: .04em;
   text-transform: uppercase;
@@ -1190,7 +1190,7 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
 .ficheros-modo-proyectado { color: var(--amber); }
 .ficheros-modo-solo-lectura { color: var(--faint); }
 
-.ficheros-razon { margin: 7px 0 0; color: var(--muted); font-size: .7rem; }
+.ficheros-razon { margin: 7px 0 0; color: var(--muted); font-size: var(--tipo-apunte); }
 
 .ficheros-editor { display: grid; gap: 9px; margin-top: 10px; }
 
@@ -1202,12 +1202,12 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
   background: var(--surface);
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .72rem;
+  font-size: var(--tipo-rotulo);
   line-height: 1.5;
   resize: vertical;
 }
 
-.ficheros-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .68rem; }
+.ficheros-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: var(--tipo-apunte); }
 .ficheros-pie .button { margin-left: auto; }
 .ficheros-pie .button + .button { margin-left: 0; }
 
@@ -1220,7 +1220,7 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
   border-radius: 10px;
   background: var(--red-dim);
   color: #ffb7bc;
-  font-size: .72rem;
+  font-size: var(--tipo-rotulo);
 }
 .ficheros-fallo p { margin: 4px 0 0; }
 
@@ -1231,8 +1231,8 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
   border-radius: 12px;
   color: var(--muted);
 }
-.ficheros-hueco h4 { margin: 0 0 7px; color: var(--text); font-size: .74rem; }
-.ficheros-hueco ul { display: grid; gap: 7px; margin: 0; padding-left: 16px; font-size: .7rem; }
+.ficheros-hueco h4 { margin: 0 0 7px; color: var(--text); font-size: var(--tipo-rotulo); }
+.ficheros-hueco ul { display: grid; gap: 7px; margin: 0; padding-left: 16px; font-size: var(--tipo-apunte); }
 .ficheros-hueco strong { color: var(--text); }
 
 /* Modo claro. Sin este bloque, los tres avisos de arriba quedan en su color de tema oscuro

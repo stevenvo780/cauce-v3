@@ -20,9 +20,9 @@
 }
 
 .auth-card h1 { margin: 0; font-size: 25px; letter-spacing: -.015em; }
-.auth-lede { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.5; }
-.auth-reason { margin: 0; padding: 9px 12px; border-left: 3px solid var(--amber); border-radius: 0 8px 8px 0; background: var(--amber-dim); color: var(--text); font-size: 13.5px; }
-.auth-fineprint { margin: 0; color: var(--faint); font-size: 12.5px; line-height: 1.5; }
+.auth-lede { margin: 0; color: var(--muted); font-size: var(--tipo-cuerpo); line-height: 1.5; }
+.auth-reason { margin: 0; padding: 9px 12px; border-left: 3px solid var(--amber); border-radius: 0 8px 8px 0; background: var(--amber-dim); color: var(--text); font-size: var(--tipo-rotulo); }
+.auth-fineprint { margin: 0; color: var(--faint); font-size: var(--tipo-apunte); line-height: 1.5; }
 .auth-fineprint code { color: var(--muted); }
 
 .auth-mark {
@@ -36,11 +36,11 @@
 }
 .auth-mark-danger { background: var(--red-dim); color: var(--red); }
 
-.auth-primary { padding: 11px 20px; font-size: 15px; }
+.auth-primary { padding: 11px 20px; font-size: var(--tipo-cuerpo); }
 
 /* Formulario de correo + contraseña. */
 .auth-form { display: grid; gap: 6px; width: 100%; }
-.auth-form label { color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.auth-form label { color: var(--muted); font-size: var(--tipo-rotulo); font-weight: 600; }
 .auth-form label + input { margin-bottom: 8px; }
 .auth-form input {
   width: 100%;
@@ -50,7 +50,7 @@
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: 14.5px;
+  font-size: var(--tipo-cuerpo);
 }
 .auth-form input:focus-visible { outline: 2px solid var(--mint); outline-offset: 1px; }
 .auth-form input:disabled { opacity: .6; }
@@ -62,16 +62,16 @@
   border-radius: 0 8px 8px 0;
   background: var(--red-dim);
   color: var(--text);
-  font-size: 13.5px;
+  font-size: var(--tipo-rotulo);
 }
 
 .auth-card-quiet { flex-flow: row; align-items: center; grid-auto-flow: column; color: var(--muted); }
 .auth-card-error { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); }
 
 /* Insignia de identidad en la barra superior. */
-.auth-state { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; }
-.auth-state.authenticated strong { display: block; font-size: 13px; }
-.auth-state.authenticated small { display: block; color: var(--faint); font-size: 11px; }
+.auth-state { display: inline-flex; align-items: center; gap: 9px; font-size: var(--tipo-rotulo); }
+.auth-state.authenticated strong { display: block; font-size: var(--tipo-rotulo); }
+.auth-state.authenticated small { display: block; color: var(--faint); font-size: var(--tipo-apunte); }
 .auth-unmanaged { padding: 4px 10px; border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--border)); border-radius: 999px; background: var(--amber-dim); color: var(--amber); font-weight: 700; }
 
 /* Aviso permanente de "acá no hay login". Molesta a propósito. */
@@ -87,4 +87,4 @@
   color: var(--text);
 }
 .auth-banner svg { flex: none; margin-top: 2px; color: var(--amber); }
-.auth-banner p { margin: 0; font-size: 13px; line-height: 1.5; }
+.auth-banner p { margin: 0; font-size: var(--tipo-rotulo); line-height: 1.5; }

@@ -13,46 +13,24 @@
 /*
  * ══ La escala ══════════════════════════════════════════════════════════════════════════════════
  *
- * Steven, por segunda vez: «la vista de configuraciones aún hay mucho que mejorar, también es muy
- * ilegible». MEDIDO en Chrome a 1600×1000 sobre `/config` (histograma de font-size/color de los
- * elementos hoja con texto, tema claro, que es el que da el navegador por defecto):
+ * 🔴 **LA ESCALA YA NO SE DECLARA ACÁ. Vive en el `:root` de `styles.css`**, con los mismos cinco
+ * escalones (26 → 17 → 14 → 13 → 12,5), el mismo suelo de 12,5 px y el razonamiento medido de cada
+ * escalón, que se mudó entero con ella.
  *
- *     11,84px  --text-2    97 elementos      ← celdas de tabla y rótulos de formulario
- *     11,84px  --muted     69
- *     10,88px  --muted     32                ← cabeceras de columna, pastillas, chips
- *     10,88px  --text-2    32
- *     10,88px  --faint     19
- *      9,28px  --muted      3                ← la marca «?» de la cabecera con ayuda
+ * Se mudó el 2026-08-24 y el motivo está medido: encerrada en `.config-pagina`, la escala existía
+ * sólo en /config. Contando en Chrome a 1920×1080 los elementos de texto hoja de `main` por debajo
+ * de 12,5 px: /config 0, y las otras siete vistas entre 37 y 299 — 889 en total. El arreglo se
+ * había hecho una vez y alcanzaba a una vista de ocho.
  *
- * **255 de 288 elementos de texto por debajo de 12 px**, y el título a 44,8 px. O sea: lo grande
- * era el envase y lo chico era lo que hay que leer. Los `font-size` estaban sembrados sueltos en
- * `.rem` por tres hojas distintas, así que no había ninguna forma de subir «el cuerpo» sin ir
- * elemento por elemento — y por eso nadie lo hizo en dos rondas de arreglos.
+ * Y peor que lo estético: `toggles.css` YA citaba `var(--tipo-rotulo)` y `var(--tipo-apunte)`, y
+ * esos componentes se usan también fuera de /config, donde la variable no existía. Una `var()` sin
+ * declarar no hereda: el navegador descarta la declaración entera y manda la de al lado, sin un
+ * solo aviso.
  *
- * Acá se declara la escala UNA vez y todo lo demás la cita. Cinco escalones, y la diferencia entre
- * dos vecinos se ve: 26 → 17 → 14 → 13 → 12,5. El suelo es 12,5 px y NADA de esta vista baja de
- * ahí; el cuerpo y los rótulos no bajan de 13.
- *
- * ⚠️ El `.6875rem` de la barra de navegación de móvil (`styles.css`, `@media (max-width: 900px)`)
- * NO sale de acá y no se toca: está medido contra el ancho real de las ocho entradas a 360 px, y
- * subirlo vuelve a pisar los rótulos entre sí.
+ * Lo que SÍ sigue acá abajo es la MEDIDA (el ancho de la caja y el largo del renglón), porque eso
+ * sí es propio de esta página y no de la consola entera.
  */
 .config-pagina {
-  /* El título de la página. Antes `clamp(1.85rem, 4vw, 2.8rem)` = 44,8 px a 1600: seis veces el
-     cuerpo, para tres palabras que el menú lateral ya dice. */
-  --tipo-titulo: 26px;
-  /* El título de un panel. Es lo que se busca al barrer la página con la vista. */
-  --tipo-panel: 17px;
-  /* CUERPO: prosa, celdas de tabla, valores. Lo que de verdad se lee. Antes 11,84 px. */
-  --tipo-cuerpo: 14px;
-  /* RÓTULOS: etiquetas de formulario, pestañas, botones pequeños, avisos. Antes 11,84 px. */
-  --tipo-rotulo: 13px;
-  /* SECUNDARIO: pistas, cabeceras de columna, pastillas, metadatos. El suelo de la vista. */
-  --tipo-apunte: 12.5px;
-  /* Monoespaciado: a igual `px` una monoespaciada se ve más grande, así que va un escalón abajo
-     del cuerpo y nunca por debajo del suelo. */
-  --tipo-mono: 13px;
-
   /*
    * ══ La medida ═════════════════════════════════════════════════════════════════════════════
    *
