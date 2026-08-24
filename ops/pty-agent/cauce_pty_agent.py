@@ -89,6 +89,19 @@ TICKET_RE = re.compile(r"^v1\.([A-Za-z0-9_-]{1,4096})\.([A-Za-z0-9_-]{43})$")
 IDENTITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 MODES = ("shell", "harness")
 
+# Modos de VISOR: se miran, no se teclean. El agente nunca escribe en su pty, venga la trama que
+# venga del relay.
+#
+# El candado vivia en el argv (`tmux attach -r`) y eso no alcanza por dos motivos medidos:
+#   1. `HARNESS_COMMAND` se puede escribir a mano en el `.env` del alias; uno sin `-r` convierte
+#      la consola en un teclado sobre la sesion del humano que trabaja ahi, sin aviso.
+#   2. La TUI nativa de OpenClaw —la unica que pueden emitir los alias openclaw, porque en sus
+#      imagenes no hay `tmux`— NO tiene equivalente de `-r`.
+# Con la sesion compartida encendida hay una sola caja de entrada por alias, asi que un segundo
+# escritor no abre una conversacion: pisa el turno en curso (cuatro `input_busy` seguidas, medido
+# el 2026-07-31). El `-r` del tmux se mantiene como defensa en profundidad.
+READ_ONLY_MODES = frozenset({"harness"})
+
 # --- Lectura de ficheros de gobierno ----------------------------------------------------------
 #
 # El agente NO conoce el juego cerrado del gateway (no sabe que arnes corre de verdad ni cual es
@@ -391,6 +404,9 @@ class PtySession:
         self.argv = argv
         self.out = bytearray()
         self.pending_input = bytearray()
+        # Se registra UNA vez por sesion: un visor recibe pulsaciones a rafagas y el journal no
+        # puede convertirse en el eco del teclado del operador.
+        self.refused_input = False
         self.last_flush = time.monotonic()
         self.eof = False
         self.reaped = False
@@ -940,6 +956,13 @@ class PtyAgent:
         session = self.sessions.get(session_id)
         if session is None:
             return  # tombstoned or unknown: late keystrokes never reach a fresh session
+        if session.mode in READ_ONLY_MODES:
+            # Se descarta ANTES de tocar el descriptor, y no se encola: guardarlo seria una fuga
+            # que se vaciaria sola en cuanto el modo cambiara o el pty aceptara escrituras.
+            if not session.refused_input:
+                session.refused_input = True
+                log(f"input refused on a read-only session mode={session.mode} session={session_id}")
+            return
         session.pending_input.extend(data)
         self._write_session(session)
 
