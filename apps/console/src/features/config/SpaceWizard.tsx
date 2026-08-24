@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, Braces, CircleCheck, RotateCcw, Save, SearchCheck } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { ConfigMutation } from '../../api/types';
 import { Badge, EmptyState, Panel } from '../../components/ui';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
@@ -119,10 +119,12 @@ function stepError(step: WizardStep, draft: SpaceDraft): string | undefined {
  * las filas que creó el anterior, así que el plan se previsualiza y se aplica de a un paso: no hay
  * dry-run posible del room antes de que exista el tenant.
  */
-export function SpaceWizard({ canWrite, busy, onChange }: {
+export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
   canWrite: boolean;
   busy: boolean;
   onChange: (mutation: ConfigMutation, dryRun: boolean) => Promise<ConfigChangeOutcome>;
+  /** El control que elige entre este wizard y el alta de un solo recurso. Ver `AltaDeEspacios`. */
+  encabezado?: ReactNode;
 }) {
   const [draft, setDraft] = useState<SpaceDraft>(emptyDraft);
   const [step, setStep] = useState<WizardStep>('tenant');
@@ -200,7 +202,8 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
     });
   }
 
-  return <Panel title="Wizard de espacios" subtitle="Alta guiada tenant → room → membership → harness. Cada paso pasa por dry-run y se aplica por separado sobre el mismo change endpoint.">
+  return <Panel title="Wizard de espacios" subtitle="Cada paso pasa por dry-run y se aplica por separado, sobre el mismo change endpoint.">
+    {encabezado}
     <div className="config-actions" role="group" aria-label="Pasos del wizard">
       {wizardSteps.map((item, position) => <button key={item} type="button" className={`button small${item === step ? ' primary' : ''}`} onClick={() => setStep(item)}>
         {doneSteps.has(item) ? <CircleCheck size={14} aria-hidden="true" /> : null}{position + 1}. {stepTitles[item]}

@@ -163,6 +163,31 @@ export function columnasDe(clave: string, filas: ReadonlyArray<Record<string, un
   }));
 }
 
+/**
+ * Si una columna es de NÚMEROS, para alinearla a la derecha.
+ *
+ * Una columna de números alineada a la izquierda obliga a comparar magnitudes contando dígitos:
+ * `8` y `120` empiezan en el mismo píxel y el que PARECE más grande es el que tiene más
+ * caracteres. En `/config` hay unas cuantas —`max_per_hour`, `max_per_day`, `contact_ttl_days`,
+ * `min_interval_seconds`, `priority`, `generation`— y todas se leen para comparar.
+ *
+ * Exige que TODOS los valores presentes sean números y que haya al menos uno: una columna mixta
+ * («12» en una fila y «sin límite» en otra) alineada a la derecha se lee peor que a la izquierda,
+ * y un booleano en JavaScript no es un número pero sí lo parece si uno mira `typeof` con prisa.
+ * Los nulos y las claves ausentes no cuentan: un `null` no desmiente que la columna sea numérica.
+ */
+export function columnaNumerica(filas: ReadonlyArray<Record<string, unknown>>, columna: string): boolean {
+  let vistos = 0;
+  for (const fila of filas) {
+    if (!Object.hasOwn(fila, columna)) continue;
+    const valor = fila[columna];
+    if (valor === null || valor === undefined) continue;
+    if (typeof valor !== 'number' || !Number.isFinite(valor)) return false;
+    vistos += 1;
+  }
+  return vistos > 0;
+}
+
 /** Campos que identifican una fila en cada colección, en el orden de la clave primaria. */
 const IDENTIDAD: Record<string, readonly string[]> = {
   tenants: ['id'],

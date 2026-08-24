@@ -5,8 +5,8 @@ import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
 import { Badge, EmptyState, Panel, Unknown } from '../../components/ui';
 import type { ConfigCollection } from './collections';
 import {
-  accionDeRol, claveDeFila, columnasDe, esColumnaDeFecha, esColumnaFundida, esColumnaLarga,
-  identidadFundida, motivoSinCambioDeRol, resumirTextoLargo, rolesDisponibles,
+  accionDeRol, claveDeFila, columnaNumerica, columnasDe, esColumnaDeFecha, esColumnaFundida,
+  esColumnaLarga, identidadFundida, motivoSinCambioDeRol, resumirTextoLargo, rolesDisponibles,
   type AccionDeRol, type ColumnaTabla,
 } from './collection-table';
 import {
@@ -61,6 +61,10 @@ export function CollectionTable({
   const { key, title, rows } = coleccion;
   const filas = rows ?? [];
   const columnas = columnasDe(key, filas);
+  // Qué columnas se alinean a la derecha. Se decide por los DATOS de esta colección y no por una
+  // lista de nombres: `max_per_hour` es numérico acá y podría no serlo en un gateway que publique
+  // otra cosa con ese nombre. Ver `columnaNumerica`.
+  const numericas = new Set(columnas.filter((columna) => columnaNumerica(filas, columna.clave)).map((columna) => columna.clave));
   const avisoDeInterruptor = control.avisoDe(key);
   const confirmandoAqui = control.confirmacion?.interruptor.coleccion === key;
 
@@ -81,7 +85,7 @@ export function CollectionTable({
           {confirmandoAqui ? <ConfirmarQuitarControl control={control} busy={busy} /> : null}
 
           <div className="table-wrap"><table><thead><tr>
-            {columnas.map((columna) => <th key={columna.clave}>
+            {columnas.map((columna) => <th key={columna.clave} data-numero={numericas.has(columna.clave) ? 'true' : undefined}>
               <CabeceraConAyuda
                 etiqueta={columna.etiqueta}
                 {...(() => {
@@ -100,7 +104,7 @@ export function CollectionTable({
                 .find((encontrado) => encontrado !== undefined);
               return <Fragment key={filaId}>
                 <tr>
-                  {columnas.map((columna) => <td key={columna.clave}>
+                  {columnas.map((columna) => <td key={columna.clave} data-numero={numericas.has(columna.clave) ? 'true' : undefined}>
                     <Celda
                       coleccion={key} columna={columna} fila={fila} filaId={filaId} indice={indice}
                       politicasDeRol={politicasDeRol} soloLectura={soloLectura} busy={busy}

@@ -1,5 +1,5 @@
 import { Braces, Plus, SearchCheck } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { ConfigMutation } from '../../api/types';
 import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
 import { Panel } from '../../components/ui';
@@ -18,10 +18,16 @@ import './toggles.css';
  * `api.changeConfiguration` con `expected_revision`—, así que no hay un segundo camino de escritura
  * que pueda quedarse atrás del primero.
  */
-export function AltaRapida({ soloLectura, busy, onChange }: {
+export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
   soloLectura: boolean;
   busy: boolean;
   onChange: (mutation: ConfigMutation, dryRun: boolean) => Promise<ConfigChangeOutcome>;
+  /**
+   * El control que elige entre este alta y el wizard. Se pinta DENTRO del panel, arriba del
+   * formulario que gobierna: colgado por fuera era una segunda tira de pestañas idéntica a la de
+   * las áreas, y se leía como navegación de la página. Ver `AltaDeEspacios`.
+   */
+  encabezado?: ReactNode;
 }) {
   const [recurso, setRecurso] = useState<RecursoAlta>('membership');
   const [borrador, setBorrador] = useState<BorradorAlta>(BORRADOR_VACIO);
@@ -92,7 +98,8 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
   // en una pantalla que arriba dice «Solo lectura», es prometer una escritura que nunca va a salir.
   const inerte = { disabled: soloLectura, ...(soloLectura ? { title: CONFIG_SIN_CONTROL_REASON } : {}) };
 
-  return <Panel title="Alta rápida" subtitle="Formulario para los cuatro recursos que se dan de alta a diario. Arma la mutación y la manda por el mismo change endpoint que el editor crudo.">
+  return <Panel title="Alta rápida" subtitle="Arma la mutación y la manda por el mismo change endpoint versionado que el editor crudo.">
+    {encabezado}
     <div className="config-form">
       <label>Recurso<select
         {...inerte}

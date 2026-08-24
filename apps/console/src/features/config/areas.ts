@@ -23,9 +23,26 @@ export interface ConfigArea {
   id: ConfigAreaId;
   /** Lo que se lee en la pestaña. Lenguaje de negocio, no nombre de tabla. */
   label: string;
-  /** Una línea que dice para qué se entra acá. Se pinta bajo la pestaña activa. */
+  /**
+   * UNA frase de ~90 caracteres como mucho. Se pinta abierta bajo la pestaña activa.
+   *
+   * El tope no es estético. MEDIDO en Chrome: las siete descripciones eran de dos y tres frases y
+   * ocupaban tres párrafos de prosa gris ANTES del primer control de la página. Quien entra veinte
+   * veces al día ya sabe qué es la pantalla y los vuelve a saltar veinte veces, pagando el scroll
+   * cada vez. `LARGO_DESCRIPCION` lo comprueba en `areas.test.ts`.
+   */
   descripcion: string;
+  /**
+   * El resto, plegado en un `<details>` CERRADO. Plegado y no borrado: acá está lo que explica
+   * por qué la pestaña importa —de dónde saca el enrutado la flota, que todo empieza denegado—, y
+   * eso es la diferencia entre entender la pantalla y no entenderla. Lo que no hace falta es
+   * releerlo en cada visita.
+   */
+  detalle: string;
 }
+
+/** El tope de la frase que se lee sin plegar. Ver `descripcion`. */
+export const LARGO_DESCRIPCION = 90;
 
 /**
  * El orden de las pestañas es el orden en que se monta una flota: primero el espacio (quién existe
@@ -36,46 +53,50 @@ export const CONFIG_AREAS: readonly ConfigArea[] = [
   {
     id: 'espacios',
     label: 'Espacios y miembros',
-    descripcion: 'Los clientes, sus salas y quién está dentro de cada sala. Es de acá de donde el '
-      + 'enrutado saca la flota: un alias sin membership habilitada no recibe entregas, aunque esté '
-      + 'en el registro de agentes.',
+    descripcion: 'Los clientes, sus salas y quién está dentro de cada sala.',
+    detalle: 'Es de acá de donde el enrutado saca la flota: un alias sin membership habilitada no '
+      + 'recibe entregas, aunque esté en el registro de agentes.',
   },
   {
     id: 'permisos',
     label: 'Permisos',
-    descripcion: 'Quién puede hablarle a quién entre clientes, y qué puede hacer cada rol de bus. '
-      + 'Todo empieza denegado: lo que no esté acá, no pasa.',
+    descripcion: 'Quién puede hablarle a quién entre clientes, y qué puede hacer cada rol.',
+    detalle: 'Todo empieza denegado: lo que no esté acá, no pasa.',
   },
   {
     id: 'roles',
     label: 'Roles de agente',
-    descripcion: 'El texto de identidad que cada bot recibe antes de su contrato. Acá se ve qué '
-      + 'roles hay en uso, quién lleva cada uno y cómo pasarle el mismo rol a otro agente.',
+    descripcion: 'El texto de identidad que cada bot recibe antes de su contrato.',
+    detalle: 'Acá se ve qué roles hay en uso, quién lleva cada uno y cómo pasarle el mismo rol a '
+      + 'otro agente.',
   },
   {
     id: 'agentes',
     label: 'Agentes y cuentas',
-    descripcion: 'El registro de bots, el programa con el que corre cada uno y a qué suscripciones '
-      + 'de IA puede llegar. Esto NO decide a quién se le entrega: eso son las membresías.',
+    descripcion: 'El registro de bots, con qué programa corre cada uno y a qué cuentas de IA llega.',
+    detalle: 'Esto NO decide a quién se le entrega: eso son las membresías, en «Espacios y '
+      + 'miembros».',
   },
   {
     id: 'avisos',
     label: 'Avisos y cadena',
-    descripcion: 'Qué ve un bot de la cadena que él mismo disparó, y a qué conversaciones humanas '
-      + 'se permite escribir sin que nadie lo haya preguntado.',
+    descripcion: 'Qué ve un bot de la cadena que él disparó y a qué humanos puede escribirle.',
+    detalle: 'Un aviso proactivo es un mensaje que nadie pidió: por eso cada destino declara a qué '
+      + 'conversación va, cada cuánto y cuántas veces por día.',
   },
   {
     id: 'historial',
     label: 'Historial y JSON',
-    descripcion: 'Cada cambio queda con su inversa: acá se deshace. Y la válvula de escape, el '
-      + 'editor de mutación cruda, para lo que ninguna pestaña sepa hacer todavía.',
+    descripcion: 'Cada cambio queda con su inversa: acá se deshace.',
+    detalle: 'Y acá está la válvula de escape, el editor de mutación cruda, para lo que ninguna '
+      + 'pestaña sepa hacer todavía.',
   },
   {
     id: 'otros',
     label: 'Otros',
-    descripcion: 'Colecciones que este gateway publica y esta consola todavía no sabe presentar. '
-      + 'Se muestran igual, en crudo: esconder un dato que el servidor manda sería mentir sobre lo '
-      + 'que hay configurado.',
+    descripcion: 'Colecciones que este gateway publica y esta consola no sabe presentar todavía.',
+    detalle: 'Se muestran igual, en crudo: esconder un dato que el servidor manda sería mentir '
+      + 'sobre lo que hay configurado.',
   },
 ];
 

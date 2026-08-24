@@ -62,7 +62,10 @@ it('lleva el wizard hasta el dry-run y aplica el primer paso del espacio contra 
   renderWithApi(<ConfigPage />);
   // El wizard dejó de estar desplegado al lado del alta rápida: son dos modos del MISMO alta y se
   // ve uno a la vez. Que la prueba tenga que elegirlo es la diferencia que se buscaba.
-  await user.click(await screen.findByRole('tab', { name: /espacio completo/i }));
+  // Y dejó de ser un `tab`: era una SEGUNDA tira de pestañas idéntica a la de las áreas, apilada
+  // debajo de ella. Ahora es un segmentado (`role="group"` + `aria-pressed`) dentro del panel del
+  // alta. Ver `AltaDeEspacios` y la prueba de hoja de `config-css.test.ts`.
+  await user.click(await screen.findByRole('button', { name: /espacio completo/i }));
   await user.click(await screen.findByRole('button', { name: /5\. dry-run y aplicar/i }));
 
   expect(screen.getByRole('button', { name: /aplicar paso/i })).toBeDisabled();
@@ -1032,4 +1035,134 @@ it('FAMILIA 7: el JSON va detrás de un desplegable cerrado y los dos botones vi
   for (const nombre of ['Confirmar', 'Cancelar']) {
     expect(detalle!.contains(screen.getByRole('button', { name: nombre }))).toBe(false);
   }
+});
+
+// --- FAMILIA 8: se puede leer -------------------------------------------------------------------
+//
+// Steven, por SEGUNDA vez: «la vista de configuraciones aún hay mucho que mejorar, también es muy
+// ilegible». Lo que se puede afirmar desde acá es la ESTRUCTURA; el tamaño de la letra, el
+// contraste y el ancho del renglón NO se pueden afirmar desde jsdom —no hay layout ni cascada— y
+// viven en `config-css.test.ts`, que lee la hoja, más la medición en Chrome que va en el informe.
+
+it('FAMILIA 8: la página se llama IGUAL que su entrada de menú, y no hay antetítulo en inglés', async () => {
+  renderWithApi(<ConfigPage />);
+  const titulo = await screen.findByRole('heading', { level: 1 });
+
+  // Eran TRES nombres a la vez para una pantalla: el menú decía «Ajustes y altas», el `h1` decía
+  // «Ajustes & rollback» y encima había un `.eyebrow` que decía «ATOMIC CONTROL PLANE».
+  expect(titulo).toHaveTextContent(/^Ajustes y altas$/);
+  expect(document.querySelector('.eyebrow')).toBeNull();
+  expect(document.body.textContent).not.toMatch(/atomic control plane/i);
+});
+
+it('FAMILIA 8: hay UNA sola tira de pestañas, y el modo de alta es un segmentado DENTRO del panel', async () => {
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { name: /alta rápida/i });
+
+  // MEDIDO en Chrome: eran dos tiras `role="tablist"` apiladas, a y=307 y a y=389, con la misma
+  // forma exacta. La de abajo no es navegación de la página: elige un MODO dentro del alta.
+  const tiras = screen.getAllByRole('tablist');
+  expect(tiras).toHaveLength(1);
+  expect(tiras[0]).toHaveAccessibleName(/áreas de configuración/i);
+
+  // Y el segmentado está DENTRO del panel que gobierna, no colgado por encima de él: lo que dice
+  // de qué es este control es dónde está.
+  const segmentado = screen.getByRole('group', { name: 'Modo de alta' });
+  const panel = segmentado.closest('.panel');
+  expect(panel, 'el segmentado del alta quedó fuera de todo panel').not.toBeNull();
+  expect(within(panel as HTMLElement).getByRole('heading', { name: /alta rápida/i })).toBeInTheDocument();
+
+  // Sigue siendo un control de verdad: dice cuál está elegido y cambia el formulario.
+  expect(screen.getByRole('button', { name: 'Un solo recurso' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('button', { name: /espacio completo/i })).toHaveAttribute('aria-pressed', 'false');
+});
+
+it('FAMILIA 8: la orientación de cada pestaña es UNA frase, y lo que sobra queda plegado y cerrado', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { name: /alta rápida/i });
+
+  // Abierto: una frase. Eran tres párrafos de prosa gris antes de llegar a un control.
+  const frase = document.querySelector('.config-area-descripcion');
+  expect(frase).toHaveTextContent('Los clientes, sus salas y quién está dentro de cada sala.');
+  expect(frase?.textContent?.length ?? 999).toBeLessThanOrEqual(90);
+
+  // Plegado, y CERRADO al entrar: nadie paga el scroll de leerlo veinte veces al día.
+  const plegado = document.querySelector('.config-detalle');
+  expect(plegado).not.toBeNull();
+  expect(plegado).not.toHaveAttribute('open');
+
+  // Pero no se tiró: la frase que dice de dónde saca el enrutado la flota sigue estando entera, y
+  // se llega a ella con el teclado, no pasando el ratón por encima de nada.
+  expect(plegado).toHaveTextContent(/un alias sin membership habilitada no recibe entregas/i);
+
+  await user.click(screen.getByText(/qué es exactamente «espacios y miembros»/i));
+  expect(plegado).toHaveAttribute('open');
+
+  // Y cambia con la pestaña: lo plegado describe el área que está abierta, no la anterior.
+  await irA(user, PERMISOS);
+  expect(document.querySelector('.config-detalle')).toHaveTextContent(/todo empieza denegado/i);
+});
+
+it('FAMILIA 8: el permiso se dice en castellano, sin perder el identificador que hay que citar', async () => {
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1 });
+  const linea = document.querySelector('.config-permiso');
+  expect(linea, 'la línea del permiso no se pinta').not.toBeNull();
+
+  // Lo primero de la página era `RBAC config.write ALLOW Roles: operator`: cuatro jergas seguidas
+  // encima de todo lo demás, y ninguna contesta «¿puedo tocar esto?».
+  expect(linea).toHaveTextContent(/podés cambiar la configuración/i);
+  // El identificador crudo NO se tira: es lo que hay que citarle a quien administra para pedirlo.
+  expect(linea).toHaveTextContent(/config\.write/);
+  expect(linea).toHaveAttribute('data-estado', 'allowed');
+});
+
+it.each([
+  ['denied', ['agent'], /^Solo lectura: /],
+  // `unknown` —no se pudo leer el RBAC— NO se cuenta como negativa: la pantalla queda habilitada
+  // y decide el servidor. Ante la duda no se le quita nada a nadie. Mismo criterio que
+  // `configNavAvailability` y que `soloLectura`.
+  ['unknown', undefined, /la pantalla queda habilitada y decide el servidor/i],
+] as const)('FAMILIA 8: con el permiso «%s» la línea lo dice con todas las letras', async (estado, roles, texto) => {
+  server.use(http.get('*/v3/console/access', () => (roles
+    ? HttpResponse.json({ subject: 'Miguel:janus', roles, permissions: ['message.publish'] })
+    : HttpResponse.json({ error: 'internal' }, { status: 500 }))));
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1 });
+
+  await waitFor(() => {
+    const linea = document.querySelector('.config-permiso');
+    expect(linea).toHaveAttribute('data-estado', estado);
+    expect(linea).toHaveTextContent(texto);
+    // El identificador crudo está en los tres estados: es lo que hay que citar para PEDIR el
+    // permiso, y esconderlo justo cuando falta dejaría a quien lo necesita sin nada que llevar.
+    expect(linea).toHaveTextContent(/config\.write/);
+  });
+});
+
+it('FAMILIA 8: las columnas de números se marcan para alinearse a la derecha, y sólo ellas', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1 });
+  await irA(user, AVISOS);
+
+  const tabla = (await screen.findByRole('heading', { name: /chain visibility policy/i }))
+    .closest('.panel')!.querySelector('table')!;
+  const cabeceras = [...tabla.querySelectorAll('th')];
+  const numerica = cabeceras.find((th) => /progress_relay_max_events/i.test(th.textContent ?? ''));
+  const texto = cabeceras.find((th) => /^\s*id\s*$/i.test(th.textContent ?? ''));
+
+  // `progress_relay_max_events` trae un 8: es la columna que hay que poder comparar de un vistazo.
+  expect(numerica, 'no está la columna numérica del fixture').toBeDefined();
+  expect(numerica).toHaveAttribute('data-numero', 'true');
+  const celda = tabla.querySelectorAll('tbody tr td')[cabeceras.indexOf(numerica!)];
+  expect(celda).toHaveAttribute('data-numero', 'true');
+  expect(celda).toHaveTextContent('8');
+
+  // Y SÓLO ellas: alinear a la derecha una columna de identificadores los desalinea entre sí.
+  // (Que `data-numero` acabe en `text-align: right` lo comprueba `config-css.test.ts` sobre la
+  // hoja: jsdom no resuelve la cascada y preguntárselo sería preguntarle a quien no sabe.)
+  expect(texto, 'no está la columna de texto del fixture').toBeDefined();
+  expect(texto).not.toHaveAttribute('data-numero');
 });

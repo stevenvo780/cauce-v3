@@ -51,7 +51,13 @@ const DESTINOS: Record<string, Destino> = {
   messages: { encabezado: /^mensajes$/i },
   queues: { encabezado: /queues, retries & dlq/i },
   observability: { encabezado: /^señales y auditoría$/i },
-  config: { encabezado: /ajustes & rollback/i },
+  /*
+   * El `h1` dice EXACTAMENTE lo que dice la entrada del menú. Decía «Ajustes & rollback» debajo de
+   * un antetítulo en inglés («ATOMIC CONTROL PLANE») mientras el menú decía «Ajustes y altas»:
+   * tres nombres para una pantalla, y ninguno de los tres confirma que llegaste a donde ibas. El
+   * ancla `^…$` no es decoración — es lo que impide que vuelva a haber dos nombres.
+   */
+  config: { encabezado: /^ajustes y altas$/i },
   terminal: { encabezado: /^ultimate terminal$/i },
   /** Sin `<h1>`: son avisos, no vistas. Ver `FleetRouteNotice` y `JobsRetiredNotice`. */
   fleet: { marca: /esa dirección ya no identifica a nadie/i },
