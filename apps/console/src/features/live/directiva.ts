@@ -189,6 +189,23 @@ export function avisosDeCapas(roleBrief: string | null | undefined, directiva: A
   return avisos;
 }
 
+/**
+ * Las primeras líneas CON CONTENIDO de un texto, para el resumen del cajón.
+ *
+ * Salta las vacías en vez de contarlas: los briefs de la flota abren con una línea en blanco o con
+ * un `#` de título más de una vez, y un resumen de «dos líneas» que gasta las dos en el hueco no
+ * resume nada. Se recorta cada línea porque el resumen se pinta en un renglón: los espacios de
+ * sangrado del `.md` original correrían el texto sin decir nada.
+ */
+export function primerasLineas(texto: string | null | undefined, cuantas: number): string[] {
+  if (!texto) return [];
+  return texto
+    .split('\n')
+    .map((linea) => linea.trim())
+    .filter((linea) => linea.length > 0)
+    .slice(0, cuantas);
+}
+
 /** Cuántas entradas de memoria hay DE VERDAD, aunque la lista venga recortada. */
 export function totalDeMemoria(directiva: AgentDirective | undefined): number | undefined {
   const memoria = directiva?.memory;

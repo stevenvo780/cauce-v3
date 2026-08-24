@@ -151,10 +151,60 @@ export const handlers = [
       sha: 'sha-nueva', bytes: (cuerpo.content ?? '').length,
     });
   }),
-  http.get('*/v3/console/agents/:tenantId/:alias/directive', () => HttpResponse.json(
-    { error: 'not_found', message: 'agent directive files are not published by this gateway yet' },
-    { status: 404 },
-  )),
+  /*
+   * LAS TRES CAPAS DE DIRECTIVA — y los TRES estados que la pantalla tiene que distinguir.
+   *
+   * El estado que hoy da PRODUCCIÓN es el tercero, y en los 14 alias: comprobado uno por uno el
+   * 2026-08-24, `GET /v3/console/agents/:tenant/:alias/directive` devuelve 404 porque el gateway
+   * todavía no publica la ruta (el backend existe en `gateway/editor-ficheros-agente-20260823`,
+   * frenado por una auditoría de seguridad). Por eso es el estado por defecto de este fixture.
+   *
+   * Los otros dos se sirven a propósito para poder MIRARLOS antes de que el backend salga, porque
+   * el día que salga van a convivir en la misma flota y confundirlos es el defecto que esta
+   * pantalla existe para no cometer:
+   *   · `kant` = el caso janus: DOS `CLAUDE.md` a la vez, con la autonomía repetida en el manual.
+   *   · `midas` = el caso gaia: el servidor MIRÓ y no hay ningún manual. Eso sí se puede afirmar.
+   *   · el resto = NO SE MIRÓ. Que no es «no tiene», y tiene que verse distinto.
+   */
+  http.get('*/v3/console/agents/:tenantId/:alias/directive', ({ params }) => {
+    if (params.alias === 'kant') {
+      return HttpResponse.json({
+        observed_at: new Date().toISOString(),
+        container_id: 'claw-kant',
+        files: [
+          {
+            path: '~/.claude/CLAUDE.md', scope: 'user', bytes: 2079,
+            modified_at: new Date(Date.now() - 86_400_000).toISOString(),
+            text: '# Flota\n\nAUTONOMIA: decidí y actuá vos. Pedí permiso SOLO si hay dinero de por medio.\n\nEl repo vive en /workspace/cauce-v3 y se prueba con `pnpm test`.\n',
+          },
+          {
+            path: '/workspace/CLAUDE.md', scope: 'workspace', bytes: 512,
+            modified_at: new Date(Date.now() - 3_600_000).toISOString(),
+            text: '# Cauce V3\n\nLa consola se construye con `pnpm --filter @cauce/console build`.\n',
+          },
+        ],
+        memory: {
+          root: '~/.claude/projects', total: 267, truncated: true,
+          entries: [
+            { path: 'MEMORY.md', bytes: 25_412, modified_at: new Date(Date.now() - 7_200_000).toISOString() },
+            { path: 'compilar-no-es-correr.md', bytes: 1_204, modified_at: new Date(Date.now() - 172_800_000).toISOString() },
+          ],
+        },
+      });
+    }
+    if (params.alias === 'midas') {
+      return HttpResponse.json({
+        observed_at: new Date().toISOString(),
+        container_id: 'ws-midas',
+        files: [],
+        memory: { root: '~/.openclaw/memory', total: 0, entries: [] },
+      });
+    }
+    return HttpResponse.json(
+      { error: 'not_found', message: 'agent directive files are not published by this gateway yet' },
+      { status: 404 },
+    );
+  }),
   /*
    * El diario del rol. A diferencia de las capas 2 y 3, éste SÍ está desplegado: comprobado el
    * 2026-08-23 contra producción, responde 200 con las entradas, y 200 con `entries: []` para un
