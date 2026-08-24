@@ -6,6 +6,8 @@ import {
   bloqueGestionado,
   conBloqueGestionado,
   rutaDelContextoFijo,
+  resumirContextoFijo,
+  selloDesdeElDisco,
 } from "../src/harnesses/contexto-fijo.js";
 
 /*
@@ -107,4 +109,40 @@ test("el cierre del bloque queda bien formado y es reconocible", () => {
   const resultado = conBloqueGestionado(MANUAL_HUMANO, "X");
   assert.ok(resultado.includes(MARCA_FIN));
   assert.equal(resultado.split(MARCA_FIN).length - 1, 1);
+});
+
+// ── El sello leído del disco ────────────────────────────────────────────────────────────────
+
+test("el sello sale del bloque, no del fichero entero", () => {
+  const fijo = "CONTRATO DE ZEUS";
+  const fichero = conBloqueGestionado(MANUAL_HUMANO, fijo);
+  const sello = selloDesdeElDisco("/da/igual", () => fichero);
+  assert.ok(sello);
+  assert.equal(sello.sha256, resumirContextoFijo(fijo));
+  // Y por tanto: cambiar el texto HUMANO de alrededor no invalida el sello. Eso es lo que hace
+  // que una persona pueda editar su manual sin que la flota vuelva a pagar 8.000 caracteres.
+  const conMasTextoHumano = conBloqueGestionado(`${MANUAL_HUMANO}\nUna nota nueva.\n`, fijo);
+  assert.equal(selloDesdeElDisco("/da/igual", () => conMasTextoHumano)?.sha256, sello.sha256);
+});
+
+test("CONTROL NEGATIVO: un fichero que no se puede leer NO produce sello", () => {
+  // Fichero ausente, sin permisos, ruta que era un directorio: todo tiene que dar «mandá todo».
+  const sello = selloDesdeElDisco("/no/existe", () => {
+    throw new Error("ENOENT");
+  });
+  assert.equal(sello, undefined);
+});
+
+test("CONTROL NEGATIVO: un fichero sin bloque gestionado NO produce sello", () => {
+  assert.equal(selloDesdeElDisco("/x", () => MANUAL_HUMANO), undefined);
+});
+
+test("CONTROL NEGATIVO: sin ruta -openclaw, hermes- NO se lee nada", () => {
+  let seLeyo = false;
+  const sello = selloDesdeElDisco(undefined, () => {
+    seLeyo = true;
+    return "";
+  });
+  assert.equal(sello, undefined);
+  assert.equal(seLeyo, false, "se intentó leer un fichero para un arnés que no tiene");
 });

@@ -204,3 +204,38 @@ export function conBloqueGestionado(textoOriginal: string, bloque: string): stri
   }
   return textoOriginal.slice(0, par.inicio) + nuevo + textoOriginal.slice(par.fin + MARCA_FIN.length);
 }
+
+/**
+ * El sello del fichero que hay AHORA en el disco, leído desde dentro del contenedor.
+ *
+ * ── Por qué lo lee el adaptador y no el gateway ──────────────────────────────────────────────
+ *
+ * El adaptador YA corre dentro del contenedor del alias, con su usuario y con su `$HOME`. Puede
+ * abrir el fichero directamente. Hacer que el gateway lo mida exigiría la cadena
+ * gateway → relay → pty-agent, que el 2026-08-24 no existe en producción (los tres eslabones dan
+ * 404 o no tienen la capacidad) y que además obliga a un viaje de red por cada entrega.
+ *
+ * Esta es la simplificación que pedía el encargo: el que necesita el dato es el que ya lo tiene
+ * delante.
+ *
+ * ── Nunca lanza ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Fichero ausente, sin permisos, disco lleno, ruta que resultó ser un directorio: todo devuelve
+ * `undefined`, y `undefined` significa «mandá el sobre entero», que es el comportamiento de
+ * siempre. Un fallo de lectura NO puede costar un turno.
+ */
+export function selloDesdeElDisco(
+  ruta: string | undefined,
+  leer: (ruta: string) => string,
+): SelloDeContextoFijo | undefined {
+  if (!ruta) return undefined;
+  let texto: string;
+  try {
+    texto = leer(ruta);
+  } catch {
+    return undefined;
+  }
+  const bloque = bloqueGestionado(texto);
+  if (bloque === undefined) return undefined;
+  return { version: VERSION_CONTEXTO_FIJO, sha256: resumirContextoFijo(bloque) };
+}
