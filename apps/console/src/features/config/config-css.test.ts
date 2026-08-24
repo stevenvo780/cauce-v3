@@ -135,10 +135,19 @@ describe('las pastillas de estado en modo claro', () => {
       .toBeGreaterThanOrEqual(4.5);
   });
 
+  /*
+   * Desde el 2026-08-24 `.badge` no lleva un `.rem` suelto: cita el escalón de APUNTE de la escala,
+   * que es el mismo que ya usaba `.config-pagina .badge`. Por eso el tamaño se RESUELVE contra el
+   * `:root` en vez de parsearse como número — leerlo con `parseFloat('var(--tipo-apunte)')` daba
+   * `NaN`, y un `NaN` no es «no se pudo medir»: `NaN >= 12` es falso, así que el guardia habría
+   * dicho que la pastilla es ilegible cuando en realidad había subido.
+   */
   it('la pastilla es de un tamaño con el que se puede exigir contraste (>= 12px)', () => {
     const base = declaraciones(sinComentarios(GLOBAL), '.badge');
-    const rem = Number.parseFloat(base['font-size'].replace('rem', ''));
-    expect(rem * 16).toBeGreaterThanOrEqual(12);
+    const escala = new Map(Object.entries(declaraciones(sinComentarios(GLOBAL), ':root')));
+    const px = enPixeles(base['font-size'], escala);
+    expect(px, `.badge { font-size: ${base['font-size']} } no resuelve a píxeles`).toBeDefined();
+    expect(px!).toBeGreaterThanOrEqual(12);
   });
 
   /**
@@ -338,6 +347,13 @@ export function enPixeles(valor: string, escala: Map<string, string>): number | 
   if (px) return Number(px[1]);
   const rem = /^(\d*\.?\d+)rem$/.exec(valor.trim());
   if (rem) return Number(rem[1]) * 16;
+  /*
+   * `clamp(min, preferido, max)` se juzga por su MÍNIMO, que es el peor caso para la legibilidad:
+   * si el mínimo llega al suelo, no hay ancho de ventana en el que ese texto baje de ahí. Juzgarlo
+   * por el valor preferido sería medir contra un ancho que nadie garantiza.
+   */
+  const clamp = /^clamp\(\s*([^,]+),/.exec(valor.trim());
+  if (clamp) return enPixeles(clamp[1], escala);
   return undefined;
 }
 
@@ -353,6 +369,19 @@ const SUELO_CUERPO = 13;
  * una hoja mutada y exigir que la repruebe. Un guardia que sólo sabe mirar el fichero de verdad no
  * se puede probar a sí mismo.
  */
+/**
+ * LA EXCEPCIÓN al suelo, y la única de toda la consola.
+ *
+ * `.sidebar nav a` a `.6875rem` (11 px) dentro de `@media (max-width: 760px)` es la barra de
+ * navegación de móvil: está MEDIDA contra el ancho real de las ocho entradas a 360 px y subirla
+ * vuelve a pisar los rótulos entre sí. Se anota como par (selector, valor) EXACTO y no como «a este
+ * selector perdonale todo»: el mismo selector tiene otra declaración en el bloque base (`.9rem`), y
+ * un perdón por selector la dejaría entrar por la ventana.
+ */
+const EXCEPCIONES: ReadonlyArray<{ selector: string; valor: string }> = [
+  { selector: '.sidebar nav a', valor: '.6875rem' },
+];
+
 export function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[] {
   const escala = variables(sinComentarios(hojas.join('\n')));
   const fallos: string[] = [];
@@ -360,6 +389,7 @@ export function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[]
     for (const { selector, valor } of tamanosDeLetra(hoja)) {
       // `inherit`/`0` no declaran un tamaño: no hay nada que juzgar.
       if (/^(inherit|initial|unset|revert)$/.test(valor)) continue;
+      if (EXCEPCIONES.some((e) => e.selector === selector && e.valor === valor)) continue;
       const px = enPixeles(valor, escala);
       if (px === undefined) {
         fallos.push(`${selector} { font-size: ${valor} } no se sabe resolver a píxeles`);
@@ -373,17 +403,24 @@ export function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[]
 
 describe('la escala tipográfica de /config', () => {
   /*
-   * La escala se lee del bloque BASE de `.config-pagina`, no de la hoja entera. `variables()` se
-   * queda con la última coincidencia y `--medida` está redefinida dentro del `@media` de móvil: la
-   * hoja entera devolvería `100%` para un tope que arriba es `74ch`. Es el mismo error de método
-   * que este fichero existe para atrapar — un dato fresco medido contra el objeto equivocado.
+   * 🔴 La escala se MUDÓ a `:root` de `styles.css` el 2026-08-24, y por eso se lee de ahí.
+   *
+   * Estaba en el bloque base de `.config-pagina`, o sea que existía sólo dentro de /config. MEDIDO
+   * en Chrome a 1920×1080: /config tenía 0 elementos por debajo de 12,5 px y las otras siete vistas
+   * 889 entre todas. Peor: `toggles.css` ya citaba `var(--tipo-rotulo)` en componentes que se usan
+   * fuera de /config, donde la variable no existía y la declaración entera se descartaba.
+   *
+   * Se lee del PRIMER bloque `:root` —el base— y no de la hoja entera: hay un segundo `:root`
+   * dentro de `@media (prefers-color-scheme: light)` y `variables()` se queda con la última
+   * coincidencia. Medir contra el bloque equivocado es el error de método que este fichero existe
+   * para atrapar.
    */
-  const escala = new Map(Object.entries(declaraciones(sinComentarios(PROPIA), '.config-pagina')));
+  const escala = new Map(Object.entries(declaraciones(sinComentarios(GLOBAL), ':root')));
 
   it('declara los seis escalones y van de mayor a menor, sin dos iguales', () => {
     const pixeles = ESCALA.map((nombre) => {
       const bruto = escala.get(nombre);
-      expect(bruto, `${nombre} no está declarada en config.css`).toBeDefined();
+      expect(bruto, `${nombre} no está declarada en el :root de styles.css`).toBeDefined();
       const px = enPixeles(bruto!, escala);
       expect(px, `${nombre} = ${bruto} no es un tamaño en píxeles`).toBeDefined();
       return px!;
@@ -421,8 +458,14 @@ describe('la escala tipográfica de /config', () => {
     expect(titulo).toBeGreaterThan(cuerpo);
   });
 
+  /*
+   * `GLOBAL` entra en la lista porque desde la mudanza es quien DECLARA los tokens: sin ella,
+   * `var(--tipo-apunte)` no resuelve y el guardia lo reportaría como «no se sabe resolver». Que la
+   * hoja global tenga que estar es justamente el punto — es lo que hace que la escala exista fuera
+   * de /config.
+   */
   it('ninguna regla de las hojas de /config declara letra por debajo del suelo', () => {
-    expect(letraPorDebajoDelSuelo([PROPIA, INTERRUPTORES])).toEqual([]);
+    expect(letraPorDebajoDelSuelo([GLOBAL, PROPIA, INTERRUPTORES])).toEqual([]);
   });
 
   /**
@@ -434,7 +477,7 @@ describe('la escala tipográfica de /config', () => {
   it('CONTROL NEGATIVO — marca los tamaños que estaban desplegados (.68rem = 10,88px, .58rem = 9,28px)', () => {
     const roto = PROPIA.replace('font-size: var(--tipo-apunte);', 'font-size: .68rem;');
     expect(roto).not.toBe(PROPIA);
-    expect(letraPorDebajoDelSuelo([roto])).toContainEqual(expect.stringContaining('.68rem'));
+    expect(letraPorDebajoDelSuelo([GLOBAL, roto])).toContainEqual(expect.stringContaining('.68rem'));
     expect(letraPorDebajoDelSuelo(['.x { font-size: .58rem; }'])).toHaveLength(1);
     // Y que el suelo sea el que se dijo: 12px NO alcanza, 12,5 sí.
     expect(letraPorDebajoDelSuelo(['.x { font-size: 12px; }'])).toHaveLength(1);
@@ -447,7 +490,7 @@ describe('la escala tipográfica de /config', () => {
    * la página sin jerarquía ninguna.
    */
   it('CONTROL NEGATIVO — una escala aplanada no es una escala', () => {
-    const plana = variables(sinComentarios(PROPIA.replace('--tipo-rotulo: 13px', '--tipo-rotulo: 14px')));
+    const plana = variables(sinComentarios(GLOBAL.replace('--tipo-rotulo: 13px', '--tipo-rotulo: 14px')));
     const cuerpo = enPixeles(plana.get('--tipo-cuerpo')!, plana)!;
     const rotulo = enPixeles(plana.get('--tipo-rotulo')!, plana)!;
     expect(rotulo).not.toBeLessThan(cuerpo);

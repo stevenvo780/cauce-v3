@@ -239,3 +239,75 @@ export function selloDesdeElDisco(
   if (bloque === undefined) return undefined;
   return { version: VERSION_CONTEXTO_FIJO, sha256: resumirContextoFijo(bloque) };
 }
+
+/** Por qué NO se sembró el fichero. Va al registro; el turno sigue igual. */
+export type MotivoDeNoSembrar =
+  | "sembrado"
+  | "apagado"
+  | "sin-ruta"
+  | "ya-estaba"
+  | "ocupado-por-otro-alias"
+  | "no-se-pudo-escribir";
+
+/**
+ * Escribe el bloque gestionado en el fichero del arnés, si hace falta y si se puede.
+ *
+ * ── Por qué lo siembra el propio adaptador ──────────────────────────────────────────────────
+ *
+ * Es el mismo argumento que para leerlo: el adaptador ya corre dentro del contenedor, con el
+ * usuario del alias. Sembrar desde fuera exigiría un canal de escritura hasta el disco de cada
+ * contenedor —que hoy no existe— y un despliegue coordinado. Así, el primer turno tras una
+ * actualización escribe el bloque y manda el sobre entero; del segundo en adelante el sobre va
+ * recortado. Se cura solo, sin ventana de mantenimiento.
+ *
+ * ── La negativa que importa: FICHERO COMPARTIDO ─────────────────────────────────────────────
+ *
+ * `kratos` y `atlas` comparten `$HOME` y su `AGENTS.md` es el MISMO inodo (medido: 12.942 bytes
+ * en los dos el 24-ago-2026). Si los dos sembraran, cada uno pisaría al otro en cada turno: el
+ * fichero oscilaría entre dos identidades y ninguno de los dos tendría nunca su contrato. Por eso
+ * cuando el bloque existe y NO es el nuestro, no se toca y se devuelve
+ * `ocupado-por-otro-alias`. La cura de eso no es escribir más fuerte: es darle a cada alias su
+ * propio directorio de configuración.
+ *
+ * Nunca lanza. Un fallo al sembrar deja el sobre entero, que es el comportamiento de siempre.
+ */
+export function sembrarContextoFijo(
+  ruta: string | undefined,
+  textoFijo: string,
+  io: {
+    leer: (ruta: string) => string;
+    escribir: (ruta: string, contenido: string) => void;
+    habilitado: boolean;
+  },
+): MotivoDeNoSembrar {
+  if (!io.habilitado) return "apagado";
+  if (!ruta) return "sin-ruta";
+
+  let original: string;
+  try {
+    original = io.leer(ruta);
+  } catch {
+    // Que no exista es normal la primera vez: se siembra sobre un fichero vacío.
+    original = "";
+  }
+
+  const actual = bloqueGestionado(original);
+  if (actual === textoFijo) return "ya-estaba";
+  if (actual !== undefined && actual !== textoFijo) {
+    /*
+     * Hay un bloque y dice otra cosa. Son dos casos y desde aquí no se distinguen: o el contrato
+     * cambió (y hay que reescribirlo), o el fichero es de otro alias que comparte `$HOME` (y
+     * reescribirlo sería empezar una guerra de escrituras). Ante la duda no se pisa, porque el
+     * daño de las dos opciones no es simétrico: reescribir de más deja a dos alias sin identidad
+     * estable; reescribir de menos sólo cuesta un sobre entero por turno, que es lo de hoy.
+     */
+    return "ocupado-por-otro-alias";
+  }
+
+  try {
+    io.escribir(ruta, conBloqueGestionado(original, textoFijo));
+  } catch {
+    return "no-se-pudo-escribir";
+  }
+  return "sembrado";
+}

@@ -42,7 +42,7 @@
 .hg-note {
   margin: 12px 2px 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--tipo-rotulo);
   line-height: 1.55;
 }
 
@@ -69,7 +69,7 @@
 
 .hg-edge-label {
   fill: var(--muted);
-  font-size: 12px;
+  font-size: var(--tipo-rotulo);
   font-weight: 600;
   letter-spacing: .02em;
   paint-order: stroke;
@@ -106,7 +106,7 @@
 }
 
 .hg-arc text {
-  font-size: 10.5px;
+  font-size: var(--tipo-apunte);
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
@@ -180,7 +180,7 @@
 
 .hg-node-label {
   fill: var(--text);
-  font-size: 11.5px;
+  font-size: var(--tipo-rotulo);
   font-weight: 600;
   paint-order: stroke;
   stroke: var(--surface-2);
@@ -225,7 +225,7 @@
 .hg-tenant-labels { pointer-events: none; }
 
 .hg-tenant {
-  font-size: 15px;
+  font-size: var(--tipo-cuerpo);
   font-weight: 700;
   letter-spacing: .06em;
   text-transform: uppercase;

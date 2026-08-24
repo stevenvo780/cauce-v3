@@ -79,8 +79,28 @@ assert(rootlessCovered.has("tests/container-release-pin.test.mjs"));
 const rootlessCheck = spawnSync("python3", [digestScript, "--rootless", "--check"], { encoding: "utf8" });
 assert.equal(rootlessCheck.status, 0, `${rootlessCheck.stdout} ${rootlessCheck.stderr}`);
 const rootless = path.join(ops, "generated/container-systemd/rootless");
-assert.equal((await readdir(rootless)).filter((name) => /^cauce-v3-container-.*\.service$/u.test(name)).length, 14);
-assert.equal((await readdir(path.join(rootless, "configs"))).filter((name) => name.endsWith(".env.example")).length, 14);
+/*
+ * El número de units NO se escribe a mano. Estuvo clavado en 14 y el registro creció a 15 al dar
+ * de alta a `heraclito`: la prueba se puso roja por el motivo equivocado —«14 !== 15»— cuando lo
+ * que de verdad pasaba es que a un alias registrado le faltaba su unidad. Un número a mano
+ * confunde «alguien añadió un alias» con «alguien se olvidó de generar», que son lo contrario.
+ *
+ * Atado al registro, la prueba sigue cazando lo que importa —una unit que falta— y deja de pedir
+ * que se la edite cada vez que la flota crece.
+ */
+const aliasRegistrados = Object.keys(
+  JSON.parse(await readFile(path.join(ops, "container-aliases.json"), "utf8")).aliases,
+).length;
+assert.equal(
+  (await readdir(rootless)).filter((name) => /^cauce-v3-container-.*\.service$/u.test(name)).length,
+  aliasRegistrados,
+  "hay un alias registrado sin unit rootless generada: corré generate-container-units.py --rootless",
+);
+assert.equal(
+  (await readdir(path.join(rootless, "configs"))).filter((name) => name.endsWith(".env.example")).length,
+  aliasRegistrados,
+  "hay un alias registrado sin config de ejemplo rootless",
+);
 const rootlessUnit = await readFile(path.join(rootless, "cauce-v3-container-kant.service"), "utf8");
 assert(!/^User=/mu.test(rootlessUnit), "systemd user unit must not set User=");
 assert.match(rootlessUnit, /^WantedBy=default\.target$/mu);

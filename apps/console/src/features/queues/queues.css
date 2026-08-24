@@ -18,9 +18,9 @@
 .metrica-filtro:hover:not(:disabled) { border-color: var(--border-strong); transform: translateY(-1px); }
 .metrica-filtro[aria-pressed="true"] { border-color: var(--blue); box-shadow: inset 3px 0 var(--blue); }
 .metrica-filtro:disabled { cursor: not-allowed; opacity: .6; }
-.metrica-en-pagina { color: var(--amber) !important; font-size: .6rem !important; }
+.metrica-en-pagina { color: var(--amber) !important; font-size: var(--tipo-apunte) !important; }
 
-.queues-ayuda { margin: -6px 0 18px; color: var(--muted); font-size: .74rem; line-height: 1.6; }
+.queues-ayuda { margin: -6px 0 18px; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
 .queues-ayuda strong { color: var(--text); }
 
 /* ---------------------------------------------------------------------------- el filtro */
@@ -31,14 +31,14 @@
 .queues-busqueda svg { position: absolute; z-index: 1; top: 13px; left: 10px; color: var(--faint); }
 .queues-busqueda input { margin-top: 0; padding-left: 32px; }
 
-.queues-conteo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: var(--muted); font-size: .74rem; }
+.queues-conteo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: var(--muted); font-size: var(--tipo-rotulo); }
 
 /*
  * «sin error» NO es UNKNOWN y por eso NO usa `.unknown`, que es ámbar y en negrita. Ver
  * `ultimo-error.ts`: 31 de las 38 filas de producción gritaban ese ámbar sobre entregas que
  * habían salido bien, y las 7 que sí importaban se perdían entre ellas.
  */
-.sin-error { color: var(--faint); font-size: .74rem; }
+.sin-error { color: var(--faint); font-size: var(--tipo-rotulo); }
 
 /* --------------------------------------------------------------- la confirmación de la acción */
 
@@ -50,9 +50,9 @@
   background: rgb(208 135 0 / 10%);
 }
 
-.confirmacion-titulo { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0; color: #ffd9a0; font-size: .85rem; font-weight: 700; }
+.confirmacion-titulo { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0; color: #ffd9a0; font-size: var(--tipo-rotulo); font-weight: 700; }
 .confirmacion-titulo svg { flex: none; }
-.confirmacion-detalle { margin: 8px 0 0; color: var(--muted); font-size: .76rem; line-height: 1.6; }
+.confirmacion-detalle { margin: 8px 0 0; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
 .confirmacion-acciones { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 13px; }
 
 /*
@@ -87,14 +87,14 @@
   .metrics-grid.three.metricas-de-cola { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .metricas-de-cola .metric { min-height: 0; padding: 12px 10px; }
   .metricas-de-cola .metric::after { display: none; }
-  .metricas-de-cola .metric p { margin-bottom: 8px; font-size: .58rem; letter-spacing: .02em; }
+  .metricas-de-cola .metric p { margin-bottom: 8px; font-size: var(--tipo-apunte); letter-spacing: .02em; }
   .metricas-de-cola .metric strong { font-size: 1.5rem; }
-  .metricas-de-cola .metric span { margin-top: 5px; font-size: .55rem; }
+  .metricas-de-cola .metric span { margin-top: 5px; font-size: var(--tipo-apunte); }
 
   .tabla-entregas, .tabla-entregas tbody, .tabla-entregas tr, .tabla-entregas td { display: block; width: 100%; }
   .tabla-entregas thead { position: absolute; overflow: hidden; width: 1px; height: 1px; clip-path: inset(50%); white-space: nowrap; }
   .tabla-entregas tr { margin-bottom: 10px; padding: 4px 0; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
   .tabla-entregas td { display: grid; align-items: baseline; padding: 7px 12px; border-bottom: 0; gap: 4px 12px; grid-template-columns: 96px minmax(0, 1fr); }
-  .tabla-entregas td::before { color: var(--faint); font-size: .6rem; letter-spacing: .06em; text-transform: uppercase; content: attr(data-label); }
+  .tabla-entregas td::before { color: var(--faint); font-size: var(--tipo-apunte); letter-spacing: .06em; text-transform: uppercase; content: attr(data-label); }
   .tabla-entregas td .subline { grid-column: 2; }
 }

@@ -69,6 +69,45 @@ valid_absolute_path() {
   [[ $1 != *'//'* && $1 != */../* && $1 != */./* && $1 != */.. && $1 != */. ]]
 }
 
+# ---------------------------------------------------------------------------
+# Configuración por alias (interruptor CONFIG_POR_ALIAS, APAGADO por defecto).
+#
+# POR QUÉ. `kratos` y `atlas` corren en el MISMO contenedor, con el mismo usuario y el mismo HOME
+# (/home/dev). Su ~/.codex/AGENTS.md es el mismo INODO: es físicamente imposible darles identidades
+# distintas por fichero. `zeus` y `argos` comparten CLAUDE.md por lo mismo. Ese reparto es el motivo
+# por el que el rol acabó en la base de datos (020_agent_role_brief.sql).
+#
+# CLAUDE_CONFIG_DIR y CODEX_HOME ya gobiernan dónde busca cada CLI, así que apuntar cada alias a un
+# directorio propio es lo único que hace falta para que el fichero vuelva a servir.
+#
+# La ruta se DERIVA del alias y del home mapeado; no es un valor libre de configuración. Quien copia
+# los ficheros allí es ops/scripts/separar-config-alias.mjs, y calcula exactamente lo mismo. Si
+# fueran dos valores libres, un día uno copiaría a un directorio y el otro leería de otro: el alias
+# arrancaría con la configuración de fábrica y no fallaría NADA.
+# ---------------------------------------------------------------------------
+
+config_por_alias_variable() {
+  # Falla (no devuelve vacío) para todo lo demás: exportar `CODEX_HOME=` sería una variable que
+  # existe y apunta a ninguna parte, y el arnés resolvería el directorio de fábrica sin un error.
+  case "$1" in
+    claude) printf 'CLAUDE_CONFIG_DIR' ;;
+    codex) printf 'CODEX_HOME' ;;
+    *) return 1 ;;
+  esac
+}
+
+config_por_alias_directorio() {
+  local harness_de=$1 home_de=$2 alias_de=$3 subdirectorio
+  case "$harness_de" in
+    claude) subdirectorio=.claude ;;
+    codex) subdirectorio=.codex ;;
+    *) return 1 ;;
+  esac
+  valid_absolute_path "$home_de" || return 1
+  valid_alias "$alias_de" || return 1
+  printf '%s/.cauce/%s/%s' "$home_de" "$alias_de" "$subdirectorio"
+}
+
 safe_owner_uid() {
   printf '%s\n' "$EUID"
 }
@@ -121,6 +160,12 @@ load_config() {
       # existe para claude y codex, que son los dos harness con una TUI compartible; para el resto
       # el interruptor no significaría nada y aceptarlo sería mentir sobre en qué modo corre.
       SHARED_SESSION|SHARED_SESSION_WORKSPACE)
+        [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
+        ;;
+      # Configuración por alias: sólo para los dos arneses que leen un directorio gobernado por una
+      # variable. hermes lee stdin y los openclaw no leen ~/.codex ni ~/.claude; aceptar la clave
+      # ahí exportaría una variable que nadie lee y daría por separado un alias que no lo está.
+      CONFIG_POR_ALIAS)
         [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
         ;;
       OPENCLAW_TRANSPORT|OPENCLAW_API_URL|OPENCLAW_TOKEN_FILE|OPENCLAW_AGENT_TARGET|OPENCLAW_DIST_DIR)
@@ -196,6 +241,14 @@ validate_config_values() {
   if [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]]; then
     [[ -v CONFIG[SHARED_SESSION] ]] || die 'SHARED_SESSION_WORKSPACE requires SHARED_SESSION=1'
     valid_absolute_path "${CONFIG[SHARED_SESSION_WORKSPACE]}" || die 'SHARED_SESSION_WORKSPACE must be a canonical absolute path'
+  fi
+  # Por el mismo criterio que SHARED_SESSION: sólo el valor exacto 1. Un `CONFIG_POR_ALIAS=true`
+  # que un lado leyera como encendido y otro como apagado dejaría al alias copiando a un directorio
+  # y leyendo de otro, que es exactamente el estado que este trabajo existe para eliminar.
+  if [[ -v CONFIG[CONFIG_POR_ALIAS] ]]; then
+    [[ ${CONFIG[CONFIG_POR_ALIAS]} == 1 ]] || die 'CONFIG_POR_ALIAS must be exactly 1'
+    config_por_alias_directorio "$harness" "$container_home" "$alias_name" >/dev/null \
+      || die 'CONFIG_POR_ALIAS cannot derive a per-alias configuration directory for this alias'
   fi
   validate_relay_url "${CONFIG[RELAY_URL]}"
   if [[ $harness == hermes ]]; then
@@ -589,6 +642,20 @@ start_adapter() {
     # tmux crea la sesión con este TERM. Sin él el servidor nace con un terminal desconocido y la
     # TUI se dibuja rota para el dueño, que es quien se engancha después.
     environment+=('TERM=xterm-256color')
+  fi
+  # AQUÍ es donde se exporta la configuración por alias: dentro del array `environment`, que es el
+  # que viaja entero al `/usr/bin/env -i` de la línea del `docker exec` de más abajo. Puesto
+  # después del bloque de sesión compartida a propósito: el panel de la TUI hereda este mismo
+  # entorno, así que el adaptador y la terminal del dueño resuelven el MISMO directorio
+  # (`harnessConfigDirectory` en packages/adapter-sdk/src/shared-session/config.ts lee justo esta
+  # variable). Exportarlo sólo en uno de los dos daría dos conversaciones con dos identidades.
+  #
+  # APAGADO POR DEFECTO. Sin `CONFIG_POR_ALIAS=1` en el .env del alias no se exporta nada y el
+  # comportamiento es byte a byte el de hoy. El encendido es por alias porque hay que copiar los
+  # ficheros ANTES (ops/scripts/aplicar-separacion-config.sh): encender la variable apuntando a un
+  # directorio vacío deja al alias sin identidad y, en claude, sin un solo MCP — y sin ningún error.
+  if [[ -v CONFIG[CONFIG_POR_ALIAS] ]]; then
+    environment+=("$(config_por_alias_variable "$harness")=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name")")
   fi
   if [[ $harness == hermes ]]; then
     environment+=("HERMES_HOME=${CONFIG[HERMES_HOME]}" "HERMES_INFERENCE_MODEL=${CONFIG[HERMES_INFERENCE_MODEL]}")

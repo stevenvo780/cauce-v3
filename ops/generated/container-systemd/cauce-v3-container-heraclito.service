@@ -1,0 +1,45 @@
+[Unit]
+Description=Cauce V3 container adapter heraclito (agv2-jhon-heraclito-oc/openclaw)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+ConditionPathExists=/etc/cauce-v3/container-aliases/heraclito.env
+StartLimitIntervalSec=300s
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+ExecStart=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh start heraclito
+ExecStop=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop heraclito
+Restart=always
+RestartSec=5s
+RestartPreventExitStatus=2 73 78
+RestartForceExitStatus=70
+TimeoutStopSec=45s
+KillMode=control-group
+StandardInput=null
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+ReadOnlyPaths=/etc/cauce-v3/container-aliases /etc/cauce-v3/container-pki /opt/cauce-v3 /opt/cauce-v3-adapter
+
+[Install]
+WantedBy=multi-user.target
