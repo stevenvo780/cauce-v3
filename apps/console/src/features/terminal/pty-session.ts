@@ -170,6 +170,8 @@ interface PtyEntry {
   inputChunks: string[];
   inputTimer?: number;
   resizeObserver?: ResizeObserver;
+  /** La última geometría que se le DIJO al agente. Ver `sendResize`. */
+  geometriaDicha?: { cols: number; rows: number };
   /** Falso en cuanto el operador sube a leer; verdadero mientras esté pegado al final. */
   pegadoAbajo: boolean;
   disposers: Array<() => void>;
@@ -325,11 +327,29 @@ function ajustarGeometria(entry: PtyEntry): void {
   if (entry.terminal.cols !== entry.view.columnas) publish(entry, { columnas: entry.terminal.cols });
 }
 
+/**
+ * Le dice al agente el tamaño de la ventana, **sólo cuando cambió de verdad**.
+ *
+ * 🔴 La guarda de igualdad no es una optimización. El extremo de allá contesta cada trama con
+ * `ioctl(TIOCSWINSZ)` (`ops/pty-agent/cauce_pty_agent.py`), y `TIOCSWINSZ` **manda `SIGWINCH`** al
+ * grupo en primer plano aunque las medidas sean idénticas: no hay comprobación de igualdad ni en
+ * el agente ni en el kernel. Y quien dispara esto es un `ResizeObserver`, que late con cada
+ * cambio de disposición del hueco —incluidos los que provoca el propio terminal al repintarse—.
+ * Sin guarda, arrastrar el borde de la ventana un segundo son decenas de `SIGWINCH` seguidos a la
+ * TUI del agente que está trabajando, cada uno un repintado completo. Medido en pruebas: ocho
+ * latidos sin un solo cambio de geometría daban ocho tramas.
+ *
+ * Se compara contra lo ÚLTIMO QUE SE MANDÓ, no contra lo que el terminal tenía antes: lo que el
+ * agente sabe es lo que se le dijo, y el `attach` ya le dijo la primera geometría.
+ */
 function sendResize(entry: PtyEntry): void {
   ajustarGeometria(entry);
   mantenerElFinal(entry);
   if (entry.socket?.readyState !== WebSocket.OPEN) return;
-  entry.socket.send(JSON.stringify({ type: 'resize', cols: entry.terminal.cols, rows: entry.terminal.rows }));
+  const { cols, rows } = entry.terminal;
+  if (entry.geometriaDicha?.cols === cols && entry.geometriaDicha.rows === rows) return;
+  entry.geometriaDicha = { cols, rows };
+  entry.socket.send(JSON.stringify({ type: 'resize', cols, rows }));
 }
 
 /** ¿La vista está mirando el final del búfer, o el operador subió a leer? */
@@ -430,6 +450,9 @@ function openSocket(entry: PtyEntry, options: PtySessionOptions): void {
       // Geometry falls back to the terminal defaults; attach still carries explicit cols/rows.
     }
     // The attach frame MUST be the first thing on the wire: the relay authorises before anything else.
+    // Y ya lleva la geometría, así que cuenta como «dicha»: repetirla en un `resize` inmediato
+    // sería el primer SIGWINCH gratis de la sesión (ver `sendResize`).
+    entry.geometriaDicha = { cols: entry.terminal.cols, rows: entry.terminal.rows };
     socket.send(JSON.stringify({
       type: 'attach',
       session_id: options.sessionId,
@@ -492,7 +515,7 @@ export function ensurePtySession(options: PtySessionOptions): void {
     cursorBlink: options.readOnly !== true,
     disableStdin: options.readOnly === true,
     convertEol: false,
-    // La CSP de produccion no admite el `<style>` que xterm inyecta. Ver `documentoQueNiegaLosEstilos`.
+    // La CSP de producción no admite el `<style>` que xterm inyecta. Ver `documentoQueNiegaLosEstilos`.
     documentOverride: documentoQueNiegaLosEstilos(),
     fontFamily: FUENTE_TERMINAL,
     fontSize: CUERPO_BASE,
@@ -647,6 +670,21 @@ export const PTY_CUERPO_BASE = CUERPO_BASE;
 
 export function ptySessionScroll(sessionId: string, lineas: number): void {
   entries.get(sessionId)?.terminal.scrollLines(lineas);
+}
+
+/**
+ * Mueve la geometría por el camino real de xterm, el mismo que usa `fit()`. Diagnóstico y
+ * pruebas: sin motor de maquetación `proposeDimensions()` no devuelve nada y `fit()` no mueve un
+ * pixel, así que es la única forma honesta de que una prueba vea un cambio de tamaño de verdad.
+ */
+export function ptySessionRedimensionar(sessionId: string, cols: number, rows: number): void {
+  entries.get(sessionId)?.terminal.resize(cols, rows);
+}
+
+/** La geometría que el terminal tiene AHORA. Es contra esto que se compara lo que se manda. */
+export function ptySessionGeometria(sessionId: string): { cols: number; rows: number } | undefined {
+  const entry = entries.get(sessionId);
+  return entry ? { cols: entry.terminal.cols, rows: entry.terminal.rows } : undefined;
 }
 
 /**
