@@ -1,7 +1,10 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isEnvelopeText, stripJsonFence } from "./envelope.js";
 import { transcriptDirectoryIn } from "./session.js";
 import type { TranscriptReader, TranscriptSlice } from "./types.js";
+
+export { stripJsonFence } from "./envelope.js";
 
 /**
  * De dónde sale el sobre en el harness claude: del fichero de transcript, nunca de la pantalla.
@@ -365,28 +368,41 @@ export function findFinalAssistant(
 }
 
 /**
- * Quita un vallado Markdown que envuelva TODO el texto, y nada más.
+ * El SOBRE que la terminal escribió después de que pegáramos, cuando la ascendencia no lo prueba.
  *
- * No es aflojar el contrato: el sobre se sigue exigiendo entero y `validateStructuredOutput` lo
- * valida igual. Es desenvolver el transporte, del mismo modo que leer el `.jsonl` en vez de la
- * pantalla. Hace falta porque el mismo modelo que en `--print` contesta JSON pelado, dentro de la
- * TUI lo devuelve envuelto en ```json — medido el 2026-07-30, respuesta literal
- * "```json\n{\"reply\":\"PASTEPROBE-9182\",…}\n```".
+ * Es el rescate del fallo de fusión de turnos: si claude encoló nuestro pegado y lo fundió en el
+ * turno que ya estaba corriendo, no hay entrada de usuario nuestra de la que descender, y
+ * `findFinalAssistant` no puede devolver nada NUNCA. Pero el turno sí corre y sí termina, y lo que
+ * escribe al terminar es un sobre. Ver `envelope.ts` para el incidente que lo midió.
  *
- * Es estricto a propósito: sólo desenvuelve cuando el vallado abre en la primera línea y cierra en
- * la última. Un texto con un bloque de código EN MEDIO se deja intacto, porque ahí el vallado no
- * es el transporte sino contenido.
+ * Las condiciones son las mismas que en `findFinalAssistant` salvo la ascendencia, que es
+ * justamente lo que aquí no se puede exigir:
+ *  - `stop_reason: "end_turn"` marca el CIERRE del turno; un mensaje intermedio traería medio sobre.
+ *  - `isSidechain !== true` descarta el tráfico de subagentes, que vive en el mismo fichero.
+ *  - el texto tiene que ser un sobre (`isEnvelopeText`), no cualquier respuesta: lo que se busca es
+ *    el resultado estructurado de una entrega, que es algo que el agente no le escribe a su dueño.
+ *
+ * `desde` acota la búsqueda a partir de nuestra entrada inyectada cuando SÍ se supo localizar (el
+ * caso de la cadena de padres rota). Sin ella se recorre lo que le pasen, que en el runner es
+ * únicamente lo escrito DESPUÉS del pegado: un sobre anterior a nuestro turno no puede colarse.
  */
-export function stripJsonFence(text: string): string {
-  const trimmed = text.trim();
-  const opening = /^```[A-Za-z0-9_-]*[ \t]*\r?\n/u.exec(trimmed);
-  if (opening === null) return trimmed;
-  if (!trimmed.endsWith("```")) return trimmed;
-  const body = trimmed.slice(opening[0].length, trimmed.length - 3);
-  // Un segundo vallado dentro del cuerpo significa que había varios bloques y el primero no
-  // envolvía al texto entero.
-  if (body.includes("```")) return trimmed;
-  return body.trim();
+export function findEnvelopeTurn(
+  entries: readonly TranscriptEntry[],
+  desde?: string,
+): { readonly text: string; readonly sessionId?: string } | undefined {
+  const floor = desde === undefined ? 0 : (positionByUuid(entries).get(desde) ?? 0);
+  for (let index = entries.length - 1; index >= floor; index -= 1) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    if (entry.type !== "assistant" || entry.isSidechain === true) continue;
+    if (stopReason(entry) !== "end_turn") continue;
+    const text = assistantText(entry);
+    if (text === undefined || !isEnvelopeText(text)) continue;
+    const sessionId = asString(entry.sessionId);
+    const body = stripJsonFence(text);
+    return sessionId === undefined ? { text: body } : { text: body, sessionId };
+  }
+  return undefined;
 }
 
 /**
@@ -424,6 +440,13 @@ export function claudeTranscript(
       return answer.sessionId === undefined
         ? { kind: "answer", text }
         : { kind: "answer", text, sessionId: answer.sessionId };
+    },
+    findEnvelope: (entries, desde) => {
+      const found = findEnvelopeTurn(entries, desde);
+      if (found === undefined) return undefined;
+      return found.sessionId === undefined
+        ? { kind: "answer", text: found.text }
+        : { kind: "answer", text: found.text, sessionId: found.sessionId };
     },
     compactions: (appended) => compactBoundaries(appended).map((event) => {
       const tokens = event.preTokens === undefined || event.postTokens === undefined

@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { parseHermesOutput, parseOpenClawOutput } from "../src/sdk/output-parser.js";
 import { SpawnCommandRunner } from "../src/sdk/process-runner.js";
+import { HARNESS_START_MARKER } from "../src/sdk/types.js";
 
 const sourceHermes = resolve("bridge/hermes-stdin-bridge.py");
 const sourceOpenClaw = resolve("bridge/openclaw-stdin-bridge.mjs");
@@ -51,7 +52,10 @@ for (const prompt of ["HERMES_RC_FAILURE", "HERMES_HTTP_ERROR"] as const) {
     });
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
-    assert.equal(result.stderr, "hermes stdin bridge failed\n");
+    // La marca de arranque sale ANTES de llamar a hermes, así que un fallo DE HERMES la lleva:
+    // es exactamente lo que tiene que pasar. El turno llegó a la puerta, así que el transporte
+    // no puede declararlo pre-vuelo y la entrega sigue siendo ambigua.
+    assert.equal(result.stderr, `${HARNESS_START_MARKER}\nhermes stdin bridge failed\n`);
     assert.doesNotMatch(`${result.stdout}${result.stderr}`, /native log|upstream unavailable/u);
   });
 }

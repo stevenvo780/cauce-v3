@@ -264,7 +264,7 @@ describe('stale delivery reaper', () => {
     );
     await expire(delivery!.delivery_id);
 
-    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0 });
+    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
 
     const row = await pool.query<{ status: string; available_in: number }>(
       `SELECT status,EXTRACT(EPOCH FROM (available_at-now())) AS available_in
@@ -297,7 +297,7 @@ describe('stale delivery reaper', () => {
     );
     await expire(delivery!.delivery_id);
 
-    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0 });
+    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
     expect((await pool.query<{ status: string; execution_started_at: Date | null }>(
       'SELECT status,execution_started_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
     )).rows[0]).toMatchObject({ status: 'retry', execution_started_at: null });
@@ -314,7 +314,7 @@ describe('stale delivery reaper', () => {
     await startExecution(delivery!, 'worker-1', lease.epoch!);
     await expire(delivery!.delivery_id);
 
-    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 0, dead: 1 });
+    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 0, dead: 1, parked: 0 });
 
     const row = await pool.query<{ status: string; attempt: number; last_error: string }>(
       'SELECT status,attempt,last_error FROM deliveries WHERE id=$1', [delivery!.delivery_id]
@@ -390,7 +390,7 @@ describe('stale delivery reaper', () => {
     await expire(delivery!.delivery_id);
 
     expect(await repository.retryStaleDeliveries(0, 100, { retryStartedDeliveries: true }))
-      .toEqual({ retried: 1, dead: 0 });
+      .toEqual({ retried: 1, dead: 0, parked: 0 });
     expect((await pool.query<{ status: string }>(
       'SELECT status FROM deliveries WHERE id=$1', [delivery!.delivery_id]
     )).rows[0]?.status).toBe('retry');
@@ -408,7 +408,7 @@ describe('stale delivery reaper', () => {
     // 'started' aplicado de un intento VIEJO. El backoff corre available_at al futuro, así que
     // hay que rehabilitarla para poder reclamarla dentro del test.
     expect(await repository.retryStaleDeliveries(0, 100, { retryStartedDeliveries: true }))
-      .toEqual({ retried: 1, dead: 0 });
+      .toEqual({ retried: 1, dead: 0, parked: 0 });
     await pool.query('UPDATE deliveries SET available_at=now() WHERE id=$1', [first!.delivery_id]);
 
     const [second] = await repository.claimDeliveries(
@@ -420,7 +420,7 @@ describe('stale delivery reaper', () => {
     // El intento 2 no arrancó nunca. La marca pertenece al intento y se limpia tanto en el
     // reintento como en el reclamo; sin eso, una entrega quedaría retenida para siempre por
     // evidencia de una corrida anterior.
-    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0 });
+    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
   });
 });
 

@@ -359,6 +359,24 @@ describe('adversarial PostgreSQL store hardening', () => {
     if (!delivery) throw new Error('expected an ambiguity test delivery');
     const eventId = randomUUID();
 
+    // La entrega tiene que HABER ARRANCADO para que su ambigüedad valga: `execution_started_at`
+    // es lo que dice que el harness fue invocado y la cuota comprometida. Sin esa marca un
+    // ambiguo ya no es terminal —murió antes de ejecutar, así que se reintenta— y este test
+    // pasaba por el motivo equivocado: mataba en el intento 1 una entrega que nunca corrió.
+    // Lo que sigue fijando, que es su intención original: con trabajo posiblemente pagado, ni
+    // `retryable: true` de un llamador directo del store consigue un reintento.
+    await repository.ackDelivery(delivery.delivery_id, 'Isa', 'salva', {
+      version: '3.0',
+      status: 'started',
+      instance_id: 'ambiguous-worker',
+      epoch: lease.epoch!,
+      event_id: randomUUID(),
+      claim_token: delivery.claim_token,
+      attempt: delivery.attempt,
+      retryable: false,
+      execution_started: true
+    }, 30_000);
+
     await expect(repository.ackDelivery(delivery.delivery_id, 'Isa', 'salva', {
       version: '3.0',
       status: 'failed',

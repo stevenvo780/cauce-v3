@@ -78,7 +78,7 @@ async function ackAndWait(
   client: FakeHarness,
   delivery: DeliveryEnvelope,
   status: Ack['status'],
-  detail: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result'>> = {}
+  detail: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result' | 'execution_started'>> = {}
 ) {
   client.ack(delivery, status, detail);
   return client.waitFor((frame) => frame.type === 'ack_result' && frame.delivery_id === delivery.delivery_id);
@@ -220,7 +220,7 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     await publish(message());
     const first = await consumer.nextDelivery();
     consumer.terminate();
-    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0 });
+    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
 
     const secondEpoch = await consumer.connect(wsUrl);
     expect(secondEpoch).toBeGreaterThan(firstEpoch);
@@ -270,7 +270,7 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
         `UPDATE deliveries SET claimed_at=claimed_at-interval '2 minutes' WHERE id=$1`,
         [delivery.delivery_id]
       );
-      expect(await repository.retryStaleDeliveries(120_000)).toEqual({ retried: 0, dead: 0 });
+      expect(await repository.retryStaleDeliveries(120_000)).toEqual({ retried: 0, dead: 0, parked: 0 });
       expect((await pool.query<{ status: string }>(
         'SELECT status FROM deliveries WHERE id=$1', [delivery.delivery_id]
       )).rows[0]?.status).toBe('started');
@@ -287,7 +287,7 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
       // como prueba de ejecución era lo que mandaba a `dead` trabajo que jamás corrió.
       // La retención para revisión manual se prueba, con la marca de verdad, en
       // packages/store/test/delivery-admission-postgres.test.ts.
-      expect(await repository.retryStaleDeliveries(120_000)).toEqual({ retried: 1, dead: 0 });
+      expect(await repository.retryStaleDeliveries(120_000)).toEqual({ retried: 1, dead: 0, parked: 0 });
       expect((await pool.query<{ status: string; claim_token: string | null }>(
         'SELECT status,claim_token FROM deliveries WHERE id=$1', [delivery.delivery_id]
       )).rows[0]).toEqual({ status: 'retry', claim_token: null });
@@ -403,6 +403,11 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     const sent = await publish(message());
     expect(sent.response.status).toBe(202);
     const original = await consumer.nextDelivery();
+    // La ambigüedad sólo es terminal si HUBO ejecución, y eso lo dice `execution_started`, que el
+    // SDK manda tras tomar la reserva de sesión y antes de invocar al harness. Sin este ACK la
+    // entrega murió sin haber corrido nada y ahora se reintenta en vez de ir al DLQ, así que lo
+    // que este test vigila —dead-letter + exactamente un clon de replay manual— exige la marca.
+    await ackAndWait(consumer, original, 'started', { execution_started: true });
     const eventId = randomUUID();
     const detail = {
       event_id: eventId,

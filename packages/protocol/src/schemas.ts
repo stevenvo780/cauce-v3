@@ -31,6 +31,48 @@ export function isAmbiguousAckErrorCode(code: unknown): code is AmbiguousAckErro
 }
 
 /**
+ * PRE-VUELO: el harness murió SIN haber empezado el turno, y consta.
+ *
+ * Son el reverso exacto de los ambiguos. Un código ambiguo dice «no sabemos si hubo efectos» y
+ * por eso es terminal; uno de pre-vuelo dice «sabemos que NO los hubo», y por eso vuelve al
+ * circuito de reintento en vez de morir en el intento 1. La garantía *at-most-once* no se
+ * relaja: lo que cambia es que ahora hay una manera de DEMOSTRAR el caso fácil, y sólo se usa
+ * cuando la prueba existe.
+ *
+ * La prueba nunca es el tiempo. Son dos señales positivas, y las dos exigen además que el
+ * proceso no escribiera ni un byte por stdout, que es el canal donde vive la salida del turno
+ * (`packages/adapter-sdk/src/harnesses/shared.ts`):
+ *   1. el TESTIGO de arranque del transporte: el harness declara qué byte suyo significa «ya
+ *      estoy ejecutando» y el runner atestigua que nunca llegó (`CommandRunResult.harnessStarted`);
+ *   2. el DIAGNÓSTICO DE ARRANQUE que el propio CLI imprime en vez de trabajar —config que no
+ *      parsea, sesión que no existe, binario ausente, argumento que no entiende—, de una lista
+ *      blanca de mensajes que son imposibles una vez que el turno empezó.
+ *
+ * NUNCA pueden solaparse con `AMBIGUOUS_ACK_ERROR_CODES`: `BaseAckSchema` descarta
+ * `retryable:true` junto a un código ambiguo, así que un código en las dos listas volvería a
+ * morir en el primer intento y encima en silencio. `assertPreflightCodesAreNotAmbiguous` lo
+ * comprueba al cargar el módulo para que ese error no pueda llegar a producción.
+ */
+export const PREFLIGHT_ACK_ERROR_CODES = [
+  'PROCESS_EXIT_PREFLIGHT',
+  'EXECUTION_CANCELLED_PREFLIGHT'
+] as const;
+export const PreflightAckErrorCodeSchema = z.enum(PREFLIGHT_ACK_ERROR_CODES);
+export type PreflightAckErrorCode = z.infer<typeof PreflightAckErrorCodeSchema>;
+
+export function isPreflightAckErrorCode(code: unknown): code is PreflightAckErrorCode {
+  return PreflightAckErrorCodeSchema.safeParse(code).success;
+}
+
+function assertPreflightCodesAreNotAmbiguous(): void {
+  const overlap = PREFLIGHT_ACK_ERROR_CODES.filter((code) => isAmbiguousAckErrorCode(code));
+  if (overlap.length > 0) {
+    throw new Error(`Preflight ACK codes must never be ambiguous: ${overlap.join(', ')}`);
+  }
+}
+assertPreflightCodesAreNotAmbiguous();
+
+/**
  * Tope del rol declarado por alias (`agents.role_brief`), medido en PUNTOS DE CÓDIGO.
  *
  * Vive acá y no en el store porque es el número que tienen que compartir CUATRO capas, y
@@ -123,8 +165,21 @@ export const RoutingTargetSchema = RecipientSchema.extend({
 export const MAX_ATTACHMENT_BYTES = 10_000_000;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 export const MAX_ATTACHMENTS_TOTAL_BYTES = 10_000_000;
+/**
+ * Los tipos que el bus acepta como adjunto.
+ *
+ * `services/telegram-bridge/src/attachments.ts` produce `.md` y `.csv` desde el 2026-08-05 y este
+ * enum se quedó atrás: el puente descargaba el archivo, lo empaquetaba y RECIÉN AHÍ `publish` lo
+ * rechazaba con un ZodError, que subía por fuera de los `catch` que avanzan el cursor y dejaba al
+ * alias reintentando el mismo update para siempre. Medido en `heraclito` el 2026-08-05: un `.md`
+ * de Steven y 4 mensajes suyos parados detrás durante horas, con el lease latiendo sano.
+ *
+ * Telegram no manda un mime estable para markdown: según el cliente llega `text/markdown`,
+ * `text/x-markdown` o directamente `text/plain`. Los tres tienen que entrar o no entra ninguno.
+ */
 export const ATTACHMENT_MIME_TYPES = [
   'image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain',
+  'text/markdown', 'text/x-markdown', 'text/csv',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 ] as const;
 
@@ -154,13 +209,21 @@ export const AttachmentContentSchema = z.object({
     .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u)
 }).strict().superRefine((attachment, context) => {
   const extension = attachment.name.toLowerCase().match(/\.[^.]+$/u)?.[0];
-  const expected = new Map<string, readonly [string, 'image' | 'document']>([
-    ['image/jpeg', ['.jpg', 'image']], ['image/png', ['.png', 'image']],
-    ['image/webp', ['.webp', 'image']], ['application/pdf', ['.pdf', 'document']],
-    ['text/plain', ['.txt', 'document']],
-    ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', ['.docx', 'document']]
+  // El valor es (extensiones admitidas, kind): `text/plain` es legítimamente el mime que Telegram
+  // manda para `.txt`, `.md` y `.csv`, así que una sola extensión por mime no alcanza. Los pares
+  // son EXACTAMENTE los del allowlist de la ingesta: tener dos criterios distintos para el mismo
+  // valor es justo como un adjunto entra por una capa y lo rechaza la de al lado.
+  const expected = new Map<string, readonly [readonly string[], 'image' | 'document']>([
+    ['image/jpeg', [['.jpg'], 'image']], ['image/png', [['.png'], 'image']],
+    ['image/webp', [['.webp'], 'image']], ['application/pdf', [['.pdf'], 'document']],
+    ['text/plain', [['.txt', '.md', '.csv'], 'document']],
+    ['text/markdown', [['.md'], 'document']],
+    ['text/x-markdown', [['.md'], 'document']],
+    ['text/csv', [['.csv'], 'document']],
+    ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', [['.docx'], 'document']]
   ]).get(attachment.mime_type);
-  if (expected === undefined || extension !== expected[0] || attachment.kind !== expected[1]) {
+  if (expected === undefined || extension === undefined || !expected[0].includes(extension) ||
+      attachment.kind !== expected[1]) {
     context.addIssue({ code: 'custom', message: 'attachment kind, MIME and extension do not agree' });
   }
   const padding = attachment.content_base64.endsWith('==') ? 2 : attachment.content_base64.endsWith('=') ? 1 : 0;

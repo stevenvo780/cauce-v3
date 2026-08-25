@@ -19,6 +19,42 @@ export interface TmuxController {
 }
 
 /**
+ * Variables con las que el supervisor RECONOCE a los procesos de su propio ciclo de vida.
+ *
+ * `alias_generation_pids` (cauce-container-runtime.py) barre `/proc` y considera «de esta
+ * generación» a todo proceso cuyo entorno traiga `CAUCE_ALIAS`, `CAUCE_CONTAINER_GENERATION` y
+ * `CAUCE_STATE_DIR`. Si encuentra uno que no puede atribuir ni al controlador ni al árbol del
+ * adaptador, falla cerrado: no manda ninguna señal y sale 78.
+ *
+ * El servidor de tmux se demoniza —se va del grupo de procesos y del árbol de descendientes del
+ * adaptador— pero HEREDA su entorno. Con estas variables puestas queda como «proceso no rastreado»
+ * para siempre, y a partir de ahí `systemctl restart` del alias NO funciona nunca más: el stop se
+ * niega, el start se niega, la unidad queda `failed` y el adaptador viejo sigue vivo atendiendo. Se
+ * ve como un alias sano —el lease late, contesta— con la unidad en `failed` y el bundle viejo.
+ * Medido el 2026-08-06 en atlas y dedalo: los dos fallaron con exit 78 y los untracked eran
+ * exactamente el `tmux new-session` de la sesión compartida y la TUI colgando de él.
+ *
+ * Se borran las CINCO de `IDENTITY_ENV_KEYS`, no las tres del barrido: el runtime también compara
+ * el entorno completo contra `expected_environment()` para reconocer al adaptador y al
+ * controlador, y dejar la mitad de la identidad puesta en un proceso ajeno al ciclo de vida es
+ * volver a sembrar el mismo error donde el próximo cambio de criterio lo encuentre.
+ *
+ * La sesión del dueño no es parte del ciclo de vida del adaptador, así que estas variables no
+ * pintan nada ahí. Lo que la TUI sí necesita se le pasa explícito por `paneEnvironmentPrefix`.
+ */
+const LIFECYCLE_ENV_KEYS = [
+  "CAUCE_ALIAS", "CAUCE_STATE_DIR", "CAUCE_CONTROL_DIR", "CAUCE_CONTAINER_ID",
+  "CAUCE_CONTAINER_GENERATION",
+] as const;
+
+/** El entorno del adaptador sin su identidad de ciclo de vida. */
+export function withoutLifecycleIdentity(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const copy = { ...environment };
+  for (const key of LIFECYCLE_ENV_KEYS) delete copy[key];
+  return copy;
+}
+
+/**
  * tmux de verdad, sin shell.
  *
  * `shell: false` no es decoración: el prompt de protocolo entra por `load-buffer` desde stdin y
@@ -35,7 +71,7 @@ export class CliTmux implements TmuxController {
     return new Promise<TmuxResult>((resolveRun) => {
       const child = spawn("tmux", ["-L", this.socket, ...args], {
         shell: false,
-        env: this.environment,
+        env: withoutLifecycleIdentity(this.environment),
         stdio: ["pipe", "pipe", "pipe"],
       });
       let stdout = "";
@@ -61,6 +97,20 @@ export class CliTmux implements TmuxController {
 export async function hasSession(tmux: TmuxController, session: string): Promise<boolean> {
   const result = await tmux.run(["has-session", "-t", `=${session}`]);
   return result.exitCode === 0;
+}
+
+/**
+ * Se lleva la sesión entera. Sólo se usa para DESHACER un arranque que no cuajó.
+ *
+ * El `=` es obligatorio: sin él tmux acepta prefijos, y `cauce-kant` casaría con `cauce-kant-viejo`
+ * o con cualquier sesión que empiece igual. Matar la sesión equivocada de esta flota significa
+ * borrarle a otro alias su conversación, que es exactamente el daño que este mecanismo repara.
+ *
+ * Devuelve si tmux la mató. Que ya no exista NO es un fallo: es el estado que se buscaba.
+ */
+export async function killSession(tmux: TmuxController, session: string): Promise<boolean> {
+  const result = await tmux.run(["kill-session", "-t", `=${session}`]);
+  return result.exitCode === 0 || !await hasSession(tmux, session);
 }
 
 export async function capturePane(

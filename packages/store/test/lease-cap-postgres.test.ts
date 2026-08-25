@@ -142,7 +142,7 @@ describe('techo de vida total de una entrega', () => {
     // staleMs enorme: ninguna garra está vencida, así que el ÚNICO camino posible es el techo.
     const swept = await repository.retryStaleDeliveries(24 * 60 * 60_000);
 
-    expect(swept).toEqual({ retried: 0, dead: 1 });
+    expect(swept).toEqual({ retried: 0, dead: 1, parked: 0 });
     const row = await deliveryRow(claimed.delivery_id);
     expect(row.status).toBe('dead');
     expect(row.last_error).toContain('Lease cap exhausted');
@@ -179,7 +179,7 @@ describe('techo de vida total de una entrega', () => {
       [claimed.delivery_id]
     );
 
-    expect(await repository.retryStaleDeliveries(24 * 60 * 60_000)).toEqual({ retried: 0, dead: 0 });
+    expect(await repository.retryStaleDeliveries(24 * 60 * 60_000)).toEqual({ retried: 0, dead: 0, parked: 0 });
     expect((await deliveryRow(claimed.delivery_id)).status).toBe('started');
   });
 
@@ -236,7 +236,7 @@ describe('techo de vida total de una entrega', () => {
 
     expect(await repository.retryStaleDeliveries(24 * 60 * 60_000, 100, {
       retryStartedDeliveries: true
-    })).toEqual({ retried: 0, dead: 1 });
+    })).toEqual({ retried: 0, dead: 1, parked: 0 });
     expect((await deliveryRow(claimed.delivery_id)).last_error).toContain('Lease cap exhausted');
   });
 });
@@ -272,7 +272,7 @@ describe('timeout_ms por mensaje', () => {
       [corta.delivery_id]
     );
     expect(await repository.retryStaleDeliveries(24 * 60 * 60_000, 100, policy))
-      .toEqual({ retried: 0, dead: 1 });
+      .toEqual({ retried: 0, dead: 1, parked: 0 });
     const cortaRow = await deliveryRow(corta.delivery_id);
     expect(cortaRow.status).toBe('dead');
     expect(cortaRow.last_error).toContain('Lease cap exhausted');
@@ -291,7 +291,7 @@ describe('timeout_ms por mensaje', () => {
       [larga.delivery_id]
     );
     expect(await repository.retryStaleDeliveries(24 * 60 * 60_000, 100, policy))
-      .toEqual({ retried: 0, dead: 0 });
+      .toEqual({ retried: 0, dead: 0, parked: 0 });
     expect((await deliveryRow(larga.delivery_id)).status).toBe('started');
   });
 
@@ -310,7 +310,7 @@ describe('timeout_ms por mensaje', () => {
     await ageExecutionStart(claimed.delivery_id, 17 * 60 * 60_000);
 
     // Cae al default de 12 h y muere por techo, sin error de conversión.
-    expect(await repository.retryStaleDeliveries(24 * 60 * 60_000)).toEqual({ retried: 0, dead: 1 });
+    expect(await repository.retryStaleDeliveries(24 * 60 * 60_000)).toEqual({ retried: 0, dead: 1, parked: 0 });
     expect((await deliveryRow(claimed.delivery_id)).last_error).toContain('Lease cap exhausted');
   });
 });

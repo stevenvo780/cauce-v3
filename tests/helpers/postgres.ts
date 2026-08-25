@@ -56,6 +56,18 @@ export function esBaseDePruebas(url: string): boolean {
   }
 }
 
+/**
+ * El contrato mínimo que las suites usan del contenedor, para la base externa.
+ *
+ * Un objeto con sólo `stop` deja a quien llame a `restart` o `getHost` con un TypeError en vez
+ * de con un no-op, y el fallo aparecería lejos de aquí. Viene de `main`; lo de arriba —la guarda
+ * del nombre— es de esta rama. Las dos mitades hacen falta.
+ */
+function contenedorDesacoplado(): StartedTestContainer {
+  const noop = async (): Promise<void> => undefined;
+  return { stop: noop, restart: noop, getHost: () => 'external' } as unknown as StartedTestContainer;
+}
+
 export async function startTestDatabase(): Promise<TestDatabase> {
   /*
    * Camino sin Docker. Los contenedores de agente de esta flota NO tienen demonio de Docker
@@ -82,8 +94,7 @@ export async function startTestDatabase(): Promise<TestDatabase> {
       await waitForDatabase(pool);
       await applyMigrations(pool);
       await guardarSemillaDeCatalogo(pool);
-      const container = { stop: async () => undefined } as unknown as StartedTestContainer;
-      return { container, pool, url: externa };
+      return { container: contenedorDesacoplado(), pool, url: externa };
     } catch (error) {
       await pool.end();
       throw error;

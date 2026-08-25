@@ -1204,6 +1204,13 @@ test("an uncorrelated agent response cannot recover a retained local prompt", as
   );
 });
 
+/**
+ * El rebote al remitente no se materializa, pero el turno SOBREVIVE, de punta a punta y no solo
+ * en el validador. Antes esto salia `phase:"failed"` con `AGENT_MESSAGE_PING_PONG` y sin
+ * `output`: la entrega moria sin `result` y el trabajo no llegaba a nadie. Medido en 48 h
+ * (2026-08-04/05): 5 turnos asi en argos, jarvis, hegel, janus y midas; el de midas llevaba una
+ * lista de 11 prospectos ya hecha.
+ */
 test("an internal agent cannot send any message back to its sender", async () => {
   const runner = new ControlledRunner();
   runner.stdout = JSON.stringify({
@@ -1222,9 +1229,12 @@ test("an internal agent cannot send any message back to its sender", async () =>
   };
   await context.engine.handleDelivery(input);
   const terminal = context.events.at(-1);
-  assert.equal(terminal?.phase, "failed");
-  assert.equal(terminal?.error?.code, "AGENT_MESSAGE_PING_PONG");
-  assert.equal(terminal?.error?.retryable, false);
+  assert.equal(terminal?.phase, "done");
+  assert.equal(terminal?.error, undefined);
+  assert.deepEqual(terminal?.output?.messages, [], "el rebote no se manda");
+  // El cuerpo iba al mismo destinatario que el reply, asi que llega igual, y con el motivo.
+  assert.match(terminal?.output?.reply ?? "", /a differently worded follow-up/u);
+  assert.match(terminal?.output?.reply ?? "", /\[Cauce\].*"seneca"/su);
 });
 
 test("every harness runtime bypasses providers and native sessions for agent fan-in", async () => {
@@ -2132,6 +2142,49 @@ test("materializa attachments_v1 para el harness, verifica contenido y limpia el
   assert.ok(materializedPath);
   await assert.rejects(access(materializedPath), { code: "ENOENT" });
   assert.equal(context.events.at(-1)?.phase, "done");
+});
+
+/**
+ * La ENTREGA tiene que aceptar los mismos textos que la INGESTA.
+ *
+ * `SUPPORTED_MIME` es un allowlist propio de este paquete, sin relacion con el enum del protocolo.
+ * Mientras solo conocia `.txt`, ampliar el protocolo movia el fallo de la ingesta a aca: el .md
+ * entraba al bus, se guardaba, y al entregarlo `materializeAttachments` tiraba `INVALID_ATTACHMENT`
+ * NO reintentable, que termina en `finishError` ANTES de invocar al harness. El agente no veia el
+ * archivo Y TAMPOCO el texto del humano.
+ */
+test("los textos que la ingesta acepta tambien se materializan en la entrega", async () => {
+  const casos: readonly (readonly [string, string])[] = [
+    ["notas.md", "text/markdown"],
+    ["notas.md", "text/x-markdown"],
+    ["notas.md", "text/plain"],
+    ["tabla.csv", "text/csv"],
+    ["tabla.csv", "text/plain"],
+  ];
+  const payload = Buffer.from("# informe\nuna linea\n", "utf8");
+  for (const [indice, [name, mime]] of casos.entries()) {
+    const runner = new ControlledRunner();
+    const context = await setup(`engine-texto-${indice}`, runner);
+    const input: Delivery = {
+      ...delivery(`media-texto-${indice}`),
+      body: {
+        type: "telegram.message",
+        attachments_v1: [{
+          kind: "document",
+          name,
+          mime_type: mime,
+          file_size: payload.length,
+          sha256: createHash("sha256").update(payload).digest("hex"),
+          content_base64: payload.toString("base64"),
+        }],
+      },
+    };
+
+    await context.engine.handleDelivery(input);
+
+    assert.equal(context.events.at(-1)?.phase, "done", `${mime} + ${name} deberia entregarse`);
+    assert.match(runner.requests.at(-1)?.stdin ?? "", /"local_path":"[^"]+"/u);
+  }
 });
 
 test("un cuerpo realmente vacio sigue siendo rechazado", async () => {

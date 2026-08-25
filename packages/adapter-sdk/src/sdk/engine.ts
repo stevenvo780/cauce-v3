@@ -419,6 +419,27 @@ export class AdapterEngine {
     let output: StructuredOutput | undefined;
     let executionFailure: unknown;
     let attachments: MaterializedAttachments | undefined;
+    /**
+     * DÓNDE se sella `execution_started_at`, que es el arreglo de fondo.
+     *
+     * La marca decía «se lanzó el proceso», no «el harness hizo algo». Un binario que revienta
+     * parseando su propia configuración quedaba marcado como «empezó» y por lo tanto retenido
+     * para siempre: 173 entregas de argos murieron así por un typo en `config.toml`, con efectos
+     * cero y sin `result`.
+     *
+     * Ahora, cuando el harness declara un TESTIGO de arranque (`definition.startWitness`), la
+     * marca se sella con el primer byte que ese testigo reconoce, y no antes. Sin testigo se
+     * sella donde siempre —justo antes de invocar—, que es el lado conservador: se paga de más,
+     * nunca se repite un efecto.
+     */
+    let executionMarked: Promise<void> | undefined;
+    // Harness Y transporte: ver `HarnessAdapter.witnessesHarnessStart`. El mismo codex por
+    // sesión compartida NO atestigua, y ahí la marca se sella como siempre.
+    const witnessedStart = this.harness.witnessesHarnessStart;
+    const markExecutionStarted = (): void => {
+      executionMarked ??= this.emitClaimRenewal(started, "started", { executionStarted: true })
+        .catch(() => undefined);
+    };
     try {
       const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
       const requestContext = {
@@ -475,7 +496,14 @@ export class AdapterEngine {
         // Se emite como renovación de garra a propósito: reusa la confirmación de propiedad que
         // ya existe, así que además funciona como último chequeo de "esto sigue siendo mío"
         // justo antes de gastar plata. Si el gateway responde que no, `loseClaim` aborta.
-        await this.emitClaimRenewal(started, "started", { executionStarted: true });
+        //
+        // El chequeo de propiedad se mantiene SIEMPRE acá; lo único que se movió es la marca de
+        // ejecución, que con testigo viaja en `onHarnessStart` y llega con el primer byte.
+        if (witnessedStart) {
+          await this.emitClaimRenewal(started, "started");
+        } else {
+          await this.emitClaimRenewal(started, "started", { executionStarted: true });
+        }
         output = await this.harness.execute({
           prompt,
           ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
@@ -485,6 +513,7 @@ export class AdapterEngine {
           ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
           timeoutMs: executionBudget.harnessTimeoutMs,
           signal: controller.signal,
+          ...(witnessedStart ? { onHarnessStart: markExecutionStarted } : {}),
         });
       }
       if (controller.signal.aborted) {
@@ -495,6 +524,10 @@ export class AdapterEngine {
     } catch (error) {
       executionFailure = error;
     } finally {
+      // La marca de ejecución se espera ANTES de cerrar las renovaciones y, por lo tanto, antes
+      // del ACK terminal: si se colara después, el gateway vería «arrancó» sobre una entrega ya
+      // cerrada y el orden de los ACK dejaría de contar la misma historia que los hechos.
+      await executionMarked;
       await stopClaimRenewal();
       try {
         await attachments?.cleanup();
