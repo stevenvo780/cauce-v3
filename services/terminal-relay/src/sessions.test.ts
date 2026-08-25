@@ -5,7 +5,16 @@ import type {
   AgentPresence, AuthzOutcome, ConsumeOutcome, SessionCloseReport, TerminalGatewayClient,
   TerminalMode, TerminalSessionGrant
 } from './gateway-client.js';
-import { CLOSE_CODES, SessionManager, parseClientMessage, type SessionLimits } from './sessions.js';
+import {
+  CLOSE_CODES,
+  MAX_COLS,
+  MAX_ROWS,
+  MIN_COLS,
+  MIN_ROWS,
+  SessionManager,
+  parseClientMessage,
+  type SessionLimits,
+} from './sessions.js';
 
 const SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const OTHER_SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff';
@@ -225,8 +234,27 @@ describe('client frames', () => {
       .toEqual({ type: 'resize', cols: 100, rows: 30 });
     expect(parseClientMessage(Buffer.from('{"type":"ping"}'), false)).toEqual({ type: 'ping' });
     expect(parseClientMessage(Buffer.from('{"type":"exec","cmd":"rm"}'), false)).toBeUndefined();
-    expect(parseClientMessage(Buffer.from('{"type":"resize","cols":4,"rows":30}'), false)).toBeUndefined();
     expect(parseClientMessage(Buffer.from([0x01, 0x02]), true)).toBeUndefined();
+  });
+
+  // 2026-08-24: una tercera terminal mandaba rows:1, el parser devolvía undefined y el llamador
+  // cerraba la sesión con protocol_error 4400 — matando las DOS terminales que ya estaban vivas.
+  // Se arregló en producción acotando; esta prueba existe para que no vuelva a revertirse.
+  it('acota el resize fuera de rango en vez de rechazarlo y matar la sesión', () => {
+    expect(parseClientMessage(Buffer.from('{"type":"resize","cols":100,"rows":1}'), false))
+      .toEqual({ type: 'resize', cols: 100, rows: MIN_ROWS });
+    expect(parseClientMessage(Buffer.from('{"type":"resize","cols":4,"rows":30}'), false))
+      .toEqual({ type: 'resize', cols: MIN_COLS, rows: 30 });
+    expect(parseClientMessage(Buffer.from('{"type":"resize","cols":9999,"rows":9999}'), false))
+      .toEqual({ type: 'resize', cols: MAX_COLS, rows: MAX_ROWS });
+  });
+
+  // Control negativo: acotar no puede volverse "acepto cualquier cosa".
+  it('sigue rechazando un resize que no trae enteros', () => {
+    expect(parseClientMessage(Buffer.from('{"type":"resize","cols":"80","rows":24}'), false)).toBeUndefined();
+    expect(parseClientMessage(Buffer.from('{"type":"resize","cols":80.5,"rows":24}'), false)).toBeUndefined();
+    expect(parseClientMessage(Buffer.from('{"type":"resize","cols":null,"rows":24}'), false)).toBeUndefined();
+    expect(parseClientMessage(Buffer.from('{"type":"resize","rows":24}'), false)).toBeUndefined();
   });
 });
 
