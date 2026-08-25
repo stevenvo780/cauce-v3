@@ -18,6 +18,7 @@ import {
   fleetPlacement, resolveOperator, routingAuthority, type RoutingAuthority
 } from './authority.js';
 import type { TerminalConfig } from './config.js';
+import { hechosDelRegistro } from './hechos-del-registro.js';
 import { AgentRegistry, parseAgentPresence } from './registry.js';
 import {
   deriveAliasKey, issueTicket, parseAndVerify, ticketDigest, ticketSha256,
@@ -521,7 +522,15 @@ export async function registerTerminalControlPlane(
    * que app.ts instala ANTES de este plugin, igual que el resto de rutas de navegador.
    */
   const relayGovernance = options.governanceRelay ?? await buildGovernanceRelay(config);
-  const measuredFacts: MeasuredFactsSource = options.measuredFacts ?? { factsFor: async () => undefined };
+  /*
+   * El default deja de ser «nadie ha medido nada nunca» y pasa a ser la presencia REAL que el
+   * pty-agent publica. Ver `hechos-del-registro.ts`: el `harness` ya viajaba y el `home` no, y ese
+   * hueco era lo que dejaba toda la vía de documentos contestando «no medido» para siempre.
+   *
+   * Sigue siendo inyectable para los tests, y sigue devolviendo `undefined` cuando el agente no
+   * publica su `home` —uno anterior a esta versión— o cuando su medición está vieja.
+   */
+  const measuredFacts: MeasuredFactsSource = options.measuredFacts ?? hechosDelRegistro(registry);
 
   async function authorizeDirective(raw: unknown): Promise<{ tenant_id: string; alias: string }> {
     const request = raw as FastifyRequest<{ Params: { tenant?: string; alias?: string } }>;

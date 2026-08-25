@@ -556,6 +556,19 @@ class PtyAgent:
             "runtime_user": self.bundle["runtime_user"],
             "runtime_uid": self.bundle["runtime_uid"],
             "harness": self.bundle["harness"],
+            # El HOME del alias, que el agente conoce desde que arranca y NO publicaba.
+            #
+            # Sin el, `MeasuredFactsSource` del gateway no tiene fuente y toda la via de documentos
+            # -leer y editar el CLAUDE.md de un agente desde la consola- contesta "no medido" para
+            # siempre: no hay forma de saber QUE fichero es "la directiva" de este alias sin saber
+            # donde vive su arnes. Deducirlo del registro no vale, y esta medido por que: el
+            # 23-ago-2026 el registro se equivocaba de arnes en 5 de los 14 alias, asi que serviria
+            # el fichero de OTRO arnes.
+            #
+            # El agente es la unica pieza que lo sabe de verdad: lo lee del bundle con el que se
+            # lanzo, dentro del contenedor. Va aqui y no en el `.env` del gateway por lo mismo que
+            # el `harness`: quien tiene el dato delante es quien lo dice.
+            "home": self.bundle["home"],
             "agent_version": self.bundle["agent_version"],
             "modes": self.modes,
             # El relay NO manda TAG_READ a un agente que no lo anuncie. Un agente viejo trata un

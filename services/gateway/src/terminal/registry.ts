@@ -97,6 +97,12 @@ export function parseAgentPresence(value: unknown): AgentPresence {
     runtime_user: stringField(record.runtime_user, 'runtime_user', 64),
     runtime_uid: uid,
     harness: stringField(record.harness, 'harness', 64),
+    // Opcional y validado: si viene, tiene que ser una ruta absoluta. Un `home` relativo o vacío
+    // se descarta en vez de tumbar la presencia, porque con él se resuelven rutas de ficheros que
+    // después se leen del disco de un contenedor.
+    ...(typeof record.home === 'string' && record.home.startsWith('/')
+      ? { home: stringField(record.home, 'home', 512) }
+      : {}),
     modes: (modes as string[]).slice(0, 8),
     connected_since: stringField(record.connected_since, 'connected_since', 64)
   };

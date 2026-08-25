@@ -32,6 +32,18 @@ export interface AgentPresence {
   readonly runtime_user: string;
   readonly runtime_uid: number;
   readonly harness: string;
+  /**
+   * El `$HOME` del alias dentro de su contenedor, medido por el agente que corre ahí.
+   *
+   * OPCIONAL: un pty-agent anterior a esta versión no lo manda, y exigirlo tiraría su presencia
+   * entera —`parseAgentPresence` lanza y `registry.observe` pierde al alias—, o sea que desplegar
+   * el gateway antes que el agente dejaría terminales caídas por toda la flota. Es la misma
+   * lección que el comentario de `features` en el propio agente.
+   *
+   * `undefined` significa «este agente no lo dice», que NO es lo mismo que «no tiene»: la vía de
+   * documentos sigue contestando «no medido», igual que antes.
+   */
+  readonly home?: string;
   readonly modes: readonly string[];
   readonly connected_since: string;
 }
