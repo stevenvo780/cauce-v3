@@ -76,6 +76,16 @@ export type ClientMessage =
   | { readonly type: 'resize'; readonly cols: number; readonly rows: number }
   | { readonly type: 'ping' };
 
+/** Un entero finito de verdad: descarta NaN, Infinity, decimales y cualquier cosa que no sea número. */
+function isEnteroFinito(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value);
+}
+
+/** Lleva `valor` al rango [minimo, maximo] en vez de rechazarlo. */
+function acotar(valor: number, minimo: number, maximo: number): number {
+  return Math.min(maximo, Math.max(minimo, valor));
+}
+
 export function isValidCols(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= MIN_COLS && value <= MAX_COLS;
 }
@@ -107,8 +117,16 @@ export function parseClientMessage(data: RawData, isBinary: boolean): ClientMess
     return typeof source.data === 'string' ? { type: 'input', data: source.data } : undefined;
   }
   if (source.type === 'resize') {
-    if (!isValidCols(source.cols) || !isValidRows(source.rows)) return undefined;
-    return { type: 'resize', cols: source.cols, rows: source.rows };
+    // Un resize fuera de rango se ACOTA, nunca se rechaza. Devolver `undefined` aquí hacía que el
+    // llamador cerrase la sesión con protocol_error 4400: una tercera terminal que mandaba rows:1
+    // se llevaba puestas las dos que ya estaban vivas (arreglado en prod el 2026-08-24, portado
+    // aquí para no revertirlo). Lo que no es un número entero sí sigue siendo un mensaje inválido.
+    if (!isEnteroFinito(source.cols) || !isEnteroFinito(source.rows)) return undefined;
+    return {
+      type: 'resize',
+      cols: acotar(source.cols, MIN_COLS, MAX_COLS),
+      rows: acotar(source.rows, MIN_ROWS, MAX_ROWS),
+    };
   }
   if (source.type === 'ping') return { type: 'ping' };
   return undefined;
