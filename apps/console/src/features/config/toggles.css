@@ -257,3 +257,45 @@
   .config-area input[type="checkbox"].interruptor:checked::after { background: var(--mint); }
   .interruptor-fallo p { color: #8f2734; }
 }
+
+/* --- La marca de una columna SIN EFECTO ------------------------------------------------------
+ *
+ * La cabecera con ayuda esconde su explicación detrás de un «?» que hay que provocar. Esto es lo
+ * contrario y por eso se pinta al revés: la palabra va A LA VISTA, con el mismo par de color que
+ * la insignia de aviso —`--on-amber` sobre `--amber-dim`, el único par ámbar que `config-css.test.ts`
+ * ya guarda a AA en los dos temas—, porque el defecto que corrige es precisamente que la columna
+ * PARECÍA gobernar algo.
+ *
+ * `text-transform: none` a propósito: el `th` de la consola va en mayúsculas y «SIN EFECTO» a
+ * 12,5 px de caja alta se lee como un rótulo de columna más, que es justo lo que no es.
+ */
+.cabecera-inerte {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid var(--amber);
+  border-radius: 999px;
+  background: var(--amber-dim);
+  color: var(--on-amber);
+  font-size: var(--tipo-apunte);
+  font-weight: 800;
+  letter-spacing: .02em;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+/* El valor sigue legible —es lo que hay declarado en la base— pero deja de competir por la
+   atención con las columnas que sí gobiernan algo. Se apaga con opacidad y no bajando el
+   contraste del texto: bajar el contraste habría vuelto a meter texto por debajo de AA, que es el
+   defecto que este directorio acaba de cerrar. */
+.config-pagina .config-area td[data-inerte='true'] { opacity: .72; }
+
+/*
+ * La cabecera marcada PUEDE partirse en dos renglones, y el `th` de la consola no puede
+ * (`white-space: nowrap`, styles.css). MEDIDO en Chrome a 1920 sobre «Agent registry»: con la
+ * píldora en la misma línea, las tres columnas marcadas sumaban ~200 px al ancho de una tabla que
+ * ya vive dentro de un scroller, y empujaban «Carpeta personal» fuera del panel. Partiendo el
+ * rótulo, la píldora cae debajo y la columna vuelve a su ancho.
+ */
+.config-pagina .config-area th[data-inerte='true'] { color: var(--on-amber); white-space: normal; }
+.config-pagina .config-area th[data-inerte='true'] .cabecera-ayuda > span { flex-wrap: wrap; }

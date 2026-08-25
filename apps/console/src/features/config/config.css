@@ -368,6 +368,78 @@
 .rol-asignar label { display: grid; gap: 4px; font-size: var(--tipo-rotulo); color: var(--muted); }
 .rol-sin-rol { display: grid; gap: 5px; margin: 0 0 10px; padding: 0; list-style: none; font-size: var(--tipo-rotulo); }
 
+/* --- El aviso de columnas sin efecto, arriba de la tabla ------------------------------------- */
+
+.config-inertes {
+  margin: 0 0 12px;
+  border-left: 3px solid var(--amber);
+  font-size: var(--tipo-rotulo);
+  line-height: 1.55;
+}
+
+/* --- Qué lee cada arnés de verdad -------------------------------------------------------------
+ *
+ * Cuatro tarjetas en reja auto-ajustable y NO en cuatro columnas fijas: a 1920 entran las cuatro
+ * en una fila, y por debajo se repliegan solas sin que ninguna ruta —que es el dato que se viene
+ * a buscar— quede partida ni empuje la reja fuera de la pantalla.
+ */
+.arnes-lista {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.arnes-card {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+/* El que no lee ningún fichero se distingue de un vistazo: es la fila que más se malinterpreta. */
+.arnes-card[data-sin-directiva='true'] { border-color: var(--border-strong); }
+
+.arnes-card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.arnes-card h3 { margin: 0; font-size: var(--tipo-rotulo); letter-spacing: -.01em; }
+
+.arnes-id {
+  color: var(--faint);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: var(--tipo-apunte);
+}
+
+/* La ruta es lo que se viene a buscar: va primero, en monoespaciada y con `overflow-wrap` para que
+   una ruta larga se parta DENTRO de la tarjeta en vez de estirar la reja. */
+.arnes-ruta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--tipo-apunte);
+  overflow-wrap: anywhere;
+}
+
+.arnes-ruta code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.arnes-ruta-vacia { color: var(--faint); }
+
+.arnes-detalle { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); line-height: 1.55; }
+.arnes-donde { margin: 0; color: var(--text-2); font-size: var(--tipo-apunte); line-height: 1.55; }
+.arnes-donde strong { color: var(--text); }
+
+.arnes-gobierna {
+  margin: 0;
+  border-left: 3px solid var(--mint);
+  font-size: var(--tipo-rotulo);
+  line-height: 1.6;
+}
+
 @media (max-width: 900px) {
   /* MEDIDO a 360 px: la tira ya era un carrusel (`flex-wrap: nowrap` + `overflow-x: auto`) pero
      el TEXTO de cada pestaña sí se partía, y «Roles de agente» salía en tres renglones sobre una

@@ -12,6 +12,7 @@ import { permissionState } from '../../lib';
 import { CONFIG_SIN_CONTROL_REASON, onNavClick } from '../../navigation';
 import { AltaDeEspacios } from './AltaDeEspacios';
 import { AREA_POR_DEFECTO, agruparPorArea, type ConfigAreaId } from './areas';
+import { ArnesesPanel } from './ArnesesPanel';
 import { CollectionTable, type AccionPendiente, type AvisoDeColeccion } from './CollectionTable';
 import { configCollections } from './collections';
 import {
@@ -27,7 +28,11 @@ const templates: Record<ConfigResource, ConfigMutation> = {
   room: { resource: 'room', action: 'create', tenant_id: 'Acme', id: 'grp.acme', value: { display_name: 'Acme room', enabled: true } },
   membership: { resource: 'membership', action: 'create', tenant_id: 'Acme', room_id: 'grp.acme', alias: 'agent', value: { role: 'agent', enabled: true } },
   acl_edge: { resource: 'acl_edge', action: 'create', from_tenant: 'Acme', to_tenant: 'Steven', value: { enabled: true, allow_route: false, allow_read: false, allow_control: false } },
-  harness: { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', command: null, capabilities: [], enabled: true } },
+  // Sin `command`, igual que el paso de harness del wizard: la columna se guarda y no la lee ningún
+  // camino de ejecución (ver `campos-inertes.ts`). El esquema la sigue aceptando —quien la necesite
+  // la escribe a mano acá mismo, que para eso es la válvula de escape—, pero la plantilla ya no la
+  // ofrece rellena: una plantilla es una sugerencia, y no se sugiere lo que no hace nada.
+  harness: { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', capabilities: [], enabled: true } },
   role_policy: { resource: 'role_policy', action: 'create', role: 'observer', value: { allow_route: false, allow_read: false, allow_control: false } },
   chain_policy: { resource: 'chain_policy', action: 'update', id: 'default', value: { progress_relay_enabled: true, progress_relay_max_events: 8, cycle_cut_enabled: true } },
   egress_destination: {
@@ -466,6 +471,12 @@ export function ConfigPage() {
       {areaVisible === 'espacios'
         ? <AltaDeEspacios soloLectura={soloLectura} busy={busy} onChange={change} />
         : null}
+
+      {/* Antes del registro de bots, y no debajo: la tabla es justo lo que induce el error que este
+          panel corrige —una columna «Harness» con un valor escrito parece elegir el programa que
+          corre el bot, y no lo elige—. Puesto después, se leería como una nota al pie de algo que
+          el operador ya interpretó mal. */}
+      {areaVisible === 'agentes' ? <ArnesesPanel /> : null}
 
       {areaVisible === 'roles' ? <>
         {avisoDeRoles ? <p

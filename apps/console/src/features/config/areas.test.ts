@@ -100,3 +100,46 @@ it('lo que se plegó sigue estando: de dónde saca el enrutado la flota, y que t
   const permisos = CONFIG_AREAS.find((area) => area.id === 'permisos');
   expect(permisos?.detalle).toMatch(/todo empieza denegado/i);
 });
+
+/**
+ * **La descripción de «Agentes y cuentas» decía justo lo que la pantalla NO hace.**
+ *
+ * Estaba desplegada así: «El registro de bots, con qué programa corre cada uno y a qué cuentas de IA
+ * llega». La primera mitad es falsa: `agents.harness_id` no decide con qué programa corre el bot —el
+ * arnés real se deduce del binario en ejecución (`harnessFromCommand`,
+ * services/gateway/src/console/agent-documents.ts:280)— y el 23-ago-2026 esa columna se equivocaba
+ * en 5 de los 14 alias. Una frase que promete lo que la tabla de abajo no cumple es el defecto que
+ * este cambio persigue, y estaba en el rótulo de entrada.
+ */
+it('«Agentes y cuentas» ya no promete decir con qué programa corre cada bot', () => {
+  const agentes = CONFIG_AREAS.find((area) => area.id === 'agentes');
+  expect(agentes?.descripcion).not.toMatch(/con qué programa corre/i);
+  // Y lo dice donde se lee entero, no lo calla: el detalle plegado nombra de dónde sale de verdad.
+  expect(agentes?.detalle).toMatch(/binario en ejecución/i);
+  // CONTROL NEGATIVO: no se perdió por el camino lo que ya decía y sigue siendo cierto.
+  expect(agentes?.detalle).toMatch(/membres/i);
+});
+
+/**
+ * **El defecto ESPEJO: campos que sí tienen efecto y esta pantalla no deja ni ver.**
+ *
+ * La auditoría de campos inertes encontró de paso su contrario. `agent_chain_policies` tiene cinco
+ * columnas más que la migración 019 añadió —`delegation_caps_enabled`, `max_fanout_per_turn`,
+ * `max_edge_repeats_per_root`, `max_delegations_per_root`, `human_gate_enabled`—, las lee
+ * `loadChainPolicy()` (packages/store/src/repository.ts:3068) y gobiernan de verdad el abanico de
+ * delegaciones y la compuerta humana (:3314, :3503). Pero no están en
+ * `ChainPolicyConfigMutationSchema` (packages/protocol/src/schemas.ts:544) ni en el `SELECT` del
+ * snapshot (packages/store/src/configuration.ts:185), así que la consola ni las edita ni las
+ * muestra: un operador que mire esta pestaña creerá que ahí está toda la política de cadena.
+ *
+ * Cerrar el hueco es otra entrega —toca protocolo y store—. Lo que NO puede esperar es decirlo:
+ * callar un tope que gobierna la flota es la misma mentira que enseñar un campo que no gobierna
+ * nada, con el signo cambiado.
+ */
+it('«Avisos y cadena» declara los topes de delegación que el servidor aplica y esta pantalla no muestra', () => {
+  const avisos = CONFIG_AREAS.find((area) => area.id === 'avisos');
+  expect(avisos?.detalle).toMatch(/topes de delegación|delegación/i);
+  expect(avisos?.detalle).toMatch(/no se (ven|editan)|ni se ven ni se editan/i);
+  // CONTROL NEGATIVO: no se perdió lo que la pestaña ya explicaba y sigue siendo cierto.
+  expect(avisos?.detalle).toMatch(/aviso proactivo/i);
+});
