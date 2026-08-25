@@ -2,7 +2,7 @@ import {
   componerBloqueDePerfil, lineasDeArnes, lineasDeCuotas, lineasDePermisos, measureStrictestUnits,
   seccion, vinetas, type AgentProfile, type ContextoDeAlias, type HechosDelAlias,
 } from "./agent-profile.js";
-import { conBloqueDePerfil } from "./marcas-de-bloque.js";
+import { bloqueDePerfil, conBloqueDePerfil, sinBloqueDePerfil } from "./marcas-de-bloque.js";
 
 /**
  * EL GENERADOR DE FICHEROS POR ARNÉS: un perfil -> el contenido de CADA fichero que el arnés lee.
@@ -136,21 +136,39 @@ function bloqueDeFichero(
     return unir([seccion("Tu humano y cómo tratarlo", perfil.human_brief ?? undefined)]);
   }
   if (nombre === "AGENTS.md") {
-    return unir([
+    /*
+     * Los permisos y la configuración del arnés son HECHOS: siempre existen. Así que sin este
+     * corte, un alias sin NADA autorado igual recibía un `AGENTS.md` de 417 caracteres que sólo le
+     * decía en qué contenedor corre y a quién puede escribir — ruido con forma de contrato, que es
+     * literalmente lo que el compilador del bloque único se niega a emitir (`hayAutorado`).
+     *
+     * Medido sobre `argos`, que el 2026-08-24 no tenía NINGUNO de los siete ficheros: `claude` y
+     * `codex` no escribían nada y `openclaw` escribía `AGENTS.md` (417) y `TOOLS.md` (228). Tres
+     * arneses, dos criterios distintos para el mismo perfil vacío. La mecánica acompaña a lo
+     * autorado; sola, no se emite.
+     */
+    const autorado = unir([
       seccion("Responsabilidades",
         perfil.responsibilities.length > 0 ? vinetas(perfil.responsibilities) : undefined),
       seccion("Restricciones",
         perfil.restrictions.length > 0 ? vinetas(perfil.restrictions) : undefined),
       seccion("Instrucciones fijas de funcionamiento",
         perfil.operating_rules.length > 0 ? vinetas(perfil.operating_rules) : undefined),
+    ]);
+    if (autorado.length === 0) return "";
+    return unir([
+      autorado,
       seccion("Permisos y acceso vía Cauce", lineasDePermisos(hechos.permisos)),
       seccion("Configuración del arnés", lineasDeArnes(hechos)),
     ]);
   }
   if (nombre === "TOOLS.md") {
+    // Mismo criterio: las capacidades del arnés y las cuotas son hechos, y solos no son una
+    // persona. Sin herramientas declaradas, este fichero no se escribe.
+    if (perfil.tools.length === 0) return "";
     return unir([
       seccion("Herramientas y capacidades", unir([
-        perfil.tools.length > 0 ? vinetas(perfil.tools) : undefined,
+        vinetas(perfil.tools),
         hechos.arnes.capacidades.length > 0
           ? `Capacidades del arnés: ${[...hechos.arnes.capacidades].join(", ")}`
           : undefined,
@@ -201,16 +219,57 @@ export function ficherosDelArnes(
     }
 
     // El fichero único de claude/codex lleva el perfil ENTERO: ese arnés no tiene dónde repartirlo.
-    const bloque = harness === "openclaw"
+    const cuerpo = harness === "openclaw"
       ? bloqueDeFichero(nombre, contexto.perfil, contexto.hechos)
       : componerBloqueDePerfil(contexto.perfil, contexto.hechos);
+    const bloque = cuerpo.trim().length === 0 ? "" : `${renglonDeDueno(contexto.perfil)}\n${cuerpo}`;
 
     /*
-     * Sin bloque no se toca el fichero. Un encabezado sin nada debajo le enseña al agente que el
-     * sistema no sabe la respuesta, que es peor que no preguntar: es la lección de los cinco
-     * SOUL.md de fábrica de 1.806 bytes que llevan cinco alias sin que nadie los escribiera.
+     * Sin bloque no se emite un encabezado hueco — un encabezado sin nada debajo le enseña al
+     * agente que el sistema no sabe la respuesta, que es peor que no preguntar—, PERO el bloque
+     * que ya estuviera escrito SÍ se retira.
+     *
+     * La diferencia es todo el contrato de esta tabla. «La base es la fuente de verdad y el
+     * fichero se GENERA desde ella» significa que borrar un campo en la consola tiene que borrarlo
+     * del fichero. Devolviendo `escribir: false` sobre un fichero que todavía dice lo viejo, el
+     * generador AFIRMA que está al día mientras el agente sigue leyendo el propósito que alguien
+     * quitó — y no hay error, ni aviso, ni forma de enterarse. Medido: borrado `purpose`, `SOUL.md`
+     * seguía diciendo el propósito viejo; borrado `human_brief`, `USER.md` seguía nombrando al
+     * humano viejo.
+     *
+     * Retirar es quitar EL BLOQUE, no vaciar el fichero: lo que una persona escribiera fuera de
+     * las marcas se conserva byte a byte, igual que al escribir.
      */
     if (bloque.trim().length === 0) {
+      const teniaBloque = previo !== undefined && bloqueDePerfil(previo) !== undefined;
+      if (!teniaBloque) {
+        generados.push({
+          nombre, politica: "bloque-gestionado", texto: previo ?? "", escribir: false,
+        });
+        continue;
+      }
+      const limpio = sinBloqueDePerfil(previo ?? "");
+      generados.push({
+        nombre, politica: "bloque-gestionado", texto: limpio, escribir: limpio !== previo,
+      });
+      continue;
+    }
+
+    /*
+     * GUARDA DE DUEÑO: si el bloque que hay es de OTRO alias, no se pisa.
+     *
+     * `kratos` y `atlas` comparten `$HOME` y su `AGENTS.md` es el MISMO inodo (medido: 12.942
+     * bytes en los dos el 24-ago-2026). Sin esta guarda los dos escribirían en cada turno y el
+     * fichero oscilaría entre dos identidades, con `escribir: true` siempre y ninguno de los dos
+     * teniendo nunca su perfil. `sembrarContextoFijo` —el hermano de este módulo, para el bloque
+     * A— ya se negaba por esto mismo y nombra a los dos alias; el bloque B no tenía la guarda.
+     *
+     * Se reconoce al dueño por la primera línea del bloque, que lleva su alias. Ante la duda NO se
+     * pisa: el daño de pisar de más son dos alias oscilando, y el de pisar de menos es un fichero
+     * sin actualizar, que es el estado de hoy.
+     */
+    const anterior = previo === undefined ? undefined : bloqueDePerfil(previo);
+    if (anterior !== undefined && !esDelMismoAlias(anterior, bloque)) {
       generados.push({
         nombre, politica: "bloque-gestionado", texto: previo ?? "", escribir: false,
       });
@@ -225,6 +284,37 @@ export function ficherosDelArnes(
 
   comprobarTopes(harness, generados);
   return generados;
+}
+
+/**
+ * El renglón que dice DE QUIÉN es este bloque. Va dentro del bloque y como primera línea.
+ *
+ * Es lo que hace posible la guarda de dueño: sin él, dos alias que comparten `$HOME` —`kratos` y
+ * `atlas`, mismo inodo medido— no tienen forma de distinguir «mi bloque de ayer» de «el bloque del
+ * otro», y la única opción segura sería no escribir nunca.
+ *
+ * Va en comentario HTML porque en Markdown no se ve al leer, igual que las marcas.
+ */
+function renglonDeDueno(perfil: AgentProfile): string {
+  return `<!-- alias: ${perfil.tenant_id}/${perfil.alias} -->`;
+}
+
+/** El alias que declara un bloque, o `undefined` si no lo declara. */
+function duenoDelBloque(bloque: string): string | undefined {
+  return /^\s*<!--\s*alias:\s*([^\s>]+)\s*-->/.exec(bloque)?.[1];
+}
+
+/**
+ * ¿El bloque que hay en el disco es de este mismo alias?
+ *
+ * Un bloque SIN dueño declarado NO cuenta como nuestro. Puede parecer duro, pero es lo correcto
+ * hoy: `ficherosDelArnes` no tiene todavía ningún llamador en producción, así que no existe ni un
+ * bloque B escrito en la flota. Aceptar los que no se identifican sólo serviría para reabrir el
+ * agujero de `kratos`/`atlas` sin ganar nada.
+ */
+function esDelMismoAlias(anterior: string, nuestro: string): boolean {
+  const suyo = duenoDelBloque(anterior);
+  return suyo !== undefined && suyo === duenoDelBloque(nuestro);
 }
 
 /** `MEMORY.md` y `HEARTBEAT.md` de openclaw, y nada más. */
@@ -244,6 +334,20 @@ function comprobarTopes(harness: string, ficheros: readonly FicheroGenerado[]): 
   if (harness !== "openclaw") return;
   let total = 0;
   for (const fichero of ficheros) {
+    /*
+     * LOS FICHEROS DEL AGENTE NO ENTRAN EN LA CUENTA, y la razón es de daño, no de aritmética.
+     *
+     * `MEMORY.md` es del agente, no tiene tope y CRECE: es lo que va aprendiendo. Contándolo, un
+     * alias con memoria larga bloquea la siembra de los SIETE ficheros —incluida su identidad— con
+     * un error que además NOMBRA a `MEMORY.md`, o sea que invita al operador a podar la memoria de
+     * un compañero para desatascar el despliegue. Ese borrado es irreversible desde dentro del
+     * contenedor y es exactamente el acto que este módulo declara catastrófico tres párrafos más
+     * arriba.
+     *
+     * Además no habría nada que recortar: no escribimos un solo byte de ellos. El tope del arnés
+     * existe para proteger lo que NOSOTROS metemos.
+     */
+    if (fichero.politica === "solo-si-falta") continue;
     const medido = measureStrictestUnits(fichero.texto);
     if (medido > TOPES_OPENCLAW.porFichero) {
       throw new ErrorDeTopeDelArnes(fichero.nombre, medido, TOPES_OPENCLAW.porFichero);

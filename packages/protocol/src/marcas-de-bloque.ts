@@ -129,3 +129,30 @@ export function bloqueDePerfil(texto: string): string | undefined {
 export function conBloqueDePerfil(textoOriginal: string, bloque: string): string {
   return conBloqueEntreMarcas(textoOriginal, bloque, MARCA_PERFIL_INICIO, MARCA_PERFIL_FIN);
 }
+
+/**
+ * Quita un bloque de un fichero conservando TODO lo de fuera byte a byte.
+ *
+ * Existe porque «la base es la fuente de verdad y el fichero se GENERA desde ella» sólo es cierto
+ * si borrar en la base borra en el fichero. Sin esto, vaciar un campo desde la consola dejaba el
+ * texto VIEJO escrito y el generador contestaba «está al día»: el agente seguía leyendo un
+ * propósito que alguien ya había quitado, sin error y sin forma de enterarse.
+ *
+ * Se lleva también el salto de línea que quedaría suelto donde estaba el bloque, para que quitar y
+ * volver a poner sea idempotente y no vaya acumulando líneas en blanco.
+ */
+export function sinBloqueEntreMarcas(
+  textoOriginal: string, marcaInicio: string, marcaFin: string
+): string {
+  const par = parDeMarcas(textoOriginal, marcaInicio, marcaFin);
+  if (!par) return textoOriginal;
+  const antes = textoOriginal.slice(0, par.inicio).replace(/\n{2,}$/, '\n');
+  const despues = textoOriginal.slice(par.fin + marcaFin.length).replace(/^\n+/, '');
+  if (antes.trim().length === 0) return despues;
+  return despues.length === 0 ? antes : `${antes.replace(/\n*$/, '\n')}\n${despues}`;
+}
+
+/** El fichero sin el bloque del perfil, con lo humano intacto. */
+export function sinBloqueDePerfil(texto: string): string {
+  return sinBloqueEntreMarcas(texto, MARCA_PERFIL_INICIO, MARCA_PERFIL_FIN);
+}

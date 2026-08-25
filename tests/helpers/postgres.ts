@@ -151,6 +151,8 @@ const TABLAS_DE_CATALOGO = [
 ] as const;
 
 const ESQUEMA_SEMILLA = 'cauce_semilla';
+/** Dónde vive la huella del juego de migraciones con el que se capturó la semilla. */
+const TABLA_HUELLA = 'huella_de_migraciones';
 
 /**
  * Guarda el catálogo tal y como lo dejaron las migraciones, para poder devolverlo después.
@@ -158,17 +160,56 @@ const ESQUEMA_SEMILLA = 'cauce_semilla';
  * Se hace una vez, justo tras migrar y antes de que ninguna suite toque nada. Es idempotente: si
  * el esquema ya existe —base externa reutilizada— no se rehace, porque rehacerlo copiaría el
  * estado YA contaminado y consagraría el defecto en vez de arreglarlo.
+ *
+ * ── Y por eso lleva la huella de las migraciones ─────────────────────────────────────────────
+ *
+ * Esa misma idempotencia abría un agujero silencioso. Una base externa reutilizada guarda su
+ * semilla la PRIMERA vez; si después llega una migración nueva que siembra catálogo —la 027 añade
+ * el rol `agent_notify`, que existe en producción y no lo creaba ninguna migración—, `applyMigrations`
+ * la aplica sobre `public` pero la semilla sigue siendo la vieja. Y como `restaurarCatalogo()`
+ * corre en CADA `resetTestDatabase()`, el primer reset BORRA la fila que la migración acaba de
+ * crear. El resultado es una suite que falla por algo que sí está en el código, con un mensaje que
+ * no apunta a ninguna parte.
+ *
+ * Se guarda la huella del juego de migraciones aplicadas junto a la semilla. Si al arrancar no
+ * coincide, se LANZA con la instrucción exacta en vez de recapturar: recapturar sobre una base que
+ * ya usó una suite consagraría el estado contaminado, que es justamente el defecto que este
+ * mecanismo vino a cerrar. Tirar el esquema es barato —es una base desechable— y es una decisión
+ * que tiene que tomar una persona, no un `catch`.
  */
 export async function guardarSemillaDeCatalogo(pool: DatabasePool): Promise<void> {
+  const huella = await huellaDeMigraciones(pool);
   const existe = await pool.query<{ hay: boolean }>(
     `SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS hay`,
     [ESQUEMA_SEMILLA],
   );
-  if (existe.rows[0]?.hay) return;
+  if (existe.rows[0]?.hay) {
+    const guardada = await pool.query<{ huella: string }>(
+      `SELECT huella FROM ${ESQUEMA_SEMILLA}.${TABLA_HUELLA}`,
+    ).catch(() => ({ rows: [] as Array<{ huella: string }> }));
+    const anterior = guardada.rows[0]?.huella;
+    if (anterior === huella) return;
+    throw new Error(
+      `la semilla de catálogo de esta base se guardó con OTRO juego de migraciones ` +
+        `(${anterior ?? 'ninguna huella guardada'} vs ${huella}). Restaurarla borraría lo que las ` +
+        `migraciones nuevas acaban de sembrar. Tirá el esquema y volvé a correr:\n` +
+        `  psql "$CAUCE_TEST_DATABASE_URL" -c 'DROP SCHEMA ${ESQUEMA_SEMILLA} CASCADE'`,
+    );
+  }
   await pool.query(`CREATE SCHEMA ${ESQUEMA_SEMILLA}`);
   for (const tabla of TABLAS_DE_CATALOGO) {
     await pool.query(`CREATE TABLE ${ESQUEMA_SEMILLA}.${tabla} AS TABLE public.${tabla}`);
   }
+  await pool.query(`CREATE TABLE ${ESQUEMA_SEMILLA}.${TABLA_HUELLA}(huella text NOT NULL)`);
+  await pool.query(`INSERT INTO ${ESQUEMA_SEMILLA}.${TABLA_HUELLA}(huella) VALUES ($1)`, [huella]);
+}
+
+/** La huella del juego de migraciones aplicadas: su número y la última, que basta para detectar altas. */
+export async function huellaDeMigraciones(pool: DatabasePool): Promise<string> {
+  const r = await pool.query<{ cuantas: string; ultima: string | null }>(
+    `SELECT count(*)::text AS cuantas, max(version) AS ultima FROM schema_migrations`,
+  );
+  return `${r.rows[0]?.cuantas ?? '0'}:${r.rows[0]?.ultima ?? '-'}`;
 }
 
 /** Devuelve el catálogo a como lo dejaron las migraciones. */

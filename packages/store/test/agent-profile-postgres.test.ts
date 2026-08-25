@@ -50,9 +50,17 @@ describe('la migración 026 está aplicada de verdad', () => {
       `SELECT column_name,is_nullable FROM information_schema.columns
        WHERE table_name='agent_profiles' ORDER BY ordinal_position`
     );
+    /*
+     * La lista es ORDENADA y EXACTA a propósito: una columna que se añada sin tocar el compilador
+     * es un campo editable sin lector, que es el defecto que toda esta tabla vino a cerrar.
+     *
+     * `human_brief` va en la posición 7 —entre `restrictions` y `tools`— porque ahí la puso la
+     * 026: el orden de las columnas cuenta el orden de LECTURA del fichero (quién sos, qué te
+     * toca, con quién tratás, con qué contás), y `USER.md` de openclaw se lee después del rol.
+     */
     expect(columns.rows.map((row) => row.column_name)).toEqual([
       'tenant_id', 'alias', 'purpose', 'role_summary', 'responsibilities',
-      'restrictions', 'tools', 'operating_rules', 'created_at', 'updated_at'
+      'restrictions', 'human_brief', 'tools', 'operating_rules', 'created_at', 'updated_at'
     ]);
     const fk = await pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM pg_constraint
