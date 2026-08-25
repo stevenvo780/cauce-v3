@@ -166,7 +166,56 @@ huérfano.
   reactivarla. **El defecto que describe es real**: el gateway puede contestar `ready` con el plano
   de datos caído.
 
-## 7. MCP de codex en este workspace — revisados uno por uno
+## 7. codex está en 0.149.1 y sus MCP quedaron revisados
+
+**Actualizado de `0.145.0` a `0.149.1`** (la última del registro). La causa de que estuviera atrás
+no era que faltara instalar: **había dos prefijos npm a la vez**. `/usr/lib/node_modules` ya tenía
+`0.149.1`, pero el `PATH` resuelve `~/.local/bin/codex` → `~/.npm-global`, que seguía en `0.145.0`.
+Actualizado ese prefijo, `codex --version` → `codex-cli 0.149.1`.
+
+**La credencial compartida NO se tocó**: `~/.codex/auth.json` conserva su `mtime` del 12-ago y su
+tamaño. Nunca se ejecutó `codex login` ni nada que renueve el testigo — un `login` rota la
+credencial de `codex-pro-steven`, que comparten ocho alias. Sólo `--version`, `mcp list` y
+`mcp get`, que no autentican.
+
+Respaldos antes de tocar nada: `~/.codex/config.toml.bak-zeus-*`,
+`~/.codex/plugins/agent-parity/.mcp.json.bak-zeus-*` y el `.mcp.json.bak-zeus-*` de la caché.
+
+### El estado real, según el propio codex (`codex mcp list`)
+
+**Encendidos — 13:** `ai-usage`, `cloud-offload`, `serena`, `chrome-devtools`, `playwright`,
+`context7`, `graphify`, `sequential-thinking`, `github-legacy`, `firebase`, `vercel`, `atlassian`,
+`openaiDeveloperDocs`.
+
+**Apagados — 3, y los tres por credencial:** `brave-search` (`BRAVE_API_KEY` ausente), `sentry`
+(`SENTRY_ACCESS_TOKEN` ausente), `neon` (HTTP 401). Se dejan apagados a propósito: encender lo que
+no arranca sólo llena la lista de herramientas rotas. **No se tocan**: es dato, no recomendación.
+
+### Lo que estaba mal y se arregló
+
+- **Diez servidores estaban `disabled`,** entre ellos `chrome-devtools`, `playwright` y `serena`.
+  Eso importa para este trabajo: **la tarea pendiente exige abrir el modal en un navegador**, y
+  codex tenía las dos herramientas de navegador apagadas. Encendidos los siete que miden bien.
+- **`ollama-local` seguía declarado y ENCENDIDO**, contra la baja de Ollama que pidió Steven el
+  2026-07-24. Vivía en la **copia cacheada** del plugin
+  (`plugins/cache/shared-agents/agent-parity/0.1.0+codex.20260723185017/.mcp.json`, fechada un día
+  antes de la baja), que es la que codex lee de verdad — quitarlo del plugin «fuente» no bastaba.
+  Eliminado de las dos.
+- **`firebase` no arrancaba**: no existe el binario global. Reapuntado a `npx -y firebase-tools`;
+  pasó de no arrancar a 19 herramientas.
+
+### Dos correcciones a lo que informé antes
+
+1. **`cloud-offload` y `ai-usage` NO faltaban.** Estaban declarados en el plugin `agent-parity`,
+   no en `config.toml`, y yo sólo había mirado el `.toml`. Peor: al «añadirlos» pisé la definición
+   buena — la mía apuntaba a `~/.local/bin/cloud-mcp.py` y la del plugin a
+   `scripts/safe_cloud_mcp.py`, **que es el que de verdad atiende `delegar_a_cloud`**. Revertido:
+   `codex mcp get cloud-offload` vuelve a mostrar `safe_cloud_mcp.py`.
+2. **`clawbus` sí estaba muerto** (`Module not found`) y sigue eliminado. Eso se sostiene.
+
+### Antes eran 15 declarados y 9 respondían
+
+## 7 bis. Detalle de la primera revisión
 
 Probados arrancando cada servidor y hablándole el protocolo (`initialize` + `tools/list`), **sin
 invocar el CLI de codex**: hacerlo revoca la cadena de credencial que comparte la flota.
