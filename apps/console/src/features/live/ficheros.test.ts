@@ -1,6 +1,7 @@
 import type { AgentDocumentItem, AgentDocumentsMap } from '../../api/types';
 import {
-  avisoAntesDeGuardar, avisoDeFuente, explicarFallo, hayCambios, modoDeDocumento, sePuedeEditar,
+  avisoAntesDeGuardar, avisoDeFuente, explicarFallo, hayCambios, mensajeDeGuardado,
+  modoDeDocumento, sePuedeEditar,
 } from './ficheros';
 
 function doc(extra: Partial<AgentDocumentItem> = {}): AgentDocumentItem {
@@ -115,5 +116,32 @@ describe('hay cambios sin guardar', () => {
   it('un espacio al final también es un cambio', () => {
     expect(hayCambios('hola', 'hola ')).toBe(true);
     expect(hayCambios('hola', 'hola')).toBe(false);
+  });
+});
+
+describe('estado después de escribir', () => {
+  it('dice aplicado sólo con evidencia explícita de la sonda', () => {
+    const mensaje = mensajeDeGuardado({
+      ok: true,
+      state: 'applied',
+      evidence: 'probe_write_ack',
+      path: '/home/dev/.claude/CLAUDE.md',
+      sha: 'a'.repeat(64),
+      bytes: 12,
+    });
+
+    expect(mensaje).toMatch(/Aplicado/);
+    expect(mensaje).toMatch(/ACK de escritura/);
+  });
+
+  it('CONTROL NEGATIVO: una respuesta legacy sin evidencia no inventa aplicación', () => {
+    const legacy = {
+      ok: true, path: '/home/dev/.claude/CLAUDE.md', sha: 'abc', bytes: 12,
+    } as Parameters<typeof mensajeDeGuardado>[0];
+
+    const mensaje = mensajeDeGuardado(legacy);
+
+    expect(mensaje).toMatch(/no quedó confirmada/);
+    expect(mensaje).not.toMatch(/^Aplicado/);
   });
 });

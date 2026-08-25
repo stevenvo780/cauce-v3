@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { OriginRelayAck, OriginRelayEvent, OriginRelayRepository, OriginTransportRegistry } from './types.js';
+import type {
+  OriginRelayAck, OriginRelayEvent, OriginRelayRepository, OriginRelayResult, OriginTransportRegistry
+} from './types.js';
 import { OriginTransportError } from './types.js';
 
 export interface OriginRelayWorkerOptions {
@@ -11,7 +13,11 @@ export interface OriginRelayWorkerOptions {
   maxAttempts?: number;
   baseRetryMs?: number;
   pollMs?: number;
-  onResult?: (result: 'sent' | 'retry' | 'dead') => void;
+  errorBackoffMs?: number;
+  onResult?: (result: OriginRelayResult) => void;
+  onCycleStart?: () => void;
+  onCycleSuccess?: (processed: number) => void;
+  onCycleError?: () => void;
 }
 
 function errorMessage(error: unknown): string {
@@ -39,19 +45,34 @@ export class OriginRelayWorker {
   private readonly maxAttempts: number;
   private readonly baseRetryMs: number;
   private readonly pollMs: number;
-  private readonly onResult: (result: 'sent' | 'retry' | 'dead') => void;
+  private readonly errorBackoffMs: number;
+  private readonly onResult: (result: OriginRelayResult) => void;
+  private readonly onCycleStart: () => void;
+  private readonly onCycleSuccess: (processed: number) => void;
+  private readonly onCycleError: () => void;
 
   constructor(options: OriginRelayWorkerOptions) {
     this.repository = options.repository;
     this.transports = options.transports;
     this.workerId = options.workerId ?? `origin-relay:${randomUUID()}`;
     this.leaseMs = options.leaseMs ?? 30_000;
-    this.batchSize = options.batchSize ?? 20;
+    // Kept as a compatibility input while old deployments still export
+    // CAUCE_RELAY_BATCH_SIZE=20. The safe runtime value is intentionally fixed at one.
+    this.batchSize = 1;
     this.maxAttempts = options.maxAttempts ?? 5;
     this.baseRetryMs = options.baseRetryMs ?? 500;
     this.pollMs = options.pollMs ?? 250;
+    this.errorBackoffMs = options.errorBackoffMs ?? 1_000;
     this.onResult = options.onResult ?? (() => undefined);
-    if (this.leaseMs < 1_000 || this.batchSize < 1 || this.maxAttempts < 1 || this.baseRetryMs < 1 || this.pollMs < 1) {
+    this.onCycleStart = options.onCycleStart ?? (() => undefined);
+    this.onCycleSuccess = options.onCycleSuccess ?? (() => undefined);
+    this.onCycleError = options.onCycleError ?? (() => undefined);
+    // A lease starts when it is claimed, not when its turn in an in-memory batch begins. Claiming
+    // more than one event and sending sequentially therefore burns the later leases while the
+    // first remote request is in flight. One fresh claim per adapter/cycle removes that queue.
+    if (this.leaseMs < 1_000 || (options.batchSize !== undefined && options.batchSize < 1) ||
+        this.maxAttempts < 1 || this.baseRetryMs < 1 ||
+        this.pollMs < 1 || this.errorBackoffMs < 1) {
       throw new Error('origin relay worker options are invalid');
     }
   }
@@ -66,30 +87,42 @@ export class OriginRelayWorker {
   }
 
   private async process(event: OriginRelayEvent): Promise<void> {
+    let transportError: unknown;
     try {
       const transport = this.transports.forAdapter(event.adapter);
       if (!transport) throw new OriginTransportError(`no transport registered for adapter ${event.adapter}`, false);
       await transport.send(event);
-      await this.repository.ack(this.acknowledgement(event, { status: 'sent' }));
-      this.onResult('sent');
     } catch (error) {
-      const retryable = !(error instanceof OriginTransportError) || error.retryable;
-      const shouldRetry = retryable && event.attempt < Math.min(this.maxAttempts, event.max_attempts);
-      if (shouldRetry) {
-        const retryAfter = Math.min(300_000, this.baseRetryMs * 2 ** Math.max(0, event.attempt - 1));
-        await this.repository.ack(this.acknowledgement(event, {
-          status: 'retry',
-          error: errorMessage(error),
-          retry_after_ms: retryAfter
-        }));
-        this.onResult('retry');
-      } else {
-        await this.repository.ack(this.acknowledgement(event, {
-          status: 'dead',
-          error: errorMessage(error)
-        }));
-        this.onResult('dead');
+      transportError = error;
+    }
+
+    // Remote delivery and durable acknowledgement are deliberately separate. If the remote side
+    // accepted the event but the fenced ACK no longer applies, issuing a retry ACK would both lie
+    // about the outcome and risk a duplicate. The stable event id remains the downstream
+    // idempotency key; the expired lease is reconciled by the next fenced claim.
+    if (transportError === undefined) {
+      try {
+        await this.repository.ack(this.acknowledgement(event, { status: 'sent' }));
+        this.onResult('sent');
+      } catch {
+        this.onResult('fenced');
       }
+      return;
+    }
+
+    const retryable = !(transportError instanceof OriginTransportError) || transportError.retryable;
+    const shouldRetry = retryable && event.attempt < Math.min(this.maxAttempts, event.max_attempts);
+    const outcome: 'retry' | 'dead' = shouldRetry ? 'retry' : 'dead';
+    const retryAfter = Math.min(300_000, this.baseRetryMs * 2 ** Math.max(0, event.attempt - 1));
+    try {
+      await this.repository.ack(this.acknowledgement(event, {
+        status: outcome,
+        error: errorMessage(transportError),
+        ...(outcome === 'retry' ? { retry_after_ms: retryAfter } : {})
+      }));
+      this.onResult(outcome);
+    } catch {
+      this.onResult('fenced');
     }
   }
 
@@ -110,8 +143,15 @@ export class OriginRelayWorker {
 
   async run(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
-      const processed = await this.runOnce();
-      if (processed === 0) await sleep(this.pollMs, signal);
+      this.onCycleStart();
+      try {
+        const processed = await this.runOnce();
+        this.onCycleSuccess(processed);
+        if (processed === 0) await sleep(this.pollMs, signal);
+      } catch {
+        this.onCycleError();
+        if (!signal.aborted) await sleep(this.errorBackoffMs, signal);
+      }
     }
   }
 }

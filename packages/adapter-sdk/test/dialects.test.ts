@@ -137,10 +137,14 @@ test("plain fallback rejects non-visible, oversized and object-like malformed ou
   assert.throws(() => parseFinalText("x".repeat(MAX_FINAL_TEXT_BYTES + 1), "test final"), /limit/u);
   // CAMBIO DE CONTRATO 2026-08-05: un sobre truncado con `reply` completo ya NO se pierde entero,
   // se entrega la respuesta (ver fence.test.ts). Perder el turno costaba minutos de trabajo del
-  // agente por un campo accesorio cortado. Lo que sigue siendo fallo duro es el sobre truncado SIN
-  // reply rescatable, que es el caso de abajo.
+  // agente por un campo accesorio cortado. Un sobre truncado SIN reply rescatable conserva el
+  // diagnostico como resultado `failed`, pero nunca materializa sus campos accesorios.
   assert.equal(parseFinalText('{"reply":"truncated"', "test final").reply, "truncated");
-  assert.throws(() => parseFinalText('{"messages":[', "test final"), /malformed JSON object/u);
+  const ilegible = parseFinalText('{"messages":[', "test final");
+  assert.equal(ilegible.status, "failed");
+  assert.equal(ilegible.retryable, false);
+  assert.deepEqual(ilegible.messages, []);
+  assert.match(ilegible.reply ?? "", /no quedo ni una linea de texto rescatable/u);
   // Un objeto BIEN formado pero que incumple el esquema sigue siendo fallo duro: ahí el agente
   // declaró un sobre completo y le faltan campos, no es un corte de transporte.
   assert.throws(

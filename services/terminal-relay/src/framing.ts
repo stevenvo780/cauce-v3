@@ -15,6 +15,11 @@ export const FRAME_TAGS = {
   STDIN: 0x20,
   STDOUT: 0x21,
   RESIZE: 0x22,
+  /** DA/DSR generado por el emulador; nunca teclado o paste humano. */
+  TERMINAL_RESPONSE: 0x23,
+  /** Crédito de salida por sesión: no pausa el socket multiplexado del agente. */
+  PAUSE_OUTPUT: 0x24,
+  RESUME_OUTPUT: 0x25,
   CLOSE: 0x30,
   CLOSED: 0x31,
   PING: 0x40,
@@ -26,7 +31,20 @@ export const FRAME_TAGS = {
   READ: 0x50,
   READ_OK: 0x51,
   READ_ERR: 0x52,
-  READ_DATA: 0x53
+  READ_DATA: 0x53,
+  /** Escritura gobernada v1. Sólo se envía si el hello anuncia `write_governance_v1`. */
+  WRITE: 0x54,
+  WRITE_DATA: 0x55,
+  WRITE_OK: 0x56,
+  WRITE_ERR: 0x57,
+  /** Libera una escritura incompleta cuando vence/cierra su petición HTTP. */
+  WRITE_CANCEL: 0x58,
+  /** Perfil multi-fichero: una transacción, preflight total y rollback en el agente. */
+  WRITE_BATCH: 0x59,
+  WRITE_BATCH_DATA: 0x5a,
+  WRITE_BATCH_OK: 0x5b,
+  WRITE_BATCH_ERR: 0x5c,
+  WRITE_BATCH_CANCEL: 0x5d
 } as const;
 
 export type FrameTag = (typeof FRAME_TAGS)[keyof typeof FRAME_TAGS];
@@ -34,9 +52,9 @@ export type FrameTag = (typeof FRAME_TAGS)[keyof typeof FRAME_TAGS];
 /** A frame payload never exceeds this; a longer declared length is a protocol violation. */
 export const MAX_FRAME_PAYLOAD_BYTES = 65_536;
 /**
- * DATA payloads carry the session UUID (with dashes) as 36 leading ASCII bytes. READ_DATA uses
- * the same prefix for the `request_id` of the read on purpose: el agente lo genera con el mismo
- * formato para que `decodeDataFrame` valga para los dos y no haya una segunda ruta de código.
+ * DATA payloads carry the session UUID (with dashes) as 36 leading ASCII bytes. READ_DATA and
+ * WRITE_DATA use the same prefix for their `request_id`: all three are opaque UUID-correlated
+ * binary streams and therefore share one deliberately small decoder.
  */
 export const SESSION_ID_BYTES = 36;
 export const MAX_DATA_BYTES = MAX_FRAME_PAYLOAD_BYTES - SESSION_ID_BYTES;

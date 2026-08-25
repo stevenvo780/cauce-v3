@@ -125,8 +125,7 @@ test("una entrega en cola late en 'accepted' y sólo pasa a 'started' cuando tom
   const store = await storeFor("queue-accepted-heartbeat");
   const runner = new GatedRunner();
   const events: DeliveryEvent[] = [];
-  let engine!: AdapterEngine;
-  engine = new AdapterEngine({
+  const engine: AdapterEngine = new AdapterEngine({
     store,
     harness: harnessFor(store, runner),
     publish: confirmingPublisher(() => engine, events),
@@ -184,8 +183,7 @@ test("la entrega que ejecuta sí renueva, y renueva con 'started'", async () => 
   const store = await storeFor("running-started-heartbeat");
   const runner = new GatedRunner();
   const events: DeliveryEvent[] = [];
-  let engine!: AdapterEngine;
-  engine = new AdapterEngine({
+  const engine: AdapterEngine = new AdapterEngine({
     store,
     harness: harnessFor(store, runner),
     publish: confirmingPublisher(() => engine, events),
@@ -216,8 +214,7 @@ test("la espera en cola tiene techo: vence RETRYABLE y sin haber declarado ejecu
   const store = await storeFor("queue-budget-exhausted");
   const runner = new GatedRunner();
   const events: DeliveryEvent[] = [];
-  let engine!: AdapterEngine;
-  engine = new AdapterEngine({
+  const engine: AdapterEngine = new AdapterEngine({
     store,
     harness: harnessFor(store, runner),
     publish: confirmingPublisher(() => engine, events),

@@ -178,10 +178,11 @@ describe('verifyWritablePath — falla cerrada', () => {
     expect(verifyWritablePath(zeus, 'mcp', mcp!.path).allowed).toBe(false);
   });
 
-  it('settings.json es editable pero viaja con el aviso de los hooks', () => {
+  it('settings.json se muestra con el aviso de hooks pero no se edita sin validacion estructural', () => {
     const doc = documentForKind(zeus, 'tools');
-    expect(doc?.editable).toBe(true);
+    expect(doc?.editable).toBe(false);
     expect(doc?.warning).toMatch(/hooks/);
+    expect(verifyWritablePath(zeus, 'tools', doc!.path).allowed).toBe(false);
   });
 
   it('ningún documento resuelto cae nunca en la lista negra', () => {

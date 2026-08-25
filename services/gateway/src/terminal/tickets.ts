@@ -1,4 +1,4 @@
-import { createHash, createHmac, hkdfSync, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 import { isTerminalMode, type TerminalMode } from './types.js';
 
 /**
@@ -16,6 +16,8 @@ import { isTerminalMode, type TerminalMode } from './types.js';
 
 export const TICKET_VERSION = 'v1';
 export const TICKET_HKDF_SALT = 'cauce-v3/pty-ticket/v1';
+export const RESUME_TOKEN_VERSION = 'r1';
+export const RESUME_HKDF_SALT = 'cauce-v3/pty-resume/v1';
 
 export interface TicketTarget {
   readonly tenant: string;
@@ -53,7 +55,21 @@ function base64url(value: Buffer): string {
 
 function fromBase64url(value: string): Buffer {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new TicketError('malformed', 'ticket segment is not base64url');
-  return Buffer.from(value.replaceAll('-', '+').replaceAll('_', '/'), 'base64');
+  const decoded = Buffer.from(value.replaceAll('-', '+').replaceAll('_', '/'), 'base64');
+  if (base64url(decoded) !== value) {
+    throw new TicketError('malformed', 'ticket segment is not canonical base64url');
+  }
+  return decoded;
+}
+
+function signatureFromBase64url(value: string, message: string): Buffer {
+  try {
+    return fromBase64url(value);
+  } catch {
+    // A non-canonical spelling that decodes to the same HMAC is still a different credential.
+    // Classify every signature-segment failure uniformly so callers do not gain a parser oracle.
+    throw new TicketError('signature_invalid', message);
+  }
 }
 
 /** Per-alias key. The master secret never leaves the gateway process. */
@@ -153,7 +169,10 @@ export function parseAndVerify(
     throw new TicketError('malformed', 'ticket is not a v1 ticket');
   }
   const [, encodedPayload, encodedSignature] = parts as [string, string, string];
-  const signature = fromBase64url(encodedSignature);
+  const signature = signatureFromBase64url(
+    encodedSignature,
+    'ticket signature does not verify for this alias key'
+  );
   const expected = createHmac('sha256', key)
     .update(Buffer.from(`${TICKET_VERSION}.${encodedPayload}`, 'ascii')).digest();
   if (signature.byteLength !== expected.byteLength || !timingSafeEqual(signature, expected)) {
@@ -172,4 +191,104 @@ export function ticketSha256(ticket: string): Buffer {
 /** Truncated digest for logs and audit metadata. */
 export function ticketDigest(ticket: string): string {
   return ticketSha256(ticket).toString('hex').slice(0, 16);
+}
+
+/**
+ * Memory-only credential used after the one-shot OPEN ticket has been consumed.
+ *
+ * It is deliberately a different wire format and HKDF domain from the agent ticket: the
+ * pty-agent must never see it, and possessing it cannot mint or open a new PTY.  The gateway
+ * re-checks the live database authorization on every resume; the token only proves continuity
+ * of this exact browser session while its original TTL is still alive.
+ */
+export interface ResumeTokenPayload {
+  readonly v: 1;
+  readonly sid: string;
+  readonly op: string;
+  readonly iat: number;
+  readonly exp: number;
+  /** 128 random bits prevent two otherwise identical sessions producing the same credential. */
+  readonly nonce: string;
+}
+
+function resumeKey(master: Buffer): Buffer {
+  if (master.byteLength !== 32) throw new Error('terminal ticket master key must be 32 bytes');
+  return Buffer.from(hkdfSync(
+    'sha256', master, Buffer.from(RESUME_HKDF_SALT, 'utf8'), Buffer.from('resume-token', 'utf8'), 32
+  ));
+}
+
+function canonicalResumePayload(payload: ResumeTokenPayload): string {
+  return JSON.stringify({
+    v: 1,
+    sid: payload.sid,
+    op: payload.op,
+    iat: payload.iat,
+    exp: payload.exp,
+    nonce: payload.nonce
+  });
+}
+
+export function issueResumeToken(
+  sessionId: string,
+  operatorId: string,
+  expiresAtSeconds: number,
+  master: Buffer,
+  nowSeconds: number = Math.floor(Date.now() / 1_000)
+): string {
+  const payload: ResumeTokenPayload = {
+    v: 1,
+    sid: sessionId,
+    op: operatorId,
+    iat: nowSeconds,
+    exp: expiresAtSeconds,
+    nonce: randomBytes(16).toString('base64url')
+  };
+  const encoded = base64url(Buffer.from(canonicalResumePayload(payload), 'utf8'));
+  const input = `${RESUME_TOKEN_VERSION}.${encoded}`;
+  const signature = createHmac('sha256', resumeKey(master)).update(Buffer.from(input, 'ascii')).digest();
+  return `${input}.${base64url(signature)}`;
+}
+
+export function parseResumeToken(
+  token: string,
+  master: Buffer,
+  nowSeconds: number = Math.floor(Date.now() / 1_000)
+): ResumeTokenPayload {
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== RESUME_TOKEN_VERSION) {
+    throw new TicketError('malformed', 'resume token is not an r1 token');
+  }
+  const [, encodedPayload, encodedSignature] = parts as [string, string, string];
+  const signature = signatureFromBase64url(encodedSignature, 'resume token signature is invalid');
+  const input = `${RESUME_TOKEN_VERSION}.${encodedPayload}`;
+  const expected = createHmac('sha256', resumeKey(master)).update(Buffer.from(input, 'ascii')).digest();
+  if (signature.byteLength !== expected.byteLength || !timingSafeEqual(signature, expected)) {
+    throw new TicketError('signature_invalid', 'resume token signature is invalid');
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(fromBase64url(encodedPayload).toString('utf8'));
+  } catch {
+    throw new TicketError('malformed', 'resume token payload is not JSON');
+  }
+  if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) {
+    throw new TicketError('malformed', 'resume token payload is not an object');
+  }
+  const record = decoded as Record<string, unknown>;
+  if (record.v !== 1 || typeof record.sid !== 'string' || typeof record.op !== 'string' ||
+      typeof record.iat !== 'number' || !Number.isSafeInteger(record.iat) ||
+      typeof record.exp !== 'number' || !Number.isSafeInteger(record.exp) ||
+      typeof record.nonce !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(record.nonce)) {
+    throw new TicketError('malformed', 'resume token claims are invalid');
+  }
+  if (record.exp <= nowSeconds) throw new TicketError('expired', 'resume token is expired');
+  return {
+    v: 1,
+    sid: record.sid,
+    op: record.op,
+    iat: record.iat,
+    exp: record.exp,
+    nonce: record.nonce
+  };
 }

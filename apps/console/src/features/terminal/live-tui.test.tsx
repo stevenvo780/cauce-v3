@@ -177,7 +177,7 @@ it('un rechazo del gateway no se reintenta en bucle: la apertura automática es 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
   await waitFor(() => expect(attempts).toBe(1));
   // El panel sigue vivo y refrescando (targets cada 15 s, feed cada 2.5 s) sin volver a pedir.
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
   expect(attempts).toBe(1);
   expect(StubWebSocket.instances).toHaveLength(0);
 });

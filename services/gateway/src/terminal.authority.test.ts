@@ -5,13 +5,24 @@ import type { FastifyRequest } from 'fastify';
 import type { DatabasePool } from '@cauce/store';
 import type { Principal } from './auth.js';
 import {
-  FLEET_PLACEMENTS, GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort,
-  fleetPlacement, resolveOperator, routingAuthority
+  GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort, fleetPlacement,
+  loadFleetPlacements, resolveOperator, routingAuthority
 } from './terminal/authority.js';
 import {
   loadTerminalConfig, terminalCapabilityAnnouncement, type TerminalConfig
 } from './terminal/config.js';
-import { UNATTRIBUTED_OPERATOR } from './terminal/types.js';
+import { UNATTRIBUTED_OPERATOR, type FleetPlacement } from './terminal/types.js';
+
+const PLACEMENTS: readonly FleetPlacement[] = [
+  { tenant_id: 'Isa', alias: 'salva', container: 'ws-isa', runtime_user: 'dev' },
+  { tenant_id: 'Miguel', alias: 'atlas', container: 'ws-humanizar', runtime_user: 'dev' },
+  { tenant_id: 'Miguel', alias: 'iza', container: 'ws-humanizar', runtime_user: 'dev' },
+  { tenant_id: 'Miguel', alias: 'kratos', container: 'ws-humanizar', runtime_user: 'dev' },
+  { tenant_id: 'Steven', alias: 'argos', container: 'ctrl-infra', runtime_user: 'dev' },
+  { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw' },
+  { tenant_id: 'Steven', alias: 'kant', container: 'ctrl-infra', runtime_user: 'dev' },
+  { tenant_id: 'Steven', alias: 'zeus', container: 'ws-zeus', runtime_user: 'dev' },
+];
 
 interface RoomRow { side: 'actor' | 'target'; room_id: string }
 
@@ -155,25 +166,34 @@ describe('terminal configuration', () => {
 });
 
 describe('fleet placement and container cohorts', () => {
-  it('covers the fifteen fleet aliases with their tenant and runtime user', () => {
-    expect(Object.keys(FLEET_PLACEMENTS)).toHaveLength(15);
-    expect(fleetPlacement('jarvis')).toEqual({ tenant_id: 'Steven', container: 'claw', runtime_user: 'claw' });
-    expect(fleetPlacement('salva')).toEqual({ tenant_id: 'Isa', container: 'ws-isa', runtime_user: 'dev' });
-    // zeus orchestrates the fleet from its own container; leaving it out made it the only alias
-    // the console could never reach, however the grants file was written.
-    expect(fleetPlacement('zeus')).toEqual({ tenant_id: 'Steven', container: 'ws-zeus', runtime_user: 'dev' });
-    expect(containerCohort('zeus')).toEqual(['zeus']);
-    expect(fleetPlacement('nonexistent')).toBeUndefined();
-    // Prototype keys must never resolve to a placement.
-    expect(fleetPlacement('constructor')).toBeUndefined();
+  it('loads only enabled placements from PostgreSQL and fails on incomplete enabled rows', async () => {
+    let query = '';
+    const live = {
+      query: async (text: string) => {
+        query = text;
+        return { rows: [{ tenant_id: 'Steven', alias: 'zeus', container_name: 'ws-zeus', runtime_user: 'dev' }] };
+      },
+    } as unknown as DatabasePool;
+    await expect(loadFleetPlacements(live)).resolves.toEqual([
+      { tenant_id: 'Steven', alias: 'zeus', container: 'ws-zeus', runtime_user: 'dev' },
+    ]);
+    expect(query).toContain('WHERE enabled');
+    const broken = {
+      query: async () => ({ rows: [{ tenant_id: 'Steven', alias: 'zeus', container_name: null, runtime_user: 'dev' }] }),
+    } as unknown as DatabasePool;
+    await expect(loadFleetPlacements(broken)).rejects.toThrow(/incomplete placement/);
   });
 
-  it('groups every alias that shares a container, because a shell sees all of their homes', () => {
-    expect(containerCohort('iza')).toEqual(['atlas', 'iza', 'kratos']);
-    expect(containerCohort('atlas')).toEqual(['atlas', 'iza', 'kratos']);
-    expect(containerCohort('argos')).toEqual(['argos', 'kant']);
-    expect(containerCohort('jarvis')).toEqual(['jarvis']);
-    expect(containerCohort('nonexistent')).toEqual([]);
+  it('keys placement by tenant plus alias and groups every identity sharing a container', () => {
+    const duplicateAlias = [...PLACEMENTS,
+      { tenant_id: 'Miguel', alias: 'jarvis', container: 'other', runtime_user: 'dev' }];
+    expect(fleetPlacement(duplicateAlias, 'Steven', 'jarvis')?.container).toBe('claw');
+    expect(fleetPlacement(duplicateAlias, 'Miguel', 'jarvis')?.container).toBe('other');
+    expect(containerCohort(PLACEMENTS, 'Miguel', 'iza').map((item) => item.alias))
+      .toEqual(['atlas', 'iza', 'kratos']);
+    expect(containerCohort(PLACEMENTS, 'Steven', 'argos').map((item) => item.alias)).toEqual(['argos', 'kant']);
+    expect(containerCohort(PLACEMENTS, 'Steven', 'jarvis').map((item) => item.alias)).toEqual(['jarvis']);
+    expect(containerCohort(PLACEMENTS, 'Steven', 'nonexistent')).toEqual([]);
   });
 });
 
@@ -219,8 +239,9 @@ describe('routing authority', () => {
       'Miguel:iza': ['grp.miguel'],
       'Miguel:kratos': ['grp.miguel']
     }, ['Steven->Miguel']);
-    await expect(cohortRoutingAuthority(partial, 'Steven', 'kant', 'iza')).resolves.toMatchObject({
-      allowed: false, reason: 'target_not_routable:atlas'
+    const cohort = containerCohort(PLACEMENTS, 'Miguel', 'iza');
+    await expect(cohortRoutingAuthority(partial, 'Steven', 'kant', cohort)).resolves.toMatchObject({
+      allowed: false, reason: 'target_not_routable:Miguel:atlas'
     });
     const { pool: complete } = pool({
       'Steven:kant': ['grp.steven'],
@@ -228,7 +249,7 @@ describe('routing authority', () => {
       'Miguel:atlas': ['grp.miguel'],
       'Miguel:kratos': ['grp.miguel']
     }, ['Steven->Miguel']);
-    await expect(cohortRoutingAuthority(complete, 'Steven', 'kant', 'iza')).resolves.toMatchObject({
+    await expect(cohortRoutingAuthority(complete, 'Steven', 'kant', cohort)).resolves.toMatchObject({
       allowed: true, source_room_ids: ['grp.steven']
     });
   });
@@ -252,7 +273,7 @@ describe('grants file', () => {
     const store = new GrantStore(join(directory, 'missing.json'), (message) => warnings.push(message));
     expect(await store.grants(1_000)).toEqual([]);
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_000)).toBe(false);
-    expect(await store.allowsCohort('steven', 'jarvis', 'shell', 5_000)).toBe(false);
+    expect(await store.allowsCohort('steven', containerCohort(PLACEMENTS, 'Steven', 'jarvis'), 'shell', 5_000)).toBe(false);
     expect(await store.grants(30_000)).toEqual([]);
     expect(warnings).toHaveLength(1);
     expect(await store.grants(120_000)).toEqual([]);
@@ -300,14 +321,15 @@ describe('grants file', () => {
     }));
     const store = new GrantStore(path);
     expect(await store.allows('steven', 'Miguel', 'iza', 'shell', 1_000)).toBe(true);
-    expect(await store.allowsCohort('steven', 'iza', 'shell', 1_000)).toBe(false);
+    const cohort = containerCohort(PLACEMENTS, 'Miguel', 'iza');
+    expect(await store.allowsCohort('steven', cohort, 'shell', 1_000)).toBe(false);
     await writeFile(path, JSON.stringify({
       version: 1,
       grants: ['iza', 'atlas', 'kratos'].map((alias) => ({
         operator: '*', tenant_id: 'Miguel', alias, modes: ['shell']
       }))
     }));
-    expect(await store.allowsCohort('steven', 'iza', 'shell', 10_000)).toBe(true);
+    expect(await store.allowsCohort('steven', cohort, 'shell', 10_000)).toBe(true);
   });
 });
 

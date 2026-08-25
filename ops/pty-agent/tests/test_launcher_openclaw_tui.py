@@ -24,7 +24,8 @@ sin modo `harness` (que es como esta hoy). En concreto:
   * La version instalada tiene que tener el subcomando `tui` y aceptar `--session`. Se le pregunta
     al binario, no a la memoria: openclaw se actualiza solo y el dia que cambie el flag, esto deja
     de anunciar la TUI en vez de anunciar una pantalla vacia.
-  * Tiene que haber una sesion. Sin conversacion no hay nada que mirar.
+  * La sesion NO se elige al arrancar: el bundle lleva el state directory confiable y el agente
+    resuelve su pointer durable en cada OPEN.
 
 Cada caso positivo va con su CONTROL NEGATIVO, porque el fallo caro aca no es quedarse sin TUI:
 es ANUNCIAR una que abre en negro. Eso manda al operador a mirar una pantalla vacia y a creer que
@@ -52,17 +53,18 @@ docker_control() { "$FAKE_DOCKER" "$@"; }
 alias_name=jarvis
 container_id=deadbeef
 container_home=/home/claw
+state_directory=/home/claw/.openclaw/cauce-v3/jarvis
+harness=openclaw
 runtime_uid=1000
 runtime_gid=1000
 OPENCLAW_ENTRY=${CAUCE_PTY_OPENCLAW_ENTRY:-/usr/lib/node_modules/openclaw/dist/index.js}
-OPENCLAW_SESSIONS_DIR=${CAUCE_PTY_OPENCLAW_SESSIONS_DIR:-.openclaw/agents/main/sessions}
+OPENCLAW_HISTORY_LIMIT=200
 """
 
 EPILOGUE = r"""
 OPENCLAW_NODE_FOUND=''
-OPENCLAW_SESSION_FOUND=''
 if derive_openclaw_tui_command; then
-  printf 'DERIVED %s %s\n' "$OPENCLAW_NODE_FOUND" "$OPENCLAW_SESSION_FOUND"
+  printf 'DERIVED %s\n' "$OPENCLAW_NODE_FOUND"
 else
   printf 'NO_TUI\n'
 fi
@@ -83,9 +85,8 @@ def _fake_docker(
     node_path: str | None = "/usr/bin/node",
     entry_present: bool = True,
     tui_help: str | None = "Usage: openclaw tui [--session <key>] [--history-limit <n>]",
-    newest_session: str | None = "/home/claw/.openclaw/agents/main/sessions/conv-7ab3.jsonl",
 ) -> pathlib.Path:
-    """Un `docker` que sabe contestar exactamente las cuatro sondas de la derivacion."""
+    """Un `docker` que sabe contestar exactamente las tres sondas de capacidad."""
     script = tmp / "docker"
     body = ["#!/usr/bin/env bash", 'args="$*"']
 
@@ -99,13 +100,6 @@ def _fake_docker(
 
     body += ['if [[ $args == *"tui --help"* ]]; then']
     body += ["  exit 1"] if tui_help is None else [f"  printf '%s\\n' {json.dumps(tui_help)}", "  exit 0"]
-    body += ["fi"]
-
-    body += ['if [[ $args == *"ls -1t"* ]]; then']
-    if newest_session is None:
-        body += ["  printf '\\n'", "  exit 0"]
-    else:
-        body += [f"  printf '{newest_session}\\n'", "  exit 0"]
     body += ["fi"]
 
     body += ["exit 97"]
@@ -130,8 +124,8 @@ class DeriveOpenClawTuiTest(unittest.TestCase):
             self.assertEqual(done.returncode, 0, done.stderr)
             return done.stdout.strip()
 
-    def test_a_live_openclaw_with_a_session_yields_that_session(self) -> None:
-        self.assertEqual(self._run(), "DERIVED /usr/bin/node conv-7ab3")
+    def test_a_live_openclaw_yields_capability_without_freezing_a_session(self) -> None:
+        self.assertEqual(self._run(), "DERIVED /usr/bin/node")
 
     def test_control_negativo_sin_node_no_hay_tui(self) -> None:
         self.assertEqual(self._run(node_path=None), "NO_TUI")
@@ -155,29 +149,19 @@ class DeriveOpenClawTuiTest(unittest.TestCase):
             "NO_TUI",
         )
 
-    def test_control_negativo_sin_ninguna_sesion_no_hay_nada_que_mirar(self) -> None:
-        self.assertEqual(self._run(newest_session=None), "NO_TUI")
-
-    def test_control_negativo_un_nombre_de_sesion_hostil_se_rechaza(self) -> None:
-        # El nombre entra en un argv. Un fichero llamado `; rm -rf /` no puede convertirse en argumento.
-        self.assertEqual(
-            self._run(newest_session="/home/claw/.openclaw/agents/main/sessions/a;rm -rf /.jsonl"),
-            "NO_TUI",
-        )
-
-
 class DerivedOpenClawArgvTest(unittest.TestCase):
-    """El argv derivado tiene que ser JSON valido y nombrar la sesion medida."""
+    """El bundle lleva un resolver, nunca el native id congelado."""
 
-    def test_the_launcher_builds_the_native_tui_invocation(self) -> None:
+    def test_the_launcher_builds_a_dynamic_resolver_without_a_session_key(self) -> None:
         text = LAUNCHER.read_text(encoding="utf-8")
-        start = text.index("harness_command=$(CAUCE_OPENCLAW_NODE=")
+        start = text.index("openclaw_tui=$(CAUCE_OPENCLAW_NODE=")
         snippet = text[start:text.index("|| die", start)]
-        self.assertIn('"tui"', snippet)
-        self.assertIn('"--session"', snippet)
+        self.assertIn('"state_directory"', snippet)
+        self.assertNotIn("CAUCE_OPENCLAW_SESSION", snippet)
+        self.assertNotIn("mtime", snippet)
 
         one_liner = snippet[snippet.index("import json"):]
-        one_liner = one_liner[:one_liner.index("]))") + len("]))")]
+        one_liner = one_liner[:one_liner.index("}))") + len("}))")]
         done = subprocess.run(
             ["python3", "-c", one_liner],
             capture_output=True,
@@ -185,7 +169,7 @@ class DerivedOpenClawArgvTest(unittest.TestCase):
             env={
                 "CAUCE_OPENCLAW_NODE": "/usr/bin/node",
                 "CAUCE_OPENCLAW_ENTRY": "/usr/lib/node_modules/openclaw/dist/index.js",
-                "CAUCE_OPENCLAW_SESSION": "conv-7ab3",
+                "CAUCE_OPENCLAW_STATE": "/home/claw/.openclaw/cauce-v3/jarvis",
                 "CAUCE_OPENCLAW_HISTORY": "200",
                 "PATH": "/usr/bin:/bin",
             },
@@ -194,16 +178,19 @@ class DerivedOpenClawArgvTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(
             json.loads(done.stdout),
-            [
-                "/usr/bin/node",
-                "/usr/lib/node_modules/openclaw/dist/index.js",
-                "tui",
-                "--session",
-                "conv-7ab3",
-                "--history-limit",
-                "200",
-            ],
+            {
+                "node": "/usr/bin/node",
+                "entry": "/usr/lib/node_modules/openclaw/dist/index.js",
+                "state_directory": "/home/claw/.openclaw/cauce-v3/jarvis",
+                "history_limit": 200,
+            },
         )
+
+    def test_launcher_logs_never_print_a_native_session_key(self) -> None:
+        text = LAUNCHER.read_text(encoding="utf-8")
+        publish = text[text.index("publish_bundle() {"):text.index("start_agent() {")]
+        self.assertNotIn("OPENCLAW_SESSION_FOUND", publish)
+        self.assertNotIn("openclaw tui alias=%s session=%s", publish)
 
 
 class TmuxStillWinsTest(unittest.TestCase):

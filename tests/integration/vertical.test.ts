@@ -46,6 +46,47 @@ function harness(tenant_id: 'Steven' | 'Isa' | 'Jhon' | 'Pablo' | 'Miguel', alia
   return client;
 }
 
+async function waitForHarnessLeaseRelease(clients: FakeHarness[]): Promise<void> {
+  if (clients.length === 0) return;
+  const identities = [...new Map(clients.map((client) => [
+    `${client.identity.tenant_id}\u0000${client.identity.alias}\u0000${client.identity.instance_id}`,
+    client.identity
+  ])).values()];
+  const predicates = identities.map((_, index) => {
+    const offset = index * 3;
+    return `(tenant_id=$${offset + 1} AND alias=$${offset + 2} AND instance_id=$${offset + 3})`;
+  });
+  const parameters = identities.flatMap(({ tenant_id, alias, instance_id }) => [
+    tenant_id, alias, instance_id
+  ]);
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const live = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM connection_leases
+       WHERE lease_until>now() AND (${predicates.join(' OR ')})`,
+      parameters
+    );
+    if (Number(live.rows[0]?.count ?? 0) === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('gateway did not release the closed harness lease within 5000ms');
+}
+
+async function assertAndElapseTimeoutBackoff(deliveryId: string): Promise<void> {
+  const retry = await pool.query<{ status: string; delay_ms: string }>(
+    `SELECT status,
+            (EXTRACT(EPOCH FROM (available_at-now()))*1000)::bigint::text AS delay_ms
+       FROM deliveries WHERE id=$1`,
+    [deliveryId]
+  );
+  expect(retry.rows[0]?.status).toBe('retry');
+  expect(Number(retry.rows[0]?.delay_ms)).toBeGreaterThan(25_000);
+  expect(Number(retry.rows[0]?.delay_ms)).toBeLessThanOrEqual(30_000);
+  // The backoff itself is pinned above. Elapse only that clock so the vertical path can verify
+  // fencing and redelivery without turning two deterministic integration cases into 30 s sleeps.
+  await pool.query('UPDATE deliveries SET available_at=now() WHERE id=$1', [deliveryId]);
+}
+
 function message(overrides: Partial<TestPublish> = {}): TestPublish {
   return {
     version: '3.0', request_id: randomUUID(), trace_id: `trace-${randomUUID()}`,
@@ -103,7 +144,12 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await Promise.all(harnesses.splice(0).map(async (client) => client.close()));
+  const closing = harnesses.splice(0);
+  await Promise.all(closing.map(async (client) => client.close()));
+  // The WebSocket close handshake completes on the client before the gateway's asynchronous
+  // releaseLease transaction commits. Waiting for that exact durable fence prevents the next
+  // test's catalog TRUNCATE from deadlocking with the previous socket cleanup.
+  await waitForHarnessLeaseRelease(closing);
 });
 
 afterAll(async () => {
@@ -209,7 +255,8 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
       attempt: claimed[0]!.attempt, claim_token: claimed[0]!.claim_token, retryable: false
     })).rejects.toMatchObject({ code: 'fenced' });
 
-    await repository.retryStaleDeliveries(0);
+    expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
+    await assertAndElapseTimeoutBackoff(claimed[0]!.delivery_id);
     const reclaimed = await repository.claimDeliveries('Jhon', 'hegel', 'epoch-b', secondLease.epoch!, 1);
     expect(reclaimed[0]).toMatchObject({ delivery_id: claimed[0]!.delivery_id, attempt: 2, epoch: secondLease.epoch });
   });
@@ -220,7 +267,9 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     await publish(message());
     const first = await consumer.nextDelivery();
     consumer.terminate();
+    await waitForHarnessLeaseRelease([consumer]);
     expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
+    await assertAndElapseTimeoutBackoff(first.delivery_id);
 
     const secondEpoch = await consumer.connect(wsUrl);
     expect(secondEpoch).toBeGreaterThan(firstEpoch);
@@ -529,7 +578,7 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     )).rowCount).toBe(1);
   });
 
-  it('rejects an invented ambiguous suffix and keeps the failure out of the DLQ', async () => {
+  it('rejects an invented ambiguous suffix while preserving ordinary failure replay evidence', async () => {
     const consumer = harness('Isa', 'salva', 'ordinary-failure-consumer');
     await consumer.connect(wsUrl);
     await publish(message());
@@ -539,10 +588,27 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
       error: 'deterministic execution failure',
       error_code: 'CLIENT_INVENTED_AMBIGUOUS'
     })).toMatchObject({ status: 'failed', applied: true });
-    expect((await pool.query(
-      `SELECT 1 FROM dead_letters WHERE delivery_id=$1`,
+    expect((await pool.query<{
+      reason: string; attempts: number; payload: Record<string, unknown>;
+    }>(
+      `SELECT reason,attempts,payload FROM dead_letters WHERE delivery_id=$1`,
       [delivery.delivery_id]
-    )).rowCount).toBe(0);
+    )).rows).toEqual([{
+      reason: 'deterministic execution failure',
+      attempts: 1,
+      payload: { text: 'vertical slice' }
+    }]);
+    const audit = (await pool.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM audit_events
+       WHERE action='delivery.ack' AND delivery_id=$1 ORDER BY id DESC LIMIT 1`,
+      [delivery.delivery_id]
+    )).rows[0]?.metadata;
+    expect(audit).toMatchObject({
+      resulting_status: 'failed',
+      error_code: 'CLIENT_INVENTED_AMBIGUOUS'
+    });
+    expect(audit?.ambiguous_execution).toBeUndefined();
+    expect(audit?.ambiguous_without_execution).toBeUndefined();
   });
 
   it('claims PostgreSQL jobs with bounded interactive/batch lane fairness', async () => {

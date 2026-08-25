@@ -50,8 +50,14 @@ const health = createServer(async (request, response) => {
   response.setHeader('content-type', 'application/json');
   response.setHeader('cache-control', 'no-store');
   if (request.url === '/health/live') {
-    response.statusCode = 200;
-    response.end(JSON.stringify({ status: 'live' }));
+    const progress = metrics.progress(config.healthStaleMs);
+    response.statusCode = progress.live ? 200 : 503;
+    response.end(JSON.stringify({
+      status: progress.live ? 'live' : 'not_live',
+      reason: progress.reason,
+      ticks: progress.ticks,
+      tick_age_ms: progress.tickAgeMs ?? null,
+    }));
     return;
   }
   if (request.url === '/health/ready') {
@@ -64,13 +70,30 @@ const health = createServer(async (request, response) => {
         );
         if (encrypted.rows[0]?.ssl !== true) throw new Error('postgres connection is not encrypted');
       }
+      const progress = metrics.progress(config.healthStaleMs);
+      if (!progress.ready) {
+        const reason = progress.reason === 'ready' ? 'starting' : progress.reason;
+        throw new DispatcherNotReadyError(reason);
+      }
       response.statusCode = 200;
-      response.end(JSON.stringify({ status: 'ready', last_error: lastError ?? null }));
+      response.end(JSON.stringify({
+        status: 'ready',
+        last_error: lastError ?? null,
+        ticks: progress.ticks,
+        tick_age_ms: progress.tickAgeMs ?? null,
+        successful_ticks: progress.successfulTicks,
+        failed_ticks: progress.failedTicks,
+        fenced_ticks: progress.fencedTicks,
+      }));
     } catch (error) {
       response.statusCode = 503;
       response.end(JSON.stringify({
         status: 'not_ready',
-        reason: error instanceof Error && /ssl|tls|encrypt/i.test(error.message) ? 'postgres_tls_required' : 'postgres_unavailable',
+        reason: error instanceof DispatcherNotReadyError
+          ? error.reason
+          : error instanceof Error && /ssl|tls|encrypt/i.test(error.message)
+            ? 'postgres_tls_required'
+            : 'postgres_unavailable',
       }));
     }
     return;
@@ -110,4 +133,11 @@ function postgresTlsPolicy(connectionString: string, environment: string | undef
     return { ok: false, reason: 'production PostgreSQL requires sslmode=verify-full' };
   }
   return { ok: true };
+}
+
+class DispatcherNotReadyError extends Error {
+  constructor(readonly reason: 'starting' | 'loop_stale' | 'tick_error' | 'fenced') {
+    super(`dispatcher is not ready: ${reason}`);
+    this.name = 'DispatcherNotReadyError';
+  }
 }

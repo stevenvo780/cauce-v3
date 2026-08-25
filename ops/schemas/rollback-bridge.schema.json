@@ -1,0 +1,452 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/rollback-bridge.schema.json",
+  "title": "Cauce V3 schema-029 rollback bridge evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "suite", "evidenceClass", "mechanism", "generatedAt", "validUntil",
+    "sourceDigest", "sourceDigestDomain", "operationsDigest", "dockerfileSha256",
+    "sourceRevision", "runtime", "candidateRuntime", "database", "digestContract",
+    "fleet", "lifecycle", "shims", "tests", "summary"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "suite": { "const": "cauce-v3-rollback-bridge" },
+    "evidenceClass": { "const": "rollback-bridge" },
+    "mechanism": { "const": "isolated-restored-production-backup-runtime-image-cycle" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "validUntil": { "type": "string", "format": "date-time" },
+    "sourceDigest": { "$ref": "#/$defs/digest" },
+    "sourceDigestDomain": { "const": "runtime" },
+    "operationsDigest": { "$ref": "#/$defs/digest" },
+    "dockerfileSha256": { "$ref": "#/$defs/digest" },
+    "sourceRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "originBaseCommit", "patchSourceCommit", "patchPath", "patchSetSha256",
+        "resultingBridgeTree", "worktreeStatus", "buildContext"
+      ],
+      "properties": {
+        "originBaseCommit": { "$ref": "#/$defs/gitObject" },
+        "patchSourceCommit": { "$ref": "#/$defs/gitObject" },
+        "patchPath": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+\\.patch$"
+        },
+        "patchSetSha256": { "$ref": "#/$defs/digest" },
+        "resultingBridgeTree": { "$ref": "#/$defs/gitObject" },
+        "worktreeStatus": { "const": "clean" },
+        "buildContext": { "const": "git-archive" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bridgeKind", "repositoryDigest", "imageId", "sourceDigest", "sourceDigestDomain"],
+      "properties": {
+        "bridgeKind": { "const": "origin-main-plus-schema029-shims" },
+        "repositoryDigest": { "$ref": "#/$defs/imageReference" },
+        "imageId": { "$ref": "#/$defs/digest" },
+        "sourceDigest": { "$ref": "#/$defs/digest" },
+        "sourceDigestDomain": { "const": "runtime" }
+      }
+    },
+    "candidateRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryDigest", "imageId", "sourceDigest", "sourceDigestDomain"],
+      "properties": {
+        "repositoryDigest": { "$ref": "#/$defs/imageReference" },
+        "imageId": { "$ref": "#/$defs/digest" },
+        "sourceDigest": { "$ref": "#/$defs/digest" },
+        "sourceDigestDomain": { "const": "runtime" }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "restoreEvidenceSha256", "restoredBackupSha256", "postgresMajor", "schemaLatest",
+        "isolated", "network", "egress", "productionConnected", "snapshots"
+      ],
+      "properties": {
+        "restoreEvidenceSha256": { "$ref": "#/$defs/digest" },
+        "restoredBackupSha256": { "$ref": "#/$defs/digest" },
+        "postgresMajor": { "const": 16 },
+        "schemaLatest": { "const": "029_reconcile_declared_fleet.sql" },
+        "isolated": { "const": true },
+        "network": { "const": "private-test-network" },
+        "egress": { "const": "disabled" },
+        "productionConnected": { "const": false },
+        "snapshots": {
+          "type": "array",
+          "prefixItems": [
+            { "$ref": "#/$defs/candidateAfterMigrate" },
+            { "$ref": "#/$defs/bridgeAfterTests" },
+            { "$ref": "#/$defs/candidateAfterReturn" },
+            { "$ref": "#/$defs/candidateBeforeCompensation" },
+            { "$ref": "#/$defs/candidateAfterCompensation" }
+          ],
+          "items": false,
+          "minItems": 5,
+          "maxItems": 5
+        }
+      }
+    },
+    "digestContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "encoding", "migrationLedger", "reconciliation", "leases"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "encoding": { "const": "canonical-json-utf8" },
+        "migrationLedger": {
+          "const": "schema_migrations(version,applied_at)|schema_migration_ledger(version,source_sha256,source_origin,recorded_at)|schema_migration_verifications(version,bundled_source_sha256,observed_schema_sha256,verification_method,source_origin,verified_at);all-rows;tables-listed-order;rows-primary-key-order"
+        },
+        "reconciliation": {
+          "const": "fleet_reconciliation_runs(id,migration_version,active,applied_at,rolled_back_at)|fleet_reconciliation_history(run_id,entity,tenant_id,alias,room_id,previous,applied,captured_at);all-rows;tables-listed-order;rows-primary-key-order"
+        },
+        "leases": {
+          "const": "connection_leases(tenant_id,alias,instance_id,epoch,capabilities,lease_until,last_heartbeat_at,connected_at);capabilities-jsonb;all-rows;rows-tenant_id-alias-order"
+        }
+      }
+    },
+    "fleet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabledAgentCount", "enabledAgents", "enabledMembershipCount", "enabledMemberships",
+        "disabledHistoricalAgentCount", "disabledHistoricalAgents", "systemPrincipalAgentRowCount",
+        "gateProbeMembershipCount", "quotaCollectorEnabledMembershipCount", "agentNotifyRole",
+        "activeReconciliationRunCount", "activeReconciliationMigration"
+      ],
+      "properties": {
+        "enabledAgentCount": { "const": 15 },
+        "enabledAgents": { "$ref": "#/$defs/enabledAgents" },
+        "enabledMembershipCount": { "const": 16 },
+        "enabledMemberships": { "$ref": "#/$defs/enabledMemberships" },
+        "disabledHistoricalAgentCount": { "const": 3 },
+        "disabledHistoricalAgents": { "$ref": "#/$defs/disabledHistoricalAgents" },
+        "systemPrincipalAgentRowCount": { "const": 0 },
+        "gateProbeMembershipCount": { "const": 0 },
+        "quotaCollectorEnabledMembershipCount": { "const": 1 },
+        "agentNotifyRole": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowRoute", "allowRead", "allowControl", "allowNotify"],
+          "properties": {
+            "allowRoute": { "const": true },
+            "allowRead": { "const": true },
+            "allowControl": { "const": false },
+            "allowNotify": { "const": true }
+          }
+        },
+        "activeReconciliationRunCount": { "const": 1 },
+        "activeReconciliationMigration": { "const": "029_reconcile_declared_fleet.sql" }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidateInitial", "bridge", "candidateReturn", "compensation"],
+      "properties": {
+        "candidateInitial": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["preMigrationIntegrity", "migratedThrough", "postMigrationIntegrity"],
+          "properties": {
+            "preMigrationIntegrity": { "const": "passed" },
+            "migratedThrough": { "const": "029_reconcile_declared_fleet.sql" },
+            "postMigrationIntegrity": { "const": "passed" }
+          }
+        },
+        "bridge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allWritersDrained", "migratorResult", "centralServicesOnly", "disabledExternalComponents", "health"],
+          "properties": {
+            "allWritersDrained": { "const": true },
+            "migratorResult": { "const": "no-op" },
+            "centralServicesOnly": { "const": true },
+            "disabledExternalComponents": {
+              "type": "array",
+              "prefixItems": [
+                { "const": "adapters" },
+                { "const": "models" },
+                { "const": "telegram" }
+              ],
+              "items": false,
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "health": { "const": "passed" }
+          }
+        },
+        "candidateReturn": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bridgeDrained", "migratorResult", "health", "modelFreeRoundtrip", "status"],
+          "properties": {
+            "bridgeDrained": { "const": true },
+            "migratorResult": { "const": "no-op" },
+            "health": { "const": "passed" },
+            "modelFreeRoundtrip": { "const": "publish-claim-ack" },
+            "status": { "const": "passed" }
+          }
+        },
+        "compensation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rollbackAction", "failureInjection", "failureObserved", "selectorCasRestored",
+            "candidateImageRestored", "servicesRestored", "databaseDigestsUnchanged", "status"
+          ],
+          "properties": {
+            "rollbackAction": { "const": "release" },
+            "failureInjection": { "const": "post-selector-swap-health" },
+            "failureObserved": { "const": true },
+            "selectorCasRestored": { "const": true },
+            "candidateImageRestored": { "const": true },
+            "servicesRestored": { "const": true },
+            "databaseDigestsUnchanged": { "const": true },
+            "status": { "const": "passed" }
+          }
+        }
+      }
+    },
+    "shims": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "profile-role-writes-frozen" },
+        { "const": "unrelated-agent-update-omits-role-brief" },
+        { "const": "system-principals-filtered" },
+        { "const": "gate-probe-explicitly-rejected" }
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "tests": {
+      "type": "array",
+      "prefixItems": [
+        { "$ref": "#/$defs/profileWritesFrozen" },
+        { "$ref": "#/$defs/unrelatedUpdate" },
+        { "$ref": "#/$defs/principalsFiltered" },
+        { "$ref": "#/$defs/gateProbeRejected" },
+        { "$ref": "#/$defs/basicCompatibility" },
+        { "$ref": "#/$defs/fleetExact" },
+        { "$ref": "#/$defs/agentNotifyExact" },
+        { "$ref": "#/$defs/migrationNoop" },
+        { "$ref": "#/$defs/leasesPreserved" },
+        { "$ref": "#/$defs/candidateReturn" },
+        { "$ref": "#/$defs/compensation" }
+      ],
+      "items": false,
+      "minItems": 11,
+      "maxItems": 11
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tests", "passed", "failed", "skipped", "criticalSkipped"],
+      "properties": {
+        "tests": { "const": 11 },
+        "passed": { "const": 11 },
+        "failed": { "const": 0 },
+        "skipped": { "const": 0 },
+        "criticalSkipped": { "const": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "gitObject": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" },
+    "imageReference": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$"
+    },
+    "stateSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage", "migrationLedgerSha256", "reconciliationSha256", "profileContentSha256",
+        "profileRevisionSha256", "leasesSha256"
+      ],
+      "properties": {
+        "stage": { "type": "string" },
+        "migrationLedgerSha256": { "$ref": "#/$defs/digest" },
+        "reconciliationSha256": { "$ref": "#/$defs/digest" },
+        "profileContentSha256": { "$ref": "#/$defs/digest" },
+        "profileRevisionSha256": { "$ref": "#/$defs/digest" },
+        "leasesSha256": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "candidateAfterMigrate": {
+      "allOf": [
+        { "$ref": "#/$defs/stateSnapshot" },
+        { "properties": { "stage": { "const": "candidate-after-migrate-029" } } }
+      ]
+    },
+    "bridgeAfterTests": {
+      "allOf": [
+        { "$ref": "#/$defs/stateSnapshot" },
+        { "properties": { "stage": { "const": "bridge-after-noop-migrator-and-tests" } } }
+      ]
+    },
+    "candidateAfterReturn": {
+      "allOf": [
+        { "$ref": "#/$defs/stateSnapshot" },
+        { "properties": { "stage": { "const": "candidate-after-return-noop-migrator-and-model-free-ack" } } }
+      ]
+    },
+    "candidateBeforeCompensation": {
+      "allOf": [
+        { "$ref": "#/$defs/stateSnapshot" },
+        { "properties": { "stage": { "const": "candidate-before-injected-rollback-failure" } } }
+      ]
+    },
+    "candidateAfterCompensation": {
+      "allOf": [
+        { "$ref": "#/$defs/stateSnapshot" },
+        { "properties": { "stage": { "const": "candidate-after-rollback-compensation" } } }
+      ]
+    },
+    "enabledAgents": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "Isa:salva" },
+        { "const": "Jhon:hegel" },
+        { "const": "Miguel:atlas" },
+        { "const": "Miguel:iza" },
+        { "const": "Miguel:janus" },
+        { "const": "Miguel:kratos" },
+        { "const": "Pablo:dedalo" },
+        { "const": "Pablo:midas" },
+        { "const": "Pablo:seneca" },
+        { "const": "Pablo:vulcano" },
+        { "const": "Steven:argos" },
+        { "const": "Steven:jarvis" },
+        { "const": "Steven:kant" },
+        { "const": "Steven:socrates" },
+        { "const": "Steven:zeus" }
+      ],
+      "items": false,
+      "minItems": 15,
+      "maxItems": 15
+    },
+    "enabledMemberships": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "Isa:salva:grp.isa:agent" },
+        { "const": "Jhon:hegel:grp.jhon:agent" },
+        { "const": "Miguel:atlas:grp.miguel:agent" },
+        { "const": "Miguel:iza:grp.miguel:agent" },
+        { "const": "Miguel:janus:grp.miguel:operator" },
+        { "const": "Miguel:kratos:grp.miguel:agent" },
+        { "const": "Pablo:dedalo:grp.pablo:agent" },
+        { "const": "Pablo:midas:grp.pablo:agent" },
+        { "const": "Pablo:seneca:grp.pablo:agent" },
+        { "const": "Pablo:vulcano:grp.pablo:agent" },
+        { "const": "Steven:argos:grp.steven:agent" },
+        { "const": "Steven:jarvis:grp.steven:agent_notify" },
+        { "const": "Steven:kant:grp.steven:operator" },
+        { "const": "Steven:quota-collector:grp.steven:operator" },
+        { "const": "Steven:socrates:grp.steven:agent_notify" },
+        { "const": "Steven:zeus:grp.steven:agent_notify" }
+      ],
+      "items": false,
+      "minItems": 16,
+      "maxItems": 16
+    },
+    "disabledHistoricalAgents": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "Jhon:heraclito" },
+        { "const": "Jhon:tales" },
+        { "const": "Miguel:gaia" }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "passedTestBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mechanism", "status", "critical"],
+      "properties": {
+        "name": { "type": "string" },
+        "mechanism": { "type": "string" },
+        "status": { "const": "passed" },
+        "critical": { "const": true }
+      }
+    },
+    "profileWritesFrozen": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "profile-role-writes-frozen" }, "mechanism": { "const": "mutation-rejected" } } }
+      ]
+    },
+    "unrelatedUpdate": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "unrelated-agent-update-preserves-role" }, "mechanism": { "const": "database-state-comparison" } } }
+      ]
+    },
+    "principalsFiltered": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "system-principals-filtered" }, "mechanism": { "const": "read-model-contract" } } }
+      ]
+    },
+    "gateProbeRejected": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "gate-probe-explicitly-rejected" }, "mechanism": { "const": "protocol-negative" } } }
+      ]
+    },
+    "basicCompatibility": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "basic-read-delivery-compatible" }, "mechanism": { "const": "runtime-integration" } } }
+      ]
+    },
+    "fleetExact": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "schema029-fleet-exact" }, "mechanism": { "const": "database-exact-set" } } }
+      ]
+    },
+    "agentNotifyExact": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "agent-notify-role-exact" }, "mechanism": { "const": "application-role-policy" } } }
+      ]
+    },
+    "migrationNoop": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "migration-ledger-and-reconciliation-noop" }, "mechanism": { "const": "canonical-state-digest" } } }
+      ]
+    },
+    "leasesPreserved": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "connection-leases-preserved" }, "mechanism": { "const": "canonical-state-digest" } } }
+      ]
+    },
+    "candidateReturn": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "candidate-return-model-free-roundtrip" }, "mechanism": { "const": "publish-claim-ack" } } }
+      ]
+    },
+    "compensation": {
+      "allOf": [
+        { "$ref": "#/$defs/passedTestBase" },
+        { "properties": { "name": { "const": "rollback-health-failure-compensates" }, "mechanism": { "const": "rollback-script-injected-failure" } } }
+      ]
+    }
+  }
+}

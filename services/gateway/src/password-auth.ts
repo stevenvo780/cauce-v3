@@ -352,13 +352,13 @@ export class PasswordAuthProvider implements AuthProvider {
       // La pieza que arregla la auditoría: de acá sale el operador, no de una cabecera que hoy
       // pone el proxy con el valor `steven` fijo para todo el mundo.
       operator_id: user.email,
-      origin: {
-        adapter: 'console',
-        channel: 'console',
-        conversation_id: `console:${claims.sid}`,
-        relay: [],
-        metadata: { auth: 'console-password', user_id: user.id }
-      }
+      /*
+       * Una sesión web NO es un transporte de retorno. La consola relee el mensaje y sus
+       * entregas desde PostgreSQL; no existe (ni debe existir) un bridge `adapter=console` que
+       * reciba una respuesta. Fabricar ese origin hacía que cada respuesta terminal dejara un
+       * `origin_relay` durable que ningún worker podía reclamar. La identidad humana ya queda
+       * trazada por operator_id y session_id, sin convertirla en una ruta de entrega.
+       */
     });
   }
 

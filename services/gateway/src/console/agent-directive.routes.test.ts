@@ -68,6 +68,7 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
       bytes: 42,
       truncated: false,
       modified_at: '2026-08-24T10:00:00Z',
+      sha: 'a'.repeat(64),
     };
     const memoryIndex: MemoryDirectoryListing = {
       root: '/home/dev/.claude/projects',
@@ -91,6 +92,7 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
               bytes: 14,
               truncated: false,
               modified_at: '2026-08-23T10:00:00Z',
+              sha: 'b'.repeat(64),
             },
             '/home/dev/.claude.json': { error: 'permission_denied', reason: 'no se sirve' },
           },
@@ -186,6 +188,7 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
               bytes: gran_contenido.length, // Pero el tamaño real es 300 KB
               truncated: true,
               modified_at: '2026-08-24T10:00:00Z',
+              sha: 'c'.repeat(64),
             },
           },
           memory: { root: '/home/dev/.openclaw/memory', total: 0, truncated: false, entries: [] },

@@ -15,9 +15,23 @@ interface HardenedOutboxStore {
   ): Promise<'retry' | 'dead' | 'fenced'>;
 }
 
+interface AppliedOutboxAck {
+  readonly status: 'sent' | 'failed' | 'dead';
+  readonly applied: boolean;
+}
+
 function record(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid origin relay lease');
   return value as Record<string, unknown>;
+}
+
+function appliedAck(value: unknown): AppliedOutboxAck {
+  const result = record(value);
+  if ((result.status !== 'sent' && result.status !== 'failed' && result.status !== 'dead') ||
+      typeof result.applied !== 'boolean') {
+    throw new Error('origin relay outbox ACK returned an invalid result');
+  }
+  return result as unknown as AppliedOutboxAck;
 }
 
 function requiredString(value: unknown, name: string, max = 512): string {
@@ -93,7 +107,11 @@ export class StoreOriginRelayRepository implements OriginRelayRepository {
     }
     try {
       if (this.store.ackOutbox) {
-        await this.store.ackOutbox(acknowledgement);
+        const result = appliedAck(await this.store.ackOutbox(acknowledgement));
+        const expected = acknowledgement.status === 'retry' ? 'failed' : acknowledgement.status;
+        if (!result.applied || result.status !== expected) {
+          throw new Error('origin relay outbox ACK was fenced');
+        }
         return;
       }
       if (acknowledgement.status === 'sent') {

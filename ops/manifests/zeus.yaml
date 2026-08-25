@@ -1,0 +1,20 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: zeus
+spec:
+  tenant: Steven
+  room: grp.steven
+  alias: zeus
+  harness: claude
+  profile: {seedOnConnect: true, configScope: alias}
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_ZEUS_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_ZEUS_TOKEN_PATH
+    clientCertificate: CAUCE_ZEUS_CERT_PATH
+    clientKey: CAUCE_ZEUS_KEY_PATH
+    certificateAuthority: CAUCE_ZEUS_CA_PATH
+  process:
+    executablePathEnv: CAUCE_ZEUS_EXEC_PATH
+  stateDirectory: /var/lib/cauce-v3/aliases/zeus

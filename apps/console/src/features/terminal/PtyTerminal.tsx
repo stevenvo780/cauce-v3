@@ -125,7 +125,9 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
       ) : null}
       {finished ? (
         <p className="pty-reconnect-note">
-          El ticket ya se consumió. La consola no reconecta sola: abrir otro canal exige una sesión nueva, con su motivo y su registro de auditoría.
+          La consola sólo reanuda automáticamente una interrupción de transporte mientras el relay
+          conserva el mismo PTY. Este cierre ya terminó el canal: abrir otro exige una sesión nueva
+          y una nueva auditoría.
         </p>
       ) : null}
     </div>

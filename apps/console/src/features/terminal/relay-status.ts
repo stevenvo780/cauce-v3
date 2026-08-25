@@ -72,7 +72,7 @@ export const TERMINAL_RELAY_NOT_DEPLOYED_REASON = 'El relay de terminales no est
  * le harían creer al operador que son dos problemas.
  */
 export const TERMINAL_RELAY_SIN_PERMISO_REASON =
-  'Tu cuenta no tiene permiso de control sobre esta flota: Ultimate Terminal es del dueño del bus. '
+  'Tu cuenta no tiene permiso de control sobre esta flota: la terminal de agentes es del dueño del bus. '
   + 'El relay puede estar perfectamente desplegado; lo que falta es el permiso.';
 
 /** Estados que sí prueban ausencia de upstream: no hay nadie del otro lado que conteste. */

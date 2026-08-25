@@ -10,7 +10,7 @@ trap 'rm -f "$tmp"' EXIT
 (
   cd "$dir"
   files=()
-  for file in report.json junit.xml build.json; do
+  for file in report.json junit.xml build.json pre.json post.json; do
     [[ -f "$file" ]] && files+=("$file")
   done
   ((${#files[@]} > 0)) || { printf 'no QA/build artifacts found\n' >&2; exit 1; }

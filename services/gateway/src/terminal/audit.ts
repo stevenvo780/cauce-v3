@@ -12,6 +12,7 @@ import type { DatabasePool } from '@cauce/store';
 export type TerminalAuditAction =
   | 'terminal.session.request'
   | 'terminal.session.consume'
+  | 'terminal.session.resume'
   | 'terminal.session.revoked'
   | 'terminal.session.close';
 
@@ -47,6 +48,7 @@ export interface TerminalAuditContext {
   readonly target_tenant: string;
   readonly target_alias: string;
   readonly container: string | null;
+  /** Tenant-qualified identities; bare aliases are ambiguous across tenants. */
   readonly cohort: readonly string[];
   readonly mode: string;
 }

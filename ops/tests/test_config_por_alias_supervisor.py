@@ -143,11 +143,7 @@ class TestLasDosImplementacionesCoinciden(unittest.TestCase):
                 self.assertEqual({del_shell[0]: del_shell[1]}, plan["entorno"])
 
 
-class TestElInterruptorEstaApagadoPorDefecto(unittest.TestCase):
-    """
-    El encendido es gradual y por alias. Una exportación incondicional mandaría a TODA la flota a
-    un directorio que todavía no existe, y ahí ningún alias tendría ni identidad ni MCP.
-    """
+class TestLaPoliticaDeclarativaEsFailClosed(unittest.TestCase):
 
     def test_la_exportacion_esta_condicionada_al_interruptor(self) -> None:
         texto = SUPERVISOR.read_text(encoding="utf-8")
@@ -163,11 +159,26 @@ class TestElInterruptorEstaApagadoPorDefecto(unittest.TestCase):
             self.assertIn("CONFIG[CONFIG_POR_ALIAS]", contexto,
                           "la exportación tiene que colgar del interruptor")
 
-    def test_el_interruptor_no_esta_en_ningun_env_de_ejemplo(self) -> None:
-        """Apagado por defecto también en lo que se despliega: nadie lo hereda sin pedirlo."""
-        for ejemplo in (RAIZ / "generated").rglob("*.env.example"):
-            self.assertNotIn("CONFIG_POR_ALIAS", ejemplo.read_text(encoding="utf-8"),
-                             f"{ejemplo} enciende el interruptor sin que nadie lo pida")
+    def test_los_env_generados_exigen_seed_y_aislamiento_en_contenedores_multi_alias(self) -> None:
+        inventario = json.loads((RAIZ / "container-aliases.json").read_text(encoding="utf-8"))["aliases"]
+        cantidades: dict[str, int] = {}
+        for entrada in inventario.values():
+            cantidades[entrada["container"]] = cantidades.get(entrada["container"], 0) + 1
+        for alias, entrada in inventario.items():
+            ejemplo = RAIZ / "generated" / "container-systemd" / "configs" / f"{alias}.env.example"
+            texto = ejemplo.read_text(encoding="utf-8")
+            self.assertIn("CAUCE_SEMBRAR_PERFIL=1", texto, alias)
+            multi = cantidades[entrada["container"]] > 1
+            if multi and entrada["harness"] in {"claude", "codex"}:
+                self.assertIn("CONFIG_POR_ALIAS=1", texto, alias)
+            elif entrada["harness"] in {"claude", "codex"}:
+                self.assertNotIn("CONFIG_POR_ALIAS=1", texto, alias)
+            if multi and entrada["harness"] == "hermes":
+                self.assertIn(
+                    f"HERMES_HOME={entrada['home']}/.hermes/profiles/{alias}", texto, alias,
+                )
+            if entrada["harness"] == "openclaw":
+                self.assertIn(f"OPENCLAW_WORKSPACE={entrada['workspace']}", texto, alias)
 
 
 if __name__ == "__main__":

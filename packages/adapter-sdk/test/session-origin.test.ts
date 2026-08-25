@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
-import { HarnessAdapter, fakeDefinition } from "../src/harnesses/index.js";
+import { HarnessAdapter, fakeDefinition, openClawDefinition } from "../src/harnesses/index.js";
 import { DurableStore } from "../src/sdk/durable-store.js";
 import { AdapterEngine } from "../src/sdk/engine.js";
 import type {
@@ -82,7 +82,7 @@ function telegramDelivery(id: string): Delivery {
     ...base(id),
     origin: origin(),
     authenticated_context: { session_id: "tg:bot:chat:user", channel: "telegram", origin: origin() },
-  } as Delivery;
+  };
 }
 
 /** Publicación de consola por mTLS: sin ruta de retorno, la conversación es el actor. */
@@ -90,19 +90,18 @@ function consoleDelivery(id: string): Delivery {
   return {
     ...base(id),
     authenticated_context: { session_id: "sid-de-login", channel: "console" },
-  } as Delivery;
+  };
 }
 
 /** Una entrega sin canal: no hay conversación que nombrar, y no se inventa ninguna. */
 function sinCanalDelivery(id: string): Delivery {
-  return { ...base(id) } as Delivery;
+  return { ...base(id) };
 }
 
 async function corre(nombre: string, delivery: Delivery): Promise<Record<string, unknown>> {
   const store = await storeFor(nombre);
   const events: DeliveryEvent[] = [];
-  let engine!: AdapterEngine;
-  engine = new AdapterEngine({
+  const engine = new AdapterEngine({
     store,
     harness: new HarnessAdapter({
       definition: fakeDefinition,
@@ -152,4 +151,50 @@ test("sin canal no se inventa origen: la entrada queda con la forma vieja", asyn
   const clave = Object.keys(sesiones)[0]!;
   assert.equal(clave, "fake:jarvis:alias-default");
   assert.deepEqual(Object.keys(sesiones[clave] as Record<string, unknown>).sort(), ["initialized", "native_id"]);
+});
+
+test("OpenClaw mueve el pointer estable a la conversación humana real sin colapsar sesiones", async () => {
+  const nombre = "openclaw-terminal-pointer";
+  const store = await storeFor(nombre);
+  const events: DeliveryEvent[] = [];
+  const engine = new AdapterEngine({
+    store,
+    harness: new HarnessAdapter({
+      definition: openClawDefinition,
+      runner: new OkRunner(),
+      store,
+      sessionNamespace: "jarvis",
+      fallbackSessionKey: "alias-default",
+    }),
+    publish: async (event: DeliveryEvent) => {
+      events.push(event);
+      if (event.claim_renewal === true) {
+        engine.confirmClaim(event.delivery_id, event.attempt, event.claim_token);
+      }
+    },
+    claimRenewalMs: 10_000,
+    claimWatchdogMs: 60_000,
+  });
+  await engine.activateEpoch(1);
+
+  await engine.handleDelivery(telegramDelivery("oc-tg"));
+  const pointerKey = "openclaw:jarvis:shared:jarvis";
+  const first = store.getSession(pointerKey);
+  assert.ok(first);
+  assert.deepEqual(first.origin, {
+    adapter: "telegram", channel: "telegram", conversation_id: "8981434475",
+  });
+
+  await engine.handleDelivery(consoleDelivery("oc-console"));
+  const second = store.getSession(pointerKey);
+  assert.ok(second);
+  assert.notEqual(second.native_id, first.native_id, "el pointer cambia de conversación nativa");
+  assert.deepEqual(second.origin, {
+    adapter: "console", channel: "console", conversation_id: "operator:Steven:kant",
+  });
+  const persisted = JSON.parse(
+    await readFile(resolve(root, nombre, "sessions.json"), "utf8"),
+  ) as { sessions: Record<string, unknown> };
+  assert.equal(Object.keys(persisted.sessions).length, 3, "dos conversaciones más un pointer, sin colapsarlas");
+  assert.equal(events.filter((event) => event.phase === "done").length, 2);
 });

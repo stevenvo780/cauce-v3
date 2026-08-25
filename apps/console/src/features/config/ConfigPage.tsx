@@ -139,10 +139,6 @@ export function ConfigPage() {
   // una escritura se pinta junto al control que la disparó y sin abrir nada.
   const [avisoDeRollback, setAvisoDeRollback] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
   const [previewDeRollback, setPreviewDeRollback] = useState<string>();
-  // Mismo criterio que `avisoDeRollback`: el desenlace de aplicar un rol se pinta DENTRO de la
-  // pestaña «Roles de agente», que es donde está mirando quien apretó el botón. Escribirlo en
-  // `notice` lo mandaría al `<details>` del editor crudo, en otra pestaña, cerrado.
-  const [avisoDeRoles, setAvisoDeRoles] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
   // La pestaña abierta. `/config` era UN scroll con dieciséis paneles seguidos —el alta, el wizard,
   // el editor crudo, doce tablas y el audit trail— y para tocar una arista de ACL había que pasar
   // por delante del pool de suscripciones de IA. Lo que cambia es el ORDEN, no el alcance: no se
@@ -192,7 +188,6 @@ export function ConfigPage() {
     setArea(siguiente);
     setPendiente(undefined);
     setAvisoDeAccion(undefined);
-    setAvisoDeRoles(undefined);
     interruptores.limpiar();
   }
 
@@ -317,29 +312,6 @@ export function ConfigPage() {
       tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
       text: `${accion.descripcion}: aplicado en la revisión ${outcome.result.revision ?? 'UNKNOWN'} `
         + `(${outcome.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(outcome.recarga)}`,
-    });
-  }
-
-  /**
-   * Copia el texto de un rol a otro bot, por el MISMO camino versionado que todo lo demás.
-   *
-   * No previsualiza y es a propósito: la mutación tiene un solo campo y el operador no escribió el
-   * JSON, así que no hay nada que revisar en él. Lo que sí hay es marcha atrás, y eso se le dice
-   * con todas las letras en el mensaje: dónde deshacerlo.
-   */
-  async function aplicarRol(mutation: ConfigMutation, descripcion: string) {
-    setAvisoDeRoles(undefined);
-    // `directo`: este botón no previsualiza, así que un 409 no puede mandar a «volver a
-    // previsualizar» — manda a releer el catálogo y volver a elegir.
-    const outcome = await change(mutation, false, 'directo');
-    if (!outcome.ok) {
-      setAvisoDeRoles({ text: `NO se aplicó «${descripcion}»: ${outcome.message}${textoRecarga(outcome.recarga)}`, tone: 'error' });
-      return;
-    }
-    setAvisoDeRoles({
-      tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
-      text: `${descripcion}: revisión ${outcome.result.revision ?? 'UNKNOWN'}`
-        + `${textoRecarga(outcome.recarga)} Se puede deshacer desde «Historial y JSON».`,
     });
   }
 
@@ -479,16 +451,8 @@ export function ConfigPage() {
       {areaVisible === 'agentes' ? <ArnesesPanel /> : null}
 
       {areaVisible === 'roles' ? <>
-        {avisoDeRoles ? <p
-          className={avisoDeRoles.tone === 'error' ? 'notice error' : avisoDeRoles.tone === 'parcial' ? 'notice parcial' : 'notice success'}
-          role={avisoDeRoles.tone === 'success' ? 'status' : 'alert'}
-        >{avisoDeRoles.text}</p> : null}
         <RolesPanel
           {...(config.data ? { snapshot: config.data } : {})}
-          canWrite={!soloLectura}
-          busy={busy}
-          motivoSinEscritura={CONFIG_SIN_CONTROL_REASON}
-          onMutar={(mutation, descripcion) => void aplicarRol(mutation, descripcion)}
         />
       </> : null}
 

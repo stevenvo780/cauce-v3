@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 //
-// Fake gateway: implements the four `/v3/terminal/relay/*` endpoints of the PTY contract
+// Fake gateway: implements the `/v3/terminal/relay/*` endpoints of the PTY contract
 // with no database, no dispatcher and no bus, so the terminal-relay can be driven end to
 // end from a test.
 //
 //   POST /v3/terminal/relay/agents                     agent registration
 //   POST /v3/terminal/relay/sessions/:sid/consume      atomic single use: 200 then 409
+//   POST /v3/terminal/relay/sessions/:sid/resume       live revalidation of continuity token
 //   GET  /v3/terminal/relay/sessions/:sid/authz        200 while live, 403 with a reason
 //   POST /v3/terminal/relay/sessions/:sid/close        session teardown + audit row
 //
@@ -17,7 +18,7 @@
 //   GATEWAY_PORT=0 RELAY_TOKEN=... MASTER_KEY_B64=... node tests/terminal-pty/fake-gateway.mjs
 
 import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
@@ -29,7 +30,7 @@ import { deriveAliasKey, verifyTicket } from './protocol.mjs';
 import { createSelfSignedCert } from './certs.mjs';
 
 const AGENTS_PATH = '/v3/terminal/relay/agents';
-const SESSION_PATH = /^\/v3\/terminal\/relay\/sessions\/([^/]+)\/(consume|authz|close)$/;
+const SESSION_PATH = /^\/v3\/terminal\/relay\/sessions\/([^/]+)\/(consume|resume|authz|close)$/;
 const HARNESS_STATE_PATH = '/__harness/state';
 
 function fingerprint(value) {
@@ -113,21 +114,24 @@ export async function startFakeGateway(options = {}) {
 
     if (url.pathname === AGENTS_PATH && request.method === 'POST') {
       const body = await readJson(request);
-      const key = `${String(body.tenant_id)}:${String(body.alias)}`;
-      if (revoked || !grants.has(key)) {
-        record('agent.rejected', { alias: body.alias, reason: 'not_granted' });
-        reply(response, 403, { ok: false, error: 'not_granted' });
-        return;
+      const entries = Array.isArray(body.agents) ? body.agents : [body];
+      for (const entry of entries) {
+        const key = `${String(entry.tenant_id)}:${String(entry.alias)}`;
+        if (revoked || !grants.has(key)) {
+          record('agent.rejected', { alias: entry.alias, reason: 'not_granted' });
+          reply(response, 403, { ok: false, error: 'not_granted' });
+          return;
+        }
+        const agent = {
+          tenant_id: entry.tenant_id, alias: entry.alias, container_id: entry.container_id,
+          generation: entry.generation, image_id: entry.image_id, runtime_user: entry.runtime_user,
+          runtime_uid: entry.runtime_uid, modes: entry.modes, agent_version: entry.agent_version,
+          registered_at: new Date().toISOString(),
+        };
+        agents.set(key, agent);
+        record('agent.registered', { alias: entry.alias, container_id: entry.container_id, image_id: entry.image_id });
       }
-      const agent = {
-        tenant_id: body.tenant_id, alias: body.alias, container_id: body.container_id,
-        generation: body.generation, image_id: body.image_id, runtime_user: body.runtime_user,
-        runtime_uid: body.runtime_uid, modes: body.modes, agent_version: body.agent_version,
-        registered_at: new Date().toISOString(),
-      };
-      agents.set(key, agent);
-      record('agent.registered', { alias: body.alias, container_id: body.container_id, image_id: body.image_id });
-      reply(response, 200, { ok: true, agent_id: `agent:${key}`, registered_at: agent.registered_at });
+      reply(response, 200, { ok: true, agents: entries.length });
       return;
     }
 
@@ -138,6 +142,7 @@ export async function startFakeGateway(options = {}) {
     }
     const [, sessionId, action] = match;
     if (action === 'consume' && request.method === 'POST') return consume(sessionId, request, response);
+    if (action === 'resume' && request.method === 'POST') return resume(sessionId, request, response);
     if (action === 'authz' && request.method === 'GET') return authz(sessionId, response);
     if (action === 'close' && request.method === 'POST') return close(sessionId, request, response);
     reply(response, 405, { error: 'method_not_allowed' });
@@ -192,6 +197,10 @@ export async function startFakeGateway(options = {}) {
       subject: payload.sub,
       operation: payload.op,
       expires_at: payload.exp,
+      session_expires_at: payload.exp + sessionTtlSec,
+      // Opaque continuity credential for the relay contract. The real gateway HMAC-binds this
+      // to sid/operator/expiry; this harness stores and compares an equally unguessable value.
+      resume_token: `r1.${randomBytes(64).toString('base64url')}`,
       consumed_at: now(),
       ticket_fp: fingerprint(ticket),
       // Geometry belongs to the session the operator asked for; the real gateway stores it at
@@ -218,7 +227,11 @@ export async function startFakeGateway(options = {}) {
     // relay's `parseSessionGrant` rejects wholesale: the grant was dropped and every attach died
     // with 1011 instead of opening a shell. `session` is still echoed alongside so the harness's
     // own gateway tests keep asserting the container identity they were written against.
-    reply(response, 200, {
+    reply(response, 200, relayGrant(session));
+  }
+
+  function relayGrant(session) {
+    return {
       ok: true,
       tenant_id: session.tenant_id,
       alias: session.alias,
@@ -229,14 +242,31 @@ export async function startFakeGateway(options = {}) {
       container: session.container_id,
       runtime_user: session.runtime_user,
       expires_at: new Date(session.expires_at * 1000).toISOString(),
-      session_expires_at: new Date((session.expires_at + sessionTtlSec) * 1000).toISOString(),
+      session_expires_at: new Date(session.session_expires_at * 1000).toISOString(),
+      resume_token: session.resume_token,
       session: {
-        session_id: sessionId, tenant_id: session.tenant_id, alias: session.alias,
+        session_id: session.session_id, tenant_id: session.tenant_id, alias: session.alias,
         container_id: session.container_id, generation: session.generation,
         image_id: session.image_id, runtime_user: session.runtime_user,
         runtime_uid: session.runtime_uid, mode: session.mode, expires_at: session.expires_at,
       },
-    });
+    };
+  }
+
+  async function resume(sessionId, request, response) {
+    const body = await readJson(request);
+    const session = sessions.get(sessionId);
+    if (!session || typeof body.resume_token !== 'string' || body.resume_token !== session.resume_token) {
+      reply(response, 401, { ok: false, reason: 'resume_invalid' });
+      return;
+    }
+    if (session.closed_at !== null || revoked || session.revoked_at !== null ||
+        now() > session.session_expires_at || !grants.has(`${session.tenant_id}:${session.alias}`)) {
+      reply(response, 403, { ok: false, reason: 'revoked' });
+      return;
+    }
+    record('terminal.session.resume', { session_id: sessionId, alias: session.alias });
+    reply(response, 200, relayGrant(session));
   }
 
   function authz(sessionId, response) {

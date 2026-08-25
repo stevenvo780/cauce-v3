@@ -27,11 +27,28 @@
 --      corriera antes. Esa es una de las dos causas de que el mismo código diera 6, 18 o 19
 --      fallos según el orden (la otra, la falta de restauración del catálogo, va aparte).
 --
--- `allow_notify` ya existe como columna desde la 009; esto sólo añade la FILA que falta, con los
--- mismos valores que tiene producción hoy. `ON CONFLICT DO NOTHING` para no pisar una base donde
--- alguien ya la creó a mano —que es justamente el caso de producción—: esta migración tiene que
--- ser un no-op allí y traer el rol donde falte.
+-- `allow_notify` ya existe como columna desde la 009; esto añade la FILA que falta con el contrato
+-- exacto medido. Una fila preexistente NO se acepta sólo por llamarse igual: 029 asigna este rol a
+-- tres alias, por lo que cualquiera de sus cuatro permisos divergente cambiaría autoridad sin que
+-- la paridad lo viera. El lock de fila mantiene la comprobación estable hasta el commit de la
+-- transacción de migraciones.
 
 INSERT INTO role_policies(role, allow_route, allow_read, allow_control, allow_notify)
 VALUES ('agent_notify', true, true, false, true)
 ON CONFLICT (role) DO NOTHING;
+
+DO $$
+BEGIN
+  PERFORM 1 FROM role_policies WHERE role='agent_notify' FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION '027 failed to create the agent_notify role policy';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM role_policies
+     WHERE role='agent_notify'
+       AND ROW(allow_route,allow_read,allow_control,allow_notify)
+           IS DISTINCT FROM ROW(true,true,false,true)
+  ) THEN
+    RAISE EXCEPTION '027 refuses divergent agent_notify role policy';
+  END IF;
+END $$;

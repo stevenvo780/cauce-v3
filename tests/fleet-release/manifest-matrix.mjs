@@ -2,12 +2,12 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export const EXPECTED_ALIAS_COUNT = 12;
+export const EXPECTED_ALIAS_COUNT = 15;
 export const EXPECTED_HARNESS_COUNTS = Object.freeze({
   openclaw: 5,
-  claude: 1,
+  claude: 3,
   hermes: 1,
-  codex: 5,
+  codex: 6,
   opencode: 0,
 });
 export const HARNESS_IDS = Object.freeze(Object.keys(EXPECTED_HARNESS_COUNTS));

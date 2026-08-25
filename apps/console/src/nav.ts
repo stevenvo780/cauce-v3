@@ -63,7 +63,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   // evita el desborde partiendo la palabra. La prueba automatica siempre dara 0. Se vio MIRANDO
   // la barra renderizada. Si volves a tocar el tamano de letra, mira la barra, no midas el ancho.
   { id: 'config', label: 'Ajustes y altas', icon: Settings2, que: 'Tenants, salas, membresías, roles y altas — con reversión por revisión.' },
-  { id: 'terminal', label: 'Ultimate Terminal', icon: TerminalSquare, que: 'La terminal de cada bot, con su feed durable aunque el relay PTY no esté.' },
+  { id: 'terminal', label: 'Terminal de agentes', icon: TerminalSquare, que: 'La terminal de cada bot, con su feed durable aunque el relay PTY no esté.' },
 ];
 
 /**

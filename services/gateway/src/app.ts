@@ -7,8 +7,9 @@ import {
   AliasSchema, AuthenticatedPublishSchema, ClaimedAckSchema, clampAgentPriority,
   ConfigChangeRequestSchema, ConfigRollbackRequestSchema,
   CreateJobSchema, DeliveryIdSchema, HeartbeatSchema, HelloSchema, isAgentToAgentBody,
-  NotifyRequestSchema, PROTOCOL_VERSION,
+  isSystemGateProbeBody, NotifyRequestSchema, PROTOCOL_VERSION,
   QueryDeliveriesSchema, QuotaSampleRequestSchema, TenantSchema,
+  SYSTEM_GATE_PROBE_MESSAGE_TYPE, SystemGateProbeBodySchema,
   type ClaimedAck, type ConfigMutation, type DeliveryEnvelope, type Hello, type NotifyRequest,
   type QuotaSampleRequest, type Tenant
 } from '@cauce/protocol';
@@ -23,6 +24,7 @@ import {
   type AuthProvider, type Principal
 } from './auth.js';
 import { registerAgentDocumentRoutes } from './console/agent-documents.routes.js';
+import { prepareAgentProfileRuntime } from './console/agent-profile-runtime.js';
 import { SondaCompartida, sondaDiferida } from './console/sonda-compartida.js';
 import { registerAgentProfileRoutes } from './console/agent-profile.routes.js';
 import { createConsoleSecurityHook } from './console-security.js';
@@ -94,6 +96,23 @@ export interface GatewayRepository {
   listAdapters(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listAgents(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   getAgent(alias: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown> | undefined>;
+  /**
+   * Lookup autorizado por identidad canónica. Opcional sólo para dobles legacy de test: las rutas
+   * tenant-qualified fallan cerradas cuando no está implementado.
+   */
+  authorizeAgentTarget?(
+    actorTenant: Tenant,
+    actorAlias: string,
+    targetTenant: Tenant,
+    targetAlias: string,
+    permission: 'read' | 'control',
+  ): Promise<{
+    tenant_id: Tenant;
+    alias: string;
+    harness_id: string | null;
+    home_directory: string | null;
+    enabled: boolean;
+  } | undefined>;
   listOriginRelays(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   enqueueNotification(actorTenant: Tenant, actorAlias: string, input: NotifyRequest): Promise<NotificationVerdict>;
   listNotifications(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
@@ -362,7 +381,7 @@ function claimFromDelivery(delivery: DeliveryClaimRecord, fallbackDeadlineMs: nu
   return {
     attempt: delivery.attempt,
     claim_token: delivery.claim_token,
-    humanOriginated: !isAgentToAgentBody(delivery.body),
+    humanOriginated: !isAgentToAgentBody(delivery.body) && !isSystemGateProbeBody(delivery.body),
     admissionExpiresAtMs: Number.isFinite(deadlineMs) ? deadlineMs : Date.now() + fallbackDeadlineMs
   };
 }
@@ -526,12 +545,33 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
       const command = publicPublish(request.body);
+      const systemGateProbe = command.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE;
+      if (systemGateProbe) {
+        const probeBody = SystemGateProbeBodySchema.parse(command.body);
+        const exactRole = actor.roles.length === 1 && actor.roles[0] === 'agent';
+        const exactPermissions = actor.permissions.length === 2
+          && actor.permissions.includes('route') && actor.permissions.includes('read');
+        if (options.authProvider.name !== 'mtls' || actor.tenant_id !== 'Steven' ||
+            actor.alias !== 'gate-probe' || actor.session_id !== 'gate-probe' ||
+            actor.channel !== 'gate' || actor.origin !== undefined || !exactRole || !exactPermissions) {
+          throw new AuthorizationError('system gate probe requires the exact dedicated mTLS identity');
+        }
+        const recipient = command.recipients[0];
+        if (command.room_id !== 'grp.steven' || command.recipients.length !== 1 ||
+            command.lane !== 'interactive' || command.priority !== -100 ||
+            command.idempotency_key !== `gate:${recipient?.tenant_id}:${recipient?.alias}:${probeBody.nonce}`) {
+          throw new Error('system gate probe payload is not canonical');
+        }
+      }
       const trustedCommand: TrustedPublishCommand = {
         version: PROTOCOL_VERSION,
         request_id: randomUUID(),
         trace_id: `trace-${randomUUID()}`,
         tenant_id: actor.tenant_id,
-        actor_alias: actor.alias,
+        // `gate-probe` intentionally has no membership/agent/lease and can never become a
+        // routing target. Kant is only the already-declared durable actor required by the
+        // messages FK; auth_session_id/auth_channel preserve the exact mTLS gate authority.
+        actor_alias: systemGateProbe ? 'kant' : actor.alias,
         authenticated_context: {
           session_id: actor.session_id,
           channel: actor.channel,
@@ -762,10 +802,11 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
    *
    * `registerAgentDocumentRoutes` estaba escrita, probada y exportada desde
    * `console/agent-documents.routes.ts` — y NO LA LLAMABA NADIE. Cero sitios en todo el repo fuera
-   * de su propia definición y de sus pruebas. Por eso `GET /v3/console/agents/:alias/documents`
-   * daba 404 en producción y la consola enseñaba «capa 2 y 3 no disponibles»: no era que el dato
-   * faltara, es que la ruta no estaba montada. Una prueba de la función no acredita que el
-   * servidor la sirva; eso lo acredita el registro, y el registro no existía.
+   * de su propia definición y de sus pruebas. Por eso la ruta legacy de documentos daba 404 en
+   * producción y la consola enseñaba «capa 2 y 3 no disponibles»: no era que el dato faltara, es
+   * que la ruta no estaba montada. Una prueba de la función no acredita que el servidor la sirva;
+   * eso lo acredita el registro, y el registro no existía. El contrato activo usa ahora el tenant
+   * explícito en `/v3/console/tenants/:tenantId/agents/:alias/documents`.
    *
    * Van en el ámbito de `/v3/console` y NO dentro del plugin de terminal —donde sí está la de
    * directiva— a propósito: el perfil es base de datos y composición pura, no necesita el PTY para
@@ -780,22 +821,71 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
    * El hueco donde el plano de terminal deja su sonda. Se decora sobre ESTA instancia de Fastify y
    * no vive como estado de módulo a propósito: los tests montan varios gateways en el mismo
    * proceso y compartirían la sonda del último en arrancar.
-   */
+  */
   const sondaDeDocumentos = new SondaCompartida();
+  const profileProbe = sondaDiferida(sondaDeDocumentos);
   app.decorate('sondaDeDocumentos', sondaDeDocumentos);
   {
     const perfiles = agentProfiles;
-    const autorizarPerfil = async (request: unknown): Promise<{ tenant_id: Tenant; alias: string }> => {
+    const autorizarPerfil = async (
+      request: unknown, permission: 'read' | 'control'
+    ): Promise<{ tenant_id: Tenant; alias: string }> => {
       const actor = await principal(request as FastifyRequest, options.authProvider);
-      requireOperatorPermission(actor, 'read');
+      requireOperatorPermission(actor, permission);
       return { tenant_id: actor.tenant_id, alias: actor.alias };
+    };
+    const autorizarDestino = async (
+      actor: { tenant_id: string; alias: string },
+      targetTenantId: string,
+      targetAlias: string,
+      permission: 'read' | 'control',
+      legacySameTenant: boolean,
+    ) => {
+      const actorTenant = actor.tenant_id;
+      const targetTenant = targetTenantId;
+      if (repository.authorizeAgentTarget !== undefined) {
+        try {
+          return await repository.authorizeAgentTarget(
+            actorTenant, actor.alias, targetTenant, targetAlias, permission,
+          );
+        } catch (error) {
+          // No se distingue «actor sin permiso», «destino oculto» y «destino ausente» en esta
+          // superficie: los tres fallan cerrados sin confirmar que la identidad existe.
+          if (error instanceof StoreError
+            && (error.code === 'forbidden' || error.code === 'invalid_actor')) return undefined;
+          throw error;
+        }
+      }
+
+      /*
+       * Compatibilidad exclusiva para repositorios falsos anteriores a esta primitiva: sólo la
+       * ruta LEGACY, sólo el tenant del actor y con permiso del store. Las rutas canónicas nunca
+       * entran acá; sin método exacto responden 404.
+       */
+      if (!legacySameTenant || targetTenant !== actorTenant) return undefined;
+      await repository.assertPermission(actorTenant, actor.alias, permission);
+      return {
+        tenant_id: actorTenant,
+        alias: targetAlias,
+        harness_id: null,
+        home_directory: null,
+        enabled: true,
+      };
     };
     registerAgentProfileRoutes(app, {
       authorize: autorizarPerfil,
-      readContext: (tenantId, alias) => perfiles.readContext(tenantId as Tenant, alias)
+      authorizeTarget: autorizarDestino,
+      readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
+      replaceProfile: (profile, expectedRevision, actor) =>
+        perfiles.replace(profile, expectedRevision, actor),
+      prepareRuntime: (tenantId, alias, contexto) =>
+        prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),
+      markProfileApplied: (tenantId, alias, revision, actor) =>
+        perfiles.markApplied(tenantId, alias, revision, actor),
     });
     registerAgentDocumentRoutes(app, {
       authorize: autorizarPerfil,
+      authorizeTarget: autorizarDestino,
       /*
        * La sonda se resuelve en CADA petición a través del hueco, no se captura acá.
        *
@@ -807,17 +897,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
        * Mientras nadie instale una, la degradada contesta «no medido» y «no hay canal» con esas
        * palabras, que es lo que la pantalla ya sabe pintar.
        */
-      probe: sondaDiferida(sondaDeDocumentos),
-      lookupAgent: async (alias, tenantId, actorAlias) => {
-        const fila = await repository.getAgent(alias, tenantId as Tenant, actorAlias);
-        if (fila === undefined) return undefined;
-        return {
-          tenant_id: String(fila.tenant_id),
-          alias: String(fila.alias),
-          harness_id: (fila.harness_id ?? null) as string | null,
-          home_directory: (fila.home_directory ?? null) as string | null
-        };
-      }
+      probe: profileProbe,
     });
   }
 

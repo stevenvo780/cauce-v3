@@ -349,15 +349,26 @@ describe('Telegram egress text extraction', () => {
 class MemoryEgressRepository implements TelegramEgressRepository {
   readonly effects = new Map<string, TelegramEffect>();
   readonly acknowledgements: TelegramOriginRelayAck[] = [];
+  readonly claimLimits: number[] = [];
+  renewCalls = 0;
+  renewAllowed = true;
+  failAck = false;
   outboxState: 'pending' | 'failed' | 'sent' | 'dead' = 'pending';
 
   constructor(readonly event: TelegramOriginRelay) {}
 
-  async claim(): Promise<TelegramOriginRelay[]> {
+  async claim(_workerId?: string, limit = 1): Promise<TelegramOriginRelay[]> {
+    this.claimLimits.push(limit);
     return this.outboxState === 'pending' || this.outboxState === 'failed' ? [this.event] : [];
   }
 
+  async renew(): Promise<boolean> {
+    this.renewCalls += 1;
+    return this.renewAllowed;
+  }
+
   async ack(value: TelegramOriginRelayAck): Promise<void> {
+    if (this.failAck) throw new Error('fenced durable ACK');
     if (value.status === 'sent') {
       const expected = value.effect_count;
       const effects = [...this.effects.values()].filter((effect) => effect.outbox_id === value.event_id);
@@ -823,7 +834,7 @@ describe('Telegram group routing (poller integration)', () => {
       api,
       repository,
       ingress,
-      onSuppressed: (record) => suppressed.push(record as unknown as { reason: string; chat_id: string })
+      onSuppressed: (record) => suppressed.push(record)
     }).runOnce();
 
     expect(ingress.calls).toHaveLength(0);
@@ -884,6 +895,58 @@ describe('Telegram group routing (poller integration)', () => {
 });
 
 describe('Telegram fenced egress', () => {
+  it('claims one fresh outbox lease and renews it before each remote effect', async () => {
+    const api = new FakeTelegram();
+    const repository = new MemoryEgressRepository(relay({
+      payload: { result: { text: `${'a'.repeat(4_096)}b` } }
+    }));
+
+    await new TelegramEgressWorker({
+      repository, aliases: [config()], apis: new Map([['kant', api]]), batchSize: 20
+    }).runOnce();
+
+    expect(repository.claimLimits).toEqual([1]);
+    expect(repository.renewCalls).toBeGreaterThanOrEqual(5);
+    expect(api.sends).toHaveLength(2);
+    expect(repository.acknowledgements.at(-1)?.status).toBe('sent');
+  });
+
+  it('does not call Telegram after renewal is fenced', async () => {
+    const api = new FakeTelegram();
+    const repository = new MemoryEgressRepository(relay());
+    const metrics: string[] = [];
+    repository.renewAllowed = false;
+
+    await new TelegramEgressWorker({
+      repository, aliases: [config()], apis: new Map([['kant', api]]),
+      onMetric: (metric) => metrics.push(metric)
+    }).runOnce();
+
+    expect(api.sends).toHaveLength(0);
+    expect(repository.acknowledgements).toHaveLength(0);
+    expect(metrics).toContain('egress_fenced');
+    expect(metrics).not.toContain('egress_sent');
+  });
+
+  it('does not count or rewrite a remote send whose durable ACK is fenced', async () => {
+    const api = new FakeTelegram();
+    const repository = new MemoryEgressRepository(relay());
+    const metrics: string[] = [];
+    repository.failAck = true;
+
+    await new TelegramEgressWorker({
+      repository, aliases: [config()], apis: new Map([['kant', api]]),
+      onMetric: (metric) => metrics.push(metric)
+    }).runOnce();
+
+    expect(api.sends).toHaveLength(1);
+    expect([...repository.effects.values()][0]?.state).toBe('sent');
+    expect(repository.acknowledgements).toHaveLength(0);
+    expect(metrics).toContain('egress_fenced');
+    expect(metrics).not.toContain('egress_sent');
+    expect(metrics).not.toContain('egress_retry');
+  });
+
   it('sends an interim relay ACK without finishing the original Telegram activity', async () => {
     const api = new FakeTelegram();
     const finishes: Array<{ outcome: string }> = [];

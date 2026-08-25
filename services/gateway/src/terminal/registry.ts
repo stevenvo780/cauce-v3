@@ -74,6 +74,12 @@ function stringField(value: unknown, name: string, max = 256): string {
   return value;
 }
 
+function optionalMeasuredPath(record: Record<string, unknown>, name: string): Record<string, string> {
+  const value = record[name];
+  if (typeof value !== 'string' || !value.startsWith('/') || value.includes('\0')) return {};
+  return { [name]: stringField(value, name, 4096) };
+}
+
 /** Validates one relay-reported presence record; the relay is authenticated but not trusted blindly. */
 export function parseAgentPresence(value: unknown): AgentPresence {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -103,6 +109,9 @@ export function parseAgentPresence(value: unknown): AgentPresence {
     ...(typeof record.home === 'string' && record.home.startsWith('/')
       ? { home: stringField(record.home, 'home', 512) }
       : {}),
+    ...optionalMeasuredPath(record, 'codex_home'),
+    ...optionalMeasuredPath(record, 'claude_config_dir'),
+    ...optionalMeasuredPath(record, 'openclaw_workspace'),
     modes: (modes as string[]).slice(0, 8),
     connected_since: stringField(record.connected_since, 'connected_since', 64)
   };

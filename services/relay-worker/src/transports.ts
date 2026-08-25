@@ -10,11 +10,14 @@ export class MapOriginTransportRegistry implements OriginTransportRegistry {
   private readonly transports = new Map<string, OriginTransport>();
 
   constructor(entries: Iterable<readonly [string, OriginTransport]> = []) {
-    for (const [adapter, transport] of entries) this.transports.set(adapter, transport);
+    for (const [adapter, transport] of entries) this.register(adapter, transport);
   }
 
   register(adapter: string, transport: OriginTransport): void {
     if (!/^[a-z][a-z0-9_-]{0,63}$/i.test(adapter)) throw new Error('invalid adapter name');
+    if (adapter.toLowerCase() === 'telegram') {
+      throw new Error('the telegram adapter is reserved for telegram-bridge');
+    }
     this.transports.set(adapter, transport);
   }
 
@@ -164,6 +167,26 @@ function pinnedHttpsRequest(
   });
 }
 
+async function beforeDeadline<T>(operation: Promise<T>, deadline: number): Promise<T> {
+  const remaining = deadline - Date.now();
+  if (remaining < 1) throw new OriginTransportError('webhook send deadline exceeded', true);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new OriginTransportError('webhook send deadline exceeded', true)),
+          remaining
+        );
+        timer.unref();
+      })
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export class HttpWebhookOriginTransport implements OriginTransport {
   private readonly provider: WebhookProvider;
   private readonly allowedOrigins: ReadonlySet<string>;
@@ -181,7 +204,11 @@ export class HttpWebhookOriginTransport implements OriginTransport {
   }
 
   async send(event: OriginRelayEvent): Promise<OriginTransportResult> {
-    const endpoint = new URL(await this.provider.endpoint(event));
+    // One deadline covers provider lookup, signing, DNS and HTTP. A timeout that applied only to
+    // fetch would let a provider or resolver consume the whole outbox lease before any byte was
+    // sent, after which the remote side effect could race a new claimant.
+    const deadline = Date.now() + this.timeoutMs;
+    const endpoint = new URL(await beforeDeadline(this.provider.endpoint(event), deadline));
     if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || !this.allowedOrigins.has(endpoint.origin)) {
       throw new OriginTransportError('webhook endpoint is not allowlisted', false);
     }
@@ -198,9 +225,21 @@ export class HttpWebhookOriginTransport implements OriginTransport {
       payload: event.payload
     });
     const bytes = new TextEncoder().encode(body);
-    const signature = await this.provider.sign(bytes, event);
-    const resolved = await this.resolver(endpoint.hostname).catch(() => []);
-    if (resolved.length === 0 || resolved.some((entry) => !publicIp(entry.address))) {
+    const signature = await beforeDeadline(this.provider.sign(bytes, event), deadline);
+    let resolved: readonly ResolvedAddress[];
+    try {
+      resolved = await beforeDeadline(this.resolver(endpoint.hostname), deadline);
+    } catch (error) {
+      if (error instanceof OriginTransportError) throw error;
+      // Resolver/network failure is transient and happens before any remote side effect.  It must
+      // remain retryable; classifying an empty catch fallback as SSRF terminal used to DLQ DNS
+      // outages permanently.
+      throw new OriginTransportError('webhook DNS resolution failed', true);
+    }
+    if (resolved.length === 0) {
+      throw new OriginTransportError('webhook DNS returned no addresses', true);
+    }
+    if (resolved.some((entry) => !publicIp(entry.address))) {
       throw new OriginTransportError('webhook endpoint resolved to a non-public address', false);
     }
     const headers = {
@@ -212,8 +251,9 @@ export class HttpWebhookOriginTransport implements OriginTransport {
     let response: WebhookHttpResult;
     try {
       if (this.fetcher) {
+        const remaining = Math.max(1, deadline - Date.now());
         const fetched = await this.fetcher(endpoint, {
-          method: 'POST', redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs), headers, body
+          method: 'POST', redirect: 'error', signal: AbortSignal.timeout(remaining), headers, body
         });
         response = {
           ok: fetched.ok,
@@ -223,7 +263,9 @@ export class HttpWebhookOriginTransport implements OriginTransport {
             : { providerMessageId: fetched.headers.get('x-provider-message-id')! })
         };
       } else {
-        response = await pinnedHttpsRequest(endpoint, resolved[0]!, headers, body, this.timeoutMs);
+        response = await pinnedHttpsRequest(
+          endpoint, resolved[0]!, headers, body, Math.max(1, deadline - Date.now())
+        );
       }
     } catch (error) {
       if (error instanceof OriginTransportError) throw error;

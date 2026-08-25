@@ -4,7 +4,6 @@ import { useApi } from '../../api/context';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { DirectivaModal } from './DirectivaModal';
-import type { RoleBriefTabProps } from './RoleBriefTab';
 import { primerasLineas } from './directiva';
 import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
 
@@ -26,7 +25,12 @@ import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
  * justamente lo que había.
  */
 
-export type DirectivaTabProps = RoleBriefTabProps;
+export interface DirectivaTabProps {
+  tenantId: string;
+  alias: string;
+  onEditarEnPerfil: () => void;
+  onRestaurarEnPerfil: (texto: string) => void;
+}
 
 /**
  * Los tres desenlaces de buscar un alias en el registro, que NO son el mismo hecho.
@@ -49,25 +53,23 @@ function buscarEnRegistro(snapshot: ConfigurationSnapshot | undefined, tenantId:
   return { estado: 'fila', brief: typeof fila.role_brief === 'string' ? fila.role_brief : '' };
 }
 
-export function DirectivaTab({ tenantId, alias, borrador, onBorrador }: DirectivaTabProps) {
+export function DirectivaTab({
+  tenantId, alias, onEditarEnPerfil, onRestaurarEnPerfil,
+}: DirectivaTabProps) {
   const api = useApi();
   const config = useResource(`directiva-config-${tenantId}-${alias}`, () => api.getConfiguration());
   const [abierto, setAbierto] = useState(false);
   const abridor = useRef<HTMLButtonElement>(null);
 
   const registro = buscarEnRegistro(config.data, tenantId, alias);
-  /*
-   * El resumen habla del texto que el operador tiene DELANTE, no del que hay en la base: si dejó
-   * un borrador a medias en el diálogo y volvió al cajón, enseñar el guardado diría que sus
-   * cambios se perdieron. Por eso se dice cuál de los dos es, en vez de elegir en silencio.
-   */
-  const texto = borrador ?? (registro.estado === 'fila' ? registro.brief : '');
+  // La columna legacy es una proyección de sólo lectura; ningún borrador alternativo la pisa.
+  const texto = registro.estado === 'fila' ? registro.brief : '';
   const lineas = primerasLineas(texto, 2);
   const largo = contarRoleBrief(texto);
   const tono = tonoRoleBrief(largo);
   // El contador sólo se pinta sobre una lectura que ocurrió: «0 / 1200» encima de un GET que
   // falló, o de un alias que ni siquiera está en el registro, es una cifra inventada.
-  const hayRol = registro.estado === 'fila' || borrador !== undefined;
+  const hayRol = registro.estado === 'fila';
 
   return (
     <div className="directiva-resumen">
@@ -100,7 +102,6 @@ export function DirectivaTab({ tenantId, alias, borrador, onBorrador }: Directiv
       {hayRol ? (
         <p className="directiva-resumen-contador" data-tono={tono}>
           <strong>{largo}</strong> / {ROLE_BRIEF_MAX} caracteres
-          {borrador === undefined ? '' : ' · borrador sin guardar'}
         </p>
       ) : null}
 
@@ -118,16 +119,14 @@ export function DirectivaTab({ tenantId, alias, borrador, onBorrador }: Directiv
           tenantId={tenantId}
           alias={alias}
           snapshot={config.data}
-          borrador={borrador}
-          onBorrador={onBorrador}
+          onEditarEnPerfil={onEditarEnPerfil}
+          onRestaurarEnPerfil={onRestaurarEnPerfil}
           devolverFocoA={abridor}
           onCerrar={() => {
             setAbierto(false);
             /*
-             * El editor del rol vive dentro del diálogo y tiene su PROPIO recurso de configuración
-             * (`drawer-config`). Cuando guarda, releé ése y no éste: sin esta relectura el resumen
-             * del cajón se quedaría enseñando el texto anterior con cara de actual, que es
-             * exactamente el defecto que `RoleBriefTab` se cuida de no cometer por dentro.
+             * La columna legacy es de sólo lectura. Se relee al cerrar para no conservar una
+             * proyección vieja después de que Perfil haya aplicado una revisión canónica.
              */
             void config.reload();
           }}

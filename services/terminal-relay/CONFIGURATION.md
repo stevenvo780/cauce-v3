@@ -33,17 +33,19 @@ agents, outbound**:
 | `CAUCE_TERMINAL_RELAY_TLS_CERT_FILE` | — | Server certificate for both listeners. |
 | `CAUCE_TERMINAL_RELAY_TLS_KEY_FILE` | — | Server private key. |
 | `CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE` | — | CA of the console nginx client certificate. |
-| `CAUCE_TERMINAL_RELAY_CONSOLE_CN` | `console` | Comma-separated allowlist of console CNs. |
+| `CAUCE_TERMINAL_RELAY_CONSOLE_CN` | `console` | Comma-separated, unique allowlist of safe console CNs (for example `console-client,gateway-client`). Empty elements, controls and duplicates fail startup. |
 | `CAUCE_TERMINAL_RELAY_AGENT_CA_FILE` | — | CA of the PTY agent client certificates. |
 | `CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE` | `/run/cauce-terminal/pty_agent_identities.json` | Fingerprint registry, re-read on every handshake. |
 | `CAUCE_TERMINAL_GATEWAY_URL` | `https://gateway:8443` | Credential-free HTTPS origin of the gateway. |
 | `CAUCE_TERMINAL_RELAY_TOKEN_FILE` | — | File holding the gateway bearer token. |
-| `CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS` | `600` | No browser input for this long closes with 4408. |
+| `CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS` | `600` | Shell: no human input. Read-only harness: no browser heartbeat and no PTY output. Closes with 4408. |
 | `CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC` | `262144` | Sustained output allowance per session. |
-| `CAUCE_TERMINAL_SCROLLBACK_BYTES` | `20480` | Replay buffer kept per session for a reattach. |
+| `CAUCE_TERMINAL_SCROLLBACK_BYTES` | `20480` | Bounded in-memory output tail per session. It is not, by itself, a reconnect mechanism; see below. |
 | `CAUCE_TERMINAL_MAX_SESSIONS` | `16` | Concurrent terminals in the process. |
 | `CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS` | `30` | Revalidation period of a live session. |
 | `CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS` | `90` | How long an unreachable gateway is tolerated. |
+| `CAUCE_TERMINAL_RECONNECT_GRACE_SECONDS` | `30` | Maximum browser-loss window in which the same live PTY may be reattached. |
+| `CAUCE_TERMINAL_CLOSE_SPOOL_FILE` | `/tmp/cauce-terminal-close-reports.json` | Atomic local retry spool for close reports; contains only session ids, reasons and counters. |
 
 ## Agent identity
 
@@ -69,12 +71,53 @@ closes it with 4403 immediately; a gateway that stays unreachable longer than th
 closes it too. A session is never grandfathered because its authorization could not be
 re-confirmed. Idle closes with 4408, the granted TTL with 4423, and sustained output above the
 rate limit produces a warning notice and then closes with 4413 — a `cat` of a binary cannot
-take the service down. When `bufferedAmount` on the browser socket exceeds 4 MB the agent
-socket is paused until it drains.
+take the service down.
+
+Input and output pressure are scoped to one session:
+
+- Browser `input` messages are limited to 16 KiB each and to 64 KiB while the 8 ms keystroke
+  coalescer is pending. Frames arriving before the agent finishes `OPEN` are capped at 128 KiB.
+  Exceeding a bound closes that session with 4414. Relay-to-agent writes follow Node's
+  `write()`/`drain` contract and have a 512 KiB bounded queue; the Python agent then drains to
+  the non-blocking PTY with `select`, with a final 256 KiB per-session input high-water mark.
+- When one browser's `bufferedAmount` exceeds 4 MiB, the relay sends `PAUSE_OUTPUT` for that
+  session only and resumes it below 1 MiB. The agent keeps reading its multiplexed TLS socket,
+  so PONG and every other terminal continue to flow. This is negotiated through the
+  `session_output_flow_control` feature. An older agent that did not advertise it causes only
+  the slow browser session to close with 4415; the shared agent socket is never paused.
+
+For idle accounting, human input is the only activity that extends an interactive `shell`.
+A read-only `harness` cannot produce human input, so either real PTY output or the console's
+typed `ping` heartbeat proves that the viewer is still present. The heartbeat is control only:
+it never becomes STDIN.
 
 Close codes: `4400` protocol error, `4401` ticket invalid, `4403` revoked, `4404` agent
-offline, `4408` idle, `4409` session conflict, `4413` output flood, `4423` TTL expired, `1011`
-internal error, `1001` relay shutdown.
+offline, `4408` idle, `4409` session conflict, `4413` output flood, `4414` input flood, `4415`
+slow browser or blocked technical-response path, `4423` TTL expired, `1011` internal error,
+`1001` relay shutdown.
+
+## Reconnect contract and threat model
+
+The one-shot OPEN ticket still cannot be replayed. After the gateway consumes it, it returns an
+HMAC capability in a different HKDF domain, bound to the exact session id, operator id and
+consumed-session expiry. The credential stays in browser memory, crosses only the console TLS
+WebSocket and the mutually authenticated relay-to-gateway path, and is never persisted or logged.
+
+An abnormal browser loss detaches only that socket for the bounded reconnect grace. Resume always
+re-reads the database row, routing authority, complete physical-container grant set, revocation,
+close state and TTL. It can only call `SessionManager.reattach`: it has no code path to `OPEN` and
+therefore cannot create a PTY. Reattach succeeds only while the prior browser socket is absent;
+two concurrent replays race on the single relay event loop and exactly one becomes owner. Output
+is replayed from the bounded offset-addressed tail and the pty-agent receives only a resize.
+
+The capability is reusable inside that short grace rather than rotated: the gateway keeps no
+browser credential state, and pretending to rotate a stateless token would leave the previous
+token valid. Its replay surface is bounded by all of the following independent gates: trusted
+browser Origin at nginx/relay, console client-certificate CN, relay bearer plus gateway mTLS,
+live authorization, original session TTL, one live `TerminalSession`, and one attached socket.
+An explicit browser close, grace expiry, agent loss or authorization failure kills the PTY and
+durably queues the close report. Rotation would require a persisted nonce hash and atomic consume;
+it must not be claimed until that state exists.
 
 ## Hygiene
 
@@ -87,6 +130,7 @@ the gateway and exits.
 ## Tests
 
 `pnpm --filter @cauce/terminal-relay test` covers the framing golden vector shared with the
-Python agent, byte-at-a-time reassembly, the session limits, and a circuit test that stands up
-both mutual-TLS listeners with throwaway fixtures and drives attach, echo, revocation, agent
-absent, flood and fail-closed paths.
+Python agent, byte-at-a-time reassembly, per-session flow control, bounded `write()`/`drain`,
+slow and concurrent browsers, viewer presence, continuous output, input floods, and a circuit
+test that stands up both mutual-TLS listeners with throwaway fixtures and drives attach, echo,
+revocation, agent absent, flood and fail-closed paths.

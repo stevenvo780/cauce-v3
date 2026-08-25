@@ -14,8 +14,11 @@ import { LiveFleetPage } from './LiveFleetPage';
  * su superficie HTTP en cero y ninguna prueba lo delataba—.
  */
 
-const RUTA_MAPA = 'http://localhost/v3/console/agents/kant/documents';
-const RUTA_CONTENIDO = 'http://localhost/v3/console/agents/kant/documents/directive/content';
+const RUTA_MAPA = 'http://localhost/v3/console/tenants/Steven/agents/kant/documents';
+const RUTA_CONTENIDO =
+  'http://localhost/v3/console/tenants/Steven/agents/kant/documents/directive/content';
+const SHA_VIEJO = 'a'.repeat(64);
+const SHA_NUEVO = 'b'.repeat(64);
 
 function mapaDeKant(items: unknown[], extra: Record<string, unknown> = {}) {
   server.use(http.get(RUTA_MAPA, () => HttpResponse.json({
@@ -88,12 +91,19 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
       path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
-      exists: true, content: '# manual viejo\n', sha: 'huella-de-lo-abierto',
-      bytes: 15, editable: true, projected: false,
+      exists: true, content: '# manual viejo\n', sha: SHA_VIEJO,
+      bytes: 15, editable: true, projected: false, truncated: false,
     })),
     http.put(RUTA_CONTENIDO, async ({ request }) => {
       recibido = await request.json() as { content?: string; expected_sha?: string };
-      return HttpResponse.json({ ok: true, path: '/home/stev/.claude/CLAUDE.md', sha: 'nueva', bytes: 9 });
+      return HttpResponse.json({
+        ok: true,
+        state: 'applied',
+        evidence: 'probe_write_ack',
+        path: '/home/stev/.claude/CLAUDE.md',
+        sha: SHA_NUEVO,
+        bytes: 9,
+      });
     }),
   );
 
@@ -110,8 +120,9 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
   await waitFor(() => expect(recibido).toBeDefined());
   expect(recibido?.content).toBe('# nuevo');
   // La huella de lo que se abrió VIAJA. Sin ella dos personas se pisan en silencio.
-  expect(recibido?.expected_sha).toBe('huella-de-lo-abierto');
-  expect(await within(cajon).findByText(/Guardado en/)).toBeInTheDocument();
+  expect(recibido?.expected_sha).toBe(SHA_VIEJO);
+  expect(await within(cajon).findByText(/Aplicado en/)).toBeInTheDocument();
+  expect(within(cajon).getByText(/ACK de escritura/)).toBeInTheDocument();
 });
 
 /**
@@ -144,7 +155,8 @@ it('si el fichero cambió mientras se editaba, lo dice y no finge que guardó', 
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
       path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
-      exists: true, content: 'original', sha: 'vieja', bytes: 8, editable: true, projected: false,
+      exists: true, content: 'original', sha: SHA_VIEJO, bytes: 8,
+      editable: true, projected: false, truncated: false,
     })),
     http.put(RUTA_CONTENIDO, () => HttpResponse.json(
       { error: 'stale', message: 'el fichero cambió desde que lo abriste' }, { status: 409 },
@@ -159,7 +171,75 @@ it('si el fichero cambió mientras se editaba, lo dice y no finge que guardó', 
   await user.click(within(cajon).getByRole('button', { name: /Guardar/i }));
 
   expect(await within(cajon).findByText(/cambió mientras lo editabas/i)).toBeInTheDocument();
-  expect(within(cajon).queryByText(/Guardado en/)).not.toBeInTheDocument();
+  expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
+});
+
+it('un fichero ausente se crea con create_if_absent, nunca como reemplazo sin SHA', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  let recibido: { content?: string; create_if_absent?: boolean; expected_sha?: string } | undefined;
+  server.use(
+    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown', exists: false,
+      content: '', sha: null, bytes: 0, editable: true, projected: false, truncated: false,
+    })),
+    http.put(RUTA_CONTENIDO, async ({ request }) => {
+      recibido = await request.json() as typeof recibido;
+      return HttpResponse.json({
+        ok: true, state: 'applied', evidence: 'probe_write_ack',
+        path: '/home/stev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
+      });
+    }),
+  );
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  await user.type(caja, '# nuevo');
+  await user.click(within(cajon).getByRole('button', { name: /Guardar/i }));
+
+  await waitFor(() => expect(recibido).toBeDefined());
+  expect(recibido).toEqual({ content: '# nuevo', create_if_absent: true });
+});
+
+it('un contenido truncado se enseña pero nunca queda editable ni guardable', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  server.use(http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+    tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+    path: '/home/stev/.claude/CLAUDE.md', format: 'markdown', exists: true,
+    content: 'prefijo', sha: SHA_VIEJO, bytes: 900_000,
+    editable: false, projected: false, truncated: true,
+  })));
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  expect(caja).toHaveAttribute('readonly');
+  expect(await within(cajon).findByRole('alert')).toHaveTextContent(/lectura está recortada/i);
+  expect(within(cajon).getByRole('button', { name: /Guardar/i })).toBeDisabled();
+});
+
+it('un 2xx sin ACK completo conserva el borrador sucio y no afirma aplicado', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  server.use(
+    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown', exists: true,
+      content: 'viejo', sha: SHA_VIEJO, bytes: 5,
+      editable: true, projected: false, truncated: false,
+    })),
+    http.put(RUTA_CONTENIDO, () => HttpResponse.json({ ok: true, path: '/home/stev/.claude/CLAUDE.md' })),
+  );
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  await user.clear(caja);
+  await user.type(caja, 'nuevo');
+  await user.click(within(cajon).getByRole('button', { name: /Guardar/i }));
+
+  expect(await within(cajon).findByText(/no confirmó la aplicación/i)).toBeInTheDocument();
+  expect(caja).toHaveValue('nuevo');
+  expect(within(cajon).getByRole('button', { name: /Guardar/i })).toBeEnabled();
+  expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
 });
 
 /**
@@ -167,7 +247,7 @@ it('si el fichero cambió mientras se editaba, lo dice y no finge que guardó', 
  * publica la ruta NO puede convertirse en «este alias no tiene ficheros».
  */
 it('un gateway que no publica la ruta no se pinta como «este alias no tiene ficheros»', async () => {
-  server.use(http.get(RUTA_MAPA, () => HttpResponse.json({ error: 'not_found' }, { status: 404 })));
+  server.use(http.get(RUTA_MAPA, () => HttpResponse.json({ error: 'Not Found' }, { status: 404 })));
   const { cajon } = await abrirFicheros();
 
   const vacio = await within(cajon).findByText(/no publica el mapa de ficheros/i);
@@ -176,6 +256,18 @@ it('un gateway que no publica la ruta no se pinta como «este alias no tiene fic
   const parrafo = vacio.closest('p') as HTMLElement;
   expect(parrafo.textContent).toMatch(/no publica el mapa de ficheros/i);
   expect(parrafo.textContent).toMatch(/desde aquí no se ha mirado/i);
+});
+
+it('un 404 del manejador se conserva como alias ausente o denegado, no como ruta sin publicar', async () => {
+  server.use(http.get(RUTA_MAPA, () => HttpResponse.json(
+    { error: 'not_found', message: 'agent not found or not visible' }, { status: 404 },
+  )));
+
+  const { cajon } = await abrirFicheros();
+
+  expect(await within(cajon).findByText(/no existe en ese tenant o no es visible/i))
+    .toBeInTheDocument();
+  expect(within(cajon).queryByText(/no publica el mapa de ficheros/i)).not.toBeInTheDocument();
 });
 
 it('cuando las rutas no están medidas, la cabecera lo advierte', async () => {

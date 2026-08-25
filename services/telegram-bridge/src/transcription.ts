@@ -73,14 +73,23 @@ export function transcriptionConfig(
 
 /** Marcas bidi e invisibles: permiten disfrazar texto dentro del prompt del harness. */
 const INVISIBLES = /[\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/gu;
+
 /** Controles, salvo el salto de linea, que el reconocedor si puede devolver legitimamente. */
-const CONTROLES = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/gu;
+function replaceControls(value: string): string {
+  return Array.from(value, (character) => {
+    const codePoint = character.codePointAt(0);
+    const isControl = codePoint !== undefined && (
+      codePoint <= 0x09
+      || (codePoint >= 0x0b && codePoint <= 0x1f)
+      || (codePoint >= 0x7f && codePoint <= 0x9f)
+    );
+    return isControl ? ' ' : character;
+  }).join('');
+}
 
 function sanitize(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const limpio = value
-    .replace(INVISIBLES, '')
-    .replace(CONTROLES, ' ')
+  const limpio = replaceControls(value.replace(INVISIBLES, ''))
     .replace(/[^\S\n]+/gu, ' ')
     .trim();
   if (limpio.length === 0) return undefined;

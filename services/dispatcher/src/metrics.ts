@@ -12,6 +12,22 @@ interface CountRow {
   oldest_seconds?: number | string;
 }
 
+export interface DispatcherProgress {
+  ticks: number;
+  successfulTicks: number;
+  failedTicks: number;
+  fencedTicks: number;
+  lastTickAt: number | undefined;
+  lastSuccessAt: number | undefined;
+  tickAgeMs: number | undefined;
+  successAgeMs: number | undefined;
+  consecutiveFailures: number;
+  lastResult: 'ok' | 'error' | 'fenced' | undefined;
+  live: boolean;
+  ready: boolean;
+  reason: 'starting' | 'loop_stale' | 'tick_error' | 'fenced' | 'ready';
+}
+
 const lanes: readonly Lane[] = ['interactive', 'batch'];
 const deliveryStates = ['pending', 'retry', 'leased', 'accepted', 'started', 'done', 'failed', 'dead'] as const;
 const relayStates = ['pending', 'processing', 'sent', 'failed', 'dead'] as const;
@@ -19,18 +35,83 @@ const relayStates = ['pending', 'processing', 'sent', 'failed', 'dead'] as const
 /** Process counters plus exact, scrape-time PostgreSQL gauges. No tenant or payload labels. */
 export class DispatcherMetrics {
   private readonly jobResults = new Map<string, number>();
-  private readonly ticks = new Map<'ok' | 'error', number>([['ok', 0], ['error', 0]]);
+  private readonly ticks = new Map<'ok' | 'error' | 'fenced', number>([
+    ['ok', 0], ['error', 0], ['fenced', 0]
+  ]);
   private readonly chainSweeps = new Map<ChainSweepOutcome, number>();
+  private readonly startedAt: number;
+  private lastTickAt: number | undefined;
+  private lastSuccessAt: number | undefined;
+  private lastResult: 'ok' | 'error' | 'fenced' | undefined;
+  private consecutiveFailures = 0;
+  private fencedDuringTick = false;
 
-  constructor(private readonly pool: DatabasePool) {}
+  constructor(private readonly pool: DatabasePool, private readonly now: () => number = Date.now) {
+    this.startedAt = this.now();
+  }
 
   recordTick(result: 'ok' | 'error'): void {
-    this.ticks.set(result, (this.ticks.get(result) ?? 0) + 1);
+    const outcome = result === 'error' ? 'error' : this.fencedDuringTick ? 'fenced' : 'ok';
+    this.fencedDuringTick = false;
+    this.ticks.set(outcome, (this.ticks.get(outcome) ?? 0) + 1);
+    this.lastTickAt = this.now();
+    this.lastResult = outcome;
+    if (outcome === 'ok') {
+      this.lastSuccessAt = this.lastTickAt;
+      this.consecutiveFailures = 0;
+    } else {
+      this.consecutiveFailures += 1;
+    }
+  }
+
+  /**
+   * Monotonic work-loop progress used by readiness, liveness and Prometheus.
+   *
+   * Error ticks prove that the timer is still executing, so they keep liveness green while fresh,
+   * but they are never readiness success.  A fenced completion is classified as its own failed
+   * tick instead of being hidden behind the otherwise-successful outer iteration.
+   */
+  progress(staleAfterMs = 5_000): DispatcherProgress {
+    if (!Number.isSafeInteger(staleAfterMs) || staleAfterMs < 1) {
+      throw new Error('dispatcher stale deadline must be a positive integer');
+    }
+    const at = this.now();
+    const successfulTicks = this.ticks.get('ok') ?? 0;
+    const failedTicks = this.ticks.get('error') ?? 0;
+    const fencedTicks = this.ticks.get('fenced') ?? 0;
+    const ticks = successfulTicks + failedTicks + fencedTicks;
+    const ageMs = at - (this.lastTickAt ?? this.startedAt);
+    const stale = ageMs > staleAfterMs;
+    const reason: DispatcherProgress['reason'] = stale
+      ? 'loop_stale'
+      : this.lastResult === 'fenced'
+        ? 'fenced'
+        : this.lastResult === 'error'
+          ? 'tick_error'
+          : this.lastResult === 'ok'
+            ? 'ready'
+            : 'starting';
+    return {
+      ticks,
+      successfulTicks,
+      failedTicks,
+      fencedTicks,
+      lastTickAt: this.lastTickAt,
+      lastSuccessAt: this.lastSuccessAt,
+      tickAgeMs: this.lastTickAt === undefined ? undefined : Math.max(0, at - this.lastTickAt),
+      successAgeMs: this.lastSuccessAt === undefined ? undefined : Math.max(0, at - this.lastSuccessAt),
+      consecutiveFailures: this.consecutiveFailures,
+      lastResult: this.lastResult,
+      live: !stale,
+      ready: reason === 'ready',
+      reason,
+    };
   }
 
   recordJob(lane: Lane, result: JobResult): void {
     const key = `${lane}:${result}`;
     this.jobResults.set(key, (this.jobResults.get(key) ?? 0) + 1);
+    if (result === 'fenced') this.fencedDuringTick = true;
   }
 
   /**
@@ -58,7 +139,7 @@ export class DispatcherMetrics {
     const lines = [
       '# HELP cauce_dispatcher_ticks_total Dispatcher polling ticks by result.',
       '# TYPE cauce_dispatcher_ticks_total counter',
-      ...(['ok', 'error'] as const).map((result) => `cauce_dispatcher_ticks_total{result="${result}"} ${this.ticks.get(result) ?? 0}`),
+      ...(['ok', 'error', 'fenced'] as const).map((result) => `cauce_dispatcher_ticks_total{result="${result}"} ${this.ticks.get(result) ?? 0}`),
       '# HELP cauce_dispatcher_jobs_processed_total Jobs whose registered handler was selected, by outcome.',
       '# TYPE cauce_dispatcher_jobs_processed_total counter',
     ];
@@ -72,6 +153,16 @@ export class DispatcherMetrics {
     for (const outcome of ['scanned', 'fanin_recovered', 'notified', 'skipped', 'failed'] as const) {
       lines.push(`cauce_dispatcher_chain_sweep_total{outcome="${outcome}"} ${this.chainSweeps.get(outcome) ?? 0}`);
     }
+    const progress = this.progress();
+    lines.push('# HELP cauce_dispatcher_tick_age_seconds Seconds since the dispatcher work loop last completed a tick; -1 before its first tick.');
+    lines.push('# TYPE cauce_dispatcher_tick_age_seconds gauge');
+    lines.push(`cauce_dispatcher_tick_age_seconds ${progress.tickAgeMs === undefined ? -1 : progress.tickAgeMs / 1_000}`);
+    lines.push('# HELP cauce_dispatcher_loop_stale Whether no dispatcher tick has completed inside the bounded deadline.');
+    lines.push('# TYPE cauce_dispatcher_loop_stale gauge');
+    lines.push(`cauce_dispatcher_loop_stale ${progress.reason === 'loop_stale' ? 1 : 0}`);
+    lines.push('# HELP cauce_dispatcher_ready Whether the latest completed dispatcher tick was clean and recent.');
+    lines.push('# TYPE cauce_dispatcher_ready gauge');
+    lines.push(`cauce_dispatcher_ready ${progress.ready ? 1 : 0}`);
 
     if (!databaseAllowed) {
       lines.push('# HELP cauce_dispatcher_metrics_query_success Whether exact PostgreSQL gauges were collected.');
@@ -176,6 +267,10 @@ function appendLaneGauge(lines: string[], name: string, help: string, rows: read
 }
 
 function number(value: unknown): number {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  if (value === undefined || value === null) return 0;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error('dispatcher metric query returned a non-finite or negative value');
+  }
+  return parsed;
 }

@@ -14,14 +14,16 @@ import {
 import { HttpGovernanceRelayClient } from '../console/relay-governance-client.js';
 import { recordTerminalAudit, terminalAuditMetadata, type TerminalAuditContext } from './audit.js';
 import {
-  FLEET_PLACEMENTS, GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort,
-  fleetPlacement, resolveOperator, routingAuthority, type RoutingAuthority
+  GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort, fleetIdentity,
+  fleetIdentityLabel, fleetPlacement, loadFleetPlacements, resolveOperator, routingAuthority,
+  type RoutingAuthority
 } from './authority.js';
 import type { TerminalConfig } from './config.js';
 import { hechosDelRegistro } from './hechos-del-registro.js';
 import { AgentRegistry, parseAgentPresence } from './registry.js';
 import {
-  deriveAliasKey, issueTicket, parseAndVerify, ticketDigest, ticketSha256,
+  deriveAliasKey, issueResumeToken, issueTicket, parseAndVerify, parseResumeToken,
+  ticketDigest, ticketSha256,
   TicketError, type TicketPayload
 } from './tickets.js';
 import { isTerminalMode, type TerminalMode, type TerminalSessionRow, type TerminalTarget } from './types.js';
@@ -35,8 +37,9 @@ import { isTerminalMode, type TerminalMode, type TerminalSessionRow, type Termin
  * component with a route into the containers. The browser talks to the relay over the
  * WebSocket path announced in the capability; the relay talks back here over
  * /v3/terminal/relay/* to redeem a ticket, revalidate it every few seconds and report closure.
- * Nothing in that path lets the browser name a container: it names an alias and the fixed
- * server-side map in authority.ts resolves the rest.
+ * Nothing in that path lets the browser name a container: it names `(tenant, alias)` and the
+ * enabled PostgreSQL registry resolves placement.  The release gate separately proves that
+ * registry matches the declarative operations inventory.
  *
  * Route placement is deliberate:
  *  - /v3/console/terminal/*  browser routes, covered by the global console security hook
@@ -205,9 +208,62 @@ export async function registerTerminalControlPlane(
     return result.rows[0];
   }
 
+  async function currentCohort(tenantId: string, alias: string) {
+    const placements = await loadFleetPlacements(pool);
+    return containerCohort(placements, tenantId, alias);
+  }
+
+  function cohortLabels(cohort: Awaited<ReturnType<typeof currentCohort>>): string[] {
+    return cohort.map(fleetIdentityLabel);
+  }
+
   function sessionExpiry(row: TerminalSessionRow): Date | undefined {
     if (row.consumed_at === null) return undefined;
     return new Date(row.consumed_at.getTime() + config.sessionTtlSeconds * 1_000);
+  }
+
+  function relayGrant(row: TerminalSessionRow, resumeToken: string): Record<string, unknown> {
+    const expiry = sessionExpiry(row) ?? row.expires_at;
+    return {
+      ok: true,
+      tenant_id: row.tenant_id,
+      alias: row.alias,
+      mode: row.mode,
+      cols: row.cols,
+      rows: row.rows,
+      operator_id: row.operator_id,
+      container: row.container,
+      runtime_user: row.runtime_user,
+      expires_at: row.expires_at.toISOString(),
+      session_expires_at: expiry.toISOString(),
+      // Never persisted or logged. It only crosses the relay mTLS path and then the already
+      // authenticated browser WebSocket as part of `ready`.
+      resume_token: resumeToken
+    };
+  }
+
+  interface LiveSessionAuthorization {
+    readonly allowed: boolean;
+    readonly reason: string;
+    readonly expires_at?: Date;
+  }
+
+  /** One authority implementation shared by periodic authz and browser reconnect. */
+  async function liveSessionAuthorization(row: TerminalSessionRow): Promise<LiveSessionAuthorization> {
+    if (row.consumed_at === null) return { allowed: false, reason: 'not_consumed' };
+    if (row.revoked_at !== null) return { allowed: false, reason: 'revoked' };
+    if (row.closed_at !== null) return { allowed: false, reason: 'closed' };
+    const expiry = sessionExpiry(row);
+    if (!expiry || expiry.getTime() <= Date.now()) return { allowed: false, reason: 'session_expired' };
+    const [actorTenant, actorAlias] = row.console_subject.split(':', 2) as [string, string?];
+    if (actorAlias === undefined) return { allowed: false, reason: 'unknown_session' };
+    const cohort = await currentCohort(row.tenant_id, row.alias);
+    const authority = await cohortRoutingAuthority(pool, actorTenant, actorAlias, cohort);
+    if (!authority.allowed) return { allowed: false, reason: 'no_routing_authority' };
+    if (!(await grants.allowsCohort(row.operator_id, cohort, row.mode))) {
+      return { allowed: false, reason: 'no_grant' };
+    }
+    return { allowed: true, reason: 'ok', expires_at: expiry };
   }
 
   /* ------------------------------------------------------------------ */
@@ -220,10 +276,11 @@ export async function registerTerminalControlPlane(
       requireOperatorPermission(actor, 'control');
       const operator = resolveOperator(request, actor, config);
       const now = Date.now();
+      const placements = await loadFleetPlacements(pool);
       // One routing decision per (tenant, alias) even though cohorts overlap heavily.
       const decisions = new Map<string, Promise<RoutingAuthority>>();
       const authorityFor = (tenantId: string, alias: string): Promise<RoutingAuthority> => {
-        const cacheKey = `${tenantId}:${alias}`;
+        const cacheKey = `${tenantId}\0${alias}`;
         let pending = decisions.get(cacheKey);
         if (!pending) {
           pending = routingAuthority(pool, actor.tenant_id, actor.alias, tenantId, alias);
@@ -232,46 +289,44 @@ export async function registerTerminalControlPlane(
         return pending;
       };
       const items: TerminalTarget[] = [];
-      for (const alias of Object.keys(FLEET_PLACEMENTS).sort()) {
-        const placement = fleetPlacement(alias);
-        if (!placement) continue;
-        const cohort = containerCohort(alias);
-        const observation = registry.get(placement.tenant_id, alias, now);
-        const state = registry.state(placement.tenant_id, alias, now);
+      for (const placement of placements) {
+        const cohort = containerCohort(placements, placement.tenant_id, placement.alias);
+        const observation = registry.get(placement.tenant_id, placement.alias, now);
+        const state = registry.state(placement.tenant_id, placement.alias, now);
         let authorized = attributionAllows(operator.attributed, actor.tenant_id, placement.tenant_id);
         for (const member of cohort) {
           if (!authorized) break;
-          const memberPlacement = fleetPlacement(member);
-          if (!memberPlacement) { authorized = false; break; }
-          if (!attributionAllows(operator.attributed, actor.tenant_id, memberPlacement.tenant_id)) {
+          if (!attributionAllows(operator.attributed, actor.tenant_id, member.tenant_id)) {
             authorized = false;
             break;
           }
-          authorized = (await authorityFor(memberPlacement.tenant_id, member)).allowed;
+          authorized = (await authorityFor(member.tenant_id, member.alias)).allowed;
         }
         const reported = observation?.presence.modes ?? ['shell'];
         const modes: string[] = [];
         if (authorized) {
           for (const mode of reported) {
             if (!isTerminalMode(mode)) continue;
-            if (await grants.allowsCohort(operator.operator_id, alias, mode, now)) modes.push(mode);
+            if (await grants.allowsCohort(operator.operator_id, cohort, mode, now)) modes.push(mode);
           }
         }
         const usable = authorized && modes.length > 0;
         items.push({
           tenant_id: placement.tenant_id,
-          alias,
+          alias: placement.alias,
           // Denial must not confirm what the target looks like, only that authority is missing.
           container: usable ? placement.container : null,
           runtime_user: usable ? (observation?.presence.runtime_user ?? placement.runtime_user) : null,
           harness: usable ? (observation?.presence.harness ?? null) : null,
           image: usable ? (observation?.presence.image_id ?? null) : null,
-          shares_container_with: cohort.filter((member) => member !== alias),
+          shares_container_with: cohort
+            .filter((member) => member.tenant_id !== placement.tenant_id || member.alias !== placement.alias)
+            .map(fleetIdentity),
           modes: usable ? modes : [],
           pty_state: state,
           last_seen: observation?.observed_at ?? null,
           authorized: usable,
-          reason: usable ? 'ok' : `sin autoridad sobre ${alias}`
+          reason: usable ? 'ok' : `sin autoridad sobre ${placement.tenant_id}:${placement.alias}`
         });
       }
       return {
@@ -290,15 +345,16 @@ export async function registerTerminalControlPlane(
       requireOperatorPermission(actor, 'control');
       const operator = resolveOperator(request, actor, config);
       const body = parseSessionRequest(request.body);
-      const placement = fleetPlacement(body.alias);
-      const cohort = containerCohort(body.alias);
+      const placements = await loadFleetPlacements(pool);
+      const placement = fleetPlacement(placements, body.tenant_id, body.alias);
+      const cohort = containerCohort(placements, body.tenant_id, body.alias);
       const audit: TerminalAuditContext = {
         operator_id: operator.operator_id,
         attributed: operator.attributed,
         target_tenant: body.tenant_id,
         target_alias: body.alias,
         container: placement?.container ?? null,
-        cohort,
+        cohort: cohortLabels(cohort),
         mode: body.mode
       };
       // Every outcome of this route is audited, allow and deny alike.
@@ -316,7 +372,7 @@ export async function registerTerminalControlPlane(
         );
       };
 
-      if (!placement || placement.tenant_id !== body.tenant_id) {
+      if (!placement) {
         await deny(403, 'unknown_alias');
         return;
       }
@@ -333,21 +389,19 @@ export async function registerTerminalControlPlane(
         return;
       }
       for (const member of cohort) {
-        const memberPlacement = fleetPlacement(member);
-        if (!memberPlacement ||
-            !attributionAllows(operator.attributed, actor.tenant_id, memberPlacement.tenant_id)) {
+        if (!attributionAllows(operator.attributed, actor.tenant_id, member.tenant_id)) {
           await deny(403, 'attribution_required');
           return;
         }
       }
       // Gate 4: routing authority over EVERY alias sharing the container.
-      const authority = await cohortRoutingAuthority(pool, actor.tenant_id, actor.alias, body.alias);
+      const authority = await cohortRoutingAuthority(pool, actor.tenant_id, actor.alias, cohort);
       if (!authority.allowed) {
         await deny(403, 'no_routing_authority', { authority_reason: authority.reason });
         return;
       }
       // Gate 5: grants file, re-read from disk, over the whole cohort.
-      if (!(await grants.allowsCohort(operator.operator_id, body.alias, body.mode))) {
+      if (!(await grants.allowsCohort(operator.operator_id, cohort, body.mode))) {
         await deny(403, 'no_grant');
         return;
       }
@@ -357,27 +411,6 @@ export async function registerTerminalControlPlane(
         await deny(409, 'agent_offline', { pty_state: registry.state(placement.tenant_id, body.alias) });
         return;
       }
-      // Gate 7: concurrency. One operator holds few shells, and two operators never share a
-      // container: a second shell in the same container would read the first one's home.
-      const open = await pool.query<{ open: number }>(
-        `SELECT count(*)::int AS open FROM terminal_sessions
-          WHERE operator_id=$1 AND ${openPredicate(2)}`,
-        [operator.operator_id, config.sessionTtlSeconds]
-      );
-      if ((open.rows[0]?.open ?? 0) >= config.maxSessionsPerOperator) {
-        await deny(409, 'session_limit');
-        return;
-      }
-      const busy = await pool.query<{ open: number }>(
-        `SELECT count(*)::int AS open FROM terminal_sessions
-          WHERE container=$1 AND operator_id<>$2 AND ${openPredicate(3)}`,
-        [placement.container, operator.operator_id, config.sessionTtlSeconds]
-      );
-      if ((busy.rows[0]?.open ?? 0) > 0) {
-        await deny(409, 'container_busy');
-        return;
-      }
-
       const sessionId = randomUUID();
       const issuedAt = Date.now();
       const expiresAt = new Date(issuedAt + config.ticketTtlSeconds * 1_000);
@@ -400,19 +433,72 @@ export async function registerTerminalControlPlane(
         exp: Math.floor(expiresAt.getTime() / 1_000)
       };
       const ticket = issueTicket(payload, deriveAliasKey(config.ticketKey, placement.tenant_id, body.alias));
-      await pool.query(
-        `INSERT INTO terminal_sessions(
-           id, operator_id, attributed, console_subject, tenant_id, alias, container, generation,
-           image_id, runtime_user, mode, ticket_sha256, reason, cols, rows, trace_id, expires_at
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
-        [
-          sessionId, operator.operator_id, operator.attributed, `${actor.tenant_id}:${actor.alias}`,
-          placement.tenant_id, body.alias, observation.presence.container_id,
-          observation.presence.generation, observation.presence.image_id,
-          observation.presence.runtime_user, body.mode, ticketSha256(ticket), body.reason,
-          body.cols, body.rows, traceId, expiresAt.toISOString()
-        ]
-      );
+      // Gate 7 and insertion share a transaction, but the locks MUST be acquired by earlier
+      // statements. PostgreSQL takes a READ COMMITTED snapshot at statement start: putting the
+      // advisory lock in the same CTE as COUNT lets a waiter resume with the stale pre-lock
+      // snapshot and admit a second terminal. The admission statement below gets a fresh
+      // snapshot after both ordered locks, and transaction-scoped locks leave no residue.
+      const admissionClient = await pool.connect();
+      let transactionOpen = false;
+      let admitted: { rows: Array<{
+        reason: 'ok' | 'session_limit' | 'container_busy'; id: string | null;
+      }> };
+      try {
+        await admissionClient.query('BEGIN');
+        transactionOpen = true;
+        await admissionClient.query(
+          `SELECT pg_advisory_xact_lock(hashtextextended('terminal:operator:' || $1, 0))`,
+          [operator.operator_id]
+        );
+        await admissionClient.query(
+          `SELECT pg_advisory_xact_lock(hashtextextended('terminal:container:' || $1, 0))`,
+          [observation.presence.container_id]
+        );
+        admitted = await admissionClient.query<{
+          reason: 'ok' | 'session_limit' | 'container_busy'; id: string | null;
+        }>(
+          `WITH decision AS MATERIALIZED (
+           SELECT CASE
+             WHEN (SELECT count(*) FROM terminal_sessions
+                    WHERE operator_id=$1 AND ${openPredicate(3)}) >= $4 THEN 'session_limit'
+             WHEN EXISTS (SELECT 1 FROM terminal_sessions
+                    WHERE container=$2 AND ${openPredicate(3)}) THEN 'container_busy'
+             ELSE 'ok'
+           END AS reason
+         ), inserted AS (
+           INSERT INTO terminal_sessions(
+             id, operator_id, attributed, console_subject, tenant_id, alias, container, generation,
+             image_id, runtime_user, mode, ticket_sha256, reason, cols, rows, trace_id, expires_at
+           )
+           SELECT $5,$1,$6,$7,$8,$9,$2,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+             FROM decision WHERE reason='ok'
+           RETURNING id
+         )
+         SELECT decision.reason, inserted.id
+           FROM decision LEFT JOIN inserted ON true`,
+          [
+            operator.operator_id, observation.presence.container_id, config.sessionTtlSeconds,
+            config.maxSessionsPerOperator, sessionId, operator.attributed,
+            `${actor.tenant_id}:${actor.alias}`, placement.tenant_id, body.alias,
+            observation.presence.generation, observation.presence.image_id,
+            observation.presence.runtime_user, body.mode, ticketSha256(ticket), body.reason,
+            body.cols, body.rows, traceId, expiresAt.toISOString()
+          ]
+        );
+        await admissionClient.query('COMMIT');
+        transactionOpen = false;
+      } catch (error) {
+        if (transactionOpen) await admissionClient.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        admissionClient.release();
+      }
+      const admission = admitted.rows[0];
+      if (!admission || admission.reason !== 'ok' || admission.id !== sessionId) {
+        const reason = admission?.reason === 'session_limit' ? 'session_limit' : 'container_busy';
+        await deny(409, reason);
+        return;
+      }
       await recordTerminalAudit(pool, {
         tenant_id: actor.tenant_id,
         actor_alias: actor.alias,
@@ -443,7 +529,9 @@ export async function registerTerminalControlPlane(
           container: observation.presence.container_id,
           runtime_user: observation.presence.runtime_user,
           mode: body.mode,
-          shares_container_with: cohort.filter((member) => member !== body.alias)
+          shares_container_with: cohort
+            .filter((member) => member.tenant_id !== body.tenant_id || member.alias !== body.alias)
+            .map(fleetIdentity)
         }
       });
     } catch (error) { replyError(reply, error); }
@@ -499,7 +587,7 @@ export async function registerTerminalControlPlane(
             target_tenant: row.tenant_id,
             target_alias: row.alias,
             container: row.container,
-            cohort: containerCohort(row.alias),
+            cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias)),
             mode: row.mode
           }, { session_id: row.id, reason: 'operator_revoked' })
         });
@@ -640,7 +728,8 @@ export async function registerTerminalControlPlane(
             ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
             metadata: terminalAuditMetadata({
               operator_id: row.operator_id, attributed: row.attributed, target_tenant: row.tenant_id,
-              target_alias: row.alias, container: row.container, cohort: containerCohort(row.alias),
+              target_alias: row.alias, container: row.container,
+              cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias)),
               mode: row.mode
             }, { session_id: sid, reason: 'already_consumed', ticket_sha256: ticketDigest(ticket) })
           });
@@ -659,7 +748,7 @@ export async function registerTerminalControlPlane(
         metadata: terminalAuditMetadata({
           operator_id: session.operator_id, attributed: session.attributed,
           target_tenant: session.tenant_id, target_alias: session.alias, container: session.container,
-          cohort: containerCohort(session.alias), mode: session.mode
+          cohort: cohortLabels(await currentCohort(session.tenant_id, session.alias)), mode: session.mode
         }, {
           session_id: sid,
           image_id: session.image_id,
@@ -670,19 +759,61 @@ export async function registerTerminalControlPlane(
           ticket_sha256: ticketDigest(ticket)
         })
       });
-      return await reply.code(200).send({
-        ok: true,
-        tenant_id: session.tenant_id,
-        alias: session.alias,
-        mode: session.mode,
-        cols: session.cols,
-        rows: session.rows,
-        operator_id: session.operator_id,
-        container: session.container,
-        runtime_user: session.runtime_user,
-        expires_at: session.expires_at.toISOString(),
-        session_expires_at: (sessionExpiry(session) ?? session.expires_at).toISOString()
+      const expiry = sessionExpiry(session) ?? session.expires_at;
+      const resumeToken = issueResumeToken(
+        session.id, session.operator_id, Math.floor(expiry.getTime() / 1_000), config.ticketKey
+      );
+      return await reply.code(200).send(relayGrant(session, resumeToken));
+    } catch (error) { replyError(reply, error); }
+  });
+
+  app.post<{ Params: { sid: string } }>('/v3/terminal/relay/sessions/:sid/resume', async (request, reply) => {
+    const sid = request.params.sid;
+    const refuse = async (status: 401 | 403, reason: string): Promise<void> => {
+      // Authentication failures intentionally share the same small body. A caller on this route
+      // already passed the relay bearer gate, but a stale/forged browser credential learns no row.
+      await reply.code(status).send({ ok: false, reason });
+    };
+    try {
+      if (!UUID_PATTERN.test(sid)) { await refuse(401, 'resume_invalid'); return; }
+      const body = request.body;
+      const token = body !== null && typeof body === 'object' && !Array.isArray(body)
+        ? (body as Record<string, unknown>).resume_token : undefined;
+      if (typeof token !== 'string' || token.length < 80 || token.length > 1_024) {
+        await refuse(401, 'resume_invalid');
+        return;
+      }
+      const row = await loadSession(sid);
+      if (!row) { await refuse(401, 'resume_invalid'); return; }
+      let credential;
+      try {
+        credential = parseResumeToken(token, config.ticketKey);
+      } catch (error) {
+        if (!(error instanceof TicketError)) throw error;
+        await refuse(401, 'resume_invalid');
+        return;
+      }
+      const expiry = sessionExpiry(row);
+      if (credential.sid !== sid || credential.op !== row.operator_id || expiry === undefined ||
+          credential.exp !== Math.floor(expiry.getTime() / 1_000)) {
+        await refuse(401, 'resume_invalid');
+        return;
+      }
+      const authorization = await liveSessionAuthorization(row);
+      if (!authorization.allowed) { await refuse(403, authorization.reason); return; }
+      await recordTerminalAudit(pool, {
+        tenant_id: row.tenant_id,
+        actor_alias: row.alias,
+        action: 'terminal.session.resume',
+        decision: 'info',
+        ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
+        metadata: terminalAuditMetadata({
+          operator_id: row.operator_id, attributed: row.attributed,
+          target_tenant: row.tenant_id, target_alias: row.alias, container: row.container,
+          cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias)), mode: row.mode
+        }, { session_id: row.id })
       });
+      return await reply.code(200).send(relayGrant(row, token));
     } catch (error) { replyError(reply, error); }
   });
 
@@ -700,7 +831,8 @@ export async function registerTerminalControlPlane(
             ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
             metadata: terminalAuditMetadata({
               operator_id: row.operator_id, attributed: row.attributed, target_tenant: row.tenant_id,
-              target_alias: row.alias, container: row.container, cohort: containerCohort(row.alias),
+              target_alias: row.alias, container: row.container,
+              cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias)),
               mode: row.mode
             }, { session_id: row.id, reason })
           });
@@ -708,19 +840,14 @@ export async function registerTerminalControlPlane(
         await reply.code(403).send({ ok: false, reason });
       };
       if (!row) { await refuse('unknown_session'); return; }
-      if (row.consumed_at === null) { await refuse('not_consumed'); return; }
-      if (row.revoked_at !== null) { await refuse('revoked'); return; }
-      if (row.closed_at !== null) { await refuse('closed'); return; }
-      const expiry = sessionExpiry(row);
-      if (!expiry || expiry.getTime() <= Date.now()) { await refuse('session_expired'); return; }
       // Grants and routing authority are re-read here, never cached across calls: emptying
       // grants.json must cut a live shell within one revalidation round.
-      const [actorTenant, actorAlias] = row.console_subject.split(':', 2) as [string, string?];
-      if (actorAlias === undefined) { await refuse('unknown_session'); return; }
-      const authority = await cohortRoutingAuthority(pool, actorTenant, actorAlias, row.alias);
-      if (!authority.allowed) { await refuse('no_routing_authority'); return; }
-      if (!(await grants.allowsCohort(row.operator_id, row.alias, row.mode))) { await refuse('no_grant'); return; }
-      return { ok: true, expires_at: expiry.toISOString() };
+      const authorization = await liveSessionAuthorization(row);
+      if (!authorization.allowed || authorization.expires_at === undefined) {
+        await refuse(authorization.reason);
+        return;
+      }
+      return { ok: true, expires_at: authorization.expires_at.toISOString() };
     } catch (error) { replyError(reply, error); }
   });
 
@@ -752,7 +879,8 @@ export async function registerTerminalControlPlane(
           ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
           metadata: terminalAuditMetadata({
             operator_id: row.operator_id, attributed: row.attributed, target_tenant: row.tenant_id,
-            target_alias: row.alias, container: row.container, cohort: containerCohort(row.alias),
+            target_alias: row.alias, container: row.container,
+            cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias)),
             mode: row.mode
           }, {
             session_id: row.id,

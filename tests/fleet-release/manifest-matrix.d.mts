@@ -9,7 +9,7 @@ export interface AliasManifest {
   sha256: string;
 }
 
-export const EXPECTED_ALIAS_COUNT: 12;
+export const EXPECTED_ALIAS_COUNT: 15;
 export const EXPECTED_HARNESS_COUNTS: Readonly<Record<HarnessId, number>>;
 export const HARNESS_IDS: readonly HarnessId[];
 export function readAliasManifest(manifestPath: string): Promise<AliasManifest>;

@@ -1,8 +1,13 @@
 import { readFileSync } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import {
+  ensureMigrationIntegrityTables,
+  inspectMigrationIntegrity,
+  migrationIntegrityVersions,
+  migrationSourcesForApply,
+  recordLegacy024Verification,
+} from './migration-integrity.js';
 
 const { Pool } = pg;
 export type DatabasePool = pg.Pool;
@@ -79,21 +84,36 @@ export function createPool(connectionString: string, options: DatabasePoolOption
 }
 
 export async function applyMigrations(pool: DatabasePool): Promise<void> {
-  const directory = fileURLToPath(new URL('../migrations/', import.meta.url));
-  const files = (await readdir(directory)).filter((name) => name.endsWith('.sql')).sort();
+  const migrations = await migrationSourcesForApply();
   await withTransaction(pool, async (client) => {
     await client.query('SELECT pg_advisory_xact_lock(783_003_003)');
     await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
       version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now()
     )`);
-    for (const file of files) {
-      const applied = await client.query<{ exists: boolean }>(
-        'SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1) AS exists', [file]
+    await ensureMigrationIntegrityTables(client);
+    // Recompute the observed legacy fingerprint on every attempt. A prior verification row is
+    // evidence, never permission to trust later drift.
+    await inspectMigrationIntegrity(client);
+    for (const migration of migrations) {
+      const applied = await client.query<{ exists: boolean; source_sha256: string | null }>(
+        `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1) AS exists,
+                (SELECT source_sha256 FROM schema_migration_ledger WHERE version=$1) AS source_sha256`,
+        [migration.version],
       );
-      if (!applied.rows[0]?.exists) {
-        await client.query(await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
-        await client.query('INSERT INTO schema_migrations(version) VALUES ($1)', [file]);
+      if (applied.rows[0]?.exists) {
+        if (migration.version === migrationIntegrityVersions.legacyStructural
+            && applied.rows[0].source_sha256 === null) {
+          await recordLegacy024Verification(client, migration.sourceSha256);
+        }
+        continue;
       }
+      await client.query(migration.source);
+      await client.query('INSERT INTO schema_migrations(version) VALUES ($1)', [migration.version]);
+      await client.query(
+        `INSERT INTO schema_migration_ledger(version,source_sha256,source_origin)
+         VALUES ($1,$2,'applied-atomically')`,
+        [migration.version, migration.sourceSha256],
+      );
     }
   });
 }

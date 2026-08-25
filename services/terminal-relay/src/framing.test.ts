@@ -10,6 +10,8 @@ import {
  */
 const GOLDEN_STDOUT_HEX =
   '210000002631313131313131312d323232322d333333332d343434342d3535353535353535353535356869';
+const GOLDEN_TERMINAL_RESPONSE_HEX =
+  '230000002831313131313131312d323232322d333333332d343434342d3535353535353535353535351b5b306e';
 
 describe('agent framing', () => {
   it('encodes the golden STDOUT vector byte for byte', () => {
@@ -23,6 +25,37 @@ describe('agent framing', () => {
     const data = decodeDataFrame(frame?.payload ?? Buffer.alloc(0));
     expect(data.sessionId).toBe('11111111-2222-3333-4444-555555555555');
     expect(data.data.toString('utf8')).toBe('hi');
+  });
+
+  it('keeps the technical terminal response on its own cross-language tag', () => {
+    const frame = encodeDataFrame(
+      FRAME_TAGS.TERMINAL_RESPONSE,
+      '11111111-2222-3333-4444-555555555555',
+      Buffer.from('\x1b[0n', 'ascii')
+    );
+    expect(frame.toString('hex')).toBe(GOLDEN_TERMINAL_RESPONSE_HEX);
+    const [decoded] = new FrameDecoder().push(Buffer.from(GOLDEN_TERMINAL_RESPONSE_HEX, 'hex'));
+    expect(decoded?.tag).toBe(FRAME_TAGS.TERMINAL_RESPONSE);
+    expect(decodeDataFrame(decoded?.payload ?? Buffer.alloc(0)).data.toString('ascii')).toBe('\x1b[0n');
+  });
+
+  it('pins session-scoped output flow-control tags across implementations', () => {
+    expect(FRAME_TAGS.PAUSE_OUTPUT).toBe(0x24);
+    expect(FRAME_TAGS.RESUME_OUTPUT).toBe(0x25);
+  });
+
+  it('pins the negotiated governance-write tags across implementations', () => {
+    expect(FRAME_TAGS.WRITE).toBe(0x54);
+    expect(FRAME_TAGS.WRITE_DATA).toBe(0x55);
+    expect(FRAME_TAGS.WRITE_OK).toBe(0x56);
+    expect(FRAME_TAGS.WRITE_ERR).toBe(0x57);
+    expect(FRAME_TAGS.WRITE_CANCEL).toBe(0x58);
+    const frame = encodeDataFrame(
+      FRAME_TAGS.WRITE_DATA,
+      '11111111-2222-3333-4444-555555555555',
+      Buffer.from('manual', 'utf8')
+    );
+    expect(decodeDataFrame(new FrameDecoder().push(frame)[0]!.payload).data.toString()).toBe('manual');
   });
 
   it('reassembles a stream delivered one byte at a time', () => {

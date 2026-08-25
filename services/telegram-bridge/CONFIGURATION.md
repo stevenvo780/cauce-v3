@@ -149,6 +149,20 @@ y escucha solo en loopback:
 
 - `/health/live`
 - `/health/ready`
+
+Ambos endpoints usan progreso real. Cada alias debe completar ciclos de polling recientes y el
+loop de egress debe completar claims recientes; un long-poll o claim que devuelve cero es idle
+legítimo y cuenta como tick. Tres errores consecutivos quitan readiness y un loop que supera su
+deadline quita también liveness. `/health/ready` exige PostgreSQL. Las métricas no llevan alias,
+chat ni tenant como labels y sus contadores son locales al proceso; el reinicio queda explícito
+con `cauce_telegram_process_start_time_seconds`.
+
+Egress reclama exactamente una fila a la vez. Antes de cada llamada remota renueva la lease usando
+`event_id + attempt + claim_token`, y sólo incrementa `egress_sent` después de un ACK durable
+aplicado. `CAUCE_TELEGRAM_EGRESS_LEASE_MS` vale 90000 por defecto y debe ser al menos 10000. El
+cliente HTTP queda acotado por esa lease y por la lease del poller. Al reiniciar, un outbox muerto
+por expiración se reconcilia a `sent` únicamente si todas las piezas esperadas tienen estado
+durable `sent`; `sending` pasa a `ambiguous` y jamás se reproduce automáticamente.
 - `/metrics` (sin labels de tenant, chat, bot ni alias)
 
 El origen, la sesión, conversación y mensaje externo se derivan exclusivamente del

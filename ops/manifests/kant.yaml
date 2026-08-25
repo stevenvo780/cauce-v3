@@ -7,6 +7,7 @@ spec:
   room: grp.steven
   alias: kant
   harness: codex
+  profile: {seedOnConnect: true, configScope: alias}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_KANT_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

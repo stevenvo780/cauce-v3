@@ -33,9 +33,8 @@ import { avisosDeCapas, medicionDeCapa, totalDeMemoria, type AvisoDeCapas } from
  *     tiene editor. Medía 679 px —casi lo mismo que la capa 1, que es la única que se puede
  *     tocar de verdad— y encabezaba con el mismo rótulo «Capa N» que las que sí son capas.
  *
- * Lo que NO se tocó: `RoleBriefTab` entra entero y sin un cambio dentro de la columna 1. Tiene
- * siete casos de prueba que describen fallos ya cometidos —revisión optimista, conflicto,
- * relectura tras guardar—; estrecharlo es cosa del CSS, no de reescribirlo.
+ * La columna 1 conserva la proyección y su diario, ambos de sólo lectura. Editar o recuperar una
+ * revisión sale de este diálogo hacia Perfil, que es el único dueño del PUT canónico y su ACK.
  */
 
 export interface DirectivaModalProps extends RoleBriefTabProps {
@@ -65,7 +64,7 @@ function briefGuardado(snapshot: ConfigurationSnapshot | undefined, tenantId: st
 }
 
 export function DirectivaModal({
-  tenantId, alias, snapshot, borrador, onBorrador, devolverFocoA, onCerrar,
+  tenantId, alias, snapshot, onEditarEnPerfil, onRestaurarEnPerfil, devolverFocoA, onCerrar,
 }: DirectivaModalProps) {
   const api = useApi();
   /*
@@ -190,14 +189,19 @@ export function DirectivaModal({
                 numero={1}
                 titulo="Rol declarado"
                 fin="QUIÉN SOS y QUÉ PODÉS DECIDIR"
-                fuente="agents.role_brief · base de datos · viaja en CADA entrega"
+                fuente="agent_profiles.role_summary · role_brief es sólo su proyección"
                 porque={
                   'Es la única capa que sigue siendo verdad si se recrea el contenedor o cambia el '
                   + 'arnés, así que es la única que debe fijar identidad, límites de autonomía y a '
                   + 'quién se escala.'
                 }
               />
-              <RoleBriefTab tenantId={tenantId} alias={alias} borrador={borrador} onBorrador={onBorrador} />
+              <RoleBriefTab
+                tenantId={tenantId}
+                alias={alias}
+                onEditarEnPerfil={onEditarEnPerfil}
+                onRestaurarEnPerfil={onRestaurarEnPerfil}
+              />
             </section>
 
             <section className="directiva-capa" aria-label="Capa 2: manual del sitio">

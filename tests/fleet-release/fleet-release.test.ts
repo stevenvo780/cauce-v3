@@ -87,7 +87,7 @@ function errorMessage(error: unknown): string {
 
 // The fleet matrix exercises the real gateway, the real store and the packaged adapters. Nothing in
 // it reads or renders apps/console, so it binds to the runtime domain: a console edit must not
-// invalidate a 14-alias run. ops/scripts/source-digest.py documents the domains.
+// invalidate a 15-alias run. ops/scripts/source-digest.py documents the domains.
 const SOURCE_DIGEST_DOMAIN = 'runtime';
 
 async function currentSourceDigest(): Promise<string> {
@@ -469,7 +469,7 @@ async function writeArtifacts(
 }
 
 describe('fleet release matrix with authentic packaged adapters', () => {
-  it('validates hello/lease/ACK/retry/session/relay for exactly 12 manifest aliases', async () => {
+  it('validates hello/lease/ACK/retry/session/relay for exactly 15 manifest aliases', async () => {
     const startedAt = new Date();
     const sourceDigest = await currentSourceDigest();
     const manifests = await readFleetManifests(manifestDirectory);
@@ -514,7 +514,7 @@ describe('fleet release matrix with authentic packaged adapters', () => {
       const published = new Map<string, Published>();
       await Promise.all(manifests.map(async (manifest) => published.set(manifest.alias, await publish(httpUrl, manifest))));
       const deliveryIds = manifests.map((manifest) => published.get(manifest.alias)?.delivery_ids[0]).filter((value): value is string => Boolean(value));
-      expect(deliveryIds).toHaveLength(12);
+      expect(deliveryIds).toHaveLength(15);
       await waitFor(async () => {
         const deliveries = await database!.pool.query<{
           id: string;
@@ -548,7 +548,7 @@ describe('fleet release matrix with authentic packaged adapters', () => {
             + (diagnostic ? `; adapter diagnostic=${diagnostic}` : ''),
           );
         }
-        return deliveries.rows.length === 12 && deliveries.rows.every((row) => row.status === 'done' && row.attempt === 2);
+        return deliveries.rows.length === 15 && deliveries.rows.every((row) => row.status === 'done' && row.attempt === 2);
       });
       for (const manifest of manifests) {
         const deliveryId = published.get(manifest.alias)!.delivery_ids[0]!;
@@ -582,7 +582,7 @@ describe('fleet release matrix with authentic packaged adapters', () => {
       await rm(workRoot, { recursive: true, force: true });
     }
     expect(matrixError, matrixError ? errorMessage(matrixError) : undefined).toBeUndefined();
-    expect(results).toHaveLength(12);
+    expect(results).toHaveLength(15);
     expect(results.every((result) => result.status === 'passed')).toBe(true);
   }, 120_000);
 });

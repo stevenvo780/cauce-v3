@@ -25,8 +25,11 @@
  *    negra y se proyectan campo a campo o no se sirven.
  */
 
+import { createHash } from 'node:crypto';
+import { FICHEROS_OPENCLAW } from '@cauce/protocol';
 import type {
-  AgentFactsProbe, FactsSource, GovernanceDocumentContent, GovernanceReadError, MemoryDirectoryListing
+  AgentFactsProbe, FactsSource, GovernanceBatchWrite, GovernanceBatchWriteAck,
+  GovernanceDocumentContent, GovernanceReadError, GovernanceWritePrecondition, MemoryDirectoryListing
 } from './agent-documents.routes.js';
 
 /** Arnés REAL, deducido del binario que corre. Nunca de `agents.harness_id`. */
@@ -52,6 +55,8 @@ export interface RuntimeFacts {
   readonly codexHome?: string;
   /** `cwd` del proceso: de ahí salen los CLAUDE.md/AGENTS.md de nivel proyecto. */
   readonly cwd?: string;
+  /** Workspace efectivo de OpenClaw; no se deduce de HOME ni de openclaw.json. */
+  readonly openclawWorkspace?: string;
 }
 
 export interface AgentDocument {
@@ -102,6 +107,19 @@ function codexDir(facts: RuntimeFacts): string {
   return facts.codexHome?.trim() || join(facts.home, '.codex');
 }
 
+/** Juego cerrado de ficheros de PERFIL, separado del inventario de configuración sensible. */
+export function profileDocumentPaths(facts: RuntimeFacts): readonly string[] {
+  if (!facts.home.startsWith('/')) return [];
+  if (facts.harness === 'claude') return [join(claudeDir(facts), 'CLAUDE.md')];
+  if (facts.harness === 'codex') return [join(codexDir(facts), 'AGENTS.md')];
+  if (facts.harness === 'openclaw') {
+    const workspace = facts.openclawWorkspace?.trim();
+    if (workspace === undefined || !workspace.startsWith('/')) return [];
+    return FICHEROS_OPENCLAW.map((name) => join(workspace, name));
+  }
+  return [];
+}
+
 /**
  * `settings.json` de Claude lleva `hooks`, y un hook es una orden de shell que el arnés ejecuta
  * solo. Editarlo desde una web es ejecución remota dentro del contenedor, aunque no lo parezca.
@@ -143,7 +161,9 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
           label: 'Herramientas y permisos (settings.json)',
           path: join(dir, 'settings.json'),
           format: 'json',
-          editable: true,
+          editable: false,
+          reason: 'Este canal sólo admite los manuales CLAUDE.md/AGENTS.md. settings.json puede '
+            + 'contener hooks ejecutables y necesita validación estructural antes de habilitar escritura.',
           warning: AVISO_HOOKS,
         },
         {
@@ -270,6 +290,35 @@ export function verifyWritablePath(
   return { allowed: true };
 }
 
+/** Puerta separada para el lote de perfil. No habilita settings/openclaw.json ni rutas del UI. */
+export function verifyWritableProfilePath(
+  facts: RuntimeFacts,
+  requested: string,
+  resolved: string = requested,
+): PathVerdict {
+  if (!profileDocumentPaths(facts).includes(requested)) {
+    return { allowed: false, reason: 'la ruta no pertenece al juego cerrado del perfil' };
+  }
+  for (const candidate of [requested, resolved]) {
+    if (!candidate.startsWith('/') || candidate.includes('\0') || candidate.length > 4096) {
+      return { allowed: false, reason: 'la ruta del perfil no es absoluta o canónica' };
+    }
+    const segments = candidate.split('/');
+    if (segments.includes('..') || segments.includes('.') || segments.slice(1).includes('')) {
+      return { allowed: false, reason: 'la ruta del perfil no está en forma canónica' };
+    }
+    const base = segments[segments.length - 1] ?? '';
+    if (NEVER_SERVE_BASENAMES.includes(base)
+      || NEVER_SERVE_SUFFIXES.some((suffix) => base.endsWith(suffix))) {
+      return { allowed: false, reason: 'el destino parece material sensible' };
+    }
+  }
+  if (resolved !== requested) {
+    return { allowed: false, reason: 'la ruta del perfil es un enlace' };
+  }
+  return { allowed: true };
+}
+
 /**
  * Tope de tamaño. El `CLAUDE.md` más grande medido en la flota es el de zeus (10.733 B) y el
  * `AGENTS.md` de hermes en ctrl-infra llega a 75 KB, así que 256 KB deja margen de sobra sin
@@ -314,6 +363,7 @@ export function harnessFromCapabilities(capabilities: readonly string[]): Harnes
  * del pty-agent no viajan — y el propio pty-agent los rechaza aunque el gateway los pida.
  */
 export const READ_ALLOWED_BASENAMES: readonly string[] = ['CLAUDE.md', 'AGENTS.md'];
+const PROFILE_READ_BASENAMES: readonly string[] = [...FICHEROS_OPENCLAW, ...READ_ALLOWED_BASENAMES];
 
 /**
  * ÚNICA puerta del camino de LECTURA, hermana de `verifyWritablePath`. Falla cerrada.
@@ -343,13 +393,14 @@ export function verifyReadablePath(facts: RuntimeFacts, requested: string): Path
   if (NEVER_SERVE_SUFFIXES.some((suffix) => base.endsWith(suffix))) {
     return { allowed: false, reason: `\`${base}\` parece material de credencial` };
   }
-  if (!READ_ALLOWED_BASENAMES.includes(base)) {
+  const profilePath = profileDocumentPaths(facts).includes(requested);
+  if (!READ_ALLOWED_BASENAMES.includes(base) && !(profilePath && PROFILE_READ_BASENAMES.includes(base))) {
     return { allowed: false, reason: `\`${base}\` no es un manual del sitio; esta vía sólo lee CLAUDE.md y AGENTS.md` };
   }
 
   // El juego CERRADO manda: la ruta tiene que ser una de las que se derivan de hechos medidos.
   // El navegador manda un alias, nunca una ruta, y esto lo vuelve a exigir aquí abajo.
-  if (!resolveAgentDocuments(facts).some((doc) => doc.path === requested)) {
+  if (!resolveAgentDocuments(facts).some((doc) => doc.path === requested) && !profilePath) {
     return { allowed: false, reason: 'la ruta no es la de ningún documento de ese alias' };
   }
   return { allowed: true };
@@ -362,8 +413,22 @@ export interface RelayFileRead {
   readonly bytes: number;
   readonly truncated: boolean;
   readonly modified_at: string;
+  readonly sha: string;
   readonly content: string;
 }
+
+export interface RelayFileWrite {
+  readonly path: string;
+  readonly operation: 'replace' | 'create';
+  readonly sha: string;
+  readonly bytes: number;
+}
+
+export interface RelayFileWriteBatch {
+  readonly files: readonly GovernanceBatchWriteAck[];
+}
+
+export type GovernanceWriteError = GovernanceReadError | { readonly error: 'conflict'; readonly reason: string };
 
 /**
  * Lo poco que el gateway necesita del terminal-relay. Se declara aquí, y no se importa del
@@ -371,6 +436,19 @@ export interface RelayFileRead {
  */
 export interface GovernanceRelayClient {
   readFile(tenantId: string, alias: string, path: string): Promise<RelayFileRead | GovernanceReadError>;
+  /** Ausente en dobles/clientes antiguos; la sonda falla honesta y no afirma aplicación. */
+  writeFile?(
+    tenantId: string,
+    alias: string,
+    path: string,
+    content: string,
+    precondition: GovernanceWritePrecondition,
+  ): Promise<RelayFileWrite | GovernanceWriteError>;
+  writeFiles?(
+    tenantId: string,
+    alias: string,
+    writes: readonly GovernanceBatchWrite[],
+  ): Promise<RelayFileWriteBatch | GovernanceWriteError>;
 }
 
 /** De dónde salen los hechos medidos. Se inyecta para no atar el probe al almacén. */
@@ -422,11 +500,20 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
     if (!Number.isInteger(answer.bytes) || answer.bytes < 0) {
       return { error: 'unknown', reason: 'la respuesta no trae un tamaño creíble' };
     }
+    if (!/^[0-9a-f]{64}$/.test(answer.sha)) {
+      return { error: 'unknown', reason: 'la respuesta no trae una huella SHA-256 válida' };
+    }
 
     // OJO con las unidades: `MAX_DOCUMENT_BYTES` son BYTES y `string.length` son unidades UTF-16.
     // Compararlos directamente deja pasar de largo cualquier documento con acentos, que aquí los
     // hay en todos. Se mide con `byteLength` y se recorta sobre el buffer.
     const size = Buffer.byteLength(answer.content, 'utf8');
+    if (!answer.truncated && size !== answer.bytes) {
+      return { error: 'unknown', reason: 'el tamaño de la lectura no coincide con su contenido' };
+    }
+    if (!answer.truncated && createHash('sha256').update(answer.content, 'utf8').digest('hex') !== answer.sha) {
+      return { error: 'unknown', reason: 'la huella de la lectura no coincide con su contenido' };
+    }
     const overflowed = size > MAX_DOCUMENT_BYTES;
     const text = overflowed
       ? Buffer.from(answer.content, 'utf8').subarray(0, MAX_DOCUMENT_BYTES).toString('utf8')
@@ -437,7 +524,116 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
       bytes: answer.bytes,
       truncated: answer.truncated || overflowed,
       modified_at: answer.modified_at,
+      sha: answer.sha,
     };
+  }
+
+  async writeGovernanceDocument(
+    path: string,
+    contenido: string,
+    precondition: GovernanceWritePrecondition,
+    facts: RuntimeFacts,
+    tenantId: string,
+    alias: string,
+  ): Promise<{ sha: string; bytes: number } | GovernanceWriteError> {
+    const kind = documentForPathKind(facts, path);
+    if (kind === undefined) {
+      return { error: 'invalid_path', reason: 'la ruta no pertenece al juego cerrado de documentos' };
+    }
+    const verdict = verifyWritablePath(facts, kind, path);
+    if (!verdict.allowed) {
+      return { error: 'invalid_path', reason: verdict.reason ?? 'ruta no permitida' };
+    }
+    const raw = Buffer.from(contenido, 'utf8');
+    if (raw.byteLength > MAX_DOCUMENT_BYTES) {
+      return { error: 'too_large', reason: 'el contenido se pasa del tope de 256 KiB' };
+    }
+    if (precondition.state === 'present' && !/^[0-9a-f]{64}$/.test(precondition.sha256)) {
+      return { error: 'invalid_path', reason: 'la precondición de reemplazo no es un SHA-256 válido' };
+    }
+    if (this.relay.writeFile === undefined) {
+      return { error: 'unavailable', reason: 'el cliente del terminal-relay no publica escritura gobernada' };
+    }
+
+    let answer: RelayFileWrite | GovernanceWriteError;
+    try {
+      answer = await this.relay.writeFile(tenantId, alias, path, contenido, precondition);
+    } catch (error) {
+      return { error: 'unknown', reason: `la escritura falló: ${error instanceof Error ? error.message : 'sin detalle'}` };
+    }
+    if ('error' in answer) return answer;
+    const expectedOperation = precondition.state === 'present' ? 'replace' : 'create';
+    const expectedSha = createHash('sha256').update(raw).digest('hex');
+    if (answer.path !== path || answer.operation !== expectedOperation
+      || answer.sha !== expectedSha || answer.bytes !== raw.byteLength) {
+      return { error: 'unknown', reason: 'el ACK del relay no acredita el contenido solicitado' };
+    }
+    return { sha: answer.sha, bytes: answer.bytes };
+  }
+
+  async writeGovernanceBatch(
+    writes: readonly GovernanceBatchWrite[],
+    facts: RuntimeFacts,
+    tenantId: string,
+    alias: string,
+  ): Promise<readonly GovernanceBatchWriteAck[] | GovernanceWriteError> {
+    if (writes.length === 0 || writes.length > 7 || this.relay.writeFiles === undefined) {
+      return { error: 'unavailable', reason: 'el relay no publica el lote gobernado del perfil' };
+    }
+    const seen = new Set<string>();
+    for (const write of writes) {
+      const verdict = verifyWritableProfilePath(facts, write.path);
+      if (!verdict.allowed || seen.has(write.path)) {
+        return { error: 'invalid_path', reason: verdict.reason ?? 'el lote repite una ruta' };
+      }
+      seen.add(write.path);
+      if (write.mode === 'write' && Buffer.byteLength(write.content, 'utf8') > MAX_DOCUMENT_BYTES) {
+        return { error: 'too_large', reason: 'un documento del perfil se pasa de 256 KiB' };
+      }
+      if (write.precondition.state === 'present' && !/^[0-9a-f]{64}$/.test(write.precondition.sha256)) {
+        return { error: 'invalid_path', reason: 'una precondición del lote no es un SHA-256 válido' };
+      }
+    }
+
+    let answer: RelayFileWriteBatch | GovernanceWriteError;
+    try {
+      answer = await this.relay.writeFiles(tenantId, alias, writes);
+    } catch (error) {
+      return { error: 'unknown', reason: `el lote falló: ${error instanceof Error ? error.message : 'sin detalle'}` };
+    }
+    if ('error' in answer) return answer;
+    if (answer.files.length !== writes.length) {
+      return { error: 'unknown', reason: 'el ACK del lote no acredita todos los documentos' };
+    }
+    const byPath = new Map(answer.files.map((file) => [file.path, file]));
+    if (byPath.size !== writes.length) {
+      return { error: 'unknown', reason: 'el ACK del lote repite documentos' };
+    }
+    const acknowledgements: GovernanceBatchWriteAck[] = [];
+    for (const write of writes) {
+      const file = byPath.get(write.path);
+      if (file === undefined) {
+        return { error: 'unknown', reason: 'un ACK del lote no coincide con el contenido solicitado' };
+      }
+      if (write.mode === 'verify') {
+        const valid = write.precondition.state === 'present'
+          ? file.operation === 'unchanged' && file.sha === write.precondition.sha256
+          : file.operation === 'absent' && file.sha === null && file.bytes === 0;
+        if (!valid) {
+          return { error: 'unknown', reason: 'un ACK del lote no acredita el fichero preservado' };
+        }
+      } else {
+        const content = Buffer.from(write.content, 'utf8');
+        const expectedOperation = write.precondition.state === 'present' ? 'replace' : 'create';
+        const expectedSha = createHash('sha256').update(content).digest('hex');
+        if ((file.operation !== expectedOperation && file.operation !== 'unchanged')
+          || file.sha !== expectedSha || file.bytes !== content.byteLength) {
+          return { error: 'unknown', reason: 'un ACK del lote no coincide con el contenido solicitado' };
+        }
+      }
+      acknowledgements.push(file);
+    }
+    return acknowledgements;
   }
 
   /**
@@ -448,4 +644,9 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
   async listMemoryDirectory(memoryRoot: string): Promise<MemoryDirectoryListing | GovernanceReadError> {
     return { error: 'unavailable', reason: `el índice de memoria (${memoryRoot}) todavía no se sirve por esta vía` };
   }
+}
+
+/** `verifyWritablePath` exige kind: lo deriva sólo del mismo juego cerrado que produjo la ruta. */
+function documentForPathKind(facts: RuntimeFacts, path: string): DocumentKind | undefined {
+  return resolveAgentDocuments(facts).find((document) => document.path === path)?.kind;
 }

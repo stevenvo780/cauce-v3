@@ -30,6 +30,9 @@ export interface TerminalRelayConfig {
   readonly maxSessions: number;
   readonly authzIntervalMs: number;
   readonly authzGraceMs: number;
+  readonly reconnectGraceMs: number;
+  /** Atomic local spool; contains only session ids, reasons and byte counters. */
+  readonly closeSpoolFile: string;
 }
 
 export const DEFAULT_BROWSER_PORT = 8446;
@@ -58,8 +61,17 @@ function port(environment: NodeJS.ProcessEnv, name: string, fallback: number): n
 }
 
 function commonNames(environment: NodeJS.ProcessEnv, name: string, fallback: string): readonly string[] {
-  const values = (environment[name] ?? fallback).split(',').map((item) => item.trim()).filter((item) => item.length > 0);
-  if (values.length === 0) throw new Error(`${name} must contain at least one common name`);
+  const values = (environment[name] ?? fallback).split(',').map((item) => item.trim());
+  if (values.length === 0 || values.some((item) => item.length === 0)) {
+    throw new Error(`${name} must contain only non-empty common names`);
+  }
+  const safeCommonName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+  if (values.some((item) => !safeCommonName.test(item))) {
+    throw new Error(`${name} contains an unsafe common name`);
+  }
+  if (new Set(values).size !== values.length) {
+    throw new Error(`${name} must not contain duplicate common names`);
+  }
   return values;
 }
 
@@ -91,6 +103,8 @@ export function loadRelayConfig(environment: NodeJS.ProcessEnv = process.env): T
     scrollbackBytes: positiveInteger(environment, 'CAUCE_TERMINAL_SCROLLBACK_BYTES', 20_480),
     maxSessions: positiveInteger(environment, 'CAUCE_TERMINAL_MAX_SESSIONS', 16),
     authzIntervalMs: positiveInteger(environment, 'CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS', 30) * 1_000,
-    authzGraceMs: positiveInteger(environment, 'CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS', 90) * 1_000
+    authzGraceMs: positiveInteger(environment, 'CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS', 90) * 1_000,
+    reconnectGraceMs: positiveInteger(environment, 'CAUCE_TERMINAL_RECONNECT_GRACE_SECONDS', 30) * 1_000,
+    closeSpoolFile: environment.CAUCE_TERMINAL_CLOSE_SPOOL_FILE ?? '/tmp/cauce-terminal-close-reports.json'
   };
 }

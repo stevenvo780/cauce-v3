@@ -20,7 +20,7 @@ import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const SERVER_ENTRY = fileURLToPath(
-  new URL('../../packages/mcp-fleet-monitor/src/server.ts', import.meta.url),
+  new URL('../../packages/mcp-fleet-monitor/dist/server.js', import.meta.url),
 );
 const HARNESS_PROMPT_SOURCE = fileURLToPath(
   new URL('../../packages/adapter-sdk/src/harnesses/shared.ts', import.meta.url),
@@ -63,7 +63,7 @@ class StdioMcpClient {
   readonly stderr: string[] = [];
 
   constructor(databaseUrl: string) {
-    this.child = spawn('pnpm', ['exec', 'tsx', SERVER_ENTRY], {
+    this.child = spawn(process.execPath, [SERVER_ENTRY], {
       cwd: REPO_ROOT,
       env: {
         ...process.env,
@@ -209,15 +209,11 @@ describe('MCP fleet monitor tool surface', () => {
    * straight into the fleet tables and has to surface, unprompted, through the MCP call.
    */
   it('returns rows that were really written to the database', async () => {
-    const empty = JSON.parse(textOf(await client.callTool('estado_flota'))) as {
+    const initial = JSON.parse(textOf(await client.callTool('estado_flota'))) as {
       data: readonly Record<string, unknown>[];
     };
-    expect(empty.data).toEqual([]);
+    expect(initial.data).toContainEqual(expect.objectContaining({ alias: 'kant', lease_alive: false }));
 
-    await database.pool.query(
-      `INSERT INTO tenants(id) VALUES($1) ON CONFLICT DO NOTHING`,
-      [TENANT],
-    );
     await database.pool.query(
       `INSERT INTO connection_leases(tenant_id,alias,instance_id,epoch,lease_until)
        VALUES($1,$2,$3,$4,now() + interval '1 hour')`,
@@ -229,18 +225,20 @@ describe('MCP fleet monitor tool surface', () => {
       data: readonly Record<string, unknown>[];
     };
     expect(flota.available).toBe(true);
-    expect(flota.data).toHaveLength(1);
-    expect(flota.data[0]).toMatchObject({
+    expect(flota.data.find((row) => row.alias === 'kant')).toMatchObject({
       alias: 'kant',
       active_instance_id: 'adapter-kant-1',
       epoch: 7,
       lease_alive: true,
     });
 
-    // The same row has to reach the health summary, which counts it through a
-    // separate query against the same table.
+    // Health counts the enabled catalog as its denominator and the lease as its numerator. A
+    // bare stale lease must not make a disabled/historical alias part of the healthy fleet.
     const salud = JSON.parse(textOf(await client.callTool('salud'))) as { summary: string };
-    expect(salud.summary).toContain('1 alias');
+    const enabled = await database.pool.query<{ count: string }>(
+      'SELECT count(*) FROM agents WHERE tenant_id=$1 AND enabled=true', [TENANT],
+    );
+    expect(salud.summary).toContain(`${enabled.rows[0]?.count ?? '0'} alias`);
     expect(salud.summary).toContain('1 vivos');
     expect(salud.summary).not.toContain('unavailable');
 

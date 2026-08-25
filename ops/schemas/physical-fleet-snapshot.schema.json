@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/physical-fleet-snapshot.schema.json",
+  "title": "Sanitized physical Docker inventory for deterministic gate tests",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "containers"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "containers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+    }
+  }
+}

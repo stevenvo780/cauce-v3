@@ -35,7 +35,7 @@ describe('terminalNavAvailability', () => {
 function Link({ disabledReason }: { disabledReason?: string }) {
   return (
     <a href="/terminal" onClick={(event) => onNavClick(event, '/terminal', disabledReason)}>
-      Ultimate Terminal
+      Terminal de agentes
     </a>
   );
 }
@@ -47,13 +47,21 @@ describe('onNavClick with disabledReason', () => {
 
   it('navigates normally when there is no disabledReason', () => {
     render(<Link />);
-    fireEvent.click(screen.getByRole('link', { name: 'Ultimate Terminal' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Terminal de agentes' }));
     expect(window.location.pathname).toBe('/terminal');
   });
 
   it('blocks navigation and leaves the path untouched when disabledReason is set', () => {
     render(<Link disabledReason="El relay de terminales no está desplegado en este stack." />);
-    fireEvent.click(screen.getByRole('link', { name: 'Ultimate Terminal' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Terminal de agentes' }));
+    expect(window.location.pathname).toBe('/fleet');
+  });
+
+  it('does not intercept ctrl+click, preserving the browser new-tab gesture', () => {
+    render(<Link />);
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true });
+    screen.getByRole('link', { name: 'Terminal de agentes' }).dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
     expect(window.location.pathname).toBe('/fleet');
   });
 

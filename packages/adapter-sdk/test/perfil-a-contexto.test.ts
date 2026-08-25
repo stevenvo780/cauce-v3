@@ -364,6 +364,14 @@ test("rolBreveDelPerfil sale del role_summary y NUNCA pasa el tope del sobre", (
 
 test("un perfil sin rol declarado da null, para que el sobre omita la línea 'Tu rol:'", () => {
   assert.equal(rolBreveDelPerfil(perfil({ role_summary: null })), null);
+  assert.equal(rolBreveDelPerfil(perfil({ role_summary: "   \n\t" })), null);
+});
+
+test("la proyección recorta espacios igual que la migración y el claim del store", () => {
+  assert.equal(
+    rolBreveDelPerfil(perfil({ role_summary: "  rol canónico  \n" })),
+    "rol canónico",
+  );
 });
 
 /**

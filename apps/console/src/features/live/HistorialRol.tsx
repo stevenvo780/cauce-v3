@@ -8,46 +8,22 @@ import {
 } from './historial-rol';
 
 /**
- * EL DIARIO DEL ROL DECLARADO, Y LA VUELTA ATRÁS.
+ * Diario de la proyección legacy del rol y puente seguro hacia el perfil canónico.
  *
- * Era el tercer pedido de Steven —«ver el historial y poder volver a una versión anterior»— y el
- * único de los tres que no tenía nada construido: el rol se podía leer y escribir, pero un cambio
- * desafortunado no se deshacía desde ningún sitio. La tabla existía y no la miraba nadie.
- *
- * CÓMO SE DESHACE, Y POR QUÉ ASÍ. El botón NO guarda: trae el texto anterior al editor de arriba y
- * deja al operador delante de él, con el botón «Guardar el rol» de siempre. Parece un rodeo y es
- * justo lo contrario. Escribir directo desde acá se saltaría, una por una, todas las guardas que
- * ese editor ya tiene y que costaron caro:
- *
- *   · el bloqueo por UTF-16 (`bloqueoPorRuntimeDesplegado`), que es lo único que hoy impide dejar
- *     a un alias SORDO. Y un texto viejo es EXACTAMENTE el que más riesgo tiene de disparar ese
- *     bloqueo: se escribió por psql, antes de que existiera guarda ninguna.
- *   · la `expected_revision`, sin la cual dos operadores se pisan en silencio;
- *   · la relectura tras guardar, que es lo que separa «el servidor lo aceptó» de «esto es lo que hay»;
- *   · y que el operador VEA lo que va a guardar antes de guardarlo.
- *
- * Un «deshacer» de un clic que se salta las cinco cosas no es más cómodo, es más peligroso: el
- * texto que restaura es el que ya se demostró que alguien quiso cambiar.
- *
- * Además, deshacer acá no borra nada: guardar el texto anterior crea una revisión NUEVA, con su
- * inversa en `config_revisions`. El diario sigue creciendo hacia adelante y el cambio que se
- * deshizo se sigue viendo. No hay forma de perder una versión desde esta pantalla.
+ * Este componente no escribe. Una restauración sólo copia `previous_brief` al `role_summary` del
+ * borrador de Perfil. El operador lo revisa allí y el único guardado disponible es el PUT
+ * canónico con CAS, lote gobernado y ACK del runtime. Así se conserva el historial útil sin
+ * reabrir el antiguo `agent.update {role_brief}`.
  */
 
 export interface HistorialRolProps {
   tenantId: string;
   alias: string;
-  /**
-   * Trae un texto al editor de la capa 1. Es el MISMO canal que usa el textarea al escribir, así
-   * que el texto restaurado queda «sucio» y pasa por el contador, por el bloqueo de UTF-16 y por
-   * el botón de guardar como si se hubiera tecleado a mano.
-   */
-  onRestaurar: (texto: string) => void;
-  /** Sin `config.write` el diario se LEE igual: lo que se retira es la vuelta atrás, no la vista. */
-  soloLectura: boolean;
+  /** Ausente sin `config.write`: el diario se lee igual y sólo desaparece la carga del borrador. */
+  onRestaurar?: (texto: string) => void;
 }
 
-export function HistorialRol({ tenantId, alias, onRestaurar, soloLectura }: HistorialRolProps) {
+export function HistorialRol({ tenantId, alias, onRestaurar }: HistorialRolProps) {
   const api = useApi();
   const historial = useResource(
     `historial-rol-${tenantId}-${alias}`,
@@ -98,9 +74,9 @@ export function HistorialRol({ tenantId, alias, onRestaurar, soloLectura }: Hist
       {/* Se dice UNA vez arriba y no en cada fila: repetir «no consta quién» catorce veces
           convierte un dato importante en ruido que se deja de leer. */}
       <p className="historial-nota-actor">
-        El diario dice qué cambió y cuándo. <strong>No dice quién</strong>: las columnas de autor
-        llegan vacías por todos los caminos de escritura, incluido este editor. Para saber quién
-        hay que cruzarlo con el registro de auditoría.
+        El diario dice qué cambió y cuándo. Las revisiones antiguas pueden no decir quién: si las
+        columnas de autor llegan vacías se muestra <strong>«no consta quién»</strong>, sin atribuir
+        el cambio al operador que está mirando.
       </p>
 
       <ol className="historial-lista">
@@ -132,7 +108,7 @@ export function HistorialRol({ tenantId, alias, onRestaurar, soloLectura }: Hist
                 </details>
               ) : null}
 
-              {soloLectura ? null : (
+              {onRestaurar ? (
                 <div className="historial-entrada-acciones">
                   <button
                     type="button"
@@ -141,16 +117,16 @@ export function HistorialRol({ tenantId, alias, onRestaurar, soloLectura }: Hist
                   >
                     <RotateCcw size={14} aria-hidden="true" />
                     {restauracion.clase === 'texto'
-                      ? ' Traer este texto al editor'
-                      : ' Deshacer esto dejaría al alias SIN rol'}
+                      ? ' Usar este texto en Perfil'
+                      : ' Vaciar el rol en un borrador de Perfil'}
                   </button>
                   <span className="historial-entrada-ayuda">
                     {restauracion.clase === 'texto'
-                      ? 'Se carga arriba para que lo revises; no se guarda hasta que pulses «Guardar el rol».'
-                      : 'Antes de este cambio no tenía rol. Vacía el editor de arriba: revisalo antes de guardar.'}
+                      ? 'No guarda nada: carga role_summary y abre Perfil para revisarlo y aplicarlo con CAS y ACK.'
+                      : 'Antes de este cambio no había rol. Perfil se abre con role_summary vacío; los demás campos se conservan.'}
                   </span>
                 </div>
-              )}
+              ) : null}
             </li>
           );
         })}

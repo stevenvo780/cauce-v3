@@ -35,16 +35,16 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
   const adapterTexto = adapterBreakdownText(adapters);
 
   return (
-    <aside className="terminal-fleet-sidebar" aria-label="Fleet de agentes">
+    <aside className="terminal-fleet-sidebar" aria-label="Flota de agentes">
       <header className="terminal-fleet-head">
         <div>
-          <p className="eyebrow">Fleet live</p>
+          <p className="eyebrow">Flota en vivo</p>
           <h2>{agents.length} agentes</h2>
         </div>
-        <Badge tone={online > 0 ? 'online' : agents.length ? 'warning' : 'unknown'}>{online} online</Badge>
+        <Badge tone={online > 0 ? 'online' : agents.length ? 'warning' : 'unknown'}>{online} en línea</Badge>
       </header>
 
-      <div className="fleet-health-strip" aria-label="Salud de adapters">
+      <div className="fleet-health-strip" aria-label="Salud de los adaptadores">
         <Bot size={15} aria-hidden="true" />
         <span>Adaptadores</span>
         {/* «3/6» se leía como «3 rotos»: sin reportar no es lo mismo que caído. */}
@@ -53,20 +53,20 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
 
       <div className="fleet-filters">
         <label className="terminal-search">
-          <span className="sr-only">Buscar agente o capability</span>
+          <span className="sr-only">Buscar agente o capacidad</span>
           <Search size={15} aria-hidden="true" />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar agente…" />
         </label>
         <div className="fleet-filter-row">
           <label>
-            <span><Filter size={12} aria-hidden="true" /> Tenant</span>
+            <span><Filter size={12} aria-hidden="true" /> Cliente</span>
             <select value={tenantId} onChange={(event) => setTenantId(event.target.value)}>
               <option value="all">Todos</option>
               {tenants.map((tenant) => <option key={tenant} value={tenant}>{tenant}</option>)}
             </select>
           </label>
           <label>
-            <span><Radio size={12} aria-hidden="true" /> Room</span>
+            <span><Radio size={12} aria-hidden="true" /> Sala</span>
             <select value={roomId} onChange={(event) => setRoomId(event.target.value)}>
               <option value="all">Todos</option>
               {rooms.map((room) => <option key={room} value={room}>{room}</option>)}
@@ -77,12 +77,12 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
 
       <div className="fleet-list-meta">
         <span>{visible.length} visibles</span>
-        {loading ? <span className="terminal-syncing"><span className="spinner" aria-hidden="true" /> Sync</span> : <span>leases del servidor</span>}
+        {loading ? <span className="terminal-syncing"><span className="spinner" aria-hidden="true" /> Sincronizando</span> : <span>leases del servidor</span>}
       </div>
 
       <div className="terminal-agent-list" aria-label="Agentes disponibles">
-        {loading && agents.length === 0 ? <LoadingState label="Sincronizando fleet del servidor…" />
-          : error && agents.length === 0 ? <div role="alert"><EmptyState>No se pudo cargar el fleet: {error.message}</EmptyState></div>
+        {loading && agents.length === 0 ? <LoadingState label="Sincronizando la flota del servidor…" />
+          : error && agents.length === 0 ? <div role="alert"><EmptyState>No se pudo cargar la flota: {error.message}</EmptyState></div>
             : visible.length === 0 ? <EmptyState>No hay agentes que coincidan con los filtros.</EmptyState> : visible.map((agent) => {
           const expiry = agent.presence?.lease_expires_at ?? agent.presence?.lease_until;
           const capabilities = agent.presence?.capabilities ?? [];

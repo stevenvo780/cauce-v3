@@ -13,7 +13,12 @@ change_id=${CAUCE_CHANGE_ID:?set a non-secret change/ticket ID}
   exit 2
 }
 : "${CAUCE_GATE_CAPTURE_PATH:?set an absolute executable gate snapshot collector}"
-[[ $CAUCE_GATE_CAPTURE_PATH == /* && -x $CAUCE_GATE_CAPTURE_PATH ]] || { printf 'gate collector must be an absolute executable\n' >&2; exit 2; }
+[[ $CAUCE_GATE_CAPTURE_PATH == /* && -x $CAUCE_GATE_CAPTURE_PATH && ! -L $CAUCE_GATE_CAPTURE_PATH ]] || { printf 'gate collector must be an absolute executable non-symlink\n' >&2; exit 2; }
+: "${CAUCE_GATE_PROBE_PATH:?set an absolute executable authentic round-trip probe}"
+[[ $CAUCE_GATE_PROBE_PATH == /* && -x $CAUCE_GATE_PROBE_PATH && ! -L $CAUCE_GATE_PROBE_PATH ]] || {
+  printf 'round-trip probe must be an absolute executable non-symlink\n' >&2
+  exit 2
+}
 command -v systemctl >/dev/null 2>&1 || { printf 'systemctl is required\n' >&2; exit 127; }
 command -v flock >/dev/null 2>&1 || { printf 'flock is required\n' >&2; exit 127; }
 systemd_scope=${CAUCE_SYSTEMD_SCOPE:-}
@@ -58,8 +63,9 @@ if "${systemctl_cmd[@]}" is-enabled --quiet "$other" || "${systemctl_cmd[@]}" is
   exit 73
 fi
 post=$(mktemp)
+probe_evidence=$(mktemp)
 rollback_on_error() { "${systemctl_cmd[@]}" disable --now "$unit" >/dev/null 2>&1 || true; }
-cleanup() { rm -f "$post"; }
+cleanup() { rm -f "$post" "$probe_evidence"; }
 trap 'rollback_on_error; cleanup' ERR
 trap cleanup EXIT
 "${systemctl_cmd[@]}" start "$unit"
@@ -72,7 +78,9 @@ fi
 if [[ $family == container ]]; then
   "$supervisor" check "$alias_name"
 fi
-"$CAUCE_GATE_CAPTURE_PATH" "$alias_name" "$post" post-cutover
+"$CAUCE_GATE_PROBE_PATH" "$alias_name" "$probe_evidence"
+CAUCE_GATE_BASELINE_FILE="$drain_snapshot" CAUCE_GATE_PROBE_EVIDENCE_FILE="$probe_evidence" \
+  "$CAUCE_GATE_CAPTURE_PATH" "$alias_name" "$post" post-cutover
 node "$ROOT/scripts/migration-gate.mjs" post-cutover "$post" "$alias_name"
 "${systemctl_cmd[@]}" enable "$unit"
 "${systemctl_cmd[@]}" is-enabled --quiet "$unit" || { printf 'selected V3 runtime could not be enabled after its gate\n' >&2; rollback_on_error; exit 1; }

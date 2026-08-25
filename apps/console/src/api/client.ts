@@ -1,5 +1,6 @@
 import type {
   AgentPerfil,
+  AgentPerfilValor,
   AdapterPage,
   AgentChainSnapshot,
   AgentDirective,
@@ -502,13 +503,14 @@ export class CauceApi {
    * `publicado: false` y NO a lista vacía. La diferencia importa: «no se miró» y «no tiene» se
    * pintan igual de seguros y sólo uno de los dos es un hecho.
    */
-  async getAgentDocuments(alias: string): Promise<AgentDocumentsMap> {
-    const ruta = `/v3/console/agents/${encodeURIComponent(alias)}/documents`;
+  async getAgentDocuments(tenantId: string, alias: string): Promise<AgentDocumentsMap> {
+    const ruta = `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents`;
     try {
       const cuerpo = await this.request<Omit<AgentDocumentsMap, 'publicado'>>(ruta);
       return { ...cuerpo, publicado: true };
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
+      if (error instanceof ApiError
+        && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
         return {
           publicado: false,
           motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
@@ -528,9 +530,11 @@ export class CauceApi {
    * pantalla tiene que poder repetir cuál fue. Convertirlos todos en «no disponible» sería
    * borrar justo la información que hace falta para arreglarlo.
    */
-  async getAgentDocumentContent(alias: string, kind: AgentDocumentKind): Promise<AgentDocumentContent> {
+  async getAgentDocumentContent(
+    tenantId: string, alias: string, kind: AgentDocumentKind,
+  ): Promise<AgentDocumentContent> {
     return this.request<AgentDocumentContent>(
-      `/v3/console/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
+      `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
     );
   }
 
@@ -541,14 +545,20 @@ export class CauceApi {
    * y aquí pesa más porque lo que se pierde es prosa que no está en ningún otro sitio.
    */
   async putAgentDocumentContent(
-    alias: string, kind: AgentDocumentKind, content: string, expectedSha?: string,
+    tenantId: string,
+    alias: string,
+    kind: AgentDocumentKind,
+    content: string,
+    expectedSha: string | null,
   ): Promise<AgentDocumentGuardado> {
     return this.request<AgentDocumentGuardado>(
-      `/v3/console/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
+      `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, ...(expectedSha ? { expected_sha: expectedSha } : {}) }),
+        body: JSON.stringify(expectedSha === null
+          ? { content, create_if_absent: true }
+          : { content, expected_sha: expectedSha }),
       },
     );
   }
@@ -564,13 +574,14 @@ export class CauceApi {
    * El resto de los errores se dejan subir: un 403 y un 500 dicen cosas distintas y la pantalla
    * tiene que poder repetir cuál fue.
    */
-  async getAgentPerfil(alias: string): Promise<AgentPerfil> {
-    const ruta = `/v3/console/agents/${encodeURIComponent(alias)}/perfil`;
+  async getAgentPerfil(tenantId: string, alias: string): Promise<AgentPerfil> {
+    const ruta = `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil`;
     try {
       const cuerpo = await this.request<Omit<AgentPerfil, 'publicado'>>(ruta);
       return { ...cuerpo, publicado: true };
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
+      if (error instanceof ApiError
+        && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
         return {
           publicado: false,
           motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
@@ -582,6 +593,26 @@ export class CauceApi {
       }
       throw error;
     }
+  }
+
+  /**
+   * Persiste el desired por CAS y sólo obtiene 2xx cuando el runtime acredita el lote completo.
+   * La respuesta queda como `unknown` a propósito: la UI valida el ACK antes de limpiar el
+   * borrador; una aserción TypeScript no convertiría un 2xx parcial en evidencia real.
+   */
+  putAgentPerfil(
+    tenantId: string,
+    alias: string,
+    profile: AgentPerfilValor,
+    expectedRevision: number | null,
+  ): Promise<unknown> {
+    return this.request(
+      `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ expected_revision: expectedRevision, profile }),
+      },
+    );
   }
 
   async getTerminalCapability(): Promise<TerminalCapability> {

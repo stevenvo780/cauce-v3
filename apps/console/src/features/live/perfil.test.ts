@@ -2,24 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { measureStrictestUnits } from '@cauce/protocol';
 import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import {
-  CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, camposQueNoEntran, camposVigentes, contarUnidades, hayCambios,
-  lineasALista, listaALineas, mutacionDePerfil, perfilYaExiste, unidadesDelPerfil,
+  CAMPOS_DE_LISTA, camposQueNoEntran, camposVigentes, contarUnidades, hayCambios,
+  esPerfilAplicado, lineasALista, listaALineas, perfilParaGuardar,
+  perfilYaExiste, unidadesDelPerfil,
 } from './perfil';
 
 /**
  * EL EDITOR DE PERFIL, probado por donde se rompe.
  *
- * Estas pruebas no cubren la pintura: cubren las cuatro decisiones que, si se tuercen, hacen que
+ * Estas pruebas no cubren la pintura: cubren las decisiones que, si se tuercen, hacen que
  * el operador crea que guardó algo que no guardó.
  *
  * 1. Que la cuenta de unidades del navegador sea LA MISMA que la del servidor. El 16-ago un alias
  *    se quedó sordo porque dos capas contaban el mismo 1200 en unidades distintas.
- * 2. Que `human_brief` viaje en la mutación. Es el campo que tenía columna, tope e interfaz y NO
- *    tenía camino: la consola podía enseñar la caja y el servidor rechazaba el cuerpo entero.
+ * 2. Que los siete campos, incluido `human_brief`, viajen en el cuerpo canónico sin identidad ni
+ *    acción controladas por el navegador.
  * 3. Que un texto vacío viaje como `null` y no como `''`. La columna tiene CHECK de longitud >= 1
  *    y `null` es lo que hace que el compilador OMITA la sección en vez de emitir un encabezado
  *    hueco.
- * 4. Que un alta se distinga de una edición, porque el DESHACER de cada una es distinto.
+ * 4. Que la UI sólo anuncie aplicado ante convergencia y ACK exacto de todos los ficheros.
  */
 
 const VACIO: AgentPerfilCampos = {
@@ -168,42 +169,50 @@ describe('los topes se miden antes de dejar guardar', () => {
   });
 });
 
-describe('la mutación que se envía', () => {
-  it('lleva human_brief, que es el campo que no tenía camino', () => {
-    /*
-     * `human_brief` tenía columna en la 026, tope en `AGENT_PROFILE_LIMITS`, sitio en la interfaz
-     * `AgentProfile` y una cara propia en `USER.md` de openclaw — y NO estaba ni en el esquema de
-     * la mutación ni en el INSERT ni en el SELECT del deshacer. Una caja en pantalla sin camino
-     * hasta el fichero es exactamente el defecto que este trabajo viene a cerrar.
-     */
-    const mutation = mutacionDePerfil('Steven', 'zeus', { ...VACIO, human_brief: 'Steven, directo' }, true);
-    expect((mutation.value as Record<string, unknown>).human_brief).toBe('Steven, directo');
+describe('la escritura aplicada del perfil', () => {
+  const esperado = { tenantId: 'Steven', alias: 'kant', nombres: ['AGENTS.md'] };
+  const ack = {
+    ok: true,
+    state: 'applied',
+    tenant_id: 'Steven',
+    alias: 'kant',
+    revision: 7,
+    applied_revision: 7,
+    acknowledgements: [{
+      name: 'AGENTS.md',
+      path: '/home/kant/.codex/AGENTS.md',
+      state: 'written',
+      sha: 'a'.repeat(64),
+      bytes: 12,
+    }],
+  };
+
+  it('serializa textos vacíos como null sin identidad controlada por el navegador', () => {
+    expect(perfilParaGuardar({ ...VACIO, purpose: 'coordinar', human_brief: '  ' })).toEqual({
+      purpose: 'coordinar', role_summary: null, human_brief: null,
+      responsibilities: [], restrictions: [], tools: [], operating_rules: [],
+    });
   });
 
-  it('un texto vacío viaja como null y NO como cadena vacía', () => {
-    const mutation = mutacionDePerfil('Steven', 'zeus', VACIO, true);
-    const value = mutation.value as Record<string, unknown>;
-    for (const campo of CAMPOS_DE_TEXTO) expect(value[campo]).toBeNull();
+  it('acepta sólo convergencia y un ACK exacto por fichero', () => {
+    expect(esPerfilAplicado(ack, esperado)).toBe(true);
+    expect(esPerfilAplicado({ ...ack, applied_revision: 6 }, esperado)).toBe(false);
+    expect(esPerfilAplicado({ ...ack, acknowledgements: [] }, esperado)).toBe(false);
+    expect(esPerfilAplicado({
+      ...ack,
+      acknowledgements: [{ ...ack.acknowledgements[0], sha: null }],
+    }, esperado)).toBe(false);
   });
 
-  it('un texto de sólo espacios también viaja como null', () => {
-    const mutation = mutacionDePerfil('Steven', 'zeus', { ...VACIO, purpose: '   \n  ' }, true);
-    expect((mutation.value as Record<string, unknown>).purpose).toBeNull();
-  });
-
-  it('sobre un alias sin perfil es un ALTA, y sobre uno con perfil una edición', () => {
-    // No es cosmética: un alta se deshace BORRANDO y una edición reponiendo. Si un alta se
-    // deshiciera con un `update` al perfil vacío quedaría una fila con todo en NULL, que no es lo
-    // mismo que no tener perfil — el compilador distingue «no declarado» de «declarado vacío».
-    expect(mutacionDePerfil('Steven', 'zeus', VACIO, false).action).toBe('create');
-    expect(mutacionDePerfil('Steven', 'zeus', VACIO, true).action).toBe('update');
-  });
-
-  it('CONTROL NEGATIVO: las listas se copian, la mutación no comparte array con el editor', () => {
-    const campos = { ...VACIO, tools: ['ssh'] };
-    const mutation = mutacionDePerfil('Steven', 'zeus', campos, true);
-    campos.tools.push('docker');
-    expect((mutation.value as Record<string, string[]>).tools).toEqual(['ssh']);
+  it('rechaza ACK extra, duplicado o con ruta que no corresponde al nombre', () => {
+    expect(esPerfilAplicado({
+      ...ack,
+      acknowledgements: [ack.acknowledgements[0], ack.acknowledgements[0]],
+    }, esperado)).toBe(false);
+    expect(esPerfilAplicado({
+      ...ack,
+      acknowledgements: [{ ...ack.acknowledgements[0], path: '/tmp/otro.md' }],
+    }, esperado)).toBe(false);
   });
 });
 

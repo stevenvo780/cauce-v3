@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter dedalo (ws-pablo-dev/codex)
+Description=Cauce V3 rootless container adapter dedalo (ws-pablo/codex)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/dedalo.env

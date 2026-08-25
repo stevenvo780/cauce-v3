@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "artifact": "cauce-v3-schema029-rollback-bridge",
+  "originBaseCommit": "79d6d8f1eae00e733bf2aeddaffeb592e5944687",
+  "patchPath": "ops/rollback-bridge/rollback-bridge-schema029.patch",
+  "patchSetSha256": "sha256:f6c61ed1c8e2bc3e6c021ad56fa27142f8996571ae250e4484a464756bdb9733",
+  "resultingBridgeTree": "72cb55a2b4a9413193da69298ebb0c548955d9a6",
+  "patchSourceCommitPolicy": "private release evidence references the main commit containing this patch",
+  "buildContext": "deterministic-git-archive-from-verified-tree",
+  "schemaContract": {
+    "postgresMajor": 16,
+    "schemaLatest": "029_reconcile_declared_fleet.sql",
+    "normalRollbackRunsDownMigrations": false,
+    "candidateMigrationInputs": {
+      "024_agent_role_templates.sql": "sha256:678abb052499730c19d28ca3345c5d2c5932bc90f06d233f9e015d72c7da35b4",
+      "026_agent_profile.sql": "sha256:486b649e5c761be01fcfd246a6861ecdb1217999ba8499cff6a3e7aa9f585a34",
+      "027_rol_agent_notify.sql": "sha256:ba96f269f45815e7bbfee5c8d10482b3c5d5472315e0edbfb5a41fab872ad672",
+      "028_canonical_agent_role.sql": "sha256:3de12af8311c1e01f050b9423892b0d19bd31e8e7366d8ef1a1e48dc81a6fe31",
+      "029_reconcile_declared_fleet.sql": "sha256:a784f2f84bc6a755e042d0e8c7115eb861a8249ac4347834e8280965064d6605"
+    }
+  },
+  "shims": [
+    "freeze-agent-profile-and-role-brief-mutations",
+    "omit-role-brief-from-unrelated-agent-updates-and-their-inverses",
+    "exclude-gate-probe-and-quota-collector-from-publish-and-routing-targets",
+    "terminally-reject-system-gate-probe-before-session-harness-model-or-egress"
+  ],
+  "patchedPaths": [
+    "packages/adapter-sdk/src/sdk/engine.ts",
+    "packages/adapter-sdk/test/engine.test.ts",
+    "packages/protocol/src/schemas.ts",
+    "packages/store/src/agent-profile.ts",
+    "packages/store/src/configuration.ts",
+    "packages/store/src/repository.ts",
+    "tests/unit/rollback-bridge.test.ts"
+  ],
+  "verification": {
+    "script": "bash ops/rollback-bridge/test.sh",
+    "network": "lockfile-pinned-package-downloads-permitted",
+    "productionDatabase": false,
+    "deploy": false,
+    "observed": {
+      "rollbackBridgeUnit": "4 passed, 0 skipped",
+      "adapterEngine": "65 passed, 0 skipped",
+      "adapterTypecheck": "passed",
+      "changedPathLint": "passed with the one exact origin-base repository diagnostic admitted by the verifier",
+      "coreTypecheck": "no bridge-added diagnostics; exact 12-diagnostic origin-base set remains"
+    },
+    "originBaseKnownDiagnostics": {
+      "typescript": {
+        "services/dispatcher/test/liveness.test.ts": 7,
+        "services/gateway/src/health-progress.test.ts": 5
+      },
+      "eslint": {
+        "packages/store/src/repository.ts:@typescript-eslint/no-unused-vars:_visible": 1
+      }
+    }
+  },
+  "releaseEvidenceRequired": [
+    "isolated restored production backup migrated by the exact candidate through schema 029",
+    "canonical hashes invariant across candidate to bridge to candidate and injected compensation",
+    "exact fleet 15 enabled agents, 16 enabled memberships, 3 disabled historical agents, 0 system-principal agent rows",
+    "agent_notify application policy true,true,false,true and exactly one active 029 reconciliation",
+    "profile content plus revision and applied_revision, migration ledger, reconciliation history and leases invariant",
+    "model-free publish, claim and ACK plus rollback health-failure compensation"
+  ],
+  "limitations": [
+    "This source artifact does not authorize deployment.",
+    "test.sh is a source-level gate and does not substitute for private schema-029 restore evidence.",
+    "The bridge must run central services only with adapters, models, Telegram and external egress disabled until exact evidence passes."
+  ]
+}

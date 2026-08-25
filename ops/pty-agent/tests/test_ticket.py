@@ -55,6 +55,19 @@ def b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def noncanonical_encoding_of_same_bytes(encoded: str) -> str:
+    expected = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    for final_character in alphabet:
+        candidate = encoded[:-1] + final_character
+        if candidate == encoded:
+            continue
+        decoded = base64.urlsafe_b64decode(candidate + "=" * (-len(candidate) % 4))
+        if decoded == expected:
+            return candidate
+    raise AssertionError("fixture has no alternate non-canonical base64url spelling")
+
+
 def mint(payload: dict, key: bytes = ALIAS_KEY) -> str:
     encoded = b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     signature = hmac.new(key, ("v1." + encoded).encode("ascii"), hashlib.sha256).digest()
@@ -129,6 +142,15 @@ class RefusalTests(unittest.TestCase):
         head, body, signature = GOLDEN_TICKET.split(".")
         flipped = ("A" if signature[0] != "A" else "B") + signature[1:]
         self.assertEqual(self._reason(f"{head}.{body}.{flipped}"), "ticket_bad_signature")
+
+    def test_a_noncanonical_hmac_spelling_is_refused(self) -> None:
+        head, body, signature = GOLDEN_TICKET.split(".")
+        alternate = noncanonical_encoding_of_same_bytes(signature)
+        self.assertEqual(
+            base64.urlsafe_b64decode(alternate + "=" * (-len(alternate) % 4)),
+            base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4)),
+        )
+        self.assertEqual(self._reason(f"{head}.{body}.{alternate}"), "ticket_bad_signature")
 
     def test_a_tampered_payload_is_refused(self) -> None:
         head, _, signature = GOLDEN_TICKET.split(".")

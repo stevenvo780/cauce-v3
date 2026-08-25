@@ -337,6 +337,30 @@ export const AGENT_TO_AGENT_MESSAGE_TYPES = [
 ] as const;
 
 /**
+ * Sonda operativa reservada. El gateway sólo admite este tipo desde la identidad mTLS exacta
+ * `Steven:gate-probe`; el SDK la termina sin abrir sesión ni invocar un harness/modelo.
+ */
+export const SYSTEM_GATE_PROBE_MESSAGE_TYPE = 'system.gate.probe' as const;
+/** Principals técnicos cerrados: nunca son destinos ni aparecen en routing_targets. */
+export const SYSTEM_PRINCIPAL_ALIASES = ['gate-probe', 'quota-collector'] as const;
+export const SystemGateProbeBodySchema = z.object({
+  type: z.literal(SYSTEM_GATE_PROBE_MESSAGE_TYPE),
+  nonce: z.string().regex(/^[a-f0-9]{32}$/),
+  timeout_ms: MessageTimeoutMsSchema,
+}).strict();
+export type SystemGateProbeBody = z.infer<typeof SystemGateProbeBodySchema>;
+
+export function isSystemGateProbeBody(body: unknown): body is SystemGateProbeBody {
+  return SystemGateProbeBodySchema.safeParse(body).success;
+}
+
+/** Tipos que nunca deben gastar la reserva de admisión destinada a mensajes humanos. */
+export const NON_HUMAN_DELIVERY_MESSAGE_TYPES = [
+  ...AGENT_TO_AGENT_MESSAGE_TYPES,
+  SYSTEM_GATE_PROBE_MESSAGE_TYPE,
+] as const;
+
+/**
  * `agent.notify` es egress proactivo hacia un handle externo: va a `adapter_outbox` y nunca a
  * `deliveries`, así que no participa del reparto de cupo. Sigue reservado igual porque la
  * protección anti-suplantación de abajo tiene que cubrirlo.
@@ -652,18 +676,10 @@ export const AgentConfigMutationSchema = z.object({
     runtime_user: z.string().trim().min(1).max(64).nullable().optional(),
     home_directory: z.string().trim().min(1).max(512).nullable().optional(),
     state_directory: z.string().trim().min(1).max(512).nullable().optional(),
-    // Rol declarado del alias (columna `role_brief`, migración 020). El borde exacto
-    // —`ROLE_BRIEF_MAX_CODE_POINTS`, vacío = borrar— lo decide `normalizeRoleBrief()` en el store,
-    // que es quien puede devolver cuántos caracteres se mandaron; acá sólo se corta un cuerpo
-    // absurdo antes de abrir transacción, y por eso el techo de este guard es holgado a propósito.
-    //
-    // Se mide con `countCodePoints` y NO con `.max()`: el `.max()` de zod cuenta unidades UTF-16,
-    // así que un brief de 1200 puntos de código con emoji mediría 1300 y lo rechazaría este
-    // esquema aunque `char_length` de Postgres lo acepte. Los puntos de código son lo que mide la
-    // columna.
-    role_brief: z.string()
-      .refine((text) => countCodePoints(text) <= 8_000, { message: 'role_brief is too long' })
-      .nullable().optional(),
+    // `role_brief` es una proyección legacy de `agent_profiles.role_summary` desde la migración
+    // 028. No se acepta en esta mutación: guardarlo por el editor genérico sólo acreditaría una
+    // fila de Postgres, mientras el fichero que lee el arnés seguiría en la revisión anterior.
+    // La única escritura pública es el PUT canónico de perfil, que exige CAS y ACK del runtime.
     /*
      * El techo REAL de entregas en vuelo de este agente (columna `max_concurrent_deliveries`,
      * migración 015). `repository.ts` lo aplica al repartir cupo, y no estaba en ninguna pantalla:
@@ -718,97 +734,12 @@ export const AgentAccountBindingConfigMutationSchema = z.object({
   }).strict().optional()
 }).strict();
 
-/**
- * EL BORDE del perfil: un corte grosero para que un cuerpo absurdo no abra transacción.
- *
- * NO ES EL TOPE. El tope real —y el único que manda— es `AGENT_PROFILE_LIMITS` de
- * `agent-profile.ts`, que aplica `normalizeAgentProfile()` midiendo en LAS DOS unidades y
- * devolviendo un `AgentProfileError` que NOMBRA EL CAMPO. Sobre un formulario de seis campos, un
- * «no entra» sin campo obliga al operador a adivinar cuál recortar.
- *
- * Estas dos constantes son deliberadamente MÁS FLOJAS que las de allá, y esa desigualdad es la
- * propiedad que importa: un borde más estricto que la base convertiría un rechazo explicado en uno
- * mudo. `tests/unit/agent-profile-mutacion.test.ts` la MIDE en vez de darla por supuesta.
- *
- * Están escritas acá como literales, y no importadas de `agent-profile.ts`, a propósito: ese
- * módulo importa `countCodePoints` de éste, así que importarlo de vuelta cerraría un ciclo y estas
- * constantes se evaluarían como `undefined` en el momento en que zod construye el esquema —un
- * fallo de arranque que no se parece en nada a su causa.
- *
- * Por qué el corte existe: `apply()` toma `pg_advisory_xact_lock(783_003_004)`, que es un lock
- * GLOBAL, uno solo para toda la instalación. Un megabyte de texto que Postgres va a rechazar de
- * todos modos lo tomaría igual, y el resto de operadores espera detrás mientras se rechaza.
- */
-const AGENT_PROFILE_BORDER_TEXT = 24_000;
-const AGENT_PROFILE_BORDER_ITEMS = 256;
-
-/**
- * Una lista del perfil, en el borde.
- *
- * El tope de ELEMENTOS es más flojo que el real (`AGENT_PROFILE_LIMITS.items`) por un motivo
- * concreto: `normalizeAgentProfile()` DESCARTA los elementos en blanco antes de contarlos, así que
- * un formulario con renglones vacíos de más manda legítimamente más entradas de las que van a
- * contar. Rechazarlo acá le costaría al operador el trabajo de los otros sesenta y tres por unos
- * renglones que la base iba a tirar sola.
- */
-function AgentProfileListBorderSchema(field: string) {
-  return z.array(
-    z.string().refine((text) => countCodePoints(text) <= AGENT_PROFILE_BORDER_TEXT,
-      { message: `a ${field} entry is too long` })
-  ).max(AGENT_PROFILE_BORDER_ITEMS, { message: `${field} has too many entries` }).optional();
-}
-
-/**
- * El perfil AUTORADO de un alias (tabla `agent_profiles`, migración 026).
- *
- * Entra como un recurso más de la mutación de configuración, y no por una ruta HTTP propia, porque
- * así hereda SIN escribir una línea: el bloqueo optimista de revisión (`expected_revision`), la
- * fila en `config_revisions` con su mutación INVERSA —que es lo que hace que el botón de deshacer
- * lo alcance—, el asiento en `audit_events`, el `assertControl` contra la base antes y después, y
- * el aislamiento por inquilino de `authorizeMutation`. Una ruta nueva pierde casi todo eso y hay
- * que reimplementarlo a mano, que es como se pierde una guarda sin que nadie lo note.
- *
- * Los permisos, las cuotas y la configuración del arnés NO son campos de acá: son HECHOS que se
- * leen frescos de `memberships`/`role_policies`, del camino del techo de ruteo y de `agents`.
- * Copiarlos como texto autorado sería una segunda fuente de verdad que se desincroniza en silencio
- * —se revoca el permiso y el fichero del contenedor sigue diciendo que lo tiene—.
- */
-export const AgentProfileConfigMutationSchema = z.object({
-  resource: z.literal('agent_profile'), action: ConfigActionSchema,
-  tenant_id: TenantSchema, alias: AliasSchema,
-  value: z.object({
-    purpose: z.string()
-      .refine((text) => countCodePoints(text) <= AGENT_PROFILE_BORDER_TEXT,
-        { message: 'purpose is too long' })
-      .nullable().optional(),
-    role_summary: z.string()
-      .refine((text) => countCodePoints(text) <= AGENT_PROFILE_BORDER_TEXT,
-        { message: 'role_summary is too long' })
-      .nullable().optional(),
-    /*
-     * `human_brief` estaba en la interfaz, en `AGENT_PROFILE_TEXT_FIELDS` y en la columna de la
-     * migración 026, pero NO acá — así que la consola podía enseñar la caja y el servidor
-     * rechazaba el cuerpo por `.strict()`. Es exactamente el defecto que este trabajo viene a
-     * cerrar: un campo editable sin camino real hasta el fichero que el arnés lee.
-     */
-    human_brief: z.string()
-      .refine((text) => countCodePoints(text) <= AGENT_PROFILE_BORDER_TEXT,
-        { message: 'human_brief is too long' })
-      .nullable().optional(),
-    responsibilities: AgentProfileListBorderSchema('responsibilities'),
-    restrictions: AgentProfileListBorderSchema('restrictions'),
-    tools: AgentProfileListBorderSchema('tools'),
-    operating_rules: AgentProfileListBorderSchema('operating_rules')
-  }).strict().optional()
-}).strict();
-
 export const ConfigMutationSchema = z.discriminatedUnion('resource', [
   TenantConfigMutationSchema, RoomConfigMutationSchema, MembershipConfigMutationSchema,
   AclEdgeConfigMutationSchema, HarnessConfigMutationSchema, RolePolicyConfigMutationSchema,
   ChainPolicyConfigMutationSchema, EgressDestinationConfigMutationSchema,
   AgentConfigMutationSchema, ProviderAccountConfigMutationSchema,
-  AliasRoutingCeilingConfigMutationSchema, AgentAccountBindingConfigMutationSchema,
-  AgentProfileConfigMutationSchema
+  AliasRoutingCeilingConfigMutationSchema, AgentAccountBindingConfigMutationSchema
 ]);
 export const ConfigChangeRequestSchema = z.object({
   dry_run: z.boolean().default(true), expected_revision: ConfigRevisionSchema.optional(), mutation: ConfigMutationSchema

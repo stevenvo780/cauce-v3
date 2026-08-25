@@ -1,6 +1,11 @@
 import { request as httpsRequest, type RequestOptions } from 'node:https';
-import type { GovernanceRelayClient, RelayFileRead } from './agent-documents.js';
-import type { GovernanceReadError } from './agent-documents.routes.js';
+import type {
+  GovernanceRelayClient, GovernanceWriteError, RelayFileRead, RelayFileWrite,
+  RelayFileWriteBatch,
+} from './agent-documents.js';
+import type {
+  GovernanceBatchWrite, GovernanceReadError, GovernanceWritePrecondition,
+} from './agent-documents.routes.js';
 
 /**
  * `GovernanceRelayClient` de verdad: habla con `POST /v3/terminal/relay/read` del terminal-relay.
@@ -31,6 +36,8 @@ const READ_CODES: readonly GovernanceReadError['error'][] = [
   'not_found', 'permission_denied', 'invalid_path', 'symlink_detected',
   'too_large', 'timeout', 'unavailable', 'unknown'
 ];
+
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 export interface HttpGovernanceRelayClientOptions {
   /** Origen HTTPS del lado navegador del relay, p. ej. `https://terminal-relay:8446`. */
@@ -96,10 +103,11 @@ export function parseReadOutcome(body: string): RelayFileRead | GovernanceReadEr
   const path = stringField(source, 'path');
   const modifiedAt = stringField(source, 'modified_at');
   const content = stringField(source, 'content');
+  const sha = stringField(source, 'sha');
   const bytes = source.bytes;
   const truncated = source.truncated;
-  if (path === undefined || modifiedAt === undefined || content === undefined) {
-    return { error: 'unknown', reason: 'la lectura vino sin ruta, sin fecha o sin contenido' };
+  if (path === undefined || modifiedAt === undefined || content === undefined || sha === undefined) {
+    return { error: 'unknown', reason: 'la lectura vino sin ruta, fecha, contenido o huella SHA-256' };
   }
   if (typeof bytes !== 'number' || !Number.isInteger(bytes) || bytes < 0) {
     return { error: 'unknown', reason: 'la lectura vino sin un tamaño creíble' };
@@ -107,7 +115,106 @@ export function parseReadOutcome(body: string): RelayFileRead | GovernanceReadEr
   if (typeof truncated !== 'boolean') {
     return { error: 'unknown', reason: 'la lectura no dice si viene recortada' };
   }
-  return { path, bytes, truncated, modified_at: modifiedAt, content };
+  if (!SHA256_PATTERN.test(sha)) {
+    return { error: 'unknown', reason: 'la lectura no trae una huella SHA-256 válida' };
+  }
+  return { path, bytes, truncated, modified_at: modifiedAt, sha, content };
+}
+
+/**
+ * Un ACK de escritura no se completa con valores del pedido. El relay tiene que devolver las
+ * cuatro pruebas que recibió del agente: ruta, operación, SHA y bytes. `TerminalRelayFactsProbe`
+ * las vuelve a contrastar con el contenido solicitado; esta primera puerta impide que un 200
+ * vacío o una forma legacy parezcan un ACK.
+ */
+export function parseWriteOutcome(body: string): RelayFileWrite | GovernanceWriteError {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return { error: 'unknown', reason: 'el terminal-relay contestó algo que no es JSON' };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { error: 'unknown', reason: 'el terminal-relay contestó algo que no es un objeto' };
+  }
+  const source = parsed as Record<string, unknown>;
+  const failure = stringField(source, 'error');
+  if (failure !== undefined) {
+    if (failure === 'conflict') {
+      return { error: 'conflict', reason: stringField(source, 'reason') ?? 'la precondición no se cumplió' };
+    }
+    return {
+      error: normalizeCode(failure),
+      reason: stringField(source, 'reason') ?? 'el terminal-relay no explicó el fallo',
+    };
+  }
+
+  const path = stringField(source, 'path');
+  const operation = stringField(source, 'operation');
+  const sha = stringField(source, 'sha');
+  const bytes = source.bytes;
+  if (path === undefined || (operation !== 'replace' && operation !== 'create')) {
+    return { error: 'unknown', reason: 'el ACK de escritura vino sin ruta u operación válida' };
+  }
+  if (sha === undefined || !SHA256_PATTERN.test(sha)) {
+    return { error: 'unknown', reason: 'el ACK de escritura vino sin una huella SHA-256 válida' };
+  }
+  if (typeof bytes !== 'number' || !Number.isInteger(bytes) || bytes < 0) {
+    return { error: 'unknown', reason: 'el ACK de escritura vino sin un tamaño creíble' };
+  }
+  return { path, operation, sha, bytes };
+}
+
+/** El lote sólo existe si TODOS sus ACK individuales tienen forma completa y rutas únicas. */
+export function parseWriteBatchOutcome(body: string): RelayFileWriteBatch | GovernanceWriteError {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return { error: 'unknown', reason: 'el terminal-relay contestó un lote que no es JSON' };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { error: 'unknown', reason: 'el terminal-relay contestó un lote que no es un objeto' };
+  }
+  const source = parsed as Record<string, unknown>;
+  const failure = stringField(source, 'error');
+  if (failure !== undefined) {
+    if (failure === 'conflict') {
+      return { error: 'conflict', reason: stringField(source, 'reason') ?? 'el lote entró en conflicto' };
+    }
+    return {
+      error: normalizeCode(failure),
+      reason: stringField(source, 'reason') ?? 'el terminal-relay no explicó el fallo del lote',
+    };
+  }
+  if (!Array.isArray(source.files) || source.files.length === 0 || source.files.length > 7) {
+    return { error: 'unknown', reason: 'el ACK del lote no trae una lista acotada de ficheros' };
+  }
+  const files: RelayFileWriteBatch['files'][number][] = [];
+  const paths = new Set<string>();
+  for (const raw of source.files) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { error: 'unknown', reason: 'el ACK del lote contiene un fichero inválido o repetido' };
+    }
+    const record = raw as Record<string, unknown>;
+    const path = stringField(record, 'path');
+    const operation = stringField(record, 'operation');
+    const bytes = record.bytes;
+    const rawSha: unknown = record.sha;
+    const sha = rawSha === null ? null : typeof rawSha === 'string' ? rawSha : undefined;
+    if (path === undefined || paths.has(path)
+      || (operation !== 'create' && operation !== 'replace'
+        && operation !== 'unchanged' && operation !== 'absent')
+      || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0
+      || sha === undefined || (sha !== null && !SHA256_PATTERN.test(sha))
+      || (operation === 'absent' && (sha !== null || bytes !== 0))
+      || (operation !== 'absent' && sha === null)) {
+      return { error: 'unknown', reason: 'el ACK del lote contiene un fichero inválido o repetido' };
+    }
+    paths.add(path);
+    files.push({ path, operation, sha, bytes });
+  }
+  return { files };
 }
 
 export class HttpGovernanceRelayClient implements GovernanceRelayClient {
@@ -130,7 +237,7 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
   async readFile(tenantId: string, alias: string, path: string): Promise<RelayFileRead | GovernanceReadError> {
     let result: HttpResult;
     try {
-      result = await this.send({ tenant_id: tenantId, alias, path });
+      result = await this.send('/v3/terminal/relay/read', { tenant_id: tenantId, alias, path });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'sin detalle';
       // El vencimiento se distingue del resto porque significa otra cosa para quien mira el modal:
@@ -153,9 +260,82 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
     return parseReadOutcome(result.body);
   }
 
-  private async send(body: Readonly<Record<string, unknown>>): Promise<HttpResult> {
+  async writeFile(
+    tenantId: string,
+    alias: string,
+    path: string,
+    content: string,
+    precondition: GovernanceWritePrecondition,
+  ): Promise<RelayFileWrite | GovernanceWriteError> {
+    let result: HttpResult;
+    try {
+      result = await this.send('/v3/terminal/relay/write', {
+        tenant_id: tenantId,
+        alias,
+        path,
+        content_base64: Buffer.from(content, 'utf8').toString('base64'),
+        precondition,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'sin detalle';
+      return {
+        error: message.includes('timed out') ? 'timeout' : 'unavailable',
+        reason: `no se pudo hablar con el terminal-relay: ${message}`,
+      };
+    }
+    if (result.overflowed) {
+      return { error: 'too_large', reason: 'el terminal-relay mandó más de lo que esta vía acepta' };
+    }
+    if (result.status === 401 || result.status === 403) {
+      return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
+    }
+    if (result.status !== 200) {
+      return { error: 'unavailable', reason: `el terminal-relay contestó ${result.status}` };
+    }
+    return parseWriteOutcome(result.body);
+  }
+
+  async writeFiles(
+    tenantId: string,
+    alias: string,
+    writes: readonly GovernanceBatchWrite[],
+  ): Promise<RelayFileWriteBatch | GovernanceWriteError> {
+    let result: HttpResult;
+    try {
+      result = await this.send('/v3/terminal/relay/write-batch', {
+        tenant_id: tenantId,
+        alias,
+        files: writes.map((write) => ({
+          mode: write.mode,
+          path: write.path,
+          ...(write.mode === 'write'
+            ? { content_base64: Buffer.from(write.content, 'utf8').toString('base64') }
+            : {}),
+          precondition: write.precondition,
+        })),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'sin detalle';
+      return {
+        error: message.includes('timed out') ? 'timeout' : 'unavailable',
+        reason: `no se pudo hablar con el terminal-relay: ${message}`,
+      };
+    }
+    if (result.overflowed) {
+      return { error: 'too_large', reason: 'el terminal-relay mandó más de lo que esta vía acepta' };
+    }
+    if (result.status === 401 || result.status === 403) {
+      return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
+    }
+    if (result.status !== 200) {
+      return { error: 'unavailable', reason: `el terminal-relay contestó ${result.status}` };
+    }
+    return parseWriteBatchOutcome(result.body);
+  }
+
+  private async send(route: string, body: Readonly<Record<string, unknown>>): Promise<HttpResult> {
     const payload = Buffer.from(JSON.stringify(body), 'utf8');
-    const url = new URL('/v3/terminal/relay/read', this.relayUrl);
+    const url = new URL(route, this.relayUrl);
     const options: RequestOptions = {
       method: 'POST',
       headers: {

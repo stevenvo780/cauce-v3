@@ -1,4 +1,5 @@
 ARG CAUCE_NODE_BASE=node:22.17.0-alpine3.22
+ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=029_reconcile_declared_fleet.sql
 FROM ${CAUCE_NODE_BASE} AS build
 WORKDIR /app
 RUN corepack enable
@@ -8,6 +9,7 @@ COPY packages/protocol/package.json packages/protocol/tsconfig.json ./packages/p
 COPY packages/protocol/src ./packages/protocol/src
 COPY packages/store/package.json ./packages/store/
 COPY packages/adapter-sdk/package.json packages/adapter-sdk/tsconfig.json ./packages/adapter-sdk/
+COPY packages/mcp-fleet-monitor/package.json packages/mcp-fleet-monitor/tsconfig.json ./packages/mcp-fleet-monitor/
 COPY services/gateway/package.json ./services/gateway/
 COPY services/dispatcher/package.json services/dispatcher/tsconfig.json ./services/dispatcher/
 COPY services/relay-worker/package.json ./services/relay-worker/
@@ -56,11 +58,13 @@ RUN pnpm --filter @cauce/protocol \
   install --prod --frozen-lockfile --ignore-scripts
 
 FROM ${CAUCE_NODE_BASE} AS runtime
+ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH
+LABEL io.cauce.schema.compatible-through=${CAUCE_SCHEMA_COMPATIBLE_THROUGH}
 ENV NODE_ENV=production
 WORKDIR /app
 RUN apk add --no-cache python3 \
-  && mkdir -p /var/lib/cauce-adapter \
-  && chown node:node /var/lib/cauce-adapter
+  && mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal \
+  && chown node:node /var/lib/cauce-adapter /var/lib/cauce-terminal
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=production-dependencies --chown=node:node /app/packages ./packages
 COPY --from=production-dependencies --chown=node:node /app/services ./services
@@ -76,7 +80,7 @@ COPY --from=build --chown=node:node /app/packages/protocol/dist ./packages/proto
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/src ./packages/adapter-sdk/dist/src
 COPY --from=build --chown=node:node --chmod=0555 /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge
 COPY --chown=node:node deploy/runtime-store.package.json ./packages/store/package.json
-COPY --chown=node:node deploy/readiness-probe.mjs deploy/unix-readiness-probe.mjs deploy/postgres-tls.mjs deploy/migrate.mjs deploy/outbox-metrics.mjs deploy/shadow-guard.mjs deploy/runtime-package-smoke.mjs ./deploy/
+COPY --chown=node:node deploy/readiness-probe.mjs deploy/unix-readiness-probe.mjs deploy/postgres-tls.mjs deploy/migrate.mjs deploy/migration-integrity.mjs deploy/schema-version.mjs deploy/fleet-snapshot.mjs deploy/outbox-metrics.mjs deploy/outbox-metrics-core.mjs deploy/reconcile-stale-console-outbox.mjs deploy/reconcile-stale-console-outbox-core.mjs deploy/shadow-guard.mjs deploy/runtime-package-smoke.mjs ./deploy/
 COPY --chown=node:node deploy/runtime-entrypoint.sh ./deploy/runtime-entrypoint.sh
 RUN chmod 0555 ./deploy/runtime-entrypoint.sh
 USER node

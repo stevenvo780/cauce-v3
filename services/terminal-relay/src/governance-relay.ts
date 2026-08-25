@@ -2,11 +2,15 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
 import type { AgentLookup } from './agent-leg.js';
-import { requestFileRead, type FileReadOutcome } from './gateway-client.js';
+import {
+  MAX_GOVERNANCE_BYTES, requestFileRead, requestFileWrite, requestFileWriteBatch,
+  type FileReadOutcome, type FileWriteOutcome, type GovernanceWriteBatchEntry,
+  type GovernanceWriteBatchOutcome, type GovernanceWritePrecondition,
+} from './gateway-client.js';
 import { errorLabel, logEvent } from './log.js';
 
 /**
- * `POST /v3/terminal/relay/read` — la única puerta HTTP por la que se pide un fichero de gobierno.
+ * `POST /v3/terminal/relay/read|write` — puertas mTLS del gateway hacia el disco gobernado.
  *
  * Es el eslabón que faltaba entre el gateway y el pty-agent: `requestFileRead` ya sabía hablar con
  * el agente, pero nadie desde fuera del proceso podía llamarla. Esto la expone, y nada más.
@@ -31,9 +35,11 @@ import { errorLabel, logEvent } from './log.js';
 
 /** Ruta de la lectura. Vive fuera de `/v3/console/` por lo mismo que las del gateway: no es un navegador. */
 export const GOVERNANCE_READ_PATH = '/v3/terminal/relay/read';
+export const GOVERNANCE_WRITE_PATH = '/v3/terminal/relay/write';
+export const GOVERNANCE_WRITE_BATCH_PATH = '/v3/terminal/relay/write-batch';
 
-/** El cuerpo es un objeto con tres cadenas cortas. Cualquier cosa más grande no es esta llamada. */
-const MAX_REQUEST_BYTES = 8 * 1024;
+/** Base64 de 256 KiB más JSON. No se acumula nada por encima de este techo. */
+const MAX_REQUEST_BYTES = 512 * 1024;
 
 /** Misma forma de alias que exige el gateway al pedir una sesión de terminal. */
 const ALIAS_PATTERN = /^[a-z][a-z0-9_-]{1,63}$/u;
@@ -59,6 +65,19 @@ interface ReadRequest {
   readonly alias: string;
   readonly path: string;
 }
+
+interface WriteRequest extends ReadRequest {
+  readonly content: Buffer;
+  readonly precondition: GovernanceWritePrecondition;
+}
+
+interface WriteBatchRequest {
+  readonly tenantId: string;
+  readonly alias: string;
+  readonly entries: readonly GovernanceWriteBatchEntry[];
+}
+
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 /** Digerir antes de comparar: tiempo constante, y una longitud distinta no revienta ni se filtra. */
 function digest(value: string): Buffer {
@@ -127,6 +146,133 @@ export function parseReadRequest(raw: string): ReadRequest | { readonly rejected
   return { tenantId, alias, path };
 }
 
+/** Escritura cerrada: no hay una forma implícita que pueda significar create o replace según el disco. */
+export function parseWriteRequest(raw: string): WriteRequest | { readonly rejected: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { rejected: 'el cuerpo no es JSON' };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { rejected: 'el cuerpo tiene que ser un objeto' };
+  }
+  const source = parsed as Record<string, unknown>;
+  const allowed = new Set(['tenant_id', 'alias', 'path', 'content_base64', 'precondition']);
+  if (Object.keys(source).some((key) => !allowed.has(key))) {
+    return { rejected: 'el cuerpo trae campos que este protocolo no conoce' };
+  }
+  const common = parseReadRequest(JSON.stringify({
+    tenant_id: source.tenant_id, alias: source.alias, path: source.path,
+  }));
+  if ('rejected' in common) return common;
+
+  const encoded = source.content_base64;
+  if (typeof encoded !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+    return { rejected: 'content_base64 no es base64 canónico' };
+  }
+  const content = Buffer.from(encoded, 'base64');
+  if (content.toString('base64') !== encoded) return { rejected: 'content_base64 no es base64 canónico' };
+  if (content.byteLength > MAX_GOVERNANCE_BYTES) return { rejected: 'el contenido se pasa del tope' };
+
+  const precondition = source.precondition;
+  if (precondition === null || typeof precondition !== 'object' || Array.isArray(precondition)) {
+    return { rejected: 'precondition es obligatoria' };
+  }
+  const record = precondition as Record<string, unknown>;
+  if (record.state === 'absent' && Object.keys(record).length === 1) {
+    return { ...common, content, precondition: { state: 'absent' } };
+  }
+  if (record.state === 'present' && Object.keys(record).length === 2
+    && typeof record.sha256 === 'string' && SHA256_PATTERN.test(record.sha256)) {
+    return { ...common, content, precondition: { state: 'present', sha256: record.sha256 } };
+  }
+  return { rejected: 'precondition debe ser absent o present con SHA-256 minúscula' };
+}
+
+/** Lote cerrado: cada entrada declara si escribe o sólo verifica, nunca se infiere por su forma. */
+export function parseWriteBatchRequest(raw: string): WriteBatchRequest | { readonly rejected: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { rejected: 'el cuerpo no es JSON' };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { rejected: 'el cuerpo tiene que ser un objeto' };
+  }
+  const source = parsed as Record<string, unknown>;
+  const allowed = new Set(['tenant_id', 'alias', 'files']);
+  if (Object.keys(source).some((key) => !allowed.has(key))
+    || !Array.isArray(source.files) || source.files.length < 1 || source.files.length > 7) {
+    return { rejected: 'el lote debe traer entre uno y siete ficheros y ningún campo desconocido' };
+  }
+
+  const entries: GovernanceWriteBatchEntry[] = [];
+  const paths = new Set<string>();
+  let totalBytes = 0;
+  for (const rawEntry of source.files) {
+    if (rawEntry === null || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
+      return { rejected: 'cada fichero del lote tiene que ser un objeto' };
+    }
+    const entry = rawEntry as Record<string, unknown>;
+    const mode = entry.mode;
+    const entryAllowed = mode === 'write'
+      ? new Set(['mode', 'path', 'content_base64', 'precondition'])
+      : mode === 'verify'
+        ? new Set(['mode', 'path', 'precondition'])
+        : undefined;
+    if (entryAllowed === undefined || Object.keys(entry).some((key) => !entryAllowed.has(key))) {
+      return { rejected: 'cada fichero debe declarar mode write o verify y su forma exacta' };
+    }
+    const common = parseReadRequest(JSON.stringify({
+      tenant_id: source.tenant_id, alias: source.alias, path: entry.path,
+    }));
+    if ('rejected' in common) return common;
+    if (paths.has(common.path)) return { rejected: 'el lote repite una ruta' };
+    paths.add(common.path);
+
+    const precondition = entry.precondition;
+    if (precondition === null || typeof precondition !== 'object' || Array.isArray(precondition)) {
+      return { rejected: 'precondition es obligatoria en cada fichero' };
+    }
+    const record = precondition as Record<string, unknown>;
+    const parsedPrecondition: GovernanceWritePrecondition | undefined =
+      record.state === 'absent' && Object.keys(record).length === 1
+        ? { state: 'absent' }
+        : record.state === 'present' && Object.keys(record).length === 2
+          && typeof record.sha256 === 'string' && SHA256_PATTERN.test(record.sha256)
+          ? { state: 'present', sha256: record.sha256 }
+          : undefined;
+    if (parsedPrecondition === undefined) {
+      return { rejected: 'precondition debe ser absent o present con SHA-256 minúscula' };
+    }
+    if (mode === 'verify') {
+      entries.push({ mode, path: common.path, precondition: parsedPrecondition });
+      continue;
+    }
+
+    const encoded = entry.content_base64;
+    if (typeof encoded !== 'string'
+      || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+      return { rejected: 'content_base64 no es base64 canónico' };
+    }
+    const content = Buffer.from(encoded, 'base64');
+    if (content.toString('base64') !== encoded) return { rejected: 'content_base64 no es base64 canónico' };
+    totalBytes += content.byteLength;
+    if (totalBytes > MAX_GOVERNANCE_BYTES) return { rejected: 'el contenido total se pasa del tope' };
+    entries.push({ mode: 'write', path: common.path, content, precondition: parsedPrecondition });
+  }
+
+  const first = entries[0];
+  if (first === undefined) return { rejected: 'el lote está vacío' };
+  const common = parseReadRequest(JSON.stringify({
+    tenant_id: source.tenant_id, alias: source.alias, path: first.path,
+  }));
+  if ('rejected' in common) return common;
+  return { tenantId: common.tenantId, alias: common.alias, entries };
+}
+
 /** `body` es `unknown` y no un registro: lo que se sirve son tipos cerrados (`FileReadOutcome`). */
 function send(response: ServerResponse, status: number, body?: unknown): void {
   if (response.writableEnded) return;
@@ -145,7 +291,14 @@ async function handle(
   response: ServerResponse
 ): Promise<void> {
   const path = (request.url ?? '/').split('?', 1)[0];
-  if (path !== GOVERNANCE_READ_PATH) {
+  const operation = path === GOVERNANCE_READ_PATH
+    ? 'read'
+    : path === GOVERNANCE_WRITE_PATH
+      ? 'write'
+      : path === GOVERNANCE_WRITE_BATCH_PATH
+        ? 'write_batch'
+        : undefined;
+  if (operation === undefined) {
     request.resume();
     send(response, 404, { error: 'not_found' });
     return;
@@ -163,7 +316,7 @@ async function handle(
   } catch (error) {
     // Sin token no se puede autenticar a nadie, y dejar pasar sería justo lo contrario de fallar
     // cerrado. Es un fallo del relay, no del que llama: 503, no 401.
-    logEvent('terminal_relay_read_token_unreadable', { error: errorLabel(error) });
+    logEvent('terminal_relay_governance_token_unreadable', { operation, error: errorLabel(error) });
     request.resume();
     send(response, 503, { error: 'unavailable' });
     return;
@@ -171,7 +324,7 @@ async function handle(
   if (!authorized(request.headers.authorization, expected)) {
     // Cuerpo vacío a propósito, igual que en las rutas de relay del gateway: quien no se autentica
     // no aprende nada del plano. Y el cuerpo ni se lee: un no autenticado no mueve al pty-agent.
-    logEvent('terminal_relay_read_rejected', { reason: 'bad_token' });
+    logEvent('terminal_relay_governance_rejected', { operation, reason: 'bad_token' });
     request.resume();
     send(response, 401);
     return;
@@ -181,7 +334,7 @@ async function handle(
   try {
     raw = await readBody(request);
   } catch (error) {
-    logEvent('terminal_relay_read_rejected', { reason: 'body_error', error: errorLabel(error) });
+    logEvent('terminal_relay_governance_rejected', { operation, reason: 'body_error', error: errorLabel(error) });
     send(response, 400, { error: 'invalid_request', reason: 'no se pudo leer el cuerpo' });
     return;
   }
@@ -189,51 +342,150 @@ async function handle(
     send(response, 413, { error: 'invalid_request', reason: 'el cuerpo se pasa del tope' });
     return;
   }
-  const parsed = parseReadRequest(raw);
+  if (operation === 'read') {
+    const parsed = parseReadRequest(raw);
+    if ('rejected' in parsed) {
+      logEvent('terminal_relay_governance_rejected', { operation, reason: 'invalid_request' });
+      send(response, 400, { error: 'invalid_request', reason: parsed.rejected });
+      return;
+    }
+    await serveRead(options, parsed, response);
+    return;
+  }
+
+  if (operation === 'write') {
+    const parsed = parseWriteRequest(raw);
+    if ('rejected' in parsed) {
+      logEvent('terminal_relay_governance_rejected', { operation, reason: 'invalid_request' });
+      send(response, 400, { error: 'invalid_request', reason: parsed.rejected });
+      return;
+    }
+    await serveWrite(options, parsed, response);
+    return;
+  }
+
+  const parsed = parseWriteBatchRequest(raw);
   if ('rejected' in parsed) {
-    logEvent('terminal_relay_read_rejected', { reason: 'invalid_request' });
+    logEvent('terminal_relay_governance_rejected', { operation, reason: 'invalid_request' });
     send(response, 400, { error: 'invalid_request', reason: parsed.rejected });
     return;
   }
+  await serveWriteBatch(options, parsed, response);
+}
 
-  const connection = options.agents.lookup(parsed.tenantId, parsed.alias);
-  if (!connection) {
-    // 200 con un fallo de LECTURA, no 404: la llamada llegó y se contestó. Que el alias no tenga
-    // pty-agent conectado es un hecho del alias, y el modal tiene que poder decirlo con esas
-    // palabras en vez de enseñar un error de transporte.
-    const offline: FileReadOutcome = {
-      error: 'unavailable',
-      reason: 'no hay ningún pty-agent conectado para ese alias'
-    };
-    logEvent('terminal_relay_read_served', {
-      tenant_id: parsed.tenantId, alias: parsed.alias, path: parsed.path, error: 'unavailable'
-    });
-    send(response, 200, offline);
-    return;
-  }
-
-  const outcome = await requestFileRead(
-    connection,
-    parsed.tenantId,
-    parsed.alias,
-    parsed.path,
-    options.timeoutMs
-  );
+function logOutcome(
+  operation: 'read' | 'write',
+  parsed: ReadRequest,
+  outcome: FileReadOutcome | FileWriteOutcome,
+): void {
   const failed = 'error' in outcome;
   // Nunca el contenido: el tamaño y el veredicto bastan para diagnosticar, y el manual de un alias
   // es suyo. Lo mismo vale para el resto de este fichero.
-  logEvent('terminal_relay_read_served', {
+  logEvent('terminal_relay_governance_served', {
+    operation,
     tenant_id: parsed.tenantId,
     alias: parsed.alias,
     path: parsed.path,
     error: failed ? outcome.error : null,
-    bytes: failed ? null : outcome.bytes
+    bytes: 'bytes' in outcome ? outcome.bytes : null,
   });
+}
+
+function offlineOutcome(operation: 'read' | 'write', parsed: ReadRequest, response: ServerResponse): void {
+  // 200 con un fallo de DOMINIO, no 404: la llamada llegó y se contestó. Que el alias no tenga
+  // pty-agent conectado es un hecho del alias y no un fallo del transporte HTTP.
+  const outcome: FileReadOutcome | FileWriteOutcome = {
+    error: 'unavailable',
+    reason: 'no hay ningún pty-agent conectado para ese alias',
+  };
+  logOutcome(operation, parsed, outcome);
+  send(response, 200, outcome);
+}
+
+async function serveRead(
+  options: GovernanceRelayOptions,
+  parsed: ReadRequest,
+  response: ServerResponse,
+): Promise<void> {
+  const connection = options.agents.lookup(parsed.tenantId, parsed.alias);
+  if (!connection) {
+    offlineOutcome('read', parsed, response);
+    return;
+  }
+  const outcome = await requestFileRead(
+    connection, parsed.tenantId, parsed.alias, parsed.path, options.timeoutMs,
+  );
+  logOutcome('read', parsed, outcome);
+  send(response, 200, outcome);
+}
+
+async function serveWrite(
+  options: GovernanceRelayOptions,
+  parsed: WriteRequest,
+  response: ServerResponse,
+): Promise<void> {
+  const connection = options.agents.lookup(parsed.tenantId, parsed.alias);
+  if (!connection) {
+    offlineOutcome('write', parsed, response);
+    return;
+  }
+  const abort = new AbortController();
+  response.once('close', () => {
+    if (!response.writableEnded) abort.abort();
+  });
+  const outcome = await requestFileWrite(
+    connection,
+    parsed.tenantId,
+    parsed.alias,
+    parsed.path,
+    parsed.content,
+    parsed.precondition,
+    options.timeoutMs,
+    abort.signal,
+  );
+  logOutcome('write', parsed, outcome);
+  send(response, 200, outcome);
+}
+
+function logBatchOutcome(parsed: WriteBatchRequest, outcome: GovernanceWriteBatchOutcome): void {
+  const failed = 'error' in outcome;
+  logEvent('terminal_relay_governance_served', {
+    operation: 'write_batch',
+    tenant_id: parsed.tenantId,
+    alias: parsed.alias,
+    files: parsed.entries.length,
+    error: failed ? outcome.error : null,
+    bytes: failed ? null : outcome.files.reduce((total, file) => total + file.bytes, 0),
+  });
+}
+
+async function serveWriteBatch(
+  options: GovernanceRelayOptions,
+  parsed: WriteBatchRequest,
+  response: ServerResponse,
+): Promise<void> {
+  const connection = options.agents.lookup(parsed.tenantId, parsed.alias);
+  if (!connection) {
+    const outcome: GovernanceWriteBatchOutcome = {
+      error: 'unavailable', reason: 'no hay ningún pty-agent conectado para ese alias',
+    };
+    logBatchOutcome(parsed, outcome);
+    send(response, 200, outcome);
+    return;
+  }
+  const abort = new AbortController();
+  response.once('close', () => {
+    if (!response.writableEnded) abort.abort();
+  });
+  const outcome = await requestFileWriteBatch(
+    connection, parsed.tenantId, parsed.alias, parsed.entries, options.timeoutMs, abort.signal,
+  );
+  logBatchOutcome(parsed, outcome);
   send(response, 200, outcome);
 }
 
 /**
- * Engancha la lectura de gobierno al servidor del lado navegador.
+ * Engancha lectura y escritura de gobierno al servidor mTLS del lado navegador.
  *
  * No recibe el cliente del gateway a propósito: la decisión de si esta lectura vale ya la tomó el
  * gateway antes de llamar, así que preguntársela de vuelta sería un viaje de ida y vuelta que no
@@ -242,9 +494,9 @@ async function handle(
 export function setupGovernanceRelay(options: GovernanceRelayOptions): void {
   options.server.on('request', (request: IncomingMessage, response: ServerResponse) => {
     handle(options, request, response).catch((error: unknown) => {
-      // Una lectura rota no puede tumbar el proceso y con él todas las terminales abiertas.
-      logEvent('terminal_relay_read_failed', { error: errorLabel(error) });
-      send(response, 500, { error: 'unknown', reason: 'la lectura falló en el relay' });
+      // Una operación rota no puede tumbar el proceso y con él todas las terminales abiertas.
+      logEvent('terminal_relay_governance_failed', { error: errorLabel(error) });
+      send(response, 500, { error: 'unknown', reason: 'la operación de gobierno falló en el relay' });
     });
   });
 }

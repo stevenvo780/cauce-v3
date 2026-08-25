@@ -29,16 +29,16 @@
       "additionalProperties": false,
       "required": ["aliases", "harnessCounts", "manifestsSha256"],
       "properties": {
-        "aliases": { "const": 12 },
+        "aliases": { "const": 15 },
         "harnessCounts": {
           "type": "object",
           "additionalProperties": false,
           "required": ["openclaw", "claude", "hermes", "codex", "opencode"],
           "properties": {
             "openclaw": { "const": 5 },
-            "claude": { "const": 1 },
+            "claude": { "const": 3 },
             "hermes": { "const": 1 },
-            "codex": { "const": 5 },
+            "codex": { "const": 6 },
             "opencode": { "const": 0 }
           }
         },
@@ -67,15 +67,15 @@
       "additionalProperties": false,
       "required": ["aliases", "passed", "failed"],
       "properties": {
-        "aliases": { "const": 12 },
-        "passed": { "type": "integer", "minimum": 0, "maximum": 12 },
-        "failed": { "type": "integer", "minimum": 0, "maximum": 12 }
+        "aliases": { "const": 15 },
+        "passed": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "failed": { "type": "integer", "minimum": 0, "maximum": 15 }
       }
     },
     "aliases": {
       "type": "array",
-      "minItems": 12,
-      "maxItems": 12,
+      "minItems": 15,
+      "maxItems": 15,
       "items": { "$ref": "#/$defs/aliasResult" }
     }
   },

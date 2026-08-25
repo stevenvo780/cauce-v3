@@ -598,7 +598,7 @@ test("un output failed pierde sus delegaciones pero conserva la respuesta", () =
   assert.equal(resultado.status, "failed");
   assert.equal(resultado.retryable, true);
   assert.ok(resultado.reply !== null && resultado.reply.length > 0, "el reply tiene que sobrevivir");
-  assert.match(resultado.reply as string, /Se descartaron 1 delegacion/u);
+  assert.match(resultado.reply, /Se descartaron 1 delegacion/u);
 });
 
 test("failed output rejects an invisible reply but permits reply null", () => {

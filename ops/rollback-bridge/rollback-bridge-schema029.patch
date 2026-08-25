@@ -1,0 +1,479 @@
+diff --git a/packages/adapter-sdk/src/sdk/engine.ts b/packages/adapter-sdk/src/sdk/engine.ts
+index 8d75f255a418fdd234a826b596e8fa8f7552197e..d9c402891baba3cf9c22cb74019c5968d89e9dce 100644
+--- a/packages/adapter-sdk/src/sdk/engine.ts
++++ b/packages/adapter-sdk/src/sdk/engine.ts
+@@ -1,6 +1,7 @@
+ import { createHash, randomUUID } from "node:crypto";
+ import {
+   clampToRoleBriefLimit, isAgentToAgentBody, isAmbiguousAckErrorCode,
++  SYSTEM_GATE_PROBE_MESSAGE_TYPE,
+ } from "@cauce/protocol";
+ import type { InboxRecord, SessionOrigin } from "./durable-store.js";
+ import { DurableStore, sanitizeSessionOrigin } from "./durable-store.js";
+@@ -194,6 +195,7 @@ export class AdapterEngine {
+      * conversaciones distintas, y ahora el control de admisión del gateway lo acota a
+      * `maxInflight + humanReserved` (4 por defecto) contra las 71 en vuelo del incidente.
+      */
++    const systemGateProbe = delivery.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE;
+     const fanin = delivery.body.type === "agent.fanin";
+     /*
+      * SESION COMPARTIDA: un solo carril y una sola clave, la del alias.
+@@ -210,12 +212,14 @@ export class AdapterEngine {
+     const lane: SessionLane = compartida
+       ? "human"
+       : (isAgentToAgentBody(delivery.body) ? "agent" : "human");
+-    const session: HarnessSessionRequestScope = fanin
++    const session: HarnessSessionRequestScope = fanin || systemGateProbe
+       ? {}
+       : (compartida
+         ? { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane }
+         : { ...sessionFromDelivery(delivery, this.ownTenantId), sessionLane: lane });
+-    const reservation = fanin ? undefined : this.harness.reserveSession(session.sessionKey, lane);
++    const reservation = fanin || systemGateProbe
++      ? undefined
++      : this.harness.reserveSession(session.sessionKey, lane);
+ 
+     this.logger({
+       event: 'delivery_start',
+@@ -225,7 +229,9 @@ export class AdapterEngine {
+       timestamp: this.clock.now().toISOString(),
+     });
+ 
+-    const execution = this.runDelivery(delivery, session, reservation);
++    const execution = systemGateProbe
++      ? this.rejectSystemGateProbe(delivery)
++      : this.runDelivery(delivery, session, reservation);
+     const task = execution.finally(() => {
+       if (this.tasks.get(delivery.delivery_id)?.promise === task) {
+         this.tasks.delete(delivery.delivery_id);
+@@ -337,6 +343,30 @@ export class AdapterEngine {
+     }
+   }
+ 
++  /**
++   * Schema 029 can leave an already-persisted transport probe for an older bridge image to claim.
++   * It is terminally rejected before reserving a native session or invoking any harness/model.
++   * The failure ACK is the only emitted effect: it carries no output, reply, messages or egress.
++   */
++  private async rejectSystemGateProbe(delivery: Delivery): Promise<void> {
++    const accepted = await this.store.accept(delivery, this.clock.now().toISOString());
++    if (accepted.acceptance === "stale" || accepted.acceptance === "blocked") return;
++    if (accepted.acceptance === "duplicate") {
++      await this.replayPending(accepted.record);
++      if (accepted.record.state !== "accepted") return;
++    } else {
++      await this.emit("accepted", accepted.record);
++    }
++    await this.finishError(
++      accepted.record,
++      new AdapterError(
++        "ROLLBACK_BRIDGE_GATE_PROBE_REJECTED",
++        "system.gate.probe is disabled while the rollback bridge is active",
++        false,
++      ),
++    );
++  }
++
+   private async runReservedDelivery(
+     delivery: Delivery,
+     session: HarnessSessionRequestScope,
+diff --git a/packages/adapter-sdk/test/engine.test.ts b/packages/adapter-sdk/test/engine.test.ts
+index 96d1281249a330a0888a2846b132a4fec8b26297..ab236a6268fa6830a5db665c038c78baaae6ff51 100644
+--- a/packages/adapter-sdk/test/engine.test.ts
++++ b/packages/adapter-sdk/test/engine.test.ts
+@@ -1306,6 +1306,54 @@ test("every harness runtime bypasses providers and native sessions for agent fan
+   }
+ });
+ 
++test("rollback bridge terminally rejects system.gate.probe before session, model or egress", async () => {
++  for (const definition of Object.values(HARNESS_DEFINITIONS)) {
++    const runner = new ControlledRunner();
++    runner.stdout = JSON.stringify({
++      reply: "must never be observed",
++      messages: [{ to: "socrates", body: "must never be sent" }],
++      notify: [{ destination: "owner", kind: "alert", body: "must never egress" }],
++      status: "done",
++      retryable: false,
++      artifacts: [],
++    });
++    const storeName = `engine-rollback-gate-${definition.id}`;
++    const store = await storeFor(storeName);
++    await store.activateEpoch(1);
++    const events: DeliveryEvent[] = [];
++    const harness = new CountingHarnessAdapter({ definition, runner, store });
++    const engine = new AdapterEngine({
++      store,
++      harness,
++      publish: async (event) => { events.push(event); },
++    });
++    const sessionsPath = resolve(root, storeName, "sessions.json");
++    const sessionsBefore = await optionalFile(sessionsPath);
++
++    await engine.handleDelivery({
++      ...delivery(`rollback-gate-${definition.id}`),
++      actor_alias: "kant",
++      recipient_alias: "jarvis",
++      authenticated_context: { session_id: "gate-probe", channel: "gate" },
++      body: {
++        type: "system.gate.probe",
++        nonce: "0123456789abcdef0123456789abcdef",
++        timeout_ms: 5_000,
++      },
++    });
++
++    const terminal = events.at(-1);
++    assert.equal(runner.calls, 0, `${definition.id} provider must not run`);
++    assert.equal(harness.executeCalls, 0, `${definition.id} harness must not execute`);
++    assert.equal(harness.reserveSessionCalls, 0, `${definition.id} session must not be reserved`);
++    assert.equal(await optionalFile(sessionsPath), sessionsBefore);
++    assert.equal(terminal?.phase, "failed");
++    assert.equal(terminal?.error?.code, "ROLLBACK_BRIDGE_GATE_PROBE_REJECTED");
++    assert.equal(terminal?.error?.retryable, false);
++    assert.equal(terminal?.output, undefined);
++  }
++});
++
+ test("agent fan-in rejects legacy generated text without fanin_data_v1 before harness dispatch", async () => {
+   const context = await setup("engine-fanin-missing-data");
+   const input: Delivery = {
+diff --git a/packages/protocol/src/schemas.ts b/packages/protocol/src/schemas.ts
+index fd36f63411b9fa21d4f531945d79a273e60b19fb..bc75d0ecc19f6a6db29ef6f27739c3f505763e0a 100644
+--- a/packages/protocol/src/schemas.ts
++++ b/packages/protocol/src/schemas.ts
+@@ -336,6 +336,14 @@ export const AGENT_TO_AGENT_MESSAGE_TYPES = [
+   'agent.fanin'
+ ] as const;
+ 
++/**
++ * Technical principals introduced by schema 029.  A rollback bridge can read that schema, but
++ * must never expose these identities as peers or let their transport probe reach an older model
++ * path.  Keep this list shared by protocol, store and SDK so the emergency release cannot drift.
++ */
++export const SYSTEM_PRINCIPAL_ALIASES = ['gate-probe', 'quota-collector'] as const;
++export const SYSTEM_GATE_PROBE_MESSAGE_TYPE = 'system.gate.probe' as const;
++
+ /**
+  * `agent.notify` es egress proactivo hacia un handle externo: va a `adapter_outbox` y nunca a
+  * `deliveries`, así que no participa del reparto de cupo. Sigue reservado igual porque la
+@@ -343,7 +351,8 @@ export const AGENT_TO_AGENT_MESSAGE_TYPES = [
+  */
+ export const RESERVED_INTERNAL_MESSAGE_TYPES = [
+   ...AGENT_TO_AGENT_MESSAGE_TYPES,
+-  'agent.notify'
++  'agent.notify',
++  SYSTEM_GATE_PROBE_MESSAGE_TYPE
+ ] as const;
+ 
+ const ReservedInternalMessageTypes = new Set<string>(RESERVED_INTERNAL_MESSAGE_TYPES);
+diff --git a/packages/store/src/agent-profile.ts b/packages/store/src/agent-profile.ts
+index 23b2c02f4246cccc2a4a20ffa35398786fb9f099..16f77a0d79273c092c613908d2992a447094085c 100644
+--- a/packages/store/src/agent-profile.ts
++++ b/packages/store/src/agent-profile.ts
+@@ -1,5 +1,5 @@
+ import {
+-  emptyAgentProfile, normalizeAgentProfile,
++  emptyAgentProfile, normalizeAgentProfile, SYSTEM_PRINCIPAL_ALIASES,
+   type AgentProfile, type ArnesDelAlias, type ContextoDeAlias, type CuotaDelAlias,
+   type HechosDelAlias, type PermisosDelAlias
+ } from '@cauce/protocol';
+@@ -198,7 +198,7 @@ export class AgentProfileRepository {
+            LEFT JOIN harness_definitions harness ON harness.id=agent.harness_id
+           WHERE agent.tenant_id=$1 AND agent.alias=$2`, [tenantId, alias]
+       ),
+-      this.pool.query<{ alias: string }>(DESTINOS_SQL, [tenantId, alias])
++      this.pool.query<{ alias: string }>(DESTINOS_SQL, [tenantId, alias, SYSTEM_PRINCIPAL_ALIASES])
+     ]);
+ 
+     const permiso = permisos.rows[0];
+@@ -336,6 +336,7 @@ const DESTINOS_SQL = `
+       ON target_room.id=membership.room_id AND target_room.tenant_id=membership.tenant_id
+    WHERE membership.enabled AND target_tenant.enabled AND target_room.enabled
+      AND NOT (membership.tenant_id=$1 AND membership.alias=$2)
++     AND NOT (membership.alias=ANY($3::text[]))
+      AND (
+        membership.tenant_id=$1
+        OR EXISTS (
+@@ -356,4 +357,3 @@ function limiteLegible(
+   if (restante === null || ventana === null) return undefined;
+   return `${Number(restante)}% disponible en la ventana ${ventana}`;
+ }
+-
+diff --git a/packages/store/src/configuration.ts b/packages/store/src/configuration.ts
+index b1810f569810f63aa834fc6517ebc3d26bd6e67f..5c15503fed9eea9b2cb60a37f967c5f1f6c61de1 100644
+--- a/packages/store/src/configuration.ts
++++ b/packages/store/src/configuration.ts
+@@ -19,6 +19,9 @@ export class ConfigurationError extends Error {
+   }
+ }
+ 
++export const ROLLBACK_BRIDGE_PROFILE_FROZEN =
++  'rollback bridge is read-only for agent_profile and role_brief';
++
+ export interface ConfigurationChangeResult {
+   applied: boolean;
+   dry_run: boolean;
+@@ -413,6 +416,18 @@ export class ConfigurationRepository {
+   }
+ 
+   private authorizeMutation(mutation: ConfigMutation, actorTenant: Tenant, hub: boolean): void {
++    // Schema 028 makes `agents.role_brief` a projection of the canonical profile.  The old
++    // configuration writer used to mention that column in every UPDATE, even when the operator
++    // changed only placement or capacity; the 028 compatibility trigger then copied the
++    // 1,200-code-point projection back over a richer role_summary.  During rollback the profile
++    // plane is therefore frozen, including old rollback records that contain either resource.
++    if (mutation.resource === 'agent_profile'
++      || (mutation.resource === 'agent' && (
++        mutation.action === 'delete'
++        || (mutation.value !== undefined && has(mutation.value, 'role_brief'))
++      ))) {
++      throw new ConfigurationError('conflict', ROLLBACK_BRIDGE_PROFILE_FROZEN);
++    }
+     // Waiving prior contact means writing to a group nobody in it ever addressed.
+     // That is a hub-only decision even for a destination inside the actor tenant.
+     if (mutation.resource === 'egress_destination' && !hub && mutation.value?.require_prior_contact === false) {
+@@ -958,25 +973,37 @@ export class ConfigurationRepository {
+       runtime_user: has(value, 'runtime_user') ? value.runtime_user as string | null : old.runtime_user,
+       home_directory: has(value, 'home_directory') ? value.home_directory as string | null : old.home_directory,
+       state_directory: has(value, 'state_directory') ? value.state_directory as string | null : old.state_directory,
+-      // Se valida sólo lo que el operador MANDÓ. Reusar la clave ausente para revalidar `old`
+-      // convertiría cualquier edición de otro campo en un rechazo por un brief que ya está en la
+-      // base — y las filas anteriores a esta validación entran por un CHECK NOT VALID.
+-      role_brief: has(value, 'role_brief') ? normalizeRoleBrief(value.role_brief) : old.role_brief,
+       max_concurrent_deliveries: has(value, 'max_concurrent_deliveries')
+         ? value.max_concurrent_deliveries as number | null
+         : old.max_concurrent_deliveries
+     };
+     await client.query(
+       `UPDATE agents SET harness_id=$3,display_name=$4,enabled=$5,container_name=$6,runtime_user=$7,
+-         home_directory=$8,state_directory=$9,role_brief=$10,max_concurrent_deliveries=$11,
++         home_directory=$8,state_directory=$9,max_concurrent_deliveries=$10,
+          updated_at=now()
+        WHERE tenant_id=$1 AND alias=$2`,
+       [mutation.tenant_id, mutation.alias, next.harness_id, next.display_name, next.enabled,
+         next.container_name, next.runtime_user, next.home_directory, next.state_directory,
+-        next.role_brief, next.max_concurrent_deliveries]
++        next.max_concurrent_deliveries]
+     );
++    // The inverse is deliberately limited to fields this bridge may write.  Persisting the old
++    // role_brief inside a new revision would make a later rollback mention the frozen projection
++    // and reintroduce the exact 028 truncation this release exists to prevent.
++    const inverseValue = {
++      harness_id: old.harness_id,
++      display_name: old.display_name,
++      enabled: old.enabled,
++      container_name: old.container_name,
++      runtime_user: old.runtime_user,
++      home_directory: old.home_directory,
++      state_directory: old.state_directory,
++      max_concurrent_deliveries: old.max_concurrent_deliveries
++    };
+     return {
+-      inverse: { resource: 'agent', action: 'update', tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue },
++      inverse: {
++        resource: 'agent', action: 'update', tenant_id: mutation.tenant_id,
++        alias: mutation.alias, value: inverseValue
++      },
+       summary: `update agent ${key}`
+     };
+   }
+diff --git a/packages/store/src/repository.ts b/packages/store/src/repository.ts
+index de250380b0a5aac5eab1ca1eae0b8e49e43cd3b8..1d73f5e7dac1f424e543b90c9f966cbf8f7f7e4e 100644
+--- a/packages/store/src/repository.ts
++++ b/packages/store/src/repository.ts
+@@ -6,7 +6,7 @@ import type {
+ import {
+   AGENT_TO_AGENT_MESSAGE_TYPES, clampAgentPriority, isAmbiguousAckErrorCode,
+   MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs, NOTIFY_KINDS, PROTOCOL_VERSION,
+-  SUPPORTED_QUOTA_SCHEMA_VERSIONS
++  SUPPORTED_QUOTA_SCHEMA_VERSIONS, SYSTEM_GATE_PROBE_MESSAGE_TYPE, SYSTEM_PRINCIPAL_ALIASES
+ } from '@cauce/protocol';
+ import type { DatabaseClient, DatabasePool } from './db.js';
+ import { withTransaction } from './db.js';
+@@ -570,8 +570,10 @@ const reservedInternalMessageTypes = new Set([
+   'agent.message',
+   'agent.response',
+   'agent.fanin',
+-  'agent.notify'
++  'agent.notify',
++  SYSTEM_GATE_PROBE_MESSAGE_TYPE
+ ]);
++const systemPrincipalAliases = new Set<string>(SYSTEM_PRINCIPAL_ALIASES);
+ /**
+  * Se pasa como `text[]` a las consultas de reclamo para que el predicado
+  * "esta entrega nació de otro agente" tenga UNA sola definición en todo el árbol
+@@ -1504,6 +1506,12 @@ export class CauceRepository {
+ 
+   async publish(input: PublishMessage): Promise<PublishResult> {
+     if (input.recipients.length === 0) throw new StoreError('no_route', 'message has zero recipients');
++    if (systemPrincipalAliases.has(input.actor_alias)) {
++      throw new StoreError('forbidden', 'system principals cannot publish messages through the rollback bridge');
++    }
++    if (input.recipients.some((recipient) => systemPrincipalAliases.has(recipient.alias))) {
++      throw new StoreError('no_route', 'system principals are not routable message recipients');
++    }
+     if (typeof input.body.type === 'string' && reservedInternalMessageTypes.has(input.body.type)) {
+       throw new StoreError('forbidden', 'reserved internal message types cannot be published by clients');
+     }
+@@ -1876,6 +1884,7 @@ export class CauceRepository {
+          ON lease.tenant_id=membership.tenant_id AND lease.alias=membership.alias
+        WHERE membership.enabled AND target_tenant.enabled AND target_room.enabled
+          AND NOT (membership.tenant_id=$1 AND membership.alias=$2)
++         AND NOT (membership.alias=ANY($3::text[]))
+          AND (
+            membership.tenant_id=$1
+            OR EXISTS (
+@@ -1890,7 +1899,7 @@ export class CauceRepository {
+          )
+        GROUP BY membership.tenant_id,membership.alias
+        ORDER BY membership.tenant_id,membership.alias`,
+-      [sourceTenant, sourceAlias]
++      [sourceTenant, sourceAlias, SYSTEM_PRINCIPAL_ALIASES]
+     );
+     if (targets.rows.length > 100) {
+       throw new StoreError('conflict', 'routing inventory exceeds the protocol limit of 100 targets');
+diff --git a/tests/unit/rollback-bridge.test.ts b/tests/unit/rollback-bridge.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..df662dd4e5ccd4915c887876f418235dc0f6eef6
+--- /dev/null
++++ b/tests/unit/rollback-bridge.test.ts
+@@ -0,0 +1,140 @@
++import { randomUUID } from 'node:crypto';
++import { describe, expect, it, vi } from 'vitest';
++import {
++  AuthenticatedPublishSchema, SYSTEM_GATE_PROBE_MESSAGE_TYPE, SYSTEM_PRINCIPAL_ALIASES,
++  type ConfigMutation, type PublishMessage,
++} from '@cauce/protocol';
++import {
++  CauceRepository, ConfigurationRepository, ROLLBACK_BRIDGE_PROFILE_FROZEN,
++  type DatabasePool,
++} from '@cauce/store';
++
++function publish(overrides: Partial<PublishMessage> = {}): PublishMessage {
++  return {
++    version: '3.0',
++    request_id: randomUUID(),
++    trace_id: `rollback-${randomUUID()}`,
++    tenant_id: 'Steven',
++    room_id: 'grp.steven',
++    actor_alias: 'kant',
++    recipients: [{ tenant_id: 'Steven', alias: 'argos' }],
++    body: { text: 'diagnostico' },
++    idempotency_key: randomUUID(),
++    lane: 'interactive',
++    priority: 0,
++    ...overrides,
++  };
++}
++
++function configurationPool(): { pool: DatabasePool; sql: string[] } {
++  const sql: string[] = [];
++  const client = {
++    on: () => undefined,
++    off: () => undefined,
++    release: () => undefined,
++    async query(statement: string) {
++      const normalized = statement.replace(/\s+/g, ' ').trim();
++      sql.push(normalized);
++      if (normalized.includes('SELECT tenant.is_hub FROM memberships')) {
++        return { rows: [{ is_hub: true }], rowCount: 1 };
++      }
++      if (normalized.includes('COALESCE(max(id),0)::text AS revision')) {
++        return { rows: [{ revision: '12' }], rowCount: 1 };
++      }
++      if (normalized.includes('FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE')) {
++        return {
++          rows: [{
++            harness_id: 'codex', display_name: 'Kant', enabled: true,
++            container_name: 'ctrl-infra', runtime_user: 'stev',
++            home_directory: '/home/stev', state_directory: '/home/stev/.local/state/cauce',
++            role_brief: 'r'.repeat(1_200), max_concurrent_deliveries: 2,
++          }],
++          rowCount: 1,
++        };
++      }
++      if (normalized.includes('INSERT INTO config_revisions')) {
++        return { rows: [{ id: '13' }], rowCount: 1 };
++      }
++      return { rows: [], rowCount: 0 };
++    },
++  };
++  return {
++    pool: {
++      connect: async () => client,
++      query: async (statement: string) => client.query(statement),
++    } as unknown as DatabasePool,
++    sql,
++  };
++}
++
++describe('rollback bridge compatibility shims', () => {
++  it('reserves both system principals and rejects system.gate.probe at the public schema', () => {
++    expect(SYSTEM_PRINCIPAL_ALIASES).toEqual(['gate-probe', 'quota-collector']);
++    expect(AuthenticatedPublishSchema.safeParse({
++      room_id: 'grp.steven',
++      recipients: [{ tenant_id: 'Steven', alias: 'kant' }],
++      body: {
++        type: SYSTEM_GATE_PROBE_MESSAGE_TYPE,
++        nonce: '0123456789abcdef0123456789abcdef',
++        timeout_ms: 5_000,
++      },
++      idempotency_key: 'gate-probe-must-not-enter-the-bridge',
++      lane: 'interactive',
++      priority: -100,
++    }).success).toBe(false);
++  });
++
++  it('rejects probe, system actor and system recipient before opening a transaction', async () => {
++    const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
++    const repository = new CauceRepository({ query } as unknown as DatabasePool);
++    for (const command of [
++      publish({ body: { type: SYSTEM_GATE_PROBE_MESSAGE_TYPE } }),
++      publish({ actor_alias: 'quota-collector' }),
++      publish({ recipients: [{ tenant_id: 'Steven', alias: 'gate-probe' }] }),
++      publish({ recipients: [{ tenant_id: 'Steven', alias: 'quota-collector' }] }),
++    ]) {
++      const code = await repository.publish(command).then(
++        () => 'unexpected-success',
++        (error: unknown) => error instanceof Error && 'code' in error ? String(error.code) : 'unknown',
++      );
++      expect(code).toMatch(/^(forbidden|no_route)$/);
++    }
++    expect(query).not.toHaveBeenCalled();
++  });
++
++  it('freezes profile and role writes before issuing their SQL', async () => {
++    for (const mutation of [
++      {
++        resource: 'agent_profile', action: 'update', tenant_id: 'Steven', alias: 'kant',
++        value: { purpose: 'must remain frozen' },
++      },
++      {
++        resource: 'agent', action: 'update', tenant_id: 'Steven', alias: 'kant',
++        value: { role_brief: 'must remain frozen' },
++      },
++    ] satisfies ConfigMutation[]) {
++      const { pool, sql } = configurationPool();
++      await expect(new ConfigurationRepository(pool).apply(
++        'Steven', 'kant', mutation, false, 12,
++      )).rejects.toMatchObject({ code: 'conflict', message: ROLLBACK_BRIDGE_PROFILE_FROZEN });
++      expect(sql.some((statement) => /(?:INSERT INTO|UPDATE|DELETE FROM) agent_profiles/u.test(statement)))
++        .toBe(false);
++      expect(sql.some((statement) => /UPDATE agents/u.test(statement))).toBe(false);
++    }
++  });
++
++  it('updates unrelated agent fields without mentioning role_brief, including the inverse', async () => {
++    const { pool, sql } = configurationPool();
++    const result = await new ConfigurationRepository(pool).apply('Steven', 'kant', {
++      resource: 'agent', action: 'update', tenant_id: 'Steven', alias: 'kant',
++      value: { display_name: 'Kant bridge' },
++    }, false, 12);
++
++    const update = sql.find((statement) => statement.startsWith('UPDATE agents SET'));
++    expect(update).toBeDefined();
++    expect(update).not.toContain('role_brief');
++    expect(result.inverse_mutation.resource).toBe('agent');
++    if (result.inverse_mutation.resource !== 'agent') throw new Error('inverse resource changed');
++    expect(result.inverse_mutation.value).not.toHaveProperty('role_brief');
++  });
++});

@@ -3,6 +3,50 @@ import test from "node:test";
 import { runtimeHarnessDefinition } from "../src/bin/shared.js";
 import { HARNESS_DEFINITIONS, openClawDefinition } from "../src/harnesses/index.js";
 import { capabilityStrings } from "../src/sdk/client.js";
+import type { AdapterCapabilities } from "../src/sdk/types.js";
+
+function cuentaDeclaradas(capabilities: AdapterCapabilities): number {
+  return Object.values(capabilities).filter((value) => value !== false && value !== undefined).length;
+}
+
+test("every declared runtime capability has exactly one hello string", () => {
+  for (const definition of Object.values(HARNESS_DEFINITIONS)) {
+    const advertised = capabilityStrings(definition.capabilities);
+    assert.equal(advertised.length, cuentaDeclaradas(definition.capabilities), definition.id);
+    assert.equal(new Set(advertised).size, advertised.length, `${definition.id} duplicated a capability`);
+    assert.equal(advertised.includes("agent_profile_v1"), true, definition.id);
+  }
+});
+
+test("optional media and transport declarations are not omitted", () => {
+  const capabilities: AdapterCapabilities = {
+    ...HARNESS_DEFINITIONS.fake.capabilities,
+    native_image_input_v1: true,
+    native_document_input_v1: true,
+    loopback_api: true,
+    stable_alias_sessions: true,
+    api_cancellation: "abort_signal",
+  };
+  const advertised = capabilityStrings(capabilities);
+
+  assert.equal(advertised.length, cuentaDeclaradas(capabilities));
+  for (const capability of [
+    "stdin-prompt",
+    "idempotent-delivery",
+    "heartbeat",
+    "cancellation.process-group",
+    "origin-relay",
+    "attachments_v1",
+    "native_image_input_v1",
+    "native_document_input_v1",
+    "agent_profile_v1",
+    "loopback-api",
+    "stable-alias-sessions",
+    "api-cancellation.abort-signal",
+  ]) {
+    assert.equal(advertised.includes(capability), true, `hello omitted ${capability}`);
+  }
+});
 
 test("every bundled adapter advertises routing_targets_v1 before receiving trusted inventory", () => {
   for (const definition of Object.values(HARNESS_DEFINITIONS)) {

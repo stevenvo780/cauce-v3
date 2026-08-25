@@ -42,6 +42,12 @@ TAG_OPEN_ERR = 0x12
 TAG_STDIN = 0x20
 TAG_STDOUT = 0x21
 TAG_RESIZE = 0x22
+# Respuesta DA/DSR generada por el emulador. Un tag propio impide confundirla con teclado/paste.
+TAG_TERMINAL_RESPONSE = 0x23
+# Backpressure por SESION. El relay nunca pausa el TLS multiplexado: eso bloquearia PONG y las
+# demas terminales del mismo agente.
+TAG_PAUSE_OUTPUT = 0x24
+TAG_RESUME_OUTPUT = 0x25
 TAG_CLOSE = 0x30
 TAG_CLOSED = 0x31
 TAG_PING = 0x40
@@ -52,16 +58,28 @@ TAG_READ = 0x50
 TAG_READ_OK = 0x51
 TAG_READ_ERR = 0x52
 TAG_READ_DATA = 0x53
+# Escritura gobernada v1. Tags separados de READ mantienen compatibilidad: un relay sólo los manda
+# cuando el hello anuncia `write_governance_v1`; un agente anterior conserva terminal y lectura.
+TAG_WRITE = 0x54
+TAG_WRITE_DATA = 0x55
+TAG_WRITE_OK = 0x56
+TAG_WRITE_ERR = 0x57
+TAG_WRITE_CANCEL = 0x58
+TAG_WRITE_BATCH = 0x59
+TAG_WRITE_BATCH_DATA = 0x5A
+TAG_WRITE_BATCH_OK = 0x5B
+TAG_WRITE_BATCH_ERR = 0x5C
+TAG_WRITE_BATCH_CANCEL = 0x5D
 
 MAX_FRAME = 65536
-# DATA frames (0x20/0x21) carry the 36 ASCII bytes of the session UUID before the raw bytes.
+# DATA frames carry the 36 ASCII bytes of the session UUID before the raw bytes.
 SESSION_ID_BYTES = 36
 MAX_DATA = MAX_FRAME - SESSION_ID_BYTES
-DATA_TAGS = frozenset({TAG_STDIN, TAG_STDOUT})
+DATA_TAGS = frozenset({TAG_STDIN, TAG_STDOUT, TAG_TERMINAL_RESPONSE})
 # Tags cuyo payload empieza por un identificador de 36 bytes ASCII. READ_DATA lleva el
 # `request_id` de la peticion, no una sesion, pero el formato del prefijo es el mismo a proposito:
 # asi el relay reusa su decodificador de tramas de datos sin una segunda ruta de codigo.
-PREFIXED_TAGS = DATA_TAGS | frozenset({TAG_READ_DATA})
+PREFIXED_TAGS = DATA_TAGS | frozenset({TAG_READ_DATA, TAG_WRITE_DATA, TAG_WRITE_BATCH_DATA})
 
 MAX_SESSIONS = 2
 # A TUI over the network is unusable if every keystroke echo becomes its own packet, so output is
@@ -72,6 +90,9 @@ FLUSH_BYTES = 8192
 # the pressure lands on the writer inside the container instead of on our heap (a `ls -R /` must
 # not balloon the agent nor stall the relay for the other session).
 SESSION_HIGH_WATER = 262144
+# El descriptor PTY tambien puede bloquear escrituras. Esta cota evita que una rafaga del browser
+# crezca sin limite mientras `select` espera que ese descriptor vuelva a ser escribible.
+SESSION_INPUT_HIGH_WATER = 262144
 # Same idea one level up: while this much is already queued for the relay nothing new is coalesced
 # into it, so a slow relay pushes the pressure back to SESSION_HIGH_WATER and from there to the pty.
 OUTBOUND_HIGH_WATER = 1 << 20
@@ -89,8 +110,22 @@ TICKET_RE = re.compile(r"^v1\.([A-Za-z0-9_-]{1,4096})\.([A-Za-z0-9_-]{43})$")
 IDENTITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 MODES = ("shell", "harness")
 
-# Modos de VISOR: se miran, no se teclean. El agente nunca escribe en su pty, venga la trama que
-# venga del relay.
+# Misma geometria contractual que el browser leg y SessionManager. OPEN y RESIZE pasan por una
+# sola funcion para que una ventana inicial extrema no esquive el clamp aplicado despues.
+MIN_COLS = 20
+MAX_COLS = 500
+MIN_ROWS = 5
+MAX_ROWS = 200
+
+# Juego cerrado que xterm 5.5 emite para Device Attributes / Device Status Report.
+MAX_TERMINAL_RESPONSE_BYTES = 256
+TERMINAL_FIXED_RESPONSES = (b"\x1b[?1;2c", b"\x1b[>0;276;0c", b"\x1b[0n")
+TERMINAL_CURSOR_RESPONSE_RE = re.compile(rb"^\x1b\[(?:\?)?([1-9][0-9]{0,2});([1-9][0-9]{0,2})R")
+OPENCLAW_NATIVE_SESSION_RE = re.compile(r"^[A-Za-z0-9._:-]{1,512}$")
+MAX_SESSION_STORE_BYTES = 1 << 20
+
+# Modos de VISOR: se miran, no se teclean. El agente nunca acepta STDIN humano; sólo puede escribir
+# respuestas técnicas DA/DSR que llegan por su tag propio y vuelven a pasar por una lista cerrada.
 #
 # El candado vivia en el argv (`tmux attach -r`) y eso no alcanza por dos motivos medidos:
 #   1. `HARNESS_COMMAND` se puede escribir a mano en el `.env` del alias; uno sin `-r` convierte
@@ -110,10 +145,16 @@ READ_ONLY_MODES = frozenset({"harness"})
 # distinto de un manual: una lista BLANCA de nombres base, contencion dentro de su propio home, y
 # nada de enlaces. Con eso, un gateway comprometido no consigue `/etc/passwd` ni `~/.ssh/id_ed25519`
 # aunque los pida: el peor caso es leer un CLAUDE.md, que es exactamente el proposito de la via.
-FEATURES = ("read_governance",)
+FEATURES = (
+    "read_governance", "write_governance_v1", "write_governance_batch_v1",
+    "session_output_flow_control",
+)
 
 # Unicos nombres que esta via sirve. Cualquier otro se rechaza aunque el gateway lo pida.
-READ_ALLOWED_BASENAMES = frozenset({"CLAUDE.md", "AGENTS.md"})
+READ_ALLOWED_BASENAMES = frozenset({
+    "CLAUDE.md", "AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md",
+    "MEMORY.md", "HEARTBEAT.md",
+})
 
 # Nunca se sirven ni se listan, esten donde esten. Espejo de NEVER_SERVE_BASENAMES del gateway
 # (`services/gateway/src/console/agent-documents.ts`): las dos listas se defienden por separado a
@@ -129,6 +170,10 @@ MAX_READ_PATH = 4096
 # 256 KB: el CLAUDE.md mas grande medido en la flota es el de zeus (10.733 B) y el AGENTS.md de
 # hermes llega a 75 KB. Sobra margen sin convertir la via en un canal de volcado.
 MAX_DOCUMENT_BYTES = 256 * 1024
+MAX_WRITE_TRANSACTIONS = 4
+MAX_WRITE_BATCH_FILES = 7
+MAX_WRITE_BATCH_BYTES = MAX_DOCUMENT_BYTES
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 # Indice de memoria: sale metadato, nunca contenido.
 MAX_DIR_ENTRIES = 200
 MAX_DIR_DEPTH = 3
@@ -141,6 +186,7 @@ BUNDLE_KEYS = (
     "runtime_gid", "home", "shell_candidates", "harness", "relay_host", "relay_port",
     "alias_key_hex", "client_cert_pem", "client_key_pem", "ca_pem", "agent_version",
 )
+RUNTIME_FACT_KEYS = frozenset(("codex_home", "claude_config_dir", "openclaw_workspace"))
 
 
 class PermanentError(RuntimeError):
@@ -190,7 +236,7 @@ def encode_json(tag: int, document: dict[str, Any]) -> bytes:
 
 def encode_data(tag: int, session_id: str, data: bytes) -> bytes:
     if tag not in PREFIXED_TAGS:
-        raise ProtocolError("only STDIN/STDOUT/READ_DATA carry a 36 byte prefix")
+        raise ProtocolError("only data/response frames carry a 36 byte prefix")
     identifier = session_id.encode("ascii")
     if len(identifier) != SESSION_ID_BYTES:
         raise ProtocolError("session id must be a 36 byte UUID")
@@ -239,7 +285,11 @@ def b64url_decode(text: str) -> bytes:
     # Unpadded base64url exactly as the gateway emits it: '-' and '_' are the URL-safe aliases of
     # '+' and '/', and the padding is restored here because base64 refuses a short final quantum.
     normalized = text.replace("-", "+").replace("_", "/")
-    return base64.b64decode(normalized + "=" * (-len(normalized) % 4))
+    decoded = base64.b64decode(normalized + "=" * (-len(normalized) % 4))
+    canonical = base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=")
+    if canonical != text:
+        raise ValueError("base64url segment is not canonical")
+    return decoded
 
 
 def verify_ticket(alias_key: bytes, ticket: str, now: float) -> dict[str, Any]:
@@ -257,7 +307,8 @@ def verify_ticket(alias_key: bytes, ticket: str, now: float) -> dict[str, Any]:
     try:
         signature = b64url_decode(encoded_mac)
     except ValueError:  # binascii.Error is a ValueError subclass
-        raise TicketError("ticket_malformed") from None
+        # Do not expose whether a signature had bad alphabet, length or unused trailing bits.
+        raise TicketError("ticket_bad_signature") from None
     expected = hmac.new(alias_key, ("v1." + encoded_payload).encode("ascii"), hashlib.sha256).digest()
     if len(signature) != len(expected) or not hmac.compare_digest(expected, signature):
         raise TicketError("ticket_bad_signature")
@@ -363,10 +414,51 @@ def validate_bundle(document: dict[str, Any]) -> dict[str, Any]:
         document["harness_command"] = _command(document["harness_command"], "harness_command")
     else:
         document["harness_command"] = None
+    document["openclaw_tui"] = _openclaw_tui_config(
+        document.get("openclaw_tui"), document["harness"], document["home"]
+    )
+    document["runtime_facts"] = _runtime_facts_config(
+        document.get("runtime_facts", {}), document["harness"], document["home"]
+    )
+    if document["harness_command"] is not None and document["openclaw_tui"] is not None:
+        raise PermanentError("bundle defines two harness resolvers")
     for key in ("client_cert_pem", "client_key_pem", "ca_pem"):
         if not isinstance(document.get(key), str) or "-----BEGIN" not in document[key]:
             raise PermanentError(f"bundle field is invalid: {key}")
     return document
+
+
+def _runtime_facts_config(value: Any, harness: str, home: str) -> dict[str, str]:
+    """Validate only non-secret paths measured from the live adapter environment.
+
+    The object is optional during rolling upgrades. An advertised value, however, must name a
+    real alias-owned directory below HOME and must match this harness; otherwise publishing it
+    would let the gateway edit a sibling alias' profile.
+    """
+    if not isinstance(value, dict) or not set(value).issubset(RUNTIME_FACT_KEYS):
+        raise PermanentError("bundle field is invalid: runtime_facts")
+    expected = {
+        "codex": "codex_home",
+        "claude": "claude_config_dir",
+        "openclaw": "openclaw_workspace",
+    }.get(harness)
+    if any(key != expected for key in value):
+        raise PermanentError("bundle runtime facts do not match the harness")
+    validated: dict[str, str] = {}
+    normalized_home = os.path.normpath(home)
+    for key, path in value.items():
+        if not isinstance(path, str) or not path.startswith("/") or os.path.normpath(path) != path:
+            raise PermanentError(f"bundle runtime fact is invalid: {key}")
+        try:
+            contained = os.path.commonpath((normalized_home, path)) == normalized_home
+            details = os.lstat(path)
+        except (OSError, ValueError):
+            raise PermanentError(f"bundle runtime fact is unavailable: {key}") from None
+        if (not contained or not stat.S_ISDIR(details.st_mode)
+                or os.path.realpath(path) != path or details.st_uid != os.geteuid()):
+            raise PermanentError(f"bundle runtime fact is unsafe: {key}")
+        validated[key] = path
+    return validated
 
 
 def _command(value: Any, label: str) -> list[str]:
@@ -390,6 +482,109 @@ def _command_list(value: Any, label: str) -> list[list[str]]:
     return [_command(item, label) for item in value]
 
 
+def _openclaw_tui_config(value: Any, harness: str, home: str) -> dict[str, Any] | None:
+    if value in (None, "", {}):
+        return None
+    if harness != "openclaw" or not isinstance(value, dict):
+        raise PermanentError("bundle field is invalid: openclaw_tui")
+    if set(value) != {"node", "entry", "state_directory", "history_limit"}:
+        raise PermanentError("bundle field is invalid: openclaw_tui")
+    node = value.get("node")
+    entry = value.get("entry")
+    state_directory = value.get("state_directory")
+    history_limit = value.get("history_limit")
+    for path in (node, entry, state_directory):
+        if not isinstance(path, str) or not os.path.isabs(path) or "\x00" in path:
+            raise PermanentError("bundle field is invalid: openclaw_tui")
+        if os.path.normpath(path) != path:
+            raise PermanentError("bundle field is invalid: openclaw_tui")
+    try:
+        contained = os.path.commonpath((home, state_directory)) == os.path.normpath(home)
+    except ValueError:
+        contained = False
+    if not contained:
+        raise PermanentError("bundle field is invalid: openclaw_tui")
+    if not isinstance(history_limit, int) or isinstance(history_limit, bool) or not 1 <= history_limit <= 10000:
+        raise PermanentError("bundle field is invalid: openclaw_tui")
+    return {
+        "node": node,
+        "entry": entry,
+        "state_directory": state_directory,
+        "history_limit": history_limit,
+    }
+
+
+def resolve_openclaw_tui_command(bundle: dict[str, Any]) -> list[str] | None:
+    """Resuelve en cada OPEN el pointer durable de la sesión compartida; nunca usa mtime.
+
+    `sessions.json` lo escribe el adapter con rename atómico y modo 0600. Se abre sin seguir el
+    enlace final y se valida antes de mirar la única entrada canónica. El native id sólo vuelve como
+    elemento de argv: no se registra ni se incorpora a presencia.
+    """
+    config = bundle.get("openclaw_tui")
+    if not isinstance(config, dict):
+        return None
+    state_directory = config["state_directory"]
+    try:
+        directory_status = os.lstat(state_directory)
+    except OSError:
+        return None
+    if (not stat.S_ISDIR(directory_status.st_mode)
+            or directory_status.st_uid != os.geteuid()
+            or directory_status.st_mode & 0o022
+            or os.path.realpath(state_directory) != state_directory):
+        return None
+    path = os.path.join(state_directory, "sessions.json")
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_mode & 0o777 != 0o600
+                or info.st_nlink != 1
+                or info.st_size > MAX_SESSION_STORE_BYTES):
+            return None
+        chunks = bytearray()
+        while len(chunks) <= MAX_SESSION_STORE_BYTES:
+            chunk = os.read(descriptor, min(65536, MAX_SESSION_STORE_BYTES + 1 - len(chunks)))
+            if not chunk:
+                break
+            chunks.extend(chunk)
+        if len(chunks) > MAX_SESSION_STORE_BYTES:
+            return None
+    finally:
+        os.close(descriptor)
+    try:
+        document = json.loads(bytes(chunks).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if (not isinstance(document, dict) or set(document) != {"version", "sessions"}
+            or document.get("version") != 1 or not isinstance(document.get("sessions"), dict)
+            or len(document["sessions"]) > 4096):
+        return None
+    alias = bundle["alias"]
+    # La clave es determinista y se deriva localmente; no llega desde OPEN ni se imprime.
+    pointer = document["sessions"].get(f"openclaw:{alias}:shared:{alias}")
+    if not isinstance(pointer, dict):
+        return None
+    if set(pointer) not in ({"native_id", "initialized"}, {"native_id", "initialized", "origin"}):
+        return None
+    native_id = pointer.get("native_id")
+    if (not isinstance(native_id, str) or not OPENCLAW_NATIVE_SESSION_RE.fullmatch(native_id)
+            or pointer.get("initialized") is not True):
+        return None
+    return [
+        config["node"], config["entry"], "tui", "--session", native_id,
+        "--history-limit", str(config["history_limit"]),
+    ]
+
+
 # ---------------------------------------------------------------------------------------------
 # PTY sessions
 # ---------------------------------------------------------------------------------------------
@@ -404,6 +599,7 @@ class PtySession:
         self.argv = argv
         self.out = bytearray()
         self.pending_input = bytearray()
+        self.output_paused = False
         # Se registra UNA vez por sesion: un visor recibe pulsaciones a rafagas y el journal no
         # puede convertirse en el eco del teclado del operador.
         self.refused_input = False
@@ -413,6 +609,65 @@ class PtySession:
         self.exit_code: int | None = None
         self.exit_signal: int | None = None
         self.kill_deadline: float | None = None
+        self.close_reason: str | None = None
+
+
+class GovernanceWrite:
+    """Una escritura correlacionada y acotada que todavía no llegó completa."""
+
+    def __init__(
+        self,
+        request_id: str,
+        path: str,
+        operation: str,
+        expected_sha: str | None,
+        content_sha: str,
+        content_bytes: int,
+        chunks: int,
+    ) -> None:
+        self.request_id = request_id
+        self.path = path
+        self.operation = operation
+        self.expected_sha = expected_sha
+        self.content_sha = content_sha
+        self.content_bytes = content_bytes
+        self.chunks = chunks
+        self.received_chunks = 0
+        self.content = bytearray()
+
+
+class GovernanceBatchEntry:
+    def __init__(
+        self,
+        path: str,
+        mode: str,
+        operation: str,
+        expected_sha: str | None,
+        content_sha: str | None,
+        content_bytes: int,
+        chunks: int,
+    ) -> None:
+        self.path = path
+        self.mode = mode
+        self.operation = operation
+        self.expected_sha = expected_sha
+        self.content_sha = content_sha
+        self.content_bytes = content_bytes
+        self.chunks = chunks
+        self.received_chunks = 0
+        self.content = bytearray()
+
+
+class GovernanceWriteBatch:
+    def __init__(self, request_id: str, entries: list[GovernanceBatchEntry]) -> None:
+        self.request_id = request_id
+        self.entries = entries
+
+    def receiving_entry(self) -> GovernanceBatchEntry | None:
+        return next((entry for entry in self.entries if entry.received_chunks < entry.chunks), None)
+
+    def complete(self) -> bool:
+        return all(entry.received_chunks == entry.chunks for entry in self.entries)
 
 
 def set_window_size(fd: int, rows: int, cols: int) -> None:
@@ -422,11 +677,30 @@ def set_window_size(fd: int, rows: int, cols: int) -> None:
 def _window(request: dict[str, Any]) -> tuple[int, int]:
     rows = request.get("rows", 24)
     cols = request.get("cols", 80)
-    if not isinstance(rows, int) or isinstance(rows, bool) or not 1 <= rows <= 1000:
-        rows = 24
-    if not isinstance(cols, int) or isinstance(cols, bool) or not 1 <= cols <= 1000:
-        cols = 80
-    return rows, cols
+    if not isinstance(rows, int) or isinstance(rows, bool):
+        raise ProtocolError("window rows must be an integer")
+    if not isinstance(cols, int) or isinstance(cols, bool):
+        raise ProtocolError("window cols must be an integer")
+    return min(MAX_ROWS, max(MIN_ROWS, rows)), min(MAX_COLS, max(MIN_COLS, cols))
+
+
+def is_terminal_emulator_response(data: bytes) -> bool:
+    """DA/DSR solamente. Acepta concatenacion, rechaza ANSI generico, texto y bytes no ASCII."""
+    if not data or len(data) > MAX_TERMINAL_RESPONSE_BYTES or not data.isascii():
+        return False
+    pending = data
+    while pending:
+        fixed = next((item for item in TERMINAL_FIXED_RESPONSES if pending.startswith(item)), None)
+        if fixed is not None:
+            pending = pending[len(fixed):]
+            continue
+        cursor = TERMINAL_CURSOR_RESPONSE_RE.match(pending)
+        if cursor is None:
+            return False
+        if int(cursor.group(1)) > MAX_ROWS or int(cursor.group(2)) > MAX_COLS:
+            return False
+        pending = pending[cursor.end():]
+    return True
 
 
 def _cloexec(fd: int) -> None:
@@ -445,8 +719,10 @@ class PtyAgent:
             "generation": bundle["generation"],
             "runtime_uid": bundle["runtime_uid"],
         }
-        self.modes = ["shell"] + (["harness"] if bundle["harness_command"] else [])
+        self.modes = ["shell"] + (["harness"] if bundle.get("harness_command") or bundle.get("openclaw_tui") else [])
         self.sessions: dict[str, PtySession] = {}
+        self.pending_writes: dict[str, GovernanceWrite] = {}
+        self.pending_write_batches: dict[str, GovernanceWriteBatch] = {}
         self.tombstones: dict[str, float] = {}
         self.connection: ssl.SSLSocket | None = None
         self.outbound = bytearray()
@@ -481,6 +757,8 @@ class PtyAgent:
             time.sleep(backoff + self._jitter(backoff))
             backoff = min(BACKOFF_MAX, backoff * 2)
         self._terminate_sessions()
+        self.pending_writes.clear()
+        self.pending_write_batches.clear()
         return 0
 
     @staticmethod
@@ -536,6 +814,8 @@ class PtyAgent:
         self.outbound = bytearray()
         self.decoder = FrameDecoder()
         self.acknowledged = False
+        self.pending_writes.clear()
+        self.pending_write_batches.clear()
         # The relay is the only path to the operator: if it disappears (container stopped, network
         # cut) the shells it fronted are unreachable, so they are terminated instead of orphaned.
         self._terminate_sessions()
@@ -569,6 +849,7 @@ class PtyAgent:
             # lanzo, dentro del contenedor. Va aqui y no en el `.env` del gateway por lo mismo que
             # el `harness`: quien tiene el dato delante es quien lo dice.
             "home": self.bundle["home"],
+            **self.bundle["runtime_facts"],
             "agent_version": self.bundle["agent_version"],
             "modes": self.modes,
             # El relay NO manda TAG_READ a un agente que no lo anuncie. Un agente viejo trata un
@@ -582,7 +863,7 @@ class PtyAgent:
             readable: list[Any] = [connection]
             writable: list[Any] = [connection] if self.outbound else []
             for session in self.sessions.values():
-                if not session.eof and len(session.out) < SESSION_HIGH_WATER:
+                if not session.eof and not session.output_paused and len(session.out) < SESSION_HIGH_WATER:
                     readable.append(session.fd)
                 if session.pending_input:
                     writable.append(session.fd)
@@ -592,7 +873,7 @@ class PtyAgent:
             for session in list(self.sessions.values()):
                 if session.fd in ready_write:
                     self._write_session(session)
-                if session.fd in ready_read:
+                if session.fd in ready_read and not session.output_paused:
                     self._read_session(session)
             self._maintain()
 
@@ -641,11 +922,18 @@ class PtyAgent:
                 return
 
     def _dispatch(self, tag: int, payload: bytes) -> None:
-        if tag in DATA_TAGS:
-            if tag != TAG_STDIN:
-                raise ProtocolError("relay may only send STDIN data frames")
+        if tag in PREFIXED_TAGS:
+            if tag not in (TAG_STDIN, TAG_TERMINAL_RESPONSE, TAG_WRITE_DATA, TAG_WRITE_BATCH_DATA):
+                raise ProtocolError("relay sent a response-only data frame")
             session_id, data = decode_data(payload)
-            self._on_stdin(session_id, data)
+            if tag == TAG_STDIN:
+                self._on_stdin(session_id, data)
+            elif tag == TAG_TERMINAL_RESPONSE:
+                self._on_terminal_response(session_id, data)
+            elif tag == TAG_WRITE_DATA:
+                self._on_write_data(session_id, data)
+            else:
+                self._on_write_batch_data(session_id, data)
             return
         if tag == TAG_PING:
             # Answered even before the ack: the relay's keepalive timer is global and must not be
@@ -670,10 +958,22 @@ class PtyAgent:
             self._on_open(document)
         elif tag == TAG_READ:
             self._on_read(document)
+        elif tag == TAG_WRITE:
+            self._on_write(document)
+        elif tag == TAG_WRITE_CANCEL:
+            self._on_write_cancel(document)
+        elif tag == TAG_WRITE_BATCH:
+            self._on_write_batch(document)
+        elif tag == TAG_WRITE_BATCH_CANCEL:
+            self._on_write_batch_cancel(document)
         elif tag == TAG_RESIZE:
             self._on_resize(document)
         elif tag == TAG_CLOSE:
             self._on_close(document)
+        elif tag == TAG_PAUSE_OUTPUT:
+            self._on_output_flow(document, True)
+        elif tag == TAG_RESUME_OUTPUT:
+            self._on_output_flow(document, False)
         else:
             raise ProtocolError(f"relay sent an unsupported tag: 0x{tag:02x}")
 
@@ -809,7 +1109,7 @@ class PtyAgent:
             return ("permission_denied", f"{base} is never served")
         if base.endswith(NEVER_SERVE_SUFFIXES):
             return ("permission_denied", "looks like credential material")
-        if kind == "file" and base not in READ_ALLOWED_BASENAMES:
+        if kind == "file" and not self._is_governance_file_path(path):
             return ("permission_denied", f"{base} is not a governance document")
         # Contencion: el agente no sirve nada fuera de su propio home, lo pida quien lo pida.
         home = str(self.bundle["home"]).rstrip("/")
@@ -838,16 +1138,37 @@ class PtyAgent:
         return None
 
     def _send_document(self, request_id: str, path: str) -> None:
-        with open(path, "rb") as handle:
-            raw = handle.read(MAX_DOCUMENT_BYTES + 1)
-            info = os.fstat(handle.fileno())
-        truncated = len(raw) > MAX_DOCUMENT_BYTES
-        if truncated:
-            raw = raw[:MAX_DOCUMENT_BYTES]
+        directory, basename = self._open_governance_parent(path)
+        descriptor = os.open(basename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                raise PermissionError("governance target is not a regular file")
+            digest = hashlib.sha256()
+            raw = bytearray()
+            while True:
+                chunk = os.read(descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                if len(raw) < MAX_DOCUMENT_BYTES:
+                    raw.extend(chunk[:MAX_DOCUMENT_BYTES - len(raw)])
+            info = os.fstat(descriptor)
+            identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+            identity_after = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            if identity_before != identity_after:
+                raise OSError("governance file changed while being read")
+        finally:
+            os.close(descriptor)
+            os.close(directory)
+        truncated = info.st_size > MAX_DOCUMENT_BYTES
         # Se manda UTF-8 valido SIEMPRE: el corte por bytes puede partir un caracter por la mitad y
         # el relay y el gateway decodifican sin red. Un fichero que no sea texto sale con
         # reemplazos, no revienta la lectura.
-        payload = raw.decode("utf-8", "replace").encode("utf-8")
+        payload = bytes(raw).decode("utf-8", "replace").encode("utf-8")
+        if len(payload) > MAX_DOCUMENT_BYTES:
+            payload = payload[:MAX_DOCUMENT_BYTES].decode("utf-8", "ignore").encode("utf-8")
+            truncated = True
         chunks = [payload[offset:offset + MAX_DATA] for offset in range(0, len(payload), MAX_DATA)]
         self._queue(encode_json(TAG_READ_OK, {
             "request_id": request_id,
@@ -858,6 +1179,9 @@ class PtyAgent:
             "bytes": info.st_size,
             "truncated": truncated,
             "modified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(info.st_mtime)),
+            # Huella de los bytes REALES. Para un fichero truncado no es la huella del prefijo que
+            # viaja: la UI nunca lo edita, pero sigue pudiendo identificar qué versión observó.
+            "sha": digest.hexdigest(),
             "chunks": len(chunks),
         }))
         for chunk in chunks:
@@ -925,9 +1249,657 @@ class PtyAgent:
             "request_id": request_id, "error": code, "reason": reason,
         }))
 
+    # -- escritura de ficheros de gobierno ----------------------------------------------------
+
+    def _on_write(self, request: dict[str, Any]) -> None:
+        """Empieza una escritura sin abrir procesos ni interpretar el contenido.
+
+        La capacidad se negocia en el hello. Aun así, todo el pedido vuelve a validarse aquí: un
+        relay comprometido no puede nombrar otra ruta, omitir la precondición ni mandar un cuerpo
+        por encima del tope. El contenido llega en WRITE_DATA y sólo se toca el disco cuando llegó
+        completo y su SHA coincide.
+        """
+        request_id = request.get("request_id")
+        if not isinstance(request_id, str) or not SESSION_ID_RE.fullmatch(request_id):
+            raise ProtocolError("WRITE carries an invalid request id")
+        if request_id in self.pending_writes:
+            self.pending_writes.pop(request_id, None)
+            self._write_error(request_id, "conflict", "duplicate write request id")
+            return
+        if len(self.pending_writes) >= MAX_WRITE_TRANSACTIONS:
+            self._write_error(request_id, "unavailable", "too many governance writes in flight")
+            return
+
+        path = request.get("path")
+        operation = request.get("operation")
+        expected_sha = request.get("expected_sha")
+        content_sha = request.get("content_sha")
+        content_bytes = request.get("bytes")
+        chunks = request.get("chunks")
+        verdict = self._validate_write_shape(path)
+        if verdict is not None:
+            self._write_error(request_id, verdict[0], verdict[1])
+            return
+        if operation not in ("replace", "create"):
+            self._write_error(request_id, "invalid_path", "operation must be replace or create")
+            return
+        if operation == "replace":
+            if not isinstance(expected_sha, str) or not SHA256_RE.fullmatch(expected_sha):
+                self._write_error(request_id, "invalid_path", "replace requires a lowercase SHA-256 precondition")
+                return
+        elif expected_sha is not None:
+            self._write_error(request_id, "invalid_path", "create must use the absent precondition")
+            return
+        if not isinstance(content_sha, str) or not SHA256_RE.fullmatch(content_sha):
+            self._write_error(request_id, "invalid_path", "content_sha must be a lowercase SHA-256")
+            return
+        if (not isinstance(content_bytes, int) or isinstance(content_bytes, bool)
+                or content_bytes < 0 or content_bytes > MAX_DOCUMENT_BYTES):
+            self._write_error(request_id, "too_large", "content size is outside the governance limit")
+            return
+        max_chunks = (MAX_DOCUMENT_BYTES + MAX_DATA - 1) // MAX_DATA
+        if (not isinstance(chunks, int) or isinstance(chunks, bool)
+                or chunks < 0 or chunks > max_chunks
+                or (content_bytes == 0) != (chunks == 0)):
+            self._write_error(request_id, "invalid_path", "chunk count does not match the content size")
+            return
+
+        pending = GovernanceWrite(
+            request_id, path, operation, expected_sha, content_sha, content_bytes, chunks,
+        )
+        self.pending_writes[request_id] = pending
+        if chunks == 0:
+            self._finish_write(pending)
+
+    def _on_write_data(self, request_id: str, data: bytes) -> None:
+        pending = self.pending_writes.get(request_id)
+        # Puede llegar tarde después de WRITE_CANCEL/timeout. Es stale, no una violación capaz de
+        # tirar la conexión y con ella las PTY que comparten el socket.
+        if pending is None:
+            return
+        pending.received_chunks += 1
+        if pending.received_chunks > pending.chunks or len(pending.content) + len(data) > pending.content_bytes:
+            self.pending_writes.pop(request_id, None)
+            self._write_error(request_id, "too_large", "write data exceeds the announced content")
+            return
+        pending.content.extend(data)
+        if pending.received_chunks == pending.chunks:
+            self._finish_write(pending)
+
+    def _on_write_cancel(self, request: dict[str, Any]) -> None:
+        request_id = request.get("request_id")
+        if not isinstance(request_id, str) or not SESSION_ID_RE.fullmatch(request_id):
+            raise ProtocolError("WRITE_CANCEL carries an invalid request id")
+        self.pending_writes.pop(request_id, None)
+
+    def _on_write_batch(self, request: dict[str, Any]) -> None:
+        """Recibe el manifiesto completo antes de aceptar un solo byte o tocar el disco."""
+        request_id = request.get("request_id")
+        if not isinstance(request_id, str) or not SESSION_ID_RE.fullmatch(request_id):
+            raise ProtocolError("WRITE_BATCH carries an invalid request id")
+        if request_id in self.pending_write_batches or request_id in self.pending_writes:
+            self.pending_write_batches.pop(request_id, None)
+            self._write_batch_error(request_id, "conflict", "duplicate write batch request id")
+            return
+        if len(self.pending_writes) + len(self.pending_write_batches) >= MAX_WRITE_TRANSACTIONS:
+            self._write_batch_error(request_id, "unavailable", "too many governance writes in flight")
+            return
+        raw_entries = request.get("entries")
+        if (not isinstance(raw_entries, list) or not raw_entries
+                or len(raw_entries) > MAX_WRITE_BATCH_FILES):
+            self._write_batch_error(request_id, "too_large", "batch must contain one to seven files")
+            return
+
+        entries: list[GovernanceBatchEntry] = []
+        seen: set[str] = set()
+        total_bytes = 0
+        total_chunks = 0
+        max_chunks = (MAX_WRITE_BATCH_BYTES + MAX_DATA - 1) // MAX_DATA
+        for raw in raw_entries:
+            if not isinstance(raw, dict):
+                self._write_batch_error(request_id, "invalid_path", "batch entry must be an object")
+                return
+            path = raw.get("path")
+            mode = raw.get("mode")
+            operation = raw.get("operation")
+            expected_sha = raw.get("expected_sha")
+            content_sha = raw.get("content_sha")
+            content_bytes = raw.get("bytes")
+            chunks = raw.get("chunks")
+            verdict = self._validate_write_shape(path)
+            if verdict is not None:
+                self._write_batch_error(request_id, verdict[0], verdict[1])
+                return
+            if path in seen:
+                self._write_batch_error(request_id, "conflict", "batch contains duplicate paths")
+                return
+            seen.add(path)
+            if (not isinstance(content_bytes, int) or isinstance(content_bytes, bool)
+                    or not isinstance(chunks, int) or isinstance(chunks, bool)
+                    or content_bytes < 0 or chunks < 0):
+                self._write_batch_error(request_id, "invalid_path", "batch sizes must be non-negative integers")
+                return
+
+            if mode == "write":
+                if operation not in ("replace", "create"):
+                    self._write_batch_error(request_id, "invalid_path", "write operation must be replace or create")
+                    return
+                if operation == "replace":
+                    if not isinstance(expected_sha, str) or not SHA256_RE.fullmatch(expected_sha):
+                        self._write_batch_error(request_id, "invalid_path", "replace requires a SHA-256 precondition")
+                        return
+                elif expected_sha is not None:
+                    self._write_batch_error(request_id, "invalid_path", "create must use the absent precondition")
+                    return
+                if not isinstance(content_sha, str) or not SHA256_RE.fullmatch(content_sha):
+                    self._write_batch_error(request_id, "invalid_path", "write content_sha must be a SHA-256")
+                    return
+                if (content_bytes > MAX_DOCUMENT_BYTES or chunks > max_chunks
+                        or (content_bytes == 0) != (chunks == 0)):
+                    self._write_batch_error(request_id, "too_large", "batch entry exceeds the governance limit")
+                    return
+            elif mode == "verify":
+                if operation == "present":
+                    if not isinstance(expected_sha, str) or not SHA256_RE.fullmatch(expected_sha):
+                        self._write_batch_error(request_id, "invalid_path", "verify present requires a SHA-256")
+                        return
+                elif operation == "absent":
+                    if expected_sha is not None:
+                        self._write_batch_error(request_id, "invalid_path", "verify absent cannot carry a SHA-256")
+                        return
+                else:
+                    self._write_batch_error(request_id, "invalid_path", "verify operation must be present or absent")
+                    return
+                if content_sha is not None or content_bytes != 0 or chunks != 0:
+                    self._write_batch_error(request_id, "invalid_path", "verify entries cannot carry content")
+                    return
+            else:
+                self._write_batch_error(request_id, "invalid_path", "batch mode must be write or verify")
+                return
+
+            total_bytes += content_bytes
+            total_chunks += chunks
+            if total_bytes > MAX_WRITE_BATCH_BYTES or total_chunks > max_chunks:
+                self._write_batch_error(request_id, "too_large", "batch exceeds the total governance limit")
+                return
+            entries.append(GovernanceBatchEntry(
+                path, mode, operation, expected_sha, content_sha, content_bytes, chunks,
+            ))
+
+        pending = GovernanceWriteBatch(request_id, entries)
+        self.pending_write_batches[request_id] = pending
+        if pending.complete():
+            self._finish_write_batch(pending)
+
+    def _on_write_batch_data(self, request_id: str, data: bytes) -> None:
+        pending = self.pending_write_batches.get(request_id)
+        if pending is None:
+            return
+        entry = pending.receiving_entry()
+        if entry is None:
+            self.pending_write_batches.pop(request_id, None)
+            self._write_batch_error(request_id, "conflict", "batch received unannounced data")
+            return
+        entry.received_chunks += 1
+        if entry.received_chunks > entry.chunks or len(entry.content) + len(data) > entry.content_bytes:
+            self.pending_write_batches.pop(request_id, None)
+            self._write_batch_error(request_id, "too_large", "batch data exceeds its announced entry")
+            return
+        entry.content.extend(data)
+        if pending.complete():
+            self._finish_write_batch(pending)
+
+    def _on_write_batch_cancel(self, request: dict[str, Any]) -> None:
+        request_id = request.get("request_id")
+        if not isinstance(request_id, str) or not SESSION_ID_RE.fullmatch(request_id):
+            raise ProtocolError("WRITE_BATCH_CANCEL carries an invalid request id")
+        self.pending_write_batches.pop(request_id, None)
+
+    def _finish_write_batch(self, pending: GovernanceWriteBatch) -> None:
+        self.pending_write_batches.pop(pending.request_id, None)
+        for entry in pending.entries:
+            if entry.mode != "write":
+                continue
+            content = bytes(entry.content)
+            if (len(content) != entry.content_bytes
+                    or hashlib.sha256(content).hexdigest() != entry.content_sha):
+                self._write_batch_error(
+                    pending.request_id, "conflict", "batch content does not match its announced digest",
+                )
+                return
+            try:
+                content.decode("utf-8", "strict")
+            except UnicodeDecodeError:
+                self._write_batch_error(
+                    pending.request_id, "invalid_path", "governance content must be UTF-8 text",
+                )
+                return
+        try:
+            acknowledgements = self._apply_governance_batch(pending)
+        except FileExistsError:
+            self._write_batch_error(pending.request_id, "conflict", "an absent precondition failed")
+        except FileNotFoundError:
+            self._write_batch_error(pending.request_id, "not_found", "a required file is absent")
+        except PermissionError:
+            self._write_batch_error(pending.request_id, "permission_denied", "permission denied")
+        except ValueError as error:
+            self._write_batch_error(pending.request_id, "conflict", str(error))
+        except OSError as error:
+            self._write_batch_error(
+                pending.request_id, "unknown", f"batch write failed: {type(error).__name__}",
+            )
+        else:
+            self._queue(encode_json(TAG_WRITE_BATCH_OK, {
+                "request_id": pending.request_id, "files": acknowledgements,
+            }))
+
+    @staticmethod
+    def _stat_identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    def _apply_governance_batch(self, pending: GovernanceWriteBatch) -> list[dict[str, Any]]:
+        """Preflight, stage, revalidate and commit; any failed commit rolls the prefix back."""
+        plans: list[dict[str, Any]] = []
+        try:
+            # PRE-FLIGHT COMPLETO. Nada se crea, trunca, renombra ni toca antes de acabar este bucle.
+            for index, entry in enumerate(pending.entries):
+                directory, basename = self._open_governance_parent(entry.path)
+                plan: dict[str, Any] = {
+                    "entry": entry, "directory": directory, "basename": basename,
+                    "index": index, "temporary": None, "backup": None, "committed": False,
+                }
+                plans.append(plan)
+                try:
+                    current_sha, current_info = self._hash_regular_at(directory, basename)
+                    exists = True
+                except FileNotFoundError:
+                    current_sha, current_info, exists = None, None, False
+                plan.update({"current_sha": current_sha, "current_info": current_info, "exists": exists})
+
+                if entry.mode == "verify":
+                    if entry.operation == "present":
+                        if not exists:
+                            raise FileNotFoundError(basename)
+                        if current_sha != entry.expected_sha:
+                            raise ValueError(f"{basename} changed; SHA-256 precondition failed")
+                        plan["ack_operation"] = "unchanged"
+                    else:
+                        if exists:
+                            raise FileExistsError(basename)
+                        plan["ack_operation"] = "absent"
+                    continue
+
+                if exists and current_sha == entry.content_sha:
+                    plan["ack_operation"] = "unchanged"
+                    continue
+                if entry.operation == "create":
+                    if exists:
+                        raise FileExistsError(basename)
+                else:
+                    if not exists:
+                        raise FileNotFoundError(basename)
+                    if current_sha != entry.expected_sha:
+                        raise ValueError(f"{basename} changed; SHA-256 precondition failed")
+                plan["ack_operation"] = entry.operation
+
+            # STAGING COMPLETO. Los temporales no son nombres servidos y no cambian los destinos.
+            for plan in plans:
+                entry = plan["entry"]
+                if entry.mode != "write" or plan["ack_operation"] == "unchanged":
+                    continue
+                directory = plan["directory"]
+                temporary = f".cauce-profile-{pending.request_id}-{plan['index']}.tmp"
+                temp_fd = os.open(
+                    temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600, dir_fd=directory,
+                )
+                plan["temporary"] = temporary
+                try:
+                    content = memoryview(bytes(entry.content))
+                    written = 0
+                    while written < len(content):
+                        amount = os.write(temp_fd, content[written:])
+                        if amount <= 0:
+                            raise OSError("short governance batch write")
+                        written += amount
+                    current_info = plan["current_info"]
+                    if current_info is not None:
+                        os.fchmod(temp_fd, stat.S_IMODE(current_info.st_mode))
+                        if current_info.st_uid != os.geteuid() or current_info.st_gid != os.getegid():
+                            os.fchown(temp_fd, current_info.st_uid, current_info.st_gid)
+                    os.fsync(temp_fd)
+                    staged = os.fstat(temp_fd)
+                    plan["staged_inode"] = (staged.st_dev, staged.st_ino)
+                finally:
+                    os.close(temp_fd)
+
+            # REVALIDACION GLOBAL. Los verifies/no-op también se vuelven a medir justo antes.
+            for plan in plans:
+                entry = plan["entry"]
+                directory = plan["directory"]
+                basename = plan["basename"]
+                try:
+                    latest_sha, latest_info = self._hash_regular_at(directory, basename)
+                    latest_exists = True
+                except FileNotFoundError:
+                    latest_sha, latest_info, latest_exists = None, None, False
+                if plan["exists"] != latest_exists:
+                    raise ValueError(f"{basename} changed after preflight")
+                if latest_exists and self._stat_identity(latest_info) != self._stat_identity(plan["current_info"]):
+                    raise ValueError(f"{basename} changed after preflight")
+                if latest_sha != plan["current_sha"]:
+                    raise ValueError(f"{basename} changed after preflight")
+                if entry.mode == "write" and plan["ack_operation"] == "replace":
+                    backup = f".cauce-profile-{pending.request_id}-{plan['index']}.bak"
+                    os.link(basename, backup, src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
+                    plan["backup"] = backup
+                    # Crear el hardlink de rollback cambia ctime/nlink del inodo aunque nadie haya
+                    # editado sus bytes. Esa identidad posterior es la que debe llegar al commit.
+                    plan["commit_identity"] = self._stat_identity(
+                        os.stat(basename, dir_fd=directory, follow_symlinks=False),
+                    )
+                elif latest_info is not None:
+                    plan["commit_identity"] = self._stat_identity(latest_info)
+
+            # COMMIT. Cada paso es atómico; si uno falla, se revierte el prefijo en orden inverso.
+            try:
+                for plan in plans:
+                    entry = plan["entry"]
+                    operation = plan["ack_operation"]
+                    if entry.mode != "write" or operation == "unchanged":
+                        continue
+                    directory = plan["directory"]
+                    basename = plan["basename"]
+                    temporary = plan["temporary"]
+                    if operation == "create":
+                        os.link(
+                            temporary, basename,
+                            src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False,
+                        )
+                        os.unlink(temporary, dir_fd=directory)
+                        plan["temporary"] = None
+                    else:
+                        latest = os.stat(basename, dir_fd=directory, follow_symlinks=False)
+                        if self._stat_identity(latest) != plan["commit_identity"]:
+                            raise ValueError(f"{basename} changed before commit")
+                        os.replace(temporary, basename, src_dir_fd=directory, dst_dir_fd=directory)
+                        plan["temporary"] = None
+                    plan["committed"] = True
+                    os.fsync(directory)
+            except BaseException:
+                rollback_failed = False
+                for plan in reversed(plans):
+                    if not plan["committed"]:
+                        continue
+                    directory = plan["directory"]
+                    basename = plan["basename"]
+                    try:
+                        current_sha, current = self._hash_regular_at(directory, basename)
+                        entry = plan["entry"]
+                        if ((current.st_dev, current.st_ino) != plan["staged_inode"]
+                                or current_sha != entry.content_sha):
+                            rollback_failed = True
+                            continue
+                        if plan["ack_operation"] == "create":
+                            os.unlink(basename, dir_fd=directory)
+                        else:
+                            os.replace(
+                                plan["backup"], basename,
+                                src_dir_fd=directory, dst_dir_fd=directory,
+                            )
+                            plan["backup"] = None
+                        os.fsync(directory)
+                    except OSError:
+                        rollback_failed = True
+                if rollback_failed:
+                    raise OSError("governance batch rollback could not restore every file") from None
+                raise
+
+            acknowledgements: list[dict[str, Any]] = []
+            for plan in plans:
+                entry = plan["entry"]
+                if plan["ack_operation"] == "absent":
+                    digest, size = None, 0
+                elif entry.mode == "write":
+                    digest, size = entry.content_sha, entry.content_bytes
+                else:
+                    digest, size = entry.expected_sha, plan["current_info"].st_size
+                acknowledgements.append({
+                    "path": entry.path,
+                    "operation": plan["ack_operation"],
+                    "sha": digest,
+                    "bytes": size,
+                })
+            return acknowledgements
+        finally:
+            for plan in plans:
+                directory = plan["directory"]
+                for key in ("temporary", "backup"):
+                    name = plan.get(key)
+                    if name is not None:
+                        try:
+                            os.unlink(name, dir_fd=directory)
+                        except OSError:
+                            pass
+                os.close(directory)
+
+    def _write_batch_error(self, request_id: str, code: str, reason: str) -> None:
+        self._queue(encode_json(TAG_WRITE_BATCH_ERR, {
+            "request_id": request_id, "error": code, "reason": reason,
+        }))
+
+    def _finish_write(self, pending: GovernanceWrite) -> None:
+        self.pending_writes.pop(pending.request_id, None)
+        content = bytes(pending.content)
+        if len(content) != pending.content_bytes or hashlib.sha256(content).hexdigest() != pending.content_sha:
+            self._write_error(pending.request_id, "conflict", "content does not match its announced digest")
+            return
+        try:
+            content.decode("utf-8", "strict")
+        except UnicodeDecodeError:
+            self._write_error(pending.request_id, "invalid_path", "governance content must be UTF-8 text")
+            return
+        try:
+            self._apply_governance_write(pending, content)
+        except FileExistsError:
+            self._write_error(pending.request_id, "conflict", "the file exists; create precondition failed")
+        except FileNotFoundError:
+            self._write_error(pending.request_id, "not_found", "the file vanished before replacement")
+        except PermissionError:
+            self._write_error(pending.request_id, "permission_denied", "permission denied")
+        except ValueError as error:
+            self._write_error(pending.request_id, "conflict", str(error))
+        except OSError as error:
+            self._write_error(pending.request_id, "unknown", f"write failed: {type(error).__name__}")
+
+    def _validate_write_shape(self, path: Any) -> tuple[str, str] | None:
+        if not isinstance(path, str) or not path:
+            return ("invalid_path", "path is required")
+        if len(path) > MAX_READ_PATH or "\0" in path or not path.startswith("/"):
+            return ("invalid_path", "path is not a bounded absolute path")
+        segments = path.split("/")
+        if ".." in segments or "." in segments or "" in segments[1:]:
+            return ("invalid_path", "path is not canonical")
+        base = segments[-1]
+        if base in NEVER_SERVE_BASENAMES:
+            return ("permission_denied", f"{base} is never served")
+        if base.endswith(NEVER_SERVE_SUFFIXES):
+            return ("permission_denied", "looks like credential material")
+        if not self._is_governance_file_path(path):
+            return ("permission_denied", f"{base} is not a governance document")
+        home = str(self.bundle["home"]).rstrip("/")
+        if not home.startswith("/") or not path.startswith(home + "/"):
+            return ("permission_denied", "path is outside the agent home")
+        return None
+
+    def _is_governance_file_path(self, path: str) -> bool:
+        """Exact per-harness roots; a basename match elsewhere in HOME is never enough."""
+        base = os.path.basename(path)
+        harness = self.bundle.get("harness")
+        facts = self.bundle.get("runtime_facts", {})
+        home = str(self.bundle["home"]).rstrip("/")
+        if harness == "openclaw":
+            root = facts.get("openclaw_workspace")
+            allowed = {"SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md"}
+        elif harness == "claude":
+            root = facts.get("claude_config_dir", f"{home}/.claude")
+            allowed = {"CLAUDE.md"}
+        elif harness == "codex":
+            root = facts.get("codex_home", f"{home}/.codex")
+            allowed = {"AGENTS.md"}
+        elif harness == "hermes":
+            root = home
+            allowed = {"AGENTS.md"}
+        else:
+            return False
+        return isinstance(root, str) and path == f"{root.rstrip('/')}/{base}" and base in allowed
+
+    def _open_governance_parent(self, path: str) -> tuple[int, str]:
+        """Abre cada padre con O_NOFOLLOW y devuelve `(dirfd, basename)`.
+
+        Resolver con `realpath` y luego abrir por nombre deja una carrera entre ambos pasos. Esta
+        caminata queda anclada en descriptores: cambiar un padre por un enlace no redirige la E/S.
+        """
+        home = str(self.bundle["home"]).rstrip("/")
+        if os.path.realpath(home) != home:
+            raise PermissionError("agent home is a symlink")
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory = os.open(home, flags)
+        try:
+            relative = path[len(home) + 1:].split("/")
+            for segment in relative[:-1]:
+                child = os.open(segment, flags, dir_fd=directory)
+                os.close(directory)
+                directory = child
+            return directory, relative[-1]
+        except BaseException:
+            os.close(directory)
+            raise
+
+    @staticmethod
+    def _hash_regular_at(directory: int, basename: str) -> tuple[str, os.stat_result]:
+        fd = os.open(basename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+        try:
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode):
+                raise PermissionError("governance target is not a regular file")
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(fd, 64 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            after = os.fstat(fd)
+            identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+            identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+            if identity_before != identity_after:
+                raise ValueError("the file changed while its precondition was checked")
+            return digest.hexdigest(), after
+        finally:
+            os.close(fd)
+
+    def _apply_governance_write(self, pending: GovernanceWrite, content: bytes) -> None:
+        directory, basename = self._open_governance_parent(pending.path)
+        temporary = f".cauce-governance-{pending.request_id}.tmp"
+        temp_fd: int | None = None
+        temp_exists = False
+        try:
+            try:
+                current_sha, current_info = self._hash_regular_at(directory, basename)
+                exists = True
+            except FileNotFoundError:
+                current_sha, current_info, exists = None, None, False
+
+            # ACK perdido: repetir la misma operación no debe convertir un éxito real en conflicto.
+            if exists and current_sha == pending.content_sha:
+                self._write_ok(pending)
+                return
+            if pending.operation == "create" and exists:
+                raise FileExistsError(basename)
+            if pending.operation == "replace":
+                if not exists:
+                    raise FileNotFoundError(basename)
+                if current_sha != pending.expected_sha:
+                    raise ValueError("the file changed; SHA-256 precondition failed")
+
+            temp_fd = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=directory,
+            )
+            temp_exists = True
+            view = memoryview(content)
+            written = 0
+            while written < len(view):
+                amount = os.write(temp_fd, view[written:])
+                if amount <= 0:
+                    raise OSError("short governance write")
+                written += amount
+            if current_info is not None:
+                os.fchmod(temp_fd, stat.S_IMODE(current_info.st_mode))
+                if current_info.st_uid != os.geteuid() or current_info.st_gid != os.getegid():
+                    os.fchown(temp_fd, current_info.st_uid, current_info.st_gid)
+            os.fsync(temp_fd)
+            os.close(temp_fd)
+            temp_fd = None
+
+            if pending.operation == "create":
+                # linkat falla con EEXIST: a diferencia de replace(), nunca pisa una creación que
+                # ganó la carrera entre el chequeo y el commit.
+                os.link(
+                    temporary, basename,
+                    src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False,
+                )
+                os.unlink(temporary, dir_fd=directory)
+                temp_exists = False
+            else:
+                # Revalida la MISMA identidad justo antes del commit. Serializa las escrituras de
+                # este agente y detecta ediciones externas que ocurrieron durante el staging.
+                latest = os.stat(basename, dir_fd=directory, follow_symlinks=False)
+                expected_identity = (
+                    current_info.st_dev, current_info.st_ino, current_info.st_size,
+                    current_info.st_mtime_ns, current_info.st_ctime_ns,
+                )
+                actual_identity = (
+                    latest.st_dev, latest.st_ino, latest.st_size,
+                    latest.st_mtime_ns, latest.st_ctime_ns,
+                )
+                if expected_identity != actual_identity or not stat.S_ISREG(latest.st_mode):
+                    raise ValueError("the file changed before the atomic commit")
+                os.replace(temporary, basename, src_dir_fd=directory, dst_dir_fd=directory)
+                temp_exists = False
+            os.fsync(directory)
+            self._write_ok(pending)
+        finally:
+            if temp_fd is not None:
+                os.close(temp_fd)
+            if temp_exists:
+                try:
+                    os.unlink(temporary, dir_fd=directory)
+                except OSError:
+                    pass
+            os.close(directory)
+
+    def _write_ok(self, pending: GovernanceWrite) -> None:
+        self._queue(encode_json(TAG_WRITE_OK, {
+            "request_id": pending.request_id,
+            "path": pending.path,
+            "operation": pending.operation,
+            "sha": pending.content_sha,
+            "bytes": pending.content_bytes,
+        }))
+
+    def _write_error(self, request_id: str, code: str, reason: str) -> None:
+        self._queue(encode_json(TAG_WRITE_ERR, {
+            "request_id": request_id, "error": code, "reason": reason,
+        }))
+
     def _resolve_command(self, mode: str) -> list[str] | None:
         if mode == "harness":
-            return self.bundle["harness_command"]
+            if self.bundle["harness_command"] is not None:
+                return self.bundle["harness_command"]
+            return resolve_openclaw_tui_command(self.bundle)
         for candidate in self.bundle["shell_candidates"]:
             if os.access(candidate[0], os.X_OK):
                 return candidate
@@ -976,8 +1948,19 @@ class PtyAgent:
                 session.refused_input = True
                 log(f"input refused on a read-only session mode={session.mode} session={session_id}")
             return
-        session.pending_input.extend(data)
-        self._write_session(session)
+        self._enqueue_session_input(session, data)
+
+    def _on_terminal_response(self, session_id: str, data: bytes) -> None:
+        # Se valida incluso si la sesion ya termino: una trama mal formada nunca gana un camino
+        # permisivo por llegar tarde.
+        if not is_terminal_emulator_response(data):
+            raise ProtocolError("TERMINAL_RESPONSE is not an allowed DA/DSR response")
+        session = self.sessions.get(session_id)
+        if session is None:
+            return
+        if session.mode not in READ_ONLY_MODES:
+            raise ProtocolError("TERMINAL_RESPONSE is only valid for a read-only session")
+        self._enqueue_session_input(session, data)
 
     def _on_resize(self, request: dict[str, Any]) -> None:
         session_id = request.get("session_id")
@@ -999,9 +1982,28 @@ class PtyAgent:
         session = self.sessions.get(session_id)
         if session is None:
             return
-        self._hangup(session)
+        reason = request.get("reason")
+        self._hangup(session, reason if isinstance(reason, str) and reason else "relay_close")
 
-    def _hangup(self, session: PtySession) -> None:
+    def _on_output_flow(self, request: dict[str, Any], paused: bool) -> None:
+        session_id = request.get("session_id")
+        if not isinstance(session_id, str) or not SESSION_ID_RE.fullmatch(session_id):
+            raise ProtocolError("output flow control carries an invalid session id")
+        session = self.sessions.get(session_id)
+        if session is not None:
+            session.output_paused = paused
+
+    def _enqueue_session_input(self, session: PtySession, data: bytes) -> None:
+        if len(session.pending_input) + len(data) > SESSION_INPUT_HIGH_WATER:
+            session.pending_input.clear()
+            self._hangup(session, "input_flood")
+            return
+        session.pending_input.extend(data)
+        self._write_session(session)
+
+    def _hangup(self, session: PtySession, reason: str | None = None) -> None:
+        if reason is not None and session.close_reason is None:
+            session.close_reason = reason[:120]
         if session.kill_deadline is not None:
             return
         session.kill_deadline = time.monotonic() + KILL_GRACE
@@ -1109,6 +2111,7 @@ class PtyAgent:
             "session_id": session.session_id,
             "exit_code": session.exit_code,
             "signal": session.exit_signal,
+            "reason": session.close_reason or "agent_closed",
         }))
         try:
             os.close(session.fd)

@@ -1,14 +1,14 @@
 import { Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
-import type { AgentPerfil, AgentPerfilCampos, ConfigurationSnapshot } from '../../api/types';
+import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import { useResource, type RecargaResultado } from '../../api/use-resource';
 import { EmptyState } from '../../components/ui';
 import { permissionState } from '../../lib';
-import { describeConfigError } from '../config/config-change';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, ETIQUETAS, camposQueNoEntran, camposVigentes, contarUnidades,
-  hayCambios, lineasALista, listaALineas, mutacionDePerfil, perfilYaExiste, unidadesDelPerfil,
+  esPerfilAplicado, hayCambios, lineasALista, listaALineas, perfilParaGuardar, unidadesDelPerfil,
 } from './perfil';
 
 /**
@@ -29,11 +29,11 @@ import {
  * ── La regla de la pantalla ──────────────────────────────────────────────────────────────────
  *
  * Acá no se afirma nada que no se haya comprobado. La vista previa dice de qué está compuesta
- * (`base`), los ficheros del agente dicen que no se tocan, y el cartel verde sólo aparece después
- * de releer del servidor. Cuando algo no se pudo comprobar, se dice con esas palabras.
+ * (`base`), los ficheros del agente dicen que no se tocan y una relectura de DB nunca se presenta
+ * como ACK del arnés. Cuando algo no se pudo comprobar, se dice con esas palabras.
  */
 
-type TonoAviso = 'success' | 'error' | 'parcial';
+type TonoAviso = 'error' | 'parcial' | 'success';
 
 export interface PerfilTabProps {
   tenantId: string;
@@ -49,8 +49,9 @@ export interface PerfilTabProps {
 
 export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabProps) {
   const api = useApi();
-  const perfil = useResource(`perfil-${tenantId}-${alias}`, () => api.getAgentPerfil(alias));
-  const config = useResource('drawer-config', () => api.getConfiguration());
+  const perfil = useResource(
+    `perfil-${tenantId}-${alias}`, () => api.getAgentPerfil(tenantId, alias),
+  );
   const access = useResource('console-access', () => api.getConsoleAccess());
   const [busy, setBusy] = useState(false);
   const [aviso, setAviso] = useState<{ text: string; tone: TonoAviso }>();
@@ -61,12 +62,26 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   const sucio = hayCambios(perfil.data, campos);
   const fuera = camposQueNoEntran(campos, perfil.data?.limites);
   const total = unidadesDelPerfil(campos);
+  const presenciaConocida = typeof perfil.data?.exists === 'boolean';
+  const agenteHabilitado = perfil.data?.agent_enabled === true;
+  const revisionCoherente = perfil.data?.exists === false
+    ? perfil.data.revision === null
+    : perfil.data?.exists === true
+      && typeof perfil.data.revision === 'number'
+      && Number.isSafeInteger(perfil.data.revision)
+      && perfil.data.revision > 0;
+  const estadoConocido = perfil.data?.runtime_state === 'absent'
+    || perfil.data?.runtime_state === 'pending'
+    || perfil.data?.runtime_state === 'applied'
+    || perfil.data?.runtime_state === 'disabled';
+  const pendiente = perfil.data?.runtime_state === 'pending';
+  const ficheros = perfil.data?.ficheros ?? [];
+  const aplicable = ficheros.length > 0;
 
-  // El verde habla del texto que se envió. En cuanto el operador vuelve a escribir, ese cartel
-  // pasa a estar encima de OTRO texto —uno que nadie guardó— y se convierte en una afirmación
-  // falsa: se retira solo. El rojo no se toca: el rechazo sigue siendo cierto mientras se corrige.
+  // El estado de persistencia habla del texto anterior. En cuanto se vuelve a editar, ya no
+  // describe el borrador visible y se retira. El rojo se conserva: el rechazo sigue siendo cierto.
   useEffect(() => {
-    if (sucio) setAviso((actual) => (actual?.tone === 'success' ? undefined : actual));
+    if (sucio) setAviso((actual) => (actual?.tone === 'error' ? actual : undefined));
   }, [sucio]);
 
   if (perfil.loading && !perfil.data) {
@@ -93,63 +108,98 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   }
 
   async function guardar() {
+    if (!presenciaConocida || !revisionCoherente || !estadoConocido) {
+      setAviso({
+        tone: 'error',
+        text: 'Este gateway no informó de forma coherente la presencia, revisión y estado '
+          + 'desired/applied del perfil. No guardé: sin ese CAS podría pisar una edición ajena.',
+      });
+      return;
+    }
+    if (!agenteHabilitado) {
+      setAviso({
+        tone: 'error',
+        text: 'El alias está apagado o su estado no fue acreditado. No se cambia el desired sin '
+          + 'un runtime habilitado que pueda aplicar y responder el lote.',
+      });
+      return;
+    }
+    if (!aplicable) {
+      setAviso({
+        tone: 'error',
+        text: 'No hay ficheros gobernados acreditables para este arnés. No guardé un desired que '
+          + 'la consola no podría demostrar como aplicado.',
+      });
+      return;
+    }
     setAviso(undefined);
     setBusy(true);
     try {
-      const revision = typeof config.data?.revision === 'number' ? config.data.revision : undefined;
-      const mutation = mutacionDePerfil(tenantId, alias, campos, perfilYaExiste(perfil.data));
-      const result = await api.changeConfiguration(mutation, {
-        dryRun: false,
-        ...(revision === undefined ? {} : { expectedRevision: revision }),
-      });
-      /*
-       * El 201 dice que el servidor lo aceptó, no que la pantalla esté enseñando lo aceptado. Se
-       * espera la relectura ANTES de soltar el borrador: si se soltara acá, las cajas volverían al
-       * valor viejo y el cartel verde quedaría encima del texto anterior. Y se relee el PERFIL,
-       * que es donde vive la vista previa recompuesta — releer sólo la configuración dejaría los
-       * ficheros de la derecha mostrando el texto de antes de guardar.
-       */
+      const expectedRevision = perfil.data?.exists === true ? perfil.data.revision as number : null;
+      const result = await api.putAgentPerfil(
+        tenantId, alias, perfilParaGuardar(campos), expectedRevision,
+      );
+      const nombres = ficheros.map((fichero) => fichero.nombre);
+      if (!esPerfilAplicado(result, { tenantId, alias, nombres })) {
+        setAviso({
+          tone: 'error',
+          text: 'El servidor devolvió 2xx, pero no acreditó la misma revisión ni un SHA y número '
+            + 'de bytes por cada fichero gobernado. El borrador sigue sucio; no se afirma aplicación.',
+        });
+        return;
+      }
+
+      // El ACK prueba el runtime; la relectura evita soltar el borrador sobre un snapshot viejo.
       const recarga: RecargaResultado<AgentPerfil> = await perfil.reload();
-      await config.reload();
       if (recarga.error) {
         setAviso({
           tone: 'parcial',
-          text: `Guardé el perfil en la revisión ${result.revision ?? 'una revisión que el servidor no informó'}, pero NO pude releerlo `
-            + `(${recarga.error.message}): lo que ves es lo que envié, no lo que el servidor tiene. `
-            + 'El borrador se conserva; volvé a abrir esta pestaña cuando la lectura funcione.',
+          text: `El runtime acreditó la revisión ${result.revision}, pero no pude releer el perfil `
+            + `(${recarga.error.message}). Conservo el borrador para no volver a mostrar un snapshot viejo.`,
+        });
+        return;
+      }
+      if (recarga.data.exists !== true || recarga.data.revision !== result.revision
+        || recarga.data.applied_revision !== result.revision
+        || recarga.data.runtime_state !== 'applied') {
+        setAviso({
+          tone: 'parcial',
+          text: `El runtime acreditó la revisión ${result.revision}, pero la relectura ya muestra `
+            + `desired ${recarga.data.revision ?? 'ausente'} y aplicado ${recarga.data.applied_revision ?? 'ninguno'}. `
+            + 'No limpio el borrador ni presento esa revisión más nueva como aplicada.',
         });
         return;
       }
       onBorrador(undefined);
       setAviso({
         tone: 'success',
-        text: `Perfil guardado en la revisión ${result.revision ?? 'una revisión que el servidor no informó'} y releído del servidor: los `
-          + 'ficheros de la derecha son los que se van a escribir. Se puede deshacer desde el audit '
-          + 'trail de Configuración.',
+        text: `Aplicado: desired y runtime acreditan la revisión ${result.revision}; `
+          + `${result.acknowledgements.length} ficheros respondieron SHA y bytes.`,
       });
     } catch (error) {
-      const descripcion = describeConfigError(error, 'El servidor rechazó el guardado y no dijo por qué');
-      if (!descripcion.conflict) {
-        setAviso({ tone: 'error', text: descripcion.message });
-        return;
-      }
       const crudo = error instanceof Error ? error.message : 'el servidor no dijo por qué';
-      const recarga: RecargaResultado<ConfigurationSnapshot> = await config.reload();
+      const status = error instanceof ApiError ? error.status : undefined;
+      const recarga: RecargaResultado<AgentPerfil> = await perfil.reload();
+      const relectura = recarga.data;
+      const quedaPendiente = relectura?.runtime_state === 'pending';
       setAviso({
         tone: 'error',
         text: recarga.error
-          ? `Conflicto de revisión (el servidor dijo: «${crudo}») y NO se aplicó nada. La relectura `
-            + `TAMBIÉN falló (${recarga.error.message}), así que esta pestaña sigue con una revisión `
-            + 'vencida: recargá la página antes de reintentar.'
-          : `Conflicto de revisión y NO se aplicó nada: otro operador movió la configuración. Ya `
-            + `releí (revisión ${typeof recarga.data?.revision === 'number' ? recarga.data.revision : 'sin dato'}); revisá lo que escribiste y reintentá.`,
+          ? `No hubo un 2xx aplicado (HTTP ${status ?? 'sin dato'}: ${crudo}) y tampoco pude `
+            + `releer (${recarga.error.message}). El borrador se conserva; no se infiere si el desired avanzó.`
+          : quedaPendiente
+            ? `No hubo un 2xx aplicado (HTTP ${status ?? 'sin dato'}: ${crudo}). La relectura `
+              + `muestra desired ${relectura.revision ?? 'ausente'} pendiente sobre aplicado `
+              + `${relectura.applied_revision ?? 'ninguno'}; el borrador se conserva y podés reintentar el lote.`
+            : `No hubo un 2xx aplicado (HTTP ${status ?? 'sin dato'}: ${crudo}). Releí desired `
+              + `${relectura?.revision ?? 'ausente'} / aplicado ${relectura?.applied_revision ?? 'ninguno'}; `
+              + 'el borrador se conserva.',
       });
     } finally {
       setBusy(false);
     }
   }
 
-  const ficheros = perfil.data?.ficheros ?? [];
   const abierto = ficheros.find((f) => f.nombre === ficheroAbierto) ?? ficheros[0];
 
   return (
@@ -162,6 +212,13 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
               Esto es lo FIJO del alias y va a su fichero de arnés, no al sobre de cada mensaje.
               Entre turnos sólo debería viajar lo que fluctúa.
             </p>
+            {presenciaConocida ? (
+              <p className="muted perfil-ayuda">
+                {perfil.data?.exists
+                  ? 'Hay una fila de perfil persistida, aunque su contenido pueda estar vacío.'
+                  : 'Todavía no hay una fila de perfil persistida; el primer guardado será un alta.'}
+              </p>
+            ) : null}
           </div>
           <p className={`perfil-medida${fuera.length > 0 ? ' perfil-medida-fuera' : ''}`}>
             {total.toLocaleString('es')} / {(perfil.data?.limites?.total ?? 0).toLocaleString('es')} unidades
@@ -183,7 +240,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
               <textarea
                 value={valor}
                 rows={campo === 'purpose' ? 4 : 3}
-                disabled={soloLectura || busy}
+                disabled={soloLectura || busy || !agenteHabilitado}
                 onChange={(event) => editarTexto(campo, event.target.value)}
               />
               <span className={`perfil-cuenta${tope !== undefined && medido > tope ? ' perfil-cuenta-fuera' : ''}`}>
@@ -204,7 +261,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
               <textarea
                 value={listaALineas(items)}
                 rows={4}
-                disabled={soloLectura || busy}
+                disabled={soloLectura || busy || !agenteHabilitado}
                 onChange={(event) => editarLista(campo, event.target.value)}
               />
               <span className={`perfil-cuenta${items.length > (perfil.data?.limites?.items ?? Infinity) ? ' perfil-cuenta-fuera' : ''}`}>
@@ -226,15 +283,41 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
         ) : null}
 
         {aviso ? <p className={`perfil-aviso perfil-aviso-${aviso.tone}`} role="status">{aviso.text}</p> : null}
+        {perfil.data?.publicado && !agenteHabilitado ? (
+          <p className="perfil-aviso perfil-aviso-error" role="alert">
+            Alias apagado o estado de habilitación no acreditado: edición y aplicación bloqueadas.
+          </p>
+        ) : null}
+        {perfil.data?.publicado && agenteHabilitado && pendiente ? (
+          <p className="perfil-aviso perfil-aviso-parcial" role="status">
+            Desired revisión {perfil.data.revision ?? 'sin dato'} pendiente; el runtime sólo tiene
+            acreditada la revisión {perfil.data.applied_revision ?? 'ninguna'}. La vista previa no
+            se presenta como aplicada. Podés reintentar aunque el texto no haya cambiado.
+          </p>
+        ) : null}
+        {perfil.data?.publicado && (!presenciaConocida || !revisionCoherente || !estadoConocido) ? (
+          <p className="perfil-aviso perfil-aviso-error" role="alert">
+            Este gateway no informa presencia, revisión y estado desired/applied de forma
+            coherente. Guardado bloqueado para no perder concurrencia ni afirmar convergencia.
+          </p>
+        ) : null}
+        {perfil.data?.publicado && agenteHabilitado && !aplicable ? (
+          <p className="perfil-aviso perfil-aviso-error" role="alert">
+            Este arnés no publica un conjunto de ficheros gobernados acreditable; no se puede
+            confirmar una aplicación completa.
+          </p>
+        ) : null}
 
         <button
           type="button"
           className="button primary"
-          disabled={soloLectura || busy || !sucio || fuera.length > 0}
+          disabled={soloLectura || busy || !presenciaConocida || !revisionCoherente
+            || !estadoConocido || !agenteHabilitado || !aplicable
+            || (!sucio && !pendiente) || fuera.length > 0}
           onClick={() => { void guardar(); }}
         >
           <Save size={16} aria-hidden />
-          {busy ? 'Guardando…' : 'Guardar perfil'}
+          {busy ? 'Aplicando…' : pendiente && !sucio ? 'Reintentar aplicación' : 'Guardar y aplicar perfil'}
         </button>
         {soloLectura ? (
           <p className="muted">Tu sesión no tiene permiso de escritura en configuración.</p>
@@ -243,10 +326,10 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
 
       <section className="perfil-vista-previa">
         <header>
-          <h4>Lo que se va a escribir</h4>
+          <h4>Vista previa del desired</h4>
           <p className="muted perfil-ayuda">
             {perfil.data?.harness
-              ? `Arnés medido: ${perfil.data.harness}.`
+              ? `Arnés declarado: ${perfil.data.harness}.`
               : 'El registro no dice qué arnés corre este alias.'}
             {' '}
             {perfil.data?.base === 'fichero-vacio'
@@ -254,6 +337,11 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
                 + 'que una persona haya escrito a mano NO aparece acá — sigue en el fichero y no se toca.'
               : null}
           </p>
+          {pendiente ? (
+            <p className="perfil-aviso perfil-aviso-parcial">
+              Esta composición corresponde al desired pendiente; no describe el runtime aplicado.
+            </p>
+          ) : null}
         </header>
 
         {perfil.data?.aviso ? <EmptyState>{perfil.data.aviso}</EmptyState> : null}

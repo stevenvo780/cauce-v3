@@ -20,6 +20,7 @@ function sondaFalsa(marca: string): AgentFactsProbe {
     factsFor: async () => ({ facts: { harness: 'claude', home: `/${marca}` }, source: 'measured' }),
     readGovernanceDocument: async () => ({ error: 'not_found', reason: marca }),
     listMemoryDirectory: async () => ({ error: 'not_found', reason: marca }),
+    writeGovernanceDocument: async (_path, content) => ({ sha: marca.padEnd(64, 'a'), bytes: content.length }),
   };
 }
 
@@ -63,6 +64,10 @@ describe('con sonda instalada, delega en ella', () => {
       '/x', { harness: 'claude', home: '/home/dev' }, 'Steven', 'zeus',
     );
     expect('reason' in memoria ? memoria.reason : '').toBe('real');
+    const escrito = await diferida.writeGovernanceDocument?.(
+      '/x', 'abc', { state: 'absent' }, { harness: 'claude', home: '/home/dev' }, 'Steven', 'zeus',
+    );
+    expect(escrito).toMatchObject({ bytes: 3 });
     expect(hueco.instalada).toBe(true);
   });
 });
@@ -93,6 +98,21 @@ describe('🔴 la trampa: se resuelve en CADA llamada, no al construirse', () =>
     expect((await diferida.factsFor('Steven', 'zeus'))?.facts.home).toBe('/primera');
     hueco.instalar(sondaFalsa('segunda'));
     expect((await diferida.factsFor('Steven', 'zeus'))?.facts.home).toBe('/segunda');
+  });
+
+  it('una diferida creada antes reexpone escritura cuando la sonda tardía la publica', async () => {
+    const hueco = new SondaCompartida();
+    const diferida = sondaDiferida(hueco);
+    const sinCanal = await diferida.writeGovernanceDocument?.(
+      '/x', 'a', { state: 'absent' }, { harness: 'claude', home: '/home/dev' }, 'Steven', 'zeus',
+    );
+    expect(sinCanal).toMatchObject({ error: 'unavailable' });
+
+    hueco.instalar(sondaFalsa('ack'));
+    const aplicado = await diferida.writeGovernanceDocument?.(
+      '/x', 'abcd', { state: 'absent' }, { harness: 'claude', home: '/home/dev' }, 'Steven', 'zeus',
+    );
+    expect(aplicado).toMatchObject({ bytes: 4 });
   });
 
   it('CONTROL NEGATIVO: dos huecos NO comparten sonda', () => {

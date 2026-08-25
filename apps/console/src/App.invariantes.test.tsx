@@ -58,7 +58,7 @@ const DESTINOS: Record<string, Destino> = {
    * ancla `^…$` no es decoración — es lo que impide que vuelva a haber dos nombres.
    */
   config: { encabezado: /^ajustes y altas$/i },
-  terminal: { encabezado: /^ultimate terminal$/i },
+  terminal: { encabezado: /^terminal de agentes$/i },
   /** Sin `<h1>`: son avisos, no vistas. Ver `FleetRouteNotice` y `JobsRetiredNotice`. */
   fleet: { marca: /esa dirección ya no identifica a nadie/i },
   jobs: { marca: /«Jobs» ya no es una vista de esta consola/i },

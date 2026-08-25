@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { DatabasePool } from '@cauce/store';
 import type { BridgeMetric } from './types.js';
+import type { TelegramBridgeProgress } from './progress.js';
 
 // `updates_denied` keeps its original meaning (hard ACL denial) so its time series stays
 // comparable; ordinary group suppression gets its own counters instead of inflating it.
@@ -12,12 +13,13 @@ import type { BridgeMetric } from './types.js';
 // (`updates_mention_unserved`). `group_config_degraded` counts boot-time group config problems
 // that were downgraded from fatal so the DMs keep running.
 const METRICS: readonly BridgeMetric[] = [
-  'updates_allowed', 'updates_denied', 'updates_duplicate', 'poll_fenced',
+  'updates_allowed', 'updates_denied', 'updates_duplicate', 'poll_fenced', 'poll_error',
   'updates_unaddressed', 'updates_echo_suppressed', 'updates_mention_unserved',
   'updates_suppressed_bot', 'updates_via_bot',
   'updates_chat_denied', 'updates_chat_disabled', 'updates_conflict',
   'group_config_degraded',
-  'egress_sent', 'egress_retry', 'egress_dead', 'egress_ambiguous',
+  'egress_sent', 'egress_retry', 'egress_dead', 'egress_ambiguous', 'egress_fenced',
+  'egress_loop_error',
   // `egress_format_downgraded` existía en el tipo desde el 27-jul pero faltaba en esta lista, así
   // que su contador nunca se publicó: la única señal de que la conversión a HTML está produciendo
   // algo que Telegram rechaza era invisible en /metrics.
@@ -49,7 +51,7 @@ export function startTelegramHealthServer(
   port: number,
   pool: DatabasePool,
   metrics: TelegramBridgeMetrics,
-  startedAliases: () => number
+  progress: TelegramBridgeProgress
 ): Server {
   const server = createServer(async (request, response) => {
     if (request.method !== 'GET') {
@@ -57,26 +59,44 @@ export function startTelegramHealthServer(
       return;
     }
     if (request.url === '/health/live') {
-      response.writeHead(200, { 'content-type': 'application/json' }).end('{"status":"live"}');
+      const state = progress.snapshot();
+      response.writeHead(state.live ? 200 : 503, {
+        'content-type': 'application/json', 'cache-control': 'no-store'
+      }).end(JSON.stringify({
+        status: state.live ? 'live' : 'not_live', reason: state.reason,
+        pollers: state.pollers, stale_pollers: state.stale_pollers,
+        fenced_pollers: state.fenced_pollers, egress_stale: state.egress_stale,
+        egress_fenced: state.egress_fenced
+      }));
       return;
     }
     if (request.url === '/health/ready') {
       try {
         await pool.query('SELECT 1');
-        const ready = startedAliases() > 0;
-        response.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' })
-          .end(JSON.stringify({ status: ready ? 'ready' : 'not_ready', aliases: startedAliases() }));
+        const state = progress.snapshot();
+        response.writeHead(state.ready ? 200 : 503, {
+          'content-type': 'application/json', 'cache-control': 'no-store'
+        }).end(JSON.stringify({
+          status: state.ready ? 'ready' : 'not_ready', reason: state.reason,
+          aliases: state.pollers, healthy_aliases: state.healthy_pollers,
+          egress_configured: state.egress_configured
+        }));
       } catch {
-        response.writeHead(503, { 'content-type': 'application/json' }).end('{"status":"not_ready"}');
+        response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+          .end('{"status":"not_ready","reason":"database"}');
       }
       return;
     }
     if (request.url === '/metrics') {
-      response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }).end(metrics.render());
+      response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' })
+        .end(`${metrics.render()}${progress.renderMetrics()}`);
       return;
     }
     response.writeHead(404).end();
   });
-  server.listen(port, '127.0.0.1');
+  // The service has no published host port; binding the internal backend interface is required
+  // for Prometheus in its sibling container to scrape it. Docker's own health probe still uses
+  // 127.0.0.1 from inside this container.
+  server.listen(port, '0.0.0.0');
   return server;
 }

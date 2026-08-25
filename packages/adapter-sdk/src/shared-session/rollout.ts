@@ -116,7 +116,7 @@ export async function readRolloutSince(
     try {
       const value: unknown = JSON.parse(trimmed);
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-        entries.push(value as RolloutLine);
+        entries.push(value);
       }
     } catch {
       // Un corte a mitad de un carácter multibyte en el primer byte leído, o una línea a medio

@@ -9,6 +9,7 @@ import type {
 } from './types.js';
 import { TelegramApiError, validTelegramMessageId } from './telegram.js';
 import { markdownToPlainText, markdownToTelegramHtml } from './markdown.js';
+import type { TelegramLoopObserver } from './progress.js';
 
 export class EgressCrash extends Error {
   constructor(readonly point: 'before_begin' | 'before_send' | 'during_send' | 'after_send' | 'after_complete') {
@@ -36,6 +37,14 @@ export interface TelegramEgressWorkerOptions {
   hooks?: TelegramEgressHooks;
   activity?: TelegramActivity;
   onMetric?: (metric: BridgeMetric) => void;
+  observer?: TelegramLoopObserver;
+}
+
+class EgressLeaseLost extends Error {
+  constructor() {
+    super('Telegram egress lease or durable ACK was fenced');
+    this.name = 'EgressLeaseLost';
+  }
 }
 
 function object(value: unknown): Record<string, unknown> | undefined {
@@ -301,18 +310,58 @@ export class TelegramEgressWorker {
   private readonly hooks: TelegramEgressHooks;
   private readonly activity: TelegramActivity | undefined;
   private readonly onMetric: (metric: BridgeMetric) => void;
+  private readonly observer: TelegramLoopObserver | undefined;
 
   constructor(options: TelegramEgressWorkerOptions) {
     this.repository = options.repository;
     this.aliases = new Map(options.aliases.map((entry) => [entry.alias, entry]));
     this.apis = options.apis;
     this.workerId = options.workerId ?? `telegram-egress:${randomUUID()}`;
-    this.batchSize = options.batchSize ?? 20;
-    this.leaseMs = options.leaseMs ?? 30_000;
+    // Compatibility accepts the old batch option, but a claim is always incremental. A remote
+    // send must never wait in memory behind leases that started at the same instant.
+    this.batchSize = 1;
+    this.leaseMs = options.leaseMs ?? 90_000;
     this.baseRetryMs = options.baseRetryMs ?? 500;
     this.hooks = options.hooks ?? {};
     this.activity = options.activity;
     this.onMetric = options.onMetric ?? (() => undefined);
+    this.observer = options.observer;
+    if ((options.batchSize !== undefined && options.batchSize < 1) ||
+        !Number.isInteger(this.leaseMs) || this.leaseMs < 1_000 ||
+        !Number.isInteger(this.baseRetryMs) || this.baseRetryMs < 1) {
+      throw new Error('Telegram egress worker options are invalid');
+    }
+  }
+
+  private async ensureLease(event: TelegramOriginRelay): Promise<void> {
+    try {
+      if (await this.repository.renew(event, this.leaseMs)) {
+        this.observer?.egressCycleHeartbeat();
+        return;
+      }
+    } catch {
+      // A database error makes ownership unknowable. Fail closed exactly like a fencing result.
+    }
+    this.markEgressFenced();
+    throw new EgressLeaseLost();
+  }
+
+  private markEgressFenced(): void {
+    this.onMetric('egress_fenced');
+    this.observer?.egressCycleFenced();
+  }
+
+  private async durableAck(
+    event: TelegramOriginRelay,
+    values: Omit<TelegramOriginRelayAck, 'event_id' | 'attempt' | 'claim_token'>
+  ): Promise<void> {
+    await this.ensureLease(event);
+    try {
+      await this.repository.ack(this.acknowledgement(event, values));
+    } catch {
+      this.markEgressFenced();
+      throw new EgressLeaseLost();
+    }
   }
 
   /**
@@ -332,11 +381,13 @@ export class TelegramEgressWorker {
     api: TelegramApi,
     chatId: string,
     text: string,
-    options: TelegramSendOptions | undefined
+    options: TelegramSendOptions | undefined,
+    beforeRemote: () => Promise<void>
   ): Promise<TelegramSendResult> {
     const html = markdownToTelegramHtml(text);
     const conFormato: TelegramSendOptions = { ...(options ?? {}), parse_mode: 'html' };
     try {
+      await beforeRemote();
       return await api.sendText(chatId, html, conFormato);
     } catch (error) {
       if (error instanceof EgressCrash) throw error;
@@ -347,6 +398,7 @@ export class TelegramEgressWorker {
       if (!rechazoDeFormato) throw error;
       this.onMetric('egress_format_downgraded');
       const plano = markdownToPlainText(text);
+      await beforeRemote();
       return options === undefined
         ? await api.sendText(chatId, plano)
         : await api.sendText(chatId, plano, options);
@@ -374,7 +426,8 @@ export class TelegramEgressWorker {
     api: TelegramApi,
     chatId: string,
     upload: PlannedUpload,
-    options: TelegramSendOptions | undefined
+    options: TelegramSendOptions | undefined,
+    beforeRemote: () => Promise<void>
   ): Promise<TelegramSendResult> {
     const payload: TelegramUpload = {
       kind: upload.kind,
@@ -388,6 +441,7 @@ export class TelegramEgressWorker {
 
     if (upload.kind === 'photo' && api.sendPhoto !== undefined) {
       try {
+        await beforeRemote();
         const sent = await api.sendPhoto(chatId, payload, options);
         this.onMetric('egress_attachment_uploaded');
         return sent;
@@ -397,6 +451,7 @@ export class TelegramEgressWorker {
     }
     if (api.sendDocument !== undefined) {
       try {
+        await beforeRemote();
         const sent = await api.sendDocument(chatId, { ...payload, kind: 'document' }, options);
         this.onMetric('egress_attachment_uploaded');
         return sent;
@@ -407,6 +462,7 @@ export class TelegramEgressWorker {
     this.onMetric('egress_attachment_upload_failed');
     const aviso = `📎 No pude adjuntar «${upload.name}»: Telegram rechazó el archivo. `
       + 'Pedile al agente que lo mande más liviano o en otro formato.';
+    await beforeRemote();
     return options === undefined
       ? await api.sendText(chatId, aviso)
       : await api.sendText(chatId, aviso, options);
@@ -457,9 +513,9 @@ export class TelegramEgressWorker {
     if (!bridgeAlias || !config || !api || config.tenant_id !== event.tenant_id || event.origin.channel !== 'telegram' ||
         !config.allowed_chat_ids.includes(chatId) || !egressAuthorized(config, chatId, threadId)
         || forgedProactiveReply) {
-      await this.repository.ack(this.acknowledgement(event, {
+      await this.durableAck(event, {
         status: 'dead', error: 'Telegram origin is not authorized for this tenant and alias'
-      }));
+      });
       this.onMetric('egress_dead');
       return;
     }
@@ -476,7 +532,7 @@ export class TelegramEgressWorker {
       if (plan.listed > 0) this.onMetric('egress_attachment_listed');
       if (pieces.length === 0 || (!interimAcknowledgement && isMissingFinalReply(event.payload))) {
         const diagnostic = 'Telegram relay has no visible final reply; no message was sent';
-        await this.repository.ack(this.acknowledgement(event, { status: 'dead', error: diagnostic }));
+        await this.durableAck(event, { status: 'dead', error: diagnostic });
         if (!interimAcknowledgement) this.finishActivity(event, bridgeAlias, api, 'failed');
         this.onMetric('egress_dead');
         return;
@@ -507,6 +563,7 @@ export class TelegramEgressWorker {
           break;
         }
         await this.hooks.beforeBegin?.(effectId);
+        await this.ensureLease(event);
         effect = await this.repository.beginEffect(effectId, payloadHash);
         if (effect.state === 'sent') continue;
         if (effect.state !== 'sending') {
@@ -524,16 +581,25 @@ export class TelegramEgressWorker {
         try {
           const replyToOrigin = effectiveChatPolicy(config, chatId, threadId)?.reply_to_origin ?? false;
           const options = threadOptions(event, index, threadId, replyToOrigin);
+          const beforeRemote = async (): Promise<void> => this.ensureLease(event);
           // Omit the argument entirely when there is nothing to thread, so any existing
           // two-parameter TelegramApi implementation keeps behaving exactly as before.
           const sent = piece.kind === 'text'
-            ? await this.sendFormatted(api, chatId, piece.text, options)
-            : await this.sendAttachment(api, chatId, piece.upload, options);
+            ? await this.sendFormatted(api, chatId, piece.text, options, beforeRemote)
+            : await this.sendAttachment(api, chatId, piece.upload, options, beforeRemote);
           remotelyAccepted = true;
           await this.hooks.afterSend?.(effectId);
           await this.repository.completeEffect(effectId, payloadHash, sent.message_id);
         } catch (error) {
           if (error instanceof EgressCrash) throw error;
+          if (error instanceof EgressLeaseLost) {
+            // Every remote call is preceded by renewal. A loss here therefore happened before a
+            // call, or after a known rejection while preparing a fallback; no new effect is
+            // possible. Reset when PostgreSQL is reachable, otherwise the later claimant will
+            // conservatively diagnose the stranded `sending` row as ambiguous.
+            await this.repository.resetPrepared(effectId, payloadHash).catch(() => undefined);
+            throw error;
+          }
           const knownRejected = !remotelyAccepted && error instanceof TelegramApiError && error.outcomeKnown;
           if (knownRejected) {
             const canRetry = error.retryable && event.attempt < event.max_attempts;
@@ -561,30 +627,31 @@ export class TelegramEgressWorker {
         await this.hooks.afterComplete?.(effectId);
       }
       if (blocked) {
-        await this.repository.ack(this.acknowledgement(event, { status: 'dead', error: blocked }));
+        await this.durableAck(event, { status: 'dead', error: blocked });
         if (!interimAcknowledgement) this.finishActivity(event, bridgeAlias, api, 'dead');
         this.onMetric('egress_dead');
         return;
       }
-      await this.repository.ack(this.acknowledgement(event, { status: 'sent', effect_count: pieces.length }));
+      await this.durableAck(event, { status: 'sent', effect_count: pieces.length });
       if (!interimAcknowledgement) {
         this.finishActivity(event, bridgeAlias, api, relayOutcome(event.payload));
       }
       this.onMetric('egress_sent');
     } catch (error) {
       if (error instanceof EgressCrash) throw error;
+      if (error instanceof EgressLeaseLost) return;
       const retryable = error instanceof TelegramApiError ? error.retryable : true;
       const retry = retryable && event.attempt < event.max_attempts;
       if (retry) {
         const exponential = Math.min(300_000, this.baseRetryMs * 2 ** Math.max(0, event.attempt - 1));
         const retryAfter = error instanceof TelegramApiError && error.retryAfterMs !== undefined
           ? Math.max(exponential, error.retryAfterMs) : exponential;
-        await this.repository.ack(this.acknowledgement(event, {
+        await this.durableAck(event, {
           status: 'retry', error: safeError(error), retry_after_ms: retryAfter
-        }));
+        });
         this.onMetric('egress_retry');
       } else {
-        await this.repository.ack(this.acknowledgement(event, { status: 'dead', error: safeError(error) }));
+        await this.durableAck(event, { status: 'dead', error: safeError(error) });
         if (!interimAcknowledgement) this.finishActivity(event, bridgeAlias, api, 'dead');
         this.onMetric('egress_dead');
       }
@@ -599,10 +666,14 @@ export class TelegramEgressWorker {
 
   async run(signal: AbortSignal, idleMs = 250): Promise<void> {
     while (!signal.aborted) {
+      this.observer?.egressCycleStarted();
       try {
         const count = await this.runOnce();
+        this.observer?.egressCycleSucceeded(count);
         if (count === 0) await sleep(idleMs, signal);
       } catch (error) {
+        this.observer?.egressCycleFailed();
+        this.onMetric('egress_loop_error');
         if (error instanceof EgressCrash) throw error;
         if (!signal.aborted) await sleep(1_000, signal);
       }

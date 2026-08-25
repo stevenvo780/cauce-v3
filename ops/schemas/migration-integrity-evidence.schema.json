@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/migration-integrity-evidence.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "phase", "generatedAt", "sourceOriginPolicy", "migrationSetSha256", "structuralContract", "entries"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "suite": { "const": "cauce-v3-migration-integrity" },
+    "phase": { "enum": ["pre", "post"] },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "sourceOriginPolicy": { "const": "never-infer-from-version-name" },
+    "migrationSetSha256": { "$ref": "#/$defs/sha256" },
+    "structuralContract": { "const": "024-agent-role-templates-v1" },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "sourceSha256", "applied", "sourceOrigin", "verificationMethod"],
+        "properties": {
+          "version": { "type": "string", "pattern": "^[0-9]{3}_[a-z0-9_]+\\.sql$" },
+          "sourceSha256": { "$ref": "#/$defs/sha256" },
+          "applied": { "type": "boolean" },
+          "sourceOrigin": { "enum": ["applied-atomically", "undetermined", "pending"] },
+          "verificationMethod": { "enum": ["atomic-ledger-v1", "structural-equivalence-v1", "legacy-name-only", "not-applied"] },
+          "observedSchemaSha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

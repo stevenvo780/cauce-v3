@@ -11,6 +11,7 @@ import type {
   TelegramMessage, TelegramUpdate
 } from './types.js';
 import type { TelegramActivity } from './activity.js';
+import type { TelegramLoopObserver } from './progress.js';
 import { TelegramApiError } from './telegram.js';
 import { prepareTelegramAttachments, prepareTelegramVoice } from './attachments.js';
 import { redactSecretsDeep } from './redaction.js';
@@ -29,6 +30,7 @@ export interface TelegramPollerOptions {
   activity?: TelegramActivity;
   ownerId?: string;
   onMetric?: (metric: BridgeMetric) => void;
+  observer?: TelegramLoopObserver;
   /** Usernames/bot ids of the whole fleet. Defaults to a directory holding only this bot. */
   fleet?: FleetDirectory;
   /** Verified `getMe` username of this bot, used to match `@self` mentions. */
@@ -454,6 +456,7 @@ export class TelegramPoller {
   private readonly activity: TelegramActivity | undefined;
   private readonly ownerId: string;
   private readonly onMetric: (metric: BridgeMetric) => void;
+  private readonly observer: TelegramLoopObserver | undefined;
   private readonly fleet: FleetDirectory;
   private readonly self: AddressingSelf;
   private readonly participants: ((chatId: string, threadId: string) => ReadonlySet<string>) | undefined;
@@ -479,6 +482,7 @@ export class TelegramPoller {
     this.activity = options.activity;
     this.ownerId = options.ownerId ?? `telegram-poller:${randomUUID()}`;
     this.onMetric = options.onMetric ?? (() => undefined);
+    this.observer = options.observer;
     const username = options.botUsername ?? options.config.bot_username;
     this.fleet = options.fleet ?? {
       byUsername: new Map(username === undefined ? [] : [[username.toLowerCase(), options.config.alias]]),
@@ -506,6 +510,11 @@ export class TelegramPoller {
       ...this.fleet.byBotId.values(),
       options.config.alias
     ]);
+  }
+
+  private markPollFenced(): void {
+    this.onMetric('poll_fenced');
+    this.observer?.pollCycleFenced(this.config.alias);
   }
 
   /**
@@ -754,13 +763,52 @@ export class TelegramPoller {
     await this.repository.advanceCursor(current, update.update_id + 1);
   }
 
+  private async processWithLeaseHeartbeat(update: TelegramUpdate, current: PollLease): Promise<PollLease | undefined> {
+    const stop = new AbortController();
+    const intervalMs = Math.max(1_000, Math.floor(this.config.poll_lease_ms / 3));
+    let active = current;
+    let fenced = false;
+    const heartbeat = (async (): Promise<void> => {
+      while (!stop.signal.aborted) {
+        await sleep(intervalMs, stop.signal);
+        if (stop.signal.aborted) return;
+        let renewed: PollLease | undefined;
+        try {
+          renewed = await this.repository.renewPollLease(active, this.config.poll_lease_ms);
+        } catch {
+          renewed = undefined;
+        }
+        if (!renewed) {
+          fenced = true;
+          return;
+        }
+        active = renewed;
+        this.currentLease = renewed;
+      }
+    })();
+    try {
+      await this.process(update, current);
+    } finally {
+      stop.abort();
+      await heartbeat;
+      if (fenced) {
+        this.currentLease = undefined;
+        this.markPollFenced();
+      }
+    }
+    if (fenced) {
+      return undefined;
+    }
+    return active;
+  }
+
   async runOnce(): Promise<number> {
     let current = this.currentLease
       ? await this.repository.renewPollLease(this.currentLease, this.config.poll_lease_ms)
       : await this.repository.acquirePollLease(this.botId, this.ownerId, this.config.poll_lease_ms);
     if (!current) {
       this.currentLease = undefined;
-      this.onMetric('poll_fenced');
+      this.markPollFenced();
       return 0;
     }
     this.currentLease = current;
@@ -771,12 +819,18 @@ export class TelegramPoller {
       const renewed = await this.repository.renewPollLease(current, this.config.poll_lease_ms);
       if (!renewed) {
         this.currentLease = undefined;
-        this.onMetric('poll_fenced');
+        this.markPollFenced();
         break;
       }
       current = renewed;
       this.currentLease = current;
-      await this.process(update, current);
+      const afterProcess = await this.processWithLeaseHeartbeat(update, current);
+      if (!afterProcess) break;
+      current = afterProcess;
+      this.currentLease = current;
+      // This is real per-update progress.  Lease renewal by itself must not keep health green
+      // while the same update is hung forever.
+      this.observer?.pollCycleHeartbeat(this.config.alias);
     }
     return updates.length;
   }
@@ -784,11 +838,15 @@ export class TelegramPoller {
   async run(signal: AbortSignal, idleMs = 250): Promise<void> {
     let failures = 0;
     while (!signal.aborted) {
+      this.observer?.pollCycleStarted(this.config.alias);
       try {
         const count = await this.runOnce();
+        this.observer?.pollCycleSucceeded(this.config.alias, count);
         failures = 0;
         if (count === 0) await sleep(idleMs, signal);
       } catch (error) {
+        this.observer?.pollCycleFailed(this.config.alias);
+        this.onMetric('poll_error');
         failures += 1;
         /**
          * El único lugar donde queda constancia de que el bucle está fallando.

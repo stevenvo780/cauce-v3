@@ -47,8 +47,15 @@ full     Union of every domain. Backs the three-round verification evidence, bec
          `full` is also the safe default: a caller that forgets to declare a domain gets the
          strictest digest and fails closed, never open.
 
-Justification for the single exclusion that LOOSENS anything
-------------------------------------------------------------
+Justification for the exclusions that LOOSEN anything
+------------------------------------------------------
+`apps/console/src/features/_grafo/` is operator-local SQL scratch.  It is excluded from every
+domain by its exact repository-relative prefix, and nowhere else.  It cannot enter a release:
+`.dockerignore` excludes it from ordinary Docker contexts and `release-build.sh` builds from the
+committed `git archive`, rejects that path if it ever becomes committed, and fails on every other
+untracked path.  Excluding the scratch here makes a digest recomputed on the release host describe
+the same committed RC that was built, without moving or hashing local operator notes.
+
 `apps/console` is absent from the `runtime` domain. This is safe because there is no causal path
 from apps/console to the runtime image or to runtime behaviour:
   1. deploy/Dockerfile copies apps/console only into the `build` stage and into the
@@ -92,6 +99,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 # They define the workspace shape and the resolved dependency graph for BOTH images, so a change
 # to any of them can change either one.
 SHARED_MANIFESTS = (
+    ".dockerignore",
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
@@ -114,6 +122,7 @@ DOMAIN_INPUTS: dict[str, tuple[str, ...]] = {
     "harness": (
         "ops/harness",
         "ops/compose.authentic.yaml",
+        "ops/scripts/compose-files.sh",
         "ops/scripts/compose.sh",
         "ops/scripts/fault-compose.sh",
         "ops/scripts/fault-compose.test.sh",
@@ -138,6 +147,10 @@ EXCLUDED_PARTS = {
     ".claude",
 }
 
+# Do not turn this into a name-based exclusion.  Only the explicitly approved operator scratch
+# path is outside release source digests; a `_grafo` directory anywhere else remains covered.
+EXCLUDED_PREFIXES = (pathlib.PurePosixPath("apps/console/src/features/_grafo"),)
+
 
 def domain_inputs(domain: str) -> tuple[str, ...]:
     if domain == "full":
@@ -160,6 +173,9 @@ def files(root: pathlib.Path, domain: str) -> list[pathlib.Path]:
                 continue
             local = path.relative_to(root)
             if any(part in EXCLUDED_PARTS for part in local.parts):
+                continue
+            local_posix = pathlib.PurePosixPath(local.as_posix())
+            if any(local_posix == prefix or prefix in local_posix.parents for prefix in EXCLUDED_PREFIXES):
                 continue
             if path.name == ".env" or path.name.startswith(".env."):
                 continue
@@ -192,7 +208,7 @@ def main(argv: list[str]) -> int:
         "--root",
         type=pathlib.Path,
         default=None,
-        help="tree to digest (tests only; every release validator invokes this script without --root)",
+        help="tree to digest (used by tests and by the committed git-archive release context)",
     )
     parser.add_argument("output", nargs="?", type=pathlib.Path, help="write the digest here instead of stdout")
     args = parser.parse_args(argv)

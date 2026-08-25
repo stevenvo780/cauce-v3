@@ -17,12 +17,22 @@
     "spec": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tenant", "room", "alias", "harness", "origin", "relay", "secretPathEnv", "process", "stateDirectory"],
+      "required": ["tenant", "room", "alias", "harness", "profile", "origin", "relay", "secretPathEnv", "process", "stateDirectory"],
       "properties": {
         "tenant": { "enum": ["Steven", "Miguel", "Isa", "Jhon", "Pablo"] },
         "room": { "enum": ["grp.steven", "grp.miguel", "grp.isa", "grp.jhon", "grp.pablo"] },
         "alias": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
         "harness": { "enum": ["openclaw", "opencode", "claude", "hermes", "codex"] },
+        "profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seedOnConnect", "configScope"],
+          "properties": {
+            "seedOnConnect": { "const": true },
+            "configScope": { "const": "alias" },
+            "workspace": { "type": "string", "pattern": "^/[A-Za-z0-9._/-]+$" }
+          }
+        },
         "origin": {
           "type": "object",
           "additionalProperties": false,
@@ -71,6 +81,18 @@
           },
           "else": {
             "properties": { "process": { "not": { "required": ["operationalModelEnv"] } } }
+          }
+        },
+        {
+          "if": {
+            "required": ["harness"],
+            "properties": { "harness": { "const": "openclaw" } }
+          },
+          "then": {
+            "properties": { "profile": { "required": ["workspace"] } }
+          },
+          "else": {
+            "properties": { "profile": { "not": { "required": ["workspace"] } } }
           }
         }
       ]

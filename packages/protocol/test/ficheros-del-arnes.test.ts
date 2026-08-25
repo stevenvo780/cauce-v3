@@ -103,8 +103,7 @@ test("cada cara del perfil cae en SU fichero y NO en los demás", () => {
   assert.match(textoDe(ficheros, "AGENTS.md"), /RESTRICCION-AGENTS/);
   assert.match(textoDe(ficheros, "AGENTS.md"), /REGLA-AGENTS/);
   assert.match(textoDe(ficheros, "TOOLS.md"), /HERRAMIENTA-TOOLS/);
-  assert.match(textoDe(ficheros, "TOOLS.md"), /CAPACIDAD-TOOLS/);
-  assert.match(textoDe(ficheros, "TOOLS.md"), /CUOTA-TOOLS/);
+  assert.doesNotMatch(textoDe(ficheros, "TOOLS.md"), /CAPACIDAD-TOOLS|CUOTA-TOOLS/);
 
   // ...y en NINGÚN otro. Éste es el control que hace la prueba capaz de dar rojo: sin él, un
   // generador que escribiera el perfil entero en los siete ficheros pasaría los asertos de arriba.
@@ -123,16 +122,31 @@ test("cada cara del perfil cae en SU fichero y NO en los demás", () => {
   }
 });
 
-test("los permisos y los destinos viajan en AGENTS.md, que es el fichero del «cómo se trabaja acá»", () => {
-  const ficheros = ficherosDelArnes("openclaw", {
+test("revocar permisos o cambiar destinos, cuotas y montaje NO deja una fotografía rancia en disco", () => {
+  const antes = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
+  const despues = ficherosDelArnes("openclaw", {
     perfil: perfil(),
-    hechos: hechos({ permisos: { ruta: true, lectura: false, control: false, notificacion: false } }),
+    hechos: hechos({
+      permisos: { ruta: false, lectura: false, control: false, notificacion: false },
+      destinos: ["socrates"],
+      cuotas: [{ proveedor: "codex", cuenta: "otra", limite: "agotada" }],
+      arnes: {
+        harness: "claude", home: "/otro/home", contenedor: "otro-contenedor",
+        capacidades: ["otra-capacidad"],
+      },
+    }),
   });
-  const agents = textoDe(ficheros, "AGENTS.md");
-  // Los DENEGADOS se nombran igual que los concedidos: un agente que no sabe si puede, prueba.
-  assert.match(agents, /Leer el estado de la flota: no/);
-  assert.match(agents, /Rutear mensajes a otros alias: sí/);
-  assert.match(agents, /kant/);
+
+  assert.deepEqual(
+    despues.map((fichero: FicheroGenerado) => [fichero.nombre, fichero.texto]),
+    antes.map((fichero: FicheroGenerado) => [fichero.nombre, fichero.texto]),
+  );
+  for (const fichero of despues) {
+    assert.doesNotMatch(
+      fichero.texto,
+      /kant|argos|socrates|CUOTA-TOOLS|otra-capacidad|otro-contenedor|\/otro\/home|Leer el estado/,
+    );
+  }
 });
 
 // ── MEMORY Y HEARTBEAT SON DEL AGENTE ────────────────────────────────────────────────────────

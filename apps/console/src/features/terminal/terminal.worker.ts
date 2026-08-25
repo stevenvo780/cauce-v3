@@ -15,7 +15,10 @@ function flush(): void {
 scope.onmessage = (event: MessageEvent<Inbound>) => {
   if (event.data.type === 'close') {
     if (timer !== undefined) clearTimeout(timer);
+    const tail = decoder.decode();
+    if (tail) chunks.push(tail);
     flush();
+    scope.postMessage({ type: 'closed' });
     scope.close();
     return;
   }

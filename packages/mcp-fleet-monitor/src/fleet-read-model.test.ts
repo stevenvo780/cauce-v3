@@ -1,108 +1,171 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createPool } from '@cauce/store';
+import { describe, expect, it } from 'vitest';
+import type { DatabasePool } from '@cauce/store';
 import { FleetReadModel } from './fleet-read-model.js';
 
-// This test is designed to run against the real database if DATABASE_URL is set
-// Skip if no database is available
+interface QueryStep {
+  readonly match: RegExp;
+  readonly rows: readonly Record<string, unknown>[];
+}
+
+interface QueryCall {
+  readonly sql: string;
+  readonly params: readonly unknown[];
+}
+
+/**
+ * A deterministic Pool double. The real PostgreSQL/MCP wire is covered by
+ * tests/integration/mcp-fleet-monitor-tools.test.ts; these tests pin every mapping and selector
+ * without turning missing DATABASE_URL into seven silent skips.
+ */
+function scriptedPool(...steps: readonly QueryStep[]): {
+  readonly pool: DatabasePool;
+  readonly calls: QueryCall[];
+} {
+  const pending = [...steps];
+  const calls: QueryCall[] = [];
+  const query = async (sql: string, params: readonly unknown[] = []) => {
+    calls.push({ sql, params });
+    const step = pending.shift();
+    if (!step) throw new Error(`unexpected query: ${sql}`);
+    expect(sql).toMatch(step.match);
+    return { rows: [...step.rows] };
+  };
+  return { pool: { query } as unknown as DatabasePool, calls };
+}
 
 describe('FleetReadModel', () => {
-  let pool: ReturnType<typeof createPool> | undefined;
-  let model: FleetReadModel | undefined;
-  const testTenantId = 'grp.steven';
+  it('lists enabled catalog aliases even before they have a delivery or lease', async () => {
+    const future = new Date('2099-01-01T00:00:00.000Z');
+    const activity = new Date('2026-08-25T12:00:00.000Z');
+    const fake = scriptedPool({
+      match: /SELECT alias FROM agents[\s\S]*enabled = true/u,
+      rows: [{
+        alias: 'kant', active_instance_id: 'instance-1', lease_expires_at: future,
+        epoch: '7', last_activity: activity,
+      }],
+    });
 
-  beforeAll(async () => {
-    const dbUrl = process.env.DATABASE_URL;
-    if (!dbUrl) {
-      console.log('DATABASE_URL not set; skipping live database tests');
-      return;
-    }
+    const result = await new FleetReadModel(fake.pool, 'Steven').estadoFlota('kant');
 
-    try {
-      pool = createPool(dbUrl);
-      model = new FleetReadModel(pool, testTenantId);
-
-      // Test connection
-      const result = await pool.query('SELECT 1');
-      if (!result.rows.length) {
-        throw new Error('Database connection test failed');
-      }
-      console.log('Database connection established');
-    } catch (error) {
-      console.error('Failed to connect to database:', error);
-      pool = undefined;
-      model = undefined;
-    }
+    expect(fake.calls[0]?.params).toEqual(['Steven', 'kant']);
+    expect(result).toEqual({
+      available: true,
+      data: [{
+        alias: 'kant', active_instance_id: 'instance-1', lease_alive: true, epoch: 7,
+        lease_expires_at: future.toISOString(), last_activity: activity.toISOString(),
+        available: true,
+      }],
+    });
   });
 
-  afterAll(async () => {
-    if (pool) {
-      await pool.end();
-    }
+  it('maps deliveries and clamps the public limit', async () => {
+    const createdAt = new Date('2026-08-25T12:00:00.000Z');
+    const fake = scriptedPool({
+      match: /FROM deliveries d/u,
+      rows: [{
+        id: 'delivery-1', message_id: 'message-1', recipient_alias: 'kant', status: 'done',
+        attempt: 1, max_attempts: 3, created_at: createdAt, root_message_id: 'root-1',
+      }],
+    });
+
+    const result = await new FleetReadModel(fake.pool, 'Steven').entregas('kant', 'done', 50_000);
+
+    expect(fake.calls[0]?.params).toEqual(['Steven', 'kant', 'done', 1_000]);
+    expect(result.data[0]).toMatchObject({
+      id: 'delivery-1', status: 'done', root_message_id: 'root-1',
+      created_at: createdAt.toISOString(), available: true,
+    });
   });
 
-  it('should return available=false if model is not initialized', async () => {
-    const uninitialized = new FleetReadModel(
-      { query: async () => ({ rows: [] }) } as any,
-      'test'
+  it('follows a root message and preserves the durable hop_count instead of the array index', async () => {
+    const createdAt = new Date('2026-08-25T12:00:00.000Z');
+    const fake = scriptedPool({
+      match: /correlation->>'root_message_id' = \$2/u,
+      rows: [{
+        hop_count: 7, source_alias: 'kant', source_tenant: 'Steven', target_alias: 'socrates',
+        target_tenant: 'Steven', status: 'materialized', created_at: createdAt,
+        rejection_code: null,
+      }],
+    });
+
+    const result = await new FleetReadModel(fake.pool, 'Steven').cadena(undefined, 'root-1');
+
+    expect(fake.calls[0]?.params).toEqual([null, 'root-1']);
+    expect(result).toMatchObject({
+      available: true,
+      root_message_id: 'root-1',
+      data: [{ hop: 7, source_alias: 'kant', target_alias: 'socrates' }],
+    });
+    expect(result).not.toHaveProperty('trace_id');
+  });
+
+  it('uses trace_id when both chain selectors are present', async () => {
+    const fake = scriptedPool({ match: /aom\.trace_id = \$1/u, rows: [] });
+    const result = await new FleetReadModel(fake.pool, 'Steven').cadena('trace-1', 'root-1');
+    expect(fake.calls[0]?.params).toEqual(['trace-1', 'root-1']);
+    expect(result).toEqual({ data: [], available: true, trace_id: 'trace-1' });
+  });
+
+  it('does not query when cadena has no selector', async () => {
+    const fake = scriptedPool();
+    await expect(new FleetReadModel(fake.pool, 'Steven').cadena()).resolves.toEqual({
+      data: [], available: false,
+    });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it('normalizes PostgreSQL bigint dead-letter counts and returns recent examples', async () => {
+    const createdAt = new Date('2026-08-25T12:00:00.000Z');
+    const fake = scriptedPool(
+      { match: /GROUP BY aom\.rejection_code/u, rows: [{ rejection_code: 'target_absent', count: '2' }] },
+      { match: /LIMIT 3/u, rows: [{
+        id: 'delivery-1', recipient_alias: 'missing', created_at: createdAt,
+        rejection_code: 'target_absent',
+      }] },
     );
-    // Don't call query; just test the error handling
+
+    const result = await new FleetReadModel(fake.pool, 'Steven').deadLetters();
+
+    expect(result).toEqual({
+      available: true,
+      data: [{
+        cause: 'target_absent', count: 2,
+        recent_examples: [{
+          delivery_id: 'delivery-1', alias: 'missing', created_at: createdAt.toISOString(),
+          rejection_code: 'target_absent',
+        }],
+      }],
+    });
   });
 
-  it.skipIf(!model)('estadoFlota should return data structure', async () => {
-    if (!model) return;
-    const result = await model.estadoFlota();
-    expect(result).toHaveProperty('data');
-    expect(result).toHaveProperty('available');
-    expect(Array.isArray(result.data)).toBe(true);
+  it('computes health from enabled agents and terminal delivery outcomes', async () => {
+    const fake = scriptedPool(
+      { match: /FROM agents agent/u, rows: [{ live: '2', total: '2' }] },
+      { match: /GROUP BY status/u, rows: [
+        { status: 'done', count: '10' },
+        { status: 'pending', count: '200' },
+      ] },
+    );
+
+    const result = await new FleetReadModel(fake.pool, 'Steven').salud();
+
+    expect(result.summary).toBe('Flota: 2 alias, 2 vivos (healthy), 100% entregas OK');
+    expect(Number.isNaN(Date.parse(result.timestamp))).toBe(false);
   });
 
-  it.skipIf(!model)('estadoFlota should filter by alias', async () => {
-    if (!model) return;
-    const result = await model.estadoFlota('jarvis');
-    if (result.available && result.data.length > 0) {
-      expect(result.data[0].alias).toBe('jarvis');
-    }
+  it('fails closed on malformed database counters', async () => {
+    const fake = scriptedPool({ match: /FROM agents agent/u, rows: [{ live: 'NaN', total: '2' }] });
+    await expect(new FleetReadModel(fake.pool, 'Steven').salud()).rejects.toThrow(
+      /salud read model query failed: live alias count/u,
+    );
   });
 
-  it.skipIf(!model)('entregas should return data structure', async () => {
-    if (!model) return;
-    const result = await model.entregas();
-    expect(result).toHaveProperty('data');
-    expect(result).toHaveProperty('available');
-    expect(Array.isArray(result.data)).toBe(true);
-  });
-
-  it.skipIf(!model)('entregas should filter by status', async () => {
-    if (!model) return;
-    const result = await model.entregas(undefined, 'acked');
-    if (result.available && result.data.length > 0) {
-      result.data.forEach((d) => {
-        expect(['acked', 'claimed', 'dead']).toContain(d.status);
-      });
-    }
-  });
-
-  it.skipIf(!model)('cadena should return data structure', async () => {
-    if (!model) return;
-    const result = await model.cadena('test-trace-id');
-    expect(result).toHaveProperty('data');
-    expect(result).toHaveProperty('available');
-    expect(Array.isArray(result.data)).toBe(true);
-  });
-
-  it.skipIf(!model)('deadLetters should return grouped data', async () => {
-    if (!model) return;
-    const result = await model.deadLetters();
-    expect(result).toHaveProperty('data');
-    expect(result).toHaveProperty('available');
-    expect(Array.isArray(result.data)).toBe(true);
-  });
-
-  it.skipIf(!model)('salud should return health summary', async () => {
-    if (!model) return;
-    const result = await model.salud();
-    expect(result).toHaveProperty('summary');
-    expect(result).toHaveProperty('timestamp');
-    expect(typeof result.summary).toBe('string');
+  it('labels query failures with the tool that became unavailable', async () => {
+    const pool = {
+      query: async () => { throw new Error('database offline'); },
+    } as unknown as DatabasePool;
+    await expect(new FleetReadModel(pool, 'Steven').estadoFlota()).rejects.toThrow(
+      'estado_flota read model query failed: database offline',
+    );
   });
 });

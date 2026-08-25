@@ -7,16 +7,18 @@ import { X509Certificate } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { AgentLeg, createAgentTlsServer, loadAgentRegistry } from './agent-leg.js';
-import { BrowserLeg, createBrowserHttpsServer, BROWSER_WS_PATH } from './browser-leg.js';
+import { BrowserLeg, createBrowserHttpsServer, BROWSER_WS_PATH, parseAttachRequest } from './browser-leg.js';
 import { loadRelayConfig } from './config.js';
 import {
   decodeDataFrame, decodeJsonFrame, encodeDataFrame, encodeFrame, encodeJsonFrame, FrameDecoder, FRAME_TAGS
 } from './framing.js';
 import {
-  parseSessionGrant, type AgentPresence, type AuthzOutcome, type ConsumeOutcome, type SessionCloseReport,
+  parseSessionGrant, type AgentPresence, type AuthzOutcome, type ConsumeOutcome, type ResumeOutcome, type SessionCloseReport,
   type TerminalGatewayClient, type TerminalSessionGrant
 } from './gateway-client.js';
-import { CLOSE_CODES, SessionManager, type SessionLimits } from './sessions.js';
+import {
+  CLOSE_CODES, MAX_COLS, MAX_ROWS, MIN_COLS, MIN_ROWS, SessionManager, type SessionLimits
+} from './sessions.js';
 
 /**
  * Circuit test: a real mutual-TLS agent leg, a real mutual-TLS browser leg and a scripted
@@ -281,18 +283,33 @@ function grant(overrides: Partial<TerminalSessionGrant> = {}): TerminalSessionGr
     container: 'claw',
     runtime_user: 'claw',
     session_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    resume_token: 'r'.repeat(100),
     ...overrides
   };
 }
 
 class ScriptedGateway implements TerminalGatewayClient {
   consume: ConsumeOutcome = { status: 'granted', grant: grant() };
+  consumeCalls = 0;
+  resumeCalls = 0;
+  resume: ResumeOutcome | undefined;
+  consumeGate: Promise<void> | undefined;
   authz: AuthzOutcome = 'allow';
   readonly closeReports: SessionCloseReport[] = [];
   readonly presence: AgentPresence[][] = [];
 
   async consumeTicket(): Promise<ConsumeOutcome> {
+    this.consumeCalls += 1;
+    await this.consumeGate;
     return this.consume;
+  }
+
+  async resumeSession(): Promise<ResumeOutcome> {
+    this.resumeCalls += 1;
+    if (this.resume !== undefined) return this.resume;
+    return this.consume.status === 'granted'
+      ? { status: 'granted', grant: this.consume.grant }
+      : { status: 'unavailable' };
   }
 
   async authorizeSession(): Promise<AuthzOutcome> {
@@ -312,6 +329,7 @@ class ScriptedGateway implements TerminalGatewayClient {
 /** Stand-in for the Python PTY agent: it speaks the same framing and echoes STDIN back. */
 class FakePtyAgent {
   readonly stdin: Buffer[] = [];
+  readonly terminalResponses: Buffer[] = [];
   readonly opens: Record<string, unknown>[] = [];
   readonly closes: Record<string, unknown>[] = [];
   helloAck: Record<string, unknown> | undefined;
@@ -382,6 +400,11 @@ class FakePtyAgent {
       this.stdin.push(data.data);
       // A real PTY echoes what was typed; that is how the operator sees their own keystrokes.
       this.socket.write(encodeDataFrame(FRAME_TAGS.STDOUT, data.sessionId, data.data));
+      return;
+    }
+    if (tag === FRAME_TAGS.TERMINAL_RESPONSE) {
+      const data = decodeDataFrame(payload);
+      this.terminalResponses.push(data.data);
       return;
     }
     if (tag === FRAME_TAGS.CLOSE) this.closes.push(decodeJsonFrame(payload));
@@ -478,13 +501,15 @@ interface BrowserClient {
 
 async function connectConsole(
   port: number,
-  material: { cert: string; key: string } = { cert: TEST_CONSOLE_CERTIFICATE, key: TEST_CONSOLE_PRIVATE_KEY }
+  material: { cert: string; key: string } = { cert: TEST_CONSOLE_CERTIFICATE, key: TEST_CONSOLE_PRIVATE_KEY },
+  origin = `https://localhost:${port}`
 ): Promise<BrowserClient> {
   // Dialled by name so SNI and hostname verification match the fixture SAN, as nginx would.
   const socket = new WebSocket(`wss://localhost:${port}${BROWSER_WS_PATH}`, {
     ca: TEST_CA_CERTIFICATE,
     cert: material.cert,
-    key: material.key
+    key: material.key,
+    origin
   });
   const client: BrowserClient = { socket, text: [], binary: [], closes: [] };
   socket.on('message', (data: Buffer, isBinary: boolean) => {
@@ -503,6 +528,13 @@ async function connectConsole(
 function attach(client: BrowserClient, overrides: Record<string, unknown> = {}): void {
   client.socket.send(JSON.stringify({
     type: 'attach', session_id: SESSION_ID, ticket: 'opaque-ticket', cols: 120, rows: 40, ...overrides
+  }));
+}
+
+function resume(client: BrowserClient, overrides: Record<string, unknown> = {}): void {
+  client.socket.send(JSON.stringify({
+    type: 'resume', session_id: SESSION_ID, resume_token: 'r'.repeat(100),
+    after_bytes: 0, cols: 120, rows: 40, ...overrides,
   }));
 }
 
@@ -531,9 +563,32 @@ describe('relay configuration and identity registry', () => {
       authzGraceMs: 90_000,
       maxSessions: 16
     });
+
+    expect(loadRelayConfig({
+      ...environment,
+      CAUCE_TERMINAL_RELAY_CONSOLE_CN: 'console-client,gateway-client',
+    }).consoleCommonNames).toEqual(['console-client', 'gateway-client']);
+    for (const commonNames of [
+      '', ',console', 'console,', 'console,,gateway', 'console,console',
+      'console\nclient', `console-${'x'.repeat(128)}`, 'cónsola',
+    ]) {
+      expect(() => loadRelayConfig({
+        ...environment, CAUCE_TERMINAL_RELAY_CONSOLE_CN: commonNames,
+      })).toThrow();
+    }
     expect(() => loadRelayConfig({ ...environment, CAUCE_TERMINAL_GATEWAY_URL: 'http://gateway:8443' })).toThrow();
     expect(() => loadRelayConfig({ ...environment, CAUCE_TERMINAL_GATEWAY_URL: 'https://user:pw@gateway:8443' })).toThrow();
     expect(() => loadRelayConfig({ ...environment, CAUCE_TERMINAL_RELAY_TOKEN_FILE: '' })).toThrow();
+  });
+
+  it('acota la geometría del attach igual que un resize y rechaza valores no enteros', () => {
+    const request = (cols: unknown, rows: unknown) => Buffer.from(JSON.stringify({
+      type: 'attach', session_id: SESSION_ID, ticket: 'opaque-ticket', cols, rows
+    }));
+    expect(parseAttachRequest(request(1, 1), false)).toMatchObject({ cols: MIN_COLS, rows: MIN_ROWS });
+    expect(parseAttachRequest(request(9_999, 9_999), false)).toMatchObject({ cols: MAX_COLS, rows: MAX_ROWS });
+    expect(parseAttachRequest(request(80.5, 24), false)).toBeUndefined();
+    expect(parseAttachRequest(request('80', 24), false)).toBeUndefined();
   });
 
   it('admits nobody when the identity registry cannot be read or parsed', async () => {
@@ -605,6 +660,76 @@ describe('terminal relay circuit', () => {
     expect(harness.gateway.closeReports[0]).toMatchObject({ reason: 'exited', exit_code: 0, bytes_in: 7 });
   });
 
+  it('public reconnect reattaches the same PTY and a concurrent replay cannot own a second socket', async () => {
+    const harness = await startHarness({ reconnectGraceMs: 1_000 });
+    const agent = await FakePtyAgent.connect(harness.agentPort, {
+      cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY,
+    }, {
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw',
+      generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
+      runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell'],
+    });
+    await waitFor(() => harness.leg.lookup('Steven', 'jarvis') !== undefined);
+    const first = await connectConsole(harness.browserPort);
+    attach(first);
+    await waitFor(() => first.text.some((frame) => frame.type === 'ready'));
+    agent.emit('scrollback-tail');
+    await waitFor(() => first.binary.length > 0);
+    first.socket.terminate();
+    await waitFor(() => first.closes.length > 0);
+
+    const winner = await connectConsole(harness.browserPort);
+    resume(winner);
+    await waitFor(() => winner.text.some((frame) => frame.type === 'ready'));
+    expect(winner.text[0]).toMatchObject({ type: 'ready', resumed: true, stream_offset: 0 });
+    await waitFor(() => winner.binary.length > 0);
+    expect(winner.binary[0]?.toString()).toBe('scrollback-tail');
+
+    const replay = await connectConsole(harness.browserPort);
+    resume(replay);
+    await waitFor(() => replay.closes.length > 0);
+    expect(replay.closes[0]).toEqual({ code: CLOSE_CODES.session_conflict, reason: 'resume_conflict' });
+    expect(agent.opens).toHaveLength(1);
+    expect(harness.gateway.consumeCalls).toBe(1);
+    expect(harness.gateway.resumeCalls).toBe(2);
+  });
+
+  it('rejects a browser Origin mismatch before consuming or resuming a credential', async () => {
+    const harness = await startHarness();
+    await expect(connectConsole(
+      harness.browserPort,
+      { cert: TEST_CONSOLE_CERTIFICATE, key: TEST_CONSOLE_PRIVATE_KEY },
+      'https://attacker.invalid',
+    )).rejects.toThrow();
+    expect(harness.gateway.consumeCalls).toBe(0);
+    expect(harness.gateway.resumeCalls).toBe(0);
+  });
+
+  it('lleva DA/DSR por su tag end-to-end en harness y corta cualquier STDIN humano', async () => {
+    const harness = await startHarness();
+    harness.gateway.consume = { status: 'granted', grant: grant({ mode: 'harness' }) };
+    const agent = await FakePtyAgent.connect(harness.agentPort, {
+      cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
+    }, {
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
+      runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['harness']
+    });
+    await waitFor(() => harness.leg.lookup('Steven', 'jarvis') !== undefined);
+    const client = await connectConsole(harness.browserPort);
+    attach(client);
+    await waitFor(() => client.text.length > 0);
+
+    client.socket.send(JSON.stringify({ type: 'terminal_response', data: '\x1b[?1;2c\x1b[24;80R' }));
+    await waitFor(() => agent.terminalResponses.length > 0);
+    expect(agent.terminalResponses[0]?.toString('ascii')).toBe('\x1b[?1;2c\x1b[24;80R');
+    expect(agent.stdin).toHaveLength(0);
+
+    client.socket.send(JSON.stringify({ type: 'input', data: 'yes\r' }));
+    await waitFor(() => client.closes.length > 0);
+    expect(client.closes[0]).toEqual({ code: CLOSE_CODES.protocol_error, reason: 'input_forbidden' });
+    expect(agent.stdin).toHaveLength(0);
+  });
+
   it('closes with 4400 when the first frame is not a valid attach', async () => {
     const harness = await startHarness();
     const client = await connectConsole(harness.browserPort);
@@ -661,6 +786,42 @@ describe('terminal relay circuit', () => {
     attach(client);
     await waitFor(() => client.closes.length > 0);
     expect(client.closes[0]).toEqual({ code: CLOSE_CODES.agent_offline, reason: 'agent_offline' });
+    await waitFor(() => harness.gateway.closeReports.length > 0);
+    expect(harness.gateway.closeReports[0]).toMatchObject({ reason: 'agent_offline', bytes_in: 0, bytes_out: 0 });
+  });
+
+  it('cierra el ticket si el browser desaparece mientras consume y no crea una sesión fantasma', async () => {
+    const harness = await startHarness();
+    let releaseConsume!: () => void;
+    harness.gateway.consumeGate = new Promise<void>((resolve) => { releaseConsume = resolve; });
+    const client = await connectConsole(harness.browserPort);
+    attach(client);
+    await waitFor(() => harness.gateway.consumeCalls === 1);
+    client.socket.close(1000, 'gone_during_consume');
+    await waitFor(() => client.closes.length > 0);
+    releaseConsume();
+    await waitFor(() => harness.gateway.closeReports.length > 0);
+    expect(harness.gateway.closeReports[0]).toMatchObject({ reason: 'browser_closed', bytes_in: 0, bytes_out: 0 });
+    expect(harness.sessions.size).toBe(0);
+  });
+
+  it('acota la entrada que llega mientras consume el ticket y libera la plaza al cortar el flood', async () => {
+    const harness = await startHarness();
+    let releaseConsume!: () => void;
+    harness.gateway.consumeGate = new Promise<void>((resolve) => { releaseConsume = resolve; });
+    const client = await connectConsole(harness.browserPort);
+    attach(client);
+    await waitFor(() => harness.gateway.consumeCalls === 1);
+
+    const chunk = JSON.stringify({ type: 'input', data: 'x'.repeat(16 * 1024) });
+    for (let index = 0; index < 9; index += 1) client.socket.send(chunk);
+    await waitFor(() => client.closes.length > 0);
+    expect(client.closes[0]).toEqual({ code: CLOSE_CODES.input_flood, reason: 'input_flood' });
+
+    releaseConsume();
+    await waitFor(() => harness.gateway.closeReports.length > 0);
+    expect(harness.gateway.closeReports[0]).toMatchObject({ reason: 'browser_closed', bytes_in: 0, bytes_out: 0 });
+    expect(harness.sessions.size).toBe(0);
   });
 
   it('closes the live session with 4403 within one revalidation once the grant is revoked', async () => {

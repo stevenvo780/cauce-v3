@@ -33,6 +33,8 @@ import subprocess
 import sys
 from typing import Any
 
+from container_alias_lib import load_container_aliases
+
 THRESHOLDS = {
     'heartbeat_stale_minutes': 30,
     'pending_unclaimed_minutes': 60,
@@ -40,10 +42,8 @@ THRESHOLDS = {
     'epoch_outlier_multiplier': 2.0,
 }
 
-EXPECTED_ALIASES = [
-    'argos', 'atlas', 'dedalo', 'hegel', 'iza', 'janus', 'jarvis',
-    'kant', 'kratos', 'midas', 'salva', 'seneca', 'socrates', 'vulcano',
-]
+OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
+EXPECTED_ALIASES = sorted(load_container_aliases(OPS_ROOT))
 
 
 def run_psql(database_url: str, query: str) -> str:

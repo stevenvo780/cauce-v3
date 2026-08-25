@@ -155,6 +155,8 @@ function PtySessionDialog({ agent, resolution, pending, error, onCancel, onConfi
   const target = resolution.target;
   const problem = ptyReasonProblem(reason);
   const shared = target?.shares_container_with ?? [];
+  const sharedLabels = shared.map((identity) =>
+    identity.tenant_id === target?.tenant_id ? identity.alias : `${identity.tenant_id}:${identity.alias}`);
 
   useEffect(() => { reasonRef.current?.focus(); }, []);
 
@@ -176,8 +178,8 @@ function PtySessionDialog({ agent, resolution, pending, error, onCancel, onConfi
           <p className="pty-dialog-shared" role="alert">
             <AlertTriangle size={15} aria-hidden="true" />
             <span>
-              Este contenedor lo comparten <strong>{shared.join(', ')}</strong>. Una shell acá no es “la terminal de {agent.alias}”:
-              es acceso al home donde conviven {[agent.alias, ...shared].join(', ')}.
+              Este contenedor lo comparten <strong>{sharedLabels.join(', ')}</strong>. Una shell acá no es “la terminal de {agent.alias}”:
+              es acceso al home donde conviven {[agent.alias, ...sharedLabels].join(', ')}.
             </span>
           </p>
         ) : (
@@ -276,7 +278,7 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
   return (
     <>
       <section className="terminal-inspector-section">
-        <header className="inspector-title"><div><p className="eyebrow">Authority</p><h3>Capability gates</h3></div><ShieldCheck size={18} aria-hidden="true" /></header>
+        <header className="inspector-title"><div><p className="eyebrow">Autorización</p><h3>Permisos efectivos</h3></div><ShieldCheck size={18} aria-hidden="true" /></header>
         <div className="terminal-permissions">
           <PermissionState access={access} permission="ultimate-terminal.connect" />
           <PermissionState access={access} permission="message.publish" />
@@ -285,7 +287,7 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
         <p className="inspector-footnote">Roles: {access?.roles?.length ? access.roles.join(', ') : 'sin dato'}. La UI no eleva permisos faltantes.</p>
       </section>
       <section className="terminal-inspector-section">
-        <header className="inspector-title"><div><p className="eyebrow">Transport plane</p><h3>Adapters</h3></div><Bot size={18} aria-hidden="true" /></header>
+        <header className="inspector-title"><div><p className="eyebrow">Plano de transporte</p><h3>Adaptadores</h3></div><Bot size={18} aria-hidden="true" /></header>
         <div className="terminal-adapter-list">
           {adapters.length ? adapters.map((adapter, index) => (
             <article key={adapter.id ?? index}>
@@ -301,15 +303,15 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
                 {ADAPTER_STATE_LABELS[safeCapabilityState(adapter.state) ?? 'unknown']}
               </Badge>
             </article>
-          )) : <EmptyState>Adapters no informados.</EmptyState>}
+          )) : <EmptyState>Adaptadores no informados.</EmptyState>}
         </div>
       </section>
       <section className="terminal-inspector-section terminal-pty-capability">
-        <header className="inspector-title"><div><p className="eyebrow">Optional channel</p><h3>PTY directo</h3></div><TerminalSquare size={18} aria-hidden="true" /></header>
+        <header className="inspector-title"><div><p className="eyebrow">Canal opcional</p><h3>PTY directo</h3></div><TerminalSquare size={18} aria-hidden="true" /></header>
         <dl>
           <div><dt>Estado</dt><dd>{capability?.available === true ? 'Disponible' : capability?.available === false ? 'No disponible' : 'sin dato'}</dd></div>
-          <div><dt>Target</dt><dd><Unknown value={capability?.target_label} /></dd></div>
-          <div><dt>Endpoint</dt><dd className="mono"><Unknown value={capability?.websocket_path} /></dd></div>
+          <div><dt>Destino</dt><dd><Unknown value={capability?.target_label} /></dd></div>
+          <div><dt>Ruta WebSocket</dt><dd className="mono"><Unknown value={capability?.websocket_path} /></dd></div>
         </dl>
         <p className="inspector-footnote">La autoridad por destino la da el servidor en cada target, no este resumen.</p>
       </section>
@@ -853,8 +855,8 @@ function GridContainer({
     return (
       <div className="terminal-no-session" style={{ flex: 1 }}>
         <span><MessageSquareText size={27} aria-hidden="true" /></span>
-        <p className="eyebrow">No active target</p>
-        <h2>Abrí una sesión desde Fleet</h2>
+        <p className="eyebrow">Ningún agente seleccionado</p>
+        <h2>Abrí una sesión desde la flota</h2>
         <p>Cada pestaña es una vista efímera sobre mensajes y ACK del servidor. No se persiste estado de sesión en el navegador.</p>
       </div>
     );

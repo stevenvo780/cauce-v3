@@ -324,12 +324,12 @@
 .finding-section p {
   margin: 0 0 8px 0;
   font-size: var(--tipo-rotulo);
-  color: hsl(0 0% 55%);
+  color: var(--muted);
 }
 
 @media (prefers-color-scheme: dark) {
   .finding-section p {
-    color: hsl(0 0% 50%);
+    color: var(--muted);
   }
 }
 
@@ -359,14 +359,14 @@
 
 .finding-reason {
   font-size: var(--tipo-apunte);
-  color: hsl(0 0% 55%);
+  color: var(--muted);
   margin-top: 2px;
   margin-left: 16px;
 }
 
 @media (prefers-color-scheme: dark) {
   .finding-reason {
-    color: hsl(0 0% 50%);
+    color: var(--muted);
   }
 }
 

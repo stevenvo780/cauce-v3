@@ -2,7 +2,7 @@
 
 This suite reads `ops/manifests/*.yaml` without modifying them and fails unless the fleet is exactly:
 
-- 12 aliases
+- 15 aliases
 - 5 OpenClaw, 1 Claude, 1 Hermes, 5 Codex, 0 OpenCode
 
 ## Full matrix
@@ -41,7 +41,7 @@ Optional executable overrides are single paths, never shell fragments:
 --command openclaw=/usr/local/bin/openclaw
 ```
 
-Create an inventory matching `host-inventory.schema.json`. Every one of the 12 manifests must be assigned exactly once:
+Create an inventory matching `host-inventory.schema.json`. Every one of the 15 manifests must be assigned exactly once:
 
 ```json
 {

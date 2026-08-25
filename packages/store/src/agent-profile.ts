@@ -17,11 +17,11 @@ import { withTransaction } from './db.js';
  * porque es la misma clase de objeto —una superficie coherente de lectura y escritura sobre una
  * tabla de configuración— y porque la pantalla que lo va a usar ya sostiene un repositorio así.
  *
- * POR QUÉ NO TOCA `config_revisions`: a diferencia de `role_brief`, ningún otro camino escribe
- * `agent_profiles`, así que no hay una segunda pantalla que pueda pisar esta escritura con un
- * `expected_revision` viejo. Cuando el perfil entre en la pantalla de configuración habrá que
- * sumarlo a la revisión, y ése es el momento de hacerlo, no antes: una revisión que nadie compara
- * es ceremonia.
+ * POR QUÉ TIENE REVISIÓN PROPIA: el perfil es un recurso independiente. Usar la revisión global
+ * de configuración hace que una cuota o un destino cambiados por otro operador vuelvan obsoleto
+ * este borrador, y aun así no evita que dos editores del MISMO perfil se pisen. La migración 028
+ * mantiene `revision` y `applied_revision`; este repositorio hace CAS contra la primera y sólo
+ * avanza la segunda después de un ACK completo del runtime.
  *
  * POR QUÉ NO LEE PERMISOS NI CUOTAS: no son de esta tabla. Los permisos viven en `memberships` +
  * `role_policies`, las cuotas en `provider_accounts`, y la configuración del arnés en `agents` +
@@ -31,7 +31,7 @@ import { withTransaction } from './db.js';
 
 /** Las columnas, en el orden de la tabla. Una sola copia para el SELECT y para el RETURNING. */
 const profileColumns =
-  'tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules';
+  'tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules,revision,applied_revision';
 
 interface ProfileRow {
   tenant_id: string;
@@ -43,6 +43,76 @@ interface ProfileRow {
   restrictions: string[] | null;
   tools: string[] | null;
   operating_rules: string[] | null;
+  revision: string;
+  applied_revision: string | null;
+}
+
+/**
+ * La fila y su presencia son dos hechos distintos.
+ *
+ * Un perfil persistido puede estar completamente vacío (todos los textos en NULL y todas las
+ * listas vacías). Por eso la presencia nunca se deduce del contenido: sale del mismo SELECT que
+ * leyó la fila y viaja junto con el perfil normalizado.
+ */
+export interface StoredAgentProfile {
+  readonly perfil: AgentProfile;
+  readonly exists: boolean;
+  /** NULL sólo cuando no existe la fila. */
+  readonly revision: number | null;
+  /** Última revisión cuyo runtime quedó acreditado; NULL = nunca acreditado. */
+  readonly applied_revision: number | null;
+}
+
+/** Resultado de una fila que Postgres acaba de devolver; conserva los literales útiles al CAS. */
+export interface PersistedAgentProfile extends StoredAgentProfile {
+  readonly exists: true;
+  readonly revision: number;
+}
+
+export interface StoredAgentContext {
+  readonly contexto: ContextoDeAlias;
+  readonly exists: boolean;
+  /** Estado durable del alias; false también cuando la identidad canónica no existe. */
+  readonly agent_enabled: boolean;
+  readonly revision: number | null;
+  readonly applied_revision: number | null;
+}
+
+export type AgentProfileMutationErrorCode = 'not_found' | 'disabled' | 'conflict';
+
+export interface AgentProfileAuditActor {
+  readonly tenant_id: string;
+  readonly alias: string;
+}
+
+/** Fallo de dominio estable para que el gateway no traduzca concurrencia a un 500. */
+export class AgentProfileMutationError extends Error {
+  constructor(
+    readonly code: AgentProfileMutationErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AgentProfileMutationError';
+  }
+}
+
+function revisionOf(value: string, field: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`agent profile returned an invalid ${field}`);
+  }
+  return parsed;
+}
+
+function stored(row: ProfileRow): PersistedAgentProfile {
+  return {
+    perfil: toProfile(row),
+    exists: true,
+    revision: revisionOf(row.revision, 'revision'),
+    applied_revision: row.applied_revision === null
+      ? null
+      : revisionOf(row.applied_revision, 'applied_revision'),
+  };
 }
 
 /**
@@ -82,12 +152,22 @@ export class AgentProfileRepository {
    * secciones y nunca un fichero con encabezados huecos.
    */
   async read(tenantId: string, alias: string): Promise<AgentProfile> {
+    return (await this.readWithPresence(tenantId, alias)).perfil;
+  }
+
+  /** La lectura exacta que conserva si Postgres devolvió una fila, incluso si estaba vacía. */
+  async readWithPresence(tenantId: string, alias: string): Promise<StoredAgentProfile> {
     const result = await this.pool.query<ProfileRow>(
       `SELECT ${profileColumns} FROM agent_profiles WHERE tenant_id=$1 AND alias=$2`,
       [tenantId, alias]
     );
     const row = result.rows[0];
-    return row === undefined ? emptyAgentProfile(tenantId, alias) : toProfile(row);
+    return row === undefined
+      ? {
+          perfil: emptyAgentProfile(tenantId, alias), exists: false,
+          revision: null, applied_revision: null,
+        }
+      : stored(row);
   }
 
   /** Los perfiles de varios alias de un tenant, para generar la flota entera de una pasada. */
@@ -117,6 +197,159 @@ export class AgentProfileRepository {
   async write(input: Record<string, unknown>): Promise<AgentProfile> {
     const profile = normalizeAgentProfile(input);
     return withTransaction(this.pool, (client) => this.writeWithClient(client, profile));
+  }
+
+  /**
+   * Reemplazo optimista usado por la consola.
+   *
+   * `expectedRevision=null` significa «la fila debe estar ausente». Un número significa «debe
+   * seguir exactamente en esta revisión». El alias se bloquea y tiene que existir Y estar
+   * habilitado; el estado desconocido cae en denegación, nunca en permiso implícito.
+   *
+   * Persistir aquí sólo cambia lo DESEADO. El llamador todavía debe escribir el runtime y llamar
+   * a `markApplied`; hasta entonces `applied_revision` conserva la versión anterior o NULL.
+   */
+  async replace(
+    input: AgentProfile | Record<string, unknown>,
+    expectedRevision: number | null,
+    actor: AgentProfileAuditActor,
+  ): Promise<PersistedAgentProfile> {
+    const profile = normalizeAgentProfile(input as Record<string, unknown>);
+    if (expectedRevision !== null
+      && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) {
+      throw new AgentProfileMutationError('conflict', 'expected profile revision is invalid');
+    }
+    return withTransaction(this.pool, async (client) => {
+      await this.assertEnabled(client, profile.tenant_id, profile.alias);
+      const values = [
+        profile.tenant_id, profile.alias, profile.purpose, profile.role_summary,
+        profile.human_brief, [...profile.responsibilities], [...profile.restrictions],
+        [...profile.tools], [...profile.operating_rules],
+      ];
+      const result = expectedRevision === null
+        ? await client.query<ProfileRow>(
+            `INSERT INTO agent_profiles
+               (tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules)
+             VALUES ($1,$2,$3,$4,$5,$6::text[],$7::text[],$8::text[],$9::text[])
+             ON CONFLICT (tenant_id,alias) DO NOTHING
+             RETURNING ${profileColumns}`,
+            values,
+          )
+        : await client.query<ProfileRow>(
+            `UPDATE agent_profiles SET
+               purpose=$3,role_summary=$4,human_brief=$5,responsibilities=$6::text[],
+               restrictions=$7::text[],tools=$8::text[],operating_rules=$9::text[],updated_at=now()
+             WHERE tenant_id=$1 AND alias=$2 AND revision=$10
+             RETURNING ${profileColumns}`,
+            [...values, expectedRevision],
+          );
+      const row = result.rows[0];
+      if (row === undefined) {
+        throw new AgentProfileMutationError(
+          'conflict',
+          expectedRevision === null
+            ? 'agent profile already exists'
+            : `agent profile revision changed from ${expectedRevision}`,
+        );
+      }
+      const state = stored(row);
+      await this.audit(client, actor, 'agent_profile.desired', {
+        target_tenant: profile.tenant_id,
+        target_alias: profile.alias,
+        expected_revision: expectedRevision,
+        desired_revision: state.revision,
+        applied_revision: state.applied_revision,
+      });
+      return state;
+    });
+  }
+
+  /**
+   * Registra el ACK de una revisión incluso si ya nació otra deseada.
+   *
+   * Esa carrera no es éxito para el primer escritor, pero el dato sigue siendo verdadero: el
+   * runtime llegó a la revisión N y la base ya desea N+1. Conservar N permite mostrar «pendiente»
+   * y reintentar. Un ACK tardío nunca hace retroceder un `applied_revision` mayor.
+   */
+  async markApplied(
+    tenantId: string,
+    alias: string,
+    expectedRevision: number,
+    actor: AgentProfileAuditActor,
+  ): Promise<PersistedAgentProfile> {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+      throw new AgentProfileMutationError('conflict', 'applied profile revision is invalid');
+    }
+    return withTransaction(this.pool, async (client) => {
+      await this.assertEnabled(client, tenantId, alias);
+      let result = await client.query<ProfileRow>(
+        `UPDATE agent_profiles
+            SET applied_revision=$3
+          WHERE tenant_id=$1 AND alias=$2 AND revision >= $3
+            AND (applied_revision IS NULL OR applied_revision < $3)
+          RETURNING ${profileColumns}`,
+        [tenantId, alias, expectedRevision],
+      );
+      const advanced = result.rows[0] !== undefined;
+      if (result.rows[0] === undefined) {
+        result = await client.query<ProfileRow>(
+          `SELECT ${profileColumns} FROM agent_profiles WHERE tenant_id=$1 AND alias=$2`,
+          [tenantId, alias],
+        );
+      }
+      const row = result.rows[0];
+      if (row === undefined) {
+        throw new AgentProfileMutationError(
+          'conflict', `agent profile disappeared before runtime ACK ${expectedRevision}`,
+        );
+      }
+      const state = stored(row);
+      if ((state.applied_revision ?? 0) < expectedRevision) {
+        throw new AgentProfileMutationError(
+          'conflict', `agent profile cannot record runtime ACK ${expectedRevision}`,
+        );
+      }
+      if (advanced) {
+        await this.audit(client, actor, 'agent_profile.applied', {
+          target_tenant: tenantId,
+          target_alias: alias,
+          applied_revision: expectedRevision,
+          desired_revision: state.revision,
+          converged: state.revision === expectedRevision,
+        });
+      }
+      return state;
+    });
+  }
+
+  private async assertEnabled(
+    client: DatabaseClient, tenantId: string, alias: string,
+  ): Promise<void> {
+    const result = await client.query<{ enabled: boolean }>(
+      `SELECT enabled FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
+      [tenantId, alias],
+    );
+    const row = result.rows[0];
+    if (row === undefined) {
+      throw new AgentProfileMutationError('not_found', 'agent not found');
+    }
+    if (row.enabled !== true) {
+      throw new AgentProfileMutationError('disabled', 'agent is disabled');
+    }
+  }
+
+  /** Auditoría sanitizada y atómica con el cambio: nunca incluye el cuerpo autorado del perfil. */
+  private async audit(
+    client: DatabaseClient,
+    actor: AgentProfileAuditActor,
+    action: 'agent_profile.desired' | 'agent_profile.applied',
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
+       VALUES($1,$2,$3,'allow',$4::jsonb)`,
+      [actor.tenant_id, actor.alias, action, JSON.stringify(metadata)],
+    );
   }
 
   private async writeWithClient(
@@ -157,8 +390,8 @@ export class AgentProfileRepository {
    * necesita poder distinguir «lo borré» de «no había nada», y un `true` incondicional le
    * enseñaría que borró algo que nunca existió.
    *
-   * NO toca `agents.role_brief`: el alias conserva su identidad en el sobre de la entrega aunque
-   * se quede sin perfil.
+   * Borrar la fuente canónica borra también su proyección `agents.role_brief` mediante la
+   * migración 028. Una imagen anterior ve «sin rol» en vez de seguir usando una identidad vieja.
    */
   async remove(tenantId: string, alias: string): Promise<boolean> {
     const result = await this.pool.query(
@@ -179,8 +412,13 @@ export class AgentProfileRepository {
    * compilador ya sabe omitir lo que está vacío.
    */
   async readContext(tenantId: string, alias: string): Promise<ContextoDeAlias> {
-    const [perfil, permisos, cuotas, arnes, destinos] = await Promise.all([
-      this.read(tenantId, alias),
+    return (await this.readContextWithPresence(tenantId, alias)).contexto;
+  }
+
+  /** El contexto compilable más la presencia REAL de la fila autorada. */
+  async readContextWithPresence(tenantId: string, alias: string): Promise<StoredAgentContext> {
+    const [perfilGuardado, permisos, cuotas, arnes, destinos] = await Promise.all([
+      this.readWithPresence(tenantId, alias),
       this.pool.query<{ ruta: boolean; lectura: boolean; control: boolean; notify_rol: boolean }>(
         PERMISOS_SQL, [tenantId, alias]
       ),
@@ -190,9 +428,9 @@ export class AgentProfileRepository {
       }>(CUOTAS_SQL, [tenantId, alias]),
       this.pool.query<{
         harness_id: string | null; home_directory: string | null;
-        container_name: string | null; capabilities: unknown;
+        container_name: string | null; capabilities: unknown; enabled: boolean;
       }>(
-        `SELECT agent.harness_id, agent.home_directory, agent.container_name,
+        `SELECT agent.harness_id, agent.home_directory, agent.container_name, agent.enabled,
                 COALESCE(harness.capabilities,'[]'::jsonb) AS capabilities
            FROM agents agent
            LEFT JOIN harness_definitions harness ON harness.id=agent.harness_id
@@ -201,6 +439,8 @@ export class AgentProfileRepository {
       this.pool.query<{ alias: string }>(DESTINOS_SQL, [tenantId, alias])
     ]);
 
+    const fila = arnes.rows[0];
+    const agentEnabled = fila?.enabled === true;
     const permiso = permisos.rows[0];
     /*
      * `notificacion` es la conjunción de DOS puertas, y las dos son necesarias: el rol tiene que
@@ -213,14 +453,13 @@ export class AgentProfileRepository {
         WHERE tenant_id=$1 AND alias=$2 AND enabled`, [tenantId, alias]
     );
     const permisosEfectivos: PermisosDelAlias = {
-      ruta: permiso?.ruta ?? false,
-      lectura: permiso?.lectura ?? false,
-      control: permiso?.control ?? false,
-      notificacion: (permiso?.notify_rol ?? false)
+      ruta: agentEnabled && (permiso?.ruta ?? false),
+      lectura: agentEnabled && (permiso?.lectura ?? false),
+      control: agentEnabled && (permiso?.control ?? false),
+      notificacion: agentEnabled && (permiso?.notify_rol ?? false)
         && Number(destinosDeAviso.rows[0]?.total ?? '0') > 0
     };
 
-    const fila = arnes.rows[0];
     const capacidades = Array.isArray(fila?.capabilities)
       ? (fila.capabilities as unknown[]).filter((c): c is string => typeof c === 'string')
       : [];
@@ -251,7 +490,13 @@ export class AgentProfileRepository {
       arnes: arnesDelAlias,
       destinos: permisosEfectivos.ruta ? destinos.rows.map((row) => row.alias) : []
     };
-    return { perfil, hechos };
+    return {
+      contexto: { perfil: perfilGuardado.perfil, hechos },
+      exists: perfilGuardado.exists,
+      agent_enabled: agentEnabled,
+      revision: perfilGuardado.revision,
+      applied_revision: perfilGuardado.applied_revision,
+    };
   }
 }
 
@@ -356,4 +601,3 @@ function limiteLegible(
   if (restante === null || ventana === null) return undefined;
   return `${Number(restante)}% disponible en la ventana ${ventana}`;
 }
-

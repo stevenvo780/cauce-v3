@@ -26,15 +26,61 @@ if (requireRestarts && faultMode !== 'compose') {
 }
 const httpTimeoutMs = Number(process.env.CAUCE_HTTP_TIMEOUT_MS || 8_000);
 const wsTimeoutMs = Number(process.env.CAUCE_WS_TIMEOUT_MS || 8_000);
-const retryTimeoutMs = Number(process.env.CAUCE_RETRY_TIMEOUT_MS || 12_000);
+// A lost claim is first fenced, then deliberately held for the 30 s timeout backoff before its
+// wake becomes eligible. The recovery probe must cover that safety interval instead of silently
+// encoding the old immediate-retry behaviour.
+const retryTimeoutMs = Number(process.env.CAUCE_RETRY_TIMEOUT_MS || 45_000);
 const leaseWaitMs = Number(process.env.CAUCE_PRESENCE_LEASE_MS || 500);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const unique = (prefix) => `${prefix}-${crypto.randomUUID()}`;
 const restartEvidence = [];
+const liveSockets = new Set();
+const socketShutdowns = new WeakMap();
+
+function trackSocket(socket) {
+  liveSockets.add(socket);
+  socket.once('close', () => liveSockets.delete(socket));
+  return socket;
+}
+
+async function shutdownSocket(socket, graceful = true) {
+  const existing = socketShutdowns.get(socket);
+  if (existing) return existing;
+  const shutdown = (async () => {
+    if (socket.readyState === WebSocket.CLOSED) return;
+    let closedResolve;
+    const closed = new Promise((resolve) => { closedResolve = resolve; });
+    const onClose = () => closedResolve();
+    const swallowShutdownError = () => undefined;
+    socket.once('close', onClose);
+    socket.on('error', swallowShutdownError);
+    try {
+      if (graceful && socket.readyState === WebSocket.OPEN) socket.close(1000, 'QA close');
+      else socket.terminate();
+      await Promise.race([closed, sleep(1_000)]);
+      if (socket.readyState !== WebSocket.CLOSED) {
+        socket.terminate();
+        await Promise.race([closed, sleep(1_000)]);
+      }
+      if (socket.readyState !== WebSocket.CLOSED) {
+        throw new Error('WebSocket did not reach CLOSED during QA cleanup');
+      }
+    } finally {
+      socket.off('close', onClose);
+      socket.off('error', swallowShutdownError);
+    }
+  })();
+  socketShutdowns.set(socket, shutdown);
+  try {
+    await shutdown;
+  } finally {
+    socketShutdowns.delete(socket);
+  }
+}
 
 const topology = {
-  Steven: { room: 'grp.steven', aliases: ['jarvis', 'kant', 'socrates', 'argos'] },
-  Miguel: { room: 'grp.miguel', aliases: ['kratos', 'janus'] },
+  Steven: { room: 'grp.steven', aliases: ['argos', 'jarvis', 'kant', 'socrates', 'zeus'] },
+  Miguel: { room: 'grp.miguel', aliases: ['atlas', 'iza', 'janus', 'kratos'] },
   Isa: { room: 'grp.isa', aliases: ['salva'] },
   Jhon: { room: 'grp.jhon', aliases: ['hegel'] },
   Pablo: { room: 'grp.pablo', aliases: ['dedalo', 'midas', 'seneca', 'vulcano'] },
@@ -55,32 +101,56 @@ class WsClient {
 
   async connect(expectRejected = false) {
     this.messages = [];
-    this.ws = new WebSocket(wsBaseUrl, {
+    const socket = trackSocket(new WebSocket(wsBaseUrl, {
       headers: { 'x-cauce-tenant': this.identity.tenant, 'x-cauce-alias': this.identity.alias },
-    });
-    this.ws.on('message', (data) => {
+    }));
+    this.ws = socket;
+    socket.on('message', (data) => {
       try { this.messages.push(JSON.parse(data.toString('utf8'))); }
       catch { this.messages.push({ type: 'invalid_json' }); }
     });
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('WebSocket open timeout')), wsTimeoutMs);
-      this.ws.once('open', () => { clearTimeout(timer); resolve(); });
-      this.ws.once('error', (error) => { clearTimeout(timer); reject(error); });
-    });
-    this.send({
-      type: 'hello', version: '3.0', tenant_id: this.identity.tenant, alias: this.identity.alias,
-      instance_id: this.instanceId,
-      capabilities: [`harness.${this.kind}`, 'qa-double', 'acks.v3'],
-    });
-    const response = await this.next((frame) => frame.type === 'hello_ack' || frame.type === 'takeover_rejected');
-    if (expectRejected) {
-      assert.equal(response.type, 'takeover_rejected');
+    try {
+      await new Promise((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timer);
+          socket.off('open', onOpen);
+          socket.off('error', onError);
+        };
+        const onOpen = () => { cleanup(); resolve(); };
+        const onError = (error) => { cleanup(); reject(error); };
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error('WebSocket open timeout'));
+        }, wsTimeoutMs);
+        socket.once('open', onOpen);
+        socket.once('error', onError);
+      });
+      this.send({
+        type: 'hello', version: '3.0', tenant_id: this.identity.tenant, alias: this.identity.alias,
+        instance_id: this.instanceId,
+        capabilities: [`harness.${this.kind}`, 'qa-double', 'acks.v3'],
+      });
+      const response = await this.next(
+        (frame) => frame.type === 'hello_ack' || frame.type === 'takeover_rejected'
+      );
+      if (expectRejected) {
+        assert.equal(response.type, 'takeover_rejected');
+        return response;
+      }
+      assert.equal(response.type, 'hello_ack');
+      assert.equal(response.version, '3.0');
+      this.epoch = response.epoch;
       return response;
+    } catch (error) {
+      try {
+        await shutdownSocket(socket, false);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], error.message, { cause: error });
+      } finally {
+        if (this.ws === socket) this.ws = undefined;
+      }
+      throw error;
     }
-    assert.equal(response.type, 'hello_ack');
-    assert.equal(response.version, '3.0');
-    this.epoch = response.epoch;
-    return response;
   }
 
   send(frame) {
@@ -118,17 +188,41 @@ class WsClient {
     return this.next((frame) => frame.type === 'heartbeat_ack');
   }
 
-  terminate() {
-    this.ws?.terminate();
+  async terminate() {
+    const socket = this.ws;
+    if (!socket) return;
+    await shutdownSocket(socket, false);
+    if (this.ws === socket) this.ws = undefined;
   }
 
   async close() {
     const socket = this.ws;
-    if (!socket || socket.readyState === WebSocket.CLOSED) return;
-    const closed = new Promise((resolve) => socket.once('close', resolve));
-    socket.close(1000, 'QA close');
-    await Promise.race([closed, sleep(1_000)]);
+    if (!socket) return;
+    await shutdownSocket(socket, true);
+    if (this.ws === socket) this.ws = undefined;
   }
+}
+
+async function executeWithClientCleanup(execute) {
+  let executionError;
+  try {
+    await execute();
+  } catch (error) {
+    executionError = error;
+  }
+  const cleanup = await Promise.allSettled(
+    [...liveSockets].map(async (socket) => shutdownSocket(socket, true))
+  );
+  const cleanupErrors = cleanup
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason);
+  if (executionError && cleanupErrors.length > 0) {
+    throw new AggregateError([executionError, ...cleanupErrors], executionError.message, {
+      cause: executionError
+    });
+  }
+  if (executionError) throw executionError;
+  if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'QA WebSocket cleanup failed');
 }
 
 function required(name) {
@@ -186,8 +280,43 @@ async function waitUntil(operation, timeoutMs = wsTimeoutMs) {
   throw lastError || new Error(`condition timeout after ${timeoutMs}ms`);
 }
 
+async function heartbeatWhile(client, operation) {
+  let active = true;
+  let heartbeatError;
+  const heartbeat = (async () => {
+    while (active) {
+      await sleep(Math.min(1_000, Math.max(250, leaseWaitMs)));
+      if (!active) return;
+      try {
+        await client.heartbeat();
+      } catch (error) {
+        heartbeatError = error;
+        return;
+      }
+    }
+  })();
+  let result;
+  let operationError;
+  try {
+    result = await operation();
+  } catch (error) {
+    operationError = error;
+  } finally {
+    active = false;
+    await heartbeat;
+  }
+  if (operationError && heartbeatError) {
+    throw new AggregateError([operationError, heartbeatError], operationError.message, {
+      cause: operationError
+    });
+  }
+  if (operationError) throw operationError;
+  if (heartbeatError) throw heartbeatError;
+  return result;
+}
+
 const tests = [
-  ['14 aliases and four harness kinds over real WS', async () => {
+  ['15 aliases and four harness kinds over real WS', async () => {
     const clients = await Promise.all(allIdentities.map(async (entry, index) => {
       const client = new WsClient(entry, harnessKinds[index % harnessKinds.length]);
       await client.connect();
@@ -282,13 +411,16 @@ const tests = [
     await first.connect();
     const sent = await publish(sender, recipient);
     const lost = await first.nextDelivery(sent.data.message_id);
-    first.terminate();
+    await first.terminate();
     const second = new WsClient(recipient, 'codex', unique('lost-b'));
     await waitUntil(async () => {
       try { await second.connect(); return true; }
       catch { await second.close(); return false; }
     }, retryTimeoutMs);
-    const retried = await second.nextDelivery(sent.data.message_id, retryTimeoutMs);
+    const retried = await heartbeatWhile(
+      second,
+      async () => second.nextDelivery(sent.data.message_id, retryTimeoutMs)
+    );
     assert.equal(retried.delivery_id, lost.delivery_id);
     assert.ok(retried.attempt > lost.attempt);
     await second.ack(retried, 'done');
@@ -463,7 +595,7 @@ async function main() {
   for (const [name, execute, metadata = {}] of tests) {
     const started = performance.now();
     try {
-      await execute();
+      await executeWithClientCleanup(execute);
       results.push({ name, status: 'passed', evidence: 'real', durationMs: Math.round(performance.now() - started), ...metadata });
       console.log(`PASS ${name}`);
     } catch (error) {
@@ -538,7 +670,7 @@ async function writeArtifacts(report) {
   await writeFile(path.join(artifactDir, 'SHA256SUMS'), `${digest(json)}  report.json\n${digest(junit)}  junit.xml\n`, { mode: 0o644 });
 }
 
-main().catch((error) => {
+executeWithClientCleanup(main).catch((error) => {
   console.error(error.stack || error.message);
   process.exitCode = 1;
 });

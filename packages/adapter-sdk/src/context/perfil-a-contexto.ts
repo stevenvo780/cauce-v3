@@ -185,7 +185,8 @@ export {
  */
 export function rolBreveDelPerfil(perfil: AgentProfile): string | null {
   if (perfil.role_summary === null) return null;
-  return clampToRoleBriefLimit(perfil.role_summary);
+  const normalized = perfil.role_summary.trim();
+  return normalized.length === 0 ? null : clampToRoleBriefLimit(normalized);
 }
 
 /**

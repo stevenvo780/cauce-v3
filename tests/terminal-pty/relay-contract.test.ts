@@ -620,6 +620,9 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
         CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: registryFile,
         CAUCE_TERMINAL_GATEWAY_URL: gateway.url,
         CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile,
+        // Keep durable-close state inside this run's throwaway directory.  Sharing the
+        // production default in /tmp would make a prior interrupted test retry a foreign SID.
+        CAUCE_TERMINAL_CLOSE_SPOOL_FILE: path.join(relayDirectory, 'close-reports.json'),
         // Node verifies the fake gateway's self-signed cert through the process trust store.
         ...(gateway.ca_path ? { NODE_EXTRA_CA_CERTS: gateway.ca_path } : {}),
         CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC: '65536',
@@ -651,7 +654,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
 
   function openBrowserSocket(): WebSocket {
     const socket = new WebSocket(`wss://127.0.0.1:${wsPort}/v3/console/terminal/ws`,
-      consoleClientOptions(tls));
+      consoleClientOptions(tls, wsPort));
     sockets.push(socket);
     return socket;
   }
@@ -667,10 +670,26 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     await startRelay();
   });
 
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) {
+      if (socket.readyState === socket.OPEN) socket.close(1000, 'console terminal closed');
+      else if (socket.readyState !== socket.CLOSED) socket.terminate();
+    }
+    const deadline = Date.now() + 2_000;
+    while (agent !== null && agent.sessions > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  });
+
   afterAll(async () => {
     for (const socket of sockets.splice(0)) socket.close();
     agent?.destroy();
-    process_?.kill('SIGTERM');
+    const child = process_;
+    if (child && child.exitCode === null) {
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      child.kill('SIGTERM');
+      await exited;
+    }
     await gateway.close();
     if (relayDirectory) rmSync(relayDirectory, { recursive: true, force: true });
   });
@@ -688,6 +707,59 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     // Output is binary, control is text: the console relies on this separation.
     expect(stream.controlFramesWereAllText()).toBe(true);
     expect(stream.outputFramesWereAllBinary()).toBe(true);
+  });
+
+  it('reconnects publicly to the same PTY, replays scrollback and gives one socket ownership', async () => {
+    const handle = agent ?? await attachAgent();
+    const payload = ticketPayload();
+    const first = openBrowserSocket();
+    const firstStream = collect(first);
+    await once(first, 'open');
+    first.send(JSON.stringify({
+      type: 'attach', session_id: payload.sid, ticket: mintTicket(aliasKey, payload), cols: 120, rows: 32,
+    }));
+    const ready = await firstStream.nextControl();
+    expect(ready).toMatchObject({ type: 'ready', resumed: false, stream_offset: 0 });
+    const resumeToken = ready.resume_token;
+    expect(typeof resumeToken).toBe('string');
+    expect(String(resumeToken).length).toBeGreaterThanOrEqual(80);
+    first.send(JSON.stringify({ type: 'input', data: 'ping\r' }));
+    expect(await firstStream.nextBinaryUntil((text) => text.includes('pong-1'))).toContain('pong-1');
+
+    const transportClosed = closeCode(first);
+    first.terminate();
+    expect(await transportClosed).toBe(1006);
+
+    const resumed = openBrowserSocket();
+    const replay = openBrowserSocket();
+    const resumedStream = collect(resumed);
+    await Promise.all([once(resumed, 'open'), once(replay, 'open')]);
+    const resumeFrame = JSON.stringify({
+      type: 'resume', session_id: payload.sid, resume_token: resumeToken,
+      after_bytes: 0, cols: 100, rows: 30,
+    });
+    // Both public sockets race with the same reusable-in-grace credential.  The relay's
+    // synchronous ownership transition must let exactly one take the detached PTY.
+    const replayClosed = closeCode(replay);
+    resumed.send(resumeFrame);
+    replay.send(resumeFrame);
+    const [resumedReady, replayCode] = await Promise.all([
+      resumedStream.nextControl(),
+      replayClosed,
+    ]);
+    expect(replayCode).toBe(CLOSE_CODE.session_conflict);
+    expect(resumedReady).toMatchObject({
+      type: 'ready', resumed: true, stream_offset: 0, resume_token: resumeToken,
+    });
+    expect(await resumedStream.nextBinaryUntil((text) => text.includes('pong-1'))).toContain('pong-1');
+    resumed.send(JSON.stringify({ type: 'input', data: 'ping\r' }));
+    expect(await resumedStream.nextBinaryUntil((text) => text.includes('pong-2'))).toContain('pong-2');
+
+    // The native shell counter and the agent OPEN trace both prove this is the original PTY.
+    expect(handle.events.filter((event) => event.event === 'open_ok' && event.session_id === payload.sid))
+      .toHaveLength(1);
+    expect(handle.events.filter((event) => event.event === 'open_ok' && event.session_id === payload.sid))
+      .toHaveLength(1);
   });
 
   it('closes with 4400 when the attach frame carries no ticket at all', async () => {
@@ -786,8 +858,11 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
  * cast is the whole reason this helper exists. Keeping it in one place means the console leg and
  * the readiness probe cannot drift apart in how they authenticate.
  */
-function consoleClientOptions(material: SelfSignedCert): Record<string, unknown> {
-  return { cert: material.cert, key: material.key, ca: material.cert, servername: 'localhost' };
+function consoleClientOptions(material: SelfSignedCert, port: number): Record<string, unknown> {
+  return {
+    cert: material.cert, key: material.key, ca: material.cert, servername: 'localhost',
+    origin: `https://127.0.0.1:${port}`,
+  };
 }
 
 function once(socket: WebSocket, event: 'open'): Promise<void> {
@@ -869,7 +944,7 @@ async function waitForPort(port: number, material: SelfSignedCert, timeoutMs = 2
   for (;;) {
     const reachable = await new Promise<boolean>((resolve) => {
       const probe = new WebSocket(`wss://127.0.0.1:${port}/v3/console/terminal/ws`,
-        consoleClientOptions(material));
+        consoleClientOptions(material, port));
       probe.once('open', () => { probe.close(); resolve(true); });
       probe.once('error', () => resolve(false));
     });

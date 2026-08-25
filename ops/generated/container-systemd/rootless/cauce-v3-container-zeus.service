@@ -1,8 +1,8 @@
 [Unit]
-Description=Cauce V3 rootless container adapter heraclito (agv2-jhon-heraclito-oc/openclaw)
+Description=Cauce V3 rootless container adapter zeus (ws-zeus/claude)
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=%h/.config/cauce-v3/container-aliases/heraclito.env
+ConditionPathExists=%h/.config/cauce-v3/container-aliases/zeus.env
 StartLimitIntervalSec=300s
 StartLimitBurst=10
 
@@ -14,8 +14,8 @@ Environment=CAUCE_CONTAINER_CONFIG_ROOT=%h/.config/cauce-v3/container-aliases
 Environment=CAUCE_CONTAINER_PKI_ROOT=%h/.config/cauce-v3/container-pki
 Environment=CAUCE_CONTAINER_BUNDLE_ROOT=%h/.local/share/cauce-v3-adapter
 Environment=CAUCE_CONTAINER_LOCK_ROOT=%t/cauce-v3
-ExecStart=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh start heraclito
-ExecStop=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop heraclito
+ExecStart=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh start zeus
+ExecStop=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop zeus
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78

@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { request as httpsRequest } from 'node:https';
-import type { AgentConnection } from './agent-leg.js';
+import type { AgentConnection, AgentGovernanceBatchEntry } from './agent-leg.js';
 import { errorLabel, logEvent } from './log.js';
 
 /**
@@ -22,11 +22,17 @@ export interface TerminalSessionGrant {
   readonly container: string;
   readonly runtime_user: string;
   readonly session_expires_at: string;
+  /** Gateway-signed continuity credential. It never reaches the pty-agent or persistent browser storage. */
+  readonly resume_token: string;
 }
 
 export type ConsumeOutcome =
   | { readonly status: 'granted'; readonly grant: TerminalSessionGrant }
   | { readonly status: 'ticket_invalid' | 'conflict' | 'forbidden' | 'unavailable' };
+
+export type ResumeOutcome =
+  | { readonly status: 'granted'; readonly grant: TerminalSessionGrant }
+  | { readonly status: 'resume_invalid' | 'forbidden' | 'unavailable' };
 
 /** `unreachable` is not an allow: the caller counts it against the fail-closed grace window. */
 export type AuthzOutcome = 'allow' | 'revoked' | 'unreachable';
@@ -54,6 +60,9 @@ export interface AgentPresence {
   readonly harness: string;
   /** `HOME` del arnés. Opcional: un pty-agent anterior a 2026-08-25 no lo publica. */
   readonly home?: string;
+  readonly codex_home?: string;
+  readonly claude_config_dir?: string;
+  readonly openclaw_workspace?: string;
   readonly agent_version: string;
   readonly modes: readonly TerminalMode[];
   /** Field name is the gateway's: `parseAgentPresence` rejects the record without it. */
@@ -62,6 +71,7 @@ export interface AgentPresence {
 
 export interface TerminalGatewayClient {
   consumeTicket(sessionId: string, ticket: string): Promise<ConsumeOutcome>;
+  resumeSession(sessionId: string, resumeToken: string): Promise<ResumeOutcome>;
   authorizeSession(sessionId: string): Promise<AuthzOutcome>;
   reportClose(sessionId: string, report: SessionCloseReport): Promise<void>;
   publishPresence(agents: readonly AgentPresence[]): Promise<void>;
@@ -116,7 +126,9 @@ export function parseSessionGrant(body: string): TerminalSessionGrant | undefine
   const expiresAt = stringField(source, 'session_expires_at');
   const cols = integerField(source, 'cols');
   const rows = integerField(source, 'rows');
-  if (!tenantId || !alias || !operatorId || !container || !runtimeUser || !expiresAt) return undefined;
+  const resumeToken = stringField(source, 'resume_token');
+  if (!tenantId || !alias || !operatorId || !container || !runtimeUser || !expiresAt || !resumeToken) return undefined;
+  if (resumeToken.length < 80 || resumeToken.length > 1_024) return undefined;
   if (mode !== 'shell' && mode !== 'harness') return undefined;
   if (cols === undefined || rows === undefined) return undefined;
   if (Number.isNaN(Date.parse(expiresAt))) return undefined;
@@ -129,7 +141,8 @@ export function parseSessionGrant(body: string): TerminalSessionGrant | undefine
     operator_id: operatorId,
     container,
     runtime_user: runtimeUser,
-    session_expires_at: expiresAt
+    session_expires_at: expiresAt,
+    resume_token: resumeToken
   };
 }
 
@@ -186,11 +199,31 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
     return 'revoked';
   }
 
-  async reportClose(sessionId: string, report: SessionCloseReport): Promise<void> {
+  async resumeSession(sessionId: string, resumeToken: string): Promise<ResumeOutcome> {
+    let result: HttpResult;
     try {
-      await this.send('POST', `/v3/terminal/relay/sessions/${encodeURIComponent(sessionId)}/close`, { ...report });
+      result = await this.send(
+        'POST', `/v3/terminal/relay/sessions/${encodeURIComponent(sessionId)}/resume`,
+        { resume_token: resumeToken }
+      );
     } catch (error) {
-      logEvent('terminal_relay_close_report_failed', { session_id: sessionId, error: errorLabel(error) });
+      logEvent('terminal_relay_resume_unreachable', { session_id: sessionId, error: errorLabel(error) });
+      return { status: 'unavailable' };
+    }
+    if (result.status === 401) return { status: 'resume_invalid' };
+    if (result.status === 403) return { status: 'forbidden' };
+    if (result.status !== 200) return { status: 'unavailable' };
+    const grant = parseSessionGrant(result.body);
+    if (!grant) return { status: 'unavailable' };
+    return { status: 'granted', grant };
+  }
+
+  async reportClose(sessionId: string, report: SessionCloseReport): Promise<void> {
+    const result = await this.send(
+      'POST', `/v3/terminal/relay/sessions/${encodeURIComponent(sessionId)}/close`, { ...report }
+    );
+    if (result.status !== 200 && result.status !== 204) {
+      throw new Error(`gateway rejected terminal close report with HTTP ${result.status}`);
     }
   }
 
@@ -283,6 +316,8 @@ export interface GovernanceFileRead {
   readonly bytes: number;
   readonly truncated: boolean;
   readonly modified_at: string;
+  /** SHA-256 de los bytes reales; en agentes viejos se deriva del contenido no truncado. */
+  readonly sha: string;
   readonly content: string;
 }
 
@@ -336,7 +371,18 @@ export async function requestFileRead(
 
     const complete = (): void => {
       if (metadata === undefined || expected === undefined || received < expected) return;
-      finish({ ...metadata, content: Buffer.concat(chunks).toString('utf8') });
+      const raw = Buffer.concat(chunks);
+      if (!metadata.truncated && metadata.bytes !== raw.byteLength) {
+        finish({ error: 'unknown', reason: 'el tamaño real no coincide con los datos recibidos' });
+        return;
+      }
+      const receivedSha = createHash('sha256').update(raw).digest('hex');
+      // Si no está truncado, la huella declarada tiene que describir exactamente lo que llegó.
+      if (!metadata.truncated && metadata.sha !== '' && metadata.sha !== receivedSha) {
+        finish({ error: 'unknown', reason: 'la huella de lectura no coincide con los datos recibidos' });
+        return;
+      }
+      finish({ ...metadata, sha: metadata.sha || receivedSha, content: raw.toString('utf8') });
     };
 
     const timer = setTimeout(() => {
@@ -355,6 +401,7 @@ export async function requestFileRead(
         const modifiedAt = stringField(body, 'modified_at');
         const bytes = integerField(body, 'bytes');
         const count = integerField(body, 'chunks');
+        const declaredSha = stringField(body, 'sha');
         if (answered === undefined || modifiedAt === undefined || bytes === undefined || count === undefined) {
           finish({ error: 'unknown', reason: 'el agente contestó sin los metadatos de la lectura' });
           return;
@@ -368,7 +415,20 @@ export async function requestFileRead(
           finish({ error: 'too_large', reason: 'el agente anuncia más tramas de las que cabe un documento' });
           return;
         }
-        metadata = { path: answered, bytes, truncated: body.truncated === true, modified_at: modifiedAt };
+        const fallbackSha = declaredSha === undefined ? undefined : declaredSha;
+        if (fallbackSha !== undefined && !/^[0-9a-f]{64}$/.test(fallbackSha)) {
+          finish({ error: 'unknown', reason: 'el agente contestó con una huella inválida' });
+          return;
+        }
+        // Compatibilidad de lectura: un agente pre-write no mandaba `sha`. Para un documento no
+        // truncado se completa al final desde sus bytes; el marcador temporal se sustituye allí.
+        metadata = {
+          path: answered,
+          bytes,
+          truncated: body.truncated === true,
+          modified_at: modifiedAt,
+          sha: fallbackSha ?? ''
+        };
         expected = count;
         complete();
       },
@@ -393,5 +453,293 @@ export async function requestFileRead(
     });
 
     connection.sendRead(requestId, 'file', path);
+  });
+}
+
+export type GovernanceWriteOperation = 'replace' | 'create';
+
+export type GovernanceWritePrecondition =
+  | { readonly state: 'present'; readonly sha256: string }
+  | { readonly state: 'absent' };
+
+export interface GovernanceFileWrite {
+  readonly path: string;
+  readonly operation: GovernanceWriteOperation;
+  readonly sha: string;
+  readonly bytes: number;
+}
+
+export interface GovernanceWriteFailure {
+  readonly error: GovernanceReadCode | 'conflict';
+  readonly reason: string;
+}
+
+export type FileWriteOutcome = GovernanceFileWrite | GovernanceWriteFailure;
+
+const WRITE_CODES: readonly GovernanceWriteFailure['error'][] = [...READ_CODES, 'conflict'];
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+function normalizeWriteCode(value: string): GovernanceWriteFailure['error'] {
+  return WRITE_CODES.includes(value as GovernanceWriteFailure['error'])
+    ? (value as GovernanceWriteFailure['error'])
+    : 'unknown';
+}
+
+/**
+ * Escritura CAS extremo a extremo. El único éxito posible es un WRITE_OK cuyo path, operación,
+ * bytes y SHA describen exactamente el contenido que este relay puso en el socket del agente.
+ */
+export async function requestFileWrite(
+  connection: AgentConnection,
+  tenantId: string,
+  alias: string,
+  path: string,
+  content: Buffer,
+  precondition: GovernanceWritePrecondition,
+  timeoutMs = 5_000,
+  signal?: AbortSignal
+): Promise<FileWriteOutcome> {
+  if (!connection.alive) {
+    return { error: 'unavailable', reason: 'el pty-agent de ese alias no está conectado' };
+  }
+  if (connection.hello.tenant_id !== tenantId || connection.hello.alias !== alias) {
+    return { error: 'permission_denied', reason: 'la conexión no es la de ese alias' };
+  }
+  if (!connection.supportsGovernanceWrite) {
+    return { error: 'unavailable', reason: 'el pty-agent de ese alias no sabe escribir ficheros de gobierno' };
+  }
+  if (content.byteLength > MAX_GOVERNANCE_BYTES) {
+    return { error: 'too_large', reason: 'el contenido se pasa del tope de gobierno' };
+  }
+  if (precondition.state === 'present' && !SHA256_PATTERN.test(precondition.sha256)) {
+    return { error: 'invalid_path', reason: 'replace exige una precondición SHA-256 válida' };
+  }
+  if (signal?.aborted === true) {
+    return { error: 'unavailable', reason: 'la petición de escritura fue cancelada' };
+  }
+
+  const requestId = randomUUID();
+  const operation: GovernanceWriteOperation = precondition.state === 'present' ? 'replace' : 'create';
+  const expectedSha = precondition.state === 'present' ? precondition.sha256 : undefined;
+  const contentSha = createHash('sha256').update(content).digest('hex');
+
+  return new Promise<FileWriteOutcome>((resolve) => {
+    let settled = false;
+    const finish = (outcome: FileWriteOutcome, cancelAgent = false): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', aborted);
+      connection.detachWrite(requestId);
+      if (cancelAgent) connection.cancelWrite(requestId);
+      resolve(outcome);
+    };
+    const aborted = (): void => finish(
+      { error: 'unavailable', reason: 'la petición de escritura fue cancelada' },
+      true
+    );
+    const timer = setTimeout(() => {
+      logEvent('terminal_relay_write_timeout', { tenant_id: tenantId, alias, request_id: requestId });
+      finish({ error: 'timeout', reason: `el pty-agent no confirmó la escritura en ${timeoutMs} ms` }, true);
+    }, timeoutMs);
+    timer.unref?.();
+
+    connection.attachWrite(requestId, {
+      onWriteOk(body) {
+        const answeredPath = stringField(body, 'path');
+        const answeredOperation = stringField(body, 'operation');
+        const answeredSha = stringField(body, 'sha');
+        const answeredBytes = integerField(body, 'bytes');
+        if (answeredPath !== path || answeredOperation !== operation
+          || answeredSha !== contentSha || answeredBytes !== content.byteLength) {
+          finish({ error: 'unknown', reason: 'el ACK del agente no acredita la escritura solicitada' });
+          return;
+        }
+        finish({ path, operation, sha: contentSha, bytes: content.byteLength });
+      },
+      onWriteErr(failure) {
+        finish({ error: normalizeWriteCode(failure.code), reason: failure.reason });
+      },
+      onAgentGone(reason) {
+        finish({ error: 'unavailable', reason: `el pty-agent se desconectó: ${reason}` });
+      }
+    });
+    signal?.addEventListener('abort', aborted, { once: true });
+
+    if (!connection.sendWrite(requestId, path, operation, expectedSha, contentSha, content)) {
+      finish({ error: 'unavailable', reason: 'la cola hacia el pty-agent está congestionada' }, true);
+    }
+  });
+}
+
+export type GovernanceWriteBatchEntry =
+  | {
+      readonly mode: 'write';
+      readonly path: string;
+      readonly content: Buffer;
+      readonly precondition: GovernanceWritePrecondition;
+    }
+  | {
+      readonly mode: 'verify';
+      readonly path: string;
+      readonly precondition: GovernanceWritePrecondition;
+    };
+
+export type GovernanceBatchAckOperation = 'create' | 'replace' | 'unchanged' | 'absent';
+
+export interface GovernanceBatchFileAck {
+  readonly path: string;
+  readonly operation: GovernanceBatchAckOperation;
+  readonly sha: string | null;
+  readonly bytes: number;
+}
+
+export type GovernanceWriteBatchOutcome =
+  | { readonly files: readonly GovernanceBatchFileAck[] }
+  | GovernanceWriteFailure;
+
+const MAX_GOVERNANCE_BATCH_FILES = 7;
+
+/**
+ * Perfil gobernado multi-fichero. `verify` acredita estado sin abrir para escritura ni cambiar
+ * mtime; `write` acepta `unchanged` si un retry encuentra exactamente los bytes deseados. El
+ * único éxito es un ACK completo y correlacionado para todas las entradas.
+ */
+export async function requestFileWriteBatch(
+  connection: AgentConnection,
+  tenantId: string,
+  alias: string,
+  entries: readonly GovernanceWriteBatchEntry[],
+  timeoutMs = 5_000,
+  signal?: AbortSignal
+): Promise<GovernanceWriteBatchOutcome> {
+  if (!connection.alive) {
+    return { error: 'unavailable', reason: 'el pty-agent de ese alias no está conectado' };
+  }
+  if (connection.hello.tenant_id !== tenantId || connection.hello.alias !== alias) {
+    return { error: 'permission_denied', reason: 'la conexión no es la de ese alias' };
+  }
+  if (!connection.supportsGovernanceWriteBatch) {
+    return { error: 'unavailable', reason: 'el pty-agent de ese alias no soporta perfiles atómicos' };
+  }
+  if (entries.length < 1 || entries.length > MAX_GOVERNANCE_BATCH_FILES) {
+    return { error: 'too_large', reason: 'el perfil debe contener entre uno y siete ficheros' };
+  }
+  if (new Set(entries.map((entry) => entry.path)).size !== entries.length) {
+    return { error: 'conflict', reason: 'el perfil contiene rutas duplicadas' };
+  }
+  let totalBytes = 0;
+  const wireEntries: AgentGovernanceBatchEntry[] = [];
+  for (const entry of entries) {
+    if (entry.precondition.state === 'present' && !SHA256_PATTERN.test(entry.precondition.sha256)) {
+      return { error: 'invalid_path', reason: 'una precondición del perfil no es un SHA-256 válido' };
+    }
+    const expectedSha = entry.precondition.state === 'present' ? entry.precondition.sha256 : undefined;
+    if (entry.mode === 'verify') {
+      wireEntries.push({
+        path: entry.path,
+        mode: 'verify',
+        operation: entry.precondition.state,
+        expectedSha,
+      });
+      continue;
+    }
+    totalBytes += entry.content.byteLength;
+    if (totalBytes > MAX_GOVERNANCE_BYTES) {
+      return { error: 'too_large', reason: 'el perfil se pasa del tope total de gobierno' };
+    }
+    wireEntries.push({
+      path: entry.path,
+      mode: 'write',
+      operation: entry.precondition.state === 'present' ? 'replace' : 'create',
+      expectedSha,
+      contentSha: createHash('sha256').update(entry.content).digest('hex'),
+      content: entry.content,
+    });
+  }
+  if (signal?.aborted === true) {
+    return { error: 'unavailable', reason: 'la petición de perfil fue cancelada' };
+  }
+
+  const requestId = randomUUID();
+  return new Promise<GovernanceWriteBatchOutcome>((resolve) => {
+    let settled = false;
+    const finish = (outcome: GovernanceWriteBatchOutcome, cancelAgent = false): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', aborted);
+      connection.detachWrite(requestId);
+      if (cancelAgent) connection.cancelGovernanceWriteBatch(requestId);
+      resolve(outcome);
+    };
+    const aborted = (): void => finish(
+      { error: 'unavailable', reason: 'la petición de perfil fue cancelada' }, true
+    );
+    const timer = setTimeout(() => {
+      logEvent('terminal_relay_write_batch_timeout', { tenant_id: tenantId, alias, request_id: requestId });
+      finish({ error: 'timeout', reason: `el pty-agent no confirmó el perfil en ${timeoutMs} ms` }, true);
+    }, timeoutMs);
+    timer.unref?.();
+
+    connection.attachWrite(requestId, {
+      onWriteOk(body) {
+        const rawFiles: unknown = body.files;
+        if (!Array.isArray(rawFiles) || rawFiles.length !== wireEntries.length) {
+          finish({ error: 'unknown', reason: 'el ACK del agente no acredita todos los ficheros del perfil' });
+          return;
+        }
+        const acknowledgements: GovernanceBatchFileAck[] = [];
+        for (let index = 0; index < wireEntries.length; index += 1) {
+          const requested = wireEntries[index];
+          const raw: unknown = rawFiles[index];
+          if (requested === undefined || raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+            finish({ error: 'unknown', reason: 'el ACK del agente contiene una entrada inválida' });
+            return;
+          }
+          const answer = raw as Record<string, unknown>;
+          const answeredPath = stringField(answer, 'path');
+          const operation = stringField(answer, 'operation');
+          const bytes = integerField(answer, 'bytes');
+          const rawSha: unknown = answer.sha;
+          const sha = rawSha === null ? null : typeof rawSha === 'string' ? rawSha : undefined;
+          const validOperation = operation === 'create' || operation === 'replace'
+            || operation === 'unchanged' || operation === 'absent';
+          if (answeredPath !== requested.path || !validOperation || bytes === undefined || bytes < 0
+            || sha === undefined || (sha !== null && !SHA256_PATTERN.test(sha))) {
+            finish({ error: 'unknown', reason: 'el ACK del agente contiene metadatos inválidos' });
+            return;
+          }
+          if (requested.mode === 'write') {
+            if ((operation !== requested.operation && operation !== 'unchanged')
+              || sha !== requested.contentSha || bytes !== requested.content.byteLength) {
+              finish({ error: 'unknown', reason: 'el ACK del agente no acredita los bytes solicitados' });
+              return;
+            }
+          } else if (requested.operation === 'present') {
+            if (operation !== 'unchanged' || sha !== requested.expectedSha) {
+              finish({ error: 'unknown', reason: 'el ACK del agente no acredita el fichero preservado' });
+              return;
+            }
+          } else if (operation !== 'absent' || sha !== null || bytes !== 0) {
+            finish({ error: 'unknown', reason: 'el ACK del agente no acredita la ausencia solicitada' });
+            return;
+          }
+          acknowledgements.push({ path: requested.path, operation, sha, bytes });
+        }
+        finish({ files: acknowledgements });
+      },
+      onWriteErr(failure) {
+        finish({ error: normalizeWriteCode(failure.code), reason: failure.reason });
+      },
+      onAgentGone(reason) {
+        finish({ error: 'unavailable', reason: `el pty-agent se desconectó: ${reason}` });
+      },
+    });
+    signal?.addEventListener('abort', aborted, { once: true });
+
+    if (!connection.sendGovernanceWriteBatch(requestId, wireEntries)) {
+      finish({ error: 'unavailable', reason: 'la cola hacia el pty-agent está congestionada' }, true);
+    }
   });
 }

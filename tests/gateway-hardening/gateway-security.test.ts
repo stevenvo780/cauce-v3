@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildGateway, type GatewayRepository } from '../../services/gateway/src/index.js';
+import {
+  buildGateway, type AuthProvider, type GatewayRepository, type Principal,
+} from '../../services/gateway/src/index.js';
 import {
   FixedAuthProvider, fakePool, fakeRepository, grants, ids, noDeliveryWakes, roles, testPrincipal
 } from './helpers.js';
@@ -18,6 +20,21 @@ async function gateway(repository: GatewayRepository, principal = testPrincipal(
     authProvider: new FixedAuthProvider(principal),
     deliveryWakeSubscriber: noDeliveryWakes,
     outboxPollMs: 60_000
+  });
+  apps.push(app);
+  return app;
+}
+
+async function gateGateway(repository: GatewayRepository, gatePrincipal: Principal, name = 'mtls') {
+  const authProvider: AuthProvider = {
+    name,
+    mode: 'test',
+    authenticateHttp: async () => gatePrincipal,
+    authenticateHello: async () => gatePrincipal,
+  };
+  const app = await buildGateway({
+    pool: fakePool(), repository, authProvider, deliveryWakeSubscriber: noDeliveryWakes,
+    outboxPollMs: 60_000,
   });
   apps.push(app);
   return app;
@@ -275,6 +292,43 @@ describe('gateway hardening facades and RBAC', () => {
       expect(repository.publish).not.toHaveBeenCalled();
     }
   );
+
+  it('admits system.gate.probe only from the exact dedicated mTLS principal and canonical shape', async () => {
+    const nonce = '0123456789abcdef0123456789abcdef';
+    const payload = {
+      room_id: 'grp.steven',
+      recipients: [{ tenant_id: 'Steven', alias: 'kant' }],
+      body: { type: 'system.gate.probe', nonce, timeout_ms: 5_000 },
+      idempotency_key: `gate:Steven:kant:${nonce}`,
+      lane: 'interactive',
+      priority: -100,
+    };
+    const exact: Principal = {
+      tenant_id: 'Steven', alias: 'gate-probe', session_id: 'gate-probe', channel: 'gate',
+      roles: roles('agent'), permissions: grants('route', 'read'),
+    };
+
+    const repository = fakeRepository();
+    const accepted = await gateGateway(repository, exact);
+    expect((await accepted.inject({ method: 'POST', url: '/v3/messages', payload })).statusCode).toBe(202);
+    expect(repository.publish).toHaveBeenCalledWith(expect.objectContaining({
+      tenant_id: 'Steven', actor_alias: 'kant', body: payload.body,
+      authenticated_context: { session_id: 'gate-probe', channel: 'gate' },
+    }));
+
+    const wrongProvider = await gateGateway(fakeRepository(), exact, 'fixed-test');
+    expect((await wrongProvider.inject({ method: 'POST', url: '/v3/messages', payload })).statusCode).toBe(403);
+
+    const wrongPrincipal = await gateGateway(fakeRepository(), {
+      ...exact, alias: 'quota-collector', roles: roles('operator'), permissions: grants('route', 'read', 'control'),
+    });
+    expect((await wrongPrincipal.inject({ method: 'POST', url: '/v3/messages', payload })).statusCode).toBe(403);
+
+    const malformed = await gateGateway(fakeRepository(), exact);
+    expect((await malformed.inject({
+      method: 'POST', url: '/v3/messages', payload: { ...payload, body: { ...payload.body, text: 'forbidden' } },
+    })).statusCode).toBe(400);
+  });
 
   it('enforces same-origin CSRF/CORS checks for console mutations', async () => {
     const repository = fakeRepository();

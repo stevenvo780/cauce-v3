@@ -37,7 +37,7 @@ The server will start and output logs to stderr:
 ### Production Mode
 
 ```bash
-node packages/mcp-fleet-monitor/dist/src/server.js
+node packages/mcp-fleet-monitor/dist/server.js
 ```
 
 ## Testing with MCP Client
@@ -49,7 +49,7 @@ Once the server is running, you can test it with an MCP client. The server imple
 ```bash
 # Test tool listing
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | \
-  DATABASE_URL="..." CAUCE_TENANT_ID="..." node packages/mcp-fleet-monitor/dist/src/server.js
+  DATABASE_URL="..." CAUCE_TENANT_ID="..." node packages/mcp-fleet-monitor/dist/server.js
 ```
 
 ### Using Claude
@@ -61,7 +61,7 @@ Add to your MCP config (e.g., `~/.claude/mcp.json`):
   "mcpServers": {
     "fleet-monitor": {
       "command": "node",
-      "args": ["/path/to/packages/mcp-fleet-monitor/dist/src/server.js"],
+      "args": ["/path/to/packages/mcp-fleet-monitor/dist/server.js"],
       "env": {
         "DATABASE_URL": "postgresql://...",
         "CAUCE_TENANT_ID": "Steven"

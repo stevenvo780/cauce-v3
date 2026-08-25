@@ -33,6 +33,16 @@ CONSOLE_ONLY = (
     " or edited to satisfy this check"
 )
 FINAL_SERVICES = {"gateway", "dispatcher", "relay-worker", "telegram-bridge", "shadow-router"}
+APPROVED_UNTRACKED_PREFIX = "apps/console/src/features/_grafo/"
+RUNTIME_PACKAGE_COMPONENTS = [
+    "gateway",
+    "dispatcher",
+    "relay-worker",
+    "telegram-bridge",
+    "shadow-router",
+    "terminal-relay",
+    "outbox-metrics",
+]
 REQUIRED_FAULTS = {"gateway-process-kill", "postgres-container-kill"}
 # Fault mechanisms observed to flake on CPU-loaded release hosts (agora-storage), confirmed against a
 # control run. They are still REQUIRED and still must pass -- this set only changes the wording of
@@ -91,6 +101,20 @@ def timestamp(value: str, label: str) -> datetime.datetime | None:
         return None
 
 
+def release_checkout_is_clean() -> bool:
+    """Require clean tracked/index state and tolerate only the exact operator scratch prefix."""
+    for arguments in (("diff", "--quiet", "--no-ext-diff", "--"),
+                      ("diff", "--cached", "--quiet", "--no-ext-diff", "--")):
+        if subprocess.run(["git", "-C", str(ROOT), *arguments], check=False).returncode != 0:
+            return False
+    status = subprocess.run(
+        ["git", "-C", str(ROOT), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    entries = [entry for entry in status.split("\0") if entry]
+    return all(entry.startswith(f"?? {APPROVED_UNTRACKED_PREFIX}") for entry in entries)
+
+
 build_path = OPS / "artifacts" / "release" / "build.json"
 report_path = OPS / "artifacts" / "compose-authentic" / "report.json"
 build = load(build_path)
@@ -102,6 +126,27 @@ if build_valid:
     expected_dockerfile = f"sha256:{hashlib.sha256((ROOT / 'deploy' / 'Dockerfile').read_bytes()).hexdigest()}"
     if build["dockerfileSha256"] != expected_dockerfile:
         ERRORS.append("build.dockerfileSha256 does not match the current Dockerfile")
+    expected_dockerignore = f"sha256:{hashlib.sha256((ROOT / '.dockerignore').read_bytes()).hexdigest()}"
+    if build["dockerignoreSha256"] != expected_dockerignore:
+        ERRORS.append("build.dockerignoreSha256 does not match the current build-context policy")
+    try:
+        current_commit = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--verify", "HEAD^{commit}"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        current_tree = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--verify", "HEAD^{tree}"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        checkout_clean = release_checkout_is_clean()
+    except subprocess.CalledProcessError:
+        ERRORS.append("release evidence requires the exact Git release candidate checkout")
+    else:
+        revision = build["sourceRevision"]
+        if revision["commit"] != current_commit or revision["tree"] != current_tree:
+            ERRORS.append("build sourceRevision differs from the checked-out release candidate")
+        if not checkout_clean:
+            ERRORS.append("release evidence validation requires clean tracked/index state and only the approved operator scratch")
     if build["sourceDigest"] != source_digest("runtime"):
         ERRORS.append(f"build.sourceDigest does not match current runtime-domain sources; {RERUN_AUTHENTIC}")
     if build["runtime"]["sourceDigest"] != build["sourceDigest"]:
@@ -131,6 +176,11 @@ if build_valid:
         ERRORS.append("build runtime imageId/imageDigest differ")
     if build["console"]["imageId"] != build["console"]["imageDigest"]:
         ERRORS.append("build console imageId/imageDigest differ")
+    for label in ("runtime", "console"):
+        image = build[label]
+        repository = image["repositoryDigest"].split("@", 1)[0]
+        if image["tag"] != f"{repository}:rc-{build['sourceRevision']['commit']}":
+            ERRORS.append(f"build {label} tag is not the unique tag for its committed RC")
     started = timestamp(build["timestamps"]["startedAt"], "build.timestamps.startedAt")
     finished = timestamp(build["timestamps"]["finishedAt"], "build.timestamps.finishedAt")
     if started and finished:
@@ -215,6 +265,14 @@ if report_valid:
         ERRORS.append("compose-authentic timestamps are reversed")
 
 if build_valid and report_valid:
+    package = build.get("runtimePackage", {})
+    if package.get("components") != RUNTIME_PACKAGE_COMPONENTS or package.get("status") != "passed":
+        ERRORS.append("release build lacks passing final-image terminal-relay/outbox packaging evidence")
+    latest_migration = max(path.name for path in (ROOT / "packages" / "store" / "migrations").glob("*.sql"))
+    compatibility = build.get("schemaCompatibility", {})
+    if (compatibility.get("label") != "io.cauce.schema.compatible-through"
+            or compatibility.get("compatibleThrough") != latest_migration):
+        ERRORS.append("release build schema compatibility label is stale or absent")
     if report["imageDigest"] != build["runtime"]["imageDigest"]:
         ERRORS.append("compose-authentic imageDigest differs from the release runtime build")
     if report["sourceDigest"] != build["sourceDigest"]:

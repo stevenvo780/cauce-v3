@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +11,7 @@ import { createConsoleSecurityHook } from './console-security.js';
 import type { TerminalConfig } from './terminal/config.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
 import { AgentRegistry } from './terminal/registry.js';
-import { deriveAliasKey, parseAndVerify } from './terminal/tickets.js';
+import { deriveAliasKey, issueResumeToken, parseAndVerify } from './terminal/tickets.js';
 import { UNATTRIBUTED_OPERATOR, type AgentPresence, type TerminalSessionRow } from './terminal/types.js';
 
 /**
@@ -37,6 +38,7 @@ interface FakeDatabase {
   audit: AuditRow[];
   rooms: Record<string, string[]>;
   edges: string[];
+  placements: Array<{ tenant_id: string; alias: string; container_name: string; runtime_user: string }>;
 }
 
 function isOpen(row: TerminalSessionRow, ttlSeconds: number, now: number): boolean {
@@ -49,6 +51,18 @@ function fakeDatabase(): FakeDatabase {
   const sessions = new Map<string, TerminalSessionRow>();
   const audit: AuditRow[] = [];
   const state = {
+    placements: ([
+      ['Steven', 'argos', 'ctrl-infra', 'dev'], ['Steven', 'jarvis', 'claw', 'claw'],
+      ['Steven', 'kant', 'ctrl-infra', 'dev'], ['Steven', 'socrates', 'ws-prizma', 'dev'],
+      ['Steven', 'zeus', 'ws-zeus', 'dev'], ['Miguel', 'atlas', 'ws-humanizar', 'dev'],
+      ['Miguel', 'iza', 'ws-humanizar', 'dev'], ['Miguel', 'janus', 'claw-miguel', 'claw'],
+      ['Miguel', 'kratos', 'ws-humanizar', 'dev'], ['Pablo', 'dedalo', 'ws-pablo-dev', 'dev'],
+      ['Pablo', 'midas', 'agv2-pablo-marcas-oc', 'claw'],
+      ['Pablo', 'seneca', 'agv2-pablo-personal-oc', 'claw'], ['Pablo', 'vulcano', 'ws-pablo', 'dev'],
+      ['Isa', 'salva', 'ws-isa', 'dev'], ['Jhon', 'hegel', 'agv2-jhon-hegel-oc', 'claw'],
+    ] satisfies ReadonlyArray<readonly [string, string, string, string]>).map(
+      ([tenant_id, alias, container_name, runtime_user]) => ({ tenant_id, alias, container_name, runtime_user })
+    ),
     rooms: {
       'Steven:kant': ['grp.steven'],
       'Steven:jarvis': ['grp.steven'],
@@ -62,6 +76,9 @@ function fakeDatabase(): FakeDatabase {
 
   const query = async (text: string, values: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> => {
     const now = Date.now();
+    if (text.includes('SELECT tenant_id,alias,container_name,runtime_user')) {
+      return { rows: state.placements, rowCount: state.placements.length };
+    }
     if (text.includes('INSERT INTO audit_events')) {
       const [tenantId, actorAlias, action, decision, , metadata] = values as [string, string, string, string, unknown, string];
       audit.push({
@@ -69,6 +86,31 @@ function fakeDatabase(): FakeDatabase {
         metadata: JSON.parse(metadata) as Record<string, unknown>
       });
       return { rows: [], rowCount: 1 };
+    }
+    if (text.includes('decision AS MATERIALIZED') && text.includes('INSERT INTO terminal_sessions')) {
+      const [
+        operatorId, container, ttlSeconds, maxSessions, id, attributed, subject, tenantId, alias,
+        generation, imageId, runtimeUser, mode, ticketSha256, reason, cols, rows, traceId, expiresAt,
+      ] = values as [
+        string, string, number, number, string, boolean, string, string, string, string, string,
+        string, 'shell' | 'harness', Buffer, string, number, number, string, string,
+      ];
+      const operatorOpen = [...sessions.values()].filter((row) =>
+        row.operator_id === operatorId && isOpen(row, ttlSeconds, now)).length;
+      if (operatorOpen >= maxSessions) {
+        return { rows: [{ reason: 'session_limit', id: null }], rowCount: 1 };
+      }
+      const containerBusy = [...sessions.values()].some((row) =>
+        row.container === container && isOpen(row, ttlSeconds, now));
+      if (containerBusy) return { rows: [{ reason: 'container_busy', id: null }], rowCount: 1 };
+      sessions.set(id, {
+        id, operator_id: operatorId, attributed, console_subject: subject, tenant_id: tenantId,
+        alias, container, generation, image_id: imageId, runtime_user: runtimeUser, mode,
+        ticket_sha256: ticketSha256, reason, cols, rows, trace_id: traceId,
+        issued_at: new Date(now), expires_at: new Date(expiresAt), consumed_at: null,
+        revoked_at: null, closed_at: null, close_reason: null, bytes_in: 0, bytes_out: 0,
+      });
+      return { rows: [{ reason: 'ok', id }], rowCount: 1 };
     }
     if (text.includes('INSERT INTO terminal_sessions')) {
       const [
@@ -139,7 +181,14 @@ function fakeDatabase(): FakeDatabase {
     return { rows, rowCount: rows.length };
   };
 
-  return { pool: { query } as unknown as DatabasePool, sessions, audit, rooms: state.rooms, edges: state.edges };
+  return {
+    pool: {
+      query,
+      connect: async () => ({ query, release: () => undefined }),
+    } as unknown as DatabasePool,
+    sessions, audit, rooms: state.rooms,
+    edges: state.edges, placements: state.placements,
+  };
 }
 
 /** The single console certificate in production: Steven:kant, operator, route+read+control. */
@@ -246,6 +295,35 @@ describe('terminal control plane', () => {
     });
   }
 
+  async function issueAndConsume(): Promise<{
+    sessionId: string;
+    ticket: string;
+    resumeToken: string;
+    sessionExpiresAt: string;
+  }> {
+    await report([presence()]);
+    const issued = (await openSession({})).json<{ session_id: string; ticket: string }>();
+    const consumed = await app.inject({
+      method: 'POST', url: `/v3/terminal/relay/sessions/${issued.session_id}/consume`,
+      headers: { authorization: `Bearer ${RELAY_TOKEN}` }, payload: { ticket: issued.ticket },
+    });
+    expect(consumed.statusCode).toBe(200);
+    const grant = consumed.json<{ resume_token: string; session_expires_at: string }>();
+    return {
+      sessionId: issued.session_id,
+      ticket: issued.ticket,
+      resumeToken: grant.resume_token,
+      sessionExpiresAt: grant.session_expires_at,
+    };
+  }
+
+  async function resumeSession(sessionId: string, resumeToken: string) {
+    return app.inject({
+      method: 'POST', url: `/v3/terminal/relay/sessions/${sessionId}/resume`,
+      headers: { authorization: `Bearer ${RELAY_TOKEN}` }, payload: { resume_token: resumeToken },
+    });
+  }
+
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-plugin-'));
     grantsFile = join(directory, 'grants.json');
@@ -255,7 +333,8 @@ describe('terminal control plane', () => {
     hechos = new Map();
     pedidas = [];
     leer = (path) => ({
-      path, bytes: 9, truncated: false, modified_at: '2026-08-24T10:00:00Z', content: '# Manual\n'
+      path, bytes: 9, truncated: false, modified_at: '2026-08-24T10:00:00Z',
+      sha: createHash('sha256').update('# Manual\n').digest('hex'), content: '# Manual\n'
     });
     await grant([{ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness'] }]);
     await build();
@@ -288,12 +367,18 @@ describe('terminal control plane', () => {
     });
     const argos = body.items.find((item) => item.alias === 'argos');
     // argos shares ctrl-infra with kant and no agent was ever reported there.
-    expect(argos).toMatchObject({ pty_state: 'not_installed', authorized: false, shares_container_with: ['kant'] });
+    expect(argos).toMatchObject({
+      pty_state: 'not_installed', authorized: false,
+      shares_container_with: [{ tenant_id: 'Steven', alias: 'kant' }]
+    });
     const iza = body.items.find((item) => item.alias === 'iza');
     // Cross-tenant without attribution: denied, and the denial reveals nothing about the target.
     expect(iza).toMatchObject({
       authorized: false, container: null, runtime_user: null, harness: null, image: null,
-      reason: 'sin autoridad sobre iza', shares_container_with: ['atlas', 'kratos']
+      reason: 'sin autoridad sobre Miguel:iza',
+      shares_container_with: [
+        { tenant_id: 'Miguel', alias: 'atlas' }, { tenant_id: 'Miguel', alias: 'kratos' }
+      ]
     });
   });
 
@@ -335,6 +420,24 @@ describe('terminal control plane', () => {
     expect(database.audit).toHaveLength(0);
   });
 
+  it('uses the tenant-qualified enabled registry and never resolves a bare alias across tenants', async () => {
+    await report([presence()]);
+    database.placements.push({
+      tenant_id: 'Miguel', alias: 'jarvis', container_name: 'other-container', runtime_user: 'dev',
+    });
+    const wrongTenant = await openSession({ tenant_id: 'Miguel', alias: 'jarvis' });
+    expect(wrongTenant.statusCode).toBe(403);
+    expect(wrongTenant.json()).toEqual({ error: 'forbidden', reason: 'attribution_required' });
+
+    const index = database.placements.findIndex((item) =>
+      item.tenant_id === 'Steven' && item.alias === 'jarvis');
+    expect(index).toBeGreaterThanOrEqual(0);
+    database.placements.splice(index, 1); // models enabled=false because the SQL excludes it
+    const disabled = await openSession({ tenant_id: 'Steven', alias: 'jarvis' });
+    expect(disabled.statusCode).toBe(403);
+    expect(disabled.json()).toEqual({ error: 'forbidden', reason: 'unknown_alias' });
+  });
+
   it('HARD INVARIANT: an unattributed operator cannot reach another tenant, and the deny is audited', async () => {
     await grant(['iza', 'atlas', 'kratos'].map((alias) => ({ tenant_id: 'Miguel', alias, modes: ['shell'] })));
     await report([presence({ tenant_id: 'Miguel', alias: 'iza', container_id: 'ws-humanizar', runtime_user: 'dev' })]);
@@ -359,9 +462,14 @@ describe('terminal control plane', () => {
     expect(response.statusCode).toBe(201);
     const body = response.json<{ target: Record<string, unknown> }>();
     // The dialog must be able to say out loud who else lives in that container.
-    expect(body.target.shares_container_with).toEqual(['atlas', 'kratos']);
+    expect(body.target.shares_container_with).toEqual([
+      { tenant_id: 'Miguel', alias: 'atlas' }, { tenant_id: 'Miguel', alias: 'kratos' }
+    ]);
     const allow = database.audit.find((row) => row.action === 'terminal.session.request');
-    expect(allow?.metadata).toMatchObject({ operator_id: 'steven', attributed: true, cohort: ['atlas', 'iza', 'kratos'] });
+    expect(allow?.metadata).toMatchObject({
+      operator_id: 'steven', attributed: true,
+      cohort: ['Miguel:atlas', 'Miguel:iza', 'Miguel:kratos']
+    });
   });
 
   it('SET RULE: a grant on iza alone does not open the container shared with atlas and kratos', async () => {
@@ -461,6 +569,66 @@ describe('terminal control plane', () => {
     expect(response.statusCode).toBe(401);
     expect(response.json()).toEqual({ ok: false, reason: 'ticket_invalid' });
     expect(database.sessions.get(issued.session_id)?.consumed_at).toBeNull();
+  });
+
+  it('resume binds signature, sid, operator and the exact consumed-session TTL', async () => {
+    const consumed = await issueAndConsume();
+    const resumed = await resumeSession(consumed.sessionId, consumed.resumeToken);
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json()).toMatchObject({
+      ok: true, tenant_id: 'Steven', alias: 'jarvis', operator_id: UNATTRIBUTED_OPERATOR,
+      resume_token: consumed.resumeToken,
+    });
+    expect(database.audit.at(-1)).toMatchObject({ action: 'terminal.session.resume', decision: 'info' });
+
+    const otherSid = 'aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff';
+    expect((await resumeSession(otherSid, consumed.resumeToken)).statusCode).toBe(401);
+
+    const expiry = Math.floor(Date.parse(consumed.sessionExpiresAt) / 1_000);
+    const wrongOperator = issueResumeToken(
+      consumed.sessionId, 'another-operator', expiry, MASTER, Math.floor(Date.now() / 1_000),
+    );
+    expect((await resumeSession(consumed.sessionId, wrongOperator)).statusCode).toBe(401);
+
+    const wrongTtl = issueResumeToken(
+      consumed.sessionId, UNATTRIBUTED_OPERATOR, expiry + 1, MASTER, Math.floor(Date.now() / 1_000),
+    );
+    expect((await resumeSession(consumed.sessionId, wrongTtl)).statusCode).toBe(401);
+
+    const tampered = `${consumed.resumeToken.slice(0, -1)}${consumed.resumeToken.endsWith('A') ? 'B' : 'A'}`;
+    expect((await resumeSession(consumed.sessionId, tampered)).statusCode).toBe(401);
+    const expired = issueResumeToken(
+      consumed.sessionId, UNATTRIBUTED_OPERATOR, Math.floor(Date.now() / 1_000) - 1,
+      MASTER, Math.floor(Date.now() / 1_000) - 10,
+    );
+    expect((await resumeSession(consumed.sessionId, expired)).statusCode).toBe(401);
+  });
+
+  it('resume revalidates revoked, closed, routing authority and grants on every call', async () => {
+    const consumed = await issueAndConsume();
+    const row = database.sessions.get(consumed.sessionId)!;
+
+    row.revoked_at = new Date();
+    expect((await resumeSession(consumed.sessionId, consumed.resumeToken)).json())
+      .toEqual({ ok: false, reason: 'revoked' });
+    row.revoked_at = null;
+
+    row.closed_at = new Date();
+    expect((await resumeSession(consumed.sessionId, consumed.resumeToken)).json())
+      .toEqual({ ok: false, reason: 'closed' });
+    row.closed_at = null;
+
+    database.rooms['Steven:kant'] = [];
+    const noAuthority = await resumeSession(consumed.sessionId, consumed.resumeToken);
+    expect(noAuthority.statusCode).toBe(403);
+    expect(noAuthority.json()).toEqual({ ok: false, reason: 'no_routing_authority' });
+    database.rooms['Steven:kant'] = ['grp.steven'];
+
+    await grant([]);
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const noGrant = await resumeSession(consumed.sessionId, consumed.resumeToken);
+    expect(noGrant.statusCode).toBe(403);
+    expect(noGrant.json()).toEqual({ ok: false, reason: 'no_grant' });
   });
 
   it('revalidates a live session and cuts it as soon as grants.json is emptied', async () => {

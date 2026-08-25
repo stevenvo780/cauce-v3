@@ -124,4 +124,73 @@ describe('origin relay worker adapter scoping (G1)', () => {
     expect(repository.claimScopes).not.toContain('telegram');
     expect(transport.effects.map((event) => event.event_id).sort()).toEqual(['wx-1', 'wy-1']);
   });
+
+  it('claims one fresh lease even when a legacy batch size is configured', async () => {
+    const repository = new AdapterScopedRepository([
+      ['webhook-x', [relayEvent('webhook-x', 'one'), relayEvent('webhook-x', 'two')]]
+    ]);
+    const transport = new FakeOriginTransport();
+    const worker = new OriginRelayWorker({
+      repository,
+      transports: new MapOriginTransportRegistry([['webhook-x', transport]]),
+      batchSize: 20
+    });
+
+    expect(await worker.runOnce()).toBe(1);
+    expect(transport.effects.map((event) => event.event_id)).toEqual(['one']);
+  });
+
+  it('never counts sent or issues a retry ACK when the durable sent ACK is fenced', async () => {
+    const acknowledgements: OriginRelayAck[] = [];
+    const outcomes: string[] = [];
+    const event = relayEvent('webhook-x', 'fenced');
+    const repository: OriginRelayRepository = {
+      async claim() { return [event]; },
+      async ack(acknowledgement) {
+        acknowledgements.push(acknowledgement);
+        throw new Error('fenced');
+      }
+    };
+    const transport = new FakeOriginTransport();
+    const worker = new OriginRelayWorker({
+      repository,
+      transports: new MapOriginTransportRegistry([['webhook-x', transport]]),
+      onResult: (outcome) => outcomes.push(outcome)
+    });
+
+    expect(await worker.runOnce()).toBe(1);
+    expect(transport.effects).toHaveLength(1);
+    expect(acknowledgements).toEqual([
+      { event_id: 'fenced', attempt: 1, claim_token: 'claim-fenced', status: 'sent' }
+    ]);
+    expect(outcomes).toEqual(['fenced']);
+  });
+
+  it('reclaims an expired fenced send with the stable downstream idempotency key', async () => {
+    const first = relayEvent('webhook-x', 'recoverable');
+    const second = { ...first, attempt: 2, claim_token: 'claim-recoverable-2' };
+    let claims = 0;
+    const acknowledgements: OriginRelayAck[] = [];
+    const outcomes: string[] = [];
+    const repository: OriginRelayRepository = {
+      async claim() { claims += 1; return claims === 1 ? [first] : claims === 2 ? [second] : []; },
+      async ack(acknowledgement) {
+        acknowledgements.push(acknowledgement);
+        if (acknowledgement.attempt === 1) throw new Error('lease expired');
+      }
+    };
+    const transport = new FakeOriginTransport();
+    const worker = new OriginRelayWorker({
+      repository,
+      transports: new MapOriginTransportRegistry([['webhook-x', transport]]),
+      onResult: (outcome) => outcomes.push(outcome)
+    });
+
+    await worker.runOnce();
+    await worker.runOnce();
+
+    expect(transport.effects).toHaveLength(1);
+    expect(acknowledgements.map((ack) => ack.status)).toEqual(['sent', 'sent']);
+    expect(outcomes).toEqual(['fenced', 'sent']);
+  });
 });

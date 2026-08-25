@@ -273,12 +273,7 @@ export type ConfigResource =
  * no los agregó a la lista de self-service, así que un tenant no-hub recibe 403.
  */
 export type RegistryConfigResource =
-  | 'agent' | 'provider_account' | 'alias_routing_ceiling' | 'agent_account_binding'
-  // El perfil autorado del alias (`agent_profiles`, migración 026). Entra como un recurso más de
-  // la mutación de configuración —y no por una ruta propia— para heredar el bloqueo optimista, la
-  // mutación inversa que alcanza el botón de deshacer, el asiento en `audit_events` y el
-  // aislamiento por inquilino.
-  | 'agent_profile';
+  | 'agent' | 'provider_account' | 'alias_routing_ceiling' | 'agent_account_binding';
 export type AnyConfigResource = ConfigResource | RegistryConfigResource;
 export type ConfigAction = 'create' | 'update' | 'delete';
 export type ConfigMutation = Record<string, unknown> & {
@@ -314,12 +309,9 @@ export interface ConfigurationSnapshot {
    * gateway anterior a la migración 010 no las publica, y eso NO es lo mismo que una lista vacía.
    * La UI distingue "clave ausente" (dato no disponible) de "lista vacía" (cero filas conocidas).
    *
-   * Cada fila de `agents` trae `role_brief`: el rol declarado que el adaptador antepone al
-   * contrato (`Tu rol: ...`). Es `string | null` — NULL significa "sin rol declarado", que no es
-   * lo mismo que la cadena vacía: el store convierte '' en NULL antes de guardar porque el CHECK
-   * de la base exige longitud >= 1. Se escribe con la mutación
-   * `{ resource: 'agent', action: 'update', tenant_id, alias, value: { role_brief } }`, que deja
-   * su inversa en `config_revisions`; el tope es 1200 PUNTOS DE CÓDIGO, no `String.length`.
+   * Cada fila de `agents` trae `role_brief` únicamente como proyección legacy de sólo lectura de
+   * `agent_profiles.role_summary`. La consola nunca la escribe: el PUT canónico de Perfil hace
+   * CAS, materializa el runtime y sólo después acredita `applied_revision`.
    */
   agents?: Array<Record<string, unknown>> | null;
   /** `credential_ref` nunca viaja acá; `external_account_id` y `credential_ref_kind` los anula el
@@ -327,6 +319,8 @@ export interface ConfigurationSnapshot {
   provider_accounts?: Array<Record<string, unknown>> | null;
   alias_routing_ceiling?: Array<Record<string, unknown>> | null;
   agent_account_bindings?: Array<Record<string, unknown>> | null;
+  /** Copia diagnóstica de sólo lectura; las escrituras usan la API canónica de Perfil. */
+  agent_profiles?: Array<Record<string, unknown>> | null;
   revisions?: ConfigRevision[] | null;
 }
 
@@ -723,7 +717,8 @@ export interface AgentMemoryIndex {
 // ------------------------------------------------------------------------------------------
 // LOS FICHEROS QUE GOBIERNAN A UN AGENTE
 //
-// `GET /v3/console/agents/:alias/documents` da el INVENTARIO (qué fichero es cuál y dónde vive)
+// `GET /v3/console/tenants/:tenantId/agents/:alias/documents` da el INVENTARIO
+// (qué fichero es cuál y dónde vive)
 // y `.../documents/:kind/content` da y recibe el CONTENIDO.
 //
 // La honestidad de esta pantalla depende de leer bien tres campos, porque los tres significan
@@ -777,19 +772,29 @@ export interface AgentDocumentContent {
   exists: boolean;
   content: string;
   /** Huella de lo servido. Se devuelve al guardar para que dos personas no se pisen en silencio. */
-  sha: string;
+  sha: string | null;
   bytes: number;
   editable: boolean;
+  /** Un prefijo recortado se puede inspeccionar, pero nunca editar ni reemplazar. */
+  truncated: boolean;
+  modified_at?: string;
   /** true = lo que se ve es una PROYECCIÓN, no el fichero entero. */
   projected: boolean;
   warning?: string;
 }
 
 export interface AgentDocumentGuardado {
-  ok: boolean;
-  path: string;
-  sha: string;
-  bytes: number;
+  /*
+   * Todos son opcionales a propósito: `request<T>` sólo tipa TypeScript, no valida el JSON de un
+   * gateway anterior durante un despliegue escalonado. La UI usa un type guard y sólo limpia el
+   * borrador cuando TODOS acreditan aplicación.
+   */
+  ok?: boolean;
+  state?: string;
+  evidence?: string;
+  path?: string;
+  sha?: string;
+  bytes?: number;
 }
 
 export interface AgentDirective {
@@ -869,7 +874,8 @@ export interface RoleBriefHistory {
 }
 
 /**
- * EL PERFIL DE UN ALIAS Y LA VISTA PREVIA DE SUS FICHEROS (`GET /v3/console/agents/:alias/perfil`).
+ * EL PERFIL Y SU VISTA PREVIA
+ * (`GET /v3/console/tenants/:tenantId/agents/:alias/perfil`).
  *
  * `ficheros` es EL TEXTO EXACTO que va a quedar en cada fichero que el arnés de ese alias lee,
  * compuesto por la MISMA función que usa el adaptador para escribirlo dentro del contenedor. Que
@@ -881,6 +887,17 @@ export interface AgentPerfilCampos {
   purpose: string;
   role_summary: string;
   human_brief: string;
+  responsibilities: string[];
+  restrictions: string[];
+  tools: string[];
+  operating_rules: string[];
+}
+
+/** Forma canónica que persiste el gateway; un texto vacío se representa como `null`. */
+export interface AgentPerfilValor {
+  purpose: string | null;
+  role_summary: string | null;
+  human_brief: string | null;
   responsibilities: string[];
   restrictions: string[];
   tools: string[];
@@ -905,17 +922,19 @@ export interface AgentPerfil {
   motivo?: string;
   tenant_id?: string;
   alias?: string;
-  /** El arnés MEDIDO en los hechos. `null` cuando el registro no dice ninguno. */
+  /** Estado durable del alias. Ausente se trata como apagado, nunca como habilitado implícito. */
+  agent_enabled?: boolean;
+  /** Presencia REAL de `agent_profiles`; un perfil persistido vacío sigue siendo `true`. */
+  exists?: boolean;
+  /** Revisión desired propia del perfil; `null` cuando todavía no existe una fila. */
+  revision?: number | null;
+  /** Última revisión cuyo lote completo fue acreditado por el runtime. */
+  applied_revision?: number | null;
+  /** Estado desired/applied calculado por el gateway, no inferido por el navegador. */
+  runtime_state?: 'absent' | 'pending' | 'applied' | 'disabled';
+  /** El arnés declarado en los hechos. `null` cuando el registro no dice ninguno. */
   harness?: string | null;
-  perfil: {
-    purpose: string | null;
-    role_summary: string | null;
-    human_brief: string | null;
-    responsibilities: string[];
-    restrictions: string[];
-    tools: string[];
-    operating_rules: string[];
-  };
+  perfil: AgentPerfilValor;
   hechos?: {
     permisos: { ruta: boolean; lectura: boolean; control: boolean; notificacion: boolean };
     cuotas: Array<{ proveedor: string; cuenta: string; limite?: string }>;
@@ -939,4 +958,23 @@ export interface AgentPerfil {
   ficheros?: AgentPerfilFichero[];
   /** Por qué no hay ficheros, cuando no los hay. Un array vacío sin explicación se lee mal. */
   aviso?: string;
+}
+
+export interface AgentPerfilRuntimeAck {
+  name: string;
+  path: string;
+  state: 'written' | 'already_current' | 'preserved';
+  sha: string;
+  bytes: number;
+}
+
+/** Respuesta que permite afirmar que desired y runtime convergieron en la misma revisión. */
+export interface AgentPerfilAplicado {
+  ok: true;
+  state: 'applied';
+  tenant_id: string;
+  alias: string;
+  revision: number;
+  applied_revision: number;
+  acknowledgements: AgentPerfilRuntimeAck[];
 }

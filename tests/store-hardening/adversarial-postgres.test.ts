@@ -694,9 +694,21 @@ describe('adversarial PostgreSQL store hardening', () => {
     expect(jobOrder.slice(0, 3)).toContain(batchJob);
 
     const lease = await repository.acquireLease('Pablo', 'midas', 'fair-delivery', [], 10_000);
-    const batchMessage = await repository.publish(command({
-      recipients: [{ tenant_id: 'Pablo', alias: 'midas' }], lane: 'batch'
-    }));
+    // `agent.message` is an internal materialization and is correctly rejected by publish().
+    // Seed that already-authorized hop at the persistence boundary, as the agent-output path
+    // would do. Delivery fairness is classified by provenance, not by the inherited lane.
+    const batchMessage = await pool.query<{ id: string }>(
+      `INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane,priority)
+       VALUES($1,$2,'Steven','grp.steven','kant',$3::jsonb,'batch',0) RETURNING id`,
+      [randomUUID(), `trace-${randomUUID()}`, JSON.stringify({
+        type: 'agent.message', text: 'background agent work', from_alias: 'kant'
+      })]
+    );
+    await pool.query(
+      `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias)
+       VALUES($1,'Pablo','midas')`,
+      [batchMessage.rows[0]!.id]
+    );
     const deliveryOrder: string[] = [];
     for (let index = 0; index < 6; index += 1) {
       await repository.publish(command({
@@ -712,7 +724,7 @@ describe('adversarial PostgreSQL store hardening', () => {
         event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt, retryable: false
       });
     }
-    expect(deliveryOrder.slice(0, 3)).toContain(batchMessage.message_id);
+    expect(deliveryOrder.slice(0, 3)).toContain(batchMessage.rows[0]!.id);
   });
 
   it('enforces the data-driven hub-star in ACLs and delivery inserts even for operators', async () => {

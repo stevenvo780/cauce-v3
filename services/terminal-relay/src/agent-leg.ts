@@ -44,6 +44,10 @@ export interface AgentHello {
    * campo que sólo hace falta para leer su directiva.
    */
   readonly home?: string;
+  /** Alias-scoped harness roots measured from the live adapter process, never inferred by relay. */
+  readonly codex_home?: string;
+  readonly claude_config_dir?: string;
+  readonly openclaw_workspace?: string;
   readonly agent_version: string;
   readonly modes: readonly TerminalMode[];
   /**
@@ -58,6 +62,16 @@ export interface AgentHello {
 
 /** El agente declara esto cuando sabe contestar TAG_READ. Sin la marca, no se le pregunta. */
 export const FEATURE_READ_GOVERNANCE = 'read_governance';
+/** Escritura atómica/CAS. El sufijo versiona explícitamente el protocolo y sus precondiciones. */
+export const FEATURE_WRITE_GOVERNANCE = 'write_governance_v1';
+/** Perfil completo: preflight de todos los ficheros y rollback total dentro del pty-agent. */
+export const FEATURE_WRITE_GOVERNANCE_BATCH = 'write_governance_batch_v1';
+/** Permite frenar una sola PTY sin congelar PONG, lecturas ni las otras sesiones multiplexadas. */
+export const FEATURE_SESSION_OUTPUT_FLOW_CONTROL = 'session_output_flow_control';
+/** Memoria propia máxima encima del writable buffer de Node mientras el TLS espera `drain`. */
+export const MAX_AGENT_WRITE_QUEUE_BYTES = 512 * 1024;
+/** Reserved above the data quota for CLOSE frames. Exhausting it drops TLS so the agent kills all children. */
+export const MAX_AGENT_CRITICAL_QUEUE_BYTES = 64 * 1024;
 
 /**
  * Una lectura en vuelo. Es una transacción suelta, no una sesión: el agente contesta un READ_OK
@@ -70,6 +84,29 @@ export interface AgentReadHandlers {
   /** La conexión murió con la lectura a medias; no va a llegar ni OK ni ERR. */
   onAgentGone(reason: string): void;
 }
+
+export interface AgentWriteHandlers {
+  onWriteOk(ack: Record<string, unknown>): void;
+  onWriteErr(failure: { readonly code: string; readonly reason: string }): void;
+  /** La conexión murió antes del ACK; el llamador conserva la precondición para reintentar. */
+  onAgentGone(reason: string): void;
+}
+
+export type AgentGovernanceBatchEntry =
+  | {
+      readonly path: string;
+      readonly mode: 'write';
+      readonly operation: 'replace' | 'create';
+      readonly expectedSha: string | undefined;
+      readonly contentSha: string;
+      readonly content: Buffer;
+    }
+  | {
+      readonly path: string;
+      readonly mode: 'verify';
+      readonly operation: 'present' | 'absent';
+      readonly expectedSha: string | undefined;
+    };
 
 export interface AgentSessionHandlers {
   onOpenOk(pid: number): void;
@@ -180,6 +217,10 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
   const modes = modesField(source);
   if (!tenantId || !alias || !containerId || !imageId || !runtimeUser || !harness || !agentVersion) return undefined;
   if (generation === undefined || runtimeUid === undefined || modes === undefined) return undefined;
+  const home = rutaMedida(source, 'home');
+  const codexHome = rutaMedida(source, 'codex_home');
+  const claudeConfigDir = rutaMedida(source, 'claude_config_dir');
+  const openclawWorkspace = rutaMedida(source, 'openclaw_workspace');
   return {
     tenant_id: tenantId,
     alias,
@@ -191,7 +232,10 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
     harness,
     // Opcional y validado sólo si viene: si el agente lo manda tiene que ser una ruta absoluta;
     // si no lo manda, el saludo sigue siendo válido y el alias conserva sus terminales.
-    ...(rutaDelHome(source) === undefined ? {} : { home: rutaDelHome(source) as string }),
+    ...(home === undefined ? {} : { home }),
+    ...(codexHome === undefined ? {} : { codex_home: codexHome }),
+    ...(claudeConfigDir === undefined ? {} : { claude_config_dir: claudeConfigDir }),
+    ...(openclawWorkspace === undefined ? {} : { openclaw_workspace: openclawWorkspace }),
     agent_version: agentVersion,
     modes,
     features: featuresField(source)
@@ -203,8 +247,8 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
  * saludo entero, porque un agente sin `home` sigue sirviendo terminales — sólo se queda sin
  * lectura de directiva, y el gateway lo dice con esas palabras.
  */
-function rutaDelHome(source: Record<string, unknown>): string | undefined {
-  const valor = source.home;
+function rutaMedida(source: Record<string, unknown>, campo: string): string | undefined {
+  const valor = source[campo];
   if (typeof valor !== 'string') return undefined;
   if (!valor.startsWith('/') || valor.includes('\0') || valor.length > 4096) return undefined;
   return valor;
@@ -219,9 +263,13 @@ export class AgentConnection {
   private readonly sessions = new Map<string, AgentSessionHandlers>();
   /** Lecturas de gobierno en vuelo, por `request_id`. Vacío casi siempre. */
   private readonly reads = new Map<string, AgentReadHandlers>();
+  /** Escrituras gobernadas en vuelo. Separadas de PTY y de lectura por negociación de capacidad. */
+  private readonly writes = new Map<string, AgentWriteHandlers>();
   private readonly ping: NodeJS.Timeout;
   private lastPongAt: number;
-  private paused = false;
+  private queuedWrites: Buffer[] = [];
+  private queuedWriteBytes = 0;
+  private waitingDrain = false;
   private closed = false;
 
   constructor(socket: TLSSocket, hello: AgentHello, fingerprint: string, now: () => number) {
@@ -235,7 +283,7 @@ export class AgentConnection {
         this.destroy('pong_timeout');
         return;
       }
-      this.write(encodeFrame(FRAME_TAGS.PING));
+      void this.write(encodeFrame(FRAME_TAGS.PING));
     }, AGENT_PING_INTERVAL_MS);
     this.ping.unref?.();
   }
@@ -265,6 +313,11 @@ export class AgentConnection {
       // Se propaga sólo si vino. El gateway lo necesita para componer la ruta del fichero de
       // gobierno; sin él contesta «contenedor sin identificar» en vez de adivinar una ruta.
       ...(this.hello.home === undefined ? {} : { home: this.hello.home }),
+      ...(this.hello.codex_home === undefined ? {} : { codex_home: this.hello.codex_home }),
+      ...(this.hello.claude_config_dir === undefined
+        ? {} : { claude_config_dir: this.hello.claude_config_dir }),
+      ...(this.hello.openclaw_workspace === undefined
+        ? {} : { openclaw_workspace: this.hello.openclaw_workspace }),
       agent_version: this.hello.agent_version,
       modes: this.hello.modes,
       connected_since: this.connectedAt.toISOString()
@@ -277,7 +330,6 @@ export class AgentConnection {
 
   detachSession(sessionId: string): void {
     this.sessions.delete(sessionId);
-    if (this.sessions.size === 0) this.resumeOutput();
   }
 
   hasSession(sessionId: string): boolean {
@@ -289,6 +341,18 @@ export class AgentConnection {
     return this.hello.features.includes(FEATURE_READ_GOVERNANCE);
   }
 
+  get supportsGovernanceWrite(): boolean {
+    return this.hello.features.includes(FEATURE_WRITE_GOVERNANCE);
+  }
+
+  get supportsGovernanceWriteBatch(): boolean {
+    return this.hello.features.includes(FEATURE_WRITE_GOVERNANCE_BATCH);
+  }
+
+  get supportsSessionOutputFlowControl(): boolean {
+    return this.hello.features.includes(FEATURE_SESSION_OUTPUT_FLOW_CONTROL);
+  }
+
   attachRead(requestId: string, handlers: AgentReadHandlers): void {
     this.reads.set(requestId, handlers);
   }
@@ -297,45 +361,155 @@ export class AgentConnection {
     this.reads.delete(requestId);
   }
 
+  attachWrite(requestId: string, handlers: AgentWriteHandlers): void {
+    this.writes.set(requestId, handlers);
+  }
+
+  detachWrite(requestId: string): void {
+    this.writes.delete(requestId);
+  }
+
   /**
    * Pide un fichero de gobierno. El `requestId` viaja también como prefijo de 36 bytes de los
    * READ_DATA, así que tiene que ser un UUID en minúsculas con guiones o el agente no podrá
    * codificar la respuesta.
    */
   sendRead(requestId: string, kind: 'file' | 'dir', path: string): void {
-    this.write(encodeJsonFrame(FRAME_TAGS.READ, { request_id: requestId, kind, path }));
+    void this.write(encodeJsonFrame(FRAME_TAGS.READ, { request_id: requestId, kind, path }));
+  }
+
+  /**
+   * Envía una transacción completa. La precondición vive en WRITE y el contenido binario en
+   * WRITE_DATA; no se interpola en argv, JSON de shell ni ningún comando.
+   */
+  sendWrite(
+    requestId: string,
+    path: string,
+    operation: 'replace' | 'create',
+    expectedSha: string | undefined,
+    contentSha: string,
+    content: Buffer
+  ): boolean {
+    if (!this.supportsGovernanceWrite) return false;
+    const chunks: Buffer[] = [];
+    for (let offset = 0; offset < content.byteLength; offset += MAX_DATA_BYTES) {
+      chunks.push(encodeDataFrame(
+        FRAME_TAGS.WRITE_DATA,
+        requestId,
+        content.subarray(offset, offset + MAX_DATA_BYTES)
+      ));
+    }
+    const begin = encodeJsonFrame(FRAME_TAGS.WRITE, {
+      request_id: requestId,
+      path,
+      operation,
+      ...(expectedSha === undefined ? {} : { expected_sha: expectedSha }),
+      content_sha: contentSha,
+      bytes: content.byteLength,
+      chunks: chunks.length
+    });
+    return this.writeBatch([begin, ...chunks]);
+  }
+
+  cancelWrite(requestId: string): void {
+    if (!this.supportsGovernanceWrite) return;
+    void this.write(encodeJsonFrame(FRAME_TAGS.WRITE_CANCEL, { request_id: requestId }));
+  }
+
+  /**
+   * Envía el perfil como una sola transacción. Los DATA van en el mismo orden que `entries`, y el
+   * agente no preflighta ni toca disco hasta haber recibido/verificado todos sus digests.
+   */
+  sendGovernanceWriteBatch(requestId: string, entries: readonly AgentGovernanceBatchEntry[]): boolean {
+    if (!this.supportsGovernanceWriteBatch) return false;
+    const frames: Buffer[] = [];
+    const metadata = entries.map((entry) => {
+      if (entry.mode === 'verify') {
+        return {
+          path: entry.path,
+          mode: entry.mode,
+          operation: entry.operation,
+          ...(entry.expectedSha === undefined ? {} : { expected_sha: entry.expectedSha }),
+          bytes: 0,
+          chunks: 0,
+        };
+      }
+      let chunks = 0;
+      for (let offset = 0; offset < entry.content.byteLength; offset += MAX_DATA_BYTES) {
+        frames.push(encodeDataFrame(
+          FRAME_TAGS.WRITE_BATCH_DATA,
+          requestId,
+          entry.content.subarray(offset, offset + MAX_DATA_BYTES)
+        ));
+        chunks += 1;
+      }
+      return {
+        path: entry.path,
+        mode: entry.mode,
+        operation: entry.operation,
+        ...(entry.expectedSha === undefined ? {} : { expected_sha: entry.expectedSha }),
+        content_sha: entry.contentSha,
+        bytes: entry.content.byteLength,
+        chunks,
+      };
+    });
+    const begin = encodeJsonFrame(FRAME_TAGS.WRITE_BATCH, { request_id: requestId, entries: metadata });
+    return this.writeBatch([begin, ...frames]);
+  }
+
+  cancelGovernanceWriteBatch(requestId: string): void {
+    if (!this.supportsGovernanceWriteBatch) return;
+    void this.write(encodeJsonFrame(FRAME_TAGS.WRITE_BATCH_CANCEL, { request_id: requestId }));
   }
 
   sendOpen(sessionId: string, ticket: string, mode: TerminalMode, cols: number, rows: number): void {
-    this.write(encodeJsonFrame(FRAME_TAGS.OPEN, { session_id: sessionId, ticket, mode, cols, rows }));
+    void this.write(encodeJsonFrame(FRAME_TAGS.OPEN, { session_id: sessionId, ticket, mode, cols, rows }));
   }
 
-  /** Chunked to the wire limit; the caller may hand us an arbitrarily large paste. */
-  sendStdin(sessionId: string, data: Buffer): void {
+  /** Chunked to the wire limit. `false` means the bounded TLS queue refused more input. */
+  sendStdin(sessionId: string, data: Buffer): boolean {
+    const frames: Buffer[] = [];
     for (let offset = 0; offset < data.byteLength; offset += MAX_DATA_BYTES) {
-      this.write(encodeDataFrame(FRAME_TAGS.STDIN, sessionId, data.subarray(offset, offset + MAX_DATA_BYTES)));
+      frames.push(encodeDataFrame(
+        FRAME_TAGS.STDIN,
+        sessionId,
+        data.subarray(offset, offset + MAX_DATA_BYTES)
+      ));
     }
+    return this.writeBatch(frames);
+  }
+
+  /** Respuesta técnica ya validada; el tag separado mantiene STDIN fuera de los viewers. */
+  sendTerminalResponse(sessionId: string, data: Buffer): boolean {
+    const frames: Buffer[] = [];
+    for (let offset = 0; offset < data.byteLength; offset += MAX_DATA_BYTES) {
+      frames.push(encodeDataFrame(
+        FRAME_TAGS.TERMINAL_RESPONSE,
+        sessionId,
+        data.subarray(offset, offset + MAX_DATA_BYTES)
+      ));
+    }
+    return this.writeBatch(frames);
   }
 
   sendResize(sessionId: string, cols: number, rows: number): void {
-    this.write(encodeJsonFrame(FRAME_TAGS.RESIZE, { session_id: sessionId, cols, rows }));
+    void this.write(encodeJsonFrame(FRAME_TAGS.RESIZE, { session_id: sessionId, cols, rows }));
   }
 
-  sendClose(sessionId: string, reason: string): void {
-    this.write(encodeJsonFrame(FRAME_TAGS.CLOSE, { session_id: sessionId, reason }));
+  sendClose(sessionId: string, reason: string): boolean {
+    const accepted = this.writeCritical(encodeJsonFrame(FRAME_TAGS.CLOSE, { session_id: sessionId, reason }));
+    if (!accepted) this.destroy('critical_close_backpressure');
+    return accepted;
   }
 
-  /** Backpressure: stop reading the agent socket so the kernel stalls the PTY producer. */
-  pauseOutput(): void {
-    if (this.paused || this.closed) return;
-    this.paused = true;
-    this.socket.pause();
+  pauseSessionOutput(sessionId: string): boolean {
+    if (!this.supportsSessionOutputFlowControl) return false;
+    return this.write(encodeJsonFrame(FRAME_TAGS.PAUSE_OUTPUT, { session_id: sessionId }));
   }
 
-  resumeOutput(): void {
-    if (!this.paused || this.closed) return;
-    this.paused = false;
-    this.socket.resume();
+  resumeSessionOutput(sessionId: string): boolean {
+    if (!this.supportsSessionOutputFlowControl) return false;
+    return this.write(encodeJsonFrame(FRAME_TAGS.RESUME_OUTPUT, { session_id: sessionId }));
   }
 
   destroy(reason: string): void {
@@ -344,9 +518,13 @@ export class AgentConnection {
     clearInterval(this.ping);
     // Las lecturas en vuelo se avisan igual que las sesiones: si no, se quedan esperando hasta
     // que venza su temporizador y el que pregunta ve «tardó» donde lo que pasó fue «se cayó».
-    const handlers = [...this.sessions.values(), ...this.reads.values()];
+    const handlers = [...this.sessions.values(), ...this.reads.values(), ...this.writes.values()];
     this.sessions.clear();
     this.reads.clear();
+    this.writes.clear();
+    this.queuedWrites = [];
+    this.queuedWriteBytes = 0;
+    this.waitingDrain = false;
     this.socket.destroy();
     for (const handler of handlers) {
       try {
@@ -418,6 +596,40 @@ export class AgentConnection {
       this.dispatchRead(data.sessionId, (handlers) => handlers.onReadData(data.data));
       return;
     }
+    if (frame.tag === FRAME_TAGS.WRITE_OK) {
+      const body = decodeJsonFrame(frame.payload);
+      const requestId = stringField(body, 'request_id');
+      if (requestId === undefined) throw new FramingError('WRITE_OK without a request id');
+      this.dispatchWrite(requestId, (handlers) => handlers.onWriteOk(body));
+      return;
+    }
+    if (frame.tag === FRAME_TAGS.WRITE_ERR) {
+      const body = decodeJsonFrame(frame.payload);
+      const requestId = stringField(body, 'request_id');
+      if (requestId === undefined) throw new FramingError('WRITE_ERR without a request id');
+      this.dispatchWrite(requestId, (handlers) => handlers.onWriteErr({
+        code: stringField(body, 'error') ?? 'unknown',
+        reason: stringField(body, 'reason') ?? 'write_failed'
+      }));
+      return;
+    }
+    if (frame.tag === FRAME_TAGS.WRITE_BATCH_OK) {
+      const body = decodeJsonFrame(frame.payload);
+      const requestId = stringField(body, 'request_id');
+      if (requestId === undefined) throw new FramingError('WRITE_BATCH_OK without a request id');
+      this.dispatchWrite(requestId, (handlers) => handlers.onWriteOk(body));
+      return;
+    }
+    if (frame.tag === FRAME_TAGS.WRITE_BATCH_ERR) {
+      const body = decodeJsonFrame(frame.payload);
+      const requestId = stringField(body, 'request_id');
+      if (requestId === undefined) throw new FramingError('WRITE_BATCH_ERR without a request id');
+      this.dispatchWrite(requestId, (handlers) => handlers.onWriteErr({
+        code: stringField(body, 'error') ?? 'unknown',
+        reason: stringField(body, 'reason') ?? 'write_batch_failed'
+      }));
+      return;
+    }
     // AGENT_HELLO after the handshake, or any frame only the relay may send, is a violation.
     throw new FramingError('unexpected frame from the agent');
   }
@@ -434,6 +646,17 @@ export class AgentConnection {
     }
   }
 
+  private dispatchWrite(requestId: string, apply: (handlers: AgentWriteHandlers) => void): void {
+    const handlers = this.writes.get(requestId);
+    // ACK tardío después de timeout/cancelación: se descarta sin afectar las PTY multiplexadas.
+    if (!handlers) return;
+    try {
+      apply(handlers);
+    } catch (error) {
+      logEvent('terminal_relay_write_handler_failed', { request_id: requestId, error: errorLabel(error) });
+    }
+  }
+
   private dispatch(sessionId: string, apply: (handlers: AgentSessionHandlers) => void): void {
     const handlers = this.sessions.get(sessionId);
     // Frames for a session we already closed are stale, not fatal: drop them.
@@ -445,14 +668,76 @@ export class AgentConnection {
     }
   }
 
-  private write(frame: Buffer): void {
+  /**
+   * Node acepta la trama que hace que `write()` devuelva false; sólo las siguientes esperan
+   * `drain`. La cola propia está acotada para que un browser que pega más rápido que el TLS no
+   * convierta al relay en almacenamiento. No se pausa nunca el lado legible del socket.
+   */
+  private write(frame: Buffer): boolean {
+    if (this.closed || this.socket.destroyed) return false;
+    if (this.waitingDrain) {
+      if (this.queuedWriteBytes + frame.byteLength > MAX_AGENT_WRITE_QUEUE_BYTES) return false;
+      this.queuedWrites.push(frame);
+      this.queuedWriteBytes += frame.byteLength;
+      return true;
+    }
+    if (!this.socket.write(frame)) {
+      this.waitingDrain = true;
+      this.socket.once('drain', () => this.flushWrites());
+    }
+    return true;
+  }
+
+  /**
+   * CLOSE may not be silently discarded behind PTY/data traffic. A small reserved tail accepts
+   * every close for the bounded session set; if even that cannot fit, destroying TLS is the safe
+   * signal because the pty-agent's teardown SIGHUPs and then SIGKILLs every child.
+   */
+  private writeCritical(frame: Buffer): boolean {
+    if (this.closed || this.socket.destroyed) return false;
+    if (this.waitingDrain) {
+      if (this.queuedWriteBytes + frame.byteLength >
+          MAX_AGENT_WRITE_QUEUE_BYTES + MAX_AGENT_CRITICAL_QUEUE_BYTES) return false;
+      this.queuedWrites.push(frame);
+      this.queuedWriteBytes += frame.byteLength;
+      return true;
+    }
+    if (!this.socket.write(frame)) {
+      this.waitingDrain = true;
+      this.socket.once('drain', () => this.flushWrites());
+    }
+    return true;
+  }
+
+  /** Preflight de una transacción: nunca deja media escritura en la cola propia acotada. */
+  private writeBatch(frames: readonly Buffer[]): boolean {
+    if (this.closed || this.socket.destroyed) return false;
+    const total = frames.reduce((bytes, frame) => bytes + frame.byteLength, 0);
+    if (this.waitingDrain && this.queuedWriteBytes + total > MAX_AGENT_WRITE_QUEUE_BYTES) return false;
+    for (const frame of frames) {
+      if (!this.write(frame)) return false;
+    }
+    return true;
+  }
+
+  private flushWrites(): void {
     if (this.closed || this.socket.destroyed) return;
-    this.socket.write(frame);
+    this.waitingDrain = false;
+    while (this.queuedWrites.length > 0) {
+      const frame = this.queuedWrites.shift();
+      if (frame === undefined) break;
+      this.queuedWriteBytes -= frame.byteLength;
+      if (!this.socket.write(frame)) {
+        this.waitingDrain = true;
+        this.socket.once('drain', () => this.flushWrites());
+        return;
+      }
+    }
   }
 }
 
 export function agentKey(tenantId: string, alias: string): string {
-  return `${tenantId} ${alias}`;
+  return `${tenantId}\u0000${alias}`;
 }
 
 export interface AgentTlsMaterial {

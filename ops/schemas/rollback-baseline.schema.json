@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/rollback-baseline.schema.json",
+  "title": "Cauce V3 durable rollback baseline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "suite", "createdAt", "forwardReleaseCommit", "forwardRuntime",
+    "bridgeRuntime", "console", "overrideManifest", "bridgeEvidence"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "suite": { "const": "cauce-v3-rollback-baseline" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "forwardReleaseCommit": { "$ref": "#/$defs/gitObject" },
+    "forwardRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryDigest", "imageId", "sourceDigest"],
+      "properties": {
+        "repositoryDigest": { "$ref": "#/$defs/imageReference" },
+        "imageId": { "$ref": "#/$defs/digest" },
+        "sourceDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "bridgeRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryDigest", "imageId", "sourceDigest", "patchSourceCommit", "resultingBridgeTree"],
+      "properties": {
+        "repositoryDigest": { "$ref": "#/$defs/imageReference" },
+        "imageId": { "$ref": "#/$defs/digest" },
+        "sourceDigest": { "$ref": "#/$defs/digest" },
+        "patchSourceCommit": { "$ref": "#/$defs/gitObject" },
+        "resultingBridgeTree": { "$ref": "#/$defs/gitObject" }
+      }
+    },
+    "console": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryDigest", "imageId"],
+      "properties": {
+        "repositoryDigest": { "$ref": "#/$defs/imageReference" },
+        "imageId": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "overrideManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/privatePath" },
+        "sha256": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "bridgeEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/privatePath" },
+        "sha256": { "$ref": "#/$defs/digest" }
+      }
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "gitObject": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" },
+    "imageReference": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$"
+    },
+    "privatePath": {
+      "type": "string",
+      "pattern": "^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$"
+    }
+  }
+}

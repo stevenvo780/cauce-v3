@@ -24,6 +24,7 @@ let pool: DatabasePool;
 
 const upPath = new URL('../migrations/026_agent_profile.sql', import.meta.url);
 const downPath = new URL('../migrations/down/026_agent_profile.sql', import.meta.url);
+const canonicalDownPath = new URL('../migrations/down/028_canonical_agent_role.sql', import.meta.url);
 
 async function runSql(url: URL): Promise<void> {
   await pool.query(await readFile(url, 'utf8'));
@@ -43,6 +44,15 @@ async function functionExists(name: string): Promise<boolean> {
   return result.rows[0]?.exists === true;
 }
 
+async function downCanonicalIfApplied(): Promise<void> {
+  const applied = await pool.query<{ exists: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1 FROM schema_migrations WHERE version='028_canonical_agent_role.sql'
+     ) AS exists`
+  );
+  if (applied.rows[0]?.exists) await runSql(canonicalDownPath);
+}
+
 beforeAll(async () => {
   database = await startTestDatabase();
   pool = database.pool;
@@ -52,7 +62,7 @@ afterAll(async () => {
   // Dejar el esquema ARRIBA pase lo que pase: los otros ficheros de la suite comparten esta base
   // y encontrarla a medio migrar les rompería por un motivo que no es el suyo.
   try {
-    if (pool && !(await tableExists('agent_profiles'))) await runSql(upPath);
+    if (pool) await applyMigrations(pool);
   } finally {
     if (pool) await pool.end();
     if (database?.container) await database.container.stop();
@@ -68,6 +78,7 @@ describe('026 arriba, abajo y arriba otra vez', () => {
   });
 
   it('el down/ la revierte entera: se va la tabla, se van las funciones y se va la anotación', async () => {
+    await downCanonicalIfApplied();
     await runSql(downPath);
     expect(await tableExists('agent_profiles')).toBe(false);
     expect(await functionExists('cauce_utf16_units')).toBe(false);
@@ -159,6 +170,7 @@ describe('026 arriba, abajo y arriba otra vez', () => {
     expect(await functionExists('cauce_text_items_ok')).toBe(true);
 
     // Y el orden CORRECTO —el del down/— sí funciona, entero y en una sola pasada.
+    await downCanonicalIfApplied();
     await runSql(downPath);
     expect(await tableExists('agent_profiles')).toBe(false);
     expect(await functionExists('cauce_utf16_units')).toBe(false);

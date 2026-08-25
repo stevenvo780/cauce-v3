@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 alias consumer argos (Steven/hermes)
+Description=Cauce V3 alias consumer argos (Steven/claude)
 After=network-online.target cauce-v3-compose@prod.service
 Wants=network-online.target
 ConditionPathExists=/etc/cauce-v3/aliases/argos.env
@@ -14,7 +14,8 @@ UMask=0077
 Environment=CAUCE_ALIAS=argos
 Environment=CAUCE_TENANT=Steven
 Environment=CAUCE_ROOM=grp.steven
-Environment=CAUCE_HARNESS=hermes
+Environment=CAUCE_HARNESS=claude
+Environment=CAUCE_SEMBRAR_PERFIL=1
 Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
 Environment=CAUCE_INSTANCE_ID=systemd-argos
@@ -25,7 +26,6 @@ Environment=CAUCE_CERT_PATH_ENV=CAUCE_ARGOS_CERT_PATH
 Environment=CAUCE_KEY_PATH_ENV=CAUCE_ARGOS_KEY_PATH
 Environment=CAUCE_CA_PATH_ENV=CAUCE_ARGOS_CA_PATH
 Environment=CAUCE_EXEC_PATH_ENV=CAUCE_ARGOS_EXEC_PATH
-Environment=CAUCE_OPERATIONAL_MODEL_ENV=HERMES_INFERENCE_MODEL
 EnvironmentFile=/etc/cauce-v3/aliases/argos.env
 ExecStart=/opt/cauce-v3/ops/scripts/alias-runner.sh argos
 Restart=always

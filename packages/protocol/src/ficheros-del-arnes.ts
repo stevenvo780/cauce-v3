@@ -1,6 +1,5 @@
 import {
-  componerBloqueDePerfil, lineasDeArnes, lineasDeCuotas, lineasDePermisos, measureStrictestUnits,
-  seccion, vinetas, type AgentProfile, type ContextoDeAlias, type HechosDelAlias,
+  measureStrictestUnits, seccion, vinetas, type AgentProfile, type ContextoDeAlias,
 } from "./agent-profile.js";
 import { bloqueDePerfil, conBloqueDePerfil, sinBloqueDePerfil } from "./marcas-de-bloque.js";
 
@@ -35,8 +34,10 @@ import { bloqueDePerfil, conBloqueDePerfil, sinBloqueDePerfil } from "./marcas-d
  *
  * ── Determinismo ─────────────────────────────────────────────────────────────────────────────
  *
- * Mismo perfil y mismos hechos -> los mismos bytes, siempre. Sin fechas, sin relojes y sin recorrer
- * claves en orden incidental: el reparto es una lista FIJA declarada en el código. No es
+ * Mismo perfil autorado -> los mismos bytes, siempre. Los hechos dinámicos (permisos, cuotas,
+ * destinos y montaje) NO se cachean acá: una revocación no puede dejar al disco afirmando lo
+ * contrario. Sin fechas, sin relojes y sin recorrer claves en orden incidental: el reparto es
+ * una lista FIJA declarada en el código. No es
  * cosmética — cada byte que cambia solo es una reescritura en cada contenedor de la flota, y con
  * `openclaw` son siete ficheros por alias.
  */
@@ -119,13 +120,11 @@ export function nombresDelArnes(harness: string): readonly string[] {
  * vistazo y para que el determinismo sea estructural: cambiar qué va dónde exige cambiar esta
  * tabla, no puede pasar por accidente al reordenar código.
  *
- * `permisos`, `destinos` y la configuración del arnés caen en `AGENTS.md` porque son el «cómo se
- * trabaja acá»: qué te deja hacer Cauce y contra qué estás montado. Las `cuotas` caen en
- * `TOOLS.md` porque son el límite de las herramientas, no una regla de convivencia.
+ * Los hechos dinámicos no caen en ningún fichero. Autorización, destinos y cuotas cambian sin una
+ * edición del perfil y se entregan/validan por sus superficies vivas; materializarlos acá los
+ * convertiría en una segunda fuente de verdad obsoleta.
  */
-function bloqueDeFichero(
-  nombre: string, perfil: AgentProfile, hechos: HechosDelAlias,
-): string {
+function bloqueDeFichero(nombre: string, perfil: AgentProfile): string {
   if (nombre === "SOUL.md") {
     return unir([seccion("Identidad y propósito", perfil.purpose ?? undefined)]);
   }
@@ -137,15 +136,8 @@ function bloqueDeFichero(
   }
   if (nombre === "AGENTS.md") {
     /*
-     * Los permisos y la configuración del arnés son HECHOS: siempre existen. Así que sin este
-     * corte, un alias sin NADA autorado igual recibía un `AGENTS.md` de 417 caracteres que sólo le
-     * decía en qué contenedor corre y a quién puede escribir — ruido con forma de contrato, que es
-     * literalmente lo que el compilador del bloque único se niega a emitir (`hayAutorado`).
-     *
-     * Medido sobre `argos`, que el 2026-08-24 no tenía NINGUNO de los siete ficheros: `claude` y
-     * `codex` no escribían nada y `openclaw` escribía `AGENTS.md` (417) y `TOOLS.md` (228). Tres
-     * arneses, dos criterios distintos para el mismo perfil vacío. La mecánica acompaña a lo
-     * autorado; sola, no se emite.
+     * Sólo reglas autoradas y estables. Los permisos y el inventario alcanzable se resuelven en
+     * cada operación/entrega; escribir aquí una fotografía los convertiría en autoridad rancia.
      */
     const autorado = unir([
       seccion("Responsabilidades",
@@ -156,28 +148,38 @@ function bloqueDeFichero(
         perfil.operating_rules.length > 0 ? vinetas(perfil.operating_rules) : undefined),
     ]);
     if (autorado.length === 0) return "";
-    return unir([
-      autorado,
-      seccion("Permisos y acceso vía Cauce", lineasDePermisos(hechos.permisos)),
-      seccion("Configuración del arnés", lineasDeArnes(hechos)),
-    ]);
+    return autorado;
   }
   if (nombre === "TOOLS.md") {
-    // Mismo criterio: las capacidades del arnés y las cuotas son hechos, y solos no son una
-    // persona. Sin herramientas declaradas, este fichero no se escribe.
+    // Sólo herramientas declaradas. Capacidades y cuotas observadas no se congelan en disco.
     if (perfil.tools.length === 0) return "";
-    return unir([
-      seccion("Herramientas y capacidades", unir([
-        vinetas(perfil.tools),
-        hechos.arnes.capacidades.length > 0
-          ? `Capacidades del arnés: ${[...hechos.arnes.capacidades].join(", ")}`
-          : undefined,
-      ])),
-      seccion("Cuotas y límites", lineasDeCuotas(hechos.cuotas)),
-    ]);
+    return seccion("Herramientas", vinetas(perfil.tools)) ?? "";
   }
   // MEMORY.md y HEARTBEAT.md no reciben nada nuestro: son del agente.
   return "";
+}
+
+/** Bloque único de Claude/Codex: sólo lo autorado, nunca una fotografía de hechos dinámicos. */
+function bloqueUnico(perfil: AgentProfile): string {
+  const rol = unir([
+    perfil.role_summary ?? undefined,
+    perfil.responsibilities.length > 0
+      ? `Responsabilidades:\n${vinetas(perfil.responsibilities)}`
+      : undefined,
+    perfil.restrictions.length > 0
+      ? `Restricciones:\n${vinetas(perfil.restrictions)}`
+      : undefined,
+  ]);
+  return unir([
+    seccion("Identidad y propósito", perfil.purpose ?? undefined),
+    seccion("Rol, responsabilidades y restricciones", rol),
+    seccion("Tu humano y cómo tratarlo", perfil.human_brief ?? undefined),
+    seccion("Herramientas", perfil.tools.length > 0 ? vinetas(perfil.tools) : undefined),
+    seccion(
+      "Instrucciones fijas de funcionamiento",
+      perfil.operating_rules.length > 0 ? vinetas(perfil.operating_rules) : undefined,
+    ),
+  ]);
 }
 
 function unir(partes: readonly (string | undefined)[]): string {
@@ -220,8 +222,8 @@ export function ficherosDelArnes(
 
     // El fichero único de claude/codex lleva el perfil ENTERO: ese arnés no tiene dónde repartirlo.
     const cuerpo = harness === "openclaw"
-      ? bloqueDeFichero(nombre, contexto.perfil, contexto.hechos)
-      : componerBloqueDePerfil(contexto.perfil, contexto.hechos);
+      ? bloqueDeFichero(nombre, contexto.perfil)
+      : bloqueUnico(contexto.perfil);
     const bloque = cuerpo.trim().length === 0 ? "" : `${renglonDeDueno(contexto.perfil)}\n${cuerpo}`;
 
     /*
@@ -240,8 +242,22 @@ export function ficherosDelArnes(
      * Retirar es quitar EL BLOQUE, no vaciar el fichero: lo que una persona escribiera fuera de
      * las marcas se conserva byte a byte, igual que al escribir.
      */
+    const anterior = previo === undefined ? undefined : bloqueDePerfil(previo);
+
+    /*
+     * La guarda corre ANTES de escribir Y antes de retirar. Un perfil vacío de `atlas` no autoriza
+     * a borrar el bloque de `kratos` del AGENTS.md compartido. Un bloque sin dueño tampoco se
+     * atribuye por descarte: si la procedencia es ambigua, se conserva.
+     */
+    if (anterior !== undefined && !esDelMismoAlias(anterior, contexto.perfil)) {
+      generados.push({
+        nombre, politica: "bloque-gestionado", texto: previo ?? "", escribir: false,
+      });
+      continue;
+    }
+
     if (bloque.trim().length === 0) {
-      const teniaBloque = previo !== undefined && bloqueDePerfil(previo) !== undefined;
+      const teniaBloque = anterior !== undefined;
       if (!teniaBloque) {
         generados.push({
           nombre, politica: "bloque-gestionado", texto: previo ?? "", escribir: false,
@@ -251,27 +267,6 @@ export function ficherosDelArnes(
       const limpio = sinBloqueDePerfil(previo ?? "");
       generados.push({
         nombre, politica: "bloque-gestionado", texto: limpio, escribir: limpio !== previo,
-      });
-      continue;
-    }
-
-    /*
-     * GUARDA DE DUEÑO: si el bloque que hay es de OTRO alias, no se pisa.
-     *
-     * `kratos` y `atlas` comparten `$HOME` y su `AGENTS.md` es el MISMO inodo (medido: 12.942
-     * bytes en los dos el 24-ago-2026). Sin esta guarda los dos escribirían en cada turno y el
-     * fichero oscilaría entre dos identidades, con `escribir: true` siempre y ninguno de los dos
-     * teniendo nunca su perfil. `sembrarContextoFijo` —el hermano de este módulo, para el bloque
-     * A— ya se negaba por esto mismo y nombra a los dos alias; el bloque B no tenía la guarda.
-     *
-     * Se reconoce al dueño por la primera línea del bloque, que lleva su alias. Ante la duda NO se
-     * pisa: el daño de pisar de más son dos alias oscilando, y el de pisar de menos es un fichero
-     * sin actualizar, que es el estado de hoy.
-     */
-    const anterior = previo === undefined ? undefined : bloqueDePerfil(previo);
-    if (anterior !== undefined && !esDelMismoAlias(anterior, bloque)) {
-      generados.push({
-        nombre, politica: "bloque-gestionado", texto: previo ?? "", escribir: false,
       });
       continue;
     }
@@ -312,9 +307,9 @@ function duenoDelBloque(bloque: string): string | undefined {
  * bloque B escrito en la flota. Aceptar los que no se identifican sólo serviría para reabrir el
  * agujero de `kratos`/`atlas` sin ganar nada.
  */
-function esDelMismoAlias(anterior: string, nuestro: string): boolean {
+function esDelMismoAlias(anterior: string, perfil: AgentProfile): boolean {
   const suyo = duenoDelBloque(anterior);
-  return suyo !== undefined && suyo === duenoDelBloque(nuestro);
+  return suyo !== undefined && suyo === `${perfil.tenant_id}/${perfil.alias}`;
 }
 
 /** `MEMORY.md` y `HEARTBEAT.md` de openclaw, y nada más. */

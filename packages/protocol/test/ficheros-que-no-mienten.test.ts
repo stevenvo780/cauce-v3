@@ -35,7 +35,7 @@ function perfil(parcial: Partial<AgentProfile> = {}, alias = "argos"): AgentProf
 }
 
 function contexto(p: AgentProfile, hechos: Partial<HechosDelAlias> = {}): ContextoDeAlias {
-  return { perfil: p, hechos: { ...HECHOS, ...hechos } } as ContextoDeAlias;
+  return { perfil: p, hechos: { ...HECHOS, ...hechos } };
 }
 
 function de(ficheros: readonly FicheroGenerado[], nombre: string): FicheroGenerado {
@@ -147,6 +147,29 @@ test("CONTROL NEGATIVO: el MISMO alias sí actualiza su propio bloque", () => {
   assert.ok(de(segundo, "AGENTS.md").texto.includes("después"));
 });
 
+test("un perfil vacío de OTRO alias no retira el bloque administrado del dueño", () => {
+  const deKratos = ficherosDelArnes(
+    "codex", contexto(perfil({ purpose: "soy kratos" }, "kratos")),
+  );
+  const antes = de(deKratos, "AGENTS.md").texto;
+  const enDisco = new Map([["AGENTS.md", antes]]);
+
+  const atlasVacio = de(
+    ficherosDelArnes("codex", contexto(perfil({}, "atlas")), enDisco),
+    "AGENTS.md",
+  );
+  assert.equal(atlasVacio.escribir, false, "atlas intentó retirar el bloque de kratos");
+  assert.equal(atlasVacio.texto, antes);
+  assert.ok(atlasVacio.texto.includes("soy kratos"));
+
+  const kratosVacio = de(
+    ficherosDelArnes("codex", contexto(perfil({}, "kratos")), enDisco),
+    "AGENTS.md",
+  );
+  assert.equal(kratosVacio.escribir, true, "el dueño no pudo retirar su bloque");
+  assert.equal(bloqueDePerfil(kratosVacio.texto), undefined);
+});
+
 test("CONTROL NEGATIVO: dos alias del MISMO nombre en inquilinos distintos no se confunden", () => {
   // El dueño es `inquilino/alias`, no `alias`: dos clientes pueden tener un `argos` cada uno.
   const dePablo = ficherosDelArnes("codex", contexto({
@@ -204,18 +227,17 @@ test("CONTROL NEGATIVO: si el fichero del agente YA existe, no se toca ni se ree
   assert.equal(de(generado, "MEMORY.md").texto, memoria);
 });
 
-test("CONTROL NEGATIVO: con UNA responsabilidad, AGENTS.md sí lleva la mecánica", () => {
+test("CONTROL NEGATIVO: con UNA responsabilidad, AGENTS.md sólo lleva reglas autoradas", () => {
   /*
-   * La mecánica ACOMPAÑA a lo autorado, no desaparece. Si el arreglo hubiera sido quitar los
-   * permisos y la configuración del arnés del fichero, esta prueba lo caza: el agente tiene que
-   * saber qué puede hacer, y decir «control: no» cuesta cuatro palabras.
+   * Permisos, destinos y montaje se resuelven en vivo. Congelarlos junto al perfil autorado haría
+   * que una revocación posterior dejara el disco afirmando lo contrario.
    */
   const generado = ficherosDelArnes("openclaw", contexto(perfil({ responsibilities: ["reparar Cauce"] })));
   const agents = de(generado, "AGENTS.md");
   assert.equal(agents.escribir, true);
   assert.ok(agents.texto.includes("reparar Cauce"));
-  assert.ok(agents.texto.includes("control): no"), "perdió los permisos");
-  assert.ok(agents.texto.includes("ws-argos"), "perdió la configuración del arnés");
+  assert.ok(!agents.texto.includes("control): no"), "congeló permisos dinámicos");
+  assert.ok(!agents.texto.includes("ws-argos"), "congeló el montaje dinámico");
 });
 
 test("CONTROL NEGATIVO: sin herramientas declaradas TOOLS.md no se escribe, con una sí", () => {
@@ -226,7 +248,7 @@ test("CONTROL NEGATIVO: sin herramientas declaradas TOOLS.md no se escribe, con 
   const tools = de(con, "TOOLS.md");
   assert.equal(tools.escribir, true);
   assert.ok(tools.texto.includes("ssh"));
-  assert.ok(tools.texto.includes("saldantia"), "perdió las cuotas");
+  assert.ok(!tools.texto.includes("saldantia"), "congeló las cuotas dinámicas");
 });
 
 // ── 5. EL TOPE SE MIDE SOBRE EL TEXTO FINAL ─────────────────────────────────────────────────

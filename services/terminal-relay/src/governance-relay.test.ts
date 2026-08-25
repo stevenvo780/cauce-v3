@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { request as httpsRequest, createServer, type Server as HttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
@@ -6,9 +7,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TLSSocket } from 'node:tls';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { AgentConnection, type AgentHello } from './agent-leg.js';
-import { FRAME_TAGS, FrameDecoder, encodeFrame, encodeJsonFrame, type Frame } from './framing.js';
-import { GOVERNANCE_READ_PATH, setupGovernanceRelay } from './governance-relay.js';
+import {
+  AgentConnection, FEATURE_WRITE_GOVERNANCE, FEATURE_WRITE_GOVERNANCE_BATCH, type AgentHello,
+} from './agent-leg.js';
+import {
+  FRAME_TAGS, FrameDecoder, decodeDataFrame, decodeJsonFrame, encodeFrame, encodeJsonFrame, type Frame,
+} from './framing.js';
+import {
+  GOVERNANCE_READ_PATH, GOVERNANCE_WRITE_BATCH_PATH, GOVERNANCE_WRITE_PATH,
+  parseWriteBatchRequest, parseWriteRequest, setupGovernanceRelay,
+} from './governance-relay.js';
 
 /**
  * `POST /v3/terminal/relay/read` sobre un servidor HTTPS de verdad y una `AgentConnection` de
@@ -185,6 +193,28 @@ function readErr(requestId: string, error: string, reason: string): Frame {
   )[0]!;
 }
 
+function sha(content: Buffer): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+async function esperarWrite(socket: FakeAgentSocket): Promise<Record<string, unknown>> {
+  for (let intento = 0; intento < 300; intento += 1) {
+    const frame = socket.frames().find((candidate) => candidate.tag === FRAME_TAGS.WRITE);
+    if (frame) return decodeJsonFrame(frame.payload);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  throw new Error('el relay no mandó ninguna trama WRITE');
+}
+
+async function esperarWriteBatch(socket: FakeAgentSocket): Promise<Record<string, unknown>> {
+  for (let intento = 0; intento < 300; intento += 1) {
+    const frame = socket.frames().find((candidate) => candidate.tag === FRAME_TAGS.WRITE_BATCH);
+    if (frame) return decodeJsonFrame(frame.payload);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  throw new Error('el relay no mandó ninguna trama WRITE_BATCH');
+}
+
 beforeAll(async () => {
   tls = certificadoEfimero();
   servidor = createServer({ cert: tls.cert, key: tls.key });
@@ -229,6 +259,7 @@ describe('la lectura llega al agente y vuelve', () => {
       bytes: 9,
       truncated: false,
       modified_at: '2026-08-24T10:00:00Z',
+      sha: sha(Buffer.from('# Manual\n')),
       content: '# Manual\n'
     });
   });
@@ -376,7 +407,7 @@ describe('la puerta se cierra antes de tocar al agente', () => {
 
   it('rechaza un cuerpo que se pasa del tope, y contesta la explicación', async () => {
     const respuesta = await pedir({
-      cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: `/${'a'.repeat(20_000)}` })
+      cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: `/${'a'.repeat(600_000)}` })
     });
 
     // 413 y no una conexión cortada: si el relay tira el socket, el gateway ve «conexión caída» y
@@ -391,5 +422,174 @@ describe('la puerta se cierra antes de tocar al agente', () => {
 
   it('no atiende otros métodos', async () => {
     expect((await pedir({ metodo: 'GET' })).status).toBe(405);
+  });
+});
+
+describe('la escritura llega al agente y sólo vuelve aplicada con su ACK', () => {
+  it('transporta contenido binario y precondición present sin interpretarlos', async () => {
+    const { socket, connection } = conectar({ features: ['read_governance', FEATURE_WRITE_GOVERNANCE] });
+    const content = Buffer.from('# nuevo\nacción\n', 'utf8');
+    const oldSha = 'a'.repeat(64);
+    const pendiente = pedir({
+      ruta: GOVERNANCE_WRITE_PATH,
+      cuerpo: JSON.stringify({
+        tenant_id: 'Steven', alias: 'zeus', path: RUTA,
+        content_base64: content.toString('base64'),
+        precondition: { state: 'present', sha256: oldSha },
+      }),
+    });
+
+    const begin = await esperarWrite(socket);
+    expect(begin).toMatchObject({
+      path: RUTA, operation: 'replace', expected_sha: oldSha,
+      content_sha: sha(content), bytes: content.byteLength,
+    });
+    const chunks = socket.frames().filter((frame) => frame.tag === FRAME_TAGS.WRITE_DATA);
+    expect(Buffer.concat(chunks.map((frame) => decodeDataFrame(frame.payload).data))).toEqual(content);
+
+    connection.handleFrame(new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_OK, {
+      request_id: begin.request_id, path: RUTA, operation: 'replace', sha: sha(content), bytes: content.byteLength,
+    }))[0]!, Date.now);
+
+    expect(await pendiente).toMatchObject({ status: 200 });
+    expect(cuerpo(await pendiente)).toEqual({
+      path: RUTA, operation: 'replace', sha: sha(content), bytes: content.byteLength,
+    });
+  });
+
+  it('no manda WRITE a un agente que sólo sabe leer', async () => {
+    const { socket } = conectar();
+    const content = Buffer.from('nuevo');
+    const respuesta = await pedir({
+      ruta: GOVERNANCE_WRITE_PATH,
+      cuerpo: JSON.stringify({
+        tenant_id: 'Steven', alias: 'zeus', path: RUTA,
+        content_base64: content.toString('base64'), precondition: { state: 'absent' },
+      }),
+    });
+    expect(cuerpo(respuesta)).toMatchObject({ error: 'unavailable' });
+    expect(socket.frames()).toEqual([]);
+  });
+
+  it('rechaza una precondición ambigua antes de tocar el agente', async () => {
+    const { socket } = conectar({ features: [FEATURE_WRITE_GOVERNANCE] });
+    const respuesta = await pedir({
+      ruta: GOVERNANCE_WRITE_PATH,
+      cuerpo: JSON.stringify({
+        tenant_id: 'Steven', alias: 'zeus', path: RUTA,
+        content_base64: Buffer.from('nuevo').toString('base64'), precondition: { state: 'present' },
+      }),
+    });
+    expect(respuesta.status).toBe(400);
+    expect(cuerpo(respuesta)).toMatchObject({ error: 'invalid_request' });
+    expect(socket.frames()).toEqual([]);
+  });
+
+  it('el parser exige base64 canónico, objeto cerrado y creación absent explícita', () => {
+    const base = {
+      tenant_id: 'Steven', alias: 'zeus', path: RUTA,
+      content_base64: Buffer.from('x').toString('base64'), precondition: { state: 'absent' },
+    };
+    expect(parseWriteRequest(JSON.stringify(base))).toMatchObject({
+      content: Buffer.from('x'), precondition: { state: 'absent' },
+    });
+    expect(parseWriteRequest(JSON.stringify({ ...base, content_base64: 'eA' }))).toHaveProperty('rejected');
+    expect(parseWriteRequest(JSON.stringify({ ...base, surprise: true }))).toHaveProperty('rejected');
+  });
+});
+
+describe('el lote de perfil es una sola operación gobernada', () => {
+  const SOUL = '/home/dev/.openclaw/workspace/SOUL.md';
+  const MEMORY = '/home/dev/.openclaw/workspace/MEMORY.md';
+
+  function lote(): string {
+    return JSON.stringify({
+      tenant_id: 'Steven',
+      alias: 'zeus',
+      files: [
+        {
+          mode: 'write', path: SOUL,
+          content_base64: Buffer.from('alma').toString('base64'),
+          precondition: { state: 'absent' },
+        },
+        {
+          mode: 'verify', path: MEMORY,
+          precondition: { state: 'present', sha256: 'd'.repeat(64) },
+        },
+      ],
+    });
+  }
+
+  it('conserva orden y modos, y sólo devuelve los ACK completos del agente', async () => {
+    const { socket, connection } = conectar({
+      features: ['read_governance', FEATURE_WRITE_GOVERNANCE_BATCH],
+    });
+    const pending = pedir({ ruta: GOVERNANCE_WRITE_BATCH_PATH, cuerpo: lote() });
+    const begin = await esperarWriteBatch(socket);
+    expect(begin.entries).toEqual([
+      {
+        mode: 'write', path: SOUL, operation: 'create',
+        content_sha: sha(Buffer.from('alma')), bytes: 4, chunks: 1,
+      },
+      {
+        mode: 'verify', path: MEMORY, operation: 'present', expected_sha: 'd'.repeat(64),
+        bytes: 0, chunks: 0,
+      },
+    ]);
+    const data = socket.frames().filter((frame) => frame.tag === FRAME_TAGS.WRITE_BATCH_DATA);
+    expect(Buffer.concat(data.map((frame) => decodeDataFrame(frame.payload).data))).toEqual(Buffer.from('alma'));
+
+    connection.handleFrame(new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_BATCH_OK, {
+      request_id: begin.request_id,
+      files: [
+        { path: SOUL, operation: 'create', sha: sha(Buffer.from('alma')), bytes: 4 },
+        { path: MEMORY, operation: 'unchanged', sha: 'd'.repeat(64), bytes: 123 },
+      ],
+    }))[0]!, Date.now);
+
+    const response = await pending;
+    expect(response.status).toBe(200);
+    expect(cuerpo(response)).toEqual({ files: [
+      { path: SOUL, operation: 'create', sha: sha(Buffer.from('alma')), bytes: 4 },
+      { path: MEMORY, operation: 'unchanged', sha: 'd'.repeat(64), bytes: 123 },
+    ] });
+  });
+
+  it('un ACK parcial del agente nunca se convierte en éxito HTTP', async () => {
+    const { socket, connection } = conectar({ features: [FEATURE_WRITE_GOVERNANCE_BATCH] });
+    const pending = pedir({ ruta: GOVERNANCE_WRITE_BATCH_PATH, cuerpo: lote() });
+    const begin = await esperarWriteBatch(socket);
+    connection.handleFrame(new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_BATCH_OK, {
+      request_id: begin.request_id,
+      files: [{ path: SOUL, operation: 'create', sha: sha(Buffer.from('alma')), bytes: 4 }],
+    }))[0]!, Date.now);
+    expect(cuerpo(await pending)).toMatchObject({ error: 'unknown' });
+  });
+
+  it('rechaza modo implícito, verify con contenido y rutas repetidas antes del agente', async () => {
+    const { socket } = conectar({ features: [FEATURE_WRITE_GOVERNANCE_BATCH] });
+    const base = JSON.parse(lote()) as { files: Array<Record<string, unknown>> };
+    const sinModo = { ...base, files: base.files.map((file) => ({ ...file })) };
+    delete sinModo.files[0]?.mode;
+    const verifyConContenido = {
+      ...base,
+      files: [{ ...base.files[1], content_base64: Buffer.from('x').toString('base64') }],
+    };
+    const repetido = { ...base, files: [base.files[0], { ...base.files[0] }] };
+
+    expect((await pedir({ ruta: GOVERNANCE_WRITE_BATCH_PATH, cuerpo: JSON.stringify(sinModo) })).status).toBe(400);
+    expect((await pedir({ ruta: GOVERNANCE_WRITE_BATCH_PATH, cuerpo: JSON.stringify(verifyConContenido) })).status).toBe(400);
+    expect((await pedir({ ruta: GOVERNANCE_WRITE_BATCH_PATH, cuerpo: JSON.stringify(repetido) })).status).toBe(400);
+    expect(socket.frames()).toEqual([]);
+  });
+
+  it('el parser permite verify absent sin inventar bytes ni contenido', () => {
+    expect(parseWriteBatchRequest(JSON.stringify({
+      tenant_id: 'Steven', alias: 'zeus', files: [{
+        mode: 'verify', path: MEMORY, precondition: { state: 'absent' },
+      }],
+    }))).toMatchObject({ entries: [{
+      mode: 'verify', path: MEMORY, precondition: { state: 'absent' },
+    }] });
   });
 });

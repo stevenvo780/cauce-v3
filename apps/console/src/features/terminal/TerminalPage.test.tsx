@@ -83,7 +83,14 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
   const user = userEvent.setup();
   renderWithApi(<TerminalPage />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'Ultimate Terminal' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' })).toBeInTheDocument();
+  expect(screen.getByText('Flota en vivo')).toBeInTheDocument();
+  expect(screen.getAllByRole('heading', { level: 3, name: 'Permisos efectivos' }).length).toBeGreaterThan(0);
+  expect(screen.getAllByRole('heading', { level: 3, name: 'Adaptadores' }).length).toBeGreaterThan(0);
+  expect(screen.getByText('Ningún agente seleccionado')).toBeInTheDocument();
+  for (const textoIngles of ['Ultimate Terminal', 'Fleet live', 'Capability gates', 'Adapters', 'No active target']) {
+    expect(screen.queryByText(textoIngles), `rótulo visible sin traducir: ${textoIngles}`).not.toBeInTheDocument();
+  }
   // El encabezado tiene que contar lo MISMO que la lista que se ve debajo. El número exacto es del
   // fixture y cambia cada vez que la topología de demostración se parece más a la flota real;
   // clavarlo acá solo compraba un test que se rompe sin que se rompa nada. Lo que sí importa —y no
@@ -269,7 +276,12 @@ it('states not_installed explicitly rather than leaving the operator on a spinne
 it('refuses to confirm without a written motive and spells out who shares the container', async () => {
   const user = userEvent.setup();
   enableCapability();
-  serveTargets([target({ tenant_id: 'Steven', alias: 'jarvis', container: 'ws-humanizar', runtime_user: 'claw', shares_container_with: ['atlas', 'kratos'] })]);
+  serveTargets([target({
+    tenant_id: 'Steven', alias: 'jarvis', container: 'ws-humanizar', runtime_user: 'claw',
+    shares_container_with: [
+      { tenant_id: 'Miguel', alias: 'atlas' }, { tenant_id: 'Miguel', alias: 'kratos' },
+    ],
+  })]);
   renderWithApi(<TerminalPage />);
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con jarvis/i }));
@@ -278,7 +290,7 @@ it('refuses to confirm without a written motive and spells out who shares the co
 
   const dialog = await screen.findByRole('dialog');
   // The blast radius is stated in plain words: this is not "the terminal of jarvis".
-  expect(within(dialog).getByRole('alert')).toHaveTextContent(/atlas, kratos/);
+  expect(within(dialog).getByRole('alert')).toHaveTextContent(/Miguel:atlas, Miguel:kratos/);
   expect(within(dialog).getByRole('alert')).toHaveTextContent(/no es .la terminal de jarvis./i);
   expect(within(dialog).getByText('ws-humanizar')).toBeInTheDocument();
 
@@ -355,9 +367,10 @@ it.each([
   act(() => socket.emitClose(code, 'server close'));
 
   expect(await screen.findByText(expected)).toBeInTheDocument();
-  // A single-use ticket is never replayed: the offer is a brand-new, audited session.
+  // An explicit relay close is final. Only a transport loss can resume the same PTY, and the
+  // single-use ticket is never replayed: this offer is a brand-new, audited session.
   expect(await screen.findByRole('button', { name: /pedir sesión nueva/i })).toBeInTheDocument();
-  expect(screen.getByText(/no reconecta sola/i)).toBeInTheDocument();
+  expect(screen.getByText(/sólo reanuda automáticamente una interrupción de transporte/i)).toBeInTheDocument();
   expect(StubWebSocket.instances).toHaveLength(1);
 });
 
@@ -423,7 +436,7 @@ it('con un 403 dice que falta el permiso y NUNCA que el relay no está desplegad
   );
   renderWithApi(<TerminalPage />);
 
-  expect(await screen.findByText('Ultimate Terminal necesita permiso de control')).toBeInTheDocument();
+  expect(await screen.findByText('La terminal de agentes requiere permiso de control')).toBeInTheDocument();
   expect(screen.getByText(/no tiene permiso de control sobre esta flota/)).toBeInTheDocument();
   expect(screen.getByText(/lo que falta es el permiso/)).toBeInTheDocument();
   expect(screen.queryByText(/no está desplegado en este stack/)).not.toBeInTheDocument();
@@ -437,7 +450,7 @@ it('con un 501 sigue diciendo, con el título de siempre, que el canal no está 
   renderWithApi(<TerminalPage />);
 
   expect(await screen.findByText('Canal PTY no disponible en este stack')).toBeInTheDocument();
-  expect(screen.queryByText('Ultimate Terminal necesita permiso de control')).not.toBeInTheDocument();
+  expect(screen.queryByText('La terminal de agentes requiere permiso de control')).not.toBeInTheDocument();
 }, 20_000);
 
 /**

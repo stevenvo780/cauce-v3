@@ -143,6 +143,7 @@ class MemoryRepository implements TelegramEgressRepository {
   constructor(event: TelegramOriginRelay) { this.events = [event]; }
 
   async claim(): Promise<TelegramOriginRelay[]> { return this.events.splice(0); }
+  async renew(): Promise<boolean> { return true; }
 
   async ack(acknowledgement: TelegramOriginRelayAck): Promise<void> {
     if (acknowledgement.status === 'sent') {

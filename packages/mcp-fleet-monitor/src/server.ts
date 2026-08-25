@@ -4,7 +4,6 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-  TextContent,
 } from '@modelcontextprotocol/sdk/types.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createPool } from '@cauce/store';
@@ -148,14 +147,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         {
           type: 'text',
           text: 'Error: fleet model not initialized',
-        } as TextContent,
+        },
       ],
       isError: true,
     };
   }
 
   const toolName = request.params.name;
-  const args = (request.params.arguments || {}) as Record<string, unknown>;
+  const args = request.params.arguments ?? {};
 
   try {
     let result: unknown;
@@ -188,7 +187,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: 'text',
               text: `Unknown tool: ${toolName}`,
-            } as TextContent,
+            },
           ],
           isError: true,
         };
@@ -199,7 +198,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         {
           type: 'text',
           text: JSON.stringify(result, null, 2),
-        } as TextContent,
+        },
       ],
     };
   } catch (error) {
@@ -209,7 +208,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         {
           type: 'text',
           text: `Error executing ${toolName}: ${message}`,
-        } as TextContent,
+        },
       ],
       isError: true,
     };

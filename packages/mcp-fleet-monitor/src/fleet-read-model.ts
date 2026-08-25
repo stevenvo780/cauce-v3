@@ -66,6 +66,7 @@ interface CadenaResult {
   data: ChainNode[];
   available: boolean;
   trace_id?: string;
+  root_message_id?: string;
 }
 
 interface DeadLetterGroup {
@@ -103,6 +104,9 @@ export class FleetReadModel {
       }>(
         `
         WITH all_aliases AS (
+          SELECT alias FROM agents
+          WHERE tenant_id = $1 AND enabled = true
+          UNION
           SELECT DISTINCT recipient_alias as alias FROM deliveries
           WHERE recipient_tenant = $1
           UNION
@@ -206,14 +210,8 @@ export class FleetReadModel {
   }
 
   async cadena(traceId?: string, rootMessageId?: string): Promise<CadenaResult> {
-
     try {
       if (!traceId && !rootMessageId) {
-        return { data: [], available: false };
-      }
-
-      const effectiveTraceId = traceId;
-      if (!effectiveTraceId) {
         return { data: [], available: false };
       }
 
@@ -238,16 +236,17 @@ export class FleetReadModel {
           aom.created_at,
           aom.rejection_code
         FROM agent_output_materializations aom
-        WHERE aom.trace_id = $1
+        WHERE ($1::text IS NOT NULL AND aom.trace_id = $1)
+           OR ($1::text IS NULL AND aom.correlation->>'root_message_id' = $2)
         ORDER BY aom.hop_count, aom.created_at
         LIMIT 500
         `,
-        [effectiveTraceId]
+        [traceId ?? null, rootMessageId ?? null]
       );
 
-      const mappedData = result.rows.map((row, idx) => {
+      const mappedData = result.rows.map((row) => {
         const node: ChainNode = {
-          hop: idx,
+          hop: row.hop_count,
           status: row.status,
           created_at: row.created_at.toISOString(),
         };
@@ -259,7 +258,11 @@ export class FleetReadModel {
         return node;
       });
 
-      return { data: mappedData, available: true, trace_id: effectiveTraceId };
+      return {
+        data: mappedData,
+        available: true,
+        ...(traceId ? { trace_id: traceId } : { root_message_id: rootMessageId ?? '' }),
+      };
     } catch (error) {
       throw queryFailure('cadena', error);
     }
@@ -269,7 +272,7 @@ export class FleetReadModel {
     try {
       const result = await this.pool.query<{
         rejection_code: string | null;
-        count: number;
+        count: string | number;
       }>(
         `
         SELECT
@@ -328,7 +331,7 @@ export class FleetReadModel {
 
         groups.push({
           cause,
-          count: row.count,
+          count: nonNegativeCount(row.count, 'dead_letters count'),
           recent_examples: mappedExamples,
         });
       }
@@ -345,18 +348,20 @@ export class FleetReadModel {
       const leaseResult = await this.pool.query<{ live: string; total: string }>(
         `
         SELECT
-          COUNT(*) FILTER (WHERE lease_until > now()) as live,
+          COUNT(*) FILTER (WHERE lease.lease_until > now()) as live,
           COUNT(*) as total
-        FROM connection_leases
-        WHERE tenant_id = $1
+        FROM agents agent
+        LEFT JOIN connection_leases lease
+          ON lease.tenant_id = agent.tenant_id AND lease.alias = agent.alias
+        WHERE agent.tenant_id = $1 AND agent.enabled = true
         `,
         [this.tenantId]
       );
 
       // node-postgres returns bigint counts as strings; comparing them raw made
       // `live >= total` a lexicographic test ("9" >= "10") instead of a numeric one.
-      const live = Number(leaseResult.rows[0]?.live ?? 0);
-      const total = Number(leaseResult.rows[0]?.total ?? 0);
+      const live = nonNegativeCount(leaseResult.rows[0]?.live ?? '0', 'live alias count');
+      const total = nonNegativeCount(leaseResult.rows[0]?.total ?? '0', 'enabled alias count');
 
       // Count deliveries by status
       const deliveriesResult = await this.pool.query<{
@@ -374,17 +379,23 @@ export class FleetReadModel {
 
       const deliveriesByStatus: Record<string, number> = {};
       for (const row of deliveriesResult.rows) {
-        deliveriesByStatus[row.status] = Number(row.count);
+        deliveriesByStatus[row.status] = nonNegativeCount(
+          row.count, `delivery count for status ${row.status}`,
+        );
       }
 
-      const acked = deliveriesByStatus['acked'] || 0;
-      const totalDeliveries = Object.values(deliveriesByStatus).reduce((a, b) => a + b, 0);
-      const okRate = totalDeliveries > 0 ? Math.round((acked / totalDeliveries) * 100) : 0;
+      // `acked` is not a deliveries.status value. Only terminal outcomes belong in the success
+      // rate; counting pending/leased/started as failures makes a busy healthy fleet look sick.
+      const done = deliveriesByStatus['done'] ?? 0;
+      const terminalDeliveries = done
+        + (deliveriesByStatus['failed'] ?? 0)
+        + (deliveriesByStatus['dead'] ?? 0);
+      const okRate = terminalDeliveries > 0 ? Math.round((done / terminalDeliveries) * 100) : 100;
 
       const status =
-        live >= total && okRate > 90
+        total > 0 && live === total && okRate > 90
           ? 'healthy'
-          : live >= total * 0.5 && okRate > 70
+          : total > 0 && live >= Math.ceil(total * 0.5) && okRate > 70
             ? 'degraded'
             : 'critical';
 
@@ -399,6 +410,15 @@ export class FleetReadModel {
       throw queryFailure('salud', error);
     }
   }
+}
+
+/** PostgreSQL devuelve bigint como texto. Un contador inválido degrada el tool, no su verdad. */
+function nonNegativeCount(value: string | number, label: string): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} is not a non-negative safe integer`);
+  }
+  return parsed;
 }
 
 /**

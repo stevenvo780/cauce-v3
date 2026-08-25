@@ -18,8 +18,14 @@ export const UNATTRIBUTED_OPERATOR = 'unattributed:console-basic-auth';
 /** Placement of a fleet alias. Server-side truth; never accepted from the browser. */
 export interface FleetPlacement {
   readonly tenant_id: string;
+  readonly alias: string;
   readonly container: string;
   readonly runtime_user: string;
+}
+
+export interface FleetIdentity {
+  readonly tenant_id: string;
+  readonly alias: string;
 }
 
 /** What terminal-relay reports about a pty-agent it currently holds a connection to. */
@@ -44,6 +50,10 @@ export interface AgentPresence {
    * documentos sigue contestando «no medido», igual que antes.
    */
   readonly home?: string;
+  /** Directorios efectivos del proceso del arnés; opcionales para compatibilidad durante rollout. */
+  readonly codex_home?: string;
+  readonly claude_config_dir?: string;
+  readonly openclaw_workspace?: string;
   readonly modes: readonly string[];
   readonly connected_since: string;
 }
@@ -61,7 +71,7 @@ export interface TerminalTarget {
   readonly runtime_user: string | null;
   readonly harness: string | null;
   readonly image: string | null;
-  readonly shares_container_with: readonly string[];
+  readonly shares_container_with: readonly FleetIdentity[];
   readonly modes: readonly string[];
   readonly pty_state: PtyState;
   readonly last_seen: string | null;

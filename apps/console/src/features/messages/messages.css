@@ -97,8 +97,8 @@
   white-space: nowrap;
 }
 
-.messenger-pill[data-kind="retry"] { border-color: #7a5a24; color: #ffd9a0; }
-.messenger-pill[data-kind="dead"] { border-color: #74313c; background: var(--red-dim); color: #ffb7bc; }
+.messenger-pill[data-kind="retry"] { border-color: #7a5a24; color: var(--on-amber); }
+.messenger-pill[data-kind="dead"] { border-color: #74313c; background: var(--red-dim); color: var(--on-red); }
 .messenger-pill[data-kind="unknown"] { border-style: dashed; color: var(--faint); }
 
 /* ------------------------------------------------------------------- hilo (columna derecha) */

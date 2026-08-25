@@ -13,7 +13,10 @@ STATIC_INPUTS = (
     "scripts/alias-runner.sh",
     "container-runtime/cauce-container-runtime.py",
     "scripts/container_alias_lib.py",
+    "scripts/manifest_lib.py",
     "scripts/container-alias-query.py",
+    "scripts/fleet-parity.py",
+    "scripts/fleet-parity.sh",
     "scripts/validate-container-mount.py",
     "scripts/generate-container-units.py",
     "scripts/pin-container-release.py",
@@ -21,6 +24,13 @@ STATIC_INPUTS = (
     "scripts/cutover.sh",
     "scripts/cutover-rollback.sh",
     "scripts/rollback.sh",
+    "scripts/pin-production-release.py",
+    "scripts/create-inactive-override-manifest.py",
+    "scripts/release-build.sh",
+    "scripts/release-candidate.py",
+    "scripts/validate-release-evidence.py",
+    "scripts/validate-rollback-bridge-evidence.py",
+    "scripts/rollback-baseline.py",
     "scripts/migration-gate.mjs",
     "scripts/validate.sh",
     "scripts/release-gate.sh",
@@ -39,6 +49,40 @@ STATIC_INPUTS = (
     # Operator runbooks that document the exact invariants above.
     "runbooks/container-adapters.md",
     "runbooks/alias-cutover.md",
+    "runbooks/deploy.md",
+    "runbooks/rollback.md",
+)
+
+# Everything that can change how a release is configured, proven, deployed, monitored or
+# recovered.  Artifacts/private material are deliberately excluded: evidence is an output of the
+# gate and secrets must never enter a source digest.  Recursive discovery also prevents a newly
+# added release/backup script from silently living outside OPERATIONS.sha256.
+OPERATIONAL_TREES = (
+    "scripts",
+    "tests",
+    "runbooks",
+    "schemas",
+    "systemd",
+    "observability",
+    "manifests",
+    "pty-agent",
+    "container-runtime",
+    "harness",
+    "guardias",
+    "openclaw-gateway",
+    "cli",
+    "generated/systemd",
+)
+OPERATIONAL_ROOT_FILES = (
+    "Makefile",
+    "README.md",
+    "INSTALLATION.md",
+    "GATE_CONTRACT.md",
+    "compose.authentic.yaml",
+    "compose.test.yaml",
+    "container-aliases.json",
+    "config/prod.env.example",
+    "config/host-backup.env.example",
 )
 
 
@@ -48,7 +92,17 @@ def generated_logical_path(path: pathlib.Path, generated: pathlib.Path, *, rootl
 
 
 def operational_files(root: pathlib.Path, generated: pathlib.Path, *, rootless: bool = False) -> list[pathlib.Path]:
-    files = [root / relative for relative in STATIC_INPUTS]
+    files = [root / relative for relative in (*STATIC_INPUTS, *OPERATIONAL_ROOT_FILES)]
+    for relative in OPERATIONAL_TREES:
+        tree = root / relative
+        files.extend(
+            path for path in tree.rglob("*")
+            if path.is_file()
+            and not path.is_symlink()
+            and "__pycache__" not in path.parts
+            and ".pytest_cache" not in path.parts
+            and path.suffix not in {".pyc", ".pyo"}
+        )
     files.extend(sorted(generated.glob("cauce-v3-container-*.service")))
     files.extend(sorted((generated / "configs").glob("*.env.example")))
     if not rootless:
@@ -59,6 +113,7 @@ def operational_files(root: pathlib.Path, generated: pathlib.Path, *, rootless: 
         files.extend(sorted(checked_rootless.glob("cauce-v3-container-*.service")))
         files.extend(sorted((checked_rootless / "configs").glob("*.env.example")))
         files.extend((checked_rootless / "OPERATIONS.sha256", checked_rootless / "SHA256SUMS"))
+    files = list(set(files))
     missing = [path for path in files if not path.is_file() or path.is_symlink()]
     if missing:
         raise ValueError(f"missing or symlinked operational input: {missing[0]}")

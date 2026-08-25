@@ -98,7 +98,7 @@ export function TerminalPage() {
    */
   const observando = sesionesAbiertas > 0;
   const contadores = (
-    <div className="terminal-overview" aria-label="Estado de Ultimate Terminal">
+    <div className="terminal-overview" aria-label="Estado de la terminal de agentes">
       <article><span className="overview-icon online"><Wifi size={17} aria-hidden="true" /></span><div><small>Leases vigentes</small><strong>{online} / {agents.length || 'sin dato'}</strong></div><Badge tone={online ? 'online' : agents.length ? 'warning' : 'unknown'}>LIVE</Badge></article>
       {/*
         «3 / 6» se leía como «3 rotos». Son 3 disponibles y 3 que no reportaron estado, que no
@@ -116,7 +116,7 @@ export function TerminalPage() {
     <div className="ultimate-terminal-page" data-tui={observando ? 'abierta' : undefined}>
       <PageHeader
         eyebrow={fleetLabel}
-        title="Ultimate Terminal"
+        title="Terminal de agentes"
         description="Transmisión en vivo de la TUI de cada agente —la sesión tmux que está corriendo ahora— en solo lectura. Un alias sólo emite si el servidor publica su modo harness; el resto queda con su motivo escrito, nunca en verde."
         actions={
           <>
@@ -155,7 +155,7 @@ export function TerminalPage() {
               cuerpo. Ver `TerminalRelayCause` en relay-status.ts. */}
           <div>
             <strong>{relay.cause === 'sin-permiso'
-              ? 'Ultimate Terminal necesita permiso de control'
+              ? 'La terminal de agentes requiere permiso de control'
               : relay.cause === 'sin-comprobar'
                 ? TERMINAL_RELAY_SIN_COMPROBAR_TITULO
                 : 'Canal PTY no disponible en este stack'}</strong>

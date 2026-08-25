@@ -24,7 +24,7 @@ test('una respuesta de texto que empieza con un bloque de codigo NO se reinterpr
 // "contained a malformed JSON object" de jarvis, perdiendo minutos de trabajo y una respuesta que
 // el agente ya había escrito. Ahora, si el reply se puede rescatar, se entrega y se descartan los
 // campos accesorios (que en un sobre cortado no son confiables). Sigue siendo fallo duro cuando no
-// hay reply rescatable — eso lo fija el test "sin reply rescatable" más abajo.
+// hay reply rescatable: en ese caso queda un resultado `failed` legible, sin delegaciones.
 test('un objeto truncado dentro de la valla entrega el reply rescatado, no un fallo', () => {
   assert.equal(parseFinalText('```json\n{"reply":"a\n```', 'OpenClaw').reply, 'a');
 });
@@ -61,6 +61,10 @@ test("si el corte cae DENTRO del reply, se entrega lo que alcanzó a escribir", 
   assert.match(salida.reply ?? "", /Estaba diagnosticando/u);
 });
 
-test("sin reply rescatable sigue siendo un fallo duro", () => {
-  assert.throws(() => parseFinalText('{"messages":[{"to":"x"', "OpenClaw"), /malformed JSON object/u);
+test("sin reply rescatable falla cerrado pero deja un resultado legible", () => {
+  const salida = parseFinalText('{"messages":[{"to":"x"', "OpenClaw");
+  assert.equal(salida.status, "failed");
+  assert.equal(salida.retryable, false);
+  assert.deepEqual(salida.messages, []);
+  assert.match(salida.reply ?? "", /no quedo ni una linea de texto rescatable/u);
 });

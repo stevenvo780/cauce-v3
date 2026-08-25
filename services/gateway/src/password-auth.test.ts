@@ -21,14 +21,22 @@ function fakePool(): DatabasePool {
   return { query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 })) } as unknown as DatabasePool;
 }
 
-function fakeRepository(): GatewayRepository {
-  return {
+function fakeRepository(): {
+  repository: GatewayRepository;
+  publish: ReturnType<typeof vi.fn>;
+} {
+  const publish = vi.fn(async (input: Parameters<GatewayRepository['publish']>[0]) => {
+    void input;
+    return { message_id: '11111111-2222-4333-8444-555555555556' };
+  });
+  return { publish, repository: {
     assertPrincipal: vi.fn(async () => undefined),
     status: vi.fn(async () => ({ online: 1 })),
     listPresence: vi.fn(async () => []),
     principalAccess: vi.fn(async () => ({ roles: ['operator'], permissions: ['route', 'read', 'control'] })),
+    publish,
     claimOutbox: vi.fn(async () => [])
-  } as unknown as GatewayRepository;
+  } as unknown as GatewayRepository };
 }
 
 async function makeUser(overrides: Partial<ConsoleUser> = {}): Promise<ConsoleUser> {
@@ -110,15 +118,18 @@ async function fixture(options: {
     ...(options.fallback === undefined ? {} : { fallback: options.fallback }),
     ...(options.throttle === undefined ? {} : { throttle: options.throttle })
   });
+  const { repository, publish } = fakeRepository();
   const app = await buildGateway({
     pool: fakePool(),
     authProvider: provider,
-    repository: fakeRepository(),
+    repository,
     deliveryWakeSubscriber: async () => async () => undefined
   });
   return {
     app,
     provider,
+    repository,
+    publish,
     users,
     advance(ms: number) { now += ms; },
     login(email: string, password: string) {
@@ -140,6 +151,34 @@ function cookieFrom(headers: Record<string, unknown>): string {
 }
 
 describe('login por contraseña de la consola', () => {
+  it('publica sin fabricar un origin_relay hacia un adapter console inexistente', async () => {
+    const test = await fixture();
+    try {
+      const login = await test.login('steven@elenxos.com', PASSWORD);
+      const cookie = cookieFrom(login.headers);
+      const csrf = login.json<{ csrf_token: string }>().csrf_token;
+      const response = await test.app.inject({
+        method: 'POST',
+        url: '/v3/console/messages',
+        headers: { cookie, origin: 'http://localhost', 'x-csrf-token': csrf },
+        payload: {
+          room_id: 'ops',
+          recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
+          body: { type: 'operator.message', text: 'contenido de prueba' },
+          idempotency_key: 'console-no-fake-origin',
+        },
+      });
+
+      expect(response.statusCode).toBe(202);
+      expect(test.publish).toHaveBeenCalledTimes(1);
+      const command = test.publish.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(command.authenticated_context).toMatchObject({ channel: 'console' });
+      expect(command.authenticated_context).not.toHaveProperty('origin');
+    } finally {
+      await test.app.close();
+    }
+  });
+
   it('entrega la sesión en una cookie HttpOnly+Secure+SameSite y NUNCA en el cuerpo', async () => {
     const test = await fixture();
     try {

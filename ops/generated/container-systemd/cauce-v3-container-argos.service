@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 container adapter argos (ctrl-infra/hermes)
+Description=Cauce V3 container adapter argos (ctrl-infra/claude)
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target

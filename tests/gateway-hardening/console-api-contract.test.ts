@@ -195,7 +195,7 @@ async function unroutedPaths(calls: readonly ApiCall[]): Promise<string[]> {
      * ella dentro de la lista de fallos conocidos nadie iba a mirar la lista.
      */
     if (response.statusCode !== 404) continue;
-    const cuerpo = response.json() as { error?: string; message?: string };
+    const cuerpo = response.json<{ error?: string; message?: string }>();
     if (cuerpo.error !== undefined) continue;
     missing.push(`${call.method} ${call.path}`);
   }

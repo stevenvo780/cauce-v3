@@ -29,7 +29,14 @@ import cauce_pty_agent as agent  # noqa: E402
 
 def make_agent(home: str) -> agent.PtyAgent:
     instance = agent.PtyAgent.__new__(agent.PtyAgent)
-    instance.bundle = {"home": os.path.realpath(home)}
+    canonical_home = os.path.realpath(home)
+    claude_config = f"{canonical_home}/.claude"
+    os.makedirs(claude_config, exist_ok=True)
+    instance.bundle = {
+        "home": canonical_home,
+        "harness": "claude",
+        "runtime_facts": {"claude_config_dir": claude_config},
+    }
     instance.outbound = bytearray()  # `_queue` hace self.outbound.extend(frame)
     return instance
 
@@ -46,6 +53,9 @@ class ReadGovernanceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.home = os.path.realpath(self.temp_dir.name)
+        self.claude_config = f"{self.home}/.claude"
+        self.claude_md = f"{self.claude_config}/CLAUDE.md"
+        os.makedirs(self.claude_config)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -76,7 +86,7 @@ class ReadGovernanceTests(unittest.TestCase):
 
     def test_read_real_claude_md(self) -> None:
         request_id = "11111111-2222-3333-4444-555555555555"
-        path = f"{self.home}/CLAUDE.md"
+        path = self.claude_md
         content = b"Build: make\nTest: python3 -m unittest"
         with open(path, "wb") as f:
             f.write(content)
@@ -113,7 +123,7 @@ class ReadGovernanceTests(unittest.TestCase):
 
     def test_truncate_file_above_max_document_bytes(self) -> None:
         request_id = "22222222-3333-4444-5555-666666666666"
-        path = f"{self.home}/CLAUDE.md"
+        path = self.claude_md
         real_size = agent.MAX_DOCUMENT_BYTES + 5000
         content = b"A" * real_size
         with open(path, "wb") as f:
@@ -147,7 +157,7 @@ class ReadGovernanceTests(unittest.TestCase):
 
     def test_chunking_large_file(self) -> None:
         request_id = "33333333-4444-5555-6666-777777777777"
-        path = f"{self.home}/CLAUDE.md"
+        path = self.claude_md
         size = agent.MAX_DATA + 1000
         content = b"B" * size
         with open(path, "wb") as f:
@@ -180,8 +190,9 @@ class ReadGovernanceTests(unittest.TestCase):
 
     def test_reject_symlink(self) -> None:
         request_id = "44444444-4444-4444-4444-444444444444"
-        real_path = f"{self.home}/real.md"
-        symlink_path = f"{self.home}/CLAUDE.md"
+        os.makedirs(self.claude_config, exist_ok=True)
+        real_path = f"{self.claude_config}/real.md"
+        symlink_path = self.claude_md
         with open(real_path, "wb") as f:
             f.write(b"real content")
         os.symlink("real.md", symlink_path)
@@ -291,6 +302,7 @@ class ReadGovernanceTests(unittest.TestCase):
             self.assertEqual(os.path.realpath(path), path)
 
             instance = make_agent(self.home)
+            instance.bundle["runtime_facts"] = {"claude_config_dir": os.path.realpath(outside)}
             body = self.expect_error(
                 instance,
                 "permission_denied",
@@ -373,7 +385,7 @@ class ReadGovernanceTests(unittest.TestCase):
         # 1. Directory requested as file
         # We name the directory "CLAUDE.md" to pass the governance name whitelist,
         # so it fails at the S_ISREG check and returns invalid_path.
-        dir_path = f"{self.home}/CLAUDE.md"
+        dir_path = self.claude_md
         os.makedirs(dir_path, exist_ok=True)
         self.expect_error(
             instance,
@@ -385,7 +397,7 @@ class ReadGovernanceTests(unittest.TestCase):
         os.rmdir(dir_path)
         
         # 2. File requested as dir
-        file_path = f"{self.home}/CLAUDE.md"
+        file_path = self.claude_md
         with open(file_path, "wb") as f:
             f.write(b"test")
         self.expect_error(

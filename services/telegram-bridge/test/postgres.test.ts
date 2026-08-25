@@ -42,7 +42,7 @@ class RecordingTelegram implements TelegramApi {
   }
 }
 
-async function seedRelay(pool: DatabasePool): Promise<void> {
+async function seedRelay(pool: DatabasePool, eventId = EVENT_ID): Promise<void> {
   const room = `telegram-pg-${randomUUID()}`;
   const requestId = randomUUID();
   const message = await pool.query<{ id: string }>(
@@ -68,7 +68,7 @@ async function seedRelay(pool: DatabasePool): Promise<void> {
     `INSERT INTO adapter_outbox(
        id,tenant_id,adapter,kind,idempotency_key,request_id,message_id,trace_id,origin,payload,max_attempts
      ) VALUES($1,'Steven','telegram','origin_relay',$2,$3,$4,'telegram-postgres-test',$5::jsonb,$6::jsonb,1)`,
-    [EVENT_ID, `telegram-pg-${randomUUID()}`, requestId, message.rows[0]!.id,
+    [eventId, `telegram-pg-${randomUUID()}`, requestId, message.rows[0]!.id,
       JSON.stringify(origin), JSON.stringify({ result: { text: 'durable reply' } })]
   );
 }
@@ -144,5 +144,35 @@ describe('Telegram PostgreSQL crash recovery', () => {
       `SELECT status FROM adapter_outbox WHERE id=$1`, [EVENT_ID]
     );
     expect(sent.rows[0]?.status).toBe('sent');
+  });
+
+  it('reconciles an expired final lease only when every remote effect is durably sent', async () => {
+    if (!database) throw new Error('PostgreSQL test database did not start');
+    const eventId = '22222222-2222-4222-8222-222222222222';
+    await seedRelay(database.pool, eventId);
+    const repository = new PostgresTelegramBridgeRepository(database.pool);
+    const [event] = await repository.claim('proof-worker', 1, 1_000);
+    expect(event?.event_id).toBe(eventId);
+    const payloadHash = 'a'.repeat(64);
+    await repository.prepareEffect({
+      effect_id: `${eventId}:0`, outbox_id: eventId, tenant_id: 'Steven', bridge_alias: 'kant',
+      chunk_index: 0, chunk_count: 1, payload_hash: payloadHash
+    });
+    await repository.beginEffect(`${eventId}:0`, payloadHash);
+    await repository.completeEffect(`${eventId}:0`, payloadHash, 'remote-proof');
+    await database.pool.query(
+      `UPDATE adapter_outbox SET claim_expires_at=now()-interval '1 second' WHERE id=$1`, [eventId]
+    );
+
+    const restarted = new PostgresTelegramBridgeRepository(database.pool);
+    expect(await restarted.claim('reconciler', 1, 1_000)).toEqual([]);
+    const outbox = await database.pool.query<{ status: string; last_error: string | null }>(
+      `SELECT status,last_error FROM adapter_outbox WHERE id=$1`, [eventId]
+    );
+    const letter = await database.pool.query<{ resolved_at: Date | null }>(
+      `SELECT resolved_at FROM outbox_dead_letters WHERE outbox_id=$1`, [eventId]
+    );
+    expect(outbox.rows[0]).toEqual({ status: 'sent', last_error: null });
+    expect(letter.rows[0]?.resolved_at).toBeInstanceOf(Date);
   });
 });

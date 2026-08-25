@@ -1,4 +1,6 @@
-import type { AgentPerfil, AgentPerfilCampos, ConfigMutation } from '../../api/types';
+import type {
+  AgentPerfil, AgentPerfilAplicado, AgentPerfilCampos, AgentPerfilValor,
+} from '../../api/types';
 
 /**
  * LA LÓGICA DEL EDITOR DE PERFIL, aparte de la pintura para poder probarla sola.
@@ -189,42 +191,54 @@ export function camposQueNoEntran(
   return fuera;
 }
 
-/**
- * La mutación que guarda el perfil.
- *
- * Va por el MISMO camino que «Ajustes & rollback» y no por una ruta propia, así que hereda sin
- * escribir una línea: el bloqueo optimista por revisión, la fila en `config_revisions` con su
- * mutación INVERSA —que es lo que hace que el botón de deshacer lo alcance—, el asiento en
- * `audit_events` y el aislamiento por inquilino. Una ruta nueva pierde casi todo eso y hay que
- * reimplementarlo a mano, que es como se pierde una guarda sin que nadie lo note.
- *
- * Los textos vacíos viajan como `null` y no como `''`: la columna tiene un CHECK de longitud >= 1,
- * y `null` es lo que hace que el compilador OMITA la sección entera en vez de emitir un
- * encabezado con nada debajo. Un encabezado hueco le enseña al agente que el sistema no sabe la
- * respuesta, que es peor que no preguntar.
- */
-export function mutacionDePerfil(
-  tenantId: string,
-  alias: string,
-  campos: AgentPerfilCampos,
-  existeYa: boolean,
-): ConfigMutation {
+/** Cuerpo canónico de la ruta aplicada; no contiene identidad ni acción controladas por el cliente. */
+export function perfilParaGuardar(campos: AgentPerfilCampos): AgentPerfilValor {
   const texto = (valor: string): string | null => (valor.trim().length === 0 ? null : valor);
   return {
-    resource: 'agent_profile',
-    action: existeYa ? 'update' : 'create',
-    tenant_id: tenantId,
-    alias,
-    value: {
-      purpose: texto(campos.purpose),
-      role_summary: texto(campos.role_summary),
-      human_brief: texto(campos.human_brief),
-      responsibilities: [...campos.responsibilities],
-      restrictions: [...campos.restrictions],
-      tools: [...campos.tools],
-      operating_rules: [...campos.operating_rules],
-    },
-  } as ConfigMutation;
+    purpose: texto(campos.purpose),
+    role_summary: texto(campos.role_summary),
+    human_brief: texto(campos.human_brief),
+    responsibilities: [...campos.responsibilities],
+    restrictions: [...campos.restrictions],
+    tools: [...campos.tools],
+    operating_rules: [...campos.operating_rules],
+  };
+}
+
+const SHA256 = /^[0-9a-f]{64}$/;
+
+/**
+ * Un 2xx sólo acredita aplicación si converge la misma revisión y trae exactamente un ACK válido
+ * por cada fichero esperado. Se valida en runtime porque el JSON remoto no conoce los tipos TS.
+ */
+export function esPerfilAplicado(
+  value: unknown,
+  esperado: { tenantId: string; alias: string; nombres: readonly string[] },
+): value is AgentPerfilAplicado {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (record.ok !== true || record.state !== 'applied'
+    || record.tenant_id !== esperado.tenantId || record.alias !== esperado.alias
+    || typeof record.revision !== 'number' || !Number.isSafeInteger(record.revision)
+    || record.revision <= 0 || record.applied_revision !== record.revision
+    || !Array.isArray(record.acknowledgements) || esperado.nombres.length === 0
+    || record.acknowledgements.length !== esperado.nombres.length) return false;
+
+  const pendientes = new Set(esperado.nombres);
+  if (pendientes.size !== esperado.nombres.length) return false;
+  for (const rawAck of record.acknowledgements) {
+    if (rawAck === null || typeof rawAck !== 'object' || Array.isArray(rawAck)) return false;
+    const ack = rawAck as Record<string, unknown>;
+    if (typeof ack.name !== 'string' || !pendientes.delete(ack.name)
+      || typeof ack.path !== 'string' || !ack.path.startsWith('/')
+      || !ack.path.endsWith(`/${ack.name}`)
+      || !['written', 'already_current', 'preserved'].includes(String(ack.state))
+      || typeof ack.sha !== 'string' || !SHA256.test(ack.sha)
+      || typeof ack.bytes !== 'number' || !Number.isSafeInteger(ack.bytes) || ack.bytes < 0) {
+      return false;
+    }
+  }
+  return pendientes.size === 0;
 }
 
 /**

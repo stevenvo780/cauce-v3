@@ -4,21 +4,61 @@ import {
   RadioTower,
   ShieldCheck,
 } from 'lucide-react';
-import { useEffect, useSyncExternalStore, type ComponentType } from 'react';
+import { lazy, Suspense, useEffect, useSyncExternalStore, type ComponentType } from 'react';
 import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import type { AuthGateState } from './features/auth/auth-session';
-import { LiveFleetPage } from './features/live/LiveFleetPage';
-import { FleetAgentDetailPage } from './features/fleet/FleetAgentDetailPage';
-import { MessagesPage } from './features/messages/MessagesPage';
-import { QueuesPage } from './features/queues/QueuesPage';
 import { LandingPage } from './features/landing/LandingPage';
 import { JobsRetiredNotice } from './features/landing/JobsRetiredNotice';
-import { TerminalPage } from './features/terminal/TerminalPage';
-import { ConfigPage } from './features/config/ConfigPage';
-import { AccountsPage } from './features/accounts/AccountsPage';
-import { ObservabilityPage } from './features/observability/ObservabilityPage';
 import { NAV_ENTRIES, useNavAvailability } from './nav';
 import { onNavClick, redirect } from './navigation';
+
+/**
+ * Every operational view used to be imported into the landing bundle. That made opening the
+ * login/landing path download and parse terminal, topology, configuration and observability code
+ * before the operator chose a view (the main minified chunk exceeded 1.1 MiB). Keep the landing
+ * page immediate and make each route a real code-split boundary.
+ *
+ * The wrapper is intentionally a function component rather than storing React.lazy directly in
+ * ROUTE_TABLE: the route invariant checks that every declared destination is callable, which has
+ * caught unreachable routes before, while LazyExoticComponent is represented as an object.
+ */
+function deferredPage(
+  load: () => Promise<{ default: ComponentType }>,
+): ComponentType {
+  const Deferred = lazy(load);
+  return function DeferredRoutePage() {
+    return (
+      <Suspense fallback={<p className="muted" role="status">Cargando vista…</p>}>
+        <Deferred />
+      </Suspense>
+    );
+  };
+}
+
+const LiveFleetPage = deferredPage(async () => ({
+  default: (await import('./features/live/LiveFleetPage')).LiveFleetPage,
+}));
+const AccountsPage = deferredPage(async () => ({
+  default: (await import('./features/accounts/AccountsPage')).AccountsPage,
+}));
+const MessagesPage = deferredPage(async () => ({
+  default: (await import('./features/messages/MessagesPage')).MessagesPage,
+}));
+const QueuesPage = deferredPage(async () => ({
+  default: (await import('./features/queues/QueuesPage')).QueuesPage,
+}));
+const ObservabilityPage = deferredPage(async () => ({
+  default: (await import('./features/observability/ObservabilityPage')).ObservabilityPage,
+}));
+const ConfigPage = deferredPage(async () => ({
+  default: (await import('./features/config/ConfigPage')).ConfigPage,
+}));
+const TerminalPage = deferredPage(async () => ({
+  default: (await import('./features/terminal/TerminalPage')).TerminalPage,
+}));
+const FleetAgentDetailPage = lazy(async () => ({
+  default: (await import('./features/fleet/FleetAgentDetailPage')).FleetAgentDetailPage,
+}));
 
 interface Route {
   id: string;
@@ -415,7 +455,14 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
         <main id="main-content" tabIndex={-1}>
           {gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}
           {fleetAgentTarget
-            ? <FleetAgentDetailPage tenantId={fleetAgentTarget.tenantId} alias={fleetAgentTarget.alias} />
+            ? (
+              <Suspense fallback={<p className="muted" role="status">Cargando agente…</p>}>
+                <FleetAgentDetailPage
+                  tenantId={fleetAgentTarget.tenantId}
+                  alias={fleetAgentTarget.alias}
+                />
+              </Suspense>
+            )
             : <Page />}
         </main>
       </div>

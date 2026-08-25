@@ -22,6 +22,17 @@ const failingPool = {
   connect: async () => { throw new Error('stub pool'); },
 } as unknown as DatabasePool;
 
+const idleClient = {
+  query: async () => ({ rows: [], rowCount: 0 }),
+  on: () => idleClient,
+  off: () => idleClient,
+  release: () => undefined,
+};
+const idlePool = {
+  query: async () => ({ rows: [], rowCount: 0 }),
+  connect: async () => idleClient,
+} as unknown as DatabasePool;
+
 let stateDirectory: string;
 let health: Server | undefined;
 let dispatcher: { stop: () => void } | undefined;
@@ -59,22 +70,21 @@ afterEach(async () => {
 
 describe('dispatcher liveness: the probe must go red when the loop stops', () => {
   it('passes while the real dispatcher loop ticks and fails after stop()', async () => {
-    const metrics = new DispatcherMetrics(failingPool);
-    dispatcher = runDispatcher(failingPool, {
+    const metrics = new DispatcherMetrics(idlePool);
+    dispatcher = runDispatcher(idlePool, {
       pollMs: 10,
       chainSweepMs: 0,
       metrics,
       onError: () => undefined,
     });
 
-    // `/health/ready` servido igual que en `services/dispatcher/src/main.ts`: mismo contrato,
-    // incluido el `status: ready` que sigue saliendo aunque el bucle esté muerto.
+    // `/health/ready` servido con el mismo contrato de progreso que main.ts.
     health = createServer((_request, response) => {
-      const progress = metrics.progress();
-      response.writeHead(200, { 'content-type': 'application/json' });
+      const progress = metrics.progress(200);
+      response.writeHead(progress.ready ? 200 : 503, { 'content-type': 'application/json' });
       response.end(JSON.stringify({
-        status: 'ready',
-        last_error: null,
+        status: progress.ready ? 'ready' : 'not_ready',
+        reason: progress.reason,
         ticks: progress.ticks,
         tick_age_ms: progress.tickAgeMs ?? null,
       }));
@@ -94,8 +104,8 @@ describe('dispatcher liveness: the probe must go red when the loop stops', () =>
     expect((await runProbe(url, 200)).code).toBe(0);
     expect(metrics.progress().ticks).toBeGreaterThan(turning);
 
-    // Se para el bucle. El proceso sigue en pie y `/health/ready` sigue devolviendo 200 "ready":
-    // exactamente el estado en el que hoy los nueve contenedores dicen `healthy`.
+    // Se para el bucle. El proceso HTTP sigue en pie, pero readiness deja de mentir cuando vence
+    // el deadline local de progreso.
     dispatcher.stop();
     const frozen = metrics.progress().ticks;
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -105,23 +115,32 @@ describe('dispatcher liveness: the probe must go red when the loop stops', () =>
     expect(stillAnswering.status).toBe(200);
     expect(((await stillAnswering.json()) as { status: string }).status).toBe('ready');
 
-    // Primera muestra tras la parada: abre la ventana. La segunda, pasada la ventana, condena.
-    expect((await runProbe(url, 200)).code).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     const dead = await runProbe(url, 200);
     expect(dead.code).toBe(1);
-    expect(dead.stderr).toContain('progress stalled');
-    expect(dead.stderr).toContain(`frozen at ${frozen}`);
+    expect(dead.stderr).toContain('HTTP 503');
   });
 
-  it('counts a failing tick as progress: the loop is alive even when its work is not', () => {
-    const metrics = new DispatcherMetrics(failingPool);
-    expect(metrics.progress()).toEqual({ ticks: 0, lastTickAt: undefined, tickAgeMs: undefined });
+  it('counts a failing tick as liveness progress but never as readiness success', () => {
+    let now = 1_000;
+    const metrics = new DispatcherMetrics(failingPool, () => now);
+    expect(metrics.progress()).toMatchObject({ ticks: 0, live: true, ready: false, reason: 'starting' });
     metrics.recordTick('error');
-    metrics.recordTick('ok');
     const progress = metrics.progress();
-    expect(progress.ticks).toBe(2);
-    expect(progress.tickAgeMs).toBeGreaterThanOrEqual(0);
+    expect(progress).toMatchObject({ ticks: 1, live: true, ready: false, reason: 'tick_error' });
+    now += 6_000;
+    expect(metrics.progress()).toMatchObject({ live: false, ready: false, reason: 'loop_stale' });
+  });
+
+  it('classifies a fenced job completion as a failed tick until a clean tick follows', () => {
+    const metrics = new DispatcherMetrics(failingPool, () => 1_000);
+    metrics.recordJob('interactive', 'fenced');
+    metrics.recordTick('ok');
+    expect(metrics.progress()).toMatchObject({
+      ticks: 1, successfulTicks: 0, fencedTicks: 1, ready: false, reason: 'fenced'
+    });
+    metrics.recordTick('ok');
+    expect(metrics.progress()).toMatchObject({ successfulTicks: 1, ready: true, reason: 'ready' });
   });
 
   it('publishes the tick age so Prometheus sees a stopped loop as well', async () => {

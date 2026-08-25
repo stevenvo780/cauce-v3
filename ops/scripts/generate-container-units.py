@@ -23,6 +23,10 @@ parser.add_argument("--bundle-root", help="host immutable bundle root")
 parser.add_argument("--lock-root", help="host supervisor lock root")
 args = parser.parse_args()
 aliases = load_container_aliases(root)
+physical_alias_counts: dict[str, int] = {}
+for entry in aliases.values():
+    container = entry["container"]
+    physical_alias_counts[container] = physical_alias_counts.get(container, 0) + 1
 
 mode = "rootless" if args.rootless else "system"
 args.output = args.output or root / "generated" / "container-systemd" / ("rootless" if args.rootless else "")
@@ -169,6 +173,7 @@ def example(alias: str, entry: dict[str, str]) -> str:
         f"PKI_DIR={example_pki_root}/{alias}",
         "RELAY_URL=wss://gateway.example.invalid/v3/ws",
         "EXPECTED_IMAGE_ID=sha256:REPLACE_WITH_64_LOWERCASE_HEX",
+        "CAUCE_SEMBRAR_PERFIL=1",
         "# Optional container-label reinforcement (set both keys or neither); omit to skip the label check:",
         "# EXPECTED_LABEL_KEY=com.example.runtime",
         "# EXPECTED_LABEL_VALUE=replace-with-expected-label-value",
@@ -184,15 +189,31 @@ def example(alias: str, entry: dict[str, str]) -> str:
         "# client.crt/client.key/ca.crt are required; bearer token is optional for mTLS-only aliases.",
     ]
     if entry["harness"] == "hermes":
-        lines.extend(("HERMES_HOME=/home/dev/.hermes", "HERMES_INFERENCE_MODEL=replace-with-approved-model"))
+        hermes_home = (
+            f"{entry['home']}/.hermes/profiles/{alias}"
+            if physical_alias_counts[entry["container"]] > 1
+            else f"{entry['home']}/.hermes"
+        )
+        lines.extend((
+            "# Hermes in a multi-alias physical container must use its own profile home."
+            if physical_alias_counts[entry["container"]] > 1 else "# Hermes profile home.",
+            f"HERMES_HOME={hermes_home}",
+            "HERMES_INFERENCE_MODEL=replace-with-approved-model",
+        ))
     if entry["harness"] == "openclaw":
         lines.extend((
+            f"OPENCLAW_WORKSPACE={entry['workspace']}",
             "# Optional verified API mode (CLI is the default):",
             "# OPENCLAW_TRANSPORT=api",
             "# OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions",
             f"# OPENCLAW_TOKEN_FILE=/opt/cauce-v3-secrets/{alias}/openclaw-token",
             "# OPENCLAW_AGENT_TARGET=openclaw/default",
             "# OPENCLAW_DIST_DIR=/home/claw/.openclaw/node_modules/openclaw/dist",
+        ))
+    if entry["harness"] in {"claude", "codex"} and physical_alias_counts[entry["container"]] > 1:
+        lines.extend((
+            "# Required: this runtime home is shared by multiple aliases.",
+            "CONFIG_POR_ALIAS=1",
         ))
     return "\n".join(lines) + "\n"
 

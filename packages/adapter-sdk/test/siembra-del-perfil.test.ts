@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import {
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { Worker } from "node:worker_threads";
 import type { AgentProfile, ContextoDeAlias, HechosDelAlias } from "@cauce/protocol";
 import { bloqueDePerfil } from "@cauce/protocol";
 import {
-  directorioDelArnes, resumenDeLaSiembra, sembrarPerfilDelArnes, type DiscoDelArnes,
+  directorioDelArnes, discoReal, resumenDeLaSiembra, sembrarPerfilDelArnes,
+  type DiscoDelArnes,
 } from "../src/context/siembra-del-perfil.js";
 
 /**
@@ -34,16 +43,21 @@ function contexto(parcial: Partial<AgentProfile> = {}, alias = "zeus"): Contexto
       ...parcial,
     },
     hechos: HECHOS,
-  } as ContextoDeAlias;
+  };
 }
 
 /** Un disco de mentira que además CUENTA las escrituras: «no se escribió» es media prueba. */
 function disco(inicial: Record<string, string> = {}) {
   const ficheros = new Map(Object.entries(inicial));
   const escrituras: string[] = [];
+  const aplicar = (ruta: string, contenido: string): void => {
+    ficheros.set(ruta, contenido);
+    escrituras.push(ruta);
+  };
   const puerto: DiscoDelArnes = {
     leer: (ruta) => ficheros.get(ruta),
-    escribir: (ruta, contenido) => { ficheros.set(ruta, contenido); escrituras.push(ruta); },
+    escribir: aplicar,
+    escribirLote: (lote) => { for (const entrada of lote) aplicar(entrada.ruta, entrada.contenido); },
   };
   return { ficheros, escrituras, puerto };
 }
@@ -78,6 +92,30 @@ test("codex mira CODEX_HOME, y openclaw NO adivina su espacio de trabajo", () =>
 test("CONTROL NEGATIVO: un arnés desconocido no tiene directorio, y sin HOME tampoco", () => {
   assert.equal(directorioDelArnes("hermes", ENTORNO), undefined);
   assert.equal(directorioDelArnes("claude", {}), undefined);
+  assert.equal(directorioDelArnes("claude", {
+    HOME: "/home/dev", CLAUDE_CONFIG_DIR: "relativo",
+  }), undefined);
+  assert.equal(directorioDelArnes("codex", { HOME: "relativo" }), undefined);
+  assert.equal(directorioDelArnes("openclaw", { CAUCE_OPENCLAW_WORKSPACE: "../escape" }), undefined);
+});
+
+test("dos alias con HOME compartido y homes de arnés distintos no se contaminan", () => {
+  const d = disco();
+  sembrarPerfilDelArnes("codex", contexto({ purpose: "soy kratos" }, "kratos"), {
+    habilitado: true, disco: d.puerto,
+    entorno: { HOME: "/home/dev", CODEX_HOME: "/home/dev/.codex-kratos" },
+  });
+  sembrarPerfilDelArnes("codex", contexto({ purpose: "soy atlas" }, "atlas"), {
+    habilitado: true, disco: d.puerto,
+    entorno: { HOME: "/home/dev", CODEX_HOME: "/home/dev/.codex-atlas" },
+  });
+
+  const kratos = d.ficheros.get("/home/dev/.codex-kratos/AGENTS.md") ?? "";
+  const atlas = d.ficheros.get("/home/dev/.codex-atlas/AGENTS.md") ?? "";
+  assert.match(kratos, /soy kratos/u);
+  assert.doesNotMatch(kratos, /soy atlas/u);
+  assert.match(atlas, /soy atlas/u);
+  assert.doesNotMatch(atlas, /soy kratos/u);
 });
 
 // ── EL INTERRUPTOR ──────────────────────────────────────────────────────────────────────────
@@ -167,6 +205,7 @@ test("si el disco no deja escribir, lo dice y NO lanza", () => {
   const puerto: DiscoDelArnes = {
     leer: () => undefined,
     escribir: () => { throw new Error("EACCES"); },
+    escribirLote: () => { throw new Error("EACCES"); },
   };
   const resultado = sembrarPerfilDelArnes("claude", contexto({ purpose: "x" }), {
     habilitado: true, disco: puerto, entorno: ENTORNO,
@@ -177,18 +216,140 @@ test("si el disco no deja escribir, lo dice y NO lanza", () => {
   }
 });
 
-test("si el disco no deja LEER, se sigue: un fichero ilegible no bloquea a los otros seis", () => {
+test("si un fichero no se puede LEER, OpenClaw cancela el lote entero", () => {
   const escrituras: string[] = [];
   const puerto: DiscoDelArnes = {
     leer: (ruta) => { if (ruta.endsWith("SOUL.md")) throw new Error("EACCES"); return undefined; },
     escribir: (ruta) => { escrituras.push(ruta); },
+    escribirLote: (lote) => { escrituras.push(...lote.map((entrada) => entrada.ruta)); },
   };
   const ctx = contexto({ purpose: "p", role_summary: "r", tools: ["ssh"] });
   const resultado = sembrarPerfilDelArnes("openclaw", ctx, {
     habilitado: true, disco: puerto, entorno: { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" },
   });
   assert.equal(resultado.estado, "hecho");
-  assert.ok(escrituras.some((r) => r.endsWith("IDENTITY.md")), "un fichero ilegible frenó a los demás");
+  assert.deepEqual(escrituras, [], "escribió una persona parcial de OpenClaw");
+  if (resultado.estado === "hecho") {
+    assert.equal(resultado.ficheros.length, 7);
+    assert.ok(resultado.ficheros.every((fichero) => fichero.estado === "no-se-pudo-escribir"));
+  }
+});
+
+test("el disco real sólo traduce ENOENT a ausencia y rechaza symlink/no-regular", (t) => {
+  const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-lectura-"));
+  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+
+  assert.equal(discoReal.leer(join(raiz, "ausente.md")), undefined);
+
+  const directorio = join(raiz, "directorio.md");
+  mkdirSync(directorio);
+  assert.throws(() => discoReal.leer(directorio), /no es un fichero regular/u);
+
+  const objetivo = join(raiz, "objetivo.md");
+  const enlace = join(raiz, "enlace.md");
+  writeFileSync(objetivo, "intacto", "utf8");
+  symlinkSync(objetivo, enlace);
+  assert.throws(() => discoReal.leer(enlace));
+});
+
+test("la escritura conserva el inode existente y no sigue symlinks", (t) => {
+  const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-escritura-"));
+  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+
+  const objetivo = join(raiz, "AGENTS.md");
+  writeFileSync(objetivo, "antes", "utf8");
+  const inodo = statSync(objetivo).ino;
+
+  discoReal.escribir(objetivo, "después");
+  assert.equal(statSync(objetivo).ino, inodo, "reemplazó el inode que puede estar bind-mounted");
+  assert.equal(readFileSync(objetivo, "utf8"), "después");
+
+  const enlace = join(raiz, "enlace.md");
+  symlinkSync(objetivo, enlace);
+  assert.throws(() => discoReal.escribir(enlace, "pisado"));
+  assert.equal(readFileSync(objetivo, "utf8"), "después");
+});
+
+test("un symlink en cualquier directorio padre no puede escapar del home", (t) => {
+  const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-padre-"));
+  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+
+  const home = join(raiz, "home");
+  const fuera = join(raiz, "fuera");
+  mkdirSync(home);
+  mkdirSync(fuera);
+  symlinkSync(fuera, join(home, ".codex"));
+  const ruta = join(home, ".codex", "AGENTS.md");
+
+  assert.throws(() => discoReal.leer(ruta), "trató el padre symlink como ausencia");
+  assert.throws(() => discoReal.escribir(ruta, "escape"));
+  assert.equal(existsSync(join(fuera, "AGENTS.md")), false, "escribió fuera del home autorizado");
+  assert.ok(!readdirSync(fuera).some((nombre) => nombre.startsWith(".cauce-perfil-")));
+});
+
+test("un swap concurrente del padre aborta y limpia mediante el dirfd original", async (t) => {
+  const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-carrera-"));
+  const home = join(raiz, "home");
+  const directorio = join(home, ".codex");
+  const movido = join(home, ".codex-original");
+  const fuera = join(raiz, "fuera");
+  mkdirSync(directorio, { recursive: true });
+  mkdirSync(fuera);
+
+  const worker = new Worker(`
+    (() => {
+      const { parentPort, workerData } = require("node:worker_threads");
+      const { readdirSync, renameSync, symlinkSync } = require("node:fs");
+      parentPort.postMessage("ready");
+      const limite = Date.now() + 10_000;
+      while (Date.now() < limite) {
+        try {
+          if (readdirSync(workerData.directorio).some((nombre) => nombre.startsWith(".cauce-perfil-"))) {
+            renameSync(workerData.directorio, workerData.movido);
+            symlinkSync(workerData.fuera, workerData.directorio);
+            parentPort.postMessage("swapped");
+            return;
+          }
+        } catch {}
+      }
+      parentPort.postMessage("timeout");
+    })();
+  `, { eval: true, workerData: { directorio, movido, fuera } });
+  t.after(async () => {
+    await worker.terminate();
+    rmSync(raiz, { recursive: true, force: true });
+  });
+
+  assert.deepEqual(await once(worker, "message"), ["ready"]);
+  const intercambio = once(worker, "message");
+  assert.throws(() => discoReal.escribir(
+    join(directorio, "AGENTS.md"),
+    "x".repeat(16 * 1024 * 1024),
+  ));
+  assert.deepEqual(await intercambio, ["swapped"]);
+  assert.equal(existsSync(join(fuera, "AGENTS.md")), false);
+  assert.equal(existsSync(join(movido, "AGENTS.md")), false, "no revirtió el destino anclado");
+  assert.ok(!readdirSync(movido).some((nombre) => nombre.startsWith(".cauce-perfil-")));
+});
+
+test("el preflight del lote falla antes de modificar el primer destino", (t) => {
+  const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-lote-"));
+  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+
+  const primero = join(raiz, "SOUL.md");
+  const objetivo = join(raiz, "objetivo.md");
+  const segundo = join(raiz, "IDENTITY.md");
+  writeFileSync(primero, "primero-intacto", "utf8");
+  writeFileSync(objetivo, "segundo-intacto", "utf8");
+  symlinkSync(objetivo, segundo);
+
+  assert.throws(() => discoReal.escribirLote([
+    { ruta: primero, contenido: "primero-nuevo" },
+    { ruta: segundo, contenido: "segundo-nuevo" },
+  ]));
+  assert.equal(readFileSync(primero, "utf8"), "primero-intacto");
+  assert.equal(readFileSync(objetivo, "utf8"), "segundo-intacto");
+  assert.ok(!readdirSync(raiz).some((nombre) => nombre.startsWith(".cauce-perfil-")));
 });
 
 test("un tope superado NO escribe NINGUNO de los siete", () => {
@@ -212,6 +373,16 @@ test("CONTROL NEGATIVO: un arnés sin ficheros no escribe y no es un error", () 
   });
   assert.equal(resultado.estado, "sin-ficheros");
   assert.equal(d.escrituras.length, 0);
+});
+
+test("un arnés soportado sin home absoluto falla distinto de uno sin ficheros", () => {
+  const d = disco();
+  const resultado = sembrarPerfilDelArnes("claude", contexto({ purpose: "x" }), {
+    habilitado: true, disco: d.puerto, entorno: { HOME: "relativo" },
+  });
+  assert.equal(resultado.estado, "sin-directorio");
+  assert.equal(d.escrituras.length, 0);
+  assert.match(resumenDeLaSiembra(resultado), /no tiene un directorio absoluto medido/u);
 });
 
 // ── EL PARTE ────────────────────────────────────────────────────────────────────────────────

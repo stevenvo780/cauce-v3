@@ -1155,7 +1155,7 @@ test("la TUI arranca con el mismo entorno la cree el adaptador o el CLI", () => 
   assert.deepEqual(claude?.paneEnvironment, { CLAUDE_CONFIG_DIR: "/home/dev/.claude" });
   assert.equal(claude?.configDirectory, "/home/dev/.claude");
   assert.equal(
-    transcriptDirectoryIn(claude!.configDirectory, "/workspace"),
+    transcriptDirectoryIn(claude.configDirectory, "/workspace"),
     transcriptDirectory("/home/dev", "/workspace"),
   );
 

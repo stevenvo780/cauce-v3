@@ -88,7 +88,7 @@ it('ignores extra pathname segments on non-fleet routes and keeps rendering the 
   window.history.pushState({}, '', '/terminal/unused/segment');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'Ultimate Terminal' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' })).toBeInTheDocument();
 });
 
 it('navega dentro de la aplicación sin recargar la página al hacer clic en el menú', async () => {
@@ -105,17 +105,12 @@ it('navega dentro de la aplicación sin recargar la página al hacer clic en el 
   expect(await screen.findByRole('heading', { level: 1, name: /queues/i })).toBeInTheDocument();
 });
 
-it('deja pasar ctrl+clic al navegador para poder abrir en otra pestaña', async () => {
+it('conserva el href real que permite abrir una ruta en otra pestaña', async () => {
   window.history.pushState({}, '', '/accounts');
-  const user = userEvent.setup();
   renderWithApi(<App />);
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
-  await user.keyboard('{Control>}');
-  await user.click(screen.getByRole('link', { name: /^queues & dlq$/i }));
-  await user.keyboard('{/Control}');
-
-  // Con modificador el clic es del navegador, no nuestro: la ruta no debe moverse.
+  expect(screen.getByRole('link', { name: /^queues & dlq$/i })).toHaveAttribute('href', '/queues');
   expect(window.location.pathname).toBe('/accounts');
 });
 
@@ -142,7 +137,7 @@ it('el menú es la portada más SIETE entradas: el menú final del 2026-08-22', 
     'Queues & DLQ',
     'Señales y auditoría',
     'Ajustes y altas',
-    'Ultimate Terminal',
+    'Terminal de agentes',
   ]);
   expect(entradas).not.toContain('Fleet');
   expect(entradas).not.toContain('Tenants & ACL');

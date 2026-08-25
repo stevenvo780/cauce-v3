@@ -58,6 +58,7 @@ const bridgeReplies = {
   hermes: 'hermes runtime package bridge passed',
   openclaw: 'openclaw runtime package bridge passed',
 };
+const harnessStartStderr = '<<cauce:harness-started>>\n';
 
 const hermesFixture = `def run_oneshot(prompt):
     if prompt != ${JSON.stringify(bridgePrompt)}:
@@ -139,7 +140,9 @@ function runBridgeFixture(name, command, expectedReply, env) {
   });
   if (result.error) throw new Error(`${name} runtime bridge could not launch`, { cause: result.error });
   if (result.status !== 0) throw new Error(`${name} runtime bridge fixture exited with status ${String(result.status)}`);
-  if (result.stderr !== '') throw new Error(`${name} runtime bridge fixture wrote to stderr`);
+  if (result.stderr !== harnessStartStderr) {
+    throw new Error(`${name} runtime bridge fixture did not emit exactly one harness-start marker`);
+  }
 
   let envelope;
   try {

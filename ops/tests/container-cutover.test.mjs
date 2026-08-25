@@ -19,20 +19,25 @@ const snapshots = path.join(temporary, "snapshots");
 const systemctlState = path.join(temporary, "systemctl.json");
 const systemctlLog = path.join(temporary, "systemctl.log");
 const supervisorLog = path.join(temporary, "supervisor.log");
+const probeLog = path.join(temporary, "probe.log");
 const fakeSupervisor = path.join(temporary, "fake-supervisor");
 const collector = path.join(temporary, "collector");
+const probe = path.join(temporary, "probe");
 
 function snapshot({ v3 = 0, phase = "drain", leaseOwners = v3 } = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    tenant: "Steven",
     alias: "kant",
     capturedAt: new Date().toISOString(),
     v2: { consumers: 0, pollers: 0, leaseOwners: 0 },
     v3: { consumers: v3, pollers: v3, leaseOwners },
-    drain: { inflight: 0, unsettledDeliveries: 0 },
-    acks: { pending: 0, invalid: 0, staleAccepted: 0 },
-    queues: { wakePending: 0, outboxPending: 0, relayPending: 0, dlqOpen: 0 },
-    roundTrip: phase === "post-cutover" ? "passed" : "not-run",
+    drain: { inflight: 0, overdueInflight: 0, ownershipMismatch: 0 },
+    acks: { rejectedRecent: 0, staleAccepted: 0 },
+    queues: { wakePending: 0, outboxPending: 0, relayPending: 0, dlqOpen: 0, dlqNewSinceBaseline: 0 },
+    roundTrip: phase === "post-cutover"
+      ? { status: "passed", completedAt: new Date().toISOString(), terminalAckApplied: true, activeLeaseMatch: true }
+      : { status: "not-run", completedAt: null, terminalAckApplied: false, activeLeaseMatch: false },
   };
 }
 
@@ -47,6 +52,7 @@ async function state(active = [], enabled = [], extra = {}) {
   await writeFile(systemctlState, `${JSON.stringify({ active, enabled, log: systemctlLog, ...extra })}\n`);
   await writeFile(systemctlLog, "");
   await writeFile(supervisorLog, "");
+  await writeFile(probeLog, "");
 }
 
 function environment(extra = {}) {
@@ -56,9 +62,11 @@ function environment(extra = {}) {
     FAKE_SYSTEMCTL_STATE: systemctlState,
     FAKE_GATE_SNAPSHOT_DIR: snapshots,
     FAKE_SUPERVISOR_LOG: supervisorLog,
+    FAKE_GATE_PROBE_LOG: probeLog,
     CAUCE_CUTOVER_TEST_MODE: "1",
     CAUCE_CUTOVER_TEST_SUPERVISOR: fakeSupervisor,
     CAUCE_GATE_CAPTURE_PATH: collector,
+    CAUCE_GATE_PROBE_PATH: probe,
     CAUCE_CHANGE_ID: "CHG-1",
     CAUCE_CUTOVER_LOCK_DIR: lockDir,
     CAUCE_SYSTEMD_SCOPE: "system",
@@ -91,7 +99,8 @@ try {
   await copyFile(path.join(ops, "tests/fake-systemctl.mjs"), path.join(bin, "systemctl"));
   await copyFile(path.join(ops, "tests/fake-container-supervisor.mjs"), fakeSupervisor);
   await copyFile(path.join(ops, "tests/fake-gate-collector.mjs"), collector);
-  await Promise.all([path.join(bin, "systemctl"), fakeSupervisor, collector].map((file) => chmod(file, 0o755)));
+  await copyFile(path.join(ops, "tests/fake-gate-roundtrip-probe.mjs"), probe);
+  await Promise.all([path.join(bin, "systemctl"), fakeSupervisor, collector, probe].map((file) => chmod(file, 0o755)));
   await writeSnapshots();
   const drain = path.join(snapshots, "drain.json");
   const live = path.join(snapshots, "rollback-drain.json");
@@ -152,6 +161,15 @@ try {
   current = JSON.parse(await readFile(systemctlState, "utf8"));
   assert.deepEqual(current.active, ["cauce-v3-container-kant.service"]);
   assert.deepEqual(current.enabled, ["cauce-v3-container-kant.service"]);
+  assert.deepEqual((await readFile(probeLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line)), [{ alias: "kant" }]);
+
+  // An authentic probe failure is a hard gate: the just-started runtime is stopped and never enabled.
+  await state();
+  result = run(cutover, "container", drain, { FAKE_GATE_PROBE_EXIT: "79" });
+  assert.equal(result.status, 79, result.stderr);
+  current = JSON.parse(await readFile(systemctlState, "utf8"));
+  assert.deepEqual(current.active, [], "failed round-trip probe must roll the selected unit back down");
+  assert.deepEqual(current.enabled, [], "failed round-trip probe must not leave the selected unit enabled");
 
   // Rollback disables/stops, proves negative process state, then and only then accepts rollback-ready.
   await state(["cauce-v3-container-kant.service"], ["cauce-v3-container-kant.service"]);

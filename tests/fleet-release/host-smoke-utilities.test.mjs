@@ -36,16 +36,16 @@ function evidence(host, manifests) {
 }
 
 describe('host-aware harness smoke utilities', () => {
-  it('requires the exact 12-alias 5/1/1/5/0 manifest matrix', async () => {
+  it('requires the exact 15-alias 5/3/1/6/0 manifest matrix', async () => {
     const manifests = await readFleetManifests(manifestDirectory);
     expect(validateFleetMatrix(manifests).counts).toEqual({
       openclaw: 5,
-      claude: 1,
+      claude: 3,
       hermes: 1,
-      codex: 5,
+      codex: 6,
       opencode: 0,
     });
-    expect(() => validateFleetMatrix(manifests.slice(1))).toThrow(/exactly 12/u);
+    expect(() => validateFleetMatrix(manifests.slice(1))).toThrow(/exactly 15/u);
   });
 
   it('does not require OpenClaw on control-plane when OpenClaw manifests live elsewhere', async () => {

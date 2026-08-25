@@ -61,7 +61,13 @@
 }
 .live-tally-chip:hover { transform: translateY(-1px); border-color: var(--border-strong); }
 .live-tally-chip[aria-pressed='true'] { border-color: var(--accent, var(--border-strong)); background: var(--surface-3); }
-.live-tally-chip[data-empty='true'] { opacity: .45; }
+.live-tally-chip[data-empty='true'] {
+  /* Cero sigue siendo un filtro disponible. Atenuar el botón entero al 45 % también atenuaba su
+     texto hasta 1,87:1 en claro; sólo el cuadrado decorativo pierde intensidad. */
+  opacity: 1;
+  color: var(--faint);
+}
+.live-tally-chip[data-empty='true'] .live-tally-swatch { opacity: .45; }
 .live-tally-chip .live-tally-swatch { width: 12px; height: 12px; border-radius: 4px; background: var(--accent, var(--faint)); }
 .live-tally-chip strong { font-variant-numeric: tabular-nums; }
 
@@ -1005,18 +1011,15 @@ html.directiva-modal-abierta { overflow: hidden; scrollbar-gutter: stable; }
 html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
 
 /*
- * El editor encoge cuando la PANTALLA es baja, y sólo entonces.
+ * La proyección legacy encoge cuando la PANTALLA es baja, y sólo entonces.
  *
  * `min-height: 260px` fijo daba un textarea de 285 px reales, y con eso la columna 1 medía 647.
- * MEDIDO en Chrome sobre el estado que hoy da producción (rol editable + los ficheros en 404):
- * a 1600x1000 el diálogo cabía entero, pero a **1280x800 «Guardar el rol» caía 68 px por debajo
- * del pliegue** del cuerpo. Un botón de guardar que hay que ir a buscar es exactamente el defecto
- * que ya se corrigió en la confirmación de /config.
+ * MEDIDO en Chrome sobre el visor de rol + historial: a 1600x1000 el diálogo cabía entero, pero a
+ * 1280x800 el acceso al Perfil canónico caía por debajo del pliegue del cuerpo.
  *
- * Con `clamp`, a 800 px de alto el editor mide 208 y el botón entra; a 1000 y en adelante vuelve a
- * los 285 de siempre. Sigue teniendo `resize: vertical` heredado, así que quien quiera más lo
- * agranda. Se toca la HOJA y no `RoleBriefTab`: ese componente tiene siete casos de prueba que
- * describen fallos ya cometidos y no se reescribe para ganar píxeles.
+ * Con `clamp`, a 800 px de alto el visor mide 208 y el botón entra; a 1000 y en adelante vuelve a
+ * los 285 de siempre. Se toca la HOJA y no `RoleBriefTab`: la proyección sigue siendo read-only y
+ * toda mutación ocurre únicamente en Perfil.
  */
 .directiva-modal .role-brief-field textarea { min-height: 0; height: clamp(150px, 26vh, 285px); }
 

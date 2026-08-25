@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,7 @@ const { validateRuntimeBridges } = await import(/* @vite-ignore */ smokeModuleUr
 
 const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));
 const dockerfilePath = join(repositoryRoot, 'deploy', 'Dockerfile');
+const composePath = join(repositoryRoot, 'deploy', 'compose.yaml');
 const sourceBridgeDirectory = join(repositoryRoot, 'packages', 'adapter-sdk', 'bridge');
 
 describe('runtime bridge packaging smoke', () => {
@@ -40,6 +41,22 @@ describe('runtime bridge packaging smoke', () => {
     await expect(validateRuntimeBridges({ hermesBridge, openClawBridge })).resolves.toBeUndefined();
   });
 
+  it('rejects bridge stderr beyond the single effect-boundary marker', async () => {
+    await chmod(hermesBridge, 0o755);
+    const source = await readFile(hermesBridge, 'utf8');
+    await writeFile(
+      hermesBridge,
+      source.replace(
+        '    sys.stderr.write("<<cauce:harness-started>>\\n")\n',
+        '    sys.stderr.write("<<cauce:harness-started>>\\n")\n    sys.stderr.write("unexpected diagnostic\\n")\n',
+      ),
+    );
+    await chmod(hermesBridge, 0o555);
+
+    await expect(validateRuntimeBridges({ hermesBridge, openClawBridge }))
+      .rejects.toThrow(/did not emit exactly one harness-start marker/u);
+  });
+
   it('fails when either packaged bridge is missing', async () => {
     await rm(openClawBridge);
     await expect(validateRuntimeBridges({ hermesBridge, openClawBridge }))
@@ -60,8 +77,18 @@ describe('runtime bridge packaging smoke', () => {
     const smokeIndex = dockerfile.indexOf('RUN node deploy/runtime-package-smoke.mjs');
 
     expect(dockerfile).toContain('apk add --no-cache python3');
+    expect(dockerfile).toContain('mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal');
     expect(copyIndex).toBeGreaterThan(-1);
     expect(userIndex).toBeGreaterThan(copyIndex);
     expect(smokeIndex).toBeGreaterThan(userIndex);
+  });
+
+  it('persists terminal close reports across container replacement', async () => {
+    const compose = await readFile(composePath, 'utf8');
+    expect(compose).toContain(
+      'CAUCE_TERMINAL_CLOSE_SPOOL_FILE: /var/lib/cauce-terminal/close-reports.json',
+    );
+    expect(compose).toContain('- terminal_close_spool:/var/lib/cauce-terminal');
+    expect(compose.match(/terminal_close_spool/gu)).toHaveLength(2);
   });
 });

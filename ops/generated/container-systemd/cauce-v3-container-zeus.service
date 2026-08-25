@@ -1,9 +1,9 @@
 [Unit]
-Description=Cauce V3 container adapter heraclito (agv2-jhon-heraclito-oc/openclaw)
+Description=Cauce V3 container adapter zeus (ws-zeus/claude)
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
-ConditionPathExists=/etc/cauce-v3/container-aliases/heraclito.env
+ConditionPathExists=/etc/cauce-v3/container-aliases/zeus.env
 StartLimitIntervalSec=300s
 StartLimitBurst=10
 
@@ -12,8 +12,8 @@ Type=simple
 User=root
 Group=root
 UMask=0077
-ExecStart=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh start heraclito
-ExecStop=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop heraclito
+ExecStart=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh start zeus
+ExecStop=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop zeus
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78

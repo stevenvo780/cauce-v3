@@ -21,6 +21,18 @@ for (const required of [
   "scripts/cutover.sh",
   "scripts/cutover-rollback.sh",
   "scripts/rollback.sh",
+  "scripts/pin-production-release.py",
+  "scripts/create-inactive-override-manifest.py",
+  "scripts/release-build.sh",
+  "scripts/release-candidate.py",
+  "scripts/validate-release-evidence.py",
+  "scripts/validate-rollback-bridge-evidence.py",
+  "scripts/migration-integrity-gate.sh",
+  "scripts/reconcile-stale-console-outbox.sh",
+  "scripts/bootstrap-prod-env.py",
+  "scripts/provision-terminal-client.sh",
+  "scripts/host-backup.sh",
+  "scripts/host-backup-monitor.sh",
   "tests/container-supervisor.test.mjs",
   "tests/test_container_runtime_reaping.py",
   "tests/alias-runner.test.mjs",
@@ -32,6 +44,12 @@ for (const required of [
   "tests/fake-gate-collector.mjs",
   "runbooks/container-adapters.md",
   "runbooks/alias-cutover.md",
+  "runbooks/backup-restore.md",
+  "runbooks/migration-integrity.md",
+  "runbooks/rollback.md",
+  "config/prod.env.example",
+  "config/host-backup.env.example",
+  "observability/alerts.yaml",
 ]) {
   assert(covered.has(required), `operational digest must cover ${required}`);
 }
@@ -50,10 +68,14 @@ const mutationCheck = spawnSync("python3", ["-c", [
   "spec.loader.exec_module(module)",
   "with tempfile.TemporaryDirectory() as temporary:",
   "    root = pathlib.Path(temporary) / 'ops'",
-  "    for relative in module.STATIC_INPUTS:",
+  "    generated_source = source / 'generated/container-systemd'",
+  "    for input_path in module.operational_files(source, generated_source):",
+  "        if input_path.is_relative_to(generated_source):",
+  "            continue",
+  "        relative = input_path.relative_to(source)",
   "        destination = root / relative",
   "        destination.parent.mkdir(parents=True, exist_ok=True)",
-  "        shutil.copy2(source / relative, destination)",
+  "        shutil.copy2(input_path, destination)",
   "    shutil.copytree(source / 'generated/container-systemd', root / 'generated/container-systemd')",
   "    generated = root / 'generated/container-systemd'",
   "    before = module.operational_digest(root, generated)",
@@ -147,14 +169,16 @@ const schemaCheck = spawnSync("python3", ["-c", [
   "digest = 'sha256:' + '0'*64",
   "other = 'sha256:' + '1'*64",
   "base = {",
-  // schemaVersion 3 splits the single whole-tree sourceDigest into per-image source domains, so a
-  // console edit no longer invalidates runtime evidence. Each image entry carries its own domain.
-  "  'schemaVersion':3,'evidenceClass':'release-build','mechanism':'docker-build-final-image',",
+  // schemaVersion 5 additionally binds a clean committed RC and recoverable registry digests.
+  "  'schemaVersion':5,'evidenceClass':'release-build','mechanism':'docker-build-push-pull-final-image',",
   "  'imageDigest':digest,'sourceDigest':digest,'sourceDigestDomain':'runtime','operationsDigest':digest,",
   "  'timestamps':{'startedAt':'2026-01-01T00:00:00Z','finishedAt':'2026-01-01T00:01:00Z'},",
-  "  'dockerfileSha256':digest,",
-  "  'runtime':{'tag':'r','imageId':digest,'imageDigest':digest,'sourceDigest':digest,'sourceDigestDomain':'runtime'},",
-  "  'console':{'tag':'c','imageId':digest,'imageDigest':digest,'sourceDigest':other,'sourceDigestDomain':'console'},",
+  "  'dockerfileSha256':digest,'dockerignoreSha256':digest,",
+  "  'sourceRevision':{'commit':'a'*40,'tree':'b'*40,'worktreeStatus':'tracked-and-index-clean','untrackedPolicy':'only-apps-console-src-features-grafo','excludedUntrackedPresent':True,'buildContext':'git-archive'},",
+  "  'runtime':{'tag':'registry.invalid/cauce/runtime:rc-'+'a'*40,'imageId':digest,'imageDigest':digest,'repositoryDigest':'registry.invalid/cauce/runtime@'+digest,'sourceDigest':digest,'sourceDigestDomain':'runtime'},",
+  "  'console':{'tag':'registry.invalid/cauce/console:rc-'+'a'*40,'imageId':digest,'imageDigest':digest,'repositoryDigest':'registry.invalid/cauce/console@'+other,'sourceDigest':other,'sourceDigestDomain':'console'},",
+  "  'runtimePackage':{'mechanism':'docker-run-final-image-package-smoke','status':'passed','components':['gateway','dispatcher','relay-worker','telegram-bridge','shadow-router','terminal-relay','outbox-metrics']},",
+  "  'schemaCompatibility':{'label':'io.cauce.schema.compatible-through','compatibleThrough':'029_reconcile_declared_fleet.sql'},",
   "}",
   "assert v.is_valid(base), 'complete evidence must validate'",
   "missing = {k:val for k,val in base.items() if k!='operationsDigest'}",
@@ -163,9 +187,37 @@ const schemaCheck = spawnSync("python3", ["-c", [
   "assert not v.is_valid(undeclared), 'evidence that does not declare its source domain must be rejected'",
   "unbound = json.loads(json.dumps(base)); del unbound['console']['sourceDigest']",
   "assert not v.is_valid(unbound), 'the console image must carry its own source digest'",
+  "local_only = json.loads(json.dumps(base)); del local_only['runtime']['repositoryDigest']",
+  "assert not v.is_valid(local_only), 'a local image ID without a registry digest must be rejected'",
+  "dirty = json.loads(json.dumps(base)); dirty['sourceRevision']['worktreeStatus']='dirty'",
+  "assert not v.is_valid(dirty), 'dirty RC evidence must be rejected'",
   "print('schema-enforced')",
 ].join("\n"), path.join(ops, "schemas/build-evidence.schema.json")], { encoding: "utf8" });
 assert.equal(schemaCheck.status, 0, `${schemaCheck.stdout} ${schemaCheck.stderr}`);
 assert.match(schemaCheck.stdout, /schema-enforced/);
+
+// 5. A candidate is release-ready only when the live host gate shape passed;
+//    the ordinary workspace candidate must remain explicitly blocked.
+const candidateSchemaCheck = spawnSync("python3", ["-c", [
+  "import copy, json, sys",
+  "from jsonschema import Draft202012Validator",
+  "schema = json.load(open(sys.argv[1]))",
+  "v = Draft202012Validator(schema)",
+  "digest = 'sha256:' + '0'*64",
+  "check = {'name':'verified','status':'passed','evidenceKind':'release-build'}",
+  "artifact = {'kind':'release-build','path':'ops/artifacts/release/build.json','sha256':'1'*64,'sourceDigest':digest,'sourceDigestDomain':'runtime'}",
+  "base = {'schemaVersion':2,'suite':'cauce-v3-release-candidate','sourceDigest':digest,'sourceDigestDomain':'full','sourceDigests':{'runtime':digest,'console':digest,'harness':digest,'full':digest},'generatedAt':'2026-01-01T00:00:00Z','fleet':{'manifests':15,'packagedAdapters':5},'gates':{'codeRuntime':{'status':'passed','criticalSkipped':0,'checks':[check]*7}},'evidence':[artifact]*7}",
+  "blocked = copy.deepcopy(base); blocked['candidateStatus']='code-runtime-passed-release-host-blocked'; blocked['gates']['releaseHost']={'status':'blocked','reason':'external host required','prerequisites':[{'id':f'pre-{i}','status':'required-external','description':'required'} for i in range(6)]}",
+  "assert v.is_valid(blocked), list(v.iter_errors(blocked))",
+  "ready = copy.deepcopy(base); ready['candidateStatus']='release-ready'; ready['gates']['releaseHost']={'status':'passed','criticalSkipped':0,'checks':[check]*4+[{'name':'durable rollback baseline recovered exact bridge runtime and console image IDs','status':'passed','evidenceKind':'release-build'}]}",
+  "assert v.is_valid(ready), list(v.iter_errors(ready))",
+  "dishonest = copy.deepcopy(blocked); dishonest['candidateStatus']='release-ready'",
+  "assert not v.is_valid(dishonest), 'release-ready with a blocked host gate must fail'",
+  "dishonest = copy.deepcopy(ready); dishonest['candidateStatus']='code-runtime-passed-release-host-blocked'",
+  "assert not v.is_valid(dishonest), 'blocked status with a passing host gate must fail'",
+  "print('candidate-schema-enforced')",
+].join("\n"), path.join(ops, "schemas/release-candidate.schema.json")], { encoding: "utf8" });
+assert.equal(candidateSchemaCheck.status, 0, `${candidateSchemaCheck.stdout} ${candidateSchemaCheck.stderr}`);
+assert.match(candidateSchemaCheck.stdout, /candidate-schema-enforced/);
 
 process.stdout.write("container operational digest evidence tests passed\n");

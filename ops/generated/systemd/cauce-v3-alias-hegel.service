@@ -15,6 +15,8 @@ Environment=CAUCE_ALIAS=hegel
 Environment=CAUCE_TENANT=Jhon
 Environment=CAUCE_ROOM=grp.jhon
 Environment=CAUCE_HARNESS=openclaw
+Environment=CAUCE_SEMBRAR_PERFIL=1
+Environment=CAUCE_OPENCLAW_WORKSPACE=/home/claw/clawd
 Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
 Environment=CAUCE_INSTANCE_ID=systemd-hegel

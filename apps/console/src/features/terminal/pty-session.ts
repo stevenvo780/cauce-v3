@@ -53,9 +53,9 @@ export interface PtySessionOptions {
   /**
    * Observación en solo lectura: la consola NO manda teclas por este canal.
    *
-   * Es una traba de este cliente, no una frontera de seguridad: el candado real es el
-   * `attach-session -r` con el que el agente PTY se engancha a la tmux del alias, del lado del
-   * servidor. Se dicen las dos cosas para que nadie confunda una con la otra.
+   * El cliente corta teclado/paste/mouse y separa DA/DSR, pero la frontera no depende de confiar
+   * en él: relay y agente vuelven a validar el tipo, y el agente rechaza STDIN humano en
+   * `harness`. Cuando el origen es tmux, `attach-session -r` queda como defensa adicional.
    */
   readOnly?: boolean;
   onClosed?: (view: PtySessionView) => void;
@@ -71,6 +71,8 @@ export const PTY_CLOSE_MESSAGES: Readonly<Record<number, string>> = {
   4408: 'Sesión cerrada por inactividad.',
   4409: 'Ya hay una sesión abierta en ese contenedor.',
   4413: 'Sesión cortada por exceso de salida.',
+  4414: 'Sesión cerrada por exceso de entrada.',
+  4415: 'El navegador no alcanzó a consumir la salida del terminal.',
   4423: 'Venció el tiempo máximo de sesión.',
 };
 
@@ -157,6 +159,76 @@ const CUERPO_BASE = 13;
  */
 const CUERPO_MINIMO = 10;
 
+/**
+ * Respuestas técnicas que xterm 5.5 genera al procesar DA/DSR. En un visor `harness` son la
+ * ÚNICA entrada que puede salir del emulador: teclado, paste, composición y mouse quedan fuera.
+ * Mantener la lista cerrada evita convertir "solo lectura" en un STDIN disfrazado de ANSI.
+ */
+const MAX_RESPUESTA_TECNICA = 256;
+const DA_PRIMARIA = '\x1b[?1;2c';
+const DA_SECUNDARIA = '\x1b[>0;276;0c';
+const DSR_ESTADO = '\x1b[0n';
+const MAX_FILAS_REMOTAS = 200;
+const MAX_COLUMNAS_REMOTAS = 500;
+const MAX_INPUT_FRAME_BYTES = 16 * 1024;
+const MAX_PENDING_INPUT_BYTES = 64 * 1024;
+export const PTY_VIEWER_HEARTBEAT_MS = 30_000;
+export const PTY_RECONNECT_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
+const UTF8_ENCODER = new TextEncoder();
+
+function decimalPositivo(value: string): boolean {
+  if (value.length === 0 || value.length > 3 || value[0] === '0') return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x30 || code > 0x39) return false;
+  }
+  return true;
+}
+
+/** Longitud del CPR/DECXCPR inicial, o cero si el prefijo no es exactamente una respuesta DSR. */
+function longitudRespuestaDeCursor(data: string): number {
+  if (!data.startsWith('\x1b[')) return 0;
+  let start = 2;
+  if (data[start] === '?') start += 1;
+  const separator = data.indexOf(';', start);
+  if (separator < 0) return 0;
+  const end = data.indexOf('R', separator + 1);
+  if (end < 0) return 0;
+  const row = data.slice(start, separator);
+  const col = data.slice(separator + 1, end);
+  if (!decimalPositivo(row) || !decimalPositivo(col)) return 0;
+  if (Number(row) > MAX_FILAS_REMOTAS || Number(col) > MAX_COLUMNAS_REMOTAS) return 0;
+  return end + 1;
+}
+
+/** Exportada para que la frontera negativa de la consola se pueda probar sin abrir una sesión. */
+export function esRespuestaTecnicaDelTerminal(data: string): boolean {
+  if (data.length === 0 || data.length > MAX_RESPUESTA_TECNICA) return false;
+  // Las respuestas admitidas son ASCII. Un homoglyph o byte multibyte nunca cruza como control.
+  for (let index = 0; index < data.length; index += 1) {
+    if (data.charCodeAt(index) > 0x7f) return false;
+  }
+  let pendiente = data;
+  while (pendiente.length > 0) {
+    if (pendiente.startsWith(DA_PRIMARIA)) {
+      pendiente = pendiente.slice(DA_PRIMARIA.length);
+      continue;
+    }
+    if (pendiente.startsWith(DA_SECUNDARIA)) {
+      pendiente = pendiente.slice(DA_SECUNDARIA.length);
+      continue;
+    }
+    if (pendiente.startsWith(DSR_ESTADO)) {
+      pendiente = pendiente.slice(DSR_ESTADO.length);
+      continue;
+    }
+    const longitud = longitudRespuestaDeCursor(pendiente);
+    if (longitud === 0) return false;
+    pendiente = pendiente.slice(longitud);
+  }
+  return true;
+}
+
 interface PtyEntry {
   id: string;
   terminal: Terminal;
@@ -168,7 +240,9 @@ interface PtyEntry {
   view: PtySessionView;
   readOnly: boolean;
   inputChunks: string[];
+  inputBytes: number;
   inputTimer?: number;
+  heartbeatTimer?: number;
   resizeObserver?: ResizeObserver;
   /** La última geometría que se le DIJO al agente. Ver `sendResize`. */
   geometriaDicha?: { cols: number; rows: number };
@@ -177,6 +251,12 @@ interface PtyEntry {
   disposers: Array<() => void>;
   onClosed?: (view: PtySessionView) => void;
   closed: boolean;
+  outputFinished: boolean;
+  resumeToken?: string;
+  outputBytes: number;
+  reconnectAttempt: number;
+  reconnectTimer?: number;
+  options: PtySessionOptions;
 }
 
 const IDLE_VIEW: PtySessionView = { state: 'connecting', notices: [], seguirAlFinal: true };
@@ -276,24 +356,76 @@ function publish(entry: PtyEntry, patch: Partial<PtySessionView>): void {
 
 /** The input buffer coalesces keystrokes over 8 ms so a burst is one frame, not one frame per key. */
 function queueInput(entry: PtyEntry, data: string): void {
-  // Canal de observación: la tecla se descarta acá, nunca llega al socket.
-  if (entry.readOnly) return;
+  if (entry.readOnly) {
+    // `onData` mezcla entrada humana y respuestas que el parser genera al recibir DA/DSR. Un
+    // visor descarta todo salvo ese juego cerrado, y lo etiqueta distinto de `input` en el wire.
+    if (!esRespuestaTecnicaDelTerminal(data) || entry.socket?.readyState !== WebSocket.OPEN) return;
+    entry.socket.send(JSON.stringify({ type: 'terminal_response', data }));
+    return;
+  }
+  const bytes = UTF8_ENCODER.encode(data).byteLength;
+  if (bytes > MAX_INPUT_FRAME_BYTES || entry.inputBytes + bytes > MAX_PENDING_INPUT_BYTES) {
+    cancelPendingInput(entry);
+    publish(entry, { state: 'error', message: PTY_CLOSE_MESSAGES[4414], closeCode: 4414 });
+    if (entry.socket?.readyState === WebSocket.OPEN) entry.socket.close(4414, 'input_flood');
+    return;
+  }
   entry.inputChunks.push(data);
+  entry.inputBytes += bytes;
   if (entry.inputTimer !== undefined) return;
   entry.inputTimer = window.setTimeout(() => {
     entry.inputTimer = undefined;
-    const payload = entry.inputChunks.join('');
+    const chunks = entry.inputChunks;
     entry.inputChunks = [];
-    if (!payload || entry.socket?.readyState !== WebSocket.OPEN) return;
-    entry.socket.send(JSON.stringify({ type: 'input', data: payload }));
+    entry.inputBytes = 0;
+    if (chunks.length === 0 || entry.socket?.readyState !== WebSocket.OPEN) return;
+
+    // La cota es por TRAMA, no sólo por llamada a `onData`: dos pastes permitidos dentro de los
+    // mismos 8 ms no pueden convertirse al unirlos en una trama que el relay deba rechazar.
+    let batch: string[] = [];
+    let batchBytes = 0;
+    const flushBatch = (): void => {
+      if (batch.length === 0 || entry.socket?.readyState !== WebSocket.OPEN) return;
+      entry.socket.send(JSON.stringify({ type: 'input', data: batch.join('') }));
+      batch = [];
+      batchBytes = 0;
+    };
+    for (const chunk of chunks) {
+      const chunkBytes = UTF8_ENCODER.encode(chunk).byteLength;
+      if (batchBytes + chunkBytes > MAX_INPUT_FRAME_BYTES) flushBatch();
+      if (entry.socket?.readyState !== WebSocket.OPEN) return;
+      batch.push(chunk);
+      batchBytes += chunkBytes;
+    }
+    flushBatch();
   }, 8);
 }
 
 /** Drops a pending keystroke batch: once the channel is gone there is nowhere to send it. */
 function cancelPendingInput(entry: PtyEntry): void {
-  if (entry.inputTimer === undefined) return;
-  window.clearTimeout(entry.inputTimer);
+  if (entry.inputTimer !== undefined) window.clearTimeout(entry.inputTimer);
   entry.inputTimer = undefined;
+  entry.inputChunks = [];
+  entry.inputBytes = 0;
+}
+
+function stopViewerHeartbeat(entry: PtyEntry): void {
+  if (entry.heartbeatTimer !== undefined) window.clearInterval(entry.heartbeatTimer);
+  entry.heartbeatTimer = undefined;
+}
+
+function stopReconnect(entry: PtyEntry): void {
+  if (entry.reconnectTimer !== undefined) window.clearTimeout(entry.reconnectTimer);
+  entry.reconnectTimer = undefined;
+}
+
+function startViewerHeartbeat(entry: PtyEntry): void {
+  if (!entry.readOnly || entry.heartbeatTimer !== undefined) return;
+  entry.heartbeatTimer = window.setInterval(() => {
+    if (entry.socket?.readyState === WebSocket.OPEN) {
+      entry.socket.send(JSON.stringify({ type: 'ping' }));
+    }
+  }, PTY_VIEWER_HEARTBEAT_MS);
 }
 
 /**
@@ -384,6 +516,7 @@ function mantenerElFinal(entry: PtyEntry): void {
 }
 
 function writeOutput(entry: PtyEntry, data: ArrayBuffer | string): void {
+  if (entry.outputFinished) return;
   if (entry.worker) {
     if (typeof data === 'string') entry.worker.postMessage({ type: 'chunk', data });
     else entry.worker.postMessage({ type: 'chunk', data }, [data]);
@@ -392,6 +525,18 @@ function writeOutput(entry: PtyEntry, data: ArrayBuffer | string): void {
   // No Worker available (headless test runtime): decode inline, same streaming semantics.
   entry.decoder ??= new TextDecoder();
   entry.terminal.write(typeof data === 'string' ? data : entry.decoder.decode(data, { stream: true }));
+}
+
+/** Finaliza el estado incremental: un último code point incompleto no desaparece en silencio. */
+function finishOutput(entry: PtyEntry): void {
+  if (entry.outputFinished) return;
+  entry.outputFinished = true;
+  if (entry.worker) {
+    entry.worker.postMessage({ type: 'close' });
+    return;
+  }
+  const tail = entry.decoder?.decode() ?? '';
+  if (tail) entry.terminal.write(tail);
 }
 
 /** Text frames are CONTROL, binary frames are PTY OUTPUT. They are never conflated. */
@@ -405,7 +550,13 @@ function handleControlFrame(entry: PtyEntry, raw: string): void {
   }
 
   if (payload.type === 'ready') {
+    if (typeof payload.resume_token === 'string' && payload.resume_token.length >= 80 && payload.resume_token.length <= 1_024) {
+      entry.resumeToken = payload.resume_token;
+    }
+    entry.reconnectAttempt = 0;
+    stopReconnect(entry);
     publish(entry, { state: 'open', message: undefined });
+    startViewerHeartbeat(entry);
     sendResize(entry);
     try {
       entry.terminal.focus();
@@ -432,11 +583,43 @@ function handleControlFrame(entry: PtyEntry, raw: string): void {
   });
 }
 
-function openSocket(entry: PtyEntry, options: PtySessionOptions): void {
+function finishChannel(entry: PtyEntry, code: number, reason: string): void {
+  cancelPendingInput(entry);
+  stopViewerHeartbeat(entry);
+  stopReconnect(entry);
+  finishOutput(entry);
+  const explained = ptyCloseMessage(code, reason);
+  publish(entry, {
+    state: entry.view.state === 'closed' ? 'closed' : code === 1000 ? 'closed' : 'error',
+    message: entry.view.state === 'closed' && entry.view.message ? entry.view.message : explained,
+    closeCode: code,
+  });
+  entry.onClosed?.(entry.view);
+}
+
+function scheduleReconnect(entry: PtyEntry): boolean {
+  if (entry.closed || entry.resumeToken === undefined || entry.reconnectTimer !== undefined) return false;
+  const delay = PTY_RECONNECT_DELAYS_MS[entry.reconnectAttempt];
+  if (delay === undefined) return false;
+  entry.reconnectAttempt += 1;
+  publish(entry, {
+    state: 'connecting',
+    message: `Canal interrumpido; reanudando el mismo PTY (${entry.reconnectAttempt}/${PTY_RECONNECT_DELAYS_MS.length}).`,
+    closeCode: undefined,
+  });
+  entry.reconnectTimer = window.setTimeout(() => {
+    entry.reconnectTimer = undefined;
+    openSocket(entry, entry.options, true);
+  }, delay);
+  return true;
+}
+
+function openSocket(entry: PtyEntry, options: PtySessionOptions, resume = false): void {
   let socket: WebSocket;
   try {
     socket = new WebSocket(websocketUrl(options.websocketPath));
   } catch (error) {
+    if (resume && scheduleReconnect(entry)) return;
     publish(entry, { state: 'error', message: error instanceof Error ? error.message : 'Endpoint PTY inválido.' });
     return;
   }
@@ -453,14 +636,24 @@ function openSocket(entry: PtyEntry, options: PtySessionOptions): void {
     // Y ya lleva la geometría, así que cuenta como «dicha»: repetirla en un `resize` inmediato
     // sería el primer SIGWINCH gratis de la sesión (ver `sendResize`).
     entry.geometriaDicha = { cols: entry.terminal.cols, rows: entry.terminal.rows };
-    socket.send(JSON.stringify({
+    socket.send(JSON.stringify(resume ? {
+      type: 'resume',
+      session_id: options.sessionId,
+      resume_token: entry.resumeToken,
+      after_bytes: entry.outputBytes,
+      cols: entry.terminal.cols,
+      rows: entry.terminal.rows,
+    } : {
       type: 'attach',
       session_id: options.sessionId,
       ticket: options.ticket,
       cols: entry.terminal.cols,
       rows: entry.terminal.rows,
     }));
-    publish(entry, { state: 'attaching', message: 'Ticket enviado; esperando autorización del relay.' });
+    publish(entry, {
+      state: 'attaching',
+      message: resume ? 'Revalidando continuidad y reanudando el mismo PTY.' : 'Ticket enviado; esperando autorización del relay.'
+    });
   };
 
   socket.onmessage = (event: MessageEvent<string | ArrayBuffer | Blob>) => {
@@ -473,27 +666,32 @@ function openSocket(entry: PtyEntry, options: PtySessionOptions): void {
     const blob = event.data as Blob;
     if (typeof blob.arrayBuffer === 'function') {
       void blob.arrayBuffer().then((buffer) => {
-        if (!entry.closed) writeOutput(entry, buffer);
+        if (!entry.closed) {
+          entry.outputBytes += buffer.byteLength;
+          writeOutput(entry, buffer);
+        }
       });
       return;
     }
-    writeOutput(entry, event.data as ArrayBuffer);
+    const buffer = event.data as ArrayBuffer;
+    entry.outputBytes += buffer.byteLength;
+    writeOutput(entry, buffer);
   };
 
   socket.onclose = (event: CloseEvent) => {
+    if (entry.socket !== socket || entry.closed) return;
+    entry.socket = undefined;
     cancelPendingInput(entry);
-    const explained = ptyCloseMessage(event.code, event.reason);
-    publish(entry, {
-      // A `closed` control frame already explained it; keep that wording and just add the code.
-      state: entry.view.state === 'closed' ? 'closed' : event.code === 1000 ? 'closed' : 'error',
-      message: entry.view.state === 'closed' && entry.view.message ? entry.view.message : explained,
-      closeCode: event.code,
-    });
-    entry.onClosed?.(entry.view);
+    stopViewerHeartbeat(entry);
+    // 1006 is the browser's transport-loss sentinel. The resume token is memory-only and the
+    // relay keeps the PTY for a bounded grace period; no new session, ticket or audit row is made.
+    if (event.code === 1006 && scheduleReconnect(entry)) return;
+    finishChannel(entry, event.code, event.reason);
   };
 
   socket.onerror = () => {
     if (entry.view.state === 'closed' || entry.view.closeCode !== undefined) return;
+    if (resume) return;
     publish(entry, { state: 'error', message: 'El backend cerró o rechazó el canal PTY.' });
   };
 }
@@ -513,7 +711,10 @@ export function ensurePtySession(options: PtySessionOptions): void {
 
   const terminal = new Terminal({
     cursorBlink: options.readOnly !== true,
-    disableStdin: options.readOnly === true,
+    // No se puede usar `disableStdin` en el visor: xterm también silencia con él sus respuestas
+    // DA/DSR. La separación se hace abajo por origen de UI + allowlist, y vuelve a validarse en
+    // relay y agente antes de tocar el PTY.
+    disableStdin: false,
     convertEol: false,
     // La CSP de producción no admite el `<style>` que xterm inyecta. Ver `documentoQueNiegaLosEstilos`.
     documentOverride: documentoQueNiegaLosEstilos(),
@@ -534,11 +735,33 @@ export function ensurePtySession(options: PtySessionOptions): void {
     view: { state: 'connecting', notices: [], seguirAlFinal: true },
     readOnly: options.readOnly === true,
     inputChunks: [],
+    inputBytes: 0,
     pegadoAbajo: true,
     disposers: [],
     onClosed: options.onClosed,
     closed: false,
+    outputFinished: false,
+    outputBytes: 0,
+    reconnectAttempt: 0,
+    options,
   };
+
+  if (entry.readOnly) {
+    // Teclado: xterm consulta este handler antes de producir su `onData`. Las respuestas del
+    // parser no pasan por él, por eso DA/DSR siguen funcionando.
+    terminal.attachCustomKeyEventHandler(() => false);
+    // Paste/IME/drop llegan por eventos del textarea y no siempre pasan por el handler de teclas.
+    // Capturarlos en el contenedor conserva scroll y selección de mouse, pero corta escritura.
+    const bloquearEntradaHumana = (event: Event): void => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    const eventos = ['beforeinput', 'input', 'paste', 'drop', 'compositionstart', 'compositionupdate', 'compositionend'] as const;
+    for (const tipo of eventos) {
+      container.addEventListener(tipo, bloquearEntradaHumana, true);
+      entry.disposers.push(() => container.removeEventListener(tipo, bloquearEntradaHumana, true));
+    }
+  }
   entries.set(options.sessionId, entry);
   // Antes de abrir el renderer: el primer frame ya sale con la tinta y la letra puestas.
   pintarPiel(entry);
@@ -553,8 +776,13 @@ export function ensurePtySession(options: PtySessionOptions): void {
 
   if (typeof Worker === 'function') {
     const worker = new Worker(new URL('./terminal.worker.ts', import.meta.url), { type: 'module' });
-    worker.onmessage = (event: MessageEvent<{ type: 'flush'; data: string }>) => {
-      if (!entry.closed && event.data.type === 'flush') terminal.write(event.data.data);
+    worker.onmessage = (event: MessageEvent<{ type: 'flush'; data: string } | { type: 'closed' }>) => {
+      if (event.data.type === 'closed') {
+        worker.terminate();
+        if (entry.worker === worker) entry.worker = undefined;
+        return;
+      }
+      if (!entry.closed) terminal.write(event.data.data);
     };
     entry.worker = worker;
   }
@@ -641,10 +869,12 @@ export function closePtySession(sessionId: string, reason = 'console terminal cl
   if (!entry) return;
   entry.closed = true;
   cancelPendingInput(entry);
+  stopViewerHeartbeat(entry);
+  stopReconnect(entry);
+  finishOutput(entry);
   entries.delete(sessionId);
   entry.resizeObserver?.disconnect();
   for (const dispose of entry.disposers) dispose();
-  entry.worker?.postMessage({ type: 'close' });
   entry.worker?.terminate();
   if (entry.socket && entry.socket.readyState <= WebSocket.OPEN) entry.socket.close(1000, reason);
   entry.terminal.dispose();

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
+import {
+  SYSTEM_PRINCIPAL_ALIASES, type Ack, type DeliveryEnvelope, type PublishMessage, type Tenant,
+} from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
@@ -10,6 +12,23 @@ import { PostgresTelegramBridgeRepository } from '../../../services/telegram-bri
 let database: TestDatabase;
 let pool: DatabasePool;
 let repository: CauceRepository;
+
+const ROUTABLE_FLEET_EXCEPT_ARGOS = [
+  'Isa:salva',
+  'Jhon:hegel',
+  'Miguel:atlas',
+  'Miguel:iza',
+  'Miguel:janus',
+  'Miguel:kratos',
+  'Pablo:dedalo',
+  'Pablo:midas',
+  'Pablo:seneca',
+  'Pablo:vulcano',
+  'Steven:jarvis',
+  'Steven:kant',
+  'Steven:socrates',
+  'Steven:zeus'
+] as const;
 
 function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
   return {
@@ -1522,7 +1541,9 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'argos', 'capable-routing-client', capableLease.epoch!, 1, 30_000
     );
     if (!capableDelivery) throw new Error('expected a capability-aware delivery');
-    expect(capableDelivery.routing_targets).toHaveLength(11);
+    expect(capableDelivery.routing_targets?.map(
+      ({ tenant_id, alias }) => `${tenant_id}:${alias}`
+    ).sort()).toEqual([...ROUTABLE_FLEET_EXCEPT_ARGOS].sort());
     expect(capableDelivery.routing_targets).toContainEqual({
       tenant_id: 'Steven',
       alias: 'kant',
@@ -1536,6 +1557,21 @@ describe('transactional StructuredOutput.messages materialization', () => {
     expect(capableDelivery.routing_targets).not.toContainEqual(
       expect.objectContaining({ tenant_id: 'Steven', alias: 'argos' })
     );
+    expect(capableDelivery.routing_targets).not.toContainEqual(
+      expect.objectContaining({ tenant_id: 'Steven', alias: 'quota-collector' })
+    );
+    expect(capableDelivery.routing_targets).not.toContainEqual(
+      expect.objectContaining({ tenant_id: 'Steven', alias: 'gate-probe' })
+    );
+  });
+
+  it('keeps system principals out of ordinary delivery destinations', async () => {
+    await expect(repository.publish(command({
+      recipients: [{ tenant_id: 'Steven', alias: 'quota-collector' }]
+    }))).rejects.toMatchObject({ code: 'no_route' });
+    await expect(repository.publish(command({
+      recipients: [{ tenant_id: 'Steven', alias: 'gate-probe' }]
+    }))).rejects.toMatchObject({ code: 'no_route' });
   });
 
   it('expands one @all output atomically to every online routable peer except self', async () => {
@@ -1769,9 +1805,13 @@ describe('transactional StructuredOutput.messages materialization', () => {
        FROM memberships membership
        WHERE membership.enabled
          AND NOT (membership.tenant_id='Steven' AND membership.alias='argos')
-       ORDER BY membership.tenant_id,membership.alias`
+         AND NOT (membership.alias=ANY($1::text[]))
+       ORDER BY membership.tenant_id,membership.alias`,
+      [SYSTEM_PRINCIPAL_ALIASES],
     )).rows;
-    expect(targets).toHaveLength(11);
+    expect(targets.map(
+      ({ tenant_id, alias }) => `${tenant_id}:${alias}`
+    )).toEqual([...ROUTABLE_FLEET_EXCEPT_ARGOS].sort());
     for (const [index, target] of targets.entries()) {
       await repository.acquireLease(
         target.tenant_id,

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer, type Server as HttpsServer } from 'node:https';
@@ -17,6 +18,11 @@ import { HttpGovernanceRelayClient } from './relay-governance-client.js';
 
 const TOKEN = 'token-compartido-con-el-relay-0123456789';
 const RUTA = '/home/dev/.claude/CLAUDE.md';
+const CONTENIDO = '# Manual\n';
+
+function sha(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
 
 interface PeticionRecibida {
   readonly method: string;
@@ -86,7 +92,10 @@ beforeAll(async () => {
 
 beforeEach(() => {
   recibidas = [];
-  contestar(200, { path: RUTA, bytes: 9, truncated: false, modified_at: '2026-08-24T10:00:00Z', content: '# Manual\n' });
+  contestar(200, {
+    path: RUTA, bytes: 9, truncated: false, modified_at: '2026-08-24T10:00:00Z',
+    sha: sha(CONTENIDO), content: CONTENIDO,
+  });
 });
 
 afterAll(async () => {
@@ -119,13 +128,15 @@ describe('lo que el cliente entiende de la respuesta', () => {
       bytes: 9,
       truncated: false,
       modified_at: '2026-08-24T10:00:00Z',
-      content: '# Manual\n'
+      sha: sha(CONTENIDO),
+      content: CONTENIDO,
     });
   });
 
   it('conserva `truncated` y el tamaño REAL del fichero', async () => {
     contestar(200, {
-      path: RUTA, bytes: 900_000, truncated: true, modified_at: '2026-08-24T10:00:00Z', content: 'recortado'
+      path: RUTA, bytes: 900_000, truncated: true, modified_at: '2026-08-24T10:00:00Z',
+      sha: 'a'.repeat(64), content: 'recortado',
     });
 
     expect(await cliente().readFile('Steven', 'zeus', RUTA)).toMatchObject({ truncated: true, bytes: 900_000 });
@@ -146,7 +157,9 @@ describe('lo que el cliente entiende de la respuesta', () => {
   });
 
   it('no inventa el contenido de una lectura que vino sin metadatos', async () => {
-    contestar(200, { path: RUTA, modified_at: '2026-08-24T10:00:00Z', content: '# Manual\n' });
+    contestar(200, {
+      path: RUTA, modified_at: '2026-08-24T10:00:00Z', sha: sha(CONTENIDO), content: CONTENIDO,
+    });
 
     // Rellenar `bytes` o `modified_at` con un cero y una fecha de hoy sería enseñar un fichero
     // creíble que nadie midió. Falla cerrado.
@@ -156,7 +169,10 @@ describe('lo que el cliente entiende de la respuesta', () => {
   });
 
   it('rechaza una lectura que no dice si viene recortada', async () => {
-    contestar(200, { path: RUTA, bytes: 9, modified_at: '2026-08-24T10:00:00Z', content: '# Manual\n' });
+    contestar(200, {
+      path: RUTA, bytes: 9, modified_at: '2026-08-24T10:00:00Z',
+      sha: sha(CONTENIDO), content: CONTENIDO,
+    });
 
     expect(await cliente().readFile('Steven', 'zeus', RUTA)).toEqual({
       error: 'unknown', reason: 'la lectura no dice si viene recortada'
@@ -210,11 +226,125 @@ describe('lo que el cliente hace cuando el transporte falla', () => {
   it('corta una respuesta que se pasa del tope en vez de acumularla', async () => {
     contestar(200, {
       path: RUTA, bytes: 9, truncated: false, modified_at: '2026-08-24T10:00:00Z',
-      content: 'a'.repeat(600 * 1024)
+      sha: 'a'.repeat(64), content: 'a'.repeat(600 * 1024)
     });
 
     expect(await cliente().readFile('Steven', 'zeus', RUTA)).toEqual({
       error: 'too_large', reason: 'el terminal-relay mandó más de lo que esta vía acepta'
     });
+  });
+});
+
+describe('escritura gobernada', () => {
+  it('manda contenido base64 y la precondición exacta a /write', async () => {
+    const nuevo = '# nuevo\nacción\n';
+    contestar(200, {
+      path: RUTA, operation: 'replace', sha: sha(nuevo), bytes: Buffer.byteLength(nuevo),
+    });
+
+    const resultado = await cliente().writeFile(
+      'Steven', 'zeus', RUTA, nuevo, { state: 'present', sha256: 'a'.repeat(64) },
+    );
+
+    expect(resultado).toEqual({
+      path: RUTA, operation: 'replace', sha: sha(nuevo), bytes: Buffer.byteLength(nuevo),
+    });
+    expect(recibidas[0]?.url).toBe('/v3/terminal/relay/write');
+    expect(JSON.parse(recibidas[0]?.body ?? '')).toEqual({
+      tenant_id: 'Steven', alias: 'zeus', path: RUTA,
+      content_base64: Buffer.from(nuevo, 'utf8').toString('base64'),
+      precondition: { state: 'present', sha256: 'a'.repeat(64) },
+    });
+  });
+
+  it('propaga conflicto y rechaza un 2xx que no trae el ACK completo', async () => {
+    contestar(200, { error: 'conflict', reason: 'la huella cambió' });
+    expect(await cliente().writeFile(
+      'Steven', 'zeus', RUTA, 'x', { state: 'present', sha256: 'b'.repeat(64) },
+    )).toEqual({ error: 'conflict', reason: 'la huella cambió' });
+
+    contestar(200, { ok: true });
+    expect(await cliente().writeFile(
+      'Steven', 'zeus', RUTA, 'x', { state: 'absent' },
+    )).toMatchObject({ error: 'unknown' });
+  });
+
+  it('una creación viaja como absent y sólo acepta operation=create', async () => {
+    contestar(200, { path: RUTA, operation: 'create', sha: sha('x'), bytes: 1 });
+    expect(await cliente().writeFile(
+      'Steven', 'zeus', RUTA, 'x', { state: 'absent' },
+    )).toMatchObject({ operation: 'create', sha: sha('x'), bytes: 1 });
+  });
+
+  it('manda un lote ordenado a /write-batch y exige ACK por cada fichero', async () => {
+    const soul = '/home/claw/workspace/SOUL.md';
+    const agents = '/home/claw/workspace/AGENTS.md';
+    contestar(200, { files: [
+      { path: soul, operation: 'create', sha: sha('alma'), bytes: 4 },
+      { path: agents, operation: 'replace', sha: sha('reglas'), bytes: 6 },
+    ] });
+
+    const resultado = await cliente().writeFiles('Steven', 'jarvis', [
+      { mode: 'write', path: soul, content: 'alma', precondition: { state: 'absent' } },
+      {
+        mode: 'write', path: agents, content: 'reglas',
+        precondition: { state: 'present', sha256: 'c'.repeat(64) },
+      },
+    ]);
+
+    expect(resultado).toEqual({ files: [
+      { path: soul, operation: 'create', sha: sha('alma'), bytes: 4 },
+      { path: agents, operation: 'replace', sha: sha('reglas'), bytes: 6 },
+    ] });
+    expect(recibidas[0]?.url).toBe('/v3/terminal/relay/write-batch');
+    expect(JSON.parse(recibidas[0]?.body ?? '')).toEqual({
+      tenant_id: 'Steven', alias: 'jarvis', files: [
+        {
+          mode: 'write', path: soul, content_base64: Buffer.from('alma').toString('base64'),
+          precondition: { state: 'absent' },
+        },
+        {
+          mode: 'write', path: agents, content_base64: Buffer.from('reglas').toString('base64'),
+          precondition: { state: 'present', sha256: 'c'.repeat(64) },
+        },
+      ],
+    });
+  });
+
+  it('rechaza un 2xx batch parcial, repetido o con ACK inválido', async () => {
+    const soul = '/home/claw/workspace/SOUL.md';
+    contestar(200, { files: [] });
+    expect(await cliente().writeFiles('Steven', 'jarvis', [
+      { mode: 'write', path: soul, content: 'alma', precondition: { state: 'absent' } },
+    ])).toMatchObject({ error: 'unknown' });
+
+    contestar(200, { files: [
+      { path: soul, operation: 'create', sha: sha('alma'), bytes: 4 },
+      { path: soul, operation: 'create', sha: sha('alma'), bytes: 4 },
+    ] });
+    expect(await cliente().writeFiles('Steven', 'jarvis', [
+      { mode: 'write', path: soul, content: 'alma', precondition: { state: 'absent' } },
+    ])).toMatchObject({ error: 'unknown' });
+  });
+
+  it('manda verify sin contenido y acepta unchanged con la huella preservada', async () => {
+    const memory = '/home/claw/workspace/MEMORY.md';
+    const before = 'd'.repeat(64);
+    contestar(200, { files: [
+      { path: memory, operation: 'unchanged', sha: before, bytes: 123 },
+    ] });
+
+    expect(await cliente().writeFiles('Steven', 'jarvis', [{
+      mode: 'verify', path: memory, precondition: { state: 'present', sha256: before },
+    }])).toEqual({ files: [
+      { path: memory, operation: 'unchanged', sha: before, bytes: 123 },
+    ] });
+    const enviado = JSON.parse(recibidas[0]?.body ?? '') as {
+      files: Array<Record<string, unknown>>;
+    };
+    expect(enviado).toMatchObject({ files: [{
+      mode: 'verify', path: memory, precondition: { state: 'present', sha256: before },
+    }] });
+    expect(enviado.files[0]).not.toHaveProperty('content_base64');
   });
 });

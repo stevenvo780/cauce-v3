@@ -24,6 +24,9 @@ GOLDEN_SESSION = "11111111-2222-3333-4444-555555555555"
 GOLDEN_HEX = (
     "210000002631313131313131312d323232322d333333332d343434342d3535353535353535353535356869"
 )
+GOLDEN_TERMINAL_RESPONSE_HEX = (
+    "230000002831313131313131312d323232322d333333332d343434342d3535353535353535353535351b5b306e"
+)
 
 
 class GoldenVectorTests(unittest.TestCase):
@@ -44,6 +47,43 @@ class GoldenVectorTests(unittest.TestCase):
         tag, payload = frames[0]
         self.assertEqual(tag, agent.TAG_STDOUT)
         self.assertEqual(agent.decode_data(payload), (GOLDEN_SESSION, b"hi"))
+
+    def test_terminal_response_has_a_distinct_cross_language_tag(self) -> None:
+        frame = agent.encode_data(agent.TAG_TERMINAL_RESPONSE, GOLDEN_SESSION, b"\x1b[0n")
+        self.assertEqual(frame.hex(), GOLDEN_TERMINAL_RESPONSE_HEX)
+        [(tag, payload)] = agent.FrameDecoder().feed(bytes.fromhex(GOLDEN_TERMINAL_RESPONSE_HEX))
+        self.assertEqual(tag, agent.TAG_TERMINAL_RESPONSE)
+        self.assertEqual(agent.decode_data(payload), (GOLDEN_SESSION, b"\x1b[0n"))
+
+    def test_session_scoped_flow_control_tags_match_the_relay(self) -> None:
+        self.assertEqual(agent.TAG_PAUSE_OUTPUT, 0x24)
+        self.assertEqual(agent.TAG_RESUME_OUTPUT, 0x25)
+
+    def test_governance_write_tags_match_the_relay(self) -> None:
+        self.assertEqual(
+            (
+                agent.TAG_WRITE, agent.TAG_WRITE_DATA, agent.TAG_WRITE_OK,
+                agent.TAG_WRITE_ERR, agent.TAG_WRITE_CANCEL,
+            ),
+            (0x54, 0x55, 0x56, 0x57, 0x58),
+        )
+        frame = agent.encode_data(agent.TAG_WRITE_DATA, GOLDEN_SESSION, b"manual")
+        [(tag, payload)] = agent.FrameDecoder().feed(frame)
+        self.assertEqual(tag, agent.TAG_WRITE_DATA)
+        self.assertEqual(agent.decode_data(payload), (GOLDEN_SESSION, b"manual"))
+
+    def test_governance_write_batch_tags_match_the_relay(self) -> None:
+        self.assertEqual(
+            (
+                agent.TAG_WRITE_BATCH, agent.TAG_WRITE_BATCH_DATA, agent.TAG_WRITE_BATCH_OK,
+                agent.TAG_WRITE_BATCH_ERR, agent.TAG_WRITE_BATCH_CANCEL,
+            ),
+            (0x59, 0x5A, 0x5B, 0x5C, 0x5D),
+        )
+        frame = agent.encode_data(agent.TAG_WRITE_BATCH_DATA, GOLDEN_SESSION, b"profile")
+        [(tag, payload)] = agent.FrameDecoder().feed(frame)
+        self.assertEqual(tag, agent.TAG_WRITE_BATCH_DATA)
+        self.assertEqual(agent.decode_data(payload), (GOLDEN_SESSION, b"profile"))
 
 
 class DecoderTests(unittest.TestCase):
@@ -92,7 +132,7 @@ class EncoderGuardTests(unittest.TestCase):
         frame = agent.encode_data(agent.TAG_STDOUT, GOLDEN_SESSION, b"x" * agent.MAX_DATA)
         self.assertEqual(len(frame), 5 + agent.MAX_FRAME)
 
-    def test_only_stdin_and_stdout_carry_a_session_prefix(self) -> None:
+    def test_only_data_and_terminal_response_tags_carry_a_session_prefix(self) -> None:
         with self.assertRaises(agent.ProtocolError):
             agent.encode_data(agent.TAG_OPEN, GOLDEN_SESSION, b"hi")
 

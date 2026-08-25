@@ -79,6 +79,21 @@ Montar cert/key servidor y CA cliente como secrets; `CAUCE_MTLS_IDENTITY_FILE` a
 {"version":1,"identities":[{"certificate_sha256":"<64-hex>","expires_at":"2030-01-01T00:00:00Z","principal":{"tenant_id":"Steven","alias":"kant","session_id":"mtls-kant","channel":"adapter","roles":["operator"],"permissions":["route","read","control"]}}]}
 ```
 
+### Identidad reservada del release gate
+
+Provisionar un certificado clientAuth independiente y añadir sólo su fingerprint con este principal
+exacto (sin `origin`):
+
+```json
+{"tenant_id":"Steven","alias":"gate-probe","session_id":"gate-probe","channel":"gate","roles":["agent"],"permissions":["route","read"]}
+```
+
+No crear agent row, membership, lease, cuota ni alias en `container-aliases.json`. `gate-probe` es
+identidad mTLS fuera de la flota y sólo puede publicar el tipo canónico `system.gate.probe`; cualquier
+otro provider, permiso/rol adicional, campo extra o forma distinta falla antes de persistir. El
+certificado, key y CA se entregan al probe por paths absolutos; la key debe ser privada. Rotar el mapa
+por rename atómico y verificar propagación por metadata/conteo, sin imprimir fingerprints ni JSON.
+
 ## Piloto token-file
 
 `CAUCE_TOKEN_HASH_FILE` apunta dentro del directorio montado (`/run/cauce-identities/token_hashes.json`); jamás el token. Calcular el hash fuera del repo/host de CI y guardar solo `<64-hex>`. Browser usa cookie emitida por el autenticador `__Host-cauce_session; Secure; HttpOnly; SameSite=Strict; Path=/`. Un wrapper de adapter productivo puede presentar Bearer solo si su transporte lo implementa y se prueba auténticamente; los protocol doubles y el CLI bundled no acreditan esa capacidad. Presentar cookie y Bearer a la vez se rechaza.

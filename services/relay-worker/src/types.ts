@@ -35,6 +35,8 @@ export interface OriginRelayRepository {
   ack(acknowledgement: OriginRelayAck): Promise<void>;
 }
 
+export type OriginRelayResult = 'sent' | 'retry' | 'dead' | 'fenced';
+
 export interface OriginTransportResult {
   readonly provider_message_id?: string;
   readonly duplicate?: boolean;

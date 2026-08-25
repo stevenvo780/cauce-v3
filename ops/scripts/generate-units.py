@@ -7,12 +7,14 @@ import os
 import pathlib
 import tempfile
 
-from manifest_lib import EXPECTED, load_manifests
+from container_alias_lib import load_container_aliases
+from manifest_lib import load_manifests
 
 root = pathlib.Path(__file__).resolve().parents[1]
+aliases = load_container_aliases(root)
 parser = argparse.ArgumentParser(description="Generate hardened systemd units from exact alias manifests")
 parser.add_argument("--output", type=pathlib.Path, default=root / "generated" / "systemd")
-parser.add_argument("--alias", choices=sorted(EXPECTED))
+parser.add_argument("--alias", choices=sorted(aliases))
 args = parser.parse_args()
 
 manifests = load_manifests(root)
@@ -28,6 +30,10 @@ def unit_for(manifest: dict) -> str:
     operational_model = spec["process"].get("operationalModelEnv")
     operational_model_line = (
         f"Environment=CAUCE_OPERATIONAL_MODEL_ENV={operational_model}\n" if operational_model else ""
+    )
+    openclaw_workspace_line = (
+        f"Environment=CAUCE_OPENCLAW_WORKSPACE={spec['profile']['workspace']}\n"
+        if spec["harness"] == "openclaw" else ""
     )
     return f"""[Unit]
 Description=Cauce V3 alias consumer {alias} ({spec['tenant']}/{spec['harness']})
@@ -46,7 +52,8 @@ Environment=CAUCE_ALIAS={alias}
 Environment=CAUCE_TENANT={spec['tenant']}
 Environment=CAUCE_ROOM={spec['room']}
 Environment=CAUCE_HARNESS={spec['harness']}
-Environment=CAUCE_ORIGIN_TRANSPORT=telegram
+Environment=CAUCE_SEMBRAR_PERFIL=1
+{openclaw_workspace_line}Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
 Environment=CAUCE_INSTANCE_ID=systemd-{alias}
 Environment=CAUCE_STATE_DIR={spec['stateDirectory']}
@@ -109,7 +116,7 @@ for manifest in manifests:
 if not args.alias:
     checksum = args.output / "SHA256SUMS"
     lines = []
-    for alias in sorted(EXPECTED):
+    for alias in sorted(aliases):
         unit = args.output / f"cauce-v3-alias-{alias}.service"
         lines.append(f"{hashlib.sha256(unit.read_bytes()).hexdigest()}  {unit.name}")
     fd, temporary = tempfile.mkstemp(prefix=".SHA256SUMS.", dir=args.output, text=True)

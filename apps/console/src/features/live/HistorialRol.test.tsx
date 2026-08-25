@@ -7,16 +7,14 @@ import { renderWithApi } from '../../test/render';
 import { LiveFleetPage } from './LiveFleetPage';
 
 /**
- * EL DIARIO DEL ROL Y LA VUELTA ATRÁS, probados desde la página viva.
+ * EL DIARIO LEGACY Y SU PUENTE AL PERFIL CANÓNICO, probados desde la página viva.
  *
- * Igual que el editor del rol, y por la misma razón: la mitad del encargo era DÓNDE vive. Deshacer
- * un cambio tiene que terminar en el mismo textarea donde el operador estaba mirando, y un test
- * del componente suelto pasaría igual si el botón no estuviera enganchado al editor.
+ * Recuperar una revisión nunca escribe `agents.role_brief`: termina en `role_summary`, dentro del
+ * editor Perfil. Un test del componente suelto pasaría aunque el botón reabriera el POST genérico,
+ * por eso el recorrido se prueba desde la página viva.
  *
- * El caso que más importa de este fichero es el último: restaurar pasa por el borrador, así que
- * hereda el bloqueo de UTF-16. Un «deshacer» que escribiera directo se lo saltaría, y el texto que
- * restaura es justamente el que más riesgo tiene —se escribió por psql, antes de que hubiera
- * guarda ninguna—.
+ * El borrador conserva los demás campos del perfil, pasa por sus topes estrictos y sólo se guarda
+ * por el PUT canónico con CAS y ACK del runtime.
  */
 
 beforeEach(() => {
@@ -38,12 +36,11 @@ async function abrirDiarioDeKant() {
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('complementary', { name: /detalle de kant/i });
   await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
-  // El diario sigue viviendo DEBAJO del editor, y el editor pasó a la columna 1 del diálogo.
   await user.click(await within(cajon).findByRole('button', { name: /abrir directiva completa/i }));
   const dialogo = await screen.findByRole('dialog', { name: /directiva de kant/i });
-  const textarea = await within(dialogo).findByLabelText(/rol declarado de kant/i) as HTMLTextAreaElement;
-  await user.click(within(dialogo).getByText('Historial y vuelta atrás'));
-  return { user, cajon, dialogo, textarea };
+  const proyeccion = await within(dialogo).findByLabelText(/proyección del rol de kant/i) as HTMLTextAreaElement;
+  await user.click(within(dialogo).getByText('Historial de la proyección y restauración'));
+  return { user, cajon, dialogo, proyeccion };
 }
 
 it('enseña los cambios del rol, el más nuevo arriba, dentro del mismo cajón', async () => {
@@ -65,10 +62,10 @@ it('declara desde cuándo hay diario: un registro corto no significa que el rol 
   expect(within(dialogo).getByText(/no significa que este rol se haya tocado poco/i)).toBeInTheDocument();
 });
 
-it('dice que el diario NO sabe quién, en vez de rellenarlo con quien está mirando', async () => {
+it('no atribuye las revisiones antiguas al operador que está mirando', async () => {
   const { dialogo } = await abrirDiarioDeKant();
 
-  expect(await within(dialogo).findByText(/no dice quién/i)).toBeInTheDocument();
+  expect(await within(dialogo).findByText(/pueden no decir quién/i)).toBeInTheDocument();
   expect(within(dialogo).getAllByText(/no consta quién/i).length).toBeGreaterThan(0);
 });
 
@@ -78,38 +75,101 @@ it('avisa de que editar a mano desvinculó la plantilla', async () => {
   expect(await within(dialogo).findByText(/desvinculado de la plantilla «orquestador»/i)).toBeInTheDocument();
 });
 
-it('restaurar trae el texto al editor y NO guarda: el operador lo ve antes de decidir', async () => {
-  let guardados = 0;
+it('recuperar carga role_summary en Perfil y NO escribe por ninguna ruta', async () => {
+  let cambiosGenericos = 0;
+  let perfilesGuardados = 0;
   server.use(http.post('*/v3/console/config/changes', async () => {
-    guardados += 1;
+    cambiosGenericos += 1;
     return HttpResponse.json({ applied: true, revision: 2 }, { status: 201 });
   }));
+  server.use(http.put('*/v3/console/tenants/:tenantId/agents/:alias/perfil', async () => {
+    perfilesGuardados += 1;
+    return HttpResponse.json({ ok: true });
+  }));
 
-  const { user, dialogo, textarea } = await abrirDiarioDeKant();
+  const { user, cajon, dialogo, proyeccion } = await abrirDiarioDeKant();
 
-  expect(textarea).toHaveValue('Sos kant, el hub de coordinacion de la flota.');
-  const botones = await within(dialogo).findAllByRole('button', { name: /traer este texto al editor/i });
+  expect(proyeccion).toHaveValue('Sos kant, el hub de coordinacion de la flota.');
+  const botones = await within(dialogo).findAllByRole('button', { name: /usar este texto en Perfil/i });
   await user.click(botones[0]);
 
-  // El texto anterior a la reescritura queda cargado, y el botón de guardar se enciende porque
-  // ahora hay algo distinto que guardar — pero nadie escribió nada todavía.
-  await waitFor(() => expect(textarea).toHaveValue('Sos kant.'));
-  expect(guardados).toBe(0);
-  expect(within(dialogo).getByRole('button', { name: /guardar el rol/i })).toBeEnabled();
-  expect(within(dialogo).getAllByText(/no se guarda hasta que pulses/i).length).toBeGreaterThan(0);
+  expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
+  expect(within(cajon).getByRole('tab', { name: 'Perfil' })).toHaveAttribute('aria-selected', 'true');
+  expect(await within(cajon).findByLabelText(/^Rol declarado/i)).toHaveValue('Sos kant.');
+  expect(cambiosGenericos).toBe(0);
+  expect(perfilesGuardados).toBe(0);
 });
 
-it('deshacer el alta se rotula como lo que es: dejaría al alias SIN rol', async () => {
+it('guardar una revisión recuperada usa sólo el PUT canónico con CAS y ACK', async () => {
+  const rutaPerfil = '*/v3/console/tenants/:tenantId/agents/:alias/perfil';
+  const base = {
+    tenant_id: 'Steven', alias: 'kant', agent_enabled: true, exists: true,
+    revision: 4, applied_revision: 4, runtime_state: 'applied', harness: 'codex',
+    perfil: {
+      purpose: 'Coordinar la flota.', role_summary: 'PMO de la flota.',
+      human_brief: 'Steven.', responsibilities: ['Coordinar'], restrictions: ['No inventar'],
+      tools: ['terminal'], operating_rules: ['Verificar'],
+    },
+    limites: { purpose: 2_000, role_summary: 4_000, item: 1_000, items: 64, total: 24_000 },
+    medida: { unidades: 80, tope: 24_000 }, base: 'fichero-vacio',
+    ficheros: [{ nombre: 'AGENTS.md', politica: 'bloque-gestionado', texto: '', unidades: 0 }],
+  };
+  let actual = base;
+  let cuerpoPut: Record<string, unknown> | undefined;
+  let cambiosGenericos = 0;
+  server.use(
+    http.get(rutaPerfil, () => HttpResponse.json(actual)),
+    http.put(rutaPerfil, async ({ request }) => {
+      cuerpoPut = await request.json() as Record<string, unknown>;
+      actual = {
+        ...base,
+        revision: 5,
+        applied_revision: 5,
+        perfil: cuerpoPut.profile as typeof base.perfil,
+      };
+      return HttpResponse.json({
+        ok: true, state: 'applied', tenant_id: 'Steven', alias: 'kant',
+        revision: 5, applied_revision: 5,
+        acknowledgements: [{
+          name: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md', state: 'written',
+          sha: 'a'.repeat(64), bytes: 18,
+        }],
+      });
+    }),
+    http.post('*/v3/console/config/changes', () => {
+      cambiosGenericos += 1;
+      return HttpResponse.json({ applied: true }, { status: 201 });
+    }),
+  );
+
+  const { user, cajon, dialogo } = await abrirDiarioDeKant();
+  await user.click((await within(dialogo).findAllByRole('button', { name: /usar este texto en Perfil/i }))[0]);
+  await user.click(await within(cajon).findByRole('button', { name: /guardar y aplicar perfil/i }));
+
+  await waitFor(() => expect(cuerpoPut).toBeDefined());
+  expect(cuerpoPut).toMatchObject({
+    expected_revision: 4,
+    profile: {
+      purpose: 'Coordinar la flota.', role_summary: 'Sos kant.',
+      human_brief: 'Steven.', responsibilities: ['Coordinar'], restrictions: ['No inventar'],
+      tools: ['terminal'], operating_rules: ['Verificar'],
+    },
+  });
+  expect(cambiosGenericos).toBe(0);
+  expect(await within(cajon).findByText(/desired y runtime acreditan la revisión 5/i)).toBeInTheDocument();
+});
+
+it('recuperar un alta se rotula como borrador vacío, no como borrado inmediato del alias', async () => {
   const { dialogo } = await abrirDiarioDeKant();
 
-  expect(await within(dialogo).findByRole('button', { name: /dejaría al alias SIN rol/i })).toBeInTheDocument();
+  expect(await within(dialogo).findByRole('button', { name: /vaciar el rol en un borrador de Perfil/i }))
+    .toBeInTheDocument();
 });
 
-it('un texto restaurado pasa por el bloqueo de UTF-16: restaurar no puede dejar sordo a un alias', async () => {
-  // Un brief viejo escrito por psql puede medir 1200 puntos de código y 2400 unidades UTF-16: la
-  // base lo acepta y el adaptador desplegado lo rechaza entero. Si «deshacer» escribiera directo,
-  // se saltaría esta guarda. Al pasar por el borrador, no.
-  const viejo = '🙂'.repeat(1200);
+it('un texto recuperado pasa por el tope estricto de role_summary antes del PUT', async () => {
+  // 2.500 puntos de código son 5.000 unidades UTF-16: el tope canónico es 4.000 y Perfil debe
+  // bloquear el guardado antes de intentar cualquier escritura.
+  const viejo = '🙂'.repeat(2500);
   conHistorial([{
     id: '1', tenant_id: 'Steven', alias: 'kant', operation: 'update',
     previous_brief: viejo, new_brief: 'Sos kant, el hub de coordinacion de la flota.',
@@ -117,15 +177,12 @@ it('un texto restaurado pasa por el bloqueo de UTF-16: restaurar no puede dejar 
     actor_tenant: null, actor_alias: null, changed_at: '2026-08-23T04:00:00.000Z',
   }]);
 
-  const { user, dialogo, textarea } = await abrirDiarioDeKant();
-  await user.click(await within(dialogo).findByRole('button', { name: /traer este texto al editor/i }));
+  const { user, cajon, dialogo } = await abrirDiarioDeKant();
+  await user.click(await within(dialogo).findByRole('button', { name: /usar este texto en Perfil/i }));
 
-  await waitFor(() => expect(textarea).toHaveValue(viejo));
-  // 1200 puntos de código: la base lo aceptaría, y el contador lo da por bueno.
-  expect(within(dialogo).getByText(/^1200 \/ 1200$/)).toBeInTheDocument();
-  // Y aun así el guardado queda bloqueado, porque el adaptador que corre hoy mide 2400.
-  expect(within(dialogo).getByRole('button', { name: /guardar el rol/i })).toBeDisabled();
-  expect(within(dialogo).getByText(/2400 unidades UTF-16/i)).toBeInTheDocument();
+  expect(await within(cajon).findByLabelText(/^Rol declarado/i)).toHaveValue(viejo);
+  expect(within(cajon).getByText('5000 / 4000')).toHaveClass('perfil-cuenta-fuera');
+  expect(within(cajon).getByRole('button', { name: /guardar y aplicar perfil/i })).toBeDisabled();
 });
 
 it('un alias sin cambios anotados lo dice como hecho medido, no como lista vacía muda', async () => {
@@ -144,7 +201,7 @@ it('si el gateway no publica el diario dice «no se pudo mirar», nunca «no cam
 
   expect(await within(dialogo).findByText(/no se pudo mirar el diario del rol/i)).toBeInTheDocument();
   expect(within(dialogo).getByText(/NO significa que este rol no haya cambiado nunca/i)).toBeInTheDocument();
-  expect(within(dialogo).queryByRole('button', { name: /traer este texto al editor/i })).not.toBeInTheDocument();
+  expect(within(dialogo).queryByRole('button', { name: /usar este texto en Perfil/i })).not.toBeInTheDocument();
 });
 
 it('un fallo de lectura tampoco se disfraza de «no cambió nunca»', async () => {
@@ -167,18 +224,17 @@ it('sin config.write el diario se LEE igual: lo que se retira es la vuelta atrá
 
   expect(await within(dialogo).findByText('Se reescribió el rol')).toBeInTheDocument();
   await waitFor(() => {
-    expect(within(dialogo).queryByRole('button', { name: /traer este texto al editor/i })).not.toBeInTheDocument();
+    expect(within(dialogo).queryByRole('button', { name: /usar este texto en Perfil/i })).not.toBeInTheDocument();
   });
 });
 
-it('el texto anterior se puede leer entero antes de traerlo, sin cargarlo en el editor', async () => {
-  const { user, dialogo, textarea } = await abrirDiarioDeKant();
+it('el texto anterior se puede leer entero sin alterar la proyección', async () => {
+  const { user, dialogo, proyeccion } = await abrirDiarioDeKant();
 
   await user.click((await within(dialogo).findAllByText(/ver el texto que había antes/i))[0]);
 
   expect(within(dialogo).getAllByText('Sos kant.').length).toBeGreaterThan(0);
-  // Mirarlo no es traerlo: el editor sigue con lo que hay guardado.
-  expect(textarea).toHaveValue('Sos kant, el hub de coordinacion de la flota.');
+  expect(proyeccion).toHaveValue('Sos kant, el hub de coordinacion de la flota.');
 });
 
 /**
@@ -228,25 +284,19 @@ it('no se inventa la ubicación cuando el registro no la declara', async () => {
   expect(within(pendientes).getByText(/\$HOME UNKNOWN/i)).toBeInTheDocument();
 });
 
-it('el texto restaurado es un borrador de verdad: sobrevive a cerrar el diálogo y cambiar de pestaña', async () => {
-  // Restaurar es una puerta NUEVA al borrador compartido del cajón. Si escribiera en el estado
-  // local del editor, cerrar el diálogo o cambiar de pestaña lo desmontaría y el texto recuperado
-  // se perdería sin avisar —justo lo que ya pasó una vez con lo que se teclea a mano—. Desde que
-  // el editor vive en un diálogo, el recorrido tiene un desmontaje MÁS que antes.
-  const { user, cajon, dialogo, textarea } = await abrirDiarioDeKant();
+it('el role_summary recuperado sobrevive a desmontar Perfil y conserva los otros campos', async () => {
+  const { user, cajon, dialogo } = await abrirDiarioDeKant();
 
-  await user.click((await within(dialogo).findAllByRole('button', { name: /traer este texto al editor/i }))[0]);
-  await waitFor(() => expect(textarea).toHaveValue('Sos kant.'));
+  await user.click((await within(dialogo).findAllByRole('button', { name: /usar este texto en Perfil/i }))[0]);
+  const rol = await within(cajon).findByLabelText(/^Rol declarado/i);
+  const proposito = within(cajon).getByLabelText(/^Identidad y propósito/i);
+  expect(rol).toHaveValue('Sos kant.');
+  expect(proposito).toHaveValue('Coordinás lo pendiente de la flota y perseguís lo que se quedó a medias.');
 
-  await user.click(within(dialogo).getByRole('button', { name: /cerrar la directiva/i }));
   await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
-  await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
+  await user.click(within(cajon).getByRole('tab', { name: 'Perfil' }));
 
-  // El resumen del cajón ya lo dice sin abrir nada, y lo declara como borrador sin guardar.
-  expect(await within(cajon).findByText('Sos kant.')).toBeInTheDocument();
-  expect(within(cajon).getByText(/borrador sin guardar/i)).toBeInTheDocument();
-
-  await user.click(within(cajon).getByRole('button', { name: /abrir directiva completa/i }));
-  const reabierto = await screen.findByRole('dialog', { name: /directiva de kant/i });
-  expect(await within(reabierto).findByLabelText(/rol declarado de kant/i)).toHaveValue('Sos kant.');
+  expect(await within(cajon).findByLabelText(/^Rol declarado/i)).toHaveValue('Sos kant.');
+  expect(within(cajon).getByLabelText(/^Identidad y propósito/i))
+    .toHaveValue('Coordinás lo pendiente de la flota y perseguís lo que se quedó a medias.');
 });

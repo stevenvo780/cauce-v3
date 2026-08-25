@@ -67,7 +67,7 @@ async function correrUnTurno(home: string, alias: string): Promise<string> {
   const estado = mkdtempSync(join(tmpdir(), "cauce-sello-estado-"));
   const { runner, visto } = runnerEspia();
   const adapter = new HarnessAdapter({
-    definition: HARNESS_DEFINITIONS.claude!,
+    definition: HARNESS_DEFINITIONS.claude,
     runner,
     store: await DurableStore.open(estado),
   });

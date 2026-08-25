@@ -1,6 +1,7 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
-  AGENT_PROFILE_LIMITS, agentProfileUnits, ficherosDelArnes, nombresDelArnes,
+  AGENT_PROFILE_LIMITS, AgentProfileError, AliasSchema, TenantSchema, agentProfileUnits,
+  clampToRoleBriefLimit, ficherosDelArnes, nombresDelArnes, normalizeAgentProfile,
   type AgentProfile, type ContextoDeAlias, type FicheroGenerado
 } from '@cauce/protocol';
 
@@ -45,10 +46,69 @@ import {
 
 /** De dónde salen el perfil y los hechos. Inyectable para poder probar la ruta sin base. */
 export interface AgentProfileDeps {
-  /** Resuelve el principal y exige el permiso, igual que el resto de `/v3/console`. */
-  authorize(request: unknown): Promise<{ tenant_id: string; alias: string }>;
-  /** El perfil autorado más los hechos derivados, de una pieza. */
-  readContext(tenantId: string, alias: string): Promise<ContextoDeAlias>;
+  /** Autentica al principal y exige el permiso de rol de la operación. */
+  authorize(
+    request: unknown, permission: 'read' | 'control'
+  ): Promise<{ tenant_id: string; alias: string }>;
+  /**
+   * Autoriza el par actor→destino usando la identidad CANÓNICA del destino. `undefined` no revela
+   * si el alias no existe o si la ACL lo oculta.
+   */
+  authorizeTarget(
+    actor: { tenant_id: string; alias: string },
+    targetTenantId: string,
+    targetAlias: string,
+    permission: 'read' | 'control',
+    legacySameTenant: boolean,
+  ): Promise<{ tenant_id: string; alias: string; enabled?: boolean } | undefined>;
+  /** El perfil autorado más los hechos derivados y la presencia real de su fila. */
+  readContext(tenantId: string, alias: string): Promise<{
+    contexto: ContextoDeAlias;
+    exists: boolean;
+    revision: number | null;
+    applied_revision: number | null;
+  }>;
+  /** CAS durable: NULL exige ausencia; número exige esa revisión exacta. */
+  replaceProfile?(
+    profile: AgentProfile,
+    expectedRevision: number | null,
+    actor: { tenant_id: string; alias: string },
+  ): Promise<{
+    perfil: AgentProfile;
+    exists: true;
+    revision: number;
+    applied_revision: number | null;
+  }>;
+  /** Preflight sin mutar disco. El `apply` posterior es un lote con rollback y ACK por fichero. */
+  prepareRuntime?(
+    tenantId: string, alias: string, contexto: ContextoDeAlias,
+  ): Promise<PreparedProfileRuntime>;
+  /** Registra el ACK; puede devolver una revisión desired posterior por una carrera legítima. */
+  markProfileApplied?(
+    tenantId: string,
+    alias: string,
+    revision: number,
+    actor: { tenant_id: string; alias: string },
+  ): Promise<{
+    perfil: AgentProfile;
+    exists: true;
+    revision: number;
+    applied_revision: number | null;
+  }>;
+}
+
+export interface ProfileRuntimeAck {
+  readonly name: string;
+  readonly path: string;
+  readonly state: 'written' | 'already_current' | 'preserved';
+  readonly sha: string;
+  readonly bytes: number;
+}
+
+export interface PreparedProfileRuntime {
+  /** Nombres exactos que el lote debe acreditar; no se aceptan ACK parciales ni extras. */
+  readonly documents: readonly string[];
+  apply(): Promise<readonly ProfileRuntimeAck[]>;
 }
 
 /** De qué está compuesta la vista previa: nunca de una medición que no se hizo. */
@@ -69,7 +129,18 @@ export interface FicheroDeLaVistaPrevia {
 export interface RespuestaDelPerfil {
   readonly tenant_id: string;
   readonly alias: string;
-  /** El arnés MEDIDO en los hechos. `null` cuando el registro no dice ninguno. */
+  /** Estado durable del registro de agente; editar/controlar uno apagado falla cerrado. */
+  readonly agent_enabled: boolean;
+  /** Sale de la presencia de la fila, nunca de si los campos tienen contenido. */
+  readonly exists: boolean;
+  /** Revisión propia del perfil; NULL si la fila no existe. */
+  readonly revision: number | null;
+  /** Última revisión acreditada por el runtime. */
+  readonly applied_revision: number | null;
+  readonly runtime_state: 'absent' | 'pending' | 'applied' | 'disabled';
+  /** Proyección exacta que una entrega capability-aware recibe como `self_role`. */
+  readonly self_role: string | null;
+  /** El arnés declarado en los hechos de base. `null` cuando el registro no dice ninguno. */
   readonly harness: string | null;
   readonly perfil: AgentProfile;
   readonly hechos: ContextoDeAlias['hechos'];
@@ -84,6 +155,16 @@ export interface RespuestaDelPerfil {
    * escribir — que es una cosa muy distinta y se arregla en otro sitio.
    */
   readonly aviso?: string;
+}
+
+export interface PerfilAplicado {
+  readonly ok: true;
+  readonly state: 'applied';
+  readonly tenant_id: string;
+  readonly alias: string;
+  readonly revision: number;
+  readonly applied_revision: number;
+  readonly acknowledgements: readonly ProfileRuntimeAck[];
 }
 
 /**
@@ -113,22 +194,70 @@ function unidades(texto: string): number {
 }
 
 export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProfileDeps): void {
-  app.get<{ Params: { alias: string } }>(
-    '/v3/console/agents/:alias/perfil',
-    async (request, reply) => {
-      const actor = await deps.authorize(request);
-      const alias = request.params.alias;
-      if (!/^[a-z][a-z0-9_-]{1,63}$/.test(alias)) {
+  type CanonicalParams = { tenantId: string; alias: string };
+  type LegacyParams = { alias: string };
+
+  async function responder(
+    request: FastifyRequest<{ Params: CanonicalParams | LegacyParams }>,
+    reply: FastifyReply,
+    legacySameTenant: boolean,
+  ) {
+      const aliasResult = AliasSchema.safeParse(request.params.alias);
+      if (!aliasResult.success) {
         return reply.code(400).send({ error: 'invalid_input', message: 'alias is invalid' });
       }
+      const actor = await deps.authorize(request, 'read');
+      const tenantIdCrudo = legacySameTenant
+        ? actor.tenant_id
+        : (request.params as CanonicalParams).tenantId;
+      const tenantResult = TenantSchema.safeParse(tenantIdCrudo);
+      if (!tenantResult.success) {
+        return reply.code(400).send({ error: 'invalid_input', message: 'tenantId is invalid' });
+      }
+      const tenantId = tenantResult.data;
+      const alias = aliasResult.data;
+      const target = await deps.authorizeTarget(actor, tenantId, alias, 'read', legacySameTenant);
+      if (!target || target.tenant_id !== tenantId || target.alias !== alias) {
+        return reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
+      }
 
-      const contexto = await deps.readContext(actor.tenant_id, alias);
+      if (legacySameTenant) {
+        reply.header('Deprecation', 'true');
+        reply.header(
+          'Link',
+          `</v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil>; rel="successor-version"`,
+        );
+      }
+
+      const lectura = await deps.readContext(tenantId, alias);
+      const contexto = lectura.contexto;
+      if (contexto.perfil.tenant_id !== tenantId || contexto.perfil.alias !== alias) {
+        throw new Error('agent profile repository returned a non-canonical identity');
+      }
       const harness = contexto.hechos.arnes.harness;
       const nombres = nombresDelArnes(harness ?? '');
+      const runtimeState: RespuestaDelPerfil['runtime_state'] = target.enabled !== true
+        ? 'disabled'
+        : !lectura.exists
+          ? 'absent'
+          : lectura.revision !== null && lectura.applied_revision === lectura.revision
+            ? 'applied'
+            : 'pending';
 
       const comun = {
-        tenant_id: actor.tenant_id,
+        tenant_id: tenantId,
         alias,
+        agent_enabled: target.enabled === true,
+        exists: lectura.exists,
+        revision: lectura.revision,
+        applied_revision: lectura.applied_revision,
+        runtime_state: runtimeState,
+        self_role: contexto.perfil.role_summary === null
+          ? null
+          : (() => {
+            const normalized = contexto.perfil.role_summary.trim();
+            return normalized.length === 0 ? null : clampToRoleBriefLimit(normalized);
+          })(),
         harness: harness ?? null,
         perfil: contexto.perfil,
         hechos: contexto.hechos,
@@ -178,6 +307,217 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         }
         throw error;
       }
+  }
+
+  const PROFILE_FIELDS = new Set([
+    'purpose', 'role_summary', 'human_brief', 'responsibilities', 'restrictions', 'tools',
+    'operating_rules',
+  ]);
+  const SHA256 = /^[0-9a-f]{64}$/;
+
+  function codigoDeError(error: unknown): string | undefined {
+    if (error === null || typeof error !== 'object' || !('code' in error)) return undefined;
+    return typeof error.code === 'string' ? error.code : undefined;
+  }
+
+  function mensajeDeError(error: unknown, fallback: string): string {
+    return error instanceof Error ? error.message : fallback;
+  }
+
+  function statusDeRuntime(error: unknown): number {
+    const code = codigoDeError(error);
+    if (code === 'conflict' || code === 'truncated' || code === 'invalid_path') return 409;
+    if (code === 'unavailable' || code === 'timeout') return 503;
+    if (code === 'too_large') return 413;
+    return 502;
+  }
+
+  function acksCompletos(
+    prepared: PreparedProfileRuntime, acknowledgements: readonly ProfileRuntimeAck[],
+  ): boolean {
+    if (prepared.documents.length !== acknowledgements.length) return false;
+    const expected = new Set(prepared.documents);
+    if (expected.size !== prepared.documents.length) return false;
+    for (const ack of acknowledgements) {
+      if (!expected.delete(ack.name) || !ack.path.startsWith('/') || !SHA256.test(ack.sha)
+        || !Number.isSafeInteger(ack.bytes) || ack.bytes < 0
+        || !['written', 'already_current', 'preserved'].includes(ack.state)) return false;
     }
+    return expected.size === 0;
+  }
+
+  async function responderPut(
+    request: FastifyRequest<{ Params: CanonicalParams; Body: unknown }>, reply: FastifyReply,
+  ) {
+    const aliasResult = AliasSchema.safeParse(request.params.alias);
+    const tenantResult = TenantSchema.safeParse(request.params.tenantId);
+    if (!aliasResult.success || !tenantResult.success) {
+      return reply.code(400).send({ error: 'invalid_input', message: 'tenantId or alias is invalid' });
+    }
+    const tenantId = tenantResult.data;
+    const alias = aliasResult.data;
+    const actor = await deps.authorize(request, 'control');
+    const target = await deps.authorizeTarget(actor, tenantId, alias, 'control', false);
+    if (!target || target.tenant_id !== tenantId || target.alias !== alias) {
+      return reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
+    }
+    if (target.enabled !== true) {
+      return reply.code(409).send({
+        error: 'agent_disabled',
+        message: 'el alias está apagado; su perfil desired no se cambia sin un runtime habilitado',
+      });
+    }
+    if (deps.replaceProfile === undefined || deps.prepareRuntime === undefined
+      || deps.markProfileApplied === undefined) {
+      return reply.code(503).send({
+        error: 'profile_write_unavailable',
+        message: 'este gateway no tiene montada la saga durable de perfil y runtime',
+      });
+    }
+
+    const body = request.body;
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return reply.code(400).send({ error: 'invalid_input', message: 'el cuerpo tiene que ser un objeto' });
+    }
+    const source = body as Record<string, unknown>;
+    if (Object.keys(source).some((key) => key !== 'expected_revision' && key !== 'profile')
+      || !Object.prototype.hasOwnProperty.call(source, 'expected_revision')) {
+      return reply.code(400).send({ error: 'invalid_input', message: 'el cuerpo tiene campos desconocidos o incompletos' });
+    }
+    const expectedRaw = source.expected_revision;
+    const expectedRevision = expectedRaw === null
+      ? null
+      : typeof expectedRaw === 'number' && Number.isSafeInteger(expectedRaw) && expectedRaw > 0
+        ? expectedRaw
+        : undefined;
+    if (expectedRevision === undefined) {
+      return reply.code(400).send({
+        error: 'invalid_input', message: 'expected_revision tiene que ser null o un entero positivo',
+      });
+    }
+    const rawProfile = source.profile;
+    if (rawProfile === null || typeof rawProfile !== 'object' || Array.isArray(rawProfile)
+      || Object.keys(rawProfile).some((key) => !PROFILE_FIELDS.has(key))) {
+      return reply.code(400).send({ error: 'invalid_input', message: 'profile no tiene la forma esperada' });
+    }
+
+    let profile: AgentProfile;
+    try {
+      profile = normalizeAgentProfile({
+        ...(rawProfile as Record<string, unknown>), tenant_id: tenantId, alias,
+      });
+    } catch (error) {
+      if (error instanceof AgentProfileError) {
+        return reply.code(422).send({
+          error: 'invalid_input', field: error.field, message: error.message,
+        });
+      }
+      throw error;
+    }
+
+    const current = await deps.readContext(tenantId, alias);
+    if (current.contexto.perfil.tenant_id !== tenantId || current.contexto.perfil.alias !== alias) {
+      throw new Error('agent profile repository returned a non-canonical identity');
+    }
+    if ((expectedRevision === null && current.exists)
+      || (expectedRevision !== null && current.revision !== expectedRevision)) {
+      return reply.code(409).send({
+        error: 'profile_revision_conflict',
+        message: 'el perfil cambió desde que se abrió',
+        revision: current.revision,
+        applied_revision: current.applied_revision,
+      });
+    }
+
+    let prepared: PreparedProfileRuntime;
+    try {
+      prepared = await deps.prepareRuntime(tenantId, alias, {
+        perfil: profile, hechos: current.contexto.hechos,
+      });
+    } catch (error) {
+      return reply.code(statusDeRuntime(error)).send({
+        error: codigoDeError(error) ?? 'runtime_preflight_failed',
+        message: mensajeDeError(error, 'no se pudo preparar el runtime sin modificarlo'),
+        revision: current.revision,
+        applied_revision: current.applied_revision,
+      });
+    }
+
+    let desired: Awaited<ReturnType<NonNullable<AgentProfileDeps['replaceProfile']>>>;
+    try {
+      desired = await deps.replaceProfile(profile, expectedRevision, actor);
+    } catch (error) {
+      const code = codigoDeError(error);
+      const status = code === 'not_found' ? 404 : code === 'disabled' || code === 'conflict' ? 409 : 500;
+      return reply.code(status).send({
+        error: code ?? 'profile_write_failed',
+        message: mensajeDeError(error, 'no se pudo persistir el perfil desired'),
+      });
+    }
+
+    let acknowledgements: readonly ProfileRuntimeAck[];
+    try {
+      acknowledgements = await prepared.apply();
+    } catch (error) {
+      return reply.code(statusDeRuntime(error)).send({
+        error: codigoDeError(error) ?? 'runtime_apply_failed',
+        state: 'pending',
+        message: mensajeDeError(error, 'el runtime no acreditó el lote'),
+        revision: desired.revision,
+        applied_revision: desired.applied_revision,
+      });
+    }
+    if (!acksCompletos(prepared, acknowledgements)) {
+      return reply.code(502).send({
+        error: 'runtime_ack_incomplete', state: 'pending',
+        message: 'el runtime no acreditó exactamente todos los documentos del perfil',
+        revision: desired.revision, applied_revision: desired.applied_revision,
+      });
+    }
+
+    let applied: Awaited<ReturnType<NonNullable<AgentProfileDeps['markProfileApplied']>>>;
+    try {
+      applied = await deps.markProfileApplied(tenantId, alias, desired.revision, actor);
+    } catch (error) {
+      return reply.code(codigoDeError(error) === 'conflict' ? 409 : 503).send({
+        error: codigoDeError(error) ?? 'applied_revision_not_recorded', state: 'pending',
+        message: mensajeDeError(error, 'el runtime respondió pero no se pudo registrar su revisión'),
+        revision: desired.revision, applied_revision: desired.applied_revision,
+      });
+    }
+    if (applied.revision !== desired.revision || applied.applied_revision !== desired.revision) {
+      return reply.code(409).send({
+        error: 'profile_superseded_after_runtime_ack', state: 'pending',
+        message: 'el runtime aplicó esta revisión, pero ya existe otra desired más nueva',
+        revision: applied.revision, applied_revision: applied.applied_revision,
+      });
+    }
+
+    const response: PerfilAplicado = {
+      ok: true,
+      state: 'applied',
+      tenant_id: tenantId,
+      alias,
+      revision: desired.revision,
+      applied_revision: desired.revision,
+      acknowledgements,
+    };
+    return reply.send(response);
+  }
+
+  app.get<{ Params: CanonicalParams }>(
+    '/v3/console/tenants/:tenantId/agents/:alias/perfil',
+    (request, reply) => responder(request, reply, false),
+  );
+
+  app.put<{ Params: CanonicalParams; Body: unknown }>(
+    '/v3/console/tenants/:tenantId/agents/:alias/perfil',
+    responderPut,
+  );
+
+  // Compatibilidad acotada: sin tenant en la URL sólo puede significar el tenant del actor.
+  app.get<{ Params: LegacyParams }>(
+    '/v3/console/agents/:alias/perfil',
+    (request, reply) => responder(request, reply, true),
   );
 }

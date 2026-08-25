@@ -7,6 +7,7 @@ spec:
   room: grp.jhon
   alias: hegel
   harness: openclaw
+  profile: {seedOnConnect: true, configScope: alias, workspace: /home/claw/clawd}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_HEGEL_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter argos (ctrl-infra/hermes)
+Description=Cauce V3 rootless container adapter argos (ctrl-infra/claude)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/argos.env

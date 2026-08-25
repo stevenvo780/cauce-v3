@@ -18,13 +18,16 @@ let repository: AgentProfileRepository;
 
 /** Un emoji fuera del BMP: 1 punto de código para `char_length`, 2 unidades para `String.length`. */
 const ASTRAL = '\u{1F389}';
+const ACTOR = { tenant_id: 'Steven', alias: 'kant' } as const;
 
 async function seedAgent(alias: string): Promise<void> {
   await pool.query(
-    `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled)
-     VALUES ('Steven',$1,'claude',$2,false)
+    `INSERT INTO agents(
+       tenant_id,alias,harness_id,display_name,enabled,
+       container_name,runtime_user,home_directory,state_directory
+     ) VALUES ('Steven',$1,'claude',$2,true,$3,'dev','/home/dev','/home/dev/.cauce')
      ON CONFLICT (tenant_id,alias) DO NOTHING`,
-    [alias, alias]
+    [alias, alias, `ws-${alias}`]
   );
 }
 
@@ -60,7 +63,8 @@ describe('la migración 026 está aplicada de verdad', () => {
      */
     expect(columns.rows.map((row) => row.column_name)).toEqual([
       'tenant_id', 'alias', 'purpose', 'role_summary', 'responsibilities',
-      'restrictions', 'human_brief', 'tools', 'operating_rules', 'created_at', 'updated_at'
+      'restrictions', 'human_brief', 'tools', 'operating_rules', 'created_at', 'updated_at',
+      'revision', 'applied_revision'
     ]);
     const fk = await pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM pg_constraint
@@ -244,6 +248,134 @@ describe('AgentProfileRepository', () => {
     expect((await repository.read('Steven', 'zeus')).purpose).toBe('Dos.');
   });
 
+  it('dos editores del mismo perfil no se pisan y la revisión es propia', async () => {
+    const creado = await repository.replace({
+      tenant_id: 'Steven', alias: 'zeus', purpose: 'Uno.',
+    }, null, ACTOR);
+    expect(creado).toMatchObject({ revision: 1, applied_revision: null });
+
+    const [uno, dos] = await Promise.allSettled([
+      repository.replace({ tenant_id: 'Steven', alias: 'zeus', purpose: 'Dos.' }, 1, ACTOR),
+      repository.replace({ tenant_id: 'Steven', alias: 'zeus', purpose: 'Tres.' }, 1, ACTOR),
+    ]);
+    expect([uno, dos].filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+    const rechazado = [uno, dos].find((outcome) => outcome.status === 'rejected');
+    expect(rechazado).toMatchObject({
+      status: 'rejected', reason: { name: 'AgentProfileMutationError', code: 'conflict' },
+    });
+    expect(await repository.readWithPresence('Steven', 'zeus')).toMatchObject({
+      revision: 2, applied_revision: null,
+    });
+  });
+
+  it('reintentar el mismo desired pendiente es idempotente y luego acredita esa revisión', async () => {
+    const creado = await repository.replace({
+      tenant_id: 'Steven', alias: 'zeus', purpose: 'Pendiente.',
+    }, null, ACTOR);
+    const repetido = await repository.replace({
+      tenant_id: 'Steven', alias: 'zeus', purpose: 'Pendiente.',
+    }, creado.revision, ACTOR);
+    expect(repetido.revision).toBe(creado.revision);
+    expect(repetido.applied_revision).toBeNull();
+
+    const aplicado = await repository.markApplied('Steven', 'zeus', repetido.revision, ACTOR);
+    expect(aplicado.applied_revision).toBe(repetido.revision);
+  });
+
+  it('audita desired y applied sin persistir el cuerpo autorado del perfil', async () => {
+    const creado = await repository.replace({
+      tenant_id: 'Steven', alias: 'zeus', purpose: 'CUERPO-QUE-NO-VA-AL-AUDIT.',
+      responsibilities: ['OTRO-CUERPO-SENSIBLE.'],
+    }, null, ACTOR);
+    await repository.markApplied('Steven', 'zeus', creado.revision, ACTOR);
+
+    const auditoria = await pool.query<{
+      tenant_id: string;
+      actor_alias: string;
+      action: string;
+      decision: string;
+      metadata: Record<string, unknown>;
+    }>(
+      `SELECT tenant_id,actor_alias,action,decision,metadata
+         FROM audit_events
+        WHERE action IN ('agent_profile.desired','agent_profile.applied')
+        ORDER BY id`,
+    );
+    expect(auditoria.rows).toEqual([
+      {
+        tenant_id: 'Steven', actor_alias: 'kant', action: 'agent_profile.desired', decision: 'allow',
+        metadata: {
+          target_tenant: 'Steven', target_alias: 'zeus', expected_revision: null,
+          desired_revision: creado.revision, applied_revision: null,
+        },
+      },
+      {
+        tenant_id: 'Steven', actor_alias: 'kant', action: 'agent_profile.applied', decision: 'allow',
+        metadata: {
+          target_tenant: 'Steven', target_alias: 'zeus', applied_revision: creado.revision,
+          desired_revision: creado.revision, converged: true,
+        },
+      },
+    ]);
+    const serializado = JSON.stringify(auditoria.rows);
+    expect(serializado).not.toContain('CUERPO-QUE-NO-VA-AL-AUDIT');
+    expect(serializado).not.toContain('OTRO-CUERPO-SENSIBLE');
+  });
+
+  it('si falla la auditoría, el desired y su revisión hacen rollback en la misma transacción', async () => {
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION cauce_test_reject_profile_audit() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.action='agent_profile.desired' THEN
+          RAISE EXCEPTION 'audit unavailable';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER cauce_test_reject_profile_audit
+        BEFORE INSERT ON audit_events
+        FOR EACH ROW EXECUTE FUNCTION cauce_test_reject_profile_audit();
+    `);
+    try {
+      await expect(repository.replace({
+        tenant_id: 'Steven', alias: 'zeus', purpose: 'No queda parcialmente guardado.',
+      }, null, ACTOR)).rejects.toThrow('audit unavailable');
+    } finally {
+      await pool.query(`
+        DROP TRIGGER IF EXISTS cauce_test_reject_profile_audit ON audit_events;
+        DROP FUNCTION IF EXISTS cauce_test_reject_profile_audit();
+      `);
+    }
+
+    expect(await repository.readWithPresence('Steven', 'zeus')).toMatchObject({
+      exists: false, revision: null, applied_revision: null,
+    });
+  });
+
+  it('un ACK viejo se conserva como aplicado conocido sin afirmar la revisión desired nueva', async () => {
+    const creado = await repository.replace({
+      tenant_id: 'Steven', alias: 'zeus', purpose: 'Uno.',
+    }, null, ACTOR);
+    const nuevo = await repository.replace({
+      tenant_id: 'Steven', alias: 'zeus', purpose: 'Dos.',
+    }, creado.revision, ACTOR);
+    const trasAckViejo = await repository.markApplied('Steven', 'zeus', creado.revision, ACTOR);
+    expect(trasAckViejo).toMatchObject({
+      revision: nuevo.revision, applied_revision: creado.revision,
+    });
+  });
+
+  it('replace falla cerrado para un alias apagado', async () => {
+    await pool.query(
+      `UPDATE agents SET enabled=false WHERE tenant_id='Steven' AND alias='zeus'`,
+    );
+    await expect(repository.replace({
+      tenant_id: 'Steven', alias: 'zeus', purpose: 'No debe entrar.',
+    }, null, ACTOR)).rejects.toMatchObject({
+      name: 'AgentProfileMutationError', code: 'disabled',
+    });
+  });
+
   it('rechaza en TypeScript, antes de tocar la base, lo mismo que rechaza el CHECK', async () => {
     await expect(repository.write({
       tenant_id: 'Steven', alias: 'zeus', purpose: ASTRAL.repeat(AGENT_PROFILE_LIMITS.purpose)
@@ -254,29 +386,43 @@ describe('AgentProfileRepository', () => {
     expect(Number(filas.rows[0]?.count)).toBe(0);
   });
 
-  it('convive con role_brief: escribir el perfil no lo toca', async () => {
+  it('proyecta role_summary a role_brief, pero conserva entero el rol rico canónico', async () => {
     await pool.query(
       `UPDATE agents SET role_brief='El rol de siempre.' WHERE tenant_id='Steven' AND alias='zeus'`
     );
-    await repository.write({ tenant_id: 'Steven', alias: 'zeus', role_summary: 'El rol nuevo.' });
+    const rico = `${'x'.repeat(1_199)}${ASTRAL}${'detalle'.repeat(20)}`;
+    await repository.write({ tenant_id: 'Steven', alias: 'zeus', role_summary: rico });
     const brief = await pool.query<{ role_brief: string }>(
       `SELECT role_brief FROM agents WHERE tenant_id='Steven' AND alias='zeus'`
     );
-    expect(brief.rows[0]?.role_brief).toBe('El rol de siempre.');
-    expect((await repository.read('Steven', 'zeus')).role_summary).toBe('El rol nuevo.');
+    expect([...brief.rows[0]!.role_brief]).toHaveLength(1_200);
+    expect(brief.rows[0]?.role_brief.endsWith(ASTRAL)).toBe(true);
+    expect((await repository.read('Steven', 'zeus')).role_summary).toBe(rico);
   });
 
-  it('borrar el perfil lo deja vacío pero conserva el alias y su role_brief', async () => {
+  it('borrar el perfil borra también la proyección legacy para no revivir identidad vieja', async () => {
     await pool.query(
       `UPDATE agents SET role_brief='Sigo acá.' WHERE tenant_id='Steven' AND alias='zeus'`
     );
     await repository.write({ tenant_id: 'Steven', alias: 'zeus', purpose: 'Orquestar.' });
     expect(await repository.remove('Steven', 'zeus')).toBe(true);
     expect((await repository.read('Steven', 'zeus')).purpose).toBeNull();
-    const brief = await pool.query<{ role_brief: string }>(
+    const brief = await pool.query<{ role_brief: string | null }>(
       `SELECT role_brief FROM agents WHERE tenant_id='Steven' AND alias='zeus'`
     );
-    expect(brief.rows[0]?.role_brief).toBe('Sigo acá.');
+    expect(brief.rows[0]?.role_brief).toBeNull();
+  });
+
+  it('traduce una escritura legacy de role_brief al perfil canónico en la misma transacción', async () => {
+    await pool.query(
+      `UPDATE agents SET role_brief='Compatibilidad explícita.'
+        WHERE tenant_id='Steven' AND alias='zeus'`
+    );
+
+    expect(await repository.readWithPresence('Steven', 'zeus')).toMatchObject({
+      exists: true,
+      perfil: { tenant_id: 'Steven', alias: 'zeus', role_summary: 'Compatibilidad explícita.' },
+    });
   });
 
   /** CONTROL NEGATIVO de `remove`: borrar lo que no existe informa `false`, no miente `true`. */
@@ -336,6 +482,21 @@ describe('hechos derivados del alias', () => {
     const { hechos } = await repository.readContext('Steven', 'zeus');
     expect(hechos.permisos.control).toBe(false);
     expect(hechos.permisos.ruta).toBe(false);
+  });
+
+  it('un registro de agente disabled conserva contexto legible pero todos sus poderes son NO', async () => {
+    await darSala('zeus', 'agent');
+    await pool.query(
+      `UPDATE agents SET enabled=false WHERE tenant_id='Steven' AND alias='zeus'`
+    );
+
+    const lectura = await repository.readContextWithPresence('Steven', 'zeus');
+
+    expect(lectura.agent_enabled).toBe(false);
+    expect(lectura.contexto.hechos.permisos).toEqual({
+      ruta: false, lectura: false, control: false, notificacion: false,
+    });
+    expect(lectura.contexto.hechos.destinos).toEqual([]);
   });
 
   it('notificar exige rol Y destino aprobado: con rol pero sin destino es NO', async () => {

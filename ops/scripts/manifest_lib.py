@@ -8,28 +8,15 @@ from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator
+from container_alias_lib import load_container_aliases
 
-EXPECTED = {
-    "argos": ("Steven", "grp.steven", "hermes"),
-    "atlas": ("Miguel", "grp.miguel", "codex"),
-    "dedalo": ("Pablo", "grp.pablo", "codex"),
-    "hegel": ("Jhon", "grp.jhon", "openclaw"),
-    "heraclito": ("Jhon", "grp.jhon", "openclaw"),
-    "iza": ("Miguel", "grp.miguel", "hermes"),
-    "janus": ("Miguel", "grp.miguel", "openclaw"),
-    "jarvis": ("Steven", "grp.steven", "openclaw"),
-    "kant": ("Steven", "grp.steven", "codex"),
-    "kratos": ("Miguel", "grp.miguel", "codex"),
-    "midas": ("Pablo", "grp.pablo", "openclaw"),
-    "salva": ("Isa", "grp.isa", "codex"),
-    "seneca": ("Pablo", "grp.pablo", "openclaw"),
-    "socrates": ("Steven", "grp.steven", "codex"),
-    "vulcano": ("Pablo", "grp.pablo", "claude"),
-}
 ENV_RE = re.compile(r"^CAUCE_[A-Z0-9_]+_(?:PATH|URL)$")
 ALIAS_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 TOP_KEYS = {"apiVersion", "kind", "metadata", "spec"}
-SPEC_KEYS = {"tenant", "room", "alias", "harness", "origin", "relay", "secretPathEnv", "process", "stateDirectory"}
+SPEC_KEYS = {
+    "tenant", "room", "alias", "harness", "profile", "origin", "relay",
+    "secretPathEnv", "process", "stateDirectory",
+}
 SECRET_KEYS = {"token", "clientCertificate", "clientKey", "certificateAuthority"}
 
 
@@ -54,7 +41,11 @@ def env_name(value: Any, expected: str, label: str) -> None:
         raise ManifestError(f"{label} must be the exact PATH/URL placeholder {expected}")
 
 
-def validate_manifest(data: Any, source: pathlib.Path) -> dict[str, Any]:
+def validate_manifest(
+    data: Any,
+    source: pathlib.Path,
+    assignments: dict[str, dict[str, str]],
+) -> dict[str, Any]:
     root = require_mapping(data, str(source))
     exact_keys(root, TOP_KEYS, str(source))
     if root["apiVersion"] != "cauce.io/v3" or root["kind"] != "AliasRuntime":
@@ -68,11 +59,20 @@ def validate_manifest(data: Any, source: pathlib.Path) -> dict[str, Any]:
         raise ManifestError(f"{source}: invalid alias")
     if metadata["name"] != alias or source.stem != alias:
         raise ManifestError(f"{source}: filename, metadata.name and spec.alias must match")
-    if alias not in EXPECTED:
-        raise ManifestError(f"{source}: alias is not in the 14-member fleet")
-    tenant, room, harness = EXPECTED[alias]
+    if alias not in assignments:
+        raise ManifestError(f"{source}: alias is not in the declarative fleet inventory")
+    assignment = assignments[alias]
+    tenant, room, harness = assignment["tenant"], assignment["room"], assignment["harness"]
     if (spec["tenant"], spec["room"], spec["harness"]) != (tenant, room, harness):
         raise ManifestError(f"{source}: tenant/room/harness differs from the fleet assignment")
+    profile = require_mapping(spec["profile"], f"{source}.spec.profile")
+    profile_keys = {"seedOnConnect", "configScope", "workspace"} if harness == "openclaw" \
+        else {"seedOnConnect", "configScope"}
+    exact_keys(profile, profile_keys, f"{source}.spec.profile")
+    if profile["seedOnConnect"] is not True or profile["configScope"] != "alias":
+        raise ManifestError(f"{source}: runtime profile seeding must be enabled and alias-scoped")
+    if harness == "openclaw" and profile["workspace"] != assignment.get("workspace"):
+        raise ManifestError(f"{source}: OpenClaw workspace differs from the fleet assignment")
     origin = require_mapping(spec["origin"], f"{source}.spec.origin")
     exact_keys(origin, {"transport"}, f"{source}.spec.origin")
     if origin["transport"] != "telegram":
@@ -101,14 +101,16 @@ def validate_manifest(data: Any, source: pathlib.Path) -> dict[str, Any]:
 
 
 def load_manifests(root: pathlib.Path) -> list[dict[str, Any]]:
+    assignments = load_container_aliases(root)
     schema = root / "schemas" / "alias-manifest.schema.json"
     with schema.open(encoding="utf-8") as stream:
         schema_document = json.load(stream)
     validator = Draft202012Validator(schema_document)
     paths = sorted((root / "manifests").glob("*.yaml"))
-    if {path.stem for path in paths} != set(EXPECTED):
-        missing = sorted(set(EXPECTED) - {path.stem for path in paths})
-        extra = sorted({path.stem for path in paths} - set(EXPECTED))
+    expected = set(assignments)
+    if {path.stem for path in paths} != expected:
+        missing = sorted(expected - {path.stem for path in paths})
+        extra = sorted({path.stem for path in paths} - expected)
         raise ManifestError(f"fleet manifests must be exact: missing={missing} extra={extra}")
     manifests = []
     for path in paths:
@@ -117,5 +119,5 @@ def load_manifests(root: pathlib.Path) -> list[dict[str, Any]]:
         errors = sorted(validator.iter_errors(document), key=lambda error: list(error.absolute_path))
         if errors:
             raise ManifestError(f"{path}: JSON Schema: {errors[0].message}")
-        manifests.append(validate_manifest(document, path))
+        manifests.append(validate_manifest(document, path, assignments))
     return manifests

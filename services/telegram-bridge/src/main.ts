@@ -9,6 +9,7 @@ import { startTelegramHealthServer, TelegramBridgeMetrics } from './health.js';
 import { StoreTelegramIngress } from './ingress.js';
 import { TelegramPoller } from './poller.js';
 import { PostgresTelegramBridgeRepository } from './repository.js';
+import { boundedTelegramRequestTimeoutMs, TelegramBridgeProgress } from './progress.js';
 import { TelegramHttpClient } from './telegram.js';
 import { transcriptionConfig } from './transcription.js';
 import type { TelegramAliasConfig, TelegramApi } from './types.js';
@@ -23,6 +24,14 @@ function positivePort(value: string | undefined): number {
   const port = Number(value ?? '8084');
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error('PORT is invalid');
   return port;
+}
+
+function positiveInteger(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
+  return value;
 }
 
 function selected(configs: readonly TelegramAliasConfig[]): TelegramAliasConfig[] {
@@ -50,10 +59,14 @@ const pool = createPool(required('DATABASE_URL'));
 const repository = new PostgresTelegramBridgeRepository(pool);
 const ingress = new StoreTelegramIngress(new CauceRepository(pool));
 const metrics = new TelegramBridgeMetrics();
+const progress = new TelegramBridgeProgress();
 const controller = new AbortController();
 const activity = new TelegramActivityIndicator();
-let started = 0;
-const health = startTelegramHealthServer(positivePort(process.env.PORT), pool, metrics, () => started);
+const egressLeaseMs = positiveInteger('CAUCE_TELEGRAM_EGRESS_LEASE_MS', 90_000);
+if (egressLeaseMs < 10_000) throw new Error('CAUCE_TELEGRAM_EGRESS_LEASE_MS must be at least 10000');
+const pollStaleMs = positiveInteger('CAUCE_TELEGRAM_UPDATE_STALE_MS', 180_000);
+const egressStaleMs = positiveInteger('CAUCE_TELEGRAM_EGRESS_STALE_MS', 180_000);
+let health: ReturnType<typeof startTelegramHealthServer> | undefined;
 
 /**
  * A group-configuration problem is reported and worked around; it never stops the process.
@@ -83,7 +96,15 @@ try {
   const running: TelegramAliasConfig[] = [];
   for (const alias of aliases) {
     await assertV2PollerDisabled(alias);
-    const api = new TelegramHttpClient({ token: await readTelegramToken(alias.token_file) });
+    // Every Telegram request must finish before both the poll lease and the egress lease lose
+    // their fencing window. Long update processing is renewed separately by the poller.
+    const requestTimeoutMs = boundedTelegramRequestTimeoutMs(alias.poll_lease_ms, egressLeaseMs);
+    if (pollStaleMs < requestTimeoutMs + 5_000 || egressStaleMs < requestTimeoutMs + 5_000) {
+      throw new Error('Telegram loop stale deadlines must exceed the total request deadline by 5000ms');
+    }
+    const api = new TelegramHttpClient({
+      token: await readTelegramToken(alias.token_file), requestTimeoutMs
+    });
     const identity = await api.getIdentity();
     // A wrong bot_username makes a bot fail to recognise its own mentions and makes its peers
     // suppress against a username that does not exist. That is a reason to take this alias out of
@@ -103,8 +124,13 @@ try {
     // `chats: []` (present but empty) is the explicit default-deny mode, so a mismatched alias
     // stops serving groups while every private chat keeps working untouched.
     running.push(mismatched ? { ...alias, chats: [] } : alias);
-    started += 1;
+    progress.registerPoller(alias.alias, pollStaleMs);
   }
+  progress.registerEgress(egressStaleMs);
+  // Do not advertise a live endpoint while configuration, V2 exclusion, bot identity or cursor
+  // binding is still incomplete. A connection refusal during startup is more truthful than a
+  // green process-only healthcheck.
+  health = startTelegramHealthServer(positivePort(process.env.PORT), pool, metrics, progress);
   // Built from the COMPLETE file so suppression stays correct even during an incremental start.
   const fleet = fleetDirectory(config, identities);
   const pollers = running.map((alias) => new TelegramPoller({
@@ -118,14 +144,17 @@ try {
     participants: (chatId, threadId) => chatParticipants(config, chatId, threadId),
     ...(usernames.has(alias.alias) ? { botUsername: usernames.get(alias.alias) as string } : {}),
     ...(transcription === undefined ? {} : { transcription }),
-    onMetric: (metric) => metrics.increment(metric)
+    onMetric: (metric) => metrics.increment(metric),
+    observer: progress
   }));
   const egress = new TelegramEgressWorker({
     repository,
     aliases: running,
     apis,
     activity,
-    onMetric: (metric) => metrics.increment(metric)
+    leaseMs: egressLeaseMs,
+    onMetric: (metric) => metrics.increment(metric),
+    observer: progress
   });
   const stop = (): void => controller.abort();
   process.once('SIGINT', stop);
@@ -134,6 +163,6 @@ try {
 } finally {
   controller.abort();
   activity.stop();
-  await new Promise<void>((resolve) => health.close(() => resolve()));
+  if (health !== undefined) await new Promise<void>((resolve) => health!.close(() => resolve()));
   await pool.end();
 }

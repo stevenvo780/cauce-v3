@@ -32,7 +32,7 @@ pnpm -F @cauce/mcp-fleet-monitor build
 
 The compiled server will be at:
 ```
-packages/mcp-fleet-monitor/dist/src/server.js
+packages/mcp-fleet-monitor/dist/server.js
 ```
 
 2. **Set environment variables**:
@@ -45,7 +45,7 @@ export CAUCE_TENANT_ID="Steven"  # Adjust for your tenant
 3. **Test the server**:
 
 ```bash
-node packages/mcp-fleet-monitor/dist/src/server.js
+node packages/mcp-fleet-monitor/dist/server.js
 # Output:
 # [mcp-fleet-monitor] Connected to database
 # [mcp-fleet-monitor] Tenant: Steven
@@ -66,7 +66,7 @@ Add to your Claude Code MCP servers config (typically `~/.claude/mcp.json` or vi
   "mcpServers": {
     "fleet-monitor": {
       "command": "node",
-      "args": ["/absolute/path/to/packages/mcp-fleet-monitor/dist/src/server.js"],
+      "args": ["/absolute/path/to/packages/mcp-fleet-monitor/dist/server.js"],
       "env": {
         "DATABASE_URL": "postgresql://cauce:password@localhost:5432/cauce",
         "CAUCE_TENANT_ID": "Steven"
@@ -86,7 +86,7 @@ cat > ~/.claude/mcp.json << 'EOF'
   "mcpServers": {
     "fleet-monitor": {
       "command": "node",
-      "args": ["/path/to/packages/mcp-fleet-monitor/dist/src/server.js"],
+      "args": ["/path/to/packages/mcp-fleet-monitor/dist/server.js"],
       "env": {
         "DATABASE_URL": "postgresql://...",
         "CAUCE_TENANT_ID": "Steven"
@@ -106,7 +106,7 @@ Then restart Claude Code for the config to take effect.
 3. Add MCP server:
    - **Name**: Fleet Monitor
    - **Command**: `node`
-   - **Arguments**: `/path/to/packages/mcp-fleet-monitor/dist/src/server.js`
+   - **Arguments**: `/path/to/packages/mcp-fleet-monitor/dist/server.js`
    - **Environment**:
      - `DATABASE_URL=postgresql://...`
      - `CAUCE_TENANT_ID=Steven`
@@ -299,7 +299,7 @@ Claude: Monitor atlas in real-time. Show its status and deliveries.
 **Solution**: Ensure DATABASE_URL is exported before starting:
 ```bash
 export DATABASE_URL="postgresql://..."
-node packages/mcp-fleet-monitor/dist/src/server.js
+node packages/mcp-fleet-monitor/dist/server.js
 ```
 
 **Error**: `Database connection test failed`

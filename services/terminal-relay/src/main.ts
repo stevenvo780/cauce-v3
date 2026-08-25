@@ -43,7 +43,7 @@ const gateway = new HttpsTerminalGatewayClient({
   ...(gatewayClientCert === undefined ? {} : { clientCert: gatewayClientCert }),
   ...(gatewayClientKey === undefined ? {} : { clientKey: gatewayClientKey })
 });
-const sessions = new SessionManager({ gateway, limits: config });
+const sessions = new SessionManager({ gateway, limits: config, closeSpoolFile: config.closeSpoolFile });
 
 // Presence is republished as soon as the connected set changes, debounced so a fleet-wide
 // reconnect is one publish: the console must not show "no PTY agent" for an agent that is up.

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
-import { HarnessAdapter, fakeDefinition } from "../src/harnesses/index.js";
+import { HarnessAdapter, claudeDefinition, fakeDefinition } from "../src/harnesses/index.js";
 import { ExponentialBackoff } from "../src/sdk/backoff.js";
-import { AdapterClient } from "../src/sdk/client.js";
+import {
+  AdapterClient, capabilityStrings, siembraAplicada, siembraHabilitada,
+} from "../src/sdk/client.js";
 import { ConsumerLease, DurableStore } from "../src/sdk/durable-store.js";
 import { AdapterError, StaleEpochError } from "../src/sdk/errors.js";
 import type {
@@ -15,8 +17,11 @@ import type {
   ConsumerConnection,
   ConsumerConnector,
   DeliveryEvent,
+  HarnessDefinition,
   ServerFrame,
 } from "../src/sdk/types.js";
+
+type HelloAgentProfile = NonNullable<Extract<ServerFrame, { type: "hello_ack" }>["agent_profile"]>;
 
 const root = resolve(".test-state");
 
@@ -103,13 +108,17 @@ class FakeConnection implements ConsumerConnection {
   private readonly waiters: Array<(value: IteratorResult<ServerFrame>) => void> = [];
   private ended = false;
 
-  constructor(private readonly welcomeEpoch = 1) {}
+  constructor(
+    private readonly welcomeEpoch = 1,
+    private readonly agentProfile?: HelloAgentProfile,
+  ) {}
 
   async send(frame: ClientFrame): Promise<void> {
     this.sent.push(frame);
     if (frame.type === "hello") this.push({
       type: "hello_ack", version: "3.0", epoch: this.welcomeEpoch,
       lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+      ...(this.agentProfile === undefined ? {} : { agent_profile: this.agentProfile }),
     });
   }
 
@@ -164,6 +173,8 @@ async function makeClient(
     epoch?: number;
     onLeaseAcquired?: () => Promise<void>;
     runner?: CommandRunner;
+    definition?: HarnessDefinition;
+    onError?: (code: string) => void;
     claimRenewalMs?: number;
     claimWatchdogMs?: number;
   } = {},
@@ -173,7 +184,7 @@ async function makeClient(
   const store = await DurableStore.open(directory);
   if (options.epoch !== undefined) await store.activateEpoch(options.epoch);
   const harness = new HarnessAdapter({
-    definition: fakeDefinition,
+    definition: options.definition ?? fakeDefinition,
     runner: options.runner ?? new NoopRunner(),
     store,
   });
@@ -192,6 +203,7 @@ async function makeClient(
       connector,
       store,
       harness,
+      ...(options.onError === undefined ? {} : { onError: options.onError }),
       ...(options.onLeaseAcquired === undefined ? {} : { onLeaseAcquired: options.onLeaseAcquired }),
       ...(options.claimRenewalMs === undefined ? {} : { claimRenewalMs: options.claimRenewalMs }),
       ...(options.claimWatchdogMs === undefined ? {} : { claimWatchdogMs: options.claimWatchdogMs }),
@@ -279,7 +291,7 @@ test("startup initialization runs under the stable-alias lease before connect", 
   }
 });
 
-test("connect retries with backoff then sends hello on one consumer connection", async () => {
+test("connect retries then sends the real harness capabilities in hello", async () => {
   const connection = new FakeConnection(1);
   const connector = new ScriptedConnector(connection, 1);
   const { client } = await makeClient("reconnect", connector);
@@ -292,10 +304,80 @@ test("connect retries with backoff then sends hello on one consumer connection",
   if (hello?.type === "hello") {
     assert.equal(hello.alias, "agent_reconnect");
     assert.equal(hello.instance_id, "instance-reconnect");
+    assert.deepEqual(hello.capabilities, capabilityStrings(fakeDefinition.capabilities));
     assert.equal(hello.capabilities.includes("harness.fake"), true);
+    assert.equal(hello.capabilities.includes("agent_profile_v1"), true);
+    assert.equal(hello.capabilities.includes("attachments_v1"), true);
   }
   stop.abort();
   await running;
+});
+
+test("la siembra de reconnect es default-on y sólo acepta un lote completo o comprobado", () => {
+  assert.equal(siembraHabilitada({}), true);
+  assert.equal(siembraHabilitada({ CAUCE_SEMBRAR_PERFIL: "1" }), true);
+  assert.equal(siembraHabilitada({ CAUCE_SEMBRAR_PERFIL: "0" }), false);
+
+  assert.equal(siembraAplicada({ estado: "apagado" }), true);
+  assert.equal(siembraAplicada({ estado: "sin-ficheros", harness: "hermes" }), true);
+  assert.equal(siembraAplicada({ estado: "sin-directorio", harness: "claude" }), false);
+  assert.equal(siembraAplicada({ estado: "no-entra", fichero: "CLAUDE.md", medido: 2, tope: 1 }), false);
+  assert.equal(siembraAplicada({
+    estado: "hecho",
+    ficheros: [{ nombre: "CLAUDE.md", estado: "ya-estaba" }],
+  }), true);
+  assert.equal(siembraAplicada({
+    estado: "hecho",
+    ficheros: [{ nombre: "CLAUDE.md", estado: "no-se-pudo-escribir", motivo: "EACCES" }],
+  }), false);
+  assert.equal(siembraAplicada({
+    estado: "hecho",
+    ficheros: [{ nombre: "AGENTS.md", estado: "ocupado-por-otro-alias" }],
+  }), false);
+});
+
+test("un perfil que no puede sembrarse corta la conexión antes del heartbeat y reintenta", async () => {
+  const anteriorInterruptor = process.env.CAUCE_SEMBRAR_PERFIL;
+  const anteriorClaudeHome = process.env.CLAUDE_CONFIG_DIR;
+  delete process.env.CAUCE_SEMBRAR_PERFIL;
+  process.env.CLAUDE_CONFIG_DIR = "ruta-relativa-inadmisible";
+
+  const profile: HelloAgentProfile = {
+    perfil: {
+      tenant_id: "Steven", alias: "agent_profile_seed_fail", purpose: "Perfil deseado",
+      role_summary: null, human_brief: null, responsibilities: [], restrictions: [],
+      tools: [], operating_rules: [],
+    },
+    hechos: {
+      permisos: { ruta: false, lectura: false, control: false, notificacion: false },
+      destinos: [], cuotas: [], arnes: { harness: "claude", home: "/home/dev", capacidades: [] },
+    },
+  };
+  const connection = new FakeConnection(1, profile);
+  const connector = new ScriptedConnector(connection);
+  const errors: string[] = [];
+  const { client } = await makeClient("profile-seed-fail", connector, {
+    definition: claudeDefinition,
+    heartbeatMs: 5,
+    onError: (code) => errors.push(code),
+  });
+  const stop = new AbortController();
+  const running = client.run(stop.signal);
+  try {
+    await waitUntil(() => errors.includes("PROFILE_SEED_FAILED"));
+    assert.equal(
+      connection.sent.some((frame) => frame.type === "heartbeat"),
+      false,
+      "inició heartbeat y se declaró consumidor pese a no aplicar el perfil",
+    );
+  } finally {
+    stop.abort();
+    await running;
+    if (anteriorInterruptor === undefined) delete process.env.CAUCE_SEMBRAR_PERFIL;
+    else process.env.CAUCE_SEMBRAR_PERFIL = anteriorInterruptor;
+    if (anteriorClaudeHome === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = anteriorClaudeHome;
+  }
 });
 
 test("heartbeat uses the established consumer instead of an ephemeral socket", async () => {

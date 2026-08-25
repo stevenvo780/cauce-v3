@@ -4,7 +4,8 @@ import type {
   NotifyRequest, Origin, PublishMessage, QuotaSampleRequest, Tenant
 } from '@cauce/protocol';
 import {
-  AGENT_TO_AGENT_MESSAGE_TYPES, clampAgentPriority, isAmbiguousAckErrorCode,
+  NON_HUMAN_DELIVERY_MESSAGE_TYPES, SYSTEM_GATE_PROBE_MESSAGE_TYPE, SYSTEM_PRINCIPAL_ALIASES,
+  clampAgentPriority, isAmbiguousAckErrorCode, isSystemGateProbeBody,
   MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs, NOTIFY_KINDS, PROTOCOL_VERSION,
   SUPPORTED_QUOTA_SCHEMA_VERSIONS
 } from '@cauce/protocol';
@@ -33,6 +34,17 @@ export class StoreError extends Error {
     super(message);
     this.name = 'StoreError';
   }
+}
+
+export type AgentTargetPermission = 'read' | 'control';
+
+/** Registro mínimo del alias que quedó autorizado por su identidad canónica. */
+export interface AuthorizedAgentTarget {
+  readonly tenant_id: Tenant;
+  readonly alias: string;
+  readonly harness_id: string | null;
+  readonly home_directory: string | null;
+  readonly enabled: boolean;
 }
 
 /** Carries a dry-run verdict out of a transaction that must be rolled back. */
@@ -575,9 +587,9 @@ const reservedInternalMessageTypes = new Set([
 /**
  * Se pasa como `text[]` a las consultas de reclamo para que el predicado
  * "esta entrega nació de otro agente" tenga UNA sola definición en todo el árbol
- * (`AGENT_TO_AGENT_MESSAGE_TYPES` en @cauce/protocol) y no dos que se desincronizan.
+ * (`NON_HUMAN_DELIVERY_MESSAGE_TYPES` en @cauce/protocol) y no dos que se desincronizan.
  */
-const agentToAgentMessageTypes: string[] = [...AGENT_TO_AGENT_MESSAGE_TYPES];
+const nonHumanDeliveryMessageTypes: string[] = [...NON_HUMAN_DELIVERY_MESSAGE_TYPES];
 const maxNotifyDirectives = 4;
 const maxNotifyBodyBytes = 4 * 1024;
 const maxNotifyAggregateBytes = 8 * 1024;
@@ -1504,6 +1516,24 @@ export class CauceRepository {
 
   async publish(input: PublishMessage): Promise<PublishResult> {
     if (input.recipients.length === 0) throw new StoreError('no_route', 'message has zero recipients');
+    if (input.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE) {
+      const recipient = input.recipients[0];
+      const gateAuthorized = isSystemGateProbeBody(input.body)
+        && input.tenant_id === 'Steven'
+        && input.room_id === 'grp.steven'
+        && input.actor_alias === 'kant'
+        && input.authenticated_context?.session_id === 'gate-probe'
+        && input.authenticated_context.channel === 'gate'
+        && input.authenticated_context.origin === undefined
+        && input.origin === undefined
+        && input.recipients.length === 1
+        && input.lane === 'interactive'
+        && input.priority === -100
+        && input.idempotency_key === `gate:${recipient?.tenant_id}:${recipient?.alias}:${input.body.nonce}`;
+      if (!gateAuthorized) {
+        throw new StoreError('forbidden', 'system gate probe authority or payload is invalid');
+      }
+    }
     if (typeof input.body.type === 'string' && reservedInternalMessageTypes.has(input.body.type)) {
       throw new StoreError('forbidden', 'reserved internal message types cannot be published by clients');
     }
@@ -1525,8 +1555,9 @@ export class CauceRepository {
         const member = await client.query(
           `SELECT 1 FROM memberships m JOIN tenants t ON t.id=m.tenant_id
            JOIN rooms r ON r.id=m.room_id AND r.tenant_id=m.tenant_id
-           WHERE m.tenant_id=$1 AND m.alias=$2 AND m.enabled AND t.enabled AND r.enabled LIMIT 1`,
-          [recipient.tenant_id, recipient.alias]
+           WHERE m.tenant_id=$1 AND m.alias=$2 AND m.enabled AND t.enabled AND r.enabled
+             AND NOT (m.alias=ANY($3::text[])) LIMIT 1`,
+          [recipient.tenant_id, recipient.alias, SYSTEM_PRINCIPAL_ALIASES]
         );
         if (member.rowCount !== 1) throw new StoreError('no_route', `recipient ${recipient.alias} is not routable`);
          if (recipient.tenant_id !== input.tenant_id) {
@@ -1838,23 +1869,31 @@ export class CauceRepository {
   }
 
   /**
-   * El rol declarado del alias que reclama, para el preámbulo de identidad del adaptador.
+   * La proyección corta del rol CANÓNICO del alias que reclama.
    *
    * Devuelve `undefined` —y no una cadena vacía ni un texto por defecto— cuando la fila no existe o
-   * `role_brief` es NULL. Es deliberado: el adaptador omite la línea `Tu rol:` en vez de inventar
-   * una. Un rol equivocado es peor que ninguno; el caso testigo es el `SOUL.md` de fábrica que le
-   * decía a `iza` que era "Hermes Agent, created by Nous Research".
+   * Desde la migración 028 `agent_profiles.role_summary` es la única fuente autorada. Esta lectura
+   * deriva `self_role` directamente de ella —trim + 1.200 puntos de código— y NO confía en la
+   * proyección legacy de `agents.role_brief`. Así el saludo, el fichero y cada entrega observan la
+   * misma revisión, incluso si una imagen antigua o una consulta manual dejó la caché dañada.
    */
-  private async selfRoleBrief(
+  private async selfRoleFromProfile(
     client: DatabaseClient,
     tenantId: Tenant,
     alias: string
   ): Promise<string | undefined> {
-    const result = await client.query<{ role_brief: string | null }>(
-      `SELECT role_brief FROM agents WHERE tenant_id=$1 AND alias=$2`,
+    const result = await client.query<{ self_role: string | null }>(
+      `SELECT CASE
+                WHEN profile.role_summary IS NULL OR btrim(profile.role_summary)='' THEN NULL
+                ELSE substring(btrim(profile.role_summary) FROM 1 FOR 1200)
+              END AS self_role
+         FROM agents agent
+         LEFT JOIN agent_profiles profile
+           ON profile.tenant_id=agent.tenant_id AND profile.alias=agent.alias
+        WHERE agent.tenant_id=$1 AND agent.alias=$2 AND agent.enabled`,
       [tenantId, alias]
     );
-    const brief = result.rows[0]?.role_brief;
+    const brief = result.rows[0]?.self_role;
     if (typeof brief !== 'string') return undefined;
     const trimmed = brief.trim();
     return trimmed.length === 0 ? undefined : trimmed;
@@ -1876,6 +1915,7 @@ export class CauceRepository {
          ON lease.tenant_id=membership.tenant_id AND lease.alias=membership.alias
        WHERE membership.enabled AND target_tenant.enabled AND target_room.enabled
          AND NOT (membership.tenant_id=$1 AND membership.alias=$2)
+         AND NOT (membership.alias=ANY($3::text[]))
          AND (
            membership.tenant_id=$1
            OR EXISTS (
@@ -1890,7 +1930,7 @@ export class CauceRepository {
          )
        GROUP BY membership.tenant_id,membership.alias
        ORDER BY membership.tenant_id,membership.alias`,
-      [sourceTenant, sourceAlias]
+      [sourceTenant, sourceAlias, SYSTEM_PRINCIPAL_ALIASES]
     );
     if (targets.rows.length > 100) {
       throw new StoreError('conflict', 'routing inventory exceeds the protocol limit of 100 targets');
@@ -2059,7 +2099,7 @@ export class CauceRepository {
                    m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
                    m.auth_session_id,m.auth_channel
            FROM updated u JOIN messages m ON m.id=u.message_id`,
-          [tenantId, alias, epoch, instanceId, agentToAgentMessageTypes, ackDeadlineMs, agentToAgent]
+          [tenantId, alias, epoch, instanceId, nonHumanDeliveryMessageTypes, ackDeadlineMs, agentToAgent]
         );
         return claimed.rows[0];
       };
@@ -2119,7 +2159,7 @@ export class CauceRepository {
       // mensaje. Se resuelve acá, dentro de la misma transacción, para que el sobre nunca lleve un
       // rol de otro alias.
       const selfRole = includeSelfRole && claimedRows.length > 0
-        ? await this.selfRoleBrief(client, tenantId, alias)
+        ? await this.selfRoleFromProfile(client, tenantId, alias)
         : undefined;
 
       return claimedRows.map((row) => ({
@@ -2194,7 +2234,7 @@ export class CauceRepository {
          AND d.status IN ('leased','accepted','started')
          AND d.ack_deadline_at IS NOT NULL AND d.ack_deadline_at>now()
        ORDER BY d.ack_deadline_at LIMIT $4`,
-      [tenantId, alias, agentToAgentMessageTypes, limit]
+      [tenantId, alias, nonHumanDeliveryMessageTypes, limit]
     );
     return rows.rows
       .filter((row): row is typeof row & { claim_token: string; ack_deadline_at: Date } =>
@@ -5658,7 +5698,7 @@ export class CauceRepository {
         const presentes = await client.query<{ tenant_id: string; alias: string }>(
           'SELECT tenant_id,alias FROM connection_leases WHERE lease_until>now()'
         );
-        for (const fila of presentes.rows) consumidorVivo.add(`${fila.tenant_id} ${fila.alias}`);
+        for (const fila of presentes.rows) consumidorVivo.add(`${fila.tenant_id}\u0000${fila.alias}`);
       }
       let retried = 0;
       let dead = 0;
@@ -5670,7 +5710,7 @@ export class CauceRepository {
         const heldForReview = row.execution_started && !retryStartedDeliveries;
         const attemptsExhausted = row.attempt >= row.max_attempts;
         const sinConsumidor = !consumidorVivo.has(
-          `${row.recipient_tenant} ${row.recipient_alias}`
+          `${row.recipient_tenant}\u0000${row.recipient_alias}`
         );
         // El techo manda sobre las otras dos condiciones y sobre la palanca de emergencia: una
         // entrega que estuvo horas renovando no se reintenta nunca, tenga o no la marca de
@@ -7060,6 +7100,58 @@ export class CauceRepository {
     if (result.rowCount !== 1) throw new StoreError('forbidden', `principal lacks ${permission} permission`);
   }
 
+  /**
+   * Autoriza un actor contra UN destino canónico `(tenant, alias)` y devuelve esa misma fila.
+   *
+   * No acepta sólo `alias`: el mismo nombre puede existir en varios tenants y elegir el primero
+   * por orden convierte una URL en una fuga entre clientes. Primero se exige el permiso efectivo
+   * del actor; después, para otro tenant, la arista ACL del MISMO permiso. Cualquier ausencia deja
+   * el resultado en `undefined`, igual para «no existe» y «no lo puedes ver».
+   */
+  async authorizeAgentTarget(
+    actorTenant: Tenant,
+    actorAlias: string,
+    targetTenant: Tenant,
+    targetAlias: string,
+    permission: AgentTargetPermission
+  ): Promise<AuthorizedAgentTarget | undefined> {
+    const permissionColumn = permission === 'read' ? 'allow_read' : 'allow_control';
+    const result = await this.pool.query<AuthorizedAgentTarget>(
+      `SELECT agent.tenant_id,agent.alias,agent.harness_id,agent.home_directory,agent.enabled
+         FROM agents agent
+         JOIN tenants target_tenant ON target_tenant.id=agent.tenant_id
+        WHERE agent.tenant_id=$3 AND agent.alias=$4 AND target_tenant.enabled
+          AND ($5::text='read' OR agent.enabled)
+          AND EXISTS (
+            SELECT 1
+              FROM memberships actor_membership
+              JOIN role_policies actor_role ON actor_role.role=actor_membership.role
+              JOIN tenants actor_tenant ON actor_tenant.id=actor_membership.tenant_id
+              JOIN rooms actor_room
+                ON actor_room.id=actor_membership.room_id
+               AND actor_room.tenant_id=actor_membership.tenant_id
+             WHERE actor_membership.tenant_id=$1 AND actor_membership.alias=$2
+               AND actor_membership.enabled AND actor_role.${permissionColumn}
+               AND actor_tenant.enabled AND actor_room.enabled
+          )
+          AND (
+            $1=$3
+            OR EXISTS (
+              SELECT 1
+                FROM acl_edges edge
+                JOIN tenants source_tenant ON source_tenant.id=edge.from_tenant
+               WHERE edge.from_tenant=$1 AND edge.to_tenant=$3
+                 AND edge.enabled AND edge.${permissionColumn}
+                 AND source_tenant.enabled AND target_tenant.enabled
+                 AND (source_tenant.is_hub OR target_tenant.is_hub)
+            )
+          )
+        LIMIT 1`,
+      [actorTenant, actorAlias, targetTenant, targetAlias, permission]
+    );
+    return result.rows[0];
+  }
+
   async principalAccess(tenantId: Tenant, alias: string): Promise<{
     roles: string[]; permissions: Array<'route' | 'read' | 'control' | 'notify'>;
   }> {
@@ -8132,6 +8224,7 @@ export class CauceRepository {
     // endpoint en un oráculo para enumerar cadenas de otros tenants.
     if (!row || row.visible !== true) throw new StoreError('not_found', 'failure notice was not found');
     const { visible: _visible, ...summary } = row;
+    void _visible;
     const events = await this.pool.query<Record<string, unknown>>(
       `SELECT ack_delivery_id,ack_attempt,child_delivery_id,child_tenant,child_alias,outcome,
               error,error_code,coalesced,notice_message_id,created_at

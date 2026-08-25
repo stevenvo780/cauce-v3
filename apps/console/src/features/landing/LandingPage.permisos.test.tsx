@@ -83,7 +83,7 @@ it('control negativo: con el permiso puesto, esa misma entrada sí navega', asyn
   expect(window.location.pathname).toBe('/config');
 });
 
-it('la barra sigue teniendo las SIETE entradas, «Ultimate Terminal» incluida', async () => {
+it('la barra sigue teniendo las SIETE entradas, «Terminal de agentes» incluida', async () => {
   window.history.pushState({}, '', '/');
   renderWithApi(<App />);
 

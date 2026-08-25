@@ -1,5 +1,5 @@
 import {
-  TicketError, deriveAliasKey, issueTicket, parseAndVerify, ticketDigest,
+  TicketError, deriveAliasKey, issueResumeToken, issueTicket, parseAndVerify, parseResumeToken, ticketDigest,
   type TicketPayload
 } from './terminal/tickets.js';
 
@@ -38,6 +38,16 @@ const GOLDEN_TICKET = 'v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NT
   'ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6' +
   'MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.' +
   '034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY';
+
+function nonCanonicalEncodingOfSameBytes(encoded: string): string {
+  const expected = Buffer.from(encoded, 'base64url');
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  for (const finalCharacter of alphabet) {
+    const candidate = `${encoded.slice(0, -1)}${finalCharacter}`;
+    if (candidate !== encoded && Buffer.from(candidate, 'base64url').equals(expected)) return candidate;
+  }
+  throw new Error('fixture has no alternate non-canonical base64url spelling');
+}
 
 describe('PTY ticket golden vectors', () => {
   it('derives the per-alias key with HKDF-SHA256 exactly as the relay and the agent do', () => {
@@ -105,9 +115,65 @@ describe('PTY ticket golden vectors', () => {
     expect(() => parseAndVerify(`v1.${parts[1]}.$$$`, key)).toThrowError(TicketError);
   });
 
+  it('rejects a non-canonical signature spelling even when it decodes to the authentic HMAC', () => {
+    const key = deriveAliasKey(MASTER, 'Steven', 'jarvis');
+    const [version, payload, signature] = GOLDEN_TICKET.split('.') as [string, string, string];
+    const alternate = nonCanonicalEncodingOfSameBytes(signature);
+    expect(Buffer.from(alternate, 'base64url')).toEqual(Buffer.from(signature, 'base64url'));
+    expect(() => parseAndVerify(`${version}.${payload}.${alternate}`, key, GOLDEN_PAYLOAD.iat + 1))
+      .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
+  });
+
   it('truncates the ticket digest to 16 hex characters and never echoes the ticket', () => {
     const digest = ticketDigest(GOLDEN_TICKET);
     expect(digest).toMatch(/^[0-9a-f]{16}$/);
     expect(GOLDEN_TICKET).not.toContain(digest);
+  });
+});
+
+describe('PTY resume credential', () => {
+  const sid = '11111111-2222-3333-4444-555555555555';
+  const operator = 'operator:steven';
+  const issuedAt = 1_750_000_000;
+  const expiresAt = issuedAt + 120;
+
+  it('round-trips a signed sid/operator/expiry binding with a fresh nonce', () => {
+    const first = issueResumeToken(sid, operator, expiresAt, MASTER, issuedAt);
+    const second = issueResumeToken(sid, operator, expiresAt, MASTER, issuedAt);
+    expect(first).not.toBe(second);
+    expect(parseResumeToken(first, MASTER, issuedAt + 1)).toMatchObject({
+      v: 1, sid, op: operator, iat: issuedAt, exp: expiresAt,
+    });
+    expect(parseResumeToken(first, MASTER, issuedAt + 1).nonce).toMatch(/^[A-Za-z0-9_-]{22}$/);
+  });
+
+  it('expires exactly at exp and rejects a signature made under another master', () => {
+    const token = issueResumeToken(sid, operator, expiresAt, MASTER, issuedAt);
+    expect(() => parseResumeToken(token, MASTER, expiresAt))
+      .toThrowError(expect.objectContaining({ reason: 'expired' }) as Error);
+    const otherMaster = Buffer.alloc(32, 0xff);
+    expect(() => parseResumeToken(token, otherMaster, issuedAt + 1))
+      .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
+  });
+
+  it('rejects any payload/signature tampering and malformed versions', () => {
+    const token = issueResumeToken(sid, operator, expiresAt, MASTER, issuedAt);
+    const [version, payload, signature] = token.split('.') as [string, string, string];
+    const tamperedPayload = `${payload.slice(0, -1)}${payload.endsWith('A') ? 'B' : 'A'}`;
+    const tamperedSignature = `${signature.slice(0, -1)}${signature.endsWith('A') ? 'B' : 'A'}`;
+    expect(() => parseResumeToken(`${version}.${tamperedPayload}.${signature}`, MASTER, issuedAt + 1))
+      .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
+    expect(() => parseResumeToken(`${version}.${payload}.${tamperedSignature}`, MASTER, issuedAt + 1))
+      .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
+    expect(() => parseResumeToken(`r2.${payload}.${signature}`, MASTER, issuedAt + 1)).toThrowError(TicketError);
+  });
+
+  it('rejects a non-canonical signature spelling that decodes to the same bytes', () => {
+    const token = issueResumeToken(sid, operator, expiresAt, MASTER, issuedAt);
+    const [version, payload, signature] = token.split('.') as [string, string, string];
+    const alternate = nonCanonicalEncodingOfSameBytes(signature);
+    expect(Buffer.from(alternate, 'base64url')).toEqual(Buffer.from(signature, 'base64url'));
+    expect(() => parseResumeToken(`${version}.${payload}.${alternate}`, MASTER, issuedAt + 1))
+      .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
   });
 });

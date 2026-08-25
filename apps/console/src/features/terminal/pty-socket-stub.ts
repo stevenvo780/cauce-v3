@@ -64,6 +64,10 @@ export class StubWebSocket {
   /** PTY output: always binary. */
   emitOutput(text: string): void {
     const bytes = new TextEncoder().encode(text);
+    this.emitBytes(bytes);
+  }
+
+  emitBytes(bytes: Uint8Array): void {
     // Detach a standalone ArrayBuffer so the manager may transfer it to the worker.
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     this.onmessage?.(new MessageEvent('message', { data: buffer }));

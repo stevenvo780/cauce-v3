@@ -43,7 +43,7 @@ const VISTAS = [
   ['/accounts', AccountsPage, /cuentas y cuotas/i],
   ['/queues', QueuesPage, /queues, retries & dlq/i],
   ['/observability', ObservabilityPage, /señales y auditoría/i],
-  ['/terminal', TerminalPage, /ultimate terminal/i],
+  ['/terminal', TerminalPage, 'Terminal de agentes'],
 ] as const;
 
 /**

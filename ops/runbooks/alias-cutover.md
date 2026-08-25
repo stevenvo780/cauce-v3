@@ -4,7 +4,12 @@
 
 Los scripts solo gestionan la unidad V3. Nunca detienen, arrancan ni escriben V2. Un collector externo, read-only y específico del entorno se configura en `CAUCE_GATE_CAPTURE_PATH`; recibe `ALIAS OUTPUT.json PHASE` y escribe el schema exacto `schemas/gate-snapshot.schema.json`. No debe imprimir payloads, tokens, sesiones ni headers.
 
-Cada snapshot fresco incluye consumers, pollers y lease owners V2/V3; inflight/unsettled; ACK pending/invalid/stale; wake/outbox/relay; DLQ y resultado de round-trip. `migration-gate.mjs` rechaza snapshots viejos, alias incorrecto, campos extra, dos consumers/pollers, overlap V2/V3, ACK viejo aceptado o DLQ abierta.
+Cada snapshot v2 fresco incluye consumers, pollers y lease owners V2/V3; inflight vencido o con
+owner incorrecto; ACK rechazado reciente/stale; wake/outbox/relay; DLQ histórico y delta desde el
+baseline; y prueba round-trip. El collector toma todo bajo una transacción `REPEATABLE READ READ
+ONLY`. `migration-gate.mjs` rechaza snapshots viejos, target incorrecto, campos extra, duplicados,
+overlap, ACK inválido o cualquier DLQ nuevo. El histórico `dlqOpen` se conserva y no se reinterpreta
+como regresión.
 
 ## Preparación
 
@@ -31,22 +36,35 @@ manifest ni las unidades generadas fijan un proveedor o valor de modelo.
 export CAUCE_CHANGE_ID=CHG-123
 export CAUCE_CUTOVER_CONFIRM=cutover:host-native:jarvis:CHG-123
 export CAUCE_GATE_CAPTURE_PATH=/usr/local/libexec/cauce-gate-collector
+export CAUCE_GATE_PROBE_PATH=/usr/local/libexec/cauce-gate-roundtrip-probe
 ops/scripts/cutover.sh host-native jarvis /ruta/snapshot-drain.json
 ```
 
-El primer parámetro selecciona explícitamente `host-native` o `container`; el script falla si la otra familia está activa o habilitada. Revalida drain, inicia una sola unit, captura estado nuevo y exige exactamente un consumer, poller y lease owner V3, V2 cero, round-trip auténtico, ACK válido y backlog/DLQ en gate. Para `container` también exige el check de digest/proceso del supervisor. Ante error detiene la unit seleccionada.
+El primer parámetro selecciona explícitamente `host-native` o `container`; el script falla si la
+otra familia está activa o habilitada. Revalida drain, inicia una sola unit, publica
+`system.gate.probe` con el principal mTLS reservado, captura estado nuevo y exige exactamente un
+consumer, poller y lease owner V3, V2 cero, ACK terminal aplicado por esa misma lease y backlog/DLQ
+delta en gate. La sonda no abre sesión ni invoca modelo. Para `container` también exige el check de
+digest/proceso del supervisor. Ante error detiene la unit seleccionada y elimina evidencia temporal.
 
 ## Canary
 
 ```sh
-ops/scripts/canary.sh jarvis /ruta/snapshot-canary.json
+ops/scripts/canary.sh jarvis /ruta/baseline-cutover.json
 ```
 
-Mantener al menos dos ventanas de lease/retry antes de subir tráfico. Umbrales default son cero y solo pueden elevarse explícitamente con `CAUCE_MAX_{WAKE,OUTBOX,RELAY}_PENDING` dentro del cambio aprobado.
+El segundo argumento es el baseline, no un resultado de canary aportado por el operador. El script
+crea el probe, evidencia 0600 y snapshot en un directorio temporal y los limpia al salir. Mantener al
+menos dos ventanas de lease/retry antes de subir tráfico. Umbrales default son cero y sólo pueden
+elevarse explícitamente con `CAUCE_MAX_{WAKE,OUTBOX,RELAY}_PENDING` dentro del cambio aprobado.
 
 ## Watchdog y reconciler
 
-Instalar `cauce-v3-{watchdog,reconciler}@.{service,timer}`. Crear `/etc/cauce-v3/guards/<alias>.enabled` solo después del cutover y habilitar ambos timers. Watchdog corre cada 30 s; reconciler cada 5 min. Ambos son read-only y fallan ante overlap, lease duplicado, ACK inválido/stale, DLQ o backlog fuera de gate; no intentan auto-reparar ni reinician V2.
+Instalar `cauce-v3-{watchdog,reconciler}@.{service,timer}`. Crear
+`/etc/cauce-v3/guards/<alias>.enabled` sólo después del cutover y configurar
+`CAUCE_GATE_BASELINE_FILE` con el snapshot exitoso, absoluto, regular y no symlink. Ambos son
+read-only y fallan ante overlap, lease duplicado, poller sin heartbeat fresco, ACK inválido/stale,
+DLQ nuevo o backlog fuera de gate; no publican probes, no auto-reparan ni reinician V2.
 
 ## Rollback de alias
 

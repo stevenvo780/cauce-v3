@@ -15,6 +15,7 @@ Environment=CAUCE_ALIAS=socrates
 Environment=CAUCE_TENANT=Steven
 Environment=CAUCE_ROOM=grp.steven
 Environment=CAUCE_HARNESS=codex
+Environment=CAUCE_SEMBRAR_PERFIL=1
 Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
 Environment=CAUCE_INSTANCE_ID=systemd-socrates

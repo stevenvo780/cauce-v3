@@ -10,7 +10,7 @@ import { LiveFleetPage } from './LiveFleetPage';
 /**
  * LAS TRES CAPAS, PROBADAS DESDE LA PÁGINA VIVA.
  *
- * Igual que el editor del rol: la mitad del encargo es DÓNDE vive. Un test del componente suelto
+ * Igual que el perfil canónico: la mitad del encargo es DÓNDE vive. Un test del componente suelto
  * pasaría verde con la pestaña desenganchada del cajón, que es exactamente el defecto que hace que
  * nadie mantenga el `CLAUDE.md` —está, pero no hay por dónde llegar—.
  *
@@ -31,7 +31,7 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/live');
 });
 
-/** El mismo registro que usa el editor del rol, para que el brief de kant sea el de siempre. */
+/** El mismo registro que publica la proyección legacy, para que el brief de kant sea estable. */
 function configConBrief(roleBrief: string) {
   server.use(http.get('*/v3/console/config', () => HttpResponse.json({
     revision: 1,
@@ -97,8 +97,8 @@ it('la directiva rotula las TRES capas por su fin, no sólo por su nombre técni
   expect(within(dialogo).getByText('CÓMO SE TRABAJA AQUÍ')).toBeInTheDocument();
   expect(within(dialogo).getByText('LO QUE ESE AGENTE APRENDIÓ')).toBeInTheDocument();
 
-  // Y la capa 1 sigue siendo el MISMO editor: el diálogo ensancha, no reemplaza.
-  expect(await within(dialogo).findByLabelText(/rol declarado de kant/i)).toBeInTheDocument();
+  // La capa 1 conserva la misma proyección, sin reabrir un editor legacy.
+  expect(await within(dialogo).findByLabelText(/proyección del rol de kant/i)).toHaveAttribute('readonly');
 }, 25_000);
 
 /**

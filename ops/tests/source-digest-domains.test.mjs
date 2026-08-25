@@ -14,6 +14,7 @@
 //   * the harness that produces authentic evidence is covered by a domain of its own, closing the
 //     opposite hole (evidence that proves less than it claims);
 //   * every release consumer really passes --domain instead of silently taking the default.
+//   * only the exact operator-owned _grafo scratch prefix is absent from every release digest.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -86,6 +87,7 @@ assert(
 //    the `runtime` stage of deploy/Dockerfile copies from, plus the dependency-graph manifests that
 //    keep a console dependency change visible to the runtime digest.
 for (const sentinel of [
+  '.dockerignore',
   'package.json',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
@@ -157,6 +159,7 @@ try {
     await writeFile(path.join(sandbox, relative), contents, 'utf8');
   };
   await write('package.json', '{"name":"fake"}\n');
+  await write('.dockerignore', 'node_modules\n.env*\n');
   await write('pnpm-lock.yaml', 'lockfileVersion: 9\n');
   await write('pnpm-workspace.yaml', 'packages:\n  - packages/*\n');
   await write('tsconfig.json', '{}\n');
@@ -167,6 +170,7 @@ try {
   await write('deploy/runtime-entrypoint.sh', '#!/bin/sh\nexec "$@"\n');
   await write('apps/console/src/App.tsx', 'export const App = () => null;\n');
   await write('apps/console/src/theme.css', '.panel { color: red; }\n');
+  await write('apps/console/src/features/_grafo/consultas-grafo.sql', 'SELECT 1;\n');
   await write('ops/harness/authentic-runner.mjs', 'export const run = 1;\n');
   await write('ops/compose.authentic.yaml', 'services: {}\n');
   await write('ops/scripts/fault-runtime.sh', '#!/bin/sh\n');
@@ -180,7 +184,19 @@ try {
     full: digestOf('full', sandbox),
   };
 
-  // 9a. THE FIX. A console-only change must not move the runtime digest, because no console file
+  // 9a. The one approved operator scratch path is intentionally outside every release digest.
+  //     A directory with the same basename anywhere else remains covered.
+  await write('apps/console/src/features/_grafo/consultas-grafo.sql', 'SELECT 2;\n');
+  for (const domain of ['runtime', 'console', 'harness', 'full']) {
+    assert.equal(digestOf(domain, sandbox), before[domain], `_grafo scratch changed the ${domain} digest`);
+  }
+  await write('apps/console/src/other/_grafo/query.sql', 'SELECT 3;\n');
+  assert.notEqual(digestOf('console', sandbox), before.console, 'the exclusion must not apply to another _grafo path');
+  assert.notEqual(digestOf('full', sandbox), before.full, 'the full domain must cover another _grafo path');
+  await rm(path.join(sandbox, 'apps/console/src/other'), { recursive: true });
+  assert.equal(digestOf('console', sandbox), before.console, 'removing the covered control path must restore the digest');
+
+  // 9b. THE FIX. A console-only change must not move the runtime digest, because no console file
   //     reaches the runtime image. It must still move the console and full digests.
   await write('apps/console/src/theme.css', '.panel { color: blue; }\n');
   assert.equal(digestOf('runtime', sandbox), before.runtime, 'a console CSS edit must not invalidate runtime fault evidence');
@@ -193,22 +209,33 @@ try {
     harness: digestOf('harness', sandbox),
   };
 
-  // 9b. The gate must not be loosened for anything that DOES reach the runtime image.
+  // 9c. The gate must not be loosened for anything that DOES reach the runtime image.
   await write('services/gateway/src/app.ts', 'export const app = 2;\n');
   assert.notEqual(digestOf('runtime', sandbox), afterConsole.runtime, 'a service change must invalidate runtime evidence');
   const afterService = digestOf('runtime', sandbox);
 
-  // 9c. A console dependency change is still visible to the runtime digest through the lockfile,
+  // 9d. A console dependency change is still visible to the runtime digest through the lockfile,
   //     which is why dropping apps/console from the runtime domain is safe.
   await write('pnpm-lock.yaml', 'lockfileVersion: 9\npackages:\n  react: 19\n');
   assert.notEqual(digestOf('runtime', sandbox), afterService, 'a lockfile change must invalidate runtime evidence');
   const afterLock = digestOf('runtime', sandbox);
 
-  // 9d. deploy/ still counts as runtime.
+  // 9e. deploy/ still counts as runtime.
   await write('deploy/runtime-entrypoint.sh', '#!/bin/sh\nexec env "$@"\n');
   assert.notEqual(digestOf('runtime', sandbox), afterLock, 'a deploy change must invalidate runtime evidence');
 
-  // 9e. Weakening the harness must move the harness digest without touching the image digests.
+  // 9f. Build-context policy affects both final images and must move both domains.
+  const beforeDockerignore = {
+    runtime: digestOf('runtime', sandbox),
+    console: digestOf('console', sandbox),
+  };
+  await write('.dockerignore', 'node_modules\n.env*\nlocal-scratch\n');
+  assert.notEqual(digestOf('runtime', sandbox), beforeDockerignore.runtime,
+    'a .dockerignore change must invalidate runtime build evidence');
+  assert.notEqual(digestOf('console', sandbox), beforeDockerignore.console,
+    'a .dockerignore change must invalidate console build evidence');
+
+  // 9g. Weakening the harness must move the harness digest without touching the image digests.
   const beforeHarness = {
     runtime: digestOf('runtime', sandbox),
     console: digestOf('console', sandbox),
@@ -219,16 +246,17 @@ try {
   assert.equal(digestOf('runtime', sandbox), beforeHarness.runtime, 'a harness change must not invalidate the image build evidence');
   assert.equal(digestOf('console', sandbox), beforeHarness.console, 'a harness change must not invalidate console evidence');
 
-  // 9f. Renames are observable: paths are hashed alongside bytes.
+  // 9h. Renames are observable: paths are hashed alongside bytes.
   const renameBase = digestOf('runtime', sandbox);
   await write('services/gateway/src/app2.ts', 'export const app = 2;\n');
   await rm(path.join(sandbox, 'services/gateway/src/app.ts'));
   assert.notEqual(digestOf('runtime', sandbox), renameBase, 'a rename must move the digest');
 
-  // 9g. Secrets and caches stay out even when they sit inside a covered family.
+  // 9i. Secrets and caches stay out even when they sit inside a covered family.
   const listing = pathsOf('full', sandbox);
   assert(!listing.has('node_modules/evil/index.js'), 'node_modules must never be hashed');
   assert(!listing.has('.env.production'), 'private env files must never be hashed');
+  assert(!listing.has('apps/console/src/features/_grafo/consultas-grafo.sql'), 'operator scratch leaked into full digest');
 } finally {
   await rm(sandbox, { recursive: true, force: true });
 }

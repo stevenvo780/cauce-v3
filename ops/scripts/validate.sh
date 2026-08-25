@@ -26,11 +26,16 @@ for path in sorted((root / 'container-runtime').glob('*.py')):
     print(f'python syntax ok: {path}')
 PY
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/validate-manifests.py"
+fleet_size=$(python3 - "$ROOT/container-aliases.json" <<'PY'
+import json, pathlib, sys
+print(len(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))['aliases']))
+PY
+)
 tmp_units=$(mktemp -d)
 tmp_container_units=$(mktemp -d)
 trap 'rm -rf "$tmp_units" "$tmp_container_units"' EXIT
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-units.py" --output "$tmp_units" >/dev/null
-[[ $(printf '%s\n' "$tmp_units"/cauce-v3-alias-*.service | wc -l) -eq 14 ]] || { printf 'unit generator did not emit exactly 14 units\n' >&2; exit 1; }
+[[ $(printf '%s\n' "$tmp_units"/cauce-v3-alias-*.service | wc -l) -eq "$fleet_size" ]] || { printf 'unit generator did not emit the declarative fleet size (%s)\n' "$fleet_size" >&2; exit 1; }
 (cd "$tmp_units" && sha256sum -c SHA256SUMS >/dev/null)
 for unit in "$tmp_units"/cauce-v3-alias-*.service "$tmp_units/SHA256SUMS"; do
   cmp -s "$unit" "$ROOT/generated/systemd/$(basename "$unit")" || {
@@ -43,8 +48,8 @@ done
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-container-units.py" --output "$tmp_container_units" >/dev/null
 container_units=("$tmp_container_units"/cauce-v3-container-*.service)
 container_configs=("$tmp_container_units"/configs/*.env.example)
-[[ ${#container_units[@]} -eq 14 && ${#container_configs[@]} -eq 14 ]] || {
-  printf 'container unit generator did not emit exactly 14 units/configs\n' >&2
+[[ ${#container_units[@]} -eq "$fleet_size" && ${#container_configs[@]} -eq "$fleet_size" ]] || {
+  printf 'container unit generator did not emit the declarative fleet size (%s)\n' "$fleet_size" >&2
   exit 1
 }
 (cd "$tmp_container_units" && sha256sum -c SHA256SUMS >/dev/null)
@@ -147,8 +152,45 @@ if ! docker build --help >/dev/null 2>&1; then
   printf 'docker build check skipped outside release\n'
 fi
 if command -v shellcheck >/dev/null 2>&1; then shellcheck "$ROOT"/scripts/*.sh "$PROJECT"/deploy/*.sh; fi
-if grep -R -E '(localStorage|sessionStorage)' "$PROJECT/apps/console/src" --include='*.ts' --include='*.tsx'; then
-  printf 'browser storage usage is forbidden\n' >&2
-  exit 1
-fi
+node --input-type=module - "$PROJECT/apps/console/src" <<'NODE'
+import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
+import ts from 'typescript';
+
+const root = process.argv[2];
+const forbidden = new Set(['localStorage', 'sessionStorage']);
+const failures = [];
+
+async function scanTree(directory) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      await scanTree(absolute);
+      continue;
+    }
+    if (!entry.isFile() || (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx'))) continue;
+    const source = await readFile(absolute, 'utf8');
+    const kind = entry.name.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+    const sourceFile = ts.createSourceFile(absolute, source, ts.ScriptTarget.Latest, true, kind);
+    let rejected = false;
+    const visit = (node) => {
+      if (rejected) return;
+      if (ts.isIdentifier(node) && forbidden.has(node.text)) {
+        failures.push(path.relative(root, absolute));
+        rejected = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+}
+
+await scanTree(root);
+if (failures.length > 0) {
+  for (const failure of failures.sort()) console.error(`browser storage usage is forbidden: ${failure}`);
+  process.exit(1);
+}
+console.log('browser storage policy passed');
+NODE
 printf 'static validation passed\n'

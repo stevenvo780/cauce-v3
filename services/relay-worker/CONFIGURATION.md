@@ -32,6 +32,14 @@ Retryable network, 408, 425, 429, and 5xx failures back off exponentially. Termi
 4xx failures, missing transports, allowlist violations, and exhausted attempts ACK
 `dead` for repository DLQ handling.
 
+El claim es incremental: una lease fresca por adapter y por ciclo. El valor histórico
+`CAUCE_RELAY_BATCH_SIZE` todavía se acepta para que un entorno antiguo no deje de arrancar,
+pero el worker lo acota deliberadamente a `1`. `CAUCE_RELAY_HTTP_TIMEOUT_MS` es un deadline
+total (provider, firma, DNS y HTTP), no sólo el timeout del socket, y
+`CAUCE_RELAY_LEASE_MS` debe cubrirlo con al menos 5 segundos para persistir el ACK. Un retorno
+`ackOutbox(...).applied=false` se cuenta como `fenced`, nunca como `sent` y nunca provoca un
+segundo ACK de retry después de un efecto remoto.
+
 ## Runnable service
 
 `pnpm --filter @cauce/relay-worker start` wires the PostgreSQL repository and HTTP
@@ -42,9 +50,16 @@ transport. Configure these non-secret selectors/settings:
 - `CAUCE_RELAY_ADAPTERS`: comma-separated adapter names handled by this worker.
 - `CAUCE_RELAY_ALLOWED_ORIGINS`: comma-separated exact HTTPS origins.
 - Optional positive integers: `CAUCE_RELAY_HTTP_TIMEOUT_MS`,
-  `CAUCE_RELAY_LEASE_MS`, `CAUCE_RELAY_BATCH_SIZE`, `CAUCE_RELAY_MAX_ATTEMPTS`,
+  `CAUCE_RELAY_LEASE_MS`, `CAUCE_RELAY_BATCH_SIZE` (compatibilidad; runtime siempre 1), `CAUCE_RELAY_MAX_ATTEMPTS`,
   `CAUCE_RELAY_BASE_RETRY_MS`, and `CAUCE_RELAY_POLL_MS`.
 - `PORT` (default 8083) expone `/health/live`, `/health/ready` y `/metrics`; no incluye tenant, URL ni payload como labels.
+
+`/health/live` falla si el loop excede su deadline acotado. `/health/ready` exige además
+PostgreSQL, al menos un adapter y un ciclo exitoso reciente; un ciclo sin eventos cuenta como
+progreso legítimo. Los contadores son locales al proceso y se reinician explícitamente junto con
+`cauce_origin_relay_process_start_time_seconds`. Prometheus descubre este servicio por DNS, por
+lo que un profile deliberadamente ausente no crea un target fantasma; si existe y no responde,
+o si aparece backlog durable sin progreso, las alertas sí se activan.
 
 `DATABASE_URL` is supplied by the deployment secret mechanism. The provider module,
 not this worker, owns signing-key lookup/use and must not return key material.

@@ -23,8 +23,23 @@ scrape_configs:
       - targets: [otel-collector:8888, otel-collector:9464]
   - job_name: cauce-origin-relay
     metrics_path: /metrics
-    static_configs:
-      - targets: [relay-worker:8083]
+    # Profile-aware discovery: an intentionally disabled origin-relay profile has no DNS record
+    # and therefore no permanently red phantom target. When the service is discoverable, `up=0`
+    # is actionable. Durable backlog alerts below remain the functional guard if it disappears.
+    dns_sd_configs:
+      - names: [relay-worker]
+        type: A
+        port: 8083
+        refresh_interval: 15s
+  - job_name: cauce-telegram
+    metrics_path: /metrics
+    # Same profile-aware contract as origin-relay. telegram-bridge binds only its internal backend
+    # interface; no host port is published.
+    dns_sd_configs:
+      - names: [telegram-bridge]
+        type: A
+        port: 8086
+        refresh_interval: 15s
   - job_name: cauce-outbox
     metrics_path: /metrics
     static_configs:

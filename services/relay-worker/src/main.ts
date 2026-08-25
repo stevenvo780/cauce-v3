@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { CauceRepository, createPool } from '@cauce/store';
 import { StoreOriginRelayRepository } from './repository.js';
+import { assertRelayLeaseCoversSend, OriginRelayProgress } from './progress.js';
 import {
   HttpWebhookOriginTransport, MapOriginTransportRegistry, type WebhookProvider
 } from './transports.js';
@@ -51,39 +52,55 @@ if (process.env.NODE_ENV === 'production') {
   }
 }
 const provider = await loadProvider(required('CAUCE_WEBHOOK_PROVIDER_MODULE'));
+const adapters = list('CAUCE_RELAY_ADAPTERS');
+const httpTimeoutMs = positiveInteger('CAUCE_RELAY_HTTP_TIMEOUT_MS', 10_000);
+const leaseMs = positiveInteger('CAUCE_RELAY_LEASE_MS', 30_000);
+assertRelayLeaseCoversSend(leaseMs, httpTimeoutMs);
 const transport = new HttpWebhookOriginTransport({
   provider,
   allowedOrigins: list('CAUCE_RELAY_ALLOWED_ORIGINS'),
-  timeoutMs: positiveInteger('CAUCE_RELAY_HTTP_TIMEOUT_MS', 10_000)
+  timeoutMs: httpTimeoutMs
 });
 const transports = new MapOriginTransportRegistry();
-for (const adapter of list('CAUCE_RELAY_ADAPTERS')) transports.register(adapter, transport);
+for (const adapter of adapters) transports.register(adapter, transport);
 
 const pool = createPool(databaseUrl);
 const repository = new StoreOriginRelayRepository(new CauceRepository(pool));
-const results = new Map<'sent' | 'retry' | 'dead', number>([['sent', 0], ['retry', 0], ['dead', 0]]);
+const pollMs = positiveInteger('CAUCE_RELAY_POLL_MS', 250);
+const progress = new OriginRelayProgress(
+  adapters.length,
+  adapters.length * httpTimeoutMs + pollMs + 5_000
+);
 const worker = new OriginRelayWorker({
   repository,
   transports,
-  leaseMs: positiveInteger('CAUCE_RELAY_LEASE_MS', 30_000),
-  batchSize: positiveInteger('CAUCE_RELAY_BATCH_SIZE', 20),
+  leaseMs,
+  // Parsed for compatibility, but OriginRelayWorker deliberately caps this to one fresh lease.
+  batchSize: positiveInteger('CAUCE_RELAY_BATCH_SIZE', 1),
   maxAttempts: positiveInteger('CAUCE_RELAY_MAX_ATTEMPTS', 5),
   baseRetryMs: positiveInteger('CAUCE_RELAY_BASE_RETRY_MS', 500),
-  pollMs: positiveInteger('CAUCE_RELAY_POLL_MS', 250),
-  onResult: (result) => results.set(result, (results.get(result) ?? 0) + 1)
+  pollMs,
+  onResult: (result) => progress.result(result),
+  onCycleStart: () => progress.cycleStarted(),
+  onCycleSuccess: () => progress.cycleSucceeded(),
+  onCycleError: () => progress.cycleFailed()
 });
 const shutdown = new AbortController();
 const health = createServer(async (request, response) => {
   if (request.url === '/health/live') {
-    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-    response.end(JSON.stringify({ status: 'live' }));
+    const state = progress.snapshot();
+    response.writeHead(state.live ? 200 : 503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    response.end(JSON.stringify({ status: state.live ? 'live' : 'not_live', reason: state.reason,
+      tick_age_ms: state.tick_age_ms }));
     return;
   }
   if (request.url === '/health/ready') {
     try {
       await pool.query('SELECT 1');
-      response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      response.end(JSON.stringify({ status: 'ready' }));
+      const state = progress.snapshot();
+      response.writeHead(state.ready ? 200 : 503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      response.end(JSON.stringify({ status: state.ready ? 'ready' : 'not_ready', reason: state.reason,
+        configured_adapters: state.configured_adapters, tick_age_ms: state.tick_age_ms }));
     } catch {
       response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       response.end(JSON.stringify({ status: 'not_ready' }));
@@ -92,13 +109,7 @@ const health = createServer(async (request, response) => {
   }
   if (request.url === '/metrics') {
     response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
-    response.end([
-      '# HELP cauce_origin_relay_results_total Origin relay worker outcomes.',
-      '# TYPE cauce_origin_relay_results_total counter',
-      ...(['sent', 'retry', 'dead'] as const).map((result) =>
-        `cauce_origin_relay_results_total{result="${result}"} ${results.get(result) ?? 0}`),
-      ''
-    ].join('\n'));
+    response.end(progress.renderMetrics());
     return;
   }
   response.writeHead(404, { 'content-type': 'application/json' });

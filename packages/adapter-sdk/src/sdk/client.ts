@@ -1,5 +1,7 @@
-import { PROTOCOL_VERSION, type ContextoDeAlias } from '@cauce/protocol';
-import { resumenDeLaSiembra, sembrarPerfilDelArnes } from '../context/siembra-del-perfil.js';
+import { PROTOCOL_VERSION } from '@cauce/protocol';
+import {
+  resumenDeLaSiembra, sembrarPerfilDelArnes, type ResultadoDeLaSiembra,
+} from '../context/siembra-del-perfil.js';
 import { DEFAULT_BACKOFF, ExponentialBackoff, systemClock } from './backoff.js';
 import { ConsumerLease, DurableStore } from './durable-store.js';
 import { AdapterEngine } from './engine.js';
@@ -47,27 +49,69 @@ function validateIdentity(config: AdapterConfig): void {
   }
 }
 
+type CapabilityEncoder = (capabilities: AdapterCapabilities) => readonly string[];
+
+/*
+ * El manifiesto usa claves legibles por código y el hello transporta strings. La tabla está
+ * tipada contra TODAS las claves de `AdapterCapabilities`: agregar una capability sin decidir su
+ * representación deja el typecheck rojo, en vez de producir otra declaración que el gateway nunca
+ * llega a ver. Las cadenas históricas no cambian; las nuevas son aditivas y un gateway anterior
+ * puede ignorarlas sin romper el saludo.
+ */
+const CAPABILITY_ENCODERS = {
+  protocol_version: (value) => [`protocol.${value.protocol_version}`],
+  harness: (value) => [`harness.${value.harness}`],
+  structured_output: (value) => value.structured_output === true ? ['structured-output'] : [],
+  stdin_prompt: (value) => value.stdin_prompt === true ? ['stdin-prompt'] : [],
+  durable_inbox: (value) => value.durable_inbox === true ? ['durable-inbox'] : [],
+  durable_outbox: (value) => value.durable_outbox === true ? ['durable-outbox'] : [],
+  idempotent_delivery: (value) => value.idempotent_delivery === true ? ['idempotent-delivery'] : [],
+  heartbeat: (value) => value.heartbeat === true ? ['heartbeat'] : [],
+  cancellation: (value) => value.cancellation === 'process_group'
+    ? ['cancellation.process-group']
+    : [],
+  fencing_epoch: (value) => value.fencing_epoch === true ? ['fencing-epoch'] : [],
+  origin_relay: (value) => value.origin_relay === true ? ['origin-relay'] : [],
+  attempt_scoped_delivery: (value) => value.attempt_scoped_delivery === true
+    ? ['attempt-scoped-delivery']
+    : [],
+  event_id_correlation: (value) => value.event_id_correlation === true
+    ? ['event-id-correlation']
+    : [],
+  claim_token_correlation: (value) => value.claim_token_correlation === true
+    ? ['claim-token-correlation']
+    : [],
+  authenticated_session_scope: (value) => value.authenticated_session_scope === true
+    ? ['authenticated-session-scope']
+    : [],
+  routing_targets_v1: (value) => value.routing_targets_v1 === true ? ['routing_targets_v1'] : [],
+  attachments_v1: (value) => value.attachments_v1 === true ? ['attachments_v1'] : [],
+  native_image_input_v1: (value) => value.native_image_input_v1 === true
+    ? ['native_image_input_v1']
+    : [],
+  native_document_input_v1: (value) => value.native_document_input_v1 === true
+    ? ['native_document_input_v1']
+    : [],
+  persistent_sessions: (value) => value.persistent_sessions === true ? ['persistent-sessions'] : [],
+  loopback_api: (value) => value.loopback_api === true ? ['loopback-api'] : [],
+  stable_alias_sessions: (value) => value.stable_alias_sessions === true
+    ? ['stable-alias-sessions']
+    : [],
+  api_cancellation: (value) => value.api_cancellation === 'abort_signal'
+    ? ['api-cancellation.abort-signal']
+    : [],
+  renewable_delivery_claims_v1: (value) => value.renewable_delivery_claims_v1 === true
+    ? ['renewable_delivery_claims_v1']
+    : [],
+  delegation_feedback_v1: (value) => value.delegation_feedback_v1 === true
+    ? ['delegation_feedback_v1']
+    : [],
+  agent_identity_v1: (value) => value.agent_identity_v1 === true ? ['agent_identity_v1'] : [],
+  agent_profile_v1: (value) => value.agent_profile_v1 === true ? ['agent_profile_v1'] : [],
+} satisfies Record<keyof AdapterCapabilities, CapabilityEncoder>;
+
 export function capabilityStrings(capabilities: AdapterCapabilities): string[] {
-  return [
-    `protocol.${capabilities.protocol_version}`,
-    `harness.${capabilities.harness}`,
-    'structured-output',
-    'durable-inbox',
-    'durable-outbox',
-    'fencing-epoch',
-    'attempt-scoped-delivery',
-    'event-id-correlation',
-    'claim-token-correlation',
-    'authenticated-session-scope',
-    ...(capabilities.routing_targets_v1 ? ['routing_targets_v1'] : []),
-    ...(capabilities.agent_identity_v1 ? ['agent_identity_v1'] : []),
-    ...(capabilities.renewable_delivery_claims_v1 ? ['renewable_delivery_claims_v1'] : []),
-    ...(capabilities.delegation_feedback_v1 ? ['delegation_feedback_v1'] : []),
-    ...(capabilities.persistent_sessions ? ['persistent-sessions'] : []),
-    ...(capabilities.loopback_api === true ? ['loopback-api'] : []),
-    ...(capabilities.stable_alias_sessions === true ? ['stable-alias-sessions'] : []),
-    ...(capabilities.api_cancellation === 'abort_signal' ? ['api-cancellation.abort-signal'] : []),
-  ];
+  return Object.values(CAPABILITY_ENCODERS).flatMap((encode) => encode(capabilities));
 }
 
 export class AdapterClient {
@@ -194,9 +238,9 @@ export class AdapterClient {
            * Va DESPUÉS de `activateEpoch` y ANTES del primer `drain`, que es la única ventana en
            * la que el fichero se puede escribir sin competir con un turno en curso.
            *
-           * `void` y no `await`: escribir un fichero no puede retrasar el arranque del consumidor,
-           * y `sembrarPerfilDelArnes` no lanza nunca —devuelve el parte—. Si falla, el alias queda
-           * conectado y recibiendo con el sobre completo, que es el comportamiento de siempre.
+           * Es síncrono y termina ANTES de heartbeat, outbox y recuperación. Un fallo deja esta
+           * conexión fuera de servicio y entra al backoff retryable: recibir trabajo con un perfil
+           * viejo sería afirmar una identidad que el runtime no pudo aplicar.
            */
           this.sembrarPerfil(frame);
           this.backoff.reset();
@@ -220,11 +264,10 @@ export class AdapterClient {
   }
 
   /**
-   * Escribe el perfil que vino en el saludo en los ficheros del arnés. Nunca lanza.
+   * Escribe el perfil que vino en el saludo en los ficheros del arnés o falla la conexión.
    *
-   * El interruptor (`CAUCE_SEMBRAR_PERFIL=1`) está APAGADO por defecto y es deliberado: esto
-   * escribe dentro del contenedor de quince agentes que están trabajando. Encenderlo es una
-   * decisión con fecha y con alguien mirando, no un efecto secundario de desplegar.
+   * Está activo por defecto para los arneses soportados. `CAUCE_SEMBRAR_PERFIL=0` es una retirada
+   * explícita; cualquier otro valor conserva la convergencia al reconectar.
    *
    * El resultado va al registro SIEMPRE, incluso cuando no se escribió nada: «no se sembró» es
    * justo lo que hay que poder ver cuando un alias no tiene su perfil, y un silencio no distingue
@@ -236,19 +279,23 @@ export class AdapterClient {
     try {
       const resultado = sembrarPerfilDelArnes(
         this.harness.definition.id,
-        perfil as unknown as ContextoDeAlias,
-        { habilitado: process.env.CAUCE_SEMBRAR_PERFIL === '1' },
+        perfil,
+        { habilitado: siembraHabilitada(process.env) },
       );
-      this.logger({ event: 'profile_seed', alias: this.config.alias, reason: resumenDeLaSiembra(resultado) });
+      const resumen = resumenDeLaSiembra(resultado);
+      this.logger({ event: 'profile_seed', alias: this.config.alias, reason: resumen });
+      if (!siembraAplicada(resultado)) {
+        throw new AdapterError('PROFILE_SEED_FAILED', resumen, true);
+      }
     } catch (error) {
-      // Doble red: `sembrarPerfilDelArnes` promete no lanzar, pero un fallo aquí NO puede tumbar
-      // el saludo. Un alias sordo es infinitamente peor que un fichero sin actualizar.
+      if (error instanceof AdapterError) throw error;
       this.logger({
         event: 'profile_seed',
         alias: this.config.alias,
-        reason: 'la siembra del perfil falló sin control',
+        reason: 'la siembra del perfil falló antes de acreditar el runtime',
         error_message: error instanceof Error ? error.message : String(error),
       });
+      throw new AdapterError('PROFILE_SEED_FAILED', 'Profile seed failed before runtime ACK', true);
     }
   }
 
@@ -361,6 +408,20 @@ export class AdapterClient {
       );
     }
   }
+}
+
+/** Sólo un lote completo, un no-op comprobado o una retirada explícita permiten consumir. */
+export function siembraAplicada(resultado: ResultadoDeLaSiembra): boolean {
+  if (resultado.estado === 'apagado' || resultado.estado === 'sin-ficheros') return true;
+  if (resultado.estado !== 'hecho') return false;
+  return resultado.ficheros.every((fichero) => (
+    fichero.estado === 'escrito' || fichero.estado === 'ya-estaba'
+  ));
+}
+
+/** Default-on: sólo el valor explícito `0` desactiva la convergencia en reconnect. */
+export function siembraHabilitada(entorno: NodeJS.ProcessEnv): boolean {
+  return entorno.CAUCE_SEMBRAR_PERFIL !== '0';
 }
 
 /**

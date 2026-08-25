@@ -33,7 +33,13 @@ No registrar `telegram` también en `origin-relay`: serían egress workers compe
 
 ## Flota declarativa
 
-`manifests/*.yaml` contiene exactamente 12 aliases y ninguna credencial: OpenClaw `jarvis/janus/hegel/midas/seneca`, Claude `vulcano`, Hermes `argos` y Codex `dedalo/kant/kratos/salva/socrates`. OpenCode queda empaquetado para compatibilidad, pero ningún alias live depende de él. Tenant, room, origen Telegram, estado y nombres de variables `*_PATH`/`*_URL` son validados de forma exacta. `container-aliases.json` agrega el mapping exacto container/user/home/mount sin reemplazar esos manifests ni sus units host-native.
+`container-aliases.json` es el inventario declarativo único del release y no contiene credenciales.
+`manifests/*.yaml`, los units y sus ejemplos se derivan de su conjunto exacto de aliases; los
+validadores rechazan cualquier alta, baja o cambio de tenant/room/harness aplicado sólo en una
+capa. OpenCode queda empaquetado para compatibilidad, pero ningún alias declarado depende de él.
+Tenant, room, origen Telegram, estado y nombres de variables `*_PATH`/`*_URL` son validados de
+forma exacta. PostgreSQL sigue siendo el registro de intención live y debe superar el gate de
+paridad antes de desplegar; nunca se interpreta un alta en DB como prueba de que el runtime existe.
 Hermes declara además solo el nombre operativo `HERMES_INFERENCE_MODEL`; su valor se resuelve en el env privado de `argos` y no se hardcodea en manifests o unidades.
 
 ```sh
@@ -105,7 +111,7 @@ convierte la ausencia de Compose v2, build autorizado, publicación por digest,
 credenciales privadas o evidencia distribuida de hosts en un release aprobado.
 
 `make release-gate` falla si falta Docker Compose v2, `docker build`, build
-evidence actual, hashes, las 12 unidades systemd exactas o evidencia
+evidence actual, hashes, las 15 unidades systemd exactas o evidencia
 `compose-authentic` del mismo image/source digest. Exige cero skips críticos y
 los mecanismos `gateway-process-kill` y `postgres-container-kill`. El fallback
 `runtime-authentic` sirve para desarrollo sin Compose, pero nunca para release.

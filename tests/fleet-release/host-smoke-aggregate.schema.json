@@ -17,16 +17,16 @@
       "additionalProperties": false,
       "required": ["aliases", "harnessCounts", "openClawEvidenceHosts", "controlPlaneOpenClawRequired"],
       "properties": {
-        "aliases": { "const": 12 },
+        "aliases": { "const": 15 },
         "harnessCounts": {
           "type": "object",
           "additionalProperties": false,
           "required": ["openclaw", "claude", "hermes", "codex", "opencode"],
           "properties": {
             "openclaw": { "const": 5 },
-            "claude": { "const": 1 },
+            "claude": { "const": 3 },
             "hermes": { "const": 1 },
-            "codex": { "const": 5 },
+            "codex": { "const": 6 },
             "opencode": { "const": 0 }
           }
         },

@@ -131,16 +131,12 @@ it('mientras el diálogo vive, el armazón queda inerte y el cajón marcado como
   expect(document.documentElement).not.toHaveClass('directiva-modal-abierta');
 }, 25_000);
 
-/**
- * El editor del rol entra ENTERO en la columna 1: no es una copia recortada. Se rompe si alguien
- * lo reescribe «para que quepa» y se lleva por delante el contador, el guardado o el diario —los
- * tres describen fallos ya cometidos—.
- */
-it('la columna 1 trae el editor del rol completo: textarea, contador, guardado e historial', async () => {
+/** La columna legacy no puede reabrir un guardado que omita el ACK del runtime. */
+it('la columna 1 muestra la proyección sólo lectura y dirige al perfil canónico', async () => {
   const { dialogo } = await abrir();
   const capa1 = within(dialogo).getByLabelText('Capa 1: rol declarado');
-  expect(await within(capa1).findByLabelText(/rol declarado de kant/i)).toBeInTheDocument();
+  expect(await within(capa1).findByLabelText(/proyección del rol de kant/i)).toHaveAttribute('readonly');
   expect(within(capa1).getByText(/\/ 1200$/)).toBeInTheDocument();
-  expect(within(capa1).getByRole('button', { name: /guardar el rol/i })).toBeInTheDocument();
-  expect(within(capa1).getByText(/historial y vuelta atrás/i)).toBeInTheDocument();
+  expect(within(capa1).queryByRole('button', { name: /guardar el rol/i })).not.toBeInTheDocument();
+  expect(within(capa1).getByRole('button', { name: /editar el perfil canónico/i })).toBeInTheDocument();
 }, 25_000);

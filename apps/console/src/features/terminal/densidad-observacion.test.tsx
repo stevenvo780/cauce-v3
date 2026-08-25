@@ -112,6 +112,6 @@ describe('la página del terminal con una sesión abierta', () => {
     renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con kant/i }));
-    expect(await screen.findByRole('heading', { level: 1, name: /ultimate terminal/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' })).toBeInTheDocument();
   });
 });

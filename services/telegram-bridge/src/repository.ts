@@ -83,10 +83,42 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
     this.outbox = new CauceRepository(pool);
   }
 
-  private async reconcileTerminalSendingEffects(): Promise<void> {
+  private async reconcileTerminalEffects(): Promise<void> {
     const diagnostic = 'Interrupted on the final outbox attempt while a Telegram request may have been in flight; '
       + 'automatic replay is disabled';
     await withTransaction(this.pool, async (client) => {
+      // A remote effect in `sent` is stronger evidence than an outbox lease timeout. If every
+      // expected piece is durably confirmed, finish the outbox and resolve only the mechanical
+      // expiry DLQ. This sends nothing and never touches ambiguous/sending effects.
+      const provenSent = await client.query<{ id: string }>(
+        `WITH proof AS (
+           SELECT outbox.id,max(effect.sent_at) AS sent_at
+           FROM adapter_outbox outbox
+           JOIN telegram_egress_effects effect ON effect.outbox_id=outbox.id
+           WHERE outbox.adapter='telegram' AND outbox.kind='origin_relay'
+             AND outbox.status='dead'
+             AND outbox.last_error='outbox lease expired: max attempts exhausted'
+           GROUP BY outbox.id
+           HAVING count(*)=max(effect.chunk_count)
+              AND count(*) FILTER (WHERE effect.state='sent')=count(*)
+              AND min(effect.chunk_index)=0
+              AND max(effect.chunk_index)=max(effect.chunk_count)-1
+         )
+         UPDATE adapter_outbox outbox SET
+           status='sent',sent_at=proof.sent_at,dead_at=NULL,claimed_by=NULL,claim_token=NULL,
+           claim_expires_at=NULL,last_error=NULL
+         FROM proof WHERE outbox.id=proof.id
+         RETURNING outbox.id`,
+        []
+      );
+      const recoveredIds = provenSent.rows.map((row) => row.id);
+      if (recoveredIds.length > 0) {
+        await client.query(
+          `UPDATE outbox_dead_letters SET resolved_at=now()
+           WHERE outbox_id=ANY($1::uuid[]) AND resolved_at IS NULL`,
+          [recoveredIds]
+        );
+      }
       await client.query(
         `UPDATE telegram_egress_effects effect SET
            state='ambiguous',diagnostic=$1,diagnosed_at=now()
@@ -192,12 +224,27 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
     const rows = await this.outbox.claimOutbox('origin_relay', workerId, limit, leaseMs, 'telegram');
     // claimOutbox moves an expired final attempt directly to dead without returning it.
     // Reconcile its in-flight effect so no sending row is stranded or mistaken for sent.
-    await this.reconcileTerminalSendingEffects();
+    await this.reconcileTerminalEffects();
     const events = rows.map(outboxEvent);
     for (const event of events) {
       this.claims.set(event.event_id, { attempt: event.attempt, claimToken: event.claim_token });
     }
     return events;
+  }
+
+  async renew(event: TelegramOriginRelay, leaseMs: number): Promise<boolean> {
+    if (!Number.isInteger(leaseMs) || leaseMs < 1_000) throw new Error('Telegram egress lease is invalid');
+    const claim = this.claims.get(event.event_id);
+    if (!claim || claim.attempt !== event.attempt || claim.claimToken !== event.claim_token) return false;
+    const renewed = await this.pool.query(
+      `UPDATE adapter_outbox SET claim_expires_at=now()+$4*interval '1 millisecond'
+       WHERE id=$1 AND status='processing' AND attempts=$2 AND claim_token=$3
+         AND claim_expires_at>now()`,
+      [event.event_id, event.attempt, event.claim_token, leaseMs]
+    );
+    if (renewed.rowCount === 1) return true;
+    this.claims.delete(event.event_id);
+    return false;
   }
 
   async ack(acknowledgement: TelegramOriginRelayAck): Promise<void> {
@@ -228,7 +275,10 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
     }
     try {
       const result = await this.outbox.ackOutbox(acknowledgement);
-      if (!result.applied) throw new Error('Telegram origin relay ACK was fenced');
+      const expected = acknowledgement.status === 'retry' ? 'failed' : acknowledgement.status;
+      if (!result.applied || result.status !== expected) {
+        throw new Error('Telegram origin relay ACK was fenced or returned a mismatched status');
+      }
     } finally {
       this.claims.delete(acknowledgement.event_id);
     }

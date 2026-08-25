@@ -8,6 +8,7 @@ OnFailure=cauce-v3-backup-alert@%n.service
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/etc/cauce-v3/host-backup.env
 ExecStart=/usr/local/sbin/cauce-v3-host-backup
 Nice=10
 IOSchedulingClass=best-effort

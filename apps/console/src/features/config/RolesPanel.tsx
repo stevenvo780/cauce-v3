@@ -1,6 +1,4 @@
-import { UserCheck } from 'lucide-react';
-import { useState } from 'react';
-import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
+import type { ConfigurationSnapshot } from '../../api/types';
 import { Badge, EmptyState, Panel } from '../../components/ui';
 import { ROLE_BRIEF_MAX, bloqueoPorRuntimeDesplegado } from '../live/role-brief';
 import { catalogoDeRoles, claveDeAlias, resumenDeRol, type RolCatalogado } from './roles';
@@ -38,17 +36,10 @@ function Medidor({ rol }: { rol: RolCatalogado }) {
 
 export interface RolesPanelProps {
   snapshot?: ConfigurationSnapshot;
-  canWrite: boolean;
-  busy: boolean;
-  motivoSinEscritura: string;
-  onMutar: (mutation: ConfigMutation, descripcion: string) => void;
 }
 
-export function RolesPanel({ snapshot, canWrite, busy, motivoSinEscritura, onMutar }: RolesPanelProps) {
+export function RolesPanel({ snapshot }: RolesPanelProps) {
   const catalogo = catalogoDeRoles(snapshot?.agents);
-  // Un destino elegido por rol, no uno global: si fuera global, abrir el desplegable de un rol
-  // movería el de todos los demás y el operador podría aplicar el texto equivocado.
-  const [destino, setDestino] = useState<Record<string, string>>({});
 
   if (!Array.isArray(snapshot?.agents)) {
     return (
@@ -68,22 +59,16 @@ export function RolesPanel({ snapshot, canWrite, busy, motivoSinEscritura, onMut
         subtitle={`${catalogo.roles.length} texto(s) de rol repartidos entre ${catalogo.todos.length} bot(s) registrados`}
       >
         <p className="muted">
-          Un rol es el texto de identidad que el bot recibe antes de su contrato. Hoy el servidor lo
-          guarda por alias y <strong>no tiene dónde guardar el nombre del rol</strong>: acá un rol se
-          identifica por su texto y por quiénes lo llevan, no por una etiqueta como «orquestador».
-          Aplicarlo a otro bot copia ese mismo texto con la mutación versionada, así que se puede
-          deshacer desde «Historial y JSON».
+          Esta lista agrupa la proyección corta <code>agents.role_brief</code>. Es de sólo lectura:
+          la fuente canónica es <code>agent_profiles.role_summary</code> y sólo se edita desde Perfil,
+          donde CAS, escritura gobernada y ACK del runtime forman una sola confirmación observable.
         </p>
         {!catalogo.roles.length ? (
           <EmptyState>Ningún bot del registro tiene rol declarado todavía.</EmptyState>
         ) : (
           <ul className="rol-lista">
             {catalogo.roles.map((rol) => {
-              const llevado = new Set(rol.portadores.map(claveDeAlias));
-              const candidatos = catalogo.todos.filter((entrada) => !llevado.has(claveDeAlias(entrada)));
-              const elegido = destino[rol.texto] ?? '';
               const bloqueo = bloqueoPorRuntimeDesplegado(rol.texto);
-              const impedido = rol.pasado || bloqueo !== undefined;
               return (
                 <li key={rol.texto} className="rol-card">
                   <header>
@@ -96,9 +81,13 @@ export function RolesPanel({ snapshot, canWrite, busy, motivoSinEscritura, onMut
                   </p>
                   <p className="rol-portadores">
                     Lo llevan: {rol.portadores.map((entrada) => (
-                      <span key={claveDeAlias(entrada)} className="rol-portador">
+                      <a
+                        key={claveDeAlias(entrada)}
+                        className="rol-portador"
+                        href={`/live?agente=${encodeURIComponent(claveDeAlias(entrada))}&pestana=perfil`}
+                      >
                         {entrada.tenantId}/{entrada.alias}
-                      </span>
+                      </a>
                     ))}
                   </p>
                   <Medidor rol={rol} />
@@ -113,49 +102,10 @@ export function RolesPanel({ snapshot, canWrite, busy, motivoSinEscritura, onMut
                     <summary>Ver el texto completo del rol</summary>
                     <pre>{rol.texto}</pre>
                   </details>
-                  <div className="rol-asignar">
-                    <label>
-                      <span>Aplicar este rol a</span>
-                      <select
-                        value={elegido}
-                        aria-label={`Bot que recibirá el rol «${resumenDeRol(rol.texto)}»`}
-                        onChange={(event) => setDestino((actual) => ({ ...actual, [rol.texto]: event.target.value }))}
-                      >
-                        <option value="">Elegí un bot…</option>
-                        {candidatos.map((entrada) => (
-                          <option key={claveDeAlias(entrada)} value={claveDeAlias(entrada)}>
-                            {entrada.tenantId}/{entrada.alias}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <button
-                      type="button"
-                      className="button primary"
-                      disabled={!canWrite || busy || impedido || !elegido}
-                      title={!canWrite ? motivoSinEscritura : undefined}
-                      onClick={() => {
-                        const entrada = candidatos.find((item) => claveDeAlias(item) === elegido);
-                        if (!entrada) return;
-                        onMutar(
-                          {
-                            resource: 'agent',
-                            action: 'update',
-                            tenant_id: entrada.tenantId,
-                            alias: entrada.alias,
-                            value: { role_brief: rol.texto },
-                          },
-                          `Rol aplicado a ${entrada.tenantId}/${entrada.alias}`,
-                        );
-                        setDestino((actual) => ({ ...actual, [rol.texto]: '' }));
-                      }}
-                    >
-                      <UserCheck size={15} aria-hidden="true" /> Aplicar el rol a ese bot
-                    </button>
-                    {!candidatos.length ? (
-                      <span className="muted">Ya lo llevan todos los bots del registro.</span>
-                    ) : null}
-                  </div>
+                  <p className="notice" role="note">
+                    Para cambiar o reutilizar este rol, abrí el Perfil canónico del bot destino.
+                    Esta vista no envía mutaciones genéricas.
+                  </p>
                 </li>
               );
             })}
@@ -170,7 +120,9 @@ export function RolesPanel({ snapshot, canWrite, busy, motivoSinEscritura, onMut
           <ul className="rol-sin-rol">
             {catalogo.sinRol.map((entrada) => (
               <li key={claveDeAlias(entrada)}>
-                <strong>{entrada.tenantId}/{entrada.alias}</strong>
+                <a href={`/live?agente=${encodeURIComponent(claveDeAlias(entrada))}&pestana=perfil`}>
+                  <strong>{entrada.tenantId}/{entrada.alias}</strong>
+                </a>
                 {entrada.displayName ? <span className="muted"> · {entrada.displayName}</span> : null}
               </li>
             ))}
@@ -178,8 +130,7 @@ export function RolesPanel({ snapshot, canWrite, busy, motivoSinEscritura, onMut
         )}
         <p className="muted">
           Un bot sin rol no está roto: el adaptador simplemente omite la línea «Tu rol: …». Para
-          darle uno, elegilo arriba en el rol que le corresponda, o redactale el suyo desde el
-          detalle del bot en «La flota ahora».
+          darle uno, abrí el enlace del bot y redactalo desde su pestaña Perfil.
         </p>
       </Panel>
     </>

@@ -147,17 +147,7 @@ export function LiveFleetPage() {
     () => leerQuery(),
   );
 
-  /**
-   * Los roles a medio redactar, POR ALIAS (`tenant/alias`), fuera del cajón.
-   *
-   * La pestaña «Rol» se desmonta al cambiar de pestaña y al cerrar el cajón —los dos gestos que
-   * un operador hace justamente mientras redacta, para ir a mirar qué está haciendo el bot—, así
-   * que el borrador no puede vivir dentro de ella: se perdía entero y sin aviso. Indexado por
-   * alias porque el texto es de un bot concreto: pasar a otro agente tiene que empezar en blanco,
-   * nunca heredar el rol que se estaba escribiendo para el anterior.
-   */
-  const [borradoresRol, setBorradoresRol] = useState<Record<string, string>>({});
-  // Los borradores del perfil viven acá y no dentro de la pestaña por lo mismo que los del rol:
+  // Los borradores del perfil viven acá y no dentro de la pestaña:
   // cambiar de pestaña dentro del cajón la desmonta, y perder ahí siete campos a medio redactar
   // -sin avisar- es peor cuanto más largo es lo que se estaba escribiendo.
   const [borradoresPerfil, setBorradoresPerfil] =
@@ -786,17 +776,6 @@ export function LiveFleetPage() {
           view={detail}
           tab={drawer.tab}
           traceId={drawer.trace}
-          borradorRol={borradoresRol[drawer.key]}
-          onBorradorRol={(texto) => setBorradoresRol((actuales) => {
-            // Descartar el borrador borra la entrada en vez de dejarla vacía: una cadena vacía
-            // guardada significaría «quiero dejar a este alias sin rol», que no es lo mismo.
-            if (texto === undefined) {
-              const resto = { ...actuales };
-              delete resto[drawer.key];
-              return resto;
-            }
-            return { ...actuales, [drawer.key]: texto };
-          })}
           borradorPerfil={borradoresPerfil[drawer.key]}
           onBorradorPerfil={(campos) => setBorradoresPerfil((actuales) => {
             if (campos === undefined) {

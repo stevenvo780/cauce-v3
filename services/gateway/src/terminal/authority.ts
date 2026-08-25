@@ -3,7 +3,7 @@ import type { FastifyRequest } from 'fastify';
 import type { DatabasePool } from '@cauce/store';
 import type { Principal } from '../auth.js';
 import type { TerminalConfig } from './config.js';
-import { UNATTRIBUTED_OPERATOR, type FleetPlacement, type TerminalMode } from './types.js';
+import { UNATTRIBUTED_OPERATOR, type FleetIdentity, type FleetPlacement, type TerminalMode } from './types.js';
 
 /**
  * Every authorization input of the PTY plane lives here: the grants file, the routing
@@ -15,32 +15,43 @@ import { UNATTRIBUTED_OPERATOR, type FleetPlacement, type TerminalMode } from '.
 /* Fleet placement                                                            */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Alias -> container. Server-side constant on purpose: the browser never gets to pick a
- * container, it only names an alias. Mirrors ops/container-aliases.json plus the two
- * ws-humanizar agents added later; it is copied, not imported, so this file never depends
- * on the ops tree another workflow owns.
- */
-export const FLEET_PLACEMENTS: Readonly<Record<string, FleetPlacement>> = Object.freeze({
-  argos: { tenant_id: 'Steven', container: 'ctrl-infra', runtime_user: 'dev' },
-  jarvis: { tenant_id: 'Steven', container: 'claw', runtime_user: 'claw' },
-  kant: { tenant_id: 'Steven', container: 'ctrl-infra', runtime_user: 'dev' },
-  socrates: { tenant_id: 'Steven', container: 'ws-prizma', runtime_user: 'dev' },
-  zeus: { tenant_id: 'Steven', container: 'ws-zeus', runtime_user: 'dev' },
-  atlas: { tenant_id: 'Miguel', container: 'ws-humanizar', runtime_user: 'dev' },
-  iza: { tenant_id: 'Miguel', container: 'ws-humanizar', runtime_user: 'dev' },
-  janus: { tenant_id: 'Miguel', container: 'claw-miguel', runtime_user: 'claw' },
-  kratos: { tenant_id: 'Miguel', container: 'ws-humanizar', runtime_user: 'dev' },
-  dedalo: { tenant_id: 'Pablo', container: 'ws-pablo-dev', runtime_user: 'dev' },
-  midas: { tenant_id: 'Pablo', container: 'agv2-pablo-marcas-oc', runtime_user: 'claw' },
-  seneca: { tenant_id: 'Pablo', container: 'agv2-pablo-personal-oc', runtime_user: 'claw' },
-  vulcano: { tenant_id: 'Pablo', container: 'ws-pablo', runtime_user: 'dev' },
-  salva: { tenant_id: 'Isa', container: 'ws-isa', runtime_user: 'dev' },
-  hegel: { tenant_id: 'Jhon', container: 'agv2-jhon-hegel-oc', runtime_user: 'claw' }
-});
+interface FleetPlacementRow {
+  readonly tenant_id: string;
+  readonly alias: string;
+  readonly container_name: string | null;
+  readonly runtime_user: string | null;
+}
 
-export function fleetPlacement(alias: string): FleetPlacement | undefined {
-  return Object.hasOwn(FLEET_PLACEMENTS, alias) ? FLEET_PLACEMENTS[alias] : undefined;
+/**
+ * PostgreSQL is the live registry and the only source used to authorize a browser request.
+ * The declarative ops inventory is compared against it by the release parity gate; copying that
+ * inventory into compiled gateway code created a third, stale authority and made same aliases in
+ * different tenants impossible to represent.
+ */
+export async function loadFleetPlacements(pool: DatabasePool): Promise<readonly FleetPlacement[]> {
+  const result = await pool.query<FleetPlacementRow>(
+    `SELECT tenant_id,alias,container_name,runtime_user
+       FROM agents
+      WHERE enabled
+      ORDER BY tenant_id,alias`
+  );
+  return result.rows.map((row) => {
+    if (!row.tenant_id || !row.alias || !row.container_name || !row.runtime_user) {
+      throw new Error(`enabled agent has incomplete placement: ${row.tenant_id}:${row.alias}`);
+    }
+    return {
+      tenant_id: row.tenant_id,
+      alias: row.alias,
+      container: row.container_name,
+      runtime_user: row.runtime_user
+    };
+  });
+}
+
+export function fleetPlacement(
+  placements: readonly FleetPlacement[], tenantId: string, alias: string
+): FleetPlacement | undefined {
+  return placements.find((entry) => entry.tenant_id === tenantId && entry.alias === alias);
 }
 
 /**
@@ -50,13 +61,22 @@ export function fleetPlacement(alias: string): FleetPlacement | undefined {
  * X's cohort. A shell in ws-humanizar sees the home of Miguel's three agents, so authority
  * over `iza` alone must not open `atlas` by the back door.
  */
-export function containerCohort(alias: string): string[] {
-  const placement = fleetPlacement(alias);
+export function containerCohort(
+  placements: readonly FleetPlacement[], tenantId: string, alias: string
+): FleetPlacement[] {
+  const placement = fleetPlacement(placements, tenantId, alias);
   if (!placement) return [];
-  return Object.entries(FLEET_PLACEMENTS)
-    .filter(([, value]) => value.container === placement.container)
-    .map(([name]) => name)
-    .sort();
+  return placements
+    .filter((entry) => entry.container === placement.container)
+    .sort((left, right) => `${left.tenant_id}\0${left.alias}`.localeCompare(`${right.tenant_id}\0${right.alias}`));
+}
+
+export function fleetIdentity(placement: FleetPlacement): FleetIdentity {
+  return { tenant_id: placement.tenant_id, alias: placement.alias };
+}
+
+export function fleetIdentityLabel(placement: FleetIdentity): string {
+  return `${placement.tenant_id}:${placement.alias}`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -146,14 +166,11 @@ export class GrantStore {
 
   /** Cohort form of `allows`: every alias sharing the container must be granted. */
   async allowsCohort(
-    operatorId: string, alias: string, mode: TerminalMode, now: number = Date.now()
+    operatorId: string, cohort: readonly FleetIdentity[], mode: TerminalMode, now: number = Date.now()
   ): Promise<boolean> {
-    const cohort = containerCohort(alias);
     if (cohort.length === 0) return false;
     for (const member of cohort) {
-      const placement = fleetPlacement(member);
-      if (!placement) return false;
-      if (!(await this.allows(operatorId, placement.tenant_id, member, mode, now))) return false;
+      if (!(await this.allows(operatorId, member.tenant_id, member.alias, mode, now))) return false;
     }
     return true;
   }
@@ -196,15 +213,17 @@ export async function routingAuthority(
        FROM memberships membership
        JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
        JOIN tenants tenant ON tenant.id=membership.tenant_id
+       JOIN agents agent ON agent.tenant_id=membership.tenant_id AND agent.alias=membership.alias
       WHERE membership.tenant_id=$1 AND membership.alias=$2
-        AND membership.enabled AND room.enabled AND tenant.enabled
+        AND membership.enabled AND room.enabled AND tenant.enabled AND agent.enabled
      UNION ALL
      SELECT 'target'::text AS side, room.id AS room_id
        FROM memberships membership
        JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
        JOIN tenants tenant ON tenant.id=membership.tenant_id
+       JOIN agents agent ON agent.tenant_id=membership.tenant_id AND agent.alias=membership.alias
       WHERE membership.tenant_id=$3 AND membership.alias=$4
-        AND membership.enabled AND room.enabled AND tenant.enabled`,
+        AND membership.enabled AND room.enabled AND tenant.enabled AND agent.enabled`,
     [actorTenant, actorAlias, targetTenant, targetAlias]
   );
   const actorRooms = rooms.rows.filter((row) => row.side === 'actor').map((row) => row.room_id);
@@ -236,17 +255,14 @@ export async function cohortRoutingAuthority(
   pool: DatabasePool,
   actorTenant: string,
   actorAlias: string,
-  targetAlias: string
+  cohort: readonly FleetIdentity[]
 ): Promise<RoutingAuthority> {
-  const cohort = containerCohort(targetAlias);
   if (cohort.length === 0) return { allowed: false, reason: 'unknown_alias', source_room_ids: [] };
   const roomIds = new Set<string>();
   for (const member of cohort) {
-    const placement = fleetPlacement(member);
-    if (!placement) return { allowed: false, reason: 'unknown_alias', source_room_ids: [] };
-    const decision = await routingAuthority(pool, actorTenant, actorAlias, placement.tenant_id, member);
+    const decision = await routingAuthority(pool, actorTenant, actorAlias, member.tenant_id, member.alias);
     if (!decision.allowed) {
-      return { allowed: false, reason: `${decision.reason}:${member}`, source_room_ids: [] };
+      return { allowed: false, reason: `${decision.reason}:${fleetIdentityLabel(member)}`, source_room_ids: [] };
     }
     for (const room of decision.source_room_ids) roomIds.add(room);
   }

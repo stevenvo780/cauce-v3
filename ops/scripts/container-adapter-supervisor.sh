@@ -139,6 +139,28 @@ IFS=$'\t' read -r tenant room container_name container_user container_home state
 valid_absolute_path "$container_home" || die 'mapped container home is invalid'
 valid_absolute_path "$state_directory" || die 'mapped state directory is invalid'
 
+# Policy facts that cannot fit in the seven-field legacy stdout above. They come from the same
+# validated inventory, not from the alias .env: physical-container cardinality decides whether
+# isolation is mandatory, and the OpenClaw workspace is compared byte-for-byte with inventory.
+mapfile -t inventory_policy < <(PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" "$alias_name" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
+from container_alias_lib import load_container_aliases  # noqa: E402
+
+aliases = load_container_aliases(root)
+entry = aliases[sys.argv[2]]
+print(sum(candidate["container"] == entry["container"] for candidate in aliases.values()))
+print(entry.get("workspace", ""))
+PY
+) || die 'cannot load alias isolation policy'
+[[ ${#inventory_policy[@]} == 2 && ${inventory_policy[0]} =~ ^[1-9][0-9]*$ ]] \
+  || die 'alias isolation policy is invalid'
+physical_alias_count=${inventory_policy[0]}
+inventory_workspace=${inventory_policy[1]}
+
 config_file="$CONFIG_ROOT/$alias_name.env"
 declare -A CONFIG=()
 
@@ -154,7 +176,7 @@ load_config() {
     [[ -n $value ]] || die "container alias config value is empty: $key"
     [[ ! -v "CONFIG[$key]" ]] || die "container alias config key is duplicated: $key"
     case "$key" in
-      BUNDLE_RELEASE|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW|DEFAULT_TIMEOUT_MS) ;;
+      BUNDLE_RELEASE|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW|DEFAULT_TIMEOUT_MS|CAUCE_SEMBRAR_PERFIL) ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
       # Sesión compartida: la MISMA conversación en la terminal del dueño y en Telegram. Sólo
       # existe para claude y codex, que son los dos harness con una TUI compartible; para el resto
@@ -168,7 +190,7 @@ load_config() {
       CONFIG_POR_ALIAS)
         [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
         ;;
-      OPENCLAW_TRANSPORT|OPENCLAW_API_URL|OPENCLAW_TOKEN_FILE|OPENCLAW_AGENT_TARGET|OPENCLAW_DIST_DIR)
+      OPENCLAW_TRANSPORT|OPENCLAW_API_URL|OPENCLAW_TOKEN_FILE|OPENCLAW_AGENT_TARGET|OPENCLAW_DIST_DIR|OPENCLAW_WORKSPACE)
         [[ $harness == openclaw ]] || die "config key is not allowed for $harness: $key"
         ;;
       *) die "container alias config key is not allowlisted: $key" ;;
@@ -250,6 +272,17 @@ validate_config_values() {
     config_por_alias_directorio "$harness" "$container_home" "$alias_name" >/dev/null \
       || die 'CONFIG_POR_ALIAS cannot derive a per-alias configuration directory for this alias'
   fi
+  [[ ${CONFIG[CAUCE_SEMBRAR_PERFIL]:-} == 1 ]] \
+    || die 'CAUCE_SEMBRAR_PERFIL must be present and exactly 1'
+  if (( physical_alias_count > 1 )); then
+    if [[ $harness == claude || $harness == codex ]]; then
+      [[ ${CONFIG[CONFIG_POR_ALIAS]:-} == 1 ]] \
+        || die 'a multi-alias container requires CONFIG_POR_ALIAS=1 for claude/codex'
+    elif [[ $harness == hermes ]]; then
+      [[ ${CONFIG[HERMES_HOME]:-} == "$container_home/.hermes/profiles/$alias_name" ]] \
+        || die 'a multi-alias container requires an alias-scoped HERMES_HOME'
+    fi
+  fi
   validate_relay_url "${CONFIG[RELAY_URL]}"
   if [[ $harness == hermes ]]; then
     # HERMES_HOME is either the mapped .hermes home or a profile subdirectory below it
@@ -270,6 +303,12 @@ validate_config_values() {
     fi
   fi
   if [[ $harness == openclaw ]]; then
+    valid_absolute_path "${CONFIG[OPENCLAW_WORKSPACE]:-}" \
+      || die 'OPENCLAW_WORKSPACE must be a canonical absolute path'
+    [[ ${CONFIG[OPENCLAW_WORKSPACE]} == "$inventory_workspace" ]] \
+      || die 'OPENCLAW_WORKSPACE differs from the canonical inventory workspace'
+    [[ ${CONFIG[OPENCLAW_WORKSPACE]} == "$container_home/"* ]] \
+      || die 'OPENCLAW_WORKSPACE must live below the mapped container home'
     case "${CONFIG[OPENCLAW_TRANSPORT]:-cli}" in
       cli)
         [[ ! -v CONFIG[OPENCLAW_API_URL] && ! -v CONFIG[OPENCLAW_TOKEN_FILE] ]] || die 'OpenClaw API URL/token file require API transport'
@@ -634,6 +673,7 @@ start_adapter() {
     "CAUCE_DEFAULT_TIMEOUT_MS=$effective_default_timeout_ms"
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"
   )
+  environment+=("CAUCE_SEMBRAR_PERFIL=${CONFIG[CAUCE_SEMBRAR_PERFIL]}")
   if [[ $bearer_token_present == true ]]; then environment+=("CAUCE_TOKEN_FILE=$secret_directory/token"); fi
   if [[ -v CONFIG[SHARED_SESSION] ]]; then
     environment+=("CAUCE_SHARED_SESSION=${CONFIG[SHARED_SESSION]}")
@@ -662,6 +702,7 @@ start_adapter() {
     [[ -v CONFIG[HERMES_PYTHON] ]] && environment+=("CAUCE_HERMES_PYTHON=${CONFIG[HERMES_PYTHON]}")
   fi
   if [[ $harness == openclaw ]]; then
+    environment+=("CAUCE_OPENCLAW_WORKSPACE=${CONFIG[OPENCLAW_WORKSPACE]}")
     environment+=("CAUCE_OPENCLAW_TRANSPORT=${CONFIG[OPENCLAW_TRANSPORT]:-cli}")
     [[ -v CONFIG[OPENCLAW_API_URL] ]] && environment+=("CAUCE_OPENCLAW_API_URL=${CONFIG[OPENCLAW_API_URL]}")
     [[ -v CONFIG[OPENCLAW_TOKEN_FILE] ]] && environment+=("CAUCE_OPENCLAW_TOKEN_FILE=${CONFIG[OPENCLAW_TOKEN_FILE]}")

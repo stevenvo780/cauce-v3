@@ -2,12 +2,32 @@ groups:
   - name: cauce-v3-dispatcher-availability
     rules:
       - alert: CauceDispatcherDown
-        expr: up{job="cauce-dispatcher"} == 0
+        expr: absent(up{job="cauce-dispatcher"}) or up{job="cauce-dispatcher"} == 0
         for: 2m
         labels:
           severity: critical
         annotations:
           summary: "Dispatcher metrics endpoint is unavailable"
+      - alert: CauceDispatcherLoopStale
+        expr: absent(cauce_dispatcher_loop_stale) or cauce_dispatcher_loop_stale == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dispatcher process exists but its work loop is not progressing"
+      - alert: CauceDispatcherUnready
+        expr: absent(cauce_dispatcher_ready) or cauce_dispatcher_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dispatcher has no recent clean work-loop tick"
+      - alert: CauceDispatcherFencedCompletion
+        expr: increase(cauce_dispatcher_ticks_total{result="fenced"}[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dispatcher completion was fenced and was not counted as a successful tick"
       - alert: CauceDispatcherDatabaseMetricsMissing
         expr: cauce_dispatcher_metrics_query_success == 0
         for: 2m
@@ -69,6 +89,26 @@ groups:
 
   - name: cauce-v3-leases-and-relay
     rules:
+      - alert: CauceOriginRelayTargetDown
+        expr: absent(up{job="cauce-origin-relay"}) or up{job="cauce-origin-relay"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A discovered origin-relay profile is not scrapeable"
+      - alert: CauceOriginRelayLoopStale
+        expr: cauce_origin_relay_loop_stale == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Origin relay process exists but its claim loop is not progressing"
+      - alert: CauceOriginRelayFencedAck
+        expr: increase(cauce_origin_relay_results_total{result="fenced"}[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Origin relay remote result could not be durably ACKed"
       - alert: CauceConsumerLeaseChurn
         expr: changes(cauce_dispatcher_consumer_leases_active[10m]) > 10
         for: 5m
@@ -98,10 +138,47 @@ groups:
         annotations:
           summary: "Origin relay events reached terminal DLQ"
 
+  - name: cauce-v3-telegram-progress
+    rules:
+      - alert: CauceTelegramTargetDown
+        expr: absent(up{job="cauce-telegram"}) or up{job="cauce-telegram"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A discovered Telegram profile is not scrapeable"
+      - alert: CauceTelegramPollerStale
+        expr: cauce_telegram_pollers_stale > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "One or more Telegram pollers are not progressing"
+      - alert: CauceTelegramEgressStale
+        expr: cauce_telegram_egress_loop_stale == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Telegram egress claim loop is not progressing"
+      - alert: CauceTelegramFencedAck
+        expr: increase(cauce_telegram_bridge_events_total{result="egress_fenced"}[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Telegram remote result could not be durably ACKed"
+      - alert: CauceTelegramLoopErrors
+        expr: increase(cauce_telegram_bridge_events_total{result=~"poll_error|egress_loop_error"}[10m]) >= 3
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Telegram polling or egress is repeatedly failing"
+
   - name: cauce-v3-wake-outbox
     rules:
       - alert: CauceOutboxMetricsDown
-        expr: up{job="cauce-outbox"} == 0
+        expr: absent(up{job="cauce-outbox"}) or up{job="cauce-outbox"} == 0
         for: 2m
         labels:
           severity: critical

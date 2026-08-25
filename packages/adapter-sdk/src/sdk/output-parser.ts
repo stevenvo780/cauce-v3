@@ -779,7 +779,11 @@ function isEnvelopeShape(value: unknown): boolean {
  * Y el sobre recuperado pasa igual por `validateStructuredOutput` y después por
  * `validateDeliveryOutput`, que rechaza destinos desconocidos, ausentes o fuera de línea.
  */
-function recoverEmbeddedEnvelope(text: string, context: string): StructuredOutput | undefined {
+function recoverEmbeddedEnvelope(
+  text: string,
+  context: string,
+  rejectAmbiguous = true,
+): StructuredOutput | undefined {
   const candidates = embeddedObjects(text);
   if (candidates.length === 0) return undefined;
 
@@ -796,6 +800,7 @@ function recoverEmbeddedEnvelope(text: string, context: string): StructuredOutpu
 
   if (envelopes.length === 0) return undefined;
   if (envelopes.length > 1) {
+    if (!rejectAmbiguous) return undefined;
     throw new MalformedOutputError(
       `${context} embedded more than one structured output envelope in plain text; refusing to guess which delegation is real`,
     );
@@ -805,7 +810,11 @@ function recoverEmbeddedEnvelope(text: string, context: string): StructuredOutpu
 
 function recoverOrFallback(text: string, context: string): StructuredOutput {
   const recovered = recoverEmbeddedEnvelope(text, context);
-  return recovered ?? fallbackTextOutput(text, context);
+  if (recovered !== undefined) return recovered;
+  const fenced = fencedObjectCandidate(text);
+  return fenced === undefined
+    ? fallbackTextOutput(text, context)
+    : recoverMalformedObject(fenced, context);
 }
 
 /**
@@ -829,12 +838,158 @@ function recoverOrFallback(text: string, context: string): StructuredOutput {
  * `{` ni `[` como primer carácter útil, así que sigue tratándose como texto y no se la reinterpreta.
  */
 const CODE_FENCE = /^```[A-Za-z0-9_-]*\r?\n([\s\S]*?)\r?\n?```$/u;
+const EMBEDDED_CODE_FENCE = /```[A-Za-z0-9_-]*[\t ]*\r?\n/gu;
 
 function unwrapCodeFence(candidate: string): string {
   const match = CODE_FENCE.exec(candidate);
   if (match === null) return candidate;
   const inner = (match[1] ?? "").trim();
   return inner.startsWith("{") || inner.startsWith("[") ? inner : candidate;
+}
+
+/**
+ * Encuentra un objeto que empezo dentro de una valla aunque la valla o el objeto no hayan
+ * alcanzado a cerrar. Fuera de una valla no se busca una llave arbitraria dentro de la prosa: un
+ * ejemplo de JSON en una respuesta normal no debe reinterpretarse como el sobre del contrato.
+ */
+function fencedObjectCandidate(text: string): string | undefined {
+  EMBEDDED_CODE_FENCE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = EMBEDDED_CODE_FENCE.exec(text)) !== null) {
+    const candidate = text.slice(match.index + match[0].length).replace(LEADING_INVISIBLE_TEXT, "");
+    if (candidate.startsWith("{")) return candidate;
+  }
+  return undefined;
+}
+
+function previousNonWhitespace(text: string, from: number): string | undefined {
+  for (let index = from; index >= 0; index -= 1) {
+    const character = text[index];
+    if (character !== undefined && !/\s/u.test(character)) return character;
+  }
+  return undefined;
+}
+
+function nextNonWhitespaceIndex(text: string, from: number): number {
+  let index = from;
+  while (index < text.length && /\s/u.test(text[index] ?? "")) index += 1;
+  return index;
+}
+
+function stringEnd(text: string, start: number): number | undefined {
+  let escaped = false;
+  for (let index = start + 1; index < text.length; index += 1) {
+    const character = text[index];
+    if (escaped) {
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (character === '"') {
+      return index;
+    }
+  }
+  return undefined;
+}
+
+function isJsonValueStart(character: string | undefined): boolean {
+  return character !== undefined
+    && (/[0-9]/u.test(character) || ['"', "{", "[", "t", "f", "n", "-"].includes(character));
+}
+
+function isRepairableSeparator(character: string | undefined): boolean {
+  return character !== undefined && !/[\s{}[\],:"]/u.test(character);
+}
+
+function escapeRawStringControls(text: string): { readonly changed: boolean; readonly text: string } {
+  let changed = false;
+  let escaped = false;
+  let inString = false;
+  let repaired = "";
+  for (const character of text) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (inString && !escaped && codePoint <= 0x1f) {
+      repaired += `\\u${codePoint.toString(16).padStart(4, "0")}`;
+      changed = true;
+      continue;
+    }
+    repaired += character;
+    if (!inString) {
+      if (character === '"') inString = true;
+      continue;
+    }
+    if (escaped) {
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (character === '"') {
+      inString = false;
+    }
+  }
+  return { changed, text: repaired };
+}
+
+/**
+ * Repara solo dos corrupciones deterministas del serializador: controles crudos dentro de una
+ * cadena y UN caracter no estructural puesto en lugar de `:` tras una clave. El rastreo conoce
+ * cadenas y contenedores, por lo que nunca modifica texto citado dentro de un `reply`.
+ */
+function repairJsonEnvelope(candidate: string): string | undefined {
+  const escapedControls = escapeRawStringControls(candidate);
+  const text = escapedControls.text;
+  const stack: ("array" | "object")[] = [];
+  const separatorIndexes: number[] = [];
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === '"') {
+      const start = index;
+      const end = stringEnd(text, start);
+      if (end === undefined) break;
+      const isObjectKey = stack.at(-1) === "object"
+        && ["{", ","].includes(previousNonWhitespace(text, start - 1) ?? "");
+      if (isObjectKey) {
+        const separator = nextNonWhitespaceIndex(text, end + 1);
+        if (text[separator] !== ":") {
+          const value = nextNonWhitespaceIndex(text, separator + 1);
+          if (isRepairableSeparator(text[separator]) && isJsonValueStart(text[value])) {
+            separatorIndexes.push(separator);
+          }
+        }
+      }
+      index = end;
+      continue;
+    }
+    if (character === "{") stack.push("object");
+    else if (character === "[") stack.push("array");
+    else if (character === "}" && stack.at(-1) === "object") stack.pop();
+    else if (character === "]" && stack.at(-1) === "array") stack.pop();
+  }
+
+  // Dos separadores corruptos ya no son un remiendo inequívoco: se cae al rescate sin efectos.
+  if (separatorIndexes.length > 1) return undefined;
+  if (!escapedControls.changed && separatorIndexes.length === 0) return undefined;
+  if (separatorIndexes.length === 0) return text;
+  const separator = separatorIndexes[0];
+  if (separator === undefined) return undefined;
+  return `${text.slice(0, separator)}:${text.slice(separator + 1)}`;
+}
+
+function repairedEnvelope(candidate: string): StructuredOutput | undefined {
+  const repaired = repairJsonEnvelope(candidate);
+  if (repaired === undefined) return undefined;
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(repaired) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (!isEnvelopeShape(decoded)) return undefined;
+  try {
+    return validateStructuredOutput(decoded);
+  } catch {
+    // Un accesorio que no revalida no se materializa. El reply todavia puede rescatarse abajo.
+    return undefined;
+  }
 }
 
 /**
@@ -856,41 +1011,135 @@ function unwrapCodeFence(candidate: string): string {
  * escapado de JSON: un `\"` dentro del texto no cierra la cadena, y una regex ingenua cortaría la
  * respuesta a la mitad justo cuando contiene comillas — que es lo habitual en estos sobres.
  */
-function rescataReply(candidato: string): string | undefined {
-  const marca = /"reply"\s*:\s*"/u.exec(candidato);
-  if (marca === null) return undefined;
-  let indice = marca.index + marca[0].length;
-  let texto = "";
-  while (indice < candidato.length) {
-    const caracter = candidato[indice];
-    if (caracter === "\\") {
-      // Se delega el desescapado a JSON.parse sobre la cadena SOLA: reusar el mismo desescapado
-      // que el resto del sobre evita inventar aquí una segunda interpretación de \n, \u y \".
-      const siguiente = candidato[indice + 1];
-      if (siguiente === undefined) break;
-      texto += caracter + siguiente;
-      indice += 2;
-      continue;
-    }
-    if (caracter === '"') {
-      try {
-        const valor = JSON.parse(`"${texto}"`) as unknown;
-        return typeof valor === "string" && hasVisibleText(valor) ? valor : undefined;
-      } catch {
-        return undefined;
-      }
-    }
-    texto += caracter;
-    indice += 1;
-  }
-  // El corte cayó DENTRO del propio `reply`: se devuelve lo que se alcanzó a escribir, porque medio
-  // párrafo del agente vale más que un error. Se cierra la cadena a mano para poder desescaparla.
+interface RecoveredReplyString {
+  readonly end?: number;
+  readonly value: string;
+}
+
+function decodeRecoveredReply(encoded: string): string | undefined {
   try {
-    const valor = JSON.parse(`"${texto.replace(/\\$/u, "")}"`) as unknown;
-    return typeof valor === "string" && hasVisibleText(valor) ? valor : undefined;
+    const value = JSON.parse(`"${encoded}"`) as unknown;
+    return typeof value === "string" && hasVisibleText(value) ? value : undefined;
   } catch {
     return undefined;
   }
+}
+
+function recoverReplyString(candidate: string, start: number): RecoveredReplyString | undefined {
+  let encoded = "";
+  for (let index = start + 1; index < candidate.length; index += 1) {
+    const character = candidate[index];
+    if (character === '"') {
+      const next = nextNonWhitespaceIndex(candidate, index + 1);
+      if (next < candidate.length && candidate[next] !== "," && candidate[next] !== "}") {
+        return undefined;
+      }
+      const value = decodeRecoveredReply(encoded);
+      return value === undefined ? undefined : { end: index, value };
+    }
+    if (character === "\\") {
+      const escaped = candidate[index + 1];
+      if (escaped === undefined) break;
+      if (escaped === "u") {
+        const digits = candidate.slice(index + 2, index + 6);
+        if (digits.length === 4 && /^[0-9a-f]{4}$/iu.test(digits)) {
+          encoded += `\\u${digits}`;
+          index += 5;
+          continue;
+        }
+        const tail = candidate.slice(index + 2);
+        if (tail.length < 4 && /^[0-9a-f]*$/iu.test(tail)) break;
+        return undefined;
+      }
+      if (!/["\\/bfnrt]/u.test(escaped)) return undefined;
+      encoded += `\\${escaped}`;
+      index += 1;
+      continue;
+    }
+    const codePoint = character?.codePointAt(0) ?? 0;
+    encoded += codePoint <= 0x1f
+      ? `\\u${codePoint.toString(16).padStart(4, "0")}`
+      : character;
+  }
+
+  // El transporte corto la cadena: se conserva unicamente el prefijo que puede desescaparse.
+  const value = decodeRecoveredReply(encoded);
+  return value === undefined ? undefined : { value };
+}
+
+function replyValueStart(candidate: string, keyEnd: number): number | undefined {
+  const separator = nextNonWhitespaceIndex(candidate, keyEnd + 1);
+  if (candidate[separator] === ":") return nextNonWhitespaceIndex(candidate, separator + 1);
+  if (!isRepairableSeparator(candidate[separator])) return undefined;
+  const value = nextNonWhitespaceIndex(candidate, separator + 1);
+  return candidate[value] === '"' ? value : undefined;
+}
+
+function rescataReply(candidate: string): string | undefined {
+  const outerStart = nextNonWhitespaceIndex(candidate, 0);
+  if (candidate[outerStart] !== "{") return undefined;
+
+  const stack: ("array" | "object")[] = [];
+  let recovered: string | undefined;
+  for (let index = outerStart; index < candidate.length; index += 1) {
+    const character = candidate[index];
+    if (character === '"') {
+      const start = index;
+      const end = stringEnd(candidate, start);
+      if (end === undefined) break;
+      const topLevelKey = stack.length === 1 && stack[0] === "object"
+        && ["{", ","].includes(previousNonWhitespace(candidate, start - 1) ?? "");
+      if (topLevelKey && candidate.slice(start + 1, end) === "reply") {
+        // Dos claves reply dentro del mismo sobre son ambiguas. JSON.parse elegiria la ultima,
+        // pero en un sobre ya roto no se materializa ninguna de las dos por intuicion.
+        if (recovered !== undefined) return undefined;
+        const valueStart = replyValueStart(candidate, end);
+        if (valueStart === undefined || candidate[valueStart] !== '"') return undefined;
+        const reply = recoverReplyString(candidate, valueStart);
+        if (reply === undefined) return undefined;
+        recovered = reply.value;
+        if (reply.end === undefined) break;
+        index = reply.end;
+        continue;
+      }
+      index = end;
+      continue;
+    }
+    if (character === "{") stack.push("object");
+    else if (character === "[") stack.push("array");
+    else if (character === "}" && stack.at(-1) === "object") {
+      stack.pop();
+      if (stack.length === 0) break;
+    } else if (character === "]" && stack.at(-1) === "array") {
+      stack.pop();
+    }
+  }
+  return recovered;
+}
+
+function malformedObjectOutput(candidate: string, context: string): StructuredOutput {
+  const sample = recortarABytes(candidate.trim(), 512);
+  return {
+    reply: `No pude reconstruir la salida de ${context}: el sobre JSON quedo roto y no quedo ni una linea de texto rescatable. Se descartaron delegaciones y campos accesorios porque no se pueden validar con seguridad.\n\n[Cauce] Empieza asi: ${sample}`,
+    messages: [],
+    notify: [],
+    status: "failed",
+    retryable: false,
+    artifacts: [],
+  };
+}
+
+function recoverMalformedObject(candidate: string, context: string): StructuredOutput {
+  // Si hay un unico sobre completo con prosa o basura despues, conserva todos sus campos. Dos
+  // sobres pegados son ambiguos para efectos: no se elige ninguna delegacion y se baja al reply.
+  const embedded = recoverEmbeddedEnvelope(candidate, context, false);
+  if (embedded !== undefined) return embedded;
+  const repaired = repairedEnvelope(candidate);
+  if (repaired !== undefined) return repaired;
+  const reply = rescataReply(candidate);
+  return reply === undefined
+    ? malformedObjectOutput(candidate, context)
+    : fallbackTextOutput(reply, context);
 }
 
 export function parseFinalText(text: string, context: string): StructuredOutput {
@@ -903,9 +1152,7 @@ export function parseFinalText(text: string, context: string): StructuredOutput 
     decoded = JSON.parse(jsonCandidate) as unknown;
   } catch {
     if (jsonCandidate.startsWith("{")) {
-      const rescatado = rescataReply(jsonCandidate);
-      if (rescatado !== undefined) return fallbackTextOutput(rescatado, context);
-      throw new MalformedOutputError(`${context} contained a malformed JSON object`);
+      return recoverMalformedObject(jsonCandidate, context);
     }
     return recoverOrFallback(trimmed, context);
   }

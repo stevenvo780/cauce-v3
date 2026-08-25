@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { FactsSource, GovernanceReadError } from './agent-documents.routes.js';
 import {
@@ -14,6 +15,10 @@ import {
 const CLAUDE: RuntimeFacts = { harness: 'claude', home: '/home/dev' };
 const RUTA_CLAUDE = '/home/dev/.claude/CLAUDE.md';
 
+function sha(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
 function relayQueDevuelve(answer: RelayFileRead | GovernanceReadError): GovernanceRelayClient {
   return { readFile: vi.fn(async () => answer) };
 }
@@ -21,12 +26,14 @@ function relayQueDevuelve(answer: RelayFileRead | GovernanceReadError): Governan
 const SIN_HECHOS: MeasuredFactsSource = { factsFor: async () => undefined };
 
 function lectura(overrides: Partial<RelayFileRead> = {}): RelayFileRead {
+  const content = overrides.content ?? '# Manual del sitio\n';
   return {
     path: RUTA_CLAUDE,
-    bytes: 20,
+    bytes: overrides.bytes ?? Buffer.byteLength(content, 'utf8'),
     truncated: false,
     modified_at: '2026-08-24T10:00:00Z',
-    content: '# Manual del sitio\n',
+    sha: overrides.sha ?? sha(content),
+    content,
     ...overrides
   };
 }
@@ -108,9 +115,10 @@ describe('TerminalRelayFactsProbe.readGovernanceDocument', () => {
 
     expect(result).toEqual({
       text: '# Manual del sitio\n',
-      bytes: 20,
+      bytes: Buffer.byteLength('# Manual del sitio\n'),
       truncated: false,
-      modified_at: '2026-08-24T10:00:00Z'
+      modified_at: '2026-08-24T10:00:00Z',
+      sha: sha('# Manual del sitio\n'),
     });
   });
 

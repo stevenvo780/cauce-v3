@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
-  clampToRoleBriefLimit, isAgentToAgentBody, isAmbiguousAckErrorCode,
+  clampToRoleBriefLimit, isAgentToAgentBody, isAmbiguousAckErrorCode, isSystemGateProbeBody,
+  SYSTEM_GATE_PROBE_MESSAGE_TYPE,
 } from "@cauce/protocol";
 import type { InboxRecord, SessionOrigin } from "./durable-store.js";
 import { DurableStore, sanitizeSessionOrigin } from "./durable-store.js";
@@ -43,6 +44,7 @@ const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
 const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
 const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 const MAX_AGENT_EXECUTION_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
+const OPENCLAW_FALLBACK_SESSION_KEY = "alias-default";
 
 /**
  * Techo absoluto de la espera en el candado de sesión, medido desde que la entrega se acepta.
@@ -162,6 +164,21 @@ export class AdapterEngine {
         return active.promise.catch(() => undefined).then(() => this.handleDelivery(delivery));
       }
       return Promise.resolve();
+    }
+    if (delivery.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE) {
+      const execution = this.runSystemGateProbe(delivery);
+      const task = execution.finally(() => {
+        if (this.tasks.get(delivery.delivery_id)?.promise === task) {
+          this.tasks.delete(delivery.delivery_id);
+          this.fenced.delete(delivery.delivery_id);
+        }
+      });
+      this.tasks.set(delivery.delivery_id, {
+        attempt: delivery.attempt,
+        claimToken: delivery.claim_token,
+        promise: task,
+      });
+      return task;
     }
     /**
      * ACÁ se resuelve el reclamo del dueño del sistema: "estar SIEMPRE disponibles para
@@ -335,6 +352,94 @@ export class AdapterEngine {
     } finally {
       reservation?.release();
     }
+  }
+
+  /**
+   * Sonda reservada de transporte. Termina el claim real sin sesión, prompt, harness, modelo,
+   * reply, delegación ni egress. La request desaparece del inbox durable en la transición
+   * terminal (`retainRequest=false`); sólo queda el resultado mínimo necesario para el ACK.
+   */
+  private async runSystemGateProbe(delivery: Delivery): Promise<void> {
+    const occurredAt = this.clock.now().toISOString();
+    const accepted = await this.store.accept(delivery, occurredAt);
+    if (accepted.acceptance === "stale" || accepted.acceptance === "blocked") return;
+    if (accepted.acceptance === "duplicate") {
+      await this.replayPending(accepted.record);
+      if (accepted.record.state !== "accepted") return;
+    } else {
+      await this.emitSystemGateEvent("accepted", accepted.record);
+    }
+
+    if (delivery.epoch !== this.store.epoch) {
+      await this.rejectStale(delivery);
+      return;
+    }
+
+    const context = delivery.authenticated_context;
+    const authorized = isSystemGateProbeBody(delivery.body)
+      && delivery.tenant_id === "Steven"
+      && delivery.room_id === "grp.steven"
+      && delivery.actor_alias === "kant"
+      && delivery.origin === undefined
+      && context?.session_id === "gate-probe"
+      && context.channel === "gate"
+      && context.origin === undefined;
+    if (!authorized) {
+      const error = {
+        code: "UNAUTHORIZED_GATE_PROBE",
+        message: "Reserved system gate probe authority is invalid",
+        retryable: false,
+      };
+      const failed = await this.store.transition(
+        delivery.delivery_id,
+        "failed",
+        this.clock.now().toISOString(),
+        { error, attempt: delivery.attempt, claimToken: delivery.claim_token },
+      );
+      await this.emitSystemGateEvent("failed", failed, { error });
+      return;
+    }
+
+    const output: StructuredOutput = {
+      reply: null,
+      messages: [],
+      notify: [],
+      status: "done",
+      retryable: false,
+      artifacts: [],
+    };
+    const done = await this.store.transition(
+      delivery.delivery_id,
+      "done",
+      this.clock.now().toISOString(),
+      { output, attempt: delivery.attempt, claimToken: delivery.claim_token },
+    );
+    await this.emitSystemGateEvent("done", done, { output });
+  }
+
+  /** El evento viaja al gateway, pero esta ruta reservada nunca imprime body ni identificadores. */
+  private async emitSystemGateEvent(
+    phase: DeliveryPhase,
+    record: InboxRecord,
+    additions: {
+      readonly output?: StructuredOutput;
+      readonly error?: InboxRecord["error"];
+    } = {},
+  ): Promise<void> {
+    const event: DeliveryEvent = {
+      event_id: randomUUID(),
+      delivery_id: record.delivery_id,
+      attempt: record.attempt,
+      claim_token: record.claim_token,
+      epoch: this.store.epoch,
+      phase,
+      occurred_at: this.clock.now().toISOString(),
+      ...(record.origin === undefined ? {} : { origin: record.origin }),
+      ...(additions.output === undefined ? {} : { output: additions.output }),
+      ...(additions.error === undefined ? {} : { error: additions.error }),
+    };
+    await this.store.enqueue(event);
+    await this.publishEvent(event);
   }
 
   private async runReservedDelivery(
@@ -515,6 +620,22 @@ export class AdapterEngine {
           signal: controller.signal,
           ...(witnessedStart ? { onHarnessStart: markExecutionStarted } : {}),
         });
+        await this.publishOpenClawTerminalPointer(
+          delivery,
+          session,
+          session.sessionLane ?? "human",
+        ).catch((error: unknown) => {
+          // Observation must never turn a completed harness side effect into an ambiguous retry.
+          // The PTY fails closed (no pointer => no TUI); the delivery itself keeps its real result.
+          this.logger({
+            event: "shared_session_degraded",
+            delivery_id: delivery.delivery_id,
+            alias: delivery.recipient_alias,
+            reason: "openclaw_terminal_pointer_failed",
+            error_code: error instanceof Error ? error.name : "unknown",
+            timestamp: this.clock.now().toISOString(),
+          });
+        });
       }
       if (controller.signal.aborted) {
         throw controller.signal.reason instanceof Error
@@ -582,6 +703,30 @@ export class AdapterEngine {
       claimToken: delivery.claim_token,
     });
     await this.emit("done", done, { output });
+  }
+
+  /**
+   * Publish a stable, non-secret pointer for the read-only OpenClaw TUI.
+   *
+   * The harness keeps one durable mapping per authenticated conversation. The PTY cannot guess
+   * that hash, so after a human turn finishes we mirror the exact mapping to a fixed key. This
+   * does not collapse conversations and does not restart either process; every PTY OPEN rereads
+   * the fixed key and therefore follows a channel switch on the next attach.
+   */
+  private async publishOpenClawTerminalPointer(
+    delivery: Delivery,
+    session: HarnessSessionRequestScope,
+    lane: SessionLane,
+  ): Promise<void> {
+    if (this.harness.definition.id !== "openclaw" || lane !== "human") return;
+    const base = session.sessionKey ?? OPENCLAW_FALLBACK_SESSION_KEY;
+    const source = `openclaw:${delivery.recipient_alias}:${base}`;
+    const record = this.store.getSession(source);
+    if (record === undefined) return;
+    await this.store.setSession(
+      `openclaw:${delivery.recipient_alias}:shared:${delivery.recipient_alias}`,
+      record,
+    );
   }
 
   /**

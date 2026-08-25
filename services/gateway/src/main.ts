@@ -8,7 +8,7 @@ import {
   DevOnlyAuthProvider, HashedMtlsIdentityFileProvider, HashedTokenFileAuthProvider,
   MtlsAuthProvider, type AuthProvider
 } from './auth.js';
-import { buildLoopbackHealthProbe } from './health.js';
+import { buildLoopbackHealthProbe, probeAckPath } from './health.js';
 import { OidcBffAuthProvider, PostgresOidcSessionStore } from './oidc-bff.js';
 import { PostgresConsoleUserStore } from './console-users.js';
 import { PasswordAuthProvider } from './password-auth.js';
@@ -233,6 +233,8 @@ if (terminal !== undefined) {
 // --- end PTY control plane -------------------------------------------------------------
 const health = isolatedHealth ? await buildLoopbackHealthProbe({
   pool,
+  dataApp: app,
+  ackProbe: async () => probeAckPath(pool),
   logger: true,
   requirePostgresTls: process.env.NODE_ENV === 'production'
 }) : undefined;

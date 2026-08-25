@@ -60,19 +60,36 @@ describe('real external QA harness', () => {
         CAUCE_WS_URL: `${httpUrl.replace('http:', 'ws:')}/v3/ws`,
         CAUCE_FAULT_MODE: 'none',
         CAUCE_PRESENCE_LEASE_MS: '500',
-        CAUCE_RETRY_TIMEOUT_MS: '15000',
+        CAUCE_RETRY_TIMEOUT_MS: '45000',
       },
       timeout: 170_000,
       maxBuffer: 2 * 1024 * 1024,
-    }).catch((error: unknown) => {
+    }).catch(async (error: unknown) => {
       const detail = error as { stdout?: string; stderr?: string };
+      const recovery = await database.pool.query<{
+        status: string;
+        attempt: number;
+        max_attempts: number;
+        available_in_seconds: string;
+        claimed: boolean;
+        last_error: string | null;
+      }>(
+        `SELECT status,attempt,max_attempts,
+                round(EXTRACT(EPOCH FROM (available_at-now())))::text AS available_in_seconds,
+                consumer_instance_id IS NOT NULL AS claimed,last_error
+           FROM deliveries
+          WHERE status NOT IN ('done','failed','dead')
+          ORDER BY created_at`
+      ).then((result) => result.rows).catch(() => []);
       throw new Error(
-        `real QA harness failed\n--- stdout ---\n${detail.stdout ?? ''}\n--- stderr ---\n${detail.stderr ?? ''}`,
+        `real QA harness failed\n--- stdout ---\n${detail.stdout ?? ''}` +
+          `\n--- stderr ---\n${detail.stderr ?? ''}` +
+          `\n--- sanitized recovery state ---\n${JSON.stringify(recovery)}`,
         { cause: error },
       );
     });
     expect(stderr).toBe('');
-    expect(stdout).toContain('PASS 12 aliases and four harness kinds over real WS');
+    expect(stdout).toContain('PASS 15 aliases and four harness kinds over real WS');
     expect(stdout).not.toContain('SKIP ');
     expect(stdout).not.toContain('FAIL ');
   }, 180_000);

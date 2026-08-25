@@ -98,7 +98,8 @@ export const handlers = [
    * se rompe —siete ficheros en vez de uno— y el que no tiene NINGUNA persona escrita hoy en
    * producción, así que es el que hay que poder mirar mientras se desarrolla.
    */
-  http.get('*/v3/console/agents/:alias/perfil', ({ params }) => {
+  http.get('*/v3/console/tenants/:tenantId/agents/:alias/perfil', ({ params }) => {
+    const tenantId = String(params.tenantId);
     const alias = String(params.alias);
     const esOpenclaw = alias === 'argos';
     const perfil = {
@@ -129,8 +130,9 @@ export const handlers = [
         { nombre: 'CLAUDE.md', politica: 'bloque-gestionado', texto: bloque('Identidad y propósito', perfil.purpose) },
       ];
     return HttpResponse.json({
-      tenant_id: 'Steven',
+      tenant_id: tenantId,
       alias,
+      exists: true,
       harness: esOpenclaw ? 'openclaw' : 'claude',
       perfil,
       hechos: {
@@ -146,8 +148,8 @@ export const handlers = [
     });
   }),
 
-  http.get('*/v3/console/agents/:alias/documents', ({ params }) => HttpResponse.json({
-    tenant_id: 'Steven',
+  http.get('*/v3/console/tenants/:tenantId/agents/:alias/documents', ({ params }) => HttpResponse.json({
+    tenant_id: String(params.tenantId),
     alias: String(params.alias),
     facts_source: 'measured',
     harness: 'claude',
@@ -186,7 +188,7 @@ export const handlers = [
       },
     ],
   })),
-  http.get('*/v3/console/agents/:alias/documents/:kind/content', ({ params }) => {
+  http.get('*/v3/console/tenants/:tenantId/agents/:alias/documents/:kind/content', ({ params }) => {
     if (params.alias !== 'kant') {
       return HttpResponse.json({
         error: 'no_channel',
@@ -198,20 +200,24 @@ export const handlers = [
       ? '# Manual del sitio — kant\n\nEste fichero dice CÓMO SE TRABAJA AQUÍ: rutas, comandos y\nconvenciones. No repite quién sos ni qué podés decidir: eso es el rol declarado, y\nescribirlo dos veces es como se llega a que nadie sepa cuál manda.\n'
       : '{\n  "permissions": {\n    "allow": ["Bash(git status)"]\n  }\n}\n';
     return HttpResponse.json({
-      tenant_id: 'Steven', alias: 'kant', kind: params.kind,
+      tenant_id: String(params.tenantId), alias: 'kant', kind: params.kind,
       path: esDirectiva ? '/home/stev/.claude/CLAUDE.md' : '/home/stev/.claude/settings.json',
       format: esDirectiva ? 'markdown' : 'json',
       exists: true, content: contenido, sha: 'sha-de-lo-servido',
       bytes: contenido.length, editable: true, projected: false,
     });
   }),
-  http.put('*/v3/console/agents/:alias/documents/:kind/content', async ({ request }) => {
+  http.put(
+    '*/v3/console/tenants/:tenantId/agents/:alias/documents/:kind/content',
+    async ({ request }) => {
     const cuerpo = await request.json() as { content?: string };
     return HttpResponse.json({
-      ok: true, path: '/home/stev/.claude/CLAUDE.md',
+      ok: true, state: 'applied', evidence: 'probe_write_ack',
+      path: '/home/stev/.claude/CLAUDE.md',
       sha: 'sha-nueva', bytes: (cuerpo.content ?? '').length,
     });
-  }),
+    },
+  ),
   /*
    * LAS TRES CAPAS DE DIRECTIVA — y los TRES estados que la pantalla tiene que distinguir.
    *
@@ -281,10 +287,15 @@ export const handlers = [
     entries: params.alias === 'kant' ? roleBriefHistoryKant : [],
   })),
   http.get('*/v3/console/terminal/capability', () => HttpResponse.json({ available: false, reason: 'Backend PTY no instalado en este entorno' })),
+  http.get('*/v3/console/terminal/targets', () => HttpResponse.json({
+    observed_at: new Date().toISOString(),
+    items: [],
+  })),
   /*
    * Las sesiones de terminal del operador. La consola las lee para poder CERRAR las que quedaron
    * colgadas: sin este manejador cada prueba de la vista escupía «intercepted a request without a
    * matching request handler» y la trampa que este listado destraba quedaba sin cubrir.
    */
   http.get('*/v3/console/terminal/sessions', () => HttpResponse.json({ items: [] })),
+  http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
 ];

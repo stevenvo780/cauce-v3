@@ -1,13 +1,17 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { WebSocket } from 'ws';
 import type { AgentConnection, AgentSessionHandlers } from './agent-leg.js';
 import type {
-  AgentPresence, AuthzOutcome, ConsumeOutcome, SessionCloseReport, TerminalGatewayClient,
+  AgentPresence, AuthzOutcome, ConsumeOutcome, ResumeOutcome, SessionCloseReport, TerminalGatewayClient,
   TerminalMode, TerminalSessionGrant
 } from './gateway-client.js';
 import {
   CLOSE_CODES,
   MAX_COLS,
+  MAX_INPUT_MESSAGE_BYTES,
   MAX_ROWS,
   MIN_COLS,
   MIN_ROWS,
@@ -42,7 +46,7 @@ class FakeBrowserSocket {
     if (this.readyState === 3) return;
     this.readyState = 3;
     this.closes.push({ code, reason });
-    this.emit('close');
+    this.emit('close', ...([code, Buffer.from(reason)] as never[]));
   }
 
   terminate(): void {
@@ -87,30 +91,46 @@ class FakeBrowserSocket {
 
 class FakeAgentConnection {
   alive = true;
-  paused = false;
-  handlers: AgentSessionHandlers | undefined;
+  supportsSessionOutputFlowControl = true;
+  readonly handlersBySession = new Map<string, AgentSessionHandlers>();
+  private lastSessionId: string | undefined;
   readonly opens: { sessionId: string; ticket: string; mode: TerminalMode }[] = [];
   readonly stdin: Buffer[] = [];
+  readonly terminalResponses: Buffer[] = [];
   readonly resizes: { cols: number; rows: number }[] = [];
   readonly closes: { sessionId: string; reason: string }[] = [];
+  readonly pausedSessions = new Set<string>();
+  readonly pauseRequests: string[] = [];
+  readonly resumeRequests: string[] = [];
+
+  get handlers(): AgentSessionHandlers | undefined {
+    return this.lastSessionId === undefined ? undefined : this.handlersBySession.get(this.lastSessionId);
+  }
 
   attachSession(sessionId: string, handlers: AgentSessionHandlers): void {
-    void sessionId;
-    this.handlers = handlers;
+    this.handlersBySession.set(sessionId, handlers);
+    this.lastSessionId = sessionId;
   }
 
   detachSession(sessionId: string): void {
-    void sessionId;
-    this.handlers = undefined;
+    this.handlersBySession.delete(sessionId);
+    if (this.lastSessionId === sessionId) this.lastSessionId = undefined;
   }
 
   sendOpen(sessionId: string, ticket: string, mode: TerminalMode): void {
     this.opens.push({ sessionId, ticket, mode });
   }
 
-  sendStdin(sessionId: string, data: Buffer): void {
+  sendStdin(sessionId: string, data: Buffer): boolean {
     void sessionId;
     this.stdin.push(data);
+    return true;
+  }
+
+  sendTerminalResponse(sessionId: string, data: Buffer): boolean {
+    void sessionId;
+    this.terminalResponses.push(data);
+    return true;
   }
 
   sendResize(sessionId: string, cols: number, rows: number): void {
@@ -122,12 +142,16 @@ class FakeAgentConnection {
     this.closes.push({ sessionId, reason });
   }
 
-  pauseOutput(): void {
-    this.paused = true;
+  pauseSessionOutput(sessionId: string): boolean {
+    this.pauseRequests.push(sessionId);
+    this.pausedSessions.add(sessionId);
+    return true;
   }
 
-  resumeOutput(): void {
-    this.paused = false;
+  resumeSessionOutput(sessionId: string): boolean {
+    this.resumeRequests.push(sessionId);
+    this.pausedSessions.delete(sessionId);
+    return true;
   }
 
   asAgent(): AgentConnection {
@@ -137,9 +161,15 @@ class FakeAgentConnection {
 
 class FakeGateway implements TerminalGatewayClient {
   authz: AuthzOutcome = 'allow';
+  closeFailures = 0;
+  closeAttempts = 0;
   readonly closeReports: { sessionId: string; report: SessionCloseReport }[] = [];
 
   async consumeTicket(): Promise<ConsumeOutcome> {
+    return { status: 'unavailable' };
+  }
+
+  async resumeSession(): Promise<ResumeOutcome> {
     return { status: 'unavailable' };
   }
 
@@ -148,6 +178,11 @@ class FakeGateway implements TerminalGatewayClient {
   }
 
   async reportClose(sessionId: string, report: SessionCloseReport): Promise<void> {
+    this.closeAttempts += 1;
+    if (this.closeFailures > 0) {
+      this.closeFailures -= 1;
+      throw new Error('gateway unavailable');
+    }
     this.closeReports.push({ sessionId, report });
   }
 
@@ -167,6 +202,7 @@ function grant(overrides: Partial<TerminalSessionGrant> = {}): TerminalSessionGr
     container: 'claw',
     runtime_user: 'claw',
     session_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    resume_token: 'r'.repeat(100),
     ...overrides
   };
 }
@@ -228,13 +264,37 @@ async function openSession(
 }
 
 describe('client frames', () => {
-  it('accepts only the three control frames and rejects binary input', () => {
+  it('accepts the typed frames and rejects binary input', () => {
     expect(parseClientMessage(Buffer.from('{"type":"input","data":"ls"}'), false)).toEqual({ type: 'input', data: 'ls' });
+    expect(parseClientMessage(Buffer.from(JSON.stringify({ type: 'terminal_response', data: '\x1b[?1;2c' })), false))
+      .toEqual({ type: 'terminal_response', data: '\x1b[?1;2c' });
     expect(parseClientMessage(Buffer.from('{"type":"resize","cols":100,"rows":30}'), false))
       .toEqual({ type: 'resize', cols: 100, rows: 30 });
     expect(parseClientMessage(Buffer.from('{"type":"ping"}'), false)).toEqual({ type: 'ping' });
     expect(parseClientMessage(Buffer.from('{"type":"exec","cmd":"rm"}'), false)).toBeUndefined();
     expect(parseClientMessage(Buffer.from([0x01, 0x02]), true)).toBeUndefined();
+  });
+
+  it.each([
+    ['', 'vacía'],
+    ['whoami\r', 'texto humano'],
+    ['\x1b[31m', 'ANSI genérico'],
+    ['\x1b[<0;1;1M', 'reporte de mouse'],
+    ['\x1b[201;1R', 'fila fuera de rango'],
+    ['\x1b[1;501R', 'columna fuera de rango'],
+    ['\x1b[0;1R', 'coordenada cero'],
+    ['á', 'multibyte'],
+  ])('rechaza terminal_response abusiva: %s (%s)', (data) => {
+    expect(parseClientMessage(Buffer.from(JSON.stringify({ type: 'terminal_response', data })), false)).toBeUndefined();
+  });
+
+  it('acepta DA/DSR concatenadas pero pone un límite pequeño al frame técnico', () => {
+    const valid = '\x1b[?1;2c\x1b[>0;276;0c\x1b[0n\x1b[24;80R\x1b[?24;80R';
+    expect(parseClientMessage(Buffer.from(JSON.stringify({ type: 'terminal_response', data: valid })), false))
+      .toEqual({ type: 'terminal_response', data: valid });
+    expect(parseClientMessage(Buffer.from(JSON.stringify({
+      type: 'terminal_response', data: '\x1b[0n'.repeat(100)
+    })), false)).toBeUndefined();
   });
 
   // 2026-08-24: una tercera terminal mandaba rows:1, el parser devolvía undefined y el llamador
@@ -310,6 +370,33 @@ describe('terminal sessions', () => {
     expect(agent.resizes).toEqual([{ cols: 100, rows: 30 }]);
   });
 
+  it('permite DA/DSR por el canal técnico en harness sin abrir STDIN humano', async () => {
+    const { socket, agent } = await openSession({}, { mode: 'harness' });
+    socket.raw(JSON.stringify({ type: 'terminal_response', data: '\x1b[?1;2c\x1b[24;80R' }));
+    expect(agent.terminalResponses.map((chunk) => chunk.toString('ascii'))).toEqual(['\x1b[?1;2c\x1b[24;80R']);
+    expect(agent.stdin).toHaveLength(0);
+    expect(socket.closes).toHaveLength(0);
+  });
+
+  it('cierra fail-closed si un viewer harness intenta teclado/paste humano', async () => {
+    const { socket, agent, gateway } = await openSession({}, { mode: 'harness' });
+    socket.type('rm -rf /\r');
+    expect(agent.stdin).toHaveLength(0);
+    expect(agent.terminalResponses).toHaveLength(0);
+    expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.protocol_error, reason: 'input_forbidden' });
+    await waitFor(() => gateway.closeReports.length > 0);
+    expect(gateway.closeReports[0]?.report.reason).toBe('input_forbidden');
+  });
+
+  it('no acepta el canal de viewer dentro de un shell interactivo', async () => {
+    const { socket, agent } = await openSession();
+    socket.raw(JSON.stringify({ type: 'terminal_response', data: '\x1b[0n' }));
+    expect(agent.terminalResponses).toHaveLength(0);
+    expect(socket.closes[0]).toEqual({
+      code: CLOSE_CODES.protocol_error, reason: 'terminal_response_forbidden'
+    });
+  });
+
   it('closes with 4400 when the client sends an unknown frame type', async () => {
     const { socket } = await openSession();
     socket.raw('{"type":"exec","cmd":"whoami"}');
@@ -359,19 +446,105 @@ describe('terminal sessions', () => {
     expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.idle_timeout, reason: 'idle_timeout' });
   });
 
+  it('mantiene un viewer con salida continua más allá del idle y lo cierra cuando queda realmente quieto', async () => {
+    const { socket, agent } = await openSession(
+      { idleTimeoutMs: 35, outputRateBytesPerSec: 10_000_000 },
+      { mode: 'harness' }
+    );
+    const output = setInterval(() => agent.handlers?.onStdout(Buffer.from('.')), 10);
+    try {
+      await wait(120);
+      expect(socket.closes).toHaveLength(0);
+    } finally {
+      clearInterval(output);
+    }
+    await waitFor(() => socket.closes.length > 0);
+    expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.idle_timeout, reason: 'idle_timeout' });
+  });
+
+  it('usa ping como presencia sólo para viewer; no vuelve inmortal un shell abandonado', async () => {
+    const viewer = await openSession({ idleTimeoutMs: 35 }, { mode: 'harness' });
+    const viewerPing = setInterval(() => viewer.socket.raw('{"type":"ping"}'), 10);
+    try {
+      await wait(100);
+      expect(viewer.socket.closes).toHaveLength(0);
+    } finally {
+      clearInterval(viewerPing);
+    }
+
+    const shell = await openSession({ idleTimeoutMs: 35 });
+    const shellPing = setInterval(() => shell.socket.raw('{"type":"ping"}'), 10);
+    try {
+      await waitFor(() => shell.socket.closes.length > 0);
+      expect(shell.socket.closes[0]?.code).toBe(CLOSE_CODES.idle_timeout);
+    } finally {
+      clearInterval(shellPing);
+    }
+  });
+
   it('closes with 4423 when the granted TTL runs out', async () => {
     const { socket } = await openSession({}, { session_expires_at: new Date(Date.now() + 40).toISOString() });
     await waitFor(() => socket.closes.length > 0);
     expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.ttl_expired, reason: 'ttl_expired' });
   });
 
-  it('pauses the agent when the browser stops draining and resumes after it catches up', async () => {
+  it('pausa sólo la sesión cuyo browser no drena y la reanuda al bajar el buffer', async () => {
     const { socket, agent } = await openSession();
     socket.bufferedAmount = 8 * 1024 * 1024;
     agent.handlers?.onStdout(Buffer.from('x'));
-    expect(agent.paused).toBe(true);
+    expect(agent.pausedSessions).toEqual(new Set([SESSION_ID]));
     socket.bufferedAmount = 0;
-    await waitFor(() => !agent.paused);
+    await waitFor(() => agent.pausedSessions.size === 0);
+    expect(agent.pauseRequests).toEqual([SESSION_ID]);
+    expect(agent.resumeRequests).toEqual([SESSION_ID]);
+  });
+
+  it('un browser lento no bloquea output de otra sesión multiplexada', async () => {
+    const gateway = new FakeGateway();
+    const manager = new SessionManager({ gateway, limits: limits({ maxSessions: 2 }) });
+    const agent = new FakeAgentConnection();
+    const slow = new FakeBrowserSocket();
+    const healthy = new FakeBrowserSocket();
+
+    const firstOpening = manager.open({
+      socket: slow.asWebSocket(), sessionId: SESSION_ID, ticket: 'ticket-one',
+      grant: grant({ container: 'claw-one' }), agent: agent.asAgent(), cols: 80, rows: 24
+    });
+    await waitFor(() => agent.handlersBySession.has(SESSION_ID));
+    agent.handlersBySession.get(SESSION_ID)?.onOpenOk(1);
+    await firstOpening;
+    const secondOpening = manager.open({
+      socket: healthy.asWebSocket(), sessionId: OTHER_SESSION_ID, ticket: 'ticket-two',
+      grant: grant({ container: 'claw-two' }), agent: agent.asAgent(), cols: 80, rows: 24
+    });
+    await waitFor(() => agent.handlersBySession.has(OTHER_SESSION_ID));
+    agent.handlersBySession.get(OTHER_SESSION_ID)?.onOpenOk(2);
+    await secondOpening;
+
+    slow.bufferedAmount = 8 * 1024 * 1024;
+    agent.handlersBySession.get(SESSION_ID)?.onStdout(Buffer.from('slow'));
+    expect(agent.pausedSessions).toEqual(new Set([SESSION_ID]));
+    agent.handlersBySession.get(OTHER_SESSION_ID)?.onStdout(Buffer.from('healthy'));
+    expect(healthy.binary.at(-1)?.toString()).toBe('healthy');
+    expect(healthy.closes).toHaveLength(0);
+  });
+
+  it('con un agente viejo cierra sólo el browser lento en vez de pausar el TLS global', async () => {
+    const opened = await openSession();
+    opened.agent.supportsSessionOutputFlowControl = false;
+    opened.socket.bufferedAmount = 8 * 1024 * 1024;
+    opened.agent.handlers?.onStdout(Buffer.from('x'));
+    expect(opened.socket.closes[0]).toEqual({ code: CLOSE_CODES.slow_consumer, reason: 'slow_browser' });
+    expect(opened.agent.pauseRequests).toHaveLength(0);
+  });
+
+  it('cierra sólo la sesión que inunda input antes de acumular o escribir la rafaga', async () => {
+    const { socket, agent, gateway } = await openSession();
+    socket.type('x'.repeat(MAX_INPUT_MESSAGE_BYTES + 1));
+    expect(agent.stdin).toHaveLength(0);
+    expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.input_flood, reason: 'input_flood' });
+    await waitFor(() => gateway.closeReports.length > 0);
+    expect(gateway.closeReports[0]?.report.reason).toBe('input_flood');
   });
 
   it('reports counters and reason to the gateway when the agent exits', async () => {
@@ -400,20 +573,137 @@ describe('terminal sessions', () => {
       rows: 24
     });
     expect(conflicting.closes[0]).toEqual({ code: CLOSE_CODES.session_conflict, reason: 'session_conflict' });
+    await first.manager.flush();
+    expect(first.gateway.closeReports.some((entry) => entry.report.reason === 'session_conflict')).toBe(true);
   });
 
-  it('replays the scrollback when the same session id reattaches with a new ticket', async () => {
-    const first = await openSession({ scrollbackBytes: 16 });
+  it('reporta y libera la fila consumida cuando el límite corta antes de crear TerminalSession', async () => {
+    const first = await openSession({ maxSessions: 1 });
+    const rejected = new FakeBrowserSocket();
+    await first.manager.open({
+      socket: rejected.asWebSocket(),
+      sessionId: OTHER_SESSION_ID,
+      ticket: 'second-ticket',
+      grant: grant({ alias: 'socrates', container: 'ws-socrates' }),
+      agent: new FakeAgentConnection().asAgent(),
+      cols: 80,
+      rows: 24
+    });
+    expect(rejected.closes[0]).toEqual({ code: CLOSE_CODES.session_conflict, reason: 'session_limit' });
+    await first.manager.flush();
+    expect(first.gateway.closeReports.some((entry) => entry.report.reason === 'session_limit')).toBe(true);
+  });
+
+  it('persiste el cierre antes de reintentar y limpia el spool cuando vuelve el gateway', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-close-'));
+    const spool = join(directory, 'reports.json');
+    const gateway = new FakeGateway();
+    gateway.closeFailures = 2;
+    const manager = new SessionManager({ gateway, limits: limits(), closeSpoolFile: spool });
+    try {
+      manager.reportConsumedClose(SESSION_ID, 'agent_offline');
+      const pending = JSON.parse(await readFile(spool, 'utf8')) as {
+        readonly version: number;
+        readonly reports: readonly { readonly session_id: string; readonly reason: string }[];
+      };
+      expect(pending).toEqual({
+        version: 1,
+        reports: [{
+          session_id: SESSION_ID,
+          reason: 'agent_offline',
+          exit_code: null,
+          bytes_in: 0,
+          bytes_out: 0,
+        }],
+      });
+
+      await waitFor(() => gateway.closeReports.length === 1);
+      expect(gateway.closeAttempts).toBe(3);
+      const delivered = JSON.parse(await readFile(spool, 'utf8')) as {
+        readonly version: number;
+        readonly reports: readonly unknown[];
+      };
+      expect(delivered).toEqual({ version: 1, reports: [] });
+    } finally {
+      await manager.flush();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('reanexa el mismo PTY y entrega sólo el tail no confirmado, sin un segundo OPEN', async () => {
+    const sessionExpiresAt = new Date(Date.now() + 60_000).toISOString();
+    const first = await openSession(
+      { scrollbackBytes: 16, reconnectGraceMs: 500 },
+      { session_expires_at: sessionExpiresAt }
+    );
     first.agent.handlers?.onStdout(Buffer.from('0123456789'));
     first.agent.handlers?.onStdout(Buffer.from('abcdefghij'));
-    first.socket.close(1000, 'browser_closed');
-    await waitFor(() => first.gateway.closeReports.length > 0);
+    first.socket.close(1006, 'network_lost');
 
-    const second = await openSession({}, {}, SESSION_ID, { manager: first.manager, gateway: first.gateway });
-    await waitFor(() => second.socket.binary.length > 0);
-    // The oldest bytes are dropped: only the last `scrollbackBytes` survive the reattach.
-    expect(second.socket.binary[0]?.toString()).toBe('456789abcdefghij');
-    expect(second.socket.json(1)).toMatchObject({ type: 'notice', level: 'info' });
+    const resumed = new FakeBrowserSocket();
+    expect(first.manager.reattach({
+      socket: resumed.asWebSocket(),
+      sessionId: SESSION_ID,
+      grant: grant({ session_expires_at: sessionExpiresAt }),
+      cols: 100,
+      rows: 30,
+      afterBytes: 10
+    })).toBe(true);
+    expect(first.agent.opens).toHaveLength(1);
+    expect(first.agent.resizes.at(-1)).toEqual({ cols: 100, rows: 30 });
+    expect(resumed.json(0)).toMatchObject({ type: 'ready', resumed: true, stream_offset: 10 });
+    expect(resumed.json(1)).toMatchObject({ type: 'notice', level: 'info' });
+    expect(resumed.binary[0]?.toString()).toBe('abcdefghij');
+    expect(first.gateway.closeReports).toHaveLength(0);
+  });
+
+  it('a replay cannot open a PTY or attach two browser sockets concurrently', async () => {
+    const sessionExpiresAt = new Date(Date.now() + 60_000).toISOString();
+    const first = await openSession(
+      { reconnectGraceMs: 500 }, { session_expires_at: sessionExpiresAt },
+    );
+    const whileOwned = new FakeBrowserSocket();
+    expect(first.manager.reattach({
+      socket: whileOwned.asWebSocket(), sessionId: SESSION_ID,
+      grant: grant({ session_expires_at: sessionExpiresAt }), cols: 80, rows: 24, afterBytes: 0,
+    })).toBe(false);
+
+    first.socket.close(1006, 'network_lost');
+    const winner = new FakeBrowserSocket();
+    const replay = new FakeBrowserSocket();
+    const input = {
+      sessionId: SESSION_ID,
+      grant: grant({ session_expires_at: sessionExpiresAt }),
+      cols: 80,
+      rows: 24,
+      afterBytes: 0,
+    };
+    expect(first.manager.reattach({ socket: winner.asWebSocket(), ...input })).toBe(true);
+    expect(first.manager.reattach({ socket: replay.asWebSocket(), ...input })).toBe(false);
+    expect(first.agent.opens).toHaveLength(1);
+    expect(winner.json(0)).toMatchObject({ type: 'ready', resumed: true });
+    expect(replay.text).toHaveLength(0);
+    expect(first.gateway.closeReports).toHaveLength(0);
+  });
+
+  it('reattach rejects any destination, operator or TTL mismatch', async () => {
+    const sessionExpiresAt = new Date(Date.now() + 60_000).toISOString();
+    const first = await openSession(
+      { reconnectGraceMs: 500 }, { session_expires_at: sessionExpiresAt },
+    );
+    first.socket.close(1006, 'network_lost');
+    for (const mismatch of [
+      { operator_id: 'intruder' },
+      { container: 'another-container' },
+      { alias: 'another-alias' },
+      { session_expires_at: new Date(Date.now() + 120_000).toISOString() },
+    ]) {
+      expect(first.manager.reattach({
+        socket: new FakeBrowserSocket().asWebSocket(), sessionId: SESSION_ID,
+        grant: grant({ session_expires_at: sessionExpiresAt, ...mismatch }), cols: 80, rows: 24, afterBytes: 0,
+      })).toBe(false);
+    }
+    expect(first.agent.opens).toHaveLength(1);
   });
 
   it('closes with 4404 when the agent connection dies underneath the session', async () => {

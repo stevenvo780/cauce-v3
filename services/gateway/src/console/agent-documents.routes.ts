@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { AliasSchema, TenantSchema } from '@cauce/protocol';
 import {
   type AgentDocument, type DocumentKind, type HarnessKind, type RuntimeFacts,
   documentForKind, resolveAgentDocuments, verifyWritablePath
 } from './agent-documents.js';
 
 /**
- * `GET /v3/console/agents/:alias/documents` — el inventario de ficheros que gobiernan a un alias.
+ * `GET /v3/console/tenants/:tenantId/agents/:alias/documents` — el inventario de ficheros que
+ * gobiernan a un alias inequívoco dentro de un tenant.
  *
  * SÓLO LECTURA, y ni siquiera del contenido: devuelve QUÉ fichero es cada cosa y DÓNDE vive. Hoy
  * la consola no enseña ninguna de estas rutas (medido el 23-ago contra el bundle desplegado
@@ -38,6 +40,33 @@ export interface GovernanceDocumentContent {
   readonly truncated: boolean;
   /** Timestamp ISO de la última modificación. */
   readonly modified_at: string;
+  /** Huella SHA-256 de los bytes reales, no del prefijo visible si viene truncado. */
+  readonly sha: string;
+}
+
+export type GovernanceWritePrecondition =
+  | { readonly state: 'present'; readonly sha256: string }
+  | { readonly state: 'absent' };
+
+export type GovernanceBatchWrite =
+  | {
+      readonly mode: 'write';
+      readonly path: string;
+      readonly content: string;
+      readonly precondition: GovernanceWritePrecondition;
+    }
+  | {
+      /** Acredita presencia/ausencia sin abrir para escritura ni modificar mtime. */
+      readonly mode: 'verify';
+      readonly path: string;
+      readonly precondition: GovernanceWritePrecondition;
+    };
+
+export interface GovernanceBatchWriteAck {
+  readonly path: string;
+  readonly operation: 'replace' | 'create' | 'unchanged' | 'absent';
+  readonly sha: string | null;
+  readonly bytes: number;
 }
 
 export interface MemoryDirectoryListing {
@@ -123,21 +152,41 @@ export interface AgentFactsProbe {
   writeGovernanceDocument?(
     path: string,
     contenido: string,
-    expectedSha: string | undefined,
+    precondition: GovernanceWritePrecondition,
     facts: RuntimeFacts,
     tenantId: string,
     alias: string,
   ): Promise<{ sha: string; bytes: number } | GovernanceReadError | { error: 'conflict'; reason: string }>;
+
+  /** Lote indivisible para los perfiles de varios ficheros (OpenClaw). */
+  writeGovernanceBatch?(
+    writes: readonly GovernanceBatchWrite[],
+    facts: RuntimeFacts,
+    tenantId: string,
+    alias: string,
+  ): Promise<readonly GovernanceBatchWriteAck[] | GovernanceReadError | { error: 'conflict'; reason: string }>;
 }
 
 export interface AgentDocumentsDeps {
-  /** Resuelve el principal y exige el permiso, igual que el resto de `/v3/console`. */
-  authorize(request: unknown): Promise<{ tenant_id: string; alias: string }>;
+  /** Autentica al principal y exige el permiso de rol de la operación. */
+  authorize(
+    request: unknown, permission: 'read' | 'control'
+  ): Promise<{ tenant_id: string; alias: string }>;
+  /** Lookup y autorización exactos; nunca resuelve sólo por alias. */
+  authorizeTarget(
+    actor: { tenant_id: string; alias: string },
+    targetTenantId: string,
+    targetAlias: string,
+    permission: 'read' | 'control',
+    legacySameTenant: boolean,
+  ): Promise<{
+    tenant_id: string;
+    alias: string;
+    harness_id?: string | null;
+    home_directory?: string | null;
+    enabled?: boolean;
+  } | undefined>;
   probe: AgentFactsProbe;
-  /** Filas de `agents` visibles para el actor, para poder responder algo cuando no hay medición. */
-  lookupAgent(alias: string, tenantId: string, actorAlias: string): Promise<
-    { tenant_id: string; alias: string; harness_id?: string | null; home_directory?: string | null } | undefined
-  >;
 }
 
 export interface DocumentRow extends AgentDocument {
@@ -189,31 +238,6 @@ export function buildDocumentsResponse(
 }
 
 export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDocumentsDeps): void {
-  app.get<{ Params: { alias: string } }>(
-    '/v3/console/agents/:alias/documents',
-    async (request, reply) => {
-      const actor = await deps.authorize(request);
-      const alias = request.params.alias;
-
-      const medido = await deps.probe.factsFor(actor.tenant_id, alias);
-      if (medido) {
-        return buildDocumentsResponse(actor.tenant_id, alias, medido.facts, medido.source);
-      }
-
-      const fila = await deps.lookupAgent(alias, actor.tenant_id, actor.alias);
-      if (!fila) {
-        await reply.code(404).send({ error: 'not_found', message: 'ese alias no existe o no lo ves' });
-        return undefined;
-      }
-      return buildDocumentsResponse(
-        fila.tenant_id,
-        fila.alias,
-        { harness: harnessFromRegistry(fila.harness_id), home: fila.home_directory ?? '' },
-        'database',
-      );
-    },
-  );
-
   /*
    * EL CONTENIDO — las dos rutas que la consola llamaba y el servidor NO SERVÍA.
    *
@@ -222,11 +246,10 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
    * ninguna de las dos: `agent-documents.routes.ts` sólo declaraba el inventario. O sea que el
    * editor de la consola pedía un 404 y guardaba contra un 404.
    *
-   * Se implementan acá, y lo que contestan cuando no hay canal NO es 404: es 409 con el motivo.
-   * La diferencia no es cosmética y el propio cliente la documenta — un 404 dice «este gateway no
-   * tiene la función» y un 409 dice «la función está, pero nadie ha medido el contenedor». Con el
-   * 404, la consola concluía lo primero cuando pasaba lo segundo, que es exactamente la queja de
-   * «las directivas no se muestran, dicen que no están en capa 2 y 3».
+   * Se implementan acá, y cuando no hay hechos medidos contestan 409 con el motivo. Si el probe no
+   * ofrece escritura, el PUT contesta 503: la función HTTP existe, pero no hay un canal que pueda
+   * acreditar la aplicación. Un 404 del manejador queda reservado para un destino ausente o no
+   * autorizado; la consola no lo disfraza como una ruta sin publicar.
    */
   const KINDS: readonly DocumentKind[] = ['directive', 'tools', 'prompts', 'mcp'];
 
@@ -248,16 +271,71 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
     return 'error' in valor;
   }
 
-  app.get<{ Params: { alias: string; kind: string } }>(
-    '/v3/console/agents/:alias/documents/:kind/content',
-    async (request, reply) => {
-      const actor = await deps.authorize(request);
-      const { alias, kind } = request.params;
+  type BaseParams = { tenantId?: string; alias: string };
+  type ContentParams = BaseParams & { kind: string };
+  type Target = NonNullable<Awaited<ReturnType<AgentDocumentsDeps['authorizeTarget']>>>;
+  const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+  async function destino(
+    request: FastifyRequest<{ Params: BaseParams | ContentParams }>,
+    reply: FastifyReply,
+    permission: 'read' | 'control',
+    legacySameTenant: boolean,
+  ): Promise<{ actor: { tenant_id: string; alias: string }; target: Target } | undefined> {
+    const aliasResult = AliasSchema.safeParse(request.params.alias);
+    if (!aliasResult.success) {
+      await reply.code(400).send({ error: 'invalid_input', message: 'alias is invalid' });
+      return undefined;
+    }
+    const actor = await deps.authorize(request, permission);
+    const tenantCrudo = legacySameTenant ? actor.tenant_id : request.params.tenantId;
+    const tenantResult = TenantSchema.safeParse(tenantCrudo);
+    if (!tenantResult.success) {
+      await reply.code(400).send({ error: 'invalid_input', message: 'tenantId is invalid' });
+      return undefined;
+    }
+    const target = await deps.authorizeTarget(
+      actor, tenantResult.data, aliasResult.data, permission, legacySameTenant,
+    );
+    if (!target || target.tenant_id !== tenantResult.data || target.alias !== aliasResult.data) {
+      await reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
+      return undefined;
+    }
+    if (legacySameTenant) reply.header('Deprecation', 'true');
+    return { actor, target };
+  }
+
+  async function mapa(
+    request: FastifyRequest<{ Params: BaseParams }>, reply: FastifyReply, legacySameTenant: boolean,
+  ) {
+    const resuelto = await destino(request, reply, 'read', legacySameTenant);
+    if (!resuelto) return undefined;
+    const { target } = resuelto;
+    const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
+    if (medido) {
+      return buildDocumentsResponse(target.tenant_id, target.alias, medido.facts, medido.source);
+    }
+    return buildDocumentsResponse(
+      target.tenant_id,
+      target.alias,
+      { harness: harnessFromRegistry(target.harness_id), home: target.home_directory ?? '' },
+      'database',
+    );
+  }
+
+  async function contenido(
+    request: FastifyRequest<{ Params: ContentParams }>, reply: FastifyReply, legacySameTenant: boolean,
+  ) {
+      const { kind } = request.params;
       if (!kindValido(kind)) {
         return reply.code(400).send({ error: 'invalid_input', message: 'ese tipo de documento no existe' });
       }
 
-      const medido = await deps.probe.factsFor(actor.tenant_id, alias);
+      const resuelto = await destino(request, reply, 'read', legacySameTenant);
+      if (!resuelto) return undefined;
+      const { target } = resuelto;
+
+      const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
       if (!medido) {
         /*
          * 409 y no 404. Sin hechos medidos NO se puede saber qué fichero es «la directiva» de este
@@ -276,49 +354,106 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         return reply.code(404).send({ error: 'not_found', message: 'ese alias no tiene ese documento' });
       }
 
-      const leido = await deps.probe.readGovernanceDocument(doc.path, medido.facts, actor.tenant_id, alias);
+      const leido = await deps.probe.readGovernanceDocument(
+        doc.path, medido.facts, target.tenant_id, target.alias,
+      );
       if (esError(leido)) {
+        // La ausencia es un estado editable con precondición explícita, no un error de transporte.
+        // Así la creación nunca se confunde con un reemplazo cuyo fichero desapareció a mitad del
+        // guardado: GET observa `sha: null`; PUT exige `create_if_absent: true`.
+        if (leido.error === 'not_found') {
+          return {
+            tenant_id: target.tenant_id,
+            alias: target.alias,
+            kind,
+            path: doc.path,
+            format: doc.format,
+            exists: false,
+            content: '',
+            sha: null,
+            bytes: 0,
+            editable: doc.editable,
+            projected: false,
+            ...(doc.warning === undefined ? {} : { warning: doc.warning }),
+            truncated: false,
+          };
+        }
         return reply.code(codigoDe(leido.error)).send({ error: leido.error, message: leido.reason });
       }
 
       return {
-        tenant_id: actor.tenant_id,
-        alias,
+        tenant_id: target.tenant_id,
+        alias: target.alias,
         kind,
         path: doc.path,
         format: doc.format,
         exists: true,
         content: leido.text,
-        sha: shaDe(leido.text),
+        sha: leido.sha,
         bytes: leido.bytes,
-        editable: doc.editable,
+        // Un prefijo no es un documento. Aunque la ruta sea escribible, el navegador no puede
+        // transformar un recorte en un reemplazo sin borrar silenciosamente el resto.
+        editable: doc.editable && !leido.truncated,
+        projected: false,
+        ...(doc.warning === undefined ? {} : { warning: doc.warning }),
         truncated: leido.truncated,
         modified_at: leido.modified_at,
       };
-    },
-  );
+  }
 
-  app.put<{ Params: { alias: string; kind: string }; Body: unknown }>(
-    '/v3/console/agents/:alias/documents/:kind/content',
-    async (request, reply) => {
-      const actor = await deps.authorize(request);
-      const { alias, kind } = request.params;
+  async function escribir(
+    request: FastifyRequest<{ Params: ContentParams; Body: unknown }>,
+    reply: FastifyReply,
+    legacySameTenant: boolean,
+  ) {
+      const { kind } = request.params;
       if (!kindValido(kind)) {
         return reply.code(400).send({ error: 'invalid_input', message: 'ese tipo de documento no existe' });
+      }
+
+      const resuelto = await destino(request, reply, 'control', legacySameTenant);
+      if (!resuelto) return undefined;
+      const { target } = resuelto;
+      if (target.enabled !== true) {
+        return reply.code(409).send({
+          error: 'agent_disabled',
+          message: 'el alias está apagado; no se escribe contexto en un runtime que no debe estar activo',
+        });
       }
 
       const cuerpo = request.body;
       if (cuerpo === null || typeof cuerpo !== 'object' || Array.isArray(cuerpo)) {
         return reply.code(400).send({ error: 'invalid_input', message: 'el cuerpo tiene que ser un objeto' });
       }
-      const contenido = (cuerpo as Record<string, unknown>).content;
+      const source = cuerpo as Record<string, unknown>;
+      const allowedFields = new Set(['content', 'expected_sha', 'create_if_absent']);
+      if (Object.keys(source).some((field) => !allowedFields.has(field))) {
+        return reply.code(400).send({ error: 'invalid_input', message: 'el cuerpo trae campos desconocidos' });
+      }
+      const contenido = source.content;
       if (typeof contenido !== 'string') {
         return reply.code(400).send({ error: 'invalid_input', message: '`content` tiene que ser texto' });
       }
-      const expectedShaCrudo = (cuerpo as Record<string, unknown>).expected_sha;
-      const expectedSha = typeof expectedShaCrudo === 'string' ? expectedShaCrudo : undefined;
+      if (Buffer.byteLength(contenido, 'utf8') > 256 * 1024) {
+        return reply.code(413).send({ error: 'too_large', message: 'el contenido se pasa del tope de 256 KiB' });
+      }
 
-      const medido = await deps.probe.factsFor(actor.tenant_id, alias);
+      const expectedSha = source.expected_sha;
+      const createIfAbsent = source.create_if_absent;
+      let precondition: GovernanceWritePrecondition;
+      if (createIfAbsent === true && expectedSha === undefined) {
+        precondition = { state: 'absent' };
+      } else if ((createIfAbsent === undefined || createIfAbsent === false)
+        && typeof expectedSha === 'string' && SHA256_PATTERN.test(expectedSha)) {
+        precondition = { state: 'present', sha256: expectedSha };
+      } else {
+        return reply.code(400).send({
+          error: 'invalid_input',
+          message: 'para reemplazar hace falta `expected_sha`; para crear, `create_if_absent: true` sin SHA',
+        });
+      }
+
+      const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
       if (!medido) {
         return reply.code(409).send({
           error: 'no_medido',
@@ -346,8 +481,53 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         });
       }
 
+      /*
+       * PREFLIGHT FRESCO. El SHA del navegador por sí solo no dice si el contenido que vio era un
+       * prefijo truncado. Volver a leer antes de escribir sirve para dos garantías distintas:
+       *
+       *  - create exige que el fichero siga ausente;
+       *  - replace exige una lectura ENTERA cuya huella sea exactamente la que se editó.
+       *
+       * El pty-agent vuelve a hacer CAS al abrir el descriptor; esta lectura no lo reemplaza. Es la
+       * puerta que evita que un cliente que recibió 256 KiB de un fichero mayor use su SHA real para
+       * reemplazar el fichero completo con ese prefijo.
+       */
+      const actual = await deps.probe.readGovernanceDocument(
+        doc.path, medido.facts, target.tenant_id, target.alias,
+      );
+      if (precondition.state === 'absent') {
+        if (!esError(actual)) {
+          return reply.code(409).send({
+            error: 'conflict', message: 'el fichero ya existe; hay que abrirlo antes de reemplazarlo',
+          });
+        }
+        if (actual.error !== 'not_found') {
+          return reply.code(codigoDe(actual.error)).send({ error: actual.error, message: actual.reason });
+        }
+      } else {
+        if (esError(actual)) {
+          if (actual.error === 'not_found') {
+            return reply.code(409).send({
+              error: 'conflict', message: 'el fichero desapareció desde que se abrió; no se recreó implícitamente',
+            });
+          }
+          return reply.code(codigoDe(actual.error)).send({ error: actual.error, message: actual.reason });
+        }
+        if (actual.truncated) {
+          return reply.code(409).send({
+            error: 'truncated_source',
+            message: 'la lectura está recortada; un prefijo nunca se puede usar para reemplazar el fichero completo',
+          });
+        }
+        if (actual.sha !== precondition.sha256) {
+          return reply.code(409).send({
+            error: 'conflict', message: 'el fichero cambió desde que se abrió; hay que releerlo',
+          });
+        }
+      }
+
       const escrito = await deps.probe.writeGovernanceDocument(
-        doc.path, contenido, expectedSha, medido.facts, actor.tenant_id, alias,
+        doc.path, contenido, precondition, medido.facts, target.tenant_id, target.alias,
       );
       if ('error' in escrito) {
         if (escrito.error === 'conflict') {
@@ -355,18 +535,48 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         }
         return reply.code(codigoDe(escrito.error)).send({ error: escrito.error, message: escrito.reason });
       }
-      return { ok: true, path: doc.path, sha: escrito.sha, bytes: escrito.bytes };
-    },
-  );
-}
+      const raw = Buffer.from(contenido, 'utf8');
+      const expectedAckSha = createHash('sha256').update(raw).digest('hex');
+      if (escrito.sha !== expectedAckSha || escrito.bytes !== raw.byteLength) {
+        return reply.code(502).send({
+          error: 'invalid_ack',
+          message: 'la sonda respondió, pero su ACK no acredita los bytes solicitados',
+        });
+      }
+      return {
+        ok: true,
+        state: 'applied',
+        evidence: 'probe_write_ack',
+        path: doc.path,
+        sha: escrito.sha,
+        bytes: escrito.bytes,
+      };
+  }
 
-/**
- * La huella de lo servido, para que dos personas no se pisen en silencio.
- *
- * sha256 del texto tal cual se sirvió. Se calcula sobre el TEXTO y no sobre el fichero del disco
- * porque es el texto lo que el operador tiene delante: si el servidor truncó, la huella tiene que
- * ser la del recorte o el guardado siguiente creería que el fichero cambió cuando no cambió.
- */
-function shaDe(texto: string): string {
-  return createHash('sha256').update(texto, 'utf8').digest('hex');
+  app.get<{ Params: BaseParams }>(
+    '/v3/console/tenants/:tenantId/agents/:alias/documents',
+    (request, reply) => mapa(request, reply, false),
+  );
+  app.get<{ Params: ContentParams }>(
+    '/v3/console/tenants/:tenantId/agents/:alias/documents/:kind/content',
+    (request, reply) => contenido(request, reply, false),
+  );
+  app.put<{ Params: ContentParams; Body: unknown }>(
+    '/v3/console/tenants/:tenantId/agents/:alias/documents/:kind/content',
+    (request, reply) => escribir(request, reply, false),
+  );
+
+  // Compatibilidad de transición: estas rutas nunca salen del tenant autenticado y se marcan.
+  app.get<{ Params: { alias: string } }>(
+    '/v3/console/agents/:alias/documents',
+    (request, reply) => mapa(request, reply, true),
+  );
+  app.get<{ Params: { alias: string; kind: string } }>(
+    '/v3/console/agents/:alias/documents/:kind/content',
+    (request, reply) => contenido(request, reply, true),
+  );
+  app.put<{ Params: { alias: string; kind: string }; Body: unknown }>(
+    '/v3/console/agents/:alias/documents/:kind/content',
+    (request, reply) => escribir(request, reply, true),
+  );
 }

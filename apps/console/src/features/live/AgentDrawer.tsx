@@ -68,15 +68,7 @@ export interface AgentDrawerProps {
   view: LiveAgentView;
   tab: DrawerTab;
   traceId?: string;
-  /**
-   * El rol a medio redactar de ESTE alias, si lo hay. No lo guarda la pestaña «Rol» sino la
-   * página, porque el borrador tiene que sobrevivir a lo que desmonta la pestaña: pasar a
-   * «Entregas» a mirar qué hace el bot mientras se le redacta el rol, y volver, era perder el
-   * texto sin un solo aviso. `undefined` = este alias no tiene borrador.
-   */
-  borradorRol?: string;
-  onBorradorRol: (texto: string | undefined) => void;
-  /** Mismo motivo que el del rol: cambiar de pestaña desmonta la pestaña, no el borrador. */
+  /** El único borrador editable es el perfil canónico; la proyección `role_brief` sólo se lee. */
   borradorPerfil?: Partial<AgentPerfilCampos>;
   onBorradorPerfil: (campos: Partial<AgentPerfilCampos> | undefined) => void;
   onTab: (tab: DrawerTab) => void;
@@ -85,7 +77,7 @@ export interface AgentDrawerProps {
 }
 
 export function AgentDrawer({
-  view, tab, traceId, borradorRol, onBorradorRol, borradorPerfil, onBorradorPerfil,
+  view, tab, traceId, borradorPerfil, onBorradorPerfil,
   onTab, onTrace, onClose,
 }: AgentDrawerProps) {
   // Esc cierra desde donde sea. Un panel que sólo se cierra con la crucecita obliga a buscarla con
@@ -137,17 +129,20 @@ export function AgentDrawer({
         {tab === 'conexion' ? <TabConexion view={view} /> : null}
         {tab === 'entregas' ? <TabEntregas view={view} onTrace={(id) => { onTrace(id); onTab('cadena'); }} /> : null}
         {tab === 'cadena' ? <TabCadena view={view} traceId={traceId} onTrace={onTrace} /> : null}
-        {/* `key` por alias: sin él, cambiar de agente con la pestaña abierta dejaría en pantalla el
-            aviso del guardado anterior, referido a OTRO bot. El borrador ya viene de fuera y está
-            indexado por alias, así que cambiar de agente empieza limpio por construcción y volver
-            al primero recupera lo que se estaba escribiendo. */}
+        {/* `key` por alias evita que las lecturas y el modal de un bot sobrevivan al cambio de
+            agente. El único borrador editable vive en Perfil y ya viene indexado por alias. */}
         {tab === 'rol' ? (
           <DirectivaTab
             key={view.key}
             tenantId={view.tenantId}
             alias={view.alias}
-            borrador={borradorRol}
-            onBorrador={onBorradorRol}
+            onEditarEnPerfil={() => onTab('perfil')}
+            onRestaurarEnPerfil={(texto) => {
+              // Sólo cambia `role_summary`: una restauración nunca pisa los otros seis campos que
+              // el operador ya tuviera en borrador para este alias.
+              onBorradorPerfil({ ...borradorPerfil, role_summary: texto });
+              onTab('perfil');
+            }}
           />
         ) : null}
         {tab === 'perfil' ? (

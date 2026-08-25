@@ -1,4 +1,6 @@
-import type { AgentDocumentItem, AgentDocumentsMap } from '../../api/types';
+import type {
+  AgentDocumentGuardado, AgentDocumentItem, AgentDocumentsMap,
+} from '../../api/types';
 
 /**
  * LA LÓGICA DE «QUÉ SE PUEDE HACER CON ESTE FICHERO Y POR QUÉ NO».
@@ -135,4 +137,36 @@ export function avisoAntesDeGuardar(item: AgentDocumentItem): string | undefined
 /** ¿Hay algo sin guardar? Comparación exacta: un espacio al final también es un cambio. */
 export function hayCambios(original: string, borrador: string): boolean {
   return original !== borrador;
+}
+
+/**
+ * Un 2xx aislado no significa «aplicado». Sólo el contrato nuevo, que trae el ACK de la sonda que
+ * escribió en el contenedor, habilita esa palabra. La rama defensiva evita mentir durante un
+ * despliegue escalonado si un gateway viejo devuelve la forma anterior.
+ */
+export function mensajeDeGuardado(resultado: AgentDocumentGuardado): string {
+  if (esAckAplicado(resultado)) {
+    return `Aplicado en ${resultado.path}: la sonda confirmó el ACK de escritura (${resultado.bytes} bytes).`;
+  }
+  return `El gateway respondió 2xx, pero la aplicación no quedó confirmada por un ACK completo.`;
+}
+
+export interface AckAplicado {
+  readonly ok: true;
+  readonly state: 'applied';
+  readonly evidence: 'probe_write_ack';
+  readonly path: string;
+  readonly sha: string;
+  readonly bytes: number;
+}
+
+/** Sólo esta forma completa autoriza a limpiar el borrador visible. */
+export function esAckAplicado(resultado: AgentDocumentGuardado): resultado is AckAplicado {
+  return resultado.ok === true
+    && resultado.state === 'applied'
+    && resultado.evidence === 'probe_write_ack'
+    && typeof resultado.path === 'string' && resultado.path.startsWith('/')
+    && typeof resultado.sha === 'string' && /^[0-9a-f]{64}$/.test(resultado.sha)
+    && typeof resultado.bytes === 'number' && Number.isSafeInteger(resultado.bytes)
+    && resultado.bytes >= 0;
 }

@@ -38,8 +38,10 @@ export interface FakeGatewaySession {
   subject: string;
   operation: string;
   expires_at: number;
+  session_expires_at: number;
   consumed_at: number;
   ticket_fp: string;
+  resume_token: string;
   revoked_at: number | null;
   closed_at: number | null;
 }

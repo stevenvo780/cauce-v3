@@ -6,7 +6,8 @@ import type { AgentDocumentContent, AgentDocumentItem, AgentDocumentKind } from 
 import { useResource } from '../../api/use-resource';
 import { EmptyState } from '../../components/ui';
 import {
-  avisoAntesDeGuardar, avisoDeFuente, explicarFallo, hayCambios, modoDeDocumento,
+  avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios, mensajeDeGuardado,
+  modoDeDocumento,
 } from './ficheros';
 
 /**
@@ -45,7 +46,9 @@ export interface FicherosTabProps {
 
 export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
   const api = useApi();
-  const mapa = useResource(`ficheros-${tenantId}-${alias}`, () => api.getAgentDocuments(alias));
+  const mapa = useResource(
+    `ficheros-${tenantId}-${alias}`, () => api.getAgentDocuments(tenantId, alias),
+  );
   const [abierto, setAbierto] = useState<AgentDocumentKind | undefined>(undefined);
 
   const aviso = mapa.data ? avisoDeFuente(mapa.data) : undefined;
@@ -54,7 +57,16 @@ export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
   if (mapa.loading) return <p className="muted">Leyendo el mapa de ficheros…</p>;
 
   if (mapa.error) {
-    const fallo = explicarFallo(mapa.error instanceof ApiError ? mapa.error.status : undefined, mapa.error.message);
+    const status = mapa.error instanceof ApiError ? mapa.error.status : undefined;
+    if (status === 404) {
+      return (
+        <EmptyState>
+          <strong>Ese alias no existe en ese tenant o no es visible para tu sesión.</strong>{' '}
+          {mapa.error.message}
+        </EmptyState>
+      );
+    }
+    const fallo = explicarFallo(status, mapa.error.message);
     return <EmptyState><strong>{fallo.titulo}</strong>. {fallo.detalle}</EmptyState>;
   }
 
@@ -88,6 +100,7 @@ export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
             <FilaDeFichero
               key={`${item.kind}-${item.path}`}
               item={item}
+              tenantId={tenantId}
               alias={alias}
               abierto={abierto === item.kind}
               onAbrir={() => setAbierto(abierto === item.kind ? undefined : item.kind)}
@@ -102,8 +115,14 @@ export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
 }
 
 function FilaDeFichero(
-  { item, alias, abierto, onAbrir }:
-  { item: AgentDocumentItem; alias: string; abierto: boolean; onAbrir: () => void },
+  { item, tenantId, alias, abierto, onAbrir }:
+  {
+    item: AgentDocumentItem;
+    tenantId: string;
+    alias: string;
+    abierto: boolean;
+    onAbrir: () => void;
+  },
 ) {
   const modo = modoDeDocumento(item);
   return (
@@ -122,12 +141,16 @@ function FilaDeFichero(
           que está bloqueado a propósito. */}
       {item.reason ? <p className="ficheros-razon">{item.reason}</p> : null}
 
-      {abierto && modo !== 'solo-lectura' ? <Editor item={item} alias={alias} /> : null}
+      {abierto && modo !== 'solo-lectura'
+        ? <Editor item={item} tenantId={tenantId} alias={alias} />
+        : null}
     </li>
   );
 }
 
-function Editor({ item, alias }: { item: AgentDocumentItem; alias: string }) {
+function Editor(
+  { item, tenantId, alias }: { item: AgentDocumentItem; tenantId: string; alias: string },
+) {
   const api = useApi();
   const [cargando, setCargando] = useState(true);
   const [servido, setServido] = useState<AgentDocumentContent | undefined>(undefined);
@@ -141,7 +164,7 @@ function Editor({ item, alias }: { item: AgentDocumentItem; alias: string }) {
     setFallo(undefined);
     setGuardado(undefined);
     try {
-      const cuerpo = await api.getAgentDocumentContent(alias, item.kind);
+      const cuerpo = await api.getAgentDocumentContent(tenantId, alias, item.kind);
       setServido(cuerpo);
       setBorrador(cuerpo.content);
     } catch (error) {
@@ -152,21 +175,50 @@ function Editor({ item, alias }: { item: AgentDocumentItem; alias: string }) {
     } finally {
       setCargando(false);
     }
-  }, [api, alias, item.kind]);
+  }, [api, tenantId, alias, item.kind]);
 
   useEffect(() => { void cargar(); }, [cargar]);
 
   const guardar = useCallback(async () => {
     if (!servido) return;
+    if (!servido.editable || servido.truncated !== false) {
+      setFallo({
+        titulo: 'Este contenido no se puede reemplazar',
+        detalle: servido.truncated !== false
+          ? 'Lo servido es sólo un prefijo recortado. Reemplazarlo borraría el resto del fichero.'
+          : 'El servidor marcó este documento como sólo lectura.',
+      });
+      return;
+    }
+    if (servido.exists && servido.sha === null) {
+      setFallo({
+        titulo: 'Falta la huella del fichero abierto',
+        detalle: 'No envié el guardado: sin SHA no hay forma de detectar otra edición concurrente.',
+      });
+      return;
+    }
     setGuardando(true);
     setFallo(undefined);
     try {
       // La huella de lo que se abrió viaja SIEMPRE. Es lo que hace que dos personas con esta
       // pantalla abierta no se pisen en silencio: si el fichero cambió, el servidor contesta 409
       // y no escribe, en vez de dejar que gane el último en pulsar.
-      const resultado = await api.putAgentDocumentContent(alias, item.kind, borrador, servido.sha);
-      setServido({ ...servido, content: borrador, sha: resultado.sha, bytes: resultado.bytes, exists: true });
-      setGuardado(`Guardado en ${resultado.path}`);
+      const resultado = await api.putAgentDocumentContent(
+        tenantId, alias, item.kind, borrador, servido.sha,
+      );
+      if (!esAckAplicado(resultado) || resultado.path !== servido.path
+        || resultado.bytes !== new TextEncoder().encode(borrador).byteLength) {
+        setFallo({
+          titulo: 'El servidor no confirmó la aplicación',
+          detalle: mensajeDeGuardado(resultado),
+        });
+        return;
+      }
+      setServido({
+        ...servido, content: borrador, sha: resultado.sha, bytes: resultado.bytes,
+        exists: true, truncated: false, editable: true,
+      });
+      setGuardado(mensajeDeGuardado(resultado));
     } catch (error) {
       const status = error instanceof ApiError ? error.status : undefined;
       const explicado = status === 409
@@ -179,7 +231,7 @@ function Editor({ item, alias }: { item: AgentDocumentItem; alias: string }) {
     } finally {
       setGuardando(false);
     }
-  }, [api, alias, item.kind, borrador, servido]);
+  }, [api, tenantId, alias, item.kind, borrador, servido]);
 
   if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
 
@@ -212,13 +264,25 @@ function Editor({ item, alias }: { item: AgentDocumentItem; alias: string }) {
         </p>
       ) : null}
 
+      {servido.truncated !== false ? (
+        <p className="ficheros-aviso" role="alert">
+          <AlertTriangle size={14} aria-hidden="true" /> Esta lectura está recortada. Se muestra para
+          diagnóstico, pero no se puede editar ni reemplazar: guardar este prefijo borraría el resto.
+        </p>
+      ) : null}
+
       <textarea
         className="ficheros-texto"
         aria-label={`Contenido de ${item.label}`}
         value={borrador}
         spellCheck={false}
         rows={18}
-        onChange={(event) => setBorrador(event.target.value)}
+        readOnly={!servido.editable || servido.truncated !== false}
+        aria-readonly={!servido.editable || servido.truncated !== false}
+        onChange={(event) => {
+          setBorrador(event.target.value);
+          setGuardado(undefined);
+        }}
       />
 
       <div className="ficheros-pie">
@@ -230,7 +294,12 @@ function Editor({ item, alias }: { item: AgentDocumentItem; alias: string }) {
         <button type="button" className="button small secondary" onClick={() => void cargar()} disabled={guardando}>
           Descartar y releer
         </button>
-        <button type="button" className="button small" onClick={() => void guardar()} disabled={!sucio || guardando}>
+        <button
+          type="button"
+          className="button small"
+          onClick={() => void guardar()}
+          disabled={!sucio || guardando || !servido.editable || servido.truncated !== false}
+        >
           <Save size={14} aria-hidden="true" /> {guardando ? 'Guardando…' : 'Guardar'}
         </button>
       </div>

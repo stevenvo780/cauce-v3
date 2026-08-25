@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { TLSSocket } from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AgentConnection, type AgentHello, parseAgentHello } from './agent-leg.js';
@@ -208,16 +209,17 @@ describe('requestFileRead decodifica y acumula la respuesta', () => {
     const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
     const id = requestIdEnviado(socket);
 
-    connection.handleFrame(readOk(id, { chunks: 3, bytes: 15 }), Date.now);
+    connection.handleFrame(readOk(id, { chunks: 3, bytes: 20 }), Date.now);
     connection.handleFrame(readData(id, Buffer.from('# Manual\n')), Date.now);
     connection.handleFrame(readData(id, Buffer.from('linea 2\n')), Date.now);
     connection.handleFrame(readData(id, Buffer.from('fin')), Date.now);
 
     expect(await pendiente).toEqual({
       path: RUTA,
-      bytes: 15,
+      bytes: 20,
       truncated: false,
       modified_at: '2026-08-24T10:00:00Z',
+      sha: createHash('sha256').update('# Manual\nlinea 2\nfin').digest('hex'),
       content: '# Manual\nlinea 2\nfin'
     });
   });

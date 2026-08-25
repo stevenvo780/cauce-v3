@@ -111,7 +111,7 @@ describe('qué se restaura al deshacer', () => {
     expect(restauracionDe(entrada({ previous_brief: 'Sos kant.' }))).toEqual({ clase: 'texto', texto: 'Sos kant.' });
   });
 
-  it('deshacer un alta se marca aparte: no restaura texto, deja al alias SIN rol', () => {
+  it('recuperar un alta se marca aparte: prepara role_summary vacío sin escribir nada', () => {
     expect(restauracionDe(entrada({ previous_brief: null }))).toEqual({ clase: 'borra' });
   });
 });

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
-import { applyMigrations, createPool, type DatabasePool } from '@cauce/store';
+import {
+  applyMigrations, createPool, type DatabaseClient, type DatabasePool
+} from '@cauce/store';
 
 export interface TestDatabase {
   container: StartedTestContainer;
@@ -224,28 +226,33 @@ export async function huellaDeMigraciones(pool: DatabasePool): Promise<string> {
 }
 
 /** Devuelve el catálogo a como lo dejaron las migraciones. */
-async function restaurarCatalogo(pool: DatabasePool): Promise<void> {
-  const existe = await pool.query<{ hay: boolean }>(
+async function restaurarCatalogo(client: DatabaseClient): Promise<void> {
+  const existe = await client.query<{ hay: boolean }>(
     `SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS hay`,
     [ESQUEMA_SEMILLA],
   );
   if (!existe.rows[0]?.hay) return;
   // En orden inverso al de las dependencias: primero lo que apunta, después lo apuntado.
   const alReves = [...TABLAS_DE_CATALOGO].reverse();
-  await pool.query(`TRUNCATE TABLE ${alReves.join(',')} CASCADE`);
+  await client.query(`TRUNCATE TABLE ${alReves.join(',')} CASCADE`);
   for (const tabla of TABLAS_DE_CATALOGO) {
-    await pool.query(`INSERT INTO public.${tabla} SELECT * FROM ${ESQUEMA_SEMILLA}.${tabla}`);
+    await client.query(`INSERT INTO public.${tabla} SELECT * FROM ${ESQUEMA_SEMILLA}.${tabla}`);
   }
 }
 
 export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
-  await restaurarCatalogo(pool);
   for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const client = await pool.connect();
     try {
+      await client.query('BEGIN');
+      // Catalog restore belongs to the same retryable transaction as the dynamic reset. Keeping
+      // it outside this loop let a closing gateway deadlock the first TRUNCATE with no retry and
+      // could expose a half-restored catalog between statements.
+      await restaurarCatalogo(client);
       // agent_chain_progress has no foreign key by design, so CASCADE cannot reach it.
       // agent_failure_notices and its event ledger are in the same situation (migration 014),
       // y agent_chain_closures también (migración 016 del vigía de cadenas mudas).
-      await pool.query(`TRUNCATE TABLE
+      await client.query(`TRUNCATE TABLE
         gateway_oidc_sessions,telegram_egress_effects,channel_bridge_cursors,channel_bridge_leases,
         shadow_compare_verdicts,shadow_human_reply_guards,shadow_router_mappings,shadow_router_inbox,
         egress_notifications,egress_destinations,egress_contacts,
@@ -264,16 +271,20 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
       // ENCENDIDOS en producción, así que sin este pin cualquier suite que delegue varias veces
       // sobre la misma raíz empezaría a fallar por un tope que no está probando. La suite de
       // disciplina de delegación los enciende ella misma con los valores que quiere medir.
-      await pool.query(`UPDATE agent_chain_policies
+      await client.query(`UPDATE agent_chain_policies
         SET progress_relay_enabled=false,progress_relay_max_events=12,cycle_cut_enabled=false,
             failure_coalesce_enabled=false,failure_coalesce_window_seconds=900,
             delegation_caps_enabled=false,human_gate_enabled=false,
             max_fanout_per_turn=6,max_edge_repeats_per_root=3,max_delegations_per_root=64`);
+      await client.query('COMMIT');
       return;
     } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
       const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
-      if (code !== '40P01' || attempt === 5) throw error;
+      if (!['40P01', '40001'].includes(String(code)) || attempt === 5) throw error;
       await new Promise((resolve) => setTimeout(resolve, attempt * 25));
+    } finally {
+      client.release();
     }
   }
 }

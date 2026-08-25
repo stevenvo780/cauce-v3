@@ -44,12 +44,14 @@ del contenedor).
 | Origen | Método | Script |
 |---|---|---|
 | Postgres `cauce-v3-prod-postgres-1` | `docker exec pg_dump --format=custom`, verificado con `docker exec pg_restore --list` (no solo "el archivo existe": se comprueba que el dump se puede listar) | `ops/scripts/host-backup.sh` |
-| SQLite `ut-nexus` (modo WAL) | API online de SQLite (`Connection.backup()`), origen abierto `mode=ro`; verifica `integrity_check`, tablas, conteos, esquema y FKs entre origen y copia antes de darla por buena | `ops/scripts/ut-nexus-backup.py` (ver su docstring: por qué un `cp` de `nexus.db` solo da una copia atrasada) |
-| Ambos, fuera de `agora-storage` | `rsync -a --delete` sobre una clave SSH dedicada y restringida (`rrsync`, confinada a su propio directorio) | mismo `host-backup.sh`, paso 3 |
+| SQLite `ut-nexus` (opcional, modo WAL) | Sólo cuando `UT_NEXUS_ENABLED=1`: API online de SQLite (`Connection.backup()`), origen abierto `mode=ro`; verifica `integrity_check`, tablas, conteos, esquema y FKs entre origen y copia antes de darla por buena | `ops/scripts/ut-nexus-backup.py` (ver su docstring: por qué un `cp` de `nexus.db` solo da una copia atrasada) |
+| Ambos, fuera de `agora-storage` | `rsync --ignore-existing` append-only y verificación posterior `--checksum --dry-run`, sobre una clave SSH dedicada y restringida | mismo `host-backup.sh`, paso 3 |
 
-`ops/scripts/host-backup.sh` orquesta los tres pasos; cada uno es independiente
-(uno que falle no cancela los otros) pero el proceso completo sale con código
-≠0 si **cualquiera** falló.
+`ops/scripts/host-backup.sh` siempre exige dump de Cauce y copia off-host. `ut-nexus`
+es otro producto y queda deshabilitado por defecto; un host que también lo ejecute
+debe declarar `UT_NEXUS_ENABLED=1` en `/etc/cauce-v3/host-backup.env`. Cuando está
+habilitado, cada paso es independiente (uno que falle no cancela los otros) pero
+el proceso completo sale con código ≠0 si **cualquiera** falló.
 
 ### Dónde vive el respaldo — y por qué no es solo un disco
 
@@ -64,8 +66,9 @@ del contenedor).
   autorizada en `nass-stev` con `command="rrsync -wo <dir>/",restrict,from="100.64.0.6"`:
   solo puede escribir rsync, solo dentro de su propio subdirectorio
   (`/mnt/pool/backups/cauce-v3/{db,ut-nexus}/`), y solo si la conexión viene
-  de la IP de `agora-storage`. `rsync --delete` mantiene el espejo remoto
-  alineado con la retención local: no crece sin límite.
+  de la IP de `agora-storage`. El remoto nunca borra ni sobrescribe generaciones: después de copiar,
+  una corrida seca con checksum debe quedar vacía. La retención es exclusivamente local y sólo se
+  ejecuta tras ese gate; una política corrupta no puede propagarse al respaldo remoto.
 - Si `agora-storage` se pierde entero, el dump de Postgres y el sqlite de
   `ut-nexus` siguen existiendo en `nass-stev`.
 
@@ -112,6 +115,29 @@ scp ops/systemd/cauce-v3-host-backup.service ops/systemd/cauce-v3-host-backup.ti
     agora-storage:/etc/systemd/system/
 ssh agora-storage 'systemctl daemon-reload && systemctl enable --now cauce-v3-host-backup.timer cauce-v3-host-backup-monitor.timer'
 ```
+
+En un host dedicado únicamente a Cauce, el fichero privado puede contener:
+
+```sh
+UT_NEXUS_ENABLED=0
+```
+
+No se debe usar la ausencia accidental del script de `ut-nexus` como mecanismo de
+configuración: `UT_NEXUS_ENABLED=1` hace que esa ausencia falle ruidosamente.
+
+Antes de un release o incidente se ejecuta una generación sin retención:
+
+```sh
+sudo env CAUCE_BACKUP_SKIP_RETENTION=1 /usr/local/sbin/cauce-v3-host-backup
+sudo env REQUIRE_RETENTION_PRESERVED=1 \
+  /usr/local/sbin/cauce-v3-host-backup-monitor
+```
+
+La generación produce y conserva local/off-site tres artefactos timestamped: el dump, su
+`.sha256` y `.dump.restore.json`. Este último demuestra restore completo en un PostgreSQL temporal
+con `--network none`, imagen por digest y conteos mínimos. Durante el release no se usa un valor
+grande de retención como aproximación: el estado debe declarar explícitamente
+`preserved-for-release`.
 
 ### Restore
 

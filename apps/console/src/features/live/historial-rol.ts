@@ -9,11 +9,9 @@ import { contarRoleBrief } from './role-brief';
  * `--max-warnings 0`. Y porque «qué cambió en esta entrada» y «en qué orden van» son decisiones
  * que tienen que poder probarse sin montar un cajón.
  *
- * El diario lo escribe un TRIGGER de la base, no el gateway. Eso lo vuelve la única fuente que
- * registra TODOS los caminos de escritura —incluidos los `UPDATE` crudos por psql, que hasta esta
- * consola eran la única forma de tocar un rol—. También explica sus dos huecos, que la pantalla
- * declara en vez de disimular: no sabe QUIÉN (ver `actorDeEntrada`) y no tiene historia anterior
- * al día en que se instaló (ver `AVISO_DE_PROFUNDIDAD`).
+ * El diario lo escribe un trigger de la proyección legacy. Conserva los cambios históricos,
+ * incluidos los `UPDATE` crudos previos al perfil canónico. No sustituye el audit del perfil ni
+ * autoriza una escritura directa: una restauración sólo prepara un borrador de `role_summary`.
  */
 
 /**
@@ -105,8 +103,7 @@ export function resumirCambio(entrada: RoleBriefHistoryEntry): CambioResumido {
     return {
       clase: 'borrado',
       titulo: 'Se le quitó el rol',
-      detalle: `Tenía ${contarRoleBrief(antes)} caracteres y quedó sin rol declarado. El adaptador `
-        + 'deja de anteponer la línea «Tu rol: …», así que el alias pierde su identidad en cada entrega.',
+      detalle: `Tenía ${contarRoleBrief(antes)} caracteres y la proyección quedó sin rol declarado.`,
       dejaSinRol: true,
     };
   }
@@ -153,14 +150,8 @@ export function cambioDePlantilla(entrada: RoleBriefHistoryEntry): string | unde
 }
 
 /**
- * Quién hizo el cambio — y la respuesta honesta es que hoy no consta.
- *
- * `actor_tenant` y `actor_alias` sólo se rellenan si el camino de escritura declara
- * `SET LOCAL cauce.actor_*`, y la mutación de configuración —que es la que usa este editor— no lo
- * declara. Comprobado contra producción el 2026-08-23: las dos columnas llegan NULL.
- *
- * Devuelve `undefined` y que la pantalla lo diga. La tentación es rellenarlo con el operador que
- * está mirando, y sería una mentira redonda: quien mira no es quien cambió.
+ * Quién hizo el cambio. Las filas antiguas suelen traer ambas columnas en NULL; las escrituras
+ * gobernadas más nuevas sí pueden declarar actor. Nunca se rellena con el operador que mira.
  */
 export function actorDeEntrada(entrada: RoleBriefHistoryEntry): string | undefined {
   const tenant = entrada.actor_tenant?.trim();
@@ -170,12 +161,10 @@ export function actorDeEntrada(entrada: RoleBriefHistoryEntry): string | undefin
 }
 
 /**
- * Qué se restaura al «deshacer» una entrada: el texto que había ANTES de ese cambio.
+ * Qué se copia al borrador canónico al recuperar una entrada: el texto ANTERIOR al cambio.
  *
- * `clase: 'borra'` es el caso en el que ese texto anterior era NULL —o sea, deshacer un alta—: no
- * es restaurar un texto, es dejar al alias SIN rol. Va como caso aparte y no como cadena vacía
- * porque la pantalla tiene que rotularlo distinto: es lo único de esta vista que puede quitarle la
- * identidad a un agente, y un botón que dice «restaurar» sobre eso engaña.
+ * `clase: 'borra'` significa que ese valor era NULL. La UI lo rotula como vaciado de
+ * `role_summary`; no afirma que borre el perfil completo ni escribe hasta que el operador guarda.
  */
 export type Restauracion =
   | { clase: 'texto'; texto: string }

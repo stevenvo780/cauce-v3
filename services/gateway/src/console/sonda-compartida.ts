@@ -1,4 +1,7 @@
-import type { AgentFactsProbe, FactsSource, GovernanceReadError } from './agent-documents.routes.js';
+import type {
+  AgentFactsProbe, FactsSource, GovernanceBatchWrite, GovernanceReadError,
+  GovernanceWritePrecondition,
+} from './agent-documents.routes.js';
 import type { RuntimeFacts } from './agent-documents.js';
 
 /**
@@ -54,6 +57,20 @@ const SONDA_SIN_CANAL: AgentFactsProbe = {
         + 'disco del contenedor de este alias',
     };
   },
+  async writeGovernanceDocument(): Promise<GovernanceReadError> {
+    return {
+      error: 'unavailable',
+      reason: 'este gateway no tiene el plano de terminal montado, así que no hay canal de escritura '
+        + 'hasta el disco del contenedor de este alias',
+    };
+  },
+  async writeGovernanceBatch(): Promise<GovernanceReadError> {
+    return {
+      error: 'unavailable',
+      reason: 'este gateway no tiene el plano de terminal montado, así que no hay canal batch '
+        + 'hasta el disco del contenedor de este alias',
+    };
+  },
 };
 
 /**
@@ -93,6 +110,38 @@ export function sondaDiferida(hueco: SondaCompartida): AgentFactsProbe {
       hueco.actual().readGovernanceDocument(path, facts, tenantId, alias),
     listMemoryDirectory: (memoryRoot, facts, tenantId, alias) =>
       hueco.actual().listMemoryDirectory(memoryRoot, facts, tenantId, alias),
+    writeGovernanceDocument: (
+      path: string,
+      content: string,
+      precondition: GovernanceWritePrecondition,
+      facts: RuntimeFacts,
+      tenantId: string,
+      alias: string,
+    ) => {
+      const actual = hueco.actual();
+      if (actual.writeGovernanceDocument === undefined) {
+        return Promise.resolve({
+          error: 'unavailable' as const,
+          reason: 'la sonda instalada sólo sabe leer; no anuncia escritura gobernada',
+        });
+      }
+      return actual.writeGovernanceDocument(path, content, precondition, facts, tenantId, alias);
+    },
+    writeGovernanceBatch: (
+      writes: readonly GovernanceBatchWrite[],
+      facts: RuntimeFacts,
+      tenantId: string,
+      alias: string,
+    ) => {
+      const actual = hueco.actual();
+      if (actual.writeGovernanceBatch === undefined) {
+        return Promise.resolve({
+          error: 'unavailable' as const,
+          reason: 'la sonda instalada no anuncia escritura gobernada por lote',
+        });
+      }
+      return actual.writeGovernanceBatch(writes, facts, tenantId, alias);
+    },
   };
 }
 

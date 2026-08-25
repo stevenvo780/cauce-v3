@@ -68,7 +68,7 @@ describe('transcripción de notas de voz', () => {
       CONFIG,
       async (payload, filename, mime, config) => transcribeAudio(payload, filename, mime, config, async (url, init) => {
         peticiones.push({
-          url: String(url),
+          url: typeof url === 'string' ? url : url instanceof URL ? url.href : url.url,
           body: init?.body as FormData,
           auth: new Headers(init?.headers).get('authorization')
         });
@@ -154,7 +154,8 @@ describe('transcripción de notas de voz', () => {
       async (payload, filename, mime, config) => transcribeAudio(payload, filename, mime, config, async () =>
         new Response(JSON.stringify({ text: sucio }), { status: 200 }))
     );
-    expect(resultado.transcript).not.toMatch(/[\u0007\u202e]/u);
+    expect(resultado.transcript).not.toContain(String.fromCharCode(0x07));
+    expect(resultado.transcript).not.toContain('\u202e');
     expect(resultado.transcript!.length).toBeLessThanOrEqual(8_001);
   });
 });
@@ -193,7 +194,7 @@ describe('cuerpo del mensaje', () => {
 
   it('pone la transcripción donde el agente la lee, etiquetada como dictada', async () => {
     const cuerpo = await normalizedBody(
-      message({ voice: VOICE }), 42, voiceApi() as unknown as TelegramApi, undefined, CONFIG, transcriptor
+      message({ voice: VOICE }), 42, voiceApi(), undefined, CONFIG, transcriptor
     );
     expect(cuerpo.prompt).toBe('[nota de voz transcrita] Comprá pan y avisale a jarvis.');
     // El registro fiel de qué pasó con el audio, para el operador.
@@ -205,7 +206,7 @@ describe('cuerpo del mensaje', () => {
   it('conserva el epígrafe cuando el audio viene con texto', async () => {
     const cuerpo = await normalizedBody(
       message({ voice: VOICE, caption: 'mirá esto' }), 42,
-      voiceApi() as unknown as TelegramApi, undefined, CONFIG, transcriptor
+      voiceApi(), undefined, CONFIG, transcriptor
     );
     expect(cuerpo.prompt).toBe('mirá esto\n\n[nota de voz transcrita] Comprá pan y avisale a jarvis.');
     expect(cuerpo.caption).toBe('mirá esto');
@@ -213,14 +214,14 @@ describe('cuerpo del mensaje', () => {
 
   it('le da al agente el error para que se lo explique al usuario', async () => {
     const cuerpo = await normalizedBody(
-      message({ voice: VOICE }), 42, voiceApi() as unknown as TelegramApi, undefined, undefined
+      message({ voice: VOICE }), 42, voiceApi(), undefined, undefined
     );
     expect(cuerpo.prompt).toMatch(/^No pude escuchar la nota de voz: .*Decíselo al usuario/su);
   });
 
   it('no toca el cuerpo de un mensaje de texto', async () => {
     const cuerpo = await normalizedBody(
-      message({ text: 'hola' }), 42, voiceApi() as unknown as TelegramApi, undefined, CONFIG, transcriptor
+      message({ text: 'hola' }), 42, voiceApi(), undefined, CONFIG, transcriptor
     );
     expect(cuerpo.prompt).toBeUndefined();
     expect(cuerpo.voice_v1).toBeUndefined();

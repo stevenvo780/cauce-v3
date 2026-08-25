@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 container adapter dedalo (ws-pablo-dev/codex)
+Description=Cauce V3 container adapter dedalo (ws-pablo/codex)
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target

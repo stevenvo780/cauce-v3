@@ -23,6 +23,11 @@ import { ApiError, cauceApi, type CauceApi } from '../../api/client';
 
 export type PtyTargetState = 'online' | 'agent_offline' | 'not_installed' | 'unknown';
 
+export interface TerminalFleetIdentity {
+  tenant_id: string;
+  alias: string;
+}
+
 /** Server-declared destination. `authorized` is the only per-target authority; the client never infers it. */
 export interface TerminalTarget {
   tenant_id: string;
@@ -31,7 +36,7 @@ export interface TerminalTarget {
   runtime_user: string | null;
   harness: string | null;
   /** Other agents living in the same container: a shell here reaches all of them. */
-  shares_container_with: string[];
+  shares_container_with: TerminalFleetIdentity[];
   modes: string[];
   pty_state: PtyTargetState;
   last_seen: string | null;
@@ -53,7 +58,7 @@ export interface TerminalSessionTargetView {
   container: string | null;
   runtime_user: string | null;
   mode: string;
-  shares_container_with: string[];
+  shares_container_with: TerminalFleetIdentity[];
 }
 
 /**
@@ -188,6 +193,19 @@ function safeStringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
+function safeIdentityList(value: unknown, legacyTenant: string): TerminalFleetIdentity[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    // Rolling compatibility with the old gateway, whose cohort was a bare alias list.
+    if (typeof item === 'string' && item.trim()) return [{ tenant_id: legacyTenant, alias: item }];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    if (typeof record.tenant_id !== 'string' || typeof record.alias !== 'string' ||
+        !record.tenant_id.trim() || !record.alias.trim()) return [];
+    return [{ tenant_id: record.tenant_id, alias: record.alias }];
+  });
+}
+
 function safeText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
 }
@@ -204,7 +222,7 @@ export function readTerminalTarget(value: unknown): TerminalTarget | undefined {
     container: safeText(record.container),
     runtime_user: safeText(record.runtime_user),
     harness: safeText(record.harness),
-    shares_container_with: safeStringList(record.shares_container_with),
+    shares_container_with: safeIdentityList(record.shares_container_with, record.tenant_id),
     modes: safeStringList(record.modes),
     pty_state: safeTargetState(record.pty_state),
     last_seen: safeText(record.last_seen),

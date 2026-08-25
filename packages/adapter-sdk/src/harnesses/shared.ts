@@ -180,7 +180,8 @@ function deliveryMetadata(
   context: HarnessRequestContext | undefined,
 ): Omit<HarnessRequestContext, "self_role"> | null {
   if (!context) return null;
-  const { self_role: _self_role, ...metadata } = context;
+  const { self_role, ...metadata } = context;
+  void self_role;
   return metadata;
 }
 

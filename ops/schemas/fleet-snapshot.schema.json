@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/fleet-snapshot.schema.json",
+  "title": "Sanitized Cauce V3 fleet parity snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "agents", "memberships", "rolePolicies", "leases"],
+  "properties": {
+    "schemaVersion": { "const": 3 },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tenant_id", "alias", "enabled"],
+        "properties": {
+          "tenant_id": { "type": "string", "minLength": 1 },
+          "alias": { "$ref": "#/$defs/alias" },
+          "harness_id": { "type": ["string", "null"] },
+          "enabled": { "type": "boolean" },
+          "container_name": { "type": ["string", "null"] },
+          "runtime_user": { "type": ["string", "null"] },
+          "home_directory": { "type": ["string", "null"] },
+          "state_directory": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "memberships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tenant_id", "alias", "room_id", "role"],
+        "properties": {
+          "tenant_id": { "type": "string", "minLength": 1 },
+          "alias": { "$ref": "#/$defs/alias" },
+          "room_id": { "type": "string", "minLength": 1 },
+          "role": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "rolePolicies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "allow_route", "allow_read", "allow_control", "allow_notify"],
+        "properties": {
+          "role": { "type": "string", "minLength": 1 },
+          "allow_route": { "type": "boolean" },
+          "allow_read": { "type": "boolean" },
+          "allow_control": { "type": "boolean" },
+          "allow_notify": { "type": "boolean" }
+        }
+      }
+    },
+    "leases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tenant_id", "alias", "active"],
+        "properties": {
+          "tenant_id": { "type": "string", "minLength": 1 },
+          "alias": { "$ref": "#/$defs/alias" },
+          "active": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "alias": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+  }
+}

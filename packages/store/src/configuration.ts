@@ -1,7 +1,4 @@
-import {
-  AgentProfileError, countCodePoints, normalizeAgentProfile, ROLE_BRIEF_MAX_CODE_POINTS
-} from '@cauce/protocol';
-import type { AgentProfile, ConfigMutation, Tenant } from '@cauce/protocol';
+import type { ConfigMutation, Tenant } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 
@@ -97,28 +94,6 @@ function valueRequired(mutation: ValuedConfigMutation): Record<string, unknown> 
   return mutation.value;
 }
 
-/**
- * Valida el perfil arrastrando el NOMBRE DEL CAMPO hasta la pantalla.
- *
- * `AgentProfileError` lleva `field` justamente para que la consola sepa qué caja pintar en rojo.
- * Si se dejara subir tal cual, `transaction()` lo pasaría por `databaseError()` y saldría como un
- * 500 opaco; traducido a `invalid_input` el gateway lo manda como 422 con el mensaje entero, que
- * ya nombra el campo y dice cuántos caracteres se enviaron.
- *
- * El CHECK de la migración 026 sigue siendo la última palabra —esto no lo reemplaza—, pero un
- * `23514` sólo nombra el constraint, y sobre un formulario de seis cajas eso no es una respuesta.
- */
-function normalizeAgentProfileOrInvalidInput(input: Record<string, unknown>): AgentProfile {
-  try {
-    return normalizeAgentProfile(input);
-  } catch (error) {
-    if (error instanceof AgentProfileError) {
-      throw new ConfigurationError('invalid_input', `${error.field}: ${error.message}`);
-    }
-    throw error;
-  }
-}
-
 function databaseError(error: unknown): never {
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
   if (['23503', '23505', '23514', '23P01'].includes(code)) {
@@ -128,39 +103,30 @@ function databaseError(error: unknown): never {
 }
 
 /**
- * Normaliza `role_brief` antes de que lo vea Postgres.
+ * Defensa de runtime para revisiones históricas y llamadores TypeScript que eludan el esquema.
  *
- * El tope NO se declara acá: es `ROLE_BRIEF_MAX_CODE_POINTS` de `@cauce/protocol`, el mismo valor
- * que usan el CHECK `agents_role_brief_len` de la migración 020 y `self_role` en el esquema del
- * sobre. Había una copia a mano de 1200 en este fichero; se eliminó porque si las capas dejan de
- * coincidir el brief se guarda, la pantalla dice «guardado» y el adaptador rechaza la entrega
- * ENTERA: el alias queda SORDO sin un solo error visible.
- *
- * Cuenta con `countCodePoints` y no con `text.length` porque son magnitudes distintas: JS mide
- * unidades UTF-16 (un emoji fuera del BMP vale 2) y `char_length` de Postgres mide puntos de
- * código (ese mismo emoji vale 1). Contar con `String.length` rechazaría un brief de 1200 puntos
- * de código con emoji que la base acepta sin chistar — el operador vería un error inventado por
- * nosotros sobre un texto legítimo. Los puntos de código son exactamente lo que la columna mide.
- *
- * Vacío o sólo espacios se guarda como NULL, no como '': el CHECK exige longitud >= 1, así que ''
- * sería una violación; y NULL es lo que `selfRoleBrief()` (repository.ts) espera para OMITIR la
- * línea `Tu rol:` en vez de anteponer una vacía. Borrar el brief es una operación legítima.
+ * `agent_profiles` y `agents.role_brief` dejaron de ser recursos escribibles del editor genérico:
+ * esa ruta sólo podía acreditar la base y, aun así, devolvía `applied:true` mientras el fichero del
+ * arnés conservaba la revisión anterior. El PUT canónico de perfil es la única escritura pública:
+ * hace CAS sobre la revisión propia y sólo responde éxito tras el ACK exacto del runtime.
  */
-function normalizeRoleBrief(raw: unknown): string | null {
-  if (raw === null || raw === undefined) return null;
-  if (typeof raw !== 'string') {
-    throw new ConfigurationError('invalid_input', 'agent role_brief must be text or null');
-  }
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return null;
-  const characters = countCodePoints(trimmed);
-  if (characters > ROLE_BRIEF_MAX_CODE_POINTS) {
+function assertRuntimeSynchronizedMutation(mutation: unknown): void {
+  if (mutation === null || typeof mutation !== 'object' || Array.isArray(mutation)) return;
+  const record = mutation as Record<string, unknown>;
+  if (record.resource === 'agent_profile') {
     throw new ConfigurationError(
       'invalid_input',
-      `agent role_brief admits ${ROLE_BRIEF_MAX_CODE_POINTS} characters at most; ${characters} were sent`
+      'agent_profile is only writable through the canonical profile endpoint with runtime ACK',
     );
   }
-  return trimmed;
+  if (record.resource !== 'agent') return;
+  const value = record.value;
+  if (value !== null && typeof value === 'object' && !Array.isArray(value) && has(value, 'role_brief')) {
+    throw new ConfigurationError(
+      'invalid_input',
+      'agent role_brief is a read-only legacy projection; write the canonical profile instead',
+    );
+  }
 }
 
 export class ConfigurationRepository {
@@ -222,8 +188,9 @@ export class ConfigurationRepository {
            FROM agent_chain_policies ORDER BY id`
         ),
         this.pool.query<Record<string, unknown>>(
-          // role_brief viaja en el snapshot porque es lo que la consola EDITA: sin él la pantalla
-          // mostraría una caja vacía y el primer guardado borraría el rol que el alias ya tenía.
+          // `role_brief` sigue viajando únicamente como proyección legacy de sólo lectura. La
+          // escritura canónica ocurre en `agent_profiles` y se publica al runtime con ACK; el
+          // editor genérico rechaza cualquier intento de mutar esta columna.
           /*
            * `max_concurrent_deliveries` (migración 015) es el techo REAL de entregas en vuelo de
            * un agente: `repository.ts` lo aplica al repartir cupo. No estaba en el snapshot ni en
@@ -277,10 +244,9 @@ export class ConfigurationRepository {
            ORDER BY config_revisions.id DESC LIMIT 100`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
-          // El perfil viaja en el snapshot por la MISMA razón que `role_brief`: es lo que la
-          // consola EDITA. Sin él la pantalla enseñaría seis cajas vacías, y como la mutación
-          // fusiona sobre lo que hay en la base, el primer guardado escribiría esos seis vacíos
-          // encima del perfil que el alias ya tenía.
+          // El perfil viaja en el snapshot para diagnóstico, diff y compatibilidad de lectura.
+          // Sus escrituras no pasan por el editor genérico: usan el endpoint canónico, que
+          // valida el documento completo, sincroniza el runtime y registra su ACK.
           `SELECT tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,
                   tools,operating_rules,created_at,updated_at
            FROM agent_profiles WHERE $1::text IS NULL OR tenant_id=$1
@@ -307,6 +273,7 @@ export class ConfigurationRepository {
     dryRun: boolean,
     expectedRevision?: number
   ): Promise<ConfigurationChangeResult> {
+    assertRuntimeSynchronizedMutation(mutation);
     return this.transaction<ConfigurationChangeResult>(async (client) => {
       const hub = await this.assertControl(client, actorTenant, actorAlias);
       this.authorizeMutation(mutation, actorTenant, hub);
@@ -356,6 +323,7 @@ export class ConfigurationRepository {
       if (!hub && original.actor_tenant !== actorTenant) {
         throw new ConfigurationError('forbidden', 'configuration revision is outside the actor tenant');
       }
+      assertRuntimeSynchronizedMutation(original.inverse_operation);
       this.authorizeMutation(original.inverse_operation, actorTenant, hub);
       const { inverse: redo, summary } = await this.execute(client, original.inverse_operation);
       await this.assertControl(client, actorTenant, actorAlias);
@@ -424,12 +392,6 @@ export class ConfigurationRepository {
     // decision about somebody else's money, so it stays hub-only by the default-deny fall-through
     // below rather than by a rule a future edit could soften.
     //
-    // `agent_profile` TAMPOCO está en la lista, y por una razón propia que conviene dejar escrita
-    // porque es el error natural: tiene `tenant_id`, así que la simetría con `room`/`membership`
-    // invita a añadirlo «porque es del inquilino». No. El perfil es lo que el agente LEE EN CADA
-    // TURNO: quien lo escribe decide qué cree ese agente sobre lo que puede y no puede hacer. Eso
-    // es la misma clase de decisión que el registro, no la misma que una sala. Se queda en la
-    // caída por defecto de abajo, hub-only, y hay una prueba con su control negativo que lo mide.
     if (mutation.resource === 'room' || mutation.resource === 'membership'
       || mutation.resource === 'egress_destination') {
       if (mutation.tenant_id === actorTenant) return;
@@ -463,7 +425,6 @@ export class ConfigurationRepository {
     if (mutation.resource === 'chain_policy') return this.chainPolicy(client, mutation);
     if (mutation.resource === 'egress_destination') return this.destination(client, mutation);
     if (mutation.resource === 'agent') return this.agent(client, mutation);
-    if (mutation.resource === 'agent_profile') return this.agentProfile(client, mutation);
     if (mutation.resource === 'provider_account') return this.providerAccount(client, mutation);
     if (mutation.resource === 'alias_routing_ceiling') return this.routingCeiling(client, mutation);
     if (mutation.resource === 'agent_account_binding') return this.agentAccountBinding(client, mutation);
@@ -881,10 +842,6 @@ export class ConfigurationRepository {
     client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'agent' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const key = `${mutation.tenant_id}/${mutation.alias}`;
-    // role_brief viaja en el SELECT porque `oldValue` es lo ÚNICO de lo que sale la mutación
-    // inversa: sin leerlo acá, un rollback restauraría el agente con el brief en NULL y el texto
-    // anterior quedaría irrecuperable. Un cambio de identidad sin vuelta atrás no es auditable,
-    // que es justamente lo que esta pantalla viene a dar.
     const selected = await client.query<{
       harness_id: string | null; display_name: string | null; enabled: boolean;
       container_name: string | null; runtime_user: string | null;
@@ -908,10 +865,7 @@ export class ConfigurationRepository {
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [mutation.tenant_id, mutation.alias, value.harness_id ?? null, value.display_name ?? null,
           value.enabled ?? false, value.container_name ?? null, value.runtime_user ?? null,
-          value.home_directory ?? null, value.state_directory ?? null,
-          // Un alta sin role_brief sigue naciendo sin rol declarado, como antes de esta columna:
-          // el adaptador omite la línea `Tu rol:` y nadie le inventa una identidad al alias.
-          normalizeRoleBrief(value.role_brief),
+          value.home_directory ?? null, value.state_directory ?? null, null,
           /*
            * `undefined` (no declarado) cae al DEFAULT 2 de la columna, que es lo que reciben hoy
            * los quince alias vivos. `null` DECLARADO es otra cosa: significa «sin techo», la
@@ -928,7 +882,16 @@ export class ConfigurationRepository {
       };
     }
     if (!old) throw new ConfigurationError('not_found', 'agent was not found');
-    const oldValue = { ...old };
+    const oldValue = {
+      harness_id: old.harness_id,
+      display_name: old.display_name,
+      enabled: old.enabled,
+      container_name: old.container_name,
+      runtime_user: old.runtime_user,
+      home_directory: old.home_directory,
+      state_directory: old.state_directory,
+      max_concurrent_deliveries: old.max_concurrent_deliveries,
+    };
     if (mutation.action === 'delete') {
       const active = await client.query(
         `SELECT 1 FROM deliveries d JOIN messages m ON m.id=d.message_id
@@ -940,8 +903,15 @@ export class ConfigurationRepository {
         `SELECT 1 FROM connection_leases WHERE tenant_id=$1 AND alias=$2 AND lease_until>now() LIMIT 1`,
         [mutation.tenant_id, mutation.alias]
       );
-      if (active.rowCount || liveLease.rowCount) {
-        throw new ConfigurationError('conflict', 'agent has active deliveries or a live lease');
+      const profile = await client.query(
+        `SELECT 1 FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 LIMIT 1`,
+        [mutation.tenant_id, mutation.alias],
+      );
+      if (active.rowCount || liveLease.rowCount || profile.rowCount || old.role_brief !== null) {
+        throw new ConfigurationError(
+          'conflict',
+          'agent has active work, a live lease, or canonical profile state; disable it instead',
+        );
       }
       await client.query('DELETE FROM agents WHERE tenant_id=$1 AND alias=$2', [mutation.tenant_id, mutation.alias]);
       return {
@@ -958,163 +928,22 @@ export class ConfigurationRepository {
       runtime_user: has(value, 'runtime_user') ? value.runtime_user as string | null : old.runtime_user,
       home_directory: has(value, 'home_directory') ? value.home_directory as string | null : old.home_directory,
       state_directory: has(value, 'state_directory') ? value.state_directory as string | null : old.state_directory,
-      // Se valida sólo lo que el operador MANDÓ. Reusar la clave ausente para revalidar `old`
-      // convertiría cualquier edición de otro campo en un rechazo por un brief que ya está en la
-      // base — y las filas anteriores a esta validación entran por un CHECK NOT VALID.
-      role_brief: has(value, 'role_brief') ? normalizeRoleBrief(value.role_brief) : old.role_brief,
       max_concurrent_deliveries: has(value, 'max_concurrent_deliveries')
         ? value.max_concurrent_deliveries as number | null
         : old.max_concurrent_deliveries
     };
     await client.query(
       `UPDATE agents SET harness_id=$3,display_name=$4,enabled=$5,container_name=$6,runtime_user=$7,
-         home_directory=$8,state_directory=$9,role_brief=$10,max_concurrent_deliveries=$11,
+         home_directory=$8,state_directory=$9,max_concurrent_deliveries=$10,
          updated_at=now()
        WHERE tenant_id=$1 AND alias=$2`,
       [mutation.tenant_id, mutation.alias, next.harness_id, next.display_name, next.enabled,
         next.container_name, next.runtime_user, next.home_directory, next.state_directory,
-        next.role_brief, next.max_concurrent_deliveries]
+        next.max_concurrent_deliveries]
     );
     return {
       inverse: { resource: 'agent', action: 'update', tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue },
       summary: `update agent ${key}`
-    };
-  }
-
-  /**
-   * EL PERFIL AUTORADO de un alias (tabla `agent_profiles`, migración 026).
-   *
-   * Sigue el molde de `agent()` porque las razones son las mismas, y una de ellas cuesta cara:
-   *
-   *  - `SELECT` de TODAS las columnas y `FOR UPDATE`. `oldValue` es lo ÚNICO de lo que sale la
-   *    mutación inversa, así que una columna que no se lee queda irrecuperable tras un rollback.
-   *    Y sin `FOR UPDATE`, dos operadores que guarden a la vez leen el mismo «antes» y el segundo
-   *    fabrica una inversa que restauraría un estado que nunca existió.
-   *  - La inversa lleva el perfil ENTERO, no el campo tocado. Deshacer un cambio de identidad
-   *    tiene que devolver la identidad completa.
-   *  - Un campo AUSENTE se conserva (`has(value, campo) ? … : old.campo`). Sin eso, editar sólo
-   *    `purpose` desde la pantalla borraría las cuatro listas, y el operador vería «guardado»
-   *    sobre un perfil que acaba de perder lo que no estaba mirando.
-   *
-   * LA VALIDACIÓN LA HACE `normalizeAgentProfile()` Y NO EL CHECK DE POSTGRES. El CHECK está y es
-   * la última palabra, pero llega como `23514` — un código que sólo nombra el constraint. La
-   * pantalla necesita saber QUÉ CAJA pintar en rojo, y eso sólo lo sabe la función que midió. Por
-   * eso el `AgentProfileError` se traduce a `invalid_input` (422) arrastrando el nombre del campo,
-   * en vez de dejar que suba un 500 opaco.
-   *
-   * Se valida el perfil FUSIONADO, no lo que mandó el operador: el presupuesto TOTAL es del perfil
-   * completo, y un `tools` nuevo que no entra sólo se puede detectar sumándolo a lo que ya había.
-   */
-  private async agentProfile(
-    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'agent_profile' }>
-  ): Promise<{ inverse: ConfigMutation; summary: string }> {
-    const key = `${mutation.tenant_id}/${mutation.alias}`;
-    const selected = await client.query<{
-      purpose: string | null; role_summary: string | null; human_brief: string | null;
-      responsibilities: string[] | null; restrictions: string[] | null;
-      tools: string[] | null; operating_rules: string[] | null;
-    }>(
-      // `human_brief` va en este SELECT o el DESHACER lo borra: `oldValue` es literalmente el
-      // cuerpo de la mutación inversa, así que un campo que no se lea aquí vuelve como ausente y
-      // el `update` de deshacer lo deja en NULL. Perder prosa al pulsar «deshacer» es peor que no
-      // tener el botón.
-      `SELECT purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules
-       FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
-      [mutation.tenant_id, mutation.alias]
-    );
-    const old = selected.rows[0];
-    /*
-     * `oldValue` es la forma que viaja en la inversa. Las listas se normalizan a `[]` acá y no en
-     * el sitio de uso: la columna es NOT NULL DEFAULT '{}', pero un driver puede devolver `null`
-     * para un array vacío según cómo se haya escrito, y una inversa con `null` donde va una lista
-     * la rechazaría el esquema al deshacer — un rollback que falla en el momento en que hace falta.
-     */
-    const oldValue = old === undefined ? undefined : {
-      purpose: old.purpose,
-      role_summary: old.role_summary,
-      human_brief: old.human_brief,
-      responsibilities: old.responsibilities ?? [],
-      restrictions: old.restrictions ?? [],
-      tools: old.tools ?? [],
-      operating_rules: old.operating_rules ?? []
-    };
-
-    if (mutation.action === 'delete') {
-      // «No hay» NO es «hecho». Contestar éxito sobre un alias sin perfil le enseña al operador
-      // que borró algo, que es el defecto que la consola ya arregló y no puede volver por acá.
-      if (oldValue === undefined) throw new ConfigurationError('not_found', 'agent profile was not found');
-      await client.query(
-        'DELETE FROM agent_profiles WHERE tenant_id=$1 AND alias=$2',
-        [mutation.tenant_id, mutation.alias]
-      );
-      return {
-        inverse: {
-          resource: 'agent_profile', action: 'create',
-          tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue
-        },
-        summary: `delete agent profile ${key}`
-      };
-    }
-    if (mutation.action === 'create' && oldValue !== undefined) {
-      throw new ConfigurationError('conflict', 'agent profile already exists');
-    }
-
-    const value = valueRequired(mutation);
-    const base = oldValue ?? {
-      purpose: null, role_summary: null, human_brief: null,
-      responsibilities: [], restrictions: [], tools: [], operating_rules: []
-    };
-    const fusionado = {
-      tenant_id: mutation.tenant_id,
-      alias: mutation.alias,
-      purpose: has(value, 'purpose') ? value.purpose : base.purpose,
-      role_summary: has(value, 'role_summary') ? value.role_summary : base.role_summary,
-      human_brief: has(value, 'human_brief') ? value.human_brief : base.human_brief,
-      responsibilities: has(value, 'responsibilities') ? value.responsibilities : base.responsibilities,
-      restrictions: has(value, 'restrictions') ? value.restrictions : base.restrictions,
-      tools: has(value, 'tools') ? value.tools : base.tools,
-      operating_rules: has(value, 'operating_rules') ? value.operating_rules : base.operating_rules
-    };
-    const perfil = normalizeAgentProfileOrInvalidInput(fusionado);
-
-    await client.query(
-      `INSERT INTO agent_profiles
-         (tenant_id,alias,purpose,role_summary,human_brief,
-          responsibilities,restrictions,tools,operating_rules)
-       VALUES($1,$2,$3,$4,$5,$6::text[],$7::text[],$8::text[],$9::text[])
-       ON CONFLICT (tenant_id,alias) DO UPDATE SET
-         purpose=EXCLUDED.purpose,
-         role_summary=EXCLUDED.role_summary,
-         human_brief=EXCLUDED.human_brief,
-         responsibilities=EXCLUDED.responsibilities,
-         restrictions=EXCLUDED.restrictions,
-         tools=EXCLUDED.tools,
-         operating_rules=EXCLUDED.operating_rules,
-         updated_at=now()`,
-      [
-        perfil.tenant_id, perfil.alias, perfil.purpose, perfil.role_summary, perfil.human_brief,
-        [...perfil.responsibilities], [...perfil.restrictions],
-        [...perfil.tools], [...perfil.operating_rules]
-      ]
-    );
-
-    /*
-     * Un alta se deshace BORRANDO, y una edición reponiendo lo de antes. Si el alta se deshiciera
-     * con un `update` al perfil vacío quedaría una fila con todo en NULL, que NO es lo mismo que no
-     * tener perfil: el compilador distingue «no declarado» de «declarado vacío», y una fila
-     * fantasma le haría emitir un bloque donde no debería haber ninguno.
-     */
-    return {
-      inverse: oldValue === undefined
-        ? {
-          resource: 'agent_profile', action: 'delete',
-          tenant_id: mutation.tenant_id, alias: mutation.alias
-        }
-        : {
-          resource: 'agent_profile', action: 'update',
-          tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue
-        },
-      summary: `${mutation.action} agent profile ${key}`
     };
   }
 

@@ -25,6 +25,7 @@ export const DEFAULT_CHAIN_SWEEP_LIMIT = 5;
 
 export interface DispatcherConfig {
   pollMs: number;
+  healthStaleMs: number;
   ackDeadlineMs: number;
   ackTimeoutMs: number;
   interactiveBurst: number;
@@ -70,6 +71,7 @@ function nonNegativeInteger(environment: NodeJS.ProcessEnv, name: string, fallba
 }
 
 export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.env): DispatcherConfig {
+  const pollMs = positiveInteger(environment, 'DISPATCHER_POLL_MS', 250);
   const ackDeadlineMs = positiveInteger(
     environment,
     'CAUCE_ACK_DEADLINE_MS',
@@ -117,7 +119,10 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
     throw new Error('CHAIN_MAX_AGE_MS must be equal to or greater than CHAIN_IDLE_MS');
   }
   return {
-    pollMs: positiveInteger(environment, 'DISPATCHER_POLL_MS', 250),
+    pollMs,
+    healthStaleMs: positiveInteger(
+      environment, 'CAUCE_DISPATCHER_STALE_MS', Math.max(5_000, pollMs * 20)
+    ),
     ackDeadlineMs,
     ackTimeoutMs,
     interactiveBurst: positiveInteger(environment, 'INTERACTIVE_BURST', 3),

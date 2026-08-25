@@ -307,6 +307,8 @@ export type TelegramEffectInput = Omit<
 
 export interface TelegramEgressRepository {
   claim(workerId: string, limit: number, leaseMs: number): Promise<TelegramOriginRelay[]>;
+  /** Extend only the exact still-live attempt/claim token before another remote side effect. */
+  renew(event: TelegramOriginRelay, leaseMs: number): Promise<boolean>;
   ack(acknowledgement: TelegramOriginRelayAck): Promise<void>;
   prepareEffect(effect: TelegramEffectInput): Promise<TelegramEffect>;
   beginEffect(effectId: string, payloadHash: string): Promise<TelegramEffect>;
@@ -320,12 +322,13 @@ export interface TelegramEgressRepository {
 }
 
 export type BridgeMetric =
-  | 'updates_allowed' | 'updates_denied' | 'updates_duplicate' | 'poll_fenced'
+  | 'updates_allowed' | 'updates_denied' | 'updates_duplicate' | 'poll_fenced' | 'poll_error'
   | 'updates_unaddressed' | 'updates_echo_suppressed' | 'updates_mention_unserved'
   | 'updates_suppressed_bot' | 'updates_via_bot'
   | 'updates_chat_denied' | 'updates_chat_disabled' | 'updates_conflict'
   | 'group_config_degraded'
-  | 'egress_sent' | 'egress_retry' | 'egress_dead' | 'egress_ambiguous'
+  | 'egress_sent' | 'egress_retry' | 'egress_dead' | 'egress_ambiguous' | 'egress_fenced'
+  | 'egress_loop_error'
   // Telegram rechazó el HTML y el mensaje salió en texto plano. Si este contador sube, la
   // conversión de markdown está generando algo que Telegram no acepta y hay que mirarla.
   | 'egress_format_downgraded'

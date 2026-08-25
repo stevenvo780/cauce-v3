@@ -86,6 +86,7 @@ IFS=$'\t' read -r tenant room container_name container_user container_home state
   && -n $state_directory && -n $harness && -z ${extra:-} ]] \
   || die 'container alias mapping returned invalid fields'
 valid_absolute_path "$container_home" || die 'mapped container home is invalid'
+valid_absolute_path "$state_directory" || die 'mapped state directory is invalid'
 
 config_file="$CONFIG_ROOT/$alias_name.env"
 declare -A CONFIG=()
@@ -223,8 +224,9 @@ derive_harness_command() {
 # a secas —por eso el supervisor del gateway tampoco lo usa— y un argv que no se puede reconocer
 # no se puede supervisar ni auditar.
 OPENCLAW_ENTRY=${CAUCE_PTY_OPENCLAW_ENTRY:-/usr/lib/node_modules/openclaw/dist/index.js}
-OPENCLAW_SESSIONS_DIR=${CAUCE_PTY_OPENCLAW_SESSIONS_DIR:-.openclaw/agents/main/sessions}
 OPENCLAW_HISTORY_LIMIT=${CAUCE_PTY_OPENCLAW_HISTORY_LIMIT:-200}
+[[ $OPENCLAW_HISTORY_LIMIT =~ ^[0-9]{1,5}$ && $((10#$OPENCLAW_HISTORY_LIMIT)) -ge 1 \
+  && $((10#$OPENCLAW_HISTORY_LIMIT)) -le 10000 ]] || die 'OpenClaw history limit is invalid'
 
 # La TUI NATIVA de OpenClaw, para los alias que no tienen panel tmux y no pueden tenerlo.
 #
@@ -239,13 +241,14 @@ OPENCLAW_HISTORY_LIMIT=${CAUCE_PTY_OPENCLAW_HISTORY_LIMIT:-200}
 # lanza en el pty del agente como cualquier otro `harness_command`.
 #
 # El candado de solo lectura NO esta aca: la TUI de openclaw no tiene equivalente de `tmux -r`.
-# Lo pone el agente PTY, que no escribe en el pty de un modo de visor (READ_ONLY_MODES).
+# Lo pone el agente PTY: un modo visor rechaza STDIN humano y sólo deja pasar por otro tag la
+# lista cerrada de respuestas técnicas DA/DSR que necesita el emulador.
 #
-# Todo se mide DENTRO del contenedor y como el usuario del alias. Cualquier duda devuelve vacio y
-# el alias sigue anunciando solo `shell`, que es como esta hoy: el fallo caro no es quedarse sin
-# TUI, es ANUNCIAR una que abre en negro y mandar al operador a creer que el agente esta colgado.
+# La capacidad se mide DENTRO del contenedor y como el usuario del alias. La conversacion se mide
+# despues, por cada OPEN: si el pointer durable falta o no pasa validacion, ese OPEN falla cerrado
+# sin congelar una clave vieja en el launcher.
 derive_openclaw_tui_command() {
-  local node_path tui_help session_file session_key sessions_dir
+  local node_path tui_help
   node_path=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
     sh -c 'command -v node' 2>/dev/null) || return 1
   node_path=${node_path//[$'\r\n']/}
@@ -261,28 +264,93 @@ derive_openclaw_tui_command() {
     "$node_path" "$OPENCLAW_ENTRY" tui --help 2>/dev/null) || return 1
   [[ $tui_help == *"--session"* ]] || return 1
 
-  # Cual sesion: la que el agente esta escribiendo AHORA, medida por fecha de modificacion sobre
-  # su propio almacen. No sale de la configuracion porque no hay ninguna que la fije — openclaw no
-  # tiene sesion compartida, asi que sus claves son una por conversacion.
-  sessions_dir="$container_home/$OPENCLAW_SESSIONS_DIR"
-  session_file=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
-    sh -c "ls -1t '$sessions_dir'/*.jsonl 2>/dev/null | head -n 1") || return 1
-  session_file=${session_file//[$'\r\n']/}
-  [[ -n $session_file ]] || return 1
-  session_key=${session_file##*/}
-  session_key=${session_key%.jsonl}
-  # El nombre entra en un argv: un fichero llamado `; rm -rf /` no puede convertirse en argumento.
-  [[ $session_key =~ ^[A-Za-z0-9._-]{1,200}$ ]] || return 1
-
+  # La sesion NO se elige aca. El launcher vive durante meses y congelarla en este bundle deja la
+  # TUI mirando una conversacion vieja. El agente lee el pointer durable exacto en CADA OPEN.
   OPENCLAW_NODE_FOUND=$node_path
-  OPENCLAW_SESSION_FOUND=$session_key
   return 0
 }
 
+# Read only three non-secret path variables from the environment of the adapter that is actually
+# running for this alias/generation. The scan runs as the same uid and never prints the rest of
+# /proc/*/environ. For a harness whose profile root is selected by env, absence/ambiguity is a
+# hard failure: publishing HOME alone would make the gateway guess a shared sibling directory.
+measure_adapter_runtime_facts() {
+  local measured
+  if ! measured=$(docker_control exec -i --user "$runtime_uid:$runtime_gid" \
+    --env "CAUCE_PTY_MEASURE_ALIAS=$alias_name" \
+    --env "CAUCE_PTY_MEASURE_GENERATION=$container_generation" \
+    --env "CAUCE_PTY_MEASURE_STATE=$state_directory" \
+    --env "CAUCE_PTY_MEASURE_HOME=$container_home" \
+    --env "CAUCE_PTY_MEASURE_HARNESS=$harness" \
+    "$container_id" /usr/bin/python3 - <<'PYTHON'
+import json
+import os
+
+identity = {
+    "CAUCE_ALIAS": os.environ["CAUCE_PTY_MEASURE_ALIAS"],
+    "CAUCE_CONTAINER_GENERATION": os.environ["CAUCE_PTY_MEASURE_GENERATION"],
+    "CAUCE_STATE_DIR": os.environ["CAUCE_PTY_MEASURE_STATE"],
+}
+home = os.path.normpath(os.environ["CAUCE_PTY_MEASURE_HOME"])
+harness = os.environ["CAUCE_PTY_MEASURE_HARNESS"]
+wire_for_harness = {
+    "codex": ("CODEX_HOME", "codex_home"),
+    "claude": ("CLAUDE_CONFIG_DIR", "claude_config_dir"),
+    "openclaw": ("CAUCE_OPENCLAW_WORKSPACE", "openclaw_workspace"),
+}.get(harness)
+observed = set()
+for name in os.listdir("/proc"):
+    if not name.isdigit() or int(name) == os.getpid():
+        continue
+    try:
+        raw = open(f"/proc/{name}/environ", "rb").read()
+        environment = {}
+        for item in raw.split(b"\0"):
+            if b"=" not in item:
+                continue
+            key, value = item.split(b"=", 1)
+            environment[key.decode("utf-8", "strict")] = value.decode("utf-8", "strict")
+    except (OSError, UnicodeError):
+        continue
+    if any(environment.get(key) != value for key, value in identity.items()):
+        continue
+    if environment.get("HOME") != home:
+        continue
+    value = "" if wire_for_harness is None else environment.get(wire_for_harness[0], "")
+    observed.add(value)
+
+document = {}
+safe = False
+if len(observed) == 1 and wire_for_harness is not None:
+    path = next(iter(observed))
+    try:
+        details = os.lstat(path)
+        safe = (path.startswith("/") and os.path.normpath(path) == path
+                and os.path.commonpath((home, path)) == home
+                and os.path.isdir(path) and not os.path.islink(path)
+                and os.path.realpath(path) == path and details.st_uid == os.geteuid())
+    except (OSError, ValueError):
+        safe = False
+    if safe:
+        document[wire_for_harness[1]] = path
+if wire_for_harness is not None and not safe:
+    raise SystemExit(2)
+print(json.dumps(document, separators=(",", ":")))
+PYTHON
+  ); then
+    return 1
+  fi
+  [[ $measured == \{*\} ]] || return 1
+  printf '%s' "$measured"
+}
+
 publish_bundle() {
-  local shell_candidates harness_command
+  local shell_candidates harness_command openclaw_tui runtime_facts
   shell_candidates=${CONFIG[SHELL_CANDIDATES]:-'[["/bin/bash","-l"],["/bin/sh","-l"]]'}
   harness_command=${CONFIG[HARNESS_COMMAND]:-}
+  openclaw_tui=null
+  runtime_facts=$(measure_adapter_runtime_facts) \
+    || die "cannot measure the alias-scoped runtime profile for $alias_name"
   if [[ -z $harness_command ]]; then
     TMUX_PATH_FOUND=''
     TMUX_SESSION_FOUND=''
@@ -298,15 +366,16 @@ publish_bundle() {
       # invertir: un alias con sesion compartida tiene que seguir emitiendo el panel que su dueno
       # esta mirando, no otra cosa.
       OPENCLAW_NODE_FOUND=''
-      OPENCLAW_SESSION_FOUND=''
-      if derive_openclaw_tui_command; then
-        harness_command=$(CAUCE_OPENCLAW_NODE=$OPENCLAW_NODE_FOUND CAUCE_OPENCLAW_ENTRY=$OPENCLAW_ENTRY \
-          CAUCE_OPENCLAW_SESSION=$OPENCLAW_SESSION_FOUND CAUCE_OPENCLAW_HISTORY=$OPENCLAW_HISTORY_LIMIT \
+      if [[ $harness == openclaw ]] && derive_openclaw_tui_command; then
+        harness_command=null
+        openclaw_tui=$(CAUCE_OPENCLAW_NODE=$OPENCLAW_NODE_FOUND CAUCE_OPENCLAW_ENTRY=$OPENCLAW_ENTRY \
+          CAUCE_OPENCLAW_STATE=$state_directory CAUCE_OPENCLAW_HISTORY=$OPENCLAW_HISTORY_LIMIT \
           PYTHONDONTWRITEBYTECODE=1 python3 -c \
-          'import json,os;print(json.dumps([os.environ["CAUCE_OPENCLAW_NODE"],os.environ["CAUCE_OPENCLAW_ENTRY"],"tui","--session",os.environ["CAUCE_OPENCLAW_SESSION"],"--history-limit",os.environ["CAUCE_OPENCLAW_HISTORY"]]))') \
-          || die "cannot assemble the derived openclaw harness command"
-        printf 'cauce-pty-launcher: harness derived from openclaw tui alias=%s session=%s\n' \
-          "$alias_name" "$OPENCLAW_SESSION_FOUND" >&2
+          'import json,os;print(json.dumps({"node":os.environ["CAUCE_OPENCLAW_NODE"],"entry":os.environ["CAUCE_OPENCLAW_ENTRY"],"state_directory":os.environ["CAUCE_OPENCLAW_STATE"],"history_limit":int(os.environ["CAUCE_OPENCLAW_HISTORY"])}))') \
+          || die "cannot assemble the dynamic openclaw harness resolver"
+        # No native id ni store key en journal: la seleccion ocurre dentro del agente por OPEN.
+        printf 'cauce-pty-launcher: dynamic openclaw tui resolver enabled alias=%s\n' \
+          "$alias_name" >&2
       else
         harness_command=null
         printf 'cauce-pty-launcher: no live tmux session and no openclaw tui for alias=%s socket=%s; agent will publish shell only\n' \
@@ -333,6 +402,8 @@ publish_bundle() {
   CAUCE_PTY_BUNDLE_KEY_FILE=${CONFIG[ALIAS_KEY_FILE]} \
   CAUCE_PTY_BUNDLE_SHELLS=$shell_candidates \
   CAUCE_PTY_BUNDLE_HARNESS_COMMAND=$harness_command \
+  CAUCE_PTY_BUNDLE_OPENCLAW_TUI=$openclaw_tui \
+  CAUCE_PTY_BUNDLE_RUNTIME_FACTS=$runtime_facts \
   CAUCE_PTY_BUNDLE_VERSION=$AGENT_VERSION \
   PYTHONDONTWRITEBYTECODE=1 python3 - > "$local_bundle" <<'PYTHON'
 import json, os, sys
@@ -367,6 +438,8 @@ document = {
     "home": os.environ["CAUCE_PTY_BUNDLE_HOME"],
     "shell_candidates": commands(os.environ["CAUCE_PTY_BUNDLE_SHELLS"], "SHELL_CANDIDATES"),
     "harness_command": commands(os.environ["CAUCE_PTY_BUNDLE_HARNESS_COMMAND"], "HARNESS_COMMAND"),
+    "openclaw_tui": commands(os.environ["CAUCE_PTY_BUNDLE_OPENCLAW_TUI"], "OPENCLAW_TUI"),
+    "runtime_facts": commands(os.environ["CAUCE_PTY_BUNDLE_RUNTIME_FACTS"], "RUNTIME_FACTS"),
     "harness": os.environ["CAUCE_PTY_BUNDLE_HARNESS"],
     "relay_host": os.environ["CAUCE_PTY_BUNDLE_RELAY_HOST"],
     "relay_port": int(os.environ["CAUCE_PTY_BUNDLE_RELAY_PORT"]),

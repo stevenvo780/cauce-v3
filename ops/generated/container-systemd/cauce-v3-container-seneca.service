@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 container adapter seneca (agv2-pablo-personal-oc/openclaw)
+Description=Cauce V3 container adapter seneca (agv2-pablo-developer-oc/openclaw)
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target

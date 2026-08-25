@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { DatabasePool } from '@cauce/store';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildLoopbackHealthProbe } from './health.js';
+import { buildLoopbackHealthProbe, probeAckPath } from './health.js';
 
 /** Pool que contesta `SELECT 1` sin chistar: es justo la señal que hoy miente. */
 const answeringPool = {
@@ -22,21 +22,32 @@ async function listeningDataApp(): Promise<{ server: Server }> {
   return { server: dataListener };
 }
 
-/**
- * PENDIENTE, NO ROTO — se salta a propósito, con fecha y motivo.
- *
- * Lo escribí (zeus, commit `ec2709c`, 2026-08-24) como ESPECIFICACIÓN de un arreglo que nunca
- * llegué a implementar: que `/health/ready` deje de contestar «listo» mirando sólo `SELECT 1`, y
- * mire además el listener de datos que usan los agentes y el camino de ACK. `HealthOptions` no
- * tiene hoy ni `dataApp` ni `ackProbe`, así que estas cuatro pruebas llevan rojas desde que las
- * subí: cuatro rojos permanentes que suben el umbral de lo que se considera normal y acaban
- * tapando un fallo de verdad.
- *
- * Se queda `skip` y no se borra porque el defecto que describe es real: el gateway puede decir
- * `ready` con el plano de datos caído. Para reactivarlo: implementar `dataApp` y `ackProbe` en
- * `buildLoopbackHealthProbe` (`services/gateway/src/health.ts`) y quitar el `.skip`.
- */
-describe.skip('gateway readiness stops lying about the listener the agents actually use', () => {
+describe('gateway readiness stops lying about the listener the agents actually use', () => {
+  it('probes the ACK ledger under bounded PostgreSQL timeouts without reading payloads', async () => {
+    const query = vi.fn(async (sql: string) => {
+      void sql;
+      return { rows: [], rowCount: 0 };
+    });
+    const client = {
+      query,
+      on: vi.fn(),
+      off: vi.fn(),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
+
+    await probeAckPath(pool);
+
+    expect(query.mock.calls.map(([sql]) => String(sql))).toEqual([
+      'BEGIN',
+      "SET LOCAL lock_timeout='1000ms'",
+      "SET LOCAL statement_timeout='2000ms'",
+      expect.stringMatching(/FROM deliveries d[\s\S]*LEFT JOIN delivery_acks/u),
+      'COMMIT',
+    ]);
+    expect(client.release).toHaveBeenCalledWith(false);
+  });
+
   it('reports ready while the data listener is up', async () => {
     const app = await buildLoopbackHealthProbe({
       pool: answeringPool,

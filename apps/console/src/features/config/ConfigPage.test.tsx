@@ -868,7 +868,7 @@ it('FAMILIA 6: «Roles de agente» cataloga los roles en uso y dice quién lleva
   expect(within(panelDe(/bots sin rol declarado/i)).getByText('Steven/argos')).toBeInTheDocument();
 });
 
-it('FAMILIA 6: aplicar un rol a otro bot manda la mutación versionada exacta y dice dónde deshacerla', async () => {
+it('FAMILIA 6: el catálogo es sólo lectura y enlaza al Perfil canónico sin POST genérico', async () => {
   const changes: ChangeRequest[] = [];
   servirConfig(snapshotConAgentes);
   recordChanges(changes);
@@ -876,23 +876,12 @@ it('FAMILIA 6: aplicar un rol a otro bot manda la mutación versionada exacta y 
   renderWithApi(<ConfigPage />);
   await irA(user, ROLES);
 
-  await user.selectOptions(
-    await screen.findByLabelText(/bot que recibirá el rol/i), 'Steven/argos',
-  );
-  await user.click(screen.getByRole('button', { name: /aplicar el rol a ese bot/i }));
-
-  expect(changes[0]).toEqual({
-    dry_run: false,
-    expected_revision: 1,
-    mutation: {
-      resource: 'agent', action: 'update', tenant_id: 'Steven', alias: 'argos',
-      value: { role_brief: 'Sos el orquestador de la flota.' },
-    },
-  });
-  const aviso = await screen.findByText(/rol aplicado a Steven\/argos/i);
-  // El desenlace se lee EN la pestaña de roles, sin abrir nada, y dice dónde está la marcha atrás.
-  expect(aviso.closest('details')).toBeNull();
-  expect(aviso).toHaveTextContent(/se puede deshacer desde «Historial y JSON»/i);
+  const enlace = within(panelDe(/bots sin rol declarado/i)).getByRole('link', { name: /Steven\/argos/i });
+  expect(enlace).toHaveAttribute('href', '/live?agente=Steven%2Fargos&pestana=perfil');
+  expect(screen.getByText(/esta vista no envía mutaciones genéricas/i)).toBeInTheDocument();
+  expect(screen.queryByLabelText(/bot que recibirá el rol/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /aplicar el rol/i })).not.toBeInTheDocument();
+  expect(changes).toEqual([]);
 });
 
 it('FAMILIA 6: un rol pasado del tope NO se puede aplicar a otro bot: lo dejaría SORDO', async () => {
@@ -912,9 +901,8 @@ it('FAMILIA 6: un rol pasado del tope NO se puede aplicar a otro bot: lo dejarí
   renderWithApi(<ConfigPage />);
   await irA(user, ROLES);
 
-  await user.selectOptions(await screen.findByLabelText(/bot que recibirá el rol/i), 'Steven/argos');
-  expect(screen.getByRole('button', { name: /aplicar el rol a ese bot/i })).toBeDisabled();
   expect(screen.getByText(/lo dejaría SORDO/i)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /aplicar el rol a ese bot/i })).not.toBeInTheDocument();
   expect(changes).toEqual([]);
 });
 
