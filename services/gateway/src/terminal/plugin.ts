@@ -19,6 +19,7 @@ import {
 } from './authority.js';
 import type { TerminalConfig } from './config.js';
 import { AgentRegistry, parseAgentPresence } from './registry.js';
+import { hechosDelRegistro } from './hechos-del-registro.js';
 import {
   deriveAliasKey, issueTicket, parseAndVerify, ticketDigest, ticketSha256,
   TicketError, type TicketPayload
@@ -521,7 +522,11 @@ export async function registerTerminalControlPlane(
    * que app.ts instala ANTES de este plugin, igual que el resto de rutas de navegador.
    */
   const relayGovernance = options.governanceRelay ?? await buildGovernanceRelay(config);
-  const measuredFacts: MeasuredFactsSource = options.measuredFacts ?? { factsFor: async () => undefined };
+  // El default NO puede ser `async () => undefined`. Con ese stub la cadena de lectura estaba
+  // completa y probada pero el gateway nunca sabía DÓNDE mirar: el modal de directiva contestaba
+  // «contenedor sin identificar» aunque el pty-agent leyera el fichero sin problema. Los hechos ya
+  // están en el registro vivo de presencia; sólo faltaba conectarlos.
+  const measuredFacts: MeasuredFactsSource = options.measuredFacts ?? hechosDelRegistro(registry);
 
   async function authorizeDirective(raw: unknown): Promise<{ tenant_id: string; alias: string }> {
     const request = raw as FastifyRequest<{ Params: { tenant?: string; alias?: string } }>;

@@ -67,6 +67,15 @@ export class AgentRegistry {
   }
 }
 
+/** Como `stringField`, pero además exige ruta absoluta y sin bytes nulos. */
+function rutaAbsoluta(value: unknown, name: string, max = 4096): string {
+  const texto = stringField(value, name, max);
+  if (!texto.startsWith('/') || texto.includes('\0')) {
+    throw new Error(`agent presence ${name} is invalid`);
+  }
+  return texto;
+}
+
 function stringField(value: unknown, name: string, max = 256): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > max) {
     throw new Error(`agent presence ${name} is invalid`);
@@ -97,6 +106,9 @@ export function parseAgentPresence(value: unknown): AgentPresence {
     runtime_user: stringField(record.runtime_user, 'runtime_user', 64),
     runtime_uid: uid,
     harness: stringField(record.harness, 'harness', 64),
+    // Opcional y validado sólo si viene: un agente viejo no lo manda, y rechazar su presencia por
+    // esto lo dejaría fuera de la consola entera. Si viene, tiene que ser una ruta absoluta.
+    ...(record.home === undefined ? {} : { home: rutaAbsoluta(record.home, 'home') }),
     modes: (modes as string[]).slice(0, 8),
     connected_since: stringField(record.connected_since, 'connected_since', 64)
   };

@@ -540,6 +540,10 @@ class PtyAgent:
             "runtime_user": self.bundle["runtime_user"],
             "runtime_uid": self.bundle["runtime_uid"],
             "harness": self.bundle["harness"],
+            # El agente SABE su HOME (lo usa para lanzar la sesion) y hasta ahora no lo publicaba.
+            # Sin este campo el gateway no puede componer la ruta del fichero de gobierno del alias
+            # y el modal de directiva dice "contenedor sin identificar" aunque la lectura funcione.
+            "home": self.bundle["home"],
             "agent_version": self.bundle["agent_version"],
             "modes": self.modes,
             # El relay NO manda TAG_READ a un agente que no lo anuncie. Un agente viejo trata un

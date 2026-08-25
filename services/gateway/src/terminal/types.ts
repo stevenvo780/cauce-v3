@@ -32,6 +32,12 @@ export interface AgentPresence {
   readonly runtime_user: string;
   readonly runtime_uid: number;
   readonly harness: string;
+  /**
+   * `HOME` del proceso del arnés dentro del contenedor. OPCIONAL a propósito: un pty-agent
+   * anterior a 2026-08-25 no lo manda, y exigirlo tiraría su presencia entera —dejando al alias
+   * como `not_installed` en la consola— por un campo que sólo hace falta para leer su directiva.
+   */
+  readonly home?: string;
   readonly modes: readonly string[];
   readonly connected_since: string;
 }
