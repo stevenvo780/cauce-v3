@@ -7,7 +7,24 @@
     "declarationMap": true,
     "sourceMap": true,
     "noEmit": false,
-    "types": ["node"]
+    "types": ["node"],
+    /*
+     * Este paquete EMITE, así que no puede resolver `@cauce/protocol` al SOURCE como hace el
+     * tsconfig raíz: un `.ts` fuera de `rootDir` hace fallar el build entero con TS6059. Se apunta
+     * a la DECLARACIÓN ya construida, que sigue siendo la de ESTE árbol —que es el fallo que el
+     * raíz vino a cerrar— y de la que no se emite nada, así que `rootDir` no la mira.
+     *
+     * Consecuencia operativa: `@cauce/protocol` tiene que estar construido ANTES que este paquete.
+     * Ya lo estaba: su propio script de test arranca con `pnpm --filter @cauce/protocol build`.
+     *
+     * La ruta es desde la RAÍZ del repo, no desde este fichero: `baseUrl` lo declara el tsconfig
+     * raíz y se resuelve relativo a QUIEN LO DECLARA, no a quien lo hereda. Escrito como
+     * `../protocol/...` apuntaba fuera del repo y el síntoma era «no exported member» sobre un
+     * símbolo que estaba en el `.d.ts` — el error no dice que no encontró el fichero.
+     */
+    "paths": {
+      "@cauce/protocol": ["packages/protocol/dist/index.d.ts"]
+    }
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
   "exclude": ["dist", "node_modules"]
