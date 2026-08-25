@@ -1,5 +1,7 @@
 import {
-  emptyAgentProfile, normalizeAgentProfile, type AgentProfile
+  emptyAgentProfile, normalizeAgentProfile,
+  type AgentProfile, type ArnesDelAlias, type ContextoDeAlias, type CuotaDelAlias,
+  type HechosDelAlias, type PermisosDelAlias
 } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
@@ -161,4 +163,194 @@ export class AgentProfileRepository {
     );
     return (result.rowCount ?? 0) > 0;
   }
+
+  /**
+   * El perfil autorado MÁS los hechos derivados: lo único que el compilador necesita.
+   *
+   * Es una sola llamada y no cinco a propósito: quien genera un fichero no tiene por qué saber que
+   * los permisos viven en `role_policies` y las cuotas detrás del techo de ruteo. Esa es
+   * exactamente la dispersión que este trabajo vino a cerrar.
+   *
+   * Un alias sin nada configurado devuelve hechos VACÍOS y no un fallo: no tener permisos, ni
+   * cuentas, ni destinos es un estado legítimo —es el de un alias recién dado de alta— y el
+   * compilador ya sabe omitir lo que está vacío.
+   */
+  async readContext(tenantId: string, alias: string): Promise<ContextoDeAlias> {
+    const [perfil, permisos, cuotas, arnes, destinos] = await Promise.all([
+      this.read(tenantId, alias),
+      this.pool.query<{ ruta: boolean; lectura: boolean; control: boolean; notify_rol: boolean }>(
+        PERMISOS_SQL, [tenantId, alias]
+      ),
+      this.pool.query<{
+        provider: string; account_id: string; label: string | null;
+        remaining_percent: string | null; window_key: string | null;
+      }>(CUOTAS_SQL, [tenantId, alias]),
+      this.pool.query<{
+        harness_id: string | null; home_directory: string | null;
+        container_name: string | null; capabilities: unknown;
+      }>(
+        `SELECT agent.harness_id, agent.home_directory, agent.container_name,
+                COALESCE(harness.capabilities,'[]'::jsonb) AS capabilities
+           FROM agents agent
+           LEFT JOIN harness_definitions harness ON harness.id=agent.harness_id
+          WHERE agent.tenant_id=$1 AND agent.alias=$2`, [tenantId, alias]
+      ),
+      this.pool.query<{ alias: string }>(DESTINOS_SQL, [tenantId, alias])
+    ]);
+
+    const permiso = permisos.rows[0];
+    /*
+     * `notificacion` es la conjunción de DOS puertas, y las dos son necesarias: el rol tiene que
+     * permitirlo Y tiene que existir al menos un destino aprobado. Un rol con `allow_notify` y
+     * cero destinos NO puede notificar —`notify` es default-deny por lista— y decirle al agente
+     * que sí puede le costaría el turno en un intento que la base rechaza.
+     */
+    const destinosDeAviso = await this.pool.query<{ total: string }>(
+      `SELECT count(*)::text AS total FROM egress_destinations
+        WHERE tenant_id=$1 AND alias=$2 AND enabled`, [tenantId, alias]
+    );
+    const permisosEfectivos: PermisosDelAlias = {
+      ruta: permiso?.ruta ?? false,
+      lectura: permiso?.lectura ?? false,
+      control: permiso?.control ?? false,
+      notificacion: (permiso?.notify_rol ?? false)
+        && Number(destinosDeAviso.rows[0]?.total ?? '0') > 0
+    };
+
+    const fila = arnes.rows[0];
+    const capacidades = Array.isArray(fila?.capabilities)
+      ? (fila.capabilities as unknown[]).filter((c): c is string => typeof c === 'string')
+      : [];
+    const arnesDelAlias: ArnesDelAlias = {
+      harness: fila?.harness_id ?? '',
+      home: fila?.home_directory ?? '',
+      contenedor: fila?.container_name ?? undefined,
+      capacidades
+    };
+
+    const cuotasDelAlias: CuotaDelAlias[] = cuotas.rows.map((row) => ({
+      proveedor: row.provider,
+      cuenta: row.account_id,
+      limite: limiteLegible(row.remaining_percent, row.window_key)
+    }));
+
+    /*
+     * Los destinos se ofrecen SÓLO si el alias puede rutear. La consulta de ACL responde «quién es
+     * alcanzable», no «quién puede alcanzarlo»: el permiso del que pregunta se comprueba aparte, en
+     * el camino de envío (`assertPermission(...,'route')`). Sin este corte, un alias sin permiso de
+     * ruta recibiría en su fichero la lista entera de la flota, y un agente al que se le enseñan
+     * doce destinos que no puede usar los intenta y gasta el turno en una entrega que la base
+     * rechaza. Es el mismo criterio por el que los permisos denegados se nombran en vez de callarse.
+     */
+    const hechos: HechosDelAlias = {
+      permisos: permisosEfectivos,
+      cuotas: cuotasDelAlias,
+      arnes: arnesDelAlias,
+      destinos: permisosEfectivos.ruta ? destinos.rows.map((row) => row.alias) : []
+    };
+    return { perfil, hechos };
+  }
 }
+
+/**
+ * ── LOS HECHOS DERIVADOS ────────────────────────────────────────────────────────────────────
+ *
+ * Las tres caras del fichero que NO se escriben a mano. Se leen FRESCAS en cada generación, que es
+ * lo único que evita el fallo que esta separación vino a impedir: si se copiaran a `agent_profiles`
+ * como texto, revocar un permiso en `role_policies` dejaría el fichero del contenedor diciendo que
+ * el alias lo sigue teniendo, y nadie se enteraría hasta que lo intentara.
+ */
+
+/**
+ * Permisos EFECTIVOS: la UNIÓN de lo que conceden todas las salas del alias.
+ *
+ * `bool_or` y no `LIMIT 1`, siguiendo el precedente de `principalAccess` en repository.ts: un alias
+ * tiene una fila de `memberships` POR SALA, y `LIMIT 1` contestaría con la primera que devolviera
+ * el planificador — o sea, con un permiso distinto según el día. La pregunta que responde un perfil
+ * es «qué puede hacer este alias», y eso es la unión.
+ *
+ * Se exige `membership.enabled`, `tenant.enabled` y `room.enabled`: una membresía apagada, o en una
+ * sala apagada, no concede nada. Es el mismo criterio que el camino de envío.
+ */
+const PERMISOS_SQL = `
+  SELECT COALESCE(bool_or(policy.allow_route),false)   AS ruta,
+         COALESCE(bool_or(policy.allow_read),false)    AS lectura,
+         COALESCE(bool_or(policy.allow_control),false) AS control,
+         COALESCE(bool_or(policy.allow_notify),false)  AS notify_rol
+    FROM memberships membership
+    JOIN role_policies policy ON policy.role=membership.role
+    JOIN tenants tenant       ON tenant.id=membership.tenant_id
+    JOIN rooms room           ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
+   WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
+     AND tenant.enabled AND room.enabled`;
+
+/**
+ * Las cuentas a las que el alias puede ser ruteado, con su límite observado si lo hay.
+ *
+ * El camino es `agent_account_bindings` -> `alias_routing_ceiling` -> `provider_accounts`, y no un
+ * atajo: el techo es la única vía por la que un binding puede existir, y saltárselo aquí daría un
+ * inventario que el selector de cuentas no reconocería.
+ *
+ * NO SE SELECCIONA `credential_ref` NI `credential_ref_kind`, y no es un olvido de columnas: esto
+ * termina escrito en un fichero DENTRO del contenedor y enseñado a un modelo. Un localizador de
+ * credencial que entre acá acaba en el contexto de un LLM y en los transcripts. El alias no
+ * necesita saber dónde está la llave: el adaptador la resuelve por su cuenta.
+ *
+ * El límite sale de `quota_window_state`, la ventana con MENOS margen: es la que de verdad lo va a
+ * frenar, y decirle la más holgada sería tranquilizarlo con el número equivocado.
+ */
+const CUOTAS_SQL = `
+  SELECT account.provider, binding.account_id, account.label,
+         quota.remaining_percent, quota.window_key, quota.reset_at
+    FROM agent_account_bindings binding
+    JOIN alias_routing_ceiling ceiling
+      ON ceiling.tenant_id=binding.tenant_id AND ceiling.alias=binding.agent_alias
+     AND ceiling.account_id=binding.account_id
+    JOIN provider_accounts account ON account.id=binding.account_id
+    LEFT JOIN LATERAL (
+      SELECT state.remaining_percent, state.window_key, state.reset_at
+        FROM quota_window_state state
+       WHERE state.account_id=account.id
+         AND (state.reset_at IS NULL OR state.reset_at > now())
+       ORDER BY state.remaining_percent ASC NULLS LAST, state.window_key
+       LIMIT 1
+    ) quota ON true
+   WHERE binding.tenant_id=$1 AND binding.agent_alias=$2 AND binding.enabled
+     AND account.enabled
+   ORDER BY binding.priority ASC, binding.account_id ASC`;
+
+/**
+ * Los alias alcanzables por ACL. Es la consulta de `routingTargets` SIN la parte de presencia: un
+ * fichero se escribe una vez y quién está conectado cambia cada minuto, así que meter `online` acá
+ * produciría un fichero desactualizado desde el segundo siguiente. Quién está en línea sigue
+ * viajando en el sobre, que es donde ese dato es cierto.
+ */
+const DESTINOS_SQL = `
+  SELECT membership.alias
+    FROM memberships membership
+    JOIN tenants target_tenant ON target_tenant.id=membership.tenant_id
+    JOIN rooms target_room
+      ON target_room.id=membership.room_id AND target_room.tenant_id=membership.tenant_id
+   WHERE membership.enabled AND target_tenant.enabled AND target_room.enabled
+     AND NOT (membership.tenant_id=$1 AND membership.alias=$2)
+     AND (
+       membership.tenant_id=$1
+       OR EXISTS (
+         SELECT 1 FROM acl_edges edge
+         JOIN tenants source_tenant ON source_tenant.id=edge.from_tenant
+         WHERE edge.from_tenant=$1 AND edge.to_tenant=membership.tenant_id
+           AND edge.enabled AND edge.allow_route AND source_tenant.enabled
+           AND (source_tenant.is_hub OR target_tenant.is_hub)
+       )
+     )
+   GROUP BY membership.alias
+   ORDER BY membership.alias`;
+
+/** El límite legible de una ventana de cuota. `undefined` cuando no hay observación fresca. */
+function limiteLegible(
+  restante: string | number | null, ventana: string | null
+): string | undefined {
+  if (restante === null || ventana === null) return undefined;
+  return `${Number(restante)}% disponible en la ventana ${ventana}`;
+}
+

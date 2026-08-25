@@ -7,8 +7,9 @@ import {
   MARCA_FIN, MARCA_INICIO, bloqueGestionado, conBloqueGestionado, resumirContextoFijo,
 } from "../src/harnesses/contexto-fijo.js";
 import {
-  CLAVES_PROHIBIDAS_OPENCLAW, componerRolDelPerfil, proyeccionOpenclaw, serializarEstable,
-  type HechosDelArnes,
+  CLAVES_PROHIBIDAS_OPENCLAW, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, bloqueDePerfil,
+  componerBloqueDePerfil, conBloqueDePerfil, proyeccionOpenclaw, rolBreveDelPerfil,
+  serializarEstable, type HechosDelAlias,
 } from "../src/context/perfil-a-contexto.js";
 
 /**
@@ -35,15 +36,15 @@ function perfil(overrides: Partial<AgentProfile> = {}): AgentProfile {
   };
 }
 
-function hechos(overrides: Partial<HechosDelArnes> = {}): HechosDelArnes {
+function hechos(overrides: Partial<HechosDelAlias> = {}): HechosDelAlias {
   return {
-    harness: "claude",
-    home: "/home/dev",
     permisos: { ruta: true, lectura: true, control: false, notificacion: true },
     destinos: ["kant", "argos"],
     cuotas: [{ proveedor: "claude", cuenta: "steven-max", limite: "5h/semanal" }],
-    capacidades: ["messages.receive", "jobs.interactive"],
-    contenedor: "claw-zeus",
+    arnes: {
+      harness: "claude", home: "/home/dev", contenedor: "claw-zeus",
+      capacidades: ["messages.receive", "jobs.interactive"],
+    },
     ...overrides,
   };
 }
@@ -51,16 +52,16 @@ function hechos(overrides: Partial<HechosDelArnes> = {}): HechosDelArnes {
 // ── Determinismo ─────────────────────────────────────────────────────────────────────────────
 
 test("mismo perfil y mismos hechos producen EXACTAMENTE los mismos bytes", () => {
-  const uno = componerRolDelPerfil(perfil(), hechos());
-  const dos = componerRolDelPerfil(perfil(), hechos());
+  const uno = componerBloqueDePerfil(perfil(), hechos());
+  const dos = componerBloqueDePerfil(perfil(), hechos());
   assert.equal(uno, dos);
   assert.equal(resumirContextoFijo(uno), resumirContextoFijo(dos));
 });
 
 test("no mete fechas ni relojes: dos composiciones separadas en el tiempo son iguales", async () => {
-  const antes = componerRolDelPerfil(perfil(), hechos());
+  const antes = componerBloqueDePerfil(perfil(), hechos());
   await new Promise((listo) => setTimeout(listo, 25));
-  assert.equal(componerRolDelPerfil(perfil(), hechos()), antes);
+  assert.equal(componerBloqueDePerfil(perfil(), hechos()), antes);
   assert.doesNotMatch(antes, /20\d\d-\d\d-\d\d/);
 });
 
@@ -76,14 +77,14 @@ test("control negativo: el orden de inserción de las claves NO cambia el result
     alReves[clave] = (derecho as unknown as Record<string, unknown>)[clave];
   }
   assert.equal(
-    componerRolDelPerfil(perfil(), alReves as unknown as HechosDelArnes),
-    componerRolDelPerfil(perfil(), derecho),
+    componerBloqueDePerfil(perfil(), alReves as unknown as HechosDelAlias),
+    componerBloqueDePerfil(perfil(), derecho),
   );
 });
 
 test("control negativo: cambiar UNA coma cambia el sello", () => {
-  const base = componerRolDelPerfil(perfil(), hechos());
-  const tocado = componerRolDelPerfil(
+  const base = componerBloqueDePerfil(perfil(), hechos());
+  const tocado = componerBloqueDePerfil(
     perfil({ purpose: "Orquestar la flota y reparar Cauce de punta a punta" }), hechos(),
   );
   assert.notEqual(base, tocado);
@@ -93,7 +94,7 @@ test("control negativo: cambiar UNA coma cambia el sello", () => {
 // ── Las siete caras ──────────────────────────────────────────────────────────────────────────
 
 test("concentra las siete secciones cuando hay material para todas", () => {
-  const texto = componerRolDelPerfil(perfil(), hechos());
+  const texto = componerBloqueDePerfil(perfil(), hechos());
   for (const seccion of [
     "Identidad y propósito", "Rol, responsabilidades y restricciones",
     "Permisos y acceso vía Cauce", "Cuotas y límites",
@@ -113,9 +114,9 @@ test("concentra las siete secciones cuando hay material para todas", () => {
  * es NULL, y la lección del SOUL.md de fábrica de `iza`.
  */
 test("omite las secciones vacías en vez de emitir un encabezado hueco", () => {
-  const texto = componerRolDelPerfil(
+  const texto = componerBloqueDePerfil(
     perfil({ purpose: null, tools: [], operating_rules: [] }),
-    hechos({ cuotas: [], capacidades: [] }),
+    hechos({ cuotas: [], arnes: { harness: "claude", home: "/home/dev", capacidades: [] } }),
   );
   assert.ok(!texto.includes("Identidad y propósito"));
   assert.ok(!texto.includes("Cuotas y límites"));
@@ -129,16 +130,16 @@ test("un perfil enteramente vacío produce texto vacío, no un esqueleto de enca
     tenant_id: "Steven", alias: "mudo", purpose: null, role_summary: null,
     responsibilities: [], restrictions: [], tools: [], operating_rules: [],
   };
-  const texto = componerRolDelPerfil(vacio, {
-    harness: "codex", home: "/home/dev",
+  const texto = componerBloqueDePerfil(vacio, {
     permisos: { ruta: false, lectura: false, control: false, notificacion: false },
-    destinos: [], cuotas: [], capacidades: [], contenedor: undefined,
+    destinos: [], cuotas: [],
+    arnes: { harness: "codex", home: "/home/dev", capacidades: [] },
   });
   assert.equal(texto, "");
 });
 
 test("los permisos se dicen por su EFECTO, y los denegados también se nombran", () => {
-  const texto = componerRolDelPerfil(perfil(), hechos());
+  const texto = componerBloqueDePerfil(perfil(), hechos());
   assert.ok(texto.includes("control"), "un permiso denegado tiene que aparecer nombrado");
   assert.doesNotMatch(texto, /undefined|\[object Object\]/);
 });
@@ -149,7 +150,7 @@ const HUMANO_ANTES = "# CLAUDE.md de zeus\n\nEsto lo escribí yo a mano y no se 
 const HUMANO_DESPUES = "\n\n## Mis notas\n\nNi esto tampoco.\n";
 
 test("respeta byte a byte el texto humano de ANTES y de DESPUÉS del bloque", () => {
-  const bloque = componerRolDelPerfil(perfil(), hechos());
+  const bloque = componerBloqueDePerfil(perfil(), hechos());
   const sembrado = conBloqueGestionado(`${HUMANO_ANTES}${HUMANO_DESPUES}`, bloque);
   assert.ok(sembrado.startsWith(HUMANO_ANTES), "se perdió el texto humano de antes");
   assert.ok(sembrado.endsWith(HUMANO_DESPUES) || sembrado.includes(HUMANO_DESPUES.trim()));
@@ -157,7 +158,7 @@ test("respeta byte a byte el texto humano de ANTES y de DESPUÉS del bloque", ()
 });
 
 test("resembrar sobre un fichero ya sembrado no duplica el bloque ni toca lo humano", () => {
-  const bloque = componerRolDelPerfil(perfil(), hechos());
+  const bloque = componerBloqueDePerfil(perfil(), hechos());
   const primera = conBloqueGestionado(`${HUMANO_ANTES}${HUMANO_DESPUES}`, bloque);
   const segunda = conBloqueGestionado(primera, bloque);
   assert.equal(segunda, primera, "resembrar el mismo bloque tiene que ser idempotente");
@@ -169,10 +170,10 @@ test("resembrar sobre un fichero ya sembrado no duplica el bloque ni toca lo hum
 
 test("cambiar el perfil cambia SOLO el bloque; lo humano sigue igual byte a byte", () => {
   const antes = conBloqueGestionado(
-    `${HUMANO_ANTES}${HUMANO_DESPUES}`, componerRolDelPerfil(perfil(), hechos()),
+    `${HUMANO_ANTES}${HUMANO_DESPUES}`, componerBloqueDePerfil(perfil(), hechos()),
   );
   const despues = conBloqueGestionado(
-    antes, componerRolDelPerfil(perfil({ purpose: "Otro propósito." }), hechos()),
+    antes, componerBloqueDePerfil(perfil({ purpose: "Otro propósito." }), hechos()),
   );
   assert.ok(despues.startsWith(HUMANO_ANTES));
   assert.ok(despues.includes("Ni esto tampoco."));
@@ -182,7 +183,7 @@ test("cambiar el perfil cambia SOLO el bloque; lo humano sigue igual byte a byte
 /** CONTROL NEGATIVO: sin este cuidado, sembrar sobre un fichero humano lo borraría. */
 test("control negativo: sembrar sobre un fichero SIN marcas conserva todo lo que había", () => {
   const original = `${HUMANO_ANTES}texto suelto que nadie debe perder\n`;
-  const sembrado = conBloqueGestionado(original, componerRolDelPerfil(perfil(), hechos()));
+  const sembrado = conBloqueGestionado(original, componerBloqueDePerfil(perfil(), hechos()));
   assert.ok(sembrado.includes("texto suelto que nadie debe perder"));
   assert.ok(sembrado.length > original.length);
 });
@@ -190,7 +191,7 @@ test("control negativo: sembrar sobre un fichero SIN marcas conserva todo lo que
 // ── openclaw: proyección campo a campo, NUNCA el fichero entero ──────────────────────────────
 
 test("la proyección de openclaw es sólo el subárbol del alias bajo agents", () => {
-  const bloque = componerRolDelPerfil(perfil(), hechos({ harness: "openclaw" }));
+  const bloque = componerBloqueDePerfil(perfil(), hechos({ arnes: { harness: "openclaw", home: "/home/dev", capacidades: [] } }));
   const fragmento = JSON.parse(proyeccionOpenclaw("zeus", bloque)) as Record<string, unknown>;
   assert.deepEqual(Object.keys(fragmento), ["agents"]);
   const agents = fragmento["agents"] as Record<string, unknown>;
@@ -204,7 +205,7 @@ test("la proyección de openclaw es sólo el subárbol del alias bajo agents", (
  * use— sino que las ÚNICAS claves emitidas son las declaradas.
  */
 test("control negativo: la proyección NUNCA emite auth ni secrets, vengan de donde vengan", () => {
-  const bloque = componerRolDelPerfil(perfil(), hechos({ harness: "openclaw" }));
+  const bloque = componerBloqueDePerfil(perfil(), hechos({ arnes: { harness: "openclaw", home: "/home/dev", capacidades: [] } }));
   const texto = proyeccionOpenclaw("zeus", bloque);
   for (const prohibida of CLAVES_PROHIBIDAS_OPENCLAW) {
     assert.ok(!texto.includes(`"${prohibida}"`), `la proyección emitió ${prohibida}`);
@@ -214,12 +215,12 @@ test("control negativo: la proyección NUNCA emite auth ni secrets, vengan de do
 });
 
 test("la proyección de openclaw es determinista byte a byte", () => {
-  const bloque = componerRolDelPerfil(perfil(), hechos({ harness: "openclaw" }));
+  const bloque = componerBloqueDePerfil(perfil(), hechos({ arnes: { harness: "openclaw", home: "/home/dev", capacidades: [] } }));
   assert.equal(proyeccionOpenclaw("zeus", bloque), proyeccionOpenclaw("zeus", bloque));
 });
 
 test("la proyección lleva el sello dentro, para poder comprobarla sin releer el perfil", () => {
-  const bloque = componerRolDelPerfil(perfil(), hechos({ harness: "openclaw" }));
+  const bloque = componerBloqueDePerfil(perfil(), hechos({ arnes: { harness: "openclaw", home: "/home/dev", capacidades: [] } }));
   const fragmento = JSON.parse(proyeccionOpenclaw("zeus", bloque)) as {
     agents: Record<string, { cauce: { version: string; sha256: string } }>;
   };
@@ -252,7 +253,7 @@ test("control negativo: serializarEstable ignora el orden de claves y JSON.strin
  * descubrirse en producción.
  */
 test("el rol compuesto declara si cabe en self_role, y lo dice midiendo", () => {
-  const corto = componerRolDelPerfil(perfil(), hechos());
+  const corto = componerBloqueDePerfil(perfil(), hechos());
   assert.ok(
     countCodePoints(corto) <= ROLE_BRIEF_MAX_CODE_POINTS,
     `un perfil típico deberia caber en self_role; mide ${countCodePoints(corto)}`,
@@ -260,7 +261,7 @@ test("el rol compuesto declara si cabe en self_role, y lo dice midiendo", () => 
 });
 
 test("control negativo: un perfil que llena el presupuesto NO cabe en self_role", () => {
-  const enorme = componerRolDelPerfil(
+  const enorme = componerBloqueDePerfil(
     perfil({
       responsibilities: Array.from({ length: 20 }, (_, i) => `${"r".repeat(999)}${i}`),
     }),
@@ -268,4 +269,111 @@ test("control negativo: un perfil que llena el presupuesto NO cabe en self_role"
   );
   assert.ok(countCodePoints(enorme) > ROLE_BRIEF_MAX_CODE_POINTS);
   assert.ok(countCodePoints(enorme) <= AGENT_PROFILE_LIMITS.total + 4_000);
+});
+
+// ── DOS BLOQUES: A sellado (contrato) y B sin sellar (perfil) ────────────────────────────────
+
+/**
+ * LA RESOLUCIÓN DEL CHOQUE QUE ENCONTRÓ LA PRUEBA ANTERIOR.
+ *
+ * El sello cubre `textoFijoDelSobre()`, que incluye `Tu rol: <role_brief>` con el brief de
+ * siempre (<=1.200 puntos de código). El perfil rico admite 24.000 unidades y NO cabe ahí. Meterlo
+ * dentro del bloque sellado haría que los dos sha no coincidieran nunca y el recorte no se
+ * activaría jamás, sin un solo error visible.
+ *
+ * Por eso son DOS bloques en el mismo fichero:
+ *   A (sellado)   -> el contrato, entre MARCA_INICIO/MARCA_FIN. Es lo único que el sello resume y
+ *                    lo único que el sobre deja de mandar.
+ *   B (sin sellar)-> el perfil rico, entre MARCA_PERFIL_INICIO/MARCA_PERFIL_FIN. El arnés carga el
+ *                    fichero ENTERO, así que el agente lo lee igual, y no cuesta nada por turno.
+ *
+ * Lo que estas pruebas fijan es que los dos bloques son INDEPENDIENTES: escribir uno no puede
+ * tocar al otro, y —lo que de verdad importa— cambiar el perfil NO puede cambiar el sello de A.
+ */
+
+test("A y B conviven en el mismo fichero sin pisarse", () => {
+  const contrato = "CONTRATO: el texto fijo del sobre, tal cual.";
+  const bloqueB = componerBloqueDePerfil(perfil(), hechos());
+  const conA = conBloqueGestionado(`${HUMANO_ANTES}${HUMANO_DESPUES}`, contrato);
+  const conAyB = conBloqueDePerfil(conA, bloqueB);
+
+  assert.equal(bloqueGestionado(conAyB), contrato, "el bloque A tiene que sobrevivir");
+  assert.equal(bloqueDePerfil(conAyB), bloqueB.trim(), "el bloque B tiene que estar");
+  assert.ok(conAyB.includes("Esto lo escribí yo a mano y no se toca."));
+  assert.ok(conAyB.includes("Ni esto tampoco."));
+});
+
+/**
+ * EL TEST QUE JUSTIFICA TODO EL DISEÑO. Si esto se pone rojo, el recorte del sobre deja de
+ * funcionar en silencio: el sello del fichero dejaría de coincidir con el que calcula el
+ * adaptador y se volvería a mandar el sobre entero en cada entrega, sin que nadie se entere.
+ */
+test("cambiar el PERFIL no cambia el sello del bloque sellado", () => {
+  const contrato = "CONTRATO: el texto fijo del sobre, tal cual.";
+  const conA = conBloqueGestionado("", contrato);
+  const selloAntes = resumirContextoFijo(bloqueGestionado(conA) ?? "");
+
+  const conB = conBloqueDePerfil(conA, componerBloqueDePerfil(perfil(), hechos()));
+  const otroB = conBloqueDePerfil(
+    conB, componerBloqueDePerfil(perfil({ purpose: "Un propósito completamente distinto." }), hechos()),
+  );
+
+  assert.equal(bloqueGestionado(otroB), contrato);
+  assert.equal(resumirContextoFijo(bloqueGestionado(otroB) ?? ""), selloAntes);
+});
+
+/** CONTROL NEGATIVO simétrico: reescribir A no puede llevarse por delante el perfil. */
+test("control negativo: resembrar el bloque A conserva el bloque B entero", () => {
+  const bloqueB = componerBloqueDePerfil(perfil(), hechos());
+  const partida = conBloqueDePerfil(conBloqueGestionado(HUMANO_ANTES, "CONTRATO v1"), bloqueB);
+  const traAReescribirA = conBloqueGestionado(partida, "CONTRATO v2 con otra redacción");
+
+  assert.equal(bloqueGestionado(traAReescribirA), "CONTRATO v2 con otra redacción");
+  assert.equal(bloqueDePerfil(traAReescribirA), bloqueB.trim(), "el perfil se perdió al reescribir A");
+  assert.ok(traAReescribirA.includes("Esto lo escribí yo a mano y no se toca."));
+});
+
+test("las marcas de A y las de B no se contienen entre sí", () => {
+  for (const a of [MARCA_INICIO, MARCA_FIN]) {
+    for (const b of [MARCA_PERFIL_INICIO, MARCA_PERFIL_FIN]) {
+      assert.ok(!a.includes(b) && !b.includes(a), `las marcas ${a} y ${b} se solapan`);
+    }
+  }
+});
+
+test("escribir el bloque B es idempotente", () => {
+  const bloqueB = componerBloqueDePerfil(perfil(), hechos());
+  const una = conBloqueDePerfil(HUMANO_ANTES, bloqueB);
+  assert.equal(conBloqueDePerfil(una, bloqueB), una);
+  assert.equal(una.split(MARCA_PERFIL_INICIO).length - 1, 1);
+});
+
+// ── El role_brief corto se DERIVA del perfil ─────────────────────────────────────────────────
+
+/**
+ * El perfil sigue siendo la única fuente de verdad: el `role_brief` que viaja en el sobre —y que
+ * entra en el bloque sellado— se deriva de él y no se escribe aparte. Si se escribieran los dos a
+ * mano, se desincronizarían, que es el problema que esta tabla vino a resolver.
+ */
+test("rolBreveDelPerfil sale del role_summary y NUNCA pasa el tope del sobre", () => {
+  assert.equal(rolBreveDelPerfil(perfil()), perfil().role_summary);
+  const largo = perfil({ role_summary: "a".repeat(AGENT_PROFILE_LIMITS.role_summary) });
+  assert.ok(countCodePoints(rolBreveDelPerfil(largo) ?? "") <= ROLE_BRIEF_MAX_CODE_POINTS);
+});
+
+test("un perfil sin rol declarado da null, para que el sobre omita la línea 'Tu rol:'", () => {
+  assert.equal(rolBreveDelPerfil(perfil({ role_summary: null })), null);
+});
+
+/**
+ * CONTROL NEGATIVO del recorte: `slice(0,1200)` indexa unidades UTF-16 y partiría un emoji por la
+ * mitad, dejando un surrogate suelto que viaja como U+FFFD — el agente recibiría su propio rol
+ * terminado en un carácter roto. Se recorta por puntos de código.
+ */
+test("control negativo: recortar no parte nunca un par suplente", () => {
+  const conEmojis = perfil({ role_summary: "\u{1F389}".repeat(ROLE_BRIEF_MAX_CODE_POINTS) });
+  const breve = rolBreveDelPerfil(conEmojis) ?? "";
+  assert.ok(countCodePoints(breve) <= ROLE_BRIEF_MAX_CODE_POINTS);
+  assert.ok(!breve.includes("�"), "quedó un surrogate suelto");
+  assert.equal([...breve].every((c) => c === "\u{1F389}"), true);
 });

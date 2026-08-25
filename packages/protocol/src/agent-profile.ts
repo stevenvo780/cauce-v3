@@ -284,3 +284,73 @@ export function emptyAgentProfile(tenantId: string, alias: string): AgentProfile
     responsibilities: [], restrictions: [], tools: [], operating_rules: []
   };
 }
+
+/**
+ * ── LOS HECHOS DERIVADOS ────────────────────────────────────────────────────────────────────
+ *
+ * Las tres caras del fichero que NO se escriben a mano: permisos, cuotas y configuración del
+ * arnés. Ya existen como filas en `memberships`/`role_policies`, en el camino
+ * `agent_account_bindings` -> `alias_routing_ceiling` -> `provider_accounts` (+ `quota_window_state`)
+ * y en `agents` + `harness_definitions`.
+ *
+ * Viven acá, y no en `@cauce/adapter-sdk`, por lo mismo que `AgentProfile`: los produce
+ * `@cauce/store` y los consume `@cauce/adapter-sdk`, que no se pueden importar entre sí.
+ * `@cauce/protocol` es la única que las dos ven.
+ *
+ * NO SE GUARDAN EN `agent_profiles`, y esa es la decisión que sostiene todo: copiarlos como texto
+ * autorado sería una segunda fuente de verdad que se desincroniza en silencio — se revoca el
+ * permiso en `role_policies` y el fichero del contenedor sigue diciendo que lo tiene. Se leen
+ * frescos cada vez que se genera.
+ */
+
+/** Permisos EFECTIVOS: la unión de lo que conceden todas las salas del alias. */
+export interface PermisosDelAlias {
+  readonly ruta: boolean;
+  readonly lectura: boolean;
+  readonly control: boolean;
+  /**
+   * Notificar a un humano exige DOS puertas y las dos son necesarias: que el rol lo permita
+   * (`role_policies.allow_notify`) y que exista al menos un destino aprobado
+   * (`egress_destinations.enabled`). Sin destinos la respuesta es NO, aunque el rol diga que sí:
+   * `notify` es default-deny por lista, no por rol.
+   */
+  readonly notificacion: boolean;
+}
+
+/**
+ * Una suscripción a la que el alias puede ser ruteado.
+ *
+ * NUNCA lleva `credential_ref` ni `credential_ref_kind`. No es un descuido de campos: un perfil se
+ * escribe en un fichero DENTRO del contenedor y se enseña al modelo, así que cualquier localizador
+ * de credencial que entre acá termina en el contexto de un LLM y en los transcripts. El alias no
+ * necesita saber dónde está la llave para usarla; el adaptador la resuelve por su cuenta.
+ */
+export interface CuotaDelAlias {
+  readonly proveedor: string;
+  readonly cuenta: string;
+  /** Descripción legible del límite observado. Nunca un secreto. */
+  readonly limite?: string | undefined;
+}
+
+/** Cómo está montado el alias. Sale de `agents` + `harness_definitions`. */
+export interface ArnesDelAlias {
+  readonly harness: string;
+  readonly home: string;
+  readonly contenedor?: string | undefined;
+  readonly capacidades: readonly string[];
+}
+
+/** Todo lo derivado, junto: lo que el compilador une al perfil autorado. */
+export interface HechosDelAlias {
+  readonly permisos: PermisosDelAlias;
+  readonly cuotas: readonly CuotaDelAlias[];
+  readonly arnes: ArnesDelAlias;
+  /** Alias alcanzables por ACL. Inventario de respaldo, igual que `routing_targets` en el sobre. */
+  readonly destinos: readonly string[];
+}
+
+/** El perfil autorado más sus hechos: lo único que el compilador necesita para generar. */
+export interface ContextoDeAlias {
+  readonly perfil: AgentProfile;
+  readonly hechos: HechosDelAlias;
+}

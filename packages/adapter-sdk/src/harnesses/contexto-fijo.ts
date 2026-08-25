@@ -157,7 +157,14 @@ export function rutaDelContextoFijo(
  * cambiar la redacción de una marca no invalide todos los sellos de la flota a la vez.
  */
 export function bloqueGestionado(texto: string): string | undefined {
-  const par = parDeMarcas(texto);
+  return bloqueEntreMarcas(texto, MARCA_INICIO, MARCA_FIN);
+}
+
+/** El contenido entre CUALQUIER par de marcas, sin las marcas. Ver `conBloqueEntreMarcas`. */
+export function bloqueEntreMarcas(
+  texto: string, marcaInicio: string, marcaFin: string,
+): string | undefined {
+  const par = parDeMarcas(texto, marcaInicio, marcaFin);
   if (!par) return undefined;
   return texto.slice(par.desde, par.fin).trim();
 }
@@ -171,14 +178,16 @@ export function bloqueGestionado(texto: string): string | undefined {
  * ninguno de los dos y cuyo resumen no coincidiría nunca con nada. Con la última, el fichero a
  * medio escribir queda como texto inerte y el bloque vigente se lee limpio.
  */
-function parDeMarcas(texto: string): { inicio: number; desde: number; fin: number } | undefined {
+function parDeMarcas(
+  texto: string, marcaInicio: string, marcaFin: string,
+): { inicio: number; desde: number; fin: number } | undefined {
   let inicio = -1;
-  for (let busca = texto.indexOf(MARCA_INICIO); busca !== -1; busca = texto.indexOf(MARCA_INICIO, busca + 1)) {
-    if (texto.indexOf(MARCA_FIN, busca + MARCA_INICIO.length) !== -1) inicio = busca;
+  for (let busca = texto.indexOf(marcaInicio); busca !== -1; busca = texto.indexOf(marcaInicio, busca + 1)) {
+    if (texto.indexOf(marcaFin, busca + marcaInicio.length) !== -1) inicio = busca;
   }
   if (inicio === -1) return undefined;
-  const desde = inicio + MARCA_INICIO.length;
-  const fin = texto.indexOf(MARCA_FIN, desde);
+  const desde = inicio + marcaInicio.length;
+  const fin = texto.indexOf(marcaFin, desde);
   if (fin === -1) return undefined;
   return { inicio, desde, fin };
 }
@@ -190,8 +199,28 @@ function parDeMarcas(texto: string): { inicio: number; desde: number; fin: numbe
  * porque lo primero de un `CLAUDE.md` suele ser el título que escribió una persona.
  */
 export function conBloqueGestionado(textoOriginal: string, bloque: string): string {
-  const nuevo = `${MARCA_INICIO}\n${bloque.trim()}\n${MARCA_FIN}`;
-  const par = parDeMarcas(textoOriginal);
+  return conBloqueEntreMarcas(textoOriginal, bloque, MARCA_INICIO, MARCA_FIN);
+}
+
+/**
+ * La misma fusión, para CUALQUIER par de marcas.
+ *
+ * Existe porque el fichero del arnés lleva DOS bloques y no uno: el contrato sellado (estas
+ * marcas) y el perfil del alias (las suyas, en `context/perfil-a-contexto.ts`). Están separados
+ * porque el sello resume el contrato —que incluye `Tu rol:` con el `role_brief` de siempre, tope
+ * 1.200 puntos de código— y el perfil rico admite 24.000: meter el perfil dentro del bloque
+ * sellado haría que el sha del fichero no coincidiera NUNCA con el que calcula el adaptador, y el
+ * recorte del sobre no se activaría jamás sin que apareciera un solo error.
+ *
+ * Se generaliza en vez de copiarse porque la parte sutil —buscar la ÚLTIMA apertura que tenga
+ * cierre detrás, no la primera— ya costó una prueba descubrirla. Dos copias de esa lógica son dos
+ * sitios donde volver a equivocarse; el segundo se arregla tarde y en silencio.
+ */
+export function conBloqueEntreMarcas(
+  textoOriginal: string, bloque: string, marcaInicio: string, marcaFin: string,
+): string {
+  const nuevo = `${marcaInicio}\n${bloque.trim()}\n${marcaFin}`;
+  const par = parDeMarcas(textoOriginal, marcaInicio, marcaFin);
   if (!par) {
     /*
      * No hay bloque cerrado. Puede que no haya nada, o que haya una apertura huérfana de una
@@ -202,7 +231,7 @@ export function conBloqueGestionado(textoOriginal: string, bloque: string): stri
     const base = textoOriginal.trimEnd();
     return base.length === 0 ? `${nuevo}\n` : `${base}\n\n${nuevo}\n`;
   }
-  return textoOriginal.slice(0, par.inicio) + nuevo + textoOriginal.slice(par.fin + MARCA_FIN.length);
+  return textoOriginal.slice(0, par.inicio) + nuevo + textoOriginal.slice(par.fin + marcaFin.length);
 }
 
 /**

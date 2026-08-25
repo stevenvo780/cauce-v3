@@ -276,3 +276,201 @@ describe('AgentProfileRepository', () => {
     expect(await repository.remove('Steven', 'zeus')).toBe(false);
   });
 });
+
+/**
+ * LOS HECHOS DERIVADOS: permisos, cuotas, arnés y destinos.
+ *
+ * No se guardan en `agent_profiles` a propósito, así que la única forma de comprobarlos es contra
+ * las tablas de verdad. Lo que estas pruebas fijan es que se leen FRESCOS: revocar un permiso en
+ * `role_policies` tiene que cambiar el fichero que se genere después, sin tocar el perfil.
+ */
+describe('hechos derivados del alias', () => {
+  async function darSala(alias: string, role: string, room = 'grp.steven'): Promise<void> {
+    await pool.query(
+      `INSERT INTO memberships(tenant_id,room_id,alias,role,enabled)
+       VALUES ('Steven',$1,$2,$3,true)
+       ON CONFLICT (tenant_id,room_id,alias) DO UPDATE SET role=EXCLUDED.role,enabled=true`,
+      [room, alias, role]
+    );
+  }
+
+  beforeEach(async () => {
+    await pool.query(`DELETE FROM memberships WHERE alias IN ('zeus','vecino')`);
+  });
+
+  /*
+   * Se crea un rol PROPIO en vez de usar `operator`. No es ceremonia: `role_policies` es una tabla
+   * de catálogo que `resetTestDatabase()` NO trunca, así que sus valores son los que haya dejado la
+   * última suite que los tocara — medido: la 003 siembra `operator(route,read,control)` y en la base
+   * compartida llega con los tres en falso. Una prueba que dependa de eso mide el residuo de otra.
+   */
+  it('los permisos son la UNIÓN de todas las salas del alias, no la de una', async () => {
+    await pool.query(
+      `INSERT INTO rooms(id,tenant_id,enabled) VALUES ('grp.steven2','Steven',true)
+       ON CONFLICT (id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO role_policies(role,allow_route,allow_read,allow_control,allow_notify)
+       VALUES ('perfil_ctl',false,false,true,false)
+       ON CONFLICT (role) DO UPDATE SET allow_control=true`
+    );
+    await darSala('zeus', 'agent');
+    await darSala('zeus', 'perfil_ctl', 'grp.steven2');
+    const { hechos } = await repository.readContext('Steven', 'zeus');
+    expect(hechos.permisos.ruta).toBe(true);
+    expect(hechos.permisos.control).toBe(true);
+  });
+
+  /** CONTROL NEGATIVO: una membresía DESHABILITADA no puede conceder nada. */
+  it('control negativo: una membresía deshabilitada no concede permiso', async () => {
+    await darSala('zeus', 'agent');
+    await pool.query(`UPDATE memberships SET enabled=false WHERE alias='zeus'`);
+    const { hechos } = await repository.readContext('Steven', 'zeus');
+    expect(hechos.permisos.control).toBe(false);
+    expect(hechos.permisos.ruta).toBe(false);
+  });
+
+  it('notificar exige rol Y destino aprobado: con rol pero sin destino es NO', async () => {
+    // `agent_notify` NO lo siembra ninguna migración: la 009 sólo lo NOMBRA en un comentario, como
+    // el rol que un operador crearía. En la base compartida existía porque lo dejó otra suite, y
+    // dar eso por supuesto es medir el residuo ajeno — en una base limpia la FK lo rechaza.
+    await pool.query(
+      `INSERT INTO role_policies(role,allow_route,allow_read,allow_control,allow_notify)
+       VALUES ('perfil_notify',true,true,false,true)
+       ON CONFLICT (role) DO UPDATE SET allow_notify=true`
+    );
+    await darSala('zeus', 'perfil_notify');
+    const sinDestino = await repository.readContext('Steven', 'zeus');
+    expect(sinDestino.hechos.permisos.notificacion).toBe(false);
+
+    await pool.query(
+      `INSERT INTO egress_destinations(tenant_id,alias,handle,conversation_id,conversation_kind,allow_kinds,enabled)
+       VALUES ('Steven','zeus','steven_dm','12345','dm',ARRAY['alert']::text[],true)`
+    );
+    const conDestino = await repository.readContext('Steven', 'zeus');
+    expect(conDestino.hechos.permisos.notificacion).toBe(true);
+  });
+
+  /** CONTROL NEGATIVO simétrico: con destino pero sin el permiso del rol, tambien es NO. */
+  it('control negativo: con destino pero sin allow_notify en el rol, es NO', async () => {
+    await darSala('zeus', 'agent');
+    await pool.query(
+      `INSERT INTO egress_destinations(tenant_id,alias,handle,conversation_id,conversation_kind,allow_kinds,enabled)
+       VALUES ('Steven','zeus','steven_dm','12345','dm',ARRAY['alert']::text[],true)`
+    );
+    const { hechos } = await repository.readContext('Steven', 'zeus');
+    expect(hechos.permisos.notificacion).toBe(false);
+  });
+
+  it('las cuotas salen del binding, pasando por el techo de ruteo', async () => {
+    await darSala('zeus', 'agent');
+    await pool.query(
+      `INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,label,
+         credential_ref_kind,credential_ref,enabled)
+       VALUES ('steven-max','claude','acc-1','Steven','Max de Steven','env_path',
+         'CAUCE_CLAUDE_TOKEN_PATH',true)`
+    );
+    await pool.query(
+      `INSERT INTO alias_routing_ceiling(tenant_id,alias,account_id,account_payer_tenant,created_by_tenant)
+       VALUES ('Steven','zeus','steven-max','Steven','Steven')`
+    );
+    await pool.query(
+      `INSERT INTO agent_account_bindings(tenant_id,agent_alias,account_id,priority,enabled)
+       VALUES ('Steven','zeus','steven-max',10,true)`
+    );
+    const { hechos } = await repository.readContext('Steven', 'zeus');
+    expect(hechos.cuotas).toHaveLength(1);
+    expect(hechos.cuotas[0]?.proveedor).toBe('claude');
+    expect(hechos.cuotas[0]?.cuenta).toBe('steven-max');
+  });
+
+  /**
+   * CONTROL NEGATIVO Y EL QUE MÁS IMPORTA: el perfil se escribe en un fichero DENTRO del
+   * contenedor y se le enseña al modelo. Un localizador de credencial que entre acá termina en el
+   * contexto de un LLM y en los transcripts. Que no esté no se afirma leyendo el código: se mide
+   * sobre el objeto entero, serializado.
+   */
+  it('control negativo: NINGÚN localizador de credencial sale en los hechos', async () => {
+    await darSala('zeus', 'agent');
+    await pool.query(
+      `INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,label,
+         credential_ref_kind,credential_ref,enabled)
+       VALUES ('steven-max','claude','acc-1','Steven','Max','env_path','CAUCE_CLAUDE_TOKEN_PATH',true)`
+    );
+    await pool.query(
+      `INSERT INTO alias_routing_ceiling(tenant_id,alias,account_id,account_payer_tenant,created_by_tenant)
+       VALUES ('Steven','zeus','steven-max','Steven','Steven')`
+    );
+    await pool.query(
+      `INSERT INTO agent_account_bindings(tenant_id,agent_alias,account_id,enabled)
+       VALUES ('Steven','zeus','steven-max',true)`
+    );
+    const contexto = await repository.readContext('Steven', 'zeus');
+    const serializado = JSON.stringify(contexto);
+    expect(serializado).not.toContain('CAUCE_CLAUDE_TOKEN_PATH');
+    expect(serializado).not.toContain('credential_ref');
+    expect(serializado).not.toContain('env_path');
+    expect(serializado).not.toContain('acc-1');
+  });
+
+  it('el arnés sale de agents + harness_definitions, con sus capacidades', async () => {
+    await darSala('zeus', 'agent');
+    await pool.query(
+      `UPDATE agents SET harness_id='claude',container_name='claw-zeus',runtime_user='dev',
+         home_directory='/home/dev',state_directory='/var/lib/zeus'
+       WHERE tenant_id='Steven' AND alias='zeus'`
+    );
+    const { hechos } = await repository.readContext('Steven', 'zeus');
+    expect(hechos.arnes.harness).toBe('claude');
+    expect(hechos.arnes.home).toBe('/home/dev');
+    expect(hechos.arnes.contenedor).toBe('claw-zeus');
+    expect(hechos.arnes.capacidades).toContain('messages.receive');
+  });
+
+  it('los destinos son los alias alcanzables y NUNCA incluyen al propio alias', async () => {
+    await darSala('zeus', 'agent');
+    await darSala('vecino', 'agent');
+    const { hechos } = await repository.readContext('Steven', 'zeus');
+    expect(hechos.destinos).toContain('vecino');
+    expect(hechos.destinos).not.toContain('zeus');
+  });
+
+  it('devuelve el perfil autorado junto a los hechos, en un solo objeto', async () => {
+    await darSala('zeus', 'agent');
+    await repository.write({ tenant_id: 'Steven', alias: 'zeus', purpose: 'Orquestar.' });
+    const contexto = await repository.readContext('Steven', 'zeus');
+    expect(contexto.perfil.purpose).toBe('Orquestar.');
+    expect(contexto.hechos.permisos.ruta).toBe(true);
+  });
+
+  it('un alias sin nada configurado devuelve hechos vacíos, no un fallo', async () => {
+    const { hechos } = await repository.readContext('Steven', 'zeus');
+    expect(hechos.permisos).toEqual({ ruta: false, lectura: false, control: false, notificacion: false });
+    expect(hechos.cuotas).toEqual([]);
+    expect(hechos.destinos).toEqual([]);
+  });
+
+  /**
+   * CONTROL NEGATIVO del acoplamiento entre ruta y destinos, que descubrió esta prueba: sin permiso
+   * de ruta la lista TIENE que venir vacía. La consulta de ACL responde «quién es alcanzable» sin
+   * mirar si el que pregunta puede rutear, así que un alias sin permiso veía la flota entera. Un
+   * agente al que se le enseñan doce destinos que no puede usar, los intenta — y gasta el turno en
+   * una entrega que la base rechaza.
+   */
+  it('control negativo: sin permiso de ruta la lista de destinos viene vacía', async () => {
+    await pool.query(
+      `INSERT INTO role_policies(role,allow_route,allow_read,allow_control,allow_notify)
+       VALUES ('perfil_sin_ruta',false,true,false,false)
+       ON CONFLICT (role) DO UPDATE SET allow_route=false`
+    );
+    await darSala('zeus', 'perfil_sin_ruta');
+    const { hechos } = await repository.readContext('Steven', 'zeus');
+    expect(hechos.permisos.ruta).toBe(false);
+    expect(hechos.destinos).toEqual([]);
+
+    await darSala('zeus', 'agent');
+    const conRuta = await repository.readContext('Steven', 'zeus');
+    expect(conRuta.hechos.permisos.ruta).toBe(true);
+    expect(conRuta.hechos.destinos.length).toBeGreaterThan(0);
+  });
+});

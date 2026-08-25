@@ -1,5 +1,11 @@
-import type { AgentProfile } from "@cauce/protocol";
-import { resumirContextoFijo, VERSION_CONTEXTO_FIJO } from "../harnesses/contexto-fijo.js";
+import {
+  clampToRoleBriefLimit,
+  type AgentProfile, type ArnesDelAlias, type ContextoDeAlias, type CuotaDelAlias,
+  type HechosDelAlias, type PermisosDelAlias,
+} from "@cauce/protocol";
+import {
+  bloqueEntreMarcas, conBloqueEntreMarcas, resumirContextoFijo, VERSION_CONTEXTO_FIJO,
+} from "../harnesses/contexto-fijo.js";
 
 /**
  * EL COMPILADOR DE CONTEXTO: perfil + hechos del arnés -> el texto que va al fichero.
@@ -23,7 +29,7 @@ import { resumirContextoFijo, VERSION_CONTEXTO_FIJO } from "../harnesses/context
  *
  * Tres son HECHOS y NO se guardan: permisos (`memberships` + `role_policies`), cuotas
  * (`provider_accounts`) y configuración del arnés (`agents` + `harness_definitions`). Llegan como
- * `HechosDelArnes` y se unen acá. Guardarlas como texto autorado sería fabricar una segunda fuente
+ * `HechosDelAlias` y se unen acá. Guardarlas como texto autorado sería fabricar una segunda fuente
  * de verdad: el permiso se revoca en la base y el fichero del contenedor sigue diciendo que lo
  * tiene.
  *
@@ -36,37 +42,14 @@ import { resumirContextoFijo, VERSION_CONTEXTO_FIJO } from "../harnesses/context
  * del fichero en cada contenedor de la flota.
  */
 
-/** Los permisos EFECTIVOS del alias, resueltos contra `memberships` + `role_policies`. */
-export interface PermisosDelAlias {
-  readonly ruta: boolean;
-  readonly lectura: boolean;
-  readonly control: boolean;
-  readonly notificacion: boolean;
-}
-
-/** Una suscripción a la que el alias puede ser ruteado, sin NINGÚN dato de la credencial. */
-export interface CuotaDelAlias {
-  readonly proveedor: string;
-  readonly cuenta: string;
-  /** Descripción legible del límite. Nunca un secreto ni un localizador de credencial. */
-  readonly limite?: string;
-}
-
-/**
- * Los hechos del arnés y del entorno del alias. Todo esto se MIDE o se lee de la base; nada se
- * escribe a mano, y por eso no está en `agent_profiles`.
+/*
+ * Los tipos de los hechos —`PermisosDelAlias`, `CuotaDelAlias`, `ArnesDelAlias`,
+ * `HechosDelAlias`— viven en `@cauce/protocol` y NO acá. Los produce `@cauce/store` leyendo
+ * `memberships`/`role_policies`, el camino del techo de ruteo y `agents`+`harness_definitions`, y
+ * los consume este módulo: las dos capas no se pueden importar entre sí, y `@cauce/protocol` es la
+ * única que las dos ven. Se reexportan para que quien compile no tenga que importar de dos sitios.
  */
-export interface HechosDelArnes {
-  readonly harness: string;
-  readonly home: string;
-  readonly permisos: PermisosDelAlias;
-  /** Alias alcanzables. Es inventario de respaldo, igual que `routing_targets` en el sobre. */
-  readonly destinos: readonly string[];
-  readonly cuotas: readonly CuotaDelAlias[];
-  /** Capacidades del arnés, de `harness_definitions.capabilities`. */
-  readonly capacidades: readonly string[];
-  readonly contenedor?: string | undefined;
-}
+export type { ArnesDelAlias, ContextoDeAlias, CuotaDelAlias, HechosDelAlias, PermisosDelAlias };
 
 /**
  * Las claves de `openclaw.json` que la proyección no puede emitir JAMÁS.
@@ -125,10 +108,10 @@ function lineasDeCuotas(cuotas: readonly CuotaDelAlias[]): string | undefined {
     .join("\n");
 }
 
-function lineasDeArnes(hechos: HechosDelArnes): string {
-  const lineas = [`- Arnés: ${hechos.harness}`, `- HOME: ${hechos.home}`];
-  if (hechos.contenedor !== undefined && hechos.contenedor.length > 0) {
-    lineas.push(`- Contenedor: ${hechos.contenedor}`);
+function lineasDeArnes(hechos: HechosDelAlias): string {
+  const lineas = [`- Arnés: ${hechos.arnes.harness}`, `- HOME: ${hechos.arnes.home}`];
+  if (hechos.arnes.contenedor !== undefined && hechos.arnes.contenedor.length > 0) {
+    lineas.push(`- Contenedor: ${hechos.arnes.contenedor}`);
   }
   if (hechos.destinos.length > 0) {
     lineas.push(`- Alias alcanzables: ${[...hechos.destinos].join(", ")}`);
@@ -146,7 +129,7 @@ function lineasDeArnes(hechos: HechosDelArnes): string {
  * Está escrito como una lista y no como concatenación suelta para que el determinismo sea
  * estructural: cambiar el orden exige cambiar esta lista, no puede pasar por accidente.
  */
-export function componerRolDelPerfil(perfil: AgentProfile, hechos: HechosDelArnes): string {
+export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAlias): string {
   const rol = [
     perfil.role_summary ?? undefined,
     perfil.responsibilities.length > 0
@@ -159,8 +142,8 @@ export function componerRolDelPerfil(perfil: AgentProfile, hechos: HechosDelArne
 
   const herramientas = [
     perfil.tools.length > 0 ? vinetas(perfil.tools) : undefined,
-    hechos.capacidades.length > 0
-      ? `Capacidades del arnés: ${[...hechos.capacidades].join(", ")}`
+    hechos.arnes.capacidades.length > 0
+      ? `Capacidades del arnés: ${[...hechos.arnes.capacidades].join(", ")}`
       : undefined,
   ].filter((parte): parte is string => parte !== undefined).join("\n\n");
 
@@ -237,4 +220,85 @@ export function proyeccionOpenclaw(alias: string, bloque: string): string {
       },
     },
   });
+}
+
+// ── EL BLOQUE B: el perfil, fuera del bloque sellado ─────────────────────────────────────────
+
+/**
+ * DOS BLOQUES EN EL MISMO FICHERO, Y POR QUÉ NO PUEDE SER UNO.
+ *
+ * El sello del contexto fijo resume `textoFijoDelSobre()`, que incluye la línea
+ * `Tu rol: <role_brief>` con el brief de siempre — tope 1.200 puntos de código, porque ese texto
+ * viaja en el sobre de cada entrega. El perfil rico admite 24.000 unidades.
+ *
+ * Si el perfil entero entrara en el bloque sellado, el sha del fichero NO coincidiría nunca con el
+ * que calcula el adaptador —que compone el suyo con el `role_brief` corto que viene en el sobre— y
+ * el recorte no se activaría JAMÁS: se seguiría mandando el sobre entero en cada entrega, el
+ * trabajo no ahorraría un solo carácter, y no aparecería ni un error. Es la clase de fallo que en
+ * esta flota cuesta días adjudicar, porque no se ve: sólo se paga.
+ *
+ * Por eso:
+ *   BLOQUE A (sellado)    — el contrato, entre `MARCA_INICIO`/`MARCA_FIN`. Es lo único que el
+ *                           sello resume y lo único que el sobre deja de mandar.
+ *   BLOQUE B (sin sellar) — el perfil, entre estas marcas. El arnés carga el fichero ENTERO, así
+ *                           que el agente lo lee igual; y como no viaja en el sobre, es contexto
+ *                           que gana SIN COSTE POR TURNO.
+ *
+ * El perfil sigue siendo la única fuente de verdad: el `role_brief` corto del bloque A se DERIVA
+ * de él con `rolBreveDelPerfil()`, no se escribe aparte.
+ *
+ * Las marcas son distintas de las de A y ninguna contiene a la otra —hay una prueba que lo fija—,
+ * porque las dos búsquedas son por subcadena y un solapamiento haría que escribir un bloque se
+ * llevara por delante el otro.
+ */
+export const VERSION_PERFIL = "1";
+export const MARCA_PERFIL_INICIO =
+  `<!-- CAUCE:PERFIL v${VERSION_PERFIL} — generado desde la configuración, no editar dentro de este bloque -->`;
+export const MARCA_PERFIL_FIN = "<!-- CAUCE:FIN-PERFIL -->";
+
+/**
+ * Escribe el bloque del perfil conservando TODO lo de fuera byte a byte — incluido el bloque A y
+ * lo que haya escrito una persona.
+ *
+ * Reusa la fusión de `contexto-fijo.ts` en vez de copiarla: la parte sutil (buscar la última
+ * apertura con cierre detrás, para no destrozar una siembra cortada a medias) ya costó una prueba
+ * descubrirla, y dos copias son dos sitios donde volver a equivocarse.
+ */
+export function conBloqueDePerfil(textoOriginal: string, bloque: string): string {
+  return conBloqueEntreMarcas(textoOriginal, bloque, MARCA_PERFIL_INICIO, MARCA_PERFIL_FIN);
+}
+
+/** El bloque del perfil que hay en un fichero, sin las marcas, o `undefined` si no está. */
+export function bloqueDePerfil(texto: string): string | undefined {
+  return bloqueEntreMarcas(texto, MARCA_PERFIL_INICIO, MARCA_PERFIL_FIN);
+}
+
+/**
+ * El `role_brief` corto que viaja en el sobre, DERIVADO del perfil.
+ *
+ * Que se derive y no se escriba aparte es lo que mantiene una sola fuente de verdad: dos textos
+ * escritos a mano para lo mismo se desincronizan, y ese es exactamente el problema que la tabla
+ * `agent_profiles` vino a resolver.
+ *
+ * Se recorta con `clampToRoleBriefLimit`, que corta por PUNTOS DE CÓDIGO. `slice(0, 1200)` indexa
+ * unidades UTF-16 y partiría un emoji por la mitad, dejando un surrogate suelto que al serializarse
+ * viaja como U+FFFD: el agente recibiría su propio rol terminado en un carácter roto.
+ *
+ * `null` cuando no hay rol declarado, para que el preámbulo omita la línea `Tu rol:` en vez de
+ * inventar una — un rol equivocado es peor que ninguno.
+ */
+export function rolBreveDelPerfil(perfil: AgentProfile): string | null {
+  if (perfil.role_summary === null) return null;
+  return clampToRoleBriefLimit(perfil.role_summary);
+}
+
+/**
+ * El bloque B a partir de lo que devuelve `AgentProfileRepository.readContext()`, de una pieza.
+ *
+ * Es la superficie que usa quien genera: pide el contexto al store y lo compila, sin tener que
+ * saber que los permisos salen de `role_policies` y las cuotas de detrás del techo de ruteo. Esa
+ * dispersión —cinco tablas y un YAML -- es justamente lo que este trabajo vino a cerrar.
+ */
+export function compilarContexto(contexto: ContextoDeAlias): string {
+  return componerBloqueDePerfil(contexto.perfil, contexto.hechos);
 }
