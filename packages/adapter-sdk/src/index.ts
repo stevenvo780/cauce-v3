@@ -13,6 +13,9 @@ export * from "./sdk/engine.js";
 export * from "./sdk/client.js";
 export * from "./sdk/websocket-transport.js";
 export * from "./context/perfil-a-contexto.js";
+// El sembrador es el ÚNICO que escribe el perfil en el disco del contenedor. Se exporta para que
+// las pruebas de integración puedan medirlo sin pasar por el socket.
+export * from "./context/siembra-del-perfil.js";
 // El reparto por arnés se MUDÓ a `@cauce/protocol`: la consola necesita previsualizar los mismos
 // siete ficheros de openclaw y el gateway no puede importar este paquete. Se re-exporta para que
 // el adaptador siga siendo el sitio natural desde donde el runtime del agente los pide.

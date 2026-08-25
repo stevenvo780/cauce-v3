@@ -61,6 +61,7 @@ export function capabilities(
     renewable_delivery_claims_v1: true,
     delegation_feedback_v1: true,
     agent_identity_v1: true,
+    agent_profile_v1: true,
     attachments_v1: true,
     ...(harness === "codex" ? { native_image_input_v1: true } : {}),
     persistent_sessions: persistentSessions,

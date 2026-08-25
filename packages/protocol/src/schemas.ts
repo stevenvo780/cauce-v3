@@ -903,12 +903,68 @@ export const ChainGateSchema = z.object({
   question: z.string().min(1).max(8_192)
 }).strict();
 
+/**
+ * EL PERFIL Y LOS HECHOS TAL Y COMO VIAJAN POR EL CABLE.
+ *
+ * Son los mismos campos que `AgentProfile` y `HechosDelAlias` de `agent-profile.ts`, escritos como
+ * esquema porque el que llega por el socket es dato AJENO y hay que validarlo antes de escribirlo
+ * en el disco de un contenedor. Los tipos de TS no comprueban nada en tiempo de ejecución, y lo
+ * que se hace con esto es escribir ficheros que un modelo va a leer como autoritativos.
+ *
+ * `.strict()` en los dos: un campo de más es una señal de que las dos puntas no hablan la misma
+ * versión, y ante eso vale más fallar el saludo que sembrar medio perfil.
+ */
+export const AgentProfileWireSchema = z.object({
+  tenant_id: TenantSchema,
+  alias: AliasSchema,
+  purpose: z.string().nullable(),
+  role_summary: z.string().nullable(),
+  human_brief: z.string().nullable(),
+  responsibilities: z.array(z.string()),
+  restrictions: z.array(z.string()),
+  tools: z.array(z.string()),
+  operating_rules: z.array(z.string())
+}).strict();
+
+export const HechosDelAliasWireSchema = z.object({
+  permisos: z.object({
+    ruta: z.boolean(), lectura: z.boolean(), control: z.boolean(), notificacion: z.boolean()
+  }).strict(),
+  cuotas: z.array(z.object({
+    proveedor: z.string(), cuenta: z.string(), limite: z.string().optional()
+  }).strict()),
+  arnes: z.object({
+    harness: z.string(), home: z.string(),
+    contenedor: z.string().optional(),
+    capacidades: z.array(z.string())
+  }).strict(),
+  destinos: z.array(z.string())
+}).strict();
+
 export const WsInboundSchema = z.discriminatedUnion('type', [HelloSchema, HeartbeatSchema, WsAckSchema]);
 
 export const WsOutboundSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hello_ack'), version: z.literal(PROTOCOL_VERSION),
-    epoch: z.number().int().positive(), lease_expires_at: z.iso.datetime({ offset: true })
+    epoch: z.number().int().positive(), lease_expires_at: z.iso.datetime({ offset: true }),
+    /*
+     * EL PERFIL DEL ALIAS, UNA VEZ POR CONEXIÓN Y NO POR ENTREGA.
+     *
+     * Es la mitad que faltaba del encargo: lo FIJO tiene que vivir en el fichero del arnés, y para
+     * escribirlo ahí el adaptador necesita conocerlo. Viaja en el saludo —una vez, al conectar— y
+     * no en el sobre, porque mandarlo en cada entrega sería exactamente el problema que este
+     * trabajo vino a cerrar: 11.546 caracteres de andamiaje para un pedido de 62.
+     *
+     * OPCIONAL EN EL ESQUEMA Y ADEMÁS GATEADO detrás de la capability `agent_profile_v1`, por el
+     * mismo motivo que los dos campos de disciplina de delegación: un adaptador viejo valida con
+     * `.strict()` y, al fallar, MATA LA COLA ENTERA de la conexión — no descarta el frame. El
+     * esquema lo hace válido para quien lo entiende; la capability evita mandárselo a quien no lo
+     * pidió. Hacen falta las dos cosas.
+     */
+    agent_profile: z.object({
+      perfil: AgentProfileWireSchema,
+      hechos: HechosDelAliasWireSchema
+    }).strict().optional()
   }).strict(),
   z.object({
     type: z.literal('takeover_rejected'), reason: z.string(), active_instance_id: z.string(),

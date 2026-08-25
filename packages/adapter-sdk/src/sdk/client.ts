@@ -1,4 +1,5 @@
-import { PROTOCOL_VERSION } from '@cauce/protocol';
+import { PROTOCOL_VERSION, type ContextoDeAlias } from '@cauce/protocol';
+import { resumenDeLaSiembra, sembrarPerfilDelArnes } from '../context/siembra-del-perfil.js';
 import { DEFAULT_BACKOFF, ExponentialBackoff, systemClock } from './backoff.js';
 import { ConsumerLease, DurableStore } from './durable-store.js';
 import { AdapterEngine } from './engine.js';
@@ -183,6 +184,21 @@ export class AdapterClient {
           if (welcomed) throw new Error('Gateway sent duplicate hello_ack');
           await this.engine.activateEpoch(frame.epoch);
           welcomed = true;
+          /*
+           * EL PERFIL SE ESCRIBE AL CONECTAR, y sólo entonces.
+           *
+           * Aquí se cierra el lazo entero: el operador edita en la consola -> la mutación guarda en
+           * `agent_profiles` -> el gateway manda el perfil en este saludo -> esto lo escribe en el
+           * fichero que el arnés lee. Hasta ahora el generador existía y no lo llamaba nadie.
+           *
+           * Va DESPUÉS de `activateEpoch` y ANTES del primer `drain`, que es la única ventana en
+           * la que el fichero se puede escribir sin competir con un turno en curso.
+           *
+           * `void` y no `await`: escribir un fichero no puede retrasar el arranque del consumidor,
+           * y `sembrarPerfilDelArnes` no lanza nunca —devuelve el parte—. Si falla, el alias queda
+           * conectado y recibiendo con el sobre completo, que es el comportamiento de siempre.
+           */
+          this.sembrarPerfil(frame);
           this.backoff.reset();
           heartbeat = this.heartbeatLoop(heartbeatAbort.signal).catch(async () => {
             await connection.close().catch(() => undefined);
@@ -200,6 +216,39 @@ export class AdapterClient {
     } finally {
       heartbeatAbort.abort();
       await heartbeat;
+    }
+  }
+
+  /**
+   * Escribe el perfil que vino en el saludo en los ficheros del arnés. Nunca lanza.
+   *
+   * El interruptor (`CAUCE_SEMBRAR_PERFIL=1`) está APAGADO por defecto y es deliberado: esto
+   * escribe dentro del contenedor de quince agentes que están trabajando. Encenderlo es una
+   * decisión con fecha y con alguien mirando, no un efecto secundario de desplegar.
+   *
+   * El resultado va al registro SIEMPRE, incluso cuando no se escribió nada: «no se sembró» es
+   * justo lo que hay que poder ver cuando un alias no tiene su perfil, y un silencio no distingue
+   * «apagado» de «no se pudo».
+   */
+  private sembrarPerfil(frame: Extract<ServerFrame, { type: 'hello_ack' }>): void {
+    const perfil = frame.agent_profile;
+    if (perfil === undefined) return;
+    try {
+      const resultado = sembrarPerfilDelArnes(
+        this.harness.definition.id,
+        perfil as unknown as ContextoDeAlias,
+        { habilitado: process.env.CAUCE_SEMBRAR_PERFIL === '1' },
+      );
+      this.logger({ event: 'profile_seed', alias: this.config.alias, reason: resumenDeLaSiembra(resultado) });
+    } catch (error) {
+      // Doble red: `sembrarPerfilDelArnes` promete no lanzar, pero un fallo aquí NO puede tumbar
+      // el saludo. Un alias sordo es infinitamente peor que un fichero sin actualizar.
+      this.logger({
+        event: 'profile_seed',
+        alias: this.config.alias,
+        reason: 'la siembra del perfil falló sin control',
+        error_message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

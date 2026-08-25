@@ -5514,6 +5514,19 @@ export class CauceRepository {
     const retryStartedDeliveries = policy.retryStartedDeliveries === true;
     // Se validan acá, fuera de la transacción, para que una configuración inválida falle en el
     // primer tick con un error nítido en vez de dejar el reaper girando sin techo.
+    //
+    // 🔴 `staleMs` NO se validaba, y es el único de los tres que llega de fuera: los otros dos son
+    // política del proceso. `timeout-retry-backoff.test.ts` exigía la guarda desde hacía tiempo y
+    // estaba en ROJO —cuatro casos: -1, 1.5, NaN, Infinity—, fallando con
+    // `TypeError: pool.connect is not a function` en vez del `conflict` que declara. O sea que un
+    // `staleMs` inválido no se rechazaba: entraba en la transacción y se metía tal cual en el
+    // `INTERVAL` del SQL. Un `NaN` ahí no da error de tipos, da una comparación que nunca es
+    // cierta: el reaper gira sin reintentar NADA y las entregas se quedan colgadas sin que ningún
+    // log diga por qué.
+    //
+    // Va la PRIMERA de las tres porque es la que viene de fuera: fallar antes de tocar el pool es
+    // lo que la prueba dice en su propio nombre («before touching PostgreSQL»).
+    positiveMs(staleMs, staleMs, 'stale timeout');
     const defaultCapMs = positiveMs(policy.leaseCapMs, DEFAULT_DELIVERY_LEASE_CAP_MS, 'lease cap');
     const graceMs = positiveMs(
       policy.leaseCapGraceMs, DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, 'lease cap grace'

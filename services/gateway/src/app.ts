@@ -770,8 +770,12 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
    * directiva— a propósito: el perfil es base de datos y composición pura, no necesita el PTY para
    * nada, y colgarlo del plugin lo dejaría caído en cualquier despliegue que apague el terminal.
    */
+  // A ESTE nivel y no dentro del bloque: lo usan las rutas de consola Y el saludo del socket, que
+  // manda el perfil una vez por conexión. Dos instancias sobre el mismo pool serían dos cachés y
+  // dos sitios donde divergir.
+  const agentProfiles = new AgentProfileRepository(options.pool);
   {
-    const perfiles = new AgentProfileRepository(options.pool);
+    const perfiles = agentProfiles;
     const autorizarPerfil = async (request: unknown): Promise<{ tenant_id: Tenant; alias: string }> => {
       const actor = await principal(request as FastifyRequest, options.authProvider);
       requireOperatorPermission(actor, 'read');
@@ -1311,9 +1315,35 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
             };
             sessions.set(key, current);
             if (previous && previous.socket !== socket) previous.socket.close(4401, 'superseded by newer epoch');
+            /*
+             * EL PERFIL VIAJA EN EL SALUDO, UNA VEZ, y sólo a quien lo pidió.
+             *
+             * Es la mitad que faltaba: lo FIJO tiene que vivir en el fichero del arnés, y el
+             * adaptador —que es el único que puede escribir dentro del contenedor— necesita
+             * conocerlo para escribirlo. Mandarlo en cada entrega sería el problema que este
+             * trabajo vino a cerrar.
+             *
+             * Gateado detrás de `agent_profile_v1` porque un adaptador viejo valida el frame con
+             * `.strict()` y, al fallar, MATA LA COLA ENTERA de la conexión: no descarta el frame.
+             *
+             * Un fallo leyendo el perfil NO tumba el saludo. El alias queda conectado y recibiendo
+             * entregas con el sobre completo, que es el comportamiento de siempre; lo que se pierde
+             * es el recorte. Al revés —negar la conexión porque no se pudo componer un fichero—
+             * dejaría a un alias sordo por un problema de presentación.
+             */
+            let agentProfile: { perfil: unknown; hechos: unknown } | undefined;
+            if (hello.capabilities.includes('agent_profile_v1')) {
+              try {
+                const contexto = await agentProfiles.readContext(hello.tenant_id, hello.alias);
+                agentProfile = { perfil: contexto.perfil, hechos: contexto.hechos };
+              } catch {
+                agentProfile = undefined;
+              }
+            }
             send(socket, {
               type: 'hello_ack', version: '3.0', epoch: lease.epoch,
-              lease_expires_at: lease.lease_expires_at
+              lease_expires_at: lease.lease_expires_at,
+              ...(agentProfile === undefined ? {} : { agent_profile: agentProfile })
             });
             await drain(current);
             return;

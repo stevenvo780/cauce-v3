@@ -49,6 +49,13 @@ export interface AdapterCapabilities {
   readonly delegation_feedback_v1?: true;
   /** Acepta `self_role` en el sobre y lo emite como preámbulo de identidad. Ver migración 020. */
   readonly agent_identity_v1?: true;
+  /**
+   * Declara que el adaptador sabe recibir `hello_ack.agent_profile` y ESCRIBIRLO en los ficheros
+   * que su arnés lee. Sin ella el gateway no manda el campo, por el mismo motivo que
+   * `delegation_feedback_v1`: quien valida con `.strict()` no descarta el frame que rechaza, falla
+   * la cola entera de la conexión.
+   */
+  readonly agent_profile_v1?: true;
 }
 
 export type RelayOrigin = Origin;
@@ -313,7 +320,16 @@ export interface AdapterLog {
      * reiniciada. Se emite al journal ADEMÁS de viajar dentro del "reply": el intento anterior
      * murió justamente porque esa situación no dejaba rastro en ninguna parte.
      */
-    | 'shared_session_degraded';
+    | 'shared_session_degraded'
+    /**
+     * Qué pasó al escribir el perfil del alias en los ficheros de su arnés, al conectar.
+     *
+     * Se emite SIEMPRE que llega un perfil, incluso cuando no se escribió nada: «no se sembró» es
+     * justo lo que hay que poder ver cuando un alias no tiene su perfil, y un silencio no
+     * distingue «el interruptor está apagado» de «no se pudo escribir». Nunca lleva el CONTENIDO
+     * del fichero: sólo el parte por nombre y estado.
+     */
+    | 'profile_seed';
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;
