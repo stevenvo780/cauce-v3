@@ -166,7 +166,34 @@ huérfano.
   reactivarla. **El defecto que describe es real**: el gateway puede contestar `ready` con el plano
   de datos caído.
 
-## 7. Lo que NO probé, con esas palabras
+## 7. MCP de codex en este workspace — revisados uno por uno
+
+Probados arrancando cada servidor y hablándole el protocolo (`initialize` + `tools/list`), **sin
+invocar el CLI de codex**: hacerlo revoca la cadena de credencial que comparte la flota.
+
+Sonda: `/tmp/claude-1000/-workspace/…/scratchpad/probar-mcp.py`. Respaldo de la config antes de
+tocarla: `~/.codex/config.toml.bak-zeus-mcp-*`.
+
+**Funcionan — 12:** `context7` (2 herramientas), `graphify` (9), `sequential-thinking` (1),
+`serena` (30), `chrome-devtools` (29), `playwright` (24), `github-legacy` (26), `firebase` (19),
+`vercel` (37), `openaiDeveloperDocs`, `ai-usage` (1), `cloud-offload` (1).
+
+**Lo que estaba mal y arreglé:**
+
+- **Faltaban los dos que la flota EXIGE.** `cloud-offload` (`delegar_a_cloud`, la vía de
+  delegación) y `ai-usage` (`get_ai_quotas`, el paso 0 antes de un fan-out) **no estaban en la
+  config de codex**. Añadidos y probados: los dos responden.
+- **`clawbus` apuntaba al bus muerto.** `Module not found …/clawbus-channel/server.ts`. Cauce V3 lo
+  reemplazó hace tiempo. Eliminado.
+- **`firebase` no arrancaba**: no existe el binario global. Reapuntado a `npx -y firebase-tools`;
+  pasó de no arrancar a 19 herramientas.
+
+**Siguen sin funcionar — 4, y los cuatro por credencial:** `neon` (HTTP 401), `atlassian`
+(HTTP 403), `sentry` (`SENTRY_ACCESS_TOKEN` ausente), `brave-search` (`BRAVE_API_KEY` ausente).
+Los extremos viven y responden; lo que falta es la credencial. **No los toqué**: es dato, no
+recomendación.
+
+## 8. Lo que NO probé, con esas palabras
 
 - **No abrí el modal en un navegador.** Verifiqué la ruta (401 con control negativo en 404), la
   lectura real (200 con el contenido), y que los tres artefactos desplegados llevan el cambio.
