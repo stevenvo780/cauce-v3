@@ -1,4 +1,5 @@
 import type {
+  AgentPerfil,
   AdapterPage,
   AgentChainSnapshot,
   AgentDirective,
@@ -550,6 +551,37 @@ export class CauceApi {
         body: JSON.stringify({ content, ...(expectedSha ? { expected_sha: expectedSha } : {}) }),
       },
     );
+  }
+
+  /**
+   * El perfil autorado de un alias MÁS la vista previa de los ficheros que su arnés lee.
+   *
+   * El 404/501 se traduce a `publicado: false` con el motivo entero, igual que
+   * `getAgentDocuments`, y NO se convierte en un perfil vacío: «este gateway no publica la ruta»
+   * y «este alias no tiene perfil» son dos cosas distintas, y enseñar la segunda cuando pasa la
+   * primera es exactamente cómo la consola llegó a afirmar que catorce alias no tenían directiva.
+   *
+   * El resto de los errores se dejan subir: un 403 y un 500 dicen cosas distintas y la pantalla
+   * tiene que poder repetir cuál fue.
+   */
+  async getAgentPerfil(alias: string): Promise<AgentPerfil> {
+    const ruta = `/v3/console/agents/${encodeURIComponent(alias)}/perfil`;
+    try {
+      const cuerpo = await this.request<Omit<AgentPerfil, 'publicado'>>(ruta);
+      return { ...cuerpo, publicado: true };
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
+        return {
+          publicado: false,
+          motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
+          perfil: {
+            purpose: null, role_summary: null, human_brief: null,
+            responsibilities: [], restrictions: [], tools: [], operating_rules: [],
+          },
+        };
+      }
+      throw error;
+    }
   }
 
   async getTerminalCapability(): Promise<TerminalCapability> {

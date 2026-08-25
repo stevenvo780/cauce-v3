@@ -1247,3 +1247,96 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
   .ficheros-fallo-linea { color: #8f2230; }
   .ficheros-texto { background: var(--surface); color: var(--text); }
 }
+
+/* ── El editor de perfil ────────────────────────────────────────────────────────────────────
+ *
+ * Dos columnas: se edita a la izquierda y se ve a la derecha EL TEXTO que va a quedar en el
+ * fichero. Es la disposición que hace el trabajo: mirar la caja y el resultado a la vez es lo
+ * único que le dice al operador que lo que escribió llegó a alguna parte.
+ *
+ * A 1920 el cajón da de sobra para las dos. Por debajo de 1400 se apilan —el `minmax(0, 1fr)` es
+ * lo que impide que un `<pre>` largo empuje la columna y desborde el cajón entero; sin el `0` el
+ * mínimo de una pista de grid es `auto`, o sea el contenido, y una línea sin espacios la estira—.
+ * Los tamaños salen de las variables de tipografía: 12.5px es el suelo acordado y no se baja.
+ */
+.perfil-tab {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1400px) {
+  .perfil-tab { grid-template-columns: minmax(0, 1fr); }
+}
+
+.perfil-editor, .perfil-vista-previa { display: grid; gap: 12px; min-width: 0; }
+
+.perfil-cabecera { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.perfil-cabecera h4, .perfil-vista-previa h4 { margin: 0; font-size: var(--tipo-cuerpo); }
+.perfil-ayuda { margin: 4px 0 0; font-size: var(--tipo-apunte); line-height: 1.4; }
+
+.perfil-medida { margin: 0; font-size: var(--tipo-rotulo); font-weight: 600; color: var(--muted); white-space: nowrap; }
+.perfil-medida-fuera { color: var(--danger, #d64545); }
+
+.perfil-campo { display: grid; gap: 4px; }
+.perfil-campo-titulo { font-size: var(--tipo-rotulo); font-weight: 600; }
+.perfil-campo-ayuda { font-size: var(--tipo-apunte); line-height: 1.4; }
+.perfil-campo textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--tipo-rotulo);
+  line-height: 1.45;
+  resize: vertical;
+}
+.perfil-cuenta { justify-self: end; font-size: var(--tipo-apunte); color: var(--muted); }
+.perfil-cuenta-fuera { color: var(--danger, #d64545); font-weight: 600; }
+
+.perfil-fuera { margin: 0; padding-left: 18px; font-size: var(--tipo-apunte); color: var(--danger, #d64545); line-height: 1.5; }
+
+.perfil-aviso { margin: 0; padding: 10px 12px; border-radius: 10px; font-size: var(--tipo-apunte); line-height: 1.5; }
+.perfil-aviso-success { background: var(--surface-3); color: var(--text); }
+.perfil-aviso-parcial { background: var(--surface-3); color: var(--text); border: 1px solid var(--warning, #c08a2e); }
+.perfil-aviso-error { background: var(--surface-3); color: var(--danger, #d64545); border: 1px solid var(--danger, #d64545); }
+
+.perfil-ficheros { display: flex; flex-wrap: wrap; gap: 6px; }
+.perfil-fichero-tab {
+  flex: none;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: var(--tipo-apunte);
+  font-weight: 600;
+  cursor: pointer;
+}
+.perfil-fichero-tab[aria-selected='true'] { background: var(--surface-3); color: var(--text); }
+.perfil-del-agente { font-weight: 400; opacity: .75; }
+
+.perfil-fichero-cuerpo { display: grid; gap: 8px; min-width: 0; }
+/* `overflow: auto` sobre el propio bloque y no sobre el cajón: una línea larga del fichero tiene
+ * que hacer scroll DENTRO de su caja. Sin esto el cajón entero se desplaza en horizontal y los
+ * botones de guardar se van fuera de la pantalla — que es el defecto que la revisión de 1920
+ * encontró en tres vistas. */
+.perfil-fichero-texto {
+  margin: 0;
+  max-height: 480px;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--tipo-apunte);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

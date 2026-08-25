@@ -30,7 +30,7 @@
     "typecheck": "tsc --noEmit",
     "build": "pnpm clean && tsc && node scripts/copy-bridges.mjs && node scripts/chmod-bins.mjs",
     "smoke:package": "node scripts/package-smoke.mjs",
-    "test": "pnpm --filter @cauce/protocol build && pnpm build && node --test --test-concurrency=1 dist/test/*.test.js"
+    "test": "pnpm --filter @cauce/protocol build && pnpm build && node --import ../../scripts/paquetes-de-este-arbol.mjs --test --test-concurrency=1 dist/test/*.test.js"
   },
   "dependencies": {
     "@cauce/protocol": "workspace:*",

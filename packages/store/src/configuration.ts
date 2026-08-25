@@ -263,8 +263,8 @@ export class ConfigurationRepository {
           // consola EDITA. Sin él la pantalla enseñaría seis cajas vacías, y como la mutación
           // fusiona sobre lo que hay en la base, el primer guardado escribiría esos seis vacíos
           // encima del perfil que el alias ya tenía.
-          `SELECT tenant_id,alias,purpose,role_summary,responsibilities,restrictions,tools,
-                  operating_rules,created_at,updated_at
+          `SELECT tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,
+                  tools,operating_rules,created_at,updated_at
            FROM agent_profiles WHERE $1::text IS NULL OR tenant_id=$1
            ORDER BY tenant_id,alias`, [scope]
         )
@@ -946,11 +946,15 @@ export class ConfigurationRepository {
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const key = `${mutation.tenant_id}/${mutation.alias}`;
     const selected = await client.query<{
-      purpose: string | null; role_summary: string | null;
+      purpose: string | null; role_summary: string | null; human_brief: string | null;
       responsibilities: string[] | null; restrictions: string[] | null;
       tools: string[] | null; operating_rules: string[] | null;
     }>(
-      `SELECT purpose,role_summary,responsibilities,restrictions,tools,operating_rules
+      // `human_brief` va en este SELECT o el DESHACER lo borra: `oldValue` es literalmente el
+      // cuerpo de la mutación inversa, así que un campo que no se lea aquí vuelve como ausente y
+      // el `update` de deshacer lo deja en NULL. Perder prosa al pulsar «deshacer» es peor que no
+      // tener el botón.
+      `SELECT purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules
        FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
       [mutation.tenant_id, mutation.alias]
     );
@@ -964,6 +968,7 @@ export class ConfigurationRepository {
     const oldValue = old === undefined ? undefined : {
       purpose: old.purpose,
       role_summary: old.role_summary,
+      human_brief: old.human_brief,
       responsibilities: old.responsibilities ?? [],
       restrictions: old.restrictions ?? [],
       tools: old.tools ?? [],
@@ -992,7 +997,7 @@ export class ConfigurationRepository {
 
     const value = valueRequired(mutation);
     const base = oldValue ?? {
-      purpose: null, role_summary: null,
+      purpose: null, role_summary: null, human_brief: null,
       responsibilities: [], restrictions: [], tools: [], operating_rules: []
     };
     const fusionado = {
@@ -1000,6 +1005,7 @@ export class ConfigurationRepository {
       alias: mutation.alias,
       purpose: has(value, 'purpose') ? value.purpose : base.purpose,
       role_summary: has(value, 'role_summary') ? value.role_summary : base.role_summary,
+      human_brief: has(value, 'human_brief') ? value.human_brief : base.human_brief,
       responsibilities: has(value, 'responsibilities') ? value.responsibilities : base.responsibilities,
       restrictions: has(value, 'restrictions') ? value.restrictions : base.restrictions,
       tools: has(value, 'tools') ? value.tools : base.tools,
@@ -1009,18 +1015,20 @@ export class ConfigurationRepository {
 
     await client.query(
       `INSERT INTO agent_profiles
-         (tenant_id,alias,purpose,role_summary,responsibilities,restrictions,tools,operating_rules)
-       VALUES($1,$2,$3,$4,$5::text[],$6::text[],$7::text[],$8::text[])
+         (tenant_id,alias,purpose,role_summary,human_brief,
+          responsibilities,restrictions,tools,operating_rules)
+       VALUES($1,$2,$3,$4,$5,$6::text[],$7::text[],$8::text[],$9::text[])
        ON CONFLICT (tenant_id,alias) DO UPDATE SET
          purpose=EXCLUDED.purpose,
          role_summary=EXCLUDED.role_summary,
+         human_brief=EXCLUDED.human_brief,
          responsibilities=EXCLUDED.responsibilities,
          restrictions=EXCLUDED.restrictions,
          tools=EXCLUDED.tools,
          operating_rules=EXCLUDED.operating_rules,
          updated_at=now()`,
       [
-        perfil.tenant_id, perfil.alias, perfil.purpose, perfil.role_summary,
+        perfil.tenant_id, perfil.alias, perfil.purpose, perfil.role_summary, perfil.human_brief,
         [...perfil.responsibilities], [...perfil.restrictions],
         [...perfil.tools], [...perfil.operating_rules]
       ]

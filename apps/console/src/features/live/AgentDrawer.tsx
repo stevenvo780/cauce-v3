@@ -2,7 +2,7 @@ import { ExternalLink, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import type { FleetActivityItem } from '../../api/types';
+import type { AgentPerfilCampos, FleetActivityItem } from '../../api/types';
 import { Badge, EmptyState, Time, Tooltip, Unknown } from '../../components/ui';
 import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../navigation';
@@ -10,6 +10,7 @@ import { AgentAvatar } from './AgentAvatar';
 import { ChainPanel } from './ChainPanel';
 import { DirectivaTab } from './DirectivaTab';
 import { FicherosTab } from './FicherosTab';
+import { PerfilTab } from './PerfilTab';
 import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
@@ -29,7 +30,7 @@ import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo }
  * su propia confirmación.
  */
 
-export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'cadena' | 'rol' | 'ficheros';
+export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'cadena' | 'rol' | 'perfil' | 'ficheros';
 
 /**
  * «Directiva» va acá y no en una vista propia: es el sitio donde el operador YA mira al bot, y el
@@ -46,6 +47,13 @@ const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
   { id: 'entregas', label: 'Entregas' },
   { id: 'cadena', label: 'Cadena' },
   { id: 'rol', label: 'Directiva' },
+  /*
+   * «Perfil» va ENTRE «Directiva» y «Ficheros» porque ése es el orden real del dato: la directiva
+   * es lo que el alias tiene hoy, el perfil es lo que se escribe, y los ficheros son donde acaba.
+   * Es la única pestaña del cajón desde la que se puede cambiar lo que el agente lee al arrancar
+   * — hasta ahora eso sólo se podía tocando la base a mano.
+   */
+  { id: 'perfil', label: 'Perfil' },
   /*
    * «Ficheros» va JUNTO a «Directiva» y no en una vista aparte, por lo mismo que «Directiva» vive
    * en este cajón: el `role_brief` y el `CLAUDE.md` son dos capas de lo que gobierna al MISMO
@@ -68,12 +76,18 @@ export interface AgentDrawerProps {
    */
   borradorRol?: string;
   onBorradorRol: (texto: string | undefined) => void;
+  /** Mismo motivo que el del rol: cambiar de pestaña desmonta la pestaña, no el borrador. */
+  borradorPerfil?: Partial<AgentPerfilCampos>;
+  onBorradorPerfil: (campos: Partial<AgentPerfilCampos> | undefined) => void;
   onTab: (tab: DrawerTab) => void;
   onTrace: (traceId: string | undefined) => void;
   onClose: () => void;
 }
 
-export function AgentDrawer({ view, tab, traceId, borradorRol, onBorradorRol, onTab, onTrace, onClose }: AgentDrawerProps) {
+export function AgentDrawer({
+  view, tab, traceId, borradorRol, onBorradorRol, borradorPerfil, onBorradorPerfil,
+  onTab, onTrace, onClose,
+}: AgentDrawerProps) {
   // Esc cierra desde donde sea. Un panel que sólo se cierra con la crucecita obliga a buscarla con
   // el ratón cada vez, y este cajón se abre y se cierra muchas veces seguidas al triar.
   useEffect(() => {
@@ -134,6 +148,15 @@ export function AgentDrawer({ view, tab, traceId, borradorRol, onBorradorRol, on
             alias={view.alias}
             borrador={borradorRol}
             onBorrador={onBorradorRol}
+          />
+        ) : null}
+        {tab === 'perfil' ? (
+          <PerfilTab
+            key={view.key}
+            tenantId={view.tenantId}
+            alias={view.alias}
+            borrador={borradorPerfil}
+            onBorrador={onBorradorPerfil}
           />
         ) : null}
         {tab === 'ficheros' ? <FicherosTab key={view.key} tenantId={view.tenantId} alias={view.alias} /> : null}

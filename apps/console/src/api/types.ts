@@ -273,7 +273,12 @@ export type ConfigResource =
  * no los agregó a la lista de self-service, así que un tenant no-hub recibe 403.
  */
 export type RegistryConfigResource =
-  | 'agent' | 'provider_account' | 'alias_routing_ceiling' | 'agent_account_binding';
+  | 'agent' | 'provider_account' | 'alias_routing_ceiling' | 'agent_account_binding'
+  // El perfil autorado del alias (`agent_profiles`, migración 026). Entra como un recurso más de
+  // la mutación de configuración —y no por una ruta propia— para heredar el bloqueo optimista, la
+  // mutación inversa que alcanza el botón de deshacer, el asiento en `audit_events` y el
+  // aislamiento por inquilino.
+  | 'agent_profile';
 export type AnyConfigResource = ConfigResource | RegistryConfigResource;
 export type ConfigAction = 'create' | 'update' | 'delete';
 export type ConfigMutation = Record<string, unknown> & {
@@ -861,4 +866,77 @@ export interface RoleBriefHistory {
    * `historial-rol.ts`, que es donde se puede probar: ver `entradasMasNuevasPrimero`.
    */
   entries?: RoleBriefHistoryEntry[] | null;
+}
+
+/**
+ * EL PERFIL DE UN ALIAS Y LA VISTA PREVIA DE SUS FICHEROS (`GET /v3/console/agents/:alias/perfil`).
+ *
+ * `ficheros` es EL TEXTO EXACTO que va a quedar en cada fichero que el arnés de ese alias lee,
+ * compuesto por la MISMA función que usa el adaptador para escribirlo dentro del contenedor. Que
+ * salgan de la misma función es lo que impide que la vista previa mienta: dos implementaciones del
+ * mismo texto divergen a la primera corrección y el operador aprobaría un bloque distinto del que
+ * acaba en el disco, sin que nada diera error.
+ */
+export interface AgentPerfilCampos {
+  purpose: string;
+  role_summary: string;
+  human_brief: string;
+  responsibilities: string[];
+  restrictions: string[];
+  tools: string[];
+  operating_rules: string[];
+}
+
+export interface AgentPerfilFichero {
+  nombre: string;
+  /** `solo-si-falta` = es del agente (MEMORY.md, HEARTBEAT.md): si existe NO se toca. */
+  politica: 'bloque-gestionado' | 'solo-si-falta';
+  texto: string;
+  unidades: number;
+}
+
+export interface AgentPerfil {
+  /**
+   * false = este gateway no publica la ruta. NO significa «este alias no tiene perfil»: significa
+   * que no se miró. Mismo criterio que `AgentDirective.publicado`, y por la misma razón — un
+   * negativo que nadie midió no es un hecho del sistema.
+   */
+  publicado: boolean;
+  motivo?: string;
+  tenant_id?: string;
+  alias?: string;
+  /** El arnés MEDIDO en los hechos. `null` cuando el registro no dice ninguno. */
+  harness?: string | null;
+  perfil: {
+    purpose: string | null;
+    role_summary: string | null;
+    human_brief: string | null;
+    responsibilities: string[];
+    restrictions: string[];
+    tools: string[];
+    operating_rules: string[];
+  };
+  hechos?: {
+    permisos: { ruta: boolean; lectura: boolean; control: boolean; notificacion: boolean };
+    cuotas: Array<{ proveedor: string; cuenta: string; limite?: string }>;
+    arnes: { harness: string; home: string; contenedor?: string; capacidades: string[] };
+    destinos: string[];
+  };
+  limites?: {
+    purpose: number;
+    role_summary: number;
+    item: number;
+    items: number;
+    total: number;
+  };
+  medida?: { unidades: number; tope: number };
+  /**
+   * De qué se compuso la vista previa. `fichero-vacio` significa que el servidor NO leyó el disco
+   * del contenedor: lo que una persona haya escrito a mano sigue ahí y no se toca —la fusión
+   * conserva lo de fuera byte a byte—, pero esta respuesta no lo ha visto y no puede enseñarlo.
+   */
+  base?: 'fichero-vacio';
+  ficheros?: AgentPerfilFichero[];
+  /** Por qué no hay ficheros, cuando no los hay. Un array vacío sin explicación se lee mal. */
+  aviso?: string;
 }

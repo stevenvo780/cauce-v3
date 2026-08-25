@@ -2,7 +2,9 @@ import { Pause, Play, Search } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import type { FleetActivitySnapshot, TenantNode, TopologySnapshot } from '../../api/types';
+import type {
+  AgentPerfilCampos, FleetActivitySnapshot, TenantNode, TopologySnapshot,
+} from '../../api/types';
 import {
   ErrorState, FloatingTooltip, LoadingState, PageHeader, Panel, Time, Tooltip,
 } from '../../components/ui';
@@ -155,6 +157,11 @@ export function LiveFleetPage() {
    * nunca heredar el rol que se estaba escribiendo para el anterior.
    */
   const [borradoresRol, setBorradoresRol] = useState<Record<string, string>>({});
+  // Los borradores del perfil viven acá y no dentro de la pestaña por lo mismo que los del rol:
+  // cambiar de pestaña dentro del cajón la desmonta, y perder ahí siete campos a medio redactar
+  // -sin avisar- es peor cuanto más largo es lo que se estaba escribiendo.
+  const [borradoresPerfil, setBorradoresPerfil] =
+    useState<Record<string, Partial<AgentPerfilCampos>>>({});
 
   const memoryRef = useRef<FleetMemory>({});
   const [pulses, setPulses] = useState<PulseMap>({});
@@ -788,6 +795,15 @@ export function LiveFleetPage() {
               return resto;
             }
             return { ...actuales, [drawer.key]: texto };
+          })}
+          borradorPerfil={borradoresPerfil[drawer.key]}
+          onBorradorPerfil={(campos) => setBorradoresPerfil((actuales) => {
+            if (campos === undefined) {
+              const resto = { ...actuales };
+              delete resto[drawer.key];
+              return resto;
+            }
+            return { ...actuales, [drawer.key]: campos };
           })}
           onTab={(tab) => { setDrawer((current) => (current ? { ...current, tab } : current)); escribirQuery(drawer.key, tab, drawer.trace); }}
           onTrace={(trace) => { setDrawer((current) => (current ? { ...current, trace } : current)); escribirQuery(drawer.key, drawer.tab, trace); }}

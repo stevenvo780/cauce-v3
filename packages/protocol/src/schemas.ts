@@ -690,6 +690,16 @@ export const AgentProfileConfigMutationSchema = z.object({
       .refine((text) => countCodePoints(text) <= AGENT_PROFILE_BORDER_TEXT,
         { message: 'role_summary is too long' })
       .nullable().optional(),
+    /*
+     * `human_brief` estaba en la interfaz, en `AGENT_PROFILE_TEXT_FIELDS` y en la columna de la
+     * migración 026, pero NO acá — así que la consola podía enseñar la caja y el servidor
+     * rechazaba el cuerpo por `.strict()`. Es exactamente el defecto que este trabajo viene a
+     * cerrar: un campo editable sin camino real hasta el fichero que el arnés lee.
+     */
+    human_brief: z.string()
+      .refine((text) => countCodePoints(text) <= AGENT_PROFILE_BORDER_TEXT,
+        { message: 'human_brief is too long' })
+      .nullable().optional(),
     responsibilities: AgentProfileListBorderSchema('responsibilities'),
     restrictions: AgentProfileListBorderSchema('restrictions'),
     tools: AgentProfileListBorderSchema('tools'),

@@ -13,7 +13,7 @@ import {
   type QuotaSampleRequest, type Tenant
 } from '@cauce/protocol';
 import {
-  CauceRepository, StoreError, subscribeDeliveryWakes,
+  AgentProfileRepository, CauceRepository, StoreError, subscribeDeliveryWakes,
   type AccountSelection, type AckResult, type DatabasePool, type DeliveryLeaseCap,
   type LeaseResult, type NotificationVerdict, type OutboxEvent, type PublishResult,
   type QuotaSampleIngestResult
@@ -22,6 +22,8 @@ import {
   AuthError, AuthorizationError, MtlsAuthProvider, requireOperatorPermission, requirePermission, validatePrincipal,
   type AuthProvider, type Principal
 } from './auth.js';
+import { registerAgentDocumentRoutes } from './console/agent-documents.routes.js';
+import { registerAgentProfileRoutes } from './console/agent-profile.routes.js';
 import { createConsoleSecurityHook } from './console-security.js';
 import {
   DEFAULT_ACK_DEADLINE_MS, DEFAULT_HUMAN_RESERVED_DELIVERIES, DEFAULT_MAX_INFLIGHT_DELIVERIES,
@@ -754,6 +756,65 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   // The registry is intrinsically cross-tenant (an agent may borrow a pooled account paid by
   // another tenant), so no sameTenantRows facade runs here: the store already applied the
   // visibility rule and redacted the payer's account identity.
+  /*
+   * EL PERFIL Y LOS DOCUMENTOS DEL ALIAS.
+   *
+   * `registerAgentDocumentRoutes` estaba escrita, probada y exportada desde
+   * `console/agent-documents.routes.ts` — y NO LA LLAMABA NADIE. Cero sitios en todo el repo fuera
+   * de su propia definición y de sus pruebas. Por eso `GET /v3/console/agents/:alias/documents`
+   * daba 404 en producción y la consola enseñaba «capa 2 y 3 no disponibles»: no era que el dato
+   * faltara, es que la ruta no estaba montada. Una prueba de la función no acredita que el
+   * servidor la sirva; eso lo acredita el registro, y el registro no existía.
+   *
+   * Van en el ámbito de `/v3/console` y NO dentro del plugin de terminal —donde sí está la de
+   * directiva— a propósito: el perfil es base de datos y composición pura, no necesita el PTY para
+   * nada, y colgarlo del plugin lo dejaría caído en cualquier despliegue que apague el terminal.
+   */
+  {
+    const perfiles = new AgentProfileRepository(options.pool);
+    const autorizarPerfil = async (request: unknown): Promise<{ tenant_id: Tenant; alias: string }> => {
+      const actor = await principal(request as FastifyRequest, options.authProvider);
+      requireOperatorPermission(actor, 'read');
+      return { tenant_id: actor.tenant_id, alias: actor.alias };
+    };
+    registerAgentProfileRoutes(app, {
+      authorize: autorizarPerfil,
+      readContext: (tenantId, alias) => perfiles.readContext(tenantId as Tenant, alias)
+    });
+    registerAgentDocumentRoutes(app, {
+      authorize: autorizarPerfil,
+      /*
+       * Sin pty-agent que mida el entorno del proceso no hay hechos MEDIDOS, y la ruta lo dice con
+       * esas palabras: contesta con las rutas DEDUCIDAS del registro y un aviso que empieza por
+       * «no medidas», y con `editable:false` en todas. Deducir en silencio sería peor que no
+       * contestar — el 23-ago-2026 el registro se equivocaba de arnés en 5 de los 14 alias.
+       *
+       * Los otros dos métodos de la sonda no se alcanzan nunca sin hechos medidos: el manejador
+       * corta antes. Lanzan, en vez de devolver vacío, para que si algún día alguien los alcanza
+       * el fallo se vea aquí y no se confunda con «el fichero está vacío».
+       */
+      probe: {
+        factsFor: async () => undefined,
+        readGovernanceDocument: async () => {
+          throw new Error('no hay canal medido hasta el contenedor del alias');
+        },
+        listMemoryDirectory: async () => {
+          throw new Error('no hay canal medido hasta el contenedor del alias');
+        }
+      },
+      lookupAgent: async (alias, tenantId, actorAlias) => {
+        const fila = await repository.getAgent(alias, tenantId as Tenant, actorAlias);
+        if (fila === undefined) return undefined;
+        return {
+          tenant_id: String(fila.tenant_id),
+          alias: String(fila.alias),
+          harness_id: (fila.harness_id ?? null) as string | null,
+          home_directory: (fila.home_directory ?? null) as string | null
+        };
+      }
+    });
+  }
+
   app.get('/v3/console/agents', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
