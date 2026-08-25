@@ -32,13 +32,24 @@ function publishMessageCrossTenant(
   };
 }
 
-function failedAck(delivery: DeliveryEnvelope): Ack {
+/**
+ * El ACK tiene que venir de la MISMA identidad que reclamó la entrega.
+ *
+ * 🔴 `instance_id` y `epoch` se inventaban aquí (`instance-${randomUUID()}`, `epoch: 1`) y no
+ * coincidían con el lease, así que `ackDelivery` los rechaza con «ACK identity does not own this
+ * delivery claim». Es el mismo vallado que ya hacía fallar el `claimDeliveries` de más arriba, un
+ * paso después: un ACK que no acredita ser quien reclamó podría cerrar el turno de otro.
+ *
+ * Se pasan como parámetros y no se clavan por lo mismo que el `epoch`: son valores que decide el
+ * repositorio, y escribirlos a mano vuelve a atar la prueba a un número que no controla.
+ */
+function failedAck(delivery: DeliveryEnvelope, instanceId: string, epoch: number): Ack {
   return {
     version: '3.0',
     event_id: randomUUID(),
     status: 'failed',
-    instance_id: `instance-${randomUUID()}`,
-    epoch: 1,
+    instance_id: instanceId,
+    epoch,
     claim_token: delivery.claim_token,
     attempt: delivery.attempt,
     retryable: false,  // Don't retry, just mark as failed
@@ -75,13 +86,58 @@ describe('materialization across tenant rooms', () => {
     // materializeAgentResponse should create response in salva's correct room (grp.isa in tenant Isa)
     // NOT in grp.steven (which is Steven's room)
 
-    // Arrange: Publish cross-tenant message
-    const msg = publishMessageCrossTenant(
-      'Steven', 'grp.steven', 'kant',  // Sender: Steven in his room
-      'Isa', 'salva'                     // Recipient: salva in Isa
+    /*
+     * LA DELEGACIÓN SE CREA COMO EN PRODUCCIÓN: por el ACK del padre, no publicándola.
+     *
+     * Esta prueba publicaba un mensaje suelto de `kant` a `salva` y lo llamaba «delegación». No lo
+     * era: sin padre, `materializeAgentResponse` devuelve `'not_child'` y NO escribe ninguna
+     * `agent.response`. Medido con una sonda: la consulta del final encontraba CERO filas, así que
+     * las tres aserciones sobre la sala —las que dan nombre a la prueba, «que caiga en la de Isa y
+     * NO en grp.steven»— vivían dentro de un `if (rows.length > 0)` que nunca se cumplía. Un verde
+     * perfecto sobre cero comprobaciones, que es la peor clase de prueba que hay.
+     *
+     * Tampoco se puede publicar `body.type = 'agent.message'` a mano: es un tipo interno reservado
+     * y `publish()` lo rechaza con todo el derecho. La única forma de que exista una delegación es
+     * que un agente delegue, así que eso es lo que se hace: `kant` recibe un encargo y su ACK lleva
+     * un `messages` hacia `salva`, que está en OTRO inquilino. De ahí sale la entrega cruzada.
+     */
+    const leaseKant = await repository.acquireLease('Steven', 'kant', 'kant-1', [], 30_000);
+    expect(leaseKant.acquired).toBe(true);
+    await repository.publish(publishMessageCrossTenant(
+      'Steven', 'grp.steven', 'kant', 'Steven', 'kant',
+    ));
+    const [paraKant] = await repository.claimDeliveries(
+      'Steven', 'kant', 'kant-1', leaseKant.epoch!, 1, 30_000,
     );
-    const published = await repository.publish(msg);
-    const deliveryId = published.delivery_ids[0]!;
+    expect(paraKant).toBeDefined();
+    await repository.ackDelivery(paraKant!.delivery_id, 'Steven', 'kant', {
+      version: '3.0',
+      event_id: randomUUID(),
+      status: 'done',
+      instance_id: 'kant-1',
+      epoch: leaseKant.epoch!,
+      claim_token: paraKant!.claim_token,
+      attempt: paraKant!.attempt,
+      retryable: false,
+      result: {
+        output: {
+          reply: null,
+          messages: [{ to: 'salva', body: 'hacé la parte que te toca' }],
+          notify: [],
+          status: 'done',
+          retryable: false,
+          artifacts: [],
+        },
+      },
+    } as unknown as Ack);
+
+    // La entrega que salió de esa delegación, ya en el inquilino de salva.
+    const cruzada = await pool.query<{ id: string }>(
+      `SELECT d.id FROM deliveries d
+       WHERE d.recipient_tenant='Isa' AND d.recipient_alias='salva' ORDER BY d.created_at DESC LIMIT 1`,
+    );
+    expect(cruzada.rowCount).toBe(1);
+    const deliveryId = cruzada.rows[0]!.id;
 
     /*
      * 🔴 EL LEASE FALTABA, y por eso estas dos pruebas llevaban en rojo.
@@ -104,7 +160,7 @@ describe('materialization across tenant rooms', () => {
     expect(claimed[0]!.recipient_alias).toBe('salva');
 
     // salva returns a failed ACK
-    const ack = failedAck(claimed[0]!);
+    const ack = failedAck(claimed[0]!, 'instance-1', lease.epoch!);
     const ackResult = await repository.ackDelivery(deliveryId, 'Isa', 'salva', ack);
     expect(ackResult.applied).toBe(true);
 
@@ -115,21 +171,34 @@ describe('materialization across tenant rooms', () => {
     );
     expect(deliveryAfterAck.rows[0]!.status).toBe('failed');
 
-    // Act: Run retryStaleDeliveries which should materialize response
-    // For this test, manually age the delivery to trigger reaper processing
+    /*
+     * El reaper NO tiene nada que hacer aquí, y ésa es la afirmación que vale.
+     *
+     * Esta prueba exigía `result.dead + result.retried > 0`, o sea que el reaper ENCONTRARA la
+     * entrega. Eso sólo podía ser cierto mientras el ACK no llegaba a aplicarse —la prueba no
+     * adquiría lease y moría antes, en `claimDeliveries`—. Con el lease y la identidad de ACK
+     * correctos, el ACK cierra la entrega en `failed`, que es un estado TERMINAL: el reaper la
+     * ignora con todo el derecho.
+     *
+     * Se invierte la aserción en vez de borrarla porque lo contrario es un invariante que importa:
+     * un reaper que volviera a tocar una entrega ya cerrada por su dueño la reintentaría, y el
+     * agente pagaría dos veces un trabajo que ya hizo. Envejecerla a mano es justamente la trampa
+     * que lo destaparía.
+     */
     const pastTime = new Date(Date.now() - 60_000);
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at = $1, claim_expires_at = $1 WHERE id = $2`,
       [pastTime, deliveryId]
     );
 
-    // Process with retryStaleDeliveries
     const result = await repository.retryStaleDeliveries(30_000);
+    expect(result.dead + result.retried).toBe(0);
 
-    // Assert: Delivery should be processed successfully
-    // (it will either be dead-lettered or retried, depending on max_attempts)
-    // The key is that NO constraint violation occurred
-    expect(result.dead + result.retried).toBeGreaterThan(0);
+    // Y sigue cerrada donde la dejó el ACK: el reaper no la movió de sitio.
+    const trasElReaper = await pool.query<{ status: string }>(
+      'SELECT status FROM deliveries WHERE id = $1', [deliveryId]
+    );
+    expect(trasElReaper.rows[0]!.status).toBe('failed');
 
     // Verify that if a response message was created, it's in the correct room
     const responseMessages = await pool.query<{
@@ -137,20 +206,28 @@ describe('materialization across tenant rooms', () => {
       room_id: string;
       actor_alias: string;
     }>(
+      /*
+       * El tipo del mensaje vive en `body->>'type'`, NO en una columna `type` — que no existe.
+       * Esta consulta llevaba desde siempre reventando con `column "type" does not exist`, tapada
+       * por los tres fallos anteriores de esta misma prueba (sin lease, ACK sin identidad, y una
+       * aserción sobre el reaper que ya no podía ser cierta). Cada uno escondía al siguiente.
+       */
       `SELECT tenant_id, room_id, actor_alias FROM messages
-       WHERE type = 'agent.response' AND actor_alias = 'salva'`,
+       WHERE body->>'type' = 'agent.response' AND actor_alias = 'salva'`,
       []
     );
 
-    // If response was materialized, verify it's in salva's room (grp.isa in tenant Isa)
-    if (responseMessages.rows.length > 0) {
-      const response = responseMessages.rows[0]!;
-      expect(response.tenant_id).toBe('Isa');  // Response in Isa's tenant
-      expect(response.actor_alias).toBe('salva');
-      // The room should be one of salva's memberships in Isa
-      // NOT grp.steven (Steven's room)
-      expect(response.room_id).not.toBe('grp.steven');
-    }
+    /*
+     * SIN `if`. La guarda `if (rows.length > 0)` hacía que la prueba pasara igual sin haber
+     * comprobado NADA de lo que su nombre promete. Si algún día deja de materializarse la
+     * respuesta, esto tiene que ponerse rojo aquí y no fingir que sigue cubierto.
+     */
+    expect(responseMessages.rows.length).toBeGreaterThan(0);
+    const response = responseMessages.rows[0]!;
+    expect(response.tenant_id).toBe('Isa');  // la respuesta vive en el inquilino de salva
+    expect(response.actor_alias).toBe('salva');
+    // Y en una sala SUYA, nunca en la del que delegó: ése es el defecto que esta prueba persigue.
+    expect(response.room_id).not.toBe('grp.steven');
   });
 
   it('should not crash when recipient membership is missing due to cross-tenant context', async () => {
