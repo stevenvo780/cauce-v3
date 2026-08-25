@@ -79,7 +79,19 @@ export const CLAVES_PROHIBIDAS_OPENCLAW = [
  *
  * Se re-exporta para que nada de lo que ya la importaba desde aqui tenga que cambiar de sitio.
  */
-export { componerBloqueDePerfil } from "@cauce/protocol";
+export {
+  componerBloqueDePerfil,
+  // Los ayudantes de composición viajan con ella: `ficheros-del-arnes.ts` reparte las mismas
+  // secciones entre los siete Markdown de openclaw, y si las recompusiera por su cuenta el
+  // fichero suelto y el bloque único dirían lo mismo con palabras distintas a la primera
+  // corrección. Una sola implementación, dos formas de repartirla.
+  lineasDeArnes,
+  lineasDeCuotas,
+  lineasDePermisos,
+  seccion,
+  vinetas,
+} from "@cauce/protocol";
+
 /**
  * JSON determinista: las claves salen SIEMPRE en el mismo orden, lo insertaran como lo insertaran.
  *

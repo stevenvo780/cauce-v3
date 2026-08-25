@@ -13,6 +13,10 @@ export * from "./sdk/engine.js";
 export * from "./sdk/client.js";
 export * from "./sdk/websocket-transport.js";
 export * from "./context/perfil-a-contexto.js";
+export {
+  ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, TOPES_OPENCLAW, ficherosDelArnes, nombresDelArnes,
+  type FicheroGenerado, type PoliticaDeFichero,
+} from "./context/ficheros-del-arnes.js";
 export * from "./harnesses/index.js";
 export * from "./harnesses/shared.js";
 export * from "./shared-session/index.js";

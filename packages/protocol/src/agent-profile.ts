@@ -107,6 +107,18 @@ export const AGENT_PROFILE_LIMITS = {
   purpose: 2_000,
   /** Rol declarado. Sucesor de `role_brief`, con sitio para el detalle que allá no cabía. */
   role_summary: 4_000,
+  /**
+   * Quién es el humano de este alias y cómo tratarlo.
+   *
+   * Existe porque el arnés `openclaw` lee un `USER.md` aparte —uno de los siete Markdown medidos el
+   * 2026-08-24— y ninguna de las otras caras responde esa pregunta. Sin este campo el generador
+   * tendría dos salidas y las dos malas: dejar `USER.md` vacío, o rellenarlo deduciendo el humano
+   * del `tenant_id`, que es inventarle a un agente cómo tratar a una persona. Un fichero de persona
+   * equivocado es peor que ninguno.
+   *
+   * Es el mismo tope que `purpose` y por el mismo motivo: describe, no enumera.
+   */
+  human_brief: 2_000,
   /** Tope de UN elemento de cualquiera de las listas. */
   item: 1_000,
   /** Tope de CUÁNTOS elementos admite una lista. */
@@ -121,7 +133,7 @@ export const AGENT_PROFILE_LIST_FIELDS = [
 ] as const;
 
 /** Los textos sueltos del perfil, en el mismo orden. */
-export const AGENT_PROFILE_TEXT_FIELDS = ['purpose', 'role_summary'] as const;
+export const AGENT_PROFILE_TEXT_FIELDS = ['purpose', 'role_summary', 'human_brief'] as const;
 
 export type AgentProfileListField = (typeof AGENT_PROFILE_LIST_FIELDS)[number];
 export type AgentProfileTextField = (typeof AGENT_PROFILE_TEXT_FIELDS)[number];
@@ -144,6 +156,11 @@ export interface AgentProfile {
   readonly purpose: string | null;
   /** Rol declarado. NULL = no declarado. */
   readonly role_summary: string | null;
+  /**
+   * Quién es su humano y cómo tratarlo. NULL = no declarado, y el generador OMITE el `USER.md`
+   * de openclaw en vez de sembrarlo con una deducción.
+   */
+  readonly human_brief: string | null;
   readonly responsibilities: readonly string[];
   readonly restrictions: readonly string[];
   readonly tools: readonly string[];
@@ -262,6 +279,7 @@ export function normalizeAgentProfile(input: Record<string, unknown>): AgentProf
     alias: requireIdentifier(input['alias'], 'alias'),
     purpose: normalizeText(input['purpose'], 'purpose'),
     role_summary: normalizeText(input['role_summary'], 'role_summary'),
+    human_brief: normalizeText(input['human_brief'], 'human_brief'),
     responsibilities: normalizeList(input['responsibilities'], 'responsibilities'),
     restrictions: normalizeList(input['restrictions'], 'restrictions'),
     tools: normalizeList(input['tools'], 'tools'),
@@ -280,7 +298,7 @@ export function normalizeAgentProfile(input: Record<string, unknown>): AgentProf
 /** Un perfil vacío pero válido. Es lo que ve el compilador de un alias sin perfil escrito. */
 export function emptyAgentProfile(tenantId: string, alias: string): AgentProfile {
   return {
-    tenant_id: tenantId, alias, purpose: null, role_summary: null,
+    tenant_id: tenantId, alias, purpose: null, role_summary: null, human_brief: null,
     responsibilities: [], restrictions: [], tools: [], operating_rules: []
   };
 }
@@ -373,7 +391,7 @@ export interface ContextoDeAlias {
  */
 
 /** Una viñeta Markdown por elemento, en el orden en que vino. */
-function vinetas(items: readonly string[]): string {
+export function vinetas(items: readonly string[]): string {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
@@ -385,7 +403,7 @@ function vinetas(items: readonly string[]): string {
  * sistema no sabe la respuesta, que es peor que no preguntar — la misma regla por la que el
  * adaptador omite `Tu rol:` cuando el brief es NULL, y la lección del SOUL.md de fábrica de `iza`.
  */
-function seccion(titulo: string, cuerpo: string | undefined): string | undefined {
+export function seccion(titulo: string, cuerpo: string | undefined): string | undefined {
   if (cuerpo === undefined || cuerpo.trim().length === 0) return undefined;
   return `## ${titulo}\n\n${cuerpo.trim()}`;
 }
@@ -397,7 +415,7 @@ function seccion(titulo: string, cuerpo: string | undefined): string | undefined
  * nadie lo escribió, y un agente que no sabe si puede hacer algo lo intenta. Decir «control: no»
  * cierra esa duda y cuesta cuatro palabras.
  */
-function lineasDePermisos(permisos: PermisosDelAlias): string {
+export function lineasDePermisos(permisos: PermisosDelAlias): string {
   const marca = (concedido: boolean): string => (concedido ? "sí" : "no");
   return [
     `- Rutear mensajes a otros alias: ${marca(permisos.ruta)}`,
@@ -407,7 +425,7 @@ function lineasDePermisos(permisos: PermisosDelAlias): string {
   ].join("\n");
 }
 
-function lineasDeCuotas(cuotas: readonly CuotaDelAlias[]): string | undefined {
+export function lineasDeCuotas(cuotas: readonly CuotaDelAlias[]): string | undefined {
   if (cuotas.length === 0) return undefined;
   return cuotas
     .map((cuota) => {
@@ -417,7 +435,7 @@ function lineasDeCuotas(cuotas: readonly CuotaDelAlias[]): string | undefined {
     .join("\n");
 }
 
-function lineasDeArnes(hechos: HechosDelAlias): string {
+export function lineasDeArnes(hechos: HechosDelAlias): string {
   const lineas = [`- Arnés: ${hechos.arnes.harness}`, `- HOME: ${hechos.arnes.home}`];
   if (hechos.arnes.contenedor !== undefined && hechos.arnes.contenedor.length > 0) {
     lineas.push(`- Contenedor: ${hechos.arnes.contenedor}`);
@@ -459,6 +477,10 @@ export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAl
   const secciones = [
     seccion("Identidad y propósito", perfil.purpose ?? undefined),
     seccion("Rol, responsabilidades y restricciones", rol),
+    // Va DESPUÉS del rol y antes de los permisos: primero quién sos y qué te toca, después con
+    // quién tratás, y sólo entonces la mecánica. `openclaw` lee esta cara en un fichero aparte
+    // —`USER.md`—, así que la sección tiene que existir por separado y no diluida dentro del rol.
+    seccion("Tu humano y cómo tratarlo", perfil.human_brief ?? undefined),
     // Los permisos SIEMPRE se emiten si el perfil tiene alguna otra cara: un alias sin permisos
     // declarados es un hecho, no una ausencia, y saberlo le evita intentar lo que no puede.
     seccion("Permisos y acceso vía Cauce", lineasDePermisos(hechos.permisos)),
@@ -477,7 +499,8 @@ export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAl
    * llamador omite la línea `Tu rol:` igual que hoy omite un `role_brief` NULL.
    */
   const hayAutorado =
-    perfil.purpose !== null || perfil.role_summary !== null ||
+    (perfil.purpose ?? null) !== null || (perfil.role_summary ?? null) !== null ||
+    (perfil.human_brief ?? null) !== null ||
     perfil.responsibilities.length > 0 || perfil.restrictions.length > 0 ||
     perfil.tools.length > 0 || perfil.operating_rules.length > 0;
   if (!hayAutorado) return "";
