@@ -249,3 +249,39 @@ recomendación.
   La pantalla en sí, no.
 - **No leí ni un valor de variable de entorno ni de credencial** en todo esto: sólo nombres.
 - **No probé la escritura** porque no existe.
+
+---
+
+## 9. Addendum 2026-08-25: por qué codex no ejecutaba nada, y qué se arregló
+
+Al arrancar `codex --yolo` a mano contestaba **`self_alias no está en esta tabla`** y no hacía nada.
+Parecía que los subagentes estaban rotos. **No lo estaban.**
+
+`~/.codex/AGENTS.md` ordenaba: *«Si `self_alias` no está en esta tabla, respondé diciendo
+exactamente eso y no ejecutes nada»*. `self_alias` sólo existe dentro del `TRUSTED DELIVERY
+CONTEXT` de una entrega del bus — **arrancado por una persona no hay entrega, así que no hay
+`self_alias`, y nunca lo va a haber.** El fichero daba por supuesto que codex sólo corre como
+agente de Cauce y se auto-bloqueaba en el único modo en el que un humano lo usa.
+
+Arreglado partiendo la sección 0 en dos: **con** `TRUSTED DELIVERY CONTEXT` = agente del bus, se
+busca en la tabla; **sin** él = hay un humano al teclado, se le contesta y no aplican las reglas del
+bus (`reply`/`messages`, plazos de ACK). Respaldo: `~/.codex/AGENTS.md.bak-zeus-interactivo-*`.
+
+**`~/.codex` es un bind compartido** (`/datos/agents/shared/.codex`): esto lo arregla para los cinco
+alias codex a la vez.
+
+Además, en el mismo arranque:
+
+- **`atlassian` tumbaba el arranque de MCP** (`MCP startup incomplete (failed: atlassian)`) por no
+  tener login. Apagado. Ahora no queda ningún servidor encendido sin autenticar.
+- **Tres subagentes apuntaban a Ollama**, dado de baja el 2026-07-24. `local-offloader` (su única
+  herramienta era `delegar_a_local`) se retiró a `agents/.retirados-zeus-20260825/`;
+  `external-offloader` y `quota-router` se limpiaron. **El propio AGENTS.md ya declaraba Ollama
+  prohibido: el documento estaba al día y los `.toml` no.**
+
+Subagentes que quedan, todos con proveedor vivo: `adversarial-reviewer`, `external-offloader`,
+`gemini-offloader`, `integrator`, `minimax-offloader`, `quota-router`, `workflow-runner`.
+
+**No lo probé ejecutando codex**, con esas palabras: Steven tenía una sesión interactiva abierta y
+un `codex exec` mío refresca el mismo `auth.json` que esa sesión tiene en memoria. La prueba la
+corre él en su propia sesión.
