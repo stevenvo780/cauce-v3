@@ -69,6 +69,39 @@ del host + el python de dentro); tres es el huérfano.
 - No se comprobó que una terminal siga abriéndose desde la UI tras subir el relay. El clamp está
   probado en la suite, no en la pantalla.
 
+## Segunda vuelta del 2026-08-25: eran SIETE, no cinco
+
+Con los cinco de arriba desplegados el modal seguía mintiendo: decía *«el servidor miró y no hay
+ningún CLAUDE.md en ningún nivel»* junto a *«contenedor sin identificar»*. **Nunca miró.** El fichero
+de zeus existe y pesa 10.733 bytes.
+
+| # | Eslabón | Qué le pasaba |
+|---|---|---|
+| 6 | hechos del alias | `terminal/plugin.ts` construía su `MeasuredFactsSource` como `{ factsFor: async () => undefined }`. Sin hechos no hay `home`, sin `home` no hay ruta y sin ruta no hay nada que leer. Ahora sale del registro vivo de presencia (`terminal/hechos-del-registro.ts`). |
+| 7 | `home` en la presencia | El pty-agent **sabía** su `HOME` y no lo publicaba; y cuando empezó a publicarlo, **el relay lo tiraba**: `AgentLeg.presence()` compone su objeto campo a campo y `home` no estaba en la lista. Tres puntos: `AgentHello`, `parseAgentHello` y `presence()`. |
+
+En los tres sitios `home` es **opcional**: un pty-agent anterior conserva su saludo, su presencia y
+sus terminales, y sólo se queda sin lectura de directiva. Exigirlo habría dejado a la flota entera
+como `not_installed` en la consola durante el despliegue.
+
+## Lo que SIGUE pendiente: crear y escribir el fichero
+
+Steven lo pidió con estas palabras: *«faltaría botón para crear el archivo correspondiente para
+poder llenarlo»*, y que el perfil de cada agente viva en SUS ficheros (`CLAUDE.md`, `AGENTS.md`,
+`SOUL.md`…), dejando la Capa 1 sólo para lo que cambia entre turnos.
+
+**Hoy no existe ningún camino de escritura.** El pty-agent sólo anuncia `read_governance`; no hay
+`TAG_WRITE`, ni ruta en el relay, ni `PUT` en el gateway, ni botón en la consola. Lo que sí está
+escrito y sin conectar, en la rama `integracion/con-main-20260825`: `ficheros-del-arnes.ts` (compone
+el texto exacto de cada fichero por arnés), `siembra-del-perfil.ts` (el adaptador lo materializa en
+el disco de su contenedor, apagado tras `CAUCE_SEMBRAR_PERFIL=1`), `agent-profile.routes.ts` (sólo
+`GET`) y `PerfilTab.tsx`.
+
+El camino corto es simétrico al de lectura, y la validación de escritura puede reutilizar
+`_validate_read_path` casi entera — con una diferencia: al crear, `not_found` deja de ser un error y
+el directorio padre es lo que hay que contener. **La escritura tiene que ser en el sitio, no por
+`rename`**: el home del agente puede ser un bind-mount y un `rename` le cambia el dueño al fichero.
+
 ## Cómo se revierte, en este orden
 
 1. `rm /etc/cauce-v3/compose-overrides/directiva-20260825.yaml`
