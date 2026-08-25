@@ -83,8 +83,23 @@ describe('materialization across tenant rooms', () => {
     const published = await repository.publish(msg);
     const deliveryId = published.delivery_ids[0]!;
 
+    /*
+     * 🔴 EL LEASE FALTABA, y por eso estas dos pruebas llevaban en rojo.
+     *
+     * `claimDeliveries` exige un lease de conexión vivo con el MISMO `instance_id` y el MISMO
+     * `epoch`, y falla con «delivery claim rejected by lease fencing». Esta prueba reclamaba a
+     * pelo con `instance-1` y `epoch 1` inventados, así que sólo podía pasar en una base donde
+     * OTRA suite hubiera dejado un lease casualmente compatible — y `resetTestDatabase()` trunca
+     * `connection_leases`, así que ni eso.
+     *
+     * El `epoch` se toma del que devuelve `acquireLease` y no se escribe a mano por lo mismo:
+     * clavar un 1 vuelve a atar la prueba a un valor que el repositorio decide.
+     */
+    const lease = await repository.acquireLease('Isa', 'salva', 'instance-1', [], 30_000);
+    expect(lease.acquired).toBe(true);
+
     // Claim the delivery to salva (Isa)
-    const claimed = await repository.claimDeliveries('Isa', 'salva', 'instance-1', 1, 1, 30_000);
+    const claimed = await repository.claimDeliveries('Isa', 'salva', 'instance-1', lease.epoch!, 1, 30_000);
     expect(claimed).toHaveLength(1);
     expect(claimed[0]!.recipient_alias).toBe('salva');
 
@@ -148,8 +163,10 @@ describe('materialization across tenant rooms', () => {
     const published = await repository.publish(msg);
     const deliveryId = published.delivery_ids[0]!;
 
-    // Claim it
-    const claimed = await repository.claimDeliveries('Isa', 'salva', 'instance-1', 1, 1, 30_000);
+    // Claim it — con su lease, por lo mismo que la prueba de arriba.
+    const lease = await repository.acquireLease('Isa', 'salva', 'instance-1', [], 30_000);
+    expect(lease.acquired).toBe(true);
+    const claimed = await repository.claimDeliveries('Isa', 'salva', 'instance-1', lease.epoch!, 1, 30_000);
     expect(claimed).toHaveLength(1);
 
     // Disable salva's membership to simulate broken sandbox

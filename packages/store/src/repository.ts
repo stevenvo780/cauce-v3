@@ -5526,7 +5526,15 @@ export class CauceRepository {
     //
     // Va la PRIMERA de las tres porque es la que viene de fuera: fallar antes de tocar el pool es
     // lo que la prueba dice en su propio nombre («before touching PostgreSQL»).
-    positiveMs(staleMs, staleMs, 'stale timeout');
+    //
+    // Y admite el CERO, que no es lo mismo que positivo. `retryStaleDeliveries(0)` significa «todo
+    // lo que lleve un instante sin avanzar está vencido» y es como se barre la cola a mano y como
+    // lo piden las pruebas del reaper. Mi primer intento reusó `positiveMs`, que exige `> 0`, y
+    // puso en rojo siete pruebas que estaban en verde: el cero es una instrucción legítima, no un
+    // valor sin declarar.
+    if (!Number.isSafeInteger(staleMs) || staleMs < 0) {
+      throw new StoreError('conflict', 'stale timeout must be a non-negative integer of milliseconds');
+    }
     const defaultCapMs = positiveMs(policy.leaseCapMs, DEFAULT_DELIVERY_LEASE_CAP_MS, 'lease cap');
     const graceMs = positiveMs(
       policy.leaseCapGraceMs, DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, 'lease cap grace'
