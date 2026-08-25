@@ -1,11 +1,9 @@
 import {
-  clampToRoleBriefLimit, componerBloqueDePerfil,
+  clampToRoleBriefLimit, componerBloqueDePerfil, VERSION_CONTEXTO_FIJO,
   type AgentProfile, type ArnesDelAlias, type ContextoDeAlias, type CuotaDelAlias,
   type HechosDelAlias, type PermisosDelAlias,
 } from "@cauce/protocol";
-import {
-  bloqueEntreMarcas, conBloqueEntreMarcas, resumirContextoFijo, VERSION_CONTEXTO_FIJO,
-} from "../harnesses/contexto-fijo.js";
+import { resumirContextoFijo } from "../harnesses/contexto-fijo.js";
 
 /**
  * EL COMPILADOR DE CONTEXTO: perfil + hechos del arnés -> el texto que va al fichero.
@@ -167,27 +165,9 @@ export function proyeccionOpenclaw(alias: string, bloque: string): string {
  * porque las dos búsquedas son por subcadena y un solapamiento haría que escribir un bloque se
  * llevara por delante el otro.
  */
-export const VERSION_PERFIL = "1";
-export const MARCA_PERFIL_INICIO =
-  `<!-- CAUCE:PERFIL v${VERSION_PERFIL} — generado desde la configuración, no editar dentro de este bloque -->`;
-export const MARCA_PERFIL_FIN = "<!-- CAUCE:FIN-PERFIL -->";
-
-/**
- * Escribe el bloque del perfil conservando TODO lo de fuera byte a byte — incluido el bloque A y
- * lo que haya escrito una persona.
- *
- * Reusa la fusión de `contexto-fijo.ts` en vez de copiarla: la parte sutil (buscar la última
- * apertura con cierre detrás, para no destrozar una siembra cortada a medias) ya costó una prueba
- * descubrirla, y dos copias son dos sitios donde volver a equivocarse.
- */
-export function conBloqueDePerfil(textoOriginal: string, bloque: string): string {
-  return conBloqueEntreMarcas(textoOriginal, bloque, MARCA_PERFIL_INICIO, MARCA_PERFIL_FIN);
-}
-
-/** El bloque del perfil que hay en un fichero, sin las marcas, o `undefined` si no está. */
-export function bloqueDePerfil(texto: string): string | undefined {
-  return bloqueEntreMarcas(texto, MARCA_PERFIL_INICIO, MARCA_PERFIL_FIN);
-}
+export {
+  bloqueDePerfil, conBloqueDePerfil, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, VERSION_PERFIL,
+} from "@cauce/protocol";
 
 /**
  * El `role_brief` corto que viaja en el sobre, DERIVADO del perfil.

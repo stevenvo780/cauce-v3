@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { measureStrictestUnits, type AgentProfile } from "@cauce/protocol";
-import { MARCA_FIN, MARCA_INICIO } from "../src/harnesses/contexto-fijo.js";
-import { MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, type HechosDelAlias } from "../src/context/perfil-a-contexto.js";
+import { test } from "vitest";
+import { measureStrictestUnits, type AgentProfile, type HechosDelAlias } from "../src/agent-profile.js";
+import {
+  MARCA_FIN, MARCA_INICIO, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO,
+} from "../src/marcas-de-bloque.js";
 import {
   ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, TOPES_OPENCLAW, ficherosDelArnes, nombresDelArnes,
-} from "../src/context/ficheros-del-arnes.js";
+  type FicheroGenerado,
+} from "../src/ficheros-del-arnes.js";
 
 /**
  * EL GENERADOR DE FICHEROS POR ARNÉS: un perfil -> el contenido de cada fichero que el arnés lee.
@@ -67,21 +69,21 @@ function textoDe(ficheros: readonly { nombre: string; texto: string }[], nombre:
 
 test("claude recibe UN solo CLAUDE.md, y codex UN solo AGENTS.md", () => {
   const deClaude = ficherosDelArnes("claude", { perfil: perfil(), hechos: hechos() });
-  assert.deepEqual(deClaude.map((f) => f.nombre), ["CLAUDE.md"]);
+  assert.deepEqual(deClaude.map((f: FicheroGenerado) => f.nombre), ["CLAUDE.md"]);
 
   const deCodex = ficherosDelArnes("codex", { perfil: perfil(), hechos: hechos() });
-  assert.deepEqual(deCodex.map((f) => f.nombre), ["AGENTS.md"]);
+  assert.deepEqual(deCodex.map((f: FicheroGenerado) => f.nombre), ["AGENTS.md"]);
 });
 
 test("openclaw recibe los SIETE ficheros medidos, con esos nombres exactos", () => {
   const ficheros = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
   assert.deepEqual(
-    ficheros.map((f) => f.nombre),
+    ficheros.map((f: FicheroGenerado) => f.nombre),
     ["SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md", "HEARTBEAT.md", "AGENTS.md", "TOOLS.md"],
   );
   // La lista exportada y lo que se emite son la MISMA cosa: una prueba contra una copia suya se
   // quedaría verde el día que el generador dejara de emitir uno.
-  assert.deepEqual(ficheros.map((f) => f.nombre), [...FICHEROS_OPENCLAW]);
+  assert.deepEqual(ficheros.map((f: FicheroGenerado) => f.nombre), [...FICHEROS_OPENCLAW]);
   assert.deepEqual(nombresDelArnes("openclaw"), [...FICHEROS_OPENCLAW]);
 });
 
@@ -143,7 +145,7 @@ test("MEMORY y HEARTBEAT que YA existen se devuelven intactos byte a byte, y sin
     new Map([["MEMORY.md", memoriaViva], ["HEARTBEAT.md", latidoVivo]]),
   );
 
-  const memoria = ficheros.find((f) => f.nombre === "MEMORY.md");
+  const memoria = ficheros.find((f: FicheroGenerado) => f.nombre === "MEMORY.md");
   assert.ok(memoria);
   assert.equal(memoria.texto, memoriaViva, "MEMORY.md se modificó: es del agente, no nuestro");
   assert.equal(memoria.escribir, false, "no hay que reescribir un MEMORY.md que ya estaba");
@@ -152,7 +154,7 @@ test("MEMORY y HEARTBEAT que YA existen se devuelven intactos byte a byte, y sin
   // acaba el día que alguien le asigne una. Lo que protege el fichero es la política, no el empate.
   assert.equal(memoria.politica, "solo-si-falta");
 
-  const latido = ficheros.find((f) => f.nombre === "HEARTBEAT.md");
+  const latido = ficheros.find((f: FicheroGenerado) => f.nombre === "HEARTBEAT.md");
   assert.ok(latido);
   assert.equal(latido.texto, latidoVivo);
   assert.equal(latido.escribir, false);
@@ -167,7 +169,7 @@ test("CONTROL NEGATIVO: un MEMORY con marcas nuestras TAMPOCO se toca", () => {
     "openclaw", { perfil: perfil(), hechos: hechos() },
     new Map([["MEMORY.md", memoriaConMarcas]]),
   );
-  const memoria = ficheros.find((f) => f.nombre === "MEMORY.md");
+  const memoria = ficheros.find((f: FicheroGenerado) => f.nombre === "MEMORY.md");
   assert.ok(memoria);
   assert.equal(memoria.texto, memoriaConMarcas);
   assert.equal(memoria.escribir, false);
@@ -177,7 +179,7 @@ test("CONTROL NEGATIVO: un MEMORY con marcas nuestras TAMPOCO se toca", () => {
 test("MEMORY y HEARTBEAT que FALTAN se siembran vacíos, y se escriben", () => {
   const ficheros = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
   for (const nombre of ["MEMORY.md", "HEARTBEAT.md"]) {
-    const fichero = ficheros.find((f) => f.nombre === nombre);
+    const fichero = ficheros.find((f: FicheroGenerado) => f.nombre === nombre);
     assert.ok(fichero);
     assert.equal(fichero.escribir, true, `${nombre} falta: hay que crearlo`);
     assert.equal(fichero.politica, "solo-si-falta");
@@ -231,7 +233,7 @@ test("el bloque SELLADO del contrato no se toca: el generador sólo escribe el s
 test("mismo perfil y mismos hechos -> los MISMOS bytes", () => {
   const uno = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
   const otro = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
-  assert.deepEqual(uno.map((f) => f.texto), otro.map((f) => f.texto));
+  assert.deepEqual(uno.map((f: FicheroGenerado) => f.texto), otro.map((f: FicheroGenerado) => f.texto));
 });
 
 test("el ORDEN EN QUE SE CONSTRUYÓ el perfil no cambia un solo byte", () => {
@@ -246,8 +248,8 @@ test("el ORDEN EN QUE SE CONSTRUYÓ el perfil no cambia un solo byte", () => {
     human_brief: "H", role_summary: "R", purpose: "P", alias: "zeus", tenant_id: "Steven",
   } as AgentProfile;
   assert.deepEqual(
-    ficherosDelArnes("openclaw", { perfil: derecho, hechos: hechos() }).map((f) => f.texto),
-    ficherosDelArnes("openclaw", { perfil: alReves, hechos: hechos() }).map((f) => f.texto),
+    ficherosDelArnes("openclaw", { perfil: derecho, hechos: hechos() }).map((f: FicheroGenerado) => f.texto),
+    ficherosDelArnes("openclaw", { perfil: alReves, hechos: hechos() }).map((f: FicheroGenerado) => f.texto),
   );
 });
 
@@ -257,7 +259,7 @@ test("CONTROL NEGATIVO del determinismo: cambiar UN campo SÍ cambia los bytes",
   const movido = ficherosDelArnes("openclaw", {
     perfil: perfil({ purpose: "OTRO proposito distinto" }), hechos: hechos(),
   });
-  assert.notDeepEqual(base.map((f) => f.texto), movido.map((f) => f.texto));
+  assert.notDeepEqual(base.map((f: FicheroGenerado) => f.texto), movido.map((f: FicheroGenerado) => f.texto));
 });
 
 // ── LOS TOPES DE OPENCLAW ────────────────────────────────────────────────────────────────────

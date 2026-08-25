@@ -1,9 +1,5 @@
-import { measureStrictestUnits, type AgentProfile, type ContextoDeAlias, type HechosDelAlias } from "@cauce/protocol";
-import {
-  componerBloqueDePerfil, conBloqueDePerfil, lineasDeArnes, lineasDeCuotas, lineasDePermisos,
-  seccion, vinetas,
-} from "./perfil-a-contexto.js";
-
+import { componerBloqueDePerfil, lineasDeArnes, lineasDeCuotas, lineasDePermisos, measureStrictestUnits, seccion, vinetas, } from "./agent-profile.js";
+import { conBloqueDePerfil } from "./marcas-de-bloque.js";
 /**
  * EL GENERADOR DE FICHEROS POR ARNÉS: un perfil -> el contenido de CADA fichero que el arnés lee.
  *
@@ -40,9 +36,7 @@ import {
  * cosmética — cada byte que cambia solo es una reescritura en cada contenedor de la flota, y con
  * `openclaw` son siete ficheros por alias.
  */
-
 // ── Los topes que declara openclaw ───────────────────────────────────────────────────────────
-
 /**
  * Lo que `openclaw.json` declara: `bootstrapMaxChars` por fichero y `bootstrapTotalMaxChars` en
  * total. Se miden con `measureStrictestUnits`, que es la cuenta UTF-16 — la misma que hace
@@ -54,13 +48,11 @@ import {
  * que medir puntos de código dejaría pasar ficheros que no entran. La única cuenta que coincide
  * con la del arnés es la UTF-16.
  */
-export const TOPES_OPENCLAW = { porFichero: 60_000, total: 150_000 } as const;
-
+export const TOPES_OPENCLAW = { porFichero: 60_000, total: 150_000 };
 /** Los siete ficheros de openclaw, en el orden en que se emiten. Es el orden medido en la flota. */
 export const FICHEROS_OPENCLAW = [
-  "SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md", "HEARTBEAT.md", "AGENTS.md", "TOOLS.md",
-] as const;
-
+    "SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md", "HEARTBEAT.md", "AGENTS.md", "TOOLS.md",
+];
 /**
  * Un tope superado, con el fichero y los DOS números.
  *
@@ -70,48 +62,30 @@ export const FICHEROS_OPENCLAW = [
  * fichero y los dos números porque «no entra» sobre siete ficheros no le dice a nadie qué recortar.
  */
 export class ErrorDeTopeDelArnes extends Error {
-  constructor(
-    readonly fichero: string,
-    readonly medido: number,
-    readonly tope: number,
-  ) {
-    super(
-      fichero === "total"
-        ? `los ficheros del arnés suman ${medido} unidades y el tope total es ${tope}`
-        : `${fichero} mide ${medido} unidades y el tope por fichero es ${tope}`,
-    );
-    this.name = "ErrorDeTopeDelArnes";
-  }
+    fichero;
+    medido;
+    tope;
+    constructor(fichero, medido, tope) {
+        super(fichero === "total"
+            ? `los ficheros del arnés suman ${medido} unidades y el tope total es ${tope}`
+            : `${fichero} mide ${medido} unidades y el tope por fichero es ${tope}`);
+        this.fichero = fichero;
+        this.medido = medido;
+        this.tope = tope;
+        this.name = "ErrorDeTopeDelArnes";
+    }
 }
-
-// ── La forma de lo que se genera ─────────────────────────────────────────────────────────────
-
-/** Cómo se trata un fichero que ya está en el disco del contenedor. */
-export type PoliticaDeFichero =
-  /** Se fusiona nuestro bloque conservando byte a byte todo lo de fuera. */
-  | "bloque-gestionado"
-  /** Es del agente: si existe no se toca; si falta se crea vacío. */
-  | "solo-si-falta";
-
-export interface FicheroGenerado {
-  readonly nombre: string;
-  readonly politica: PoliticaDeFichero;
-  /** El contenido COMPLETO que tiene que quedar en el disco. */
-  readonly texto: string;
-  /** `false` cuando lo que hay en el disco ya es esto: no hay nada que escribir. */
-  readonly escribir: boolean;
-}
-
 /** Los nombres que le tocan a un arnés, sin generar nada. Un arnés desconocido no recibe ninguno. */
-export function nombresDelArnes(harness: string): readonly string[] {
-  if (harness === "claude") return ["CLAUDE.md"];
-  if (harness === "codex") return ["AGENTS.md"];
-  if (harness === "openclaw") return [...FICHEROS_OPENCLAW];
-  return [];
+export function nombresDelArnes(harness) {
+    if (harness === "claude")
+        return ["CLAUDE.md"];
+    if (harness === "codex")
+        return ["AGENTS.md"];
+    if (harness === "openclaw")
+        return [...FICHEROS_OPENCLAW];
+    return [];
 }
-
 // ── EL REPARTO ───────────────────────────────────────────────────────────────────────────────
-
 /**
  * Qué cara del perfil va en cada uno de los siete de openclaw.
  *
@@ -123,50 +97,43 @@ export function nombresDelArnes(harness: string): readonly string[] {
  * trabaja acá»: qué te deja hacer Cauce y contra qué estás montado. Las `cuotas` caen en
  * `TOOLS.md` porque son el límite de las herramientas, no una regla de convivencia.
  */
-function bloqueDeFichero(
-  nombre: string, perfil: AgentProfile, hechos: HechosDelAlias,
-): string {
-  if (nombre === "SOUL.md") {
-    return unir([seccion("Identidad y propósito", perfil.purpose ?? undefined)]);
-  }
-  if (nombre === "IDENTITY.md") {
-    return unir([seccion("Rol", perfil.role_summary ?? undefined)]);
-  }
-  if (nombre === "USER.md") {
-    return unir([seccion("Tu humano y cómo tratarlo", perfil.human_brief ?? undefined)]);
-  }
-  if (nombre === "AGENTS.md") {
-    return unir([
-      seccion("Responsabilidades",
-        perfil.responsibilities.length > 0 ? vinetas(perfil.responsibilities) : undefined),
-      seccion("Restricciones",
-        perfil.restrictions.length > 0 ? vinetas(perfil.restrictions) : undefined),
-      seccion("Instrucciones fijas de funcionamiento",
-        perfil.operating_rules.length > 0 ? vinetas(perfil.operating_rules) : undefined),
-      seccion("Permisos y acceso vía Cauce", lineasDePermisos(hechos.permisos)),
-      seccion("Configuración del arnés", lineasDeArnes(hechos)),
-    ]);
-  }
-  if (nombre === "TOOLS.md") {
-    return unir([
-      seccion("Herramientas y capacidades", unir([
-        perfil.tools.length > 0 ? vinetas(perfil.tools) : undefined,
-        hechos.arnes.capacidades.length > 0
-          ? `Capacidades del arnés: ${[...hechos.arnes.capacidades].join(", ")}`
-          : undefined,
-      ])),
-      seccion("Cuotas y límites", lineasDeCuotas(hechos.cuotas)),
-    ]);
-  }
-  // MEMORY.md y HEARTBEAT.md no reciben nada nuestro: son del agente.
-  return "";
+function bloqueDeFichero(nombre, perfil, hechos) {
+    if (nombre === "SOUL.md") {
+        return unir([seccion("Identidad y propósito", perfil.purpose ?? undefined)]);
+    }
+    if (nombre === "IDENTITY.md") {
+        return unir([seccion("Rol", perfil.role_summary ?? undefined)]);
+    }
+    if (nombre === "USER.md") {
+        return unir([seccion("Tu humano y cómo tratarlo", perfil.human_brief ?? undefined)]);
+    }
+    if (nombre === "AGENTS.md") {
+        return unir([
+            seccion("Responsabilidades", perfil.responsibilities.length > 0 ? vinetas(perfil.responsibilities) : undefined),
+            seccion("Restricciones", perfil.restrictions.length > 0 ? vinetas(perfil.restrictions) : undefined),
+            seccion("Instrucciones fijas de funcionamiento", perfil.operating_rules.length > 0 ? vinetas(perfil.operating_rules) : undefined),
+            seccion("Permisos y acceso vía Cauce", lineasDePermisos(hechos.permisos)),
+            seccion("Configuración del arnés", lineasDeArnes(hechos)),
+        ]);
+    }
+    if (nombre === "TOOLS.md") {
+        return unir([
+            seccion("Herramientas y capacidades", unir([
+                perfil.tools.length > 0 ? vinetas(perfil.tools) : undefined,
+                hechos.arnes.capacidades.length > 0
+                    ? `Capacidades del arnés: ${[...hechos.arnes.capacidades].join(", ")}`
+                    : undefined,
+            ])),
+            seccion("Cuotas y límites", lineasDeCuotas(hechos.cuotas)),
+        ]);
+    }
+    // MEMORY.md y HEARTBEAT.md no reciben nada nuestro: son del agente.
+    return "";
 }
-
-function unir(partes: readonly (string | undefined)[]): string {
-  return partes.filter((parte): parte is string => parte !== undefined && parte.trim().length > 0)
-    .join("\n\n");
+function unir(partes) {
+    return partes.filter((parte) => parte !== undefined && parte.trim().length > 0)
+        .join("\n\n");
 }
-
 /**
  * Los ficheros que le tocan a un arnés, ya fusionados contra lo que hay en el disco.
  *
@@ -179,59 +146,47 @@ function unir(partes: readonly (string | undefined)[]): string {
  * ninguna: siete ficheros de los que cuatro están al día y tres no se contradicen entre sí, y el
  * modelo no tiene forma de saber cuál creer.
  */
-export function ficherosDelArnes(
-  harness: string,
-  contexto: ContextoDeAlias,
-  existentes: ReadonlyMap<string, string> = new Map(),
-): readonly FicheroGenerado[] {
-  const nombres = nombresDelArnes(harness);
-  const generados: FicheroGenerado[] = [];
-
-  for (const nombre of nombres) {
-    const previo = existentes.get(nombre);
-
-    // MEMORY y HEARTBEAT: del agente. Si están, se devuelven TAL CUAL y no se escriben.
-    if (esDelAgente(harness, nombre)) {
-      generados.push({
-        nombre, politica: "solo-si-falta",
-        texto: previo ?? "",
-        escribir: previo === undefined,
-      });
-      continue;
+export function ficherosDelArnes(harness, contexto, existentes = new Map()) {
+    const nombres = nombresDelArnes(harness);
+    const generados = [];
+    for (const nombre of nombres) {
+        const previo = existentes.get(nombre);
+        // MEMORY y HEARTBEAT: del agente. Si están, se devuelven TAL CUAL y no se escriben.
+        if (esDelAgente(harness, nombre)) {
+            generados.push({
+                nombre, politica: "solo-si-falta",
+                texto: previo ?? "",
+                escribir: previo === undefined,
+            });
+            continue;
+        }
+        // El fichero único de claude/codex lleva el perfil ENTERO: ese arnés no tiene dónde repartirlo.
+        const bloque = harness === "openclaw"
+            ? bloqueDeFichero(nombre, contexto.perfil, contexto.hechos)
+            : componerBloqueDePerfil(contexto.perfil, contexto.hechos);
+        /*
+         * Sin bloque no se toca el fichero. Un encabezado sin nada debajo le enseña al agente que el
+         * sistema no sabe la respuesta, que es peor que no preguntar: es la lección de los cinco
+         * SOUL.md de fábrica de 1.806 bytes que llevan cinco alias sin que nadie los escribiera.
+         */
+        if (bloque.trim().length === 0) {
+            generados.push({
+                nombre, politica: "bloque-gestionado", texto: previo ?? "", escribir: false,
+            });
+            continue;
+        }
+        const texto = conBloqueDePerfil(previo ?? "", bloque);
+        generados.push({
+            nombre, politica: "bloque-gestionado", texto, escribir: texto !== previo,
+        });
     }
-
-    // El fichero único de claude/codex lleva el perfil ENTERO: ese arnés no tiene dónde repartirlo.
-    const bloque = harness === "openclaw"
-      ? bloqueDeFichero(nombre, contexto.perfil, contexto.hechos)
-      : componerBloqueDePerfil(contexto.perfil, contexto.hechos);
-
-    /*
-     * Sin bloque no se toca el fichero. Un encabezado sin nada debajo le enseña al agente que el
-     * sistema no sabe la respuesta, que es peor que no preguntar: es la lección de los cinco
-     * SOUL.md de fábrica de 1.806 bytes que llevan cinco alias sin que nadie los escribiera.
-     */
-    if (bloque.trim().length === 0) {
-      generados.push({
-        nombre, politica: "bloque-gestionado", texto: previo ?? "", escribir: false,
-      });
-      continue;
-    }
-
-    const texto = conBloqueDePerfil(previo ?? "", bloque);
-    generados.push({
-      nombre, politica: "bloque-gestionado", texto, escribir: texto !== previo,
-    });
-  }
-
-  comprobarTopes(harness, generados);
-  return generados;
+    comprobarTopes(harness, generados);
+    return generados;
 }
-
 /** `MEMORY.md` y `HEARTBEAT.md` de openclaw, y nada más. */
-function esDelAgente(harness: string, nombre: string): boolean {
-  return harness === "openclaw" && (nombre === "MEMORY.md" || nombre === "HEARTBEAT.md");
+function esDelAgente(harness, nombre) {
+    return harness === "openclaw" && (nombre === "MEMORY.md" || nombre === "HEARTBEAT.md");
 }
-
 /**
  * Los topes, comprobados sobre el texto FINAL —el que va a quedar en el disco—, no sobre el bloque.
  *
@@ -240,17 +195,19 @@ function esDelAgente(harness: string, nombre: string): boolean {
  * agente. Sólo se aplican a `openclaw`, que es el único arnés que declara topes; inventárselos a
  * `claude` sería ponerle un límite que su arnés no tiene.
  */
-function comprobarTopes(harness: string, ficheros: readonly FicheroGenerado[]): void {
-  if (harness !== "openclaw") return;
-  let total = 0;
-  for (const fichero of ficheros) {
-    const medido = measureStrictestUnits(fichero.texto);
-    if (medido > TOPES_OPENCLAW.porFichero) {
-      throw new ErrorDeTopeDelArnes(fichero.nombre, medido, TOPES_OPENCLAW.porFichero);
+function comprobarTopes(harness, ficheros) {
+    if (harness !== "openclaw")
+        return;
+    let total = 0;
+    for (const fichero of ficheros) {
+        const medido = measureStrictestUnits(fichero.texto);
+        if (medido > TOPES_OPENCLAW.porFichero) {
+            throw new ErrorDeTopeDelArnes(fichero.nombre, medido, TOPES_OPENCLAW.porFichero);
+        }
+        total += medido;
     }
-    total += medido;
-  }
-  if (total > TOPES_OPENCLAW.total) {
-    throw new ErrorDeTopeDelArnes("total", total, TOPES_OPENCLAW.total);
-  }
+    if (total > TOPES_OPENCLAW.total) {
+        throw new ErrorDeTopeDelArnes("total", total, TOPES_OPENCLAW.total);
+    }
 }
+//# sourceMappingURL=ficheros-del-arnes.js.map

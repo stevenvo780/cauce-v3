@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  bloqueGestionado as leerBloqueGestionado, conBloqueGestionado as fusionarBloqueGestionado,
+  VERSION_CONTEXTO_FIJO,
+} from "@cauce/protocol";
 
 /**
  * EL SELLO DEL CONTEXTO FIJO.
@@ -32,7 +36,6 @@ import { createHash } from "node:crypto";
  */
 
 /** Versión del contrato del bloque gestionado. Cambiarla invalida todos los sellos a la vez. */
-export const VERSION_CONTEXTO_FIJO = "1";
 
 /**
  * Las marcas del bloque gestionado dentro del fichero del arnés.
@@ -46,8 +49,6 @@ export const VERSION_CONTEXTO_FIJO = "1";
  * Van en comentario HTML porque en Markdown no se ven al leer, y `openclaw.json` no usa este
  * camino (ahí el bloque es un campo del JSON, ver `rutaDelContextoFijo`).
  */
-export const MARCA_INICIO = `<!-- CAUCE:CONTEXTO-FIJO v${VERSION_CONTEXTO_FIJO} — generado, no editar dentro de este bloque -->`;
-export const MARCA_FIN = "<!-- CAUCE:FIN-CONTEXTO-FIJO -->";
 
 export interface SelloDeContextoFijo {
   /** `VERSION_CONTEXTO_FIJO` con el que se escribió el fichero. */
@@ -150,90 +151,19 @@ export function rutaDelContextoFijo(
   return undefined;
 }
 
-/**
- * El bloque gestionado dentro del texto de un fichero, o `undefined` si no está.
+/*
+ * Las marcas y la fusión se MUDARON a `@cauce/protocol/marcas-de-bloque.ts`.
  *
- * Devuelve el contenido SIN las marcas: lo que se resume es el texto, no su envoltorio, para que
- * cambiar la redacción de una marca no invalide todos los sellos de la flota a la vez.
+ * Motivo: la consola tiene que enseñar EXACTAMENTE el fichero que va a quedar en el disco —con lo
+ * humano intacto alrededor— y el gateway no puede importar este paquete. Lo que queda acá es lo
+ * que de verdad necesita el contenedor: el sello (`node:crypto`) y la siembra (el disco).
+ *
+ * Se re-exportan para que nada de lo que ya las importaba desde aquí tenga que cambiar de sitio.
  */
-export function bloqueGestionado(texto: string): string | undefined {
-  return bloqueEntreMarcas(texto, MARCA_INICIO, MARCA_FIN);
-}
-
-/** El contenido entre CUALQUIER par de marcas, sin las marcas. Ver `conBloqueEntreMarcas`. */
-export function bloqueEntreMarcas(
-  texto: string, marcaInicio: string, marcaFin: string,
-): string | undefined {
-  const par = parDeMarcas(texto, marcaInicio, marcaFin);
-  if (!par) return undefined;
-  return texto.slice(par.desde, par.fin).trim();
-}
-
-/**
- * El par de marcas que delimita el bloque VIGENTE, o `undefined` si no hay ninguno cerrado.
- *
- * Busca la ÚLTIMA apertura que tenga cierre detrás, no la primera. La diferencia la destapó una
- * prueba: si una siembra se cortó a medias queda una apertura huérfana, y leer desde la primera
- * devolvía el texto roto MÁS la apertura siguiente MÁS el bloque nuevo — un «bloque» que no es
- * ninguno de los dos y cuyo resumen no coincidiría nunca con nada. Con la última, el fichero a
- * medio escribir queda como texto inerte y el bloque vigente se lee limpio.
- */
-function parDeMarcas(
-  texto: string, marcaInicio: string, marcaFin: string,
-): { inicio: number; desde: number; fin: number } | undefined {
-  let inicio = -1;
-  for (let busca = texto.indexOf(marcaInicio); busca !== -1; busca = texto.indexOf(marcaInicio, busca + 1)) {
-    if (texto.indexOf(marcaFin, busca + marcaInicio.length) !== -1) inicio = busca;
-  }
-  if (inicio === -1) return undefined;
-  const desde = inicio + marcaInicio.length;
-  const fin = texto.indexOf(marcaFin, desde);
-  if (fin === -1) return undefined;
-  return { inicio, desde, fin };
-}
-
-/**
- * Escribe el bloque gestionado dentro de un fichero, conservando lo de fuera BYTE A BYTE.
- *
- * Si no había bloque, lo añade al final separado por una línea en blanco: nunca al principio,
- * porque lo primero de un `CLAUDE.md` suele ser el título que escribió una persona.
- */
-export function conBloqueGestionado(textoOriginal: string, bloque: string): string {
-  return conBloqueEntreMarcas(textoOriginal, bloque, MARCA_INICIO, MARCA_FIN);
-}
-
-/**
- * La misma fusión, para CUALQUIER par de marcas.
- *
- * Existe porque el fichero del arnés lleva DOS bloques y no uno: el contrato sellado (estas
- * marcas) y el perfil del alias (las suyas, en `context/perfil-a-contexto.ts`). Están separados
- * porque el sello resume el contrato —que incluye `Tu rol:` con el `role_brief` de siempre, tope
- * 1.200 puntos de código— y el perfil rico admite 24.000: meter el perfil dentro del bloque
- * sellado haría que el sha del fichero no coincidiera NUNCA con el que calcula el adaptador, y el
- * recorte del sobre no se activaría jamás sin que apareciera un solo error.
- *
- * Se generaliza en vez de copiarse porque la parte sutil —buscar la ÚLTIMA apertura que tenga
- * cierre detrás, no la primera— ya costó una prueba descubrirla. Dos copias de esa lógica son dos
- * sitios donde volver a equivocarse; el segundo se arregla tarde y en silencio.
- */
-export function conBloqueEntreMarcas(
-  textoOriginal: string, bloque: string, marcaInicio: string, marcaFin: string,
-): string {
-  const nuevo = `${marcaInicio}\n${bloque.trim()}\n${marcaFin}`;
-  const par = parDeMarcas(textoOriginal, marcaInicio, marcaFin);
-  if (!par) {
-    /*
-     * No hay bloque cerrado. Puede que no haya nada, o que haya una apertura huérfana de una
-     * siembra cortada. En los dos casos se conserva TODO lo anterior y el bloque nuevo va detrás:
-     * adivinar dónde terminaba un bloque a medio escribir es exactamente cómo se borra texto
-     * ajeno, y ese texto puede ser el manual que escribió una persona.
-     */
-    const base = textoOriginal.trimEnd();
-    return base.length === 0 ? `${nuevo}\n` : `${base}\n\n${nuevo}\n`;
-  }
-  return textoOriginal.slice(0, par.inicio) + nuevo + textoOriginal.slice(par.fin + marcaFin.length);
-}
-
+export {
+  bloqueEntreMarcas, bloqueGestionado, conBloqueEntreMarcas, conBloqueGestionado,
+  MARCA_FIN, MARCA_INICIO, VERSION_CONTEXTO_FIJO,
+} from "@cauce/protocol";
 /**
  * El sello del fichero que hay AHORA en el disco, leído desde dentro del contenedor.
  *
@@ -264,7 +194,7 @@ export function selloDesdeElDisco(
   } catch {
     return undefined;
   }
-  const bloque = bloqueGestionado(texto);
+  const bloque = leerBloqueGestionado(texto);
   if (bloque === undefined) return undefined;
   return { version: VERSION_CONTEXTO_FIJO, sha256: resumirContextoFijo(bloque) };
 }
@@ -320,7 +250,7 @@ export function sembrarContextoFijo(
     original = "";
   }
 
-  const actual = bloqueGestionado(original);
+  const actual = leerBloqueGestionado(original);
   if (actual === textoFijo) return "ya-estaba";
   if (actual !== undefined && actual !== textoFijo) {
     /*
@@ -334,7 +264,7 @@ export function sembrarContextoFijo(
   }
 
   try {
-    io.escribir(ruta, conBloqueGestionado(original, textoFijo));
+    io.escribir(ruta, fusionarBloqueGestionado(original, textoFijo));
   } catch {
     return "no-se-pudo-escribir";
   }
