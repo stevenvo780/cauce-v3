@@ -81,6 +81,7 @@ export async function startTestDatabase(): Promise<TestDatabase> {
     try {
       await waitForDatabase(pool);
       await applyMigrations(pool);
+      await guardarSemillaDeCatalogo(pool);
       const container = { stop: async () => undefined } as unknown as StartedTestContainer;
       return { container, pool, url: externa };
     } catch (error) {
@@ -117,6 +118,7 @@ export async function startTestDatabase(): Promise<TestDatabase> {
     // address is routable on an existing shared Docker network.
     await waitForDatabase(pool);
     await applyMigrations(pool);
+    await guardarSemillaDeCatalogo(pool);
     return { container, pool, url };
   } catch (error) {
     await pool.end();
@@ -125,7 +127,67 @@ export async function startTestDatabase(): Promise<TestDatabase> {
   }
 }
 
+/**
+ * Las tablas de CATÁLOGO: el escenario que dejan las migraciones y del que parte toda suite.
+ *
+ * `resetTestDatabase()` nunca las truncó —y hacía bien, porque vaciarlas dejaría a cada suite sin
+ * inquilinos ni salas—. Pero tampoco las RESTAURABA, así que valían lo que hubiera dejado la
+ * última suite que corrió. Medido: la migración 003 siembra `operator(route,read,control)` y en
+ * una base compartida llegaba con los tres en falso; y el rol `agent_notify` **no lo crea ninguna
+ * migración** —sólo lo nombran los comentarios de la 009—, así que existía únicamente porque otra
+ * suite lo había insertado.
+ *
+ * La consecuencia no es teórica: el mismo código daba 6, 18 o 19 fallos según el orden de las
+ * suites. Con los resultados dependiendo de quién corrió antes, ninguna comparación con una línea
+ * base significa nada — y en este repo TODO el criterio de «esto ya fallaba» se apoya en esa
+ * comparación.
+ */
+const TABLAS_DE_CATALOGO = [
+  'role_policies',
+  'tenants',
+  'rooms',
+  'memberships',
+  'acl_edges',
+] as const;
+
+const ESQUEMA_SEMILLA = 'cauce_semilla';
+
+/**
+ * Guarda el catálogo tal y como lo dejaron las migraciones, para poder devolverlo después.
+ *
+ * Se hace una vez, justo tras migrar y antes de que ninguna suite toque nada. Es idempotente: si
+ * el esquema ya existe —base externa reutilizada— no se rehace, porque rehacerlo copiaría el
+ * estado YA contaminado y consagraría el defecto en vez de arreglarlo.
+ */
+export async function guardarSemillaDeCatalogo(pool: DatabasePool): Promise<void> {
+  const existe = await pool.query<{ hay: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS hay`,
+    [ESQUEMA_SEMILLA],
+  );
+  if (existe.rows[0]?.hay) return;
+  await pool.query(`CREATE SCHEMA ${ESQUEMA_SEMILLA}`);
+  for (const tabla of TABLAS_DE_CATALOGO) {
+    await pool.query(`CREATE TABLE ${ESQUEMA_SEMILLA}.${tabla} AS TABLE public.${tabla}`);
+  }
+}
+
+/** Devuelve el catálogo a como lo dejaron las migraciones. */
+async function restaurarCatalogo(pool: DatabasePool): Promise<void> {
+  const existe = await pool.query<{ hay: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS hay`,
+    [ESQUEMA_SEMILLA],
+  );
+  if (!existe.rows[0]?.hay) return;
+  // En orden inverso al de las dependencias: primero lo que apunta, después lo apuntado.
+  const alReves = [...TABLAS_DE_CATALOGO].reverse();
+  await pool.query(`TRUNCATE TABLE ${alReves.join(',')} CASCADE`);
+  for (const tabla of TABLAS_DE_CATALOGO) {
+    await pool.query(`INSERT INTO public.${tabla} SELECT * FROM ${ESQUEMA_SEMILLA}.${tabla}`);
+  }
+}
+
 export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
+  await restaurarCatalogo(pool);
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
       // agent_chain_progress has no foreign key by design, so CASCADE cannot reach it.
