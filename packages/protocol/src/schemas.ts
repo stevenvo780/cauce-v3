@@ -551,7 +551,26 @@ export const ChainPolicyConfigMutationSchema = z.object({
     // de desactivación gradual (deja de plegar sin borrar el histórico ya acumulado), distinto
     // de failure_coalesce_enabled=false, que apaga la maquinaria entera.
     failure_coalesce_enabled: z.boolean().optional(),
-    failure_coalesce_window_seconds: z.number().int().min(0).max(86_400).optional()
+    failure_coalesce_window_seconds: z.number().int().min(0).max(86_400).optional(),
+    /*
+     * LOS CINCO TOPES DE LA MIGRACIÓN 019, que el servidor ya APLICA y la consola no podía tocar.
+     *
+     * `repository.ts` los lee y corta delegaciones con ellos; su única vía de cambio era un
+     * `UPDATE` crudo contra la base —la propia 019 lo documenta como el apagado de emergencia—,
+     * o sea sin revisión, sin mutación inversa que alcance el botón de deshacer, sin asiento en
+     * `audit_events` y sin quién lo hizo.
+     *
+     * LOS RANGOS SON LOS DEL CHECK DE POSTGRES, copiados uno a uno: fanout 1-100, repeticiones de
+     * arista 1-1000, delegaciones por raíz 1-10000. Que coincidan es lo que hace que un valor
+     * fuera de rango se rechace con un mensaje que nombra el campo, en vez de estallar como un
+     * error de restricción a mitad de la transacción. En un desacuerdo MANDA EL SQL: la columna es
+     * la que no se puede mover sin migración.
+     */
+    delegation_caps_enabled: z.boolean().optional(),
+    max_fanout_per_turn: z.number().int().min(1).max(100).optional(),
+    max_edge_repeats_per_root: z.number().int().min(1).max(1_000).optional(),
+    max_delegations_per_root: z.number().int().min(1).max(10_000).optional(),
+    human_gate_enabled: z.boolean().optional()
   }).strict().optional()
 }).strict();
 

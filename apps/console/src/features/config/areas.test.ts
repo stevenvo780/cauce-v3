@@ -121,25 +121,32 @@ it('«Agentes y cuentas» ya no promete decir con qué programa corre cada bot',
 });
 
 /**
- * **El defecto ESPEJO: campos que sí tienen efecto y esta pantalla no deja ni ver.**
+ * **El defecto ESPEJO, y su cierre.**
  *
  * La auditoría de campos inertes encontró de paso su contrario. `agent_chain_policies` tiene cinco
- * columnas más que la migración 019 añadió —`delegation_caps_enabled`, `max_fanout_per_turn`,
+ * columnas que la migración 019 añadió —`delegation_caps_enabled`, `max_fanout_per_turn`,
  * `max_edge_repeats_per_root`, `max_delegations_per_root`, `human_gate_enabled`—, las lee
- * `loadChainPolicy()` (packages/store/src/repository.ts:3068) y gobiernan de verdad el abanico de
- * delegaciones y la compuerta humana (:3314, :3503). Pero no están en
- * `ChainPolicyConfigMutationSchema` (packages/protocol/src/schemas.ts:544) ni en el `SELECT` del
- * snapshot (packages/store/src/configuration.ts:185), así que la consola ni las edita ni las
- * muestra: un operador que mire esta pestaña creerá que ahí está toda la política de cadena.
+ * `loadChainPolicy()` en `packages/store/src/repository.ts` y gobiernan de verdad el abanico de
+ * delegaciones y la compuerta humana. Y no estaban ni en el esquema de la mutación ni en el
+ * `SELECT` del snapshot: la consola ni las editaba ni las mostraba, y su única vía de cambio era
+ * un `UPDATE` crudo contra la base.
  *
- * Cerrar el hueco es otra entrega —toca protocolo y store—. Lo que NO puede esperar es decirlo:
- * callar un tope que gobierna la flota es la misma mentira que enseñar un campo que no gobierna
- * nada, con el signo cambiado.
+ * Esta prueba exigía la CONFESIÓN («no se ven ni se editan»), que era lo correcto mientras el
+ * hueco existía. El 2026-08-25 se cerró —viajan en el snapshot, entran por la mutación con los
+ * rangos del propio CHECK, y su inversa las repone—, así que ahora exige lo contrario: que la
+ * pantalla diga que están AQUÍ.
+ *
+ * La afirmación de fondo no cambia y por eso el bloque se conserva: callar un tope que gobierna la
+ * flota es la misma mentira que enseñar un campo que no gobierna nada, con el signo cambiado.
+ * `tests/unit/topes-de-delegacion-editables.test.ts` es quien mide que de verdad se pueden tocar;
+ * ésta sólo mide que la pantalla no mienta sobre ello.
  */
-it('«Avisos y cadena» declara los topes de delegación que el servidor aplica y esta pantalla no muestra', () => {
+it('«Avisos y cadena» dice que los topes de delegación se editan ACÁ, ya no que no se pueden tocar', () => {
   const avisos = CONFIG_AREAS.find((area) => area.id === 'avisos');
   expect(avisos?.detalle).toMatch(/topes de delegación|delegación/i);
-  expect(avisos?.detalle).toMatch(/no se (ven|editan)|ni se ven ni se editan/i);
+  // La confesión ya no puede estar: sería una pantalla mintiendo en la dirección contraria.
+  expect(avisos?.detalle).not.toMatch(/no se (ven|editan)|ni se ven ni se editan|sólo se cambian por SQL/i);
+  expect(avisos?.detalle).toMatch(/compuerta humana/i);
   // CONTROL NEGATIVO: no se perdió lo que la pestaña ya explicaba y sigue siendo cierto.
   expect(avisos?.detalle).toMatch(/aviso proactivo/i);
 });

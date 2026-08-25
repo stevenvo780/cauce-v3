@@ -91,19 +91,21 @@ export const CONFIG_AREAS: readonly ConfigArea[] = [
     label: 'Avisos y cadena',
     descripcion: 'Qué ve un bot de la cadena que él disparó y a qué humanos puede escribirle.',
     /*
-     * La segunda mitad es el defecto ESPEJO del que persigue este cambio, y hay que decirlo aunque
-     * todavía no se pueda arreglar acá: `agent_chain_policies` tiene cinco columnas más (migración
-     * 019) que el servidor SÍ aplica —`loadChainPolicy`, packages/store/src/repository.ts:3068, y
-     * su uso en :3314 y :3503— y que ni el esquema de mutación
-     * (packages/protocol/src/schemas.ts:544) ni el `SELECT` del snapshot
-     * (packages/store/src/configuration.ts:185) incluyen. Callar un tope que gobierna la flota es
-     * la misma mentira que enseñar un campo que no gobierna nada, con el signo cambiado.
+     * ARREGLADO el 2026-08-25. Este comentario decía que `agent_chain_policies` tenía cinco
+     * columnas más (migración 019) que el servidor SÍ aplica —`loadChainPolicy`,
+     * packages/store/src/repository.ts— y que ni el esquema de mutación ni el `SELECT` del
+     * snapshot incluían: o sea cinco topes que gobiernan la flota entera y sólo se podían tocar
+     * con un `UPDATE` a mano, sin revisión, sin inversa y sin quién lo hizo.
+     *
+     * Ahora viajan en el snapshot, entran por la mutación con los rangos del propio CHECK de
+     * Postgres, y su inversa los repone. Se deja escrito porque callar un tope que gobierna la
+     * flota es la misma mentira que enseñar un campo que no gobierna nada, con el signo cambiado —
+     * y esa simetría es la que hay que seguir vigilando.
      */
     detalle: 'Un aviso proactivo es un mensaje que nadie pidió: por eso cada destino declara a qué '
-      + 'conversación va, cada cuánto y cuántas veces por día. OJO: el servidor aplica además cinco '
-      + 'topes de delegación y la compuerta humana (abanico por turno 6, repeticiones de arista 3, '
-      + 'delegaciones por raíz 64) que ni se ven ni se editan desde acá — el protocolo todavía no '
-      + 'los expone. Hoy sólo se cambian por SQL.',
+      + 'conversación va, cada cuánto y cuántas veces por día. Acá están también los cinco topes de '
+      + 'delegación que el servidor aplica de verdad —abanico por turno, repeticiones de arista, '
+      + 'delegaciones por raíz— y la compuerta humana. Se deshacen desde Historial como todo lo demás.',
   },
   {
     id: 'historial',

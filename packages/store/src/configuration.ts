@@ -206,8 +206,19 @@ export class ConfigurationRepository {
            ORDER BY tenant_id,alias,handle`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
+          /*
+           * Los cinco topes de la migración 019 van en el snapshot porque el servidor LOS APLICA
+           * —`repository.ts` los lee y corta delegaciones con ellos— y la consola no podía ni
+           * verlos. Un tope que gobierna la producción y no aparece en ninguna pantalla sólo se
+           * puede tocar con un `UPDATE` a mano: sin revisión, sin inversa y sin quién lo hizo.
+           *
+           * La 019 documenta en un comentario el apagado de emergencia como un `UPDATE` crudo
+           * contra la base. Eso es lo que estas columnas vienen a dejar de necesitar.
+           */
           `SELECT id,progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled,
-                  failure_coalesce_enabled,failure_coalesce_window_seconds,updated_at
+                  failure_coalesce_enabled,failure_coalesce_window_seconds,
+                  delegation_caps_enabled,max_fanout_per_turn,max_edge_repeats_per_root,
+                  max_delegations_per_root,human_gate_enabled,updated_at
            FROM agent_chain_policies ORDER BY id`
         ),
         this.pool.query<Record<string, unknown>>(
@@ -458,9 +469,18 @@ export class ConfigurationRepository {
     const selected = await client.query<{
       progress_relay_enabled: boolean; progress_relay_max_events: number; cycle_cut_enabled: boolean;
       failure_coalesce_enabled: boolean; failure_coalesce_window_seconds: number;
+      delegation_caps_enabled: boolean; max_fanout_per_turn: number;
+      max_edge_repeats_per_root: number; max_delegations_per_root: number;
+      human_gate_enabled: boolean;
     }>(
+      // Los cinco topes van en este SELECT o el DESHACER los borra: `oldValue` es literalmente el
+      // cuerpo de la mutación inversa, así que una columna que no se lea aquí vuelve como ausente
+      // y el `update` de deshacer la deja en su valor por defecto. Deshacer un cambio de umbral y
+      // que se muevan OTROS cuatro es peor que no tener el botón.
       `SELECT progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled,
-              failure_coalesce_enabled,failure_coalesce_window_seconds
+              failure_coalesce_enabled,failure_coalesce_window_seconds,
+              delegation_caps_enabled,max_fanout_per_turn,max_edge_repeats_per_root,
+              max_delegations_per_root,human_gate_enabled
        FROM agent_chain_policies WHERE id=$1 FOR UPDATE`, [mutation.id]
     );
     const old = selected.rows[0];
@@ -476,15 +496,29 @@ export class ConfigurationRepository {
       failure_coalesce_enabled: has(value, 'failure_coalesce_enabled')
         ? value.failure_coalesce_enabled as boolean : old.failure_coalesce_enabled,
       failure_coalesce_window_seconds: has(value, 'failure_coalesce_window_seconds')
-        ? value.failure_coalesce_window_seconds as number : old.failure_coalesce_window_seconds
+        ? value.failure_coalesce_window_seconds as number : old.failure_coalesce_window_seconds,
+      delegation_caps_enabled: has(value, 'delegation_caps_enabled')
+        ? value.delegation_caps_enabled as boolean : old.delegation_caps_enabled,
+      max_fanout_per_turn: has(value, 'max_fanout_per_turn')
+        ? value.max_fanout_per_turn as number : old.max_fanout_per_turn,
+      max_edge_repeats_per_root: has(value, 'max_edge_repeats_per_root')
+        ? value.max_edge_repeats_per_root as number : old.max_edge_repeats_per_root,
+      max_delegations_per_root: has(value, 'max_delegations_per_root')
+        ? value.max_delegations_per_root as number : old.max_delegations_per_root,
+      human_gate_enabled: has(value, 'human_gate_enabled')
+        ? value.human_gate_enabled as boolean : old.human_gate_enabled
     };
     await client.query(
       `UPDATE agent_chain_policies
        SET progress_relay_enabled=$2,progress_relay_max_events=$3,cycle_cut_enabled=$4,
-           failure_coalesce_enabled=$5,failure_coalesce_window_seconds=$6,updated_at=now()
+           failure_coalesce_enabled=$5,failure_coalesce_window_seconds=$6,
+           delegation_caps_enabled=$7,max_fanout_per_turn=$8,max_edge_repeats_per_root=$9,
+           max_delegations_per_root=$10,human_gate_enabled=$11,updated_at=now()
        WHERE id=$1`,
       [mutation.id, next.progress_relay_enabled, next.progress_relay_max_events,
-        next.cycle_cut_enabled, next.failure_coalesce_enabled, next.failure_coalesce_window_seconds]
+        next.cycle_cut_enabled, next.failure_coalesce_enabled, next.failure_coalesce_window_seconds,
+        next.delegation_caps_enabled, next.max_fanout_per_turn, next.max_edge_repeats_per_root,
+        next.max_delegations_per_root, next.human_gate_enabled]
     );
     return {
       inverse: {
@@ -494,7 +528,12 @@ export class ConfigurationRepository {
           progress_relay_max_events: old.progress_relay_max_events,
           cycle_cut_enabled: old.cycle_cut_enabled,
           failure_coalesce_enabled: old.failure_coalesce_enabled,
-          failure_coalesce_window_seconds: old.failure_coalesce_window_seconds
+          failure_coalesce_window_seconds: old.failure_coalesce_window_seconds,
+          delegation_caps_enabled: old.delegation_caps_enabled,
+          max_fanout_per_turn: old.max_fanout_per_turn,
+          max_edge_repeats_per_root: old.max_edge_repeats_per_root,
+          max_delegations_per_root: old.max_delegations_per_root,
+          human_gate_enabled: old.human_gate_enabled
         }
       },
       summary: `update chain policy ${mutation.id}`

@@ -49,7 +49,15 @@ export const handlers = [
       { role: 'agent', allow_route: true, allow_read: true, allow_control: false, allow_notify: false },
       { role: 'observer', allow_route: false, allow_read: true, allow_control: false, allow_notify: false }
     ],
-    chain_policies: [{ id: 'default', progress_relay_enabled: true, progress_relay_max_events: 8, cycle_cut_enabled: true }],
+    chain_policies: [{
+      id: 'default', progress_relay_enabled: true, progress_relay_max_events: 8,
+      cycle_cut_enabled: true, failure_coalesce_enabled: true, failure_coalesce_window_seconds: 900,
+      // Los cinco topes de la 019, con los valores por defecto que declara la migración: el
+      // simulador tiene que traer las MISMAS columnas que el servidor o la pantalla se
+      // desarrolla contra una forma que en producción no existe.
+      delegation_caps_enabled: true, max_fanout_per_turn: 6, max_edge_repeats_per_root: 3,
+      max_delegations_per_root: 64, human_gate_enabled: true,
+    }],
     egress_destinations: [{
       tenant_id: 'Miguel', alias: 'janus', handle: 'steven_dm', adapter: 'telegram', channel: 'telegram',
       conversation_kind: 'dm', allow_kinds: ['task_complete'], require_prior_contact: true, enabled: true
