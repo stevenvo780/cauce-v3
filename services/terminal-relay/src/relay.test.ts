@@ -572,6 +572,9 @@ describe('terminal relay circuit', () => {
     expect(agent.helloAck).toEqual({ ok: true });
     await waitFor(() => harness.leg.lookup('Steven', 'jarvis') !== undefined);
     expect(harness.leg.presence()[0]).toMatchObject({ alias: 'jarvis', container_id: 'claw', runtime_user: 'claw' });
+    // Un agente que no manda `home` conserva su presencia entera: sin esto, exigirlo lo dejaría
+    // fuera de la consola en cuanto se desplegara el relay antes que el agente.
+    expect(harness.leg.presence()[0]?.home).toBeUndefined();
     // Presence is announced on connect, not only on the next tick: the console must not show an
     // agent that is up as "no PTY agent" for ten seconds.
     expect(harness.presenceChanges.count).toBe(1);
@@ -792,5 +795,38 @@ describe('terminal relay circuit', () => {
     await waitFor(() => second.helloAck !== undefined);
     await waitFor(() => harness.leg.presence().length === 1);
     expect(harness.leg.presence()[0]).toMatchObject({ generation: '9f21a70b4c5d6e7f8091a2b3c4d5e6f7' });
+  });
+
+  // El eslabón que faltaba el 2026-08-25: el pty-agent empezó a publicar `home` y el relay lo
+  // TIRABA al componer la presencia, así que el gateway seguía sin saber dónde mirar y el modal
+  // decía «contenedor sin identificar». La lectura funcionaba; lo que no llegaba era la ruta.
+  it('propaga el home del agente hasta la presencia que publica al gateway', async () => {
+    const harness = await startHarness();
+    const agent = await FakePtyAgent.connect(harness.agentPort, {
+      cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
+    }, {
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
+      runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell'],
+      home: '/home/claw'
+    });
+    await waitFor(() => agent.helloAck !== undefined);
+    expect(agent.helloAck).toEqual({ ok: true });
+    await waitFor(() => harness.leg.presence().length === 1);
+    expect(harness.leg.presence()[0]?.home).toBe('/home/claw');
+  });
+
+  it('un home que no es ruta absoluta no invalida el saludo: el alias conserva sus terminales', async () => {
+    const harness = await startHarness();
+    const agent = await FakePtyAgent.connect(harness.agentPort, {
+      cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
+    }, {
+      v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
+      runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', agent_version: '0.1.0', modes: ['shell'],
+      home: 'home/claw'
+    });
+    await waitFor(() => agent.helloAck !== undefined);
+    expect(agent.helloAck).toEqual({ ok: true });
+    await waitFor(() => harness.leg.presence().length === 1);
+    expect(harness.leg.presence()[0]?.home).toBeUndefined();
   });
 });

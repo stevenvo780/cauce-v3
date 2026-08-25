@@ -38,6 +38,12 @@ export interface AgentHello {
   readonly runtime_user: string;
   readonly runtime_uid: number;
   readonly harness: string;
+  /**
+   * `HOME` del proceso del arnés dentro del contenedor. OPCIONAL: un pty-agent anterior a
+   * 2026-08-25 no lo manda, y exigirlo le rechazaría el saludo —dejándolo sin terminales— por un
+   * campo que sólo hace falta para leer su directiva.
+   */
+  readonly home?: string;
   readonly agent_version: string;
   readonly modes: readonly TerminalMode[];
   /**
@@ -183,10 +189,25 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
     runtime_user: runtimeUser,
     runtime_uid: runtimeUid,
     harness,
+    // Opcional y validado sólo si viene: si el agente lo manda tiene que ser una ruta absoluta;
+    // si no lo manda, el saludo sigue siendo válido y el alias conserva sus terminales.
+    ...(rutaDelHome(source) === undefined ? {} : { home: rutaDelHome(source) as string }),
     agent_version: agentVersion,
     modes,
     features: featuresField(source)
   };
+}
+
+/**
+ * `home` del saludo. Devuelve `undefined` tanto si no viene como si viene mal: no invalida el
+ * saludo entero, porque un agente sin `home` sigue sirviendo terminales — sólo se queda sin
+ * lectura de directiva, y el gateway lo dice con esas palabras.
+ */
+function rutaDelHome(source: Record<string, unknown>): string | undefined {
+  const valor = source.home;
+  if (typeof valor !== 'string') return undefined;
+  if (!valor.startsWith('/') || valor.includes('\0') || valor.length > 4096) return undefined;
+  return valor;
 }
 
 /** One live agent socket. Frame routing to sessions lives here so the leg stays a registry. */
@@ -241,6 +262,9 @@ export class AgentConnection {
       runtime_user: this.hello.runtime_user,
       runtime_uid: this.hello.runtime_uid,
       harness: this.hello.harness,
+      // Se propaga sólo si vino. El gateway lo necesita para componer la ruta del fichero de
+      // gobierno; sin él contesta «contenedor sin identificar» en vez de adivinar una ruta.
+      ...(this.hello.home === undefined ? {} : { home: this.hello.home }),
       agent_version: this.hello.agent_version,
       modes: this.hello.modes,
       connected_since: this.connectedAt.toISOString()

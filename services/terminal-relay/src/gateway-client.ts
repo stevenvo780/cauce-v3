@@ -52,6 +52,8 @@ export interface AgentPresence {
   readonly runtime_user: string;
   readonly runtime_uid: number;
   readonly harness: string;
+  /** `HOME` del arnés. Opcional: un pty-agent anterior a 2026-08-25 no lo publica. */
+  readonly home?: string;
   readonly agent_version: string;
   readonly modes: readonly TerminalMode[];
   /** Field name is the gateway's: `parseAgentPresence` rejects the record without it. */
