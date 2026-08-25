@@ -23,6 +23,7 @@ import {
   type AuthProvider, type Principal
 } from './auth.js';
 import { registerAgentDocumentRoutes } from './console/agent-documents.routes.js';
+import { SondaCompartida, sondaDiferida } from './console/sonda-compartida.js';
 import { registerAgentProfileRoutes } from './console/agent-profile.routes.js';
 import { createConsoleSecurityHook } from './console-security.js';
 import {
@@ -774,6 +775,14 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   // manda el perfil una vez por conexión. Dos instancias sobre el mismo pool serían dos cachés y
   // dos sitios donde divergir.
   const agentProfiles = new AgentProfileRepository(options.pool);
+
+  /*
+   * El hueco donde el plano de terminal deja su sonda. Se decora sobre ESTA instancia de Fastify y
+   * no vive como estado de módulo a propósito: los tests montan varios gateways en el mismo
+   * proceso y compartirían la sonda del último en arrancar.
+   */
+  const sondaDeDocumentos = new SondaCompartida();
+  app.decorate('sondaDeDocumentos', sondaDeDocumentos);
   {
     const perfiles = agentProfiles;
     const autorizarPerfil = async (request: unknown): Promise<{ tenant_id: Tenant; alias: string }> => {
@@ -788,24 +797,17 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     registerAgentDocumentRoutes(app, {
       authorize: autorizarPerfil,
       /*
-       * Sin pty-agent que mida el entorno del proceso no hay hechos MEDIDOS, y la ruta lo dice con
-       * esas palabras: contesta con las rutas DEDUCIDAS del registro y un aviso que empieza por
-       * «no medidas», y con `editable:false` en todas. Deducir en silencio sería peor que no
-       * contestar — el 23-ago-2026 el registro se equivocaba de arnés en 5 de los 14 alias.
+       * La sonda se resuelve en CADA petición a través del hueco, no se captura acá.
        *
-       * Los otros dos métodos de la sonda no se alcanzan nunca sin hechos medidos: el manejador
-       * corta antes. Lanzan, en vez de devolver vacío, para que si algún día alguien los alcanza
-       * el fallo se vea aquí y no se confunda con «el fichero está vacío».
+       * La que de verdad lee el disco del contenedor la construye el plano de terminal, que en
+       * `main.ts` se registra DESPUÉS de `buildGateway`: cuando estas rutas se montan, todavía no
+       * existe. Capturarla acá guardaría para siempre la degradada, y el despliegue posterior del
+       * plano no cambiaría nada — sin un error, además. Ver `console/sonda-compartida.ts`.
+       *
+       * Mientras nadie instale una, la degradada contesta «no medido» y «no hay canal» con esas
+       * palabras, que es lo que la pantalla ya sabe pintar.
        */
-      probe: {
-        factsFor: async () => undefined,
-        readGovernanceDocument: async () => {
-          throw new Error('no hay canal medido hasta el contenedor del alias');
-        },
-        listMemoryDirectory: async () => {
-          throw new Error('no hay canal medido hasta el contenedor del alias');
-        }
-      },
+      probe: sondaDiferida(sondaDeDocumentos),
       lookupAgent: async (alias, tenantId, actorAlias) => {
         const fila = await repository.getAgent(alias, tenantId as Tenant, actorAlias);
         if (fila === undefined) return undefined;

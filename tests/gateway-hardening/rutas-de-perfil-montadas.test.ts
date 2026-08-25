@@ -99,6 +99,20 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
     expect(res.statusCode).toBe(404);
   });
 
+  it('sin plano de terminal, el contenido dice que NO HAY CANAL en vez de lanzar un 500', async () => {
+    /*
+     * Este gateway se monta sin `registerTerminalControlPlane`, así que nadie instaló la sonda que
+     * lee el disco del contenedor. La degradada contesta «no hay canal hasta el disco» —503— en
+     * lugar de lanzar: un throw se vería como «internal error» y el operador no podría accionarlo.
+     *
+     * Como además no hay hechos medidos, el manejador corta antes con el 409. Lo que se afirma acá
+     * es que en NINGUNA de las dos ausencias sale un 500.
+     */
+    const app = await gatewayDeOperador();
+    const res = await app.inject({ method: 'GET', url: '/v3/console/agents/zeus/documents/directive/content' });
+    expect(res.statusCode).toBeLessThan(500);
+  });
+
   it('el contenido de un documento contesta «no medido» y NO 404, que dicen cosas distintas', async () => {
     /*
      * Es la distinción por la que existe todo esto. Un 404 le dice a la consola «este gateway no

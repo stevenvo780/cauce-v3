@@ -557,12 +557,21 @@ export async function registerTerminalControlPlane(
   // Encapsulado en su propio ámbito para poder darle un manejador de errores: la ruta de directiva
   // no atrapa nada por dentro, así que sin esto un `AuthError` saldría como 500 y un operador sin
   // sesión vería «error interno» en vez de «no estás autenticado».
+  const sondaReal = new TerminalRelayFactsProbe(measuredFacts, relayGovernance);
+
+  /*
+   * SE INSTALA LA SONDA EN EL HUECO que `app.ts` dejó, para que las rutas de documentos —montadas
+   * antes que este plugin, con el resto de `/v3/console`— dejen de contestar «no hay canal».
+   *
+   * `app.sondaDeDocumentos` es opcional a propósito: los tests montan este plugin sobre instancias
+   * de Fastify que no pasaron por `buildGateway`, y ahí no hay hueco que rellenar. No tenerlo no
+   * es un fallo, es que ese gateway no sirve la consola.
+   */
+  app.sondaDeDocumentos?.instalar(sondaReal);
+
   await app.register(async (scope) => {
     scope.setErrorHandler((error, _request, reply) => { replyError(reply, error); });
-    registerAgentDirectiveRoutes(scope, {
-      authorize: authorizeDirective,
-      probe: new TerminalRelayFactsProbe(measuredFacts, relayGovernance)
-    });
+    registerAgentDirectiveRoutes(scope, { authorize: authorizeDirective, probe: sondaReal });
   });
 
   /* ------------------------------------------------------------------ */

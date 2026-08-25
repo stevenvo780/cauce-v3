@@ -115,9 +115,16 @@ describe('el reparto de openclaw pone cada cara donde toca', () => {
   });
 
   it('los permisos DENEGADOS se nombran igual que los concedidos', async () => {
-    // Nombrar sólo lo concedido deja al agente adivinando si lo que falta es que no lo tiene o que
-    // nadie lo escribió, y un agente que no sabe si puede hacer algo lo intenta.
-    abierto = await servidor(contexto({ purpose: 'x' }, 'openclaw'));
+    /*
+     * Nombrar sólo lo concedido deja al agente adivinando si lo que falta es que no lo tiene o que
+     * nadie lo escribió, y un agente que no sabe si puede hacer algo lo intenta.
+     *
+     * El perfil lleva una responsabilidad a propósito: desde que `AGENTS.md` no se emite con SÓLO
+     * mecánica dentro —permisos y configuración del arnés son hechos, y solos no son una persona—,
+     * un perfil que sólo declare `purpose` deja ese fichero vacío. La mecánica ACOMPAÑA a lo
+     * autorado; es lo que mide `ficheros-que-no-mienten.test.ts`.
+     */
+    abierto = await servidor(contexto({ purpose: 'x', responsibilities: ['reparar Cauce'] }, 'openclaw'));
     const ficheros: Array<{ nombre: string; texto: string }> = (await abierto.inject({
       method: 'GET', url: '/v3/console/agents/zeus/perfil'
     })).json().ficheros;
