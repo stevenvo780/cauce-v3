@@ -38,10 +38,29 @@ import type { RelayOrigin } from "../src/sdk/types.js";
  * todavía paga en cada turno de cada alias. El tope de abajo vigila el código de esta rama —que
  * es el que se puede romper desde aquí—, no el de producción.
  */
-/** El andamiaje fijo medido HOY en esta rama: 7.694. El tope deja 106 de margen, no 1.700. */
-const TOPE_ANDAMIAJE_FIJO = 7_800;
-/** Sobre completo de hoy con un rol al tope y 13 destinos. */
-const TOPE_SOBRE_COMPLETO = 10_300;
+/*
+ * SUBIDO EL 2026-08-25 AL FUSIONAR `main`, y así es como se supone que funciona esto.
+ *
+ * Los topes eran 7.800 / 10.300 sobre un andamiaje medido de 7.694. La fusión con `main` los pasó:
+ * 7.867 y 10.309. La prueba hizo exactamente su trabajo — cazó un crecimiento del sobre que nadie
+ * habría notado— y el mensaje pide lo que hay que hacer: subir el tope EN EL MISMO COMMIT y
+ * explicar por qué ese texto tiene que ir en cada turno.
+ *
+ * QUÉ CRECIÓ Y POR QUÉ SE ACEPTA: `e49b718` («un mensaje al remitente ya no se lleva puesto el
+ * turno entero») alargó la invariante de `reply` con la frase que le dice al agente qué pasa
+ * cuando apunta a `sender_alias`: que se descarta, se le informa dentro de su propia respuesta y
+ * ya NO le cuesta el turno. Son 173 caracteres que corrigen una conducta que costaba turnos
+ * enteros, y tienen que ir en el sobre porque describen lo que el bus hace con ESTA entrega — no
+ * son identidad del alias, que es lo que va al fichero del arnés.
+ *
+ * Los números nuevos son los MEDIDOS, no redondeados hacia arriba «por si acaso»: 7.867 -> tope
+ * 7.900 (33 de margen) y 10.309 -> tope 10.400. Un margen holgado convertiría esta prueba en
+ * decoración, que es justo lo contrario de para lo que está.
+ */
+/** El andamiaje fijo medido HOY en esta rama: 7.867. El tope deja 33 de margen, no 1.700. */
+const TOPE_ANDAMIAJE_FIJO = 7_900;
+/** Sobre completo de hoy con un rol al tope y 13 destinos: 10.309 medidos. */
+const TOPE_SOBRE_COMPLETO = 10_400;
 
 function contextoReal(overrides: Partial<HarnessRequestContext> = {}): HarnessRequestContext {
   return {
