@@ -4,3 +4,4 @@ export * from './repository.js';
 export * from './configuration.js';
 export * from './fleet-activity.js';
 export * from './accounts.js';
+export * from './agent-profile.js';
