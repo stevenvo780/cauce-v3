@@ -354,3 +354,134 @@ export interface ContextoDeAlias {
   readonly perfil: AgentProfile;
   readonly hechos: HechosDelAlias;
 }
+
+/**
+ * ── LA COMPOSICIÓN: perfil + hechos -> el texto del bloque ──────────────────────────────────
+ *
+ * Vive acá, y no en `@cauce/adapter-sdk`, por la MISMA razón que los tipos de arriba: la producen
+ * y la consumen capas que no se pueden importar entre sí. El adaptador la usa para sembrar el
+ * fichero del contenedor; el gateway la necesita para enseñarle al operador una VISTA PREVIA de
+ * lo que se va a escribir antes de que se escriba. `@cauce/protocol` es la única que las dos ven.
+ *
+ * Que la vista previa y la siembra salgan de la MISMA función no es comodidad: es la única forma
+ * de que la previsualización no mienta. Dos implementaciones del mismo texto divergen a la primera
+ * corrección, y el operador aprobaría un bloque distinto del que acaba en el disco — sin que nada
+ * diera error, porque cada una por su lado estaría bien.
+ *
+ * `@cauce/adapter-sdk` la RE-EXPORTA desde `context/perfil-a-contexto.ts`, así que nada de lo que
+ * ya la importaba cambia de sitio.
+ */
+
+/** Una viñeta Markdown por elemento, en el orden en que vino. */
+function vinetas(items: readonly string[]): string {
+  return items.map((item) => `- ${item}`).join("\n");
+}
+
+/**
+ * Una sección con su encabezado, o `undefined` si no hay cuerpo.
+ *
+ * Devolver `undefined` y no una cadena vacía es lo que hace que la sección desaparezca entera en
+ * vez de dejar un encabezado hueco. Un encabezado sin nada debajo le enseña al agente que el
+ * sistema no sabe la respuesta, que es peor que no preguntar — la misma regla por la que el
+ * adaptador omite `Tu rol:` cuando el brief es NULL, y la lección del SOUL.md de fábrica de `iza`.
+ */
+function seccion(titulo: string, cuerpo: string | undefined): string | undefined {
+  if (cuerpo === undefined || cuerpo.trim().length === 0) return undefined;
+  return `## ${titulo}\n\n${cuerpo.trim()}`;
+}
+
+/**
+ * Los permisos se dicen por su EFECTO y los denegados se nombran igual que los concedidos.
+ *
+ * Nombrar sólo lo concedido deja al agente adivinando si lo que falta es que no lo tiene o que
+ * nadie lo escribió, y un agente que no sabe si puede hacer algo lo intenta. Decir «control: no»
+ * cierra esa duda y cuesta cuatro palabras.
+ */
+function lineasDePermisos(permisos: PermisosDelAlias): string {
+  const marca = (concedido: boolean): string => (concedido ? "sí" : "no");
+  return [
+    `- Rutear mensajes a otros alias: ${marca(permisos.ruta)}`,
+    `- Leer el estado de la flota: ${marca(permisos.lectura)}`,
+    `- Cambiar configuración (control): ${marca(permisos.control)}`,
+    `- Avisar a un humano por notify: ${marca(permisos.notificacion)}`,
+  ].join("\n");
+}
+
+function lineasDeCuotas(cuotas: readonly CuotaDelAlias[]): string | undefined {
+  if (cuotas.length === 0) return undefined;
+  return cuotas
+    .map((cuota) => {
+      const limite = cuota.limite === undefined ? "" : ` — ${cuota.limite}`;
+      return `- ${cuota.proveedor} / ${cuota.cuenta}${limite}`;
+    })
+    .join("\n");
+}
+
+function lineasDeArnes(hechos: HechosDelAlias): string {
+  const lineas = [`- Arnés: ${hechos.arnes.harness}`, `- HOME: ${hechos.arnes.home}`];
+  if (hechos.arnes.contenedor !== undefined && hechos.arnes.contenedor.length > 0) {
+    lineas.push(`- Contenedor: ${hechos.arnes.contenedor}`);
+  }
+  if (hechos.destinos.length > 0) {
+    lineas.push(`- Alias alcanzables: ${[...hechos.destinos].join(", ")}`);
+  }
+  return lineas.join("\n");
+}
+
+/**
+ * EL ORDEN DE LAS SECCIONES ES FIJO Y ESTÁ DECLARADO ACÁ.
+ *
+ * De arriba abajo: quién sos -> qué te toca -> qué podés -> con qué contás -> cómo está montado ->
+ * cómo se funciona. Es el mismo criterio de lectura que `protocolPrompt`: el agente lee primero su
+ * identidad y sólo al final la mecánica.
+ *
+ * Está escrito como una lista y no como concatenación suelta para que el determinismo sea
+ * estructural: cambiar el orden exige cambiar esta lista, no puede pasar por accidente.
+ */
+export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAlias): string {
+  const rol = [
+    perfil.role_summary ?? undefined,
+    perfil.responsibilities.length > 0
+      ? `Responsabilidades:\n${vinetas(perfil.responsibilities)}`
+      : undefined,
+    perfil.restrictions.length > 0
+      ? `Restricciones:\n${vinetas(perfil.restrictions)}`
+      : undefined,
+  ].filter((parte): parte is string => parte !== undefined).join("\n\n");
+
+  const herramientas = [
+    perfil.tools.length > 0 ? vinetas(perfil.tools) : undefined,
+    hechos.arnes.capacidades.length > 0
+      ? `Capacidades del arnés: ${[...hechos.arnes.capacidades].join(", ")}`
+      : undefined,
+  ].filter((parte): parte is string => parte !== undefined).join("\n\n");
+
+  const secciones = [
+    seccion("Identidad y propósito", perfil.purpose ?? undefined),
+    seccion("Rol, responsabilidades y restricciones", rol),
+    // Los permisos SIEMPRE se emiten si el perfil tiene alguna otra cara: un alias sin permisos
+    // declarados es un hecho, no una ausencia, y saberlo le evita intentar lo que no puede.
+    seccion("Permisos y acceso vía Cauce", lineasDePermisos(hechos.permisos)),
+    seccion("Cuotas y límites", lineasDeCuotas(hechos.cuotas)),
+    seccion("Herramientas y capacidades", herramientas),
+    seccion("Configuración del arnés", lineasDeArnes(hechos)),
+    seccion("Instrucciones fijas de funcionamiento",
+      perfil.operating_rules.length > 0 ? vinetas(perfil.operating_rules) : undefined),
+  ].filter((parte): parte is string => parte !== undefined);
+
+  /*
+   * Un perfil ENTERAMENTE vacío produce texto vacío, no un esqueleto de encabezados. Los permisos
+   * y la configuración del arnés son hechos que siempre existen, así que sin este corte un alias
+   * sin nada escrito recibiría un fichero que sólo le dice en qué contenedor corre — ruido con
+   * forma de contrato. `componerRolDelPerfil` devolviendo "" es la señal de «no hay perfil», y el
+   * llamador omite la línea `Tu rol:` igual que hoy omite un `role_brief` NULL.
+   */
+  const hayAutorado =
+    perfil.purpose !== null || perfil.role_summary !== null ||
+    perfil.responsibilities.length > 0 || perfil.restrictions.length > 0 ||
+    perfil.tools.length > 0 || perfil.operating_rules.length > 0;
+  if (!hayAutorado) return "";
+
+  return secciones.join("\n\n");
+}
+

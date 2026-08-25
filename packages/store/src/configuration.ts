@@ -1,5 +1,7 @@
-import { countCodePoints, ROLE_BRIEF_MAX_CODE_POINTS } from '@cauce/protocol';
-import type { ConfigMutation, Tenant } from '@cauce/protocol';
+import {
+  AgentProfileError, countCodePoints, normalizeAgentProfile, ROLE_BRIEF_MAX_CODE_POINTS
+} from '@cauce/protocol';
+import type { AgentProfile, ConfigMutation, Tenant } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 
@@ -95,6 +97,28 @@ function valueRequired(mutation: ValuedConfigMutation): Record<string, unknown> 
   return mutation.value;
 }
 
+/**
+ * Valida el perfil arrastrando el NOMBRE DEL CAMPO hasta la pantalla.
+ *
+ * `AgentProfileError` lleva `field` justamente para que la consola sepa qué caja pintar en rojo.
+ * Si se dejara subir tal cual, `transaction()` lo pasaría por `databaseError()` y saldría como un
+ * 500 opaco; traducido a `invalid_input` el gateway lo manda como 422 con el mensaje entero, que
+ * ya nombra el campo y dice cuántos caracteres se enviaron.
+ *
+ * El CHECK de la migración 026 sigue siendo la última palabra —esto no lo reemplaza—, pero un
+ * `23514` sólo nombra el constraint, y sobre un formulario de seis cajas eso no es una respuesta.
+ */
+function normalizeAgentProfileOrInvalidInput(input: Record<string, unknown>): AgentProfile {
+  try {
+    return normalizeAgentProfile(input);
+  } catch (error) {
+    if (error instanceof AgentProfileError) {
+      throw new ConfigurationError('invalid_input', `${error.field}: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
 function databaseError(error: unknown): never {
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
   if (['23503', '23505', '23514', '23P01'].includes(code)) {
@@ -147,7 +171,7 @@ export class ConfigurationRepository {
     const scope = hub ? null : actorTenant;
     const [
       revision, tenants, rooms, memberships, edges, harnesses, policies, destinations, chainPolicies,
-      agents, providerAccounts, routingCeiling, agentAccountBindings, revisions
+      agents, providerAccounts, routingCeiling, agentAccountBindings, revisions, agentProfiles
     ] = await Promise.all([
         this.pool.query<{ revision: string }>('SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions'),
         this.pool.query<Record<string, unknown>>(
@@ -233,6 +257,16 @@ export class ConfigurationRepository {
           `SELECT id::text,actor_tenant,actor_alias,operation,summary,rolled_back_revision_id::text,created_at
            FROM config_revisions WHERE $1::text IS NULL OR actor_tenant=$1
            ORDER BY config_revisions.id DESC LIMIT 100`, [scope]
+        ),
+        this.pool.query<Record<string, unknown>>(
+          // El perfil viaja en el snapshot por la MISMA razón que `role_brief`: es lo que la
+          // consola EDITA. Sin él la pantalla enseñaría seis cajas vacías, y como la mutación
+          // fusiona sobre lo que hay en la base, el primer guardado escribiría esos seis vacíos
+          // encima del perfil que el alias ya tenía.
+          `SELECT tenant_id,alias,purpose,role_summary,responsibilities,restrictions,tools,
+                  operating_rules,created_at,updated_at
+           FROM agent_profiles WHERE $1::text IS NULL OR tenant_id=$1
+           ORDER BY tenant_id,alias`, [scope]
         )
     ]);
     return {
@@ -243,6 +277,7 @@ export class ConfigurationRepository {
       egress_destinations: destinations.rows,
       agents: agents.rows, provider_accounts: providerAccounts.rows,
       alias_routing_ceiling: routingCeiling.rows, agent_account_bindings: agentAccountBindings.rows,
+      agent_profiles: agentProfiles.rows,
       revisions: revisions.rows
     };
   }
@@ -370,6 +405,13 @@ export class ConfigurationRepository {
     // agent_account_binding) are absent from this list on purpose: lending a subscription is a
     // decision about somebody else's money, so it stays hub-only by the default-deny fall-through
     // below rather than by a rule a future edit could soften.
+    //
+    // `agent_profile` TAMPOCO está en la lista, y por una razón propia que conviene dejar escrita
+    // porque es el error natural: tiene `tenant_id`, así que la simetría con `room`/`membership`
+    // invita a añadirlo «porque es del inquilino». No. El perfil es lo que el agente LEE EN CADA
+    // TURNO: quien lo escribe decide qué cree ese agente sobre lo que puede y no puede hacer. Eso
+    // es la misma clase de decisión que el registro, no la misma que una sala. Se queda en la
+    // caída por defecto de abajo, hub-only, y hay una prueba con su control negativo que lo mide.
     if (mutation.resource === 'room' || mutation.resource === 'membership'
       || mutation.resource === 'egress_destination') {
       if (mutation.tenant_id === actorTenant) return;
@@ -403,6 +445,7 @@ export class ConfigurationRepository {
     if (mutation.resource === 'chain_policy') return this.chainPolicy(client, mutation);
     if (mutation.resource === 'egress_destination') return this.destination(client, mutation);
     if (mutation.resource === 'agent') return this.agent(client, mutation);
+    if (mutation.resource === 'agent_profile') return this.agentProfile(client, mutation);
     if (mutation.resource === 'provider_account') return this.providerAccount(client, mutation);
     if (mutation.resource === 'alias_routing_ceiling') return this.routingCeiling(client, mutation);
     if (mutation.resource === 'agent_account_binding') return this.agentAccountBinding(client, mutation);
@@ -871,6 +914,135 @@ export class ConfigurationRepository {
     return {
       inverse: { resource: 'agent', action: 'update', tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue },
       summary: `update agent ${key}`
+    };
+  }
+
+  /**
+   * EL PERFIL AUTORADO de un alias (tabla `agent_profiles`, migración 026).
+   *
+   * Sigue el molde de `agent()` porque las razones son las mismas, y una de ellas cuesta cara:
+   *
+   *  - `SELECT` de TODAS las columnas y `FOR UPDATE`. `oldValue` es lo ÚNICO de lo que sale la
+   *    mutación inversa, así que una columna que no se lee queda irrecuperable tras un rollback.
+   *    Y sin `FOR UPDATE`, dos operadores que guarden a la vez leen el mismo «antes» y el segundo
+   *    fabrica una inversa que restauraría un estado que nunca existió.
+   *  - La inversa lleva el perfil ENTERO, no el campo tocado. Deshacer un cambio de identidad
+   *    tiene que devolver la identidad completa.
+   *  - Un campo AUSENTE se conserva (`has(value, campo) ? … : old.campo`). Sin eso, editar sólo
+   *    `purpose` desde la pantalla borraría las cuatro listas, y el operador vería «guardado»
+   *    sobre un perfil que acaba de perder lo que no estaba mirando.
+   *
+   * LA VALIDACIÓN LA HACE `normalizeAgentProfile()` Y NO EL CHECK DE POSTGRES. El CHECK está y es
+   * la última palabra, pero llega como `23514` — un código que sólo nombra el constraint. La
+   * pantalla necesita saber QUÉ CAJA pintar en rojo, y eso sólo lo sabe la función que midió. Por
+   * eso el `AgentProfileError` se traduce a `invalid_input` (422) arrastrando el nombre del campo,
+   * en vez de dejar que suba un 500 opaco.
+   *
+   * Se valida el perfil FUSIONADO, no lo que mandó el operador: el presupuesto TOTAL es del perfil
+   * completo, y un `tools` nuevo que no entra sólo se puede detectar sumándolo a lo que ya había.
+   */
+  private async agentProfile(
+    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'agent_profile' }>
+  ): Promise<{ inverse: ConfigMutation; summary: string }> {
+    const key = `${mutation.tenant_id}/${mutation.alias}`;
+    const selected = await client.query<{
+      purpose: string | null; role_summary: string | null;
+      responsibilities: string[] | null; restrictions: string[] | null;
+      tools: string[] | null; operating_rules: string[] | null;
+    }>(
+      `SELECT purpose,role_summary,responsibilities,restrictions,tools,operating_rules
+       FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
+      [mutation.tenant_id, mutation.alias]
+    );
+    const old = selected.rows[0];
+    /*
+     * `oldValue` es la forma que viaja en la inversa. Las listas se normalizan a `[]` acá y no en
+     * el sitio de uso: la columna es NOT NULL DEFAULT '{}', pero un driver puede devolver `null`
+     * para un array vacío según cómo se haya escrito, y una inversa con `null` donde va una lista
+     * la rechazaría el esquema al deshacer — un rollback que falla en el momento en que hace falta.
+     */
+    const oldValue = old === undefined ? undefined : {
+      purpose: old.purpose,
+      role_summary: old.role_summary,
+      responsibilities: old.responsibilities ?? [],
+      restrictions: old.restrictions ?? [],
+      tools: old.tools ?? [],
+      operating_rules: old.operating_rules ?? []
+    };
+
+    if (mutation.action === 'delete') {
+      // «No hay» NO es «hecho». Contestar éxito sobre un alias sin perfil le enseña al operador
+      // que borró algo, que es el defecto que la consola ya arregló y no puede volver por acá.
+      if (oldValue === undefined) throw new ConfigurationError('not_found', 'agent profile was not found');
+      await client.query(
+        'DELETE FROM agent_profiles WHERE tenant_id=$1 AND alias=$2',
+        [mutation.tenant_id, mutation.alias]
+      );
+      return {
+        inverse: {
+          resource: 'agent_profile', action: 'create',
+          tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue
+        },
+        summary: `delete agent profile ${key}`
+      };
+    }
+    if (mutation.action === 'create' && oldValue !== undefined) {
+      throw new ConfigurationError('conflict', 'agent profile already exists');
+    }
+
+    const value = valueRequired(mutation);
+    const base = oldValue ?? {
+      purpose: null, role_summary: null,
+      responsibilities: [], restrictions: [], tools: [], operating_rules: []
+    };
+    const fusionado = {
+      tenant_id: mutation.tenant_id,
+      alias: mutation.alias,
+      purpose: has(value, 'purpose') ? value.purpose : base.purpose,
+      role_summary: has(value, 'role_summary') ? value.role_summary : base.role_summary,
+      responsibilities: has(value, 'responsibilities') ? value.responsibilities : base.responsibilities,
+      restrictions: has(value, 'restrictions') ? value.restrictions : base.restrictions,
+      tools: has(value, 'tools') ? value.tools : base.tools,
+      operating_rules: has(value, 'operating_rules') ? value.operating_rules : base.operating_rules
+    };
+    const perfil = normalizeAgentProfileOrInvalidInput(fusionado);
+
+    await client.query(
+      `INSERT INTO agent_profiles
+         (tenant_id,alias,purpose,role_summary,responsibilities,restrictions,tools,operating_rules)
+       VALUES($1,$2,$3,$4,$5::text[],$6::text[],$7::text[],$8::text[])
+       ON CONFLICT (tenant_id,alias) DO UPDATE SET
+         purpose=EXCLUDED.purpose,
+         role_summary=EXCLUDED.role_summary,
+         responsibilities=EXCLUDED.responsibilities,
+         restrictions=EXCLUDED.restrictions,
+         tools=EXCLUDED.tools,
+         operating_rules=EXCLUDED.operating_rules,
+         updated_at=now()`,
+      [
+        perfil.tenant_id, perfil.alias, perfil.purpose, perfil.role_summary,
+        [...perfil.responsibilities], [...perfil.restrictions],
+        [...perfil.tools], [...perfil.operating_rules]
+      ]
+    );
+
+    /*
+     * Un alta se deshace BORRANDO, y una edición reponiendo lo de antes. Si el alta se deshiciera
+     * con un `update` al perfil vacío quedaría una fila con todo en NULL, que NO es lo mismo que no
+     * tener perfil: el compilador distingue «no declarado» de «declarado vacío», y una fila
+     * fantasma le haría emitir un bloque donde no debería haber ninguno.
+     */
+    return {
+      inverse: oldValue === undefined
+        ? {
+          resource: 'agent_profile', action: 'delete',
+          tenant_id: mutation.tenant_id, alias: mutation.alias
+        }
+        : {
+          resource: 'agent_profile', action: 'update',
+          tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue
+        },
+      summary: `${mutation.action} agent profile ${key}`
     };
   }
 
