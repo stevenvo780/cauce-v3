@@ -247,6 +247,10 @@ describe('release build clean RC and registry evidence', () => {
     const dockerfile = await readFile(join(repository, 'deploy/Dockerfile'), 'utf8');
     expect(dockerfile).not.toMatch(/^\s*COPY\b.*--chmod=/mu);
     expect(dockerfile).toContain('RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge');
-    expect(dockerfile).toContain('RUN chmod 0644 /etc/nginx/conf.d/default.conf');
+    expect(dockerfile).toContain(
+      'FROM console-base AS console\nUSER root\n'
+      + 'COPY deploy/nginx-console-tls.conf /etc/nginx/conf.d/default.conf\n'
+      + 'RUN chmod 0644 /etc/nginx/conf.d/default.conf\nUSER 101\n',
+    );
   });
 });
