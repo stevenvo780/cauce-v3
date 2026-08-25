@@ -109,3 +109,60 @@ el directorio padre es lo que hay que contener. **La escritura tiene que ser en 
 3. Girar el symlink: `ln -sfn …/releases/ops-pty-20260822T175800Z …/ops` y reiniciar los units con
    la secuencia stop→matar dentro→start
 4. `gateway-client.{crt,key}` puede quedarse: no lo usa nadie más.
+
+---
+
+## Anexo 2026-08-25: los adjuntos de la flota — `bus-v3-20260825-adjuntos`
+
+Queja de Miguel: «janus me sigue enviando los archivos de una manera que no me sirve». Medido:
+janus emitía **cero `artifacts`** y escribía rutas en el texto (`MEDIA:/home/claw/...`,
+`ws-humanizar:/workspace/...`).
+
+**No era culpa del agente, y hay tres capas:**
+
+1. **`MEDIA:` lo inyecta OpenClaw**, no el agente: `buildAssistantOutputDirectivesSection()` de
+   `/usr/lib/node_modules/openclaw/dist/system-prompt-config-*.js` ordena *«Attach media … with
+   `MEDIA:<path-or-url>`»*. Está en la trayectoria viva de janus. Funciona en el Telegram propio de
+   openclaw; dentro del sobre de Cauce es **texto muerto** (`grep -rn "MEDIA:"` sobre cauce-v3 → 0).
+   OpenClaw sólo emite la rama moderna («Do not use legacy MEDIA:») si
+   `sourceReplyDeliveryMode == 'message_tool_only'`, clave ausente del `openclaw.json` de janus.
+2. **janus abandonó `artifacts` con evidencia correcta.** Su nota del 06-ago registra un PDF enviado
+   por `artifacts` con `file://` que no llegó. Era cierto: `artifact-inliner.ts` —que convierte el
+   fichero local a `data:` **dentro del contenedor del agente**— se escribió el **22-ago**, y la
+   flota corría el bundle del **14-ago**.
+3. **El sobre de Cauce nombra `artifacts` una sola vez**, en la línea del esquema, y **sin una sola
+   invariante de protocolo**, mientras `reply`/`messages`/`notify`/`status` sí las tienen. Un campo
+   sin regla lo llena cada arnés con su propia convención.
+
+### Lo desplegado
+
+Release `bus-v3-20260825-adjuntos`, digest `sha256:3edd721e75bc570b…`, **canario en `janus`**.
+El resto de la flota sigue en `bus-v3-20260814-umbral` hasta que janus lo pruebe en uso real.
+
+### Las tres trampas que costaron el rato, para el próximo
+
+- **`SHA256SUMS` del bundle NO lo lee el supervisor** (sólo `release-gate.sh` y las herramientas de
+  verificación). La puerta real es `bundle-digest`. Y el del bundle vivo **ya estaba desactualizado**
+  (le faltaban 20 ficheros y listaba un `SHA256SUMS.tmp` fantasma): ese fantasma es el generador
+  original hasheando su propio temporal dentro del árbol. No lo copies: generá el temporal FUERA.
+- **Reemplazar sólo `packages/adapter-sdk/dist` NO basta.** El `dist` nuevo importa
+  `clampToRoleBriefLimit` de `@cauce/protocol`, y el bundle trae su propia copia en
+  `adapter-sdk/node_modules/@cauce/protocol`. Sin actualizarla también, el arranque muere con
+  `SyntaxError: … does not provide an export named 'clampToRoleBriefLimit'` — la misma clase de
+  fallo que tumbó el gateway el 24-ago.
+- **La prueba de vuelo que lo cazó**, y que hay que hacer siempre antes de pinear: copiar el
+  paquete **entero** (con `node_modules`) al contenedor y `import()` el `engine`, el `inliner` y
+  `bin/openclaw.js`. Llegar a `ADAPTER_FATAL: Required configuration 'CAUCE_TENANT' is missing` es
+  **éxito**: significa que el grafo de módulos cargó entero y sólo falta el entorno del supervisor.
+
+### Reversa
+
+```
+python3 /opt/cauce-v3/ops/scripts/pin-container-release.py pin janus \
+  --release bus-v3-20260814-umbral \
+  --sha256 sha256:a469ed640d2ac5ef0aacc89e14c21cea9c13b7e8d6d55a38c8a671c328874d56 \
+  --expected-release bus-v3-20260825-adjuntos \
+  --expected-sha256 sha256:3edd721e75bc570b8fc5a67aa45c1e60992ca24570b56a20b32da96e77f036af
+```
+y reiniciar `cauce-v3-container-janus.service`. Las instrucciones de janus están respaldadas en
+`/home/claw/clawd/TOOLS.md.bak-zeus-20260825`.
