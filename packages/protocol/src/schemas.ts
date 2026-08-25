@@ -600,7 +600,20 @@ export const AgentConfigMutationSchema = z.object({
     // columna.
     role_brief: z.string()
       .refine((text) => countCodePoints(text) <= 8_000, { message: 'role_brief is too long' })
-      .nullable().optional()
+      .nullable().optional(),
+    /*
+     * El techo REAL de entregas en vuelo de este agente (columna `max_concurrent_deliveries`,
+     * migración 015). `repository.ts` lo aplica al repartir cupo, y no estaba en ninguna pantalla:
+     * su única vía de cambio era un `UPDATE` a mano.
+     *
+     * `null` NO es «no declarado»: significa SIN TECHO, y es la salida de emergencia que la propia
+     * 015 documenta —«si este cambio estrangula a un agente que de verdad puede paralelizar (o si
+     * hay que desactivar el techo en caliente sin desplegar)»—. Por eso es `.nullable()` y no sólo
+     * `.optional()`: son dos estados distintos y colapsarlos perdería justo la salida.
+     *
+     * El rango 1-100 es el del CHECK `agents_max_concurrent_deliveries_sane`, copiado tal cual.
+     */
+    max_concurrent_deliveries: z.number().int().min(1).max(100).nullable().optional()
   }).strict().optional()
 }).strict();
 

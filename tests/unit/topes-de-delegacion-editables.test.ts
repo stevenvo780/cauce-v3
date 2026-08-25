@@ -154,3 +154,66 @@ describe('el snapshot y la inversa los llevan, o el botón de deshacer los borra
     }
   });
 });
+
+/**
+ * 🔴 **EL MISMO DEFECTO EN OTRA COLUMNA: `agents.max_concurrent_deliveries` (migración 015).**
+ *
+ * Es el techo REAL de entregas en vuelo de un agente —`repository.ts` lo aplica al repartir cupo—
+ * y tampoco estaba ni en el snapshot ni en la mutación. Su única vía de cambio era un `UPDATE` a
+ * mano, y la propia 015 documenta ese `UPDATE ... = NULL` como la salida de emergencia para cuando
+ * el techo estrangula a un agente que sí puede paralelizar.
+ *
+ * Va en este mismo fichero y no en otro porque es EL MISMO defecto: un valor que gobierna la
+ * producción y que ninguna pantalla enseña. Separarlos haría creer que son dos casos.
+ */
+describe('el techo de entregas en vuelo de un agente se puede editar', () => {
+  function agente(value: Record<string, unknown>) {
+    return ConfigMutationSchema.safeParse({
+      resource: 'agent', action: 'update', tenant_id: 'Steven', alias: 'zeus', value
+    });
+  }
+
+  it('acepta un techo dentro del rango del CHECK (1-100)', () => {
+    expect(agente({ max_concurrent_deliveries: 1 }).success).toBe(true);
+    expect(agente({ max_concurrent_deliveries: 100 }).success).toBe(true);
+  });
+
+  it('rechaza lo de fuera del rango y los decimales', () => {
+    expect(agente({ max_concurrent_deliveries: 0 }).success).toBe(false);
+    expect(agente({ max_concurrent_deliveries: 101 }).success).toBe(false);
+    expect(agente({ max_concurrent_deliveries: 2.5 }).success).toBe(false);
+  });
+
+  it('`null` se acepta y NO es lo mismo que no declararlo: significa SIN TECHO', () => {
+    /*
+     * La distinción es la salida de emergencia entera. `null` declarado quita el techo; el campo
+     * ausente deja el que hubiera. Un esquema que sólo fuera `.optional()` no podría expresar
+     * «quítale el techo a este agente» y esa operación volvería a exigir SQL.
+     */
+    expect(agente({ max_concurrent_deliveries: null }).success).toBe(true);
+    expect(agente({ display_name: 'Zeus' }).success).toBe(true);
+  });
+
+  it('el snapshot lo trae, o la consola pintaría una caja vacía y el primer guardado lo borraría', async () => {
+    const fuente = await import('node:fs/promises').then((fs) => fs.readFile(
+      new URL('../../packages/store/src/configuration.ts', import.meta.url), 'utf8'
+    ));
+    const desde = fuente.indexOf('FROM agents WHERE $1::text IS NULL OR tenant_id=$1');
+    expect(desde).toBeGreaterThan(0);
+    expect(fuente.slice(desde - 400, desde)).toContain('max_concurrent_deliveries');
+  });
+
+  it('el SELECT bajo lock lo trae, o el DESHACER le pondría techo a un agente destechado', async () => {
+    /*
+     * `oldValue` es el cuerpo de la inversa. Aquí el `null` no es sólo un valor perdido: es una
+     * decisión deliberada del operador —«este agente no lleva techo»— que el deshacer revertiría
+     * sin que nadie lo pidiera.
+     */
+    const fuente = await import('node:fs/promises').then((fs) => fs.readFile(
+      new URL('../../packages/store/src/configuration.ts', import.meta.url), 'utf8'
+    ));
+    const desde = fuente.indexOf('FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE');
+    expect(desde).toBeGreaterThan(0);
+    expect(fuente.slice(desde - 400, desde)).toContain('max_concurrent_deliveries');
+  });
+});

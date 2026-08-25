@@ -224,9 +224,16 @@ export class ConfigurationRepository {
         this.pool.query<Record<string, unknown>>(
           // role_brief viaja en el snapshot porque es lo que la consola EDITA: sin él la pantalla
           // mostraría una caja vacía y el primer guardado borraría el rol que el alias ya tenía.
+          /*
+           * `max_concurrent_deliveries` (migración 015) es el techo REAL de entregas en vuelo de
+           * un agente: `repository.ts` lo aplica al repartir cupo. No estaba en el snapshot ni en
+           * la mutación, así que sólo se podía cambiar por SQL — y la propia 015 documenta el
+           * `UPDATE ... = NULL` como la salida de emergencia cuando el techo estrangula a un
+           * agente que sí puede paralelizar. Esa salida ahora tiene pantalla.
+           */
           `SELECT tenant_id,alias,harness_id,display_name,enabled,
                   container_name,runtime_user,home_directory,state_directory,role_brief,
-                  created_at,updated_at
+                  max_concurrent_deliveries,created_at,updated_at
            FROM agents WHERE $1::text IS NULL OR tenant_id=$1 ORDER BY tenant_id,alias`, [scope]
         ),
         // credential_ref never leaves the database, not even for its payer: it is a locator, not a
@@ -882,9 +889,14 @@ export class ConfigurationRepository {
       harness_id: string | null; display_name: string | null; enabled: boolean;
       container_name: string | null; runtime_user: string | null;
       home_directory: string | null; state_directory: string | null; role_brief: string | null;
+      max_concurrent_deliveries: number | null;
     }>(
+      // Va en este SELECT o el DESHACER lo borra: `oldValue` es el cuerpo de la inversa, y una
+      // columna ausente vuelve como no declarada. `NULL` aquí SIGNIFICA algo —«sin techo», la
+      // salida de emergencia de la 015—, así que perderlo al deshacer no deja el valor por
+      // defecto: le pone techo a un agente que alguien había destechado a propósito.
       `SELECT harness_id,display_name,enabled,container_name,runtime_user,home_directory,
-              state_directory,role_brief
+              state_directory,role_brief,max_concurrent_deliveries
        FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [mutation.tenant_id, mutation.alias]
     );
     const old = selected.rows[0];
@@ -892,14 +904,23 @@ export class ConfigurationRepository {
       if (old) throw new ConfigurationError('conflict', 'agent already exists');
       const value = valueRequired(mutation);
       await client.query(
-        `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,role_brief)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,role_brief,max_concurrent_deliveries)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [mutation.tenant_id, mutation.alias, value.harness_id ?? null, value.display_name ?? null,
           value.enabled ?? false, value.container_name ?? null, value.runtime_user ?? null,
           value.home_directory ?? null, value.state_directory ?? null,
           // Un alta sin role_brief sigue naciendo sin rol declarado, como antes de esta columna:
           // el adaptador omite la línea `Tu rol:` y nadie le inventa una identidad al alias.
-          normalizeRoleBrief(value.role_brief)]
+          normalizeRoleBrief(value.role_brief),
+          /*
+           * `undefined` (no declarado) cae al DEFAULT 2 de la columna, que es lo que reciben hoy
+           * los quince alias vivos. `null` DECLARADO es otra cosa: significa «sin techo», la
+           * salida de emergencia de la migración 015. Distinguirlos importa — colapsarlos dejaría
+           * sin techo a todo agente que se cree sin nombrar el campo.
+           */
+          has(value, 'max_concurrent_deliveries')
+            ? value.max_concurrent_deliveries as number | null
+            : 2]
       );
       return {
         inverse: { resource: 'agent', action: 'delete', tenant_id: mutation.tenant_id, alias: mutation.alias },
@@ -940,15 +961,19 @@ export class ConfigurationRepository {
       // Se valida sólo lo que el operador MANDÓ. Reusar la clave ausente para revalidar `old`
       // convertiría cualquier edición de otro campo en un rechazo por un brief que ya está en la
       // base — y las filas anteriores a esta validación entran por un CHECK NOT VALID.
-      role_brief: has(value, 'role_brief') ? normalizeRoleBrief(value.role_brief) : old.role_brief
+      role_brief: has(value, 'role_brief') ? normalizeRoleBrief(value.role_brief) : old.role_brief,
+      max_concurrent_deliveries: has(value, 'max_concurrent_deliveries')
+        ? value.max_concurrent_deliveries as number | null
+        : old.max_concurrent_deliveries
     };
     await client.query(
       `UPDATE agents SET harness_id=$3,display_name=$4,enabled=$5,container_name=$6,runtime_user=$7,
-         home_directory=$8,state_directory=$9,role_brief=$10,updated_at=now()
+         home_directory=$8,state_directory=$9,role_brief=$10,max_concurrent_deliveries=$11,
+         updated_at=now()
        WHERE tenant_id=$1 AND alias=$2`,
       [mutation.tenant_id, mutation.alias, next.harness_id, next.display_name, next.enabled,
         next.container_name, next.runtime_user, next.home_directory, next.state_directory,
-        next.role_brief]
+        next.role_brief, next.max_concurrent_deliveries]
     );
     return {
       inverse: { resource: 'agent', action: 'update', tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue },
