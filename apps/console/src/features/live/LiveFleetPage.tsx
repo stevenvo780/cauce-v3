@@ -487,7 +487,8 @@ export function LiveFleetPage() {
   if (activity.loading && !snapshot) return <LoadingState label="Leyendo la actividad de la flota…" />;
 
   return (
-    <div className={`live-page${drawer && detail ? ' has-drawer' : ''}`}>
+    <div className={`live-page${drawer && detail ? ' has-drawer' : ''}`
+      + `${drawer && detail && drawer.tab === 'perfil' ? ' cajon-ancho' : ''}`}>
       <div className="live-main">
         <PageHeader
           eyebrow="Flota"
@@ -849,7 +850,10 @@ function leerQuery(): { key: string; tab: DrawerTab; trace?: string } | null {
   const key = params.get('agente');
   if (!key) return null;
   const tab = params.get('pestana');
-  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'cadena', 'rol', 'ficheros'];
+  // Esta lista es la que gobierna el enlace profundo `?pestana=`. Una pestaña que se añada a
+  // `DRAWER_TABS` y no acá se dibuja pero NO se puede enlazar: el parámetro cae al «ahora» y
+  // el operador que pega el enlace aterriza en otra pantalla sin que nada avise.
+  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'cadena', 'rol', 'perfil', 'ficheros'];
   return {
     key,
     tab: valida.includes(tab as DrawerTab) ? tab as DrawerTab : 'ahora',

@@ -85,6 +85,59 @@ export const handlers = [
   // agente—. Un fixture que sirviera contenido para todos escondería justo el caso que hay que
   // mirar antes de dar esto por bueno.
   // ------------------------------------------------------------------------------------------
+  /*
+   * EL PERFIL Y SU VISTA PREVIA. `openclaw` a propósito para el alias `argos`: es el caso que más
+   * se rompe —siete ficheros en vez de uno— y el que no tiene NINGUNA persona escrita hoy en
+   * producción, así que es el que hay que poder mirar mientras se desarrolla.
+   */
+  http.get('*/v3/console/agents/:alias/perfil', ({ params }) => {
+    const alias = String(params.alias);
+    const esOpenclaw = alias === 'argos';
+    const perfil = {
+      purpose: alias === 'zeus'
+        ? 'Sos el médico de la flota: diagnosticás y reparás los fallos de Cauce V3 de punta a punta, sin esperar a que un humano te destrabe.'
+        : 'Coordinás lo pendiente de la flota y perseguís lo que se quedó a medias.',
+      role_summary: alias === 'zeus'
+        ? 'Orquestador e infraestructura. Escalás a kant lo que no es tuyo.'
+        : 'PMO de la flota.',
+      human_brief: 'Steven. Directo, sin rodeos y sin adornos. Si no lo probaste, decí «no lo probé».',
+      responsibilities: ['Diagnosticar los fallos de Cauce', 'Desplegar y revertir sin pedir permiso'],
+      restrictions: ['NO tocar credenciales, ni proponerlo', 'No mandar secretos por el bus'],
+      tools: ['ssh a kratos y agora-storage', 'docker de la flota'],
+      operating_rules: ['Comprobá el EFECTO, no el código de salida', 'Si no lo probaste, escribí «no lo probé»'],
+    };
+    const bloque = (titulo: string, cuerpo: string) => `<!-- CAUCE:PERFIL v1 — generado desde la configuración, no editar dentro de este bloque -->\n## ${titulo}\n\n${cuerpo}\n<!-- CAUCE:FIN-PERFIL -->\n`;
+    const ficheros = esOpenclaw
+      ? [
+        { nombre: 'SOUL.md', politica: 'bloque-gestionado', texto: bloque('Identidad y propósito', perfil.purpose) },
+        { nombre: 'IDENTITY.md', politica: 'bloque-gestionado', texto: bloque('Rol', perfil.role_summary) },
+        { nombre: 'USER.md', politica: 'bloque-gestionado', texto: bloque('Tu humano y cómo tratarlo', perfil.human_brief) },
+        { nombre: 'MEMORY.md', politica: 'solo-si-falta', texto: '' },
+        { nombre: 'HEARTBEAT.md', politica: 'solo-si-falta', texto: '' },
+        { nombre: 'AGENTS.md', politica: 'bloque-gestionado', texto: bloque('Responsabilidades', perfil.responsibilities.map((r) => `- ${r}`).join('\n')) },
+        { nombre: 'TOOLS.md', politica: 'bloque-gestionado', texto: bloque('Herramientas y capacidades', perfil.tools.map((t) => `- ${t}`).join('\n')) },
+      ]
+      : [
+        { nombre: 'CLAUDE.md', politica: 'bloque-gestionado', texto: bloque('Identidad y propósito', perfil.purpose) },
+      ];
+    return HttpResponse.json({
+      tenant_id: 'Steven',
+      alias,
+      harness: esOpenclaw ? 'openclaw' : 'claude',
+      perfil,
+      hechos: {
+        permisos: { ruta: true, lectura: true, control: false, notificacion: true },
+        cuotas: [{ proveedor: 'claude', cuenta: 'saldantia', limite: '3% semanal' }],
+        arnes: { harness: esOpenclaw ? 'openclaw' : 'claude', home: '/home/dev', contenedor: `ws-${alias}`, capacidades: ['bash', 'read', 'edit'] },
+        destinos: ['kant', 'argos', 'socrates'],
+      },
+      limites: { purpose: 2000, role_summary: 4000, item: 1000, items: 64, total: 24000 },
+      medida: { unidades: 640, tope: 24000 },
+      base: 'fichero-vacio',
+      ficheros: ficheros.map((f) => ({ ...f, unidades: f.texto.length })),
+    });
+  }),
+
   http.get('*/v3/console/agents/:alias/documents', ({ params }) => HttpResponse.json({
     tenant_id: 'Steven',
     alias: String(params.alias),

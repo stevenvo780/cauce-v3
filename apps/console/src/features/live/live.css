@@ -327,6 +327,22 @@ tr[data-highlighted='true'] > td {
 
 .live-main { display: grid; gap: 18px; min-width: 0; }
 
+/*
+ * EL CAJÓN SE ENSANCHA PARA EL PERFIL, y sólo para el perfil.
+ *
+ * 420 px es el ancho correcto para las cinco pestañas de diagnóstico: son listas y fichas, y más
+ * ancho sólo le quitaría sitio al mapa. Para «Perfil» no alcanza ni de lejos: hay que editar siete
+ * campos Y leer, al lado, el fichero que se va a escribir. Medido en Chrome a 1920x1080 el
+ * 2026-08-25, con 420 px la columna útil quedaba en 382 px, el bloque del fichero en 181 px y todo
+ * apilado en 2.235 px de alto — legible por los pelos e imposible de usar.
+ *
+ * A 1920 con 980 px caben las dos columnas del editor de lado, que es lo que hace el trabajo:
+ * mirar la caja y el resultado a la vez es lo único que le dice al operador que lo que escribió
+ * llegó a alguna parte. `min()` con `52vw` es lo que impide que en una pantalla estrecha el cajón
+ * se coma el mapa; por debajo de 1100 px sigue mandando la regla de abajo y se apila.
+ */
+.live-page.has-drawer.cajon-ancho { grid-template-columns: minmax(0, 1fr) min(980px, 52vw); }
+
 @media (max-width: 1100px) {
   /* Por debajo de este ancho, dos columnas dejan al mapa sin sitio para leerse. El cajón pasa a
      ir debajo, que es peor que al lado pero mucho mejor que un mapa de 380 px. */
@@ -1261,14 +1277,27 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
  */
 .perfil-tab {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* UNA columna por defecto: si el navegador no entendiera `@container`, lo que queda es la
+   * versión apilada —estrecha pero entera— y no dos columnas de 180 px cada una. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
   align-items: start;
 }
 
-@media (max-width: 1400px) {
-  .perfil-tab { grid-template-columns: minmax(0, 1fr); }
+/*
+ * El editor se parte en dos columnas cuando EL CAJÓN da de sí, no cuando la ventana da de sí.
+ *
+ * Un `@media (min-width: 1400px)` mira la ventana, y el cajón mide como mucho la mitad: a 1920 la
+ * ventana pasa el umbral y el cajón tiene 980 px, así que la regla se activaba con la mitad de
+ * sitio del que creía. `@container` mide el ancho REAL disponible, que es el único número que
+ * decide si dos columnas caben.
+ */
+.agent-drawer-body { container-type: inline-size; container-name: cajon; }
+
+@container cajon (min-width: 760px) {
+  .perfil-tab { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
+
 
 .perfil-editor, .perfil-vista-previa { display: grid; gap: 12px; min-width: 0; }
 
