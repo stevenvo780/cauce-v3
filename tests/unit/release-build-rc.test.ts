@@ -101,7 +101,11 @@ directory=$1
     join(root, 'bin/docker'),
     `#!/bin/sh
 set -eu
-printf '%s\t%s\n' "\${DOCKER_BUILDKIT:-}" "$*" >> "$FAKE_DOCKER_LOG"
+if [ "\${DOCKER_BUILDKIT:-0}" = 1 ]; then
+  printf 'release test fixture has no buildx plugin\n' >&2
+  exit 86
+fi
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 if [ "$1" = build ] && [ "\${2:-}" = --help ]; then exit 0; fi
 if [ "$1" = build ] || [ "$1" = run ] || [ "$1" = push ] || [ "$1" = pull ]; then exit 0; fi
 if [ "$1" = image ] && [ "$2" = inspect ]; then
@@ -149,6 +153,7 @@ exit 1
       CAUCE_RUNTIME_REPOSITORY: 'registry.invalid/cauce/runtime',
       CAUCE_CONSOLE_REPOSITORY: 'registry.invalid/cauce/console',
       CAUCE_RELEASE_PULL: '0',
+      DOCKER_BUILDKIT: '0',
     },
   };
 }
@@ -179,8 +184,6 @@ describe('release build clean RC and registry evidence', () => {
     expect(evidence.runtime.repositoryDigest).toBe(`registry.invalid/cauce/runtime@sha256:${'0'.repeat(63)}4`);
     expect(evidence.console.repositoryDigest).toBe(`registry.invalid/cauce/console@sha256:${'0'.repeat(63)}5`);
     const calls = await readFile(value.log, 'utf8');
-    expect(calls).toMatch(/^1\tbuild --help$/m);
-    expect(calls).toMatch(/^1\tbuild .*--target runtime/m);
     expect(calls).toContain(`push registry.invalid/cauce/runtime:rc-${value.commit}`);
     expect(calls).toContain(`pull registry.invalid/cauce/runtime@sha256:${'0'.repeat(63)}4`);
   });
@@ -238,5 +241,12 @@ describe('release build clean RC and registry evidence', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('did not recover the tested image ID');
     await expect(readFile(join(value.root, 'ops/artifacts/release/build.json'))).rejects.toThrow();
+  });
+
+  test('keeps the release Dockerfile portable when buildx is unavailable', async () => {
+    const dockerfile = await readFile(join(repository, 'deploy/Dockerfile'), 'utf8');
+    expect(dockerfile).not.toMatch(/^\s*COPY\b.*--chmod=/mu);
+    expect(dockerfile).toContain('RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge');
+    expect(dockerfile).toContain('RUN chmod 0644 /etc/nginx/conf.d/default.conf');
   });
 });

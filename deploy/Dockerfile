@@ -78,7 +78,8 @@ COPY --from=build --chown=node:node /app/dist/packages/store/src ./packages/stor
 COPY --from=build --chown=node:node /app/packages/store/migrations ./packages/store/migrations
 COPY --from=build --chown=node:node /app/packages/protocol/dist ./packages/protocol/dist
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/src ./packages/adapter-sdk/dist/src
-COPY --from=build --chown=node:node --chmod=0555 /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge
+COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge
+RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge
 COPY --chown=node:node deploy/runtime-store.package.json ./packages/store/package.json
 COPY --chown=node:node deploy/readiness-probe.mjs deploy/unix-readiness-probe.mjs deploy/postgres-tls.mjs deploy/migrate.mjs deploy/migration-integrity.mjs deploy/schema-version.mjs deploy/fleet-snapshot.mjs deploy/outbox-metrics.mjs deploy/outbox-metrics-core.mjs deploy/reconcile-stale-console-outbox.mjs deploy/reconcile-stale-console-outbox-core.mjs deploy/shadow-guard.mjs deploy/runtime-package-smoke.mjs ./deploy/
 COPY --chown=node:node deploy/runtime-entrypoint.sh ./deploy/runtime-entrypoint.sh
@@ -116,7 +117,8 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1
 
 FROM console-base AS console
-COPY --chmod=644 deploy/nginx-console-tls.conf /etc/nginx/conf.d/default.conf
+COPY deploy/nginx-console-tls.conf /etc/nginx/conf.d/default.conf
+RUN chmod 0644 /etc/nginx/conf.d/default.conf
 EXPOSE 8444
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=5 \
   CMD test -r /run/secrets/console_tls_ca && SSL_CERT_FILE=/run/secrets/console_tls_ca wget -q -O /dev/null https://console:8444/ || exit 1
