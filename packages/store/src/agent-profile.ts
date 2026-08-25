@@ -31,13 +31,14 @@ import { withTransaction } from './db.js';
 
 /** Las columnas, en el orden de la tabla. Una sola copia para el SELECT y para el RETURNING. */
 const profileColumns =
-  'tenant_id,alias,purpose,role_summary,responsibilities,restrictions,tools,operating_rules';
+  'tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules';
 
 interface ProfileRow {
   tenant_id: string;
   alias: string;
   purpose: string | null;
   role_summary: string | null;
+  human_brief: string | null;
   responsibilities: string[] | null;
   restrictions: string[] | null;
   tools: string[] | null;
@@ -61,6 +62,7 @@ function toProfile(row: ProfileRow): AgentProfile {
     alias: row.alias,
     purpose: row.purpose,
     role_summary: row.role_summary,
+    human_brief: row.human_brief,
     responsibilities: row.responsibilities ?? [],
     restrictions: row.restrictions ?? [],
     tools: row.tools ?? [],
@@ -122,11 +124,12 @@ export class AgentProfileRepository {
   ): Promise<AgentProfile> {
     const result = await client.query<ProfileRow>(
       `INSERT INTO agent_profiles
-         (tenant_id,alias,purpose,role_summary,responsibilities,restrictions,tools,operating_rules)
-       VALUES ($1,$2,$3,$4,$5::text[],$6::text[],$7::text[],$8::text[])
+         (tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules)
+       VALUES ($1,$2,$3,$4,$5,$6::text[],$7::text[],$8::text[],$9::text[])
        ON CONFLICT (tenant_id,alias) DO UPDATE SET
          purpose=EXCLUDED.purpose,
          role_summary=EXCLUDED.role_summary,
+         human_brief=EXCLUDED.human_brief,
          responsibilities=EXCLUDED.responsibilities,
          restrictions=EXCLUDED.restrictions,
          tools=EXCLUDED.tools,
@@ -134,7 +137,7 @@ export class AgentProfileRepository {
          updated_at=now()
        RETURNING ${profileColumns}`,
       [
-        profile.tenant_id, profile.alias, profile.purpose, profile.role_summary,
+        profile.tenant_id, profile.alias, profile.purpose, profile.role_summary, profile.human_brief,
         [...profile.responsibilities], [...profile.restrictions],
         [...profile.tools], [...profile.operating_rules]
       ]

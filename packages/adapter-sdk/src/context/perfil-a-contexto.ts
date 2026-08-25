@@ -64,7 +64,7 @@ export const CLAVES_PROHIBIDAS_OPENCLAW = [
 ] as const;
 
 /** Una viñeta Markdown por elemento, en el orden en que vino. */
-function vinetas(items: readonly string[]): string {
+export function vinetas(items: readonly string[]): string {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
@@ -76,7 +76,7 @@ function vinetas(items: readonly string[]): string {
  * sistema no sabe la respuesta, que es peor que no preguntar — la misma regla por la que el
  * adaptador omite `Tu rol:` cuando el brief es NULL, y la lección del SOUL.md de fábrica de `iza`.
  */
-function seccion(titulo: string, cuerpo: string | undefined): string | undefined {
+export function seccion(titulo: string, cuerpo: string | undefined): string | undefined {
   if (cuerpo === undefined || cuerpo.trim().length === 0) return undefined;
   return `## ${titulo}\n\n${cuerpo.trim()}`;
 }
@@ -88,7 +88,7 @@ function seccion(titulo: string, cuerpo: string | undefined): string | undefined
  * nadie lo escribió, y un agente que no sabe si puede hacer algo lo intenta. Decir «control: no»
  * cierra esa duda y cuesta cuatro palabras.
  */
-function lineasDePermisos(permisos: PermisosDelAlias): string {
+export function lineasDePermisos(permisos: PermisosDelAlias): string {
   const marca = (concedido: boolean): string => (concedido ? "sí" : "no");
   return [
     `- Rutear mensajes a otros alias: ${marca(permisos.ruta)}`,
@@ -98,7 +98,7 @@ function lineasDePermisos(permisos: PermisosDelAlias): string {
   ].join("\n");
 }
 
-function lineasDeCuotas(cuotas: readonly CuotaDelAlias[]): string | undefined {
+export function lineasDeCuotas(cuotas: readonly CuotaDelAlias[]): string | undefined {
   if (cuotas.length === 0) return undefined;
   return cuotas
     .map((cuota) => {
@@ -108,7 +108,7 @@ function lineasDeCuotas(cuotas: readonly CuotaDelAlias[]): string | undefined {
     .join("\n");
 }
 
-function lineasDeArnes(hechos: HechosDelAlias): string {
+export function lineasDeArnes(hechos: HechosDelAlias): string {
   const lineas = [`- Arnés: ${hechos.arnes.harness}`, `- HOME: ${hechos.arnes.home}`];
   if (hechos.arnes.contenedor !== undefined && hechos.arnes.contenedor.length > 0) {
     lineas.push(`- Contenedor: ${hechos.arnes.contenedor}`);
@@ -150,6 +150,9 @@ export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAl
   const secciones = [
     seccion("Identidad y propósito", perfil.purpose ?? undefined),
     seccion("Rol, responsabilidades y restricciones", rol),
+    // Va DESPUÉS del rol y antes de los permisos: primero quién sos y qué te toca, después con
+    // quién tratás, y sólo entonces la mecánica. `openclaw` lee esta cara en un fichero aparte.
+    seccion("Tu humano y cómo tratarlo", perfil.human_brief ?? undefined),
     // Los permisos SIEMPRE se emiten si el perfil tiene alguna otra cara: un alias sin permisos
     // declarados es un hecho, no una ausencia, y saberlo le evita intentar lo que no puede.
     seccion("Permisos y acceso vía Cauce", lineasDePermisos(hechos.permisos)),
@@ -168,7 +171,8 @@ export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAl
    * llamador omite la línea `Tu rol:` igual que hoy omite un `role_brief` NULL.
    */
   const hayAutorado =
-    perfil.purpose !== null || perfil.role_summary !== null ||
+    (perfil.purpose ?? null) !== null || (perfil.role_summary ?? null) !== null ||
+    (perfil.human_brief ?? null) !== null ||
     perfil.responsibilities.length > 0 || perfil.restrictions.length > 0 ||
     perfil.tools.length > 0 || perfil.operating_rules.length > 0;
   if (!hayAutorado) return "";

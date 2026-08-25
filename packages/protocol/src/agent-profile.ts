@@ -107,6 +107,18 @@ export const AGENT_PROFILE_LIMITS = {
   purpose: 2_000,
   /** Rol declarado. Sucesor de `role_brief`, con sitio para el detalle que allá no cabía. */
   role_summary: 4_000,
+  /**
+   * Quién es el humano de este alias y cómo tratarlo.
+   *
+   * Existe porque el arnés `openclaw` lee un `USER.md` aparte —uno de los siete Markdown medidos el
+   * 2026-08-24— y ninguna de las otras caras responde esa pregunta. Sin este campo el generador
+   * tendría dos salidas y las dos malas: dejar `USER.md` vacío, o rellenarlo deduciendo el humano
+   * del `tenant_id`, que es inventarle a un agente cómo tratar a una persona. Un fichero de persona
+   * equivocado es peor que ninguno.
+   *
+   * Es el mismo tope que `purpose` y por el mismo motivo: describe, no enumera.
+   */
+  human_brief: 2_000,
   /** Tope de UN elemento de cualquiera de las listas. */
   item: 1_000,
   /** Tope de CUÁNTOS elementos admite una lista. */
@@ -121,7 +133,7 @@ export const AGENT_PROFILE_LIST_FIELDS = [
 ] as const;
 
 /** Los textos sueltos del perfil, en el mismo orden. */
-export const AGENT_PROFILE_TEXT_FIELDS = ['purpose', 'role_summary'] as const;
+export const AGENT_PROFILE_TEXT_FIELDS = ['purpose', 'role_summary', 'human_brief'] as const;
 
 export type AgentProfileListField = (typeof AGENT_PROFILE_LIST_FIELDS)[number];
 export type AgentProfileTextField = (typeof AGENT_PROFILE_TEXT_FIELDS)[number];
@@ -144,6 +156,11 @@ export interface AgentProfile {
   readonly purpose: string | null;
   /** Rol declarado. NULL = no declarado. */
   readonly role_summary: string | null;
+  /**
+   * Quién es su humano y cómo tratarlo. NULL = no declarado, y el generador OMITE el `USER.md`
+   * de openclaw en vez de sembrarlo con una deducción.
+   */
+  readonly human_brief: string | null;
   readonly responsibilities: readonly string[];
   readonly restrictions: readonly string[];
   readonly tools: readonly string[];
@@ -262,6 +279,7 @@ export function normalizeAgentProfile(input: Record<string, unknown>): AgentProf
     alias: requireIdentifier(input['alias'], 'alias'),
     purpose: normalizeText(input['purpose'], 'purpose'),
     role_summary: normalizeText(input['role_summary'], 'role_summary'),
+    human_brief: normalizeText(input['human_brief'], 'human_brief'),
     responsibilities: normalizeList(input['responsibilities'], 'responsibilities'),
     restrictions: normalizeList(input['restrictions'], 'restrictions'),
     tools: normalizeList(input['tools'], 'tools'),
@@ -280,7 +298,7 @@ export function normalizeAgentProfile(input: Record<string, unknown>): AgentProf
 /** Un perfil vacío pero válido. Es lo que ve el compilador de un alias sin perfil escrito. */
 export function emptyAgentProfile(tenantId: string, alias: string): AgentProfile {
   return {
-    tenant_id: tenantId, alias, purpose: null, role_summary: null,
+    tenant_id: tenantId, alias, purpose: null, role_summary: null, human_brief: null,
     responsibilities: [], restrictions: [], tools: [], operating_rules: []
   };
 }

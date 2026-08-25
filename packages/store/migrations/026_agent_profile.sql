@@ -151,6 +151,12 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
   responsibilities text[] NOT NULL DEFAULT '{}',
   restrictions text[] NOT NULL DEFAULT '{}',
 
+  -- 3. SU HUMANO: quién es y cómo tratarlo. El arnés `openclaw` lee un `USER.md` aparte —uno de
+  -- los siete Markdown medidos el 2026-08-24— y ninguna de las otras columnas responde eso. Sin
+  -- esta columna el generador tendría que deducir el humano del `tenant_id`, o sea inventarle a un
+  -- agente cómo tratar a una persona. NULL = no declarado, y entonces `USER.md` no se siembra.
+  human_brief text,
+
   -- 5. HERRAMIENTAS Y CAPACIDADES: sólo la parte AUTORADA. Las capacidades del arnés salen de
   -- `harness_definitions.capabilities` y las une el compilador.
   tools text[] NOT NULL DEFAULT '{}',
@@ -179,6 +185,9 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
   CONSTRAINT agent_profiles_role_summary_len CHECK (
     role_summary IS NULL OR cauce_utf16_units(role_summary) BETWEEN 1 AND 4000
   ),
+  CONSTRAINT agent_profiles_human_brief_len CHECK (
+    human_brief IS NULL OR cauce_utf16_units(human_brief) BETWEEN 1 AND 2000
+  ),
 
   -- Cardinalidad y tope por elemento, lista por lista. Están separados del presupuesto total a
   -- propósito: el error que devuelve la base nombra el campo, y una pantalla que dice «sobra en
@@ -202,6 +211,7 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
   CONSTRAINT agent_profiles_budget CHECK (
     cauce_utf16_units(coalesce(purpose,''))
     + cauce_utf16_units(coalesce(role_summary,''))
+    + cauce_utf16_units(coalesce(human_brief,''))
     + cauce_utf16_units(array_to_string(responsibilities,''))
     + cauce_utf16_units(array_to_string(restrictions,''))
     + cauce_utf16_units(array_to_string(tools,''))

@@ -28,6 +28,7 @@ function perfil(overrides: Partial<AgentProfile> = {}): AgentProfile {
     alias: "zeus",
     purpose: "Orquestar la flota y reparar Cauce de punta a punta.",
     role_summary: "Médico de la flota: diagnostica y repara los fallos de Cauce V3.",
+    human_brief: "Su humano es Steven: sin tablas y como mucho diez líneas.",
     responsibilities: ["Diagnosticar fallos de entrega.", "Reparar sin esperar a un humano."],
     restrictions: ["Nunca tocar credenciales.", "No desplegar sin luz verde."],
     tools: ["cauce", "ssh a kratos"],
@@ -127,7 +128,7 @@ test("omite las secciones vacías en vez de emitir un encabezado hueco", () => {
 
 test("un perfil enteramente vacío produce texto vacío, no un esqueleto de encabezados", () => {
   const vacio: AgentProfile = {
-    tenant_id: "Steven", alias: "mudo", purpose: null, role_summary: null,
+    tenant_id: "Steven", alias: "mudo", purpose: null, role_summary: null, human_brief: null,
     responsibilities: [], restrictions: [], tools: [], operating_rules: [],
   };
   const texto = componerBloqueDePerfil(vacio, {
