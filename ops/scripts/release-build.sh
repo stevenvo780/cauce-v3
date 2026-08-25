@@ -7,6 +7,12 @@ OPS="$ROOT/ops"
 : "${CAUCE_RUNTIME_REPOSITORY:?set the immutable runtime registry repository (without tag or digest)}"
 : "${CAUCE_CONSOLE_REPOSITORY:?set the immutable console registry repository (without tag or digest)}"
 
+# The runtime Dockerfile deliberately uses BuildKit-only COPY semantics
+# (`--chmod`) so executable modes are part of the image definition.  Do not
+# inherit the daemon/client legacy-builder default: a release invocation must
+# select the builder it requires by itself.
+export DOCKER_BUILDKIT=1
+
 command -v docker >/dev/null 2>&1 || { printf 'release build failed: docker is unavailable\n' >&2; exit 127; }
 command -v git >/dev/null 2>&1 || { printf 'release build failed: git is unavailable\n' >&2; exit 127; }
 command -v tar >/dev/null 2>&1 || { printf 'release build failed: tar is unavailable\n' >&2; exit 127; }

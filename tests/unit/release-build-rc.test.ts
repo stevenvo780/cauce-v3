@@ -101,7 +101,7 @@ directory=$1
     join(root, 'bin/docker'),
     `#!/bin/sh
 set -eu
-printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+printf '%s\t%s\n' "\${DOCKER_BUILDKIT:-}" "$*" >> "$FAKE_DOCKER_LOG"
 if [ "$1" = build ] && [ "\${2:-}" = --help ]; then exit 0; fi
 if [ "$1" = build ] || [ "$1" = run ] || [ "$1" = push ] || [ "$1" = pull ]; then exit 0; fi
 if [ "$1" = image ] && [ "$2" = inspect ]; then
@@ -179,6 +179,8 @@ describe('release build clean RC and registry evidence', () => {
     expect(evidence.runtime.repositoryDigest).toBe(`registry.invalid/cauce/runtime@sha256:${'0'.repeat(63)}4`);
     expect(evidence.console.repositoryDigest).toBe(`registry.invalid/cauce/console@sha256:${'0'.repeat(63)}5`);
     const calls = await readFile(value.log, 'utf8');
+    expect(calls).toMatch(/^1\tbuild --help$/m);
+    expect(calls).toMatch(/^1\tbuild .*--target runtime/m);
     expect(calls).toContain(`push registry.invalid/cauce/runtime:rc-${value.commit}`);
     expect(calls).toContain(`pull registry.invalid/cauce/runtime@sha256:${'0'.repeat(63)}4`);
   });
