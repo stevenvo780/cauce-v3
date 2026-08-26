@@ -41,7 +41,7 @@ else
         exit 2
       }
       CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod run --rm --no-deps -T \
-        --entrypoint /bin/sh migrator -ceu \
+        migrator /bin/sh -ceu \
         'probe_dir=$(mktemp -d /tmp/cauce-fleet-snapshot.XXXXXX); probe=$probe_dir/probe.mjs; trap '\''rm -f -- "$probe"; rmdir -- "$probe_dir"'\'' EXIT HUP INT TERM; cat >"$probe"; chmod 0600 "$probe"; node "$probe"' \
         <"$fleet_probe" >"$snapshot"
       ;;

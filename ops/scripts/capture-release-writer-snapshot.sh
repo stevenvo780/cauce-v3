@@ -240,7 +240,7 @@ if ((bootstrap_legacy == 1)); then
 fi
 "${health_env[@]}" "$health_helper" "${health_args[@]}" >/dev/null
 if ((bootstrap_legacy == 1)); then
-  fleet=$(compose_prod run --rm --no-deps -T --entrypoint /bin/sh migrator -ceu \
+  fleet=$(compose_prod run --rm --no-deps -T migrator /bin/sh -ceu \
     'probe_dir=$(mktemp -d /tmp/cauce-fleet-snapshot.XXXXXX); probe=$probe_dir/probe.mjs; trap '\''rm -f -- "$probe"; rmdir -- "$probe_dir"'\'' EXIT HUP INT TERM; cat >"$probe"; chmod 0600 "$probe"; node "$probe"' \
     <"$fleet_probe")
 else
