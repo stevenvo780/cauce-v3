@@ -222,7 +222,23 @@ migrator_state=$("${canonical_env[@]}" docker inspect \
 health_args=(prod)
 ((maintenance == 0)) || health_args+=(--maintenance-offline-zeus)
 "${canonical_env[@]}" "$health_helper" "${health_args[@]}" >/dev/null
-fleet=$(compose_prod run --rm --no-deps -T migrator node deploy/fleet-snapshot.mjs)
+fleet_probe_args=()
+if ((bootstrap_legacy == 1)); then
+  # El runtime pre-bootstrap puede ser anterior a la sonda que autentica writers. La única
+  # excepción permitida monta exactamente el fichero versionado del mismo checkout que ejecuta
+  # esta transacción; el contenedor conserva sus dependencias y su secreto DB originales.
+  fleet_probe="$ROOT/../deploy/fleet-snapshot.mjs"
+  read -r probe_mode probe_links probe_owner < <(stat -c '%a %h %u' -- "$fleet_probe") || exit 1
+  [[ -f $fleet_probe && ! -L $fleet_probe && $probe_links == 1 \
+     && ( $probe_owner == 0 || $probe_owner == "$(id -u)" ) \
+     && $((8#$probe_mode & 0022)) == 0 ]] || {
+    printf 'writer snapshot capture refused: versioned bootstrap fleet probe is unsafe\n' >&2
+    exit 1
+  }
+  fleet_probe_args=(--volume "$fleet_probe:/app/deploy/fleet-snapshot.mjs:ro")
+fi
+fleet=$(compose_prod run --rm --no-deps -T "${fleet_probe_args[@]}" \
+  migrator node deploy/fleet-snapshot.mjs)
 capture_args=(--ops-root "$ROOT" capture)
 for service in "${writers[@]}"; do capture_args+=(--compose-writer "$service"); done
 snapshot=$(printf '%s' "$fleet" | "${canonical_env[@]}" "$writer_helper" "${capture_args[@]}")
