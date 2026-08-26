@@ -578,7 +578,7 @@ if (args[1] === 'ps' && args.includes('-q')) {
   process.stdout.write('cid-' + args.at(-1) + '\\n');
   process.exit(0);
 }
-if (args[1] === 'run' && args.includes('deploy/fleet-snapshot.mjs')) {
+if (args[1] === 'run' && args.some((argument) => argument.includes('fleet-snapshot'))) {
   const leases = state.FAKE_EXTERNAL_WRITER ? [{ tenant_id: 'Steven', alias: 'kant', active: !state.WRITERS_STOPPED }] : [];
   if (state.ZEUS_ACTIVE) leases.push({ tenant_id: 'Steven', alias: 'zeus', active: true });
   process.stdout.write(JSON.stringify({ schemaVersion: 3, leases }) + '\\n');
@@ -797,7 +797,7 @@ if (args[0] === 'image' && args[1] === 'inspect') {
 if (args[0] === 'inspect') {
   const service = args.at(-1).slice(4);
   if (args[2].includes('.State.Status')) {
-    process.stdout.write(service === 'migrator' ? 'exited\\t0\\n' : 'running\\t0\\n');
+    process.stdout.write(service === 'migrator' ? 'exited 0\\n' : 'running 0\\n');
     process.exit(0);
   }
   if (args[2].includes('.State.Running')) {
@@ -2139,8 +2139,11 @@ describe('canonical forward release transaction', () => {
     expect(source).not.toContain("--format '{{.State.Status}}\\t{{.State.ExitCode}}'");
     expect(captureWriter).toContain("--format '{{.State.Status}} {{.State.ExitCode}}'");
     expect(captureWriter).not.toContain("--format '{{.State.Status}}\\t{{.State.ExitCode}}'");
-    expect(captureWriter).toContain('fleet_probe_args=(--volume');
-    expect(captureWriter).toContain('$fleet_probe:/app/deploy/fleet-snapshot.mjs:ro');
+    expect(captureWriter).toContain('mktemp -d /tmp/cauce-fleet-snapshot.XXXXXX');
+    expect(captureWriter).toContain('probe=$probe_dir/probe.mjs');
+    expect(captureWriter).toContain('--entrypoint /bin/sh migrator');
+    expect(captureWriter).toContain('<"$fleet_probe"');
+    expect(captureWriter).not.toContain('$fleet_probe:/app/deploy/fleet-snapshot.mjs:ro');
     expect(captureWriter).toContain('if ((bootstrap_legacy == 1)); then');
     expect(captureWriter).toContain('legacy-fleet is not selected by its baseline');
     expect(captureWriter).toContain('refuses an ambient bootstrap legacy-fleet capability');

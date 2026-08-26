@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
-import { createPool } from '../packages/store/dist/db.js';
-import { assertProductionPostgresTls } from './postgres-tls.mjs';
+// This probe is container-only.  Absolute image paths let the authenticated legacy bootstrap
+// stream these exact versioned bytes into a private /tmp file when the pre-bootstrap image does
+// not contain deploy/fleet-snapshot.mjs yet.  Normal release images still execute it in /app.
+import { createPool } from 'file:///app/packages/store/dist/db.js';
+import { assertProductionPostgresTls } from 'file:///app/deploy/postgres-tls.mjs';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error('DATABASE_URL is required');
