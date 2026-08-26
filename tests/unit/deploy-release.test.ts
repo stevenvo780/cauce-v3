@@ -14,6 +14,7 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const sourceScript = join(repository, 'ops/scripts/deploy-release.sh');
 const sourceReleaseCandidate = join(repository, 'ops/scripts/release-candidate.py');
 const captureWriterScript = join(repository, 'ops/scripts/capture-release-writer-snapshot.sh');
+const fleetParityScript = join(repository, 'ops/scripts/fleet-parity.sh');
 const composeFile = join(repository, 'deploy/compose.yaml');
 const sourceSchema = join(repository, 'ops/schemas/build-evidence.schema.json');
 const makefile = join(repository, 'ops/Makefile');
@@ -2070,12 +2071,13 @@ describe('canonical forward release transaction', () => {
 
   test('source, Make, runbook and operations digest expose one canonical forward path', async () => {
     const [
-      source, releaseCandidate, captureWriter, compose, make, runbook, rollback, systemdUnit,
+      source, releaseCandidate, captureWriter, fleetParity, compose, make, runbook, rollback, systemdUnit,
       systemdWrapper, releaseCandidateMetadata,
     ] = await Promise.all([
       readFile(sourceScript, 'utf8'),
       readFile(sourceReleaseCandidate, 'utf8'),
       readFile(captureWriterScript, 'utf8'),
+      readFile(fleetParityScript, 'utf8'),
       readFile(composeFile, 'utf8'),
       readFile(makefile, 'utf8'),
       readFile(deployRunbook, 'utf8'),
@@ -2141,9 +2143,13 @@ describe('canonical forward release transaction', () => {
     expect(captureWriter).not.toContain("--format '{{.State.Status}}\\t{{.State.ExitCode}}'");
     expect(captureWriter).toContain('mktemp -d /tmp/cauce-fleet-snapshot.XXXXXX');
     expect(captureWriter).toContain('probe=$probe_dir/probe.mjs');
+    expect(captureWriter).toContain("health_env+=('CAUCE_BOOTSTRAP_LEGACY_FLEET_PROBE=1')");
     expect(captureWriter).toContain('--entrypoint /bin/sh migrator');
     expect(captureWriter).toContain('<"$fleet_probe"');
     expect(captureWriter).not.toContain('$fleet_probe:/app/deploy/fleet-snapshot.mjs:ro');
+    expect(fleetParity).toContain('CAUCE_BOOTSTRAP_LEGACY_FLEET_PROBE');
+    expect(fleetParity).toContain('bootstrap probe requires the authenticated release lock');
+    expect(fleetParity).toContain('mktemp -d /tmp/cauce-fleet-snapshot.XXXXXX');
     expect(captureWriter).toContain('if ((bootstrap_legacy == 1)); then');
     expect(captureWriter).toContain('legacy-fleet is not selected by its baseline');
     expect(captureWriter).toContain('refuses an ambient bootstrap legacy-fleet capability');

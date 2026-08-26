@@ -20,8 +20,36 @@ if [[ -n ${CAUCE_FLEET_SNAPSHOT_FILE:-} ]]; then
   }
   cp -- "$CAUCE_FLEET_SNAPSHOT_FILE" "$snapshot"
 else
-  CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod run --rm --no-deps -T migrator \
-    node deploy/fleet-snapshot.mjs >"$snapshot"
+  case ${CAUCE_BOOTSTRAP_LEGACY_FLEET_PROBE:-0} in
+    0)
+      CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod run --rm --no-deps -T migrator \
+        node deploy/fleet-snapshot.mjs >"$snapshot"
+      ;;
+    1)
+      [[ ${CAUCE_RELEASE_TRANSITION_LOCK_FD:-} =~ ^[0-9]+$ \
+         && ${CAUCE_RELEASE_TRANSITION_LOCK_FD:-0} -ge 3 \
+         && ${CAUCE_RELEASE_TRANSITION_LOCK_TOKEN:-} =~ ^[a-f0-9]{64}$ ]] || {
+        printf 'fleet parity: bootstrap probe requires the authenticated release lock\n' >&2
+        exit 2
+      }
+      fleet_probe="$ROOT/../deploy/fleet-snapshot.mjs"
+      read -r probe_mode probe_links probe_owner < <(stat -c '%a %h %u' -- "$fleet_probe") || exit 1
+      [[ -f $fleet_probe && ! -L $fleet_probe && $probe_links == 1 \
+         && ( $probe_owner == 0 || $probe_owner == "$(id -u)" ) \
+         && $((8#$probe_mode & 0022)) == 0 ]] || {
+        printf 'fleet parity: versioned bootstrap fleet probe is unsafe\n' >&2
+        exit 2
+      }
+      CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod run --rm --no-deps -T \
+        --entrypoint /bin/sh migrator -ceu \
+        'probe_dir=$(mktemp -d /tmp/cauce-fleet-snapshot.XXXXXX); probe=$probe_dir/probe.mjs; trap '\''rm -f -- "$probe"; rmdir -- "$probe_dir"'\'' EXIT HUP INT TERM; cat >"$probe"; chmod 0600 "$probe"; node "$probe"' \
+        <"$fleet_probe" >"$snapshot"
+      ;;
+    *)
+      printf 'fleet parity: invalid bootstrap legacy probe selector\n' >&2
+      exit 2
+      ;;
+  esac
 fi
 
 args=()

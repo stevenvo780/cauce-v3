@@ -221,7 +221,7 @@ migrator_state=$("${canonical_env[@]}" docker inspect \
 }
 health_args=(prod)
 ((maintenance == 0)) || health_args+=(--maintenance-offline-zeus)
-"${canonical_env[@]}" "$health_helper" "${health_args[@]}" >/dev/null
+health_env=("${canonical_env[@]}")
 if ((bootstrap_legacy == 1)); then
   # El runtime pre-bootstrap puede ser anterior a la sonda que autentica writers. La única
   # excepción permitida transmite exactamente el fichero versionado del mismo checkout que
@@ -236,6 +236,10 @@ if ((bootstrap_legacy == 1)); then
     printf 'writer snapshot capture refused: versioned bootstrap fleet probe is unsafe\n' >&2
     exit 1
   }
+  health_env+=('CAUCE_BOOTSTRAP_LEGACY_FLEET_PROBE=1')
+fi
+"${health_env[@]}" "$health_helper" "${health_args[@]}" >/dev/null
+if ((bootstrap_legacy == 1)); then
   fleet=$(compose_prod run --rm --no-deps -T --entrypoint /bin/sh migrator -ceu \
     'probe_dir=$(mktemp -d /tmp/cauce-fleet-snapshot.XXXXXX); probe=$probe_dir/probe.mjs; trap '\''rm -f -- "$probe"; rmdir -- "$probe_dir"'\'' EXIT HUP INT TERM; cat >"$probe"; chmod 0600 "$probe"; node "$probe"' \
     <"$fleet_probe")
