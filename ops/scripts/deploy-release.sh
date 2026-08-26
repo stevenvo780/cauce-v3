@@ -149,18 +149,23 @@ if [[ -z ${CAUCE_RELEASE_TRANSITION_LOCK_FD:-} ]]; then
     CAUCE_DEPLOY_TARGET_WRITER_SNAPSHOT_FILE \
     CAUCE_DEPLOY_TARGET_WRITER_SNAPSHOT_SHA256 \
     CAUCE_DEPLOY_LEGACY_SNAPSHOT_FILE CAUCE_DEPLOY_CONFIRM \
-    CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256 CAUCE_BOOTSTRAP_RUNTIME_IMAGE \
-    CAUCE_BOOTSTRAP_CONSOLE_IMAGE CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST \
-    CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256 \
-    CAUCE_BOOTSTRAP_LEGACY_FLEET_SNAPSHOT_FILE \
-    CAUCE_BOOTSTRAP_ROLLBACK_BASELINE CAUCE_BOOTSTRAP_BACKUP_ENV_FILE \
-    CAUCE_BOOTSTRAP_FORWARD_RELEASE_ID CAUCE_RELEASE_WRITER_SNAPSHOT_FILE \
     CAUCE_CHANGE_ID CAUCE_MAINTENANCE_CONFIRM \
     CAUCE_WRITER_ROTATION_FILE CAUCE_WRITER_ROTATION_CONFIRM; do
     if [[ -v $allowed ]]; then
       outer_env+=("$allowed=${!allowed}")
     fi
   done
+  if [[ $action == bootstrap-production-legacy ]]; then
+    for allowed in \
+      CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256 CAUCE_BOOTSTRAP_RUNTIME_IMAGE \
+      CAUCE_BOOTSTRAP_CONSOLE_IMAGE CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST \
+      CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256 \
+      CAUCE_BOOTSTRAP_LEGACY_FLEET_SNAPSHOT_FILE \
+      CAUCE_BOOTSTRAP_ROLLBACK_BASELINE CAUCE_BOOTSTRAP_BACKUP_ENV_FILE \
+      CAUCE_BOOTSTRAP_FORWARD_RELEASE_ID CAUCE_RELEASE_WRITER_SNAPSHOT_FILE; do
+      outer_env+=("$allowed=${!allowed}")
+    done
+  fi
   exec "${outer_env[@]}" "$pin_helper" locked-exec \
     --env-file "$CAUCE_ENV_FILE" -- "$0" "${lock_args[@]}"
 fi
@@ -345,8 +350,11 @@ if [[ $action == bootstrap-production-legacy ]]; then
 
   bootstrap_capture_args=("$legacy_writer")
   ((maintenance == 0)) || bootstrap_capture_args+=(--maintenance-offline-zeus)
+  bootstrap_capture_env=("${canonical_env[@]}"
+    "CAUCE_BOOTSTRAP_CAPTURE_LEGACY_FLEET_FILE=$legacy_fleet"
+    "CAUCE_BOOTSTRAP_CAPTURE_LEGACY_FLEET_SHA256=$legacy_fleet_sha")
   set +e
-  "${canonical_env[@]}" "$capture_writer_helper" "${bootstrap_capture_args[@]}"
+  "${bootstrap_capture_env[@]}" "$capture_writer_helper" "${bootstrap_capture_args[@]}"
   capture_status=$?
   set -e
   if ((capture_status == 0)); then

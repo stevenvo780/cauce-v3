@@ -21,6 +21,18 @@ if (($#)); then
 fi
 : "${CAUCE_ENV_FILE:?set the absolute private production env file}"
 [[ $output = /* ]] || { printf 'writer snapshot output path must be absolute\n' >&2; exit 2; }
+bootstrap_legacy_fleet=${CAUCE_BOOTSTRAP_CAPTURE_LEGACY_FLEET_FILE:-}
+bootstrap_legacy_fleet_sha=${CAUCE_BOOTSTRAP_CAPTURE_LEGACY_FLEET_SHA256:-}
+if [[ -n $bootstrap_legacy_fleet || -n $bootstrap_legacy_fleet_sha ]]; then
+  [[ $bootstrap_legacy_fleet = /* \
+     && $bootstrap_legacy_fleet_sha =~ ^sha256:[a-f0-9]{64}$ ]] || {
+    printf 'writer snapshot capture received an invalid bootstrap legacy-fleet capability\n' >&2
+    exit 2
+  }
+  bootstrap_legacy=1
+else
+  bootstrap_legacy=0
+fi
 if ((maintenance == 1)); then
   : "${CAUCE_CHANGE_ID:?set the non-secret maintenance change ID}"
   : "${CAUCE_MAINTENANCE_CONFIRM:?set the exact Zeus maintenance confirmation}"
@@ -41,6 +53,10 @@ for executable in "$pin_helper" "$baseline_helper" "$compose_helper" "$health_he
 done
 
 if [[ -z ${CAUCE_RELEASE_TRANSITION_LOCK_FD:-} ]]; then
+  ((bootstrap_legacy == 0)) || {
+    printf 'writer snapshot capture refuses an ambient bootstrap legacy-fleet capability\n' >&2
+    exit 2
+  }
   args=("$output")
   ((maintenance == 0)) || args+=(--maintenance-offline-zeus)
   outer_env=(/usr/bin/env -i "PATH=$system_path" 'LC_ALL=C' 'PYTHONDONTWRITEBYTECODE=1'
@@ -125,6 +141,25 @@ fi
 }
 "$baseline_helper" check --baseline "$artifact_baseline" \
   --expected-baseline-sha256 "$artifact_baseline_sha" >/dev/null
+legacy_compose_args=()
+if ((bootstrap_legacy == 1)); then
+  "$baseline_helper" check --baseline "$baseline" \
+    --expected-baseline-sha256 "$baseline_sha" >/dev/null
+  baseline_kind=$("$baseline_helper" field --baseline "$baseline" \
+    --expected-baseline-sha256 "$baseline_sha" --name baseline-kind)
+  baseline_legacy_fleet=$("$baseline_helper" field --baseline "$baseline" \
+    --expected-baseline-sha256 "$baseline_sha" --name legacy-fleet-snapshot)
+  baseline_legacy_fleet_sha=$("$baseline_helper" field --baseline "$baseline" \
+    --expected-baseline-sha256 "$baseline_sha" --name legacy-fleet-snapshot-sha256)
+  [[ $baseline_kind == legacy-pre-migration \
+     && $baseline_legacy_fleet == "$bootstrap_legacy_fleet" \
+     && $baseline_legacy_fleet_sha == "$bootstrap_legacy_fleet_sha" ]] || {
+    printf 'writer snapshot capture refused: bootstrap legacy-fleet is not selected by its baseline\n' >&2
+    exit 1
+  }
+  legacy_compose_args=(--legacy-fleet-snapshot "$bootstrap_legacy_fleet"
+    --legacy-fleet-snapshot-sha256 "$bootstrap_legacy_fleet_sha")
+fi
 release_id=$("$baseline_helper" field --baseline "$baseline" \
   --expected-baseline-sha256 "$baseline_sha" --name forward-release-commit)
 
@@ -160,7 +195,8 @@ compose_prod() { "${canonical_env[@]}" "$compose_helper" prod "$@"; }
   --expected-sha256 "$manifest_sha" --require-selected --lock-fd "$transition_lock_fd" >/dev/null
 model=$(compose_prod config --format json)
 classified=$(printf '%s' "$model" | "${canonical_env[@]}" "$writer_helper" \
-  --ops-root "$ROOT" compose-model --runtime-image "$runtime" --console-image "$console")
+  --ops-root "$ROOT" compose-model --runtime-image "$runtime" --console-image "$console" \
+  "${legacy_compose_args[@]}")
 mapfile -t configured < <(cut -f2 <<<"$classified" | LC_ALL=C sort)
 mapfile -t writers < <(awk -F '\t' '$1 == "writer" {print $2}' <<<"$classified" | LC_ALL=C sort)
 mapfile -t expected_long_lived < <(printf '%s\n' "${configured[@]}" | grep -Fvx migrator)

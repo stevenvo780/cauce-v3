@@ -34,6 +34,10 @@ from container_alias_lib import ContainerAliasError, load_container_aliases
 
 
 DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+IMAGE_REF_RE = re.compile(
+    r"^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?"
+    r"(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$"
+)
 UNIT_RE = re.compile(r"^cauce-v3-(?:alias|container)-[a-z][a-z0-9-]*\.service$")
 HOST_RE = re.compile(r"^[a-z][a-z0-9.-]*$")
 USER_RE = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
@@ -1480,6 +1484,7 @@ def classify_compose_model(
     model: dict[str, Any],
     runtime_image: str,
     console_image: str,
+    legacy_compose_images: dict[str, set[str]] | None = None,
 ) -> list[tuple[str, str, str]]:
     services = object_value(model.get("services"), "Compose services")
     if not services:
@@ -1500,7 +1505,13 @@ def classify_compose_model(
                 f"Compose database mutator {name} lacks the restart-safe release policy"
             )
         if role in {"migrator", "core", "writer"} and image != runtime_image:
-            fail(f"Compose {role} service {name} does not use the selected runtime")
+            if role not in {"core", "writer"} or legacy_compose_images is None:
+                fail(f"Compose {role} service {name} does not use the selected runtime")
+            if image not in legacy_compose_images.get(name, set()):
+                fail(
+                    f"Compose {role} service {name} image is not authorized by "
+                    "the legacy fleet snapshot"
+                )
         if role == "console" and image != console_image:
             fail("Compose console does not use the selected console image")
         if role in {"observability", "infrastructure"} and image in {
@@ -1540,6 +1551,86 @@ def classify_compose_model(
         if required not in services:
             fail(f"Compose model lacks mandatory service {required}")
     return result
+
+
+def legacy_fleet_compose_images(
+    path: pathlib.Path,
+    expected_sha256: str,
+    runtime_image: str,
+    console_image: str,
+) -> dict[str, set[str]]:
+    """Return per-service image aliases from one authenticated bootstrap snapshot."""
+    if DIGEST_RE.fullmatch(expected_sha256) is None:
+        fail("legacy fleet snapshot SHA-256 is invalid")
+    content = private_file(path, label="legacy fleet snapshot")
+    if sha256_bytes(content) != expected_sha256:
+        fail("legacy fleet snapshot differs from its authorized SHA-256")
+    document = read_json_bytes(content, "legacy fleet snapshot")
+    if (
+        set(document) != {"kind", "project", "schemaVersion", "selectors", "services"}
+        or document.get("kind") != "cauce-v3-legacy-pre-migration-fleet"
+        or document.get("project") != "cauce-v3-prod"
+        or document.get("schemaVersion") != 1
+    ):
+        fail("legacy fleet snapshot envelope is invalid")
+    selectors = object_value(document.get("selectors"), "legacy fleet snapshot selectors")
+    if set(selectors) != {
+        "console", "manifest", "manifestSha256", "normalizedConsole",
+        "normalizedRuntime", "runtime",
+    }:
+        fail("legacy fleet snapshot selectors are invalid")
+    if (
+        selectors.get("normalizedRuntime") != runtime_image
+        or selectors.get("normalizedConsole") != console_image
+        or not isinstance(selectors.get("manifest"), str)
+        or not pathlib.PurePosixPath(selectors["manifest"]).is_absolute()
+        or DIGEST_RE.fullmatch(str(selectors.get("manifestSha256"))) is None
+    ):
+        fail("legacy fleet snapshot differs from the selected release inputs")
+    allowed: dict[str, set[str]] = {}
+    seen: set[str] = set()
+    services = array_value(document.get("services"), "legacy fleet snapshot services")
+    if not services:
+        fail("legacy fleet snapshot services are empty")
+    for raw in services:
+        service = object_value(raw, "legacy fleet snapshot service")
+        if set(service) != {
+            "configHash", "configImage", "containerId", "exitCode", "imageId",
+            "repositoryDigest", "service", "status",
+        }:
+            fail("legacy fleet snapshot service record is invalid")
+        name = service.get("service")
+        configured = service.get("configImage")
+        repository_digest = service.get("repositoryDigest")
+        if (
+            not isinstance(name, str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,127}", name) is None
+            or name in seen
+            or not isinstance(configured, str)
+            or not configured
+            or any(character.isspace() for character in configured)
+            or not isinstance(repository_digest, str)
+            or IMAGE_REF_RE.fullmatch(repository_digest) is None
+            or not isinstance(service.get("imageId"), str)
+            or DIGEST_RE.fullmatch(service["imageId"]) is None
+            or not isinstance(service.get("containerId"), str)
+            or re.fullmatch(r"[a-f0-9]{12,64}", service["containerId"]) is None
+            or not isinstance(service.get("configHash"), str)
+            or re.fullmatch(r"[a-f0-9]{64}", service["configHash"]) is None
+            or not isinstance(service.get("exitCode"), int)
+        ):
+            fail("legacy fleet snapshot image/config identity is invalid")
+        seen.add(name)
+        if name == "migrator":
+            if service.get("status") != "exited" or service["exitCode"] != 0:
+                fail("legacy fleet snapshot migrator is not exited/0")
+        elif service.get("status") != "running" or service["exitCode"] != 0:
+            fail("legacy fleet snapshot long-lived service is not running")
+        if COMPOSE_ROLES.get(name) in {"core", "writer"}:
+            allowed[name] = {configured, repository_digest}
+    if "migrator" not in seen:
+        fail("legacy fleet snapshot omits the materialized migrator")
+    return allowed
 
 
 def validate_snapshot(
@@ -2257,6 +2348,8 @@ def main(argv: list[str]) -> int:
     compose_model = subparsers.add_parser("compose-model")
     compose_model.add_argument("--runtime-image", required=True)
     compose_model.add_argument("--console-image", required=True)
+    compose_model.add_argument("--legacy-fleet-snapshot", type=pathlib.Path)
+    compose_model.add_argument("--legacy-fleet-snapshot-sha256")
     for action in ("validate", "check", "fence", "restore"):
         child = subparsers.add_parser(action)
         child.add_argument("--snapshot", required=True, type=pathlib.Path)
@@ -2300,8 +2393,20 @@ def main(argv: list[str]) -> int:
             lock_descriptor = authenticated_transition_lock()
         if arguments.action == "compose-model":
             model = read_json_bytes(sys.stdin.buffer.read(), "Compose model")
+            legacy_images = None
+            if (arguments.legacy_fleet_snapshot is None) != (
+                arguments.legacy_fleet_snapshot_sha256 is None
+            ):
+                fail("legacy fleet snapshot path and SHA-256 must be supplied together")
+            if arguments.legacy_fleet_snapshot is not None:
+                legacy_images = legacy_fleet_compose_images(
+                    arguments.legacy_fleet_snapshot,
+                    arguments.legacy_fleet_snapshot_sha256,
+                    arguments.runtime_image,
+                    arguments.console_image,
+                )
             for role, name, image in classify_compose_model(
-                model, arguments.runtime_image, arguments.console_image
+                model, arguments.runtime_image, arguments.console_image, legacy_images
             ):
                 print(role, name, image, sep="\t")
             return 0

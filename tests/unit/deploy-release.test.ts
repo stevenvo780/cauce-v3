@@ -2132,6 +2132,11 @@ describe('canonical forward release transaction', () => {
     expect(runbook).toContain('release-bootstrap-legacy');
     expect(runbook).toContain('legacy-pre-migration');
     expect(source).toContain('bootstrap-production-legacy');
+    expect(source).toContain('bootstrap_capture_env=');
+    expect(source).toContain('CAUCE_BOOTSTRAP_CAPTURE_LEGACY_FLEET_FILE=$legacy_fleet');
+    expect(source).toContain('CAUCE_BOOTSTRAP_CAPTURE_LEGACY_FLEET_SHA256=$legacy_fleet_sha');
+    expect(captureWriter).toContain('legacy-fleet is not selected by its baseline');
+    expect(captureWriter).toContain('refuses an ambient bootstrap legacy-fleet capability');
     expect(runbook).toContain('CAUCE_DEPLOY_TARGET_OVERRIDE_MANIFEST_SHA256');
     expect(runbook).toContain('CAUCE_DEPLOY_LEGACY_SNAPSHOT_FILE');
     expect(runbook).toContain('`make -C ops migrate` es un tombstone que falla cerrado');

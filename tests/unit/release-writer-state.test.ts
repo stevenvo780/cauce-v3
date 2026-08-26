@@ -11,6 +11,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const helper = join(repository, 'ops/scripts/release-writer-state.py');
 const pin = join(repository, 'ops/scripts/pin-production-release.py');
+const captureWriter = join(repository, 'ops/scripts/capture-release-writer-snapshot.sh');
 const scratch: string[] = [];
 
 const digest = (content: string | Buffer): string =>
@@ -762,6 +763,126 @@ describe('durable release writer state', () => {
     ], model('always'));
     expect(rejected.status).toBe(1);
     expect(rejected.stderr).toContain('restart-safe release policy');
+  });
+
+  test('admits bootstrap-only core and writer runtime tags authenticated by the legacy fleet', async () => {
+    const value = await fixture();
+    const runtime = `registry.invalid/cauce/runtime@sha256:${'1'.repeat(64)}`;
+    const consoleImage = `registry.invalid/cauce/console@sha256:${'2'.repeat(64)}`;
+    const directiveTag = 'registry.invalid/cauce/runtime:directiva-20260825';
+    const directiveDigest = `registry.invalid/cauce/runtime@sha256:${'3'.repeat(64)}`;
+    const record = (
+      service: string, configImage: string, repositoryDigest: string,
+      status = 'running', exitCode = 0,
+    ) => ({
+      configHash: 'a'.repeat(64), configImage,
+      containerId: (service === 'migrator' ? 'b' : service === 'gateway' ? 'c' : 'd').repeat(64),
+      exitCode, imageId: `sha256:${(service === 'migrator' ? '4' : '5').repeat(64)}`,
+      repositoryDigest, service, status,
+    });
+    const legacyFleet = `${JSON.stringify({
+      kind: 'cauce-v3-legacy-pre-migration-fleet', project: 'cauce-v3-prod', schemaVersion: 1,
+      selectors: {
+        console: `cauce-console@sha256:${'6'.repeat(64)}`,
+        manifest: '/etc/cauce-v3/compose-overrides/active.manifest',
+        manifestSha256: `sha256:${'7'.repeat(64)}`,
+        normalizedConsole: consoleImage, normalizedRuntime: runtime,
+        runtime: `cauce-runtime@sha256:${'8'.repeat(64)}`,
+      },
+      services: [
+        record('migrator', runtime, runtime, 'exited', 0),
+        record('gateway', directiveTag, directiveDigest),
+        record('terminal-relay', directiveTag, directiveDigest),
+      ],
+    })}\n`;
+    await writeFile(value.snapshot, legacyFleet, { mode: 0o600 });
+    const model = JSON.stringify({ services: {
+      migrator: { image: runtime, restart: 'no' },
+      gateway: { image: directiveTag, restart: 'unless-stopped' },
+      dispatcher: { image: runtime, restart: 'unless-stopped' },
+      'outbox-metrics': { image: runtime, restart: 'unless-stopped' },
+      'terminal-relay': { image: directiveTag, restart: 'unless-stopped' },
+      console: { image: consoleImage, restart: 'always' },
+    } });
+    const strict = run(value, [
+      'compose-model', '--runtime-image', runtime, '--console-image', consoleImage,
+    ], model);
+    expect(strict.status).toBe(1);
+    expect(strict.stderr).toContain('does not use the selected runtime');
+
+    const admitted = run(value, [
+      'compose-model', '--runtime-image', runtime, '--console-image', consoleImage,
+      '--legacy-fleet-snapshot', value.snapshot,
+      '--legacy-fleet-snapshot-sha256', digest(legacyFleet),
+    ], model);
+    expect(admitted.status, admitted.stderr).toBe(0);
+    expect(admitted.stdout).toContain(`core\tgateway\t${directiveTag}`);
+    expect(admitted.stdout).toContain(`writer\tterminal-relay\t${directiveTag}`);
+  });
+
+  test('rejects an unauthorized bootstrap image and tampering of the legacy fleet', async () => {
+    const value = await fixture();
+    const runtime = `registry.invalid/cauce/runtime@sha256:${'1'.repeat(64)}`;
+    const consoleImage = `registry.invalid/cauce/console@sha256:${'2'.repeat(64)}`;
+    const authorizedTag = 'registry.invalid/cauce/runtime:directiva-20260825';
+    const legacyFleet = `${JSON.stringify({
+      kind: 'cauce-v3-legacy-pre-migration-fleet', project: 'cauce-v3-prod', schemaVersion: 1,
+      selectors: {
+        console: 'cauce-console:legacy',
+        manifest: '/etc/cauce-v3/compose-overrides/active.manifest',
+        manifestSha256: `sha256:${'3'.repeat(64)}`,
+        normalizedConsole: consoleImage, normalizedRuntime: runtime,
+        runtime: 'cauce-runtime:legacy',
+      },
+      services: [
+        {
+          configHash: '4'.repeat(64), configImage: runtime,
+          containerId: '5'.repeat(64), exitCode: 0, imageId: `sha256:${'6'.repeat(64)}`,
+          repositoryDigest: runtime, service: 'migrator', status: 'exited',
+        },
+        {
+          configHash: '7'.repeat(64), configImage: authorizedTag,
+          containerId: '8'.repeat(64), exitCode: 0, imageId: `sha256:${'9'.repeat(64)}`,
+          repositoryDigest: `registry.invalid/cauce/runtime@sha256:${'a'.repeat(64)}`,
+          service: 'gateway', status: 'running',
+        },
+      ],
+    })}\n`;
+    await writeFile(value.snapshot, legacyFleet, { mode: 0o600 });
+    const unauthorizedModel = JSON.stringify({ services: {
+      migrator: { image: runtime, restart: 'no' },
+      gateway: { image: 'registry.invalid/cauce/runtime:attacker', restart: 'unless-stopped' },
+      dispatcher: { image: runtime, restart: 'unless-stopped' },
+      'outbox-metrics': { image: runtime, restart: 'unless-stopped' },
+      console: { image: consoleImage, restart: 'always' },
+    } });
+    const args = [
+      'compose-model', '--runtime-image', runtime, '--console-image', consoleImage,
+      '--legacy-fleet-snapshot', value.snapshot,
+      '--legacy-fleet-snapshot-sha256', digest(legacyFleet),
+    ];
+    const unauthorized = run(value, args, unauthorizedModel);
+    expect(unauthorized.status).toBe(1);
+    expect(unauthorized.stderr).toContain('is not authorized by the legacy fleet snapshot');
+
+    await writeFile(value.snapshot, `${legacyFleet} `, { mode: 0o600 });
+    const tampered = run(value, args, unauthorizedModel);
+    expect(tampered.status).toBe(1);
+    expect(tampered.stderr).toContain('differs from its authorized SHA-256');
+  });
+
+  test('ordinary writer capture refuses ambient bootstrap legacy-fleet injection', async () => {
+    const value = await fixture();
+    const result = spawnSync(captureWriter, [value.snapshot], {
+      encoding: 'utf8',
+      env: {
+        ...value.env,
+        CAUCE_BOOTSTRAP_CAPTURE_LEGACY_FLEET_FILE: value.snapshot,
+        CAUCE_BOOTSTRAP_CAPTURE_LEGACY_FLEET_SHA256: `sha256:${'a'.repeat(64)}`,
+      },
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('refuses an ambient bootstrap legacy-fleet capability');
   });
 
   test('rejects undeclared active leases, tampered bytes and a non-slug marker release ID', async () => {
