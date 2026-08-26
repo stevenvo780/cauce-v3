@@ -51,6 +51,20 @@ function validateIdentity(config: AdapterConfig): void {
 
 type CapabilityEncoder = (capabilities: AdapterCapabilities) => readonly string[];
 
+interface ExecutionIntentWaiter {
+  readonly deliveryId: string;
+  readonly attempt: number;
+  readonly claimToken: string;
+  readonly confirm: () => void;
+  readonly reject: (error: AdapterError) => void;
+}
+
+interface SendDeadline {
+  /** Absolute wall-clock deadline; queueing behind an earlier frame consumes this budget. */
+  readonly at: number;
+  readonly signal: AbortSignal;
+}
+
 /*
  * El manifiesto usa claves legibles por código y el hello transporta strings. La tabla está
  * tipada contra TODAS las claves de `AdapterCapabilities`: agregar una capability sin decidir su
@@ -108,6 +122,9 @@ const CAPABILITY_ENCODERS = {
     : [],
   agent_identity_v1: (value) => value.agent_identity_v1 === true ? ['agent_identity_v1'] : [],
   agent_profile_v1: (value) => value.agent_profile_v1 === true ? ['agent_profile_v1'] : [],
+  agent_profile_adoption_v1: (value) => value.agent_profile_adoption_v1 === true
+    ? ['agent_profile_adoption_v1']
+    : [],
 } satisfies Record<keyof AdapterCapabilities, CapabilityEncoder>;
 
 export function capabilityStrings(capabilities: AdapterCapabilities): string[] {
@@ -125,6 +142,8 @@ export class AdapterClient {
   private readonly logger: AdapterLogger;
   private activeConnection: ConsumerConnection | undefined;
   private sendTail: Promise<void> = Promise.resolve();
+  private readonly failedConnections = new WeakSet<ConsumerConnection>();
+  private readonly executionIntentWaiters = new Map<string, ExecutionIntentWaiter>();
   private running = false;
   private readonly onError: (code: string) => void;
   private readonly onLeaseAcquired: (() => Promise<void>) | undefined;
@@ -147,6 +166,9 @@ export class AdapterClient {
       store: this.store,
       harness: this.harness,
       publish: (event) => this.sendEvent(event),
+      publishExecutionIntent: (event, signal, timeoutMs) => (
+        this.publishAndConfirmExecutionIntent(event, signal, timeoutMs)
+      ),
       logger: this.logger,
       ...(options.config.tenantId === undefined ? {} : { ownTenantId: options.config.tenantId }),
       ...(options.config.ownRoom === undefined ? {} : { ownRoom: options.config.ownRoom }),
@@ -319,7 +341,51 @@ export class AdapterClient {
           && event.attempt === correlation.attempt
           && event.claim_token === correlation.claim_token
         ));
-        const acknowledged = await this.store.acknowledge(correlation);
+        const terminalPending = pending?.phase === 'done' || pending?.phase === 'failed';
+        const terminalReceipt = frame.applied === true
+          ? 'applied' as const
+          : frame.receipt === 'duplicate' || frame.receipt === 'ownership_lost'
+            ? frame.receipt
+            : undefined;
+        const executionIntentReceipt = pending?.execution_started === true
+          && frame.status === 'started'
+          && ((frame.applied === true && frame.receipt === 'applied')
+            || frame.receipt === 'duplicate')
+          ? (frame.receipt === 'applied' ? 'applied' as const : 'duplicate' as const)
+          : undefined;
+        // `applied:false` sin receipt era el atajo que perdía el resultado: puede ser un gateway
+        // viejo que cortó por epoch sin consultar la DB. Sólo una prueba terminal concluyente
+        // permite quitar done/failed; todo lo demás queda durable para el reconnect con backoff.
+        if (terminalPending && terminalReceipt === undefined) return;
+        const acknowledged = await this.store.acknowledgeResult(correlation, {
+          ...(frame.delegation_rejections === undefined
+            ? {}
+            : { delegation_rejections: frame.delegation_rejections }),
+          ...(frame.delegation_materializations === undefined
+            ? {}
+            : { delegation_materializations: frame.delegation_materializations }),
+          ...(terminalReceipt === undefined ? {} : { terminal_receipt: terminalReceipt }),
+          ...(executionIntentReceipt === undefined
+            ? {}
+            : { execution_intent_receipt: executionIntentReceipt }),
+        });
+        const intentWaiter = this.executionIntentWaiters.get(frame.event_id);
+        if (intentWaiter !== undefined
+          && intentWaiter.deliveryId === frame.delivery_id
+          && intentWaiter.attempt === frame.attempt
+          && intentWaiter.claimToken === frame.claim_token) {
+          const durableReceipt = this.store.getDelivery(frame.delivery_id)
+            ?.execution_intent_receipt_event_id === frame.event_id;
+          if (acknowledged && executionIntentReceipt !== undefined && durableReceipt) {
+            intentWaiter.confirm();
+          } else {
+            intentWaiter.reject(new AdapterError(
+              frame.receipt === 'ownership_lost' ? 'FENCED' : 'EXECUTION_INTENT_CONFIRMATION_FAILED',
+              'Gateway did not confirm the exact durable execution intent',
+              true,
+            ));
+          }
+        }
         if (acknowledged && pending?.claim_renewal === true) {
           if (frame.applied === true || frame.receipt === 'duplicate') {
             this.engine.confirmClaim(frame.delivery_id, frame.attempt, frame.claim_token);
@@ -338,7 +404,11 @@ export class AdapterClient {
         return;
       }
       case 'error':
-        if (frame.code === 'fenced') throw new AdapterError('FENCED', frame.message, true);
+        if (frame.code === 'fenced') {
+          const error = new AdapterError('FENCED', frame.message, true);
+          for (const waiter of this.executionIntentWaiters.values()) waiter.reject(error);
+          throw error;
+        }
         return;
       case 'heartbeat_ack':
       case 'wake':
@@ -350,7 +420,7 @@ export class AdapterClient {
     for (const event of this.store.pendingEvents()) await this.sendEvent(event);
   }
 
-  private sendEvent(event: DeliveryEvent): Promise<void> {
+  private sendEvent(event: DeliveryEvent, deadline?: SendDeadline): Promise<void> {
     const detail = clampAckDetail(
       event.error?.message ?? (event.output?.status === 'failed' ? event.output.reply ?? undefined : undefined),
     );
@@ -370,15 +440,173 @@ export class AdapterClient {
       ...(event.execution_started === true ? { execution_started: true } : {}),
       ...(detail === undefined ? {} : { error: detail }),
       ...(event.error === undefined ? {} : { error_code: event.error.code }),
-      ...(event.output === undefined ? {} : { result: { output: event.output } }),
-    });
+      ...(event.output === undefined && event.profile_adoption === undefined
+        ? {}
+        : {
+            result: {
+              ...(event.output === undefined ? {} : { output: event.output }),
+              ...(event.profile_adoption === undefined
+                ? {}
+                : { profile_adoption: event.profile_adoption }),
+            },
+          }),
+    }, deadline);
   }
 
-  private send(frame: ClientFrame): Promise<void> {
+  /**
+   * The process may cross its side-effect boundary only after the remote store confirms the
+   * exact event. Registration precedes send, and the timeout is absolute: unrelated renewal
+   * receipts cannot extend it.
+   */
+  private async publishAndConfirmExecutionIntent(
+    event: DeliveryEvent,
+    signal: AbortSignal,
+    timeoutMs: number,
+  ): Promise<void> {
+    if (event.execution_started !== true || event.phase !== 'started') {
+      throw new AdapterError(
+        'EXECUTION_INTENT_CONFIRMATION_FAILED',
+        'Execution-intent barrier received a non-marker event',
+        true,
+      );
+    }
+    if (signal.aborted) {
+      throw signal.reason instanceof AdapterError
+        ? signal.reason
+        : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true);
+    }
+    if (this.executionIntentWaiters.has(event.event_id)) {
+      throw new AdapterError(
+        'EXECUTION_INTENT_CONFIRMATION_FAILED',
+        'Execution-intent confirmation is already pending',
+        true,
+      );
+    }
+
+    let settled = false;
+    const timerRef: { current?: NodeJS.Timeout } = {};
+    let resolveConfirmation!: () => void;
+    let rejectConfirmation!: (error: AdapterError) => void;
+    const confirmation = new Promise<void>((resolveWait, rejectWait) => {
+      resolveConfirmation = resolveWait;
+      rejectConfirmation = rejectWait;
+    });
+    const cleanup = (): void => {
+      if (timerRef.current !== undefined) clearTimeout(timerRef.current);
+      signal.removeEventListener('abort', onAbort);
+      const current = this.executionIntentWaiters.get(event.event_id);
+      if (current === waiter) this.executionIntentWaiters.delete(event.event_id);
+    };
+    const confirm = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolveConfirmation();
+    };
+    const reject = (error: AdapterError): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectConfirmation(error);
+    };
+    const onAbort = (): void => {
+      reject(signal.reason instanceof AdapterError
+        ? signal.reason
+        : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true));
+    };
+    const waiter: ExecutionIntentWaiter = {
+      deliveryId: event.delivery_id,
+      attempt: event.attempt,
+      claimToken: event.claim_token,
+      confirm,
+      reject,
+    };
+    this.executionIntentWaiters.set(event.event_id, waiter);
+    signal.addEventListener('abort', onAbort, { once: true });
+    timerRef.current = setTimeout(() => {
+      reject(new AdapterError(
+        'EXECUTION_INTENT_CONFIRMATION_FAILED',
+        'Gateway did not confirm execution intent before the ownership deadline',
+        true,
+      ));
+    }, timeoutMs);
+    timerRef.current.unref();
+
+    try {
+      await Promise.all([
+        this.sendEvent(event, { at: Date.now() + timeoutMs, signal }),
+        confirmation,
+      ]);
+    } catch (error) {
+      if (!settled) {
+        reject(error instanceof AdapterError
+          ? error
+          : new AdapterError(
+              'EXECUTION_INTENT_CONFIRMATION_FAILED',
+              'Execution intent could not be sent to the gateway',
+              true,
+            ));
+      }
+      throw error instanceof AdapterError
+        ? error
+        : new AdapterError(
+            'EXECUTION_INTENT_CONFIRMATION_FAILED',
+            'Execution intent could not be confirmed by the gateway',
+            true,
+          );
+    }
+  }
+
+  private send(frame: ClientFrame, deadline?: SendDeadline): Promise<void> {
     const next = this.sendTail.catch(() => undefined).then(async () => {
       const connection = this.activeConnection;
       if (connection === undefined) throw new Error('No active consumer connection');
-      await connection.send(frame);
+      if (this.failedConnections.has(connection)) throw new Error('Consumer connection is no longer writable');
+      if (deadline === undefined) {
+        await connection.send(frame);
+        return;
+      }
+      if (deadline.signal.aborted) {
+        throw deadline.signal.reason instanceof Error
+          ? deadline.signal.reason
+          : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true);
+      }
+      const remainingMs = deadline.at - Date.now();
+      if (remainingMs <= 0) {
+        this.failedConnections.add(connection);
+        void connection.close().catch(() => undefined);
+        throw new AdapterError(
+          'EXECUTION_INTENT_CONFIRMATION_FAILED',
+          'Execution intent send exceeded the ownership deadline',
+          true,
+        );
+      }
+      let timer: NodeJS.Timeout | undefined;
+      let onAbort: (() => void) | undefined;
+      const timedOut = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new AdapterError(
+          'EXECUTION_INTENT_CONFIRMATION_FAILED',
+          'Execution intent send exceeded the ownership deadline',
+          true,
+        )), remainingMs);
+        timer.unref();
+      });
+      const aborted = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(deadline.signal.reason instanceof Error
+          ? deadline.signal.reason
+          : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true));
+        deadline.signal.addEventListener('abort', onAbort, { once: true });
+      });
+      try {
+        await Promise.race([connection.send(frame), timedOut, aborted]);
+      } catch (error) {
+        this.failedConnections.add(connection);
+        void connection.close().catch(() => undefined);
+        throw error;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        if (onAbort !== undefined) deadline.signal.removeEventListener('abort', onAbort);
+      }
     });
     this.sendTail = next;
     return next;

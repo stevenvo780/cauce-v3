@@ -4,7 +4,12 @@ import type {
   ShadowDirection, ShadowTarget, ShadowTargetRegistry, ShadowTargetRequest, ShadowTargetResult
 } from './types.js';
 
-function postUnix(socketPath: string, path: string, payload: ShadowTargetRequest): Promise<ShadowTargetResult> {
+function postUnix(
+  socketPath: string,
+  path: string,
+  payload: ShadowTargetRequest,
+  signal?: AbortSignal,
+): Promise<ShadowTargetResult> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(payload);
     const request = httpRequest({
@@ -16,7 +21,9 @@ function postUnix(socketPath: string, path: string, payload: ShadowTargetRequest
         'content-length': String(Buffer.byteLength(body)),
         'idempotency-key': payload.target_event_id
       },
-      signal: AbortSignal.timeout(15_000)
+      signal: signal === undefined
+        ? AbortSignal.timeout(15_000)
+        : AbortSignal.any([signal, AbortSignal.timeout(15_000)])
     }, (response) => {
       const chunks: Buffer[] = [];
       let size = 0;
@@ -56,13 +63,13 @@ export class UnixSocketShadowTarget implements ShadowTarget {
     if (!isAbsolute(socketPath)) throw new Error('shadow target socket must be absolute');
   }
 
-  preview(request: ShadowTargetRequest): Promise<ShadowTargetResult> {
+  preview(request: ShadowTargetRequest, signal?: AbortSignal): Promise<ShadowTargetResult> {
     if (request.allow_human_reply || request.allow_harness) throw new Error('preview request attempted side effects');
-    return postUnix(this.socketPath, '/shadow/preview', request);
+    return postUnix(this.socketPath, '/shadow/preview', request, signal);
   }
 
-  deliver(request: ShadowTargetRequest): Promise<ShadowTargetResult> {
-    return postUnix(this.socketPath, '/shadow/cutover', request);
+  deliver(request: ShadowTargetRequest, signal?: AbortSignal): Promise<ShadowTargetResult> {
+    return postUnix(this.socketPath, '/shadow/cutover', request, signal);
   }
 }
 

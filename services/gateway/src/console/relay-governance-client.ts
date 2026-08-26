@@ -1,6 +1,6 @@
 import { request as httpsRequest, type RequestOptions } from 'node:https';
 import type {
-  GovernanceRelayClient, GovernanceWriteError, RelayFileRead, RelayFileWrite,
+  GovernanceRelayClient, GovernanceWriteError, RelayDirectoryRead, RelayFileRead, RelayFileWrite,
   RelayFileWriteBatch,
 } from './agent-documents.js';
 import type {
@@ -34,10 +34,21 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 
 const READ_CODES: readonly GovernanceReadError['error'][] = [
   'not_found', 'permission_denied', 'invalid_path', 'symlink_detected',
-  'too_large', 'timeout', 'unavailable', 'unknown'
+  'too_large', 'timeout', 'cancelled', 'busy', 'unavailable', 'unknown'
 ];
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const MAX_DIRECTORY_ENTRIES = 200;
+const MAX_PATH_BYTES = 4_096;
+const MAX_DATE_BYTES = 64;
+const MAX_REASON_BYTES = 2_048;
+const DIRECTORY_KEYS = ['entries', 'observed_at_least', 'path', 'total', 'truncated'];
+const DIRECTORY_ENTRY_KEYS = ['bytes', 'modified_at', 'path'];
+const SENSITIVE_BASENAMES = new Set([
+  '.credentials.json', 'auth.json', '.claude.json', 'openclaw.json', '.env', '.netrc',
+  'id_ed25519', 'id_rsa', 'known_hosts', 'authorized_keys',
+]);
+const SENSITIVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
 
 export interface HttpGovernanceRelayClientOptions {
   /** Origen HTTPS del lado navegador del relay, p. ej. `https://terminal-relay:8446`. */
@@ -67,6 +78,46 @@ interface HttpResult {
 function stringField(source: Record<string, unknown>, name: string): string | undefined {
   const value = source[name];
   return typeof value === 'string' ? value : undefined;
+}
+
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 0x1f || code === 0x7f;
+  });
+}
+
+function exactKeys(source: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(source).sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function canonicalAbsolutePath(value: unknown): value is string {
+  if (typeof value !== 'string' || value === '/' || !value.startsWith('/')
+      || Buffer.byteLength(value, 'utf8') > MAX_PATH_BYTES || hasControlCharacter(value)) return false;
+  return !value.split('/').slice(1).some((segment) => segment === '' || segment === '.' || segment === '..');
+}
+
+function strictDescendant(root: string, candidate: string): boolean {
+  return candidate.startsWith(`${root}/`);
+}
+
+function sensitivePath(path: string): boolean {
+  return path.split('/').some((segment) => SENSITIVE_BASENAMES.has(segment)
+    || SENSITIVE_SUFFIXES.some((suffix) => segment.endsWith(suffix)));
+}
+
+function validIsoDate(value: unknown): value is string {
+  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_DATE_BYTES) return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/u.exec(value);
+  if (match === null || Number.isNaN(Date.parse(value))) return false;
+  const date = new Date(value);
+  return date.getUTCFullYear() === Number(match[1])
+    && date.getUTCMonth() + 1 === Number(match[2])
+    && date.getUTCDate() === Number(match[3])
+    && date.getUTCHours() === Number(match[4])
+    && date.getUTCMinutes() === Number(match[5])
+    && date.getUTCSeconds() === Number(match[6]);
 }
 
 /** Un código que no reconocemos es `unknown`, nunca se propaga tal cual. */
@@ -119,6 +170,76 @@ export function parseReadOutcome(body: string): RelayFileRead | GovernanceReadEr
     return { error: 'unknown', reason: 'la lectura no trae una huella SHA-256 válida' };
   }
   return { path, bytes, truncated, modified_at: modifiedAt, sha, content };
+}
+
+/** Valida de nuevo el índice aunque el relay ya lo validó: son dos procesos y dos fronteras. */
+export function parseDirectoryOutcome(body: string): RelayDirectoryRead | GovernanceReadError {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return { error: 'unknown', reason: 'el terminal-relay contestó un índice que no es JSON' };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { error: 'unknown', reason: 'el terminal-relay contestó un índice que no es un objeto' };
+  }
+  const source = parsed as Record<string, unknown>;
+  if ('error' in source) {
+    if (!exactKeys(source, ['error', 'reason']) || typeof source.error !== 'string'
+        || typeof source.reason !== 'string' || source.reason.length === 0
+        || Buffer.byteLength(source.reason, 'utf8') > MAX_REASON_BYTES
+        || hasControlCharacter(source.reason)) {
+      return { error: 'unknown', reason: 'el terminal-relay contestó un fallo de índice inválido' };
+    }
+    return { error: normalizeCode(source.error), reason: source.reason };
+  }
+  if (!exactKeys(source, DIRECTORY_KEYS) || !canonicalAbsolutePath(source.path)
+      || (source.total !== null && (!Number.isSafeInteger(source.total) || (source.total as number) < 0))
+      || !Number.isSafeInteger(source.observed_at_least) || (source.observed_at_least as number) < 0
+      || typeof source.truncated !== 'boolean' || !Array.isArray(source.entries)
+      || source.entries.length > MAX_DIRECTORY_ENTRIES
+      || (source.observed_at_least as number) < source.entries.length
+      || (source.total !== null && source.total !== source.observed_at_least)
+      || (source.total === null && !source.truncated)
+      || (!source.truncated && (source.total !== source.entries.length
+        || source.observed_at_least !== source.entries.length))) {
+    return { error: 'unknown', reason: 'el terminal-relay contestó un índice con raíz, límites o conteos inválidos' };
+  }
+
+  const root = source.path;
+  const paths = new Set<string>();
+  const entries: Array<RelayDirectoryRead['entries'][number]> = [];
+  for (const rawEntry of source.entries) {
+    if (rawEntry === null || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
+      return { error: 'unknown', reason: 'el índice contiene una entrada inválida' };
+    }
+    const entry = rawEntry as Record<string, unknown>;
+    if (entry.symlink === true || entry.type === 'symlink') {
+      return { error: 'symlink_detected', reason: 'el índice intentó publicar un enlace simbólico' };
+    }
+    if (!exactKeys(entry, DIRECTORY_ENTRY_KEYS) || !canonicalAbsolutePath(entry.path)
+        || !strictDescendant(root, entry.path) || paths.has(entry.path)
+        || !Number.isSafeInteger(entry.bytes) || (entry.bytes as number) < 0
+        || !validIsoDate(entry.modified_at)) {
+      return { error: 'unknown', reason: 'el índice contiene una ruta, fecha o tamaño inválidos' };
+    }
+    if (sensitivePath(entry.path)) {
+      return { error: 'permission_denied', reason: 'el índice intentó publicar metadata de credenciales' };
+    }
+    paths.add(entry.path);
+    entries.push({
+      path: entry.path,
+      bytes: entry.bytes as number,
+      modified_at: entry.modified_at,
+    });
+  }
+  return {
+    path: root,
+    total: source.total as number | null,
+    observed_at_least: source.observed_at_least as number,
+    truncated: source.truncated,
+    entries,
+  };
 }
 
 /**
@@ -234,14 +355,22 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
     this.clientKey = options.clientKey;
   }
 
-  async readFile(tenantId: string, alias: string, path: string): Promise<RelayFileRead | GovernanceReadError> {
+  async readFile(
+    tenantId: string,
+    alias: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<RelayFileRead | GovernanceReadError> {
     let result: HttpResult;
     try {
-      result = await this.send('/v3/terminal/relay/read', { tenant_id: tenantId, alias, path });
+      result = await this.send('/v3/terminal/relay/read', { tenant_id: tenantId, alias, path }, signal);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'sin detalle';
       // El vencimiento se distingue del resto porque significa otra cosa para quien mira el modal:
       // el relay puede estar vivo y ser el agente el que no contesta.
+      if (signal?.aborted) {
+        return { error: 'cancelled', reason: 'se cerró la petición antes de terminar la lectura' };
+      }
       const timedOut = message.includes('timed out');
       return {
         error: timedOut ? 'timeout' : 'unavailable',
@@ -258,6 +387,37 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
       return { error: 'unavailable', reason: `el terminal-relay contestó ${result.status}` };
     }
     return parseReadOutcome(result.body);
+  }
+
+  async listDirectory(
+    tenantId: string,
+    alias: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<RelayDirectoryRead | GovernanceReadError> {
+    let result: HttpResult;
+    try {
+      result = await this.send('/v3/terminal/relay/list', { tenant_id: tenantId, alias, path }, signal);
+    } catch (error) {
+      if (signal?.aborted) {
+        return { error: 'cancelled', reason: 'se cerró la petición antes de terminar el índice' };
+      }
+      const message = error instanceof Error ? error.message : 'sin detalle';
+      return {
+        error: message.includes('timed out') ? 'timeout' : 'unavailable',
+        reason: `no se pudo hablar con el terminal-relay: ${message}`,
+      };
+    }
+    if (result.overflowed) {
+      return { error: 'too_large', reason: 'el terminal-relay mandó más de lo que esta vía acepta' };
+    }
+    if (result.status === 401 || result.status === 403) {
+      return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
+    }
+    if (result.status !== 200) {
+      return { error: 'unavailable', reason: `el terminal-relay contestó ${result.status}` };
+    }
+    return parseDirectoryOutcome(result.body);
   }
 
   async writeFile(
@@ -333,7 +493,11 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
     return parseWriteBatchOutcome(result.body);
   }
 
-  private async send(route: string, body: Readonly<Record<string, unknown>>): Promise<HttpResult> {
+  private async send(
+    route: string,
+    body: Readonly<Record<string, unknown>>,
+    signal?: AbortSignal,
+  ): Promise<HttpResult> {
     const payload = Buffer.from(JSON.stringify(body), 'utf8');
     const url = new URL(route, this.relayUrl);
     const options: RequestOptions = {
@@ -347,7 +511,8 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
       ...(this.ca === undefined ? {} : { ca: this.ca }),
       ...(this.clientCert === undefined || this.clientKey === undefined
         ? {}
-        : { cert: this.clientCert, key: this.clientKey })
+        : { cert: this.clientCert, key: this.clientKey }),
+      ...(signal === undefined ? {} : { signal }),
     };
     return new Promise<HttpResult>((resolve, reject) => {
       const request = httpsRequest(url, options, (response) => {

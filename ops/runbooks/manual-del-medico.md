@@ -103,8 +103,8 @@ cauce-panel-guard --dry-run  # (en kratos) qué panel repondría, sin tocar nada
 ```
 
 `cauce-huerfanas` corre desde un contenedor `ws-*`, **no desde kratos**: necesita llegar a la base
-en agora-storage y kratos no tiene llave hacia allá (§4). Enmascara credenciales antes de imprimir
-—la gente pega `DATABASE_URL` en el chat—, así que no lo "mejores" quitando ese `regexp_replace`.
+en agora-storage y kratos no tiene llave hacia allá (§4). No imprime cuerpos ni identificadores
+externos: muestra tenant, tamaño y estado; el contenido sólo se inspecciona en la consola autenticada.
 
 `cauce <alias> on` avisa `arranco SIN sesion compartida` cuando el alias queda en `aparte`.
 **Nunca filtres esa línea con grep**: es exactamente el aviso que importa.
@@ -115,8 +115,8 @@ docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -At -F'~' -c "..."
 ```
 - `deliveries`: la columna es **`status`** (no `state`), más `attempt`, `max_attempts`,
   `last_error`, `result`, `ack_deadline_at`, `terminal_at`.
-- `messages.origin->>'conversation_id'` identifica a la **persona**: `6979524541` Steven,
-  `8530844312` Pablo, `7084929277` Jhon. Un id desconocido es alguien real: averigualo.
+- messages.tenant_id identifica al dueño operativo. Los identificadores externos permanecen
+  privados en la configuración local y nunca se copian al manual ni a consultas de diagnóstico.
 - `delivery_acks.payload->>'error_code'` **no se sobrescribe**; `last_error` sí. Para auditar
   errores históricos, andá por el ack.
 - `agent_output_materializations` es la verdad de las delegaciones.

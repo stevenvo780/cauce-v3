@@ -9,7 +9,9 @@ import {
   Badge, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown
 } from '../../components/ui';
 import { permissionState } from '../../lib';
-import { CONFIG_SIN_CONTROL_REASON, onNavClick } from '../../navigation';
+import {
+  CONFIG_SIN_CONTROL_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON, onNavClick,
+} from '../../navigation';
 import { AltaDeEspacios } from './AltaDeEspacios';
 import { AREA_POR_DEFECTO, agruparPorArea, type ConfigAreaId } from './areas';
 import { ArnesesPanel } from './ArnesesPanel';
@@ -19,6 +21,7 @@ import {
   describeConfigError, esNegativaDeControl, textoRecarga,
   type CaminoDeCambio, type ConfigChangeOutcome, type EstadoRecarga,
 } from './config-change';
+import { exactConfigurationReceipt } from './config-receipt';
 import { RolesPanel } from './RolesPanel';
 import { useInterruptores } from './use-interruptores';
 import './config.css';
@@ -38,7 +41,7 @@ const templates: Record<ConfigResource, ConfigMutation> = {
   egress_destination: {
     resource: 'egress_destination', action: 'create', tenant_id: 'Acme', alias: 'agent', handle: 'owner_dm',
     value: {
-      adapter: 'telegram', channel: 'telegram', conversation_id: '123456789', conversation_kind: 'dm',
+    adapter: 'telegram', channel: 'telegram', conversation_id: 'synthetic-dm', conversation_kind: 'dm',
       display_label: 'DM del dueño', allow_kinds: ['task_complete'], require_prior_contact: true,
       contact_ttl_days: 30, min_interval_seconds: 300, max_per_hour: 2, max_per_day: 8, max_per_root: 1,
       enabled: true
@@ -144,10 +147,18 @@ export function ConfigPage() {
   // por delante del pool de suscripciones de IA. Lo que cambia es el ORDEN, no el alcance: no se
   // esconde ninguna colección, cada una tiene su pestaña y las desconocidas caen en «Otros».
   const [area, setArea] = useState<ConfigAreaId>(AREA_POR_DEFECTO);
-  // Con el permiso `unknown` —no se pudo leer el RBAC— la pantalla queda HABILITADA: ante la duda
-  // no se le quita nada a nadie, y el servidor rechaza igual si no corresponde. Mismo criterio que
-  // `configNavAvailability` y que el editor de rol declarado.
-  const soloLectura = permissionState(access.data, 'config.write') === 'denied';
+  // Navegar y leer siguen disponibles con RBAC `unknown`, pero escribir falla cerrado. Un error de
+  // recarga invalida también un ALLOW anterior: conservarlo habilitaría mutaciones justo cuando ya
+  // no se puede acreditar que `config.write` siga vigente.
+  const estadoPermisoDeEscritura = access.error
+    ? 'unknown'
+    : permissionState(access.data, 'config.write');
+  const motivoDeSoloLectura = estadoPermisoDeEscritura === 'denied'
+    ? CONFIG_SIN_CONTROL_REASON
+    : estadoPermisoDeEscritura === 'unknown'
+      ? CONFIG_WRITE_NO_ACREDITADO_REASON
+      : undefined;
+  const soloLectura = motivoDeSoloLectura !== undefined;
   const snapshotRevision = typeof config.data?.revision === 'number' ? config.data.revision : undefined;
   // El wizard encadena mutaciones y la recarga del snapshot es asíncrona: hasta que ésta alcanza
   // la revisión que devolvió el último apply, esa revisión es la única esperada verdadera.
@@ -229,13 +240,27 @@ export function ConfigPage() {
   async function change(
     mutation: ConfigMutation, dryRun: boolean, camino: CaminoDeCambio = 'previsualizado',
   ): Promise<ConfigChangeOutcome> {
-    if (soloLectura) return { ok: false, conflict: false, message: `Cambio bloqueado. ${CONFIG_SIN_CONTROL_REASON}` };
+    if (motivoDeSoloLectura) {
+      return { ok: false, conflict: false, message: `Cambio bloqueado. ${motivoDeSoloLectura}` };
+    }
     setBusy(true);
     try {
       const result = await api.changeConfiguration(mutation, {
         dryRun,
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
       });
+      if (!exactConfigurationReceipt(result, dryRun, mutation)) {
+        const recarga = dryRun ? undefined : await releer();
+        return {
+          ok: false,
+          conflict: false,
+          uncertain: !dryRun,
+          message: dryRun
+            ? 'El servidor devolvió un 2xx sin el recibo exacto del dry-run; no se habilitó aplicar.'
+            : 'El servidor devolvió un 2xx sin el recibo durable exacto del cambio. La escritura puede haberse aplicado; verificá la relectura antes de repetirla.',
+          ...(recarga === undefined ? {} : { recarga }),
+        };
+      }
       // Un dry-run no escribe nada, así que no hay snapshot que releer ni relectura que contar.
       if (dryRun) return { ok: true, result };
       if (typeof result.revision === 'number') setChainedRevision(result.revision);
@@ -302,7 +327,9 @@ export function ConfigPage() {
     if (!outcome.ok) {
       setAvisoDeAccion({
         coleccion, tone: 'error', revision: revisionTrasEscribir(outcome.recarga, snapshotRevision),
-        text: `NO se aplicó «${accion.descripcion}»: ${outcome.message}${textoRecarga(outcome.recarga)}`,
+        text: outcome.uncertain
+          ? `No se pudo acreditar «${accion.descripcion}»: ${outcome.message}${textoRecarga(outcome.recarga)}`
+          : `NO se aplicó «${accion.descripcion}»: ${outcome.message}${textoRecarga(outcome.recarga)}`,
       });
       return;
     }
@@ -322,7 +349,14 @@ export function ConfigPage() {
    * desenlace no lo lee nadie.
    */
   async function rollback(revisionId: string, dryRun: boolean) {
-    if (soloLectura) return;
+    if (motivoDeSoloLectura) {
+      setPreviewDeRollback(undefined);
+      setAvisoDeRollback({
+        tone: 'error',
+        text: `Rollback bloqueado. ${motivoDeSoloLectura}`,
+      });
+      return;
+    }
     setBusy(true);
     setAvisoDeRollback(undefined);
     try {
@@ -330,6 +364,17 @@ export function ConfigPage() {
         dryRun,
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
       });
+      if (!exactConfigurationReceipt(result, dryRun, undefined, Number(revisionId))) {
+        setPreviewDeRollback(undefined);
+        const recarga = dryRun ? undefined : await releer();
+        setAvisoDeRollback({
+          tone: 'error',
+          text: dryRun
+            ? `El servidor devolvió un 2xx sin el recibo exacto del preview de rollback ${revisionId}; no se acredita.`
+            : `El servidor devolvió un 2xx sin el recibo durable exacto del rollback ${revisionId}. Puede haberse aplicado; verificá la relectura antes de repetirlo.${textoRecarga(recarga)}`,
+        });
+        return;
+      }
       if (dryRun) {
         setPreviewDeRollback(JSON.stringify(result, null, 2));
         // Un dry-run que no dice nada no se distingue de un botón que no hizo nada: el `<pre>` sale
@@ -395,7 +440,7 @@ export function ConfigPage() {
         El motivo va DENTRO de la línea del permiso y no en un cartel aparte debajo: eran dos
         avisos apilados diciendo lo mismo con distintas palabras, y dos carteles seguidos que dicen
         lo mismo enseñan a saltarse los dos. */}
-    <PermisoDeEscritura access={access.data} />
+    <PermisoDeEscritura access={access.data} estado={estadoPermisoDeEscritura} />
 
     {/* `useResource` conserva el último dato bueno cuando una relectura falla: sin este cartel, un
         GET caído no se notaba en ningún sitio y la pantalla seguía mostrando datos viejos con cara
@@ -529,9 +574,9 @@ export function ConfigPage() {
       <summary><Braces size={14} aria-hidden="true" /> Editor de mutaciones JSON — válvula de escape para lo que no tiene formulario</summary>
       <Panel title="Mutation editor" subtitle={`Revisión esperada: ${expectedRevision ?? 'UNKNOWN'}`}>
         <form className="config-form" onSubmit={(event) => void submit(event, false)}>
-          <label>Resource<select value={resource} onChange={(event) => selectTemplate(event.target.value as ConfigResource, action)}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label>Action<select value={action} onChange={(event) => selectTemplate(resource, event.target.value as ConfigAction)}>{actionsFor(resource).map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label className="config-json">Mutación JSON<textarea aria-label="Mutación JSON" rows={12} value={editor} onChange={(event) => editarMutacion(event.target.value)} spellCheck={false} /></label>
+          <label>Resource<select disabled={soloLectura || busy} value={resource} onChange={(event) => selectTemplate(event.target.value as ConfigResource, action)}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label>Action<select disabled={soloLectura || busy} value={action} onChange={(event) => selectTemplate(resource, event.target.value as ConfigAction)}>{actionsFor(resource).map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label className="config-json">Mutación JSON<textarea aria-label="Mutación JSON" disabled={soloLectura || busy} rows={12} value={editor} onChange={(event) => editarMutacion(event.target.value)} spellCheck={false} /></label>
           <div className="config-actions">
             <button className="button secondary" type="button" disabled={soloLectura || busy} onClick={(event) => void submit(event, true)}><SearchCheck size={16} />Preview / dry-run</button>
             <button className="button primary" type="submit" disabled={soloLectura || busy}><Save size={16} />Aplicar atómico</button>
@@ -557,12 +602,16 @@ export function ConfigPage() {
  * administra, y esconderlo dejaría a quien lo necesita sin nada que llevar. Va detrás de la frase
  * y en un escalón secundario.
  *
- * `unknown` —no se pudo leer el RBAC— dice que la pantalla queda habilitada, que es lo que hace:
- * ante la duda no se le quita nada a nadie y el servidor rechaza igual si no corresponde. Mismo
- * criterio que `configNavAvailability` y que `soloLectura`.
+ * `unknown` —no se pudo acreditar el RBAC— conserva lectura y navegación, pero deja cada mutación
+ * inerte. El backend sigue siendo la autoridad; la UI no debe usarlo como sustituto de una decisión
+ * de permiso que ella no pudo obtener.
  */
-function PermisoDeEscritura({ access }: { access?: ConsoleAccess }) {
-  const estado = permissionState(access, 'config.write');
+function PermisoDeEscritura({
+  access, estado,
+}: {
+  access?: ConsoleAccess;
+  estado: ReturnType<typeof permissionState>;
+}) {
   const texto = estado === 'allowed'
     ? 'Podés cambiar la configuración; todo cambio se deshace desde «Historial y JSON».'
     : estado === 'denied'
@@ -570,7 +619,7 @@ function PermisoDeEscritura({ access }: { access?: ConsoleAccess }) {
       // distintas para la misma negativa le harían creer al operador que son dos problemas.
       ? `Solo lectura: ${CONFIG_SIN_CONTROL_REASON} Los datos se muestran igual; lo que está `
         + 'apagado es todo lo que escribe.'
-      : 'No se pudo leer tu permiso. La pantalla queda habilitada y decide el servidor.';
+      : `Solo lectura: ${CONFIG_WRITE_NO_ACREDITADO_REASON}`;
   const roles = access?.roles?.length ? access.roles.join(', ') : 'UNKNOWN';
   return <p className="config-permiso" data-estado={estado} role="note">
     {texto}

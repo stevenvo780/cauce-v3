@@ -194,27 +194,63 @@ TMUX_SOCKET=${CAUCE_PTY_TMUX_SOCKET:-cauce}
 
 # El modo `harness` del agente PTY es lo unico que emite la TUI que el agente YA esta corriendo;
 # `shell` abre una terminal nueva, que no es lo que se pidio ver. Si el operador no declaro un
-# HARNESS_COMMAND, se deriva de la sesion tmux viva del alias, MEDIDA dentro del contenedor y
-# como el usuario del agente (el socket es por uid). Si no hay tmux o no hay sesion, se devuelve
-# vacio y el agente sigue anunciando solo `shell`: no se inventa una TUI que no existe.
+# HARNESS_COMMAND, se descubre el binario tmux dentro del contenedor y como el usuario del agente
+# (el socket es por uid). El bundle guarda path+socket aunque la sesion todavia no exista: el
+# agente acredita nombre, marcadores y panel atomically en CADA OPEN, de modo que una tmux que
+# aparezca mas tarde queda disponible sin reiniciar esta unidad. La sonda inicial sirve solamente
+# para medir el cwd de un panel que ya este validado; nunca congela el target.
 #
 #   -r              cliente de SOLO LECTURA: desde la consola no se puede teclear en la TUI ajena.
 #   -f ignore-size  el tamano del navegador no renegocia el de la sesion, asi mirar no le encoge
 #                   el panel al humano que esta trabajando en esa misma tmux.
 derive_harness_command() {
-  local tmux_path session probe
+  local tmux_path session windows observed_session_name observed_session_id extra session_id
+  local validated_pane_cwd
+  local marker_alias marker_harness window_name window_panes tui_windows pane_pid pane_dead pane_cwd
+  TMUX_MEASUREMENT_CONFLICT=0
+  TMUX_PANE_CWD_FOUND=''
   tmux_path=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
     sh -c 'command -v tmux' 2>/dev/null) || return 1
-  tmux_path=${tmux_path//[$'\r\n']/}
+  [[ $tmux_path != *$'\r'* && $tmux_path != *$'\n'* ]] || return 1
   [[ -n $tmux_path ]] || return 1
   valid_absolute_path "$tmux_path" || return 1
-  session="cauce-$alias_name"
-  # `has-session` es la comprobacion por EFECTO: existe el binario Y existe la sesion.
-  probe=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
-    "$tmux_path" -L "$TMUX_SOCKET" has-session -t "=$session" 2>&1) || return 1
-  [[ -z ${probe//[$'\r\n']/} ]] || return 1
+  # El ejecutable es la capacidad estable de la imagen. Se conserva aunque no haya servidor o
+  # sesion todavia; el agente valida ademas propiedad/modo y resuelve la sesion por cada OPEN.
   TMUX_PATH_FOUND=$tmux_path
-  TMUX_SESSION_FOUND=$session
+  session="cauce-$alias_name"
+
+  # One tmux server command returns session, markers, window cardinality and pane facts from the
+  # same observation.  Five independent probes could otherwise assemble a cwd from states which
+  # never coexisted. `list-windows` also lets us reject duplicate `tui` windows explicitly.
+  windows=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+    "$tmux_path" -L "$TMUX_SOCKET" list-windows -t "$session" -F \
+    $'#{session_name}\t#{session_id}\t#{window_name}\t#{window_panes}\t#{@cauce_alias}\t#{@cauce_harness}\t#{pane_pid}\t#{pane_dead}\t#{pane_current_path}' \
+    2>/dev/null) || return 1
+  [[ $windows != *$'\r'* ]] || return 1
+  # Desde este punto existe una sesión que reclama el nombre del alias. Si cualquiera de sus
+  # marcadores/paneles falla, no se degrada a una raíz inventada: el llamador distingue el choque.
+  TMUX_MEASUREMENT_CONFLICT=1
+  session_id=''
+  validated_pane_cwd=''
+  tui_windows=0
+  while IFS=$'\t' read -r observed_session_name observed_session_id window_name window_panes \
+    marker_alias marker_harness pane_pid pane_dead pane_cwd extra; do
+    [[ -z ${extra:-} && $observed_session_name == "$session" \
+      && $observed_session_id =~ ^\$[0-9]+$ ]] || return 1
+    [[ $window_name == tui ]] || continue
+    tui_windows=$((tui_windows + 1))
+    [[ $window_panes == 1 && $marker_alias == "$alias_name" && $marker_harness == "$harness" \
+      && $pane_pid =~ ^[1-9][0-9]*$ && $pane_dead == 0 ]] || return 1
+    valid_absolute_path "$pane_cwd" || return 1
+    session_id=$observed_session_id
+    validated_pane_cwd=$pane_cwd
+  done <<<"$windows"
+  [[ $tui_windows -eq 1 && -n $session_id ]] || return 1
+
+  TMUX_SESSION_FOUND=$session_id
+  TMUX_TARGET_FOUND="${session_id}:tui"
+  TMUX_PANE_CWD_FOUND=$validated_pane_cwd
+  TMUX_MEASUREMENT_CONFLICT=0
   return 0
 }
 
@@ -270,21 +306,38 @@ derive_openclaw_tui_command() {
   return 0
 }
 
-# Read only three non-secret path variables from the environment of the adapter that is actually
-# running for this alias/generation. The scan runs as the same uid and never prints the rest of
-# /proc/*/environ. For a harness whose profile root is selected by env, absence/ambiguity is a
-# hard failure: publishing HOME alone would make the gateway guess a shared sibling directory.
+# Read only non-secret path facts from the adapter that is actually running for this
+# alias/generation. `cwd` comes from `/proc/<pid>/cwd`, never from the launcher's PWD nor from the
+# browser. `workspace_root` is published only when that same adapter explicitly carries
+# `CAUCE_SHARED_SESSION_WORKSPACE`; inside that bounded root the nearest real `.git` marker
+# accredits `project_root`. Without a workspace root, cwd authorizes exactly one project level.
+#
+# The scan runs as the runtime uid and never prints the rest of `/proc/*/environ`. Every matching
+# process must agree byte-for-byte. Absence, ambiguity or an unsafe path yields `{}`: runtime facts
+# are optional evidence and must never stop the shell/PTY transport. A half-measured fact is worse
+# than no project context because shared containers and shared HOME directories make plausible-
+# looking sibling paths exist.
 measure_adapter_runtime_facts() {
   local measured
+  local -a measurement_environment=(
+    --env "CAUCE_PTY_MEASURE_ALIAS=$alias_name"
+    --env "CAUCE_PTY_MEASURE_GENERATION=$container_generation"
+    --env "CAUCE_PTY_MEASURE_STATE=$state_directory"
+    --env "CAUCE_PTY_MEASURE_HOME=$container_home"
+    --env "CAUCE_PTY_MEASURE_HARNESS=$harness"
+  )
+  [[ -z ${TMUX_PANE_CWD_FOUND:-} ]] \
+    || measurement_environment+=(--env "CAUCE_PTY_MEASURE_TMUX_CWD=$TMUX_PANE_CWD_FOUND")
   if ! measured=$(docker_control exec -i --user "$runtime_uid:$runtime_gid" \
-    --env "CAUCE_PTY_MEASURE_ALIAS=$alias_name" \
-    --env "CAUCE_PTY_MEASURE_GENERATION=$container_generation" \
-    --env "CAUCE_PTY_MEASURE_STATE=$state_directory" \
-    --env "CAUCE_PTY_MEASURE_HOME=$container_home" \
-    --env "CAUCE_PTY_MEASURE_HARNESS=$harness" \
+    "${measurement_environment[@]}" \
     "$container_id" /usr/bin/python3 - <<'PYTHON'
 import json
 import os
+import stat
+try:
+    import tomllib
+except ImportError:  # El PTY sigue vivo; el gateway marcará la cobertura como parcial.
+    tomllib = None
 
 identity = {
     "CAUCE_ALIAS": os.environ["CAUCE_PTY_MEASURE_ALIAS"],
@@ -293,6 +346,7 @@ identity = {
 }
 home = os.path.normpath(os.environ["CAUCE_PTY_MEASURE_HOME"])
 harness = os.environ["CAUCE_PTY_MEASURE_HARNESS"]
+tmux_cwd = os.environ.get("CAUCE_PTY_MEASURE_TMUX_CWD", "")
 wire_for_harness = {
     "codex": ("CODEX_HOME", "codex_home"),
     "claude": ("CLAUDE_CONFIG_DIR", "claude_config_dir"),
@@ -316,51 +370,200 @@ for name in os.listdir("/proc"):
         continue
     if environment.get("HOME") != home:
         continue
-    value = "" if wire_for_harness is None else environment.get(wire_for_harness[0], "")
-    observed.add(value)
+    try:
+        cwd = os.readlink(f"/proc/{name}/cwd")
+    except OSError:
+        # The process may have exited between environ and cwd. It is not evidence for a fact.
+        continue
+    profile = "" if wire_for_harness is None else environment.get(wire_for_harness[0], "")
+    workspace_root = environment.get("CAUCE_SHARED_SESSION_WORKSPACE", "")
+    # Keep the process cwd even for a shared adapter. Without a validated tmux pane it is the only
+    # cwd actually observed; it may be used only when it is itself inside the shared workspace.
+    observed.add((profile, cwd, workspace_root))
 
-document = {}
-safe = False
-if len(observed) == 1 and wire_for_harness is not None:
-    path = next(iter(observed))
+def safe_directory(path, *, below_home=False):
     try:
         details = os.lstat(path)
-        safe = (path.startswith("/") and os.path.normpath(path) == path
-                and os.path.commonpath((home, path)) == home
-                and os.path.isdir(path) and not os.path.islink(path)
-                and os.path.realpath(path) == path and details.st_uid == os.geteuid())
+        safe = (path.startswith("/") and path != "/" and os.path.normpath(path) == path
+                and stat.S_ISDIR(details.st_mode) and not stat.S_ISLNK(details.st_mode)
+                and os.path.realpath(path) == path)
+        if below_home:
+            safe = safe and os.path.commonpath((home, path)) == home \
+                and details.st_uid == os.geteuid()
+        return safe
     except (OSError, ValueError):
-        safe = False
-    if safe:
-        document[wire_for_harness[1]] = path
-if wire_for_harness is not None and not safe:
+        return False
+
+def project_root_within(workspace_root, cwd):
+    """Nearest real `.git` marker, bounded strictly by the accredited workspace root."""
+    current = cwd
+    for _ in range(65):
+        marker = f"{current.rstrip('/')}/.git"
+        try:
+            details = os.lstat(marker)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            raise SystemExit(2)
+        else:
+            if stat.S_ISLNK(details.st_mode) or not (
+                    stat.S_ISDIR(details.st_mode) or stat.S_ISREG(details.st_mode)) \
+                    or os.path.realpath(marker) != marker:
+                raise SystemExit(2)
+            return current
+        if current == workspace_root:
+            break
+        parent = os.path.dirname(current)
+        if parent == current or not (parent == workspace_root or parent.startswith(workspace_root + "/")):
+            raise SystemExit(2)
+        current = parent
+    # No marker was measured. Exact cwd is the only non-invented project boundary.
+    return cwd
+
+def codex_instruction_config(codex_home):
+    """Proyecta sólo dos knobs no sensibles; nunca publica el resto de config.toml."""
+    config_path = f"{codex_home.rstrip('/')}/config.toml"
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(config_path, flags)
+    except FileNotFoundError:
+        return 32768, []
+    except OSError:
+        return None
+    try:
+        details = os.fstat(descriptor)
+        if (not stat.S_ISREG(details.st_mode) or details.st_uid != os.geteuid()
+                or details.st_nlink != 1 or details.st_size > 1024 * 1024 or tomllib is None):
+            return None
+        raw = bytearray()
+        while len(raw) <= 1024 * 1024:
+            chunk = os.read(descriptor, min(65536, 1024 * 1024 + 1 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        if len(raw) > 1024 * 1024:
+            return None
+    finally:
+        os.close(descriptor)
+    try:
+        parsed = tomllib.loads(bytes(raw).decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return None
+    maximum = parsed.get("project_doc_max_bytes", 32768)
+    fallbacks = parsed.get("project_doc_fallback_filenames", [])
+    if (not isinstance(maximum, int) or isinstance(maximum, bool)
+            or maximum < 1 or maximum > 16 * 1024 * 1024
+            or not isinstance(fallbacks, list) or len(fallbacks) > 16):
+        return None
+    safe = []
+    seen = {"agents.override.md", "agents.md"}
+    forbidden = {".credentials.json", "auth.json", ".claude.json", "openclaw.json", ".env",
+                 ".netrc", "id_ed25519", "id_rsa", "known_hosts", "authorized_keys"}
+    for name in fallbacks:
+        try:
+            js_length = len(name.encode("utf-16-le")) // 2 if isinstance(name, str) else 0
+        except UnicodeEncodeError:
+            return None
+        normalized = name.casefold() if isinstance(name, str) else ""
+        if (not isinstance(name, str) or not name or js_length > 128 or normalized in seen
+                or "/" in name or "\\" in name or "\0" in name or ".." in name
+                or any(ord(character) <= 0x1f or ord(character) == 0x7f for character in name)
+                or normalized in forbidden
+                or normalized.endswith((".pem", ".key", ".p12", ".pfx"))):
+            return None
+        seen.add(normalized)
+        safe.append(name)
+    return maximum, safe
+
+if len(observed) != 1:
     raise SystemExit(2)
+
+profile, process_cwd, workspace_root = next(iter(observed))
+
+document = {}
+if wire_for_harness is not None:
+    if not safe_directory(profile, below_home=True):
+        raise SystemExit(2)
+    document[wire_for_harness[1]] = profile
+    if harness == "codex":
+        instruction_config = codex_instruction_config(profile)
+        if instruction_config is not None:
+            document["project_doc_max_bytes"] = instruction_config[0]
+            document["project_doc_fallback_filenames"] = instruction_config[1]
+if workspace_root:
+    cwd = tmux_cwd or process_cwd
+    try:
+        contains_cwd = os.path.commonpath((workspace_root, cwd)) == workspace_root
+    except ValueError:
+        contains_cwd = False
+    if not safe_directory(workspace_root):
+        raise SystemExit(2)
+    if safe_directory(cwd) and contains_cwd:
+        document["cwd"] = cwd
+        document["workspace_root"] = workspace_root
+        document["project_root"] = project_root_within(workspace_root, cwd)
+    elif tmux_cwd:
+        # A pane cwd is accepted only after the complete alias/harness/panel identity check. If
+        # that accredited value is outside the declared workspace, discard every fact.
+        raise SystemExit(2)
+    # The adapter process may legitimately run outside the shared workspace. Without a validated
+    # pane there is no project cwd to publish; retain only the independently measured profile fact.
+else:
+    if tmux_cwd or not safe_directory(process_cwd):
+        raise SystemExit(2)
+    document["cwd"] = process_cwd
+    document["project_root"] = process_cwd
 print(json.dumps(document, separators=(",", ":")))
 PYTHON
   ); then
-    return 1
+    printf 'cauce-pty-launcher: runtime facts unavailable alias=%s; publishing empty facts\n' \
+      "$alias_name" >&2
+    printf '{}'
+    return 0
   fi
-  [[ $measured == \{*\} ]] || return 1
+  if [[ $measured != \{*\} ]]; then
+    printf 'cauce-pty-launcher: runtime facts malformed alias=%s; publishing empty facts\n' \
+      "$alias_name" >&2
+    printf '{}'
+    return 0
+  fi
   printf '%s' "$measured"
 }
 
 publish_bundle() {
-  local shell_candidates harness_command openclaw_tui runtime_facts
+  local shell_candidates harness_command tmux_tui openclaw_tui runtime_facts
   shell_candidates=${CONFIG[SHELL_CANDIDATES]:-'[["/bin/bash","-l"],["/bin/sh","-l"]]'}
   harness_command=${CONFIG[HARNESS_COMMAND]:-}
+  tmux_tui=null
   openclaw_tui=null
-  runtime_facts=$(measure_adapter_runtime_facts) \
-    || die "cannot measure the alias-scoped runtime profile for $alias_name"
+  TMUX_PANE_CWD_FOUND=''
+  TMUX_MEASUREMENT_CONFLICT=0
   if [[ -z $harness_command ]]; then
     TMUX_PATH_FOUND=''
     TMUX_SESSION_FOUND=''
-    if derive_harness_command; then
-      harness_command=$(CAUCE_TMUX_PATH=$TMUX_PATH_FOUND CAUCE_TMUX_SOCKET=$TMUX_SOCKET \
-        CAUCE_TMUX_SESSION=$TMUX_SESSION_FOUND PYTHONDONTWRITEBYTECODE=1 python3 -c \
-        'import json,os;print(json.dumps([os.environ["CAUCE_TMUX_PATH"],"-L",os.environ["CAUCE_TMUX_SOCKET"],"attach-session","-r","-f","ignore-size","-t",os.environ["CAUCE_TMUX_SESSION"]]))') \
-        || die "cannot assemble the derived harness command"
-      printf 'cauce-pty-launcher: harness derived from tmux alias=%s socket=%s session=%s\n' \
-        "$alias_name" "$TMUX_SOCKET" "$TMUX_SESSION_FOUND" >&2
+    TMUX_TARGET_FOUND=''
+    if [[ $harness == codex || $harness == claude ]]; then
+      if derive_harness_command; then
+        printf 'cauce-pty-launcher: live tmux context measured alias=%s socket=%s measured_session_id=%s\n' \
+          "$alias_name" "$TMUX_SOCKET" "$TMUX_SESSION_FOUND" >&2
+      elif [[ -n $TMUX_PATH_FOUND ]]; then
+        if [[ $TMUX_MEASUREMENT_CONFLICT -eq 1 ]]; then
+          printf 'cauce-pty-launcher: tmux context not accredited alias=%s socket=%s; OPEN will revalidate\n' \
+            "$alias_name" "$TMUX_SOCKET" >&2
+        else
+          printf 'cauce-pty-launcher: no live tmux session yet alias=%s socket=%s; OPEN will discover it\n' \
+            "$alias_name" "$TMUX_SOCKET" >&2
+        fi
+      fi
+    fi
+    if [[ -n $TMUX_PATH_FOUND ]]; then
+      harness_command=null
+      tmux_tui=$(CAUCE_TMUX_PATH=$TMUX_PATH_FOUND CAUCE_TMUX_SOCKET=$TMUX_SOCKET \
+        PYTHONDONTWRITEBYTECODE=1 python3 -c \
+        'import json,os;print(json.dumps({"path":os.environ["CAUCE_TMUX_PATH"],"socket":os.environ["CAUCE_TMUX_SOCKET"]},separators=(",",":")))') \
+        || die "cannot assemble the dynamic tmux harness resolver"
+      printf 'cauce-pty-launcher: dynamic tmux resolver enabled alias=%s socket=%s\n' \
+        "$alias_name" "$TMUX_SOCKET" >&2
     else
       # Sin panel tmux se prueba la TUI nativa de OpenClaw. El orden importa y no se puede
       # invertir: un alias con sesion compartida tiene que seguir emitiendo el panel que su dueno
@@ -383,6 +586,9 @@ publish_bundle() {
       fi
     fi
   fi
+  # Runtime facts enrich presence/governance but are not a precondition for terminal transport.
+  # The measurement function returns `{}` on zero, ambiguous or unsafe adapter evidence.
+  runtime_facts=$(measure_adapter_runtime_facts)
   local_bundle=$(mktemp "${TMPDIR:-/tmp}/.cauce-pty-bundle-$alias_name.XXXXXX")
   chmod 0600 "$local_bundle"
   CAUCE_PTY_BUNDLE_TENANT=$tenant \
@@ -402,6 +608,7 @@ publish_bundle() {
   CAUCE_PTY_BUNDLE_KEY_FILE=${CONFIG[ALIAS_KEY_FILE]} \
   CAUCE_PTY_BUNDLE_SHELLS=$shell_candidates \
   CAUCE_PTY_BUNDLE_HARNESS_COMMAND=$harness_command \
+  CAUCE_PTY_BUNDLE_TMUX_TUI=$tmux_tui \
   CAUCE_PTY_BUNDLE_OPENCLAW_TUI=$openclaw_tui \
   CAUCE_PTY_BUNDLE_RUNTIME_FACTS=$runtime_facts \
   CAUCE_PTY_BUNDLE_VERSION=$AGENT_VERSION \
@@ -438,6 +645,7 @@ document = {
     "home": os.environ["CAUCE_PTY_BUNDLE_HOME"],
     "shell_candidates": commands(os.environ["CAUCE_PTY_BUNDLE_SHELLS"], "SHELL_CANDIDATES"),
     "harness_command": commands(os.environ["CAUCE_PTY_BUNDLE_HARNESS_COMMAND"], "HARNESS_COMMAND"),
+    "tmux_tui": commands(os.environ["CAUCE_PTY_BUNDLE_TMUX_TUI"], "TMUX_TUI"),
     "openclaw_tui": commands(os.environ["CAUCE_PTY_BUNDLE_OPENCLAW_TUI"], "OPENCLAW_TUI"),
     "runtime_facts": commands(os.environ["CAUCE_PTY_BUNDLE_RUNTIME_FACTS"], "RUNTIME_FACTS"),
     "harness": os.environ["CAUCE_PTY_BUNDLE_HARNESS"],

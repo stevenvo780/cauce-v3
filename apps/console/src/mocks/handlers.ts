@@ -1,10 +1,16 @@
 import { delay, http, HttpResponse } from 'msw';
 import {
   adapters, agentAccountBindings, audit, configAclEdges, configMemberships, configRooms,
-  configTenants, mockActivity, mockMessages, mockQueues, mockChain, mockQuotas,
+  configTenants, mockActivity, mockMessages, mockQueues, mockDlq, mockChain, mockQuotas,
   mockStatus, originRelays, providerAccounts, registryAgents, roleBriefHistoryKant, routingCeiling,
   topology,
 } from './data';
+
+const preparedIntentByMeaning = new Map<string, string>();
+
+function mockMeaning(input: unknown): string {
+  return JSON.stringify(input);
+}
 
 export const handlers = [
   http.get('*/v3/auth/session', () => HttpResponse.json({
@@ -22,7 +28,7 @@ export const handlers = [
   }),
   http.get('*/v3/console/access', () => HttpResponse.json({
     subject: 'Steven:kant', roles: ['operator'],
-    permissions: ['message.publish', 'delivery.replay', 'delivery.cancel', 'job.create', 'config.write', 'config.rollback', 'ultimate-terminal.connect'],
+    permissions: ['message.publish', 'delivery.replay', 'delivery.cancel', 'job.create', 'config.write', 'config.rollback', 'dlq.resolve', 'ultimate-terminal.connect'],
   })),
   http.get('*/v3/console/topology', () => HttpResponse.json(topology)),
   http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())),
@@ -30,13 +36,65 @@ export const handlers = [
   // La cadena por trace: el endpoint existía en el gateway y no tenía un solo consumidor.
   http.get('*/v3/console/chains/:traceId', ({ params }) => HttpResponse.json(mockChain(String(params.traceId)))),
   http.get('*/v3/console/messages', () => HttpResponse.json(mockMessages())),
+  http.post('*/v3/console/publish-intents', async ({ request }) => {
+    const input = await request.json();
+    const meaning = mockMeaning(input);
+    let key = preparedIntentByMeaning.get(meaning);
+    if (!key) {
+      key = `console-intent:${crypto.randomUUID()}`;
+      preparedIntentByMeaning.set(meaning, key);
+    }
+    return HttpResponse.json({ version: 1, state: 'prepared', idempotency_key: key, receipt: null });
+  }),
+  http.post('*/v3/console/publish-intents/confirm', async ({ request }) => {
+    const input = await request.json() as {
+      idempotency_key?: unknown; message_id?: unknown; causal_hash?: unknown;
+    };
+    if (typeof input.idempotency_key !== 'string'
+        || typeof input.message_id !== 'string'
+        || typeof input.causal_hash !== 'string') {
+      return HttpResponse.json({ error: 'invalid_request' }, { status: 422 });
+    }
+    for (const [meaning, key] of preparedIntentByMeaning) {
+      if (key === input.idempotency_key) preparedIntentByMeaning.delete(meaning);
+    }
+    return HttpResponse.json({ version: 1, confirmed: true, ...input });
+  }),
   http.post('*/v3/console/messages', async ({ request }) => {
-    const input = await request.json() as { body?: { text?: string } };
+    const input = await request.json() as { body?: { text?: string }; idempotency_key?: unknown };
     if (!input.body?.text) return HttpResponse.json({ error: 'invalid_request', message: 'text is required' }, { status: 422 });
-    return HttpResponse.json({ message_id: crypto.randomUUID(), delivery_ids: [crypto.randomUUID()], duplicate: false, request_id: crypto.randomUUID(), trace_id: `trace-${crypto.randomUUID()}` }, { status: 202 });
+    return HttpResponse.json({
+      message_id: crypto.randomUUID(),
+      delivery_ids: [crypto.randomUUID()],
+      duplicate: false,
+      request_id: crypto.randomUUID(),
+      trace_id: `trace-${crypto.randomUUID()}`,
+      idempotency_key: input.idempotency_key,
+      tenant_id: 'Steven',
+      actor_alias: 'kant',
+      request_hash: 'a'.repeat(64),
+      causal_hash: 'b'.repeat(64),
+    }, { status: 202 });
   }),
   http.get('*/v3/console/queues', () => HttpResponse.json(mockQueues())),
-  http.post('*/v3/console/deliveries/:deliveryId/replay', ({ params }) => HttpResponse.json({ delivery_id: params.deliveryId, state: 'pending', replayed: true }, { status: 202 })),
+  http.get('*/v3/console/dlq', () => HttpResponse.json(mockDlq())),
+  http.post('*/v3/console/dlq/:target/:id/resolve-without-replay', async ({ params, request }) => {
+    const body = await request.json() as Record<string, unknown>;
+    if (body.possible_no_delivery_acknowledged !== true) {
+      return HttpResponse.json({ error: 'invalid_input', message: 'no-delivery acknowledgement is required' }, { status: 409 });
+    }
+    return HttpResponse.json({
+      schemaVersion: 1, suite: 'cauce-v3-dlq-no-replay-resolution', phase: 'resolved',
+      appliedCount: 1, alreadyApplied: false, evidenceSha256: body.evidence_sha256,
+      reasonSha256: '0'.repeat(64),
+      possibleDuplicateAcknowledged: body.possible_duplicate_acknowledged === true,
+      possibleNoDeliveryAcknowledged: true, target: params.target, id: params.id,
+    });
+  }),
+  http.post('*/v3/console/deliveries/:deliveryId/replay', ({ params }) => HttpResponse.json({
+    delivery_id: crypto.randomUUID(), replayed_from_delivery_id: params.deliveryId,
+    state: 'pending', replayed: true,
+  }, { status: 202 })),
   http.post('*/v3/console/deliveries/:deliveryId/cancel', ({ params }) => HttpResponse.json({ delivery_id: params.deliveryId, state: 'dead', cancelled: true, cancelled_from_state: 'started', parent_notice: 'returned', origin_relayed: true, replayable: true }, { status: 200 })),
   http.get('*/v3/console/adapters', () => HttpResponse.json(adapters)),
   http.get('*/v3/console/audit', () => HttpResponse.json(audit)),
@@ -68,9 +126,24 @@ export const handlers = [
   })),
   http.post('*/v3/console/config/changes', async ({ request }) => {
     const input = await request.json() as { dry_run?: boolean; mutation?: Record<string, unknown> };
-    return HttpResponse.json({ applied: input.dry_run !== true, dry_run: input.dry_run === true, revision: input.dry_run ? 1 : 2, mutation: input.mutation, summary: 'mock configuration validation' }, { status: input.dry_run ? 200 : 201 });
+    return HttpResponse.json({
+      applied: input.dry_run !== true, dry_run: input.dry_run === true,
+      revision: input.dry_run ? 1 : 2, mutation: input.mutation,
+      inverse_mutation: input.mutation, rolled_back_revision_id: null,
+      summary: 'mock configuration validation',
+    }, { status: input.dry_run ? 200 : 201 });
   }),
-  http.post('*/v3/console/config/revisions/:revisionId/rollback', ({ params }) => HttpResponse.json({ applied: true, dry_run: false, revision: Number(params.revisionId) + 1 }, { status: 201 })),
+  http.post('*/v3/console/config/revisions/:revisionId/rollback', async ({ params, request }) => {
+    const input = await request.json() as { dry_run?: boolean };
+    const dryRun = input.dry_run === true;
+    const mutation = { resource: 'tenant', action: 'update', id: 'Steven', value: { enabled: true } };
+    return HttpResponse.json({
+      applied: !dryRun, dry_run: dryRun,
+      revision: dryRun ? Number(params.revisionId) : Number(params.revisionId) + 1,
+      rolled_back_revision_id: Number(params.revisionId),
+      summary: `rollback ${String(params.revisionId)}`, mutation, inverse_mutation: mutation,
+    }, { status: dryRun ? 200 : 201 });
+  }),
   http.get('*/v3/console/observability', () => HttpResponse.json({
     observed_at: new Date().toISOString(), status: mockStatus(), queues: mockQueues(),
     origin_relays: originRelays
@@ -160,6 +233,7 @@ export const handlers = [
         label: 'CLAUDE.md (manual del sitio)',
         path: '/home/stev/.claude/CLAUDE.md',
         format: 'markdown',
+        readable: true,
         editable: true,
       },
       {
@@ -167,7 +241,9 @@ export const handlers = [
         label: 'Herramientas y permisos (settings.json)',
         path: '/home/stev/.claude/settings.json',
         format: 'json',
-        editable: true,
+        readable: false,
+        editable: false,
+        reason: 'Este canal sólo sirve manuales y perfil allowlisted; settings.json requiere validación estructural.',
         warning: 'Este fichero puede contener `hooks`: órdenes que el arnés ejecuta solo. Cambiarlo equivale a ejecutar código dentro del contenedor del agente.',
       },
       {
@@ -175,6 +251,7 @@ export const handlers = [
         label: 'Subagentes (~/.claude/agents)',
         path: '/home/stev/.claude/agents',
         format: 'markdown',
+        readable: false,
         editable: false,
         reason: 'Es un directorio; v1 sólo lista lo que hay, no edita fichero a fichero.',
       },
@@ -183,6 +260,7 @@ export const handlers = [
         label: 'Servidores MCP',
         path: '/home/stev/.claude.json',
         format: 'json',
+        readable: false,
         editable: false,
         reason: 'Los MCP viven en `.claude.json`, junto al OAuth de la cuenta y al historial de todos los proyectos. No se sirve: habría que proyectar sólo `mcpServers`.',
       },
@@ -203,8 +281,12 @@ export const handlers = [
       tenant_id: String(params.tenantId), alias: 'kant', kind: params.kind,
       path: esDirectiva ? '/home/stev/.claude/CLAUDE.md' : '/home/stev/.claude/settings.json',
       format: esDirectiva ? 'markdown' : 'json',
-      exists: true, content: contenido, sha: 'sha-de-lo-servido',
-      bytes: contenido.length, editable: true, projected: false,
+      exists: true, content: contenido,
+      sha: esDirectiva
+        ? 'fda7b5a2bcdb2d3bd7142ea12a36d23704d45333c029a8c93f3c086d6821bf75'
+        : '2e89262dab4996b4d65d1a4770a71757af32b58e3c7925bce829e1fb144258d4',
+      bytes: esDirectiva ? 243 : 61,
+      editable: esDirectiva, projected: false, truncated: false,
     });
   }),
   http.put(

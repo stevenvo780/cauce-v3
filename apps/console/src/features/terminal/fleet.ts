@@ -33,12 +33,19 @@ function normalized(value: string): string {
 }
 
 export function fleetAgentId(tenantId: string, alias: string): string {
-  return `${normalized(tenantId)}:${normalized(alias)}`;
+  // TenantSchema is case-sensitive. Folding here used to merge `Steven:operator` with
+  // `steven:operator`, after which topology, presence and PTY authority could come from different
+  // principals. Identity keys preserve the canonical wire values exactly; normalization is only
+  // for human search below.
+  return `${tenantId}:${alias}`;
 }
 
 /** Combines server topology and observed leases without inventing fleet members. */
 export function buildFleetAgents(status?: SystemStatus, topology?: TopologySnapshot): FleetAgent[] {
   const records = new Map<string, MutableFleetAgent>();
+  // A stale presence lease must not resurrect a membership the canonical registry explicitly
+  // says is not an agent. The identity is tenant-qualified: aliases may repeat across tenants.
+  const explicitlyNotAgents = new Set<string>();
 
   for (const tenant of topology?.tenants ?? []) {
     if (!tenant.id) continue;
@@ -46,6 +53,11 @@ export function buildFleetAgents(status?: SystemStatus, topology?: TopologySnaps
       for (const member of room.members ?? []) {
         if (!member.alias) continue;
         const id = fleetAgentId(tenant.id, member.alias);
+        if (member.registered === false) {
+          explicitlyNotAgents.add(id);
+          records.delete(id);
+          continue;
+        }
         const record = records.get(id) ?? {
           tenantId: tenant.id,
           alias: member.alias,
@@ -66,6 +78,7 @@ export function buildFleetAgents(status?: SystemStatus, topology?: TopologySnaps
   for (const presence of status?.presence ?? []) {
     if (!presence.tenant_id || !presence.alias) continue;
     const id = fleetAgentId(presence.tenant_id, presence.alias);
+    if (explicitlyNotAgents.has(id)) continue;
     const record = records.get(id) ?? {
       tenantId: presence.tenant_id,
       alias: presence.alias,
@@ -162,10 +175,8 @@ export const ADAPTER_STATE_LABELS: Readonly<Record<'available' | 'degraded' | 'u
  * card; per-destination authority now comes from the targets inventory below.
  */
 export function terminalTargetMatchesAgent(targetLabel: unknown, agent: FleetAgent): boolean {
-  if (typeof targetLabel !== 'string' || !targetLabel.trim()) return false;
-  const target = normalized(targetLabel);
-  return target === normalized(`${agent.tenantId}:${agent.alias}`)
-    || target === normalized(agent.id);
+  if (typeof targetLabel !== 'string' || !targetLabel) return false;
+  return targetLabel === `${agent.tenantId}:${agent.alias}` || targetLabel === agent.id;
 }
 
 /**
@@ -218,17 +229,36 @@ export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefin
     return { status: 'unknown', reason: `El servidor no declaró un target PTY para ${agent.tenantId}:${agent.alias}.` };
   }
   if (!target.authorized) return { status: 'denied', reason: target.reason, target };
+  // Rolling upgrades can briefly pair a new console with an old gateway which used `ok` for
+  // every authorized row, even when its measured PTY state was unusable. Never surface that
+  // authority placeholder as the explanation on a disabled control.
+  const placeholderReason = target.reason.trim().length === 0 || /^\s*ok\.?\s*$/iu.test(target.reason);
   if (target.pty_state === 'not_installed') {
-    return { status: 'not_installed', reason: target.reason, target };
+    return {
+      status: 'not_installed',
+      reason: placeholderReason
+        ? 'El agente PTY figura como no instalado: el terminal-relay nunca registró este destino.'
+        : target.reason,
+      target,
+    };
   }
   if (target.pty_state === 'agent_offline') {
     return {
       status: 'offline',
-      reason: `${target.reason} Última presencia: ${target.last_seen ?? 'nunca se registró una'}.`,
+      reason: `${placeholderReason
+        ? 'El agente PTY figura fuera de línea: no está conectado al terminal-relay.'
+        : target.reason} Última presencia: ${target.last_seen ?? 'nunca se registró una'}.`,
       target,
     };
   }
   if (target.pty_state === 'online') return { status: 'allowed', reason: target.reason, target };
+  if (placeholderReason) {
+    return {
+      status: 'unknown',
+      reason: 'El estado del agente PTY es desconocido: el terminal-relay no publicó una medición verificable.',
+      target,
+    };
+  }
   return { status: 'unknown', reason: `No se pudo determinar el estado del agente PTY de ${agent.alias}. ${target.reason}`, target };
 }
 

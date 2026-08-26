@@ -7,7 +7,7 @@
 //   POST /v3/terminal/relay/agents                     agent registration
 //   POST /v3/terminal/relay/sessions/:sid/consume      atomic single use: 200 then 409
 //   POST /v3/terminal/relay/sessions/:sid/resume       live revalidation of continuity token
-//   GET  /v3/terminal/relay/sessions/:sid/authz        200 while live, 403 with a reason
+//   POST /v3/terminal/relay/sessions/:sid/authz        200 while live, 403 with a reason
 //   POST /v3/terminal/relay/sessions/:sid/close        session teardown + audit row
 //
 // Every request needs `Authorization: Bearer <relay token>`. Two knobs exist to reproduce
@@ -32,6 +32,8 @@ import { createSelfSignedCert } from './certs.mjs';
 const AGENTS_PATH = '/v3/terminal/relay/agents';
 const SESSION_PATH = /^\/v3\/terminal\/relay\/sessions\/([^/]+)\/(consume|resume|authz|close)$/;
 const HARNESS_STATE_PATH = '/__harness/state';
+const RELAY_INSTANCE_ID_PATTERN = /^[0-9a-f]{64}$/;
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function fingerprint(value) {
   return createHash('sha256').update(String(value)).digest('hex').slice(0, 12);
@@ -49,6 +51,15 @@ export async function startFakeGateway(options = {}) {
   const clockSkewSec = options.clock_skew_sec ?? 2;
   /** How long the shell may live once the ticket is consumed; the ticket TTL is a separate, shorter clock. */
   const sessionTtlSec = options.session_ttl_sec ?? 3600;
+  const claimLeaseMs = options.claim_lease_ms ?? 150_000;
+  const relayPresenceStaleMs = options.relay_presence_stale_ms ?? 30_000;
+  const expectedRelayInstanceIds = new Set(
+    options.relay_instance_ids ?? [options.relay_instance_id ?? 'a'.repeat(64)],
+  );
+  if (expectedRelayInstanceIds.size === 0
+      || [...expectedRelayInstanceIds].some((value) => !RELAY_INSTANCE_ID_PATTERN.test(value))) {
+    throw new Error('fake gateway relay instance ids must be 64 lowercase hexadecimal characters');
+  }
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
 
   // grants.json semantics: a map of "<tenant>:<alias>" the operator is allowed to reach.
@@ -61,6 +72,7 @@ export async function startFakeGateway(options = {}) {
   const sessions = new Map();
   const audit = [];
   const timers = [];
+  const activeRelays = new Map();
 
   const record = (event, fields) => {
     audit.push({ at: new Date().toISOString(), event, ...fields });
@@ -114,7 +126,24 @@ export async function startFakeGateway(options = {}) {
 
     if (url.pathname === AGENTS_PATH && request.method === 'POST') {
       const body = await readJson(request);
-      const entries = Array.isArray(body.agents) ? body.agents : [body];
+      const identity = parseRelayIdentity(body);
+      if (!identity || !expectedRelayInstanceIds.has(identity.relay_instance_id)) {
+        reply(response, 403, { ok: false, error: 'relay_identity_invalid' });
+        return;
+      }
+      const priorRelay = activeRelays.get(identity.relay_instance_id);
+      const collision = priorRelay !== undefined
+        && priorRelay.relay_boot_id !== identity.relay_boot_id
+        && Date.now() - priorRelay.accepted_at <= relayPresenceStaleMs;
+      if (collision) {
+        reply(response, 409, { ok: false, error: 'relay_boot_collision' });
+        return;
+      }
+      const entries = Array.isArray(body.agents) ? body.agents : null;
+      if (entries === null) {
+        reply(response, 400, { ok: false, error: 'agents_must_be_array' });
+        return;
+      }
       for (const entry of entries) {
         const key = `${String(entry.tenant_id)}:${String(entry.alias)}`;
         if (revoked || !grants.has(key)) {
@@ -126,12 +155,15 @@ export async function startFakeGateway(options = {}) {
           tenant_id: entry.tenant_id, alias: entry.alias, container_id: entry.container_id,
           generation: entry.generation, image_id: entry.image_id, runtime_user: entry.runtime_user,
           runtime_uid: entry.runtime_uid, modes: entry.modes, agent_version: entry.agent_version,
+          relay_instance_id: identity.relay_instance_id,
+          relay_boot_id: identity.relay_boot_id,
           registered_at: new Date().toISOString(),
         };
-        agents.set(key, agent);
+        agents.set(`${identity.relay_instance_id}:${key}`, agent);
         record('agent.registered', { alias: entry.alias, container_id: entry.container_id, image_id: entry.image_id });
       }
-      reply(response, 200, { ok: true, agents: entries.length });
+      activeRelays.set(identity.relay_instance_id, { ...identity, accepted_at: Date.now() });
+      reply(response, 200, { ok: true, ...identity });
       return;
     }
 
@@ -143,7 +175,7 @@ export async function startFakeGateway(options = {}) {
     const [, sessionId, action] = match;
     if (action === 'consume' && request.method === 'POST') return consume(sessionId, request, response);
     if (action === 'resume' && request.method === 'POST') return resume(sessionId, request, response);
-    if (action === 'authz' && request.method === 'GET') return authz(sessionId, response);
+    if (action === 'authz' && request.method === 'POST') return authz(sessionId, request, response);
     if (action === 'close' && request.method === 'POST') return close(sessionId, request, response);
     reply(response, 405, { error: 'method_not_allowed' });
     return undefined;
@@ -151,7 +183,15 @@ export async function startFakeGateway(options = {}) {
 
   async function consume(sessionId, request, response) {
     const body = await readJson(request);
+    const identity = activeRelayIdentity(body, response);
+    if (!identity) return;
     const ticket = typeof body.ticket === 'string' ? body.ticket : '';
+    const claimToken = typeof body.claim_token === 'string' && UUID_V4_PATTERN.test(body.claim_token)
+      ? body.claim_token : null;
+    if (claimToken === null) {
+      reply(response, 401, { ok: false, error: 'ticket_invalid', reason: 'claim_invalid' });
+      return;
+    }
     const claimed = peekTarget(ticket);
     if (!claimed) {
       record('terminal.session.consume.denied', { session_id: sessionId, reason: 'malformed' });
@@ -178,10 +218,36 @@ export async function startFakeGateway(options = {}) {
       reply(response, 403, { ok: false, error: 'revoked' });
       return;
     }
-    if (sessions.has(sessionId)) {
-      // Single use is the whole point: a replayed ticket must never open a second shell.
-      record('terminal.session.consume.replayed', { session_id: sessionId });
-      reply(response, 409, { ok: false, error: 'ticket_already_consumed' });
+    const existing = sessions.get(sessionId);
+    if (existing) {
+      const exactLiveClaim = existing.claim_token === claimToken
+        && existing.claim_expires_at > Date.now()
+        && existing.relay_instance_id === identity.relay_instance_id
+        && existing.relay_boot_id === identity.relay_boot_id;
+      if (exactLiveClaim) {
+        existing.claim_expires_at = Date.now() + claimLeaseMs;
+        reply(response, 200, relayGrant(existing, { receiptRecovered: true }));
+        return;
+      }
+      if (existing.claim_expires_at > Date.now()) {
+        record('terminal.session.consume.replayed', { session_id: sessionId });
+        reply(response, 409, {
+          ok: false,
+          error: 'claim_conflict',
+          retry_after_ms: Math.max(1, existing.claim_expires_at - Date.now()),
+        });
+        return;
+      }
+      existing.claim_token = claimToken;
+      existing.claim_epoch = String(BigInt(existing.claim_epoch) + 1n);
+      existing.claim_expires_at = Date.now() + claimLeaseMs;
+      existing.relay_instance_id = identity.relay_instance_id;
+      existing.relay_boot_id = identity.relay_boot_id;
+      record('terminal.session.takeover', { session_id: sessionId, claim_epoch: existing.claim_epoch });
+      reply(response, 200, relayGrant(existing, {
+        receiptRecovered: false,
+        claimTakenOver: true,
+      }));
       return;
     }
     const session = {
@@ -209,6 +275,11 @@ export async function startFakeGateway(options = {}) {
       rows: Number.isInteger(body.rows) ? body.rows : 24,
       revoked_at: null,
       closed_at: null,
+      claim_token: claimToken,
+      claim_epoch: '1',
+      claim_expires_at: Date.now() + claimLeaseMs,
+      relay_instance_id: identity.relay_instance_id,
+      relay_boot_id: identity.relay_boot_id,
     };
     sessions.set(sessionId, session);
     record('terminal.session.request', { session_id: sessionId, alias: session.alias, decision: 'allow', reason: body.reason ?? null });
@@ -222,15 +293,13 @@ export async function startFakeGateway(options = {}) {
       timer.unref?.();
       timers.push(timer);
     }
-    // FLAT body, field for field as services/gateway/src/terminal/plugin.ts answers it. It used
-    // to be nested under `session` with `container_id` and no cols/rows/operator_id, which the
-    // relay's `parseSessionGrant` rejects wholesale: the grant was dropped and every attach died
-    // with 1011 instead of opening a shell. `session` is still echoed alongside so the harness's
-    // own gateway tests keep asserting the container identity they were written against.
-    reply(response, 200, relayGrant(session));
+    // FLAT and exact, field for field as services/gateway/src/terminal/plugin.ts answers it.
+    // An extra compatibility object is unsafe here: the relay intentionally rejects widened
+    // authority responses rather than guessing which fields bind the claim.
+    reply(response, 200, relayGrant(session, { receiptRecovered: false }));
   }
 
-  function relayGrant(session) {
+  function relayGrant(session, { receiptRecovered, claimTakenOver = false } = {}) {
     return {
       ok: true,
       tenant_id: session.tenant_id,
@@ -244,17 +313,21 @@ export async function startFakeGateway(options = {}) {
       expires_at: new Date(session.expires_at * 1000).toISOString(),
       session_expires_at: new Date(session.session_expires_at * 1000).toISOString(),
       resume_token: session.resume_token,
-      session: {
-        session_id: session.session_id, tenant_id: session.tenant_id, alias: session.alias,
-        container_id: session.container_id, generation: session.generation,
-        image_id: session.image_id, runtime_user: session.runtime_user,
-        runtime_uid: session.runtime_uid, mode: session.mode, expires_at: session.expires_at,
-      },
+      claim_token: session.claim_token,
+      claim_epoch: session.claim_epoch,
+      claim_lease_ms: Math.max(1, session.claim_expires_at - Date.now()),
+      claim_lease_ttl_ms: claimLeaseMs,
+      relay_instance_id: session.relay_instance_id,
+      relay_boot_id: session.relay_boot_id,
+      claim_taken_over: claimTakenOver,
+      ...(receiptRecovered === undefined ? {} : { receipt_recovered: receiptRecovered }),
     };
   }
 
   async function resume(sessionId, request, response) {
     const body = await readJson(request);
+    const identity = activeRelayIdentity(body, response);
+    if (!identity) return;
     const session = sessions.get(sessionId);
     if (!session || typeof body.resume_token !== 'string' || body.resume_token !== session.resume_token) {
       reply(response, 401, { ok: false, reason: 'resume_invalid' });
@@ -265,11 +338,44 @@ export async function startFakeGateway(options = {}) {
       reply(response, 403, { ok: false, reason: 'revoked' });
       return;
     }
+    const claimToken = typeof body.claim_token === 'string' && UUID_V4_PATTERN.test(body.claim_token)
+      ? body.claim_token : null;
+    const presentedEpoch = typeof body.claim_epoch === 'string' && /^[1-9][0-9]{0,18}$/.test(body.claim_epoch)
+      ? body.claim_epoch : null;
+    if (claimToken === null) {
+      reply(response, 403, { ok: false, reason: 'claim_fenced' });
+      return;
+    }
+    const exactLiveClaim = session.claim_token === claimToken
+      && session.claim_epoch === presentedEpoch
+      && session.claim_expires_at > Date.now()
+      && session.relay_instance_id === identity.relay_instance_id
+      && session.relay_boot_id === identity.relay_boot_id;
+    let claimTakenOver = false;
+    if (!exactLiveClaim) {
+      if (session.claim_expires_at > Date.now()) {
+        reply(response, 409, {
+          ok: false,
+          error: 'claim_conflict',
+          retry_after_ms: Math.max(1, session.claim_expires_at - Date.now()),
+        });
+        return;
+      }
+      session.claim_token = claimToken;
+      session.claim_epoch = String(BigInt(session.claim_epoch) + 1n);
+      session.relay_instance_id = identity.relay_instance_id;
+      session.relay_boot_id = identity.relay_boot_id;
+      claimTakenOver = true;
+    }
+    session.claim_expires_at = Date.now() + claimLeaseMs;
     record('terminal.session.resume', { session_id: sessionId, alias: session.alias });
-    reply(response, 200, relayGrant(session));
+    reply(response, 200, relayGrant(session, { claimTakenOver }));
   }
 
-  function authz(sessionId, response) {
+  async function authz(sessionId, request, response) {
+    const body = await readJson(request);
+    const identity = activeRelayIdentity(body, response);
+    if (!identity) return;
     const session = sessions.get(sessionId);
     if (!session) {
       reply(response, 403, { ok: false, reason: 'unknown_session' });
@@ -287,14 +393,37 @@ export async function startFakeGateway(options = {}) {
       reply(response, 403, { ok: false, reason: 'revoked' });
       return;
     }
-    reply(response, 200, { ok: true, expires_at: session.expires_at });
+    if (body.claim_token !== session.claim_token || body.claim_epoch !== session.claim_epoch
+        || identity.relay_instance_id !== session.relay_instance_id
+        || identity.relay_boot_id !== session.relay_boot_id
+        || session.claim_expires_at <= Date.now()) {
+      reply(response, 403, { ok: false, reason: 'claim_fenced' });
+      return;
+    }
+    session.claim_expires_at = Date.now() + claimLeaseMs;
+    reply(response, 200, {
+      ok: true,
+      expires_at: new Date(session.session_expires_at * 1000).toISOString(),
+      claim_epoch: session.claim_epoch,
+      claim_lease_ms: claimLeaseMs,
+      claim_lease_ttl_ms: claimLeaseMs,
+      ...identity,
+    });
   }
 
   async function close(sessionId, request, response) {
     const body = await readJson(request);
+    const identity = activeRelayIdentity(body, response);
+    if (!identity) return;
     const session = sessions.get(sessionId);
     if (!session) {
       reply(response, 404, { ok: false, error: 'unknown_session' });
+      return;
+    }
+    if (body.claim_token !== session.claim_token || body.claim_epoch !== session.claim_epoch
+        || identity.relay_instance_id !== session.relay_instance_id
+        || identity.relay_boot_id !== session.relay_boot_id) {
+      reply(response, 409, { ok: false, error: 'claim_fenced' });
       return;
     }
     session.closed_at = now();
@@ -303,7 +432,19 @@ export async function startFakeGateway(options = {}) {
       image_id: session.image_id, generation: session.generation,
       reason: body.reason ?? 'unspecified', exit_code: body.exit_code ?? null,
     });
-    reply(response, 200, { ok: true });
+    reply(response, 200, { ok: true, ...identity });
+  }
+
+  function activeRelayIdentity(body, response) {
+    const identity = parseRelayIdentity(body);
+    const activeRelay = identity === null ? undefined : activeRelays.get(identity.relay_instance_id);
+    if (!identity || activeRelay === undefined
+        || identity.relay_boot_id !== activeRelay.relay_boot_id) {
+      reply(response, 409, { ok: false, error: 'relay_not_active' });
+      return null;
+    }
+    activeRelay.accepted_at = Date.now();
+    return identity;
   }
 
   await new Promise((resolve) => { server.listen(options.port ?? 0, options.host ?? '127.0.0.1', resolve); });
@@ -337,6 +478,13 @@ export async function startFakeGateway(options = {}) {
       await new Promise((resolve) => server.close(resolve));
     },
   };
+}
+
+function parseRelayIdentity(body) {
+  const relayInstanceId = body?.relay_instance_id;
+  const relayBootId = body?.relay_boot_id;
+  if (!RELAY_INSTANCE_ID_PATTERN.test(relayInstanceId) || !UUID_V4_PATTERN.test(relayBootId)) return null;
+  return { relay_instance_id: relayInstanceId, relay_boot_id: relayBootId };
 }
 
 function reply(response, status, body) {

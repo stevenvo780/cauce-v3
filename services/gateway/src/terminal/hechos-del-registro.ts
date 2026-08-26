@@ -1,4 +1,6 @@
-import type { MeasuredFactsSource, RuntimeFacts } from '../console/agent-documents.js';
+import {
+  measuredCodexProjectDocumentConfig, type MeasuredFactsSource, type RuntimeFacts,
+} from '../console/agent-documents.js';
 import type { FactsSource } from '../console/agent-documents.routes.js';
 import type { AgentRegistry } from './registry.js';
 
@@ -38,10 +40,17 @@ import type { AgentRegistry } from './registry.js';
  */
 
 /** Los arneses cuyos ficheros de gobierno esta vía sabe resolver. */
-const ARNESES_CONOCIDOS = ['claude', 'codex', 'openclaw', 'hermes', 'opencode'] as const;
+const ARNESES_CONOCIDOS = ['claude', 'codex', 'openclaw', 'hermes'] as const;
 
 function arnesConocido(valor: string): valor is RuntimeFacts['harness'] {
   return (ARNESES_CONOCIDOS as readonly string[]).includes(valor);
+}
+
+function rutaCanonica(valor: unknown): valor is string {
+  if (typeof valor !== 'string' || !valor.startsWith('/') || valor === '/'
+      || valor.length > 4096 || valor.includes('\0')) return false;
+  return !valor.split('/').slice(1)
+    .some((segmento) => segmento === '' || segmento === '.' || segmento === '..');
 }
 
 /**
@@ -57,16 +66,65 @@ export function hechosDelRegistro(registry: AgentRegistry): MeasuredFactsSource 
       const observacion = registry.get(tenantId, alias);
       if (!observacion || observacion.stale) return undefined;
 
-      const { harness, home } = observacion.presence;
+      const {
+        harness, home, runtime_facts_observed: runtimeFactsObserved,
+        codex_home: codexHome, claude_config_dir: claudeConfigDir,
+        openclaw_workspace: openclawWorkspace, cwd, workspace_root: workspaceRoot,
+        project_root: projectRoot, project_doc_max_bytes: projectDocMaxBytes,
+        project_doc_fallback_filenames: projectDocFallbackFilenames,
+      } = observacion.presence;
       // Las dos condiciones por separado y no en una: un agente viejo no manda `home` y un agente
       // nuevo puede correr un arnés que esta vía no sabe resolver. Son dos ausencias distintas y
       // ninguna de las dos autoriza a inventar la otra.
-      if (typeof home !== 'string' || !home.startsWith('/')) return undefined;
+      if (runtimeFactsObserved !== true) return undefined;
       if (!arnesConocido(harness)) return undefined;
+      if (!rutaCanonica(home)) return undefined;
+      if ((cwd !== undefined && !rutaCanonica(cwd))
+          || (workspaceRoot !== undefined && (!rutaCanonica(workspaceRoot) || cwd === undefined
+            || (cwd !== workspaceRoot && !cwd.startsWith(`${workspaceRoot}/`))))
+          || (projectRoot !== undefined && (!rutaCanonica(projectRoot) || cwd === undefined
+            || (cwd !== projectRoot && !cwd.startsWith(`${projectRoot}/`))
+            || (workspaceRoot !== undefined && projectRoot !== workspaceRoot
+              && !projectRoot.startsWith(`${workspaceRoot}/`))))) return undefined;
+      if ((harness === 'codex' && !rutaCanonica(codexHome))
+          || (harness === 'claude' && !rutaCanonica(claudeConfigDir))
+          || (harness === 'openclaw' && !rutaCanonica(openclawWorkspace))
+          || (harness === 'hermes' && (!rutaCanonica(cwd) || !rutaCanonica(projectRoot)))) {
+        return undefined;
+      }
 
-      const facts: RuntimeFacts = { harness, home };
+      /*
+       * El cable de presencia usa snake_case y RuntimeFacts usa camelCase. No propagar estos tres
+       * campos era peor que perderlos: `resolveAgentDocuments()` caía silenciosamente a
+       * `~/.codex`/`~/.claude` y devolvía un fichero real, pero de otra cuenta del mismo HOME.
+       * Se mapean de forma explícita; un spread conservaría las claves con el nombre equivocado.
+       */
+      const facts: RuntimeFacts = {
+        harness,
+        home,
+        generation: observacion.presence.generation,
+        containerId: observacion.presence.container_id,
+        modes: [...observacion.presence.modes],
+        ...(codexHome === undefined ? {} : { codexHome }),
+        ...(claudeConfigDir === undefined ? {} : { claudeConfigDir }),
+        ...(openclawWorkspace === undefined ? {} : { openclawWorkspace }),
+        ...(cwd === undefined ? {} : { cwd }),
+        ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+        ...(projectRoot === undefined ? {} : { projectRoot }),
+      };
+      const codexConfig = measuredCodexProjectDocumentConfig({
+        ...facts,
+        ...(projectDocMaxBytes === undefined ? {} : { projectDocMaxBytes }),
+        ...(projectDocFallbackFilenames === undefined
+          ? {} : { projectDocFallbackFilenames }),
+      });
+      const completeFacts: RuntimeFacts = codexConfig === undefined ? facts : {
+        ...facts,
+        projectDocMaxBytes: codexConfig.maxBytes,
+        projectDocFallbackFilenames: [...codexConfig.fallbackFilenames],
+      };
       const source: FactsSource = 'measured';
-      return { facts, source };
+      return { facts: completeFacts, source };
     }
   };
 }

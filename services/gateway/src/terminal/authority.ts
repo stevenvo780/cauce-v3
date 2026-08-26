@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { FastifyRequest } from 'fastify';
-import type { DatabasePool } from '@cauce/store';
+import type { DatabaseClient, DatabasePool } from '@cauce/store';
 import type { Principal } from '../auth.js';
 import type { TerminalConfig } from './config.js';
 import { UNATTRIBUTED_OPERATOR, type FleetIdentity, type FleetPlacement, type TerminalMode } from './types.js';
@@ -28,8 +28,10 @@ interface FleetPlacementRow {
  * inventory into compiled gateway code created a third, stale authority and made same aliases in
  * different tenants impossible to represent.
  */
-export async function loadFleetPlacements(pool: DatabasePool): Promise<readonly FleetPlacement[]> {
-  const result = await pool.query<FleetPlacementRow>(
+export async function loadFleetPlacements(
+  database: DatabasePool | DatabaseClient,
+): Promise<readonly FleetPlacement[]> {
+  const result = await database.query<FleetPlacementRow>(
     `SELECT tenant_id,alias,container_name,runtime_user
        FROM agents
       WHERE enabled
@@ -202,7 +204,7 @@ interface EdgeRow {
  * allow_control. Nothing here writes: it is safe against production.
  */
 export async function routingAuthority(
-  pool: DatabasePool,
+  pool: DatabasePool | DatabaseClient,
   actorTenant: string,
   actorAlias: string,
   targetTenant: string,
@@ -252,7 +254,7 @@ export async function routingAuthority(
 
 /** Cohort form: routing authority is required over every alias sharing the container. */
 export async function cohortRoutingAuthority(
-  pool: DatabasePool,
+  pool: DatabasePool | DatabaseClient,
   actorTenant: string,
   actorAlias: string,
   cohort: readonly FleetIdentity[]

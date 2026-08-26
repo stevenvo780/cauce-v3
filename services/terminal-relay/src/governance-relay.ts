@@ -3,8 +3,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
 import type { AgentLookup } from './agent-leg.js';
 import {
-  MAX_GOVERNANCE_BYTES, requestFileRead, requestFileWrite, requestFileWriteBatch,
-  type FileReadOutcome, type FileWriteOutcome, type GovernanceWriteBatchEntry,
+  MAX_GOVERNANCE_BYTES, requestDirectoryRead, requestFileRead, requestFileWrite,
+  requestFileWriteBatch, type DirectoryReadOutcome, type FileReadOutcome, type FileWriteOutcome,
+  type GovernanceWriteBatchEntry,
   type GovernanceWriteBatchOutcome, type GovernanceWritePrecondition,
 } from './gateway-client.js';
 import { errorLabel, logEvent } from './log.js';
@@ -35,6 +36,7 @@ import { errorLabel, logEvent } from './log.js';
 
 /** Ruta de la lectura. Vive fuera de `/v3/console/` por lo mismo que las del gateway: no es un navegador. */
 export const GOVERNANCE_READ_PATH = '/v3/terminal/relay/read';
+export const GOVERNANCE_LIST_PATH = '/v3/terminal/relay/list';
 export const GOVERNANCE_WRITE_PATH = '/v3/terminal/relay/write';
 export const GOVERNANCE_WRITE_BATCH_PATH = '/v3/terminal/relay/write-batch';
 
@@ -66,6 +68,8 @@ interface ReadRequest {
   readonly path: string;
 }
 
+type DirectoryRequest = ReadRequest;
+
 interface WriteRequest extends ReadRequest {
   readonly content: Buffer;
   readonly precondition: GovernanceWritePrecondition;
@@ -88,6 +92,13 @@ function authorized(header: unknown, expected: string): boolean {
   const authorization = typeof header === 'string' ? header : undefined;
   if (authorization === undefined || !authorization.startsWith('Bearer ')) return false;
   return timingSafeEqual(digest(authorization.slice(7)), digest(expected));
+}
+
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 0x1f || code === 0x7f;
+  });
 }
 
 /**
@@ -144,6 +155,24 @@ export function parseReadRequest(raw: string): ReadRequest | { readonly rejected
     return { rejected: 'path tiene que ser una ruta absoluta sin bytes nulos' };
   }
   return { tenantId, alias, path };
+}
+
+/** El endpoint de índice usa la misma identidad, pero exige un objeto y una ruta canónicos. */
+export function parseDirectoryRequest(raw: string): DirectoryRequest | { readonly rejected: string } {
+  const common = parseReadRequest(raw);
+  if ('rejected' in common) return common;
+  const source = JSON.parse(raw) as Record<string, unknown>;
+  const expected = ['alias', 'path', 'tenant_id'];
+  const actual = Object.keys(source).sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    return { rejected: 'el cuerpo trae campos que este protocolo no conoce' };
+  }
+  const segments = common.path.split('/');
+  if (common.path === '/' || hasControlCharacter(common.path)
+      || segments.slice(1).some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    return { rejected: 'path tiene que ser una ruta absoluta canónica' };
+  }
+  return common;
 }
 
 /** Escritura cerrada: no hay una forma implícita que pueda significar create o replace según el disco. */
@@ -293,6 +322,8 @@ async function handle(
   const path = (request.url ?? '/').split('?', 1)[0];
   const operation = path === GOVERNANCE_READ_PATH
     ? 'read'
+    : path === GOVERNANCE_LIST_PATH
+      ? 'list'
     : path === GOVERNANCE_WRITE_PATH
       ? 'write'
       : path === GOVERNANCE_WRITE_BATCH_PATH
@@ -349,7 +380,18 @@ async function handle(
       send(response, 400, { error: 'invalid_request', reason: parsed.rejected });
       return;
     }
-    await serveRead(options, parsed, response);
+    await serveRead(options, parsed, request, response);
+    return;
+  }
+
+  if (operation === 'list') {
+    const parsed = parseDirectoryRequest(raw);
+    if ('rejected' in parsed) {
+      logEvent('terminal_relay_governance_rejected', { operation, reason: 'invalid_request' });
+      send(response, 400, { error: 'invalid_request', reason: parsed.rejected });
+      return;
+    }
+    await serveDirectory(options, parsed, request, response);
     return;
   }
 
@@ -405,6 +447,7 @@ function offlineOutcome(operation: 'read' | 'write', parsed: ReadRequest, respon
 async function serveRead(
   options: GovernanceRelayOptions,
   parsed: ReadRequest,
+  request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
   const connection = options.agents.lookup(parsed.tenantId, parsed.alias);
@@ -412,10 +455,63 @@ async function serveRead(
     offlineOutcome('read', parsed, response);
     return;
   }
+  const abort = new AbortController();
+  const abortOnClose = (): void => {
+    if (!response.writableEnded) abort.abort();
+  };
+  request.once('aborted', abortOnClose);
+  response.once('close', abortOnClose);
   const outcome = await requestFileRead(
-    connection, parsed.tenantId, parsed.alias, parsed.path, options.timeoutMs,
+    connection, parsed.tenantId, parsed.alias, parsed.path, options.timeoutMs, abort.signal,
   );
+  request.off('aborted', abortOnClose);
+  response.off('close', abortOnClose);
   logOutcome('read', parsed, outcome);
+  send(response, 200, outcome);
+}
+
+function logDirectoryOutcome(parsed: DirectoryRequest, outcome: DirectoryReadOutcome): void {
+  const failed = 'error' in outcome;
+  // Sólo conteos: los nombres de memoria también pueden ser sensibles y no pertenecen al log.
+  logEvent('terminal_relay_governance_served', {
+    operation: 'list',
+    tenant_id: parsed.tenantId,
+    alias: parsed.alias,
+    error: failed ? outcome.error : null,
+    entries: failed ? null : outcome.entries.length,
+    total: failed ? null : outcome.total,
+    observed_at_least: failed ? null : outcome.observed_at_least,
+    truncated: failed ? null : outcome.truncated,
+  });
+}
+
+async function serveDirectory(
+  options: GovernanceRelayOptions,
+  parsed: DirectoryRequest,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const connection = options.agents.lookup(parsed.tenantId, parsed.alias);
+  if (!connection) {
+    const outcome: DirectoryReadOutcome = {
+      error: 'unavailable', reason: 'no hay ningún pty-agent conectado para ese alias',
+    };
+    logDirectoryOutcome(parsed, outcome);
+    send(response, 200, outcome);
+    return;
+  }
+  const abort = new AbortController();
+  const abortOnClose = (): void => {
+    if (!response.writableEnded) abort.abort();
+  };
+  request.once('aborted', abortOnClose);
+  response.once('close', abortOnClose);
+  const outcome = await requestDirectoryRead(
+    connection, parsed.tenantId, parsed.alias, parsed.path, options.timeoutMs, abort.signal,
+  );
+  request.off('aborted', abortOnClose);
+  response.off('close', abortOnClose);
+  logDirectoryOutcome(parsed, outcome);
   send(response, 200, outcome);
 }
 

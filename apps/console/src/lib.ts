@@ -161,8 +161,8 @@ export function safeOriginRelayState(value: unknown): OriginRelayState | undefin
   return oneOf(value, ['pending', 'processing', 'sent', 'failed'] as const);
 }
 
-export function safeAuditDecision(value: unknown): 'allow' | 'deny' | undefined {
-  return oneOf(value, ['allow', 'deny'] as const);
+export function safeAuditDecision(value: unknown): 'allow' | 'deny' | 'info' | undefined {
+  return oneOf(value, ['allow', 'deny', 'info'] as const);
 }
 
 function oneOf<const T extends readonly string[]>(value: unknown, allowed: T): T[number] | undefined {

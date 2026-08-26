@@ -4,11 +4,10 @@
  * truth both the Terminal page and the app shell's nav entry should read, so they never
  * disagree about whether the interactive channel is actually reachable.
  *
- * Doctrine, same as the rest of this feature: anything short of an explicit `available: true`
- * — a declared-unavailable payload, a 404/501 (already normalised by `getTerminalCapability`),
- * a raw 502/503 from a gateway with no upstream, or a bare network failure — collapses to
- * `unavailable` with an operator-facing one-liner. Nothing here ever reports `available` on an
- * ambiguous answer, and a check in flight is `checking`, never silently `available`.
+ * Doctrine, same as the rest of this feature: nothing ambiguous reports `available`. But
+ * topology absence is narrower: only explicit `available:false` and HTTP 404/501 mean
+ * `no-desplegado`; upstream failures and transport errors mean `sin-comprobar` because they do
+ * not reveal whether the relay exists. A check in flight remains `checking`.
  */
 import { useEffect, useState } from 'react';
 import { ApiError, type CauceApi } from '../../api/client';
@@ -32,9 +31,8 @@ export type TerminalRelayStatus = 'checking' | 'available' | 'unavailable';
  * - `no-desplegado`: 404/501 —ya normalizados a `available:false` por `getTerminalCapability`— y
  *   un `available:false` declarado por el servidor.
  *
- * ⚠️ Un 502/503 o un fallo de red **siguen** leyéndose como `no-desplegado`, que es lo que esta
- * función hacía desde `0a1d0e3`: esas respuestas no permiten saber si el relay existe. No se
- * inventa una tercera causa para taparlo.
+ * - `sin-comprobar`: un upstream 502/503/504, un fallo de transporte o cualquier otra respuesta
+ *   que no acredita topología. No poder alcanzar algo no demuestra que no esté desplegado.
  */
 /**
  * 🔴 **`sin-comprobar` añadido el 2026-08-23, y por la MISMA clase de mentira.**
@@ -47,12 +45,11 @@ export type TerminalRelayStatus = 'checking' | 'available' | 'unavailable';
  * ausencia se dice como lo que es: no se pudo comprobar.
  *
  * Qué sí significa cada cosa, y nada más que eso:
- * - `no-desplegado`: 404/501 —ya normalizados a `available:false` por `getTerminalCapability`—,
- *   un `available:false` declarado por el servidor, y 502/503/504 o un fallo de red, donde no
- *   hay upstream que conteste (es lo que este módulo hace desde `0a1d0e3`).
+ * - `no-desplegado`: 404/501 —ya normalizados a `available:false` por `getTerminalCapability`— o
+ *   un `available:false` declarado por el servidor.
  * - `sin-permiso`: 403. Es del RBAC, no de la topología; el gate corre ANTES de mirar el backend.
- * - `sin-comprobar`: TODO lo demás (400, 401, 405, 409, 422, 429, 500…). La ruta contestó, así
- *   que no está ausente; y contestó algo que no permite afirmar nada sobre el relay.
+ * - `sin-comprobar`: TODO lo demás, incluidos 502/503/504 y errores sin status. No se pudo
+ *   completar la medición y no hay evidencia para afirmar ausencia.
  */
 export type TerminalRelayCause = 'no-desplegado' | 'sin-permiso' | 'sin-comprobar';
 
@@ -75,12 +72,22 @@ export const TERMINAL_RELAY_SIN_PERMISO_REASON =
   'Tu cuenta no tiene permiso de control sobre esta flota: la terminal de agentes es del dueño del bus. '
   + 'El relay puede estar perfectamente desplegado; lo que falta es el permiso.';
 
-/** Estados que sí prueban ausencia de upstream: no hay nadie del otro lado que conteste. */
-const SIN_UPSTREAM = [502, 503, 504];
+/** El gateway contestó, pero no consiguió alcanzar su upstream PTY. */
+const UPSTREAM_INALCANZABLE = [502, 503, 504];
 
 export const TERMINAL_RELAY_SIN_COMPROBAR_TITULO = 'No se pudo comprobar el canal PTY';
 
-export function terminalRelaySinComprobarReason(status: number, detalle?: string): string {
+export function terminalRelaySinComprobarReason(status?: number, detalle?: string): string {
+  if (status === undefined) {
+    return 'No se pudo consultar o alcanzar el relay de terminales'
+      + `${detalle ? `: ${detalle}` : ''}. Reintentá; este fallo de transporte no permite saber `
+      + 'si el canal PTY está disponible.';
+  }
+  if (UPSTREAM_INALCANZABLE.includes(status)) {
+    return `No se pudo alcanzar el relay de terminales a través del gateway (HTTP ${status})`
+      + `${detalle ? `: ${detalle}` : ''}. Reintentá; el upstream no contestó y eso no permite `
+      + 'afirmar el estado del despliegue.';
+  }
   return `El servidor respondió HTTP ${status} al preguntar por el relay de terminales`
     + `${detalle ? `: ${detalle}` : ''}. Eso no dice que el relay falte —la ruta contestó—, `
     + 'sólo que esa consulta no se pudo completar. Reintentá; si sigue igual, es de la consola o '
@@ -109,9 +116,9 @@ export function deriveTerminalRelayState(
     if (status === 403) {
       return { status: 'unavailable', cause: 'sin-permiso', reason: TERMINAL_RELAY_SIN_PERMISO_REASON };
     }
-    // Una respuesta que NO es 404/501 ni un corte de upstream prueba que la ruta existe: decir
-    // «no está desplegado» ahí es inventar una causa que la respuesta no sostiene.
-    if (status !== undefined && status !== 404 && status !== 501 && !SIN_UPSTREAM.includes(status)) {
+    // Sólo 404/501 acreditan ausencia. Un 502/503/504 o un error sin status apenas dicen que la
+    // medición no llegó al relay; rotularlos como despliegue ausente sería inventar topología.
+    if (status !== 404 && status !== 501) {
       return {
         status: 'unavailable',
         cause: 'sin-comprobar',
@@ -121,19 +128,25 @@ export function deriveTerminalRelayState(
     return {
       status: 'unavailable',
       cause: 'no-desplegado',
-      reason: status
-        ? `${TERMINAL_RELAY_NOT_DEPLOYED_REASON} (HTTP ${status} al consultarlo.)`
-        : detail
-          ? `${TERMINAL_RELAY_NOT_DEPLOYED_REASON} (${detail}.)`
-          : TERMINAL_RELAY_NOT_DEPLOYED_REASON,
+      reason: `${TERMINAL_RELAY_NOT_DEPLOYED_REASON} (HTTP ${status} al consultarlo.)`,
     };
   }
   if (!capability) return CHECKING_RELAY_STATE;
-  if (capability.available !== true) {
+  if (capability.available === false) {
     return {
       status: 'unavailable',
       cause: 'no-desplegado',
       reason: capability.reason?.trim() || TERMINAL_RELAY_NOT_DEPLOYED_REASON,
+    };
+  }
+  if (capability.available !== true) {
+    return {
+      status: 'unavailable',
+      cause: 'sin-comprobar',
+      reason: terminalRelaySinComprobarReason(
+        undefined,
+        'la respuesta no declaró si el relay estaba disponible',
+      ),
     };
   }
   return { status: 'available', reason: capability.reason?.trim() || 'Relay de terminales disponible.' };

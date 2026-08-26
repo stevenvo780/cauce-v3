@@ -95,8 +95,8 @@ Claude Code en vez de cron en el host).
 ssh root@agora-storage 'docker exec cauce-v3-prod-prometheus-1 wget -q -O - http://localhost:9090/api/v1/status/config 2>/dev/null | grep -A2 alerting'
 ```
 Provocar una alerta de prueba (p. ej. bajar temporalmente un target no crítico) o esperar a
-que la de dead-letters siga firing y confirmar que llega un mensaje a Telegram (alias
-`kant`, chat 6979524541) dentro de los 5 minutos.
+que la de dead-letters siga firing y confirmar que llega al destino de alerta confiable ya
+configurado, sin registrar identificadores de chats o usuarios en el repositorio.
 
 ---
 

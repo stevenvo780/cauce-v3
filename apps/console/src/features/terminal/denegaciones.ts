@@ -26,7 +26,7 @@
  *     nada: el operador queda igual de parado, sólo que en castellano.
  */
 
-/** Los cinco `403` del gateway, los tres `409`, y el estado del inventario que no es ninguno. */
+/** Los cinco `403` del gateway, los cuatro `409`, y el estado del inventario que no es ninguno. */
 export type TerminalDenialCode =
   /**
    * La consola no mandó su propio token CSRF. NO es un permiso que le falte al operador: es un
@@ -47,6 +47,7 @@ export type TerminalDenialCode =
   | 'agent_offline'
   | 'session_limit'
   | 'container_busy'
+  | 'request_conflict'
   | 'not_installed';
 
 export interface TerminalDenialCopy {
@@ -127,6 +128,13 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
     porQue: 'Dos operadores no comparten contenedor: la segunda shell leería el home de la primera. El gateway lo '
       + 'impide mientras la otra sesión siga viva.',
     quienLoLevanta: 'Quien tenga la sesión abierta, cerrándola. Se libera sola cuando vence.',
+  },
+  request_conflict: {
+    titulo: 'El reintento ya no coincide con la reserva original',
+    porQue: 'Ese identificador de apertura ya existe, pero cambió el destino, el motivo, la geometría '
+      + 'o la capacidad dueña. El gateway no mezcla ambas operaciones ni entrega la reserva anterior.',
+    quienLoLevanta: 'Vos: cerrá esta pestaña y abrí una intención nueva. Si fue sólo una pérdida de red, '
+      + 'reintentá sin editar nada para conservar la misma identidad de la operación.',
   },
   not_installed: {
     titulo: 'Ese contenedor nunca tuvo agente PTY',

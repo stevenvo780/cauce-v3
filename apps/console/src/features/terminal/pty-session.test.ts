@@ -15,16 +15,24 @@ import {
   subscribePtySession,
   websocketUrl,
   PTY_CLOSE_MESSAGES,
+  PTY_HANDSHAKE_TIMEOUT_MS,
   PTY_RECONNECT_DELAYS_MS,
   PTY_VIEWER_HEARTBEAT_MS,
 } from './pty-session';
 import { installStubWebSocket, StubWebSocket } from './pty-socket-stub';
 
 const SESSION = 'pty-session-1';
+const CLAIM_TOKEN = '12345678-1234-4234-8234-123456789abc';
+const CLAIM_EPOCH = '9007199254740993';
+const CLAIM_LEASE_MS = 45_000;
 let restore: () => void;
 
 beforeEach(() => { restore = installStubWebSocket(); });
-afterEach(() => { closePtySession(SESSION); restore(); });
+afterEach(() => {
+  closePtySession(SESSION);
+  vi.restoreAllMocks();
+  restore();
+});
 
 function open(options: { sessionId?: string; ticket?: string; readOnly?: boolean } = {}): StubWebSocket {
   ensurePtySession({
@@ -40,6 +48,16 @@ function open(options: { sessionId?: string; ticket?: string; readOnly?: boolean
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
 
+function ready(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    type: 'ready',
+    claim_token: CLAIM_TOKEN,
+    claim_epoch: CLAIM_EPOCH,
+    claim_lease_ms: CLAIM_LEASE_MS,
+    ...overrides,
+  };
+}
+
 it('sends attach as the very first frame, carrying the session and the single-use ticket', () => {
   const socket = open();
 
@@ -47,6 +65,10 @@ it('sends attach as the very first frame, carrying the session and the single-us
   expect(first).toMatchObject({ type: 'attach', session_id: SESSION, ticket: 'single-use-ticket' });
   expect(typeof first.cols).toBe('number');
   expect(typeof first.rows).toBe('number');
+  expect(first).not.toHaveProperty('claim_token');
+  expect(first).not.toHaveProperty('claim_epoch');
+  expect(first).not.toHaveProperty('prior_claim_token');
+  expect(first).not.toHaveProperty('prior_claim_epoch');
   expect(readPtySession(SESSION).state).toBe('attaching');
 });
 
@@ -56,9 +78,78 @@ it('never puts the ticket in the URL: it travels only inside the attach frame', 
   expect(new URL(socket.url).search).toBe('');
 });
 
+it('sale de CONNECTING si el upgrade nunca responde y no reutiliza el ticket de un solo uso', () => {
+  vi.useFakeTimers();
+  try {
+    const closed: string[] = [];
+    ensurePtySession({
+      sessionId: SESSION,
+      websocketPath: '/v3/console/terminal/ws',
+      ticket: 'single-use-ticket',
+      onClosed: (view) => closed.push(view.message ?? ''),
+    });
+    const socket = StubWebSocket.last();
+    expect(readPtySession(SESSION).state).toBe('connecting');
+    expect(socket.frames()).toEqual([]);
+
+    vi.advanceTimersByTime(PTY_HANDSHAKE_TIMEOUT_MS);
+
+    expect(socket.frames()).toEqual([]);
+    expect(socket.closeCode).toBe(4400);
+    expect(socket.closeReason).toBe('handshake_timeout');
+    expect(readPtySession(SESSION)).toMatchObject({
+      state: 'error',
+      message: expect.stringMatching(/no completó el handshake.*sesión nueva/iu),
+    });
+    expect(closed).toHaveLength(1);
+
+    // A late network event cannot resurrect the timed-out socket or replay its ticket.
+    socket.acceptOpen();
+    vi.advanceTimersByTime(PTY_HANDSHAKE_TIMEOUT_MS * 2);
+    expect(StubWebSocket.instances).toHaveLength(1);
+    expect(socket.frames()).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('guarda el fence de ready sólo en memoria, nunca en storage, URL ni logs de la vista', () => {
+  const storageWrite = vi.spyOn(Storage.prototype, 'setItem');
+  const socket = open();
+  socket.emitControl(ready());
+
+  expect(readPtySession(SESSION).state).toBe('open');
+  expect(storageWrite).not.toHaveBeenCalled();
+  expect(socket.url).not.toContain(CLAIM_TOKEN);
+  expect(new URL(socket.url).search).toBe('');
+  expect(JSON.stringify(readPtySession(SESSION))).not.toContain(CLAIM_TOKEN);
+  expect(JSON.stringify(readPtySession(SESSION))).not.toContain(CLAIM_EPOCH);
+});
+
+it.each([
+  ['claim_token ausente', { claim_token: undefined }],
+  ['claim_token no canónico', { claim_token: CLAIM_TOKEN.toUpperCase() }],
+  ['claim_epoch ausente', { claim_epoch: undefined }],
+  ['claim_epoch numérico', { claim_epoch: 7 }],
+  ['claim_epoch con cero inicial', { claim_epoch: '01' }],
+  ['claim_epoch cero', { claim_epoch: '0' }],
+  ['claim_epoch fuera de bigint', { claim_epoch: '9223372036854775808' }],
+  ['claim_lease_ms ausente', { claim_lease_ms: undefined }],
+  ['claim_lease_ms cero', { claim_lease_ms: 0 }],
+  ['claim_lease_ms fraccionario', { claim_lease_ms: 1.5 }],
+  ['claim_lease_ms fuera de cota', { claim_lease_ms: 300_001 }],
+])('falla cerrado y no abre ante ready con %s', (_label, malformed) => {
+  const socket = open();
+  socket.emitControl(ready(malformed));
+
+  expect(socket.closeCode).toBe(4400);
+  expect(socket.closeReason).toBe('invalid_ready');
+  expect(readPtySession(SESSION)).toMatchObject({ state: 'error', closeCode: 4400 });
+});
+
 it('writes binary frames to the terminal and keeps text frames out of the output', async () => {
   const socket = open();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
   socket.emitOutput('claw@kratos:~$ id -un\r\nclaw\r\n');
   socket.emitControl({ type: 'notice', level: 'warn', message: 'El contenedor está compartido.' });
   await settle();
@@ -75,7 +166,7 @@ it('writes binary frames to the terminal and keeps text frames out of the output
 
 it('coalesces a burst of keystrokes into a single input frame after the 8 ms buffer', async () => {
   const socket = open();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
 
   ptySessionType(SESSION, 'l');
   ptySessionType(SESSION, 's');
@@ -88,7 +179,7 @@ it('coalesces a burst of keystrokes into a single input frame after the 8 ms buf
 
 it('divide el burst en tramas acotadas sin perder orden cuando dos chunks juntos exceden 16 KiB', async () => {
   const socket = open();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
   const first = 'a'.repeat(10 * 1024);
   const second = 'b'.repeat(10 * 1024);
 
@@ -105,7 +196,7 @@ it('divide el burst en tramas acotadas sin perder orden cuando dos chunks juntos
 
 it('en solo lectura responde DA/DSR por un tipo propio y nunca abre input humano', async () => {
   const socket = open({ readOnly: true });
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
 
   // Teclado, paste textual, ANSI genérico y mouse no se parecen a una respuesta técnica válida.
   ptySessionType(SESSION, 'whoami\r');
@@ -129,7 +220,7 @@ it('un viewer read-only demuestra presencia con ping sin abrir input', () => {
   vi.useFakeTimers();
   try {
     const socket = open({ readOnly: true });
-    socket.emitControl({ type: 'ready' });
+    socket.emitControl(ready());
     expect(socket.framesOfType('ping')).toHaveLength(0);
     vi.advanceTimersByTime(PTY_VIEWER_HEARTBEAT_MS);
     expect(socket.framesOfType('ping')).toEqual([{ type: 'ping' }]);
@@ -144,7 +235,7 @@ it('un viewer read-only demuestra presencia con ping sin abrir input', () => {
 
 it('corta localmente un paste que supera la cota antes de acumularlo', () => {
   const socket = open();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
   ptySessionType(SESSION, 'x'.repeat(16 * 1024 + 1));
   expect(socket.framesOfType('input')).toHaveLength(0);
   expect(socket.closeCode).toBe(4414);
@@ -153,7 +244,7 @@ it('corta localmente un paste que supera la cota antes de acumularlo', () => {
 
 it('finaliza TextDecoder al cerrar y no pierde un code point multibyte incompleto', async () => {
   const socket = open();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
   socket.emitBytes(new Uint8Array([0xe2, 0x82]));
   socket.emitClose(1000);
   await settle();
@@ -196,7 +287,7 @@ it.each([
 
 it('surfaces a revoked permission mid-session and notifies the owner once', () => {
   const socket = open();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
   const closed: string[] = [];
   ensurePtySession({
     sessionId: SESSION,
@@ -216,7 +307,7 @@ it('surfaces a revoked permission mid-session and notifies the owner once', () =
 
 it('keeps a server-sent closed frame explanation instead of overwriting it with the code', () => {
   const socket = open();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
   socket.emitControl({ type: 'closed', reason: 'El shell terminó solo.', exit_code: 0 });
   socket.emitClose(1000);
 
@@ -236,12 +327,12 @@ it('does not reconnect an explicit server close or replay the one-shot ticket', 
   }
 });
 
-it('reanuda una pérdida de transporte con token en memoria, mismo sid y offset exacto', () => {
+it('reanuda con el fence exacto y conserva como string un epoch mayor a MAX_SAFE_INTEGER', () => {
   vi.useFakeTimers();
   try {
     const first = open();
     const resumeToken = `r1.${'a'.repeat(96)}.${'b'.repeat(43)}`;
-    first.emitControl({ type: 'ready', resume_token: resumeToken });
+    first.emitControl(ready({ resume_token: resumeToken }));
     first.emitOutput('tres');
 
     first.emitClose(1006, 'network_lost');
@@ -255,17 +346,39 @@ it('reanuda una pérdida de transporte con token en memoria, mismo sid y offset 
     expect(StubWebSocket.instances).toHaveLength(2);
     const resumed = StubWebSocket.last();
     resumed.acceptOpen();
-    expect(resumed.frames()[0]).toMatchObject({
+    const firstResume = resumed.frames()[0];
+    expect(firstResume).toMatchObject({
       type: 'resume',
       session_id: SESSION,
       resume_token: resumeToken,
+      prior_claim_token: CLAIM_TOKEN,
+      prior_claim_epoch: CLAIM_EPOCH,
       after_bytes: 4,
     });
-    expect(resumed.frames()[0]).not.toHaveProperty('ticket');
+    expect(typeof firstResume.prior_claim_epoch).toBe('string');
+    expect(firstResume).not.toHaveProperty('ticket');
     expect(first.framesOfType('attach')).toHaveLength(1);
 
-    resumed.emitControl({ type: 'ready', resumed: true, stream_offset: 4, resume_token: resumeToken });
+    resumed.emitControl(ready({
+      resumed: true,
+      stream_offset: 4,
+      resume_token: resumeToken,
+      claim_token: 'abcdefab-cdef-4def-8def-abcdefabcdef',
+      claim_epoch: '9007199254740994',
+    }));
     expect(readPtySession(SESSION)).toMatchObject({ state: 'open', closeCode: undefined });
+
+    // Un relay distinto puede emitir una generación nueva. El navegador reemplaza la anterior
+    // sólo en esta PtyEntry y devuelve exactamente esa continuidad en el siguiente transporte.
+    resumed.emitClose(1006, 'network_lost_again');
+    vi.advanceTimersByTime(PTY_RECONNECT_DELAYS_MS[0]);
+    const third = StubWebSocket.last();
+    third.acceptOpen();
+    expect(third.frames()[0]).toMatchObject({
+      type: 'resume',
+      prior_claim_token: 'abcdefab-cdef-4def-8def-abcdefabcdef',
+      prior_claim_epoch: '9007199254740994',
+    });
   } finally {
     vi.useRealTimers();
   }
@@ -275,7 +388,7 @@ it('falla cerrado ante 1006 sin token: nunca reutiliza el ticket para crear otro
   vi.useFakeTimers();
   try {
     const socket = open();
-    socket.emitControl({ type: 'ready' });
+    socket.emitControl(ready());
     socket.emitClose(1006, 'network_lost');
     vi.advanceTimersByTime(PTY_RECONNECT_DELAYS_MS.reduce((sum, delay) => sum + delay, 0) + 1);
     expect(StubWebSocket.instances).toHaveLength(1);
@@ -287,7 +400,7 @@ it('falla cerrado ante 1006 sin token: nunca reutiliza el ticket para crear otro
 
 it('survives reparenting: the live node moves between panels without losing the scrollback', async () => {
   const socket = open();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
   socket.emitOutput('linea-que-sobrevive\r\n');
   await settle();
 
@@ -334,7 +447,7 @@ it('rejects endpoints that are not a bare same-origin path', () => {
 
 it('mientras estás al final, la vista sigue el final y NO se ofrece «volver al final»', async () => {
   const socket = open();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
   socket.emitOutput(Array.from({ length: 120 }, (_, i) => `linea ${i}`).join('\r\n') + '\r\n');
   await settle();
 
@@ -354,7 +467,7 @@ it('mientras estás al final, la vista sigue el final y NO se ofrece «volver al
 
 it('si subiste a leer, la salida nueva NO te arrastra — y se te ofrece volver al final', async () => {
   const socket = open();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl(ready());
   socket.emitOutput(Array.from({ length: 120 }, (_, i) => `linea ${i}`).join('\r\n') + '\r\n');
   await settle();
 

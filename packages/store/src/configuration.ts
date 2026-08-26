@@ -20,6 +20,8 @@ export interface ConfigurationChangeResult {
   applied: boolean;
   dry_run: boolean;
   revision: number;
+  /** Revision whose inverse was executed. Null proves this was a normal configuration change. */
+  rolled_back_revision_id: number | null;
   summary: string;
   mutation: ConfigMutation;
   inverse_mutation: ConfigMutation;
@@ -133,7 +135,7 @@ export class ConfigurationRepository {
   constructor(private readonly pool: DatabasePool) {}
 
   async get(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
-    const hub = await withTransaction(this.pool, (client) => this.assertControl(client, actorTenant, actorAlias));
+    const hub = await withTransaction(this.pool, (client) => this.assertRead(client, actorTenant, actorAlias));
     const scope = hub ? null : actorTenant;
     const [
       revision, tenants, rooms, memberships, edges, harnesses, policies, destinations, chainPolicies,
@@ -282,7 +284,8 @@ export class ConfigurationRepository {
       await this.assertControl(client, actorTenant, actorAlias);
       if (dryRun) {
         return { result: {
-          applied: false, dry_run: true, revision, summary, mutation, inverse_mutation: inverse
+          applied: false, dry_run: true, revision, rolled_back_revision_id: null,
+          summary, mutation, inverse_mutation: inverse
         }, rollback: true };
       }
       const inserted = await client.query<{ id: string }>(
@@ -295,7 +298,8 @@ export class ConfigurationRepository {
         revision: nextRevision, mutation, summary
       });
       return { result: {
-        applied: true, dry_run: false, revision: nextRevision, summary, mutation, inverse_mutation: inverse
+        applied: true, dry_run: false, revision: nextRevision, rolled_back_revision_id: null,
+        summary, mutation, inverse_mutation: inverse
       }, rollback: false };
     });
   }
@@ -330,23 +334,27 @@ export class ConfigurationRepository {
       const rollbackSummary = `rollback ${revisionId}: ${summary}`;
       if (dryRun) {
         return { result: {
-          applied: false, dry_run: true, revision: currentRevision, summary: rollbackSummary,
+          applied: false, dry_run: true, revision: currentRevision,
+          rolled_back_revision_id: Number(original.id), summary: rollbackSummary,
           mutation: original.inverse_operation, inverse_mutation: redo
         }, rollback: true };
       }
-      const inserted = await client.query<{ id: string }>(
+      const inserted = await client.query<{ id: string; rolled_back_revision_id: string }>(
         `INSERT INTO config_revisions(
            actor_tenant,actor_alias,operation,inverse_operation,summary,rolled_back_revision_id
-         ) VALUES($1,$2,$3::jsonb,$4::jsonb,$5,$6) RETURNING id::text`,
+         ) VALUES($1,$2,$3::jsonb,$4::jsonb,$5,$6)
+         RETURNING id::text,rolled_back_revision_id::text`,
         [actorTenant, actorAlias, JSON.stringify(original.inverse_operation), JSON.stringify(redo),
           rollbackSummary, revisionId]
       );
       const nextRevision = Number(inserted.rows[0]!.id);
+      const rolledBackRevisionId = Number(inserted.rows[0]!.rolled_back_revision_id);
       await this.audit(client, actorTenant, actorAlias, 'config.rollback', {
         revision: nextRevision, rolled_back_revision: revisionId, mutation: original.inverse_operation
       });
       return { result: {
-        applied: true, dry_run: false, revision: nextRevision, summary: rollbackSummary,
+        applied: true, dry_run: false, revision: nextRevision,
+        rolled_back_revision_id: rolledBackRevisionId, summary: rollbackSummary,
         mutation: original.inverse_operation, inverse_mutation: redo
       }, rollback: false };
     });
@@ -377,6 +385,19 @@ export class ConfigurationRepository {
     );
     const row = result.rows[0];
     if (!row) throw new ConfigurationError('forbidden', 'control permission is required for configuration');
+    return row.is_hub;
+  }
+
+  private async assertRead(client: DatabaseClient, tenant: Tenant, alias: string): Promise<boolean> {
+    const result = await client.query<{ is_hub: boolean }>(
+      `SELECT tenant.is_hub FROM memberships membership
+       JOIN role_policies role ON role.role=membership.role
+       JOIN tenants tenant ON tenant.id=membership.tenant_id
+       WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
+         AND tenant.enabled AND role.allow_read LIMIT 1`, [tenant, alias]
+    );
+    const row = result.rows[0];
+    if (!row) throw new ConfigurationError('forbidden', 'read permission is required for configuration');
     return row.is_hub;
   }
 

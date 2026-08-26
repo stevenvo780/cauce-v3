@@ -1,6 +1,7 @@
 import type {
   AdapterPage,
   AuditPage,
+  DlqPage,
   FleetActivityItem,
   FleetActivitySnapshot,
   FleetDelegationEdge,
@@ -199,6 +200,39 @@ export function mockQueues(): QueueSnapshot {
       { delivery_id: '15aa7f4c-d11f-4ec0-819c-3f6c61b177b0', message_id: '581cc4da-77c6-4498-8ed5-991dfbc430e9', tenant_id: 'Steven', recipient_alias: 'socrates', lane: 'interactive', state: 'pending', attempts: 0, max_attempts: 5, available_at: iso(-1_000), last_error: null },
       { delivery_id: 'd15402e4-1813-4be5-b950-a1737b5d2e46', message_id: '8957fabf-e2fc-488c-9c93-66eb9b998d29', tenant_id: 'Pablo', recipient_alias: 'dedalo', lane: 'batch', state: 'retry', attempts: 2, max_attempts: 5, available_at: iso(12_000), last_error: 'ACK timeout' },
       { delivery_id: '72b24438-693d-4ae7-8746-6338cdaf1f46', message_id: '353bc0f7-3413-49fc-bfdb-f63ad7680fd0', tenant_id: 'Miguel', recipient_alias: 'kratos', lane: 'interactive', state: 'dead', attempts: 5, max_attempts: 5, available_at: iso(-420_000), last_error: 'max attempts exhausted' },
+    ],
+  };
+}
+
+export function mockDlq(): DlqPage {
+  return {
+    schemaVersion: 1,
+    total: 3,
+    truncated: false,
+    nextCursor: null,
+    items: [
+      {
+        target: 'outbox', id: '8b31b078-dd9f-4da2-8d1e-f4050965db83', tenantId: 'Steven',
+        kind: 'origin_relay', adapter: 'telegram', disposition: 'ambiguous', open: true,
+        actionable: true, evidenceSha256: 'a'.repeat(64), attempts: 3,
+        resolutionRule: 'telegram_effect_ambiguous_v1', createdAt: iso(-180_000),
+        dispositionAt: iso(-120_000), resolvedAt: null, reopenCount: 0, lastReopenedAt: null,
+      },
+      {
+        target: 'delivery', id: '423110b8-f2fd-4e83-8c38-8f99163bfa80', tenantId: 'Miguel',
+        kind: 'delivery', adapter: null, disposition: 'unclassified', open: true,
+        actionable: false, evidenceSha256: 'b'.repeat(64), attempts: 5,
+        resolutionRule: null, createdAt: iso(-240_000), dispositionAt: null,
+        resolvedAt: null, reopenCount: 0, lastReopenedAt: null,
+      },
+      {
+        target: 'outbox', id: '34fa093c-ce80-4c49-881b-ff1d69a8b92f', tenantId: 'Steven',
+        kind: 'wake', adapter: null, disposition: 'expected_offline', open: false,
+        actionable: false, evidenceSha256: 'c'.repeat(64), attempts: 1,
+        resolutionRule: 'wake_recipient_expected_offline_v1', createdAt: iso(-360_000),
+        dispositionAt: iso(-300_000), resolvedAt: iso(-300_000), reopenCount: 0,
+        lastReopenedAt: null,
+      },
     ],
   };
 }

@@ -137,9 +137,9 @@ describe('aliasDeLosMensajes', () => {
         { message_id: 'c', tenant_id: 'Steven', actor_alias: 'kant', deliveries: null },
       ],
     });
-    expect([...encontrados.keys()].sort()).toEqual(['steven:gaia', 'steven:kant']);
-    expect(encontrados.get('steven:kant')?.mensajes).toBe(2);
-    expect(encontrados.get('steven:gaia')?.mensajes).toBe(1);
+    expect([...encontrados.keys()].sort()).toEqual(['Steven:gaia', 'Steven:kant']);
+    expect(encontrados.get('Steven:kant')?.mensajes).toBe(2);
+    expect(encontrados.get('Steven:gaia')?.mensajes).toBe(1);
   });
 
   it('sin página devuelve un mapa vacío, no una excepción', () => {

@@ -69,17 +69,27 @@ describe('runtime bridge packaging smoke', () => {
       .rejects.toThrow(/Hermes runtime bridge must have mode 0555/u);
   });
 
-  it('copies the built bridge directory into the image before the build-time smoke', async () => {
+  it('copies and locks down the built bridge directory before the build-time smoke', async () => {
     const dockerfile = await readFile(dockerfilePath, 'utf8');
-    const bridgeCopy = 'COPY --from=build --chown=node:node --chmod=0555 /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge';
+    const bridgeCopy = 'COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge';
+    const bridgeMode = 'RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge';
+    const pythonCopy = 'COPY --from=python-runtime /usr/local /usr/local';
+    const pythonSmoke = "RUN python3 -c 'import asyncio, json; assert asyncio and json'";
     const copyIndex = dockerfile.indexOf(bridgeCopy);
+    const modeIndex = dockerfile.indexOf(bridgeMode);
+    const pythonCopyIndex = dockerfile.indexOf(pythonCopy);
+    const pythonSmokeIndex = dockerfile.indexOf(pythonSmoke);
     const userIndex = dockerfile.indexOf('USER node');
     const smokeIndex = dockerfile.indexOf('RUN node deploy/runtime-package-smoke.mjs');
 
-    expect(dockerfile).toContain('apk add --no-cache python3');
+    expect(dockerfile).toMatch(/^ARG CAUCE_PYTHON_BASE=docker\.io\/library\/python@sha256:[a-f0-9]{64}$/mu);
+    expect(dockerfile).not.toContain('apk add --no-cache python3');
+    expect(pythonCopyIndex).toBeGreaterThan(-1);
+    expect(pythonSmokeIndex).toBeGreaterThan(pythonCopyIndex);
     expect(dockerfile).toContain('mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal');
     expect(copyIndex).toBeGreaterThan(-1);
-    expect(userIndex).toBeGreaterThan(copyIndex);
+    expect(modeIndex).toBeGreaterThan(copyIndex);
+    expect(userIndex).toBeGreaterThan(modeIndex);
     expect(smokeIndex).toBeGreaterThan(userIndex);
   });
 

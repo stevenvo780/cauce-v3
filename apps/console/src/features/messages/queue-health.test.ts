@@ -27,7 +27,7 @@ function cola(items: QueueItem[] | null): QueueSnapshot {
 
 function agenteDeFlota(tenantId: string, alias: string): FleetAgent {
   return {
-    id: `${tenantId.toLocaleLowerCase()}:${alias.toLocaleLowerCase()}`,
+    id: `${tenantId}:${alias}`,
     tenantId, alias, roomIds: [], roomMembership: {}, leaseState: 'online',
   };
 }
@@ -43,7 +43,7 @@ describe('saludDeColaPorAgente', () => {
       ]),
     );
 
-    expect(salud['miguel:kratos']).toEqual({
+    expect(salud['Miguel:kratos']).toEqual({
       pendientes: 3, enCurso: 2, reintentos: 1, muertas: 2, muertasTruncadas: false,
     });
   });
@@ -60,14 +60,14 @@ describe('saludDeColaPorAgente', () => {
       cola([filaDeCola({ tenant_id: 'Steven', recipient_alias: 'argos', state: 'dead' })]),
     );
 
-    expect(salud['steven:argos'].pendientes).toBeUndefined();
-    expect(salud['steven:argos'].pendientes).not.toBe(0);
-    expect(salud['steven:argos'].enCurso).toBeUndefined();
-    expect(salud['steven:argos'].reintentos).toBeUndefined();
+    expect(salud['Steven:argos'].pendientes).toBeUndefined();
+    expect(salud['Steven:argos'].pendientes).not.toBe(0);
+    expect(salud['Steven:argos'].enCurso).toBeUndefined();
+    expect(salud['Steven:argos'].reintentos).toBeUndefined();
     // Lo que SÍ se sabe de él sigue estando: apareció en la cola con una entrega muerta.
-    expect(salud['steven:argos'].muertas).toBe(1);
+    expect(salud['Steven:argos'].muertas).toBe(1);
     // Y el control por el otro lado: zeus sí venía en actividad, así que sus ceros son reales.
-    expect(salud['steven:zeus'].pendientes).toBe(0);
+    expect(salud['Steven:zeus'].pendientes).toBe(0);
   });
 
   it('sin snapshot de /queues las muertas quedan UNKNOWN en vez de cero', () => {
@@ -76,9 +76,9 @@ describe('saludDeColaPorAgente', () => {
       undefined,
     );
 
-    expect(salud['steven:argos'].muertas).toBeUndefined();
-    expect(salud['steven:argos'].muertas).not.toBe(0);
-    expect(salud['steven:argos'].pendientes).toBe(4);
+    expect(salud['Steven:argos'].muertas).toBeUndefined();
+    expect(salud['Steven:argos'].muertas).not.toBe(0);
+    expect(salud['Steven:argos'].pendientes).toBe(4);
   });
 
   it('un /queues publicado pero sin filas del alias es un cero CONOCIDO, no UNKNOWN', () => {
@@ -87,8 +87,8 @@ describe('saludDeColaPorAgente', () => {
       cola([filaDeCola({ tenant_id: 'Miguel', recipient_alias: 'kratos', state: 'dead' })]),
     );
 
-    expect(salud['steven:argos'].muertas).toBe(0);
-    expect(salud['steven:argos'].muertasTruncadas).toBe(false);
+    expect(salud['Steven:argos'].muertas).toBe(0);
+    expect(salud['Steven:argos'].muertasTruncadas).toBe(false);
   });
 
   it('un `items` ausente NO es una lista vacía: no fabrica ceros', () => {
@@ -97,7 +97,7 @@ describe('saludDeColaPorAgente', () => {
       cola(null),
     );
 
-    expect(salud['steven:argos'].muertas).toBeUndefined();
+    expect(salud['Steven:argos'].muertas).toBeUndefined();
   });
 
   /**
@@ -112,8 +112,8 @@ describe('saludDeColaPorAgente', () => {
     const alTecho = Array.from({ length: LIMITE_COLA }, (_, indice) => fila(indice, indice === 0 ? 'dead' : 'pending'));
     const debajo = alTecho.slice(0, LIMITE_COLA - 1);
 
-    expect(saludDeColaPorAgente(undefined, cola(alTecho))['steven:argos'].muertasTruncadas).toBe(true);
-    expect(saludDeColaPorAgente(undefined, cola(debajo))['steven:argos'].muertasTruncadas).toBe(false);
+    expect(saludDeColaPorAgente(undefined, cola(alTecho))['Steven:argos'].muertasTruncadas).toBe(true);
+    expect(saludDeColaPorAgente(undefined, cola(debajo))['Steven:argos'].muertasTruncadas).toBe(false);
   });
 
   it('ignora filas y agentes sin identidad utilizable en vez de crear claves basura', () => {
@@ -131,7 +131,7 @@ describe('saludDeColaPorAgente', () => {
       undefined,
     );
 
-    expect(salud['steven:argos']).toEqual({ muertasTruncadas: false });
+    expect(salud['Steven:argos']).toEqual({ muertasTruncadas: false });
   });
 });
 
@@ -149,9 +149,9 @@ describe('ordenarPorSaludDeCola', () => {
   it('sube lo que sangra y conserva el orden original en el resto', () => {
     const agentes = [agenteDeFlota('Steven', 'zeus'), agenteDeFlota('Steven', 'argos'), agenteDeFlota('Miguel', 'kratos')];
     const ordenados = ordenarPorSaludDeCola(agentes, {
-      'miguel:kratos': { muertas: 3, muertasTruncadas: false },
-      'steven:argos': { reintentos: 1, muertasTruncadas: false },
-      'steven:zeus': { muertas: 0, reintentos: 0, muertasTruncadas: false },
+      'Miguel:kratos': { muertas: 3, muertasTruncadas: false },
+      'Steven:argos': { reintentos: 1, muertasTruncadas: false },
+      'Steven:zeus': { muertas: 0, reintentos: 0, muertasTruncadas: false },
     });
 
     expect(ordenados.map((agente) => agente.alias)).toEqual(['kratos', 'argos', 'zeus']);

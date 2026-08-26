@@ -33,7 +33,9 @@ PY
 )
 tmp_units=$(mktemp -d)
 tmp_container_units=$(mktemp -d)
-trap 'rm -rf "$tmp_units" "$tmp_container_units"' EXIT
+tmp_release_state=$(mktemp -d)
+chmod 0700 "$tmp_release_state"
+trap 'rm -rf "$tmp_units" "$tmp_container_units" "$tmp_release_state"' EXIT
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-units.py" --output "$tmp_units" >/dev/null
 [[ $(printf '%s\n' "$tmp_units"/cauce-v3-alias-*.service | wc -l) -eq "$fleet_size" ]] || { printf 'unit generator did not emit the declarative fleet size (%s)\n' "$fleet_size" >&2; exit 1; }
 (cd "$tmp_units" && sha256sum -c SHA256SUMS >/dev/null)
@@ -64,6 +66,7 @@ done
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/container_ops_digest.py" --check
 node "$ROOT/tests/container-supervisor.test.mjs"
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_container_runtime_reaping.py"
+PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_provision_alertmanager_config.py"
 node "$ROOT/tests/alias-runner.test.mjs"
 node "$ROOT/tests/container-release-pin.test.mjs"
 node "$ROOT/tests/container-cutover.test.mjs"
@@ -74,11 +77,13 @@ node "$ROOT/tests/container-ops-evidence.test.mjs"
 node "$ROOT/tests/source-digest-domains.test.mjs"
 
 python3 - "$PROJECT" <<'PY'
-import pathlib, sys
+import pathlib, re, sys
 project = pathlib.Path(sys.argv[1])
 prod = (project / 'deploy/compose.yaml').read_text(encoding='utf-8')
 dev = (project / 'deploy/compose.dev.yaml').read_text(encoding='utf-8')
 overlay = (project / 'deploy/compose.postgres.yaml').read_text(encoding='utf-8')
+alert_overlay = (project / 'deploy/compose.alertmanager.yaml').read_text(encoding='utf-8')
+alert_config = (project / 'ops/observability/alertmanager.yaml').read_text(encoding='utf-8')
 authentic = (project / 'ops/compose.authentic.yaml').read_text(encoding='utf-8')
 console = (project / 'apps/console/nginx.conf').read_text(encoding='utf-8')
 required = {
@@ -88,6 +93,8 @@ required = {
     'database URL must be a Compose secret': 'DATABASE_URL_FILE: /run/secrets/database_url' in prod,
     'production bind must default private': '${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}' in prod,
     'local PostgreSQL must have no published ports': '  postgres:' in overlay and '\n    ports:' not in overlay,
+    'Alertmanager must mount an explicit identity-free config path': 'CAUCE_ALERTMANAGER_CONFIG_PATH' in alert_overlay and '../ops/observability/alertmanager.yaml:' not in alert_overlay,
+    'tracked Alertmanager config must use a chat-id file and contain no inline id': 'chat_id_file: /run/secrets/alertmanager_telegram_chat_id' in alert_config and not re.search(r'^\s*chat_id:\s*', alert_config, re.MULTILINE),
     'dev compose must remain separate': 'NODE_ENV: development' in dev,
     'dev adapters must explicitly opt into non-production transport': dev.count('CAUCE_ENVIRONMENT: development') >= 2,
     'production includes Telegram bridge': 'services/telegram-bridge/dist/main.js' in prod,
@@ -117,8 +124,81 @@ if docker compose version >/dev/null 2>&1; then
   zeros=$(printf '%064d' 0)
   export POSTGRES_DB=cauce POSTGRES_USER=cauce POSTGRES_PASSWORD=x DATABASE_URL=postgresql://validation.invalid/cauce
   export CAUCE_RUNTIME_IMAGE="registry.invalid/cauce-runtime@sha256:$zeros" CAUCE_CONSOLE_IMAGE="registry.invalid/cauce-console@sha256:$zeros"
+  validation_writer_snapshot="$tmp_release_state/writer-snapshot.json"
+  validation_media_dir="$tmp_release_state/media"
+  mkdir -p -- "$validation_media_dir"
+  chmod 0700 "$validation_media_dir"
+  python3 - "$ROOT/container-aliases.json" "$validation_writer_snapshot" <<'PY'
+import hashlib, json, pathlib, sys
+manifest_bytes = pathlib.Path(sys.argv[1]).read_bytes()
+aliases = json.loads(manifest_bytes)["aliases"]
+rows = []
+for alias, body in sorted(aliases.items()):
+    units = []
+    for family, scope, name in (
+        ("host-native", "system", f"cauce-v3-alias-{alias}.service"),
+        ("container-system", "system", f"cauce-v3-container-{alias}.service"),
+        ("container-rootless", "user", f"cauce-v3-container-{alias}.service"),
+    ):
+        units.append({
+            "activeState": "inactive", "family": family, "fragmentSha256": None,
+            "loadState": "not-found", "mainPid": 0, "name": name, "scope": scope,
+            "subState": "dead", "unitFileState": "not-found",
+        })
+    rows.append({
+        "alias": alias,
+        "host": body.get("dockerHost", "local"),
+        "leaseActive": False,
+        "systemdUser": body["systemdUser"],
+        "tenant": body["tenant"],
+        "units": units,
+    })
+snapshot = {
+    "aliases": rows, "composeWriters": [], "kind": "cauce-v3-release-writer-snapshot",
+    "manifestSha256": "sha256:" + hashlib.sha256(manifest_bytes).hexdigest(),
+    "schemaVersion": 2, "writersExpectedCandidate": 0,
+}
+pathlib.Path(sys.argv[2]).write_text(
+    json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8"
+)
+PY
+  chmod 0600 "$validation_writer_snapshot"
+  validation_writer_sha="sha256:$(sha256sum "$validation_writer_snapshot" | cut -d' ' -f1)"
+  # This is an offline Compose parsing fixture, not a production state
+  # transition.  Production marker publication is intentionally available only
+  # through release-writer-state.py under the authenticated release lock.
+  python3 - "$validation_writer_snapshot" "$validation_writer_sha" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import sys
+
+snapshot = pathlib.Path(sys.argv[1])
+body = {
+    "kind": "cauce-v3-release-state",
+    "mode": "candidate",
+    "releaseId": "validation",
+    "schemaVersion": 1,
+    "snapshotPath": str(snapshot),
+    "snapshotSha256": sys.argv[2],
+    "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+    "writersExpected": 0,
+    "writersObserved": 0,
+}
+marker = pathlib.Path(f"{snapshot}.state.json")
+marker.write_text(json.dumps(body, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
+marker.chmod(0o444)
+PY
+  "$ROOT/scripts/release-writer-state.py" --ops-root "$ROOT" validate \
+    --snapshot "$validation_writer_snapshot" --expected-sha256 "$validation_writer_sha" >/dev/null
+  export CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE="$validation_writer_snapshot"
+  export CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256="$validation_writer_sha"
   export CAUCE_OTEL_IMAGE="registry.invalid/otel@sha256:$zeros" CAUCE_PROMETHEUS_IMAGE="registry.invalid/prometheus@sha256:$zeros" CAUCE_POSTGRES_IMAGE="registry.invalid/postgres@sha256:$zeros"
+  export CAUCE_ALERTMANAGER_IMAGE="registry.invalid/alertmanager@sha256:$zeros" CAUCE_ALERTMANAGER_CONFIG_PATH=/dev/null CAUCE_ALERTMANAGER_TELEGRAM_TOKEN_PATH=/dev/null
+  export CAUCE_ALERTMANAGER_TELEGRAM_CHAT_ID_PATH=/dev/null
+  export CAUCE_ALERTMANAGER_DATA_DIR=/tmp/cauce-alertmanager-validation CAUCE_ALERTMANAGER_UID=1000 CAUCE_ALERTMANAGER_GID=1000
   export CAUCE_AUTH_PROVIDER=oidc CAUCE_CONSOLE_ORIGINS=https://console.invalid
+  export CAUCE_MEDIA_RUNTIME_DIR="$validation_media_dir"
   export CAUCE_DATABASE_URL_SECRET_PATH=/dev/null CAUCE_POSTGRES_CA_PATH=/dev/null
   export CAUCE_GATEWAY_TLS_CERT_PATH=/dev/null CAUCE_GATEWAY_TLS_KEY_PATH=/dev/null CAUCE_GATEWAY_TLS_CA_PATH=/dev/null CAUCE_GATEWAY_CLIENT_CA_PATH=/dev/null
   export CAUCE_GATEWAY_IDENTITY_DIR=/tmp/cauce-validation-identities
@@ -133,6 +213,7 @@ if docker compose version >/dev/null 2>&1; then
   export CAUCE_AUTHENTIC_GATEWAY_PORT=18443 CAUCE_AUTHENTIC_CONTROL_PORT=19080 CAUCE_AUTHENTIC_UNIX_CONTROL_PORT=19081
   docker compose -f "$PROJECT/deploy/compose.yaml" config --quiet
   docker compose -f "$PROJECT/deploy/compose.yaml" -f "$PROJECT/deploy/compose.postgres.yaml" config --quiet
+  docker compose -f "$PROJECT/deploy/compose.yaml" -f "$PROJECT/deploy/compose.alertmanager.yaml" config --quiet
   docker compose -f "$PROJECT/deploy/compose.dev.yaml" config --quiet
   docker compose -f "$ROOT/compose.test.yaml" config --quiet
   docker compose -f "$ROOT/compose.authentic.yaml" config --quiet
@@ -152,45 +233,5 @@ if ! docker build --help >/dev/null 2>&1; then
   printf 'docker build check skipped outside release\n'
 fi
 if command -v shellcheck >/dev/null 2>&1; then shellcheck "$ROOT"/scripts/*.sh "$PROJECT"/deploy/*.sh; fi
-node --input-type=module - "$PROJECT/apps/console/src" <<'NODE'
-import { readdir, readFile } from 'node:fs/promises';
-import path from 'node:path';
-import ts from 'typescript';
-
-const root = process.argv[2];
-const forbidden = new Set(['localStorage', 'sessionStorage']);
-const failures = [];
-
-async function scanTree(directory) {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const absolute = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      await scanTree(absolute);
-      continue;
-    }
-    if (!entry.isFile() || (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx'))) continue;
-    const source = await readFile(absolute, 'utf8');
-    const kind = entry.name.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-    const sourceFile = ts.createSourceFile(absolute, source, ts.ScriptTarget.Latest, true, kind);
-    let rejected = false;
-    const visit = (node) => {
-      if (rejected) return;
-      if (ts.isIdentifier(node) && forbidden.has(node.text)) {
-        failures.push(path.relative(root, absolute));
-        rejected = true;
-        return;
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
-  }
-}
-
-await scanTree(root);
-if (failures.length > 0) {
-  for (const failure of failures.sort()) console.error(`browser storage usage is forbidden: ${failure}`);
-  process.exit(1);
-}
-console.log('browser storage policy passed');
-NODE
+node "$PROJECT/ops/scripts/validate-console-browser-storage.mjs" "$PROJECT/apps/console/src"
 printf 'static validation passed\n'

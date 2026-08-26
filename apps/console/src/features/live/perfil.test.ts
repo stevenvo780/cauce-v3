@@ -184,7 +184,18 @@ describe('la escritura aplicada del perfil', () => {
       state: 'written',
       sha: 'a'.repeat(64),
       bytes: 12,
+      generation: 'gen-7',
+      container_id: 'ws-kant',
     }],
+    runtime_adoption: {
+      evidence: 'adapter_delivery',
+      revision: 7,
+      generation: 'gen-7',
+      adopted_at: '2026-08-26T00:01:00Z',
+      documents: [{
+        name: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md', sha: 'a'.repeat(64),
+      }],
+    },
   };
 
   it('serializa textos vacíos como null sin identidad controlada por el navegador', () => {
@@ -202,6 +213,11 @@ describe('la escritura aplicada del perfil', () => {
       ...ack,
       acknowledgements: [{ ...ack.acknowledgements[0], sha: null }],
     }, esperado)).toBe(false);
+    expect(esPerfilAplicado({ ...ack, runtime_adoption: null }, esperado)).toBe(false);
+    expect(esPerfilAplicado({
+      ...ack,
+      runtime_adoption: { ...ack.runtime_adoption, generation: 'otra-generacion' },
+    }, esperado)).toBe(false);
   });
 
   it('rechaza ACK extra, duplicado o con ruta que no corresponde al nombre', () => {
@@ -212,6 +228,17 @@ describe('la escritura aplicada del perfil', () => {
     expect(esPerfilAplicado({
       ...ack,
       acknowledgements: [{ ...ack.acknowledgements[0], path: '/tmp/otro.md' }],
+    }, esperado)).toBe(false);
+    expect(esPerfilAplicado({
+      ...ack,
+      acknowledgements: [{ ...ack.acknowledgements[0], generation: '' }],
+    }, esperado)).toBe(false);
+    expect(esPerfilAplicado({
+      ...ack,
+      runtime_adoption: {
+        ...ack.runtime_adoption,
+        documents: [{ ...ack.runtime_adoption.documents[0], path: '/tmp/otro.md' }],
+      },
     }, esperado)).toBe(false);
   });
 });

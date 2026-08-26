@@ -25,15 +25,15 @@ const execute = promisify(execFile);
  * real, porque la base ni existe hasta que `beforeAll` la crea.
  *
  * La cuenta que se prueba es de alcance MÍNIMO (`role: reader` -> `permissions: ['read']`, sin
- * `roles`) porque lo único que este archivo certifica es login + navegación de lectura. Un GET a
- * una ruta que exige `operator` (`/v3/console/jobs`) se prueba a propósito y se espera 403: es la
- * prueba de que la cuenta NO escaló permisos que no necesitaba.
+ * `roles`). Certifica que todas las vistas generales son realmente navegables con ese alcance y,
+ * en la misma sesión, que las mutaciones siguen cerradas antes de producir efectos durables.
  */
 
 const CONSOLE_EMAIL = process.env.CAUCE_E2E_CONSOLE_EMAIL ?? 'qa-e2e-dev@cauce.test';
 const CONSOLE_PASSWORD = process.env.CAUCE_E2E_CONSOLE_PASSWORD ?? randomBytes(24).toString('base64url');
 const CONSOLE_TENANT = 'Steven';
 const CONSOLE_ALIAS = 'kant';
+const CHAIN_TRACE_ID = 'trace-reader-visible';
 
 let database: TestDatabase;
 let app: Awaited<ReturnType<typeof buildGateway>>;
@@ -65,6 +65,7 @@ beforeAll(async () => {
   provisionStdout = cli.stdout;
 
   await persistDevOnlyCredentialRecord();
+  await seedVisibleChain();
 
   const provider = new PasswordAuthProvider({
     users: new PostgresConsoleUserStore(database.pool),
@@ -134,8 +135,23 @@ describe('login E2E de la consola contra PostgreSQL real (base dev aislada y ef�
       ['/v3/console/messages', 200],
       ['/v3/console/queues', 200],
       ['/v3/console/adapters', 200],
-      // Alcance mínimo, medido: la cuenta `reader` NO tiene rol `operator` y esta ruta lo exige.
-      ['/v3/console/jobs', 403]
+      ['/v3/console/jobs', 200],
+      ['/v3/console/activity', 200],
+      ['/v3/console/quotas', 200],
+      ['/v3/console/agents', 200],
+      ['/v3/console/agents/kant', 200],
+      ['/v3/console/tenants/Steven/agents/kant', 200],
+      ['/v3/console/role-assignments/Steven/kant/history', 200],
+      ['/v3/console/audit', 200],
+      [`/v3/console/chains/${CHAIN_TRACE_ID}`, 200],
+      ['/v3/console/chain-gates', 200],
+      ['/v3/console/config', 200],
+      ['/v3/console/observability', 200],
+      ['/v3/console/tenants/Steven/agents/kant/perfil', 200],
+      ['/v3/console/tenants/Steven/agents/kant/documents', 200],
+      // Superficies operativas deliberadamente excluidas de reader.
+      ['/v3/console/dlq', 403],
+      ['/v3/console/terminal/capability', 403]
     ];
     for (const [path, expected] of reads) {
       const response = await fetch(`${httpUrl}${path}`, {
@@ -143,6 +159,67 @@ describe('login E2E de la consola contra PostgreSQL real (base dev aislada y ef�
       });
       expect(response.status, path).toBe(expected);
     }
+  });
+
+  it('RBAC: POST y PUT del reader responden 403 y dejan cero efectos durables', async () => {
+    const { cookie, csrf } = await authenticatedSession();
+    const before = await durableMutationCounts();
+    const headers = {
+      cookie,
+      origin: httpUrl,
+      'x-csrf-token': csrf,
+      'content-type': 'application/json',
+    };
+    const mutations: Array<{ method: 'POST' | 'PUT'; path: string; body: unknown }> = [
+      {
+        method: 'POST', path: '/v3/console/messages',
+        body: {
+          room_id: 'grp.steven', recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
+          body: { text: 'reader no publica' }, idempotency_key: 'reader-e2e-no-publish',
+        },
+      },
+      {
+        method: 'POST', path: '/v3/console/jobs',
+        body: { lane: 'batch', priority: 0, kind: 'system.database.probe', payload: {} },
+      },
+      {
+        method: 'POST', path: '/v3/console/config/changes',
+        body: {
+          dry_run: false, expected_revision: 0,
+          mutation: { resource: 'tenant', action: 'update', id: 'Steven', value: { enabled: true } },
+        },
+      },
+      {
+        method: 'POST', path: '/v3/console/config/revisions/1/rollback',
+        body: { dry_run: false, expected_revision: 0 },
+      },
+      {
+        method: 'POST', path: '/v3/console/chain-gates/11111111-1111-4111-8111-111111111111/answer',
+        body: { answer: 'reader no responde' },
+      },
+      {
+        method: 'POST', path: '/v3/console/deliveries/22222222-2222-4222-8222-222222222222/cancel',
+        body: { reason: 'reader no cancela' },
+      },
+      {
+        method: 'PUT', path: '/v3/console/tenants/Steven/agents/kant/perfil',
+        body: { expected_revision: null, profile: {} },
+      },
+      {
+        method: 'PUT', path: '/v3/console/tenants/Steven/agents/kant/documents/directive/content',
+        body: { content: 'reader no escribe', create_if_absent: true },
+      },
+    ];
+
+    for (const mutation of mutations) {
+      const response = await fetch(`${httpUrl}${mutation.path}`, {
+        method: mutation.method,
+        headers,
+        body: JSON.stringify(mutation.body),
+      });
+      expect(response.status, `${mutation.method} ${mutation.path}`).toBe(403);
+    }
+    expect(await durableMutationCounts()).toEqual(before);
   });
 
   it('LOGOUT: exige CSRF, contesta 204 y le dice al navegador que borre la cookie', async () => {
@@ -189,6 +266,37 @@ async function authenticatedSession(): Promise<{ cookie: string; csrf: string }>
   const cookie = rawCookie.split(';', 1)[0]!;
   const { csrf_token: csrf } = (await response.json()) as { csrf_token: string };
   return { cookie, csrf };
+}
+
+async function durableMutationCounts(): Promise<Record<string, number>> {
+  const result = await database.pool.query<Record<string, string>>(`
+    SELECT
+      (SELECT count(*)::text FROM messages) AS messages,
+      (SELECT count(*)::text FROM jobs) AS jobs,
+      (SELECT count(*)::text FROM config_revisions) AS config_revisions,
+      (SELECT count(*)::text FROM audit_events) AS audit_events,
+      (SELECT count(*)::text FROM agent_chain_gates) AS chain_gates
+  `);
+  return Object.fromEntries(
+    Object.entries(result.rows[0] ?? {}).map(([name, value]) => [name, Number(value)]),
+  );
+}
+
+async function seedVisibleChain(): Promise<void> {
+  await database.pool.query(
+    `WITH inserted_message AS (
+       INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane)
+       VALUES(gen_random_uuid(),$1,$2,'grp.steven',$3,'{}'::jsonb,'interactive')
+       RETURNING id,request_id
+     )
+     INSERT INTO adapter_outbox(
+       tenant_id,adapter,kind,idempotency_key,request_id,message_id,trace_id,payload
+     )
+     SELECT $2,'telegram','origin_relay','e2e-reader-visible-chain',request_id,id,$1,
+            '{"relay_kind":"final","terminal":true}'::jsonb
+     FROM inserted_message`,
+    [CHAIN_TRACE_ID, CONSOLE_TENANT, CONSOLE_ALIAS],
+  );
 }
 
 /**

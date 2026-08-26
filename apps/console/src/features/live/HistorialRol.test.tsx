@@ -105,6 +105,20 @@ it('guardar una revisión recuperada usa sólo el PUT canónico con CAS y ACK', 
   const base = {
     tenant_id: 'Steven', alias: 'kant', agent_enabled: true, exists: true,
     revision: 4, applied_revision: 4, runtime_state: 'applied', harness: 'codex',
+    runtime_verification: {
+      state: 'current', generation: 'gen-4', container_id: 'ws-kant',
+      observed_at: '2026-08-26T00:00:00Z',
+      documents: [{
+        name: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md',
+        expected_sha: 'a'.repeat(64), observed_sha: 'a'.repeat(64),
+        expected_bytes: 18, observed_bytes: 18, current: true,
+      }],
+    },
+    runtime_adoption: {
+      evidence: 'adapter_delivery', revision: 4, generation: 'gen-4',
+      adopted_at: '2026-08-26T00:01:00Z',
+      documents: [{ name: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md', sha: 'a'.repeat(64) }],
+    },
     perfil: {
       purpose: 'Coordinar la flota.', role_summary: 'PMO de la flota.',
       human_brief: 'Steven.', responsibilities: ['Coordinar'], restrictions: ['No inventar'],
@@ -125,6 +139,7 @@ it('guardar una revisión recuperada usa sólo el PUT canónico con CAS y ACK', 
         ...base,
         revision: 5,
         applied_revision: 5,
+        runtime_adoption: { ...base.runtime_adoption, revision: 5 },
         perfil: cuerpoPut.profile as typeof base.perfil,
       };
       return HttpResponse.json({
@@ -132,8 +147,12 @@ it('guardar una revisión recuperada usa sólo el PUT canónico con CAS y ACK', 
         revision: 5, applied_revision: 5,
         acknowledgements: [{
           name: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md', state: 'written',
-          sha: 'a'.repeat(64), bytes: 18,
+          sha: 'a'.repeat(64), bytes: 18, generation: 'gen-4', container_id: 'ws-kant',
         }],
+        runtime_adoption: {
+          ...base.runtime_adoption,
+          revision: 5,
+        },
       });
     }),
     http.post('*/v3/console/config/changes', () => {
@@ -193,15 +212,25 @@ it('un alias sin cambios anotados lo dice como hecho medido, no como lista vací
 });
 
 it('si el gateway no publica el diario dice «no se pudo mirar», nunca «no cambió nunca»', async () => {
-  server.use(http.get('*/v3/console/role-assignments/:tenantId/:alias/history', () => HttpResponse.json(
-    { error: 'not_found', message: 'no route' }, { status: 404 },
-  )));
+  server.use(http.get('*/v3/console/role-assignments/:tenantId/:alias/history', () =>
+    new HttpResponse(null, { status: 404 })));
 
   const { dialogo } = await abrirDiarioDeKant();
 
   expect(await within(dialogo).findByText(/no se pudo mirar el diario del rol/i)).toBeInTheDocument();
   expect(within(dialogo).getByText(/NO significa que este rol no haya cambiado nunca/i)).toBeInTheDocument();
   expect(within(dialogo).queryByRole('button', { name: /usar este texto en Perfil/i })).not.toBeInTheDocument();
+});
+
+it('un 404 not_found del alias no se degrada a «gateway viejo»', async () => {
+  server.use(http.get('*/v3/console/role-assignments/:tenantId/:alias/history', () => HttpResponse.json(
+    { error: 'not_found', message: 'agent not found or not visible' }, { status: 404 },
+  )));
+
+  const { dialogo } = await abrirDiarioDeKant();
+
+  expect(await within(dialogo).findByText(/agent not found or not visible/i)).toBeInTheDocument();
+  expect(within(dialogo).queryByText(/gateway no publica/i)).not.toBeInTheDocument();
 });
 
 it('un fallo de lectura tampoco se disfraza de «no cambió nunca»', async () => {

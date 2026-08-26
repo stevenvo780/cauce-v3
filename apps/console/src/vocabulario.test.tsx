@@ -41,7 +41,7 @@ const VISTAS = [
   ['la portada', LandingPage, /cauce en una pantalla/i],
   ['/live', LiveFleetPage, /la flota ahora/i],
   ['/accounts', AccountsPage, /cuentas y cuotas/i],
-  ['/queues', QueuesPage, /queues, retries & dlq/i],
+  ['/queues', QueuesPage, /colas y dlq operativo/i],
   ['/observability', ObservabilityPage, /señales y auditoría/i],
   ['/terminal', TerminalPage, 'Terminal de agentes'],
 ] as const;

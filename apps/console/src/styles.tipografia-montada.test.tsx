@@ -153,7 +153,7 @@ const VISTAS: ReadonlyArray<{ ruta: string; titulo: RegExp; minimo: number }> = 
   { ruta: '/live', titulo: /La flota ahora/i, minimo: 1200 },
   { ruta: '/accounts', titulo: /Cuentas y cuotas/i, minimo: 700 },
   { ruta: '/messages', titulo: /Mensajes/i, minimo: 200 },
-  { ruta: '/queues', titulo: /Queues, retries & DLQ/i, minimo: 120 },
+  { ruta: '/queues', titulo: /Colas y DLQ operativo/i, minimo: 120 },
   { ruta: '/observability', titulo: /Señales y auditoría/i, minimo: 100 },
   { ruta: '/config', titulo: /Ajustes y altas/i, minimo: 500 },
 ];

@@ -31,17 +31,15 @@ import {
  * vive en `@cauce/protocol` y no en `@cauce/adapter-sdk`.
  *
  * ============================================================================================
- * LO QUE ESTA RUTA NO PUEDE SABER, Y LO DICE
+ * QUÉ ESTÁ MEDIDO Y QUÉ NO
  * ============================================================================================
- * El gateway NO lee el disco del contenedor. Así que la vista previa se compone sobre fichero
- * VACÍO: enseña el bloque gestionado y nada más. Lo que una persona haya escrito a mano en su
- * `CLAUDE.md` sigue ahí y NO se toca —la fusión conserva lo de fuera byte a byte—, pero esta
- * respuesta no puede mostrarlo porque no lo ha visto.
+ * Cuando está montada `prepareRuntime`, el gateway lee los bytes vivos por el relay, compone la
+ * vista sobre ellos y acredita ruta, SHA, tamaño, generación y contenedor. Si esa sonda no está
+ * disponible, conserva el fallback de fichero vacío pero lo declara como `fichero-vacio` y jamás
+ * convierte esa ausencia de evidencia en `applied`.
  *
- * `base` lo dice con esas palabras en vez de dejar que el operador crea que el fichero entero es
- * lo que ve. Decir «así queda el fichero» sobre una medición que no se hizo es la clase de mentira
- * que cuesta un despliegue: alguien mira la vista previa, no ve su manual, y concluye que se lo
- * borraron.
+ * `base` distingue ambos casos. Decir «así queda el fichero» sobre una medición que no se hizo es
+ * la clase de mentira que cuesta un despliegue.
  */
 
 /** De dónde salen el perfil y los hechos. Inyectable para poder probar la ruta sin base. */
@@ -83,7 +81,27 @@ export interface AgentProfileDeps {
   prepareRuntime?(
     tenantId: string, alias: string, contexto: ContextoDeAlias,
   ): Promise<PreparedProfileRuntime>;
-  /** Registra el ACK; puede devolver una revisión desired posterior por una carrera legítima. */
+  /**
+   * Persiste la expectativa exacta que viajará en entregas capability-aware. Sigue siendo
+   * evidencia de disco; sólo un ACK posterior del adaptador puede convertirla en adopción.
+   */
+  recordRuntimeExpectation?(
+    tenantId: string,
+    alias: string,
+    revision: number,
+    verification: ProfileRuntimeVerification,
+  ): Promise<void>;
+  /**
+   * ACK emitido por el adaptador DESPUÉS de entregar el perfil a la TUI compartida. Un ACK de
+   * escritura del fichero no sustituye esta evidencia: el proceso pudo cargarlo horas antes.
+   */
+  readRuntimeAdoption?(
+    tenantId: string,
+    alias: string,
+    revision: number,
+    verification: ProfileRuntimeVerification,
+  ): Promise<ProfileRuntimeAdoptionAck | undefined>;
+  /** Registra applied sólo después del ACK conductual del adaptador. */
   markProfileApplied?(
     tenantId: string,
     alias: string,
@@ -103,16 +121,57 @@ export interface ProfileRuntimeAck {
   readonly state: 'written' | 'already_current' | 'preserved';
   readonly sha: string;
   readonly bytes: number;
+  /** Generación del runtime revalidada DESPUÉS del lote. */
+  readonly generation: string;
+  /** Contenedor de esa misma presencia medida, cuando lo publicó. */
+  readonly container_id: string | null;
+}
+
+export interface ProfileRuntimeDocumentEvidence {
+  readonly name: string;
+  readonly path: string;
+  readonly expected_sha: string;
+  readonly observed_sha: string | null;
+  readonly expected_bytes: number;
+  readonly observed_bytes: number | null;
+  readonly current: boolean;
+}
+
+export interface ProfileRuntimeVerification {
+  readonly state: 'current' | 'drifted' | 'unverified';
+  readonly generation: string | null;
+  readonly container_id: string | null;
+  readonly observed_at: string | null;
+  readonly documents: readonly ProfileRuntimeDocumentEvidence[];
+  readonly reason?: string;
+}
+
+export interface ProfileRuntimeAdoptionAck {
+  readonly evidence: 'adapter_delivery';
+  readonly revision: number;
+  readonly generation: string;
+  readonly adopted_at: string;
+  readonly documents: readonly {
+    readonly name: string;
+    readonly path: string;
+    readonly sha: string;
+  }[];
 }
 
 export interface PreparedProfileRuntime {
   /** Nombres exactos que el lote debe acreditar; no se aceptan ACK parciales ni extras. */
   readonly documents: readonly string[];
+  /** Arnés medido, que puede diferir de la columna declarada en la base. */
+  readonly harness: string;
+  /** Vista previa compuesta contra los bytes vivos, no contra un fichero imaginariamente vacío. */
+  readonly preview: readonly FicheroDeLaVistaPrevia[];
+  /** Evidencia viva ANTES del lote; `current` es requisito para un GET `applied`. */
+  readonly verification: ProfileRuntimeVerification;
   apply(): Promise<readonly ProfileRuntimeAck[]>;
 }
 
 /** De qué está compuesta la vista previa: nunca de una medición que no se hizo. */
-export type BaseDeLaVistaPrevia = 'fichero-vacio';
+export type BaseDeLaVistaPrevia = 'fichero-vacio' | 'runtime-medido';
 
 export interface FicheroDeLaVistaPrevia {
   readonly nombre: string;
@@ -137,7 +196,14 @@ export interface RespuestaDelPerfil {
   readonly revision: number | null;
   /** Última revisión acreditada por el runtime. */
   readonly applied_revision: number | null;
-  readonly runtime_state: 'absent' | 'pending' | 'applied' | 'disabled';
+  readonly runtime_state:
+    | 'absent' | 'pending' | 'pending_session_refresh' | 'applied' | 'disabled'
+    | 'drifted' | 'runtime_unverified';
+  /** Evidencia viva; la igualdad de revisiones sin esto nunca produce `applied`. */
+  readonly runtime_verification: ProfileRuntimeVerification | null;
+  /** Evidencia de adopción por la sesión, distinta del ACK de disco. */
+  readonly runtime_adoption: ProfileRuntimeAdoptionAck | null;
+  readonly runtime_reason?: string;
   /** Proyección exacta que una entrega capability-aware recibe como `self_role`. */
   readonly self_role: string | null;
   /** El arnés declarado en los hechos de base. `null` cuando el registro no dice ninguno. */
@@ -165,6 +231,8 @@ export interface PerfilAplicado {
   readonly revision: number;
   readonly applied_revision: number;
   readonly acknowledgements: readonly ProfileRuntimeAck[];
+  /** ACK conductual exacto que permitió avanzar `applied_revision`. */
+  readonly runtime_adoption: ProfileRuntimeAdoptionAck;
 }
 
 /**
@@ -191,6 +259,28 @@ function esTopeSuperado(error: unknown): error is Error & { fichero: string; med
 /** La misma cuenta que el CHECK de Postgres y que `String.length`. Ver `measureStrictestUnits`. */
 function unidades(texto: string): number {
   return Math.max([...texto].length, texto.length);
+}
+
+function adoptionMatches(
+  adoption: ProfileRuntimeAdoptionAck | undefined,
+  revision: number | null,
+  verification: ProfileRuntimeVerification | undefined,
+): adoption is ProfileRuntimeAdoptionAck {
+  if (adoption === undefined || revision === null || verification === undefined
+    || verification.state !== 'current' || verification.generation === null
+    || adoption.evidence !== 'adapter_delivery' || adoption.revision !== revision
+    || adoption.generation !== verification.generation
+    || !Number.isFinite(Date.parse(adoption.adopted_at))
+    || adoption.documents.length !== verification.documents.length) return false;
+  const expected = new Map(verification.documents.map((document) => [
+    document.name, { path: document.path, sha: document.expected_sha },
+  ]));
+  for (const document of adoption.documents) {
+    const wanted = expected.get(document.name);
+    if (wanted === undefined || wanted.path !== document.path || wanted.sha !== document.sha) return false;
+    expected.delete(document.name);
+  }
+  return expected.size === 0;
 }
 
 export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProfileDeps): void {
@@ -234,15 +324,61 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       if (contexto.perfil.tenant_id !== tenantId || contexto.perfil.alias !== alias) {
         throw new Error('agent profile repository returned a non-canonical identity');
       }
-      const harness = contexto.hechos.arnes.harness;
+      let prepared: PreparedProfileRuntime | undefined;
+      let runtimeReason: string | undefined;
+      if (target.enabled === true && lectura.exists && deps.prepareRuntime !== undefined) {
+        try {
+          prepared = await deps.prepareRuntime(tenantId, alias, contexto);
+        } catch (error) {
+          runtimeReason = mensajeDeError(error, 'no se pudo verificar el runtime vivo');
+        }
+      }
+      const harness = prepared?.harness ?? contexto.hechos.arnes.harness;
       const nombres = nombresDelArnes(harness ?? '');
+      const revisionCoincide = lectura.revision !== null
+        && lectura.applied_revision === lectura.revision;
+      let adoption: ProfileRuntimeAdoptionAck | undefined;
+      if (prepared?.verification.state === 'current'
+        && lectura.revision !== null) {
+        if (deps.recordRuntimeExpectation !== undefined) {
+          try {
+            await deps.recordRuntimeExpectation(
+              tenantId, alias, lectura.revision, prepared.verification,
+            );
+          } catch (error) {
+            runtimeReason = mensajeDeError(error, 'no se pudo registrar la expectativa del runtime');
+          }
+        }
+      }
+      if (prepared?.verification.state === 'current'
+        && lectura.revision !== null && deps.readRuntimeAdoption !== undefined) {
+        try {
+          adoption = await deps.readRuntimeAdoption(
+            tenantId, alias, lectura.revision, prepared.verification,
+          );
+        } catch (error) {
+          runtimeReason = mensajeDeError(error, 'no se pudo verificar la adopción por la sesión');
+        }
+      }
+      const validAdoption = adoptionMatches(adoption, lectura.revision, prepared?.verification)
+        ? adoption
+        : undefined;
+      const adopted = validAdoption !== undefined;
       const runtimeState: RespuestaDelPerfil['runtime_state'] = target.enabled !== true
         ? 'disabled'
         : !lectura.exists
           ? 'absent'
-          : lectura.revision !== null && lectura.applied_revision === lectura.revision
-            ? 'applied'
-            : 'pending';
+          : prepared?.verification.state === 'current'
+            ? adopted && revisionCoincide
+              ? 'applied'
+              : adopted
+                ? 'pending'
+                : 'pending_session_refresh'
+            : !revisionCoincide
+              ? 'pending'
+              : prepared?.verification.state === 'drifted'
+                ? 'drifted'
+                : 'runtime_unverified';
 
       const comun = {
         tenant_id: tenantId,
@@ -252,6 +388,9 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         revision: lectura.revision,
         applied_revision: lectura.applied_revision,
         runtime_state: runtimeState,
+        runtime_verification: prepared?.verification ?? null,
+        runtime_adoption: validAdoption ?? null,
+        ...(runtimeReason === undefined ? {} : { runtime_reason: runtimeReason }),
         self_role: contexto.perfil.role_summary === null
           ? null
           : (() => {
@@ -263,7 +402,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         hechos: contexto.hechos,
         limites: AGENT_PROFILE_LIMITS,
         medida: { unidades: agentProfileUnits(contexto.perfil), tope: AGENT_PROFILE_LIMITS.total },
-        base: 'fichero-vacio' as const
+        base: prepared === undefined ? 'fichero-vacio' as const : 'runtime-medido' as const
       };
 
       if (nombres.length === 0) {
@@ -283,15 +422,16 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
          * encabezado — la respuesta lo declara en `base` para que la pantalla no pueda enseñar
          * esto como «el fichero entero».
          */
-        const generados = ficherosDelArnes(harness ?? '', contexto, new Map());
-        const respuesta: RespuestaDelPerfil = {
-          ...comun,
-          ficheros: generados.map((fichero) => ({
+        const generados = prepared?.preview
+          ?? ficherosDelArnes(harness ?? '', contexto, new Map()).map((fichero) => ({
             nombre: fichero.nombre,
             politica: fichero.politica,
             texto: fichero.texto,
-            unidades: unidades(fichero.texto)
-          }))
+            unidades: unidades(fichero.texto),
+          }));
+        const respuesta: RespuestaDelPerfil = {
+          ...comun,
+          ficheros: generados,
         };
         return respuesta;
       } catch (error) {
@@ -336,11 +476,18 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     prepared: PreparedProfileRuntime, acknowledgements: readonly ProfileRuntimeAck[],
   ): boolean {
     if (prepared.documents.length !== acknowledgements.length) return false;
-    const expected = new Set(prepared.documents);
+    const expected = new Map(prepared.verification.documents.map((document) => [document.name, document]));
     if (expected.size !== prepared.documents.length) return false;
+    const generation = prepared.verification.generation;
+    if (generation === null) return false;
     for (const ack of acknowledgements) {
-      if (!expected.delete(ack.name) || !ack.path.startsWith('/') || !SHA256.test(ack.sha)
+      const document = expected.get(ack.name);
+      if (document === undefined || document.path !== ack.path || !expected.delete(ack.name)
+        || !ack.path.startsWith('/') || !SHA256.test(ack.sha)
+        || ack.sha !== document.expected_sha || ack.bytes !== document.expected_bytes
         || !Number.isSafeInteger(ack.bytes) || ack.bytes < 0
+        || ack.generation !== generation
+        || (ack.container_id !== null && (typeof ack.container_id !== 'string' || ack.container_id.length === 0))
         || !['written', 'already_current', 'preserved'].includes(ack.state)) return false;
     }
     return expected.size === 0;
@@ -367,8 +514,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         message: 'el alias está apagado; su perfil desired no se cambia sin un runtime habilitado',
       });
     }
-    if (deps.replaceProfile === undefined || deps.prepareRuntime === undefined
-      || deps.markProfileApplied === undefined) {
+    if (deps.replaceProfile === undefined || deps.prepareRuntime === undefined) {
       return reply.code(503).send({
         error: 'profile_write_unavailable',
         message: 'este gateway no tiene montada la saga durable de perfil y runtime',
@@ -475,6 +621,64 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       });
     }
 
+    const ackByName = new Map(acknowledgements.map((ack) => [ack.name, ack]));
+    const verificationAfterApply: ProfileRuntimeVerification = {
+      ...prepared.verification,
+      state: 'current',
+      observed_at: new Date().toISOString(),
+      documents: prepared.verification.documents.map((document) => ({
+        ...document,
+        observed_sha: ackByName.get(document.name)?.sha ?? null,
+        observed_bytes: ackByName.get(document.name)?.bytes ?? null,
+        current: ackByName.get(document.name)?.sha === document.expected_sha
+          && ackByName.get(document.name)?.bytes === document.expected_bytes,
+      })),
+    };
+    if (deps.recordRuntimeExpectation !== undefined) {
+      try {
+        await deps.recordRuntimeExpectation(
+          tenantId, alias, desired.revision, verificationAfterApply,
+        );
+      } catch (error) {
+        return reply.code(codigoDeError(error) === 'conflict' ? 409 : 503).send({
+          error: codigoDeError(error) ?? 'runtime_expectation_not_recorded', state: 'pending',
+          message: mensajeDeError(error, 'el runtime se escribió pero no se pudo registrar su expectativa'),
+          revision: desired.revision,
+          applied_revision: desired.applied_revision,
+          acknowledgements,
+          runtime_verification: verificationAfterApply,
+        });
+      }
+    }
+    let adoption: ProfileRuntimeAdoptionAck | undefined;
+    let adoptionReason = 'el perfil está en disco, pero la TUI compartida todavía no acreditó recibirlo';
+    if (deps.readRuntimeAdoption !== undefined) {
+      try {
+        adoption = await deps.readRuntimeAdoption(
+          tenantId, alias, desired.revision, verificationAfterApply,
+        );
+      } catch (error) {
+        adoptionReason = mensajeDeError(error, 'no se pudo leer el ACK de adopción del adaptador');
+      }
+    }
+    if (!adoptionMatches(adoption, desired.revision, verificationAfterApply)
+      || deps.markProfileApplied === undefined) {
+      return reply.code(202).send({
+        ok: true,
+        state: 'pending_session_refresh',
+        tenant_id: tenantId,
+        alias,
+        message: deps.markProfileApplied === undefined
+          ? 'el ACK de sesión no se puede acreditar de forma durable en este gateway'
+          : adoptionReason,
+        revision: desired.revision,
+        applied_revision: desired.applied_revision,
+        acknowledgements,
+        runtime_verification: verificationAfterApply,
+        runtime_adoption: null,
+      });
+    }
+
     let applied: Awaited<ReturnType<NonNullable<AgentProfileDeps['markProfileApplied']>>>;
     try {
       applied = await deps.markProfileApplied(tenantId, alias, desired.revision, actor);
@@ -501,6 +705,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       revision: desired.revision,
       applied_revision: desired.revision,
       acknowledgements,
+      runtime_adoption: adoption,
     };
     return reply.send(response);
   }

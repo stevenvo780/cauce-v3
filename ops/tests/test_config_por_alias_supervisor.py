@@ -73,25 +73,34 @@ class TestDerivacionPorAlias(unittest.TestCase):
     def test_codex_deriva_codex_home(self) -> None:
         resultado = _correr("codex")
         self.assertEqual(resultado.returncode, 0, resultado.stderr)
-        self.assertEqual(resultado.stdout.strip(), "CODEX_HOME=/home/dev/.cauce/kratos/.codex")
+        self.assertEqual(
+            resultado.stdout.strip(),
+            "CODEX_HOME=/home/dev/.local/share/cauce-v3/config/kratos/.codex",
+        )
 
     def test_claude_deriva_claude_config_dir(self) -> None:
         resultado = _correr("claude", alias="zeus")
         self.assertEqual(resultado.returncode, 0, resultado.stderr)
-        self.assertEqual(resultado.stdout.strip(), "CLAUDE_CONFIG_DIR=/home/dev/.cauce/zeus/.claude")
+        self.assertEqual(
+            resultado.stdout.strip(),
+            "CLAUDE_CONFIG_DIR=/home/dev/.local/share/cauce-v3/config/zeus/.claude",
+        )
 
     def test_kratos_y_atlas_derivan_directorios_DISTINTOS(self) -> None:
         """El trabajo entero es esto: mismo contenedor, mismo HOME, distinto directorio."""
         kratos = _correr("codex", alias="kratos").stdout.strip()
         atlas = _correr("codex", alias="atlas").stdout.strip()
         self.assertNotEqual(kratos, atlas)
-        self.assertEqual(kratos, "CODEX_HOME=/home/dev/.cauce/kratos/.codex")
-        self.assertEqual(atlas, "CODEX_HOME=/home/dev/.cauce/atlas/.codex")
+        self.assertEqual(kratos, "CODEX_HOME=/home/dev/.local/share/cauce-v3/config/kratos/.codex")
+        self.assertEqual(atlas, "CODEX_HOME=/home/dev/.local/share/cauce-v3/config/atlas/.codex")
 
     def test_el_home_del_contenedor_manda(self) -> None:
         """Los alias `claw*` viven en /home/claw: derivar sobre /home/dev les daría una ruta ajena."""
         resultado = _correr("claude", home="/home/claw", alias="hegel")
-        self.assertEqual(resultado.stdout.strip(), "CLAUDE_CONFIG_DIR=/home/claw/.cauce/hegel/.claude")
+        self.assertEqual(
+            resultado.stdout.strip(),
+            "CLAUDE_CONFIG_DIR=/home/claw/.local/share/cauce-v3/config/hegel/.claude",
+        )
 
     # ---------------- CONTROLES NEGATIVOS ----------------
     def test_control_negativo_un_arnes_sin_directorio_se_RECHAZA(self) -> None:
@@ -113,7 +122,7 @@ class TestDerivacionPorAlias(unittest.TestCase):
         ruta = salida.split("=", 1)[1]
         self.assertNotIn("//", ruta)
         self.assertNotIn("/../", ruta)
-        self.assertTrue(ruta.startswith("/home/dev/.cauce/"))
+        self.assertTrue(ruta.startswith("/home/dev/.local/share/cauce-v3/config/"))
 
 
 class TestLasDosImplementacionesCoinciden(unittest.TestCase):
@@ -161,6 +170,10 @@ class TestLaPoliticaDeclarativaEsFailClosed(unittest.TestCase):
 
     def test_los_env_generados_exigen_seed_y_aislamiento_en_contenedores_multi_alias(self) -> None:
         inventario = json.loads((RAIZ / "container-aliases.json").read_text(encoding="utf-8"))["aliases"]
+        hermes_runtime = json.loads((RAIZ / "hermes-runtime.json").read_text(encoding="utf-8"))
+        hermes_commit = hermes_runtime["commit"]
+        hermes_runtime_root = hermes_runtime["runtimeRoot"]
+        hermes_runtime_id = hermes_runtime["runtimeId"]
         cantidades: dict[str, int] = {}
         for entrada in inventario.values():
             cantidades[entrada["container"]] = cantidades.get(entrada["container"], 0) + 1
@@ -175,7 +188,15 @@ class TestLaPoliticaDeclarativaEsFailClosed(unittest.TestCase):
                 self.assertNotIn("CONFIG_POR_ALIAS=1", texto, alias)
             if multi and entrada["harness"] == "hermes":
                 self.assertIn(
-                    f"HERMES_HOME={entrada['home']}/.hermes/profiles/{alias}", texto, alias,
+                    f"HERMES_HOME={entrada['home']}/.local/share/cauce-v3/hermes/{alias}", texto, alias,
+                )
+                self.assertIn(
+                    f"HERMES_SOURCE_COMMIT={hermes_commit}", texto, alias,
+                )
+                self.assertIn(
+                    f"HERMES_PYTHON={hermes_runtime_root}/{alias}/{hermes_runtime_id}/venv/bin/python",
+                    texto,
+                    alias,
                 )
             if entrada["harness"] == "openclaw":
                 self.assertIn(f"OPENCLAW_WORKSPACE={entrada['workspace']}", texto, alias)

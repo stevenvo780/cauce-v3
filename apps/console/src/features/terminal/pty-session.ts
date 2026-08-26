@@ -172,7 +172,12 @@ const MAX_FILAS_REMOTAS = 200;
 const MAX_COLUMNAS_REMOTAS = 500;
 const MAX_INPUT_FRAME_BYTES = 16 * 1024;
 const MAX_PENDING_INPUT_BYTES = 64 * 1024;
+const MAX_CLAIM_LEASE_MS = 300_000;
+const MAX_POSTGRES_BIGINT = '9223372036854775807';
+const UUID_CANONICO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const PTY_VIEWER_HEARTBEAT_MS = 30_000;
+/** Browser TCP/TLS/upgrade deadline. The relay attach deadline starts only after `open`. */
+export const PTY_HANDSHAKE_TIMEOUT_MS = 10_000;
 export const PTY_RECONNECT_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
 const UTF8_ENCODER = new TextEncoder();
 
@@ -253,9 +258,17 @@ interface PtyEntry {
   closed: boolean;
   outputFinished: boolean;
   resumeToken?: string;
+  /**
+   * Fence que el relay asignó a esta encarnación del attach. Vive sólo mientras vive la
+   * entrada en este módulo: no se publica en la vista, URL ni almacenamiento del navegador.
+   */
+  claimToken?: string;
+  claimEpoch?: string;
+  claimLeaseMs?: number;
   outputBytes: number;
   reconnectAttempt: number;
   reconnectTimer?: number;
+  handshakeTimer?: number;
   options: PtySessionOptions;
 }
 
@@ -419,6 +432,11 @@ function stopReconnect(entry: PtyEntry): void {
   entry.reconnectTimer = undefined;
 }
 
+function stopHandshake(entry: PtyEntry): void {
+  if (entry.handshakeTimer !== undefined) window.clearTimeout(entry.handshakeTimer);
+  entry.handshakeTimer = undefined;
+}
+
 function startViewerHeartbeat(entry: PtyEntry): void {
   if (!entry.readOnly || entry.heartbeatTimer !== undefined) return;
   entry.heartbeatTimer = window.setInterval(() => {
@@ -539,6 +557,35 @@ function finishOutput(entry: PtyEntry): void {
   if (tail) entry.terminal.write(tail);
 }
 
+/** PostgreSQL `bigint` positivo, conservado como texto para no perder bits en JavaScript. */
+function claimEpochCanonico(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value)) return false;
+  if (value.length !== MAX_POSTGRES_BIGINT.length) return value.length < MAX_POSTGRES_BIGINT.length;
+  return value <= MAX_POSTGRES_BIGINT;
+}
+
+function claimReady(
+  payload: Readonly<Record<string, unknown>>,
+): { claimToken: string; claimEpoch: string; claimLeaseMs: number } | undefined {
+  const claimToken = payload.claim_token;
+  const claimEpoch = payload.claim_epoch;
+  const claimLeaseMs = payload.claim_lease_ms;
+  if (typeof claimToken !== 'string' || !UUID_CANONICO.test(claimToken) ||
+      !claimEpochCanonico(claimEpoch) || typeof claimLeaseMs !== 'number' ||
+      !Number.isSafeInteger(claimLeaseMs) || claimLeaseMs < 1 || claimLeaseMs > MAX_CLAIM_LEASE_MS) {
+    return undefined;
+  }
+  return { claimToken, claimEpoch, claimLeaseMs };
+}
+
+function rejectMalformedReady(entry: PtyEntry): void {
+  const socket = entry.socket;
+  // Desvincular primero evita que el `close` asíncrono vuelva a finalizar/notificar el canal.
+  entry.socket = undefined;
+  if (socket && socket.readyState <= WebSocket.OPEN) socket.close(4400, 'invalid_ready');
+  finishChannel(entry, 4400, 'invalid_ready');
+}
+
 /** Text frames are CONTROL, binary frames are PTY OUTPUT. They are never conflated. */
 function handleControlFrame(entry: PtyEntry, raw: string): void {
   let payload: Record<string, unknown>;
@@ -550,9 +597,17 @@ function handleControlFrame(entry: PtyEntry, raw: string): void {
   }
 
   if (payload.type === 'ready') {
+    const claim = claimReady(payload);
+    if (claim === undefined) {
+      rejectMalformedReady(entry);
+      return;
+    }
     if (typeof payload.resume_token === 'string' && payload.resume_token.length >= 80 && payload.resume_token.length <= 1_024) {
       entry.resumeToken = payload.resume_token;
     }
+    entry.claimToken = claim.claimToken;
+    entry.claimEpoch = claim.claimEpoch;
+    entry.claimLeaseMs = claim.claimLeaseMs;
     entry.reconnectAttempt = 0;
     stopReconnect(entry);
     publish(entry, { state: 'open', message: undefined });
@@ -587,6 +642,7 @@ function finishChannel(entry: PtyEntry, code: number, reason: string): void {
   cancelPendingInput(entry);
   stopViewerHeartbeat(entry);
   stopReconnect(entry);
+  stopHandshake(entry);
   finishOutput(entry);
   const explained = ptyCloseMessage(code, reason);
   publish(entry, {
@@ -598,7 +654,9 @@ function finishChannel(entry: PtyEntry, code: number, reason: string): void {
 }
 
 function scheduleReconnect(entry: PtyEntry): boolean {
-  if (entry.closed || entry.resumeToken === undefined || entry.reconnectTimer !== undefined) return false;
+  if (entry.closed || entry.resumeToken === undefined || entry.claimToken === undefined ||
+      entry.claimEpoch === undefined || entry.claimLeaseMs === undefined ||
+      entry.reconnectTimer !== undefined) return false;
   const delay = PTY_RECONNECT_DELAYS_MS[entry.reconnectAttempt];
   if (delay === undefined) return false;
   entry.reconnectAttempt += 1;
@@ -625,8 +683,31 @@ function openSocket(entry: PtyEntry, options: PtySessionOptions, resume = false)
   }
   entry.socket = socket;
   socket.binaryType = 'arraybuffer';
+  stopHandshake(entry);
+  entry.handshakeTimer = window.setTimeout(() => {
+    if (entry.closed || entry.socket !== socket || socket.readyState !== WebSocket.CONNECTING) return;
+    entry.handshakeTimer = undefined;
+    // No `open` means no attach/resume frame was sent. Detach the handlers before closing so a
+    // delayed browser close cannot finish the entry a second time.
+    entry.socket = undefined;
+    socket.close(4400, 'handshake_timeout');
+    if (resume && scheduleReconnect(entry)) return;
+    cancelPendingInput(entry);
+    stopViewerHeartbeat(entry);
+    stopReconnect(entry);
+    finishOutput(entry);
+    publish(entry, {
+      state: 'error',
+      message: `La conexión WebSocket no completó el handshake en ${Math.round(PTY_HANDSHAKE_TIMEOUT_MS / 1000)} s. `
+        + 'No se reutilizó el ticket de un solo uso; pedí una sesión nueva.',
+      closeCode: undefined,
+    });
+    entry.onClosed?.(entry.view);
+  }, PTY_HANDSHAKE_TIMEOUT_MS);
 
   socket.onopen = () => {
+    if (entry.closed || entry.socket !== socket) return;
+    stopHandshake(entry);
     try {
       entry.fitAddon.fit();
     } catch {
@@ -640,6 +721,8 @@ function openSocket(entry: PtyEntry, options: PtySessionOptions, resume = false)
       type: 'resume',
       session_id: options.sessionId,
       resume_token: entry.resumeToken,
+      prior_claim_token: entry.claimToken,
+      prior_claim_epoch: entry.claimEpoch,
       after_bytes: entry.outputBytes,
       cols: entry.terminal.cols,
       rows: entry.terminal.rows,
@@ -680,6 +763,7 @@ function openSocket(entry: PtyEntry, options: PtySessionOptions, resume = false)
 
   socket.onclose = (event: CloseEvent) => {
     if (entry.socket !== socket || entry.closed) return;
+    stopHandshake(entry);
     entry.socket = undefined;
     cancelPendingInput(entry);
     stopViewerHeartbeat(entry);
@@ -871,6 +955,7 @@ export function closePtySession(sessionId: string, reason = 'console terminal cl
   cancelPendingInput(entry);
   stopViewerHeartbeat(entry);
   stopReconnect(entry);
+  stopHandshake(entry);
   finishOutput(entry);
   entries.delete(sessionId);
   entry.resizeObserver?.disconnect();

@@ -15,12 +15,28 @@ afterEach(() => {
   window.history.pushState({}, '', '/');
 });
 
+function publishReceipt(input: Record<string, unknown>, duplicate = false) {
+  return {
+    message_id: '10000000-0000-4000-8000-000000000001',
+    delivery_ids: ['20000000-0000-4000-8000-000000000001'],
+    duplicate,
+    request_id: '30000000-0000-4000-8000-000000000001',
+    trace_id: 'trace-console-test',
+    idempotency_key: input.idempotency_key,
+    tenant_id: 'Steven',
+    actor_alias: 'kant',
+    request_hash: 'a'.repeat(64),
+    causal_hash: 'b'.repeat(64),
+  };
+}
+
 /** Registra cada publish para poder afirmar QUÉ se envió, no sólo que la UI dijo que envió. */
 function capturarPublish() {
   const enviados: Array<Record<string, unknown>> = [];
   server.use(http.post('*/v3/console/messages', async ({ request }) => {
-    enviados.push(await request.json() as Record<string, unknown>);
-    return HttpResponse.json({ message_id: 'msg-nuevo', delivery_ids: ['del-nuevo'], duplicate: false }, { status: 202 });
+    const input = await request.json() as Record<string, unknown>;
+    enviados.push(input);
+    return HttpResponse.json(publishReceipt(input), { status: 202 });
   }));
   return enviados;
 }
@@ -118,6 +134,185 @@ it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a 
   });
   expect(await within(hilo).findByText(/Aceptado por el control plane/i)).toBeInTheDocument();
 }, 25_000);
+
+it('no inventa éxito ni borra el borrador ante un 202 sin recibo durable exacto', async () => {
+  const user = userEvent.setup();
+  const keys: unknown[] = [];
+  server.use(http.post('*/v3/console/messages', async ({ request }) => {
+    const input = await request.json() as Record<string, unknown>;
+    keys.push(input.idempotency_key);
+    return HttpResponse.json({ message_id: '10000000-0000-4000-8000-000000000001' }, { status: 202 });
+  }));
+  renderWithApi(<MessagesPage />);
+
+  const hilo = await abrirConversacion(user, 'argos');
+  const campo = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
+  await user.type(campo, 'no perder este texto');
+  await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
+
+  expect(await within(hilo).findByText(/no devolvió un recibo durable exacto/i)).toBeInTheDocument();
+  expect(campo).toHaveValue('no perder este texto');
+  expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
+  expect(keys).toHaveLength(2);
+  expect(new Set(keys).size).toBe(1);
+}, 25_000);
+
+it('conserva el borrador y no reintenta cuando el servidor prueba que la reserva expiró sin efecto', async () => {
+  const user = userEvent.setup();
+  let publishes = 0;
+  let confirmations = 0;
+  server.use(
+    http.post('*/v3/console/publish-intents', () => HttpResponse.json({
+      version: 1, state: 'prepared', idempotency_key: 'server-expired-key', receipt: null,
+    })),
+    http.post('*/v3/console/messages', () => {
+      publishes += 1;
+      return HttpResponse.json({
+        version: 1,
+        error: 'publish_intent_expired',
+        state: 'expired',
+        idempotency_key: 'server-expired-key',
+        safe_to_resubmit: true,
+      }, { status: 410 });
+    }),
+    http.post('*/v3/console/publish-intents/confirm', () => {
+      confirmations += 1;
+      return HttpResponse.json({});
+    }),
+  );
+  renderWithApi(<MessagesPage />);
+
+  const hilo = await abrirConversacion(user, 'argos');
+  const campo = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
+  await user.type(campo, 'reserva vencida sin efecto');
+  await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
+
+  expect(await within(hilo).findByText(/expiró sin publicar ningún mensaje/i)).toBeInTheDocument();
+  expect(campo).toHaveValue('reserva vencida sin efecto');
+  expect(publishes).toBe(1);
+  expect(confirmations).toBe(0);
+  expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
+}, 25_000);
+
+it('reconcilia un lost-202 reintentando una sola vez con la misma clave y sin duplicar intención', async () => {
+  const user = userEvent.setup();
+  const enviados: Array<Record<string, unknown>> = [];
+  server.use(http.post('*/v3/console/messages', async ({ request }) => {
+    const input = await request.json() as Record<string, unknown>;
+    enviados.push(input);
+    if (enviados.length === 1) return HttpResponse.error();
+    return HttpResponse.json(publishReceipt(input, true), { status: 202 });
+  }));
+  renderWithApi(<MessagesPage />);
+
+  const hilo = await abrirConversacion(user, 'argos');
+  const campo = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
+  await user.type(campo, 'confirmó pero se perdió el 202');
+  await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
+
+  expect(await within(hilo).findByText(/reconciliada desde el journal durable/i)).toBeInTheDocument();
+  expect(campo).toHaveValue('');
+  expect(enviados).toHaveLength(2);
+  expect(enviados[0]?.idempotency_key).toBe(enviados[1]?.idempotency_key);
+  expect(enviados[0]).toEqual(enviados[1]);
+}, 25_000);
+
+it('recupera el journal sin body al cerrar y reabrir la conversación tras dos respuestas inciertas', async () => {
+  const user = userEvent.setup();
+  const keys: unknown[] = [];
+  const key = 'server-journal-reopen-key';
+  let committedReceipt: ReturnType<typeof publishReceipt> | undefined;
+  server.use(
+    http.post('*/v3/console/publish-intents', () => committedReceipt === undefined
+      ? HttpResponse.json({ version: 1, state: 'prepared', idempotency_key: key, receipt: null })
+      : HttpResponse.json({
+        version: 1,
+        error: 'publish_intent_reconciliation_required',
+        state: 'committed',
+        idempotency_key: key,
+        receipt: committedReceipt,
+      }, { status: 409 })),
+    http.post('*/v3/console/messages', async ({ request }) => {
+      const input = await request.json() as Record<string, unknown>;
+      keys.push(input.idempotency_key);
+      committedReceipt ??= publishReceipt(input);
+      return HttpResponse.json(
+        { message_id: '10000000-0000-4000-8000-000000000001' },
+        { status: 202 },
+      );
+    }),
+  );
+  renderWithApi(<MessagesPage />);
+
+  let hilo = await abrirConversacion(user, 'argos');
+  await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'retry exacto al reabrir');
+  await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
+  expect(await within(hilo).findByText(/Resultado incierto/i)).toBeInTheDocument();
+
+  await abrirConversacion(user, 'kratos');
+  hilo = await abrirConversacion(user, 'argos');
+  const campoReabierto = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
+  // El body no se persiste en el cliente. El operador lo vuelve a escribir y el servidor prueba
+  // que es exactamente la misma semántica antes de recuperar la clave incierta.
+  expect(campoReabierto).toHaveValue('');
+  await user.type(campoReabierto, 'retry exacto al reabrir');
+  await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
+
+  expect(await within(hilo).findByText(/reconciliada desde el journal durable/i)).toBeInTheDocument();
+  expect(keys).toHaveLength(2);
+  expect(new Set(keys).size).toBe(1);
+}, 30_000);
+
+it('recupera del servidor un publish confirmado tras recargar sin repetir el POST', async () => {
+  const user = userEvent.setup();
+  const key = 'server-journal-reload-key';
+  let committed = false;
+  let publishes = 0;
+  const receipt = publishReceipt({ idempotency_key: key }, true);
+  server.use(
+    http.post('*/v3/console/publish-intents', () => committed
+      ? HttpResponse.json({
+        version: 1,
+        error: 'publish_intent_reconciliation_required',
+        state: 'committed',
+        idempotency_key: key,
+        receipt,
+      }, { status: 409 })
+      : HttpResponse.json({ version: 1, state: 'prepared', idempotency_key: key, receipt: null })),
+    http.post('*/v3/console/messages', () => {
+      publishes += 1;
+      committed = true;
+      return HttpResponse.error();
+    }),
+    http.post('*/v3/console/publish-intents/confirm', async ({ request }) => {
+      const input = await request.json() as Record<string, unknown>;
+      return HttpResponse.json({ version: 1, confirmed: true, ...input });
+    }),
+  );
+
+  const firstView = renderWithApi(<MessagesPage />);
+  let hilo = await abrirConversacion(user, 'argos');
+  await user.type(
+    within(hilo).getByRole('textbox', { name: /mensaje para argos/i }),
+    'efecto durable tras recarga',
+  );
+  await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
+  expect(await within(hilo).findByText(/Resultado incierto/i)).toBeInTheDocument();
+  expect(publishes).toBe(2);
+
+  firstView.unmount();
+  renderWithApi(<MessagesPage />);
+  hilo = await abrirConversacion(user, 'argos');
+  await user.type(
+    within(hilo).getByRole('textbox', { name: /mensaje para argos/i }),
+    'efecto durable tras recarga',
+  );
+  await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
+
+  expect(await within(hilo).findByText(/reconciliada desde el journal durable/i)).toBeInTheDocument();
+  expect(within(hilo).getByRole('textbox', { name: /mensaje para argos/i })).toHaveValue('');
+  expect(publishes).toBe(2);
+}, 35_000);
 
 /**
  * CONTROL NEGATIVO del compositor. Steven:kant no tiene arista ACL hacia el tenant Isa (el

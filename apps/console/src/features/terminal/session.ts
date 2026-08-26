@@ -28,7 +28,9 @@ export interface TranscriptItem {
 }
 
 function same(value: string | null | undefined, expected: string): boolean {
-  return value?.toLocaleLowerCase() === expected.toLocaleLowerCase();
+  // Both TenantSchema and the tenant-qualified API are case-sensitive. Case-folding identities
+  // here mixed topology, ACL and transcript rows belonging to distinct tenants.
+  return value === expected;
 }
 
 function actorIdentity(access: ConsoleAccess | undefined): { tenantId: string; alias: string } | undefined {
@@ -203,4 +205,3 @@ export function formatCountdown(seconds: number | undefined): string {
  * consola y no una falta de permiso, y que un 401 es la cookie vencida— está allí, como los
  * códigos `csrf_missing` y `unauthorized`.
  */
-

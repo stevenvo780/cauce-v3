@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/telegram-manual-replay-request.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "requestId", "id", "evidenceSha256", "chunkIndex", "effectSha256", "expectedReplayCount", "reason", "actorTenant", "actorAlias", "duplicateRiskAcknowledged"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "requestId": { "type": "string", "format": "uuid" },
+    "id": { "type": "string", "format": "uuid" },
+    "evidenceSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "chunkIndex": { "type": "integer", "minimum": 0 },
+    "effectSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "expectedReplayCount": { "type": "integer", "minimum": 0 },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+    "actorTenant": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$" },
+    "actorAlias": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+    "duplicateRiskAcknowledged": { "const": true }
+  }
+}

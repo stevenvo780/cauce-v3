@@ -66,6 +66,14 @@ class LaPresenciaLlevaElHome(unittest.TestCase):
             "el harness y el home ya no van en la misma trama de presencia",
         )
 
+    def test_la_trama_distingue_configuracion_de_hechos_runtime_medidos(self) -> None:
+        fuente = AGENTE.read_text(encoding="utf-8")
+        self.assertIn(
+            '"runtime_facts_observed": bool(self.bundle["runtime_facts"])',
+            fuente,
+            "un bundle de rescate sin adaptador podría volver a presentarse como contexto medido",
+        )
+
     def test_el_bundle_declara_home_como_campo_obligatorio(self) -> None:
         """Si el bundle pudiera venir sin `home`, la presencia lanzaria KeyError al conectar.
 

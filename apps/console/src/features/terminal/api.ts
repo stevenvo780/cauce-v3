@@ -71,6 +71,12 @@ export interface TerminalSessionGrant {
   websocket_path: string;
   expires_at: string;
   ttl_seconds: number;
+  /** True only when the gateway rebuilt the same lost-201 receipt from its durable reservation. */
+  receipt_recovered: boolean;
+  /** Stable semantic admission id and the exact in-memory capability required to revoke it. */
+  request_id: string;
+  owner_generation: string;
+  owner_token: string;
   target: TerminalSessionTargetView;
 }
 
@@ -82,6 +88,16 @@ export interface CreateTerminalSessionInput {
   reason: string;
   cols: number;
   rows: number;
+  /** Stable across retries of one logical tab; new after an explicit close/reopen. */
+  request_id: string;
+  /** Raw UUIDv4 capability. It is held in memory only; PostgreSQL stores its SHA-256 digest. */
+  owner_token: string;
+}
+
+export interface TerminalSessionOwner {
+  request_id: string;
+  owner_generation: string;
+  owner_token: string;
 }
 
 export class TerminalApiError extends Error {
@@ -93,6 +109,18 @@ export class TerminalApiError extends Error {
     super(message);
     this.name = 'TerminalApiError';
   }
+}
+
+/** Same generous upper bound as the shared console client, including response-body consumption. */
+export const TERMINAL_REQUEST_TIMEOUT_MS = 30_000;
+
+function terminalTimeout(method: string, path: string): TerminalApiError {
+  return new TerminalApiError(
+    `El plano terminal no contestó en ${Math.round(TERMINAL_REQUEST_TIMEOUT_MS / 1000)} s `
+      + `y la consola cortó la espera (${method} ${path}). Se puede volver a intentar sin asumir que la operación terminó.`,
+    504,
+    'timeout',
+  );
 }
 
 function safeBase(baseUrl: string): string {
@@ -151,59 +179,119 @@ async function csrfParaEscritura(session: SesionConToken): Promise<string | unde
  * componentes pasan la suya (`useApi()`) para que una consola con dos clientes —los tests, sin ir
  * más lejos— no escriba con el token del otro.
  */
+async function terminalResponse(
+  path: string,
+  init: RequestInit = {},
+  session: SesionConToken = cauceApi,
+): Promise<{ status: number; body: unknown }> {
+  const method = init.method?.toUpperCase() ?? 'GET';
+  const controller = new AbortController();
+  let timedOut = false;
+  const onExternalAbort = () => controller.abort(init.signal?.reason);
+  if (init.signal?.aborted) onExternalAbort();
+  else init.signal?.addEventListener('abort', onExternalAbort, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(terminalTimeout(method, path));
+    }, TERMINAL_REQUEST_TIMEOUT_MS);
+  });
+
+  const operation = async (): Promise<{ status: number; body: unknown }> => {
+    const csrf = esEscritura(init.method) ? await csrfParaEscritura(session) : undefined;
+    const response = await fetch(`${safeBase(import.meta.env.VITE_CAUCE_API_BASE ?? '')}${path}`, {
+      ...init,
+      credentials: 'include',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        'X-Cauce-Console': '1',
+        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...init.headers,
+      },
+    });
+
+    // The deadline intentionally remains armed while consuming the body. A proxy can deliver
+    // headers and then stall the JSON stream forever; headers alone are not a completed request.
+    const contentType = response.headers.get('content-type') ?? '';
+    const body: unknown = response.status === 204
+      ? undefined
+      : contentType.includes('application/json')
+        ? await response.json()
+        : await response.text();
+
+    if (!response.ok) {
+      const detail = errorBody(body);
+      // 403/409 carry their operator-facing explanation in `reason`; keep it instead of the status text.
+      const message = detail.message ?? detail.reason ?? response.statusText ?? 'Terminal API request failed';
+      throw new TerminalApiError(message, response.status, detail.error);
+    }
+    return { status: response.status, body };
+  };
+
+  try {
+    return await Promise.race([operation(), deadline]);
+  } catch (error) {
+    if (timedOut) throw terminalTimeout(method, path);
+    throw error;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    init.signal?.removeEventListener('abort', onExternalAbort);
+  }
+}
+
 export async function terminalRequest<T>(
   path: string,
   init: RequestInit = {},
   session: SesionConToken = cauceApi,
 ): Promise<T> {
-  const csrf = esEscritura(init.method) ? await csrfParaEscritura(session) : undefined;
-  const response = await fetch(`${safeBase(import.meta.env.VITE_CAUCE_API_BASE ?? '')}${path}`, {
-    ...init,
-    credentials: 'include',
-    headers: {
-      Accept: 'application/json',
-      'X-Cauce-Console': '1',
-      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
-      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init.headers,
-    },
-  });
+  return (await terminalResponse(path, init, session)).body as T;
+}
 
-  const contentType = response.headers.get('content-type') ?? '';
-  const body: unknown = response.status === 204
-    ? undefined
-    : contentType.includes('application/json')
-      ? await response.json()
-      : await response.text();
+function exactTargetState(value: unknown): PtyTargetState | undefined {
+  return value === 'online' || value === 'agent_offline' || value === 'not_installed' || value === 'unknown'
+    ? value
+    : undefined;
+}
 
-  if (!response.ok) {
-    const detail = errorBody(body);
-    // 403/409 carry their operator-facing explanation in `reason`; keep it instead of the status text.
-    const message = detail.message ?? detail.reason ?? response.statusText ?? 'Terminal API request failed';
-    throw new TerminalApiError(message, response.status, detail.error);
+function exactStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string' || !item || seen.has(item)) return undefined;
+    seen.add(item);
+    values.push(item);
   }
-  return body as T;
+  return values;
 }
 
-function safeTargetState(value: unknown): PtyTargetState {
-  return value === 'online' || value === 'agent_offline' || value === 'not_installed' ? value : 'unknown';
-}
-
-function safeStringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
-}
-
-function safeIdentityList(value: unknown, legacyTenant: string): TerminalFleetIdentity[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
+function exactIdentityList(value: unknown, legacyTenant: string): TerminalFleetIdentity[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const identities: TerminalFleetIdentity[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
     // Rolling compatibility with the old gateway, whose cohort was a bare alias list.
-    if (typeof item === 'string' && item.trim()) return [{ tenant_id: legacyTenant, alias: item }];
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
-    const record = item as Record<string, unknown>;
-    if (typeof record.tenant_id !== 'string' || typeof record.alias !== 'string' ||
-        !record.tenant_id.trim() || !record.alias.trim()) return [];
-    return [{ tenant_id: record.tenant_id, alias: record.alias }];
-  });
+    let identity: TerminalFleetIdentity;
+    if (typeof item === 'string' && item.trim()) {
+      identity = { tenant_id: legacyTenant, alias: item };
+    } else {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return undefined;
+      const record = item as Record<string, unknown>;
+      if (!exactKeys(record, ['tenant_id', 'alias'])
+          || typeof record.tenant_id !== 'string' || typeof record.alias !== 'string'
+          || !record.tenant_id.trim() || !record.alias.trim()) return undefined;
+      identity = { tenant_id: record.tenant_id, alias: record.alias };
+    }
+    const key = `${identity.tenant_id}\u0000${identity.alias}`;
+    if (seen.has(key)) return undefined;
+    seen.add(key);
+    identities.push(identity);
+  }
+  return identities;
 }
 
 function safeText(value: unknown): string | null {
@@ -216,21 +304,28 @@ export function readTerminalTarget(value: unknown): TerminalTarget | undefined {
   const record = value as Record<string, unknown>;
   if (typeof record.tenant_id !== 'string' || typeof record.alias !== 'string') return undefined;
   if (!record.tenant_id.trim() || !record.alias.trim()) return undefined;
+  const cohort = exactIdentityList(record.shares_container_with, record.tenant_id);
+  const modes = exactStringList(record.modes);
+  const ptyState = exactTargetState(record.pty_state);
+  if (cohort === undefined || modes === undefined || ptyState === undefined
+      || typeof record.authorized !== 'boolean'
+      || typeof record.reason !== 'string' || !record.reason.trim()
+      || cohort.some((member) => member.tenant_id === record.tenant_id && member.alias === record.alias)) {
+    return undefined;
+  }
   return {
     tenant_id: record.tenant_id,
     alias: record.alias,
     container: safeText(record.container),
     runtime_user: safeText(record.runtime_user),
     harness: safeText(record.harness),
-    shares_container_with: safeIdentityList(record.shares_container_with, record.tenant_id),
-    modes: safeStringList(record.modes),
-    pty_state: safeTargetState(record.pty_state),
+    shares_container_with: cohort,
+    modes,
+    pty_state: ptyState,
     last_seen: safeText(record.last_seen),
     // Fail closed: only an explicit boolean true authorises a destination.
-    authorized: record.authorized === true,
-    reason: typeof record.reason === 'string' && record.reason.trim()
-      ? record.reason
-      : 'El servidor no informó un motivo para este destino.',
+    authorized: record.authorized,
+    reason: record.reason,
   };
 }
 
@@ -238,17 +333,34 @@ export function readTerminalTarget(value: unknown): TerminalTarget | undefined {
 export async function listTerminalTargets(): Promise<TerminalTargetsSnapshot> {
   try {
     const payload = await terminalRequest<Record<string, unknown>>('/v3/console/terminal/targets');
-    const items = Array.isArray(payload?.items)
-      ? payload.items.flatMap((item) => {
+    let items: TerminalTarget[] | null = null;
+    let invalidInventory = false;
+    if (Array.isArray(payload?.items)) {
+      const parsed: TerminalTarget[] = [];
+      const seen = new Set<string>();
+      for (const item of payload.items) {
         const target = readTerminalTarget(item);
-        return target ? [target] : [];
-      })
-      : null;
+        const key = target === undefined ? undefined : `${target.tenant_id}\u0000${target.alias}`;
+        if (target === undefined || key === undefined || seen.has(key)) {
+          // Ocultar sólo la fila rota fabricaría un inventario parcial que parece completo. Para
+          // autoridad PTY, parcial es UNKNOWN: no se habilita ni se cuenta ningún destino.
+          invalidInventory = true;
+          break;
+        }
+        seen.add(key);
+        parsed.push(target);
+      }
+      if (!invalidInventory) items = parsed;
+    }
     return {
       observed_at: safeText(payload?.observed_at),
       websocket_path: safeText(payload?.websocket_path),
       items,
-      ...(items ? {} : { reason: 'El gateway no publicó una lista de targets verificable.' }),
+      ...(items ? {} : {
+        reason: invalidInventory
+          ? 'El gateway publicó un inventario PTY parcial, duplicado o mal formado; no se asumió autoridad sobre ningún destino.'
+          : 'El gateway no publicó una lista de targets verificable.',
+      }),
     };
   } catch (error) {
     if (error instanceof TerminalApiError && (error.status === 404 || error.status === 501)) {
@@ -273,19 +385,294 @@ export function createTerminalSession(
     reason: input.reason,
     cols: input.cols,
     rows: input.rows,
+    request_id: input.request_id,
+    owner_token: input.owner_token,
   };
-  return terminalRequest('/v3/console/terminal/sessions', { method: 'POST', body: JSON.stringify(payload) }, session);
+  return terminalResponse(
+    '/v3/console/terminal/sessions',
+    { method: 'POST', body: JSON.stringify(payload) },
+    session,
+  ).then(({ status, body: value }) => {
+    const grant = status === 201 ? exactTerminalSessionGrant(value, payload) : undefined;
+    if (grant) return grant;
+
+    // El INSERT puede haber confirmado aunque el JSON haya quedado truncado, pero un `session_id`
+    // dentro de ESE recibo mal formado no es autoridad causal para borrar nada: podría pertenecer
+    // a otra pestaña o ser directamente hostil. La UI relee el inventario exacto del operador y
+    // sólo ofrece un DELETE explícito sobre una fila visible; acá nunca se revoca a ciegas.
+    throw new TerminalApiError(
+      'El gateway devolvió un grant PTY incompleto. No se usó su session_id para revocar nada; se debe conciliar contra el inventario exacto de sesiones visibles.',
+      409,
+      'invalid_grant_receipt',
+    );
+  });
+}
+
+function boundedOpaque(value: unknown, maximum: number): string | undefined {
+  return typeof value === 'string' && value.length >= 1 && value.length <= maximum
+    && [...value].every((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code > 31 && code !== 127;
+    })
+    ? value
+    : undefined;
+}
+
+function exactKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(record).sort();
+  const sortedExpected = [...expected].sort();
+  return actual.length === sortedExpected.length
+    && actual.every((key, index) => key === sortedExpected[index]);
+}
+
+const CANONICAL_UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const POSITIVE_BIGINT = /^[1-9][0-9]{0,18}$/u;
+const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+
+function canonicalUuidV4(value: unknown): string | undefined {
+  return typeof value === 'string' && CANONICAL_UUID_V4.test(value) ? value : undefined;
+}
+
+function positiveBigint(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !POSITIVE_BIGINT.test(value)) return undefined;
+  try {
+    return BigInt(value) <= POSTGRES_BIGINT_MAX ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function canonicalBase64urlBytes(value: string): Uint8Array | undefined {
+  if (!/^[A-Za-z0-9_-]+$/u.test(value)) return undefined;
+  const padding = '='.repeat((4 - (value.length % 4)) % 4);
+  try {
+    const binary = globalThis.atob(`${value.replaceAll('-', '+').replaceAll('_', '/')}${padding}`);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const canonical = globalThis.btoa(String.fromCharCode(...bytes))
+      .replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_');
+    return canonical === value ? bytes : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface BrowserTicketClaims {
+  sid: string;
+  tenant: string;
+  alias: string;
+  container: string;
+  runtimeUser: string;
+  mode: string;
+  expiresAtSeconds: number;
+  ttlSeconds: number;
+}
+
+/**
+ * The browser does not possess the per-alias HMAC key, so the relay remains the signature
+ * authority. It can still reject an internally contradictory 201 before opening a socket: the
+ * signed payload must be the exact v1 shape and must name the same session and target as the JSON
+ * projection next to it.
+ */
+function exactBrowserTicketClaims(ticket: string): BrowserTicketClaims | undefined {
+  const parts = ticket.split('.');
+  if (parts.length !== 3 || parts[0] !== 'v1') return undefined;
+  const payloadBytes = canonicalBase64urlBytes(parts[1] ?? '');
+  const signatureBytes = canonicalBase64urlBytes(parts[2] ?? '');
+  if (!payloadBytes || signatureBytes?.byteLength !== 32) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(payloadBytes));
+  } catch {
+    return undefined;
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  if (!exactKeys(row, ['v', 'sid', 'op', 'sub', 'tgt', 'mode', 'iat', 'exp']) || row.v !== 1
+      || !Number.isSafeInteger(row.iat) || !Number.isSafeInteger(row.exp)
+      || Number(row.exp) <= Number(row.iat)) return undefined;
+  const sid = boundedOpaque(row.sid, 256);
+  const operator = boundedOpaque(row.op, 256);
+  const subject = boundedOpaque(row.sub, 256);
+  const mode = boundedOpaque(row.mode, 64);
+  if (!sid || !operator || !subject || !mode
+      || row.tgt === null || typeof row.tgt !== 'object' || Array.isArray(row.tgt)) return undefined;
+  const target = row.tgt as Record<string, unknown>;
+  if (!exactKeys(target, ['tenant', 'alias', 'container', 'generation', 'image', 'uid', 'user'])
+      || !Number.isSafeInteger(target.uid)) return undefined;
+  const tenant = boundedOpaque(target.tenant, 64);
+  const alias = boundedOpaque(target.alias, 64);
+  const container = boundedOpaque(target.container, 256);
+  const generation = boundedOpaque(target.generation, 256);
+  const image = boundedOpaque(target.image, 512);
+  const runtimeUser = boundedOpaque(target.user, 128);
+  if (!tenant || !alias || !container || !generation || !image || !runtimeUser) return undefined;
+  return {
+    sid,
+    tenant,
+    alias,
+    container,
+    runtimeUser,
+    mode,
+    expiresAtSeconds: Number(row.exp),
+    ttlSeconds: Number(row.exp) - Number(row.iat),
+  };
+}
+
+function exactGrantCohort(value: unknown, target: CreateTerminalSessionInput): TerminalFleetIdentity[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const cohort: TerminalFleetIdentity[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) return undefined;
+    const row = item as Record<string, unknown>;
+    if (!exactKeys(row, ['tenant_id', 'alias'])) return undefined;
+    const tenantId = boundedOpaque(row.tenant_id, 64);
+    const alias = boundedOpaque(row.alias, 64);
+    if (!tenantId || !alias || (tenantId === target.tenant_id && alias === target.alias)) return undefined;
+    const key = `${tenantId}\u0000${alias}`;
+    if (seen.has(key)) return undefined;
+    seen.add(key);
+    cohort.push({ tenant_id: tenantId, alias });
+  }
+  return cohort;
+}
+
+/** Exact causal projection of a newly inserted PTY reservation; tickets remain memory-only. */
+export function exactTerminalSessionGrant(
+  value: unknown,
+  requested: CreateTerminalSessionInput,
+): TerminalSessionGrant | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (!exactKeys(record, [
+    'session_id', 'ticket', 'websocket_path', 'expires_at', 'ttl_seconds',
+    'receipt_recovered', 'request_id', 'owner_generation', 'target',
+  ])) return undefined;
+  const target = record.target;
+  if (target === null || typeof target !== 'object' || Array.isArray(target)) return undefined;
+  const targetRow = target as Record<string, unknown>;
+  if (!exactKeys(targetRow, [
+    'tenant_id', 'alias', 'container', 'runtime_user', 'mode', 'shares_container_with',
+  ])) return undefined;
+  const sessionId = boundedOpaque(record.session_id, 256);
+  const ticket = boundedOpaque(record.ticket, 4_096);
+  const websocketPath = boundedOpaque(record.websocket_path, 256);
+  const expiresAt = boundedOpaque(record.expires_at, 64);
+  const expiry = expiresAt === undefined ? Number.NaN : Date.parse(expiresAt);
+  const ttl = record.ttl_seconds;
+  const requestId = canonicalUuidV4(record.request_id);
+  const ownerGeneration = positiveBigint(record.owner_generation);
+  const ticketClaims = ticket === undefined ? undefined : exactBrowserTicketClaims(ticket);
+  const cohort = exactGrantCohort(targetRow.shares_container_with, requested);
+  const container = targetRow.container === null ? null : boundedOpaque(targetRow.container, 256);
+  const runtimeUser = targetRow.runtime_user === null ? null : boundedOpaque(targetRow.runtime_user, 128);
+  if (!sessionId || !ticket || !websocketPath || !/^\/[A-Za-z0-9/_-]+$/u.test(websocketPath)
+      // El reloj autoritativo del ticket es el gateway. El navegador sólo exige un ISO válido:
+      // con clock skew o una red lenta, decidir localmente que ya venció cerraría una sesión que
+      // el servidor todavía puede aceptar (y el WebSocket hará la validación real al canjearlo).
+      || !expiresAt || !Number.isFinite(expiry)
+      || !Number.isSafeInteger(ttl) || Number(ttl) < 1 || Number(ttl) > 120
+      || typeof record.receipt_recovered !== 'boolean'
+      || requestId !== requested.request_id
+      || ownerGeneration === undefined
+      || targetRow.tenant_id !== requested.tenant_id
+      || targetRow.alias !== requested.alias
+      || targetRow.mode !== requested.mode
+      || container === undefined || runtimeUser === undefined || cohort === undefined
+      || !ticketClaims
+      || ticketClaims.sid !== sessionId
+      || ticketClaims.tenant !== requested.tenant_id
+      || ticketClaims.alias !== requested.alias
+      || ticketClaims.container !== container
+      || ticketClaims.runtimeUser !== runtimeUser
+      || ticketClaims.mode !== requested.mode
+      || ticketClaims.expiresAtSeconds !== Math.floor(expiry / 1_000)
+      || ticketClaims.ttlSeconds !== Number(ttl)) {
+    return undefined;
+  }
+  return {
+    session_id: sessionId,
+    ticket,
+    websocket_path: websocketPath,
+    expires_at: expiresAt,
+    ttl_seconds: Number(ttl),
+    receipt_recovered: record.receipt_recovered,
+    request_id: requestId,
+    owner_generation: ownerGeneration,
+    owner_token: requested.owner_token,
+    target: {
+      tenant_id: requested.tenant_id,
+      alias: requested.alias,
+      container,
+      runtime_user: runtimeUser,
+      mode: requested.mode,
+      shares_container_with: cohort,
+    },
+  };
 }
 
 export function deleteTerminalSession(
   sessionId: string,
+  owner: TerminalSessionOwner,
   session?: SesionConToken,
 ): Promise<void> {
-  return terminalRequest(
+  return terminalResponse(
     `/v3/console/terminal/sessions/${encodeURIComponent(sessionId)}`,
-    { method: 'DELETE' },
+    {
+      method: 'DELETE',
+      body: JSON.stringify({
+        request_id: owner.request_id,
+        owner_generation: owner.owner_generation,
+        owner_token: owner.owner_token,
+      }),
+    },
     session,
-  );
+  ).then(({ status, body }) => {
+    if (status !== 204 || body !== undefined) {
+      throw new TerminalApiError(
+        'El gateway no devolvió el recibo vacío 204 que acredita la liberación de la sesión PTY.',
+        409,
+        'invalid_release_receipt',
+      );
+    }
+  });
+}
+
+/** Explicit operator takeover for an orphan visible in the exact session inventory. */
+export function rotateTerminalSessionOwner(
+  sessionId: string,
+  current: Pick<TerminalSessionOwner, 'request_id' | 'owner_generation'>,
+  ownerToken: string,
+  session?: SesionConToken,
+): Promise<TerminalSessionOwner> {
+  return terminalResponse(
+    `/v3/console/terminal/sessions/${encodeURIComponent(sessionId)}/owner`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        request_id: current.request_id,
+        expected_owner_generation: current.owner_generation,
+        owner_token: ownerToken,
+      }),
+    },
+    session,
+  ).then(({ status, body }) => {
+    if (status !== 200 || body === null || typeof body !== 'object' || Array.isArray(body)) {
+      throw new TerminalApiError('El gateway no acreditó el takeover de la sesión PTY.', 409, 'invalid_owner_receipt');
+    }
+    const record = body as Record<string, unknown>;
+    const generation = positiveBigint(record.owner_generation);
+    const expected = positiveBigint(current.owner_generation);
+    if (!exactKeys(record, ['owner_generation', 'request_id', 'session_id'])
+        || record.session_id !== sessionId
+        || record.request_id !== current.request_id
+        || generation === undefined
+        || expected === undefined
+        || BigInt(generation) !== BigInt(expected) + 1n) {
+      throw new TerminalApiError('El gateway devolvió un takeover PTY ambiguo.', 409, 'invalid_owner_receipt');
+    }
+    return { request_id: current.request_id, owner_generation: generation, owner_token: ownerToken };
+  });
 }
 
 /**
@@ -304,6 +691,8 @@ export interface TerminalSessionListItem {
   opened_at: string;
   expires_at: string;
   state: 'issued' | 'active' | 'closed';
+  request_id: string;
+  owner_generation: string;
 }
 
 /**
@@ -313,21 +702,60 @@ export interface TerminalSessionListItem {
  * la vista ni una sola sesión que cerrar.
  */
 export async function listTerminalSessions(session?: SesionConToken): Promise<TerminalSessionListItem[]> {
-  const payload = await terminalRequest<Record<string, unknown>>('/v3/console/terminal/sessions', {}, session);
-  if (!Array.isArray(payload?.items)) return [];
-  return payload.items.flatMap((item) => {
-    if (!item || typeof item !== 'object') return [];
+  const payload = await terminalRequest<unknown>('/v3/console/terminal/sessions', {}, session);
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)
+      || !exactKeys(payload as Record<string, unknown>, ['items'])
+      || !Array.isArray((payload as Record<string, unknown>).items)) {
+    throw new TerminalApiError(
+      'El gateway no devolvió un inventario verificable de sesiones PTY.', 409, 'invalid_sessions_receipt',
+    );
+  }
+  const result: TerminalSessionListItem[] = [];
+  const seen = new Set<string>();
+  for (const item of (payload as Record<string, unknown>).items as unknown[]) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new TerminalApiError(
+        'El gateway devolvió una sesión PTY mal formada.', 409, 'invalid_sessions_receipt',
+      );
+    }
     const record = item as Record<string, unknown>;
-    if (typeof record.session_id !== 'string' || typeof record.alias !== 'string') return [];
-    const state = record.state === 'active' || record.state === 'issued' ? record.state : 'closed';
-    return [{
-      session_id: record.session_id,
-      tenant_id: typeof record.tenant_id === 'string' ? record.tenant_id : '',
-      alias: record.alias,
-      mode: typeof record.mode === 'string' ? record.mode : '',
-      opened_at: typeof record.opened_at === 'string' ? record.opened_at : '',
-      expires_at: typeof record.expires_at === 'string' ? record.expires_at : '',
+    if (!exactKeys(record, [
+      'session_id', 'tenant_id', 'alias', 'mode', 'opened_at', 'expires_at', 'state',
+      'request_id', 'owner_generation',
+    ])) {
+      throw new TerminalApiError(
+        'El gateway devolvió una sesión PTY mal formada.', 409, 'invalid_sessions_receipt',
+      );
+    }
+    const sessionId = boundedOpaque(record.session_id, 256);
+    const tenantId = boundedOpaque(record.tenant_id, 64);
+    const alias = boundedOpaque(record.alias, 64);
+    const mode = boundedOpaque(record.mode, 64);
+    const openedAt = boundedOpaque(record.opened_at, 64);
+    const expiresAt = boundedOpaque(record.expires_at, 64);
+    const state = record.state;
+    const requestId = canonicalUuidV4(record.request_id);
+    const ownerGeneration = positiveBigint(record.owner_generation);
+    if (!sessionId || !tenantId || !alias || !mode || !openedAt || !expiresAt
+        || !Number.isFinite(Date.parse(openedAt)) || !Number.isFinite(Date.parse(expiresAt))
+        || (state !== 'issued' && state !== 'active' && state !== 'closed')
+        || !requestId || ownerGeneration === undefined || seen.has(sessionId)) {
+      throw new TerminalApiError(
+        'El gateway devolvió una sesión PTY mal formada.', 409, 'invalid_sessions_receipt',
+      );
+    }
+    seen.add(sessionId);
+    result.push({
+      session_id: sessionId,
+      tenant_id: tenantId,
+      alias,
+      mode,
+      opened_at: openedAt,
+      expires_at: expiresAt,
       state,
-    }];
-  });
+      request_id: requestId,
+      owner_generation: ownerGeneration,
+    });
+  }
+  return result;
 }

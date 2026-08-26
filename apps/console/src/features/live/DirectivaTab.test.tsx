@@ -101,6 +101,46 @@ it('la directiva rotula las TRES capas por su fin, no sólo por su nombre técni
   expect(await within(dialogo).findByLabelText(/proyección del rol de kant/i)).toHaveAttribute('readonly');
 }, 25_000);
 
+it('los avisos y el rol visible consumen un único snapshot aunque el siguiente GET ya sea otra revisión', async () => {
+  const snapshotA = 'Sos kant. AUTONOMIA: decidí y actuá vos.';
+  const snapshotB = 'Sos kant. Esperá siempre una orden antes de actuar.';
+  let lecturasDeConfig = 0;
+  server.use(
+    http.get('*/v3/console/config', () => {
+      lecturasDeConfig += 1;
+      const roleBrief = lecturasDeConfig === 1 ? snapshotA : snapshotB;
+      return HttpResponse.json({
+        revision: lecturasDeConfig,
+        observed_at: new Date().toISOString(),
+        agents: [
+          { tenant_id: 'Steven', alias: 'kant', harness_id: 'claude-code', enabled: true, role_brief: roleBrief },
+        ],
+        tenants: [], rooms: [], memberships: [], acl_edges: [], harness_definitions: [],
+        role_policies: [], chain_policies: [], egress_destinations: [], provider_accounts: [],
+        alias_routing_ceiling: [], agent_account_bindings: [], revisions: [],
+      });
+    }),
+    http.get('*/v3/console/agents/:tenantId/:alias/directive', () => HttpResponse.json({
+      publicado: true,
+      medido: true,
+      container_id: 'claw-kant',
+      files: [{
+        path: '~/.claude/CLAUDE.md', scope: 'user', bytes: 64,
+        text: '# Manual\n\nAUTONOMIA: decidí y actuá vos.\n',
+      }],
+      memory: { root: '~/.claude/projects', total: 0, entries: [] },
+    })),
+  );
+
+  const { dialogo } = await abrirDirectivaDeKant();
+  const capa1 = within(dialogo).getByLabelText('Capa 1: rol declarado');
+
+  expect(await within(capa1).findByLabelText(/proyección del rol de kant/i)).toHaveValue(snapshotA);
+  expect(within(dialogo).getByText(/la autonomía está escrita en dos capas/i)).toBeInTheDocument();
+  expect(within(dialogo).queryByDisplayValue(snapshotB)).not.toBeInTheDocument();
+  expect(lecturasDeConfig).toBe(1);
+}, 25_000);
+
 /**
  * LA PROSA SE PLIEGA. Lo que queda SIEMPRE a la vista es lo que hace falta para decidir en qué
  * capa va una frase: el fin y la fuente. El porqué está, pero cerrado.
@@ -141,9 +181,8 @@ it('lo que todavía no se puede hacer está en el pie y plegado, no como cuarta 
 it('sin el endpoint publicado dice que NO MIRÓ, y NO afirma que falte el manual', async () => {
   configConBrief('Sos kant. AUTONOMIA: decidí y actuá vos.');
   // El handler por defecto ya devuelve 404; se deja explícito para que el caso se lea solo.
-  server.use(http.get('*/v3/console/agents/:tenantId/:alias/directive', () => HttpResponse.json(
-    { error: 'not_found', message: 'no publicado' }, { status: 404 },
-  )));
+  server.use(http.get('*/v3/console/agents/:tenantId/:alias/directive', () =>
+    new HttpResponse(null, { status: 404 })));
   const { dialogo } = await abrirDirectivaDeKant();
 
   const capa2 = within(dialogo).getByLabelText('Capa 2: manual del sitio');
@@ -162,6 +201,18 @@ it('sin el endpoint publicado dice que NO MIRÓ, y NO afirma que falte el manual
   // Y tampoco se inventa un aviso de solapamiento sobre ficheros que no se leyeron.
   expect(within(dialogo).queryByRole('group', { name: /solapamiento/i })).not.toBeInTheDocument();
 }, 25_000);
+
+it('un 404 not_found del alias se muestra como recurso ausente, no como endpoint viejo', async () => {
+  configConBrief('Sos kant. AUTONOMIA: decidí y actuá vos.');
+  server.use(http.get('*/v3/console/agents/:tenantId/:alias/directive', () => HttpResponse.json(
+    { error: 'not_found', message: 'agent not found or not visible' }, { status: 404 },
+  )));
+  const { dialogo } = await abrirDirectivaDeKant();
+  const capa2 = within(dialogo).getByLabelText('Capa 2: manual del sitio');
+
+  expect(await within(capa2).findByText(/agent not found or not visible/i)).toBeInTheDocument();
+  expect(within(capa2).queryByText(/gateway todavía no publica/i)).not.toBeInTheDocument();
+});
 
 it('con el endpoint publicado enseña los CLAUDE.md, avisa del duplicado y lista la memoria', async () => {
   configConBrief('Sos kant, el hub. AUTONOMIA: decidí y actuá vos. Pedí permiso SOLO si hay dinero.');
@@ -193,12 +244,56 @@ it('con el endpoint publicado enseña los CLAUDE.md, avisa del duplicado y lista
   expect(within(avisos).getByText(/la autonomía está escrita en dos capas/i)).toBeInTheDocument();
   expect(within(avisos).getAllByText('autonomía').length).toBeGreaterThan(0);
   // Y el caso janus: dos manuales a la vez.
-  expect(within(avisos).getByText(/tiene 2 manuales a la vez/i)).toBeInTheDocument();
+  expect(within(avisos).getByText(/carga 2 manuales/i)).toBeInTheDocument();
+  expect(within(avisos).getByText(/orden medido por el runtime/i)).toBeInTheDocument();
 
   // La memoria: índice, con el total REAL del servidor aunque la lista venga recortada.
   const capa3 = within(dialogo).getByLabelText('Capa 3: memoria');
   expect(within(capa3).getByText('267')).toBeInTheDocument();
   expect(within(capa3).getByText('MEMORY.md')).toBeInTheDocument();
+}, 25_000);
+
+it('un cap de barrido se muestra como límite inferior y no como total exacto', async () => {
+  configConBrief('Sos kant, el hub. AUTONOMIA: decidí y actuá vos.');
+  server.use(http.get('*/v3/console/agents/:tenantId/:alias/directive', () => HttpResponse.json({
+    publicado: true,
+    medido: true,
+    container_id: 'claw-kant',
+    files: [],
+    memory: {
+      root: '~/.claude/projects',
+      total: null,
+      observed_at_least: 5_000,
+      truncated: true,
+      entries: [],
+    },
+  })));
+  const { dialogo } = await abrirDirectivaDeKant();
+  const capa3 = within(dialogo).getByLabelText('Capa 3: memoria');
+
+  expect(await within(capa3).findByText('≥ 5000')).toBeInTheDocument();
+  expect(within(capa3).getByText(/se observaron como mínimo 5000/i)).toBeInTheDocument();
+  expect(within(capa3).queryByText(/no tiene memoria escrita/i)).not.toBeInTheDocument();
+}, 25_000);
+
+it('un fallo discriminado de memoria muestra su causa y no un índice vacío', async () => {
+  configConBrief('Sos kant, el hub. AUTONOMIA: decidí y actuá vos.');
+  server.use(http.get('*/v3/console/agents/:tenantId/:alias/directive', () => HttpResponse.json({
+    publicado: true,
+    medido: true,
+    container_id: 'claw-kant',
+    files: [],
+    memory: {
+      root: '~/.claude/projects',
+      error: 'timeout',
+      reason: 'el pty-agent no contestó el índice',
+    },
+  })));
+  const { dialogo } = await abrirDirectivaDeKant();
+  const capa3 = within(dialogo).getByLabelText('Capa 3: memoria');
+
+  expect(await within(capa3).findByText(/el pty-agent no contestó el índice/i)).toBeInTheDocument();
+  expect(within(capa3).queryByText(/no tiene memoria escrita/i)).not.toBeInTheDocument();
 }, 25_000);
 
 /**
@@ -232,7 +327,8 @@ it('el caso gaia: el servidor MIRÓ y no hay manual, y eso sí se puede afirmar'
 
   const capa2 = within(dialogo).getByLabelText('Capa 2: manual del sitio');
   expect(await within(capa2).findByText(/no hay ningún/i)).toBeInTheDocument();
-  expect(within(capa2).getByText(/arranca cada sesión sin manual del sitio/i)).toBeInTheDocument();
+  expect(within(capa2).getByText(/no hay ningún manual estándar acreditado/i)).toBeInTheDocument();
+  expect(within(capa2).getByText(/no prueba ausencia de reglas o fallbacks/i)).toBeInTheDocument();
   // Y aquí sí: la afirmación de ausencia está permitida porque la lectura ocurrió.
   expect(within(capa2).queryByText(/no se pudo mirar/i)).not.toBeInTheDocument();
   // El otro marcador, el que hace que los dos estados no se confundan de un vistazo.

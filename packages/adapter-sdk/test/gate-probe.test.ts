@@ -66,6 +66,7 @@ async function setup(name: string) {
   const logs: AdapterLog[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness,
     publish: async (event) => { events.push(event); },
     logger: (entry) => { logs.push(entry); },

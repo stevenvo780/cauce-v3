@@ -6,7 +6,7 @@ ENV_PROD ?= config/prod.env
 ARTIFACT_DIR ?= artifacts
 
 .PHONY: help test test-contract test-doubles test-real test-compose test-compose-authentic test-runtime-authentic test-restarts test-container-supervisor test-container-reaping test-container-cutover smoke-cli smoke-adapters validate manifest verify-manifest \
-	dev-up dev-down dev-health prod-up prod-down prod-health migrate backup restore manifests release-build release-gate release-console release-console-rollback release-console-verify
+	dev-up dev-down dev-health prod-up prod-down prod-health migrate backup restore manifests release-build release-gate release-bootstrap-legacy release-bootstrap-two-selector release-bootstrap-manifest-sha release-capture-writer-snapshot release-bootstrap-writer-snapshot release-deploy-preflight release-deploy release-rotate-writer-snapshot release-console release-console-rollback release-console-verify
 
 help: ## Lista objetivos
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_.-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -51,7 +51,7 @@ test-restarts: test-compose-authentic ## Restart/fencing/durabilidad dentro de e
 validate: ## YAML/JSON/schema/scripts/manifiestos; Compose se exige con CAUCE_RELEASE_VALIDATION=1
 	./scripts/validate.sh
 
-manifests: ## Valida 12 manifests y genera units host-native y para containers
+manifests: ## Valida 15 manifests y genera units host-native y para containers
 	python3 scripts/validate-manifests.py
 	python3 scripts/generate-units.py
 	python3 scripts/generate-container-units.py
@@ -71,14 +71,14 @@ dev-health: ## Comprueba salud real dev
 dev-down: ## Baja dev sin borrar volúmenes
 	CAUCE_ENV_FILE="$(ENV_DEV)" ./scripts/compose.sh dev down
 
-prod-up: release-gate ## Levanta producción TLS con imágenes por digest; no ejecuta cutover
-	CAUCE_ENV_FILE="$(ENV_PROD)" ./scripts/compose.sh prod up -d --no-build --wait
+prod-up: ## Levanta producción bajo el lock autenticado; no ejecuta cutover
+	CAUCE_ENV_FILE="$${CAUCE_ENV_FILE:-$(ENV_PROD)}" ./scripts/deploy-release.sh prod-up
 
 prod-health: ## Comprueba salud TLS/DB desde los containers
 	CAUCE_ENV_FILE="$(ENV_PROD)" ./scripts/stack-health.sh prod
 
 prod-down: ## Baja runtime prod sin borrar volúmenes ni tocar V2
-	CAUCE_ENV_FILE="$(ENV_PROD)" ./scripts/compose.sh prod down
+	CAUCE_ENV_FILE="$${CAUCE_ENV_FILE:-$(ENV_PROD)}" ./scripts/deploy-release.sh prod-down
 
 release-build: ## Construye runtime/consola y genera evidencia con IDs
 	./scripts/release-build.sh
@@ -86,24 +86,86 @@ release-build: ## Construye runtime/consola y genera evidencia con IDs
 release-gate: ## Exige Compose v2, build y compose-authentic del mismo digest
 	CAUCE_ENV_FILE="$(ENV_PROD)" ./scripts/release-gate.sh
 
-# release-build construye SIEMPRE las dos imagenes y release-gate exige que los dos digests
-# coincidan con esa evidencia, asi que una correccion de consola arrastraba al runtime entero.
-# Este objetivo es el camino solo-consola escrito: no toca gateway, dispatcher ni outbox.
-release-console: ## Despliega SOLO la consola (build --target console) y verifica por efecto
-	CAUCE_CONSOLE_TAG="$${CAUCE_CONSOLE_TAG:?definir CAUCE_CONSOLE_TAG}" \
-	CAUCE_PROD_HOST="$${CAUCE_PROD_HOST:?definir CAUCE_PROD_HOST}" \
-	  ./scripts/release-console.sh desplegar
+release-bootstrap-legacy: ## Publica create-only el primer selector completo bajo lock
+	@CAUCE_ENV_FILE="$${CAUCE_ENV_FILE:-$(ENV_PROD)}" \
+	  python3 ./scripts/pin-production-release.py bootstrap \
+	    --env-file "$${CAUCE_ENV_FILE:-$(ENV_PROD)}" \
+	    --candidate-env-file "$${CAUCE_BOOTSTRAP_CANDIDATE_ENV_FILE:?definir CAUCE_BOOTSTRAP_CANDIDATE_ENV_FILE}" \
+	    --expected-candidate-env-sha256 "$${CAUCE_BOOTSTRAP_CANDIDATE_ENV_SHA256:?definir CAUCE_BOOTSTRAP_CANDIDATE_ENV_SHA256}" \
+	    --expected-override-manifest-sha256 "$${CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256:?definir CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256}"
 
-release-console-rollback: ## Vuelve la consola al digest anterior guardado en el host
-	CAUCE_PROD_HOST="$${CAUCE_PROD_HOST:?definir CAUCE_PROD_HOST}" \
-	  ./scripts/release-console.sh revertir
+release-bootstrap-two-selector: ## Migra atomicamente un selector fragmentado de 2 a 6 campos
+	@python3 ./scripts/pin-production-release.py bootstrap-two-selector \
+	    --env-file "$${CAUCE_ENV_FILE:-$(ENV_PROD)}" \
+	    --expected-env-sha256 "$${CAUCE_BOOTSTRAP_TWO_SELECTOR_ENV_SHA256:?definir CAUCE_BOOTSTRAP_TWO_SELECTOR_ENV_SHA256}" \
+	    --runtime-image "$${CAUCE_BOOTSTRAP_RUNTIME_IMAGE:?definir CAUCE_BOOTSTRAP_RUNTIME_IMAGE}" \
+	    --console-image "$${CAUCE_BOOTSTRAP_CONSOLE_IMAGE:?definir CAUCE_BOOTSTRAP_CONSOLE_IMAGE}" \
+	    --override-manifest "$${CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST:?definir CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST}" \
+	    --override-manifest-sha256 "$${CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256:?definir CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256}" \
+	    --rollback-baseline "$${CAUCE_BOOTSTRAP_ROLLBACK_BASELINE:?definir CAUCE_BOOTSTRAP_ROLLBACK_BASELINE}" \
+	    --rollback-baseline-sha256 "$${CAUCE_BOOTSTRAP_ROLLBACK_BASELINE_SHA256:?definir CAUCE_BOOTSTRAP_ROLLBACK_BASELINE_SHA256}" \
+	    --backup-env-file "$${CAUCE_BOOTSTRAP_BACKUP_ENV_FILE:?definir CAUCE_BOOTSTRAP_BACKUP_ENV_FILE}"
 
-release-console-verify: ## No cambia nada: dice que bundle esta sirviendo la consola ahora
-	CAUCE_PROD_HOST="$${CAUCE_PROD_HOST:?definir CAUCE_PROD_HOST}" \
-	  ./scripts/release-console.sh verificar
+release-bootstrap-manifest-sha: ## Migra atomicamente un selector legacy de 5 a 6 campos
+	@python3 ./scripts/pin-production-release.py bootstrap-manifest-sha \
+	    --env-file "$${CAUCE_ENV_FILE:-$(ENV_PROD)}" \
+	    --expected-env-sha256 "$${CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256:?definir CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256}" \
+	    --expected-override-manifest "$${CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST:?definir CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST}" \
+	    --expected-override-manifest-sha256 "$${CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256:?definir CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256}"
 
-migrate: ## Aplica migraciones pendientes (DATABASE_URL o DATABASE_URL_FILE)
-	./scripts/migrate.sh
+release-capture-writer-snapshot: ## Captura create-only el inventario exacto de writers bajo lock
+	@args=(); \
+	case "$${CAUCE_DEPLOY_ZEUS_MAINTENANCE:-0}" in \
+	  0) ;; 1) args+=(--maintenance-offline-zeus) ;; \
+	  *) printf 'CAUCE_DEPLOY_ZEUS_MAINTENANCE debe ser 0 o 1\n' >&2; exit 2 ;; \
+	esac; \
+	CAUCE_ENV_FILE="$${CAUCE_ENV_FILE:-$(ENV_PROD)}" \
+	  ./scripts/capture-release-writer-snapshot.sh \
+	    "$${CAUCE_RELEASE_WRITER_SNAPSHOT_FILE:?definir CAUCE_RELEASE_WRITER_SNAPSHOT_FILE}" \
+	    "$${args[@]}"
+
+release-bootstrap-writer-snapshot: ## Migra atomicamente un selector legacy de 6 a 8 campos
+	@python3 ./scripts/pin-production-release.py bootstrap-writer-snapshot \
+	    --env-file "$${CAUCE_ENV_FILE:-$(ENV_PROD)}" \
+	    --expected-env-sha256 "$${CAUCE_BOOTSTRAP_SIX_SELECTOR_ENV_SHA256:?definir CAUCE_BOOTSTRAP_SIX_SELECTOR_ENV_SHA256}" \
+	    --writer-snapshot "$${CAUCE_RELEASE_WRITER_SNAPSHOT_FILE:?definir CAUCE_RELEASE_WRITER_SNAPSHOT_FILE}" \
+	    --writer-snapshot-sha256 "$${CAUCE_RELEASE_WRITER_SNAPSHOT_SHA256:?definir CAUCE_RELEASE_WRITER_SNAPSHOT_SHA256}"
+
+release-deploy-preflight: ## Preflight read-only; liga CAS y snapshot legacy exacto si hay fragmentacion
+	@args=(); \
+	case "$${CAUCE_DEPLOY_ZEUS_MAINTENANCE:-0}" in \
+	  0) ;; 1) args+=(--maintenance-offline-zeus) ;; \
+	  *) printf 'CAUCE_DEPLOY_ZEUS_MAINTENANCE debe ser 0 o 1\n' >&2; exit 2 ;; \
+	esac; \
+	CAUCE_ENV_FILE="$${CAUCE_ENV_FILE:-$(ENV_PROD)}" \
+	  ./scripts/deploy-release.sh preflight "$${args[@]}"
+
+release-deploy: ## Normalizacion reversible, CAS, migrator, health, evidencia y compensacion
+	@args=(); \
+	case "$${CAUCE_DEPLOY_ZEUS_MAINTENANCE:-0}" in \
+	  0) ;; 1) args+=(--maintenance-offline-zeus) ;; \
+	  *) printf 'CAUCE_DEPLOY_ZEUS_MAINTENANCE debe ser 0 o 1\n' >&2; exit 2 ;; \
+	esac; \
+	CAUCE_ENV_FILE="$${CAUCE_ENV_FILE:-$(ENV_PROD)}" \
+	  ./scripts/deploy-release.sh deploy "$${args[@]}"
+
+release-rotate-writer-snapshot: ## Rota 8→8 el snapshot tras reactivar Zeus y cierra el gate estricto
+	@CAUCE_ENV_FILE="$${CAUCE_ENV_FILE:-$(ENV_PROD)}" \
+	  ./scripts/deploy-release.sh rotate-writer-snapshot
+
+# Tombstones deliberadas: automatizaciones antiguas obtienen un error explicito antes de mutar.
+# El unico release es release-build + CAS completo; la reversa es scripts/rollback.sh console.
+release-console: ## RETIRADO: falla cerrado; usar release-build y CAS completo
+	@./scripts/release-console.sh desplegar
+
+release-console-rollback: ## RETIRADO: falla cerrado; usar rollback.sh console
+	@./scripts/release-console.sh revertir
+
+release-console-verify: ## Valida read-only un RepoDigest; no acredita el deploy vivo
+	@./scripts/release-console.sh verificar
+
+migrate: ## DESHABILITADO: las migraciones productivas sólo ocurren dentro de deploy-release
+	@./scripts/migrate.sh
 
 backup: ## Crea backup consistente y TLS
 	./scripts/backup.sh

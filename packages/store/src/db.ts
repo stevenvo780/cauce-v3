@@ -152,6 +152,156 @@ export async function withTransaction<T>(pool: DatabasePool, work: (client: Data
   }
 }
 
+function abortFailure(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error(
+    signal.reason === undefined ? 'database operation aborted' : String(signal.reason),
+  );
+  error.name = 'AbortError';
+  return error;
+}
+
+/** node-postgres does not expose hard socket cancellation on PoolClient's public type. */
+function destroyClientSocket(client: DatabaseClient): void {
+  const internal = client as unknown as {
+    connection?: { stream?: { destroy: () => void } };
+  };
+  try {
+    internal.connection?.stream?.destroy();
+  } catch {
+    // release(true) below remains the fallback when pg changes its internal transport shape.
+  }
+}
+
+function clientBackendPid(client: DatabaseClient): number | undefined {
+  const internal = client as unknown as { processID?: unknown };
+  return typeof internal.processID === 'number' && Number.isSafeInteger(internal.processID)
+    && internal.processID > 0 ? internal.processID : undefined;
+}
+
+async function terminateBackend(pool: DatabasePool, backendPid: number | undefined): Promise<void> {
+  if (backendPid === undefined) return;
+  try {
+    // Closing a TCP socket does not necessarily wake a backend blocked inside every PostgreSQL
+    // wait primitive immediately. Signal our own abandoned backend through a fresh pool checkout
+    // and wait for that command before reporting the cancellation complete.
+    await pool.query('SELECT pg_terminate_backend($1)', [backendPid]);
+  } catch {
+    // A DB restart or concurrent reap is already an equivalent terminal outcome. Callers still
+    // observe the original abort and readiness independently observes a broader outage.
+  }
+}
+
+async function connectAbortably(pool: DatabasePool, signal: AbortSignal): Promise<DatabaseClient> {
+  if (signal.aborted) throw abortFailure(signal);
+  return new Promise<DatabaseClient>((resolve, reject) => {
+    let settled = false;
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      reject(abortFailure(signal));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void pool.connect().then(
+      (client) => {
+        signal.removeEventListener('abort', onAbort);
+        if (settled || signal.aborted) {
+          // The pool wait cannot itself be cancelled.  If a slot arrives after abort, destroy it
+          // instead of returning an unobserved checkout to the pool or letting late work start.
+          try {
+            client.release(true);
+          } catch {
+            // A concurrently closing pool may already have disposed of the checkout.
+          }
+          if (!settled) reject(abortFailure(signal));
+          return;
+        }
+        settled = true;
+        resolve(client);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        if (settled) return;
+        settled = true;
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
+/**
+ * A transaction whose PostgreSQL backend is actually torn down when the caller aborts.
+ *
+ * Racing an await against a timer only abandons the JavaScript promise: the checked-out pg
+ * client and its server-side query keep running and later block pool.end().  This helper owns a
+ * dedicated checkout for the whole transaction and calls release(true) from the AbortSignal
+ * listener.  pg closes the socket, PostgreSQL reaps the backend and every pending query rejects;
+ * no continuation can reach COMMIT after abort.
+ */
+export async function withAbortableTransaction<T>(
+  pool: DatabasePool,
+  signal: AbortSignal,
+  work: (client: DatabaseClient) => Promise<T>,
+): Promise<T> {
+  const client = await connectAbortably(pool, signal);
+  let broken = false;
+  let released = false;
+  let abortCleanup: Promise<void> = Promise.resolve();
+  const onClientError = (): void => {
+    broken = true;
+  };
+  const release = (destroy: boolean): void => {
+    if (released) return;
+    released = true;
+    if (!destroy) client.off('error', onClientError);
+    try {
+      client.release(destroy);
+    } catch {
+      // Release must never mask the transaction result or create a secondary rejection.
+    }
+  };
+  const onAbort = (): void => {
+    broken = true;
+    // Keep the error listener attached while pg tears the socket down: a backend loss can emit
+    // more than once and an unhandled EventEmitter error would crash the process during shutdown.
+    // PoolClient.release(true) removes the checkout but node-postgres may let an active query keep
+    // its socket/backend alive. Destroy the transport first so the pending query actually rejects.
+    const backendPid = clientBackendPid(client);
+    destroyClientSocket(client);
+    release(true);
+    abortCleanup = terminateBackend(pool, backendPid);
+  };
+
+  client.on('error', onClientError);
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    if (signal.aborted) throw abortFailure(signal);
+    await client.query('BEGIN');
+    if (signal.aborted) throw abortFailure(signal);
+    const result = await work(client);
+    if (signal.aborted) throw abortFailure(signal);
+    await client.query('COMMIT');
+    // Once COMMIT has succeeded, report success even if abort raced immediately afterwards.
+    // Returning AbortError here would falsely describe a durable commit as cancelled.
+    return result;
+  } catch (error) {
+    broken ||= connectionFailure(error);
+    if (!released && !signal.aborted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        broken = true;
+      }
+    }
+    if (signal.aborted) throw abortFailure(signal);
+    throw error;
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+    release(broken || signal.aborted);
+    if (signal.aborted) await abortCleanup;
+  }
+}
+
 /** Best-effort low-latency wake path; adapter_outbox remains the durable fallback. */
 export async function subscribeDeliveryWakes(
   pool: DatabasePool,

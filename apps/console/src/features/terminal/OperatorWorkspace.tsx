@@ -26,7 +26,9 @@ import { useApi } from '../../api/context';
 import type { AdapterView, ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
-import { compactId, createId, permissionState, safeCapabilityState } from '../../lib';
+import { compactId, permissionState, safeCapabilityState } from '../../lib';
+import { publishDurably } from '../messages/durable-publish';
+import { exactCancelReceipt, exactReplayReceipt } from '../queues/delivery-receipts';
 import { AckInspector } from './AckInspector';
 import { FleetSidebar } from './FleetSidebar';
 import {
@@ -34,6 +36,8 @@ import {
   createTerminalSession,
   deleteTerminalSession,
   listTerminalSessions,
+  rotateTerminalSessionOwner,
+  type CreateTerminalSessionInput,
   type TerminalSessionGrant,
   type TerminalSessionListItem,
   type TerminalTargetsSnapshot,
@@ -319,8 +323,53 @@ function AdapterInspector({ adapters, access, capability }: { adapters: AdapterV
   );
 }
 
-function SessionStage({ session, agents, access, topologyAccess, capability, targets, grants, closedChannels, onUpdate, onGrant, onChannelClosed, onReleaseChannel, onPlazaAgotada }: {
+type MotivoReconciliacionPlaza = 'session_limit' | 'invalid_grant_receipt';
+
+interface TerminalGrantRequestOutcome {
+  grant: TerminalSessionGrant;
+  adopted: boolean;
+}
+
+type RequestTerminalGrant = (
+  sessionId: string,
+  sessionToken: number,
+  input: Omit<CreateTerminalSessionInput, 'request_id' | 'owner_token'>,
+) => Promise<TerminalGrantRequestOutcome>;
+
+interface WorkspaceTerminalAttempt {
+  readonly id: symbol;
+  /** Only a remount of this exact tab incarnation may adopt the in-flight POST. */
+  readonly sessionToken: number;
+  readonly inputKey: string;
+  readonly subscribers: Set<number>;
+  readonly promise: Promise<TerminalGrantRequestOutcome>;
+}
+
+interface WorkspaceTerminalIntent {
+  readonly sessionToken: number;
+  readonly inputKey: string;
+  readonly requestId: string;
+  readonly ownerToken: string;
+}
+
+function terminalRequestInputKey(input: Omit<CreateTerminalSessionInput, 'request_id' | 'owner_token'>): string {
+  return JSON.stringify([
+    input.tenant_id, input.alias, input.mode, input.reason, input.cols, input.rows,
+  ]);
+}
+
+function terminalCapabilityUuid(): string {
+  const value = globalThis.crypto?.randomUUID?.();
+  if (value === undefined) {
+    throw new Error('Este navegador no ofrece UUID seguros para cercar la sesión PTY.');
+  }
+  return value;
+}
+
+function SessionStage({ session, sessionToken, agents, access, topologyAccess, capability, targets, grants, closedChannels, onUpdate, onRequestGrant, onChannelClosed, onReleaseChannel, onReconciliarPlazas }: {
   session: OperatorSession;
+  /** Incarnation of this tab. Closing and reopening the same alias produces a different token. */
+  sessionToken: number;
   agents: FleetAgent[];
   access?: ConsoleAccess;
   topologyAccess?: TopologySnapshot;
@@ -329,11 +378,12 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   grants: Record<string, TerminalSessionGrant>;
   closedChannels: Record<string, true>;
   onUpdate: (session: OperatorSession) => void;
-  onGrant: (sessionId: string, grant: TerminalSessionGrant) => void;
+  /** Workspace-owned fence: survives stage unmounts caused by switching tabs. */
+  onRequestGrant: RequestTerminalGrant;
   onChannelClosed: (sessionId: string) => void;
   onReleaseChannel: (sessionId: string) => Promise<void>;
-  /** El gateway contestó `session_limit`: hay plazas colgadas y hay que ir a buscarlas. */
-  onPlazaAgotada: () => void;
+  /** Un rechazo dejó incierto el estado de plazas: se relee el inventario antes de actuar. */
+  onReconciliarPlazas: (motivo: MotivoReconciliacionPlaza) => void;
 }) {
   const api = useApi();
   const messages = useResource('terminal-message-feed', () => api.listMessages());
@@ -349,6 +399,18 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   const [showInspector, setShowInspector] = useState(false);
   /** Panel que ya intentó abrir su TUI sola. Es por panel y no se reintenta. */
   const autoOpenedRef = useRef<string>(undefined);
+  /**
+   * Synchronous fence for the POST. React state cannot provide this guarantee: auto-open and a
+   * click can both enter before `setRequesting(true)` has rendered.
+   */
+  const requestAttemptRef = useRef<{ sequence: number } | undefined>(undefined);
+  const requestSequenceRef = useRef(0);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const currentAgent = agents.find((agent) => agent.id === session.agent.id) ?? session.agent;
   const liveSession = { ...session, agent: currentAgent };
@@ -447,16 +509,30 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
     setSubmitting(true);
     setNotice(undefined);
     try {
-      const result = await api.publishMessage({
+      const input = {
         room_id: sourceRoomId,
         recipients: [{ tenant_id: liveSession.agent.tenantId, alias: liveSession.agent.alias }],
         body: { text },
-        lane: 'interactive',
+        lane: 'interactive' as const,
         priority: 10,
-        idempotency_key: createId(`ultimate-terminal-${liveSession.agent.alias}`),
+      };
+      const { receipt: result, reconciled, journalStatus } = await publishDurably({
+        api,
+        input,
+        publisherSubject: access?.subject,
+        expectedDeliveries: 1,
+        reconcile: messages.reload,
       });
       setDraft('');
-      setNotice({ tone: 'success', text: `Aceptado por el control plane · ${compactId(result.message_id)}. Esperando ACK por polling.` });
+      setNotice({
+        tone: 'success',
+        text: `${reconciled ? 'Publicación reconciliada desde el journal durable' : 'Aceptado por el control plane'} · ${compactId(result.message_id)}. `
+          + `${journalStatus === 'confirmed'
+            ? 'Intención confirmada'
+            : journalStatus === 'pending'
+              ? 'Confirmación incierta; intención pendiente y cercada'
+              : 'Confirmación rechazada; intención cercada contra duplicados'}; esperando ACK por polling.`,
+      });
       messages.reload();
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'No se pudo publicar la instrucción.' });
@@ -472,17 +548,30 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
   }
 
   async function replay(deliveryId: string) {
-    await api.replayDelivery(deliveryId);
+    const result = await api.replayDelivery(deliveryId);
+    if (!exactReplayReceipt(result, deliveryId)) {
+      messages.reload();
+      throw new Error('El gateway no devolvió un recibo durable exacto del replay.');
+    }
     messages.reload();
   }
 
   async function cancel(deliveryId: string) {
-    await api.cancelDelivery(deliveryId);
+    const result = await api.cancelDelivery(deliveryId);
+    if (!exactCancelReceipt(result, deliveryId)) {
+      messages.reload();
+      throw new Error('El gateway no devolvió un recibo durable exacto de la cancelación.');
+    }
     messages.reload();
   }
 
   async function requestChannel(reason: string, mode: string) {
     if (mode === LIVE_TUI_MODE ? !liveTui.enabled : !channel?.enabled) return;
+    // This ref is assigned before the first await and before React can render `requesting`.
+    if (requestAttemptRef.current !== undefined) return;
+    const attempt = { sequence: ++requestSequenceRef.current };
+    requestAttemptRef.current = attempt;
+    const ownsAttempt = () => mountedRef.current && requestAttemptRef.current === attempt;
     setRequesting(true);
     setRequestError(undefined);
     try {
@@ -490,19 +579,24 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
       // pestaña: es otra autorización, con su motivo y su fila de auditoría. La sesión anterior
       // se suelta contra el servidor primero, para no dejarla colgada del otro lado.
       const current = grants[liveSession.id];
-      if (current && current.target.mode !== mode) await onReleaseChannel(liveSession.id);
-      const issued = await createTerminalSession({
+      if (current && (current.target.mode !== mode || closedChannels[liveSession.id])) {
+        await onReleaseChannel(liveSession.id);
+      }
+      if (!ownsAttempt()) return;
+      const outcome = await onRequestGrant(liveSession.id, sessionToken, {
         tenant_id: liveSession.agent.tenantId,
         alias: liveSession.agent.alias,
         mode,
         reason,
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
-      }, api);
-      onGrant(liveSession.id, issued);
-      onUpdate({ ...liveSession, mode: 'pty', channelMode: mode, liveTuiAttempted: true });
+      });
+      // Adoption/compensation lives in the workspace so switching tabs cannot discard its fence.
+      // This stage only updates its own dialog when the exact mounted caller still owns the await.
+      if (!ownsAttempt() || !outcome.adopted) return;
       setShowPtyDialog(false);
     } catch (error) {
+      if (!ownsAttempt()) return;
       // El rechazo se TRADUCE acá, en el único sitio por el que pasan los ocho códigos del
       // gateway. `TerminalApiError` trae el estado HTTP y el `error` del cuerpo; los dos hacían
       // falta y ninguno se estaba mostrando.
@@ -514,11 +608,18 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
       setRequestError(explicada);
       // «Cerrá alguna de las sesiones que tenés abiertas» sólo es una instrucción si el operador
       // PUEDE verlas: acá es donde se van a buscar, en el único momento en que hacen falta.
-      if (explicada.codigo === 'session_limit') onPlazaAgotada();
+      if (explicada.codigo === 'session_limit') {
+        onReconciliarPlazas('session_limit');
+      } else if (error instanceof TerminalApiError && error.code === 'invalid_grant_receipt') {
+        // El id del recibo roto no es confiable. La unica reconciliacion segura es un GET exacto
+        // y visible; cualquier cierre posterior queda como accion explicita del operador.
+        onReconciliarPlazas('invalid_grant_receipt');
+      }
       // Un rechazo se cuenta como intento: la apertura automática no vuelve a golpear al gateway.
       if (mode === LIVE_TUI_MODE) onUpdate({ ...liveSession, liveTuiAttempted: true });
     } finally {
-      setRequesting(false);
+      if (requestAttemptRef.current === attempt) requestAttemptRef.current = undefined;
+      if (mountedRef.current) setRequesting(false);
     }
   }
 
@@ -579,7 +680,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
                  type="button"
                  aria-pressed={liveSession.mode === 'pty' && channelIsLiveTui}
                  data-active={(liveSession.mode === 'pty' && channelIsLiveTui) || undefined}
-                 disabled={!liveTui.enabled}
+                 disabled={!liveTui.enabled || requesting}
                  onClick={openLiveTui}
                  title={traducirCodigosEnTexto(liveTui.reason)}
                ><MonitorPlay size={14} aria-hidden="true" /> TUI</button>
@@ -587,7 +688,7 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
                  type="button"
                  aria-pressed={liveSession.mode === 'pty' && !channelIsLiveTui}
                  data-active={(liveSession.mode === 'pty' && !channelIsLiveTui) || undefined}
-                 disabled={!channel?.enabled}
+                 disabled={!channel?.enabled || requesting}
                  onClick={selectPtyMode}
                  title={channelReason}
                ><TerminalSquare size={14} aria-hidden="true" /> PTY</button>
@@ -749,15 +850,19 @@ function SessionStage({ session, agents, access, topologyAccess, capability, tar
  * Ultimate Terminal quedaba muerta un cuarto de hora sin un error que lo dijera. Esta tira es la
  * salida: las nombra, dice cuánto les falta para soltarse solas, y las cierra de un clic.
  */
-function PlazasColgadas({ items, aLaVista, topeAlcanzado, revisando, cerrando, onRevisar, onCerrar }: {
+function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisando, cerrando, error, onRevisar, onCerrar }: {
   /** Las que ocupan plaza y esta pestaña NO gobierna: las colgadas de verdad. */
   items: TerminalSessionListItem[];
   /** Cuántas de las que ocupan plaza sí están a la vista como pestañas de esta pantalla. */
   aLaVista: number;
   /** El gateway acaba de contestar `session_limit`: hay que decir con QUÉ se gastó el tope. */
   topeAlcanzado: boolean;
+  /** Por qué se hizo la lectura causal que sostiene este cartel. */
+  motivo?: MotivoReconciliacionPlaza;
   revisando: boolean;
   cerrando: Record<string, true>;
+  /** Un inventario ilegible es UNKNOWN: nunca equivale a cero plazas ocupadas. */
+  error?: string;
   onRevisar: () => void;
   onCerrar: (sessionId: string) => void;
 }) {
@@ -777,20 +882,39 @@ function PlazasColgadas({ items, aLaVista, topeAlcanzado, revisando, cerrando, o
         <AlertTriangle size={15} aria-hidden="true" />
         <div>
           <strong>
-            {items.length === 0
+            {error
+              ? 'No se pudo leer qué sesiones están ocupando el tope'
+              : items.length === 0 && aLaVista === 0 && motivo === 'session_limit'
+                ? 'El tope se liberó antes de terminar la verificación'
+              : items.length === 0 && aLaVista === 0 && motivo === 'invalid_grant_receipt'
+                ? 'El grant fue inválido y no hay una reserva visible'
+              : motivo === 'invalid_grant_receipt' && items.length > 0
+                ? 'El grant fue inválido; estas son las reservas visibles'
+              : items.length === 0
               ? `Tope de sesiones alcanzado: las ${total} que lo gastan están abiertas acá`
               : items.length === 1
                 ? 'Una sesión tuya sigue ocupando plaza fuera de esta pantalla'
                 : `${items.length} sesiones tuyas siguen ocupando plaza fuera de esta pantalla`}
           </strong>
           <p>
-            {items.length === 0
+            {error
+              ? items.length === 0
+                ? 'El inventario del gateway no es verificable. No se infiere que haya cero sesiones ni que todas estén abiertas en esta pantalla. Reintentá la lectura antes de decidir qué cerrar.'
+                : `No se pudo actualizar el inventario. Las ${items.length} filas de abajo son el último inventario verificable y pueden estar desactualizadas; no prueban cuántas plazas siguen ocupadas ahora.`
+              : items.length === 0 && aLaVista === 0 && motivo === 'session_limit'
+                ? 'El POST recibió 409, pero el GET exacto posterior ya no encontró ninguna sesión ocupando plaza. Hubo una liberación concurrente: no hay nada que cerrar y podés reintentar la apertura.'
+              : items.length === 0 && aLaVista === 0 && motivo === 'invalid_grant_receipt'
+                ? 'No se revocó el session_id del recibo roto porque no era confiable. El inventario exacto posterior no muestra una reserva que puedas cerrar; reintentá sólo después de releer si el estado cambia.'
+              : motivo === 'invalid_grant_receipt' && items.length > 0
+                ? 'No se usó el session_id del recibo roto para borrar nada. Las filas de abajo vienen del GET exacto posterior: cerrá una sólo si reconocés que esa reserva ya no debe seguir viva.'
+              : items.length === 0
               ? 'El tope de sesiones simultáneas es por operador y ya lo gastaste con las pestañas de arriba. '
                 + 'Cerrá una con su aspa y volvé a pedir la que querías: se libera al instante.'
               : 'El tope de sesiones simultáneas es por operador, así que estas cuentan aunque su pestaña ya no exista '
                 + '—otra ventana, un cierre a lo bruto, una recarga a destiempo—. Mientras sigan vivas, abrir otra TUI '
                 + 'devuelve 409. Se sueltan solas al vencer; el botón las suelta ahora.'}
           </p>
+          {error ? <p className="notice error" role="alert">{error}</p> : null}
         </div>
         <button className="button small secondary" type="button" onClick={onRevisar} disabled={revisando}>
           <RefreshCw size={13} aria-hidden="true" /> {revisando ? 'Revisando…' : 'Revisar'}
@@ -816,6 +940,7 @@ function PlazasColgadas({ items, aLaVista, topeAlcanzado, revisando, cerrando, o
 
 interface GridContainerProps {
   sessions: OperatorSession[];
+  sessionTokens: ReadonlyMap<string, number>;
   activeId?: string;
   agents: FleetAgent[];
   access?: ConsoleAccess;
@@ -827,14 +952,15 @@ interface GridContainerProps {
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
   onUpdate: (session: OperatorSession) => void;
-  onGrant: (sessionId: string, grant: TerminalSessionGrant) => void;
+  onRequestGrant: RequestTerminalGrant;
   onChannelClosed: (sessionId: string) => void;
   onReleaseChannel: (sessionId: string) => Promise<void>;
-  onPlazaAgotada: () => void;
+  onReconciliarPlazas: (motivo: MotivoReconciliacionPlaza) => void;
 }
 
 function GridContainer({
   sessions,
+  sessionTokens,
   activeId,
   agents,
   access,
@@ -846,10 +972,10 @@ function GridContainer({
   onActivate,
   onClose,
   onUpdate,
-  onGrant,
+  onRequestGrant,
   onChannelClosed,
   onReleaseChannel,
-  onPlazaAgotada
+  onReconciliarPlazas
 }: GridContainerProps) {
   if (sessions.length === 0) {
     return (
@@ -910,6 +1036,7 @@ function GridContainer({
             <div className="terminal-panel-body">
               <SessionStage
                 session={visible}
+                sessionToken={sessionTokens.get(visible.id) ?? 0}
                 agents={agents}
                 access={access}
                 topologyAccess={topologyAccess}
@@ -918,10 +1045,10 @@ function GridContainer({
                 grants={grants}
                 closedChannels={closedChannels}
                 onUpdate={onUpdate}
-                onGrant={onGrant}
+                onRequestGrant={onRequestGrant}
                 onChannelClosed={onChannelClosed}
                 onReleaseChannel={onReleaseChannel}
-                onPlazaAgotada={onPlazaAgotada}
+                onReconciliarPlazas={onReconciliarPlazas}
               />
             </div>
           </div>
@@ -947,8 +1074,21 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   const [plazas, setPlazas] = useState<TerminalSessionListItem[]>([]);
   const [plazasAlaVista, setPlazasAlaVista] = useState(0);
   const [topeAlcanzado, setTopeAlcanzado] = useState(false);
+  const [motivoReconciliacionPlaza, setMotivoReconciliacionPlaza] = useState<MotivoReconciliacionPlaza>();
   const [revisandoPlazas, setRevisandoPlazas] = useState(false);
   const [cerrandoPlaza, setCerrandoPlaza] = useState<Record<string, true>>({});
+  const [errorPlazas, setErrorPlazas] = useState<string>();
+  /**
+   * Synchronous tab-incarnation fence. State updates are intentionally not the authority here:
+   * a 201 may resolve in the same turn as the click that closes its tab.
+   */
+  const sessionTokensRef = useRef(new Map<string, number>());
+  const nextSessionTokenRef = useRef(0);
+  const workspaceMountedRef = useRef(true);
+  /** One reservation attempt per logical tab, even while its visible SessionStage is unmounted. */
+  const terminalAttemptsRef = useRef(new Map<string, WorkspaceTerminalAttempt>());
+  /** Stable request/capability for exact retries during one logical tab incarnation. */
+  const terminalIntentsRef = useRef(new Map<string, WorkspaceTerminalIntent>());
 
   /*
    * 🔴 LA SESIÓN NO PUEDE SOBREVIVIR A LA VISTA QUE LA ABRIÓ.
@@ -967,29 +1107,46 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   grantsRef.current = grants;
   const apiRef = useRef(api);
   apiRef.current = api;
+  /** Sólo la lectura más nueva puede publicar estado; la inicial y la causal pueden solaparse. */
+  const revisionPlazasRef = useRef(0);
 
-  useEffect(() => () => {
-    for (const grant of Object.values(grantsRef.current)) {
-      closePtySession(grant.session_id, 'la vista de terminal se cerró');
-      // El DELETE puede fallar (la vista se está yendo); el socket local ya se cortó igual, y el
-      // relay cierra la fila del servidor en cuanto se le cae el navegador.
-      void deleteTerminalSession(grant.session_id, apiRef.current).catch(() => undefined);
-    }
+  useEffect(() => {
+    const sessionTokens = sessionTokensRef.current;
+    const terminalIntents = terminalIntentsRef.current;
+    workspaceMountedRef.current = true;
+    return () => {
+      workspaceMountedRef.current = false;
+      sessionTokens.clear();
+      terminalIntents.clear();
+      for (const grant of Object.values(grantsRef.current)) {
+        closePtySession(grant.session_id, 'la vista de terminal se cerró');
+        // El DELETE puede fallar (la vista se está yendo); el socket local ya se cortó igual, y el
+        // relay cierra la fila del servidor en cuanto se le cae el navegador.
+        void deleteTerminalSession(grant.session_id, grant, apiRef.current).catch(() => undefined);
+      }
+    };
   }, []);
 
   const revisarPlazas = useCallback(async () => {
+    const revision = ++revisionPlazasRef.current;
     setRevisandoPlazas(true);
     try {
       const items = await listTerminalSessions(apiRef.current);
+      if (revision !== revisionPlazasRef.current) return;
       const propias = Object.values(grantsRef.current).map((grant) => grant.session_id);
       const ocupadas = plazasOcupadas(items);
       const colgadas = plazasColgadas(items, propias);
       setPlazas(colgadas);
       setPlazasAlaVista(ocupadas.length - colgadas.length);
-    } catch {
-      // Que no se pueda leer el listado no puede tapar la vista: se deja como estaba.
+      setErrorPlazas(undefined);
+    } catch (error) {
+      if (revision !== revisionPlazasRef.current) return;
+      // El último inventario verificable puede seguir orientando, pero jamás se presenta como
+      // estado actual ni se convierte un fallo de lectura en «cero sesiones».
+      const detail = error instanceof Error ? error.message : 'El gateway no devolvió un inventario verificable.';
+      setErrorPlazas(`No se pudo verificar el inventario de sesiones PTY: ${detail}`);
     } finally {
-      setRevisandoPlazas(false);
+      if (revision === revisionPlazasRef.current) setRevisandoPlazas(false);
     }
   }, []);
 
@@ -998,9 +1155,19 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   async function cerrarPlaza(id: string) {
     setCerrandoPlaza((current) => ({ ...current, [id]: true }));
     try {
-      await deleteTerminalSession(id, apiRef.current);
+      const visible = plazas.find((item) => item.session_id === id);
+      if (!visible) throw new Error('la sesión ya no pertenece al inventario visible');
+      const ownerToken = terminalCapabilityUuid();
+      const owner = await rotateTerminalSessionOwner(
+        id,
+        { request_id: visible.request_id, owner_generation: visible.owner_generation },
+        ownerToken,
+        apiRef.current,
+      );
+      await deleteTerminalSession(id, owner, apiRef.current);
       setPlazas((current) => current.filter((item) => item.session_id !== id));
       setTopeAlcanzado(false);
+      setMotivoReconciliacionPlaza(undefined);
     } catch {
       // Se relee: si el servidor ya no la tiene, desaparece sola de la lista.
       await revisarPlazas();
@@ -1025,6 +1192,9 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
 
   function openAgent(agent: FleetAgent) {
     const id = sessionId(agent);
+    if (!sessionTokensRef.current.has(id)) {
+      sessionTokensRef.current.set(id, ++nextSessionTokenRef.current);
+    }
     const sourceRoomId = operatorRouteForAgent(topologyAccess, access, agent).sourceRoomIds[0] ?? '';
     setSessions((current) => {
       const existing = current.find((session) => session.id === id);
@@ -1035,20 +1205,113 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
     setActiveId(id);
   }
 
+  function requestTerminalGrant(
+    id: string,
+    sessionToken: number,
+    input: Omit<CreateTerminalSessionInput, 'request_id' | 'owner_token'>,
+  ): Promise<TerminalGrantRequestOutcome> {
+    if (!workspaceMountedRef.current || sessionTokensRef.current.get(id) !== sessionToken) {
+      return Promise.reject(new TerminalApiError(
+        'La pestaña que pidió el canal PTY ya no está abierta.', 409, 'stale_terminal_tab',
+      ));
+    }
+    const inputKey = terminalRequestInputKey(input);
+    let intent = terminalIntentsRef.current.get(id);
+    if (intent === undefined || intent.sessionToken !== sessionToken || intent.inputKey !== inputKey) {
+      intent = {
+        sessionToken,
+        inputKey,
+        requestId: terminalCapabilityUuid(),
+        ownerToken: terminalCapabilityUuid(),
+      };
+      terminalIntentsRef.current.set(id, intent);
+    }
+    const existing = terminalAttemptsRef.current.get(id);
+    if (existing && existing.sessionToken === sessionToken) {
+      if (existing.inputKey !== inputKey) {
+        return Promise.reject(new TerminalApiError(
+          'Ya hay otra reserva PTY en curso para esta pestaña.', 409, 'request_in_flight',
+        ));
+      }
+      // Re-mounting the same tab adopts the exact promise; it never emits another POST.
+      existing.subscribers.add(sessionToken);
+      return existing.promise;
+    }
+
+    const subscribers = new Set([sessionToken]);
+    const attemptId = Symbol('terminal-request-attempt');
+    const command: CreateTerminalSessionInput = {
+      ...input,
+      request_id: intent.requestId,
+      owner_token: intent.ownerToken,
+    };
+    const promise = createTerminalSession(command, apiRef.current).then(async (grant) => {
+      const currentToken = sessionTokensRef.current.get(id);
+      const canAdopt = workspaceMountedRef.current
+        && currentToken !== undefined
+        && subscribers.has(currentToken);
+      const governedElsewhere = () => Object.values(grantsRef.current)
+        .some((current) => current.session_id === grant.session_id);
+
+      if (!canAdopt) {
+        // A recovered lost-201 may name the same reservation a newer tab already governs. In that
+        // case DELETE would revoke the live tab; otherwise this exact validated grant is ours to
+        // compensate. Malformed payload IDs never reach this branch.
+        if (!governedElsewhere()) {
+          await deleteTerminalSession(grant.session_id, grant, apiRef.current).catch(() => undefined);
+        }
+        return { grant, adopted: false };
+      }
+
+      const current = grantsRef.current[id];
+      if (current && current.session_id !== grant.session_id) {
+        if (!governedElsewhere()) {
+          await deleteTerminalSession(grant.session_id, grant, apiRef.current).catch(() => undefined);
+        }
+        return { grant, adopted: false };
+      }
+      const next = { ...grantsRef.current, [id]: grant };
+      grantsRef.current = next;
+      setGrants(next);
+      setTopeAlcanzado(false);
+      setMotivoReconciliacionPlaza(undefined);
+      setClosedChannels((channels) => {
+        if (channels[id] === undefined) return channels;
+        const open = { ...channels };
+        delete open[id];
+        return open;
+      });
+      setSessions((currentSessions) => currentSessions.map((session) => session.id === id
+        ? { ...session, mode: 'pty', channelMode: input.mode, liveTuiAttempted: true }
+        : session));
+      return { grant, adopted: true };
+    }).finally(() => {
+      if (terminalAttemptsRef.current.get(id)?.id === attemptId) terminalAttemptsRef.current.delete(id);
+    });
+    // A closed-and-reopened alias has another sessionToken and therefore replaces the registry
+    // entry while the old promise finishes independently. Its continuation is fenced by both
+    // token and attempt id, so it can only compensate its own exact owner capability.
+    const attempt: WorkspaceTerminalAttempt = {
+      id: attemptId, sessionToken, inputKey, subscribers, promise,
+    };
+    terminalAttemptsRef.current.set(id, attempt);
+    return promise;
+  }
+
   async function releaseChannel(id: string) {
-    const grant = grants[id];
+    const grant = grantsRef.current[id];
     if (!grant) return;
+    const remaining = { ...grantsRef.current };
+    terminalIntentsRef.current.delete(id);
+    delete remaining[id];
+    grantsRef.current = remaining;
+    setGrants(remaining);
+    closePtySession(grant.session_id);
     try {
-      await deleteTerminalSession(grant.session_id, api);
+      await deleteTerminalSession(grant.session_id, grant, api);
     } catch {
       // The socket still has to go: a client-side failure must not leave a shell attached here.
     } finally {
-      closePtySession(grant.session_id);
-      setGrants((current) => {
-        const next = { ...current };
-        delete next[id];
-        return next;
-      });
       setClosedChannels((current) => {
         const next = { ...current };
         delete next[id];
@@ -1060,6 +1323,11 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   function closeSession(id: string) {
     // Cerrar una pestaña libera una plaza: el cartel del tope deja de tener razón de ser.
     setTopeAlcanzado(false);
+    setMotivoReconciliacionPlaza(undefined);
+    // Invalidate synchronously, before React commits the unmount. A late 201 cannot re-open this
+    // incarnation even if its promise continuation runs in the same event-loop turn.
+    sessionTokensRef.current.delete(id);
+    terminalIntentsRef.current.delete(id);
     const index = sessions.findIndex((session) => session.id === id);
     const next = sessions.filter((session) => session.id !== id);
     void releaseChannel(id);
@@ -1077,8 +1345,10 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
         items={plazas}
         aLaVista={plazasAlaVista}
         topeAlcanzado={topeAlcanzado}
+        motivo={motivoReconciliacionPlaza}
         revisando={revisandoPlazas}
         cerrando={cerrandoPlaza}
+        error={errorPlazas}
         onRevisar={() => { void revisarPlazas(); }}
         onCerrar={(id) => { void cerrarPlaza(id); }}
       />
@@ -1094,6 +1364,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
       />
       <GridContainer
         sessions={liveSessions}
+        sessionTokens={sessionTokensRef.current}
         activeId={activeId}
         agents={agents}
         access={access}
@@ -1105,10 +1376,14 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
         onActivate={setActiveId}
         onClose={closeSession}
         onUpdate={updateSession}
-        onGrant={(id, grant) => setGrants((current) => ({ ...current, [id]: grant }))}
+        onRequestGrant={requestTerminalGrant}
         onChannelClosed={(id) => setClosedChannels((current) => ({ ...current, [id]: true }))}
         onReleaseChannel={releaseChannel}
-        onPlazaAgotada={() => { setTopeAlcanzado(true); void revisarPlazas(); }}
+        onReconciliarPlazas={(motivo) => {
+          setTopeAlcanzado(true);
+          setMotivoReconciliacionPlaza(motivo);
+          void revisarPlazas();
+        }}
       />
       <aside className="terminal-control-inspector" aria-label="Estado del control plane">
         <AdapterInspector adapters={adapters} access={access} capability={terminalCapability} />

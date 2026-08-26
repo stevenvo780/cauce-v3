@@ -32,6 +32,7 @@ export interface Principal {
 
 export class AuthError extends Error {
   readonly code = 'unauthorized';
+  readonly statusCode = 401;
 
   constructor(message = 'authentication required') {
     super(message);
@@ -41,6 +42,7 @@ export class AuthError extends Error {
 
 export class AuthorizationError extends Error {
   readonly code = 'forbidden';
+  readonly statusCode = 403;
 
   constructor(message = 'insufficient permissions') {
     super(message);
@@ -157,6 +159,10 @@ export class DevOnlyAuthProvider implements AuthProvider {
       channel: 'dev',
       roles: this.configuredRoles ?? (localOperator ? ['operator'] : ['agent']),
       permissions: this.configuredPermissions ?? (localOperator ? ['route', 'read', 'control'] : ['route', 'read']),
+      // Development headers are never enabled in production.  Still model the one built-in
+      // interactive identity faithfully so policy tests do not have to confuse the operator role
+      // (authority) with a person actually sitting at the console (attribution).
+      ...(localOperator ? { operator_id: sessionId } : {}),
       origin: {
         adapter: 'dev-auth',
         channel: 'dev',

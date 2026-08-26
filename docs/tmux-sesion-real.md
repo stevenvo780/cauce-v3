@@ -1,17 +1,17 @@
 # La terminal y Telegram, una sola conversación
 
-**Qué está encendido hoy:** `kratos` (harness **claude**, contenedor `ws-humanizar`) y `socrates`
-(harness **codex**, contenedor `ws-prizma`). `argos` no se tocó.
+**Qué está encendido hoy:** `<agent-alias>` (harness **claude**, contenedor `<private-host>`) y `<agent-alias>`
+(harness **codex**, contenedor `<private-host>`). `<agent-alias>` no se tocó.
 
 ---
 
 ## El comando
 
 ```sh
-cauce kratos          # o: cauce socrates
+cauce <agent-alias>          # o: cauce <agent-alias>
 ```
 
-Eso es todo. Se ejecuta en **kratos** (es `~/.local/bin/cauce`).
+Eso es todo. Se ejecuta en **<agent-alias>** (es `~/.local/bin/cauce`).
 
 Para ver el estado de toda la flota, sin entrar a ninguno:
 
@@ -32,7 +32,7 @@ La columna **MODO** dice en cuál de los tres estados está cada alias:
 ## Qué vas a ver
 
 Al entrar te aparece **el binario de verdad**, no una imitación: el panel de Claude Code (o el de
-Codex), tu historial, y los `/comandos` funcionando dentro. Comprobado el 2026-07-30 con `/status`
+Codex), tu historial, y los `/comandos` funcionando dentro. Comprobado el <private-date> con `/status`
 en los dos: en claude abre el panel de Settings/Status con el ID de sesión, el modelo y los MCP; en
 codex abre su recuadro con el modelo, el directorio y la cuenta.
 
@@ -40,7 +40,7 @@ codex abre su recuadro con el modelo, el directorio y la cuenta.
 ver el pedido completo (con su bloque de contexto de entrega) y debajo la respuesta del agente, en
 el mismo hilo en el que vos escribís.
 
-Para salir **sin cerrarla**: `Ctrl-b d`. La sesión queda viva y el agente sigue atendiendo el bus.
+Para salir **sin cerrarla**: `<private-host> d`. La sesión queda viva y el agente sigue atendiendo el bus.
 
 ### Si algo se rompió mientras no mirabas
 
@@ -77,7 +77,7 @@ seguir el hilo **nuevo**, que es el que estás mirando.
 - **En codex, el app-server es punto único de fallo** para las dos puertas (tu TUI y el bus), y los
   dos subcomandos que usa están marcados `[experimental]` por OpenAI.
 - **Codex pide confirmación cuando hay actualización disponible** y se queda esperándola: la TUI no
-  llega a su caja de entrada hasta que alguien contesta ese diálogo. Si `cauce socrates` se queda
+  llega a su caja de entrada hasta que alguien contesta ese diálogo. Si `cauce <agent-alias>` se queda
   clavado al abrir, mirá el panel y elegí *Skip until next version*.
 - **Una segunda terminal más chica reflowea el panel para todos**: manda el cliente más pequeño.
 - **El acoplamiento de claude es por teclas.** Un rediseño de su caja de entrada lo rompe.
@@ -94,7 +94,7 @@ adaptador se comporta byte a byte como antes.
 
 ### 1. Apagar la sesión compartida de un alias
 
-En **kratos**, sobre `~/.config/cauce-v3/container-aliases/<alias>.env`, borrá estas dos líneas:
+En **<agent-alias>**, sobre `~/.config/cauce-v3/container-aliases/<alias>.env`, borrá estas dos líneas:
 
 ```
 SHARED_SESSION=1
@@ -112,10 +112,9 @@ Hay copias con fecha al lado de cada `.env` (`<alias>.env.bak-antes-tmux-*`).
 ### 2. Volver al bundle anterior
 
 ```sh
-# kratos y socrates estaban antes en:
-#   kratos   -> bus-v3-20260730-prompt-main
-#   socrates -> bus-v3-20260727-evidencia
-# con su BUNDLE_SHA256 correspondiente, que está en el .env.bak-antes-tmux-*
+# Los aliases afectados estaban antes en releases registrados en su backup privado.
+# Restaurar `RELEASE_DIR` y `BUNDLE_SHA256` exactamente desde cada `.env.bak-antes-tmux-*`;
+# no reconstruir esos valores desde memoria ni desde nombres de sesión.
 ```
 
 Copiá el `.bak` sobre el `.env` y reiniciá la unit. Los bundles viejos siguen todos en
@@ -127,9 +126,9 @@ Copiá el `.bak` sobre el `.env` y reiniciá la unit. Los bundles viejos siguen 
 ln -sfn "$(cat ~/.local/share/cauce-v3/.ops-anterior-antes-tmux)" ~/.local/share/cauce-v3/ops
 ```
 
-### 4. Sacar a kratos de Telegram otra vez
+### 4. Sacar a <agent-alias> de Telegram otra vez
 
-En **agora-storage**, `/etc/cauce-v3/prod.env`, quitar `,kratos` del final de
+En **<private-host>**, `/etc/cauce-v3/prod.env`, quitar `,<agent-alias>` del final de
 `CAUCE_TELEGRAM_ALIASES` y recrear el puente:
 
 ```sh
@@ -139,7 +138,7 @@ cd /opt/cauce-v3 && COMPOSE_PROFILES=observability,terminal,telegram docker comp
   up -d --force-recreate --no-deps telegram-bridge
 ```
 
-Hay copia con fecha: `/etc/cauce-v3/prod.env.bak-antes-kratos-telegram-*`.
+Hay copia con fecha: `/etc/cauce-v3/prod.env.bak-antes-<agent-alias>-telegram-*`.
 
 ---
 
@@ -151,7 +150,7 @@ Hay copia con fecha: `/etc/cauce-v3/prod.env.bak-antes-kratos-telegram-*`.
    differs` y `status=78/CONFIG`. Al construir un bundle: `chmod -R u=rX,go=rX` **antes** de calcular
    el digest.
 2. **El release de ops vivo NO es `main`.** Le habían quitado `ensure_claude_binary` porque su
-   versión fijada (2.1.218) ya no coincide con el binario del contenedor (2.1.220) y el arranque
+   versión fijada (<private-version>) ya no coincide con el binario del contenedor (<private-version>) y el arranque
    moría con exit 78, que además está en `RestartPreventExitStatus`. Un release de ops nuevo se
    construye **sobre el vivo**, no sobre el árbol del repo.
 3. **`tmux display-message` miente.** Si la ventana pedida no existe, cae a la ventana actual y

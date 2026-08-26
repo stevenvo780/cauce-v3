@@ -36,6 +36,9 @@ export function MutationBar({ runner, mutation, invalid, previewLabel }: {
         anuncie como alerta apenas carga la pantalla, y deja `alert` para lo que el servidor negó. */}
     {invalid ? <p className="notice" role="note">{invalid}</p> : null}
     {runner.preview ? <pre className="config-preview" aria-label={`Dry-run de ${previewLabel}`}>{runner.preview}</pre> : null}
-    {runner.notice ? <p className={runner.notice.tone === 'error' ? 'notice error' : 'notice success'} role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</p> : null}
+    {runner.notice ? <p
+      className={runner.notice.tone === 'error' ? 'notice error' : runner.notice.tone === 'parcial' ? 'notice parcial' : 'notice success'}
+      role={runner.notice.tone === 'success' ? 'status' : 'alert'}
+    >{runner.notice.text}</p> : null}
   </>;
 }

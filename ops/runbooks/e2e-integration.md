@@ -2,7 +2,11 @@
 
 ## Transporte real
 
-`pnpm test:e2e` y `ops/harness/runner.mjs --live` hablan HTTP/WS Fastify y PostgreSQL auténticos desde Testcontainers. Los clientes que anuncian Hermes/OpenCode/Claude/Codex siguen siendo **protocol doubles**: no ejecutan esas CLIs. El wrapper `run-testcontainers.sh` archiva sus reportes por corrida; esos reportes no son release evidence y nunca pisan `compose-authentic`.
+`pnpm test:e2e` y `ops/harness/runner.mjs --live` hablan HTTP/WS Fastify y PostgreSQL auténticos desde Testcontainers. Los clientes que anuncian Hermes/OpenCode/Claude/Codex siguen siendo **protocol doubles**: no ejecutan esas CLIs. El wrapper `run-testcontainers.sh` exige un Testcontainer real (rechaza el fallback `CAUCE_TEST_DATABASE_URL`), archiva sus reportes por corrida y los valida contra schema, SHA, digest runtime, digest del harness y RepoDigest/ID del PostgreSQL efectivamente levantado.
+
+Esos reportes son evidencia de ejecución de la aplicación desde `source-tree`; declaran
+`finalCauceImageExecuted=false` y nunca sustituyen `compose-authentic`, que es la evidencia de los
+binarios/imágenes finales. Tampoco pisan los directorios `compose-authentic` o `runtime-authentic`.
 
 ## Adapters y dobles
 

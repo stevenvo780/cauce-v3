@@ -11,11 +11,10 @@
 // Run: pnpm vitest run tests/terminal-pty/relay-contract.test.ts
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { X509Certificate } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { createServer, type TLSSocket, type Server as TlsServer } from 'node:tls';
@@ -39,12 +38,36 @@ const ALIAS = 'jarvis';
 const CONTAINER = 'claw';
 const GENERATION = 'gen-1';
 const IMAGE = 'sha256:deadbeef';
+const RELAY_BOOT_ID = '11111111-1111-4111-8111-111111111111';
+const RELAY_BOOT_ID_B = '22222222-2222-4222-8222-222222222222';
+const CLAIM_TOKEN = '12345678-1234-4234-8234-123456789abc';
 
 const aliasKey = deriveAliasKey(MASTER_KEY_B64, TENANT, ALIAS);
 const otherAliasKey = deriveAliasKey(MASTER_KEY_B64, TENANT, 'kant');
 const repoRoot = new URL('../../', import.meta.url);
 
 let tls: SelfSignedCert;
+let relayInstanceId = '';
+
+function identified(
+  body: Record<string, unknown> = {},
+  instanceId = relayInstanceId,
+  bootId = RELAY_BOOT_ID,
+): Record<string, unknown> {
+  return {
+    ...body,
+    relay_instance_id: instanceId,
+    relay_boot_id: bootId,
+  };
+}
+
+function claimed(ticket: string, claimToken = CLAIM_TOKEN, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return identified({ ticket, claim_token: claimToken, ...extra });
+}
+
+function authorized(claimToken = CLAIM_TOKEN, claimEpoch = '1'): Record<string, unknown> {
+  return identified({ claim_token: claimToken, claim_epoch: claimEpoch });
+}
 
 interface TicketOverrides {
   sid?: string;
@@ -206,6 +229,7 @@ class AgentLeg {
 
 beforeAll(() => {
   tls = createSelfSignedCert();
+  relayInstanceId = createHash('sha256').update(new X509Certificate(tls.cert).raw).digest('hex');
 });
 
 afterAll(() => {
@@ -220,65 +244,102 @@ describe('fake gateway: the /v3/terminal/relay contract', () => {
   });
 
   async function gatewayWith(options: Parameters<typeof startFakeGateway>[0] = {}): Promise<FakeGatewayHandle> {
-    const gateway = await startFakeGateway({ master_key_b64: MASTER_KEY_B64, relay_token: RELAY_TOKEN, ...options });
+    const gateway = await startFakeGateway({
+      master_key_b64: MASTER_KEY_B64,
+      relay_token: RELAY_TOKEN,
+      relay_instance_id: relayInstanceId,
+      ...options,
+    });
     gateways.push(gateway);
+    const presence = await callGateway(gateway, 'POST', '/v3/terminal/relay/agents', {
+      body: identified({ agents: [] }),
+    });
+    expect(presence).toEqual({
+      status: 200,
+      body: { ok: true, relay_instance_id: relayInstanceId, relay_boot_id: RELAY_BOOT_ID },
+    });
     return gateway;
   }
 
   it('rejects every endpoint without the relay bearer token', async () => {
     const gateway = await gatewayWith();
-    const registration = await callGateway(gateway, 'POST', '/v3/terminal/relay/agents', { body: {}, token: null });
+    const registration = await callGateway(gateway, 'POST', '/v3/terminal/relay/agents', {
+      body: identified({ agents: [] }), token: null,
+    });
     expect(registration.status).toBe(401);
-    const authz = await callGateway(gateway, 'GET', `/v3/terminal/relay/sessions/${randomUUID()}/authz`, { token: 'wrong' });
+    const authz = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${randomUUID()}/authz`, {
+      body: authorized(), token: 'wrong',
+    });
     expect(authz.status).toBe(401);
   });
 
   it('registers a granted agent and refuses one that is not in grants.json', async () => {
     const gateway = await gatewayWith({ grants: [`${TENANT}:${ALIAS}`] });
     const granted = await callGateway(gateway, 'POST', '/v3/terminal/relay/agents', {
-      body: { tenant_id: TENANT, alias: ALIAS, container_id: CONTAINER, generation: GENERATION, image_id: IMAGE, runtime_user: 'claw', runtime_uid: 1000, modes: ['shell'] },
+      body: identified({ agents: [{ tenant_id: TENANT, alias: ALIAS, container_id: CONTAINER, generation: GENERATION, image_id: IMAGE, runtime_user: 'claw', runtime_uid: 1000, modes: ['shell'] }] }),
     });
     expect(granted.status).toBe(200);
     expect(granted.body).toMatchObject({ ok: true });
 
     const denied = await callGateway(gateway, 'POST', '/v3/terminal/relay/agents', {
-      body: { tenant_id: 'Miguel', alias: 'kratos', container_id: 'kratos-ctr' },
+      body: identified({ agents: [{ tenant_id: 'Miguel', alias: 'kratos', container_id: 'kratos-ctr' }] }),
     });
     expect(denied.status).toBe(403);
     expect(denied.body).toMatchObject({ error: 'not_granted' });
   });
 
-  it('consumes a ticket exactly once: 200 then 409 on replay', async () => {
+  it('recovers an exact claim idempotently and rejects a competing live claim', async () => {
     const gateway = await gatewayWith();
     const payload = ticketPayload();
     const ticket = mintTicket(aliasKey, payload);
     const first = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, {
-      body: { ticket, cols: 120, rows: 32, reason: 'revisar el despliegue atrasado' },
+      body: claimed(ticket, CLAIM_TOKEN, { cols: 120, rows: 32, reason: 'revisar el despliegue atrasado' }),
     });
     expect(first.status).toBe(200);
-    expect(first.body).toMatchObject({ ok: true });
-    expect(first.body.session).toMatchObject({ alias: ALIAS, container_id: CONTAINER, runtime_user: 'claw', runtime_uid: 1000 });
+    expect(first.body).toMatchObject({
+      ok: true,
+      alias: ALIAS,
+      container: CONTAINER,
+      runtime_user: 'claw',
+      receipt_recovered: false,
+      claim_taken_over: false,
+      relay_instance_id: relayInstanceId,
+      relay_boot_id: RELAY_BOOT_ID,
+    });
 
-    const replay = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, { body: { ticket } });
+    const recovered = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, {
+      body: claimed(ticket),
+    });
+    expect(recovered.status).toBe(200);
+    expect(recovered.body).toMatchObject({
+      claim_token: CLAIM_TOKEN,
+      claim_epoch: '1',
+      receipt_recovered: true,
+      claim_taken_over: false,
+    });
+
+    const replay = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, {
+      body: claimed(ticket, randomUUID()),
+    });
     expect(replay.status).toBe(409);
-    expect(replay.body).toMatchObject({ error: 'ticket_already_consumed' });
+    expect(replay.body).toMatchObject({ error: 'claim_conflict' });
   });
 
   it('refuses a forged, expired or foreign-alias ticket at consume time', async () => {
     const gateway = await gatewayWith();
     const forged = ticketPayload();
     const forgedTicket = mintTicket(otherAliasKey, forged);
-    const forgedResponse = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${forged.sid}/consume`, { body: { ticket: forgedTicket } });
+    const forgedResponse = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${forged.sid}/consume`, { body: claimed(forgedTicket) });
     expect(forgedResponse.status).toBe(401);
     expect(forgedResponse.body).toMatchObject({ error: 'ticket_invalid', reason: 'bad_signature' });
 
     const stale = ticketPayload({ iat: 1_750_000_000, exp: 1_750_000_030 });
-    const staleResponse = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${stale.sid}/consume`, { body: { ticket: mintTicket(aliasKey, stale) } });
+    const staleResponse = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${stale.sid}/consume`, { body: claimed(mintTicket(aliasKey, stale)) });
     expect(staleResponse.status).toBe(401);
     expect(staleResponse.body).toMatchObject({ reason: 'ticket_expired' });
 
     const mismatched = ticketPayload();
-    const mismatchedResponse = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${randomUUID()}/consume`, { body: { ticket: mintTicket(aliasKey, mismatched) } });
+    const mismatchedResponse = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${randomUUID()}/consume`, { body: claimed(mintTicket(aliasKey, mismatched)) });
     expect(mismatchedResponse.status).toBe(401);
     expect(mismatchedResponse.body).toMatchObject({ reason: 'sid_mismatch' });
   });
@@ -288,7 +349,7 @@ describe('fake gateway: the /v3/terminal/relay contract', () => {
     const payload = ticketPayload({ tenant: 'Miguel', alias: 'kratos', container: 'kratos-ctr' });
     const foreignKey = deriveAliasKey(MASTER_KEY_B64, 'Miguel', 'kratos');
     const response = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, {
-      body: { ticket: mintTicket(foreignKey, payload) },
+      body: claimed(mintTicket(foreignKey, payload)),
     });
     expect(response.status).toBe(403);
     expect(response.body).toMatchObject({ error: 'attribution_required' });
@@ -297,27 +358,27 @@ describe('fake gateway: the /v3/terminal/relay contract', () => {
   it('flips authz to 403 revoked in flight and when grants.json is emptied', async () => {
     const gateway = await gatewayWith({ revoke_after_ms: 150 });
     const payload = ticketPayload();
-    await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, { body: { ticket: mintTicket(aliasKey, payload) } });
-    const live = await callGateway(gateway, 'GET', `/v3/terminal/relay/sessions/${payload.sid}/authz`);
+    await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, { body: claimed(mintTicket(aliasKey, payload)) });
+    const live = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/authz`, { body: authorized() });
     expect(live.status).toBe(200);
     expect(live.body).toMatchObject({ ok: true });
 
     await new Promise((resolve) => setTimeout(resolve, 250));
-    const afterRevoke = await callGateway(gateway, 'GET', `/v3/terminal/relay/sessions/${payload.sid}/authz`);
+    const afterRevoke = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/authz`, { body: authorized() });
     expect(afterRevoke.status).toBe(403);
     expect(afterRevoke.body).toMatchObject({ reason: 'revoked' });
 
     const other = ticketPayload();
-    await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${other.sid}/consume`, { body: { ticket: mintTicket(aliasKey, other) } });
+    await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${other.sid}/consume`, { body: claimed(mintTicket(aliasKey, other)) });
     gateway.setGrants([]); // this is what emptying grants.json looks like from the relay's side
-    const afterEmptyGrants = await callGateway(gateway, 'GET', `/v3/terminal/relay/sessions/${other.sid}/authz`);
+    const afterEmptyGrants = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${other.sid}/authz`, { body: authorized() });
     expect(afterEmptyGrants.status).toBe(403);
     expect(afterEmptyGrants.body).toMatchObject({ reason: 'revoked' });
   });
 
   it('answers 403 for an unknown session so a relay restart cannot resurrect a shell', async () => {
     const gateway = await gatewayWith();
-    const response = await callGateway(gateway, 'GET', `/v3/terminal/relay/sessions/${randomUUID()}/authz`);
+    const response = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${randomUUID()}/authz`, { body: authorized() });
     expect(response.status).toBe(403);
     expect(response.body).toMatchObject({ reason: 'unknown_session' });
   });
@@ -326,10 +387,10 @@ describe('fake gateway: the /v3/terminal/relay contract', () => {
     const gateway = await gatewayWith();
     const payload = ticketPayload();
     await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, {
-      body: { ticket: mintTicket(aliasKey, payload), reason: 'reiniciar el adaptador colgado' },
+      body: claimed(mintTicket(aliasKey, payload), CLAIM_TOKEN, { reason: 'reiniciar el adaptador colgado' }),
     });
     const closed = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/close`, {
-      body: { reason: 'operator_closed', exit_code: 0 },
+      body: identified({ reason: 'operator_closed', exit_code: 0, claim_token: CLAIM_TOKEN, claim_epoch: '1' }),
     });
     expect(closed.status).toBe(200);
 
@@ -345,9 +406,79 @@ describe('fake gateway: the /v3/terminal/relay contract', () => {
   it('becomes unreachable on demand so the relay can be tested fail-closed', async () => {
     const gateway = await gatewayWith();
     const payload = ticketPayload();
-    await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, { body: { ticket: mintTicket(aliasKey, payload) } });
+    await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, { body: claimed(mintTicket(aliasKey, payload)) });
     gateway.goDown();
-    await expect(callGateway(gateway, 'GET', `/v3/terminal/relay/sessions/${payload.sid}/authz`)).rejects.toThrow();
+    await expect(callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/authz`, { body: authorized() })).rejects.toThrow();
+  });
+
+  it('fences relay A, then lets relay B take over only after the database claim lease expires', async () => {
+    const relayB = 'b'.repeat(64);
+    const gateway = await gatewayWith({
+      relay_instance_ids: [relayInstanceId, relayB],
+      claim_lease_ms: 80,
+    });
+    const presenceB = await callGateway(gateway, 'POST', '/v3/terminal/relay/agents', {
+      body: identified({ agents: [] }, relayB, RELAY_BOOT_ID_B),
+    });
+    expect(presenceB.status).toBe(200);
+
+    const payload = ticketPayload();
+    const ticket = mintTicket(aliasKey, payload);
+    const admitted = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/consume`, {
+      body: claimed(ticket),
+    });
+    expect(admitted).toMatchObject({
+      status: 200,
+      body: { relay_instance_id: relayInstanceId, relay_boot_id: RELAY_BOOT_ID, claim_epoch: '1' },
+    });
+    const resumeToken = String(admitted.body.resume_token);
+    const claimB = randomUUID();
+    const premature = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/resume`, {
+      body: identified({ resume_token: resumeToken, claim_token: claimB }, relayB, RELAY_BOOT_ID_B),
+    });
+    expect(premature).toMatchObject({ status: 409, body: { error: 'claim_conflict' } });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const takeover = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/resume`, {
+      body: identified({ resume_token: resumeToken, claim_token: claimB }, relayB, RELAY_BOOT_ID_B),
+    });
+    expect(takeover).toMatchObject({
+      status: 200,
+      body: { relay_instance_id: relayB, relay_boot_id: RELAY_BOOT_ID_B, claim_epoch: '2' },
+    });
+
+    const staleA = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/authz`, {
+      body: authorized(),
+    });
+    expect(staleA).toMatchObject({ status: 403, body: { reason: 'claim_fenced' } });
+    const delayedCloseA = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/close`, {
+      body: identified({ reason: 'late A', exit_code: null, claim_token: CLAIM_TOKEN, claim_epoch: '1' }),
+    });
+    expect(delayedCloseA).toMatchObject({ status: 409, body: { error: 'claim_fenced' } });
+    const liveB = await callGateway(gateway, 'POST', `/v3/terminal/relay/sessions/${payload.sid}/authz`, {
+      body: identified({ claim_token: claimB, claim_epoch: '2' }, relayB, RELAY_BOOT_ID_B),
+    });
+    expect(liveB).toMatchObject({
+      status: 200,
+      body: { relay_instance_id: relayB, relay_boot_id: RELAY_BOOT_ID_B, claim_epoch: '2' },
+    });
+  });
+
+  it('rejects two live boot generations sharing one relay certificate and accepts restart only after staleness', async () => {
+    const gateway = await gatewayWith({ relay_presence_stale_ms: 250 });
+    const collision = await callGateway(gateway, 'POST', '/v3/terminal/relay/agents', {
+      body: identified({ agents: [] }, relayInstanceId, RELAY_BOOT_ID_B),
+    });
+    expect(collision).toMatchObject({ status: 409, body: { error: 'relay_boot_collision' } });
+
+    await new Promise((resolve) => setTimeout(resolve, 275));
+    const restart = await callGateway(gateway, 'POST', '/v3/terminal/relay/agents', {
+      body: identified({ agents: [] }, relayInstanceId, RELAY_BOOT_ID_B),
+    });
+    expect(restart).toEqual({
+      status: 200,
+      body: { ok: true, relay_instance_id: relayInstanceId, relay_boot_id: RELAY_BOOT_ID_B },
+    });
   });
 });
 
@@ -579,6 +710,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
   let process_: ChildProcess | null = null;
   let wsPort = 0;
   let agentPort = 0;
+  let healthPort = 0;
   let relayDirectory = '';
   let tokenFile = '';
   let registryFile = '';
@@ -594,6 +726,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     if (!relay) return;
     wsPort = 18_700 + Math.floor(Math.random() * 200);
     agentPort = wsPort + 1_000;
+    healthPort = agentPort + 1_000;
     writeFileSync(tokenFile, `${gateway.token}\n`);
     writeFileSync(registryFile, JSON.stringify({
       version: 1,
@@ -610,6 +743,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
         ...process.env,
         CAUCE_TERMINAL_RELAY_BROWSER_PORT: String(wsPort),
         CAUCE_TERMINAL_RELAY_AGENT_PORT: String(agentPort),
+        CAUCE_TERMINAL_RELAY_HEALTH_PORT: String(healthPort),
         CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: tls.cert_path,
         CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: tls.key_path,
         // The fixture is self-signed, so it is simultaneously the server cert, the trust
@@ -620,6 +754,9 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
         CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: registryFile,
         CAUCE_TERMINAL_GATEWAY_URL: gateway.url,
         CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile,
+        CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE: tls.cert_path,
+        CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE: tls.key_path,
+        CAUCE_TERMINAL_RELAY_INSTANCE_ID: relayInstanceId,
         // Keep durable-close state inside this run's throwaway directory.  Sharing the
         // production default in /tmp would make a prior interrupted test retry a foreign SID.
         CAUCE_TERMINAL_CLOSE_SPOOL_FILE: path.join(relayDirectory, 'close-reports.json'),
@@ -653,7 +790,8 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
   }
 
   function openBrowserSocket(): WebSocket {
-    const socket = new WebSocket(`wss://127.0.0.1:${wsPort}/v3/console/terminal/ws`,
+    const socket = new WebSocket(
+      `wss://127.0.0.1:${wsPort}/v3/console/terminal/relays/${relayInstanceId}/ws`,
       consoleClientOptions(tls, wsPort));
     sockets.push(socket);
     return socket;
@@ -666,7 +804,11 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     // The relay admits an agent by certificate fingerprint, so the registry has to name the
     // exact certificate the fake agent will present.
     agentFingerprint = new X509Certificate(tls.cert).fingerprint256;
-    gateway = await startFakeGateway({ master_key_b64: MASTER_KEY_B64, relay_token: RELAY_TOKEN });
+    gateway = await startFakeGateway({
+      master_key_b64: MASTER_KEY_B64,
+      relay_token: RELAY_TOKEN,
+      relay_instance_id: relayInstanceId,
+    });
     await startRelay();
   });
 
@@ -701,12 +843,36 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     const stream = collect(socket);
     await once(socket, 'open');
     socket.send(JSON.stringify({ type: 'attach', session_id: payload.sid, ticket: mintTicket(aliasKey, payload), cols: 120, rows: 32 }));
-    expect(await stream.nextControl()).toMatchObject({ type: 'ready' });
+    expect(await stream.nextControl()).toMatchObject({ type: 'ready', relay_instance_id: relayInstanceId });
     socket.send(JSON.stringify({ type: 'input', data: 'ping\r' }));
     expect(await stream.nextBinaryUntil((text) => text.includes('pong-1'))).toContain('pong-1');
     // Output is binary, control is text: the console relies on this separation.
     expect(stream.controlFramesWereAllText()).toBe(true);
     expect(stream.outputFramesWereAllBinary()).toBe(true);
+  });
+
+  it('returns HTTP 404 for another relay instance path before any ticket can be consumed', async () => {
+    const before = gateway.auditOf('terminal.session.consume').length;
+    const socket = new WebSocket(
+      `wss://127.0.0.1:${wsPort}/v3/console/terminal/relays/${'c'.repeat(64)}/ws`,
+      consoleClientOptions(tls, wsPort),
+    );
+    sockets.push(socket);
+    const status = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('wrong relay path did not answer')), 5_000);
+      socket.once('unexpected-response', (_request, response) => {
+        clearTimeout(timer);
+        response.resume();
+        resolve(response.statusCode ?? 0);
+      });
+      socket.once('open', () => {
+        clearTimeout(timer);
+        reject(new Error('wrong relay path unexpectedly upgraded'));
+      });
+      socket.on('error', () => undefined);
+    });
+    expect(status).toBe(404);
+    expect(gateway.auditOf('terminal.session.consume')).toHaveLength(before);
   });
 
   it('reconnects publicly to the same PTY, replays scrollback and gives one socket ownership', async () => {
@@ -721,8 +887,12 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     const ready = await firstStream.nextControl();
     expect(ready).toMatchObject({ type: 'ready', resumed: false, stream_offset: 0 });
     const resumeToken = ready.resume_token;
+    const priorClaimToken = ready.claim_token;
+    const priorClaimEpoch = ready.claim_epoch;
     expect(typeof resumeToken).toBe('string');
     expect(String(resumeToken).length).toBeGreaterThanOrEqual(80);
+    expect(String(priorClaimToken)).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(priorClaimEpoch).toBe('1');
     first.send(JSON.stringify({ type: 'input', data: 'ping\r' }));
     expect(await firstStream.nextBinaryUntil((text) => text.includes('pong-1'))).toContain('pong-1');
 
@@ -736,6 +906,7 @@ describe.skipIf(relay === null)('terminal-relay end to end: browser, relay, agen
     await Promise.all([once(resumed, 'open'), once(replay, 'open')]);
     const resumeFrame = JSON.stringify({
       type: 'resume', session_id: payload.sid, resume_token: resumeToken,
+      prior_claim_token: priorClaimToken, prior_claim_epoch: priorClaimEpoch,
       after_bytes: 0, cols: 100, rows: 30,
     });
     // Both public sockets race with the same reusable-in-grace credential.  The relay's
@@ -943,7 +1114,8 @@ async function waitForPort(port: number, material: SelfSignedCert, timeoutMs = 2
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const reachable = await new Promise<boolean>((resolve) => {
-      const probe = new WebSocket(`wss://127.0.0.1:${port}/v3/console/terminal/ws`,
+      const probe = new WebSocket(
+        `wss://127.0.0.1:${port}/v3/console/terminal/relays/${relayInstanceId}/ws`,
         consoleClientOptions(material, port));
       probe.once('open', () => { probe.close(); resolve(true); });
       probe.once('error', () => resolve(false));

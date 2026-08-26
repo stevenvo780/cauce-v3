@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AGENT_PRIORITY_CEILING, HUMAN_CHAT_PRIORITY, HUMAN_PRIORITY_FLOOR } from '@cauce/protocol';
+import {
+  AGENT_PRIORITY_CEILING, buildPublishReceipt, HUMAN_CHAT_PRIORITY, HUMAN_PRIORITY_FLOOR,
+  type PublishMessage,
+} from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 import { buildGateway, type GatewayRepository } from './app.js';
 import { DevOnlyAuthProvider } from './auth.js';
@@ -57,20 +60,22 @@ async function gateway(): Promise<{
       claimOutbox: vi.fn(async () => []),
       publish: vi.fn(async (input: {
         priority: number; tenant_id: string; actor_alias: string; request_id: string; trace_id: string;
+        idempotency_key: string;
       }) => {
         published.push({
           priority: input.priority,
           tenant_id: input.tenant_id,
           actor_alias: input.actor_alias
         });
-        return {
+        return buildPublishReceipt(input as PublishMessage, {
           message_id: '11111111-1111-4111-8111-111111111111',
           delivery_ids: ['22222222-2222-4222-8222-222222222222'],
           duplicate: false,
           request_id: input.request_id,
-          trace_id: input.trace_id
-        };
-      })
+          trace_id: input.trace_id,
+        });
+      }),
+      verifyPublishReceipt: vi.fn(async () => true),
     } as unknown as GatewayRepository,
     deliveryWakeSubscriber: async () => async () => undefined,
     exposeHealthRoutes: false,
@@ -85,7 +90,8 @@ async function publish(
   app: Awaited<ReturnType<typeof buildGateway>>,
   alias: string,
   priority: number,
-  path = '/v3/messages'
+  path = '/v3/messages',
+  lane: PublishMessage['lane'] = 'interactive',
 ): Promise<number> {
   const response = await app.inject({
     method: 'POST',
@@ -101,7 +107,7 @@ async function publish(
       recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
       body: { text: 'priority ceiling' },
       idempotency_key: `ceiling-${alias}-${priority}-${path}`,
-      lane: 'interactive',
+      lane,
       priority
     }
   });
@@ -154,13 +160,25 @@ describe('agent priority ceiling', () => {
     }));
   });
 
-  it('keeps the human band reachable by an operator principal', async () => {
-    // `Steven/kant` is the operator identity of the development provider. The operator role
-    // already replays deliveries and mutates configuration here; escalating a priority is
-    // strictly weaker than what it can otherwise do, so it keeps the full range.
+  it('does not let an attributed operator reserve the human band through machine publish routes', async () => {
     const { app, published } = await gateway();
     expect(await publish(app, 'kant', 100)).toBe(202);
-    expect(published[0]?.priority).toBe(100);
-    expect(published[0]?.priority).toBeGreaterThanOrEqual(HUMAN_CHAT_PRIORITY);
+    expect(await publish(app, 'kant', 100, '/v3/publish')).toBe(202);
+    expect(published.map((entry) => entry.priority)).toEqual([
+      AGENT_PRIORITY_CEILING, AGENT_PRIORITY_CEILING,
+    ]);
+  });
+
+  it('puts an authenticated console operator into the human band even when the UI requests 10', async () => {
+    const { app, published } = await gateway();
+    expect(await publish(app, 'kant', 10, '/v3/console/messages')).toBe(202);
+    expect(published[0]?.priority).toBe(HUMAN_CHAT_PRIORITY);
+    expect(published[0]?.priority).toBeGreaterThanOrEqual(HUMAN_PRIORITY_FLOOR);
+  });
+
+  it('does not reserve the human band for a batch publish on the console route', async () => {
+    const { app, published } = await gateway();
+    expect(await publish(app, 'kant', 100, '/v3/console/messages', 'batch')).toBe(202);
+    expect(published[0]?.priority).toBe(AGENT_PRIORITY_CEILING);
   });
 });

@@ -8,6 +8,7 @@ import { renderWithApi } from '../../test/render';
 import { PerfilTab } from './PerfilTab';
 
 const RUTA = 'http://localhost/v3/console/tenants/Steven/agents/kant/perfil';
+const RUTA_ACCESO = 'http://localhost/v3/console/access';
 const SHA = 'a'.repeat(64);
 
 function respuesta(exists: boolean, overrides: Partial<AgentPerfil> = {}): Omit<AgentPerfil, 'publicado'> {
@@ -15,13 +16,29 @@ function respuesta(exists: boolean, overrides: Partial<AgentPerfil> = {}): Omit<
   return {
     tenant_id: 'Steven', alias: 'kant', agent_enabled: true, exists, revision,
     applied_revision: revision, runtime_state: exists ? 'applied' : 'absent', harness: 'codex',
+    runtime_verification: exists ? {
+      state: 'current', generation: 'gen-4', container_id: 'ws-kant',
+      observed_at: '2026-08-26T00:00:00Z',
+      documents: [{
+        name: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md',
+        expected_sha: SHA, observed_sha: SHA, expected_bytes: 0, observed_bytes: 0,
+        current: true,
+      }],
+    } : null,
+    runtime_adoption: exists ? {
+      evidence: 'adapter_delivery', revision: revision!, generation: 'gen-4',
+      adopted_at: '2026-08-26T00:01:00Z',
+      documents: [{
+        name: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md', sha: SHA,
+      }],
+    } : null,
     perfil: {
       purpose: null, role_summary: null, human_brief: null,
       responsibilities: [], restrictions: [], tools: [], operating_rules: [],
     },
     limites: { purpose: 2_000, role_summary: 4_000, item: 1_000, items: 64, total: 24_000 },
     medida: { unidades: 0, tope: 24_000 },
-    base: 'fichero-vacio',
+    base: exists ? 'runtime-medido' : 'fichero-vacio',
     ficheros: [{ nombre: 'AGENTS.md', politica: 'bloque-gestionado', texto: '', unidades: 0 }],
     ...overrides,
   };
@@ -50,8 +67,15 @@ function ackAplicado(revision: number) {
     applied_revision: revision,
     acknowledgements: [{
       name: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md', state: 'written',
-      sha: SHA, bytes: 18,
+      sha: SHA, bytes: 18, generation: 'gen-4', container_id: 'ws-kant',
     }],
+    runtime_adoption: {
+      evidence: 'adapter_delivery', revision, generation: 'gen-4',
+      adopted_at: '2026-08-26T00:01:00Z',
+      documents: [{
+        name: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md', sha: SHA,
+      }],
+    },
   };
 }
 
@@ -68,6 +92,9 @@ async function casoDeGuardado(existeAlAbrir: boolean) {
       actual = {
         ...actual, exists: true, revision, applied_revision: revision,
         runtime_state: 'applied', perfil: body.profile,
+        runtime_adoption: {
+          ...actual.runtime_adoption!, revision,
+        },
       };
       return HttpResponse.json(ackAplicado(revision));
     }),
@@ -162,9 +189,78 @@ it('un 2xx sin ACK completo conserva el borrador y no dice aplicado', async () =
   expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeEnabled();
 });
 
-it('el arnés se presenta como declarado, nunca como medido', async () => {
+it('el arnés medido y la base viva se rotulan como tales', async () => {
   server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true))));
   renderWithApi(<Vista />);
-  expect(await screen.findByText(/Arnés declarado: codex/)).toBeInTheDocument();
-  expect(screen.queryByText(/Arnés medido/)).not.toBeInTheDocument();
+  expect(await screen.findByText(/Arnés medido: codex/)).toBeInTheDocument();
+  expect(screen.queryByText(/Arnés declarado/)).not.toBeInTheDocument();
+});
+
+it('permiso ausente o no acreditado bloquea caja y PUT', async () => {
+  let puts = 0;
+  server.use(
+    http.get(RUTA, () => HttpResponse.json(respuesta(true))),
+    http.get(RUTA_ACCESO, () => HttpResponse.json({ authenticated: true })),
+    http.put(RUTA, () => { puts += 1; return HttpResponse.json(ackAplicado(5)); }),
+  );
+  renderWithApi(<Vista />);
+
+  expect(await screen.findByLabelText(/Identidad y propósito/i)).toBeDisabled();
+  expect(screen.getByText(/No se pudo acreditar el permiso de escritura/)).toBeInTheDocument();
+  expect(puts).toBe(0);
+});
+
+it('drift se pinta rojo y permite restaurar el lote sin cambiar texto', async () => {
+  server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true, {
+    runtime_state: 'drifted',
+    runtime_verification: {
+      ...respuesta(true).runtime_verification!, state: 'drifted',
+      documents: respuesta(true).runtime_verification!.documents.map((document) => ({
+        ...document, observed_sha: 'b'.repeat(64), current: false,
+      })),
+    },
+  }))));
+  renderWithApi(<Vista />);
+
+  expect(await screen.findByRole('alert', { name: '' })).toHaveTextContent(/SHA medidos.*no coinciden/i);
+  expect(screen.getByRole('button', { name: /Reintentar aplicación/i })).toBeEnabled();
+});
+
+it('runtime sin generación no se presenta aplicado ni deja editar', async () => {
+  server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true, {
+    runtime_state: 'runtime_unverified',
+    runtime_verification: {
+      ...respuesta(true).runtime_verification!, state: 'unverified', generation: null,
+    },
+  }))));
+  renderWithApi(<Vista />);
+
+  expect(await screen.findByLabelText(/Identidad y propósito/i)).toBeDisabled();
+  expect(screen.getByText(/no publicó una generación acreditable/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeDisabled();
+});
+
+it('ACK de disco sin adopción de TUI queda pendiente y no dice aplicado', async () => {
+  let actual = respuesta(true);
+  server.use(
+    http.get(RUTA, () => HttpResponse.json(actual)),
+    http.put(RUTA, () => {
+      actual = {
+        ...actual, revision: 5, applied_revision: 4,
+        runtime_state: 'pending_session_refresh', runtime_adoption: null,
+      };
+      return HttpResponse.json({
+        ...ackAplicado(5), state: 'pending_session_refresh', applied_revision: 4,
+        runtime_adoption: null,
+      }, { status: 202 });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithApi(<Vista />);
+  const caja = await screen.findByLabelText(/Identidad y propósito/i);
+  await user.type(caja, 'todavía pendiente');
+  await user.click(screen.getByRole('button', { name: /Guardar y aplicar perfil/i }));
+
+  expect(await screen.findByText(/sesión compartida.*no acreditó recibir/i)).toBeInTheDocument();
+  expect(screen.queryByText(/^Aplicado:/)).not.toBeInTheDocument();
 });

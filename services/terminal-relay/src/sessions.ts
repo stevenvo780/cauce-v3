@@ -1,10 +1,20 @@
 import {
-  closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync
+  closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync
 } from 'node:fs';
 import { dirname } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import type { RawData, WebSocket } from 'ws';
 import type { AgentConnection } from './agent-leg.js';
-import type { SessionCloseReport, TerminalGatewayClient, TerminalSessionGrant } from './gateway-client.js';
+import {
+  CLAIM_DEADLINE_SAFETY_MARGIN_MS,
+  DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
+  MAX_CLAIM_LEASE_MS,
+  claimEpoch,
+  isClaimToken,
+  type SessionCloseReport,
+  type TerminalGatewayClient,
+  type TerminalSessionGrant,
+} from './gateway-client.js';
 import { errorLabel, logEvent } from './log.js';
 
 /**
@@ -62,6 +72,8 @@ export interface SessionLimits {
   readonly maxSessions: number;
   readonly authzIntervalMs: number;
   readonly authzGraceMs: number;
+  /** Configured nominal gateway lease; production rejects rollout skew instead of guessing. */
+  readonly expectedClaimLeaseMs?: number;
   readonly reconnectGraceMs?: number;
   readonly openTimeoutMs?: number;
   /** Test seam only; production accounts output in the one-second windows of the contract. */
@@ -81,6 +93,8 @@ export interface OpenSessionInput {
   readonly agent: AgentConnection;
   readonly cols: number;
   readonly rows: number;
+  /** Monotonic instant immediately before the claim-bearing gateway request began. */
+  readonly claimRequestStartedAt?: number;
   /** Client frames that arrived while the gateway was being consulted. */
   readonly queued?: readonly QueuedClientMessage[];
 }
@@ -91,6 +105,8 @@ export interface ReattachSessionInput {
   readonly grant: TerminalSessionGrant;
   readonly cols: number;
   readonly rows: number;
+  /** Monotonic instant immediately before the exact-fence renewal began. */
+  readonly claimRequestStartedAt?: number;
   /** Number of PTY output bytes the browser already received before the transport broke. */
   readonly afterBytes: number;
   readonly queued?: readonly QueuedClientMessage[];
@@ -244,14 +260,43 @@ export interface SessionManagerOptions {
   readonly gateway: TerminalGatewayClient;
   readonly limits: SessionLimits;
   readonly now?: () => number;
+  /** Monotonic clock used only for ownership-lease deadlines. */
+  readonly monotonicNow?: () => number;
   /** Atomic disk spool for close reports. Omit only in unit tests. */
   readonly closeSpoolFile?: string;
+}
+
+/**
+ * A lease must outlive one complete failed revalidation cycle, its fail-closed grace and the
+ * gateway timeout, with a final margin in which the local PTY is guaranteed to die before a
+ * different relay can take the row over. The nominal TTL is used for this configuration check;
+ * the remaining lease is separately checked for each response.
+ */
+export function claimLeaseContractSatisfied(
+  grant: TerminalSessionGrant,
+  limits: SessionLimits,
+): boolean {
+  return isClaimToken(grant.claim_token)
+    && claimEpoch(grant.claim_epoch) !== undefined
+    && Number.isSafeInteger(grant.claim_lease_ms)
+    && grant.claim_lease_ms > CLAIM_DEADLINE_SAFETY_MARGIN_MS
+    && grant.claim_lease_ms <= MAX_CLAIM_LEASE_MS
+    && claimLeaseTtlSatisfied(grant.claim_lease_ttl_ms, limits)
+    && grant.claim_lease_ms <= grant.claim_lease_ttl_ms;
+}
+
+function claimLeaseTtlSatisfied(ttlMs: number, limits: SessionLimits): boolean {
+  const requiredMs = limits.authzIntervalMs + limits.authzGraceMs
+    + DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS + CLAIM_DEADLINE_SAFETY_MARGIN_MS;
+  return Number.isSafeInteger(ttlMs) && ttlMs > requiredMs && ttlMs <= MAX_CLAIM_LEASE_MS
+    && (limits.expectedClaimLeaseMs === undefined || ttlMs === limits.expectedClaimLeaseMs);
 }
 
 export class SessionManager {
   private readonly gateway: TerminalGatewayClient;
   private readonly limits: SessionLimits;
   private readonly now: () => number;
+  private readonly monotonicNow: () => number;
   private readonly sessions = new Map<string, TerminalSession>();
   private readonly containers = new Map<string, string>();
   private readonly scrollback = new Map<string, ScrollbackEntry>();
@@ -263,6 +308,7 @@ export class SessionManager {
     this.gateway = options.gateway;
     this.limits = options.limits;
     this.now = options.now ?? Date.now;
+    this.monotonicNow = options.monotonicNow ?? (() => performance.now());
     this.closeSpoolFile = options.closeSpoolFile;
     this.loadCloseSpool();
     for (const [sessionId, report] of this.spooledReports) this.startCloseReport(sessionId, report);
@@ -277,31 +323,75 @@ export class SessionManager {
     return this.containers.has(containerKey(container));
   }
 
+  /** Exact local ownership check; unlike the container index it cannot confuse a replay with a peer. */
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
+  }
+
+  /** Raw fence stays private to the local relay; browser-provided copies are never authority. */
+  claimForSession(sessionId: string): { readonly token: string; readonly epoch: string } | undefined {
+    return this.sessions.get(sessionId)?.claimFence();
+  }
+
   async open(input: OpenSessionInput): Promise<void> {
     this.pruneScrollback();
+    // A recovered consume receipt can arrive while the first attach already owns this sid. The
+    // duplicate never owned a local PTY, so reporting `/close` here would tear down the winner.
+    if (this.sessions.has(input.sessionId)) {
+      closeSocket(input.socket, CLOSE_CODES.session_conflict, 'session_conflict');
+      logEvent('terminal_relay_session_rejected', {
+        session_id: input.sessionId,
+        reason: 'session_already_active',
+      });
+      return;
+    }
+    if (!claimLeaseContractSatisfied(input.grant, this.limits)) {
+      closeSocket(input.socket, CLOSE_CODES.revoked, 'claim_lease_invalid');
+      if (isClaimToken(input.grant.claim_token) && claimEpoch(input.grant.claim_epoch) !== undefined) {
+        this.reportConsumedClose(input.sessionId, 'claim_lease_invalid', input.grant);
+      }
+      logEvent('terminal_relay_session_rejected', {
+        session_id: input.sessionId,
+        reason: 'claim_lease_invalid',
+      });
+      return;
+    }
     if (this.sessions.size >= this.limits.maxSessions) {
       closeSocket(input.socket, CLOSE_CODES.session_conflict, 'session_limit');
-      this.reportConsumedClose(input.sessionId, 'session_limit');
+      this.reportConsumedClose(input.sessionId, 'session_limit', input.grant);
       logEvent('terminal_relay_session_rejected', { session_id: input.sessionId, reason: 'session_limit' });
       return;
     }
     const container = containerKey(input.grant.container);
-    if (this.sessions.has(input.sessionId) || this.containers.has(container)) {
+    if (this.containers.has(container)) {
       closeSocket(input.socket, CLOSE_CODES.session_conflict, 'session_conflict');
-      this.reportConsumedClose(input.sessionId, 'session_conflict');
+      this.reportConsumedClose(input.sessionId, 'session_conflict', input.grant);
       logEvent('terminal_relay_session_rejected', { session_id: input.sessionId, reason: 'session_conflict' });
       return;
     }
-    const session = new TerminalSession(this, this.gateway, this.limits, this.now, input);
+    const session = new TerminalSession(
+      this, this.gateway, this.limits, this.now, this.monotonicNow, input,
+    );
     this.sessions.set(input.sessionId, session);
     this.containers.set(container, input.sessionId);
-    await session.start(input.queued ?? []);
+    try {
+      await session.start(input.queued ?? []);
+    } catch (error) {
+      // `TerminalSession` handles protocol/open failures internally. This guard covers an
+      // unexpected synchronous collaborator failure after the manager acquired both indexes.
+      logEvent('terminal_relay_session_start_failed', {
+        session_id: input.sessionId,
+        error: errorLabel(error),
+      });
+      session.terminate(CLOSE_CODES.internal_error, 'open_failed');
+    }
   }
 
   /** Rebinds a new browser transport to the PTY that is still alive behind the relay. */
   reattach(input: ReattachSessionInput): boolean {
     const session = this.sessions.get(input.sessionId);
-    if (!session || !session.matchesGrant(input.grant)) return false;
+    if (!session || !claimLeaseContractSatisfied(input.grant, this.limits)
+        || !session.matchesGrant(input.grant)) return false;
     return session.reattach(input);
   }
 
@@ -325,8 +415,15 @@ export class SessionManager {
   }
 
   /** Cierra la fila de un ticket consumido que no alcanzó a convertirse en `TerminalSession`. */
-  reportConsumedClose(sessionId: string, reason: string): void {
-    const report: SessionCloseReport = { reason, exit_code: null, bytes_in: 0, bytes_out: 0 };
+  reportConsumedClose(sessionId: string, reason: string, grant: TerminalSessionGrant): void {
+    const report: SessionCloseReport = {
+      reason,
+      exit_code: null,
+      bytes_in: 0,
+      bytes_out: 0,
+      claim_token: grant.claim_token,
+      claim_epoch: grant.claim_epoch,
+    };
     this.enqueueCloseReport(sessionId, report);
   }
 
@@ -410,26 +507,40 @@ export class SessionManager {
       throw new Error('terminal close report spool is invalid');
     }
     const document = parsed as Record<string, unknown>;
-    if (document.version !== 1 || !Array.isArray(document.reports) || document.reports.length > 10_000) {
+    const version = document.version;
+    if ((version !== 1 && version !== 2) || !Array.isArray(document.reports)
+        || document.reports.length > 10_000) {
       throw new Error('terminal close report spool has an unsupported shape');
+    }
+    if (version === 2 && (statSync(path).mode & 0o077) !== 0) {
+      throw new Error('terminal close report spool containing claim fences must be mode 0600');
     }
     for (const item of document.reports) {
       if (item === null || typeof item !== 'object' || Array.isArray(item)) {
         throw new Error('terminal close report spool contains an invalid report');
       }
       const record = item as Record<string, unknown>;
+      const rawClaimToken = record.claim_token;
+      const rawClaimEpoch = record.claim_epoch;
+      const hasClaim = rawClaimToken !== undefined || rawClaimEpoch !== undefined;
       if (typeof record.session_id !== 'string' || typeof record.reason !== 'string' ||
           (record.exit_code !== null &&
             (typeof record.exit_code !== 'number' || !Number.isSafeInteger(record.exit_code))) ||
           typeof record.bytes_in !== 'number' || !Number.isSafeInteger(record.bytes_in) || record.bytes_in < 0 ||
-          typeof record.bytes_out !== 'number' || !Number.isSafeInteger(record.bytes_out) || record.bytes_out < 0) {
+          typeof record.bytes_out !== 'number' || !Number.isSafeInteger(record.bytes_out) || record.bytes_out < 0 ||
+          (version === 1 && hasClaim) ||
+          (version === 2 && hasClaim
+            && (!isClaimToken(rawClaimToken) || claimEpoch(rawClaimEpoch) === undefined))) {
         throw new Error('terminal close report spool contains invalid fields');
       }
       this.spooledReports.set(record.session_id, {
         reason: record.reason,
         exit_code: record.exit_code,
         bytes_in: record.bytes_in,
-        bytes_out: record.bytes_out
+        bytes_out: record.bytes_out,
+        ...(version === 2 && hasClaim
+          ? { claim_token: rawClaimToken as string, claim_epoch: rawClaimEpoch as string }
+          : {}),
       });
     }
   }
@@ -441,7 +552,7 @@ export class SessionManager {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.tmp`;
     const body = Buffer.from(`${JSON.stringify({
-      version: 1,
+      version: 2,
       reports: [...this.spooledReports].map(([session_id, report]) => ({ session_id, ...report }))
     })}\n`, 'utf8');
     try {
@@ -486,9 +597,12 @@ export class TerminalSession {
   private readonly gateway: TerminalGatewayClient;
   private readonly limits: SessionLimits;
   private readonly now: () => number;
+  private readonly monotonicNow: () => number;
   private socket: WebSocket | undefined;
   private readonly agent: AgentConnection;
   private readonly grant: TerminalSessionGrant;
+  private readonly claimToken: string;
+  private readonly claimEpochValue: string;
   private readonly sessionId: string;
   private readonly ticket: string;
   private resumeToken: string;
@@ -518,6 +632,9 @@ export class TerminalSession {
   private drainTimer: NodeJS.Timeout | undefined;
   private openTimer: NodeJS.Timeout | undefined;
   private reconnectTimer: NodeJS.Timeout | undefined;
+  private claimDeadlineTimer: NodeJS.Timeout | undefined;
+  private claimLeaseExpiresAt = 0;
+  private claimDeadlineAt = 0;
   private settleOpen: ((opened: boolean) => void) | undefined;
 
   constructor(
@@ -525,15 +642,19 @@ export class TerminalSession {
     gateway: TerminalGatewayClient,
     limits: SessionLimits,
     now: () => number,
+    monotonicNow: () => number,
     input: OpenSessionInput
   ) {
     this.manager = manager;
     this.gateway = gateway;
     this.limits = limits;
     this.now = now;
+    this.monotonicNow = monotonicNow;
     this.socket = input.socket;
     this.agent = input.agent;
     this.grant = input.grant;
+    this.claimToken = input.grant.claim_token;
+    this.claimEpochValue = input.grant.claim_epoch;
     this.sessionId = input.sessionId;
     this.ticket = input.ticket;
     this.resumeToken = input.grant.resume_token;
@@ -543,12 +664,21 @@ export class TerminalSession {
     this.expiresAtMs = Date.parse(input.grant.session_expires_at);
     this.lastAuthzOkAt = now();
     this.scrollback = manager.scrollbackFor(input.sessionId, this.expiresAtMs);
+    this.updateClaimLease(
+      input.grant.claim_lease_ms,
+      input.grant.claim_lease_ttl_ms,
+      input.claimRequestStartedAt ?? monotonicNow(),
+    );
   }
 
   async start(queued: readonly QueuedClientMessage[]): Promise<void> {
     const socket = this.socket;
     if (socket === undefined) {
       this.terminate(CLOSE_CODES.internal_error, 'browser_socket_missing');
+      return;
+    }
+    if (!this.claimIsLive()) {
+      this.terminate(CLOSE_CODES.revoked, 'claim_lease_expired');
       return;
     }
     // El browser pudo cerrar entre el consume y este listener. Como el evento ya pasó, el estado
@@ -606,12 +736,24 @@ export class TerminalSession {
     return grant.tenant_id === this.grant.tenant_id && grant.alias === this.grant.alias &&
       grant.container === this.grant.container && grant.runtime_user === this.grant.runtime_user &&
       grant.mode === this.grant.mode && grant.operator_id === this.grant.operator_id &&
-      grant.session_expires_at === this.grant.session_expires_at;
+      grant.session_expires_at === this.grant.session_expires_at &&
+      grant.claim_token === this.claimToken && grant.claim_epoch === this.claimEpochValue &&
+      grant.relay_instance_id === this.grant.relay_instance_id &&
+      grant.relay_boot_id === this.grant.relay_boot_id;
+  }
+
+  claimFence(): { readonly token: string; readonly epoch: string } {
+    return { token: this.claimToken, epoch: this.claimEpochValue };
   }
 
   reattach(input: ReattachSessionInput): boolean {
     if (this.closed || this.socket !== undefined || !Number.isSafeInteger(input.afterBytes) || input.afterBytes < 0 ||
         input.afterBytes > this.bytesOut) return false;
+    if (!this.updateClaimLease(
+      input.grant.claim_lease_ms,
+      input.grant.claim_lease_ttl_ms,
+      input.claimRequestStartedAt ?? this.monotonicNow(),
+    )) return false;
     this.socket = input.socket;
     this.resumeToken = input.grant.resume_token;
     this.cols = input.cols;
@@ -684,7 +826,11 @@ export class TerminalSession {
       expires_at: this.grant.session_expires_at,
       resumed,
       stream_offset: streamOffset,
-      resume_token: this.resumeToken
+      resume_token: this.resumeToken,
+      claim_token: this.claimToken,
+      claim_epoch: this.claimEpochValue,
+      claim_lease_ms: Math.max(1, Math.floor(this.claimLeaseExpiresAt - this.monotonicNow())),
+      relay_instance_id: this.grant.relay_instance_id,
     });
   }
 
@@ -711,7 +857,9 @@ export class TerminalSession {
       reason,
       exit_code: this.exitCode,
       bytes_in: this.bytesIn,
-      bytes_out: this.bytesOut
+      bytes_out: this.bytesOut,
+      claim_token: this.claimToken,
+      claim_epoch: this.claimEpochValue,
     };
     this.manager.enqueueCloseReport(this.sessionId, report);
     logEvent('terminal_relay_session_closed', {
@@ -971,14 +1119,28 @@ export class TerminalSession {
   private async revalidate(): Promise<void> {
     if (this.closed || this.authzInFlight) return;
     this.authzInFlight = true;
+    const requestStartedAt = this.monotonicNow();
     try {
-      const outcome = await this.gateway.authorizeSession(this.sessionId);
+      const outcome = await this.gateway.authorizeSession(
+        this.sessionId,
+        this.claimToken,
+        this.claimEpochValue,
+      );
       if (this.closed) return;
-      if (outcome === 'allow') {
+      if (outcome.status === 'allow') {
+        if (outcome.claim_epoch !== this.claimEpochValue
+            || !this.updateClaimLease(
+              outcome.claim_lease_ms,
+              outcome.claim_lease_ttl_ms,
+              requestStartedAt,
+            )) {
+          this.terminate(CLOSE_CODES.revoked, 'claim_lease_invalid');
+          return;
+        }
         this.lastAuthzOkAt = this.now();
         return;
       }
-      if (outcome === 'revoked') {
+      if (outcome.status === 'revoked') {
         this.terminate(CLOSE_CODES.revoked, 'revoked');
         return;
       }
@@ -1033,6 +1195,7 @@ export class TerminalSession {
     if (this.drainTimer) clearInterval(this.drainTimer);
     if (this.openTimer) clearTimeout(this.openTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.claimDeadlineTimer) clearTimeout(this.claimDeadlineTimer);
     this.stdinTimer = undefined;
     this.idleTimer = undefined;
     this.ttlTimer = undefined;
@@ -1041,5 +1204,35 @@ export class TerminalSession {
     this.drainTimer = undefined;
     this.openTimer = undefined;
     this.reconnectTimer = undefined;
+    this.claimDeadlineTimer = undefined;
+  }
+
+  /**
+   * Converts a DB-derived remaining lease to a process-monotonic hard deadline. The request start,
+   * not response receipt, is the base: a slow response can only shorten the usable lease.
+   */
+  private updateClaimLease(remainingMs: number, ttlMs: number, requestStartedAt: number): boolean {
+    const now = this.monotonicNow();
+    if (!Number.isFinite(requestStartedAt) || requestStartedAt > now
+        || !Number.isSafeInteger(remainingMs)
+        || remainingMs <= CLAIM_DEADLINE_SAFETY_MARGIN_MS
+        || !claimLeaseTtlSatisfied(ttlMs, this.limits)
+        || remainingMs > ttlMs) return false;
+    const expiresAt = requestStartedAt + remainingMs;
+    const deadlineAt = expiresAt - CLAIM_DEADLINE_SAFETY_MARGIN_MS;
+    if (!Number.isFinite(deadlineAt) || deadlineAt <= now) return false;
+    this.claimLeaseExpiresAt = expiresAt;
+    this.claimDeadlineAt = deadlineAt;
+    if (this.claimDeadlineTimer) clearTimeout(this.claimDeadlineTimer);
+    this.claimDeadlineTimer = setTimeout(() => {
+      this.claimDeadlineTimer = undefined;
+      this.terminate(CLOSE_CODES.revoked, 'claim_lease_expired');
+    }, Math.max(0, deadlineAt - now));
+    this.claimDeadlineTimer.unref?.();
+    return true;
+  }
+
+  private claimIsLive(): boolean {
+    return this.claimDeadlineAt > this.monotonicNow();
   }
 }

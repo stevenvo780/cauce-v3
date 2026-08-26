@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cauce.invalid/schemas/build-evidence.schema.json",
   "title": "Cauce V3 immutable release build evidence",
-  "description": "schemaVersion 5 binds a committed git-archive RC with clean tracked/index state and one exact excluded operator-scratch prefix to registry-recoverable runtime and console digests, per-image source domains, and final-image packaging smoke.",
+  "description": "schemaVersion 7 binds a committed git-archive RC with clean tracked/index state and one exact excluded operator-scratch prefix to registry-recoverable linux/amd64 runtime and console child manifests, immutable role-specific Node/Python/nginx child manifests, per-image source domains, a multi-intent console journal capability, provenance labels, and final-image packaging smoke.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,13 +17,14 @@
     "dockerfileSha256",
     "dockerignoreSha256",
     "sourceRevision",
+    "baseImages",
     "runtime",
     "console",
     "runtimePackage",
     "schemaCompatibility"
   ],
   "properties": {
-    "schemaVersion": { "const": 5 },
+    "schemaVersion": { "const": 7 },
     "evidenceClass": { "const": "release-build" },
     "mechanism": { "const": "docker-build-push-pull-final-image" },
     "imageDigest": { "$ref": "#/$defs/digest" },
@@ -37,6 +38,7 @@
     "dockerfileSha256": { "$ref": "#/$defs/digest" },
     "dockerignoreSha256": { "$ref": "#/$defs/digest" },
     "sourceRevision": { "$ref": "#/$defs/sourceRevision" },
+    "baseImages": { "$ref": "#/$defs/baseImages" },
     "runtime": { "$ref": "#/$defs/runtimeImage" },
     "console": { "$ref": "#/$defs/consoleImage" },
     "runtimePackage": { "$ref": "#/$defs/runtimePackage" },
@@ -50,6 +52,21 @@
     "imageReference": {
       "type": "string",
       "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$"
+    },
+    "manifestMediaType": {
+      "enum": [
+        "application/vnd.docker.distribution.manifest.v2+json",
+        "application/vnd.oci.image.manifest.v1+json"
+      ]
+    },
+    "linuxAmd64Platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": { "const": "linux" },
+        "architecture": { "const": "amd64" }
+      }
     },
     "gitObject": {
       "type": "string",
@@ -77,15 +94,65 @@
         "finishedAt": { "type": "string", "format": "date-time" }
       }
     },
+    "baseImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "repositoryDigest", "manifestDigest", "mediaType", "platform", "imageId"],
+      "properties": {
+        "role": { "enum": ["node", "python", "nginx"] },
+        "repositoryDigest": { "$ref": "#/$defs/imageReference" },
+        "manifestDigest": { "$ref": "#/$defs/digest" },
+        "mediaType": { "$ref": "#/$defs/manifestMediaType" },
+        "platform": { "$ref": "#/$defs/linuxAmd64Platform" },
+        "imageId": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "baseImages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node", "python", "nginx"],
+      "properties": {
+        "node": {
+          "allOf": [
+            { "$ref": "#/$defs/baseImage" },
+            { "properties": {
+              "role": { "const": "node" },
+              "repositoryDigest": { "pattern": "^docker\\.io/library/node@sha256:[a-f0-9]{64}$" }
+            } }
+          ]
+        },
+        "python": {
+          "allOf": [
+            { "$ref": "#/$defs/baseImage" },
+            { "properties": {
+              "role": { "const": "python" },
+              "repositoryDigest": { "pattern": "^docker\\.io/library/python@sha256:[a-f0-9]{64}$" }
+            } }
+          ]
+        },
+        "nginx": {
+          "allOf": [
+            { "$ref": "#/$defs/baseImage" },
+            { "properties": {
+              "role": { "const": "nginx" },
+              "repositoryDigest": { "pattern": "^docker\\.io/nginxinc/nginx-unprivileged@sha256:[a-f0-9]{64}$" }
+            } }
+          ]
+        }
+      }
+    },
     "runtimeImage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tag", "imageId", "imageDigest", "repositoryDigest", "sourceDigest", "sourceDigestDomain"],
+      "required": ["tag", "imageId", "imageDigest", "repositoryDigest", "manifestDigest", "mediaType", "platform", "sourceDigest", "sourceDigestDomain"],
       "properties": {
         "tag": { "type": "string", "minLength": 1 },
         "imageId": { "$ref": "#/$defs/digest" },
         "imageDigest": { "$ref": "#/$defs/digest" },
         "repositoryDigest": { "$ref": "#/$defs/imageReference" },
+        "manifestDigest": { "$ref": "#/$defs/digest" },
+        "mediaType": { "$ref": "#/$defs/manifestMediaType" },
+        "platform": { "$ref": "#/$defs/linuxAmd64Platform" },
         "sourceDigest": { "$ref": "#/$defs/digest" },
         "sourceDigestDomain": { "const": "runtime" }
       }
@@ -93,14 +160,18 @@
     "consoleImage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tag", "imageId", "imageDigest", "repositoryDigest", "sourceDigest", "sourceDigestDomain"],
+      "required": ["tag", "imageId", "imageDigest", "repositoryDigest", "manifestDigest", "mediaType", "platform", "sourceDigest", "sourceDigestDomain", "publishJournalCapability"],
       "properties": {
         "tag": { "type": "string", "minLength": 1 },
         "imageId": { "$ref": "#/$defs/digest" },
         "imageDigest": { "$ref": "#/$defs/digest" },
         "repositoryDigest": { "$ref": "#/$defs/imageReference" },
+        "manifestDigest": { "$ref": "#/$defs/digest" },
+        "mediaType": { "$ref": "#/$defs/manifestMediaType" },
+        "platform": { "$ref": "#/$defs/linuxAmd64Platform" },
         "sourceDigest": { "$ref": "#/$defs/digest" },
-        "sourceDigestDomain": { "const": "console" }
+        "sourceDigestDomain": { "const": "console" },
+        "publishJournalCapability": { "const": "multi-intent-v1" }
       }
     },
     "runtimePackage": {

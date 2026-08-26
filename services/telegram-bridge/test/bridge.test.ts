@@ -1,4 +1,4 @@
-import type { Origin, PublishMessage } from '@cauce/protocol';
+import { buildPublishReceipt, type Origin, type PublishMessage, type Tenant } from '@cauce/protocol';
 import { describe, expect, it } from 'vitest';
 import { TelegramActivityIndicator } from '../src/activity.js';
 import { parseTelegramBridgeConfig } from '../src/config.js';
@@ -285,11 +285,6 @@ describe('Telegram egress text extraction', () => {
       error: 'MISSING_FINAL_REPLY'
     })).toEqual(['Error: MISSING_FINAL_REPLY']);
     expect(telegramTextChunks({
-      result: { output: { reply: '\u200B\u2060\u0000' } },
-      error: 'Successful origin relay requires a non-empty final reply',
-      error_code: 'MISSING_FINAL_REPLY'
-    })).toEqual([]);
-    expect(telegramTextChunks({
       result: { output: { reply: '\u200B\u2060\u0000' } }
     })).toEqual([]);
     for (const reply of ['\u034F', '\uFE0F', '\u0301', '\u20DD']) {
@@ -299,6 +294,36 @@ describe('Telegram egress text extraction', () => {
     expect(telegramTextChunks({
       result: { output: { reply: 'a\u0301' } }
     })).toEqual(['a\u0301']);
+  });
+
+  it('uses one fixed MISSING_FINAL_REPLY notice and ignores every text and artifact source', () => {
+    expect(telegramTextChunks({
+      result: {
+        reply: 'SENTINEL_RESULT_REPLY',
+        text: 'SENTINEL_RESULT_TEXT',
+        content: 'SENTINEL_RESULT_CONTENT',
+        message: 'SENTINEL_RESULT_MESSAGE',
+        error: 'SENTINEL_RESULT_ERROR',
+        artifacts: [{ uri: 'https://sentinel.invalid/result', name: 'result-sentinel' }],
+        output: {
+          reply: 'SENTINEL_OUTPUT_REPLY',
+          text: 'SENTINEL_OUTPUT_TEXT',
+          content: 'SENTINEL_OUTPUT_CONTENT',
+          message: 'SENTINEL_OUTPUT_MESSAGE',
+          error: 'SENTINEL_OUTPUT_ERROR',
+          artifacts: [{ uri: 'data:text/plain;base64,U0VOVElORUxfREFUQQ==', name: 'sentinel.txt' }]
+        }
+      },
+      reply: 'SENTINEL_PAYLOAD_REPLY',
+      text: 'SENTINEL_PAYLOAD_TEXT',
+      content: 'SENTINEL_PAYLOAD_CONTENT',
+      message: 'SENTINEL_PAYLOAD_MESSAGE',
+      error: 'SENTINEL_INTERNAL_ERROR',
+      artifacts: [{ uri: 'file:///run/secrets/payload-sentinel', name: 'payload-sentinel' }],
+      error_code: 'MISSING_FINAL_REPLY'
+    }, '\nSENTINEL_FOOTER')).toEqual([
+      'No pude completar una respuesta para este turno. Volvé a preguntarme para intentarlo de nuevo.'
+    ]);
   });
 
   it('preserves result.text compatibility and never derives text from messages or tool payloads', () => {
@@ -439,9 +464,25 @@ class MemoryEgressRepository implements TelegramEgressRepository {
     return this.effects.get(effectId);
   }
 
-  async manualReplayEffect(effectId: string, payloadHash: string, reason: string): Promise<TelegramEffect> {
-    const existing = this.effects.get(effectId);
-    if (!existing || existing.payload_hash !== payloadHash ||
+  async manualReplayEffect(
+    chunkIndex: number,
+    payloadHash: string,
+    reason: string,
+    _actorTenant: Tenant,
+    _actorAlias: string,
+    duplicateRiskAcknowledged: boolean,
+    _requestId: string,
+    _deadLetterId: string,
+    _incidentEvidenceSha256: string,
+    _expectedReplayCount: number
+  ): Promise<TelegramEffect> {
+    void _requestId;
+    void _deadLetterId;
+    void _incidentEvidenceSha256;
+    void _expectedReplayCount;
+    const existing = [...this.effects.values()].find((candidate) =>
+      candidate.chunk_index === chunkIndex && candidate.payload_hash === payloadHash);
+    if (!duplicateRiskAcknowledged || !existing || existing.payload_hash !== payloadHash ||
         (existing.state !== 'ambiguous' && existing.state !== 'dead') || this.outboxState !== 'dead') {
       throw new Error('unsafe replay');
     }
@@ -453,7 +494,7 @@ class MemoryEgressRepository implements TelegramEgressRepository {
       replay_count: existing.replay_count + 1,
       replayed_at: new Date()
     };
-    this.effects.set(effectId, replayed);
+    this.effects.set(existing.effect_id, replayed);
     this.outboxState = 'failed';
     return replayed;
   }
@@ -529,10 +570,11 @@ describe('Telegram durable polling', () => {
     const ingress = new StoreTelegramIngress({
       publish: async (command) => {
         published.push(command);
-        return {
-          message_id: 'm-1', delivery_ids: ['d-1'], duplicate: false,
-          request_id: command.request_id, trace_id: command.trace_id
-        };
+        return buildPublishReceipt(command, {
+          message_id: '10000000-0000-4000-8000-000000000001',
+          delivery_ids: ['20000000-0000-4000-8000-000000000001'], duplicate: false,
+          request_id: command.request_id, trace_id: command.trace_id,
+        });
       }
     });
     const api = new FakeTelegram([{
@@ -1001,23 +1043,47 @@ describe('Telegram fenced egress', () => {
     });
   });
 
-  it('dead-letters a final relay without visible text and never sends a fallback', async () => {
+  it('delivers MISSING_FINAL_REPLY through the durable effect ledger with a safe human notice', async () => {
     const api = new FakeTelegram();
     const finishes: Array<{ outcome: string }> = [];
+    const metrics: string[] = [];
     const repository = new MemoryEgressRepository(relay({
       payload: {
         outcome: 'failed',
-        error: 'Successful origin relay requires a non-empty final reply',
+        text: 'SENTINEL_PAYLOAD_TEXT',
+        content: 'SENTINEL_PAYLOAD_CONTENT',
+        message: 'SENTINEL_PAYLOAD_MESSAGE',
+        error: 'SENTINEL_INTERNAL_ERROR',
         error_code: 'MISSING_FINAL_REPLY',
         result: {
+          reply: 'SENTINEL_RESULT_REPLY',
+          text: 'SENTINEL_RESULT_TEXT',
+          content: 'SENTINEL_RESULT_CONTENT',
+          message: 'SENTINEL_RESULT_MESSAGE',
+          error: 'SENTINEL_RESULT_ERROR',
+          artifacts: [
+            { name: 'result-sentinel', uri: 'https://sentinel.invalid/result-private' }
+          ],
           output: {
-            reply: null,
+            reply: 'SENTINEL_OUTPUT_REPLY',
+            text: 'SENTINEL_OUTPUT_TEXT',
+            content: 'SENTINEL_OUTPUT_CONTENT',
+            message: 'SENTINEL_OUTPUT_MESSAGE',
+            error: 'SENTINEL_OUTPUT_ERROR',
             messages: [],
             status: 'done',
             retryable: false,
-            artifacts: []
+            artifacts: [
+              { name: 'data-sentinel.txt', uri: 'data:text/plain;base64,U0VOVElORUxfREFUQQ==' },
+              { name: 'http-sentinel', uri: 'https://sentinel.invalid/private' },
+              { name: 'file-sentinel', uri: 'file:///run/secrets/sentinel' }
+            ]
           }
-        }
+        },
+        reply: 'SENTINEL_PAYLOAD_REPLY',
+        artifacts: [
+          { name: 'payload-sentinel', uri: 'file:///run/secrets/payload-sentinel' }
+        ]
       }
     }));
 
@@ -1025,6 +1091,7 @@ describe('Telegram fenced egress', () => {
       repository,
       aliases: [config()],
       apis: new Map([['kant', api]]),
+      onMetric: (metric) => metrics.push(metric),
       activity: {
         begin: () => undefined,
         finish: (_target, outcome) => finishes.push({ outcome }),
@@ -1032,15 +1099,47 @@ describe('Telegram fenced egress', () => {
       }
     }).runOnce();
 
-    expect(api.sends).toEqual([]);
-    expect(repository.effects.size).toBe(0);
+    expect(api.sends).toEqual([{
+      chat: '201',
+      text: 'No pude completar una respuesta para este turno. Volvé a preguntarme para intentarlo de nuevo.',
+      options: { parse_mode: 'html' },
+      arity: 3
+    }]);
+    expect([...repository.effects.values()]).toEqual([
+      expect.objectContaining({ state: 'sent', chunk_index: 0, chunk_count: 1 })
+    ]);
     expect(repository.acknowledgements).toEqual([
       expect.objectContaining({
-        status: 'dead',
-        error: 'Telegram relay has no visible final reply; no message was sent'
+        status: 'sent',
+        effect_count: 1
       })
     ]);
     expect(finishes).toEqual([{ outcome: 'failed' }]);
+    expect(metrics).not.toContain('egress_attachment_listed');
+    expect(JSON.stringify(api.sends)).not.toContain('SENTINEL');
+  });
+
+  it('dead-letters a rejected safe MISSING_FINAL_REPLY effect without leaking its internal diagnostic', async () => {
+    const api = new RejectingSendTelegram();
+    const repository = new MemoryEgressRepository(relay({
+      payload: {
+        outcome: 'failed',
+        error: 'internal stack detail that must not be shown',
+        error_code: 'MISSING_FINAL_REPLY'
+      }
+    }));
+
+    await new TelegramEgressWorker({
+      repository, aliases: [config()], apis: new Map([['kant', api]])
+    }).runOnce();
+
+    expect([...repository.effects.values()]).toEqual([
+      expect.objectContaining({ state: 'dead', chunk_index: 0, chunk_count: 1 })
+    ]);
+    expect(repository.acknowledgements.at(-1)).toMatchObject({
+      status: 'dead', error: 'message rejected'
+    });
+    expect([...repository.effects.values()][0]?.diagnostic).toBe('message rejected');
   });
 
   it('sends the reply from a realistic AdapterClient ACK payload', async () => {
@@ -1350,9 +1449,22 @@ describe('Telegram fenced egress', () => {
     }).runOnce();
     const effect = [...repository.effects.values()][0]!;
 
-    await expect(repository.manualReplayEffect(effect.effect_id, 'wrong-hash', 'operator ticket'))
+    await expect(repository.manualReplayEffect(
+      effect.chunk_index, 'wrong-hash', 'operator ticket', 'Steven', 'kant', true,
+      '11111111-1111-4111-8111-111111111111',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'a'.repeat(64), 0
+    ))
       .rejects.toThrow('unsafe replay');
-    const replayed = await repository.manualReplayEffect(effect.effect_id, effect.payload_hash, 'operator ticket');
+    await expect(repository.manualReplayEffect(
+      effect.chunk_index, effect.payload_hash, 'operator ticket', 'Steven', 'kant', false,
+      '22222222-2222-4222-8222-222222222222',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'b'.repeat(64), 0
+    )).rejects.toThrow('unsafe replay');
+    const replayed = await repository.manualReplayEffect(
+      effect.chunk_index, effect.payload_hash, 'operator ticket', 'Steven', 'kant', true,
+      '33333333-3333-4333-8333-333333333333',
+      'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'c'.repeat(64), 0
+    );
     expect(replayed).toMatchObject({ state: 'prepared', replay_count: 1 });
     await new TelegramEgressWorker({
       repository, aliases: [config()], apis: new Map([['kant', api]])

@@ -22,7 +22,10 @@ const secretLikeKeys = [
 
 test("child inherits only Hermes discovery configuration, not parent secrets", () => {
   const runnerModule = new URL("../src/sdk/process-runner.js", import.meta.url).href;
-  const inspectedKeys = ["HERMES_HOME", "HERMES_INFERENCE_MODEL", ...secretLikeKeys];
+  const inspectedKeys = [
+    "HERMES_HOME", "HERMES_INFERENCE_MODEL", "CAUCE_HERMES_RUNTIME_DIR", "CAUCE_HERMES_SOURCE_DIR",
+    ...secretLikeKeys,
+  ];
   const childProbe = `
     const keys = ${JSON.stringify(inspectedKeys)};
     process.stdout.write(JSON.stringify(Object.fromEntries(keys.map((key) => [key, process.env[key] ?? null]))));
@@ -45,9 +48,13 @@ test("child inherits only Hermes discovery configuration, not parent secrets", (
   `;
   const hermesHome = "/tmp/hermes profile discovery";
   const hermesModel = "provider/model:exact";
+  const hermesRuntime = "/opt/cauce-v3-hermes-runtime/iza/release-exact";
+  const hermesSource = "/tmp/hermes source discovery";
   const parentEnvironment: NodeJS.ProcessEnv = {
     HERMES_HOME: hermesHome,
     HERMES_INFERENCE_MODEL: hermesModel,
+    CAUCE_HERMES_RUNTIME_DIR: hermesRuntime,
+    CAUCE_HERMES_SOURCE_DIR: hermesSource,
   };
   for (const key of secretLikeKeys) parentEnvironment[key] = "blocked-parent-value";
 
@@ -61,6 +68,8 @@ test("child inherits only Hermes discovery configuration, not parent secrets", (
   const received = JSON.parse(result.stdout) as Record<string, string | null>;
   assert.equal(received.HERMES_HOME, hermesHome);
   assert.equal(received.HERMES_INFERENCE_MODEL, hermesModel);
+  assert.equal(received.CAUCE_HERMES_RUNTIME_DIR, hermesRuntime);
+  assert.equal(received.CAUCE_HERMES_SOURCE_DIR, hermesSource);
   for (const key of secretLikeKeys) assert.equal(received[key], null, `${key} leaked to the child`);
 });
 

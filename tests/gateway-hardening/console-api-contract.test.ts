@@ -40,7 +40,7 @@ const OIDC_BFF_ONLY = new Set(['/v3/auth/session', '/v3/auth/logout']);
  * Rutas que sólo existen cuando el gateway arranca CON el plano de control del terminal.
  *
  * `registerTerminalControlPlane` necesita su propia configuración (token de relé, URL de
- * gobernanza) y `operatorGateway()` no se la da, así que estas tres no están montadas en el
+ * gobernanza) y `operatorGateway()` no se la da, así que estas dos no están montadas en el
  * gateway de esta prueba — y no es un defecto: en producción sí lo están, colgadas de ese plugin.
  *
  * Se declaran EXPLÍCITAMENTE en vez de dejarlas en la lista de fallos porque una prueba que lleva
@@ -49,7 +49,6 @@ const OIDC_BFF_ONLY = new Set(['/v3/auth/session', '/v3/auth/logout']);
  */
 const SOLO_CON_PLANO_DE_TERMINAL = new Set([
   '/v3/console/agents/1/1/directive',
-  '/v3/console/role-assignments/1/1/history',
   '/v3/console/terminal/sessions'
 ]);
 

@@ -151,7 +151,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await resetTestDatabase(pool);
-  await pool.query('TRUNCATE outbox_dead_letters');
+  await pool.query('TRUNCATE outbox_dead_letters CASCADE');
 });
 
 afterAll(async () => {

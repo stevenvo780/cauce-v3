@@ -21,5 +21,19 @@ restore() {
 }
 trap restore EXIT
 
-pnpm --dir "$PROJECT" test:e2e
+CAUCE_REQUIRE_TESTCONTAINERS=1 CAUCE_EVIDENCE_CLASS=testcontainers \
+  pnpm --dir "$PROJECT" test:e2e
+for name in real restarts; do
+  [[ -f "$OPS/artifacts/$name/report.json" && -f "$OPS/artifacts/$name/junit.xml" \
+      && -f "$OPS/artifacts/$name/SHA256SUMS" ]] || {
+    printf 'Testcontainers evidence incomplete for %s\n' "$name" >&2
+    exit 1
+  }
+done
+# Validate before the trap publishes this run into the timestamped evidence tree.
+validation_run="$state/validation"
+mkdir -p "$validation_run"
+ln -s "$OPS/artifacts/real" "$validation_run/real"
+ln -s "$OPS/artifacts/restarts" "$validation_run/restarts"
+PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/validate-testcontainers-evidence.py" --run-dir "$validation_run"
 printf 'Testcontainers reports (separate from runtime evidence): %s\n' "$destination"

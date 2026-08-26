@@ -5,6 +5,7 @@ import { useResource } from '../../api/use-resource';
 import { ErrorState, LoadingState, PageHeader, Panel, PermissionBadge, RefreshButton, Time } from '../../components/ui';
 import { compactId, display, permissionState } from '../../lib';
 import { DeliveryTable, EXPLICACION_CANCEL, EXPLICACION_REPLAY } from './DeliveryTable';
+import { OperationalDlqPanel } from './OperationalDlqPanel';
 import { enfocarEntrega, leerEntregaPedida, TEXTO_AUSENTE } from './foco-de-entrega';
 import {
   contarPorGrupo, filtrarEntregas, FILTRO_VACIO, ROTULO_DEL_GRUPO, type GrupoDeEstado,
@@ -60,6 +61,7 @@ export function QueuesPage() {
 
   const items = useMemo(() => resource.data?.items ?? [], [resource.data]);
   const porGrupo = useMemo(() => contarPorGrupo(items), [items]);
+  const dlqAccess = permissionState(access.data, 'dlq.resolve');
 
   if (resource.loading && !resource.data) return <LoadingState label="Leyendo queues, retries y DLQ…" />;
   if (resource.error && !resource.data) return <ErrorState error={resource.error} onRetry={resource.reload} />;
@@ -80,7 +82,7 @@ export function QueuesPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Delivery control" title="Queues, retries & DLQ" description="Observa backoff, intentos y terminales dead. Replay y cancel solicitan una transición al servidor; nunca mutan estado local como verdad." actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />} />
+      <PageHeader eyebrow="Delivery control" title="Colas y DLQ operativo" description="Las entregas y los incidentes causales son fuentes distintas. Replay/cancel operan entregas; cerrar un incidente DLQ registra una decisión sin volver a ejecutar ni reenviar nada." actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />} />
       <PermissionBadge access={access.data} permission="delivery.replay" />
 
       {/*
@@ -163,6 +165,7 @@ export function QueuesPage() {
           canReplay={permissionState(access.data, 'delivery.replay') === 'allowed'}
           canCancel={permissionState(access.data, 'delivery.cancel') === 'allowed'}
           onChanged={resource.reload}
+          snapshotVersion={snapshot?.observed_at}
           empty={foco.estado === 'ausente'
             ? 'Este snapshot no trae ninguna fila para la entrega pedida.'
             : filas.length === 0 && items.length > 0
@@ -170,6 +173,17 @@ export function QueuesPage() {
               : 'No hay deliveries informadas.'}
         />
       </Panel>
+
+      <PermissionBadge access={access.data} permission="dlq.resolve" />
+      {dlqAccess === 'allowed' ? <OperationalDlqPanel /> : (
+        <Panel title="DLQ operativo" subtitle="La reconciliación causal está separada de replay y cancelación de entregas.">
+          <p className="notice">
+            {dlqAccess === 'denied'
+              ? 'Tu sesión no tiene control operativo para leer o cerrar incidentes DLQ.'
+              : 'Cauce todavía no publicó un permiso verificable para el DLQ operativo; no se presume acceso.'}
+          </p>
+        </Panel>
+      )}
     </>
   );
 }

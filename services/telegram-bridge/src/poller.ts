@@ -421,15 +421,7 @@ function suppressionMetric(reason: SuppressionReason): BridgeMetric {
   return 'updates_unaddressed';
 }
 
-/**
- * A publish whose idempotency key was already used with a different request hash.
- *
- * The hash covers body + origin + session_id, all of which depend on the deployed config. If a
- * config change lands between a successful publish and a failed `advanceCursor`, the retry of the
- * same update_id hashes differently and the store rejects it forever. Swallowing it and advancing
- * the cursor is the only outcome that cannot leave the bot permanently mute. "still in progress"
- * is deliberately excluded: that one is transient and must be retried by the outer loop.
- */
+/** A deterministic-key hash conflict is observable, but never permission to consume the update. */
 function isRequestConflict(error: unknown): boolean {
   return error instanceof Error && error.name === 'StoreError' &&
     (error as { code?: unknown }).code === 'conflict' &&
@@ -635,11 +627,17 @@ export class TelegramPoller {
     return context;
   }
 
-  private async process(update: TelegramUpdate, current: PollLease): Promise<void> {
+  private async process(
+    update: TelegramUpdate,
+    current: PollLease,
+    signal?: AbortSignal
+  ): Promise<void> {
+    signal?.throwIfAborted();
     const accepted = this.accepted(update);
     if (!accepted) {
       this.reportSilentDrop(update);
       this.onMetric('updates_denied');
+      signal?.throwIfAborted();
       await this.repository.advanceCursor(current, update.update_id + 1);
       return;
     }
@@ -680,6 +678,7 @@ export class TelegramPoller {
         }
       }
       this.onMetric(suppressionMetric(decision.reason));
+      signal?.throwIfAborted();
       await this.repository.advanceCursor(current, update.update_id + 1);
       return;
     }
@@ -712,6 +711,19 @@ export class TelegramPoller {
       }
     };
     const scope: SessionScope = policy?.session_scope ?? 'user';
+    const body = await normalizedBody(
+      message,
+      update.update_id,
+      this.api,
+      context,
+      this.transcription,
+      undefined,
+      () => this.onMetric('ingress_secret_redacted'),
+      { alias: this.config.alias, tenant_id: this.config.tenant_id }
+    );
+    // Attachment and voice preparation may await remote reads. Shutdown before the durable
+    // publish is still side-effect free; once publish starts, cursor advancement must finish.
+    signal?.throwIfAborted();
     let result: { duplicate: boolean };
     try {
       result = await this.ingress.publish({
@@ -721,16 +733,7 @@ export class TelegramPoller {
         alias: this.config.alias,
         room_id: this.config.room_id,
         recipients: this.config.recipients,
-        body: await normalizedBody(
-          message,
-          update.update_id,
-          this.api,
-          context,
-          this.transcription,
-          undefined,
-          () => this.onMetric('ingress_secret_redacted'),
-          { alias: this.config.alias, tenant_id: this.config.tenant_id }
-        ),
+        body,
         origin,
         session_id: session(scope, this.botId, chatId, userId, threadId),
         // `accepted()` already proved `userId` is on this alias's `allowed_user_ids`, the
@@ -742,12 +745,10 @@ export class TelegramPoller {
         human: message.from?.is_bot !== true
       });
     } catch (error) {
-      if (!isRequestConflict(error)) throw error;
-      this.onMetric('updates_conflict');
-      await this.repository.advanceCursor(current, update.update_id + 1);
-      return;
+      if (isRequestConflict(error)) this.onMetric('updates_conflict');
+      throw error;
     }
-    if (!result.duplicate) {
+    if (!result.duplicate && !signal?.aborted) {
       try {
         this.activity?.begin({
           alias: this.config.alias,
@@ -763,7 +764,11 @@ export class TelegramPoller {
     await this.repository.advanceCursor(current, update.update_id + 1);
   }
 
-  private async processWithLeaseHeartbeat(update: TelegramUpdate, current: PollLease): Promise<PollLease | undefined> {
+  private async processWithLeaseHeartbeat(
+    update: TelegramUpdate,
+    current: PollLease,
+    signal?: AbortSignal
+  ): Promise<PollLease | undefined> {
     const stop = new AbortController();
     const intervalMs = Math.max(1_000, Math.floor(this.config.poll_lease_ms / 3));
     let active = current;
@@ -787,7 +792,7 @@ export class TelegramPoller {
       }
     })();
     try {
-      await this.process(update, current);
+      await this.process(update, current, signal);
     } finally {
       stop.abort();
       await heartbeat;
@@ -802,7 +807,7 @@ export class TelegramPoller {
     return active;
   }
 
-  async runOnce(): Promise<number> {
+  async runOnce(signal?: AbortSignal): Promise<number> {
     let current = this.currentLease
       ? await this.repository.renewPollLease(this.currentLease, this.config.poll_lease_ms)
       : await this.repository.acquirePollLease(this.botId, this.ownerId, this.config.poll_lease_ms);
@@ -813,8 +818,10 @@ export class TelegramPoller {
     }
     this.currentLease = current;
     const offset = await this.repository.cursor(current);
-    const updates = await this.api.getUpdates(offset, this.config.poll_timeout_seconds);
+    if (signal?.aborted) return 0;
+    const updates = await this.api.getUpdates(offset, this.config.poll_timeout_seconds, signal);
     for (const update of updates) {
+      if (signal?.aborted) break;
       if (!Number.isSafeInteger(update.update_id) || update.update_id < offset) continue;
       const renewed = await this.repository.renewPollLease(current, this.config.poll_lease_ms);
       if (!renewed) {
@@ -824,7 +831,7 @@ export class TelegramPoller {
       }
       current = renewed;
       this.currentLease = current;
-      const afterProcess = await this.processWithLeaseHeartbeat(update, current);
+      const afterProcess = await this.processWithLeaseHeartbeat(update, current, signal);
       if (!afterProcess) break;
       current = afterProcess;
       this.currentLease = current;
@@ -840,11 +847,14 @@ export class TelegramPoller {
     while (!signal.aborted) {
       this.observer?.pollCycleStarted(this.config.alias);
       try {
-        const count = await this.runOnce();
+        const count = await this.runOnce(signal);
         this.observer?.pollCycleSucceeded(this.config.alias, count);
         failures = 0;
         if (count === 0) await sleep(idleMs, signal);
       } catch (error) {
+        // An operator-requested shutdown is not a failed poll. The cursor remains at the last
+        // completely handled update, so the first unhandled update is replayed after restart.
+        if (signal.aborted) break;
         this.observer?.pollCycleFailed(this.config.alias);
         this.onMetric('poll_error');
         failures += 1;

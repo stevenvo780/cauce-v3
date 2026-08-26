@@ -7,6 +7,11 @@ export interface FakeGatewayOptions {
   master_key_b64?: string;
   operator_tenant?: string;
   clock_skew_sec?: number;
+  session_ttl_sec?: number;
+  claim_lease_ms?: number;
+  relay_presence_stale_ms?: number;
+  relay_instance_id?: string;
+  relay_instance_ids?: string[];
   now?: () => number;
   grants?: string[];
   plaintext?: boolean;
@@ -42,6 +47,11 @@ export interface FakeGatewaySession {
   consumed_at: number;
   ticket_fp: string;
   resume_token: string;
+  claim_token: string;
+  claim_epoch: string;
+  claim_expires_at: number;
+  relay_instance_id: string;
+  relay_boot_id: string;
   revoked_at: number | null;
   closed_at: number | null;
 }

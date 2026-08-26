@@ -55,6 +55,29 @@
 .confirmacion-detalle { margin: 8px 0 0; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
 .confirmacion-acciones { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 13px; }
 
+/* ------------------------------------------------------- DLQ causal, separado de deliveries */
+
+.dlq-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 14px; }
+.dlq-toolbar label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: var(--tipo-rotulo); }
+.dlq-toolbar select { width: auto; min-width: 180px; margin: 0; }
+.dlq-toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.dlq-toolbar-actions .button { margin-left: 0; }
+.dlq-total { color: var(--faint); font-size: var(--tipo-rotulo); }
+
+.dlq-confirmation {
+  margin-bottom: 14px;
+  padding: 14px 15px;
+  border: 1px solid var(--amber);
+  border-radius: 12px;
+  background: rgb(208 135 0 / 10%);
+}
+.dlq-confirmation > p:not(.confirmacion-titulo) { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.55; }
+.dlq-confirmation > label:not(.dlq-ack) { display: grid; gap: 6px; margin-top: 12px; color: var(--text); font-size: var(--tipo-rotulo); font-weight: 650; }
+.dlq-confirmation textarea { width: 100%; min-height: 78px; resize: vertical; }
+.dlq-ack { display: flex; align-items: flex-start; gap: 8px; margin-top: 11px; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.45; }
+.dlq-ack input { flex: none; margin-top: 3px; }
+.tabla-dlq .subline { display: block; margin-top: 4px; color: var(--faint); font-size: var(--tipo-apunte); }
+
 /*
  * ------------------------------------------------------------------ pantalla estrecha (teléfono)
  *
@@ -97,4 +120,12 @@
   .tabla-entregas td { display: grid; align-items: baseline; padding: 7px 12px; border-bottom: 0; gap: 4px 12px; grid-template-columns: 96px minmax(0, 1fr); }
   .tabla-entregas td::before { color: var(--faint); font-size: var(--tipo-apunte); letter-spacing: .06em; text-transform: uppercase; content: attr(data-label); }
   .tabla-entregas td .subline { grid-column: 2; }
+
+  .tabla-dlq, .tabla-dlq tbody, .tabla-dlq tr, .tabla-dlq td { display: block; width: 100%; }
+  .tabla-dlq thead { position: absolute; overflow: hidden; width: 1px; height: 1px; clip-path: inset(50%); white-space: nowrap; }
+  .tabla-dlq tr { margin-bottom: 10px; padding: 4px 0; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
+  .tabla-dlq td { display: grid; align-items: baseline; padding: 7px 12px; border-bottom: 0; gap: 4px 12px; grid-template-columns: 96px minmax(0, 1fr); }
+  .tabla-dlq td::before { color: var(--faint); font-size: var(--tipo-apunte); letter-spacing: .06em; text-transform: uppercase; content: attr(data-label); }
+  .tabla-dlq td .subline { grid-column: 2; }
+  .dlq-toolbar-actions { margin-left: 0; }
 }

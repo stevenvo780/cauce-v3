@@ -12,7 +12,7 @@ export type JobLane = 'interactive' | 'batch';
 export type CapabilityState = 'available' | 'degraded' | 'unavailable' | 'unknown';
 export type ConsolePermission =
   | 'message.publish' | 'delivery.replay' | 'delivery.cancel' | 'job.create' | 'config.write'
-  | 'config.rollback' | 'ultimate-terminal.connect';
+  | 'config.rollback' | 'dlq.resolve' | 'ultimate-terminal.connect';
 
 /**
  * `password` = el gateway pide correo y contraseña en su propio formulario (POST /v3/auth/login).
@@ -67,13 +67,32 @@ export interface SystemStatus {
   presence?: PresenceLease[] | null;
 }
 
+export type MemberOffReason =
+  | 'not_registered'
+  | 'agent_disabled'
+  | 'membership_disabled'
+  | 'agent_and_membership_disabled';
+
+export interface RoomMember {
+  alias?: string | null;
+  role?: string | null;
+  /** Routing membership state. */
+  enabled?: boolean | null;
+  /** Whether the same tenant/alias exists in the canonical agents registry. */
+  registered?: boolean | null;
+  agent_enabled?: boolean | null;
+  harness_id?: string | null;
+  display_name?: string | null;
+  off_reason?: MemberOffReason | null;
+}
+
 export interface TenantNode {
   id?: string | null;
   label?: string | null;
   rooms?: Array<{
     id?: string | null;
     label?: string | null;
-    members?: Array<{ alias?: string | null; enabled?: boolean | null }> | null;
+    members?: RoomMember[] | null;
   }> | null;
 }
 
@@ -156,12 +175,80 @@ export interface PublishMessageInput {
   idempotency_key: string;
 }
 
+export type PublishIntentSemantics = Omit<PublishMessageInput, 'idempotency_key'>;
+
+export interface PreparePublishIntentInput extends PublishIntentSemantics {
+  /** UUIDv4 efímero por submit deliberado; nunca se persiste en el navegador. */
+  intent_nonce: string;
+}
+
 export interface PublishResult {
   message_id?: string | null;
   delivery_ids?: string[] | null;
   duplicate?: boolean | null;
   request_id?: string | null;
   trace_id?: string | null;
+  idempotency_key?: string | null;
+  tenant_id?: string | null;
+  actor_alias?: string | null;
+  request_hash?: string | null;
+  causal_hash?: string | null;
+}
+
+export interface DurablePublishReceipt {
+  message_id: string;
+  delivery_ids: string[];
+  duplicate: boolean;
+  request_id: string;
+  trace_id: string;
+  idempotency_key: string;
+  tenant_id: string;
+  actor_alias: string;
+  request_hash: string;
+  causal_hash: string;
+}
+
+export interface PreparePublishIntentResult {
+  version: 1;
+  state: 'prepared' | 'committed';
+  idempotency_key: string;
+  receipt: PublishResult | null;
+}
+
+export interface PreparePublishIntentReconciliation {
+  version: 1;
+  error: 'publish_intent_reconciliation_required';
+  state: 'committed';
+  idempotency_key: string;
+  receipt: PublishResult;
+}
+
+/** The server proved that this reservation closed before any publish effect existed. */
+export interface PublishIntentExpired {
+  version: 1;
+  error: 'publish_intent_expired';
+  state: 'expired';
+  idempotency_key: string;
+  safe_to_resubmit: true;
+}
+
+/** A bounded server-side journal admission limit; the same nonce retry remains idempotent. */
+export interface PreparePublishIntentRateLimited {
+  version: 1;
+  error: 'publish_intent_rate_limited';
+  retry_after_seconds: number;
+  safe_to_retry: true;
+}
+
+export interface ConfirmPublishIntentInput {
+  idempotency_key: string;
+  message_id: string;
+  causal_hash: string;
+}
+
+export interface ConfirmPublishIntentResult extends ConfirmPublishIntentInput {
+  version: 1;
+  confirmed: true;
 }
 
 export interface QueueItem {
@@ -185,8 +272,70 @@ export interface QueueSnapshot {
   items?: QueueItem[] | null;
 }
 
+export type DlqTarget = 'delivery' | 'outbox';
+export type DlqDisposition =
+  | 'ambiguous'
+  | 'safe_retry'
+  | 'missing_final'
+  | 'auth'
+  | 'expected_offline'
+  | 'unclassified';
+
+/**
+ * Safe schema-030 projection.  It intentionally has no payload, error, reason, origin,
+ * provider/message/delivery/outbox id or body field: this is the complete browser contract.
+ */
+export interface DlqItem {
+  target?: DlqTarget | null;
+  id?: string | null;
+  tenantId?: string | null;
+  kind?: string | null;
+  adapter?: string | null;
+  disposition?: DlqDisposition | null;
+  open?: boolean | null;
+  actionable?: boolean | null;
+  evidenceSha256?: string | null;
+  attempts?: number | null;
+  resolutionRule?: string | null;
+  createdAt?: string | null;
+  dispositionAt?: string | null;
+  resolvedAt?: string | null;
+  reopenCount?: number | null;
+  lastReopenedAt?: string | null;
+}
+
+export interface DlqPage {
+  schemaVersion?: number | null;
+  items?: DlqItem[] | null;
+  total?: number | null;
+  truncated?: boolean | null;
+  nextCursor?: string | null;
+}
+
+export interface ResolveDlqWithoutReplayInput {
+  target: DlqTarget;
+  id: string;
+  evidenceSha256: string;
+  reason: string;
+  possibleDuplicateAcknowledged: boolean;
+  possibleNoDeliveryAcknowledged: boolean;
+}
+
+export interface ResolveDlqWithoutReplayResult {
+  schemaVersion?: number | null;
+  suite?: string | null;
+  phase?: 'resolved' | null;
+  appliedCount?: number | null;
+  alreadyApplied?: boolean | null;
+  evidenceSha256?: string | null;
+  reasonSha256?: string | null;
+  possibleDuplicateAcknowledged?: boolean | null;
+  possibleNoDeliveryAcknowledged?: boolean | null;
+}
+
 export interface ReplayResult {
   delivery_id?: string | null;
+  replayed_from_delivery_id?: string | null;
   state?: DeliveryState | null;
   replayed?: boolean | null;
 }
@@ -196,7 +345,7 @@ export interface CancelResult {
   state?: DeliveryState | null;
   cancelled?: boolean | null;
   cancelled_from_state?: DeliveryState | null;
-  parent_notice?: string | null;
+  parent_notice?: 'not_child' | 'returned' | 'denied' | 'deferred' | 'coalesced' | null;
   origin_relayed?: boolean | null;
   /** Siempre true: cancelar deja fila en `dead_letters`, o sea sigue siendo replayable. */
   replayable?: boolean | null;
@@ -222,7 +371,7 @@ export interface AuditEvent {
   tenant_id?: string | null;
   actor_alias?: string | null;
   action?: string | null;
-  decision?: 'allow' | 'deny' | null;
+  decision?: 'allow' | 'deny' | 'info' | null;
   request_id?: string | null;
   trace_id?: string | null;
   summary?: string | null;
@@ -230,6 +379,7 @@ export interface AuditEvent {
 
 export interface AuditPage {
   items?: AuditEvent[] | null;
+  next_cursor?: string | null;
 }
 
 export type OriginRelayState = 'pending' | 'processing' | 'sent' | 'failed';
@@ -328,6 +478,8 @@ export interface ConfigurationChangeResult {
   applied?: boolean | null;
   dry_run?: boolean | null;
   revision?: number | null;
+  /** Exact causal source for rollback receipts; normal changes carry null. */
+  rolled_back_revision_id?: number | null;
   summary?: string | null;
   mutation?: ConfigMutation | null;
   inverse_mutation?: ConfigMutation | null;
@@ -693,26 +845,53 @@ export interface AgentDirectiveFile {
   path?: string | null;
   /** `user` = `~/.claude/CLAUDE.md`; `workspace` = `~/CLAUDE.md` o `/workspace/CLAUDE.md`. */
   scope?: 'user' | 'workspace' | string | null;
+  /** Orden medido: Codex aplica precedencia; Claude lo expone sólo como orden de carga. */
+  precedence?: number | null;
+  /** Huella real para detectar manuales duplicados aunque el texto visible esté truncado. */
+  sha?: string | null;
   bytes?: number | null;
   modified_at?: string | null;
   /** El texto del fichero, si el servidor lo publica. Sin él sólo se puede listar, no cotejar. */
   text?: string | null;
   /** true si el servidor recortó el texto: lo que se ve NO es el fichero entero. */
   truncated?: boolean | null;
+  error?:
+    | 'permission_denied' | 'invalid_path' | 'symlink_detected' | 'too_large'
+    | 'timeout' | 'cancelled' | 'busy' | 'unavailable' | 'unknown' | string | null;
+  reason?: string | null;
 }
 
 /** El índice de la memoria de un agente. Índice, no contenido: es lo que pidió Steven. */
-export interface AgentMemoryIndex {
+export interface AgentMemoryIndexAvailable {
   root?: string | null;
-  /** Cuántas entradas hay DE VERDAD, aunque `entries` venga recortado. */
+  /** Total exacto; null significa que sólo se conoce `observed_at_least`. */
   total?: number | null;
+  /** Límite inferior observado cuando el barrido alcanzó su cap. */
+  observed_at_least?: number | null;
   truncated?: boolean | null;
   entries?: Array<{
     path?: string | null;
     bytes?: number | null;
     modified_at?: string | null;
   }> | null;
+  error?: never;
+  reason?: never;
 }
+
+export interface AgentMemoryIndexUnavailable {
+  root?: string | null;
+  total?: null;
+  observed_at_least?: null;
+  truncated?: null;
+  entries?: null;
+  error:
+    | 'not_found' | 'permission_denied' | 'invalid_path' | 'symlink_detected'
+    | 'too_large' | 'timeout' | 'cancelled' | 'busy' | 'unavailable' | 'unknown';
+  reason: string;
+}
+
+/** `error` discrimina una medición fallida; los gateways nuevos no la esconden como `null`. */
+export type AgentMemoryIndex = AgentMemoryIndexAvailable | AgentMemoryIndexUnavailable;
 
 // ------------------------------------------------------------------------------------------
 // LOS FICHEROS QUE GOBIERNAN A UN AGENTE
@@ -735,13 +914,22 @@ export interface AgentMemoryIndex {
 // qué CON PALABRAS, que es lo que pidió Steven: un hueco explicado vale más que un botón muerto.
 // ------------------------------------------------------------------------------------------
 
-export type AgentDocumentKind = 'directive' | 'tools' | 'prompts' | 'mcp';
+export type AgentDocumentKind =
+  | 'directive' | 'tools' | 'prompts' | 'mcp' | 'identity' | 'human'
+  | 'memory' | 'heartbeat' | 'configuration';
 
 export interface AgentDocumentItem {
   kind: AgentDocumentKind;
+  category?: 'manual' | 'profile' | 'configuration' | 'memory';
   label: string;
   path: string;
   format: string;
+  /**
+   * true = el servidor admite GET de contenido para esta fila. Es independiente de `editable`:
+   * un manual de proyecto o un fichero de perfil puede abrirse en visor sin admitir PUT.
+   * Ausente se trata como false para fallar cerrado durante un despliegue escalonado.
+   */
+  readable?: boolean;
   editable: boolean;
   reason?: string;
   warning?: string;
@@ -816,6 +1004,9 @@ export interface AgentDirective {
   observed_at?: string | null;
   container_id?: string | null;
   files?: AgentDirectiveFile[] | null;
+  manual_order?: 'codex_precedence' | 'claude_load_order' | 'workspace_only' | string | null;
+  context_coverage?: 'standard_manuals' | string | null;
+  context_limitations?: string[] | null;
   memory?: AgentMemoryIndex | null;
 }
 
@@ -931,7 +1122,34 @@ export interface AgentPerfil {
   /** Última revisión cuyo lote completo fue acreditado por el runtime. */
   applied_revision?: number | null;
   /** Estado desired/applied calculado por el gateway, no inferido por el navegador. */
-  runtime_state?: 'absent' | 'pending' | 'applied' | 'disabled';
+  runtime_state?:
+    | 'absent' | 'pending' | 'pending_session_refresh' | 'applied' | 'disabled'
+    | 'drifted' | 'runtime_unverified';
+  /** Evidencia viva de ruta+SHA+generación; sin ella la UI nunca afirma aplicación. */
+  runtime_verification?: {
+    state: 'current' | 'drifted' | 'unverified';
+    generation: string | null;
+    container_id: string | null;
+    observed_at: string | null;
+    reason?: string;
+    documents: Array<{
+      name: string;
+      path: string;
+      expected_sha: string;
+      observed_sha: string | null;
+      expected_bytes: number;
+      observed_bytes: number | null;
+      current: boolean;
+    }>;
+  } | null;
+  runtime_adoption?: {
+    evidence: 'adapter_delivery';
+    revision: number;
+    generation: string;
+    adopted_at: string;
+    documents: Array<{ name: string; path: string; sha: string }>;
+  } | null;
+  runtime_reason?: string;
   /** El arnés declarado en los hechos. `null` cuando el registro no dice ninguno. */
   harness?: string | null;
   perfil: AgentPerfilValor;
@@ -954,7 +1172,7 @@ export interface AgentPerfil {
    * del contenedor: lo que una persona haya escrito a mano sigue ahí y no se toca —la fusión
    * conserva lo de fuera byte a byte—, pero esta respuesta no lo ha visto y no puede enseñarlo.
    */
-  base?: 'fichero-vacio';
+  base?: 'fichero-vacio' | 'runtime-medido';
   ficheros?: AgentPerfilFichero[];
   /** Por qué no hay ficheros, cuando no los hay. Un array vacío sin explicación se lee mal. */
   aviso?: string;
@@ -966,6 +1184,8 @@ export interface AgentPerfilRuntimeAck {
   state: 'written' | 'already_current' | 'preserved';
   sha: string;
   bytes: number;
+  generation: string;
+  container_id: string | null;
 }
 
 /** Respuesta que permite afirmar que desired y runtime convergieron en la misma revisión. */
@@ -977,4 +1197,11 @@ export interface AgentPerfilAplicado {
   revision: number;
   applied_revision: number;
   acknowledgements: AgentPerfilRuntimeAck[];
+  runtime_adoption: {
+    evidence: 'adapter_delivery';
+    revision: number;
+    generation: string;
+    adopted_at: string;
+    documents: Array<{ name: string; path: string; sha: string }>;
+  };
 }

@@ -1,4 +1,4 @@
-# Pool de suscripciones IA y alta de iza/atlas — plan ejecutable
+# Pool de suscripciones IA y alta de <agent-05>/<agent-04> — plan ejecutable
 
 **Estado:** propuesta de diseño + procedimiento. Nada de este documento fue ejecutado contra
 producción; es un plan para una sesión de implementación posterior, explícitamente autorizada
@@ -18,8 +18,8 @@ sostiene).
 
 Antes de escribir concluí que había una corrección de premisa posterior al lanzamiento del
 workflow (`CORRECCION-PREMISA.md`, leída primero, con prioridad explícita). La corrección cambia
-sustancialmente el ángulo 4 de los cuatro diseños: **Humanizar no es un tenant nuevo**, es un
-proyecto de Miguel; iza y atlas son agentes del tenant `Miguel`/`grp.miguel` existente. Esto
+sustancialmente el ángulo 4 de los cuatro diseños: **<private-project> no es un tenant nuevo**, es un
+proyecto de <tenant-b>; <agent-05> y <agent-04> son agentes del tenant `<tenant-b>`/`grp.<tenant-b>` existente. Esto
 invalida cualquier parte de los diseños que asumía alta de tenant.
 
 Todo lo que sigue está verificado leyendo el código del repo (`packages/store/migrations/*.sql`,
@@ -42,23 +42,23 @@ no devuelve nada) y **no está en el camino crítico de entrega de mensajes**: `
 (`packages/store/src/repository.ts:2657-2674`) y `claimDeliveries`
 (`packages/store/src/repository.ts:721-836`) leen `memberships` + `role_policies` + `tenants` +
 `rooms` + `connection_leases`, nunca `agents`. Esto importa para el plan: **el pool de cuentas es
-una capa aditiva sobre una ruta que ya funciona sin él**; nada de la Sección 4 (alta de iza/atlas)
+una capa aditiva sobre una ruta que ya funciona sin él**; nada de la Sección 4 (alta de <agent-05>/<agent-04>)
 depende de que esta sección se implemente primero.
 
 Bug real confirmado en el 008 sin commitear: `agent_account_bindings` tiene
 `FOREIGN KEY (tenant_id, account_id) REFERENCES provider_accounts(tenant_id, id)` — un FK
 compuesto que obliga a que la cuenta esté en el **mismo tenant** que el alias que la usa. Eso es
-exactamente lo contrario de "todos pueden usar el pool de todos" (requisito literal de Steven).
+exactamente lo contrario de "todos pueden usar el pool de todos" (requisito literal de <tenant-a>).
 
 **Colisión de numeración detectada** (más amplia de lo que reportó cualquiera de los 4 ángulos):
-hay **cuatro** archivos `008_*.sql` distintos hoy en este árbol de trabajo y sus worktrees
-hermanos:
+se observaron cuatro migraciones `008_*.sql` distintas entre el árbol principal y worktrees
+privados. Los identificadores y paths de esos worktrees no se versionan; las colisiones eran:
 
-```
-packages/store/migrations/008_agent_and_account_registry.sql                    (árbol principal)
-.claude/worktrees/wf_90a8fb86-1df-1/.../008_agent_chain_visibility.sql          (fan-in, otra feature)
-.claude/worktrees/wf_e261f75c-ff8-1/.../008_proactive_egress.sql               (otra feature)
-.claude/worktrees/wf_730b1918-231-5/.../008_agent_account_registry.sql         (mismo tema, nombre distinto)
+```text
+008_agent_and_account_registry.sql  (árbol principal)
+008_agent_chain_visibility.sql       (fan-in, otra feature)
+008_proactive_egress.sql             (otra feature)
+008_agent_account_registry.sql       (mismo tema, nombre distinto)
 ```
 
 El número que uso abajo (`009`) es **provisional**: quien mergee primero se queda con `008` (o el
@@ -198,7 +198,7 @@ Doble compuerta default-off intacta: mientras `alias_routing_ceiling` esté vac�
   incluidas). Cierre: agregar campos nuevos a un frame `.strict()` **tiene que ser un release
   separado y previo**, sin campos todavía, que sólo saca `.strict()` (Zod entonces hace
   strip silencioso de claves desconocidas por defecto). Desplegar y verificar 12/12 (con la
-  misma disciplina que ya usa este proyecto, ver `bus-v3-20260725-renewal-842d42bdd402` en curso)
+  misma disciplina documentada en evidencia privada de un rollout anterior)
   antes de agregar `routing_account_id`/`credential_ref` en un release posterior. Nunca los dos
   cambios en el mismo release: en una flota con 12+ adapters que no se reinician todos a la vez,
   un adapter viejo con `.strict()` todavía activo rompería el parse completo al ver una clave que
@@ -218,13 +218,13 @@ swap de cuenta por variable de entorno es técnicamente viable — ver §5). `op
 `opencode.ts` y `fake.ts` no lo tocan nunca: la compuerta queda cerrada por diseño para esos
 harnesses, sin lógica condicional adicional.
 
-### 1.6 Qué queda deliberadamente fuera de esta versión (no bloqueante para el alta de iza/atlas)
+### 1.6 Qué queda deliberadamente fuera de esta versión (no bloqueante para el alta de <agent-05>/<agent-04>)
 
 Los ángulos 2 y 3 proponen capas más ambiciosas — salud de cuenta con poller activo, tabla de
 consentimiento explícito de préstamo cross-tenant (`provider_account_pool_grants`), atribución de
 uso con prorrateo por tokens (`delivery_usage`, `usage_rollup_hourly`). Son diseños razonables pero
-**especulativos hoy**: ninguno tiene consumidor de código, y ninguno es necesario para que iza y
-atlas queden vivos (Sección 4). Los dejo fuera de la migración `009` a propósito, para no mezclar
+**especulativos hoy**: ninguno tiene consumidor de código, y ninguno es necesario para que <agent-05> y
+<agent-04> queden vivos (Sección 4). Los dejo fuera de la migración `009` a propósito, para no mezclar
 "lo que hace falta para el alta de hoy" con "lo que hace falta para facturar por cliente en el
 futuro". Cuando se retome: `provider_accounts.payer_tenant_id` (§1.2) ya es la única pieza de
 atribución mínima necesaria para responder "quién paga esta cuenta"; una tabla insert-only tipo
@@ -234,29 +234,29 @@ necesite evidencia dura por entrega — pero ese día no es hoy.
 
 ---
 
-## 2. Tabla final de asignación — 12 vivos + iza + atlas (14 alias)
+## 2. Tabla final de asignación — 12 vivos + <agent-05> + <agent-04> (14 alias)
 
 `payer_tenant_id` no existe hoy en ningún registro programático (confirmado en §1.2): es
 conocimiento tribal del operador. La columna de abajo es mi mejor lectura del inventario de
-credenciales dado en el encargo, **no un hecho verificado en DB** — Steven debe confirmarla o
+credenciales dado en el encargo, **no un hecho verificado en DB** — <tenant-a> debe confirmarla o
 corregirla antes de que signifique algo para facturación real.
 
 | alias | tenant | container | harness | cuenta que responde HOY (ambiente, sin override) | fallback en el pool | payer propuesto |
 |---|---|---|---|---|---|---|
-| jarvis | Steven | claw | openclaw | sin credencial Claude propia (accessToken vacío); enruta MiniMax/Antigravity dentro de `openclaw.json` | fuera de este pool (§5) | Steven |
-| argos | Steven | ctrl-infra | hermes | `HERMES_INFERENCE_MODEL` fijado en el manifest de argos; cuál exactamente no fue re-verificado en esta pasada | fuera de este pool (§5) | Steven |
-| kant | Steven | ctrl-infra | codex | stevenvo780@hotmail.com (única cuenta OpenAI del inventario) | ninguna otra cuenta Codex existe hoy | Steven |
-| socrates | Steven | ws-prizma | codex | stevenvo780@hotmail.com | ninguna | Steven |
-| seneca | Pablo | agv2-pablo-personal-oc | openclaw | ChatGPT vía `openclaw.json` ("los personales de Pablo van a ChatGPT", literal de Steven) | interno de openclaw, fuera de Cauce | Pablo |
-| midas | Pablo | agv2-pablo-marcas-oc | openclaw | ChatGPT vía `openclaw.json` | interno de openclaw | Pablo |
-| dedalo | Pablo | ws-pablo-dev | codex | stevenvo780@hotmail.com (compartida) | ninguna | **Steven** paga la cuenta / **Pablo** consume — pool compartido de facto, hoy sin registrar |
-| vulcano | Pablo | ws-pablo | claude | credencial Claude local del container; ninguna de las 2 cuentas Claude del inventario está explícitamente atada a vulcano — **no verificado en esta pasada** | ninguna | Pablo (asumido, sin confirmar) |
-| janus | Miguel | claw-miguel | openclaw | stevenvallejo780@gmail.com (recién logueada) + ChatGPT/MiniMax vía `openclaw.json` | interno de openclaw | Miguel |
-| hegel | Jhon | agv2-jhon-hegel-oc | openclaw | ChatGPT vía `openclaw.json` | interno de openclaw | Jhon |
-| salva | Isa | ws-isa | codex | stevenvo780@hotmail.com (compartida) | ninguna | **Steven** paga / **Isa** consume |
-| kratos | Miguel | ws-humanizar | **claude** (cambia de codex) | HOY saldantia.sas@gmail.com — verificado en vivo, pero es la cuenta personal de Steven, no de Miguel (ver §4.9 sobre el bind-mount compartido) | ninguno definido en el MVP | **pendiente — ver §6** |
-| **atlas** (nuevo) | Miguel | ws-humanizar | **codex** | stevenvo780@hotmail.com — se suma al pool ya compartido de 4 alias | ninguna (única cuenta Codex) | **Steven** paga / **Miguel** consume |
-| **iza** (nuevo) | Miguel | ws-humanizar | **hermes** | `HERMES_INFERENCE_MODEL=gpt-5.6-sol` (decidido por Steven, mismo modelo que argos, "Codex es el proveedor con más saldo") | fuera de este pool — hermes tiene su propio selector, no pasa por env-swap | Miguel (nominal; la cuenta real detrás de `gpt-5.6-sol` vía hermes no está documentada) |
+| <agent-07> | <tenant-a> | claw | openclaw | sin credencial Claude propia (accessToken vacío); enruta MiniMax/Antigravity dentro de `openclaw.json` | fuera de este pool (§5) | <tenant-a> |
+| <agent-09> | <tenant-a> | ${INFRA_CONTROLLER} | hermes | `HERMES_INFERENCE_MODEL` fijado en el manifest de <agent-09>; cuál exactamente no fue re-verificado en esta pasada | fuera de este pool (§5) | <tenant-a> |
+| <agent-01> | <tenant-a> | ${INFRA_CONTROLLER} | codex | ACCOUNT_EMAIL (única cuenta OpenAI del inventario) | ninguna otra cuenta Codex existe hoy | <tenant-a> |
+| <agent-02> | <tenant-a> | ${AGENT_CONTAINER} | codex | ACCOUNT_EMAIL | ninguna | <tenant-a> |
+| <agent-11> | <tenant-c> | agv2-<tenant-c>-personal-oc | openclaw | ChatGPT vía `openclaw.json` ("los personales de <tenant-c> van a ChatGPT", literal de <tenant-a>) | interno de openclaw, fuera de Cauce | <tenant-c> |
+| <agent-12> | <tenant-c> | agv2-<tenant-c>-marcas-oc | openclaw | ChatGPT vía `openclaw.json` | interno de openclaw | <tenant-c> |
+| <agent-13> | <tenant-c> | ${AGENT_CONTAINER} | codex | ACCOUNT_EMAIL (compartida) | ninguna | **<tenant-a>** paga la cuenta / **<tenant-c>** consume — pool compartido de facto, hoy sin registrar |
+| <agent-15> | <tenant-c> | ${AGENT_CONTAINER} | claude | credencial Claude local del container; ninguna de las 2 cuentas Claude del inventario está explícitamente atada a <agent-15> — **no verificado en esta pasada** | ninguna | <tenant-c> (asumido, sin confirmar) |
+| <agent-14> | <tenant-b> | claw-<tenant-b> | openclaw | ACCOUNT_EMAIL (recién logueada) + ChatGPT/MiniMax vía `openclaw.json` | interno de openclaw | <tenant-b> |
+| <agent-10> | <tenant-d> | agv2-<tenant-d>-<agent-10>-oc | openclaw | ChatGPT vía `openclaw.json` | interno de openclaw | <tenant-d> |
+| <agent-06> | <tenant-e> | ${AGENT_CONTAINER} | codex | ACCOUNT_EMAIL (compartida) | ninguna | **<tenant-a>** paga / **<tenant-e>** consume |
+| <agent-03> | <tenant-b> | ${AGENT_CONTAINER} | **claude** (cambia de codex) | HOY ACCOUNT_EMAIL — verificado en vivo, pero es la cuenta personal de <tenant-a>, no de <tenant-b> (ver §4.9 sobre el bind-mount compartido) | ninguno definido en el MVP | **pendiente — ver §6** |
+| **<agent-04>** (nuevo) | <tenant-b> | ${AGENT_CONTAINER} | **codex** | ACCOUNT_EMAIL — se suma al pool ya compartido de 4 alias | ninguna (única cuenta Codex) | **<tenant-a>** paga / **<tenant-b>** consume |
+| **<agent-05>** (nuevo) | <tenant-b> | ${AGENT_CONTAINER} | **hermes** | `HERMES_INFERENCE_MODEL=gpt-5.6-sol` (decidido por <tenant-a>, mismo modelo que <agent-09>, "Codex es el proveedor con más saldo") | fuera de este pool — hermes tiene su propio selector, no pasa por env-swap | <tenant-b> (nominal; la cuenta real detrás de `gpt-5.6-sol` vía hermes no está documentada) |
 
 Nota de lectura: "fallback" en esta tabla es **hoy**, con `alias_routing_ceiling` vacía para
 los 14 (doble compuerta cerrada, comportamiento idéntico al actual). Nada de esta tabla activa el
@@ -264,45 +264,45 @@ pool — es un inventario de qué pasaría si se poblara, no una activación.
 
 ---
 
-## 3. Procedimiento de alta de iza y atlas + cutover de kratos
+## 3. Procedimiento de alta de <agent-05> y <agent-04> + cutover de <agent-03>
 
-### 3.0 Lo que Steven ya decidió y aplicó (no repetir, no cuestionar)
+### 3.0 Lo que <tenant-a> ya decidió y aplicó (no repetir, no cuestionar)
 
-1. `tenant=Miguel`, `room=grp.miguel` para iza y atlas — **no se crea tenant**. El CHECK
-   hub-star hardcodeado a `'Steven'` (`001_initial.sql:41`, viejo) ya fue reemplazado por el
+1. `tenant=<tenant-b>`, `room=grp.<tenant-b>` para <agent-05> y <agent-04> — **no se crea tenant**. El CHECK
+   hub-star hardcodeado a `'<tenant-a>'` (`001_initial.sql:41`, viejo) ya fue reemplazado por el
    mecanismo data-driven `tenants.is_hub` + `cauce_assert_hub_star`
-   (`004_runtime_gates.sql:15-60`, verificado) — y de todos modos no aplica: alta de `iza`/`atlas`
+   (`004_runtime_gates.sql:15-60`, verificado) — y de todos modos no aplica: alta de `<agent-05>`/`<agent-04>`
    es un `INSERT INTO memberships` dentro de un tenant que ya existe, no toca `acl_edges`.
 2. Repositorio `ultimate-terminal` (fuera de este repo) ya revertido a `ON CONFLICT DO NOTHING` +
-   `RETIRED_AGENTS` eliminado — iza/atlas ya no se auto-borran en cada boot de ese sistema.
-3. `HERMES_INFERENCE_MODEL=gpt-5.6-sol` para iza — decidido, no abierto.
-4. `iza=hermes` — decidido explícitamente para evitar colisión de `$HOME` con kratos(claude)/
-   atlas(codex) en el mismo container (ver §3.9: con esta elección, la colisión **no ocurre**,
+   `RETIRED_AGENTS` eliminado — <agent-05>/<agent-04> ya no se auto-borran en cada boot de ese sistema.
+3. `HERMES_INFERENCE_MODEL=gpt-5.6-sol` para <agent-05> — decidido, no abierto.
+4. `<agent-05>=hermes` — decidido explícitamente para evitar colisión de `$HOME` con <agent-03>(claude)/
+   <agent-04>(codex) en el mismo container (ver §3.9: con esta elección, la colisión **no ocurre**,
    porque los 3 harnesses tienen raíces de credencial por defecto distintas: `~/.claude`,
    `~/.codex`, `~/.hermes`).
 
 ### 3.1 Fase 0 — preflight (parcialmente hecho, falta formalizarlo)
 
 Ya verificado en vivo (ángulo 4, ssh de sólo lectura): `claude` 2.1.220 y `codex` ambos instalados
-en `ws-humanizar`; `/home/dev/.claude/.credentials.json` existe, no vacío, no expirado, cuenta
-`saldantia.sas@gmail.com` (creada 2026-07-25T00:31Z). El binario hermes ya está en
-`/home/dev/.local/bin/hermes`, pero **`~/.hermes` no existe todavía** en ese container. Esto
+en `${AGENT_CONTAINER}`; `${CREDENTIAL_FILE}` existe, no vacío, no expirado, cuenta
+`ACCOUNT_EMAIL` (creada <private-timestamp>). El binario hermes ya está en
+`${HARNESS_BINARY}`, pero **`~/.hermes` no existe todavía** en ese container. Esto
 supera el bloqueo documentado en `ops/runbooks/container-adapters.md` ("El preflight live encontró
-Claude sin autenticación") para `kratos` — pero esa inspección ad hoc **no sustituye** el
+Claude sin autenticación") para `<agent-03>` — pero esa inspección ad hoc **no sustituye** el
 preflight formal que el runbook exige para el release (comando exacto en §3.7).
 
-### 3.2 Fase 1 — decisiones que sólo puede tomar Steven (bloquean todo lo demás)
+### 3.2 Fase 1 — decisiones que sólo puede tomar <tenant-a> (bloquean todo lo demás)
 
-1. **Cuenta Claude de kratos**: ¿dejar `saldantia.sas@gmail.com` (la que ya está logueada) o
-   re-loguear `ws-humanizar` con `stevenvallejo780@gmail.com` (la que ya usa `janus`, mismo
+1. **Cuenta Claude de <agent-03>**: ¿dejar `ACCOUNT_EMAIL` (la que ya está logueada) o
+   re-loguear `${AGENT_CONTAINER}` con `ACCOUNT_EMAIL` (la que ya usa `<agent-14>`, mismo
    tenant)? Ver riesgo adicional en §3.9 antes de decidir — no es un simple re-login, ese
    directorio de credenciales está compartido por bind-mount con otros dos containers.
-2. **Aceptar que `atlas` se suma a la única cuenta Codex** (`stevenvo780@hotmail.com`),
-   ya compartida hoy por kant/socrates/salva/dedalo — no hay alternativa técnica sin dar de alta
+2. **Aceptar que `<agent-04>` se suma a la única cuenta Codex** (`ACCOUNT_EMAIL`),
+   ya compartida hoy por <agent-01>/<agent-02>/<agent-06>/<agent-13> — no hay alternativa técnica sin dar de alta
    una segunda cuenta OpenAI.
-3. **Emisión de certs mTLS** para iza/atlas: no hay script de CA en este repo (`grep` vacío) — es
+3. **Emisión de certs mTLS** para <agent-05>/<agent-04>: no hay script de CA en este repo (`grep` vacío) — es
    un paso manual con la CA operativa, fuera de este repo.
-4. **Bots Telegram nuevos** (BotFather) para iza/atlas — manual, fuera de este repo.
+4. **Bots Telegram nuevos** (BotFather) para <agent-05>/<agent-04> — manual, fuera de este repo.
 5. **Autorizar la ejecución en producción** de las Fases 5-7 (systemd, DB, cutover) — este
    documento no las ejecuta (regla explícita del encargo: "no toques producción").
 
@@ -312,21 +312,21 @@ Estos 5 archivos se validan por **igualdad exacta de conjunto de claves** entre 
 tocar uno sin los otros:
 
 1. `ops/scripts/manifest_lib.py` — `EXPECTED` (línea 14): agregar
-   `"iza": ("Miguel", "grp.miguel", "hermes")`, `"atlas": ("Miguel", "grp.miguel", "codex")`;
-   cambiar `"kratos": (...)` de `"codex"` a `"claude"`. También el mensaje de error de línea 69
+   `"<agent-05>": ("<tenant-b>", "grp.<tenant-b>", "hermes")`, `"<agent-04>": ("<tenant-b>", "grp.<tenant-b>", "codex")`;
+   cambiar `"<agent-03>": (...)` de `"codex"` a `"claude"`. También el mensaje de error de línea 69
    ("alias is not in the **12**-member fleet" → 14).
 2. `ops/scripts/container_alias_lib.py` — `EXPECTED` (línea 11): mismo agregado/cambio, con
-   `container='ws-humanizar', user='dev', home='/home/dev'`,
-   `stateDirectory='/home/dev/.local/state/cauce-v3/{iza,atlas}'`.
-3. `ops/schemas/alias-manifest.schema.json` — **no se toca**: `Miguel`/`grp.miguel` ya están en
+   `container='${AGENT_CONTAINER}', user='dev', home='${RUNTIME_HOME}'`,
+   `stateDirectory='${RUNTIME_STATE_DIR},<agent-04>}'`.
+3. `ops/schemas/alias-manifest.schema.json` — **no se toca**: `<tenant-b>`/`grp.<tenant-b>` ya están en
    los enums de `tenant`/`room` (líneas 22-23, verificado). Esto es una consecuencia directa de
    la corrección de premisa (no hay tenant nuevo).
-4. `ops/manifests/iza.yaml`, `ops/manifests/atlas.yaml` (nuevos, mismo shape que
-   `ops/manifests/kratos.yaml`); editar `ops/manifests/kratos.yaml`: `harness: claude`. Para
-   `iza`, el bloque `process` necesita la clave extra que sólo exige `hermes`
+4. `ops/manifests/<agent-05>.yaml`, `ops/manifests/<agent-04>.yaml` (nuevos, mismo shape que
+   `ops/manifests/<agent-03>.yaml`); editar `ops/manifests/<agent-03>.yaml`: `harness: claude`. Para
+   `<agent-05>`, el bloque `process` necesita la clave extra que sólo exige `hermes`
    (`manifest_lib.py:90`): `operationalModelEnv: HERMES_INFERENCE_MODEL` (valor literal exacto,
    validado por `manifest_lib.py:93`) además de `executablePathEnv: CAUCE_IZA_EXEC_PATH`.
-5. `ops/container-aliases.json` — agregar bloques `iza`/`atlas`; cambiar `kratos.harness` a
+5. `ops/container-aliases.json` — agregar bloques `<agent-05>`/`<agent-04>`; cambiar `<agent-03>.harness` a
    `"claude"`.
 
 ```sh
@@ -365,10 +365,10 @@ bash ops/scripts/validate.sh
 
 ```sql
 INSERT INTO memberships(tenant_id, room_id, alias, role) VALUES
-  ('Miguel','grp.miguel','iza','agent'),
-  ('Miguel','grp.miguel','atlas','agent')
+  ('<tenant-b>','grp.<tenant-b>','<agent-05>','agent'),
+  ('<tenant-b>','grp.<tenant-b>','<agent-04>','agent')
 ON CONFLICT DO NOTHING;
--- kratos no cambia fila: el harness no vive en memberships.
+-- <agent-03> no cambia fila: el harness no vive en memberships.
 ```
 El rol `'agent'` ya existe en `role_policies` con `allow_route=true, allow_read=true`
 (`003_adversarial_hardening.sql:61-64`, verificado) — no hace falta ninguna fila nueva ahí.
@@ -378,26 +378,26 @@ esta alta** — mantiene el registro informativo sincronizado, pero no bloquea n
 
 ```sql
 UPDATE agents SET harness_id='claude', enabled=true, updated_at=now()
- WHERE tenant_id='Miguel' AND alias='kratos';
+ WHERE tenant_id='<tenant-b>' AND alias='<agent-03>';
 
 INSERT INTO agents(tenant_id, alias, harness_id, display_name, enabled,
                     container_name, runtime_user, home_directory, state_directory)
 VALUES
-  ('Miguel','atlas','codex','Atlas',true,'ws-humanizar','dev','/home/dev',
-   '/home/dev/.local/state/cauce-v3/atlas'),
-  ('Miguel','iza','hermes','Iza',true,'ws-humanizar','dev','/home/dev',
-   '/home/dev/.local/state/cauce-v3/iza')
+  ('<tenant-b>','<agent-04>','codex','<agent-04>',true,'${AGENT_CONTAINER}','dev','${RUNTIME_HOME}',
+   '${RUNTIME_STATE_DIR}'),
+  ('<tenant-b>','<agent-05>','hermes','<agent-05>',true,'${AGENT_CONTAINER}','dev','${RUNTIME_HOME}',
+   '${RUNTIME_STATE_DIR}')
 ON CONFLICT (tenant_id, alias) DO NOTHING;
 ```
 
-### 3.6 Fase 5 — secretos fuera de repo (manual, Steven u operador con la CA)
+### 3.6 Fase 5 — secretos fuera de repo (manual, <tenant-a> u operador con la CA)
 
-1. PKI: `~/.config/cauce-v3/container-pki/{iza,atlas}/` en `0700`, con `client.crt`/`client.key`/
+1. PKI: `~/.config/cauce-v3/container-pki/{<agent-05>,<agent-04>}/` en `0700`, con `client.crt`/`client.key`/
    `ca.crt` `0600` emitidos por la CA operativa (sin script en este repo — brecha documental real,
    no hay automatización de emisión de certs acá).
 2. Dos entradas nuevas en `CAUCE_MTLS_IDENTITY_FILE` (fuera de repo, formato documentado en
    `ops/runbooks/authentication.md:63`): `{"certificate_sha256": "...", "principal": {"tenant_id":
-   "Miguel", "alias": "iza"|"atlas", "channel": "adapter", "roles": [...]}}`.
+   "<tenant-b>", "alias": "<agent-05>"|"<agent-04>", "channel": "adapter", "roles": [...]}}`.
    Publicar por rename atómico y **verificar que el gateway lo vea**: el registro se alcanza por el
    directorio montado `CAUCE_GATEWAY_IDENTITY_DIR` → `/run/cauce-identities`, y si alguna vez vuelve
    a montarse como archivo suelto el rename queda pinneado al inodo viejo y el alta no llega (falla
@@ -406,19 +406,19 @@ ON CONFLICT (tenant_id, alias) DO NOTHING;
    `ops/runbooks/authentication.md` § "Montaje de los registros".
 3. Bots Telegram nuevos vía BotFather (manual) + tokens `0600`, luego regenerar:
    `python3 ops/scripts/generate-telegram-config.py`.
-4. `~/.config/cauce-v3/container-aliases/{iza,atlas}.env` desde los `.env.example` regenerados en
+4. `~/.config/cauce-v3/container-aliases/{<agent-05>,<agent-04>}.env` desde los `.env.example` regenerados en
    Fase 3, completando `BUNDLE_RELEASE`/`BUNDLE_SHA256`/`PKI_DIR`/`RELAY_URL`/`EXPECTED_IMAGE_ID`.
-5. Para `iza` específicamente, además: crear `~/.hermes/profiles/iza` dentro de `ws-humanizar`
+5. Para `<agent-05>` específicamente, además: crear `~/.hermes/profiles/<agent-05>` dentro de `${AGENT_CONTAINER}`
    (hoy `~/.hermes` no existe ahí — verificado). **Antes de clonarlo**, leer de sólo-lectura qué
-   contiene `~/.hermes/profiles/argos` en `ctrl-infra` (el único perfil hermes vivo hoy) para
+   contiene `~/.hermes/profiles/<agent-09>` en `${INFRA_CONTROLLER}` (el único perfil hermes vivo hoy) para
    saber qué replicar — no asumido en este documento, no verificado en esta pasada:
    ```sh
-   docker exec ctrl-infra find /home/dev/.hermes/profiles/argos -maxdepth 2
+   docker exec ${INFRA_CONTROLLER} find ${RUNTIME_HOME} -maxdepth 2
    ```
-   y fijar en el `.env` de `iza`: `HERMES_HOME=/home/dev/.hermes/profiles/iza`,
+   y fijar en el `.env` de `<agent-05>`: `HERMES_HOME=${HARNESS_HOME}`,
    `HERMES_INFERENCE_MODEL=gpt-5.6-sol`. `HERMES_PYTHON` es opcional
-   (`container-adapter-supervisor.sh:180-196`, verificado) — sólo fijarlo si el `.env` de argos lo
-   usa, con una ruta bajo `/home/dev` (nunca fuera del home mapeado).
+   (`container-adapter-supervisor.sh:180-196`, verificado) — sólo fijarlo si el `.env` de <agent-09> lo
+   usa, con una ruta bajo `${RUNTIME_HOME}` (nunca fuera del home mapeado).
 
 ### 3.7 Fase 6 — arranque (producción — requiere autorización explícita, no ejecutado acá)
 
@@ -426,29 +426,29 @@ ON CONFLICT (tenant_id, alias) DO NOTHING;
 python3 ops/scripts/generate-container-units.py --rootless --home "$HOME" \
   --output ops/generated/container-systemd/rootless
 (cd ops/generated/container-systemd/rootless && sha256sum -c SHA256SUMS)
-install -m 0644 ops/generated/container-systemd/rootless/cauce-v3-container-{iza,atlas}.service \
+install -m 0644 ops/generated/container-systemd/rootless/cauce-v3-container-{<agent-05>,<agent-04>}.service \
   "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
-systemctl --user enable --now cauce-v3-container-iza.service cauce-v3-container-atlas.service
-ops/scripts/container-adapter-supervisor.sh check iza
-ops/scripts/container-adapter-supervisor.sh check atlas
+systemctl --user enable --now cauce-v3-container-<agent-05>.service cauce-v3-container-<agent-04>.service
+ops/scripts/container-adapter-supervisor.sh check <agent-05>
+ops/scripts/container-adapter-supervisor.sh check <agent-04>
 ```
 
-`kratos` **no** es un simple restart: es un cambio de harness, y el runbook lo prohíbe
+`<agent-03>` **no** es un simple restart: es un cambio de harness, y el runbook lo prohíbe
 explícitamente como edición suelta — cita literal verificada de
 `ops/runbooks/container-adapters.md:50-51`: *"Volver cualquiera de esos tres alias a Claude
 requiere un preflight live nuevo... y un nuevo release inmutable de ops con mapping, manifiesto,
 units, digests y evidencia de flota regenerados; no se permite editar sólo la config o la unit
-instalada."* Esa frase describe exactamente esta operación (kratos volviendo a Claude tras el
-cutover Codex del 2026-07-23) — no es una inferencia, es el runbook existente anticipando este
+instalada."* Esa frase describe exactamente esta operación (<agent-03> volviendo a Claude tras el
+cutover anterior a Codex) — no es una inferencia, es el runbook existente anticipando este
 caso:
 
 ```sh
 CAUCE_CHANGE_ID=CHG-xxxx \
-CAUCE_CUTOVER_CONFIRM=cutover:container:kratos:CHG-xxxx \
+CAUCE_CUTOVER_CONFIRM=cutover:container:<agent-03>:CHG-xxxx \
 CAUCE_SYSTEMD_SCOPE=user \
-ops/scripts/cutover.sh container kratos snapshot-drain.json
-ops/scripts/container-adapter-supervisor.sh check kratos
+ops/scripts/cutover.sh container <agent-03> snapshot-drain.json
+ops/scripts/container-adapter-supervisor.sh check <agent-03>
 ```
 
 ### 3.8 Fase 7 — verificación (no basta `is-active`)
@@ -457,34 +457,34 @@ ops/scripts/container-adapter-supervisor.sh check kratos
 bash ops/scripts/validate.sh
 python3 ops/scripts/validate-fleet-release-evidence.py
 node ops/tests/container-supervisor.test.mjs
-systemctl --user status cauce-v3-container-{iza,atlas,kratos}.service
-journalctl --user -u cauce-v3-container-iza.service --since -10m
+systemctl --user status cauce-v3-container-{<agent-05>,<agent-04>,<agent-03>}.service
+journalctl --user -u cauce-v3-container-<agent-05>.service --since -10m
 ```
 Más un round-trip real por Telegram (mensaje → delivery `done`) por cada uno de los 3 alias
 tocados — exigido literalmente por el runbook, `is-active`/`check` solos no prueban que el harness
 responda.
 
-### 3.9 Riesgo específico verificado: la credencial `.claude` de kratos NO es exclusiva de Miguel
+### 3.9 Riesgo específico verificado: la credencial `.claude` de <agent-03> NO es exclusiva de <tenant-b>
 
 Del inventario de credenciales del encargo: *"/datos/agents/shared/.claude está montado idéntico
-en ctrl-infra, ws-prizma y ws-humanizar => argos, kant, socrates y kratos comparten literalmente
-el mismo archivo."* Esto es clave para la decisión de §3.2.1: si `kratos` pasa a `harness=claude`
-y usa lo que hay en ese directorio, **no es una cuenta propia de Miguel** — es el mismo archivo
-físico que ven `ctrl-infra` (Steven: argos, kant) y `ws-prizma` (Steven: socrates), aunque hoy
+en ${INFRA_CONTROLLER}, ${AGENT_CONTAINER} y ${AGENT_CONTAINER} => <agent-09>, <agent-01>, <agent-02> y <agent-03> comparten literalmente
+el mismo archivo."* Esto es clave para la decisión de §3.2.1: si `<agent-03>` pasa a `harness=claude`
+y usa lo que hay en ese directorio, **no es una cuenta propia de <tenant-b>** — es el mismo archivo
+físico que ven `${INFRA_CONTROLLER}` (<tenant-a>: <agent-09>, <agent-01>) y `${AGENT_CONTAINER}` (<tenant-a>: <agent-02>), aunque hoy
 ninguno de esos otros tres alias usa realmente `harness=claude` (usan hermes/codex/codex, así que
-no lo leen activamente). Por eso la cuenta que aparece logueada es la personal de Steven
-(`saldantia.sas@gmail.com`) y no una de Miguel: es tribalmente "la de quien la logueó por última
+no lo leen activamente). Por eso la cuenta que aparece logueada es la personal de <tenant-a>
+(`ACCOUNT_EMAIL`) y no una de <tenant-b>: es tribalmente "la de quien la logueó por última
 vez en ese bind compartido", no algo que Cauce aísle por alias. Consecuencias:
 
-- Re-loguear `ws-humanizar` con `stevenvallejo780@gmail.com` para "corregir" la atribución de
-  `kratos` **cambiaría el mismo archivo que comparten ctrl-infra y ws-prizma** — hoy inofensivo
+- Re-loguear `${AGENT_CONTAINER}` con `ACCOUNT_EMAIL` para "corregir" la atribución de
+  `<agent-03>` **cambiaría el mismo archivo que comparten ${INFRA_CONTROLLER} y ${AGENT_CONTAINER}** — hoy inofensivo
   porque ningún alias activo ahí usa `harness=claude`, pero es un riesgo latente para el día que
   alguno lo use.
 - La verdadera solución (aislar por alias con `CLAUDE_CONFIG_DIR`) es exactamente el mecanismo de
   §1.5/§5, hoy sin wiring en `ops/` (confirmado por `grep` vacío). Mientras no se construya, este
   bind compartido es una limitación de infraestructura preexistente, no algo que el pool de la
   Sección 1 resuelva por sí solo.
-- Nota de calendario del propio inventario: la credencial compartida "vence hoy ~09:39Z" — no
+- Nota de calendario del propio inventario: la credencial compartida "vence hoy ~<private-time>" — no
   tengo forma de verificar si ese plazo ya pasó al momento de ejecutar este plan; quien lo ejecute
   debe revalidar el estado de la credencial antes de la Fase 3.2.1, no asumir que sigue vigente.
 
@@ -493,17 +493,17 @@ vez en ese bind compartido", no algo que Cauce aísle por alias. Consecuencias:
 ## 4. Fuera de alcance por el límite harness ≠ proveedor (sin ambigüedad)
 
 - **`codex` sólo habla con OpenAI. `claude` sólo habla con Anthropic.** Ninguna fila de
-  `agent_account_bindings`, por más pool que exista, hace que `atlas` (harness `codex`) le hable a
-  Anthropic ni que `kratos`/`vulcano` (harness `claude`) le hablen a OpenAI. El pool cambia de
-  **cuenta**, nunca de **proveedor**. "Isa usa Claude" o "Pablo es Codex" son etiquetas de negocio
+  `agent_account_bindings`, por más pool que exista, hace que `<agent-04>` (harness `codex`) le hable a
+  Anthropic ni que `<agent-03>`/`<agent-15>` (harness `claude`) le hablen a OpenAI. El pool cambia de
+  **cuenta**, nunca de **proveedor**. "<tenant-e> usa Claude" o "<tenant-c> es Codex" son etiquetas de negocio
   que sólo se activan en el alias cuyo harness ya coincide con ese proveedor — nunca migran el
-  harness de un alias existente. Con el inventario dado, "Isa usa Claude" no tiene hoy ningún
-  correlato real (ninguna de las 2 cuentas Claude está asociada a Isa) hasta que Isa tenga un
-  alias `harness=claude` propio o el hub decida que una cuenta Claude pagada por Isa entre al
-  `alias_routing_ceiling` de otro alias claude existente (p. ej. `vulcano`) como fallback.
+  harness de un alias existente. Con el inventario dado, "<tenant-e> usa Claude" no tiene hoy ningún
+  correlato real (ninguna de las 2 cuentas Claude está asociada a <tenant-e>) hasta que <tenant-e> tenga un
+  alias `harness=claude` propio o el hub decida que una cuenta Claude pagada por <tenant-e> entre al
+  `alias_routing_ceiling` de otro alias claude existente (p. ej. `<agent-15>`) como fallback.
 - **`openclaw` queda 100% fuera del mecanismo de la Sección 1**, no por decisión de producto sino
   por límite técnico verificado: `provider_routing_v1` (§1.5) nunca se activa en `openclaw.ts`, así
-  que `connection_leases.capabilities` para jarvis/seneca/midas/janus/hegel jamás incluye esa
+  que `connection_leases.capabilities` para <agent-07>/<agent-11>/<agent-12>/<agent-14>/<agent-10> jamás incluye esa
   capability y `claimDeliveries` nunca intenta resolución de cuenta para ellos. Su historia
   multi-proveedor (MiniMax/Antigravity/ChatGPT) ya la resuelve `openclaw.json`, **fuera** de este
   repo y de este control plane. Intentar meterla en el mismo pool exigiría pasar API keys (tipo
@@ -512,7 +512,7 @@ vez en ese bind compartido", no algo que Cauce aísle por alias. Consecuencias:
   que matchee `api[_-]?key` (verificado: `MINIMAX_API_KEY` matchea), así que ese camino ni
   siquiera compila hoy sin cambiar el filtro — sería una feature distinta, no una extensión de
   este diseño.
-- **`hermes` (argos, iza) queda fuera por un motivo distinto: ya tiene su propio selector.**
+- **`hermes` (<agent-09>, <agent-05>) queda fuera por un motivo distinto: ya tiene su propio selector.**
   `HERMES_INFERENCE_MODEL` (allowlisteado en `SAFE_ENVIRONMENT`,
   `process-runner.ts:21-22`) es un mecanismo de ruteo de **modelo** que ya existe y ya funciona,
   orthogonal a las tablas de la Sección 1. No es que hermes esté bloqueado — es que ya resuelve
@@ -525,10 +525,10 @@ vez en ese bind compartido", no algo que Cauce aísle por alias. Consecuencias:
   `subprocess.Popen(..., env=None)` — es decir hereda el entorno del controlador tal cual, sin
   fijar `HOME`/`CLAUDE_CONFIG_DIR`/`CODEX_HOME` por alias. Construir ese wiring es trabajo de
   código previo (nuevo `case` en el allowlist + paso de `env` en `run_adapter`), no cosmético, y
-  **no bloquea la alta de iza/atlas** (§3) porque, con la asignación de harnesses que decidió
-  Steven — `kratos=claude`, `atlas=codex`, `iza=hermes` — los tres usan raíces de credencial por
+  **no bloquea la alta de <agent-05>/<agent-04>** (§3) porque, con la asignación de harnesses que decidió
+  <tenant-a> — `<agent-03>=claude`, `<agent-04>=codex`, `<agent-05>=hermes` — los tres usan raíces de credencial por
   defecto distintas (`~/.claude`, `~/.codex`, `~/.hermes`) dentro del mismo `$HOME` de
-  `ws-humanizar`, así que **no hay colisión real para esta composición específica de equipo**. Sí
+  `${AGENT_CONTAINER}`, así que **no hay colisión real para esta composición específica de equipo**. Sí
   sería bloqueante el día que un cuarto alias con `harness=claude` (o un segundo `codex`) quiera
   convivir en el mismo container con una cuenta distinta.
 - El servidor **nunca** conoce ni transmite el valor real de una credencial — sólo nombres de
@@ -540,20 +540,20 @@ vez en ese bind compartido", no algo que Cauce aísle por alias. Consecuencias:
 
 ---
 
-## 5. Decisiones abiertas para Steven (resumen accionable)
+## 5. Decisiones abiertas para <tenant-a> (resumen accionable)
 
-1. **Cuenta Claude de `kratos`**: ¿dejar `saldantia.sas@gmail.com` o re-loguear a
-   `stevenvallejo780@gmail.com`? Ver el riesgo de bind compartido en §3.9 antes de decidir — no es
+1. **Cuenta Claude de `<agent-03>`**: ¿dejar `ACCOUNT_EMAIL` o re-loguear a
+   `ACCOUNT_EMAIL`? Ver el riesgo de bind compartido en §3.9 antes de decidir — no es
    un simple re-login aislado.
 2. **`payer_tenant_id` real** de cada `provider_accounts` (Sección 2): mi lectura del inventario es
    una inferencia razonable, no un hecho de facturación confirmado — en particular
-   `dedalo`/`salva`/`atlas` (Codex) y potencialmente `kratos` (Claude) son casos de "Steven paga,
+   `<agent-13>`/`<agent-06>`/`<agent-04>` (Codex) y potencialmente `<agent-03>` (Claude) son casos de "<tenant-a> paga,
    otro tenant consume" que hoy nadie registra en ningún lado.
 3. **¿Se implementa la Sección 1 (pool/migración `009`) ahora o se pospone?** No bloquea la alta de
-   iza/atlas (§1.1) — es una decisión de secuencia de trabajo, no de negocio.
+   <agent-05>/<agent-04> (§1.1) — es una decisión de secuencia de trabajo, no de negocio.
 4. **Numeración de migración**: 4 archivos `008_*.sql` compiten hoy entre worktrees (§1.1) — quien
    mergee primero fija el número real; este documento usa `009` como placeholder.
-5. **Emisión de certs mTLS y bots Telegram para iza/atlas**: pasos manuales sin automatización en
+5. **Emisión de certs mTLS y bots Telegram para <agent-05>/<agent-04>**: pasos manuales sin automatización en
    este repo — ejecutarlos o encargar que se escriba el tooling faltante primero.
 6. **Ejecución en producción de las Fases 5-7 de la Sección 3**: este documento las deja
    completamente especificadas pero **no ejecutadas**, por regla explícita del encargo.

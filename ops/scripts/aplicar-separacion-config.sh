@@ -82,7 +82,7 @@ if [[ $plan_origen == - ]]; then plan_json=$(cat); else plan_json=$(cat -- "$pla
 # ---------------------------------------------------------------------------
 leer_plan() {
   python3 - "$1" <<'PY'
-import json, sys
+import json, pathlib, re, sys
 
 try:
     plan = json.loads(sys.argv[1])
@@ -100,25 +100,97 @@ for campo in ("alias", "arnes", "variable", "testigo", "directorioOrigen", "dire
 # EL RECHAZO DURO. El origen es la reversa: ningún plan puede pedir que se borre. Si algún día el
 # planificador crece una lista de borrados, esto para la aplicación en seco en vez de descubrirlo
 # cuando ya no haya a dónde volver.
-if plan["borrados"]:
+if not isinstance(plan["borrados"], list) or plan["borrados"]:
     sys.exit(
         "el plan trae borrados y este ejecutor no borra NADA: el directorio de origen es la "
         f"reversa. Borrados pedidos: {plan['borrados']}"
     )
 
-destino = plan["directorioDestino"]
-if not isinstance(destino, str) or not destino.startswith("/") or "//" in destino:
-    sys.exit("directorioDestino tiene que ser una ruta absoluta canónica")
+def ruta_canonica(valor, etiqueta):
+    if (
+        not isinstance(valor, str)
+        or not valor.startswith("/")
+        or valor == "/"
+        or valor.endswith("/")
+        or "//" in valor
+        or "\0" in valor
+        or any(parte in ("", ".", "..") for parte in valor.split("/")[1:])
+        or str(pathlib.PurePosixPath(valor)) != valor
+    ):
+        sys.exit(f"{etiqueta} tiene que ser una ruta absoluta canónica")
+    return valor
+
+alias = plan["alias"]
+arnes = plan["arnes"]
+contratos = {
+    "codex": ("CODEX_HOME", ".codex", "AGENTS.md", {
+        "AGENTS.md": ("fichero", True),
+        "config.toml": ("enlace", True),
+        "auth.json": ("enlace", True),
+    }),
+    "claude": ("CLAUDE_CONFIG_DIR", ".claude", "CLAUDE.md", {
+        "CLAUDE.md": ("fichero", True),
+        ".claude.json": ("enlace", True),
+        ".credentials.json": ("enlace", True),
+        "settings.json": ("enlace", False),
+    }),
+}
+if not isinstance(alias, str) or re.fullmatch(r"[a-z][a-z0-9-]*", alias) is None:
+    sys.exit("alias inválido")
+if arnes not in contratos:
+    sys.exit("arnés inválido")
+variable_esperada, directorio_arnes, testigo_esperado, operaciones_esperadas = contratos[arnes]
+if plan["variable"] != variable_esperada or plan["testigo"] != testigo_esperado:
+    sys.exit("variable o testigo no coincide con el arnés")
+if not isinstance(plan["reversa"], str) or any(c in plan["reversa"] for c in ("\0", "\r")):
+    sys.exit("reversa inválida")
+
+origen = ruta_canonica(plan["directorioOrigen"], "directorioOrigen")
+destino = ruta_canonica(plan["directorioDestino"], "directorioDestino")
+sufijo = f"/.local/share/cauce-v3/config/{alias}/{directorio_arnes}"
+if not destino.endswith(sufijo) or destino == sufijo:
+    sys.exit("directorioDestino no es el perfil persistente exacto del alias")
+if destino == origen or destino.startswith(origen + "/") or origen.startswith(destino + "/"):
+    sys.exit("origen y destino se solapan")
 
 copias = plan["copias"]
 if not isinstance(copias, list) or not copias:
     sys.exit("el plan no trae ninguna copia")
 
+vistos = set()
 for copia in copias:
-    ruta = copia["destino"]
-    # Una copia que escribe fuera del directorio del alias no es parte de esta separación.
-    if ruta != destino and not ruta.startswith(destino + "/"):
-        sys.exit(f"la copia a {ruta} cae fuera del directorio del alias ({destino})")
+    if not isinstance(copia, dict):
+        sys.exit("cada operación tiene que ser un objeto")
+    tipo = copia.get("tipo")
+    ruta_origen = ruta_canonica(copia.get("origen"), "origen de copia")
+    ruta = ruta_canonica(copia.get("destino"), "destino de copia")
+    if not isinstance(copia.get("obligatorio"), bool):
+        sys.exit("obligatorio tiene que ser booleano")
+    try:
+        relativo = pathlib.PurePosixPath(ruta).relative_to(pathlib.PurePosixPath(destino))
+    except ValueError:
+        sys.exit(f"la copia a {ruta} cae fuera del perfil exacto")
+    if len(relativo.parts) != 1:
+        sys.exit(f"la copia a {ruta} no es un destino directo exacto del perfil")
+    nombre = relativo.parts[0]
+    if nombre in vistos:
+        sys.exit(f"el plan duplica el destino {nombre}")
+    vistos.add(nombre)
+    esperado = operaciones_esperadas.get(nombre)
+    if esperado is None or (tipo, copia["obligatorio"]) != esperado:
+        sys.exit(f"operación inesperada o incompleta para {nombre}")
+    if nombre == testigo_esperado and ruta_origen != f"{origen}/{testigo_esperado}":
+        sys.exit("el testigo no sale del directorioOrigen exacto")
+    if nombre in {"config.toml", "auth.json", ".credentials.json", "settings.json"}:
+        if ruta_origen != f"{origen}/{nombre}":
+            sys.exit(f"el origen de {nombre} no coincide con directorioOrigen")
+    if nombre == ".claude.json":
+        parent = str(pathlib.PurePosixPath(origen).parent)
+        if ruta_origen not in {f"{origen}/.claude.json", f"{parent}/.claude.json"}:
+            sys.exit("el origen de .claude.json no corresponde al perfil actual")
+if vistos != set(operaciones_esperadas):
+    faltan = sorted(set(operaciones_esperadas) - vistos)
+    sys.exit("el plan omite operaciones exactas: " + ",".join(faltan))
 
 campos = [plan["alias"], plan["arnes"], plan["variable"], plan["testigo"],
           plan["directorioOrigen"], destino, plan["reversa"], str(len(copias))]
@@ -147,38 +219,190 @@ done
 
 identidad() { stat -c '%d:%i' -- "$1"; }
 
+# Valida fuentes y publica por descriptores relativos a directorios abiertos con O_NOFOLLOW. Así
+# `dest/../victim`, un componente symlink o dos operaciones sobre el mismo nombre fallan antes de
+# escribir; ninguna resolución tardía de `cp`, `mkdir` o `ln` puede escapar del perfil autorizado.
+aplicar_seguro() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, os, secrets, stat, sys
+
+def fallo_limpio(_kind, error, _traceback):
+    print(str(error) or "operación de filesystem rechazada", file=sys.stderr)
+
+sys.excepthook = fallo_limpio
+
+plan = json.loads(sys.argv[1])
+solo_verificar = sys.argv[2] == "true"
+rehacer = sys.argv[3] == "true"
+destino = plan["directorioDestino"]
+
+def abrir_directorio(ruta, *, crear=False):
+    actual = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for componente in ruta.split("/")[1:]:
+            try:
+                siguiente = os.open(
+                    componente,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=actual,
+                )
+            except FileNotFoundError:
+                if not crear:
+                    raise
+                os.mkdir(componente, 0o700, dir_fd=actual)
+                os.fsync(actual)
+                siguiente = os.open(
+                    componente,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=actual,
+                )
+            os.close(actual)
+            actual = siguiente
+        return actual
+    except BaseException:
+        os.close(actual)
+        raise
+
+def abrir_fuente(ruta):
+    parent, nombre = ruta.rsplit("/", 1)
+    parent_fd = abrir_directorio(parent)
+    try:
+        fd = os.open(nombre, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
+    details = os.fstat(fd)
+    if not stat.S_ISREG(details.st_mode):
+        os.close(fd)
+        raise RuntimeError("una fuente no es un fichero regular directo")
+    return fd, details
+
+def identidad_fichero(details):
+    return (
+        details.st_dev, details.st_ino, details.st_mode, details.st_nlink,
+        details.st_uid, details.st_gid, details.st_size,
+        details.st_mtime_ns, details.st_ctime_ns,
+    )
+
+fuentes = []
+try:
+    # Preflight completo antes de crear un solo componente del destino.
+    for operacion in plan["copias"]:
+        try:
+            fd, details = abrir_fuente(operacion["origen"])
+        except FileNotFoundError:
+            if operacion["obligatorio"]:
+                nombre = operacion["origen"].rsplit("/", 1)[-1]
+                raise RuntimeError(f"un origen obligatorio no existe: {nombre}") from None
+            fuentes.append(None)
+            continue
+        fuentes.append((fd, details))
+
+    if solo_verificar:
+        destino_fd = abrir_directorio(destino)
+        try:
+            details = os.fstat(destino_fd)
+            if details.st_uid != os.geteuid() or details.st_mode & 0o022:
+                raise RuntimeError("el directorio destino tiene ownership o modo inseguros")
+        finally:
+            os.close(destino_fd)
+        raise SystemExit(0)
+
+    parent, nombre_destino = destino.rsplit("/", 1)
+    parent_fd = abrir_directorio(parent, crear=True)
+    try:
+        try:
+            existing = os.stat(nombre_destino, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            os.mkdir(nombre_destino, 0o700, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+        else:
+            if not rehacer:
+                raise RuntimeError("el destino ya existe y no se pidió --rehacer")
+            if not stat.S_ISDIR(existing.st_mode) or stat.S_ISLNK(existing.st_mode):
+                raise RuntimeError("el destino existente no es un directorio directo")
+        destino_fd = os.open(
+            nombre_destino,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_fd,
+        )
+    finally:
+        os.close(parent_fd)
+    try:
+        dest_details = os.fstat(destino_fd)
+        if dest_details.st_uid != os.geteuid() or dest_details.st_mode & 0o022:
+            raise RuntimeError("el directorio destino tiene ownership o modo inseguros")
+        # Rehacer también es fail-closed: validar TODOS los tipos antes de reemplazar el primero
+        # evita dejar una publicación parcialmente nueva porque el último nombre era un symlink o
+        # directorio inesperado. Una fuente opcional ausente tampoco puede bendecir un destino
+        # viejo que ya no representa el plan.
+        for operacion, fuente in zip(plan["copias"], fuentes, strict=True):
+            nombre = operacion["destino"].rsplit("/", 1)[1]
+            try:
+                current = os.stat(nombre, dir_fd=destino_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if fuente is None:
+                raise RuntimeError("un destino opcional obsoleto requiere inspección")
+            if not rehacer:
+                raise RuntimeError("un destino exacto ya existe")
+            if operacion["tipo"] == "fichero" and not stat.S_ISREG(current.st_mode):
+                raise RuntimeError("un fichero destino existente tiene tipo ambiguo")
+            if operacion["tipo"] == "enlace" and not stat.S_ISLNK(current.st_mode):
+                raise RuntimeError("un enlace destino existente tiene tipo ambiguo")
+        for operacion, fuente in zip(plan["copias"], fuentes, strict=True):
+            if fuente is None:
+                continue
+            source_fd, source_details = fuente
+            nombre = operacion["destino"].rsplit("/", 1)[1]
+            temporal = f".{nombre}.cauce-{os.getpid()}-{secrets.token_hex(8)}"
+            try:
+                if operacion["tipo"] == "fichero":
+                    output = os.open(
+                        temporal,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        stat.S_IMODE(source_details.st_mode) & 0o700 or 0o600,
+                        dir_fd=destino_fd,
+                    )
+                    try:
+                        while True:
+                            chunk = os.read(source_fd, 65536)
+                            if not chunk:
+                                break
+                            view = memoryview(chunk)
+                            while view:
+                                written = os.write(output, view)
+                                if written <= 0:
+                                    raise RuntimeError("escritura incompleta")
+                                view = view[written:]
+                        if identidad_fichero(os.fstat(source_fd)) != identidad_fichero(source_details):
+                            raise RuntimeError("una fuente cambió durante la copia")
+                        os.fsync(output)
+                    finally:
+                        os.close(output)
+                else:
+                    os.symlink(operacion["origen"], temporal, dir_fd=destino_fd)
+
+                os.replace(temporal, nombre, src_dir_fd=destino_fd, dst_dir_fd=destino_fd)
+                os.fsync(destino_fd)
+            finally:
+                try:
+                    os.unlink(temporal, dir_fd=destino_fd)
+                except FileNotFoundError:
+                    pass
+    finally:
+        os.close(destino_fd)
+finally:
+    for fuente in fuentes:
+        if fuente is not None:
+            os.close(fuente[0])
+PY
+}
+
 # ---------------------------------------------------------------------------
 # Aplicación.
 # ---------------------------------------------------------------------------
-if [[ $solo_verificar == false ]]; then
-  # Comprobación previa: TODO origen obligatorio tiene que existir ANTES de copiar nada. Descubrir
-  # a mitad que falta el `.claude.json` deja al alias apuntando a un directorio sin MCP.
-  for ((i = 0; i < numero_copias; i++)); do
-    [[ ${copia_obligatoria[$i]} == 1 ]] || continue
-    if [[ ! -e ${copia_origen[$i]} ]]; then
-      morir "el origen obligatorio no existe y sin él la separación deja al alias incompleto: ${copia_origen[$i]}"
-    fi
-  done
-  [[ -e "$directorio_origen/$testigo" ]] \
-    || morir "el fichero testigo no existe en el origen: $directorio_origen/$testigo (sin él no se puede comprobar por efecto que la separación ocurrió)"
-
-  if [[ -e $directorio_destino && $rehacer == false ]]; then
-    morir "el destino ya existe: $directorio_destino (usá --rehacer si de verdad querés reescribirlo)"
-  fi
-
-  mkdir -p -- "$directorio_destino"
-  for ((i = 0; i < numero_copias; i++)); do
-    case "${copia_tipo[$i]}" in
-      # `cp -a` copia CONTENIDO nuevo: no enlaza duro. La comprobación de inodo de más abajo es la
-      # que lo acredita, no esta línea.
-      directorio) cp -a -- "${copia_origen[$i]}/." "${copia_destino[$i]}/" ;;
-      fichero)
-        mkdir -p -- "$(dirname -- "${copia_destino[$i]}")"
-        cp -p -- "${copia_origen[$i]}" "${copia_destino[$i]}"
-        ;;
-      *) morir "tipo de copia desconocido: ${copia_tipo[$i]}" ;;
-    esac
-  done
+if ! error_aplicacion=$(aplicar_seguro "$plan_json" "$solo_verificar" "$rehacer" 2>&1); then
+  morir "publicación segura rechazada${error_aplicacion:+: $error_aplicacion}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -218,34 +442,89 @@ fi
 
 # Cada copia declarada tiene que haber llegado. Se comprueba la que se pidió, no la que se supone.
 for ((i = 0; i < numero_copias; i++)); do
+  if [[ ! -e ${copia_origen[$i]} && ${copia_obligatoria[$i]} == 0 ]]; then
+    continue
+  fi
   [[ -e ${copia_destino[$i]} ]] \
     || fallo_comprobacion "la copia declarada no llegó al destino: ${copia_destino[$i]}"
+  if [[ ${copia_tipo[$i]} == enlace ]]; then
+    [[ -L ${copia_destino[$i]} ]] \
+      || fallo_comprobacion "el destino debía ser un enlace, no una copia: ${copia_destino[$i]}"
+    origen_real=$(readlink -f -- "${copia_origen[$i]}")
+    destino_real=$(readlink -f -- "${copia_destino[$i]}")
+    [[ -n $origen_real && $destino_real == "$origen_real" ]] \
+      || fallo_comprobacion "el enlace no conserva la fuente única autorizada: ${copia_destino[$i]}"
+  fi
 done
 printf '  [ok] llegaron las %s copias declaradas\n' "$numero_copias"
 
-# EL `.claude.json`. Que exista no basta: un fichero truncado o un `{}` arrancan igual de bien y
-# dejan al alias sin una sola herramienta. Se dice CUÁNTOS servidores trae para poder compararlo
-# con lo que el alias tenía.
+# EL `.claude.json`. Que exista no basta: un fichero truncado, un mapa vacío o entradas sin
+# transporte arrancan sin proporcionar herramientas. Se exige un mapa no vacío y cada servidor
+# debe declarar un comando local o una URL remota mínimamente bien formada.
 destino_claude_json="$directorio_destino/.claude.json"
 if [[ $variable == CLAUDE_CONFIG_DIR ]]; then
   [[ -s $destino_claude_json ]] \
     || fallo_comprobacion "falta (o está vacío) $destino_claude_json — CLAUDE_CONFIG_DIR mueve TAMBIÉN ese fichero y con él TODOS los MCP del alias; sin él arranca sin un solo error y sin ninguna herramienta"
   if ! mcp=$(python3 -c '
 import json, sys
+from urllib.parse import urlsplit
 try:
     documento = json.load(open(sys.argv[1], encoding="utf-8"))
 except Exception as error:
     sys.exit(f"ilegible: {error}")
 if not isinstance(documento, dict):
     sys.exit("no es un objeto JSON")
-print(len(documento.get("mcpServers") or {}))
+servidores = documento.get("mcpServers")
+if not isinstance(servidores, dict) or not servidores:
+    sys.exit("mcpServers debe ser un objeto no vacío")
+for nombre, servidor in servidores.items():
+    if not isinstance(nombre, str) or not nombre or any(c.isspace() for c in nombre):
+        sys.exit("mcpServers contiene un nombre inválido")
+    if not isinstance(servidor, dict):
+        sys.exit("mcpServers contiene una entrada que no es objeto")
+    comando = servidor.get("command")
+    url = servidor.get("url")
+    if (comando is None) == (url is None):
+        sys.exit("mcpServers contiene una entrada ambigua o sin transporte")
+    if comando is not None:
+        if not isinstance(comando, str) or not comando.strip() or "\0" in comando:
+            sys.exit("mcpServers contiene un comando inválido")
+        argumentos = servidor.get("args", [])
+        entorno = servidor.get("env", {})
+        if (not isinstance(argumentos, list)
+                or any(not isinstance(item, str) or "\0" in item for item in argumentos)
+                or not isinstance(entorno, dict)
+                or any(not isinstance(key, str) or not key or "\0" in key
+                       or not isinstance(value, str) or "\0" in value
+                       for key, value in entorno.items())):
+            sys.exit("mcpServers contiene argumentos o entorno inválidos")
+    else:
+        if (not isinstance(url, str) or not url or url != url.strip()
+                or any(character.isspace() or ord(character) < 0x20 or ord(character) == 0x7f
+                       for character in url)):
+            sys.exit("mcpServers contiene una URL inválida")
+        try:
+            parsed = urlsplit(url)
+            port = parsed.port
+        except ValueError:
+            sys.exit("mcpServers contiene una URL inválida")
+        if (parsed.scheme not in ("http", "https")
+                or not parsed.netloc
+                or parsed.hostname is None
+                or parsed.username is not None
+                or parsed.password is not None
+                or "#" in url
+                or parsed.netloc.endswith(":")):
+            sys.exit("mcpServers contiene una URL inválida")
+        if port is not None and not 1 <= port <= 65535:
+            sys.exit("mcpServers contiene una URL inválida")
+        if servidor.get("type", "http") not in ("http", "sse"):
+            sys.exit("mcpServers contiene un transporte remoto inválido")
+print(len(servidores))
 ' "$destino_claude_json" 2>&1); then
     fallo_comprobacion ".claude.json llegó pero no se puede leer ($mcp): un fichero a medias arranca igual y deja al alias sin MCP"
   fi
   printf '  [ok] .claude.json llegó y trae %s servidores mcpServers\n' "$mcp"
-  if [[ $mcp == 0 ]]; then
-    printf '  [!!] ATENCIÓN: 0 servidores MCP. Si el alias tenía herramientas, esto es la pérdida silenciosa.\n'
-  fi
 fi
 
 printf '\nRESULTADO: separación aplicada y COMPROBADA para %s.\n' "$alias_nombre"

@@ -15,6 +15,7 @@ test("every declared runtime capability has exactly one hello string", () => {
     assert.equal(advertised.length, cuentaDeclaradas(definition.capabilities), definition.id);
     assert.equal(new Set(advertised).size, advertised.length, `${definition.id} duplicated a capability`);
     assert.equal(advertised.includes("agent_profile_v1"), true, definition.id);
+    assert.equal(advertised.includes("agent_profile_adoption_v1"), true, definition.id);
   }
 });
 
@@ -40,6 +41,7 @@ test("optional media and transport declarations are not omitted", () => {
     "native_image_input_v1",
     "native_document_input_v1",
     "agent_profile_v1",
+    "agent_profile_adoption_v1",
     "loopback-api",
     "stable-alias-sessions",
     "api-cancellation.abort-signal",

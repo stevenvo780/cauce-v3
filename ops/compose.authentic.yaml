@@ -253,6 +253,8 @@ services:
       SHADOW_ROUTER_SOCKET: /sockets/router/router.sock
       SHADOW_ROUTER_V2_SOCKET: /sockets/v2/ingress.sock
       SHADOW_ROUTER_V3_SOCKET: /sockets/v3/ingress.sock
+      SHADOW_ROUTER_HEALTH_STALE_MS: "30000"
+      SHADOW_ROUTER_SHUTDOWN_MS: "5000"
     volumes:
       - type: bind
         source: ${CAUCE_AUTHENTIC_ROUTER_DIR:?set a private router socket directory}

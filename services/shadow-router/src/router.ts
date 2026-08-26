@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { TenantSchema } from '@cauce/protocol';
+import { ShadowRouteExecutionError } from './errors.js';
 import type {
   ShadowCorrelation, ShadowDirection, ShadowEnvelope, ShadowMappingRepository,
   ShadowMetric, ShadowMode, ShadowTargetRegistry, ShadowTargetRequest, ShadowVerdict
@@ -99,7 +100,14 @@ export interface ShadowRouteResult {
   status: 'shadowed' | 'compared' | 'delivered' | 'blocked';
   duplicate: boolean;
   human_reply: boolean;
+  /** Whether this invocation crossed the target method boundary. */
+  target_invoked: boolean;
   verdict?: ShadowVerdict['verdict'];
+}
+
+export interface ShadowRouteHooks {
+  /** Persist the inbox attempt immediately before invoking preview/deliver. */
+  beforeTarget?: (signal?: AbortSignal) => Promise<void>;
 }
 
 export class ShadowRouter {
@@ -122,78 +130,115 @@ export class ShadowRouter {
     if (this.mode !== 'cutover' && this.cutoverDirection) throw new Error('cutover direction is only valid in cutover mode');
   }
 
-  async route(input: ShadowEnvelope): Promise<ShadowRouteResult> {
-    const envelope = parseShadowEnvelope(input);
-    if (!this.allowedTenants.has(envelope.tenant_id)) throw new Error('tenant is not allowed');
-    if (this.mode === 'cutover' && envelope.direction !== this.cutoverDirection) {
-      throw new Error('direction is not enabled for cutover');
-    }
-    const target = this.targets.forDirection(envelope.direction);
-    if (!target) throw new Error('target is unavailable');
-    const mapping = await this.repository.begin(envelope, this.mode);
-    if (mapping.status !== 'processing' && mapping.status !== 'failed') {
-      return {
-        target_event_id: mapping.target_event_id,
-        status: mapping.status === 'shadowed' || mapping.status === 'compared' || mapping.status === 'delivered'
-          ? mapping.status : 'blocked',
-        duplicate: true,
-        human_reply: mapping.status === 'delivered' && envelope.expects_human_reply
-      };
-    }
-    const request: ShadowTargetRequest = {
-      target_event_id: mapping.target_event_id,
-      source_event_id: envelope.source_event_id,
-      tenant_id: envelope.tenant_id,
-      direction: envelope.direction,
-      correlation: envelope.correlation,
-      payload: envelope.payload,
-      allow_human_reply: false,
-      allow_harness: false
-    };
+  async route(
+    input: ShadowEnvelope,
+    signal?: AbortSignal,
+    hooks: ShadowRouteHooks = {},
+  ): Promise<ShadowRouteResult> {
+    let targetInvoked = false;
     try {
-      if (this.mode === 'shadow') {
-        await target.preview(request);
-        await this.repository.complete(mapping, 'shadowed');
-        this.onMetric('shadowed');
-        return { target_event_id: mapping.target_event_id, status: 'shadowed', duplicate: false, human_reply: false };
+      signal?.throwIfAborted();
+      const envelope = parseShadowEnvelope(input);
+      if (!this.allowedTenants.has(envelope.tenant_id)) throw new Error('tenant is not allowed');
+      if (this.mode === 'cutover' && envelope.direction !== this.cutoverDirection) {
+        throw new Error('direction is not enabled for cutover');
       }
-      if (this.mode === 'compare') {
-        const preview = await target.preview(request);
-        const verdict = compareRedacted(envelope.baseline, preview.output);
-        await this.repository.recordVerdict(mapping, verdict);
-        await this.repository.complete(mapping, 'compared');
-        this.onMetric(verdict.verdict === 'match' ? 'compared_match' : 'compared_mismatch');
+      const target = this.targets.forDirection(envelope.direction);
+      if (!target) throw new Error('target is unavailable');
+      const mapping = await this.repository.begin(envelope, this.mode, signal);
+      if (mapping.status !== 'processing' && mapping.status !== 'failed') {
         return {
           target_event_id: mapping.target_event_id,
-          status: 'compared',
-          duplicate: false,
-          human_reply: false,
-          verdict: verdict.verdict
+          status: mapping.status === 'shadowed' || mapping.status === 'compared' || mapping.status === 'delivered'
+            ? mapping.status : 'blocked',
+          duplicate: true,
+          human_reply: mapping.status === 'delivered' && envelope.expects_human_reply,
+          target_invoked: false,
         };
       }
-      let allowHumanReply = false;
-      if (envelope.expects_human_reply) {
-        const key = envelope.correlation.conversation_key ?? envelope.correlation.request_id;
-        allowHumanReply = await this.repository.reserveHumanReply(mapping, key);
-        if (!allowHumanReply) {
-          await this.repository.complete(mapping, 'blocked');
-          this.onMetric('human_reply_blocked');
-          return { target_event_id: mapping.target_event_id, status: 'blocked', duplicate: true, human_reply: false };
-        }
-      }
-      await target.deliver({ ...request, allow_human_reply: allowHumanReply, allow_harness: true });
-      await this.repository.complete(mapping, 'delivered');
-      this.onMetric('cutover_delivered');
-      return {
+      const request: ShadowTargetRequest = {
         target_event_id: mapping.target_event_id,
-        status: 'delivered',
-        duplicate: false,
-        human_reply: allowHumanReply
+        source_event_id: envelope.source_event_id,
+        tenant_id: envelope.tenant_id,
+        direction: envelope.direction,
+        correlation: envelope.correlation,
+        payload: envelope.payload,
+        allow_human_reply: false,
+        allow_harness: false
       };
+      try {
+        if (this.mode === 'shadow') {
+          await hooks.beforeTarget?.(signal);
+          targetInvoked = true;
+          await target.preview(request, signal);
+          signal?.throwIfAborted();
+          await this.repository.complete(mapping, 'shadowed', signal);
+          this.onMetric('shadowed');
+          return {
+            target_event_id: mapping.target_event_id,
+            status: 'shadowed',
+            duplicate: false,
+            human_reply: false,
+            target_invoked: true,
+          };
+        }
+        if (this.mode === 'compare') {
+          await hooks.beforeTarget?.(signal);
+          targetInvoked = true;
+          const preview = await target.preview(request, signal);
+          signal?.throwIfAborted();
+          const verdict = compareRedacted(envelope.baseline, preview.output);
+          await this.repository.recordVerdict(mapping, verdict, signal);
+          await this.repository.complete(mapping, 'compared', signal);
+          this.onMetric(verdict.verdict === 'match' ? 'compared_match' : 'compared_mismatch');
+          return {
+            target_event_id: mapping.target_event_id,
+            status: 'compared',
+            duplicate: false,
+            human_reply: false,
+            target_invoked: true,
+            verdict: verdict.verdict
+          };
+        }
+        let allowHumanReply = false;
+        if (envelope.expects_human_reply) {
+          const key = envelope.correlation.conversation_key ?? envelope.correlation.request_id;
+          allowHumanReply = await this.repository.reserveHumanReply(mapping, key, signal);
+          if (!allowHumanReply) {
+            await this.repository.complete(mapping, 'blocked', signal);
+            this.onMetric('human_reply_blocked');
+            return {
+              target_event_id: mapping.target_event_id,
+              status: 'blocked',
+              duplicate: true,
+              human_reply: false,
+              target_invoked: false,
+            };
+          }
+        }
+        await hooks.beforeTarget?.(signal);
+        targetInvoked = true;
+        await target.deliver(
+          { ...request, allow_human_reply: allowHumanReply, allow_harness: true },
+          signal,
+        );
+        signal?.throwIfAborted();
+        await this.repository.complete(mapping, 'delivered', signal);
+        this.onMetric('cutover_delivered');
+        return {
+          target_event_id: mapping.target_event_id,
+          status: 'delivered',
+          duplicate: false,
+          human_reply: allowHumanReply,
+          target_invoked: true,
+        };
+      } catch (error) {
+        await this.repository.complete(mapping, 'failed', signal);
+        this.onMetric('failed');
+        throw error;
+      }
     } catch (error) {
-      await this.repository.complete(mapping, 'failed');
-      this.onMetric('failed');
-      throw error;
+      throw new ShadowRouteExecutionError(error, targetInvoked);
     }
   }
 }

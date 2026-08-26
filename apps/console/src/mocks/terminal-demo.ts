@@ -21,10 +21,14 @@
 import { http, HttpResponse } from 'msw';
 /* La constante, no una copia del literal: es exactamente la copia lo que estaba mal (ver abajo). */
 import { LIVE_TUI_MODE } from '../features/terminal/fleet';
+import { mockTerminalGrant } from './terminal-ticket';
 
 const RUTA_WS = '/v3/console/terminal/stream';
 const TENANT = 'Steven';
 const ALIAS = 'kant';
+const DEMO_CLAIM_TOKEN = '12345678-1234-4234-8234-123456789abc';
+const DEMO_CLAIM_EPOCH = '1';
+const DEMO_CLAIM_LEASE_MS = 45_000;
 
 export const terminalDemoHandlers = [
   http.get('*/v3/console/terminal/capability', () => HttpResponse.json({
@@ -65,19 +69,20 @@ export const terminalDemoHandlers = [
     const cuerpo = await request.json().catch(() => ({})) as Record<string, unknown>;
     const ahora = Date.now();
     return HttpResponse.json({
-      session_id: `demo-${ahora.toString(36)}`,
-      ticket: 'demo-ticket-de-un-solo-uso',
-      websocket_path: RUTA_WS,
-      expires_at: new Date(ahora + 15 * 60_000).toISOString(),
-      ttl_seconds: 900,
-      target: {
-        tenant_id: typeof cuerpo.tenant_id === 'string' ? cuerpo.tenant_id : TENANT,
+      ...mockTerminalGrant({
+        sessionId: `demo-${ahora.toString(36)}`,
+        tenantId: typeof cuerpo.tenant_id === 'string' ? cuerpo.tenant_id : TENANT,
         alias: typeof cuerpo.alias === 'string' ? cuerpo.alias : ALIAS,
         container: 'ws-steven',
-        runtime_user: 'dev',
+        runtimeUser: 'dev',
         mode: typeof cuerpo.mode === 'string' ? cuerpo.mode : 'shell',
-      },
-    });
+        ttlSeconds: 30,
+        requestId: typeof cuerpo.request_id === 'string'
+          ? cuerpo.request_id
+          : '11111111-1111-4111-8111-111111111111',
+      }),
+      websocket_path: RUTA_WS,
+    }, { status: 201 });
   }),
 
   http.delete('*/v3/console/terminal/sessions/:id', () => new HttpResponse(null, { status: 204 })),
@@ -110,7 +115,12 @@ export function instalarPtyDeMentira(): void {
       setTimeout(() => {
         this.readyState = 1;
         this.onopen?.(new Event('open'));
-        setTimeout(() => this.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ type: 'ready' }) })), 10);
+        setTimeout(() => this.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
+          type: 'ready',
+          claim_token: DEMO_CLAIM_TOKEN,
+          claim_epoch: DEMO_CLAIM_EPOCH,
+          claim_lease_ms: DEMO_CLAIM_LEASE_MS,
+        }) })), 10);
         setTimeout(() => this.escupir(), 40);
       }, 10);
     }

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { FactsSource, GovernanceReadError } from './agent-documents.routes.js';
 import {
   type GovernanceRelayClient, MAX_DOCUMENT_BYTES, type MeasuredFactsSource, type RelayFileRead,
-  type RuntimeFacts, TerminalRelayFactsProbe, verifyReadablePath
+  type RelayDirectoryRead, type RuntimeFacts, TerminalRelayFactsProbe, verifyReadablePath
 } from './agent-documents.js';
 
 /**
@@ -14,6 +14,7 @@ import {
 
 const CLAUDE: RuntimeFacts = { harness: 'claude', home: '/home/dev' };
 const RUTA_CLAUDE = '/home/dev/.claude/CLAUDE.md';
+const MEMORY_ROOT = '/home/dev/.claude/projects';
 
 function sha(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
@@ -21,6 +22,17 @@ function sha(content: string): string {
 
 function relayQueDevuelve(answer: RelayFileRead | GovernanceReadError): GovernanceRelayClient {
   return { readFile: vi.fn(async () => answer) };
+}
+
+function relayQueLista(answer: RelayDirectoryRead | GovernanceReadError): GovernanceRelayClient & {
+  readonly listCalls: () => readonly unknown[][];
+} {
+  const listDirectory = vi.fn(async () => answer);
+  return {
+    readFile: vi.fn(async (): Promise<GovernanceReadError> => ({ error: 'unavailable', reason: 'no aplica' })),
+    listDirectory,
+    listCalls: () => listDirectory.mock.calls,
+  };
 }
 
 const SIN_HECHOS: MeasuredFactsSource = { factsFor: async () => undefined };
@@ -55,6 +67,27 @@ describe('verifyReadablePath abre para el manual del sitio', () => {
     expect(verifyReadablePath(facts, '/home/dev/.codex/cuenta-b/AGENTS.md')).toEqual({ allowed: true });
     expect(verifyReadablePath(facts, '/home/dev/.codex/AGENTS.md').allowed).toBe(false);
   });
+
+  it('abre sólo la cadena proyecto acreditada y sus nombres oficiales', () => {
+    const claude: RuntimeFacts = {
+      ...CLAUDE, workspaceRoot: '/workspace', projectRoot: '/workspace/repo',
+      cwd: '/workspace/repo/sub',
+    };
+    for (const path of [
+      '/workspace/repo/CLAUDE.md', '/workspace/repo/sub/CLAUDE.local.md',
+    ]) {
+      expect(verifyReadablePath(claude, path), path).toEqual({ allowed: true });
+    }
+    expect(verifyReadablePath(claude, '/workspace/CLAUDE.md').allowed).toBe(false);
+    expect(verifyReadablePath(claude, '/workspace/sibling/CLAUDE.md').allowed).toBe(false);
+
+    const codex: RuntimeFacts = {
+      harness: 'codex', home: '/home/dev', workspaceRoot: '/workspace',
+      projectRoot: '/workspace/repo', cwd: '/workspace/repo/sub',
+    };
+    expect(verifyReadablePath(codex, '/workspace/repo/AGENTS.override.md')).toEqual({ allowed: true });
+    expect(verifyReadablePath(codex, '/workspace/AGENTS.md').allowed).toBe(false);
+  });
 });
 
 describe('verifyReadablePath se cierra para todo lo demás', () => {
@@ -69,7 +102,7 @@ describe('verifyReadablePath se cierra para todo lo demás', () => {
   it('no sirve `settings.json`, que es del inventario pero no es un manual', () => {
     const verdict = verifyReadablePath(CLAUDE, '/home/dev/.claude/settings.json');
     expect(verdict.allowed).toBe(false);
-    expect(verdict.reason).toContain('sólo lee CLAUDE.md y AGENTS.md');
+    expect(verdict.reason).toContain('manual efectivo permitido');
   });
 
   it.each([
@@ -100,6 +133,19 @@ describe('verifyReadablePath se cierra para todo lo demás', () => {
 
   it('rechaza el AGENTS.md de codex cuando el arnés medido es claude', () => {
     expect(verifyReadablePath(CLAUDE, '/home/dev/.codex/AGENTS.md').allowed).toBe(false);
+  });
+
+  it('rechaza una basename permitida fuera de la cadena medida', () => {
+    const facts: RuntimeFacts = {
+      ...CLAUDE, workspaceRoot: '/workspace', projectRoot: '/workspace/repo',
+      cwd: '/workspace/repo/sub',
+    };
+    for (const path of [
+      '/workspace/sibling/CLAUDE.md', '/workspace/sibling/CLAUDE.local.md',
+      '/workspace/sibling/.claude/CLAUDE.md',
+    ]) {
+      expect(verifyReadablePath(facts, path).allowed, path).toBe(false);
+    }
   });
 
   it('no deja leer nada si el home no es una ruta absoluta', () => {
@@ -194,16 +240,146 @@ describe('TerminalRelayFactsProbe.readGovernanceDocument', () => {
   });
 });
 
-describe('TerminalRelayFactsProbe: lo que todavía no hace', () => {
-  it('dice que el índice de memoria no se sirve, en vez de devolverlo vacío', async () => {
-    const probe = new TerminalRelayFactsProbe(SIN_HECHOS, relayQueDevuelve(lectura()));
+describe('TerminalRelayFactsProbe.listMemoryDirectory', () => {
+  function indice(overrides: Partial<RelayDirectoryRead> = {}): RelayDirectoryRead {
+    return {
+      path: MEMORY_ROOT,
+      total: 2,
+      observed_at_least: 2,
+      truncated: false,
+      entries: [
+        { path: `${MEMORY_ROOT}/sesiones/hoy.md`, bytes: 12, modified_at: '2026-08-24T10:00:00Z' },
+        { path: `${MEMORY_ROOT}/ayer.md`, bytes: 7, modified_at: '2026-08-23T10:00:00Z' },
+      ],
+      ...overrides,
+    };
+  }
 
-    expect(await probe.listMemoryDirectory('/home/dev/.claude/projects')).toEqual({
-      error: 'unavailable',
-      reason: 'el índice de memoria (/home/dev/.claude/projects) todavía no se sirve por esta vía'
+  it('exige la raíz exacta de los hechos y devuelve rutas relativas', async () => {
+    const relay = relayQueLista(indice());
+    const probe = new TerminalRelayFactsProbe(SIN_HECHOS, relay);
+
+    expect(await probe.listMemoryDirectory(MEMORY_ROOT, CLAUDE, 'Steven', 'zeus')).toEqual({
+      root: MEMORY_ROOT,
+      total: 2,
+      observed_at_least: 2,
+      truncated: false,
+      entries: [
+        { path: 'sesiones/hoy.md', bytes: 12, modified_at: '2026-08-24T10:00:00Z' },
+        { path: 'ayer.md', bytes: 7, modified_at: '2026-08-23T10:00:00Z' },
+      ],
+    });
+    expect(relay.listCalls()).toEqual([['Steven', 'zeus', MEMORY_ROOT, undefined]]);
+  });
+
+  it.each([
+    '/home/dev/.claude/projects-otro',
+    '/home/dev/.claude/projects/..',
+    '/etc',
+    'home/dev/.claude/projects',
+  ])('rechaza la raíz arbitraria %s sin llamar al relay', async (root) => {
+    const relay = relayQueLista(indice());
+    const probe = new TerminalRelayFactsProbe(SIN_HECHOS, relay);
+
+    expect(await probe.listMemoryDirectory(root, CLAUDE, 'Steven', 'zeus')).toMatchObject({ error: 'invalid_path' });
+    expect(relay.listCalls()).toEqual([]);
+  });
+
+  it('respeta exactamente CLAUDE_CONFIG_DIR y no admite la raíz por defecto', async () => {
+    const facts = { ...CLAUDE, claudeConfigDir: '/home/dev/.claude-b' };
+    const root = '/home/dev/.claude-b/projects';
+    const relay = relayQueLista({
+      path: root, total: 0, observed_at_least: 0, truncated: false, entries: [],
+    });
+    const probe = new TerminalRelayFactsProbe(SIN_HECHOS, relay);
+
+    expect(await probe.listMemoryDirectory(root, facts, 'Steven', 'zeus')).toEqual({
+      root, total: 0, observed_at_least: 0, truncated: false, entries: [],
+    });
+    expect(await probe.listMemoryDirectory(MEMORY_ROOT, facts, 'Steven', 'zeus')).toMatchObject({
+      error: 'invalid_path',
     });
   });
 
+  it('propaga el cap como límite inferior sin convertirlo en un total exacto', async () => {
+    const probe = new TerminalRelayFactsProbe(SIN_HECHOS, relayQueLista(indice({
+      total: null,
+      observed_at_least: 5_000,
+      truncated: true,
+    })));
+
+    expect(await probe.listMemoryDirectory(MEMORY_ROOT, CLAUDE, 'Steven', 'zeus')).toMatchObject({
+      root: MEMORY_ROOT,
+      total: null,
+      observed_at_least: 5_000,
+      truncated: true,
+    });
+  });
+
+  it.each([
+    ['wrong root', indice({ path: '/home/dev/.claude/projects-otra' })],
+    ['prefix collision', indice({ entries: [{
+      path: `${MEMORY_ROOT}-otra/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z',
+    }], total: 1 })],
+    ['escape', indice({ entries: [{
+      path: `${MEMORY_ROOT}/../auth.json`, bytes: 1, modified_at: '2026-08-24T10:00:00Z',
+    }], total: 1 })],
+    ['absolute outside', indice({ entries: [{
+      path: '/etc/passwd', bytes: 1, modified_at: '2026-08-24T10:00:00Z',
+    }], total: 1 })],
+    ['duplicate', indice({ entries: [
+      { path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z' },
+      { path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z' },
+    ] })],
+    ['credential', indice({ entries: [{
+      path: `${MEMORY_ROOT}/.credentials.json`, bytes: 1, modified_at: '2026-08-24T10:00:00Z',
+    }], total: 1 })],
+  ])('rechaza %s aunque el relay tipado lo entregue', async (_label, answer) => {
+    const probe = new TerminalRelayFactsProbe(SIN_HECHOS, relayQueLista(answer));
+    expect(await probe.listMemoryDirectory(MEMORY_ROOT, CLAUDE, 'Steven', 'zeus')).toHaveProperty('error');
+  });
+
+  it('rechaza marcadores de symlink, campos extra, más de 200 y totales incoherentes', async () => {
+    const malformed: RelayDirectoryRead[] = [
+      indice({ entries: [{
+        path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z', symlink: true,
+      } as RelayDirectoryRead['entries'][number]], total: 1 }),
+      { ...indice(), extra: true } as RelayDirectoryRead,
+      indice({
+        total: 201,
+        truncated: true,
+        entries: Array.from({ length: 201 }, (_, index) => ({
+          path: `${MEMORY_ROOT}/${index}.md`, bytes: index, modified_at: '2026-08-24T10:00:00Z',
+        })),
+      }),
+      indice({ total: 1 }),
+      indice({ total: 3, truncated: false }),
+      indice({ total: null, observed_at_least: 5_000, truncated: false }),
+      indice({ total: 2, observed_at_least: 1 }),
+    ];
+    for (const answer of malformed) {
+      const probe = new TerminalRelayFactsProbe(SIN_HECHOS, relayQueLista(answer));
+      expect(await probe.listMemoryDirectory(MEMORY_ROOT, CLAUDE, 'Steven', 'zeus')).toHaveProperty('error');
+    }
+  });
+
+  it('mantiene unavailable/error honestos y nunca los convierte en vacío', async () => {
+    const legacy = new TerminalRelayFactsProbe(SIN_HECHOS, relayQueDevuelve(lectura()));
+    expect(await legacy.listMemoryDirectory(MEMORY_ROOT, CLAUDE, 'Steven', 'zeus')).toMatchObject({
+      error: 'unavailable',
+    });
+
+    const failed = new TerminalRelayFactsProbe(
+      SIN_HECHOS,
+      relayQueLista({ error: 'timeout', reason: 'el agente no contestó' }),
+    );
+    expect(await failed.listMemoryDirectory(MEMORY_ROOT, CLAUDE, 'Steven', 'zeus')).toEqual({
+      error: 'timeout', reason: 'el agente no contestó',
+    });
+  });
+});
+
+describe('TerminalRelayFactsProbe.factsFor', () => {
   it('delega los hechos en quien los mide', async () => {
     const medidos = { facts: CLAUDE, source: 'measured' as FactsSource };
     const probe = new TerminalRelayFactsProbe(

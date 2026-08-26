@@ -55,10 +55,15 @@ if [[ $target == prod ]]; then
     terminal_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$terminal_id")
     [[ $terminal_health == healthy ]] || { printf 'terminal-relay is not healthy\n' >&2; exit 1; }
   fi
+  if grep -qx shadow-router <<<"$configured"; then
+    CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod exec -T shadow-router \
+      node deploy/unix-readiness-probe.mjs \
+        /run/cauce-shadow/router/router.sock /health/ready ready
+  fi
   CAUCE_FLEET_SNAPSHOT_FILE= CAUCE_FLEET_TEST_MODE=0 \
     CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/fleet-gate-mode.sh" "$fleet_mode"
   if [[ $fleet_mode == final ]]; then
-    printf 'production core, configured relay/Telegram/terminal services, strict fleet parity and PostgreSQL TLS are ready\n'
+    printf 'production core, configured relay/Telegram/terminal/shadow services, strict fleet parity and PostgreSQL TLS are ready\n'
   else
     printf 'production core and bounded Zeus maintenance checks are ready; final strict fleet gate remains mandatory\n'
   fi

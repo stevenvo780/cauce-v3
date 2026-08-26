@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import {
   chmod, chown, copyFile, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile,
 } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,9 @@ const lockRoot = path.join(temporary, "locks");
 const binRoot = path.join(temporary, "bin");
 const log = path.join(temporary, "docker.jsonl");
 const imageId = `sha256:${"a".repeat(64)}`;
+const hermesCommit = "62b2d78025c349996e753c6f7c748de035eb8048";
+const hermesRuntimeId = "hermes-0.20.5-62b2d78025c3-uv0.11.21-2856d1bf7e5b";
+const hermesRuntimeDir = `/opt/cauce-v3-hermes-runtime/iza/${hermesRuntimeId}`;
 const firstId = "1".repeat(64);
 const secondId = "2".repeat(64);
 const firstGenerationStartedAt = "2026-07-22T10:00:00.000000000Z";
@@ -50,7 +53,7 @@ const secondGenerationStartedAt = "2026-07-22T10:01:00.000000000Z";
 const labelKey = "com.example.runtime";
 const labelValue = "approved-runtime";
 const aliasState = {
-  kant: "/home/stev/.local/state/cauce-v3/kant",
+  kant: "/home/dev/.local/state/cauce-v3/kant",
   argos: "/home/dev/.local/state/cauce-v3/argos",
   atlas: "/home/dev/.local/state/cauce-v3/atlas",
   iza: "/home/dev/.local/state/cauce-v3/iza",
@@ -59,7 +62,7 @@ const aliasState = {
 // The real fleet never dedicates a mount to the state dir: the state lives inside a broad
 // persistent bind. Physical co-location does not imply that aliases share the same mapped HOME.
 const aliasMount = {
-  kant: "/home/stev/.local",
+  kant: "/home/dev/.local",
   argos: "/home/dev/.local",
   atlas: "/home/dev/.local",
   iza: "/home/dev/.local",
@@ -98,8 +101,11 @@ async function writeConfig(alias, extra = [], overrides = {}, omit = []) {
     MOUNT_RW: "true",
     CAUCE_SEMBRAR_PERFIL: "1",
     ...(alias === "kant" || alias === "argos" || alias === "atlas" ? { CONFIG_POR_ALIAS: "1" } : {}),
+    ...(alias === "argos" ? { EXPECTED_CLI_VERSION: "2.1.220" } : {}),
     ...(alias === "iza" ? {
-      HERMES_HOME: "/home/dev/.hermes/profiles/iza",
+      HERMES_HOME: "/home/dev/.local/share/cauce-v3/hermes/iza",
+      HERMES_SOURCE_COMMIT: hermesCommit,
+      HERMES_PYTHON: `${hermesRuntimeDir}/venv/bin/python`,
       HERMES_INFERENCE_MODEL: "approved/model-v1",
     } : {}),
     ...(alias === "jarvis" ? { OPENCLAW_WORKSPACE: "/home/claw/clawd" } : {}),
@@ -146,12 +152,43 @@ async function dockerState(alias, overrides = {}) {
     imageId,
     labelKey,
     labelValue,
-    mounts: [{
-      Type: "bind",
-      Source: `${mountSourceRoot}/${alias}`,
-      Destination: aliasMount[alias],
-      RW: true,
-    }],
+    mounts: [
+      {
+        Type: "bind",
+        Source: `${mountSourceRoot}/${alias}`,
+        Destination: aliasMount[alias],
+        RW: true,
+      },
+      ...(alias === "kant" || alias === "atlas" ? [{
+        Type: "bind",
+        Source: `${mountSourceRoot}/${alias}-codex`,
+        Destination: "/home/dev/.codex",
+        RW: true,
+      }] : []),
+      ...(alias === "argos" ? [{
+        Type: "bind",
+        Source: `${mountSourceRoot}/${alias}-claude`,
+        Destination: "/home/dev/.claude",
+        RW: true,
+      }, {
+        Type: "bind",
+        Source: `${mountSourceRoot}/${alias}-claude-json`,
+        Destination: "/home/dev/.claude.json",
+        RW: true,
+      }] : []),
+      ...(alias === "kant" || alias === "atlas" || alias === "argos" || alias === "iza" ? [{
+        Type: "bind",
+        Source: `${mountSourceRoot}/${alias}-workspace`,
+        Destination: "/workspace",
+        RW: true,
+      }] : []),
+      ...(alias === "jarvis" ? [{
+        Type: "bind",
+        Source: `${mountSourceRoot}/${alias}-workspace`,
+        Destination: "/home/claw/clawd",
+        RW: true,
+      }] : []),
+    ],
     bundleDigest,
     controlExists: true,
     stateExists: true,
@@ -185,10 +222,27 @@ function runSupervisor(action, alias, statePath) {
 }
 
 async function clearLog() { await writeFile(log, ""); }
-async function records() {
-  const contents = await readFile(log, "utf8");
-  return contents.trim() ? contents.trim().split("\n").map((line) => JSON.parse(line)) : [];
+function parseRecords(contents, { allowIncompleteTail = false } = {}) {
+  const lines = contents.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  else if (allowIncompleteTail) lines.pop();
+  else throw new SyntaxError("JSONL record is not committed by a newline");
+  return lines.map((line) => JSON.parse(line));
 }
+async function records(options) {
+  return parseRecords(await readFile(log, "utf8"), options);
+}
+
+// A live JSONL reader may observe the final append after its body is visible but before the
+// terminating newline. Only that in-flight tail is retryable; completed malformed records and
+// post-exit truncation must remain hard failures so the fixture cannot manufacture a green gate.
+assert.deepEqual(
+  parseRecords('{"call":1}\n{"call":', { allowIncompleteTail: true }),
+  [{ call: 1 }],
+);
+assert.throws(() => parseRecords('{"call":1}\nnot-json\n', { allowIncompleteTail: true }), SyntaxError);
+assert.throws(() => parseRecords('{"call":'), SyntaxError);
+assert.throws(() => parseRecords('{"call":1}'), /not committed by a newline/u);
 
 async function waitForFile(pathname, timeoutMs = 5000) {
   const started = Date.now();
@@ -226,8 +280,12 @@ async function waitForMetadataPhase(pathname, phase, timeoutMs = 5000) {
 async function waitForLogOrExit(child, predicate, timeoutMs = 15000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    if (predicate(await records())) return;
+    if (predicate(await records({ allowIncompleteTail: true }))) return;
     if (child.exitCode !== null || child.signalCode !== null) {
+      // The producer may have committed its final newline between the live read above and the
+      // exit observation. Re-read strictly once: accept a completed barrier, but surface an
+      // actually truncated or malformed post-exit log instead of converting it into a timeout.
+      if (predicate(await records())) return;
       throw new Error(`supervisor exited before fake Docker barrier: status=${child.exitCode} signal=${child.signalCode}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -410,6 +468,40 @@ try {
   await Promise.all([configRoot, path.join(release, "packages/adapter-sdk/dist/src/bin"),
     path.join(release2, "packages/adapter-sdk/dist/src/bin"), pkiRoot, mountSourceRoot, lockRoot, binRoot]
     .map((directory) => mkdir(directory, { recursive: true, mode: 0o700 })));
+
+  // Deterministic reproduction of a live append: polling ignores only the unfinished tail and
+  // observes it after the producer commits the newline, without hiding the prior complete row.
+  await writeFile(log, '{"call":1}\n{"call":');
+  const liveCommit = new Promise((resolve, reject) => {
+    setTimeout(() => {
+      writeFile(log, '{"call":1}\n{"call":2}\n').then(resolve, reject);
+    }, 40);
+  });
+  await waitForLogOrExit(
+    { exitCode: null, signalCode: null },
+    (entries) => entries.some(({ call }) => call === 2),
+    2000,
+  );
+  await liveCommit;
+
+  // Deterministic reproduction of the poll/exit boundary: the first live read sees an
+  // uncommitted tail; observing exit commits the final record, which the strict re-read accepts.
+  await writeFile(log, '{"call":');
+  const commitOnExit = {
+    get exitCode() {
+      writeFileSync(log, '{"call":2}\n');
+      return 0;
+    },
+    signalCode: null,
+  };
+  await waitForLogOrExit(commitOnExit, (entries) => entries.some(({ call }) => call === 2), 2000);
+  await writeFile(log, '{"call":');
+  await assert.rejects(
+    waitForLogOrExit({ exitCode: 1, signalCode: null }, () => false, 2000),
+    /not committed by a newline/u,
+  );
+  await clearLog();
+
   await chmod(configRoot, 0o700);
   await chmod(lockRoot, 0o700);
   for (const harness of ["codex", "claude", "opencode", "hermes", "openclaw"]) {
@@ -531,6 +623,32 @@ try {
   await writeConfig("kant");
   process.stdout.write("default timeout: 86400000 default and 480000 override exported; invalid values rejected before Docker\n");
 
+  // Claude containers are upgraded independently.  The version pin therefore belongs to each
+  // alias config and must be exact; a source-global version would reject two healthy containers
+  // whenever their prebuilt images differ.
+  await writeConfig("argos", [], {}, ["EXPECTED_CLI_VERSION"]);
+  await clearLog();
+  result = runSupervisor("start", "argos", await dockerState("argos"));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /claude requires EXPECTED_CLI_VERSION/u);
+  assert.equal((await records()).length, 0, "missing Claude version must fail before Docker");
+
+  await writeConfig("argos", [], { EXPECTED_CLI_VERSION: "2.1" });
+  await clearLog();
+  result = runSupervisor("start", "argos", await dockerState("argos"));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /exact semantic version/u);
+  assert.equal((await records()).length, 0, "malformed Claude version must fail before Docker");
+
+  await writeConfig("argos");
+  await clearLog();
+  result = runSupervisor("start", "argos", await dockerState("argos"));
+  assert.equal(result.status, 0, result.stderr);
+  const claudeVersionProbe = (await records()).find(({ argv }) =>
+    argv[0] === "exec" && argv.includes("bash") && argv.some((value) => value.includes("required_ver=\"2.1.220\"")));
+  assert(claudeVersionProbe, "Claude version probe must use the alias-specific exact pin");
+  process.stdout.write("claude version: alias-specific exact pin required and probed\n");
+
   // ---- Sesión compartida: una sola conversación en la terminal y en Telegram. ----
   // El interruptor sólo existe para claude y codex, sólo admite el valor exacto 1, y cuando está
   // encendido tiene que llegar al adaptador junto con un TERM utilizable: sin TERM tmux crea la
@@ -601,9 +719,9 @@ try {
   result = runSupervisor("start", "kant", await dockerState("kant"));
   assert.equal(result.status, 0, `config por alias debe arrancar: ${result.stderr}`);
   const conInterruptor = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
-  // kant es codex y su home mapeado es /home/stev. La ruta se DERIVA del alias: es la misma que
+  // kant es codex y su home mapeado es /home/dev. La ruta se DERIVA del alias: es la misma que
   // calcula ops/scripts/separar-config-alias.mjs, que es quien copia los ficheros ahí.
-  assert(conInterruptor?.argv.includes("CODEX_HOME=/home/stev/.cauce/kant/.codex"),
+  assert(conInterruptor?.argv.includes("CODEX_HOME=/home/dev/.local/share/cauce-v3/config/kant/.codex"),
     "el interruptor tiene que exportar el directorio derivado del alias");
   assert(!conInterruptor?.argv.some((value) => value.startsWith("CLAUDE_CONFIG_DIR=")),
     "un alias codex no puede recibir además la variable de claude");
@@ -740,10 +858,12 @@ try {
   result = runSupervisor("start", "iza", statePath);
   assert.equal(result.status, 0, result.stderr);
   const izaFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=iza"));
-  assert(izaFinal?.argv.includes("HERMES_HOME=/home/dev/.hermes/profiles/iza"));
+  assert(izaFinal?.argv.includes("HERMES_HOME=/home/dev/.local/share/cauce-v3/hermes/iza"));
   assert(izaFinal?.argv.includes("HERMES_INFERENCE_MODEL=approved/model-v1"));
-  assert(!izaFinal?.argv.some((value) => value.startsWith("CAUCE_HERMES_PYTHON=")),
-    "without HERMES_PYTHON the supervisor must not export CAUCE_HERMES_PYTHON (behaviour unchanged)");
+  assert(izaFinal?.argv.includes(`CAUCE_HERMES_RUNTIME_DIR=${hermesRuntimeDir}`));
+  assert(izaFinal?.argv.includes(`CAUCE_HERMES_SOURCE_DIR=${hermesRuntimeDir}/source`));
+  assert(izaFinal?.argv.includes(`CAUCE_HERMES_PYTHON=${hermesRuntimeDir}/venv/bin/python`),
+    "the adapter must receive the verified immutable interpreter");
 
   // Each alias consumes its exact BUNDLE_RELEASE pin. A canary pin for iza must copy and
   // execute release-2 directly, without consulting or changing a shared host `current` pointer.
@@ -767,52 +887,55 @@ try {
   await writeConfig("iza");
   process.stdout.write("per-alias release pin: iza release-2 selected directly without a current symlink\n");
 
-  // Hermes profile home is mandatory for iza because ws-humanizar is multi-alias.
+  // Hermes profile is persistent; source+venv are mandatory at their exact immutable /opt path.
   await writeConfig("iza");
   await clearLog();
   result = runSupervisor("start", "iza", await dockerState("iza"));
   assert.equal(result.status, 0, `profile HERMES_HOME must start: ${result.stderr}`);
   const izaProfileFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=iza"));
-  assert(izaProfileFinal?.argv.includes("HERMES_HOME=/home/dev/.hermes/profiles/iza"),
-    "a profile HERMES_HOME below .hermes/ must be accepted and exported verbatim");
-  // A HERMES_HOME that escapes the mapped .hermes root (sibling prefix .hermes-evil) is rejected
-  // before any container copy; valid_absolute_path already forbids ../ traversal.
-  await writeConfig("iza", [], { HERMES_HOME: "/home/dev/.hermes-evil" });
+  assert(izaProfileFinal?.argv.includes("HERMES_HOME=/home/dev/.local/share/cauce-v3/hermes/iza"),
+    "the persistent alias profile must be accepted and exported verbatim");
+  await writeConfig("iza", [], { HERMES_HOME: "/home/dev/.local/share/cauce-v3/hermes/otro" });
   await clearLog();
   result = runSupervisor("start", "iza", await dockerState("iza"));
-  assert.notEqual(result.status, 0, "HERMES_HOME escaping the .hermes root must fail");
+  assert.notEqual(result.status, 0, "another alias HERMES_HOME must fail");
   assert.match(result.stderr, /multi-alias container requires an alias-scoped HERMES_HOME/u);
   assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false,
     "an escaping HERMES_HOME must fail before any container copy");
   await writeConfig("iza");
-  process.stdout.write("hermes profile: .hermes/profiles/<alias> accepted; sibling .hermes-evil rejected before copy\n");
+  process.stdout.write("hermes profile: exact persistent alias path accepted; another alias rejected before copy\n");
 
-  // HERMES_PYTHON pins the interpreter the hermes bridge runs (the venv that provides hermes_cli).
-  // It is optional; when set it must be a canonical absolute path below the mapped container home
-  // and the supervisor exports it verbatim as CAUCE_HERMES_PYTHON for the adapter bridge.
-  await writeConfig("iza", [
-    "HERMES_PYTHON=/home/dev/.hermes/hermes-agent/venv/bin/python",
-  ]);
+  await writeConfig("iza", [], {
+    HERMES_SOURCE_COMMIT: "f".repeat(40),
+    HERMES_PYTHON: `${hermesRuntimeDir}/venv/bin/python`,
+  });
   await clearLog();
   result = runSupervisor("start", "iza", await dockerState("iza"));
-  assert.equal(result.status, 0, `HERMES_PYTHON below the container home must start: ${result.stderr}`);
+  assert.notEqual(result.status, 0, "an unapproved but syntactically valid Hermes commit must fail");
+  assert.match(result.stderr, /HERMES_SOURCE_COMMIT is not the approved operations pin/u);
+  assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
+  await writeConfig("iza");
+
+  // Only the exact immutable alias runtime may run the Hermes bridge.
+  await writeConfig("iza");
+  await clearLog();
+  result = runSupervisor("start", "iza", await dockerState("iza"));
+  assert.equal(result.status, 0, `exact immutable HERMES_PYTHON must start: ${result.stderr}`);
   const izaPythonFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=iza"));
-  assert(izaPythonFinal?.argv.includes("CAUCE_HERMES_PYTHON=/home/dev/.hermes/hermes-agent/venv/bin/python"),
-    "a HERMES_PYTHON below the container home must be exported verbatim as CAUCE_HERMES_PYTHON");
+  assert(izaPythonFinal?.argv.includes(`CAUCE_HERMES_PYTHON=${hermesRuntimeDir}/venv/bin/python`),
+    "the exact immutable venv must be exported as CAUCE_HERMES_PYTHON");
   // A HERMES_PYTHON outside the mapped container home (here the system interpreter that lacks
   // hermes_cli) is rejected fail-closed before any container copy: the bridge must never fall back
   // to a host binary.
-  await writeConfig("iza", [
-    "HERMES_PYTHON=/usr/bin/python3",
-  ]);
+  await writeConfig("iza", [], { HERMES_PYTHON: "/usr/bin/python3" });
   await clearLog();
   result = runSupervisor("start", "iza", await dockerState("iza"));
   assert.notEqual(result.status, 0, "HERMES_PYTHON outside the container home must fail");
-  assert.match(result.stderr, /HERMES_PYTHON must live under the mapped container home/u);
+  assert.match(result.stderr, /HERMES_PYTHON must be the exact immutable alias runtime interpreter/u);
   assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false,
     "a HERMES_PYTHON outside the container home must fail before any container copy");
   await writeConfig("iza");
-  process.stdout.write("hermes python: venv interpreter below container home exported verbatim; system python rejected before copy\n");
+  process.stdout.write("hermes python: exact immutable alias venv exported; system python rejected before copy\n");
 
   // Image is mandatory; the label and MOUNT_* keys are optional reinforcement. When declared,
   // each must match. The persistent mount is the bind/volume that CONTAINS the state dir, so
@@ -833,6 +956,29 @@ try {
     assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
   }
 
+  // A persistent state mount does not make an ephemeral harness home acceptable.  The isolated
+  // destination lives below .local, but its single-source Codex auth/config live below .codex and
+  // must survive the same container recreation as the state.
+  await clearLog();
+  statePath = await dockerState("kant", { mounts: [{
+    Type: "bind", Source: `${mountSourceRoot}/kant`, Destination: aliasMount.kant, RW: true,
+  }] });
+  result = runSupervisor("start", "kant", statePath);
+  assert.notEqual(result.status, 0, "state persistence without persistent Codex auth/config must fail");
+  assert.match(result.stderr, /required harness path/u);
+  assert.equal((await records()).some(({ mutating }) => mutating), false,
+    "harness persistence must fail before any Docker mutation");
+
+  // The on-disk isolated layout is rechecked by start/check, not trusted merely because the env
+  // points to its directory.  The fake models a broken/missing identity or a link redirected away
+  // from the authorized single source.
+  await clearLog();
+  result = runSupervisor("start", "kant", await dockerState("kant", { isolatedConfigOk: false }));
+  assert.notEqual(result.status, 0, "a broken isolated config must fail closed");
+  assert.match(result.stderr, /isolated harness configuration verification failed/u);
+  assert.equal((await records()).some(({ mutating }) => mutating), false,
+    "isolated config verification must precede helper/state/bundle/PKI mutation");
+
   // A declared volume-name that differs from the discovered mount fails before any copy.
   await writeConfig("kant", [], {
     MOUNT_TYPE: "volume",
@@ -851,6 +997,35 @@ try {
   assert.notEqual(result.status, 0);
   assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
   await writeConfig("kant");
+
+  // `check` is a complete read-only preflight: it revalidates host PKI and the harness-specific
+  // runtime before accepting lifecycle metadata.  Missing PKI or a broken Hermes import cannot be
+  // hidden behind a healthy old adapter process.
+  await rm(path.join(pkiRoot, "kant/ca.crt"));
+  await clearLog();
+  result = runSupervisor("check", "kant", await dockerState("kant"));
+  assert.notEqual(result.status, 0, "check must reject missing PKI");
+  assert.equal((await records()).some(({ argv }) => argv.includes("check")), false,
+    "lifecycle check must not run after PKI preflight failure");
+  await writeFile(path.join(pkiRoot, "kant/ca.crt"), "fake-ca\n");
+  await chmod(path.join(pkiRoot, "kant/ca.crt"), 0o600);
+
+  await clearLog();
+  result = runSupervisor("check", "iza", await dockerState("iza", { hermesRuntimeOk: false }));
+  assert.notEqual(result.status, 0, "check must reject a broken pinned Hermes runtime");
+  assert.match(result.stderr, /Hermes runtime verification failed/u);
+  assert.equal((await records()).some(({ argv }) => argv.includes("check")), false,
+    "lifecycle metadata cannot mask a failed Hermes preflight");
+
+  await clearLog();
+  result = runSupervisor("check", "iza", await dockerState("iza"));
+  assert.equal(result.status, 0, `full Hermes check must pass: ${result.stderr}`);
+  calls = await records();
+  const hermesProbeIndex = calls.findIndex(({ argv }) => argv.some((value) => value.includes("hermes_cli.oneshot")));
+  const lifecycleCheckIndex = calls.findIndex(({ argv }) => argv.includes("check"));
+  assert(hermesProbeIndex >= 0 && lifecycleCheckIndex > hermesProbeIndex,
+    "Hermes source/import preflight must precede lifecycle metadata check");
+  process.stdout.write("complete check: PKI and Hermes runtime precede lifecycle metadata\n");
 
   // Optional-key omission still starts. First: image ID correct, NO label declared, so the
   // label check is skipped even though the container reports an unverified label value.
@@ -886,7 +1061,10 @@ try {
   // colliding: disjoint /opt trees and disjoint prepared state dirs prove the isolation.
   await clearLog();
   const sharedSource = `${mountSourceRoot}/ws-humanizar-dot-local`;
-  const sharedBind = [{ Type: "bind", Source: sharedSource, Destination: "/home/dev/.local", RW: true }];
+  const sharedBind = [
+    { Type: "bind", Source: sharedSource, Destination: "/home/dev/.local", RW: true },
+    { Type: "bind", Source: `${mountSourceRoot}/ws-humanizar-codex`, Destination: "/home/dev/.codex", RW: true },
+  ];
   await writeConfig("atlas", [], { MOUNT_SOURCE: sharedSource, MOUNT_DESTINATION: aliasMount.atlas });
   await writeConfig("iza", [], { MOUNT_SOURCE: sharedSource, MOUNT_DESTINATION: aliasMount.iza });
   assert.equal(runSupervisor("start", "atlas", await dockerState("atlas", { mounts: sharedBind })).status, 0);

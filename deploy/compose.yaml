@@ -3,7 +3,9 @@ name: ${COMPOSE_PROJECT_NAME:-cauce-v3-prod}
 x-runtime-service: &runtime-service
   image: ${CAUCE_RUNTIME_IMAGE:?set an immutable CAUCE_RUNTIME_IMAGE digest}
   user: "1000:1000"
-  restart: always
+  # `unless-stopped` preserves crash recovery but makes an authenticated bridge
+  # stop durable across Docker daemon and host restarts.
+  restart: unless-stopped
   init: true
   read_only: true
   tmpfs:
@@ -94,9 +96,15 @@ services:
       CAUCE_TERMINAL_RELAY_CLIENT_KEY_FILE: /run/secrets/gateway_relay_client_key
       CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE: /run/secrets/terminal_gateway_client_cert
       CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE: /run/secrets/terminal_gateway_client_key
+      # SHA-256 of the terminal-relay -> gateway mTLS leaf DER. The gateway recomputes it from
+      # the peer certificate; an empty/mismatched release pin keeps the PTY plane closed.
+      CAUCE_TERMINAL_RELAY_INSTANCE_ID: ${CAUCE_TERMINAL_RELAY_INSTANCE_ID:-}
       CAUCE_TERMINAL_GRANTS_FILE: /run/cauce-terminal/grants.json
       CAUCE_TERMINAL_TICKET_TTL_SECONDS: "30"
       CAUCE_TERMINAL_SESSION_TTL_SECONDS: "900"
+      # Gateway and relay must agree exactly; both reject rollout skew instead of silently using
+      # different takeover deadlines.
+      CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: "150"
       CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR: "2"
       CAUCE_TERMINAL_OPERATOR_HEADER: x-cauce-operator
       CAUCE_TERMINAL_OPERATORS: ${CAUCE_TERMINAL_OPERATORS:-}
@@ -224,11 +232,18 @@ services:
     # capability. The profile also keeps the two halves honest — the relay only runs where
     # CAUCE_TERMINAL_ENABLED=1 has been paired with real key material.
     profiles: [terminal]
+    # This release intentionally has one authenticated relay route. Scaling without unique mTLS
+    # certificates plus a generated closed nginx map would make browser routing ambiguous.
+    deploy:
+      replicas: 1
+    labels:
+      io.cauce.terminal-relay.routing: single-authenticated-instance-v1
     command: ["node", "services/terminal-relay/dist/main.js"]
     environment:
       NODE_ENV: production
       CAUCE_TERMINAL_RELAY_BROWSER_PORT: "8446"
       CAUCE_TERMINAL_RELAY_AGENT_PORT: "8445"
+      CAUCE_TERMINAL_RELAY_HEALTH_PORT: "8085"
       CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: /run/secrets/terminal_relay_tls_cert
       CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: /run/secrets/terminal_relay_tls_key
       CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: /run/secrets/gateway_client_ca
@@ -242,12 +257,15 @@ services:
       CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/secrets/terminal_relay_token
       CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE: /run/secrets/terminal_gateway_client_cert
       CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE: /run/secrets/terminal_gateway_client_key
+      CAUCE_TERMINAL_RELAY_INSTANCE_ID: ${CAUCE_TERMINAL_RELAY_INSTANCE_ID:-}
       CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS: "600"
       CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC: "262144"
       CAUCE_TERMINAL_SCROLLBACK_BYTES: "20480"
       CAUCE_TERMINAL_MAX_SESSIONS: "16"
       CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS: "30"
       CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS: "90"
+      CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: "150"
+      CAUCE_TERMINAL_PRESENCE_MAX_STALE_SECONDS: "30"
       # Close reports are persisted before delivery to the gateway. A named volume keeps the
       # idempotent report across image replacement and host-side container recreation.
       CAUCE_TERMINAL_CLOSE_SPOOL_FILE: /var/lib/cauce-terminal/close-reports.json
@@ -305,7 +323,7 @@ services:
       gateway:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "const n=require('net');let q=2;for(const p of [8445,8446]){const s=n.connect(p,'127.0.0.1');s.on('connect',()=>{s.end();if(--q===0)process.exit(0)});s.on('error',()=>process.exit(1))}"]
+      test: ["CMD", "node", "deploy/local-readiness-probe.mjs", "http://127.0.0.1:8085/health/ready", "ready"]
       interval: 15s
       timeout: 5s
       retries: 4
@@ -346,8 +364,27 @@ services:
       NODE_ENV: production
       PGSSLMODE: verify-full
       PGSSLROOTCERT: /run/secrets/postgres_ca
+      # Mutable release-state marker; its path is derived from the content-addressed writer
+      # snapshot selector. The deploy driver recreates this service after every marker replace,
+      # because a Compose file secret is an inode-pinning bind mount.
+      CAUCE_RELEASE_STATE_FILE: /run/secrets/release_state
       PORT: "8084"
-    secrets: *runtime-secrets
+    secrets:
+      - source: database_url
+        target: database_url
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: postgres_ca
+        target: postgres_ca
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: release_state
+        target: release_state
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
     healthcheck:
       test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8084/health/ready", "ready"]
       interval: 15s
@@ -456,6 +493,7 @@ services:
       SHADOW_ROUTER_V3_SOCKET: /run/cauce-shadow/v3/ingress.sock
       SHADOW_ROUTER_CUTOVER_DIRECTION: ${SHADOW_ROUTER_CUTOVER_DIRECTION:-}
       SHADOW_ROUTER_ENABLE_CUTOVER: ${SHADOW_ROUTER_ENABLE_CUTOVER:-}
+      SHADOW_ROUTER_HEALTH_STALE_MS: ${SHADOW_ROUTER_HEALTH_STALE_MS:-30000}
     secrets: *runtime-secrets
     volumes:
       - type: bind
@@ -612,6 +650,8 @@ secrets:
     file: ${CAUCE_DATABASE_URL_SECRET_PATH:?set CAUCE_DATABASE_URL_SECRET_PATH}
   postgres_ca:
     file: ${CAUCE_POSTGRES_CA_PATH:?set CAUCE_POSTGRES_CA_PATH}
+  release_state:
+    file: ${CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE:?set the selected writer snapshot}.state.json
   gateway_tls_cert:
     file: ${CAUCE_GATEWAY_TLS_CERT_PATH:?set CAUCE_GATEWAY_TLS_CERT_PATH}
   gateway_tls_key:

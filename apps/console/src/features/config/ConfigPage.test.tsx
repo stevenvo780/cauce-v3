@@ -1,10 +1,13 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
+import { vi } from 'vitest';
 import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
-import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
+import {
+  CONFIG_SIN_CONTROL_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON,
+} from '../../navigation';
 
 interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }
 
@@ -35,7 +38,9 @@ function recordChanges(sink: ChangeRequest[]) {
     sink.push(input);
     return HttpResponse.json({
       applied: input.dry_run !== true, dry_run: input.dry_run === true,
-      revision: input.dry_run ? 1 : 2, mutation: input.mutation, summary: 'mock configuration validation',
+      revision: input.dry_run ? 1 : 2, mutation: input.mutation,
+      inverse_mutation: input.mutation, rolled_back_revision_id: null,
+      summary: 'mock configuration validation',
     }, { status: input.dry_run ? 200 : 201 });
   }));
 }
@@ -54,6 +59,28 @@ it('previews and applies a default-deny ACL mutation through the protected API',
   await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
   expect(await screen.findByText(/cambio atómico aplicado/i)).toBeInTheDocument();
 });
+
+it('no acredita preview ni apply cuando un 2xx omite el recibo exacto de configuración', async () => {
+  server.use(http.post('*/v3/console/config/changes', async ({ request }) => {
+    const input = await request.json() as ChangeRequest;
+    const dryRun = input.dry_run === true;
+    return HttpResponse.json({
+      applied: !dryRun, dry_run: dryRun, revision: dryRun ? 1 : 2,
+      summary: 'respuesta truncada',
+    }, { status: dryRun ? 200 : 201 });
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, HISTORIAL);
+
+  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
+  expect(await screen.findByText(/2xx sin el recibo exacto del dry-run/i)).toBeInTheDocument();
+  expect(screen.queryByLabelText(/resultado de preview/i)).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
+  expect(await screen.findByText(/puede haberse aplicado/i)).toBeInTheDocument();
+  expect(screen.queryByText(/cambio atómico aplicado/i)).not.toBeInTheDocument();
+}, 20_000);
 
 it('lleva el wizard hasta el dry-run y aplica el primer paso del espacio contra el change endpoint', async () => {
   const changes: ChangeRequest[] = [];
@@ -313,6 +340,51 @@ it('sin config.write se ve TODO en solo lectura y lo dice, en vez de esconder la
   expect(screen.getByRole('button', { name: /aplicar atómico/i })).toBeDisabled();
 });
 
+it('con config.write desconocido conserva la vista pero no permite ningún POST ni PUT', async () => {
+  servirConfig(() => snapshotConAudit(1));
+  server.use(http.get('*/v3/console/access', () => HttpResponse.json(
+    { error: 'internal', message: 'RBAC no disponible' }, { status: 500 },
+  )));
+  const fetchSpy = vi.spyOn(globalThis, 'fetch');
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+
+  expect(await screen.findByText(new RegExp(CONFIG_WRITE_NO_ACREDITADO_REASON, 'i')))
+    .toBeInTheDocument();
+  // Leer y moverse por la configuración sigue disponible.
+  expect(within(panelDe(/memberships/i)).getByText('janus')).toBeInTheDocument();
+  expect(screen.getByRole('tab', { name: HISTORIAL })).toBeEnabled();
+
+  // Alta rápida y tablas: controles inertes, aunque se intente activarlos.
+  const interruptor = screen.getByRole('switch', { name: MEMBERSHIP_JANUS });
+  const crear = screen.getByRole('button', { name: /^Crear$/ });
+  expect(interruptor).toBeDisabled();
+  expect(screen.getByLabelText('Recurso a crear')).toBeDisabled();
+  expect(crear).toBeDisabled();
+  await user.click(interruptor);
+  await user.click(crear);
+
+  // Restauración y editor atómico: tanto los disparadores como el borrador quedan inertes.
+  await irA(user, HISTORIAL);
+  const rollback = screen.getByRole('button', { name: /^Rollback$/ });
+  const previewRollback = screen.getByRole('button', { name: /^Preview$/ });
+  const aplicar = screen.getByRole('button', { name: /aplicar atómico/i });
+  expect(rollback).toBeDisabled();
+  expect(previewRollback).toBeDisabled();
+  expect(aplicar).toBeDisabled();
+  expect(screen.getByRole('button', { name: /preview \/ dry-run/i })).toBeDisabled();
+  expect(screen.getByLabelText('Mutación JSON')).toBeDisabled();
+  await user.click(rollback);
+  await user.click(previewRollback);
+  await user.click(aplicar);
+
+  const unsafe = fetchSpy.mock.calls.filter(([input, init]) => {
+    const method = (input instanceof Request ? input.method : init?.method ?? 'GET').toUpperCase();
+    return method === 'POST' || method === 'PUT';
+  });
+  expect(unsafe).toEqual([]);
+});
+
 it('muestra el rechazo del servidor en la propia colección y no dice que aplicó nada', async () => {
   server.use(http.post('*/v3/console/config/changes', () => HttpResponse.json(
     { error: 'conflict', message: 'membership has active deliveries or a live lease' },
@@ -457,6 +529,28 @@ it('FAMILIA 1: el desenlace de un rollback aplicado se lee SIN abrir ningún des
   expect(aviso.closest('details')).toBeNull();
   // Y está en el MISMO panel que el botón que lo disparó, no tres paneles más abajo.
   expect(panelDe(/audit trail/i)).toContainElement(aviso);
+});
+
+it('FAMILIA 1: no acredita un receipt válido que corresponde a otra revisión', async () => {
+  servirConfig(() => snapshotConAudit(1));
+  server.use(http.post('*/v3/console/config/revisions/:id/rollback', () => HttpResponse.json({
+    applied: true,
+    dry_run: false,
+    revision: 3,
+    rolled_back_revision_id: 2,
+    summary: 'rollback 2: update tenant Steven',
+    mutation: { resource: 'tenant', action: 'update', id: 'Steven', value: { enabled: true } },
+    inverse_mutation: { resource: 'tenant', action: 'update', id: 'Steven', value: { enabled: false } },
+  }, { status: 201 })));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, HISTORIAL);
+
+  await user.click(await screen.findByRole('button', { name: /^Rollback$/ }));
+
+  expect(await screen.findByText(/2xx sin el recibo durable exacto del rollback 1/i))
+    .toBeInTheDocument();
+  expect(screen.queryByText(/rollback atómico de la revisión 1 aplicado/i)).not.toBeInTheDocument();
 });
 
 it('FAMILIA 1: un rollback que FALLA no se ve igual que uno que funciona', async () => {
@@ -1108,10 +1202,8 @@ it('FAMILIA 8: el permiso se dice en castellano, sin perder el identificador que
 
 it.each([
   ['denied', ['agent'], /^Solo lectura: /],
-  // `unknown` —no se pudo leer el RBAC— NO se cuenta como negativa: la pantalla queda habilitada
-  // y decide el servidor. Ante la duda no se le quita nada a nadie. Mismo criterio que
-  // `configNavAvailability` y que `soloLectura`.
-  ['unknown', undefined, /la pantalla queda habilitada y decide el servidor/i],
+  // `unknown` mantiene la vista disponible, pero no acredita autoridad para modificarla.
+  ['unknown', undefined, new RegExp(CONFIG_WRITE_NO_ACREDITADO_REASON, 'i')],
 ] as const)('FAMILIA 8: con el permiso «%s» la línea lo dice con todas las letras', async (estado, roles, texto) => {
   server.use(http.get('*/v3/console/access', () => (roles
     ? HttpResponse.json({ subject: 'Miguel:janus', roles, permissions: ['message.publish'] })

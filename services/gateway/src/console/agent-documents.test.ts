@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_DOCUMENT_BYTES, NEVER_SERVE_BASENAMES, type RuntimeFacts, documentForKind,
-  harnessFromCapabilities, harnessFromCommand, resolveAgentDocuments, verifyWritablePath
+  DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES, MAX_DOCUMENT_BYTES, NEVER_SERVE_BASENAMES,
+  type RuntimeFacts, codexProjectDocMaxBytes, documentForKind, effectiveManualPaths,
+  harnessFromCapabilities, harnessFromCommand, measuredCodexProjectDocumentConfig,
+  resolveAgentDocuments, verifyReadableDocument, verifyWritablePath
 } from './agent-documents.js';
 
 /**
@@ -19,8 +21,8 @@ const MEDIDO = {
   socrates:  { harness: 'codex',    harness_bd: 'codex',    contenedor: 'ws-prizma',              home: '/home/dev',  cwd: '/workspace' },
   atlas:     { harness: 'codex',    harness_bd: 'codex',    contenedor: 'ws-humanizar',           home: '/home/dev',  cwd: '/workspace', codexHome: '/home/dev/.codex/cuenta-b' },
   kratos:    { harness: 'claude',   harness_bd: 'codex',    contenedor: 'ws-humanizar',           home: '/home/dev',  cwd: '/workspace' },
-  jarvis:    { harness: 'openclaw', harness_bd: 'openclaw', contenedor: 'claw',                   home: '/home/claw', cwd: '/home/claw' },
-  argos:     { harness: 'openclaw', harness_bd: 'hermes',   contenedor: 'ctrl-infra',             home: '/home/dev',  cwd: '/workspace' },
+  jarvis:    { harness: 'openclaw', harness_bd: 'openclaw', contenedor: 'claw',                   home: '/home/claw', cwd: '/home/claw', openclawWorkspace: '/home/claw/workspace' },
+  argos:     { harness: 'openclaw', harness_bd: 'hermes',   contenedor: 'ctrl-infra',             home: '/home/dev',  cwd: '/workspace', openclawWorkspace: '/home/dev/workspace' },
   heraclito: { harness: 'claude',   harness_bd: 'openclaw', contenedor: 'agv2-jhon-heraclito-oc', home: '/home/claw', cwd: '/home/claw' },
   tales:     { harness: 'codex',    harness_bd: 'codex',    contenedor: 'agv2-jhon-tales-oc',     home: '/home/claw', cwd: '/home/claw' },
   salva:     { harness: 'claude',   harness_bd: 'codex',    contenedor: 'ws-isa',                 home: '/home/dev',  cwd: '/workspace' },
@@ -35,7 +37,7 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
   it('acierta la directiva de cada alias medido', () => {
     expect(directivePath(MEDIDO.zeus)).toBe('/home/dev/.claude/CLAUDE.md');
     expect(directivePath(MEDIDO.socrates)).toBe('/home/dev/.codex/AGENTS.md');
-    expect(directivePath(MEDIDO.jarvis)).toBe('/home/claw/.openclaw/openclaw.json');
+    expect(directivePath(MEDIDO.jarvis)).toBe('/home/claw/workspace/AGENTS.md');
     expect(directivePath(MEDIDO.tales)).toBe('/home/claw/.codex/AGENTS.md');
     expect(directivePath(MEDIDO.kant)).toBe('/home/stev/.claude/CLAUDE.md');
     expect(directivePath(MEDIDO.salva)).toBe('/home/dev/.claude/CLAUDE.md');
@@ -86,6 +88,17 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
     expect(resolveAgentDocuments({ harness: 'claude', home: 'relativo' })).toEqual([]);
   });
 
+  it('Hermes resuelve exactamente el AGENTS.md global que el pty-agent permite', () => {
+    const facts: RuntimeFacts = { harness: 'hermes', home: '/home/dev' };
+    expect(resolveAgentDocuments(facts)).toEqual([expect.objectContaining({
+      kind: 'directive', category: 'manual', path: '/home/dev/AGENTS.md', editable: true,
+    })]);
+    expect(effectiveManualPaths(facts).map(({ path }) => path)).toEqual(['/home/dev/AGENTS.md']);
+    const document = documentForKind(facts, 'directive')!;
+    expect(verifyReadableDocument(facts, document)).toEqual({ allowed: true });
+    expect(verifyWritablePath(facts, 'directive', document.path)).toEqual({ allowed: true });
+  });
+
   /**
    * `GET /v3/status` -> `presence[].capabilities` llevaba el arnés correcto de los 14 alias el
    * 23-ago-2026, comparado uno a uno contra el binario en ejecución. La columna `harness_id` de
@@ -105,14 +118,107 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
   it('unas capabilities sin arnés no adivinan uno', () => {
     expect(harnessFromCapabilities(['messages.receive', 'jobs.interactive'])).toBe('unknown');
     expect(harnessFromCapabilities([])).toBe('unknown');
-    expect(harnessFromCapabilities(['harness.hermes'])).toBe('unknown');
+    expect(harnessFromCapabilities(['harness.hermes'])).toBe('hermes');
   });
 
   it('harnessFromCommand lee el binario que corre', () => {
     expect(harnessFromCommand('node /opt/cauce-v3-adapter/zeus/releases/x/dist/src/bin/claude.js')).toBe('claude');
     expect(harnessFromCommand('node /opt/.../bin/openclaw.js')).toBe('openclaw');
     expect(harnessFromCommand('node /opt/.../bin/codex.js')).toBe('codex');
+    expect(harnessFromCommand('node /opt/.../bin/hermes.js')).toBe('hermes');
     expect(harnessFromCommand('/usr/bin/python3 cauce-container-runtime.py run --alias salva')).toBe('unknown');
+  });
+});
+
+describe('manuales efectivos de proyecto', () => {
+  it('Claude ordena global y cada nivel root→cwd, incluido .claude y local', () => {
+    const paths = effectiveManualPaths({
+      harness: 'claude', home: '/home/dev', workspaceRoot: '/workspace',
+      projectRoot: '/workspace/repo', cwd: '/workspace/repo/packages/api',
+    });
+    expect(paths.map(({ path, scope }) => [path, scope])).toEqual([
+      ['/home/dev/.claude/CLAUDE.md', 'user'],
+      ['/workspace/repo/CLAUDE.md', 'workspace'],
+      ['/workspace/repo/.claude/CLAUDE.md', 'workspace'],
+      ['/workspace/repo/CLAUDE.local.md', 'workspace'],
+      ['/workspace/repo/packages/CLAUDE.md', 'workspace'],
+      ['/workspace/repo/packages/.claude/CLAUDE.md', 'workspace'],
+      ['/workspace/repo/packages/CLAUDE.local.md', 'workspace'],
+      ['/workspace/repo/packages/api/CLAUDE.md', 'workspace'],
+      ['/workspace/repo/packages/api/.claude/CLAUDE.md', 'workspace'],
+      ['/workspace/repo/packages/api/CLAUDE.local.md', 'workspace'],
+    ]);
+    expect(paths.map(({ precedence }) => precedence)).toEqual(paths.map((_, index) => index));
+  });
+
+  it('Codex empieza en projectRoot y el override precede al AGENTS de cada nivel', () => {
+    const paths = effectiveManualPaths({
+      harness: 'codex', home: '/home/dev', workspaceRoot: '/workspace',
+      projectRoot: '/workspace/repo', cwd: '/workspace/repo/sub',
+    });
+    expect(paths.map(({ path }) => path)).toEqual([
+      '/home/dev/.codex/AGENTS.override.md', '/home/dev/.codex/AGENTS.md',
+      '/workspace/repo/AGENTS.override.md', '/workspace/repo/AGENTS.md',
+      '/workspace/repo/sub/AGENTS.override.md', '/workspace/repo/sub/AGENTS.md',
+    ]);
+    expect(paths.some(({ path }) => path === '/workspace/AGENTS.md')).toBe(false);
+    expect(paths.every(({ selection }) => selection === 'first_existing')).toBe(true);
+  });
+
+  it('Codex intercala fallbacks medidos y aplica el par de config de forma indivisible', () => {
+    const measured: RuntimeFacts = {
+      harness: 'codex', home: '/home/dev', projectRoot: '/workspace/repo',
+      cwd: '/workspace/repo/sub', projectDocMaxBytes: 65_536,
+      projectDocFallbackFilenames: ['TEAM.md', 'LOCAL.md'],
+    };
+    expect(measuredCodexProjectDocumentConfig(measured)).toEqual({
+      maxBytes: 65_536, fallbackFilenames: ['TEAM.md', 'LOCAL.md'],
+    });
+    expect(codexProjectDocMaxBytes(measured)).toBe(65_536);
+    expect(effectiveManualPaths(measured).map(({ path }) => path)).toEqual([
+      '/home/dev/.codex/AGENTS.override.md', '/home/dev/.codex/AGENTS.md',
+      '/workspace/repo/AGENTS.override.md', '/workspace/repo/AGENTS.md',
+      '/workspace/repo/TEAM.md', '/workspace/repo/LOCAL.md',
+      '/workspace/repo/sub/AGENTS.override.md', '/workspace/repo/sub/AGENTS.md',
+      '/workspace/repo/sub/TEAM.md', '/workspace/repo/sub/LOCAL.md',
+    ]);
+
+    for (const partialOrUnsafe of [
+      { ...measured, projectDocFallbackFilenames: undefined },
+      { ...measured, projectDocFallbackFilenames: ['TEAM.md', 'TEAM.md'] },
+      { ...measured, projectDocFallbackFilenames: ['secreto.key'] },
+      { ...measured, projectDocFallbackFilenames: ['SECRET.PEM'] },
+      { ...measured, projectDocFallbackFilenames: ['Auth.Json'] },
+    ] as RuntimeFacts[]) {
+      expect(measuredCodexProjectDocumentConfig(partialOrUnsafe)).toBeUndefined();
+      expect(codexProjectDocMaxBytes(partialOrUnsafe)).toBe(DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES);
+      expect(effectiveManualPaths(partialOrUnsafe).some(({ path }) => path.endsWith('/TEAM.md')))
+        .toBe(false);
+    }
+  });
+
+  it('sin raíz acreditada sólo añade el cwd exacto y deduplica una ruta global coincidente', () => {
+    expect(effectiveManualPaths({
+      harness: 'claude', home: '/home/dev', cwd: '/workspace/repo/sub',
+    }).map(({ path }) => path)).toEqual([
+      '/home/dev/.claude/CLAUDE.md', '/workspace/repo/sub/CLAUDE.md',
+      '/workspace/repo/sub/.claude/CLAUDE.md', '/workspace/repo/sub/CLAUDE.local.md',
+    ]);
+    expect(effectiveManualPaths({
+      harness: 'claude', home: '/home/dev', claudeConfigDir: '/workspace/repo', cwd: '/workspace/repo',
+    }).map(({ path }) => path)).toEqual([
+      '/workspace/repo/CLAUDE.md', '/workspace/repo/.claude/CLAUDE.md',
+      '/workspace/repo/CLAUDE.local.md',
+    ]);
+  });
+
+  it('workspace / o cwd fuera de la raíz no amplían el juego', () => {
+    const base = { harness: 'claude' as const, home: '/home/dev' };
+    expect(effectiveManualPaths({ ...base, projectRoot: '/', cwd: '/workspace/repo' }))
+      .toHaveLength(1);
+    expect(effectiveManualPaths({
+      ...base, projectRoot: '/workspace/a', cwd: '/workspace/b',
+    })).toHaveLength(1);
   });
 });
 
@@ -163,12 +269,27 @@ describe('verifyWritablePath — falla cerrada', () => {
     expect(verifyWritablePath(MEDIDO.socrates, 'tools', doc!.path).allowed).toBe(false);
   });
 
-  it('openclaw no expone nada editable: su json lleva auth y secrets', () => {
+  it('openclaw separa perfil, manual, memoria y configuración sensible sin exponerla', () => {
     const docs = resolveAgentDocuments(MEDIDO.jarvis);
-    expect(docs.length).toBeGreaterThan(0);
+    expect(docs.map((doc) => [doc.kind, doc.category, doc.path])).toEqual([
+      ['prompts', 'profile', '/home/claw/workspace/SOUL.md'],
+      ['identity', 'profile', '/home/claw/workspace/IDENTITY.md'],
+      ['human', 'profile', '/home/claw/workspace/USER.md'],
+      ['memory', 'memory', '/home/claw/workspace/MEMORY.md'],
+      ['heartbeat', 'memory', '/home/claw/workspace/HEARTBEAT.md'],
+      ['directive', 'manual', '/home/claw/workspace/AGENTS.md'],
+      ['tools', 'configuration', '/home/claw/workspace/TOOLS.md'],
+      ['configuration', 'configuration', '/home/claw/.openclaw/openclaw.json'],
+    ]);
     expect(docs.every((d) => !d.editable)).toBe(true);
-    expect(docs[0]?.reason).toMatch(/secrets/);
-    expect(verifyWritablePath(MEDIDO.jarvis, 'directive', docs[0]!.path).allowed).toBe(false);
+    expect(docs.find((doc) => doc.kind === 'configuration')?.reason).toMatch(/secrets/);
+    expect(verifyWritablePath(
+      MEDIDO.jarvis, 'directive', documentForKind(MEDIDO.jarvis, 'directive')!.path,
+    ).allowed).toBe(false);
+  });
+
+  it('openclaw sin workspace medido no adivina ~/.openclaw ni sirve otro alias', () => {
+    expect(resolveAgentDocuments({ harness: 'openclaw', home: '/home/claw' })).toEqual([]);
   });
 
   it('los MCP de claude no se sirven: viven con el OAuth', () => {
@@ -198,5 +319,37 @@ describe('verifyWritablePath — falla cerrada', () => {
   it('el tope deja pasar el CLAUDE.md más grande medido y no un volcado', () => {
     expect(MAX_DOCUMENT_BYTES).toBeGreaterThan(75_142); // el AGENTS.md de hermes en ctrl-infra
     expect(MAX_DOCUMENT_BYTES).toBeLessThan(1024 * 1024);
+  });
+});
+
+describe('lectura y escritura son capacidades independientes', () => {
+  it('un manual global es legible y editable', () => {
+    const doc = documentForKind(MEDIDO.zeus, 'directive')!;
+    expect(verifyReadableDocument(MEDIDO.zeus, doc)).toEqual({ allowed: true });
+    expect(verifyWritablePath(MEDIDO.zeus, 'directive', doc.path)).toEqual({ allowed: true });
+  });
+
+  it('los siete ficheros allowlisted del perfil OpenClaw son legibles pero no escribibles por PUT', () => {
+    const docs = resolveAgentDocuments(MEDIDO.jarvis)
+      .filter((doc) => doc.path.startsWith('/home/claw/workspace/'));
+    expect(docs).toHaveLength(7);
+    for (const doc of docs) {
+      expect(verifyReadableDocument(MEDIDO.jarvis, doc), doc.path).toEqual({ allowed: true });
+      expect(verifyWritablePath(MEDIDO.jarvis, doc.kind, doc.path).allowed, doc.path).toBe(false);
+    }
+  });
+
+  it('configuración sensible y directorios quedan inventariados pero no servibles', () => {
+    for (const [facts, kinds] of [
+      [MEDIDO.zeus, ['tools', 'prompts', 'mcp']],
+      [MEDIDO.socrates, ['tools', 'prompts']],
+    ] as const) {
+      for (const kind of kinds) {
+        const doc = documentForKind(facts, kind)!;
+        expect(verifyReadableDocument(facts, doc).allowed, doc.path).toBe(false);
+      }
+    }
+    const sensitive = documentForKind(MEDIDO.jarvis, 'configuration')!;
+    expect(verifyReadableDocument(MEDIDO.jarvis, sensitive).allowed).toBe(false);
   });
 });

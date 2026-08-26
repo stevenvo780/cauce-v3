@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { vi } from 'vitest';
-import type { DatabasePool } from '@cauce/store';
-import type { ConfigMutation, Tenant } from '@cauce/protocol';
+import type { DatabasePool, OperationalDlqResolutionRequest } from '@cauce/store';
+import { buildPublishReceipt, type ConfigMutation, type Tenant } from '@cauce/protocol';
 import type {
-  AuthProvider, GatewayOptions, GatewayRepository, Principal, PrincipalPermission, PrincipalRole
+  AuthProvider, GatewayOptions, GatewayRepository, OutboxLeaseAck, Principal,
+  PrincipalPermission, PrincipalRole
 } from '../../services/gateway/src/index.js';
 
 export const ids = {
@@ -60,13 +62,24 @@ export const noDeliveryWakes: NonNullable<GatewayOptions['deliveryWakeSubscriber
 
 export function fakeRepository(): GatewayRepository {
   return {
-    publish: vi.fn(async () => ({
-      message_id: ids.message,
-      delivery_ids: [ids.delivery],
-      duplicate: false,
-      request_id: ids.request,
-      trace_id: 'trace-test'
-    })),
+    publish: vi.fn(async (input: Parameters<GatewayRepository['publish']>[0]) => buildPublishReceipt(
+      input,
+      {
+        message_id: ids.message,
+        delivery_ids: [ids.delivery],
+        duplicate: false,
+        request_id: input.request_id,
+        trace_id: input.trace_id,
+      },
+    )),
+    verifyPublishReceipt: vi.fn(async (
+      _input: Parameters<GatewayRepository['verifyPublishReceipt']>[0],
+      receipt: Parameters<GatewayRepository['verifyPublishReceipt']>[1],
+    ) => (
+      receipt.message_id === ids.message
+      && receipt.delivery_ids.length === 1
+      && receipt.delivery_ids[0] === ids.delivery
+    )),
     assertPrincipal: vi.fn(async () => undefined),
     assertPermission: vi.fn(async () => undefined),
     principalAccess: vi.fn(async () => ({
@@ -77,6 +90,28 @@ export function fakeRepository(): GatewayRepository {
     topology: vi.fn(async () => ({ tenants: [], acl_edges: [] })),
     listMessages: vi.fn(async () => ({ items: [], next_cursor: null })),
     queueSnapshot: vi.fn(async () => ({ pending: 0, retrying: 0, dead: 0, items: [] })),
+    listOperationalDlq: vi.fn(async () => ({
+      schemaVersion: 1 as const,
+      items: [],
+      total: 0,
+      truncated: false,
+      nextCursor: null,
+    })),
+    resolveOperationalDlqWithoutReplay: vi.fn(async (
+      _actorTenant: Tenant,
+      _actorAlias: string,
+      request: OperationalDlqResolutionRequest,
+    ) => ({
+      schemaVersion: 1 as const,
+      suite: 'cauce-v3-dlq-no-replay-resolution' as const,
+      phase: 'resolved' as const,
+      appliedCount: 1,
+      alreadyApplied: false,
+      evidenceSha256: request.evidenceSha256,
+      reasonSha256: '0'.repeat(64),
+      possibleDuplicateAcknowledged: request.possibleDuplicateAcknowledged,
+      possibleNoDeliveryAcknowledged: request.possibleNoDeliveryAcknowledged,
+    })),
     replayDelivery: vi.fn(async (deliveryId: string) => ({
       delivery_id: ids.deliveryTwo,
       replayed_from_delivery_id: deliveryId,
@@ -97,6 +132,7 @@ export function fakeRepository(): GatewayRepository {
     listAdapters: vi.fn(async () => ({ items: [] })),
     listAgents: vi.fn(async () => ({ items: [] })),
     getAgent: vi.fn(async () => undefined),
+    getAgentByIdentity: vi.fn(async () => undefined),
     listOriginRelays: vi.fn(async () => ({ items: [] })),
     enqueueNotification: vi.fn(async () => ({
       notification_id: ids.notification,
@@ -149,13 +185,22 @@ export function fakeRepository(): GatewayRepository {
     applyConfigurationChange: vi.fn(async (
       _tenant: Tenant, _alias: string, mutation: ConfigMutation, dryRun: boolean
     ) => ({
-      applied: !dryRun, dry_run: dryRun, revision: dryRun ? 0 : 1, mutation
+      applied: !dryRun, dry_run: dryRun, revision: dryRun ? 0 : 1,
+      rolled_back_revision_id: null,
+      summary: 'test configuration change', mutation, inverse_mutation: mutation,
     })),
     rollbackConfiguration: vi.fn(async (
       _tenant: Tenant, _alias: string, revisionId: number, dryRun: boolean
-    ) => ({
-      applied: !dryRun, dry_run: dryRun, revision: revisionId
-    })),
+    ) => {
+      const mutation: ConfigMutation = {
+        resource: 'tenant', action: 'update', id: 'Pablo', value: { enabled: true },
+      };
+      return {
+        applied: !dryRun, dry_run: dryRun, revision: revisionId,
+        rolled_back_revision_id: revisionId,
+        summary: `rollback ${revisionId}`, mutation, inverse_mutation: mutation,
+      };
+    }),
     getMessage: vi.fn(async () => ({
       id: ids.message,
       tenant_id: 'Pablo',
@@ -165,11 +210,13 @@ export function fakeRepository(): GatewayRepository {
     acquireLease: vi.fn(async () => ({
       acquired: true,
       epoch: 1,
+      connection_token: randomUUID(),
       lease_expires_at: new Date(Date.now() + 60_000).toISOString()
     })),
     heartbeat: vi.fn(async () => new Date(Date.now() + 60_000).toISOString()),
-    releaseLease: vi.fn(async () => undefined),
+    releaseLease: vi.fn(async () => true),
     claimDeliveries: vi.fn(async () => []),
+    liveDeliveryClaims: vi.fn(async () => []),
     ackDelivery: vi.fn(async (deliveryId: string) => ({
       delivery_id: deliveryId,
       status: 'done' as const,
@@ -177,6 +224,12 @@ export function fakeRepository(): GatewayRepository {
       receipt: 'applied' as const,
     })),
     claimOutbox: vi.fn(async () => []),
+    claimWakeOutbox: vi.fn(async () => []),
+    renewWakeOutbox: vi.fn(async () => true),
+    ackOutbox: vi.fn(async (ack: OutboxLeaseAck) => ({
+      status: ack.status === 'sent' ? 'sent' as const : 'failed' as const,
+      applied: true,
+    })),
     completeOutbox: vi.fn(async () => true),
     retryOutbox: vi.fn(async () => 'retry' as const)
   };

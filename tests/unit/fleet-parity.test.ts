@@ -30,10 +30,12 @@ async function fixture() {
       kant: {
         tenant: 'Steven', room: 'grp.steven', container: 'ctrl-infra', registryContainer: 'host:kratos', user: 'dev',
         home: '/home/dev', stateDirectory: '/state/kant', harness: 'codex', membershipRole: 'operator',
+        systemdUser: 'stev',
       },
       iza: {
         tenant: 'Miguel', room: 'grp.miguel', container: 'ws-humanizar', user: 'dev',
         home: '/home/dev', stateDirectory: '/state/iza', harness: 'hermes', membershipRole: 'agent',
+        systemdUser: 'stev',
       },
     },
   }));

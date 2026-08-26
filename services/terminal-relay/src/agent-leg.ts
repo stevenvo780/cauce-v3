@@ -38,6 +38,8 @@ export interface AgentHello {
   readonly runtime_user: string;
   readonly runtime_uid: number;
   readonly harness: string;
+  /** True sólo cuando el launcher observó al proceso real; ausente/false no acredita rutas. */
+  readonly runtime_facts_observed?: boolean;
   /**
    * `HOME` del proceso del arnés dentro del contenedor. OPCIONAL: un pty-agent anterior a
    * 2026-08-25 no lo manda, y exigirlo le rechazaría el saludo —dejándolo sin terminales— por un
@@ -48,6 +50,13 @@ export interface AgentHello {
   readonly codex_home?: string;
   readonly claude_config_dir?: string;
   readonly openclaw_workspace?: string;
+  /** Contexto efectivo medido; opcional para agentes anteriores durante rollout. */
+  readonly cwd?: string;
+  readonly workspace_root?: string;
+  readonly project_root?: string;
+  /** Proyección cerrada de config.toml; ambos campos viajan juntos y sólo para Codex. */
+  readonly project_doc_max_bytes?: number;
+  readonly project_doc_fallback_filenames?: readonly string[];
   readonly agent_version: string;
   readonly modes: readonly TerminalMode[];
   /**
@@ -62,6 +71,8 @@ export interface AgentHello {
 
 /** El agente declara esto cuando sabe contestar TAG_READ. Sin la marca, no se le pregunta. */
 export const FEATURE_READ_GOVERNANCE = 'read_governance';
+/** READ_OK/READ_DATA terminan únicamente cuando llega READ_DONE. Obligatorio para índices. */
+export const FEATURE_READ_GOVERNANCE_DONE = 'read_governance_done_v1';
 /** Escritura atómica/CAS. El sufijo versiona explícitamente el protocolo y sus precondiciones. */
 export const FEATURE_WRITE_GOVERNANCE = 'write_governance_v1';
 /** Perfil completo: preflight de todos los ficheros y rollback total dentro del pty-agent. */
@@ -72,6 +83,10 @@ export const FEATURE_SESSION_OUTPUT_FLOW_CONTROL = 'session_output_flow_control'
 export const MAX_AGENT_WRITE_QUEUE_BYTES = 512 * 1024;
 /** Reserved above the data quota for CLOSE frames. Exhausting it drops TLS so the agent kills all children. */
 export const MAX_AGENT_CRITICAL_QUEUE_BYTES = 64 * 1024;
+/** Una conexión corresponde a un alias: este tope es, por construcción, por alias. */
+export const MAX_AGENT_READS_IN_FLIGHT = 4;
+/** Al llenarse se rota la conexión: nunca se olvida un terminal id mientras el socket siga vivo. */
+export const MAX_TERMINAL_READ_TOMBSTONES = 1_024;
 
 /**
  * Una lectura en vuelo. Es una transacción suelta, no una sesión: el agente contesta un READ_OK
@@ -80,6 +95,7 @@ export const MAX_AGENT_CRITICAL_QUEUE_BYTES = 64 * 1024;
 export interface AgentReadHandlers {
   onReadOk(metadata: Record<string, unknown>): void;
   onReadData(chunk: Buffer): void;
+  onReadDone(metadata: Record<string, unknown>): void;
   onReadErr(failure: { readonly code: string; readonly reason: string }): void;
   /** La conexión murió con la lectura a medias; no va a llegar ni OK ni ERR. */
   onAgentGone(reason: string): void;
@@ -157,6 +173,48 @@ function featuresField(source: Record<string, unknown>): readonly string[] {
   return (value as readonly unknown[]).filter((entry): entry is string => typeof entry === 'string');
 }
 
+const MAX_CODEX_PROJECT_DOC_BYTES = 16 * 1024 * 1024;
+const MAX_CODEX_FALLBACKS = 16;
+const CODEX_NEVER_SERVE_BASENAMES = new Set([
+  '.credentials.json', 'auth.json', '.claude.json', 'openclaw.json', '.env', '.netrc',
+  'id_ed25519', 'id_rsa', 'known_hosts', 'authorized_keys',
+]);
+const CODEX_NEVER_SERVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
+
+function validCodexFallbackFilename(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return value.length > 0 && value.length <= 128 && !value.includes('/') && !value.includes('\\')
+    && !value.includes('..') && ![...value].some((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 0x1f || code === 0x7f;
+    })
+    && !CODEX_NEVER_SERVE_BASENAMES.has(normalized)
+    && !CODEX_NEVER_SERVE_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+}
+
+function codexProjectDocumentFields(
+  source: Record<string, unknown>,
+  harness: string,
+): Pick<AgentHello, 'project_doc_max_bytes' | 'project_doc_fallback_filenames'> {
+  const maxBytes = source.project_doc_max_bytes;
+  const rawFallbacks = source.project_doc_fallback_filenames;
+  if (harness !== 'codex' || typeof maxBytes !== 'number' || !Number.isSafeInteger(maxBytes)
+      || maxBytes < 1 || maxBytes > MAX_CODEX_PROJECT_DOC_BYTES
+      || !Array.isArray(rawFallbacks) || rawFallbacks.length > MAX_CODEX_FALLBACKS) return {};
+  const seen = new Set<string>(['AGENTS.override.md', 'AGENTS.md']);
+  const fallbacks: string[] = [];
+  for (const candidate of rawFallbacks) {
+    if (typeof candidate !== 'string' || !validCodexFallbackFilename(candidate)
+        || seen.has(candidate)) return {};
+    seen.add(candidate);
+    fallbacks.push(candidate);
+  }
+  return {
+    project_doc_max_bytes: maxBytes,
+    project_doc_fallback_filenames: fallbacks,
+  };
+}
+
 /**
  * Read on every handshake: the file is rotated by atomic rename, so a revoked agent stops
  * being admitted without restarting the relay. Any read or parse failure yields an empty map.
@@ -221,6 +279,34 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
   const codexHome = rutaMedida(source, 'codex_home');
   const claudeConfigDir = rutaMedida(source, 'claude_config_dir');
   const openclawWorkspace = rutaMedida(source, 'openclaw_workspace');
+  let cwd = rutaMedida(source, 'cwd');
+  let workspaceRoot = rutaMedida(source, 'workspace_root');
+  let projectRoot = rutaMedida(source, 'project_root');
+  const rawWorkspaceRoot = source.workspace_root;
+  const rawProjectRoot = source.project_root;
+  const workspacePairSafe = rawWorkspaceRoot === undefined
+    || (workspaceRoot !== undefined && cwd !== undefined
+      && (cwd === workspaceRoot || cwd.startsWith(`${workspaceRoot}/`)));
+  const projectPairSafe = rawProjectRoot === undefined
+    || (projectRoot !== undefined && cwd !== undefined
+      && (cwd === projectRoot || cwd.startsWith(`${projectRoot}/`))
+      && (workspaceRoot === undefined || projectRoot === workspaceRoot
+        || projectRoot.startsWith(`${workspaceRoot}/`)));
+  const contextFieldsSafe = (source.cwd === undefined || cwd !== undefined)
+    && (rawWorkspaceRoot === undefined || workspaceRoot !== undefined)
+    && (rawProjectRoot === undefined || projectRoot !== undefined)
+    && workspacePairSafe && projectPairSafe;
+  if (!contextFieldsSafe) {
+    cwd = undefined;
+    workspaceRoot = undefined;
+    projectRoot = undefined;
+  }
+  const runtimeFactsObserved = source.runtime_facts_observed === true && contextFieldsSafe
+    && home !== undefined
+    && ((harness === 'codex' && codexHome !== undefined)
+      || (harness === 'claude' && claudeConfigDir !== undefined)
+      || (harness === 'openclaw' && openclawWorkspace !== undefined)
+      || (harness === 'hermes' && cwd !== undefined && projectRoot !== undefined));
   return {
     tenant_id: tenantId,
     alias,
@@ -230,12 +316,19 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
     runtime_user: runtimeUser,
     runtime_uid: runtimeUid,
     harness,
-    // Opcional y validado sólo si viene: si el agente lo manda tiene que ser una ruta absoluta;
-    // si no lo manda, el saludo sigue siendo válido y el alias conserva sus terminales.
-    ...(home === undefined ? {} : { home }),
-    ...(codexHome === undefined ? {} : { codex_home: codexHome }),
-    ...(claudeConfigDir === undefined ? {} : { claude_config_dir: claudeConfigDir }),
-    ...(openclawWorkspace === undefined ? {} : { openclaw_workspace: openclawWorkspace }),
+    runtime_facts_observed: runtimeFactsObserved,
+    // Un marker sin su raíz efectiva no acredita un hecho parcial. El alias conserva terminales,
+    // pero toda la familia contextual queda fuera del hello normalizado y de la presencia.
+    ...(runtimeFactsObserved ? {
+      home,
+      ...(harness === 'codex' ? { codex_home: codexHome! } : {}),
+      ...(harness === 'claude' ? { claude_config_dir: claudeConfigDir! } : {}),
+      ...(harness === 'openclaw' ? { openclaw_workspace: openclawWorkspace! } : {}),
+      ...(cwd === undefined ? {} : { cwd }),
+      ...(workspaceRoot === undefined ? {} : { workspace_root: workspaceRoot }),
+      ...(projectRoot === undefined ? {} : { project_root: projectRoot }),
+      ...codexProjectDocumentFields(source, harness),
+    } : {}),
     agent_version: agentVersion,
     modes,
     features: featuresField(source)
@@ -250,7 +343,11 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
 function rutaMedida(source: Record<string, unknown>, campo: string): string | undefined {
   const valor = source[campo];
   if (typeof valor !== 'string') return undefined;
-  if (!valor.startsWith('/') || valor.includes('\0') || valor.length > 4096) return undefined;
+  if (!valor.startsWith('/') || valor === '/' || valor.includes('\0') || valor.length > 4096) return undefined;
+  const segments = valor.split('/');
+  if (segments.slice(1).some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    return undefined;
+  }
   return valor;
 }
 
@@ -263,6 +360,8 @@ export class AgentConnection {
   private readonly sessions = new Map<string, AgentSessionHandlers>();
   /** Lecturas de gobierno en vuelo, por `request_id`. Vacío casi siempre. */
   private readonly reads = new Map<string, AgentReadHandlers>();
+  /** Operaciones cerradas correctamente/por READ_ERR; nunca crece sin límite. */
+  private readonly terminalReads = new Set<string>();
   /** Escrituras gobernadas en vuelo. Separadas de PTY y de lectura por negociación de capacidad. */
   private readonly writes = new Map<string, AgentWriteHandlers>();
   private readonly ping: NodeJS.Timeout;
@@ -310,6 +409,8 @@ export class AgentConnection {
       runtime_user: this.hello.runtime_user,
       runtime_uid: this.hello.runtime_uid,
       harness: this.hello.harness,
+      ...(this.hello.runtime_facts_observed === undefined
+        ? {} : { runtime_facts_observed: this.hello.runtime_facts_observed }),
       // Se propaga sólo si vino. El gateway lo necesita para componer la ruta del fichero de
       // gobierno; sin él contesta «contenedor sin identificar» en vez de adivinar una ruta.
       ...(this.hello.home === undefined ? {} : { home: this.hello.home }),
@@ -318,6 +419,15 @@ export class AgentConnection {
         ? {} : { claude_config_dir: this.hello.claude_config_dir }),
       ...(this.hello.openclaw_workspace === undefined
         ? {} : { openclaw_workspace: this.hello.openclaw_workspace }),
+      ...(this.hello.cwd === undefined ? {} : { cwd: this.hello.cwd }),
+      ...(this.hello.workspace_root === undefined
+        ? {} : { workspace_root: this.hello.workspace_root }),
+      ...(this.hello.project_root === undefined
+        ? {} : { project_root: this.hello.project_root }),
+      ...(this.hello.project_doc_max_bytes === undefined
+        ? {} : { project_doc_max_bytes: this.hello.project_doc_max_bytes }),
+      ...(this.hello.project_doc_fallback_filenames === undefined
+        ? {} : { project_doc_fallback_filenames: this.hello.project_doc_fallback_filenames }),
       agent_version: this.hello.agent_version,
       modes: this.hello.modes,
       connected_since: this.connectedAt.toISOString()
@@ -341,6 +451,10 @@ export class AgentConnection {
     return this.hello.features.includes(FEATURE_READ_GOVERNANCE);
   }
 
+  get supportsGovernanceReadDone(): boolean {
+    return this.hello.features.includes(FEATURE_READ_GOVERNANCE_DONE);
+  }
+
   get supportsGovernanceWrite(): boolean {
     return this.hello.features.includes(FEATURE_WRITE_GOVERNANCE);
   }
@@ -353,12 +467,24 @@ export class AgentConnection {
     return this.hello.features.includes(FEATURE_SESSION_OUTPUT_FLOW_CONTROL);
   }
 
-  attachRead(requestId: string, handlers: AgentReadHandlers): void {
+  attachRead(requestId: string, handlers: AgentReadHandlers): boolean {
+    if (this.closed || this.reads.has(requestId) || this.terminalReads.has(requestId)
+        || this.reads.size >= MAX_AGENT_READS_IN_FLIGHT) return false;
     this.reads.set(requestId, handlers);
+    return true;
   }
 
-  detachRead(requestId: string): void {
+  detachRead(requestId: string, terminal = false): void {
     this.reads.delete(requestId);
+    if (!terminal) return;
+    this.terminalReads.delete(requestId);
+    if (this.terminalReads.size >= MAX_TERMINAL_READ_TOMBSTONES) {
+      // Evictar el más viejo permitiría tirar en silencio un DATA tardío de ese id. Se cierra el
+      // transporte y el agente reconecta limpio; así el límite de memoria no debilita el orden.
+      this.destroy('read_tombstone_capacity');
+      return;
+    }
+    this.terminalReads.add(requestId);
   }
 
   attachWrite(requestId: string, handlers: AgentWriteHandlers): void {
@@ -521,6 +647,7 @@ export class AgentConnection {
     const handlers = [...this.sessions.values(), ...this.reads.values(), ...this.writes.values()];
     this.sessions.clear();
     this.reads.clear();
+    this.terminalReads.clear();
     this.writes.clear();
     this.queuedWrites = [];
     this.queuedWriteBytes = 0;
@@ -577,14 +704,14 @@ export class AgentConnection {
       const body = decodeJsonFrame(frame.payload);
       const requestId = stringField(body, 'request_id');
       if (requestId === undefined) throw new FramingError('READ_OK without a request id');
-      this.dispatchRead(requestId, (handlers) => handlers.onReadOk(body));
+      this.dispatchRead(requestId, 'ok', (handlers) => handlers.onReadOk(body));
       return;
     }
     if (frame.tag === FRAME_TAGS.READ_ERR) {
       const body = decodeJsonFrame(frame.payload);
       const requestId = stringField(body, 'request_id');
       if (requestId === undefined) throw new FramingError('READ_ERR without a request id');
-      this.dispatchRead(requestId, (handlers) => handlers.onReadErr({
+      this.dispatchRead(requestId, 'error', (handlers) => handlers.onReadErr({
         code: stringField(body, 'error') ?? 'unknown',
         reason: stringField(body, 'reason') ?? 'read_failed'
       }));
@@ -593,7 +720,14 @@ export class AgentConnection {
     if (frame.tag === FRAME_TAGS.READ_DATA) {
       // Mismo prefijo de 36 bytes que STDOUT, pero lo que lleva es el `request_id`.
       const data = decodeDataFrame(frame.payload);
-      this.dispatchRead(data.sessionId, (handlers) => handlers.onReadData(data.data));
+      this.dispatchRead(data.sessionId, 'data', (handlers) => handlers.onReadData(data.data));
+      return;
+    }
+    if (frame.tag === FRAME_TAGS.READ_DONE) {
+      const body = decodeJsonFrame(frame.payload);
+      const requestId = stringField(body, 'request_id');
+      if (requestId === undefined) throw new FramingError('READ_DONE without a request id');
+      this.dispatchRead(requestId, 'done', (handlers) => handlers.onReadDone(body));
       return;
     }
     if (frame.tag === FRAME_TAGS.WRITE_OK) {
@@ -634,11 +768,22 @@ export class AgentConnection {
     throw new FramingError('unexpected frame from the agent');
   }
 
-  private dispatchRead(requestId: string, apply: (handlers: AgentReadHandlers) => void): void {
+  private dispatchRead(
+    requestId: string,
+    frame: 'ok' | 'data' | 'done' | 'error',
+    apply: (handlers: AgentReadHandlers) => void,
+  ): void {
     const handlers = this.reads.get(requestId);
-    // Una lectura que ya venció por tiempo se desenganchó: lo que llegue tarde se tira, no mata
-    // la conexión. Un agente comprometido no consigue nada mandando request_ids inventados.
-    if (!handlers) return;
+    if (!handlers) {
+      // Un id inventado o una lectura abandonada por timeout no compromete las PTY. En cambio,
+      // DATA después de un cierre terminal contradice el orden TCP acreditado: la conexión queda
+      // degradada y se cierra, en vez de aceptar éxito y tirar silenciosamente la evidencia.
+      if (frame === 'data' && this.terminalReads.has(requestId)) {
+        this.destroy('read_data_after_terminal');
+        throw new FramingError('READ_DATA after terminal read frame');
+      }
+      return;
+    }
     try {
       apply(handlers);
     } catch (error) {

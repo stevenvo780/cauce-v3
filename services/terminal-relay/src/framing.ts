@@ -44,7 +44,9 @@ export const FRAME_TAGS = {
   WRITE_BATCH_DATA: 0x5a,
   WRITE_BATCH_OK: 0x5b,
   WRITE_BATCH_ERR: 0x5c,
-  WRITE_BATCH_CANCEL: 0x5d
+  WRITE_BATCH_CANCEL: 0x5d,
+  /** Cierre inequívoco de una lectura exitosa; READ_ERR ya es terminal por sí mismo. */
+  READ_DONE: 0x5e
 } as const;
 
 export type FrameTag = (typeof FRAME_TAGS)[keyof typeof FRAME_TAGS];

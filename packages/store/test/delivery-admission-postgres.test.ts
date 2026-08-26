@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
+import {
+  HUMAN_PRIORITY_FLOOR, type Ack, type DeliveryEnvelope, type PublishMessage, type Tenant,
+} from '@cauce/protocol';
 import { CauceRepository, timeoutRetryBackoffSeconds, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
@@ -37,7 +39,7 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
     body: { text: 'mensaje de una persona' },
     idempotency_key: randomUUID(),
     lane: 'interactive',
-    priority: 0,
+    priority: HUMAN_PRIORITY_FLOOR,
     ...overrides
   };
 }
@@ -47,13 +49,11 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
  * el mismo `body.type` que escribe `materializeAgentOutputs` y el mismo `lane='batch'`.
  * `publish()` rechaza los tipos reservados a propósito, así que el INSERT va directo.
  */
-async function publishAgentDelivery(text: string): Promise<string> {
+async function publishRawDelivery(body: Record<string, unknown>, priority: number): Promise<string> {
   const message = await pool.query<{ id: string }>(
     `INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane,priority)
-     VALUES($1,$2,$3,'grp.steven','kant',$4::jsonb,'batch',0) RETURNING id`,
-    [randomUUID(), `trace-${randomUUID()}`, humanTenant, JSON.stringify({
-      type: 'agent.message', text, from_alias: 'kant'
-    })]
+     VALUES($1,$2,$3,'grp.steven','kant',$4::jsonb,'batch',$5) RETURNING id`,
+    [randomUUID(), `trace-${randomUUID()}`, humanTenant, JSON.stringify(body), priority]
   );
   const messageId = message.rows[0]!.id;
   const delivery = await pool.query<{ id: string }>(
@@ -62,6 +62,10 @@ async function publishAgentDelivery(text: string): Promise<string> {
     [messageId, consumerTenant, consumerAlias]
   );
   return delivery.rows[0]!.id;
+}
+
+async function publishAgentDelivery(text: string): Promise<string> {
+  return publishRawDelivery({ type: 'agent.message', text, from_alias: 'kant' }, 0);
 }
 
 function ack(
@@ -126,20 +130,100 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetTestDatabase(pool);
+  await pool.query(
+    `INSERT INTO agents(tenant_id,alias,enabled,max_concurrent_deliveries)
+     VALUES($1,$2,false,100)`,
+    [consumerTenant, consumerAlias],
+  );
+});
+
+describe('atomic delivery-consumer lease admission', () => {
+  it('creates no lease when the durable capacity row is missing', async () => {
+    await pool.query(
+      `DELETE FROM agents WHERE tenant_id=$1 AND alias=$2`,
+      [consumerTenant, consumerAlias],
+    );
+
+    await expect(repository.acquireLease(
+      consumerTenant, consumerAlias, 'missing-capacity-initial', [], 30_000,
+      { requireDeclaredCapacity: true },
+    )).rejects.toThrow('delivery consumer is missing its durable agent capacity');
+
+    const durable = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM connection_leases
+        WHERE tenant_id=$1 AND alias=$2`,
+      [consumerTenant, consumerAlias],
+    );
+    expect(durable.rows[0]).toEqual({ count: '0' });
+  });
+
+  it('does not rotate a renewable lease when the durable capacity row is missing', async () => {
+    const instanceId = 'atomic-capacity-resume';
+    const original = await repository.acquireLease(
+      consumerTenant, consumerAlias, instanceId, [], 30_000,
+      { resume: true, resumeWindowMs: 60_000, requireDeclaredCapacity: true },
+    );
+    expect(original.acquired).toBe(true);
+    expect(original.connection_token).toMatch(/^[0-9a-f-]{36}$/u);
+
+    await pool.query(
+      `DELETE FROM agents WHERE tenant_id=$1 AND alias=$2`,
+      [consumerTenant, consumerAlias],
+    );
+    await expect(repository.acquireLease(
+      consumerTenant, consumerAlias, instanceId, [], 30_000,
+      { resume: true, resumeWindowMs: 60_000, requireDeclaredCapacity: true },
+    )).rejects.toThrow('delivery consumer is missing its durable agent capacity');
+
+    const durable = await pool.query<{ epoch: string; connection_token: string }>(
+      `SELECT epoch,connection_token::text FROM connection_leases
+        WHERE tenant_id=$1 AND alias=$2`,
+      [consumerTenant, consumerAlias],
+    );
+    expect(durable.rows[0]).toEqual({
+      epoch: String(original.epoch), connection_token: original.connection_token,
+    });
+    await expect(repository.heartbeat(
+      consumerTenant, consumerAlias, instanceId, original.epoch!, 30_000,
+      original.connection_token,
+    )).resolves.toMatch(/^\d{4}-\d{2}-\d{2}T/u);
+  });
 });
 
 describe('claim admission with a reserve for humans', () => {
+  it('derives the human class from trusted priority, never from producer-controlled body shape', async () => {
+    const lease = await repository.acquireLease(
+      consumerTenant, consumerAlias, 'assistant-priority-authority', [], 30_000,
+    );
+    const spoofedHumanId = await publishRawDelivery({ text: 'parezco humano' }, 0);
+    const trustedHumanId = await publishRawDelivery(
+      { type: 'agent.message', text: 'el body no decide la clase', from_alias: 'kant' },
+      HUMAN_PRIORITY_FLOOR,
+    );
+
+    const claimed = await repository.claimDeliveries(
+      consumerTenant, consumerAlias, 'assistant-priority-authority', lease.epoch!,
+      0, 30_000, 3,
+      { generalCapacity: 0, humanReservedCapacity: 1, maxClaims: 1 },
+    );
+
+    expect(claimed.map((delivery) => delivery.delivery_id)).toEqual([trustedHumanId]);
+    expect((await pool.query<{ status: string }>(
+      `SELECT status FROM deliveries WHERE id=$1`, [spoofedHumanId],
+    )).rows[0]).toEqual({ status: 'pending' });
+  });
+
   it('admits a human delivery through the reserve while the general budget is exhausted', async () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'assistant-1', [], 30_000);
     await publishAgentDelivery('tarea larga entre agentes');
     await publishAgentDelivery('otra tarea larga');
     await repository.publish(command({ body: { text: '¿cómo venís?' } }));
 
-    // `limit: 0` es el estado real del gateway cuando el agente ya tiene su trabajo en vuelo.
-    // Sin cupo reservado esto devolvería cero y la persona esperaría a que termine la tarea.
+    // El cupo general está explícitamente en cero. Sin reserva esto devolvería cero y la
+    // persona esperaría a que termine la tarea.
     const claimed = await repository.claimDeliveries(
       consumerTenant, consumerAlias, 'assistant-1', lease.epoch!, 0, 30_000, 3,
-      { humanReservedLimit: 1 }
+      { generalCapacity: 0, humanReservedCapacity: 1, maxClaims: 1 }
     );
 
     expect(claimed).toHaveLength(1);
@@ -199,7 +283,7 @@ describe('claim admission with a reserve for humans', () => {
 
     const live = await repository.liveDeliveryClaims(consumerTenant, consumerAlias);
     expect(live).toHaveLength(2);
-    expect(new Set(live.map((claim) => claim.agent_to_agent))).toEqual(new Set([true, false]));
+    expect(new Set(live.map((claim) => claim.human_originated))).toEqual(new Set([true, false]));
 
     // Una garra terminada deja de ocupar cupo en el acto.
     const first = claimed.find((delivery) => delivery.body.type === undefined)!;
@@ -208,7 +292,7 @@ describe('claim admission with a reserve for humans', () => {
       ack(first, 'assistant-5', lease.epoch!, 'done')
     );
     const remaining = await repository.liveDeliveryClaims(consumerTenant, consumerAlias);
-    expect(remaining.map((claim) => claim.agent_to_agent)).toEqual([true]);
+    expect(remaining.map((claim) => claim.human_originated)).toEqual([false]);
   });
 
   it('rejects a claim with no general budget and no reserve', async () => {

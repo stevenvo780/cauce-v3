@@ -16,12 +16,14 @@
     "sourceDigests": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runtime", "console", "harness", "full"],
+      "required": ["runtime", "console", "harness", "testcontainers", "verification", "full"],
       "description": "Every domain digest observed while assembling the candidate, so a reader can re-derive which artifact was checked against which domain.",
       "properties": {
         "runtime": { "$ref": "#/$defs/digest" },
         "console": { "$ref": "#/$defs/digest" },
         "harness": { "$ref": "#/$defs/digest" },
+        "testcontainers": { "$ref": "#/$defs/digest" },
+        "verification": { "$ref": "#/$defs/digest" },
         "full": { "$ref": "#/$defs/digest" }
       }
     },
@@ -124,7 +126,7 @@
             "$ref": "#/$defs/digest",
             "description": "Digest of the domain this artifact actually depends on, NOT the whole tree."
           },
-          "sourceDigestDomain": { "enum": ["runtime", "console", "harness", "full"] }
+          "sourceDigestDomain": { "enum": ["runtime", "console", "harness", "testcontainers", "verification", "full"] }
         }
       }
     }

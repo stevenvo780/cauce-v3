@@ -159,11 +159,8 @@ function decodePayload(value: Buffer): TicketPayload {
  * Verifies signature first, then expiry. `nowSeconds` is injectable so the tests can pin the
  * clock; production callers pass nothing and get the wall clock.
  */
-export function parseAndVerify(
-  ticket: string,
-  key: Buffer,
-  nowSeconds: number = Math.floor(Date.now() / 1_000)
-): TicketPayload {
+/** Verifies the immutable credential and decodes its claims without consulting a process clock. */
+export function verifyTicketSignature(ticket: string, key: Buffer): TicketPayload {
   const parts = ticket.split('.');
   if (parts.length !== 3 || parts[0] !== TICKET_VERSION) {
     throw new TicketError('malformed', 'ticket is not a v1 ticket');
@@ -178,7 +175,15 @@ export function parseAndVerify(
   if (signature.byteLength !== expected.byteLength || !timingSafeEqual(signature, expected)) {
     throw new TicketError('signature_invalid', 'ticket signature does not verify for this alias key');
   }
-  const payload = decodePayload(fromBase64url(encodedPayload));
+  return decodePayload(fromBase64url(encodedPayload));
+}
+
+export function parseAndVerify(
+  ticket: string,
+  key: Buffer,
+  nowSeconds: number = Math.floor(Date.now() / 1_000)
+): TicketPayload {
+  const payload = verifyTicketSignature(ticket, key);
   if (payload.exp <= nowSeconds) throw new TicketError('expired', 'ticket is expired');
   return payload;
 }
@@ -250,11 +255,8 @@ export function issueResumeToken(
   return `${input}.${base64url(signature)}`;
 }
 
-export function parseResumeToken(
-  token: string,
-  master: Buffer,
-  nowSeconds: number = Math.floor(Date.now() / 1_000)
-): ResumeTokenPayload {
+/** Verifies a resume credential without assigning authority to the local wall clock. */
+export function verifyResumeTokenSignature(token: string, master: Buffer): ResumeTokenPayload {
   const parts = token.split('.');
   if (parts.length !== 3 || parts[0] !== RESUME_TOKEN_VERSION) {
     throw new TicketError('malformed', 'resume token is not an r1 token');
@@ -282,7 +284,6 @@ export function parseResumeToken(
       typeof record.nonce !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(record.nonce)) {
     throw new TicketError('malformed', 'resume token claims are invalid');
   }
-  if (record.exp <= nowSeconds) throw new TicketError('expired', 'resume token is expired');
   return {
     v: 1,
     sid: record.sid,
@@ -291,4 +292,14 @@ export function parseResumeToken(
     exp: record.exp,
     nonce: record.nonce
   };
+}
+
+export function parseResumeToken(
+  token: string,
+  master: Buffer,
+  nowSeconds: number = Math.floor(Date.now() / 1_000)
+): ResumeTokenPayload {
+  const payload = verifyResumeTokenSignature(token, master);
+  if (payload.exp <= nowSeconds) throw new TicketError('expired', 'resume token is expired');
+  return payload;
 }

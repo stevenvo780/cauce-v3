@@ -100,19 +100,33 @@ function rotuloDeFichero(fichero: AgentDirectiveFile): string {
 /**
  * Los avisos de solapamiento entre capas.
  *
- * `directiva.publicado === false` es el caso que más importa hacer bien: significa que los
- * ficheros NO SE MIRARON. Devuelve lista vacía a propósito —ni un «no tiene manual», ni un «no se
- * pisan»—, porque las dos frases serían afirmaciones sobre algo que nadie leyó. Quien pinta la
- * pantalla se encarga de decir que no se pudo mirar; ver `DirectivaTab`.
+ * `publicado:false`, `medido:false` y `files:null` significan que los ficheros NO SE MIRARON.
+ * Devuelve lista vacía a propósito —ni un «no tiene manual», ni un «no se pisan»—, porque las dos
+ * frases serían afirmaciones sobre algo que nadie leyó. `files:null` conserva el cierre seguro ante
+ * gateways legacy sin el discriminante `medido`. Quien pinta la pantalla explica por qué no pudo
+ * mirar; ver `DirectivaTab`.
  */
 export function avisosDeCapas(roleBrief: string | null | undefined, directiva: AgentDirective | undefined): AvisoDeCapas[] {
-  if (!directiva?.publicado) return [];
+  if (!directiva?.publicado || directiva.medido === false || directiva.files == null) return [];
   const ficheros = directiva.files ?? [];
+  const fallos = ficheros.filter((fichero) => typeof fichero.error === 'string');
+  const existentes = ficheros.filter((fichero) => typeof fichero.error !== 'string');
   const avisos: AvisoDeCapas[] = [];
 
   const girosDelBrief = girosDeAutonomia(roleBrief);
 
-  for (const fichero of ficheros) {
+  for (const fallo of fallos) {
+    avisos.push({
+      id: `lectura-fallida:${rotuloDeFichero(fallo)}`,
+      tono: 'nota',
+      titulo: 'Falló la lectura de un manual candidato',
+      detalle: `${rotuloDeFichero(fallo)} no se pudo leer (${fallo.error ?? 'error'}): `
+        + `${fallo.reason ?? 'sin detalle'}. No se toma como ausente ni como existente.`,
+      evidencia: [rotuloDeFichero(fallo)],
+    });
+  }
+
+  for (const fichero of existentes) {
     // Sin texto no se puede cotejar. Y NO se asume que no se pisa: se dice que no se pudo mirar.
     if (typeof fichero.text !== 'string') {
       avisos.push({
@@ -153,24 +167,49 @@ export function avisosDeCapas(roleBrief: string | null | undefined, directiva: A
     }
   }
 
-  if (ficheros.length > 1) {
+  if (existentes.length > 1) {
+    const detalle = directiva.manual_order === 'codex_precedence'
+      ? 'Codex los aplica en el orden mostrado: los niveles más profundos tienen mayor precedencia; '
+        + 'AGENTS.override.md gana sobre AGENTS.md dentro del mismo nivel.'
+      : directiva.manual_order === 'claude_load_order'
+        ? 'Claude los carga en el orden mostrado (usuario, ancestros y nivel local). La vista no '
+          + 'convierte ese orden de carga en una regla de precedencia que el runtime no acreditó.'
+        : 'Se muestran en el orden medido por el runtime.';
     avisos.push({
       id: 'dos-manuales',
-      tono: 'choque',
-      titulo: `Este alias tiene ${ficheros.length} manuales a la vez`,
-      detalle: 'Hay `CLAUDE.md` en más de un nivel (usuario y espacio de trabajo) y no está decidido '
-        + 'cuál manda. Es el caso janus del diseño: hay que decir cuál gobierna, o quitar uno.',
-      evidencia: ficheros.map(rotuloDeFichero),
+      tono: 'nota',
+      titulo: `Este alias carga ${existentes.length} manuales`,
+      detalle,
+      evidencia: existentes.map(rotuloDeFichero),
     });
   }
 
-  if (ficheros.length === 0) {
+  const porHuella = new Map<string, AgentDirectiveFile[]>();
+  for (const fichero of existentes) {
+    if (typeof fichero.sha !== 'string') continue;
+    const grupo = porHuella.get(fichero.sha) ?? [];
+    grupo.push(fichero);
+    porHuella.set(fichero.sha, grupo);
+  }
+  for (const [huella, duplicados] of porHuella) {
+    if (duplicados.length < 2) continue;
+    avisos.push({
+      id: `manuales-duplicados:${huella}`,
+      tono: 'nota',
+      titulo: 'El mismo manual está duplicado en varios niveles',
+      detalle: 'Las huellas SHA-256 coinciden byte por byte. La copia duplicada añade ambigüedad '
+        + 'operativa aunque hoy diga exactamente lo mismo.',
+      evidencia: duplicados.map(rotuloDeFichero),
+    });
+  }
+
+  if (existentes.length === 0 && fallos.length === 0) {
     avisos.push({
       id: 'sin-manual',
       tono: 'hueco',
-      titulo: 'Ningún manual: este alias arranca sin contexto operativo',
-      detalle: 'El servidor miró y no hay `CLAUDE.md` en ningún nivel. Es el caso gaia del diseño: '
-        + 'el alta de un alias no siembra uno, así que el agente empieza sin saber cómo se trabaja acá.',
+      titulo: 'No hay manual estándar acreditado en los niveles medidos',
+      detalle: 'El servidor miró las rutas estándar y no encontró un manual efectivo. Esto no '
+        + 'acredita ausencia de reglas o fallbacks que la propia respuesta declare fuera de cobertura.',
       evidencia: [directiva.container_id ?? 'contenedor sin identificar'],
     });
   }
@@ -245,15 +284,21 @@ export function medicionDeCapa(recurso: RecursoDeCapa, campo: 'files' | 'memory'
 
   const memoria = recurso.data.memory;
   if (memoria === null || memoria === undefined) return 'no-se-miro';
+  if ('error' in memoria && memoria.error !== undefined) return 'no-se-miro';
   const total = totalDeMemoria(recurso.data);
   if (total === undefined) return 'no-se-miro';
+  if (memoria.total === null && memoria.truncated === true) return 'hay-datos';
   return total === 0 ? 'miro-y-no-hay' : 'hay-datos';
 }
 
-/** Cuántas entradas de memoria hay DE VERDAD, aunque la lista venga recortada. */
+/** Conteo exacto, o límite inferior cuando `total:null` acredita un barrido cortado. */
 export function totalDeMemoria(directiva: AgentDirective | undefined): number | undefined {
   const memoria = directiva?.memory;
   if (!memoria) return undefined;
+  if ('error' in memoria && memoria.error !== undefined) return undefined;
   if (typeof memoria.total === 'number') return memoria.total;
+  if (memoria.total === null && typeof memoria.observed_at_least === 'number') {
+    return memoria.observed_at_least;
+  }
   return Array.isArray(memoria.entries) ? memoria.entries.length : undefined;
 }

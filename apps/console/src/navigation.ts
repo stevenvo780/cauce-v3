@@ -70,6 +70,9 @@ export function terminalNavAvailability(relay: TerminalRelayState): NavEntryAvai
 export const CONFIG_SIN_CONTROL_REASON =
   'Tu cuenta no tiene permiso de control sobre esta flota: Configuración es del dueño del bus.';
 
+export const CONFIG_WRITE_NO_ACREDITADO_REASON =
+  'No se pudo acreditar config.write; la vista permanece disponible en solo lectura y no permite cambios ni restauraciones.';
+
 /**
  * La entrada "Configuration" apuntaba a una vista que devuelve 403 para todo el que no tenga
  * `config.write` — o sea, para todos los tenants cliente. Miguel (Miguel:janus) entraba, veía el
@@ -79,8 +82,8 @@ export const CONFIG_SIN_CONTROL_REASON =
  * Misma decisión que en `terminalNavAvailability` y por la misma razón: se DESHABILITA en vez de
  * esconder. Un menú más corto no distingue "acá no está desplegado" de "no tengo permiso"; una
  * entrada visible pero inerte que dice el motivo sí. Con el permiso `unknown` -no se pudo leer el
- * RBAC- la entrada queda HABILITADA: ante la duda no se le quita nada a nadie, y la propia página
- * ya sabe explicar un 403.
+ * RBAC- la entrada queda HABILITADA porque leer y navegar no mutan nada; la propia página conserva
+ * los datos visibles pero bloquea toda escritura hasta poder acreditar `config.write`.
  */
 export function configNavAvailability(state: 'allowed' | 'denied' | 'unknown'): NavEntryAvailability {
   if (state !== 'denied') return { hidden: false, disabled: false };

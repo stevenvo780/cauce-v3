@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { WebSocket } from 'ws';
 import type { AgentConnection, AgentSessionHandlers } from './agent-leg.js';
 import type {
@@ -16,12 +16,14 @@ import {
   MIN_COLS,
   MIN_ROWS,
   SessionManager,
+  claimLeaseContractSatisfied,
   parseClientMessage,
   type SessionLimits,
 } from './sessions.js';
 
 const SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const OTHER_SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff';
+const CLAIM_TOKEN = '12345678-1234-4234-8234-123456789abc';
 
 type Listener = (...args: readonly never[]) => void;
 
@@ -91,6 +93,7 @@ class FakeBrowserSocket {
 
 class FakeAgentConnection {
   alive = true;
+  throwOnAttach = false;
   supportsSessionOutputFlowControl = true;
   readonly handlersBySession = new Map<string, AgentSessionHandlers>();
   private lastSessionId: string | undefined;
@@ -108,6 +111,7 @@ class FakeAgentConnection {
   }
 
   attachSession(sessionId: string, handlers: AgentSessionHandlers): void {
+    if (this.throwOnAttach) throw new Error('forced attachSession failure');
     this.handlersBySession.set(sessionId, handlers);
     this.lastSessionId = sessionId;
   }
@@ -160,7 +164,9 @@ class FakeAgentConnection {
 }
 
 class FakeGateway implements TerminalGatewayClient {
-  authz: AuthzOutcome = 'allow';
+  authz: AuthzOutcome = {
+    status: 'allow', claim_epoch: '1', claim_lease_ms: 150_000, claim_lease_ttl_ms: 150_000,
+  };
   closeFailures = 0;
   closeAttempts = 0;
   readonly closeReports: { sessionId: string; report: SessionCloseReport }[] = [];
@@ -203,6 +209,12 @@ function grant(overrides: Partial<TerminalSessionGrant> = {}): TerminalSessionGr
     runtime_user: 'claw',
     session_expires_at: new Date(Date.now() + 60_000).toISOString(),
     resume_token: 'r'.repeat(100),
+    claim_token: CLAIM_TOKEN,
+    claim_epoch: '1',
+    claim_lease_ms: 150_000,
+    claim_lease_ttl_ms: 150_000,
+    relay_instance_id: 'a'.repeat(64),
+    relay_boot_id: '11111111-1111-4111-8111-111111111111',
     ...overrides
   };
 }
@@ -323,8 +335,9 @@ describe('terminal sessions', () => {
     const { socket, agent } = await openSession();
     expect(socket.json(0)).toMatchObject({
       type: 'ready', session_id: SESSION_ID, alias: 'jarvis', tenant_id: 'Steven', container: 'claw',
-      runtime_user: 'claw', mode: 'shell'
+      runtime_user: 'claw', mode: 'shell', claim_token: CLAIM_TOKEN, claim_epoch: '1',
     });
+    expect(socket.json(0).claim_lease_ms).toEqual(expect.any(Number));
     expect(agent.opens[0]).toMatchObject({ sessionId: SESSION_ID, ticket: 'ticket-under-test', mode: 'shell' });
 
     agent.handlers?.onStdout(Buffer.from('claw@jarvis:~$ '));
@@ -405,7 +418,7 @@ describe('terminal sessions', () => {
 
   it('closes with 4403 as soon as the gateway revokes the session', async () => {
     const { socket, gateway } = await openSession({ authzIntervalMs: 15 });
-    gateway.authz = 'revoked';
+    gateway.authz = { status: 'revoked' };
     await waitFor(() => socket.closes.length > 0);
     expect(socket.closes[0]?.code).toBe(CLOSE_CODES.revoked);
     expect(socket.json(1)).toMatchObject({ type: 'closed', reason: 'revoked' });
@@ -414,14 +427,14 @@ describe('terminal sessions', () => {
 
   it('fails closed when the gateway stays unreachable past the grace window', async () => {
     const { socket, gateway } = await openSession({ authzIntervalMs: 15, authzGraceMs: 40 });
-    gateway.authz = 'unreachable';
+    gateway.authz = { status: 'unreachable' };
     await waitFor(() => socket.closes.length > 0);
     expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.revoked, reason: 'authz_unreachable' });
   });
 
   it('keeps the session while the gateway is unreachable inside the grace window', async () => {
     const { socket, gateway } = await openSession({ authzIntervalMs: 10, authzGraceMs: 5_000 });
-    gateway.authz = 'unreachable';
+    gateway.authz = { status: 'unreachable' };
     await wait(60);
     expect(socket.closes).toHaveLength(0);
   });
@@ -555,7 +568,8 @@ describe('terminal sessions', () => {
     agent.handlers?.onClosed({ exit_code: 0, signal: null, reason: 'agent_closed' });
     await waitFor(() => gateway.closeReports.length > 0);
     expect(gateway.closeReports[0]?.report).toEqual({
-      reason: 'agent_closed', exit_code: 0, bytes_in: 5, bytes_out: 8
+      reason: 'agent_closed', exit_code: 0, bytes_in: 5, bytes_out: 8,
+      claim_token: CLAIM_TOKEN, claim_epoch: '1',
     });
     expect(socket.closes[0]?.code).toBe(CLOSE_CODES.normal);
   });
@@ -575,6 +589,55 @@ describe('terminal sessions', () => {
     expect(conflicting.closes[0]).toEqual({ code: CLOSE_CODES.session_conflict, reason: 'session_conflict' });
     await first.manager.flush();
     expect(first.gateway.closeReports.some((entry) => entry.report.reason === 'session_conflict')).toBe(true);
+  });
+
+  it('rejects the same active sid without reporting a close for the winner', async () => {
+    const first = await openSession();
+    const duplicate = new FakeBrowserSocket();
+    await first.manager.open({
+      socket: duplicate.asWebSocket(),
+      sessionId: SESSION_ID,
+      ticket: 'same-ticket',
+      grant: grant(),
+      agent: new FakeAgentConnection().asAgent(),
+      cols: 80,
+      rows: 24,
+    });
+    expect(duplicate.closes[0]).toEqual({
+      code: CLOSE_CODES.session_conflict,
+      reason: 'session_conflict',
+    });
+    expect(first.manager.hasSession(SESSION_ID)).toBe(true);
+    expect(first.gateway.closeReports).toHaveLength(0);
+  });
+
+  it('releases ownership and reports once when an unexpected collaborator throws during open', async () => {
+    const gateway = new FakeGateway();
+    const manager = new SessionManager({ gateway, limits: limits() });
+    const socket = new FakeBrowserSocket();
+    const agent = new FakeAgentConnection();
+    agent.throwOnAttach = true;
+
+    await manager.open({
+      socket: socket.asWebSocket(),
+      sessionId: SESSION_ID,
+      ticket: 'ticket-under-test',
+      grant: grant(),
+      agent: agent.asAgent(),
+      cols: 80,
+      rows: 24,
+    });
+
+    expect(manager.hasSession(SESSION_ID)).toBe(false);
+    expect(manager.size).toBe(0);
+    expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.internal_error, reason: 'open_failed' });
+    await manager.flush();
+    expect(gateway.closeReports).toEqual([
+      expect.objectContaining({
+        sessionId: SESSION_ID,
+        report: expect.objectContaining({ reason: 'open_failed' }) as unknown,
+      }),
+    ]);
   });
 
   it('reporta y libera la fila consumida cuando el límite corta antes de crear TerminalSession', async () => {
@@ -601,21 +664,24 @@ describe('terminal sessions', () => {
     gateway.closeFailures = 2;
     const manager = new SessionManager({ gateway, limits: limits(), closeSpoolFile: spool });
     try {
-      manager.reportConsumedClose(SESSION_ID, 'agent_offline');
+      manager.reportConsumedClose(SESSION_ID, 'agent_offline', grant());
       const pending = JSON.parse(await readFile(spool, 'utf8')) as {
         readonly version: number;
         readonly reports: readonly { readonly session_id: string; readonly reason: string }[];
       };
       expect(pending).toEqual({
-        version: 1,
+        version: 2,
         reports: [{
           session_id: SESSION_ID,
           reason: 'agent_offline',
           exit_code: null,
           bytes_in: 0,
           bytes_out: 0,
+          claim_token: CLAIM_TOKEN,
+          claim_epoch: '1',
         }],
       });
+      expect((await stat(spool)).mode & 0o777).toBe(0o600);
 
       await waitFor(() => gateway.closeReports.length === 1);
       expect(gateway.closeAttempts).toBe(3);
@@ -623,10 +689,116 @@ describe('terminal sessions', () => {
         readonly version: number;
         readonly reports: readonly unknown[];
       };
-      expect(delivered).toEqual({ version: 1, reports: [] });
+      expect(delivered).toEqual({ version: 2, reports: [] });
     } finally {
       await manager.flush();
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('drains a version-1 legacy close spool but writes only strict version-2 reports', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-close-v1-'));
+    const spool = join(directory, 'reports.json');
+    await writeFile(spool, JSON.stringify({
+      version: 1,
+      reports: [{
+        session_id: SESSION_ID,
+        reason: 'legacy_restart',
+        exit_code: null,
+        bytes_in: 3,
+        bytes_out: 5,
+      }],
+    }), { mode: 0o600 });
+    const gateway = new FakeGateway();
+    const manager = new SessionManager({ gateway, limits: limits(), closeSpoolFile: spool });
+    try {
+      await waitFor(() => gateway.closeReports.length === 1);
+      expect(gateway.closeReports[0]).toEqual({
+        sessionId: SESSION_ID,
+        report: {
+          reason: 'legacy_restart', exit_code: null, bytes_in: 3, bytes_out: 5,
+        },
+      });
+      expect(JSON.parse(await readFile(spool, 'utf8'))).toEqual({ version: 2, reports: [] });
+    } finally {
+      await manager.flush();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a version-2 capability spool that is readable by group or other users', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-close-mode-'));
+    const spool = join(directory, 'reports.json');
+    await writeFile(spool, JSON.stringify({
+      version: 2,
+      reports: [{
+        session_id: SESSION_ID,
+        reason: 'private_claim',
+        exit_code: null,
+        bytes_in: 0,
+        bytes_out: 0,
+        claim_token: CLAIM_TOKEN,
+        claim_epoch: '1',
+      }],
+    }));
+    await chmod(spool, 0o644);
+    try {
+      expect(() => new SessionManager({
+        gateway: new FakeGateway(), limits: limits(), closeSpoolFile: spool,
+      })).toThrow(/mode 0600/u);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when claim TTL cannot cover authz, grace, request timeout and takeover margin', () => {
+    expect(claimLeaseContractSatisfied(
+      grant({ claim_lease_ms: 130_000, claim_lease_ttl_ms: 130_000 }),
+      limits(),
+    )).toBe(false);
+    expect(claimLeaseContractSatisfied(
+      grant({ claim_lease_ms: 130_001, claim_lease_ttl_ms: 130_001 }),
+      limits(),
+    )).toBe(true);
+  });
+
+  it('hard-closes on the monotonic claim deadline before another relay may take over', async () => {
+    vi.useFakeTimers();
+    let monotonicNow = 0;
+    const gateway = new FakeGateway();
+    const manager = new SessionManager({
+      gateway,
+      monotonicNow: () => monotonicNow,
+      limits: limits({ authzIntervalMs: 2_000, authzGraceMs: 1_000 }),
+    });
+    const socket = new FakeBrowserSocket();
+    const agent = new FakeAgentConnection();
+    try {
+      const opening = manager.open({
+        socket: socket.asWebSocket(),
+        sessionId: SESSION_ID,
+        ticket: 'ticket-under-test',
+        grant: grant({ claim_lease_ms: 6_000, claim_lease_ttl_ms: 14_000 }),
+        agent: agent.asAgent(),
+        cols: 120,
+        rows: 40,
+        claimRequestStartedAt: 0,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      agent.handlers?.onOpenOk(4242);
+      await opening;
+      expect(socket.closes).toHaveLength(0);
+
+      monotonicNow = 1_001;
+      await vi.advanceTimersByTimeAsync(1_001);
+      expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.revoked, reason: 'claim_lease_expired' });
+      expect(gateway.closeReports[0]?.report).toMatchObject({
+        reason: 'claim_lease_expired', claim_token: CLAIM_TOKEN, claim_epoch: '1',
+      });
+    } finally {
+      manager.closeAll(CLOSE_CODES.going_away, 'test_teardown');
+      await manager.flush();
+      vi.useRealTimers();
     }
   });
 

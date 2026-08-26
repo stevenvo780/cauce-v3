@@ -45,6 +45,12 @@ it('la portada NO vuelve a dibujar el menú: el bloque «el resto de la consola�
   await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i });
   expect(screen.queryByRole('list', { name: /el resto de la consola/i })).not.toBeInTheDocument();
 
+  // La portada espera a que se asienten sus cuatro fuentes antes de publicar alertas. El fixture
+  // demora `/status` a propósito; sin esperar un hallazgo acreditado, esta invariante podía mirar
+  // el frame de carga y pasar aunque el frame definitivo volviera a copiar los rótulos del menú.
+  const alertas = screen.getByRole('region', { name: /lo que exige atención/i });
+  await within(alertas).findByText(/entrega muerta en la dlq/i);
+
   // Y ningún rótulo del menú aparece como enlace FUERA de la barra: si alguien reintroduce la
   // lista con otro `aria-label`, esto la encuentra igual.
   const nav = await screen.findByRole('navigation', { name: /principal/i });

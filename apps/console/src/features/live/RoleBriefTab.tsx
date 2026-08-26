@@ -1,5 +1,6 @@
 import { ArrowRight } from 'lucide-react';
 import { useApi } from '../../api/context';
+import type { ConfigurationSnapshot } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { EmptyState } from '../../components/ui';
 import { permissionState } from '../../lib';
@@ -19,6 +20,16 @@ function filaDelAgente(
 export interface RoleBriefTabProps {
   tenantId: string;
   alias: string;
+  /**
+   * La misma lectura versionada que usa la superficie que contiene esta proyección. La capa no
+   * vuelve a consultar `/config`: hacerlo permitiría advertir con la revisión A y mostrar la B
+   * dentro del mismo diálogo.
+   */
+  configuration: {
+    data?: ConfigurationSnapshot;
+    error?: Error;
+    loading: boolean;
+  };
   /** Cambia la pestaña del mismo cajón al editor canónico, sin abrir otra superficie de escritura. */
   onEditarEnPerfil: () => void;
   /** Lleva una revisión histórica al `role_summary` del borrador canónico y abre Perfil. */
@@ -35,14 +46,14 @@ export interface RoleBriefTabProps {
  * que sólo confirma éxito tras CAS, batch gobernado y `applied_revision` convergente.
  */
 export function RoleBriefTab({
-  tenantId, alias, onEditarEnPerfil, onRestaurarEnPerfil,
+  tenantId, alias, configuration, onEditarEnPerfil, onRestaurarEnPerfil,
 }: RoleBriefTabProps) {
   const api = useApi();
-  const config = useResource('drawer-config', () => api.getConfiguration());
   const access = useResource('console-access', () => api.getConsoleAccess());
-  const soloLectura = permissionState(access.data, 'config.write') === 'denied';
+  const estadoPermiso = permissionState(access.data, 'config.write');
+  const soloLectura = estadoPermiso !== 'allowed';
 
-  const fila = filaDelAgente(config.data?.agents, tenantId, alias);
+  const fila = filaDelAgente(configuration.data?.agents, tenantId, alias);
   const texto = typeof fila?.role_brief === 'string' ? fila.role_brief : '';
   const largo = contarRoleBrief(texto);
   const tono = tonoRoleBrief(largo);
@@ -55,13 +66,13 @@ export function RoleBriefTab({
         aplicado cuando el runtime acredita todos sus ficheros.
       </p>
 
-      {config.loading && !config.data ? (
+      {configuration.loading && !configuration.data ? (
         <p className="muted">Leyendo la proyección del rol desde el registro…</p>
-      ) : config.error && !config.data ? (
+      ) : configuration.error && !configuration.data ? (
         <EmptyState>
-          No se pudo leer la proyección del rol; no se interpreta como un rol vacío: {config.error.message}
+          No se pudo leer la proyección del rol; no se interpreta como un rol vacío: {configuration.error.message}
         </EmptyState>
-      ) : !Array.isArray(config.data?.agents) ? (
+      ) : !Array.isArray(configuration.data?.agents) ? (
         <EmptyState>
           Este gateway no publica el registro de agentes, así que no hay una proyección del rol que mostrar.
         </EmptyState>
@@ -72,9 +83,9 @@ export function RoleBriefTab({
         </EmptyState>
       ) : (
         <>
-          {config.error ? (
+          {configuration.error ? (
             <p className="notice error" role="alert">
-              La última relectura falló ({config.error.message}); se muestra la última lectura buena.
+              La última relectura falló ({configuration.error.message}); se muestra la última lectura buena.
             </p>
           ) : null}
 
@@ -111,7 +122,9 @@ export function RoleBriefTab({
 
       {soloLectura ? (
         <p className="muted">
-          Tu sesión puede leer el historial, pero no cargar una revisión en el editor de Perfil.
+          {estadoPermiso === 'unknown'
+            ? 'No se pudo acreditar config.write: el historial sigue visible, pero restaurar queda bloqueado.'
+            : 'Tu sesión puede leer el historial, pero no cargar una revisión en el editor de Perfil.'}
         </p>
       ) : null}
     </div>

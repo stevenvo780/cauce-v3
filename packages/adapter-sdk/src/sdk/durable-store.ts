@@ -12,7 +12,14 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { ConsumerLeaseError } from "./errors.js";
-import type { Delivery, DeliveryEvent, StructuredOutput } from "./types.js";
+import type {
+  Delivery, DeliveryEvent, StructuredOutput,
+} from "./types.js";
+import type {
+  DelegationMaterializationNotice,
+  DelegationRejectionNotice,
+  ProfileRuntimeAdoptionEvidence,
+} from "@cauce/protocol";
 
 export type InboxState = "accepted" | "started" | "done" | "failed";
 
@@ -24,21 +31,54 @@ export interface InboxRecord {
   readonly claim_token: string;
   readonly previous_claim_tokens?: readonly string[];
   readonly state: InboxState;
+  /**
+   * Recovery contract for executions created after the durable pre-invocation gate shipped.
+   * Legacy `started` records have no value and therefore remain conservatively ambiguous.
+   */
+  readonly execution_intent_protocol?: "preinvoke-v1";
+  /** Exact execution-intent event durably confirmed by the remote store for this attempt. */
+  readonly execution_intent_receipt_event_id?: string;
   readonly origin: Delivery["origin"];
   readonly request?: Delivery;
   readonly output?: StructuredOutput;
+  readonly profile_adoption?: ProfileRuntimeAdoptionEvidence;
+  /** Exact store-side outcome of this turn's StructuredOutput.messages. */
+  readonly delegation_rejections?: readonly DelegationRejectionNotice[];
+  readonly delegation_materializations?: readonly DelegationMaterializationNotice[];
   readonly error?: { readonly code: string; readonly message: string; readonly retryable: boolean };
+  /**
+   * Stable evidence that the state-changing lifecycle event was created for this attempt.
+   *
+   * The event may no longer be in the outbox because the relay acknowledged it. Keeping the
+   * identifier prevents a later duplicate delivery from manufacturing an endless stream of new
+   * terminal ACKs after the exact original event was already confirmed.
+   */
+  readonly lifecycle_event_ids?: {
+    readonly accepted?: string;
+    readonly started?: string;
+    readonly execution_started?: string;
+    readonly terminal?: string;
+  };
   readonly updated_at: string;
 }
 
 interface InboxFile {
   readonly version: 1;
   readonly deliveries: Record<string, InboxRecord>;
+  readonly last_transaction_id?: string;
 }
 
 interface OutboxFile {
   readonly version: 1;
   readonly pending: readonly DeliveryEvent[];
+  readonly last_transaction_id?: string;
+}
+
+interface DeliveryTransactionFile {
+  readonly version: 1;
+  readonly transaction_id: string;
+  readonly inbox_updates?: Readonly<Record<string, InboxRecord>>;
+  readonly outbox_pending?: readonly DeliveryEvent[];
 }
 
 /**
@@ -82,16 +122,28 @@ export interface ProcessedFaninReply {
    * tenant/alias key cannot express.
    */
   readonly childDeliveryId?: string;
+  readonly outputIndex?: number;
+  readonly targetTenant?: string;
+}
+
+export interface DelegationBranchIdentity {
+  readonly outputIndex: number;
+  readonly targetTenant?: string;
+  readonly alias: string;
+  readonly childDeliveryId?: string;
 }
 
 /** Ramas hermanas de un mismo abanico, tal como este adaptador las tiene registradas. */
 export interface DelegationBranchProgress {
-  /** Destinos que este adaptador emitió en el turno que abrió las ramas, en orden de emisión. */
+  /** Destinos materializados, preserving duplicates and output order. */
   readonly delegated: readonly string[];
+  readonly branches: readonly DelegationBranchIdentity[];
+  readonly rejected: readonly Pick<DelegationRejectionNotice, "output_index" | "target" | "code">[];
   /** Ramas hermanas ya cerradas localmente, más nuevas primero. El texto es de este adaptador. */
-  readonly returned: readonly Omit<ProcessedFaninReply, "childDeliveryId">[];
+  readonly returned: readonly ProcessedFaninReply[];
   /** Destinos delegados sin respuesta terminal local todavía, sin la rama que llega ahora. */
   readonly pending: readonly string[];
+  readonly pendingBranches: readonly DelegationBranchIdentity[];
 }
 
 export const CANONICAL_OPEN_CODE_SESSION_FILE = "canonical-opencode-session.json";
@@ -150,11 +202,86 @@ export interface EventCorrelation {
   readonly claim_token: string;
 }
 
+export interface EventDeliveryFeedback {
+  readonly delegation_rejections?: readonly DelegationRejectionNotice[];
+  readonly delegation_materializations?: readonly DelegationMaterializationNotice[];
+  /** Sólo receipts terminales concluyentes; `superseded`/ausencia conservan el evento para replay. */
+  readonly terminal_receipt?: "applied" | "duplicate" | "ownership_lost";
+  /** Applied/duplicate receipt for the exact `execution_started` barrier event. */
+  readonly execution_intent_receipt?: "applied" | "duplicate";
+}
+
+export interface DeliveryTransitionDetails {
+  readonly output?: StructuredOutput;
+  readonly profileAdoption?: ProfileRuntimeAdoptionEvidence;
+  readonly error?: InboxRecord["error"];
+  readonly retainRequest?: boolean;
+  readonly attempt?: number;
+  readonly claimToken?: string;
+  readonly executionIntentProtocol?: "preinvoke-v1";
+}
+
+export interface LifecycleAcceptance {
+  readonly acceptance: DeliveryAcceptance;
+  readonly record: InboxRecord;
+  /** Present only when this call created a new accepted lifecycle event. */
+  readonly event?: DeliveryEvent;
+}
+
+export interface LifecycleTransition {
+  readonly record: InboxRecord;
+  readonly event: DeliveryEvent;
+}
+
+type LifecycleEventSlot = "accepted" | "started" | "execution_started" | "terminal";
+
 const EMPTY_INBOX: InboxFile = { version: 1, deliveries: {} };
 const EMPTY_OUTBOX: OutboxFile = { version: 1, pending: [] };
 const EMPTY_SESSIONS: SessionsFile = { version: 1, sessions: {} };
 const EMPTY_FENCING: FencingFile = { version: 1, epoch: 0 };
 const O_CLOEXEC = Number((fsConstants as unknown as Record<string, unknown>).O_CLOEXEC ?? 0);
+
+function lifecycleSlot(event: DeliveryEvent): LifecycleEventSlot | undefined {
+  if (event.execution_started === true) return "execution_started";
+  if (event.claim_renewal === true) return undefined;
+  if (event.phase === "accepted") return "accepted";
+  if (event.phase === "started") return "started";
+  if (event.phase === "done" || event.phase === "failed") return "terminal";
+  return undefined;
+}
+
+function lifecycleEventFor(
+  record: InboxRecord,
+  phase: InboxState,
+  occurredAt: string,
+  epoch = record.epoch,
+): DeliveryEvent {
+  return {
+    event_id: randomUUID(),
+    delivery_id: record.delivery_id,
+    attempt: record.attempt,
+    claim_token: record.claim_token,
+    epoch,
+    phase,
+    occurred_at: occurredAt,
+    ...(record.origin === undefined ? {} : { origin: record.origin }),
+    ...(record.output === undefined ? {} : { output: record.output }),
+    ...(record.profile_adoption === undefined ? {} : { profile_adoption: record.profile_adoption }),
+    ...(record.error === undefined ? {} : { error: record.error }),
+  };
+}
+
+function withLifecycleEvent(record: InboxRecord, event: DeliveryEvent): InboxRecord {
+  const slot = lifecycleSlot(event);
+  if (slot === undefined || record.lifecycle_event_ids?.[slot] !== undefined) return record;
+  return {
+    ...record,
+    lifecycle_event_ids: {
+      ...record.lifecycle_event_ids,
+      [slot]: event.event_id,
+    },
+  };
+}
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -348,7 +475,8 @@ async function atomicWrite(
   }
 }
 
-const ATOMIC_STATE_FILES = [
+export const ATOMIC_STATE_FILES = [
+  "delivery-transaction.json",
   "inbox.json",
   "outbox.json",
   "sessions.json",
@@ -392,7 +520,13 @@ async function recoverAtomicArtifacts(
   const targetSet = new Set<string>(targets);
   const groups = new Map<AtomicStateFile, Map<string, Set<AtomicArtifactKind>>>();
   const entries = await readdir(directoryPath);
-  const targetPattern = "(inbox\\.json|outbox\\.json|sessions\\.json|fencing\\.json|canonical-opencode-session\\.json)";
+  // Una lista manual omitió `delivery-transaction.json`: exactamente el WAL que hace atómica la
+  // pareja inbox/outbox. Derivar ambos parsers de la fuente única evita que el próximo fichero
+  // durable quede otra vez fuera del recovery aunque sí esté en `ATOMIC_STATE_FILES`.
+  const escapedTargets = ATOMIC_STATE_FILES.map((target) => (
+    target.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")
+  ));
+  const targetPattern = `(${escapedTargets.join("|")})`;
   const currentPattern = new RegExp(
     `^${targetPattern}\\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.atomic-(tmp|backup-tmp|backup|committed)$`,
     "u",
@@ -793,6 +927,7 @@ export class DurableStore {
   private canonicalOpenCodeScopeKey: string | undefined;
   private canonicalOpenCodeReconciled = false;
   private delegationContextPruneTimer: ReturnType<typeof setTimeout> | undefined;
+  private recoveryRequired = false;
 
   private constructor(
     private readonly directory: string,
@@ -803,17 +938,26 @@ export class DurableStore {
     await prepareStateDirectory(directory);
     const store = new DurableStore(directory, options.directoryFsync ?? defaultDirectoryFsync);
     const startupRecoveryTargets: readonly AtomicStateFile[] = options.deferSessions === true
-      ? ["inbox.json", "outbox.json", "fencing.json"]
+      ? ["delivery-transaction.json", "inbox.json", "outbox.json", "fencing.json"]
       : ATOMIC_STATE_FILES;
     await recoverAtomicArtifacts(directory, startupRecoveryTargets, store.directoryFsync);
-    [store.inbox, store.outbox, store.sessions, store.fencing] = await Promise.all([
+    const [loadedInbox, loadedOutbox, transaction, sessions, fencing] = await Promise.all([
       readJson(store.path("inbox.json"), EMPTY_INBOX),
       readJson(store.path("outbox.json"), EMPTY_OUTBOX),
+      readJson<DeliveryTransactionFile | undefined>(
+        store.path("delivery-transaction.json"),
+        undefined,
+      ),
       options.deferSessions === true
         ? Promise.resolve(clone(EMPTY_SESSIONS))
         : readSessionsSecure(store.path("sessions.json")),
       readJson(store.path("fencing.json"), EMPTY_FENCING),
     ]);
+    store.inbox = loadedInbox;
+    store.outbox = loadedOutbox;
+    store.sessions = sessions;
+    store.fencing = fencing;
+    if (transaction !== undefined) await store.recoverDeliveryTransaction(transaction);
     await store.pruneExpiredDelegationContexts();
     return store;
   }
@@ -824,6 +968,83 @@ export class DurableStore {
 
   private atomicWrite(name: string, value: unknown): Promise<void> {
     return atomicWrite(this.path(name), value, this.directoryFsync);
+  }
+
+  /**
+   * Write-ahead transaction over the historical inbox/outbox files.
+   *
+   * The intent is durable before either target changes. A crash at any later instruction leaves
+   * enough information to idempotently finish both writes on reopen. Keeping the patch small
+   * avoids rewriting the unbounded inbox for renewals and ACKs, while preserving the existing
+   * files for old diagnostics and rollback tooling.
+   */
+  private async commitDeliveryState(
+    inbox: InboxFile,
+    outbox: OutboxFile,
+    targets: { readonly inbox: boolean; readonly outbox: boolean },
+  ): Promise<void> {
+    if (!targets.inbox && !targets.outbox) return;
+    const transactionId = randomUUID();
+    const inboxUpdates = targets.inbox
+      ? Object.fromEntries(Object.entries(inbox.deliveries).filter(
+          ([deliveryId, record]) => this.inbox.deliveries[deliveryId] !== record,
+        ))
+      : undefined;
+    const transaction: DeliveryTransactionFile = {
+      version: 1,
+      transaction_id: transactionId,
+      ...(inboxUpdates === undefined ? {} : { inbox_updates: inboxUpdates }),
+      ...(targets.outbox ? { outbox_pending: outbox.pending } : {}),
+    };
+    await this.atomicWrite("delivery-transaction.json", transaction);
+    try {
+      const committedInbox: InboxFile = targets.inbox
+        ? { version: 1, deliveries: inbox.deliveries, last_transaction_id: transactionId }
+        : this.inbox;
+      const committedOutbox: OutboxFile = targets.outbox
+        ? { version: 1, pending: outbox.pending, last_transaction_id: transactionId }
+        : this.outbox;
+      if (targets.inbox) await this.atomicWrite("inbox.json", committedInbox);
+      if (targets.outbox) await this.atomicWrite("outbox.json", committedOutbox);
+      this.inbox = committedInbox;
+      this.outbox = committedOutbox;
+      this.recoveryRequired = false;
+    } catch (error) {
+      this.recoveryRequired = true;
+      throw error;
+    }
+  }
+
+  private async recoverDeliveryTransaction(transaction?: DeliveryTransactionFile): Promise<void> {
+    const pending = transaction ?? await readJson<DeliveryTransactionFile | undefined>(
+      this.path("delivery-transaction.json"),
+      undefined,
+    );
+    if (pending === undefined) {
+      this.recoveryRequired = false;
+      return;
+    }
+    if (pending.inbox_updates !== undefined
+      && this.inbox.last_transaction_id !== pending.transaction_id) {
+      const recoveredInbox: InboxFile = {
+        version: 1,
+        deliveries: { ...this.inbox.deliveries, ...pending.inbox_updates },
+        last_transaction_id: pending.transaction_id,
+      };
+      await this.atomicWrite("inbox.json", recoveredInbox);
+      this.inbox = recoveredInbox;
+    }
+    if (pending.outbox_pending !== undefined
+      && this.outbox.last_transaction_id !== pending.transaction_id) {
+      const recoveredOutbox: OutboxFile = {
+        version: 1,
+        pending: pending.outbox_pending,
+        last_transaction_id: pending.transaction_id,
+      };
+      await this.atomicWrite("outbox.json", recoveredOutbox);
+      this.outbox = recoveredOutbox;
+    }
+    this.recoveryRequired = false;
   }
 
   private withoutExpiredDelegationContexts(nowMs: number): InboxFile {
@@ -888,8 +1109,7 @@ export class DurableStore {
           this.inbox.deliveries[deliveryId]?.request !== undefined
           && nextInbox.deliveries[deliveryId]?.request === undefined)
         .length;
-      await this.atomicWrite("inbox.json", nextInbox);
-      this.inbox = nextInbox;
+      await this.commitDeliveryState(nextInbox, this.outbox, { inbox: true, outbox: false });
       this.scheduleDelegationContextPrune();
       return removed;
     });
@@ -903,6 +1123,7 @@ export class DurableStore {
     });
     await previous;
     try {
+      if (this.recoveryRequired) await this.recoverDeliveryTransaction();
       return await operation();
     } finally {
       release();
@@ -930,6 +1151,26 @@ export class DurableStore {
     delivery: Delivery,
     occurredAt: string,
   ): Promise<{ acceptance: DeliveryAcceptance; record: InboxRecord }> {
+    const accepted = await this.acceptInternal(delivery, occurredAt, false);
+    return { acceptance: accepted.acceptance, record: accepted.record };
+  }
+
+  /**
+   * Persist a newly accepted attempt and its transport event in the same atomic state image.
+   *
+   * On a duplicate from a legacy split-file store, this also reconstructs the one missing event
+   * for the record's current state and records its stable id. That recovery can cause one safe
+   * at-least-once replay, but never a permanent new-event loop after the relay ACKs it.
+   */
+  async acceptAndEnqueue(delivery: Delivery, occurredAt: string): Promise<LifecycleAcceptance> {
+    return this.acceptInternal(delivery, occurredAt, true);
+  }
+
+  private async acceptInternal(
+    delivery: Delivery,
+    occurredAt: string,
+    enqueueLifecycle: boolean,
+  ): Promise<LifecycleAcceptance> {
     return this.serialized(async () => {
       const existing = this.inbox.deliveries[delivery.delivery_id];
       const fingerprint = deliveryFingerprint(delivery);
@@ -941,6 +1182,10 @@ export class DurableStore {
           return { acceptance: "stale", record: clone(existing) };
         }
         if (delivery.attempt === existing.attempt) {
+          if (delivery.claim_token === existing.claim_token && enqueueLifecycle) {
+            const recovered = await this.ensureCurrentLifecycleEventUnlocked(existing);
+            return { acceptance: "duplicate", record: clone(recovered) };
+          }
           return {
             acceptance: delivery.claim_token === existing.claim_token ? "duplicate" : "stale",
             record: clone(existing),
@@ -969,15 +1214,69 @@ export class DurableStore {
         updated_at: occurredAt,
       };
       const baseInbox = this.withoutExpiredDelegationContexts(Date.now());
+      const event = enqueueLifecycle ? lifecycleEventFor(record, "accepted", occurredAt) : undefined;
+      const committedRecord = event === undefined ? record : withLifecycleEvent(record, event);
       const nextInbox: InboxFile = {
         version: 1,
-        deliveries: { ...baseInbox.deliveries, [delivery.delivery_id]: record },
+        deliveries: { ...baseInbox.deliveries, [delivery.delivery_id]: committedRecord },
       };
-      await this.atomicWrite("inbox.json", nextInbox);
-      this.inbox = nextInbox;
+      const nextOutbox: OutboxFile = event === undefined
+        ? this.outbox
+        : { version: 1, pending: [...this.outbox.pending, event] };
+      await this.commitDeliveryState(nextInbox, nextOutbox, {
+        inbox: true,
+        outbox: event !== undefined,
+      });
       this.scheduleDelegationContextPrune();
-      return { acceptance: existing === undefined ? "created" : "retry", record: clone(record) };
+      return {
+        acceptance: existing === undefined ? "created" : "retry",
+        record: clone(committedRecord),
+        ...(event === undefined ? {} : { event: clone(event) }),
+      };
     });
+  }
+
+  async ensureCurrentLifecycleEvent(
+    correlation: Pick<InboxRecord, "delivery_id" | "attempt" | "claim_token">,
+  ): Promise<InboxRecord> {
+    return this.serialized(async () => {
+      const existing = this.inbox.deliveries[correlation.delivery_id];
+      if (existing === undefined) throw new Error(`Unknown delivery ${correlation.delivery_id}`);
+      if (existing.attempt !== correlation.attempt || existing.claim_token !== correlation.claim_token) {
+        throw new Error(`Stale lifecycle correlation for delivery ${correlation.delivery_id}`);
+      }
+      return clone(await this.ensureCurrentLifecycleEventUnlocked(existing));
+    });
+  }
+
+  private async ensureCurrentLifecycleEventUnlocked(existing: InboxRecord): Promise<InboxRecord> {
+    const slot: LifecycleEventSlot = existing.state === "done" || existing.state === "failed"
+      ? "terminal"
+      : existing.state;
+    if (existing.lifecycle_event_ids?.[slot] !== undefined) return existing;
+
+    const pending = this.outbox.pending.find((event) => (
+      event.delivery_id === existing.delivery_id
+      && event.attempt === existing.attempt
+      && event.claim_token === existing.claim_token
+      && lifecycleSlot(event) === slot
+      && (slot !== "terminal" || event.phase === existing.state)
+    ));
+    const event = pending
+      ?? lifecycleEventFor(existing, existing.state, existing.updated_at, this.fencing.epoch);
+    const recovered = withLifecycleEvent(existing, event);
+    const nextInbox: InboxFile = {
+      version: 1,
+      deliveries: { ...this.inbox.deliveries, [existing.delivery_id]: recovered },
+    };
+    const nextOutbox: OutboxFile = pending === undefined
+      ? { version: 1, pending: [...this.outbox.pending, event] }
+      : this.outbox;
+    await this.commitDeliveryState(nextInbox, nextOutbox, {
+      inbox: true,
+      outbox: pending === undefined,
+    });
+    return recovered;
   }
 
   getDelivery(deliveryId: string): InboxRecord | undefined {
@@ -1034,15 +1333,25 @@ export class DurableStore {
     const sourceDeliveryId = typeof correlation?.response_to_delivery_id === "string"
       ? correlation.response_to_delivery_id
       : undefined;
+    const childDeliveryId = typeof correlation?.child_delivery_id === "string"
+      ? correlation.child_delivery_id
+      : undefined;
     if (sourceDeliveryId === undefined) return undefined;
     const source = this.inbox.deliveries[sourceDeliveryId];
+    const exactBranch = source?.delegation_materializations;
+    const correlatedBranch = exactBranch === undefined
+      ? source?.output?.messages.some((message) => message.to === delivery.actor_alias)
+      : childDeliveryId !== undefined && exactBranch.some((branch) => (
+          branch.child_delivery_id === childDeliveryId
+          && branch.target_alias === delivery.actor_alias
+        ));
     if (
       source?.state !== "done"
       || source.request === undefined
       || source.output === undefined
       || source.request.trace_id !== delivery.trace_id
       || source.request.recipient_alias !== delivery.recipient_alias
-      || !source.output.messages.some((message) => message.to === delivery.actor_alias)
+      || !correlatedBranch
     ) {
       return undefined;
     }
@@ -1058,9 +1367,10 @@ export class DurableStore {
    * escribía FALTA para las otras tres aunque el agregado existiera. Y por el mismo hueco
    * re-pingueaba a los que creía ausentes: 22 entregas donde tocaban 10.
    *
-   * Todo sale del inbox local y nada del cable:
-   *  - `delegated` son los destinos que ESTE adaptador emitió en el turno que abrió las ramas
-   *    (`continuationSource` ya probó que la rama que llega es una de ellas);
+   * Todo sale del inbox durable local, incluido el receipt autenticado que el gateway devolvió:
+   *  - `branches` son las entregas que el store materializó, identificadas por output_index y
+   *    child_delivery_id; no los deseos crudos del modelo;
+   *  - `rejected` son los outputs que el store negó y por tanto nunca pueden quedar pendientes;
    *  - `returned` son las respuestas que ESTE adaptador escribió al cerrar las ramas hermanas
    *    —texto propio, nunca `untrusted_text` de un tercero—, más nuevas primero, que es el mismo
    *    criterio con el que `processedRepliesForFanin` elige la síntesis que encabeza el fan-in;
@@ -1069,22 +1379,34 @@ export class DurableStore {
    * Devuelve `undefined` para un abanico de una sola rama: ahí no hay nada que consolidar ni nadie
    * a quien duplicar, y el prompt de continuación queda byte a byte como estaba.
    *
-   * Dos imprecisiones conocidas, las dos conservadoras y las dos declaradas:
-   *  - `delegated` es lo que el agente PIDIÓ, no lo que el store materializó. El adaptador declara
-   *    `delegation_feedback_v1` y el frame `ack_result` trae `delegation_rejections`, pero nadie
-   *    las guarda todavía en el inbox, así que una rama rechazada (alias offline, tope de repetición
-   *    de arista, cadena con gate humano abierto) figura como pendiente para siempre. El efecto es
-   *    que el agente espera en vez de reintentar, que es el lado seguro del defecto que se está
-   *    cerrando. Cablear `delegation_rejections` hasta acá es el paso siguiente.
-   *  - la resta de `pending` se hace por ALIAS. El store distingue dos ramas al mismo alias por
-   *    `child_delivery_id`, pero la salida local sólo tiene el alias al que el agente escribió, así
-   *    que dos ramas al mismo destino cuentan como una.
+   * Los registros anteriores al receipt exacto degradan a un multiconjunto por output_index y
+   * alias. Incluso ahí una respuesta sólo cierra UNA ocurrencia y child_delivery_id deduplica sus
+   * reentregas; nunca se vuelve al Set<alias> que cerraba dos ramas con una sola respuesta.
    */
   branchProgressForResponse(delivery: Delivery): DelegationBranchProgress | undefined {
     const source = this.continuationSource(delivery);
     if (source?.request === undefined || source.output === undefined) return undefined;
-    const delegated = source.output.messages.map((message) => message.to);
-    if (delegated.length < 2) return undefined;
+    const rejected = (source.delegation_rejections ?? []).map((rejection) => ({
+      output_index: rejection.output_index,
+      ...(rejection.target === undefined ? {} : { target: rejection.target }),
+      code: rejection.code,
+    }));
+    const rejectedIndexes = new Set(rejected.map((rejection) => rejection.output_index));
+    const branches: DelegationBranchIdentity[] = source.delegation_materializations === undefined
+      ? source.output.messages.flatMap((message, outputIndex) => (
+          rejectedIndexes.has(outputIndex)
+            ? []
+            : [{ outputIndex, alias: message.to }]
+        ))
+      : [...source.delegation_materializations]
+          .sort((left, right) => left.output_index - right.output_index)
+          .map((branch) => ({
+            outputIndex: branch.output_index,
+            targetTenant: branch.target_tenant,
+            alias: branch.target_alias,
+            childDeliveryId: branch.child_delivery_id,
+          }));
+    if (Math.max(source.output.messages.length, branches.length + rejected.length) < 2) return undefined;
 
     const returned = Object.values(this.inbox.deliveries)
       .filter((record) => {
@@ -1096,23 +1418,72 @@ export class DurableStore {
           && request.trace_id === delivery.trace_id
           && request.recipient_alias === delivery.recipient_alias
           && correlation?.response_to_delivery_id === source.delivery_id
+          && this.continuationSource(request)?.delivery_id === source.delivery_id
           && visibleText(record.output?.reply);
       })
       .sort((left, right) =>
         right.updated_at.localeCompare(left.updated_at)
         || right.delivery_id.localeCompare(left.delivery_id))
-      .map((record) => ({
-        tenantId: record.request!.tenant_id,
-        alias: record.request!.actor_alias,
-        reply: record.output!.reply!.trim(),
-        updatedAt: record.updated_at,
-      }));
+      .map((record): ProcessedFaninReply => {
+        const correlation = objectRecord(record.request!.body.correlation);
+        const childDeliveryId = typeof correlation?.child_delivery_id === "string"
+          ? correlation.child_delivery_id
+          : undefined;
+        const exact = childDeliveryId === undefined
+          ? undefined
+          : branches.find((branch) => branch.childDeliveryId === childDeliveryId);
+        return {
+          tenantId: record.request!.tenant_id,
+          alias: record.request!.actor_alias,
+          reply: record.output!.reply!.trim(),
+          updatedAt: record.updated_at,
+          ...(childDeliveryId === undefined ? {} : { childDeliveryId }),
+          ...(exact === undefined ? {} : {
+            outputIndex: exact.outputIndex,
+            ...(exact.targetTenant === undefined ? {} : { targetTenant: exact.targetTenant }),
+          }),
+        };
+      });
 
-    const closed = new Set([delivery.actor_alias, ...returned.map((entry) => entry.alias)]);
+    const currentCorrelation = objectRecord(delivery.body.correlation);
+    const currentChildDeliveryId = typeof currentCorrelation?.child_delivery_id === "string"
+      ? currentCorrelation.child_delivery_id
+      : undefined;
+    const closures = [
+      { alias: delivery.actor_alias, childDeliveryId: currentChildDeliveryId },
+      ...returned.map((entry) => ({ alias: entry.alias, childDeliveryId: entry.childDeliveryId })),
+    ];
+    const closedIndexes = new Set<number>();
+    const seenChildDeliveries = new Set<string>();
+    for (const closure of closures) {
+      if (closure.childDeliveryId !== undefined) {
+        if (seenChildDeliveries.has(closure.childDeliveryId)) continue;
+        seenChildDeliveries.add(closure.childDeliveryId);
+        const exact = branches.find((branch) => (
+          branch.childDeliveryId === closure.childDeliveryId
+          && branch.alias === closure.alias
+        ));
+        if (exact !== undefined) {
+          closedIndexes.add(exact.outputIndex);
+          continue;
+        }
+      }
+      // Legacy receipts have no child ids. Consume one unmatched occurrence, never the alias set.
+      const legacy = branches.find((branch) => (
+        !closedIndexes.has(branch.outputIndex)
+        && branch.childDeliveryId === undefined
+        && branch.alias === closure.alias
+      ));
+      if (legacy !== undefined) closedIndexes.add(legacy.outputIndex);
+    }
+    const pendingBranches = branches.filter((branch) => !closedIndexes.has(branch.outputIndex));
     return {
-      delegated,
+      delegated: branches.map((branch) => branch.alias),
+      branches,
+      rejected,
       returned,
-      pending: delegated.filter((alias) => !closed.has(alias)),
+      pending: pendingBranches.map((branch) => branch.alias),
+      pendingBranches,
     };
   }
 
@@ -1171,14 +1542,30 @@ export class DurableStore {
     deliveryId: string,
     state: InboxState,
     occurredAt: string,
-    details: {
-      readonly output?: StructuredOutput;
-      readonly error?: InboxRecord["error"];
-      readonly retainRequest?: boolean;
-      readonly attempt?: number;
-      readonly claimToken?: string;
-    } = {},
+    details: DeliveryTransitionDetails = {},
   ): Promise<InboxRecord> {
+    return (await this.transitionInternal(deliveryId, state, occurredAt, details, false)).record;
+  }
+
+  /** Atomically commits the state transition and the exact event that reports it. */
+  async transitionAndEnqueue(
+    deliveryId: string,
+    state: InboxState,
+    occurredAt: string,
+    details: DeliveryTransitionDetails = {},
+  ): Promise<LifecycleTransition> {
+    const result = await this.transitionInternal(deliveryId, state, occurredAt, details, true);
+    if (result.event === undefined) throw new Error("Lifecycle transition did not create an event");
+    return { record: result.record, event: result.event };
+  }
+
+  private async transitionInternal(
+    deliveryId: string,
+    state: InboxState,
+    occurredAt: string,
+    details: DeliveryTransitionDetails,
+    enqueueLifecycle: boolean,
+  ): Promise<{ readonly record: InboxRecord; readonly event?: DeliveryEvent }> {
     return this.serialized(async () => {
       const existing = this.inbox.deliveries[deliveryId];
       if (existing === undefined) throw new Error(`Unknown delivery ${deliveryId}`);
@@ -1199,15 +1586,31 @@ export class DurableStore {
           ? {}
           : { previous_claim_tokens: existing.previous_claim_tokens }),
         state,
+        ...(details.executionIntentProtocol === undefined
+          ? (existing.execution_intent_protocol === undefined
+              ? {}
+              : { execution_intent_protocol: existing.execution_intent_protocol })
+          : { execution_intent_protocol: details.executionIntentProtocol }),
+        ...(existing.execution_intent_receipt_event_id === undefined
+          ? {}
+          : { execution_intent_receipt_event_id: existing.execution_intent_receipt_event_id }),
         origin: existing.origin,
         ...(!terminal || details.retainRequest === true ? { request: existing.request } : {}),
         ...(details.output === undefined ? {} : { output: details.output }),
+        ...(details.profileAdoption === undefined ? {} : { profile_adoption: details.profileAdoption }),
         ...(details.error === undefined ? {} : { error: details.error }),
+        ...(existing.lifecycle_event_ids === undefined
+          ? {}
+          : { lifecycle_event_ids: existing.lifecycle_event_ids }),
         updated_at: occurredAt,
       };
+      const event = enqueueLifecycle
+        ? lifecycleEventFor(next, state, occurredAt, this.fencing.epoch)
+        : undefined;
+      const committedNext = event === undefined ? next : withLifecycleEvent(next, event);
       const deliveries: Record<string, InboxRecord> = {
         ...this.inbox.deliveries,
-        [deliveryId]: next,
+        [deliveryId]: committedNext,
       };
       if (state === "done" && existing.request?.body.type === "agent.fanin") {
         const root = this.faninRoot(existing.request);
@@ -1230,18 +1633,44 @@ export class DurableStore {
         version: 1,
         deliveries,
       };
-      await this.atomicWrite("inbox.json", nextInbox);
-      this.inbox = nextInbox;
+      const nextOutbox: OutboxFile = event === undefined
+        ? this.outbox
+        : { version: 1, pending: [...this.outbox.pending, event] };
+      await this.commitDeliveryState(nextInbox, nextOutbox, {
+        inbox: true,
+        outbox: event !== undefined,
+      });
       this.scheduleDelegationContextPrune();
-      return clone(next);
+      return {
+        record: clone(committedNext),
+        ...(event === undefined ? {} : { event: clone(event) }),
+      };
     });
   }
 
   async enqueue(event: DeliveryEvent): Promise<void> {
     await this.serialized(async () => {
-      if (this.outbox.pending.some((candidate) => candidate.event_id === event.event_id)) return;
-      this.outbox = { version: 1, pending: [...this.outbox.pending, event] };
-      await this.atomicWrite("outbox.json", this.outbox);
+      const alreadyPending = this.outbox.pending.some((candidate) => candidate.event_id === event.event_id);
+      const existing = this.inbox.deliveries[event.delivery_id];
+      const correlated = existing?.attempt === event.attempt
+        && existing.claim_token === event.claim_token
+        ? withLifecycleEvent(existing, event)
+        : existing;
+      const markerChanged = existing !== undefined && correlated !== undefined && correlated !== existing;
+      if (alreadyPending && !markerChanged) return;
+      const nextInbox: InboxFile = markerChanged
+        ? {
+            version: 1,
+            deliveries: { ...this.inbox.deliveries, [event.delivery_id]: correlated },
+          }
+        : this.inbox;
+      const nextOutbox: OutboxFile = alreadyPending
+        ? this.outbox
+        : { version: 1, pending: [...this.outbox.pending, event] };
+      await this.commitDeliveryState(nextInbox, nextOutbox, {
+        inbox: markerChanged,
+        outbox: !alreadyPending,
+      });
     });
   }
 
@@ -1250,11 +1679,99 @@ export class DurableStore {
   }
 
   async acknowledge(correlation: EventCorrelation): Promise<boolean> {
+    return this.acknowledgeResult(correlation);
+  }
+
+  /**
+   * Confirm one exact event and persist its delegation receipt in the same WAL transaction.
+   * A restart therefore sees either both feedback+removal or the still-pending event to replay.
+   */
+  async acknowledgeResult(
+    correlation: EventCorrelation,
+    feedback: EventDeliveryFeedback = {},
+  ): Promise<boolean> {
     return this.serialized(async () => {
+      const acknowledgedEvent = this.outbox.pending.find((event) => sameCorrelation(event, correlation));
+      if (acknowledgedEvent === undefined) return false;
       const pending = this.outbox.pending.filter((event) => !sameCorrelation(event, correlation));
-      if (pending.length === this.outbox.pending.length) return false;
-      this.outbox = { version: 1, pending };
-      await this.atomicWrite("outbox.json", this.outbox);
+      const existing = this.inbox.deliveries[correlation.delivery_id];
+      const terminalFeedback = (acknowledgedEvent.phase === "done" || acknowledgedEvent.phase === "failed")
+        && existing?.attempt === correlation.attempt
+        && existing.claim_token === correlation.claim_token
+        && (feedback.delegation_rejections !== undefined
+          || feedback.delegation_materializations !== undefined);
+      const terminalOwnershipLost = (acknowledgedEvent.phase === "done" || acknowledgedEvent.phase === "failed")
+        && existing?.attempt === correlation.attempt
+        && existing.claim_token === correlation.claim_token
+        && feedback.terminal_receipt === "ownership_lost";
+      const executionIntentConfirmed = acknowledgedEvent.execution_started === true
+        && existing?.attempt === correlation.attempt
+        && existing.claim_token === correlation.claim_token
+        && feedback.execution_intent_receipt !== undefined;
+      if (feedback.execution_intent_receipt !== undefined && !executionIntentConfirmed) {
+        throw new Error("Execution intent receipt does not match a current durable marker");
+      }
+      // El store remoto rechazó este resultado terminal: conservar `done` local bloquearía para
+      // siempre el intento superior que el bus tiene derecho a entregar. Se degrada a un failed
+      // retryable, pero se conserva el id terminal ya confirmado para que una redelivery del MISMO
+      // intento no fabrique otro evento ni vuelva a ejecutar el trabajo ambiguo.
+      const ownershipReleasedRecord = terminalOwnershipLost && existing !== undefined
+        ? (() => {
+            const retained: { -readonly [Key in keyof InboxRecord]: InboxRecord[Key] } = {
+              ...existing,
+            };
+            delete retained.output;
+            delete retained.profile_adoption;
+            delete retained.delegation_rejections;
+            delete retained.delegation_materializations;
+            delete retained.error;
+            return {
+              ...retained,
+              state: "failed" as const,
+              error: {
+                code: "TERMINAL_ACK_OWNERSHIP_LOST",
+                message: "The durable relay rejected this terminal result because claim ownership was lost",
+                retryable: true,
+              },
+            };
+          })()
+        : existing;
+      let nextRecord: InboxRecord | undefined = ownershipReleasedRecord;
+      if (executionIntentConfirmed && nextRecord !== undefined) {
+        nextRecord = {
+          ...nextRecord,
+          execution_intent_receipt_event_id: acknowledgedEvent.event_id,
+        };
+      }
+      if (terminalFeedback && !terminalOwnershipLost) {
+        if (ownershipReleasedRecord === undefined) {
+          throw new Error(`Terminal feedback has no inbox record for ${correlation.delivery_id}`);
+        }
+        nextRecord = {
+          ...ownershipReleasedRecord,
+          ...(feedback.delegation_rejections === undefined
+            ? {}
+            : { delegation_rejections: clone(feedback.delegation_rejections) }),
+          ...(feedback.delegation_materializations === undefined
+            ? {}
+            : { delegation_materializations: clone(feedback.delegation_materializations) }),
+        };
+      }
+      const inboxChanged = terminalFeedback || terminalOwnershipLost || executionIntentConfirmed;
+      let nextInbox: InboxFile = this.inbox;
+      if (inboxChanged) {
+        if (nextRecord === undefined) {
+          throw new Error(`Terminal receipt has no inbox record for ${correlation.delivery_id}`);
+        }
+        nextInbox = {
+          version: 1,
+          deliveries: { ...this.inbox.deliveries, [correlation.delivery_id]: nextRecord },
+        };
+      }
+      await this.commitDeliveryState(nextInbox, { version: 1, pending }, {
+        inbox: inboxChanged,
+        outbox: true,
+      });
       return true;
     });
   }

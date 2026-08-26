@@ -121,7 +121,7 @@ export interface TelegramUpload {
 
 export interface TelegramApi {
   getIdentity(): Promise<TelegramIdentity>;
-  getUpdates(offset: number, timeoutSeconds: number): Promise<TelegramUpdate[]>;
+  getUpdates(offset: number, timeoutSeconds: number, signal?: AbortSignal): Promise<TelegramUpdate[]>;
   getFile(fileId: string): Promise<TelegramRemoteFile>;
   downloadFile(filePath: string, maxBytes: number): Promise<Buffer>;
   sendText(chatId: string, text: string, options?: TelegramSendOptions): Promise<TelegramSendResult>;
@@ -317,8 +317,23 @@ export interface TelegramEgressRepository {
   markEffectAmbiguous(effectId: string, payloadHash: string, diagnostic: string): Promise<TelegramEffect>;
   markEffectDead(effectId: string, payloadHash: string, diagnostic: string): Promise<TelegramEffect>;
   getEffect(effectId: string): Promise<TelegramEffect | undefined>;
-  /** Explicit operator action. It never replays sent or in-flight effects. */
-  manualReplayEffect(effectId: string, payloadHash: string, reason: string): Promise<TelegramEffect>;
+  /**
+   * Explicit operator action. It never replays sent or in-flight effects, and the caller must
+   * supply a control-authorized actor plus an explicit acknowledgement that Telegram may already
+   * have accepted the effect.
+   */
+  manualReplayEffect(
+    chunkIndex: number,
+    payloadHash: string,
+    reason: string,
+    actorTenant: Tenant,
+    actorAlias: string,
+    duplicateRiskAcknowledged: boolean,
+    requestId: string,
+    deadLetterId: string,
+    incidentEvidenceSha256: string,
+    expectedReplayCount: number
+  ): Promise<TelegramEffect>;
 }
 
 export type BridgeMetric =

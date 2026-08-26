@@ -38,3 +38,33 @@ it('runs at most one load concurrently and coalesces reloads into one pending lo
   expect(await screen.findByText('2')).toBeInTheDocument();
   expect(maximumActive).toBe(1);
 });
+
+it('never exposes the previous key data while the next key is still loading', async () => {
+  const resolveLoads = new Map<string, (value: string) => void>();
+  const loader = vi.fn((resourceKey: string) => new Promise<string>((resolve) => {
+    resolveLoads.set(resourceKey, resolve);
+  }));
+
+  function Probe({ resourceKey }: { resourceKey: string }) {
+    const resource = useResource(`probe-${resourceKey}`, () => loader(resourceKey));
+    return (
+      <output>
+        {resource.loading && resource.data === undefined ? `loading-${resourceKey}` : resource.data}
+      </output>
+    );
+  }
+
+  const view = render(<Probe resourceKey="A" />);
+  await waitFor(() => expect(loader).toHaveBeenCalledWith('A'));
+  await act(async () => resolveLoads.get('A')?.('data-A'));
+  expect(await screen.findByText('data-A')).toBeInTheDocument();
+
+  view.rerender(<Probe resourceKey="B" />);
+  expect(screen.queryByText('data-A')).not.toBeInTheDocument();
+  expect(screen.getByText('loading-B')).toBeInTheDocument();
+
+  await waitFor(() => expect(loader).toHaveBeenCalledWith('B'));
+  expect(screen.queryByText('data-A')).not.toBeInTheDocument();
+  await act(async () => resolveLoads.get('B')?.('data-B'));
+  expect(await screen.findByText('data-B')).toBeInTheDocument();
+});

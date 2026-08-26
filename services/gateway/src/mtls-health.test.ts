@@ -47,7 +47,10 @@ describe('mTLS health isolation', () => {
         })
       }),
       repository: {
-        claimOutbox: vi.fn(async () => [])
+        claimOutbox: vi.fn(async () => []),
+        // MtlsAuthProvider is production-mode, so the data-plane fixture must advertise the
+        // durable reconnect primitive instead of weakening buildGateway's production invariant.
+        liveDeliveryClaims: vi.fn(async () => []),
       } as unknown as GatewayRepository,
       deliveryWakeSubscriber: async () => async () => undefined,
       exposeHealthRoutes: false,

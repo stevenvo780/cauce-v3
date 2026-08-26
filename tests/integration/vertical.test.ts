@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeHarness } from '@cauce/adapter-sdk';
-import type { Ack, DeliveryEnvelope } from '@cauce/protocol';
+import {
+  publishReceiptCausalHash, PublishResultSchema, type Ack, type DeliveryEnvelope,
+} from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
@@ -15,6 +17,11 @@ interface Published {
   duplicate: boolean;
   request_id: string;
   trace_id: string;
+  idempotency_key: string;
+  tenant_id: string;
+  actor_alias: string;
+  request_hash: string;
+  causal_hash: string;
 }
 
 interface TestPublish {
@@ -40,8 +47,13 @@ let httpUrl: string;
 let wsUrl: string;
 const harnesses: FakeHarness[] = [];
 
-function harness(tenant_id: 'Steven' | 'Isa' | 'Jhon' | 'Pablo' | 'Miguel', alias: string, instance_id: string = randomUUID()): FakeHarness {
-  const client = new FakeHarness({ tenant_id, alias, instance_id, capabilities: ['messages.v3', 'acks.v3'] });
+function harness(
+  tenant_id: 'Steven' | 'Isa' | 'Jhon' | 'Pablo' | 'Miguel',
+  alias: string,
+  instance_id: string = randomUUID(),
+  capabilities: string[] = ['messages.v3', 'acks.v3'],
+): FakeHarness {
+  const client = new FakeHarness({ tenant_id, alias, instance_id, capabilities });
   harnesses.push(client);
   return client;
 }
@@ -141,6 +153,14 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await resetTestDatabase(pool);
+  // El runtime productivo rechaza consumidores ausentes del inventario durable. Este vertical
+  // prueba el bus, no la migración de flota, así que modela explícitamente una capacidad para
+  // cada membership canónica que pueda abrir un harness durante los casos.
+  await pool.query(
+    `INSERT INTO agents(tenant_id,alias,enabled,max_concurrent_deliveries)
+     SELECT tenant_id,alias,false,100 FROM memberships
+     ON CONFLICT(tenant_id,alias) DO NOTHING`,
+  );
 });
 
 afterEach(async () => {
@@ -159,6 +179,46 @@ afterAll(async () => {
 });
 
 describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
+  it('returns the execution-intent receipt only after PostgreSQL persists the fence', async () => {
+    const consumer = harness(
+      'Isa',
+      'salva',
+      'execution-intent-consumer',
+      ['messages.v3', 'acks.v3', 'renewable_delivery_claims_v1'],
+    );
+    const epoch = await consumer.connect(wsUrl);
+    const sent = await publish(message());
+    expect(sent.response.status).toBe(202);
+    const delivery = await consumer.nextDelivery();
+
+    expect(await ackAndWait(consumer, delivery, 'accepted')).toMatchObject({
+      status: 'accepted', applied: true, receipt: 'applied',
+    });
+    const intentEventId = randomUUID();
+    const intentReceipt = await ackAndWait(consumer, delivery, 'started', {
+      event_id: intentEventId, execution_started: true,
+    });
+    expect(intentReceipt).toMatchObject({ status: 'started', applied: true, receipt: 'applied' });
+    const replayReceipt = await ackAndWait(consumer, delivery, 'started', {
+      event_id: intentEventId, execution_started: true,
+    });
+    expect(replayReceipt).toMatchObject({
+      status: 'started', applied: true, receipt: 'duplicate', event_id: intentEventId,
+    });
+    const durableFence = await pool.query<{ persisted: boolean }>(
+      'SELECT execution_started_at IS NOT NULL AS persisted FROM deliveries WHERE id=$1',
+      [delivery.delivery_id],
+    );
+    expect(durableFence.rows).toEqual([{ persisted: true }]);
+
+    expect(await ackAndWait(consumer, delivery, 'done')).toMatchObject({
+      status: 'done', applied: true, receipt: 'applied',
+    });
+    expect(await repository.releaseLease(
+      'Isa', 'salva', 'execution-intent-consumer', epoch,
+    )).toBe(true);
+  });
+
   it('records accepted/started/done and ignores duplicate or out-of-order ACKs', async () => {
     const consumer = harness('Isa', 'salva', 'ack-consumer');
     await consumer.connect(wsUrl);
@@ -177,9 +237,10 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     );
     expect(ackRows.rows).toEqual([
       { status: 'accepted', applied: true }, { status: 'started', applied: true },
-      { status: 'accepted', applied: false }, { status: 'done', applied: true },
-      { status: 'failed', applied: false }
+      { status: 'accepted', applied: false }, { status: 'done', applied: true }
     ]);
+    // Un evento nuevo contra una fila terminal se responde ownership_lost pero no puede inflar
+    // indefinidamente el historial forense durable.
   });
 
   it('rejects a second live consumer and fences by epoch', async () => {
@@ -218,12 +279,15 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
         instance_id: 'http-consumer', capabilities: ['messages.v3']
       })
     });
-    const lease = await helloResponse.json() as { epoch: number };
+    const lease = await helloResponse.json() as { epoch: number; connection_token: string };
     expect(helloResponse.status).toBe(200);
 
     const queryResponse = await fetch(`${httpUrl}/v3/query`, {
       method: 'POST', headers,
-      body: JSON.stringify({ instance_id: 'http-consumer', epoch: lease.epoch, limit: 1 })
+      body: JSON.stringify({
+        instance_id: 'http-consumer', epoch: lease.epoch, limit: 1,
+        connection_token: lease.connection_token,
+      })
     });
     const queried = await queryResponse.json() as { deliveries: DeliveryEnvelope[] };
     expect(queried.deliveries).toHaveLength(1);
@@ -351,7 +415,26 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     const duplicate = await publish(input);
     expect(first.response.status).toBe(202);
     expect(duplicate.response.status).toBe(202);
-    expect(duplicate.body).toMatchObject({ message_id: (first.body as Published).message_id, duplicate: true });
+    const firstReceipt = PublishResultSchema.parse(first.body);
+    const duplicateReceipt = PublishResultSchema.parse(duplicate.body);
+    expect(firstReceipt).toMatchObject({
+      duplicate: false,
+      tenant_id: input.tenant_id,
+      actor_alias: input.actor_alias,
+      idempotency_key: input.idempotency_key,
+    });
+    expect(firstReceipt.causal_hash).toBe(publishReceiptCausalHash(firstReceipt));
+    expect(duplicateReceipt).toMatchObject({
+      message_id: firstReceipt.message_id,
+      duplicate: true,
+      request_id: firstReceipt.request_id,
+      trace_id: firstReceipt.trace_id,
+      idempotency_key: input.idempotency_key,
+      tenant_id: input.tenant_id,
+      actor_alias: input.actor_alias,
+      request_hash: firstReceipt.request_hash,
+      causal_hash: firstReceipt.causal_hash,
+    });
     expect((await pool.query('SELECT 1 FROM messages')).rowCount).toBe(1);
 
     const changed = await publish({ ...input, body: { text: 'different' } });

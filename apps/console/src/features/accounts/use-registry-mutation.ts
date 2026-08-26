@@ -3,11 +3,12 @@ import { useApi } from '../../api/context';
 import type { ConfigMutation, ConfigurationSnapshot, ConsoleAccess } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { permissionState } from '../../lib';
+import { exactConfigurationReceipt } from '../config/config-receipt';
 import { describeRegistryError, redactPreview, type RegistryContext } from './registry';
 
 export interface RegistryNotice {
   text: string;
-  tone: 'success' | 'error';
+  tone: 'success' | 'error' | 'parcial';
 }
 
 export interface RegistryMutationRunner {
@@ -76,6 +77,23 @@ export function useRegistryMutation(options: {
         dryRun,
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
       });
+      if (!exactConfigurationReceipt(result, dryRun, mutation)) {
+        setValidatedKey(undefined);
+        setPreview(undefined);
+        const recarga = dryRun ? undefined : await options.config.reload();
+        const desenlace = recarga === undefined
+          ? ''
+          : recarga.error
+            ? ` La relectura tampoco llegó (${recarga.error.message}).`
+            : ` Se releyó la revisión ${recarga.data.revision ?? 'no informada'}; verificá allí el efecto.`;
+        setNotice({
+          tone: 'error',
+          text: dryRun
+            ? 'El servidor devolvió un 2xx sin el recibo exacto del dry-run; no se habilitó aplicar.'
+            : `El servidor devolvió un 2xx sin el recibo durable exacto. La escritura puede haberse aplicado; no la repitas sin conciliar.${desenlace}`,
+        });
+        return false;
+      }
       if (dryRun) {
         setValidatedKey(mutationKey);
         setPreview(redactPreview(result));
@@ -85,8 +103,14 @@ export function useRegistryMutation(options: {
       setValidatedKey(undefined);
       setPreview(undefined);
       if (typeof result.revision === 'number') setChainedRevision(result.revision);
-      options.config.reload();
-      setNotice({ text: `Aplicado en revisión ${result.revision ?? 'una revisión que el servidor no informó'}: ${result.summary ?? 'el servidor no devolvió resumen'}.`, tone: 'success' });
+      const recarga = await options.config.reload();
+      setNotice({
+        text: `Aplicado en revisión ${result.revision}: ${result.summary}.`
+          + (recarga.error
+            ? ` PERO la relectura del inventario no llegó (${recarga.error.message}); lo visible puede estar vencido.`
+            : ` Inventario releído en revisión ${recarga.data.revision ?? 'no informada'}.`),
+        tone: recarga.error ? 'parcial' : 'success',
+      });
       return true;
     } catch (error) {
       const described = describeRegistryError(error, mutation, options.context);
@@ -94,7 +118,7 @@ export function useRegistryMutation(options: {
         setChainedRevision(undefined);
         setValidatedKey(undefined);
         setPreview(undefined);
-        options.config.reload();
+        await options.config.reload();
       }
       setNotice({ text: described.message, tone: 'error' });
       return false;

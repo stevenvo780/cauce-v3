@@ -14,13 +14,25 @@
  *
  *   * Un destino cuyo testigo es un ENLACE DURO al origen tiene todos los ficheros en su sitio y
  *     no está separado de nada. Si la comprobación de inodo no pudiera fallar aquí, sería adorno.
- *   * Un destino sin `.claude.json` tiene el directorio, el CLAUDE.md y todo lo demás. Es
+ *   * Un destino sin el enlace `.claude.json` tiene el directorio y el CLAUDE.md. Es
  *     exactamente el estado que ya se pagó una vez.
  *   * Un plan con borrados tiene que ser RECHAZADO: el origen es la reversa.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -44,12 +56,19 @@ function fleteCompartido({ arnes = "codex", testigo = "AGENTS.md", conClaudeJson
   mkdirSync(path.join(home, directorio), { recursive: true });
   const compartido = path.join(home, directorio, testigo);
   writeFileSync(compartido, "identidad compartida por dos alias\n");
-  // La credencial vive dentro del directorio: se copia con él y por eso el plan lo advierte.
+  // Credenciales/config viven en la fuente autorizada. La separación las enlaza; nunca copia sus
+  // bytes ni importa historiales/sesiones ambiguas.
   writeFileSync(path.join(home, directorio, arnes === "codex" ? "auth.json" : ".credentials.json"), "{}\n");
+  if (arnes === "codex") writeFileSync(path.join(home, directorio, "config.toml"), "model = 'fixture'\n");
   if (conClaudeJson) {
     writeFileSync(
       path.join(home, ".claude.json"),
-      JSON.stringify({ mcpServers: { "cloud-offload": {}, "ai-usage": {} } }, null, 2),
+      JSON.stringify({
+        mcpServers: {
+          "cloud-offload": { command: "/usr/bin/env", args: ["true"] },
+          "ai-usage": { type: "http", url: "https://mcp.example.invalid/v1" },
+        },
+      }, null, 2),
     );
   }
   return { raiz, home, compartido };
@@ -86,6 +105,38 @@ test("aplica el plan de codex y el testigo deja de compartir inodo con el alias 
   assert.equal(readFileSync(nuevo, "utf8"), "identidad compartida por dos alias\n", "el contenido viaja");
   // El origen es la reversa: sigue exactamente donde estaba, con su inodo intacto.
   assert.equal(identidad(compartido), antes, "el ejecutor NO puede tocar el origen");
+
+  for (const nombre of ["auth.json", "config.toml"]) {
+    const enlace = path.join(plan.directorioDestino, nombre);
+    assert.equal(lstatSync(enlace).isSymbolicLink(), true, `${nombre} no debe copiar secretos/config`);
+    assert.equal(readlinkSync(enlace), path.join(home, ".codex", nombre));
+  }
+});
+
+test("el enlace auth de Codex sobrevive una renovación atómica sin copiar credenciales", (t) => {
+  const { raiz, home } = fleteCompartido();
+  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  const plan = planificarSeparacion({ alias: "dedalo", home, arnes: "codex" });
+  const resultado = aplicar(plan);
+  assert.equal(resultado.status, 0, `${resultado.stdout}\n${resultado.stderr}`);
+
+  const fuente = path.join(home, ".codex/auth.json");
+  const enlace = path.join(plan.directorioDestino, "auth.json");
+  const enlaceAntes = lstatSync(enlace);
+  const fuenteAntes = statSync(fuente);
+  const temporal = path.join(home, ".codex/.auth-renovado");
+  writeFileSync(temporal, "{\"fixture\":\"rotada\"}\n");
+  renameSync(temporal, fuente);
+
+  const enlaceDespues = lstatSync(enlace);
+  const fuenteDespues = statSync(fuente);
+  assert.equal(enlaceDespues.isSymbolicLink(), true);
+  assert.equal(`${enlaceDespues.dev}:${enlaceDespues.ino}`, `${enlaceAntes.dev}:${enlaceAntes.ino}`,
+    "la renovación no reemplaza el enlace del alias");
+  assert.notEqual(`${fuenteDespues.dev}:${fuenteDespues.ino}`, `${fuenteAntes.dev}:${fuenteAntes.ino}`,
+    "el fixture debe reproducir un rename atómico real del origen");
+  assert.equal(readFileSync(enlace, "utf8"), "{\"fixture\":\"rotada\"}\n",
+    "el alias ve inmediatamente el nuevo origen a través del mismo enlace");
 });
 
 test("el .claude.json llega al destino con sus MCP dentro", (t) => {
@@ -97,6 +148,13 @@ test("el .claude.json llega al destino con sus MCP dentro", (t) => {
   assert.equal(resultado.status, 0, `${resultado.stdout}\n${resultado.stderr}`);
 
   const destino = path.join(plan.directorioDestino, ".claude.json");
+  assert.equal(lstatSync(destino).isSymbolicLink(), true, "los MCP mantienen una fuente única");
+  assert.equal(readlinkSync(destino), path.join(home, ".claude.json"));
+  assert.equal(
+    lstatSync(path.join(plan.directorioDestino, ".credentials.json")).isSymbolicLink(),
+    true,
+    "la credencial nunca se copia",
+  );
   const documento = JSON.parse(readFileSync(destino, "utf8"));
   assert.deepEqual(Object.keys(documento.mcpServers), ["cloud-offload", "ai-usage"]);
   // El ejecutor tiene que DECIR cuántos MCP llegaron: "existe" no distingue un fichero con los
@@ -211,6 +269,50 @@ test("CONTROL NEGATIVO: un .claude.json que no es JSON válido se rechaza", (t) 
   assert.notEqual(resultado.status, 0, "que exista no basta: tiene que ser legible");
 });
 
+for (const [nombre, mcpServers] of [
+  ["un mapa vacío", {}],
+  ["una lista", ["not-a-server-object"]],
+  ["una entrada sin transporte", { broken: {} }],
+]) {
+  test(`CONTROL NEGATIVO: mcpServers con ${nombre} se rechaza`, (t) => {
+    const { raiz, home } = fleteCompartido({ arnes: "claude", testigo: "CLAUDE.md", conClaudeJson: true });
+    t.after(() => rmSync(raiz, { recursive: true, force: true }));
+    const plan = planificarSeparacion({ alias: "zeus", home, arnes: "claude" });
+    writeFileSync(path.join(home, ".claude.json"), JSON.stringify({ mcpServers }));
+
+    const resultado = aplicar(plan);
+    assert.notEqual(resultado.status, 0);
+    assert.match(`${resultado.stdout}${resultado.stderr}`, /mcpServers|MCP/u);
+  });
+}
+
+for (const [nombre, servidor] of [
+  ["command compuesto sólo por whitespace", { command: " \t\n " }],
+  ["http:// sin hostname", { type: "http", url: "http://" }],
+  ["https://?x sin hostname", { type: "http", url: "https://?x" }],
+  ["whitespace alrededor de la URL", { type: "http", url: " https://mcp.example.invalid/v1 " }],
+  ["puerto fuera de rango", { type: "http", url: "https://mcp.example.invalid:70000/v1" }],
+  ["puerto explícito vacío", { type: "http", url: "https://mcp.example.invalid:/v1" }],
+  ["userinfo", { type: "http", url: "https://user@mcp.example.invalid/v1" }],
+  ["fragmento", { type: "http", url: "https://mcp.example.invalid/v1#tools" }],
+  ["command y URL a la vez", { command: "/usr/bin/true", url: "https://mcp.example.invalid/v1" }],
+]) {
+  test(`CONTROL NEGATIVO: servidor MCP con ${nombre} se rechaza`, (t) => {
+    const { raiz, home } = fleteCompartido({
+      arnes: "claude", testigo: "CLAUDE.md", conClaudeJson: true,
+    });
+    t.after(() => rmSync(raiz, { recursive: true, force: true }));
+    const plan = planificarSeparacion({ alias: "zeus", home, arnes: "claude" });
+    writeFileSync(path.join(home, ".claude.json"), JSON.stringify({
+      mcpServers: { invalid: servidor },
+    }));
+
+    const resultado = aplicar(plan);
+    assert.notEqual(resultado.status, 0);
+    assert.match(`${resultado.stdout}${resultado.stderr}`, /mcpServers|MCP/u);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // CONTROL NEGATIVO 3: el origen es la reversa y no se toca.
 // ---------------------------------------------------------------------------
@@ -239,6 +341,69 @@ test("un origen obligatorio ausente detiene el plan ANTES de copiar nada", (t) =
   assert.notEqual(resultado.status, 0);
   assert.match(`${resultado.stdout}${resultado.stderr}`, /\.claude\.json/u);
   assert.throws(() => statSync(plan.directorioDestino), "no se copió nada");
+});
+
+test("un destino dest/../victim se rechaza antes de tocar los bytes externos", (t) => {
+  const { raiz, home } = fleteCompartido();
+  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  const plan = planificarSeparacion({ alias: "kratos", home, arnes: "codex" });
+  const victim = path.resolve(plan.directorioDestino, "../victim");
+  mkdirSync(path.dirname(victim), { recursive: true });
+  writeFileSync(victim, "bytes externos intactos\n");
+  const envenenado = structuredClone(plan);
+  envenenado.copias[0].destino = `${plan.directorioDestino}/../victim`;
+
+  const resultado = aplicar(envenenado);
+  assert.notEqual(resultado.status, 0);
+  assert.match(`${resultado.stdout}${resultado.stderr}`, /canónica|perfil exacto|destino/iu);
+  assert.equal(readFileSync(victim, "utf8"), "bytes externos intactos\n");
+  assert.throws(() => lstatSync(plan.directorioDestino), "el perfil no puede publicarse parcialmente");
+});
+
+test("un directorio destino symlink se rechaza incluso con --rehacer y no toca su target", (t) => {
+  const { raiz, home } = fleteCompartido();
+  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  const plan = planificarSeparacion({ alias: "kratos", home, arnes: "codex" });
+  const externo = path.join(raiz, "externo");
+  const testigoExterno = path.join(externo, "AGENTS.md");
+  mkdirSync(externo);
+  writeFileSync(testigoExterno, "no reemplazar\n");
+  mkdirSync(path.dirname(plan.directorioDestino), { recursive: true });
+  symlinkSync(externo, plan.directorioDestino);
+
+  const resultado = aplicar(plan, ["--rehacer"]);
+  assert.notEqual(resultado.status, 0);
+  assert.equal(readFileSync(testigoExterno, "utf8"), "no reemplazar\n");
+  assert.equal(lstatSync(plan.directorioDestino).isSymbolicLink(), true);
+});
+
+test("dos operaciones sobre el mismo destino se rechazan antes de publicar", (t) => {
+  const { raiz, home } = fleteCompartido();
+  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  const plan = planificarSeparacion({ alias: "kratos", home, arnes: "codex" });
+  const envenenado = structuredClone(plan);
+  envenenado.copias.push({ ...envenenado.copias[0] });
+
+  const resultado = aplicar(envenenado);
+  assert.notEqual(resultado.status, 0);
+  assert.match(`${resultado.stdout}${resultado.stderr}`, /duplica/u);
+  assert.throws(() => lstatSync(plan.directorioDestino), "ningún destino debe existir");
+});
+
+test("--rehacer preflighta todos los tipos y no reemplaza el primer fichero si el último es ambiguo", (t) => {
+  const { raiz, home } = fleteCompartido();
+  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  const plan = planificarSeparacion({ alias: "kratos", home, arnes: "codex" });
+  mkdirSync(plan.directorioDestino, { recursive: true });
+  const identity = path.join(plan.directorioDestino, "AGENTS.md");
+  writeFileSync(identity, "identidad anterior intacta\n");
+  writeFileSync(path.join(plan.directorioDestino, "config.toml"), "tipo ambiguo\n");
+
+  const resultado = aplicar(plan, ["--rehacer"]);
+  assert.notEqual(resultado.status, 0);
+  assert.match(`${resultado.stdout}${resultado.stderr}`, /tipo ambiguo/iu);
+  assert.equal(readFileSync(identity, "utf8"), "identidad anterior intacta\n",
+    "no puede publicar AGENTS antes de descubrir que config.toml era inseguro");
 });
 
 test("no pisa un destino que ya existe salvo que se pida --rehacer", (t) => {
@@ -280,7 +445,7 @@ test("tras separar los dos alias, el censo por inodo deja de ver el grupo compar
 
   // DESPUÉS: se vuelve a MEDIR sobre el disco real, no se supone.
   const despues = ["kratos", "atlas"].map((alias) => {
-    const ruta = path.join(home, ".cauce", alias, ".codex/AGENTS.md");
+    const ruta = path.join(home, ".local/share/cauce-v3/config", alias, ".codex/AGENTS.md");
     const s = statSync(ruta);
     return { alias, ruta, inodo: s.ino, dispositivo: s.dev };
   });

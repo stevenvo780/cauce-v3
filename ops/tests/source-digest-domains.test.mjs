@@ -18,7 +18,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,8 +56,12 @@ function pathsOf(domain, tree) {
 const runtimePaths = pathsOf('runtime');
 const consolePaths = pathsOf('console');
 const harnessPaths = pathsOf('harness');
+const testcontainersPaths = pathsOf('testcontainers');
+const verificationPaths = pathsOf('verification');
 const fullPaths = pathsOf('full');
-const union = new Set([...runtimePaths, ...consolePaths, ...harnessPaths]);
+const union = new Set([
+  ...runtimePaths, ...consolePaths, ...harnessPaths, ...testcontainersPaths, ...verificationPaths,
+]);
 assert.deepEqual([...fullPaths].sort(), [...union].sort(), 'full domain must be the exact union of the declared domains');
 
 // 2. The ONLY narrowing: relative to the two image domains combined -- which is byte-for-byte the
@@ -78,6 +82,60 @@ assert(
   ![...runtimePaths].some((entry) => entry.startsWith('apps/console/')),
   'runtime domain must not contain apps/console',
 );
+assert(
+  runtimePaths.has('services/gateway/src/test-fixtures/mtls-server-certificate.pem'),
+  'versioned PEM fixtures are source and must remain covered',
+);
+assert(
+  ![...fullPaths].some((entry) => entry.startsWith('tests/fleet-release/artifacts/')),
+  'timestamped fleet-release outputs must not enter verification/full',
+);
+assert(
+  ![...fullPaths].some((entry) => entry.startsWith('tests/fleet-release/.matrix-state/')),
+  'ephemeral fleet matrix state must not enter verification/full',
+);
+assert(
+  ![...fullPaths].some((entry) => /(?:^|\/)cauce\.bak-/u.test(entry)),
+  'Git-ignored operator backups must not enter verification/full',
+);
+
+for (const sentinel of [
+  'tests/e2e/real-qa.test.ts',
+  'tests/helpers/postgres.ts',
+  'ops/harness/runner.mjs',
+  'ops/scripts/run-testcontainers.sh',
+  'ops/scripts/validate-testcontainers-evidence.py',
+  'ops/schemas/testcontainers-evidence.schema.json',
+]) {
+  assert(testcontainersPaths.has(sentinel), `testcontainers domain lost coverage of ${sentinel}`);
+}
+for (const sentinel of [
+  'tests/unit/restore-release-integrity.test.ts',
+  'ops/tests/source-digest-domains.test.mjs',
+  'ops/Makefile',
+  'ops/cli/cauce-huerfanas',
+  'ops/compose.rollback-bridge.yaml',
+  'ops/compose.test.yaml',
+  'ops/container-aliases.json',
+  'ops/container-runtime/cauce-container-runtime.py',
+  'ops/generated/systemd/SHA256SUMS',
+  'ops/guardias/cauce-huerfanas.sh',
+  'ops/manifests/kant.yaml',
+  'ops/observability/alerts.yaml',
+  'ops/rollback-bridge/metadata.json',
+  'ops/runbooks/deploy.md',
+  'ops/schemas/build-evidence.schema.json',
+  'ops/schemas/rollback-bridge.schema.json',
+  'ops/scripts/deploy-release.sh',
+  'ops/scripts/rollback.sh',
+  'ops/scripts/pin-production-release.py',
+  'ops/scripts/release-writer-state.py',
+  'ops/scripts/verification-rounds.mjs',
+  'ops/scripts/source-digest.py',
+  'eslint.config.js',
+]) {
+  assert(verificationPaths.has(sentinel), `verification domain lost coverage of ${sentinel}`);
+}
 assert(
   [...consolePaths].some((entry) => entry.startsWith('apps/console/src/')),
   'console domain must contain apps/console sources',
@@ -132,17 +190,24 @@ assert(
 for (const entry of fullPaths) {
   for (const part of entry.split('/')) {
     assert(
-      !['node_modules', 'dist', 'coverage', '.git', '.serena', '.test-state', '.claude'].includes(part),
+      ![
+        'node_modules', 'dist', 'coverage', '.git', '.serena', '.test-state', '.claude',
+        '__pycache__', '.pytest_cache',
+      ].includes(part),
       `excluded family leaked into a digest: ${entry}`,
     );
   }
   assert(!path.basename(entry).startsWith('.env'), `private env file leaked into a digest: ${entry}`);
+  assert(!entry.endsWith('.pyc') && !entry.endsWith('.pyo'), `Python bytecode leaked into a digest: ${entry}`);
 }
 
 // 7. Determinism and distinctness.
 assert.equal(digestOf('runtime'), digestOf('runtime'), 'digest must be deterministic');
-const distinct = new Set([digestOf('runtime'), digestOf('console'), digestOf('harness'), digestOf('full')]);
-assert.equal(distinct.size, 4, 'each domain must produce its own digest');
+const distinct = new Set([
+  digestOf('runtime'), digestOf('console'), digestOf('harness'),
+  digestOf('testcontainers'), digestOf('verification'), digestOf('full'),
+]);
+assert.equal(distinct.size, 6, 'each domain must produce its own digest');
 
 // 8. An undeclared caller must fail CLOSED: the default is the strictest domain, never runtime.
 assert.equal(run([]), digestOf('full'), 'the default domain must be full so a forgotten --domain over-covers instead of under-covering');
@@ -168,12 +233,36 @@ try {
   await write('packages/store/src/index.ts', 'export const store = 1;\n');
   await write('services/gateway/src/app.ts', 'export const app = 1;\n');
   await write('deploy/runtime-entrypoint.sh', '#!/bin/sh\nexec "$@"\n');
+  await write('scripts/gate-a.sh', '#!/bin/sh\nexit 0\n');
+  await write('scripts/gate-b.sh', '#!/bin/sh\nexit 7\n');
+  await write('unselected/gate.sh', '#!/bin/sh\nexit 9\n');
   await write('apps/console/src/App.tsx', 'export const App = () => null;\n');
   await write('apps/console/src/theme.css', '.panel { color: red; }\n');
   await write('apps/console/src/features/_grafo/consultas-grafo.sql', 'SELECT 1;\n');
   await write('ops/harness/authentic-runner.mjs', 'export const run = 1;\n');
+  await write('ops/harness/runner.mjs', 'export const run = 1;\n');
   await write('ops/compose.authentic.yaml', 'services: {}\n');
   await write('ops/scripts/fault-runtime.sh', '#!/bin/sh\n');
+  await write('ops/scripts/run-testcontainers.sh', '#!/bin/sh\n');
+  await write('ops/scripts/validate-testcontainers-evidence.py', 'print("ok")\n');
+  await write('ops/scripts/deploy-release.sh', '#!/bin/sh\nexit 0\n');
+  await write('ops/scripts/rollback.sh', '#!/bin/sh\nexit 0\n');
+  await write('ops/scripts/pin-production-release.py', 'print("pin")\n');
+  await write('ops/scripts/release-writer-state.py', 'print("state")\n');
+  await write('ops/scripts/source-digest.py', '# fixture\n');
+  await write('ops/scripts/verification-rounds.mjs', 'export const rounds = 3;\n');
+  await write('ops/schemas/build-evidence.schema.json', '{}\n');
+  await write('ops/schemas/testcontainers-evidence.schema.json', '{}\n');
+  await write('ops/tests/gate.test.mjs', 'export const gate = 1;\n');
+  await write('tests/e2e/real-qa.test.ts', 'export const qa = 1;\n');
+  await write('tests/helpers/postgres.ts', 'export const postgres = 1;\n');
+  await write('tests/unit/example.test.ts', 'export const unit = 1;\n');
+  await write('tests/unit/artifacts/fixture.pem', 'versioned fixture bytes\n');
+  await write('tests/fleet-release/artifacts/report.json', '{"generatedAt":"2026-01-01T00:00:00Z"}\n');
+  await write('tests/fleet-release/artifacts/junit.xml', '<testsuite timestamp="old"/>\n');
+  await write('tests/fleet-release/artifacts/SHA256SUMS', 'old sums\n');
+  await write('tests/fleet-release/.matrix-state/harness-logs/worker.log', 'initial harness state\n');
+  await write('eslint.config.js', 'export default [];\n');
   await write('node_modules/evil/index.js', 'module.exports = 1;\n');
   await write('.env.production', 'SECRET=must-never-be-hashed\n');
 
@@ -181,13 +270,60 @@ try {
     runtime: digestOf('runtime', sandbox),
     console: digestOf('console', sandbox),
     harness: digestOf('harness', sandbox),
+    testcontainers: digestOf('testcontainers', sandbox),
+    verification: digestOf('verification', sandbox),
     full: digestOf('full', sandbox),
   };
 
-  // 9a. The one approved operator scratch path is intentionally outside every release digest.
+  // 9a. The fleet generator rewrites timestamped evidence. It must leave the initial source digest
+  //     unchanged, while a same-named directory outside the producer-owned output root remains a
+  //     covered fixture rather than being excluded by basename.
+  await write('tests/fleet-release/artifacts/report.json', '{"generatedAt":"2026-08-26T13:45:00Z"}\n');
+  await write('tests/fleet-release/artifacts/junit.xml', '<testsuite timestamp="new"/>\n');
+  await write('tests/fleet-release/artifacts/SHA256SUMS', 'new sums\n');
+  await write('tests/fleet-release/.matrix-state/harness-logs/worker.log', 'rewritten harness state\n');
+  for (const domain of ['runtime', 'console', 'harness', 'testcontainers', 'verification', 'full']) {
+    assert.equal(digestOf(domain, sandbox), before[domain], `fleet artifact generation changed ${domain}`);
+  }
+  const fixtureBase = digestOf('verification', sandbox);
+  await write('tests/unit/artifacts/fixture.pem', 'mutated versioned fixture bytes\n');
+  assert.notEqual(
+    digestOf('verification', sandbox),
+    fixtureBase,
+    'an artifacts-named source fixture must remain covered',
+  );
+  await write('tests/unit/artifacts/fixture.pem', 'versioned fixture bytes\n');
+  assert.equal(digestOf('verification', sandbox), fixtureBase, 'restoring the fixture must restore its digest');
+
+  // 9b. Interpreter and test-runner caches are never source. Place one in a family owned by each
+  //     domain and prove that neither membership nor bytes can move any digest.
+  for (const [relative, contents] of [
+    ['services/gateway/__pycache__/runtime.cpython-313.pyc', 'runtime bytecode v1'],
+    ['services/gateway/runtime.pyo', 'optimized runtime bytecode v1'],
+    ['apps/console/.pytest_cache/v/cache/nodeids', 'console pytest state v1'],
+    ['apps/console/src/cached.pyc', 'console bytecode v1'],
+    ['ops/harness/__pycache__/faults.pyc', 'harness bytecode v1'],
+    ['ops/harness/faults.pyo', 'harness optimized bytecode v1'],
+    ['tests/e2e/.pytest_cache/state.json', '{"testcontainers":1}\n'],
+    ['tests/e2e/qa.pyc', 'Testcontainers bytecode v1'],
+    ['ops/scripts/__pycache__/deploy-release.cpython-313.pyc', 'verification bytecode v1'],
+    ['ops/scripts/verification.pyo', 'verification optimized bytecode v1'],
+  ]) {
+    await write(relative, contents);
+  }
+  for (const domain of ['runtime', 'console', 'harness', 'testcontainers', 'verification', 'full']) {
+    assert.equal(digestOf(domain, sandbox), before[domain], `cache files changed the ${domain} digest`);
+  }
+  const cacheListing = pathsOf('full', sandbox);
+  assert(![...cacheListing].some((entry) => entry.includes('/__pycache__/')), '__pycache__ leaked into full');
+  assert(![...cacheListing].some((entry) => entry.includes('/.pytest_cache/')), '.pytest_cache leaked into full');
+  assert(![...cacheListing].some((entry) => entry.endsWith('.pyc')), '*.pyc leaked into full');
+  assert(![...cacheListing].some((entry) => entry.endsWith('.pyo')), '*.pyo leaked into full');
+
+  // 9c. The one approved operator scratch path is intentionally outside every release digest.
   //     A directory with the same basename anywhere else remains covered.
   await write('apps/console/src/features/_grafo/consultas-grafo.sql', 'SELECT 2;\n');
-  for (const domain of ['runtime', 'console', 'harness', 'full']) {
+  for (const domain of ['runtime', 'console', 'harness', 'testcontainers', 'verification', 'full']) {
     assert.equal(digestOf(domain, sandbox), before[domain], `_grafo scratch changed the ${domain} digest`);
   }
   await write('apps/console/src/other/_grafo/query.sql', 'SELECT 3;\n');
@@ -196,11 +332,13 @@ try {
   await rm(path.join(sandbox, 'apps/console/src/other'), { recursive: true });
   assert.equal(digestOf('console', sandbox), before.console, 'removing the covered control path must restore the digest');
 
-  // 9b. THE FIX. A console-only change must not move the runtime digest, because no console file
+  // 9d. THE FIX. A console-only change must not move the runtime digest, because no console file
   //     reaches the runtime image. It must still move the console and full digests.
   await write('apps/console/src/theme.css', '.panel { color: blue; }\n');
   assert.equal(digestOf('runtime', sandbox), before.runtime, 'a console CSS edit must not invalidate runtime fault evidence');
   assert.equal(digestOf('harness', sandbox), before.harness, 'a console CSS edit must not invalidate harness binding');
+  assert.equal(digestOf('testcontainers', sandbox), before.testcontainers, 'a console CSS edit must not invalidate Testcontainers harness binding');
+  assert.equal(digestOf('verification', sandbox), before.verification, 'a console CSS edit must not invalidate verification apparatus');
   assert.notEqual(digestOf('console', sandbox), before.console, 'a console edit must still invalidate console evidence');
   assert.notEqual(digestOf('full', sandbox), before.full, 'a console edit must still invalidate full-domain verification evidence');
   const afterConsole = {
@@ -209,22 +347,22 @@ try {
     harness: digestOf('harness', sandbox),
   };
 
-  // 9c. The gate must not be loosened for anything that DOES reach the runtime image.
+  // 9d. The gate must not be loosened for anything that DOES reach the runtime image.
   await write('services/gateway/src/app.ts', 'export const app = 2;\n');
   assert.notEqual(digestOf('runtime', sandbox), afterConsole.runtime, 'a service change must invalidate runtime evidence');
   const afterService = digestOf('runtime', sandbox);
 
-  // 9d. A console dependency change is still visible to the runtime digest through the lockfile,
+  // 9e. A console dependency change is still visible to the runtime digest through the lockfile,
   //     which is why dropping apps/console from the runtime domain is safe.
   await write('pnpm-lock.yaml', 'lockfileVersion: 9\npackages:\n  react: 19\n');
   assert.notEqual(digestOf('runtime', sandbox), afterService, 'a lockfile change must invalidate runtime evidence');
   const afterLock = digestOf('runtime', sandbox);
 
-  // 9e. deploy/ still counts as runtime.
+  // 9f. deploy/ still counts as runtime.
   await write('deploy/runtime-entrypoint.sh', '#!/bin/sh\nexec env "$@"\n');
   assert.notEqual(digestOf('runtime', sandbox), afterLock, 'a deploy change must invalidate runtime evidence');
 
-  // 9f. Build-context policy affects both final images and must move both domains.
+  // 9g. Build-context policy affects both final images and must move both domains.
   const beforeDockerignore = {
     runtime: digestOf('runtime', sandbox),
     console: digestOf('console', sandbox),
@@ -235,7 +373,7 @@ try {
   assert.notEqual(digestOf('console', sandbox), beforeDockerignore.console,
     'a .dockerignore change must invalidate console build evidence');
 
-  // 9g. Weakening the harness must move the harness digest without touching the image digests.
+  // 9h. Weakening the harness must move the harness digest without touching the image digests.
   const beforeHarness = {
     runtime: digestOf('runtime', sandbox),
     console: digestOf('console', sandbox),
@@ -246,17 +384,128 @@ try {
   assert.equal(digestOf('runtime', sandbox), beforeHarness.runtime, 'a harness change must not invalidate the image build evidence');
   assert.equal(digestOf('console', sandbox), beforeHarness.console, 'a harness change must not invalidate console evidence');
 
-  // 9h. Renames are observable: paths are hashed alongside bytes.
+  // 9i. Testcontainers and global verification apparatus are independently bound.
+  const beforeTestcontainers = {
+    runtime: digestOf('runtime', sandbox),
+    harness: digestOf('harness', sandbox),
+    testcontainers: digestOf('testcontainers', sandbox),
+    verification: digestOf('verification', sandbox),
+    full: digestOf('full', sandbox),
+  };
+  await write('tests/e2e/real-qa.test.ts', 'export const qa = 0; // weakened\n');
+  assert.equal(digestOf('runtime', sandbox), beforeTestcontainers.runtime,
+    'an E2E harness edit must not relabel runtime image evidence');
+  assert.equal(digestOf('harness', sandbox), beforeTestcontainers.harness,
+    'a Testcontainers edit must not invalidate the authentic-image harness');
+  assert.notEqual(digestOf('testcontainers', sandbox), beforeTestcontainers.testcontainers,
+    'an E2E harness edit must invalidate Testcontainers evidence');
+  assert.notEqual(digestOf('verification', sandbox), beforeTestcontainers.verification,
+    'the global verification domain must cover root tests');
+  assert.notEqual(digestOf('full', sandbox), beforeTestcontainers.full,
+    'full must cover the Testcontainers harness');
+
+  const beforeOpsTest = {
+    runtime: digestOf('runtime', sandbox),
+    testcontainers: digestOf('testcontainers', sandbox),
+    verification: digestOf('verification', sandbox),
+    full: digestOf('full', sandbox),
+  };
+  await write('ops/tests/gate.test.mjs', 'export const gate = 0;\n');
+  assert.equal(digestOf('runtime', sandbox), beforeOpsTest.runtime, 'an ops gate test must not move runtime image evidence');
+  assert.equal(digestOf('testcontainers', sandbox), beforeOpsTest.testcontainers,
+    'an unrelated ops gate test must not move Testcontainers evidence');
+  assert.notEqual(digestOf('verification', sandbox), beforeOpsTest.verification,
+    'ops gate tests must move verification evidence');
+  assert.notEqual(digestOf('full', sandbox), beforeOpsTest.full, 'full must cover ops gate tests');
+
+  // 9j. A three-round report is causally bound to every operational source family its tests
+  //     execute. Mutating each formerly uncovered critical script or schema must invalidate both
+  //     verification and full, while image/authentic/Testcontainers evidence stays untouched.
+  const operationallyIndependent = {
+    runtime: digestOf('runtime', sandbox),
+    console: digestOf('console', sandbox),
+    harness: digestOf('harness', sandbox),
+    testcontainers: digestOf('testcontainers', sandbox),
+  };
+  let priorVerification = digestOf('verification', sandbox);
+  let priorFull = digestOf('full', sandbox);
+  for (const [relative, contents] of [
+    ['ops/scripts/deploy-release.sh', '#!/bin/sh\nexit 7 # weakened deploy gate\n'],
+    ['ops/scripts/rollback.sh', '#!/bin/sh\nexit 7 # weakened rollback gate\n'],
+    ['ops/scripts/pin-production-release.py', 'print("pin without lock")\n'],
+    ['ops/scripts/release-writer-state.py', 'print("accept any writer state")\n'],
+    ['ops/schemas/build-evidence.schema.json', '{"additionalProperties":true}\n'],
+    ['ops/scripts/future-release-gate.py', 'print("new gate")\n'],
+    ['ops/schemas/future-release-evidence.schema.json', '{"type":"object"}\n'],
+  ]) {
+    await write(relative, contents);
+    const nextVerification = digestOf('verification', sandbox);
+    const nextFull = digestOf('full', sandbox);
+    assert.notEqual(nextVerification, priorVerification, `${relative} must invalidate verification evidence`);
+    assert.notEqual(nextFull, priorFull, `${relative} must invalidate full three-round evidence`);
+    assert.equal(digestOf('runtime', sandbox), operationallyIndependent.runtime, `${relative} moved runtime evidence`);
+    assert.equal(digestOf('console', sandbox), operationallyIndependent.console, `${relative} moved console evidence`);
+    assert.equal(digestOf('harness', sandbox), operationallyIndependent.harness, `${relative} moved harness evidence`);
+    assert.equal(
+      digestOf('testcontainers', sandbox),
+      operationallyIndependent.testcontainers,
+      `${relative} moved Testcontainers evidence`,
+    );
+    priorVerification = nextVerification;
+    priorFull = nextFull;
+  }
+
+  const beforeSymlink = {
+    runtime: digestOf('runtime', sandbox),
+    verification: digestOf('verification', sandbox),
+    full: digestOf('full', sandbox),
+  };
+  const futureGate = path.join(sandbox, 'ops/scripts/future-release-gate.sh');
+  for (const target of [
+    '../../scripts/gate-a.sh',
+    '../../scripts/gate-b.sh',
+    '../../unselected/gate.sh',
+    '../../unselected/missing.sh',
+    '/var/tmp/cauce-external-gate.sh',
+  ]) {
+    await symlink(target, futureGate);
+    for (const args of [
+      ['--domain', 'verification', '--root', sandbox],
+      ['--domain', 'full', '--list', '--root', sandbox],
+    ]) {
+      assert.throws(() => run(args, { stdio: ['ignore', 'pipe', 'pipe'] }), (error) => {
+        const stderr = String(error?.stderr ?? '');
+        assert.match(stderr, /source digest rejects symlinks in covered inputs/u);
+        assert(!stderr.includes(target), 'sanitized symlink rejection exposed its target');
+        return true;
+      }, `source digest accepted symlink target ${target}`);
+    }
+    assert.equal(digestOf('runtime', sandbox), beforeSymlink.runtime, 'an ops symlink must not relabel runtime');
+    await rm(futureGate);
+    assert.equal(digestOf('verification', sandbox), beforeSymlink.verification, 'removing symlink must restore verification');
+    assert.equal(digestOf('full', sandbox), beforeSymlink.full, 'removing symlink must restore full');
+  }
+
+  // 9k. Renames are observable: paths are hashed alongside bytes.
   const renameBase = digestOf('runtime', sandbox);
   await write('services/gateway/src/app2.ts', 'export const app = 2;\n');
   await rm(path.join(sandbox, 'services/gateway/src/app.ts'));
   assert.notEqual(digestOf('runtime', sandbox), renameBase, 'a rename must move the digest');
 
-  // 9i. Secrets and caches stay out even when they sit inside a covered family.
+  // 9l. Secrets and caches stay out even when they sit inside a covered family.
   const listing = pathsOf('full', sandbox);
   assert(!listing.has('node_modules/evil/index.js'), 'node_modules must never be hashed');
   assert(!listing.has('.env.production'), 'private env files must never be hashed');
   assert(!listing.has('apps/console/src/features/_grafo/consultas-grafo.sql'), 'operator scratch leaked into full digest');
+  assert(![...listing].some((entry) => entry.startsWith('tests/fleet-release/artifacts/')),
+    'fleet generator outputs must never be hashed');
+  assert(![...listing].some((entry) => entry.startsWith('tests/fleet-release/.matrix-state/')),
+    'fleet ephemeral matrix state must never be hashed');
+  assert(listing.has('tests/unit/artifacts/fixture.pem'), 'a source fixture named artifacts must remain hashed');
+  assert(![...listing].some((entry) => entry.includes('/__pycache__/')), '__pycache__ must never be hashed');
+  assert(![...listing].some((entry) => entry.includes('/.pytest_cache/')), '.pytest_cache must never be hashed');
+  assert(![...listing].some((entry) => entry.endsWith('.pyc')), '*.pyc must never be hashed');
+  assert(![...listing].some((entry) => entry.endsWith('.pyo')), '*.pyo must never be hashed');
 } finally {
   await rm(sandbox, { recursive: true, force: true });
 }
@@ -271,6 +520,7 @@ const wiring = [
   ['scripts/validate-fleet-release-evidence.py', ['"--domain", "runtime"']],
   ['scripts/release-candidate.py', ['"--domain", domain']],
   ['scripts/verification-rounds.mjs', ["'--domain', SOURCE_DIGEST_DOMAIN"]],
+  ['scripts/validate-testcontainers-evidence.py', ['source_digest("runtime")', 'source_digest("testcontainers")']],
 ];
 for (const [relative, needles] of wiring) {
   const contents = await readFile(path.join(ops, relative), 'utf8');
@@ -305,6 +555,10 @@ for (const [relative, domain] of declared) {
 }
 const testEvidence = JSON.parse(await readFile(path.join(ops, 'schemas/test-evidence.schema.json'), 'utf8'));
 assert(testEvidence.required.includes('harnessDigest'), 'authentic evidence must be bound to the harness that produced it');
+const testcontainersEvidence = JSON.parse(await readFile(path.join(ops, 'schemas/testcontainers-evidence.schema.json'), 'utf8'));
+assert(testcontainersEvidence.required.includes('sourceDigest'), 'Testcontainers evidence must bind runtime sources');
+assert(testcontainersEvidence.required.includes('harnessDigest'), 'Testcontainers evidence must bind its harness');
+assert(testcontainersEvidence.required.includes('databaseImage'), 'Testcontainers evidence must bind its actual database image');
 const candidate = JSON.parse(await readFile(path.join(ops, 'schemas/release-candidate.schema.json'), 'utf8'));
 assert(
   candidate.properties.evidence.items.required.includes('sourceDigestDomain'),

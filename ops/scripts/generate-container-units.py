@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import pathlib
 import tempfile
@@ -23,6 +24,21 @@ parser.add_argument("--bundle-root", help="host immutable bundle root")
 parser.add_argument("--lock-root", help="host supervisor lock root")
 args = parser.parse_args()
 aliases = load_container_aliases(root)
+hermes_runtime = json.loads((root / "hermes-runtime.json").read_text(encoding="utf-8"))
+hermes_commit = hermes_runtime["commit"]
+hermes_runtime_root = hermes_runtime.get("runtimeRoot")
+hermes_runtime_id = hermes_runtime.get("runtimeId")
+if not isinstance(hermes_commit, str) or len(hermes_commit) != 40 or any(c not in "0123456789abcdef" for c in hermes_commit):
+    parser.error("ops/hermes-runtime.json must pin an exact lowercase Git commit")
+if hermes_runtime_root != "/opt/cauce-v3-hermes-runtime":
+    parser.error("ops/hermes-runtime.json must use the approved immutable runtime root")
+if (
+    not isinstance(hermes_runtime_id, str)
+    or not hermes_runtime_id
+    or len(hermes_runtime_id) > 128
+    or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-" for c in hermes_runtime_id)
+):
+    parser.error("ops/hermes-runtime.json must declare a safe immutable runtime ID")
 physical_alias_counts: dict[str, int] = {}
 for entry in aliases.values():
     container = entry["container"]
@@ -189,16 +205,22 @@ def example(alias: str, entry: dict[str, str]) -> str:
         "# client.crt/client.key/ca.crt are required; bearer token is optional for mTLS-only aliases.",
     ]
     if entry["harness"] == "hermes":
-        hermes_home = (
-            f"{entry['home']}/.hermes/profiles/{alias}"
-            if physical_alias_counts[entry["container"]] > 1
-            else f"{entry['home']}/.hermes"
-        )
+        # `.local` is the mapped persistent tree in the declared fleet. `.hermes` is not mounted
+        # in the shared Humanizar container, so putting either the profile or venv there would make
+        # Iza disappear on container recreation.
+        hermes_home = f"{entry['home']}/.local/share/cauce-v3/hermes/{alias}"
+        hermes_python = f"{hermes_runtime_root}/{alias}/{hermes_runtime_id}/venv/bin/python"
         lines.extend((
-            "# Hermes in a multi-alias physical container must use its own profile home."
-            if physical_alias_counts[entry["container"]] > 1 else "# Hermes profile home.",
+            "# The profile is persistent/user-owned; code and interpreter are a root-owned immutable /opt release.",
             f"HERMES_HOME={hermes_home}",
+            f"HERMES_SOURCE_COMMIT={hermes_commit}",
+            f"HERMES_PYTHON={hermes_python}",
             "HERMES_INFERENCE_MODEL=replace-with-approved-model",
+        ))
+    if entry["harness"] == "claude":
+        lines.extend((
+            "# Exact version certified on this alias container; aliases may use different images.",
+            "EXPECTED_CLI_VERSION=REPLACE_WITH_EXACT_SEMVER",
         ))
     if entry["harness"] == "openclaw":
         lines.extend((

@@ -9,19 +9,38 @@ services:
   alertmanager:
     profiles: [observability]
     image: ${CAUCE_ALERTMANAGER_IMAGE:?set an immutable CAUCE_ALERTMANAGER_IMAGE digest}
-    user: "65534:65534"
+    # Reuse the owner of the already-provisioned Telegram token without copying
+    # that token. provision-alertmanager-config.py emits these non-secret IDs and
+    # verifies config/state ownership before this container can start.
+    user: "${CAUCE_ALERTMANAGER_UID:?set the provisioned non-root uid}:${CAUCE_ALERTMANAGER_GID:?set the provisioned non-root gid}"
     restart: always
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yaml"
       - "--storage.path=/alertmanager"
     volumes:
-      - ../ops/observability/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml:ro
-      - alertmanager_data:/alertmanager
+      # The tracked config contains no identity data: Alertmanager reads both the
+      # token and destination through separate protected files.
+      - type: bind
+        source: ${CAUCE_ALERTMANAGER_CONFIG_PATH:?set the tracked identity-free Alertmanager config}
+        target: /etc/alertmanager/alertmanager.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CAUCE_ALERTMANAGER_DATA_DIR:?set a private persistent Alertmanager data directory}
+        target: /alertmanager
+        bind:
+          create_host_path: false
     secrets:
       - source: alertmanager_telegram_token
         target: alertmanager_telegram_token
-        uid: "65534"
-        gid: "65534"
+        uid: "${CAUCE_ALERTMANAGER_UID}"
+        gid: "${CAUCE_ALERTMANAGER_GID}"
+        mode: 0400
+      - source: alertmanager_telegram_chat_id
+        target: alertmanager_telegram_chat_id
+        uid: "${CAUCE_ALERTMANAGER_UID}"
+        gid: "${CAUCE_ALERTMANAGER_GID}"
         mode: 0400
     read_only: true
     tmpfs:
@@ -38,6 +57,5 @@ services:
 secrets:
   alertmanager_telegram_token:
     file: ${CAUCE_ALERTMANAGER_TELEGRAM_TOKEN_PATH:?set CAUCE_ALERTMANAGER_TELEGRAM_TOKEN_PATH}
-
-volumes:
-  alertmanager_data:
+  alertmanager_telegram_chat_id:
+    file: ${CAUCE_ALERTMANAGER_TELEGRAM_CHAT_ID_PATH:?set CAUCE_ALERTMANAGER_TELEGRAM_CHAT_ID_PATH}

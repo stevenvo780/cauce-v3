@@ -57,7 +57,9 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   const [aviso, setAviso] = useState<{ text: string; tone: TonoAviso }>();
   const [ficheroAbierto, setFicheroAbierto] = useState<string>();
 
-  const soloLectura = permissionState(access.data, 'config.write') === 'denied';
+  const estadoPermiso = permissionState(access.data, 'config.write');
+  // Ausencia, error o respuesta vieja del endpoint de acceso nunca habilitan una mutación.
+  const soloLectura = estadoPermiso !== 'allowed';
   const campos = camposVigentes(perfil.data, borrador);
   const sucio = hayCambios(perfil.data, campos);
   const fuera = camposQueNoEntran(campos, perfil.data?.limites);
@@ -73,8 +75,18 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   const estadoConocido = perfil.data?.runtime_state === 'absent'
     || perfil.data?.runtime_state === 'pending'
     || perfil.data?.runtime_state === 'applied'
-    || perfil.data?.runtime_state === 'disabled';
-  const pendiente = perfil.data?.runtime_state === 'pending';
+    || perfil.data?.runtime_state === 'disabled'
+    || perfil.data?.runtime_state === 'drifted'
+    || perfil.data?.runtime_state === 'pending_session_refresh'
+    || perfil.data?.runtime_state === 'runtime_unverified';
+  const runtimeActual = perfil.data?.runtime_state !== 'applied'
+    || (perfil.data.runtime_verification?.state === 'current'
+      && perfil.data.runtime_adoption?.evidence === 'adapter_delivery'
+      && perfil.data.runtime_adoption.revision === perfil.data.revision
+      && perfil.data.runtime_adoption.generation === perfil.data.runtime_verification.generation);
+  const pendiente = perfil.data?.runtime_state === 'pending'
+    || perfil.data?.runtime_state === 'drifted';
+  const runtimeNoVerificado = perfil.data?.runtime_state === 'runtime_unverified';
   const ficheros = perfil.data?.ficheros ?? [];
   const aplicable = ficheros.length > 0;
 
@@ -108,7 +120,14 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   }
 
   async function guardar() {
-    if (!presenciaConocida || !revisionCoherente || !estadoConocido) {
+    if (estadoPermiso !== 'allowed') {
+      setAviso({
+        tone: 'error',
+        text: 'No se acreditó config.write para esta sesión. No se envió ninguna mutación.',
+      });
+      return;
+    }
+    if (!presenciaConocida || !revisionCoherente || !estadoConocido || !runtimeActual) {
       setAviso({
         tone: 'error',
         text: 'Este gateway no informó de forma coherente la presencia, revisión y estado '
@@ -139,6 +158,16 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
       const result = await api.putAgentPerfil(
         tenantId, alias, perfilParaGuardar(campos), expectedRevision,
       );
+      if (result && typeof result === 'object' && 'state' in result
+        && result.state === 'pending_session_refresh') {
+        setAviso({
+          tone: 'parcial',
+          text: 'Desired y ficheros del runtime quedaron actualizados, pero la sesión compartida '
+            + 'todavía no acreditó recibir esa revisión. No se presenta como aplicada.',
+        });
+        await perfil.reload();
+        return;
+      }
       const nombres = ficheros.map((fichero) => fichero.nombre);
       if (!esPerfilAplicado(result, { tenantId, alias, nombres })) {
         setAviso({
@@ -161,7 +190,12 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
       }
       if (recarga.data.exists !== true || recarga.data.revision !== result.revision
         || recarga.data.applied_revision !== result.revision
-        || recarga.data.runtime_state !== 'applied') {
+        || recarga.data.runtime_state !== 'applied'
+        || recarga.data.runtime_verification?.state !== 'current'
+        || recarga.data.runtime_adoption?.evidence !== 'adapter_delivery'
+        || recarga.data.runtime_adoption.revision !== result.revision
+        || recarga.data.runtime_adoption.generation
+          !== recarga.data.runtime_verification.generation) {
         setAviso({
           tone: 'parcial',
           text: `El runtime acreditó la revisión ${result.revision}, pero la relectura ya muestra `
@@ -240,7 +274,8 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
               <textarea
                 value={valor}
                 rows={campo === 'purpose' ? 4 : 3}
-                disabled={soloLectura || busy || !agenteHabilitado}
+                disabled={soloLectura || busy || !agenteHabilitado
+                  || runtimeNoVerificado || !runtimeActual}
                 onChange={(event) => editarTexto(campo, event.target.value)}
               />
               <span className={`perfil-cuenta${tope !== undefined && medido > tope ? ' perfil-cuenta-fuera' : ''}`}>
@@ -261,7 +296,8 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
               <textarea
                 value={listaALineas(items)}
                 rows={4}
-                disabled={soloLectura || busy || !agenteHabilitado}
+                disabled={soloLectura || busy || !agenteHabilitado
+                  || runtimeNoVerificado || !runtimeActual}
                 onChange={(event) => editarLista(campo, event.target.value)}
               />
               <span className={`perfil-cuenta${items.length > (perfil.data?.limites?.items ?? Infinity) ? ' perfil-cuenta-fuera' : ''}`}>
@@ -288,14 +324,35 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
             Alias apagado o estado de habilitación no acreditado: edición y aplicación bloqueadas.
           </p>
         ) : null}
-        {perfil.data?.publicado && agenteHabilitado && pendiente ? (
+        {perfil.data?.publicado && agenteHabilitado && perfil.data.runtime_state === 'pending' ? (
           <p className="perfil-aviso perfil-aviso-parcial" role="status">
             Desired revisión {perfil.data.revision ?? 'sin dato'} pendiente; el runtime sólo tiene
             acreditada la revisión {perfil.data.applied_revision ?? 'ninguna'}. La vista previa no
             se presenta como aplicada. Podés reintentar aunque el texto no haya cambiado.
           </p>
         ) : null}
-        {perfil.data?.publicado && (!presenciaConocida || !revisionCoherente || !estadoConocido) ? (
+        {perfil.data?.publicado && agenteHabilitado && perfil.data.runtime_state === 'drifted' ? (
+          <p className="perfil-aviso perfil-aviso-error" role="alert">
+            La base conserva la revisión {perfil.data.revision ?? 'sin dato'} como aplicada, pero
+            los SHA medidos del runtime ya no coinciden. La vista no se presenta como aplicada;
+            podés restaurar el lote canónico sin cambiar el borrador.
+          </p>
+        ) : null}
+        {perfil.data?.publicado
+          && agenteHabilitado && perfil.data.runtime_state === 'pending_session_refresh' ? (
+          <p className="perfil-aviso perfil-aviso-parcial" role="status">
+            Los ficheros ya coinciden con desired, pero la TUI compartida todavía no acreditó
+            recibir el perfil en una entrega. Un ACK de escritura no se presenta como adopción.
+          </p>
+        ) : null}
+        {perfil.data?.publicado && agenteHabilitado && runtimeNoVerificado ? (
+          <p className="perfil-aviso perfil-aviso-error" role="alert">
+            El runtime no publicó una generación acreditable. Edición y aplicación quedan
+            bloqueadas: una igualdad de revisiones sin ruta, SHA y generación no prueba adopción.
+          </p>
+        ) : null}
+        {perfil.data?.publicado
+          && (!presenciaConocida || !revisionCoherente || !estadoConocido || !runtimeActual) ? (
           <p className="perfil-aviso perfil-aviso-error" role="alert">
             Este gateway no informa presencia, revisión y estado desired/applied de forma
             coherente. Guardado bloqueado para no perder concurrencia ni afirmar convergencia.
@@ -312,15 +369,26 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
           type="button"
           className="button primary"
           disabled={soloLectura || busy || !presenciaConocida || !revisionCoherente
-            || !estadoConocido || !agenteHabilitado || !aplicable
+            || !estadoConocido || !runtimeActual || runtimeNoVerificado
+            || !agenteHabilitado || !aplicable
             || (!sucio && !pendiente) || fuera.length > 0}
           onClick={() => { void guardar(); }}
         >
           <Save size={16} aria-hidden />
-          {busy ? 'Aplicando…' : pendiente && !sucio ? 'Reintentar aplicación' : 'Guardar y aplicar perfil'}
+          {busy
+            ? 'Aplicando…'
+            : pendiente && !sucio
+              ? 'Reintentar aplicación'
+              : perfil.data?.runtime_state === 'pending_session_refresh' && !sucio
+                ? 'Esperando adopción de sesión'
+                : 'Guardar y aplicar perfil'}
         </button>
         {soloLectura ? (
-          <p className="muted">Tu sesión no tiene permiso de escritura en configuración.</p>
+          <p className="muted">
+            {estadoPermiso === 'unknown'
+              ? 'No se pudo acreditar el permiso de escritura; la edición queda bloqueada.'
+              : 'Tu sesión no tiene permiso de escritura en configuración.'}
+          </p>
         ) : null}
       </section>
 
@@ -329,7 +397,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
           <h4>Vista previa del desired</h4>
           <p className="muted perfil-ayuda">
             {perfil.data?.harness
-              ? `Arnés declarado: ${perfil.data.harness}.`
+              ? `${perfil.data.base === 'runtime-medido' ? 'Arnés medido' : 'Arnés declarado'}: ${perfil.data.harness}.`
               : 'El registro no dice qué arnés corre este alias.'}
             {' '}
             {perfil.data?.base === 'fichero-vacio'

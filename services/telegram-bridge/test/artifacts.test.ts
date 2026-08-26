@@ -1,3 +1,4 @@
+import type { Tenant } from '@cauce/protocol';
 import { describe, expect, it } from 'vitest';
 import { planArtifacts } from '../src/artifacts.js';
 import { TelegramEgressWorker, telegramTextChunks } from '../src/egress.js';
@@ -108,7 +109,7 @@ const ALIAS: TelegramAliasConfig = {
   token_file: '/dev/null',
   v2_shutdown_marker_file: '/dev/null',
   allowed_user_ids: ['9'],
-  allowed_chat_ids: ['6979524541'],
+  allowed_chat_ids: ['123456789'],
   recipients: [{ tenant_id: 'Pablo', alias: 'seneca' }],
   poll_timeout_seconds: 1,
   poll_lease_ms: 1_000
@@ -125,7 +126,7 @@ function relay(artifacts: unknown): TelegramOriginRelay {
     origin: {
       adapter: 'telegram',
       channel: 'telegram',
-      conversation_id: '6979524541',
+      conversation_id: '123456789',
       external_message_id: '324',
       relay: [],
       metadata: { bridge_alias: 'seneca', bridge_tenant: 'Pablo' }
@@ -202,7 +203,29 @@ class MemoryRepository implements TelegramEgressRepository {
   }
 
   async getEffect(effectId: string): Promise<TelegramEffect | undefined> { return this.effects.get(effectId); }
-  async manualReplayEffect(effectId: string): Promise<TelegramEffect> { return this.effects.get(effectId)!; }
+  async manualReplayEffect(
+    chunkIndex: number,
+    _payloadHash: string,
+    _reason: string,
+    _actorTenant: Tenant,
+    _actorAlias: string,
+    _duplicateRiskAcknowledged: boolean,
+    _requestId: string,
+    _deadLetterId: string,
+    _incidentEvidenceSha256: string,
+    _expectedReplayCount: number
+  ): Promise<TelegramEffect> {
+    void _payloadHash;
+    void _reason;
+    void _actorTenant;
+    void _actorAlias;
+    void _duplicateRiskAcknowledged;
+    void _requestId;
+    void _deadLetterId;
+    void _incidentEvidenceSha256;
+    void _expectedReplayCount;
+    return [...this.effects.values()].find((effect) => effect.chunk_index === chunkIndex)!;
+  }
 }
 
 interface Enviado { readonly method: string; readonly value: string }

@@ -12,6 +12,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach } from 'vitest';
 import { server } from '../../mocks/server';
+import { mockTerminalGrant } from '../../mocks/terminal-ticket';
 import { renderWithApi } from '../../test/render';
 import type { TerminalTarget } from './api';
 import { closePtySession, ptySessionText, ptySessionType } from './pty-session';
@@ -56,14 +57,10 @@ function recordSessions(calls: SessionCall[], mode = 'harness') {
     http.post('*/v3/console/terminal/sessions', async ({ request }) => {
       const body = await request.json() as Record<string, unknown>;
       calls.push({ mode: body.mode, reason: body.reason, alias: body.alias });
-      return HttpResponse.json({
-        session_id: PTY_SESSION_ID,
-        ticket: 'one-shot-ticket',
-        websocket_path: WS_PATH,
-        expires_at: new Date(Date.now() + 900_000).toISOString(),
-        ttl_seconds: 30,
-        target: { tenant_id: 'Steven', alias: 'zeus', container: 'ws-zeus', runtime_user: 'dev', mode, shares_container_with: [] },
-      }, { status: 201 });
+      return HttpResponse.json(mockTerminalGrant({
+        sessionId: PTY_SESSION_ID, tenantId: 'Steven', alias: 'zeus', container: 'ws-zeus',
+        runtimeUser: 'dev', mode, requestId: String(body.request_id),
+      }), { status: 201 });
     }),
     http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
   );
@@ -100,10 +97,17 @@ it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y
 
   const socket = StubWebSocket.last();
   act(() => socket.acceptOpen());
-  expect(socket.frames()[0]).toMatchObject({ type: 'attach', session_id: PTY_SESSION_ID, ticket: 'one-shot-ticket' });
+  expect(socket.frames()[0]).toMatchObject({
+    type: 'attach', session_id: PTY_SESSION_ID, ticket: expect.stringMatching(/^v1\./u),
+  });
 
   act(() => {
-    socket.emitControl({ type: 'ready' });
+    socket.emitControl({
+      type: 'ready',
+      claim_token: '12345678-1234-4234-8234-123456789abc',
+      claim_epoch: '1',
+      claim_lease_ms: 45_000,
+    });
     socket.emitOutput(TUI_FRAME);
   });
   await waitFor(() => expect(ptySessionText(PTY_SESSION_ID)).toContain('zeus esta corriendo pnpm test'));

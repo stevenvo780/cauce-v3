@@ -1,10 +1,13 @@
 import { createPool } from '@cauce/store';
-import { ShadowRouterMetrics, startShadowIngressServer } from './http.js';
+import {
+  ShadowRouterMetrics, shutdownShadowIngressServer, startShadowIngressServer,
+} from './http.js';
 import { PostgresShadowRepository } from './repository.js';
 import { ShadowRouter } from './router.js';
 import { MapShadowTargetRegistry, UnixSocketShadowTarget } from './target.js';
 import type { ShadowDirection, ShadowMode } from './types.js';
 import { ShadowRouterWorker } from './worker.js';
+import { ShadowRouterProgress } from './progress.js';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -37,14 +40,56 @@ function tenants(): Set<string> {
   return result;
 }
 
+function healthStaleMs(): number {
+  const value = Number(process.env.SHADOW_ROUTER_HEALTH_STALE_MS ?? 30_000);
+  if (!Number.isSafeInteger(value) || value < 20_000) {
+    throw new Error('SHADOW_ROUTER_HEALTH_STALE_MS must be an integer of at least 20000');
+  }
+  return value;
+}
+
+function shutdownMs(): number {
+  const value = Number(process.env.SHADOW_ROUTER_SHUTDOWN_MS ?? 5_000);
+  if (!Number.isSafeInteger(value) || value < 2_000 || value > 60_000) {
+    throw new Error('SHADOW_ROUTER_SHUTDOWN_MS must be an integer between 2000 and 60000');
+  }
+  return value;
+}
+
 const selected = mode();
 const allowedTenants = tenants();
-const pool = createPool(required('DATABASE_URL'));
-const repository = new PostgresShadowRepository(pool);
+const healthStalenessMs = healthStaleMs();
+const shutdownBudgetMs = shutdownMs();
+const databaseUrl = required('DATABASE_URL');
+const ingressSocket = required('SHADOW_ROUTER_SOCKET');
+const v2Socket = required('SHADOW_ROUTER_V2_SOCKET');
+const v3Socket = required('SHADOW_ROUTER_V3_SOCKET');
 const metrics = new ShadowRouterMetrics();
+const progress = new ShadowRouterProgress(healthStalenessMs);
+const controller = new AbortController();
+let stopping = false;
+let shutdownWatchdog: NodeJS.Timeout | undefined;
+const stop = (): void => {
+  if (stopping) return;
+  stopping = true;
+  progress.stopping();
+  controller.abort(new Error('shadow router stopping'));
+  shutdownWatchdog = setTimeout(() => {
+    console.error(JSON.stringify({ event: 'shadow_router_shutdown_timeout' }));
+    process.exit(1);
+  }, shutdownBudgetMs);
+  shutdownWatchdog.unref();
+};
+// Install handlers before allocating the pool/listener. A SIGTERM during startup must not leave a
+// stale Unix socket or skip the same bounded pool teardown used in steady state.
+process.once('SIGINT', stop);
+process.once('SIGTERM', stop);
+
+const pool = createPool(databaseUrl);
+const repository = new PostgresShadowRepository(pool);
 const targets = new MapShadowTargetRegistry([
-  ['v2-to-v3', new UnixSocketShadowTarget(required('SHADOW_ROUTER_V3_SOCKET'))],
-  ['v3-to-v2', new UnixSocketShadowTarget(required('SHADOW_ROUTER_V2_SOCKET'))]
+  ['v2-to-v3', new UnixSocketShadowTarget(v3Socket)],
+  ['v3-to-v2', new UnixSocketShadowTarget(v2Socket)]
 ]);
 const router = new ShadowRouter({
   ...selected,
@@ -56,25 +101,30 @@ const router = new ShadowRouter({
 const worker = new ShadowRouterWorker({
   repository,
   router,
-  onMetric: (metric) => metrics.increment(metric)
+  progress,
+  onLoopError: (reason) => console.error(JSON.stringify({ event: 'shadow_router_loop_error', reason })),
 });
-const server = await startShadowIngressServer({
-  socketPath: required('SHADOW_ROUTER_SOCKET'),
-  mode: selected.mode,
-  allowedTenants,
-  repository,
-  pool,
-  metrics
-});
-const controller = new AbortController();
-const stop = (): void => controller.abort();
-process.once('SIGINT', stop);
-process.once('SIGTERM', stop);
+let server: Awaited<ReturnType<typeof startShadowIngressServer>> | undefined;
 
 try {
+  server = await startShadowIngressServer({
+    socketPath: ingressSocket,
+    mode: selected.mode,
+    allowedTenants,
+    repository,
+    metrics,
+    progress,
+    signal: controller.signal,
+  });
   await worker.run(controller.signal);
 } finally {
-  controller.abort();
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  await pool.end();
+  stop();
+  try {
+    if (server) await shutdownShadowIngressServer(server);
+    await pool.end();
+  } finally {
+    if (shutdownWatchdog) clearTimeout(shutdownWatchdog);
+    process.off('SIGINT', stop);
+    process.off('SIGTERM', stop);
+  }
 }

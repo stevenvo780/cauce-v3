@@ -40,7 +40,7 @@ capa. OpenCode queda empaquetado para compatibilidad, pero ningún alias declara
 Tenant, room, origen Telegram, estado y nombres de variables `*_PATH`/`*_URL` son validados de
 forma exacta. PostgreSQL sigue siendo el registro de intención live y debe superar el gate de
 paridad antes de desplegar; nunca se interpreta un alta en DB como prueba de que el runtime existe.
-Hermes declara además solo el nombre operativo `HERMES_INFERENCE_MODEL`; su valor se resuelve en el env privado de `argos` y no se hardcodea en manifests o unidades.
+Hermes declara además sólo el nombre operativo `HERMES_INFERENCE_MODEL`; su valor se resuelve en el entorno privado autorizado y no se hardcodea en manifests o unidades.
 
 ```sh
 make manifests
@@ -115,8 +115,17 @@ evidence actual, hashes, las 15 unidades systemd exactas o evidencia
 `compose-authentic` del mismo image/source digest. Exige cero skips críticos y
 los mecanismos `gateway-process-kill` y `postgres-container-kill`. El fallback
 `runtime-authentic` sirve para desarrollo sin Compose, pero nunca para release.
-`release-build` usa `--pull` por defecto; `CAUCE_RELEASE_PULL=0` solo permite una
-construcción diagnóstica con bases cacheadas y no reemplaza el build del release host.
+`release-build` exige tres referencias canónicas child-manifest, todas `linux/amd64`:
+`CAUCE_NODE_BASE_IMAGE=docker.io/library/node@sha256:56a687b4d23e7a6cb49114924f5e257fcfbd33ad1f28f5c67aea9365996f2819`,
+`CAUCE_PYTHON_BASE_IMAGE=docker.io/library/python@sha256:53739acebd52a300f19f52d93f2a6165f63300689bdf6f8af2bff0d63780e5e6`
+y `CAUCE_NGINX_BASE_IMAGE=docker.io/nginxinc/nginx-unprivileged@sha256:28d91bdce70ad09025ea901458fdd149259d8e05982ade79d4ef2c0d9470eb48`.
+El productor rechaza índices multiarch, roles intercambiados, IDs repetidos y plataformas distintas;
+liga RepoDigest, manifest digest, media type, plataforma e image ID en `build.json` schema v6 y en
+los labels finales. Python se copia desde su base inmutable; el Dockerfile no resuelve paquetes con
+`apk add`. Con `CAUCE_RELEASE_PULL=1` recupera explícitamente las tres bases. Con
+`CAUCE_RELEASE_PULL=0` no ejecuta ningún pull de bases y sólo admite una construcción diagnóstica si
+los tres child manifests ya están cacheados; runtime/consola publicados sí se recuperan siempre por
+RepoDigest para acreditar el artefacto final.
 
 ## Seguridad y recuperación
 
@@ -129,20 +138,11 @@ construcción diagnóstica con bases cacheadas y no reemplaza el build del relea
 - Rollback de schema es restore hacia DB V3 nueva; no hay down migrations.
 - CSP permite a xterm solo atributos de estilo inline (`style-src-attr`), sin abrir scripts inline.
 
-## Estado live 2026-07-23 — Telegram bridge V3
+## Snapshot histórico de Telegram bridge V3
 
-> **Nota (2026-07-23):** Bridge productivo único `cauce-v3-prod-telegram-bridge-1`
-> sobre `agora-storage`, `healthy`, `RestartCount=0`, readiness aliases = **12**.
-> Selector acumulativo activo sobre los 12 manifest (selector siempre
-> acumulativo; selector vacío activa todos — para apagar, **STOP** explícito del
-> perfil, no recreate con `CAUCE_TELEGRAM_ALIASES=""`); preflight secret-free PASS
-> (sólo metadata, no formato/contenido del token); V2 Telegram = 0 sobre los 4
-> pendientes iniciales de watchdog (`socrates`=connector, `kratos`=native,
-> `salva`=native, `vulcano`=connector); `janus` post-remediación 2026-07-23 vía
-> CLI oficial (`channels.telegram.enabled=false`, hot reload, sin restart).
-> Métricas agregadas (sin labels por alias) — `poll_fenced` estable no prueba
-> ausencia de V2. Detalle operativo, advertencias e incidente/remediación:
-> `runbooks/telegram-cutover.md` §"Advertencias operativas" y §"Estado live
-> verificado 2026-07-23", y
-> `../../docs/handoffs/HANDOFF-CAUCE-V3-TELEGRAM-CUTOVER-2026-07-23.md` §8
-> (Incidente y remediación).
+> La evidencia privada conserva fecha, host, aliases, releases y métricas exactas. Se observó un
+> único bridge saludable, selector acumulativo y preflight secret-free de metadata. El corte
+> también observó V2 drenado para su alcance, pero no acredita el presente: `poll_fenced` estable
+> no prueba ausencia de V2. Antes de un release se repiten el gate V2 y los round-trips por alias.
+> Las advertencias operativas vigentes están en `runbooks/telegram-cutover.md`; el incidente y
+> su remediación detallada permanecen en evidencia privada no versionada.

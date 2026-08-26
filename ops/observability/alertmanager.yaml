@@ -1,4 +1,5 @@
-# Alertmanager for cauce-v3 prod.
+# Alertmanager for cauce-v3 prod. The pinned runtime supports chat_id_file, so
+# neither the Telegram token nor the operational destination belongs in Git.
 # Delivery path is deliberately INDEPENDENT of the cauce pipeline: Alertmanager talks
 # straight to api.telegram.org. Routing alerts through the cauce telegram-bridge would
 # be circular -- most of these alerts fire precisely when the dispatcher/outbox is stuck.
@@ -7,7 +8,7 @@ global:
   resolve_timeout: 5m
 
 route:
-  receiver: telegram-steven
+  receiver: telegram-operator
   # Alerts of the same name collapse into one message (e.g. one message for all lanes).
   group_by: ['alertname']
   group_wait: 30s
@@ -17,7 +18,7 @@ route:
   routes:
     - matchers:
         - severity="critical"
-      receiver: telegram-steven
+      receiver: telegram-operator
       group_wait: 10s
       group_interval: 5m
       # Criticals nag every hour until resolved or silenced.
@@ -26,21 +27,27 @@ route:
 inhibit_rules:
   # If the outbox exporter itself is down/blind, every outbox-derived alert is noise.
   - source_matchers:
-      - alertname=~"CauceOutboxMetricsDown|CauceOutboxDatabaseMetricsMissing"
+      - alertname=~"CauceOutboxMetricsDown|CauceOutboxDatabaseMetricsMissing|CauceOutboxDlqClassificationMetricsMissing"
     target_matchers:
-      - alertname=~"CauceWakeOutboxStalled|CauceWakeOutboxFailed|CauceOriginOutboxStalled|CauceOutboxDeadLettersOpen"
+      - alertname=~"CauceWakeOutboxStalled|CauceWakeOutboxFailed|CauceOriginOutboxStalled|CauceOriginOutboxDeadLetterNew|CauceWakeOutboxDeadLetterNew|CauceOutboxDlqUnclassified|CauceOriginOutboxDlqActionableStale|CauceWakeOutboxDlqActionableStale"
   # Same for the dispatcher exporter and everything derived from it.
   - source_matchers:
       - alertname=~"CauceDispatcherDown|CauceDispatcherDatabaseMetricsMissing"
     target_matchers:
       - alertname=~"CauceDeliveryDlqGrowing|CauceJobDlqGrowing|CauceDeliveryRetryBacklog|CauceInteractiveDeliveryStalled|CauceBatchDeliveryStalled|CauceJobLaneStalled|CauceUnknownJobKinds|CauceConsumerLeaseChurn|CauceOriginRelayFailed|CauceOriginRelayStalled|CauceOriginRelayDead"
+  # A missing gateway metrics listener already says the process is unobservable. Suppress the
+  # derivative stale signal until the target returns; fenced/error counters remain visible again
+  # as soon as Prometheus can scrape them.
+  - source_matchers:
+      - alertname="CauceGatewayMetricsDown"
+    target_matchers:
+      - alertname=~"CauceGatewayWakePumpStale|CauceGatewayWakePumpFenced|CauceGatewayWakePumpErrors"
 
 receivers:
-  - name: telegram-steven
+  - name: telegram-operator
     telegram_configs:
       - bot_token_file: /run/secrets/alertmanager_telegram_token
-        # Steven's private Telegram chat.
-        chat_id: 6979524541
+        chat_id_file: /run/secrets/alertmanager_telegram_chat_id
         # Plain text on purpose: alert summaries may contain < > &, and with parse_mode
         # HTML/Markdown Telegram would reject the message with HTTP 400.
         parse_mode: ''

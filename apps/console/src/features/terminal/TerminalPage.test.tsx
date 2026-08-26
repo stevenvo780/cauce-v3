@@ -1,8 +1,9 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach } from 'vitest';
 import { server } from '../../mocks/server';
+import { mockTerminalGrant } from '../../mocks/terminal-ticket';
 import { renderWithApi } from '../../test/render';
 import type { TerminalTarget } from './api';
 import { closePtySession, ptySessionText } from './pty-session';
@@ -40,17 +41,29 @@ function enableCapability() {
 
 function serveGrant(overrides: Record<string, unknown> = {}) {
   server.use(
-    http.post('*/v3/console/terminal/sessions', () => HttpResponse.json({
-      session_id: PTY_SESSION_ID,
-      ticket: 'one-shot-ticket',
-      websocket_path: WS_PATH,
-      expires_at: new Date(Date.now() + 900_000).toISOString(),
-      ttl_seconds: 30,
-      target: { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw', mode: 'shell', shares_container_with: [] },
-      ...overrides,
-    }, { status: 201 })),
+    http.post('*/v3/console/terminal/sessions', async ({ request }) => {
+      const body = await request.json() as Record<string, unknown>;
+      return HttpResponse.json({
+        ...mockTerminalGrant({
+          sessionId: PTY_SESSION_ID,
+          tenantId: String(body.tenant_id),
+          alias: String(body.alias),
+          container: 'claw',
+          runtimeUser: 'claw',
+          mode: String(body.mode),
+          requestId: String(body.request_id),
+        }),
+        ...overrides,
+      }, { status: 201 });
+    }),
     http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
   );
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((settle) => { resolve = settle; });
+  return { promise, resolve };
 }
 
 let restoreSocket: () => void;
@@ -118,6 +131,23 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
   // según con quién comparta la corrida no está midiendo la aplicación.
 }, 20_000);
 
+it('keeps the terminal draft and reports uncertainty when publish returns a malformed 202', async () => {
+  const user = userEvent.setup();
+  server.use(http.post('*/v3/console/messages', () => HttpResponse.json({
+    message_id: '10000000-0000-4000-8000-000000000001',
+  }, { status: 202 })));
+  renderWithApi(<TerminalPage />);
+
+  await user.click(await screen.findByRole('button', { name: /abrir sesión con kant/i }));
+  const input = await screen.findByRole('textbox', { name: /entrada para kant/i });
+  await user.type(input, 'conservar hasta conciliar');
+  await user.click(screen.getByRole('button', { name: /^enviar$/i }));
+
+  expect(await screen.findByText(/no devolvió un recibo durable exacto/i)).toBeInTheDocument();
+  expect(input).toHaveValue('conservar hasta conciliar');
+  expect(screen.queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
+}, 20_000);
+
 it('keeps the durable feed operational on a real PTY 501 and disables only PTY', async () => {
   const user = userEvent.setup();
   server.use(
@@ -148,7 +178,18 @@ it('publishes cross-tenant from the operator source room and blocks destinations
   let published: Record<string, unknown> | undefined;
   server.use(http.post('http://localhost/v3/console/messages', async ({ request }) => {
     published = await request.json() as Record<string, unknown>;
-    return HttpResponse.json({ message_id: 'cross-tenant-message' }, { status: 202 });
+    return HttpResponse.json({
+      message_id: '10000000-0000-4000-8000-000000000002',
+      delivery_ids: ['20000000-0000-4000-8000-000000000002'],
+      duplicate: false,
+      request_id: '30000000-0000-4000-8000-000000000002',
+      trace_id: 'trace-cross-tenant-test',
+      idempotency_key: published.idempotency_key,
+      tenant_id: 'Steven',
+      actor_alias: 'kant',
+      request_hash: 'a'.repeat(64),
+      causal_hash: 'b'.repeat(64),
+    }, { status: 202 });
   }));
   renderWithApi(<TerminalPage />);
 
@@ -316,12 +357,17 @@ it('sends attach as the first frame and renders binary PTY output', async () => 
 
   expect(socket.frames()).toHaveLength(0);
   act(() => socket.acceptOpen());
-  expect(socket.frames()[0]).toMatchObject({ type: 'attach', session_id: PTY_SESSION_ID, ticket: 'one-shot-ticket' });
+  expect(socket.frames()[0]).toMatchObject({
+    type: 'attach', session_id: PTY_SESSION_ID, ticket: expect.stringMatching(/^v1\./u),
+  });
   // Until the relay authorises, what is ticking is the single-use ticket window.
   expect(screen.getByLabelText('Sesión PTY activa')).toHaveTextContent(/Ticket vence en \d+:\d\d/);
 
   act(() => {
-    socket.emitControl({ type: 'ready' });
+    socket.emitControl({
+      type: 'ready', claim_token: '12345678-1234-4234-8234-123456789abc',
+      claim_epoch: '1', claim_lease_ms: 45_000,
+    });
     socket.emitOutput('claw@claw:~$ id -un\r\nclaw\r\n');
   });
   await waitFor(() => expect(ptySessionText(PTY_SESSION_ID)).toContain('claw@claw:~$ id -un'));
@@ -345,6 +391,50 @@ it('sends attach as the first frame and renders binary PTY output', async () => 
   expect(within(bar).getByText('POLLING EN PAUSA')).toBeInTheDocument();
 });
 
+it('fences two confirmations in the same render to one PTY reservation POST', async () => {
+  const user = userEvent.setup();
+  const gate = deferred();
+  let posts = 0;
+  enableCapability();
+  serveTargets([target({ tenant_id: 'Steven', alias: 'jarvis' })]);
+  server.use(
+    http.post('*/v3/console/terminal/sessions', async ({ request }) => {
+      posts += 1;
+      const body = await request.json() as Record<string, unknown>;
+      await gate.promise;
+      return HttpResponse.json(mockTerminalGrant({
+        sessionId: PTY_SESSION_ID,
+        tenantId: String(body.tenant_id),
+        alias: String(body.alias),
+        container: 'claw',
+        runtimeUser: 'claw',
+        mode: String(body.mode),
+        requestId: String(body.request_id),
+      }), { status: 201 });
+    }),
+    http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
+  );
+  renderWithApi(<TerminalPage />);
+
+  await user.click(await screen.findByRole('button', { name: /abrir sesión con jarvis/i }));
+  await user.click(await screen.findByRole('button', { name: /^PTY$/i }));
+  const dialog = await screen.findByRole('dialog');
+  await user.type(within(dialog).getByRole('textbox'), 'verificar carrera de reserva');
+  const confirm = within(dialog).getByRole('button', { name: /abrir sesión pty/i });
+
+  // Both handlers run before React can render `pending=true`; the synchronous attempt ref is the
+  // authority that prevents the second POST.
+  act(() => {
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+  });
+  await waitFor(() => expect(posts).toBe(1));
+
+  gate.resolve(undefined);
+  await waitFor(() => expect(StubWebSocket.instances).toHaveLength(1));
+  expect(posts).toBe(1);
+}, 20_000);
+
 it.each([
   [4401, /Ticket inválido o vencido/i],
   [4403, /Permiso revocado/i],
@@ -363,7 +453,13 @@ it.each([
   renderWithApi(<TerminalPage />);
 
   const socket = await openPtyChannel(user, 'jarvis', 'diagnóstico de la sesión');
-  act(() => { socket.acceptOpen(); socket.emitControl({ type: 'ready' }); });
+  act(() => {
+    socket.acceptOpen();
+    socket.emitControl({
+      type: 'ready', claim_token: '12345678-1234-4234-8234-123456789abc',
+      claim_epoch: '1', claim_lease_ms: 45_000,
+    });
+  });
   act(() => socket.emitClose(code, 'server close'));
 
   expect(await screen.findByText(expected)).toBeInTheDocument();
@@ -387,7 +483,13 @@ it('releases the grant server-side when the operator closes the session', async 
   renderWithApi(<TerminalPage />);
 
   const socket = await openPtyChannel(user, 'jarvis', 'cerrar despues de revisar');
-  act(() => { socket.acceptOpen(); socket.emitControl({ type: 'ready' }); });
+  act(() => {
+    socket.acceptOpen();
+    socket.emitControl({
+      type: 'ready', claim_token: '12345678-1234-4234-8234-123456789abc',
+      claim_epoch: '1', claim_lease_ms: 45_000,
+    });
+  });
 
   await user.click(within(screen.getByLabelText('Sesión PTY activa')).getByRole('button', { name: /cerrar la terminal/i }));
 
@@ -452,6 +554,24 @@ it('con un 501 sigue diciendo, con el título de siempre, que el canal no está 
   expect(await screen.findByText('Canal PTY no disponible en este stack')).toBeInTheDocument();
   expect(screen.queryByText('La terminal de agentes requiere permiso de control')).not.toBeInTheDocument();
 }, 20_000);
+
+it.each([502, 503, 504])(
+  'con upstream HTTP %s muestra medición inconclusa y nunca afirma que el relay no esté desplegado',
+  async (status) => {
+    server.use(http.get(
+      'http://localhost/v3/console/terminal/capability',
+      () => new HttpResponse(null, { status }),
+    ));
+    renderWithApi(<TerminalPage />);
+
+    expect(await screen.findByText('No se pudo comprobar el canal PTY')).toBeInTheDocument();
+    expect(screen.getByText(/no se pudo alcanzar el relay de terminales/i)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`HTTP ${status}`))).toBeInTheDocument();
+    expect(screen.queryByText(/no está desplegado en este stack/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Canal PTY no disponible en este stack')).not.toBeInTheDocument();
+  },
+  20_000,
+);
 
 /**
  * 🔴 **Jerga cruda en la cara del operador, y un contador que sugería una avería.**

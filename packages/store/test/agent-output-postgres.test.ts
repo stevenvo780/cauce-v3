@@ -183,10 +183,17 @@ async function deadTelegramAckEffect(ackId: string): Promise<{
   bridge: PostgresTelegramBridgeRepository;
   effectId: string;
   payloadHash: string;
+  deadLetterId: string;
+  incidentEvidenceSha256: string;
 }> {
   const bridge = new PostgresTelegramBridgeRepository(pool);
   const effectId = `${ackId}:0`;
   const payloadHash = 'a'.repeat(64);
+  await pool.query(
+    `UPDATE adapter_outbox SET status='processing',claimed_at=now(),
+       claim_expires_at=now()+interval '1 minute' WHERE id=$1`,
+    [ackId]
+  );
   await bridge.prepareEffect({
     effect_id: effectId,
     outbox_id: ackId,
@@ -203,7 +210,24 @@ async function deadTelegramAckEffect(ackId: string): Promise<{
      WHERE id=$1`,
     [ackId]
   );
-  return { bridge, effectId, payloadHash };
+  await pool.query(
+    `INSERT INTO outbox_dead_letters(
+       outbox_id,tenant_id,adapter,kind,reason,payload,attempts
+     )
+     SELECT id,tenant_id,adapter,kind,'operator review required',payload,attempts
+     FROM adapter_outbox WHERE id=$1
+     ON CONFLICT(outbox_id) DO NOTHING`,
+    [ackId]
+  );
+  const incidentEvidenceSha256 = 'c'.repeat(64);
+  const incident = await pool.query<{ id: string }>(
+    `UPDATE outbox_dead_letters SET disposition='ambiguous',disposition_at=now(),
+       evidence_sha256=$2 WHERE outbox_id=$1 RETURNING id`,
+    [ackId, incidentEvidenceSha256],
+  );
+  return {
+    bridge, effectId, payloadHash, deadLetterId: incident.rows[0]!.id, incidentEvidenceSha256,
+  };
 }
 
 beforeAll(async () => {
@@ -253,7 +277,10 @@ describe('transactional StructuredOutput.messages materialization', () => {
     expect(replay).toMatchObject({
       message_id: first.message_id,
       delivery_ids: first.delivery_ids,
-      duplicate: true
+      duplicate: true,
+      request_id: first.request_id,
+      trace_id: first.trace_id,
+      idempotency_key: input.idempotency_key,
     });
     expect((await pool.query<{
       idempotency_key: string;
@@ -407,9 +434,10 @@ describe('transactional StructuredOutput.messages materialization', () => {
       const replay = await deadTelegramAckEffect(seeded.ackId);
 
       await expect(replay.bridge.manualReplayEffect(
-        replay.effectId, replay.payloadHash, `review ${finalStatus}`
+        0, replay.payloadHash, `review ${finalStatus}`, 'Steven', 'kant', true,
+        randomUUID(), replay.deadLetterId, replay.incidentEvidenceSha256, 0
       )).rejects.toThrow(
-        'Telegram acceptance ACK replay is forbidden after its final relay was claimed or completed'
+        'Telegram acceptance ACK replay is forbidden after its final relay was claimed or terminal'
       );
       expect(await replay.bridge.getEffect(replay.effectId)).toMatchObject({
         state: 'dead',
@@ -428,7 +456,8 @@ describe('transactional StructuredOutput.messages materialization', () => {
 
     const [manualResult, claimResult] = await Promise.allSettled([
       replay.bridge.manualReplayEffect(
-        replay.effectId, replay.payloadHash, 'concurrent operator review'
+        0, replay.payloadHash, 'concurrent operator review', 'Steven', 'kant', true,
+        randomUUID(), replay.deadLetterId, replay.incidentEvidenceSha256, 0
       ),
       repository.claimOutbox(
         'origin_relay', 'concurrent-final-claim', 1, 30_000, 'telegram'
@@ -457,7 +486,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       expect(rejection).toBeInstanceOf(Error);
       if (rejection instanceof Error) {
         expect(rejection.message).toBe(
-          'Telegram acceptance ACK replay is forbidden after its final relay was claimed or completed'
+          'Telegram acceptance ACK replay is forbidden after its final relay was claimed or terminal'
         );
       }
     }

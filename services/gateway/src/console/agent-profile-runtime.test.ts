@@ -46,13 +46,26 @@ function probe(
   batch: (writes: readonly GovernanceBatchWrite[]) => Promise<
     readonly GovernanceBatchWriteAck[] | GovernanceReadError | { error: 'conflict'; reason: string }
   >,
+  withGeneration = true,
 ): AgentFactsProbe {
+  const measured: RuntimeFacts = {
+    ...(withGeneration ? { generation: 'gen-1' } : {}), containerId: 'ws-test', ...facts,
+  };
+  const live = new Map(reads);
   return {
-    factsFor: async () => ({ facts, source: 'measured' }),
-    readGovernanceDocument: async (path) => reads.get(path)
+    factsFor: async () => ({ facts: measured, source: 'measured' }),
+    readGovernanceDocument: async (path) => live.get(path)
       ?? { error: 'not_found', reason: 'no existe' },
     listMemoryDirectory: async () => ({ error: 'unavailable', reason: 'no aplica' }),
-    writeGovernanceBatch: async (writes) => batch(writes),
+    writeGovernanceBatch: async (writes) => {
+      const result = await batch(writes);
+      if (Array.isArray(result)) {
+        for (const write of writes) {
+          if (write.mode === 'write') live.set(write.path, read(write.content));
+        }
+      }
+      return result;
+    },
   };
 }
 
@@ -104,6 +117,7 @@ describe('prepareAgentProfileRuntime', () => {
     expect(acks).toEqual([{
       name: 'AGENTS.md', path, state: 'written',
       sha: sha(write.content), bytes: Buffer.byteLength(write.content, 'utf8'),
+      generation: 'gen-1', container_id: 'ws-test',
     }]);
   });
 
@@ -160,6 +174,41 @@ describe('prepareAgentProfileRuntime', () => {
     });
   });
 
+  it('MEMORY.md grande se acredita por SHA/tamaño sin copiar ni reescribir su prefijo', async () => {
+    const workspace = '/home/claw/.openclaw/workspace-kant';
+    const memory = `${workspace}/MEMORY.md`;
+    const prefix = 'memoria visible'.repeat(100);
+    const fullBytes = 900_000;
+    const fullSha = 'd'.repeat(64);
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+    const prepared = await prepareAgentProfileRuntime(
+      probe(
+        { harness: 'openclaw', home: '/home/claw', openclawWorkspace: workspace },
+        new Map([[memory, read(prefix, {
+          truncated: true, bytes: fullBytes, sha: fullSha,
+        })]]),
+        batch,
+      ),
+      'Steven', 'kant', contexto('kant', 'openclaw'),
+    );
+
+    const memoryPreview = prepared.preview.find((file) => file.nombre === 'MEMORY.md');
+    expect(memoryPreview).toMatchObject({ politica: 'solo-si-falta', texto: '' });
+    expect(prepared.verification.documents.find((file) => file.name === 'MEMORY.md')).toMatchObject({
+      expected_sha: fullSha, observed_sha: fullSha,
+      expected_bytes: fullBytes, observed_bytes: fullBytes, current: true,
+    });
+
+    const acknowledgements = await prepared.apply();
+    const memoryWrite = batch.mock.calls[0]?.[0].find((write) => write.path === memory);
+    expect(memoryWrite).toEqual({
+      mode: 'verify', path: memory, precondition: { state: 'present', sha256: fullSha },
+    });
+    expect(acknowledgements.find((ack) => ack.name === 'MEMORY.md')).toMatchObject({
+      state: 'preserved', sha: fullSha, bytes: fullBytes,
+    });
+  });
+
   it('dos alias con HOME compartido escriben sólo en su CODEX_HOME medido', async () => {
     const paths: string[] = [];
     const run = async (alias: string, codexHome: string) => {
@@ -208,5 +257,66 @@ describe('prepareAgentProfileRuntime', () => {
       ),
       'Steven', 'kratos', contexto('kratos', 'codex'),
     )).rejects.toMatchObject({ name: 'ProfileRuntimeError', code: 'conflict' });
+  });
+
+  it('GET puede distinguir bytes actuales de drift sin escribir nada', async () => {
+    const path = '/home/dev/.codex/AGENTS.md';
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+    const prepared = await prepareAgentProfileRuntime(
+      probe(
+        { harness: 'codex', home: '/home/dev' },
+        new Map([[path, read('# manual\n')]]),
+        batch,
+      ),
+      'Steven', 'kant', contexto('kant', 'codex'),
+    );
+
+    expect(prepared.verification).toMatchObject({
+      state: 'drifted', generation: 'gen-1', container_id: 'ws-test',
+      documents: [{ name: 'AGENTS.md', path, current: false, observed_sha: sha('# manual\n') }],
+    });
+    expect(prepared.preview[0]?.texto).toContain('# manual');
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it('sin generación permite inspeccionar pero se niega a afirmar applied o escribir', async () => {
+    const path = '/home/dev/.codex/AGENTS.md';
+    const p = probe(
+      { harness: 'codex', home: '/home/dev' },
+      new Map([[path, read('# manual\n')]]),
+      async (writes) => ackFor(writes),
+      false,
+    );
+    const prepared = await prepareAgentProfileRuntime(p, 'Steven', 'kant', contexto('kant', 'codex'));
+
+    expect(prepared.verification.state).toBe('unverified');
+    await expect(prepared.apply()).rejects.toMatchObject({ code: 'unavailable' });
+  });
+
+  it('un recreate entre write y relectura invalida el ACK de la generación anterior', async () => {
+    const path = '/home/dev/.codex/AGENTS.md';
+    let calls = 0;
+    const live = new Map<string, GovernanceDocumentContent | GovernanceReadError>([
+      [path, read('# manual\n')],
+    ]);
+    const p: AgentFactsProbe = {
+      factsFor: async () => ({
+        facts: {
+          harness: 'codex', home: '/home/dev', generation: calls++ === 0 ? 'gen-1' : 'gen-2',
+          containerId: 'ws-test',
+        },
+        source: 'measured',
+      }),
+      readGovernanceDocument: async (candidate) => live.get(candidate)
+        ?? { error: 'not_found', reason: 'no existe' },
+      listMemoryDirectory: async () => ({ error: 'unavailable', reason: 'no aplica' }),
+      writeGovernanceBatch: async (writes) => {
+        for (const write of writes) if (write.mode === 'write') live.set(write.path, read(write.content));
+        return ackFor(writes);
+      },
+    };
+    const prepared = await prepareAgentProfileRuntime(p, 'Steven', 'kant', contexto('kant', 'codex'));
+
+    await expect(prepared.apply()).rejects.toMatchObject({ code: 'conflict' });
   });
 });

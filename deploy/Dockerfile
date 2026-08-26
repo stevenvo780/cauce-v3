@@ -1,5 +1,8 @@
-ARG CAUCE_NODE_BASE=node:22.17.0-alpine3.22
-ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=029_reconcile_declared_fleet.sql
+ARG CAUCE_NODE_BASE=docker.io/library/node@sha256:56a687b4d23e7a6cb49114924f5e257fcfbd33ad1f28f5c67aea9365996f2819
+ARG CAUCE_PYTHON_BASE=docker.io/library/python@sha256:53739acebd52a300f19f52d93f2a6165f63300689bdf6f8af2bff0d63780e5e6
+ARG CAUCE_NGINX_BASE=docker.io/nginxinc/nginx-unprivileged@sha256:28d91bdce70ad09025ea901458fdd149259d8e05982ade79d4ef2c0d9470eb48
+ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=037_console_publish_intent_indexes.sql
+ARG CAUCE_TERMINAL_RELAY_INSTANCE_ID=""
 FROM ${CAUCE_NODE_BASE} AS build
 WORKDIR /app
 RUN corepack enable
@@ -57,12 +60,26 @@ RUN pnpm --filter @cauce/protocol \
   --filter @cauce/terminal-relay \
   install --prod --frozen-lockfile --ignore-scripts
 
+FROM ${CAUCE_PYTHON_BASE} AS python-runtime
+
 FROM ${CAUCE_NODE_BASE} AS runtime
+ARG CAUCE_NODE_BASE
+ARG CAUCE_PYTHON_BASE
 ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH
-LABEL io.cauce.schema.compatible-through=${CAUCE_SCHEMA_COMPATIBLE_THROUGH}
+ARG CAUCE_SOURCE_DIGEST
+ARG CAUCE_RELEASE_COMMIT
+ARG CAUCE_TARGET_PLATFORM=linux/amd64
+LABEL io.cauce.schema.compatible-through=${CAUCE_SCHEMA_COMPATIBLE_THROUGH} \
+  io.cauce.source.digest=${CAUCE_SOURCE_DIGEST} \
+  io.cauce.base.node.repository-digest=${CAUCE_NODE_BASE} \
+  io.cauce.base.python.repository-digest=${CAUCE_PYTHON_BASE} \
+  io.cauce.target-platform=${CAUCE_TARGET_PLATFORM} \
+  org.opencontainers.image.revision=${CAUCE_RELEASE_COMMIT} \
+  org.opencontainers.image.base.name=${CAUCE_NODE_BASE}
 ENV NODE_ENV=production
 WORKDIR /app
-RUN apk add --no-cache python3 \
+COPY --from=python-runtime /usr/local /usr/local
+RUN python3 -c 'import asyncio, json; assert asyncio and json' \
   && mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal \
   && chown node:node /var/lib/cauce-adapter /var/lib/cauce-terminal
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
@@ -81,7 +98,7 @@ COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/src ./package
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge
 RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge
 COPY --chown=node:node deploy/runtime-store.package.json ./packages/store/package.json
-COPY --chown=node:node deploy/readiness-probe.mjs deploy/unix-readiness-probe.mjs deploy/postgres-tls.mjs deploy/migrate.mjs deploy/migration-integrity.mjs deploy/schema-version.mjs deploy/fleet-snapshot.mjs deploy/outbox-metrics.mjs deploy/outbox-metrics-core.mjs deploy/reconcile-stale-console-outbox.mjs deploy/reconcile-stale-console-outbox-core.mjs deploy/shadow-guard.mjs deploy/runtime-package-smoke.mjs ./deploy/
+COPY --chown=node:node deploy/readiness-probe.mjs deploy/local-readiness-probe.mjs deploy/unix-readiness-probe.mjs deploy/postgres-tls.mjs deploy/migrate.mjs deploy/migration-integrity.mjs deploy/schema-version.mjs deploy/fleet-snapshot.mjs deploy/outbox-metrics.mjs deploy/outbox-metrics-core.mjs deploy/release-state-metrics.mjs deploy/reconcile-stale-console-outbox.mjs deploy/reconcile-stale-console-outbox-core.mjs deploy/shadow-guard.mjs deploy/runtime-package-smoke.mjs ./deploy/
 COPY --chown=node:node deploy/runtime-entrypoint.sh ./deploy/runtime-entrypoint.sh
 RUN chmod 0555 ./deploy/runtime-entrypoint.sh
 USER node
@@ -106,7 +123,17 @@ RUN ln -s ../packages/adapter-sdk/node_modules/ws node_modules/ws
 USER node
 CMD ["node", "ops/harness/authentic-external-server.mjs"]
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine AS console-base
+FROM ${CAUCE_NGINX_BASE} AS console-base
+ARG CAUCE_NGINX_BASE
+ARG CAUCE_SOURCE_DIGEST
+ARG CAUCE_RELEASE_COMMIT
+ARG CAUCE_TARGET_PLATFORM=linux/amd64
+LABEL io.cauce.source.digest=${CAUCE_SOURCE_DIGEST} \
+  io.cauce.base.nginx.repository-digest=${CAUCE_NGINX_BASE} \
+  io.cauce.console.publish-journal=multi-intent-v1 \
+  io.cauce.target-platform=${CAUCE_TARGET_PLATFORM} \
+  org.opencontainers.image.revision=${CAUCE_RELEASE_COMMIT} \
+  org.opencontainers.image.base.name=${CAUCE_NGINX_BASE}
 COPY --from=build /app/apps/console/dist /usr/share/nginx/html
 USER 101
 
@@ -120,6 +147,16 @@ FROM console-base AS console
 USER root
 COPY deploy/nginx-console-tls.conf /etc/nginx/conf.d/default.conf
 RUN chmod 0644 /etc/nginx/conf.d/default.conf
+USER 101
+USER root
+ARG CAUCE_TERMINAL_RELAY_INSTANCE_ID
+RUN case "${CAUCE_TERMINAL_RELAY_INSTANCE_ID}" in \
+      ""|*[!0-9a-f]*|?????????????????????????????????????????????????????????????????*) \
+        test -z "${CAUCE_TERMINAL_RELAY_INSTANCE_ID}" ;; \
+      *) test "${#CAUCE_TERMINAL_RELAY_INSTANCE_ID}" -eq 64 ;; \
+    esac \
+ && sed -i "s/\${CAUCE_TERMINAL_RELAY_INSTANCE_ID}/${CAUCE_TERMINAL_RELAY_INSTANCE_ID}/g" /etc/nginx/conf.d/default.conf
+LABEL io.cauce.terminal-relay.instance-id=${CAUCE_TERMINAL_RELAY_INSTANCE_ID}
 USER 101
 EXPOSE 8444
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=5 \

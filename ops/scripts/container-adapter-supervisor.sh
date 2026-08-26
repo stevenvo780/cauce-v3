@@ -28,14 +28,11 @@ PKI_ROOT=${CAUCE_CONTAINER_PKI_ROOT:-$default_pki_root}
 LOCK_ROOT=${CAUCE_CONTAINER_LOCK_ROOT:-$default_lock_root}
 RUNTIME_HELPER_SOURCE="$ROOT/container-runtime/cauce-container-runtime.py"
 MOUNT_VALIDATOR="$ROOT/scripts/validate-container-mount.py"
+ALIAS_LOCK_EXEC="$ROOT/scripts/alias-lock-exec.py"
+HERMES_RUNTIME_VERIFIER="$ROOT/scripts/verify-hermes-runtime.py"
 CONTROL_ROOT=/run/cauce-v3-supervisor
 WAIT_SECONDS=60
 DOCKER_CALL_TIMEOUT=${CAUCE_CONTAINER_DOCKER_TIMEOUT:-30}
-
-# Claude Code version requirement for claude harness adapters.
-# This version MUST be installed in the container image beforehand.
-# To update the fleet: upgrade this constant and rebuild container images.
-CLAUDE_CODE_REQUIRED_VERSION="2.1.218"
 
 die() {
   printf '%s\n' "$1" >&2
@@ -105,7 +102,7 @@ config_por_alias_directorio() {
   esac
   valid_absolute_path "$home_de" || return 1
   valid_alias "$alias_de" || return 1
-  printf '%s/.cauce/%s/%s' "$home_de" "$alias_de" "$subdirectorio"
+  printf '%s/.local/share/cauce-v3/config/%s/%s' "$home_de" "$alias_de" "$subdirectorio"
 }
 
 safe_owner_uid() {
@@ -177,7 +174,8 @@ load_config() {
     [[ ! -v "CONFIG[$key]" ]] || die "container alias config key is duplicated: $key"
     case "$key" in
       BUNDLE_RELEASE|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW|DEFAULT_TIMEOUT_MS|CAUCE_SEMBRAR_PERFIL) ;;
-      HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
+      EXPECTED_CLI_VERSION) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
+      HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON|HERMES_SOURCE_COMMIT) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
       # Sesión compartida: la MISMA conversación en la terminal del dueño y en Telegram. Sólo
       # existe para claude y codex, que son los dos harness con una TUI compartible; para el resto
       # el interruptor no significaría nada y aceptarlo sería mentir sobre en qué modo corre.
@@ -215,6 +213,11 @@ validate_relay_url() {
 
 validate_config_values() {
   local expected_pki="$PKI_ROOT/$alias_name" api_authority api_port default_timeout_ms
+  local expected_hermes_home="$container_home/.local/share/cauce-v3/hermes/$alias_name"
+  local expected_hermes_python approved_hermes_commit approved_hermes_line extra
+  local approved_hermes_root approved_hermes_runtime_id
+  local approved_hermes_version approved_uv_version approved_uv_target approved_uv_sha approved_uv_lock_sha
+  local approved_uv_archive_url approved_uv_archive_sha
   valid_absolute_path "${CONFIG[PKI_DIR]}" || die 'PKI_DIR path is invalid'
   [[ ${CONFIG[BUNDLE_RELEASE]} =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ \
     && ${CONFIG[BUNDLE_RELEASE]} != current ]] || die 'BUNDLE_RELEASE name is invalid'
@@ -274,33 +277,97 @@ validate_config_values() {
   fi
   [[ ${CONFIG[CAUCE_SEMBRAR_PERFIL]:-} == 1 ]] \
     || die 'CAUCE_SEMBRAR_PERFIL must be present and exactly 1'
+  if [[ $harness == claude ]]; then
+    [[ ${CONFIG[EXPECTED_CLI_VERSION]:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+      || die 'claude requires EXPECTED_CLI_VERSION as an exact semantic version'
+  fi
   if (( physical_alias_count > 1 )); then
     if [[ $harness == claude || $harness == codex ]]; then
       [[ ${CONFIG[CONFIG_POR_ALIAS]:-} == 1 ]] \
         || die 'a multi-alias container requires CONFIG_POR_ALIAS=1 for claude/codex'
     elif [[ $harness == hermes ]]; then
-      [[ ${CONFIG[HERMES_HOME]:-} == "$container_home/.hermes/profiles/$alias_name" ]] \
+      [[ ${CONFIG[HERMES_HOME]:-} == "$expected_hermes_home" ]] \
         || die 'a multi-alias container requires an alias-scoped HERMES_HOME'
     fi
   fi
   validate_relay_url "${CONFIG[RELAY_URL]}"
   if [[ $harness == hermes ]]; then
-    # HERMES_HOME is either the mapped .hermes home or a profile subdirectory below it
-    # (e.g. .hermes/profiles/<alias>). valid_absolute_path forbids .././/. components, so the
-    # "$container_home/.hermes/" prefix cannot be escaped and sibling paths (.hermesX) are rejected.
+    [[ ${CONFIG[HERMES_SOURCE_COMMIT]:-} =~ ^[a-f0-9]{40}$ ]] \
+      || die 'HERMES_SOURCE_COMMIT must be an exact lowercase Git commit'
+    approved_hermes_line=$(python3 - "$ROOT/hermes-runtime.json" <<'PY'
+import json, re, sys
+try:
+    document = json.load(open(sys.argv[1], encoding="utf-8"))
+    commit = document["commit"]
+    runtime_root = document["runtimeRoot"]
+    runtime_id = document["runtimeId"]
+    package_version = document["packageVersion"]
+    uv_version = document["uvVersion"]
+    uv_target = document["uvTarget"]
+    uv_sha = document["uvSha256"]
+    uv_lock_sha = document["uvLockSha256"]
+    uv_archive_url = document["uvArchiveUrl"]
+    uv_archive_sha = document["uvArchiveSha256"]
+except Exception:
+    sys.exit(1)
+if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+    sys.exit(1)
+if runtime_root != "/opt/cauce-v3-hermes-runtime":
+    sys.exit(1)
+if not isinstance(runtime_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", runtime_id):
+    sys.exit(1)
+if not isinstance(package_version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", package_version):
+    sys.exit(1)
+if not isinstance(uv_version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", uv_version):
+    sys.exit(1)
+if not isinstance(uv_target, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", uv_target):
+    sys.exit(1)
+if not isinstance(uv_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", uv_sha):
+    sys.exit(1)
+if not isinstance(uv_lock_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", uv_lock_sha):
+    sys.exit(1)
+expected_url = f"https://github.com/astral-sh/uv/releases/download/{uv_version}/uv-{uv_target}.tar.gz"
+if uv_archive_url != expected_url:
+    sys.exit(1)
+if not isinstance(uv_archive_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", uv_archive_sha):
+    sys.exit(1)
+print("\t".join((commit, runtime_root, runtime_id, package_version, uv_version, uv_target,
+                 uv_sha, uv_lock_sha, uv_archive_url, uv_archive_sha)))
+PY
+    ) || die 'the approved Hermes runtime manifest is invalid'
+    IFS=$'\t' read -r approved_hermes_commit approved_hermes_root approved_hermes_runtime_id \
+      approved_hermes_version approved_uv_version approved_uv_target approved_uv_sha \
+      approved_uv_lock_sha approved_uv_archive_url approved_uv_archive_sha extra \
+      <<<"$approved_hermes_line"
+    [[ -n $approved_hermes_commit && -n $approved_hermes_root && -n $approved_hermes_runtime_id \
+      && -n $approved_hermes_version && -n $approved_uv_version && -n $approved_uv_target \
+      && -n $approved_uv_sha && -n $approved_uv_lock_sha \
+      && -n $approved_uv_archive_url && -n $approved_uv_archive_sha \
+      && -z ${extra:-} ]] || die 'the approved Hermes runtime manifest is invalid'
+    [[ ${CONFIG[HERMES_SOURCE_COMMIT]} == "$approved_hermes_commit" ]] \
+      || die 'HERMES_SOURCE_COMMIT is not the approved operations pin'
+    hermes_runtime_root=$approved_hermes_root
+    hermes_runtime_id=$approved_hermes_runtime_id
+    hermes_runtime_dir="$hermes_runtime_root/$alias_name/$hermes_runtime_id"
+    hermes_source_dir="$hermes_runtime_dir/source"
+    hermes_package_version=$approved_hermes_version
+    hermes_uv_version=$approved_uv_version
+    hermes_uv_target=$approved_uv_target
+    hermes_uv_sha=$approved_uv_sha
+    hermes_uv_lock_sha=$approved_uv_lock_sha
+    hermes_uv_archive_url=$approved_uv_archive_url
+    hermes_uv_archive_sha=$approved_uv_archive_sha
+    expected_hermes_python="$hermes_runtime_dir/venv/bin/python"
+    # The profile is mutable/persistent; executable code and its venv are an exact immutable
+    # root-owned release under /opt. Accepting a user-home interpreter would reintroduce shared-UID
+    # code injection between Atlas/Kratos/Iza.
     valid_absolute_path "${CONFIG[HERMES_HOME]:-}" || die 'HERMES_HOME must be a canonical absolute path'
-    [[ ${CONFIG[HERMES_HOME]} == "$container_home/.hermes" || ${CONFIG[HERMES_HOME]} == "$container_home/.hermes/"* ]] \
-      || die 'HERMES_HOME must be the mapped .hermes home or a subdirectory below it'
+    [[ ${CONFIG[HERMES_HOME]} == "$expected_hermes_home" ]] \
+      || die 'HERMES_HOME must be the exact persistent alias profile path'
     [[ ${CONFIG[HERMES_INFERENCE_MODEL]:-} =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$ ]] || die 'HERMES_INFERENCE_MODEL is invalid'
-    # HERMES_PYTHON is optional: when unset the adapter keeps its default interpreter (unchanged
-    # behaviour). When set it must be a canonical absolute path that lives under the mapped
-    # container home (e.g. a venv interpreter below $container_home that provides hermes_cli), so
-    # it can never point at an arbitrary host/system binary. valid_absolute_path already forbids
-    # .././/. traversal, so the "$container_home/" prefix cannot be escaped.
-    if [[ -v CONFIG[HERMES_PYTHON] ]]; then
-      valid_absolute_path "${CONFIG[HERMES_PYTHON]}" || die 'HERMES_PYTHON must be a canonical absolute path'
-      [[ ${CONFIG[HERMES_PYTHON]} == "$container_home/"* ]] || die 'HERMES_PYTHON must live under the mapped container home'
-    fi
+    valid_absolute_path "${CONFIG[HERMES_PYTHON]:-}" || die 'HERMES_PYTHON must be a canonical absolute path'
+    [[ ${CONFIG[HERMES_PYTHON]} == "$expected_hermes_python" ]] \
+      || die 'HERMES_PYTHON must be the exact immutable alias runtime interpreter'
   fi
   if [[ $harness == openclaw ]]; then
     valid_absolute_path "${CONFIG[OPENCLAW_WORKSPACE]:-}" \
@@ -465,6 +532,20 @@ docker_id_exec() {
   return "$status"
 }
 
+docker_id_exec_stdin() {
+  local status
+  assert_generation
+  if [[ ${1:-} == --user ]]; then
+    local user=$2
+    shift 2
+    if docker_control exec -i --user "$user" "$container_id" "$@"; then status=0; else status=$?; fi
+  else
+    if docker_control exec -i "$container_id" "$@"; then status=0; else status=$?; fi
+  fi
+  assert_generation
+  return "$status"
+}
+
 docker_id_cp() {
   local source=$1 destination=$2 status
   assert_generation
@@ -485,7 +566,8 @@ docker_id_mutate() {
 
 discovered_mount_destination=''
 validate_container_identity_and_mount() {
-  local before image label template mount_json after mount_args=()
+  local before image label template mount_json after runtime_path runtime_mount
+  local mount_args=() runtime_paths=()
   before=$(read_state_signature) || die 'cannot inspect selected container ID' 75
   [[ $before == "$container_state_signature" ]] || die 'container changed before policy validation' 75
   image=$(docker_control inspect --format '{{.Image}}' "$container_id") || die 'cannot inspect container image' 75
@@ -506,13 +588,45 @@ validate_container_identity_and_mount() {
   [[ -v CONFIG[MOUNT_RW] ]] && mount_args+=(--rw "${CONFIG[MOUNT_RW]}")
   discovered_mount_destination=$(PYTHONDONTWRITEBYTECODE=1 python3 "$MOUNT_VALIDATOR" "$mount_json" "$state_directory" "${mount_args[@]}") \
     || { rm -f "$mount_json"; die 'container persistent mount policy differs'; }
-  rm -f "$mount_json"
   valid_absolute_path "$discovered_mount_destination" || die 'discovered persistent mount is invalid' 75
   [[ $state_directory == "$discovered_mount_destination" || $state_directory == "${discovered_mount_destination%/}/"* ]] \
     || die 'discovered persistent mount does not contain the alias state directory' 75
   if [[ -v CONFIG[MOUNT_DESTINATION] ]]; then
     [[ ${CONFIG[MOUNT_DESTINATION]} == "$discovered_mount_destination" ]] || die 'declared MOUNT_DESTINATION differs from the discovered persistent mount'
   fi
+
+  # State persistence alone is insufficient.  A recreate must also preserve every harness path
+  # that carries identity/configuration and every workspace that is explicitly promised as
+  # durable.  Validate these paths against the same immutable inspect snapshot, without reading
+  # their contents.  In particular this catches a Dédalo-style layout where /workspace survives
+  # but CODEX_HOME accidentally lives in the container writable layer, and a Hermes layout where
+  # the profile survives but the pinned source or venv does not.
+  if [[ $harness == codex ]]; then
+    runtime_paths+=("$container_home/.codex/auth.json" "$container_home/.codex/config.toml")
+  elif [[ $harness == claude ]]; then
+    runtime_paths+=("$container_home/.claude/.credentials.json" "$container_home/.claude.json")
+  elif [[ $harness == hermes ]]; then
+    # Only the mutable profile must live on a persistent mount. Source+venv deliberately live in
+    # a root-owned immutable /opt release and are reproducibly reprovisioned after a recreate.
+    runtime_paths+=("${CONFIG[HERMES_HOME]}")
+  elif [[ $harness == openclaw ]]; then
+    runtime_paths+=("${CONFIG[OPENCLAW_WORKSPACE]}")
+  fi
+  if [[ ${CONFIG[CONFIG_POR_ALIAS]:-} == 1 ]]; then
+    runtime_path=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name") \
+      || { rm -f "$mount_json"; die 'cannot derive persistent alias configuration directory'; }
+    runtime_paths+=("$runtime_path")
+  fi
+  if [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]]; then
+    runtime_paths+=("${CONFIG[SHARED_SESSION_WORKSPACE]}")
+  fi
+  for runtime_path in "${runtime_paths[@]}"; do
+    runtime_mount=$(PYTHONDONTWRITEBYTECODE=1 python3 "$MOUNT_VALIDATOR" "$mount_json" "$runtime_path") \
+      || { rm -f "$mount_json"; die 'a required harness path is not on persistent read-write storage'; }
+    valid_absolute_path "$runtime_mount" \
+      || { rm -f "$mount_json"; die 'a required harness mount is invalid' 75; }
+  done
+  rm -f "$mount_json"
   after=$(read_state_signature) || die 'container disappeared during policy validation' 75
   [[ $after == "$before" ]] || die 'container generation changed during policy validation' 75
 }
@@ -555,14 +669,16 @@ prepare_state_securely() {
 }
 
 ensure_claude_binary() {
-  # For claude harness adapters: verify the claude-code binary version matches the required
-  # pinned version. This does NOT install; installation must be pre-built into the container.
+  # For claude harness adapters: verify the binary against the alias-specific version observed
+  # and approved during release evidence. Containers update independently, so a source-global
+  # version would make healthy aliases fail merely because another image carries a newer build.
+  # This does NOT install; installation must be pre-built into the container.
   # Fail loudly if version is wrong to prevent silent misconfiguration.
   if [[ $harness == claude ]]; then
     docker_id_exec --user "$container_user" bash -c '
       set -euo pipefail
       home_dir="'"$container_home"'"
-      required_ver="'"$CLAUDE_CODE_REQUIRED_VERSION"'"
+      required_ver="'"${CONFIG[EXPECTED_CLI_VERSION]}"'"
 
       # Check if claude binary exists at the expected location
       # resolve_claude_bin looks in ~/.local/bin first, then ~/.npm-global
@@ -587,6 +703,93 @@ ensure_claude_binary() {
       exit 0
     ' || die "claude binary verification failed for $alias_name harness=claude; see log above"
   fi
+}
+
+ensure_hermes_runtime() {
+  [[ $harness == hermes ]] || return 0
+  # The exact same executable verifier is used by provisioning and every supervisor preflight.
+  # It checks commit, ignored/untracked entries, uv bytes, the publish-last marker, ownership,
+  # modes, symlink containment and the final editable import location without touching auth.
+  [[ -f $HERMES_RUNTIME_VERIFIER && ! -L $HERMES_RUNTIME_VERIFIER ]] \
+    || die "Hermes runtime verifier is unavailable for $alias_name" 78
+  docker_id_exec_stdin --user 0 /usr/bin/python3 - \
+    --allowed-root "$hermes_runtime_root" --runtime-dir "$hermes_runtime_dir" \
+    --source-commit "${CONFIG[HERMES_SOURCE_COMMIT]}" --package-version "$hermes_package_version" \
+    --uv-version "$hermes_uv_version" --uv-target "$hermes_uv_target" \
+    --uv-sha256 "$hermes_uv_sha" --uv-lock-sha256 "$hermes_uv_lock_sha" \
+    --uv-archive-url "$hermes_uv_archive_url" --uv-archive-sha256 "$hermes_uv_archive_sha" \
+    < "$HERMES_RUNTIME_VERIFIER" >/dev/null 2>&1 \
+    || die "Hermes runtime verification failed for $alias_name (immutable release differs)" 78
+  docker_id_exec --user "$container_user" sh -c \
+    'set -eu; cd "$1"; HERMES_HOME="$2" PYTHONDONTWRITEBYTECODE=1 "$3" -c '\''import hermes_cli.oneshot'\''' \
+    sh "$hermes_source_dir" "${CONFIG[HERMES_HOME]}" "${CONFIG[HERMES_PYTHON]}" \
+    >/dev/null 2>&1 \
+    || die "Hermes runtime verification failed for $alias_name (profile/import unavailable)" 78
+}
+
+ensure_isolated_config() {
+  [[ ${CONFIG[CONFIG_POR_ALIAS]:-} == 1 ]] || return 0
+  local destination source identity required_one required_two optional=''
+  destination=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name") \
+    || die "cannot derive isolated configuration for $alias_name" 78
+  case "$harness" in
+    codex)
+      source="$container_home/.codex"
+      identity=AGENTS.md
+      required_one=config.toml
+      required_two=auth.json
+      ;;
+    claude)
+      source="$container_home/.claude"
+      identity=CLAUDE.md
+      required_one=.credentials.json
+      required_two=.claude.json
+      optional=settings.json
+      ;;
+    *) die "isolated configuration is unsupported for $harness" 78 ;;
+  esac
+
+  # Probe only file types, ownership/mode and exact link destinations; never read a credential or
+  # print a path supplied by the container.  The destination identity must be its own regular
+  # inode, while credential/config files remain single-source symlinks so atomic login rotation is
+  # immediately visible to every alias without copying secret bytes.
+  docker_id_exec --user "$container_user" /usr/bin/python3 -c '
+import os, stat, sys
+
+destination, source, harness, identity, required_one, required_two, optional = sys.argv[1:]
+uid = os.geteuid()
+
+def regular_private_enough(path):
+    details = os.lstat(path)
+    return stat.S_ISREG(details.st_mode) and details.st_uid == uid and not (details.st_mode & 0o022)
+
+def exact_link(name, source_path):
+    destination_path = os.path.join(destination, name)
+    details = os.lstat(destination_path)
+    if not stat.S_ISLNK(details.st_mode) or details.st_uid != uid:
+        raise SystemExit(1)
+    if os.path.realpath(destination_path) != os.path.realpath(source_path):
+        raise SystemExit(1)
+    if not regular_private_enough(source_path):
+        raise SystemExit(1)
+
+directory = os.lstat(destination)
+if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != uid or directory.st_mode & 0o022:
+    raise SystemExit(1)
+if not regular_private_enough(os.path.join(destination, identity)):
+    raise SystemExit(1)
+if harness == "codex":
+    exact_link(required_one, os.path.join(source, required_one))
+    exact_link(required_two, os.path.join(source, required_two))
+else:
+    exact_link(required_one, os.path.join(source, required_one))
+    exact_link(required_two, os.path.join(os.path.dirname(source), required_two))
+    source_optional = os.path.join(source, optional)
+    destination_optional = os.path.join(destination, optional)
+    if os.path.lexists(source_optional) or os.path.lexists(destination_optional):
+        exact_link(optional, source_optional)
+' "$destination" "$source" "$harness" "$identity" "$required_one" "$required_two" "$optional" \
+    >/dev/null 2>&1 || die "isolated harness configuration verification failed for $alias_name" 78
 }
 
 stop_existing() {
@@ -629,33 +832,31 @@ deploy_pki() {
 }
 
 start_adapter() {
-  local lock_file runtime_path effective_default_timeout_ms
+  local runtime_path effective_default_timeout_ms
   command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
-  command -v flock >/dev/null 2>&1 || die 'flock is unavailable' 127
+  [[ -f $ALIAS_LOCK_EXEC && ! -L $ALIAS_LOCK_EXEC ]] || die 'alias lock helper is unavailable' 73
+  if [[ -z ${CAUCE_ALIAS_LOCK_FD:-} ]]; then
+    exec env CAUCE_CONTAINER_OPS_ROOT="$ROOT" CAUCE_CONTAINER_LOCK_ROOT="$LOCK_ROOT" \
+      python3 "$ALIAS_LOCK_EXEC" run --lock-root "$LOCK_ROOT" --alias "$alias_name" -- \
+      "$0" start "$alias_name"
+  fi
+  python3 "$ALIAS_LOCK_EXEC" verify --lock-root "$LOCK_ROOT" --alias "$alias_name" \
+    || die "another supervisor owns alias $alias_name" 73
   load_config
   validate_bundle
-  if [[ ! -e $LOCK_ROOT ]]; then
-    mkdir -p -- "$LOCK_ROOT" || die 'container adapter lock root cannot be created'
-    chmod 0700 "$LOCK_ROOT" || die 'container adapter lock root cannot be secured'
-  fi
-  [[ -d $LOCK_ROOT && ! -L $LOCK_ROOT ]] || die 'container adapter lock root is unavailable'
-  if (( EUID != 0 )) || [[ $LOCK_ROOT != /run/lock ]]; then
-    assert_secure_directory "$LOCK_ROOT" 'container adapter lock root'
-  fi
-  lock_file="$LOCK_ROOT/cauce-v3-container-$alias_name.lock"
-  exec 9>"$lock_file"
-  flock -n 9 || die "another supervisor owns alias $alias_name" 73
   wait_for_container
   validate_container_identity_and_mount
   validate_pki
   resolve_container_identity
+  ensure_isolated_config
+  ensure_claude_binary
+  ensure_hermes_runtime
   copy_control_helper
   prepare_control_securely
   prepare_state_securely
   stop_existing
   deploy_bundle
   deploy_pki
-  ensure_claude_binary
   runtime_path="$container_home/.local/bin:$container_home/.npm-global/bin:$container_home/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   if [[ -v CONFIG[DEFAULT_TIMEOUT_MS] ]]; then
     effective_default_timeout_ms=${CONFIG[DEFAULT_TIMEOUT_MS]}
@@ -699,7 +900,9 @@ start_adapter() {
   fi
   if [[ $harness == hermes ]]; then
     environment+=("HERMES_HOME=${CONFIG[HERMES_HOME]}" "HERMES_INFERENCE_MODEL=${CONFIG[HERMES_INFERENCE_MODEL]}")
-    [[ -v CONFIG[HERMES_PYTHON] ]] && environment+=("CAUCE_HERMES_PYTHON=${CONFIG[HERMES_PYTHON]}")
+    environment+=("CAUCE_HERMES_RUNTIME_DIR=$hermes_runtime_dir")
+    environment+=("CAUCE_HERMES_SOURCE_DIR=$hermes_source_dir")
+    environment+=("CAUCE_HERMES_PYTHON=${CONFIG[HERMES_PYTHON]}")
   fi
   if [[ $harness == openclaw ]]; then
     environment+=("CAUCE_OPENCLAW_WORKSPACE=${CONFIG[OPENCLAW_WORKSPACE]}")
@@ -739,7 +942,11 @@ check_adapter() {
   validate_bundle
   wait_for_container
   validate_container_identity_and_mount
+  validate_pki
   resolve_container_identity
+  ensure_isolated_config
+  ensure_claude_binary
+  ensure_hermes_runtime
   docker_id_exec test -x "$control_helper" >/dev/null 2>&1 || die 'container lifecycle helper is absent' 78
   docker_id_exec --user 0 /usr/bin/python3 "$control_helper" check \
     --alias "$alias_name" --state "$state_directory" --control-dir "$control_dir" \

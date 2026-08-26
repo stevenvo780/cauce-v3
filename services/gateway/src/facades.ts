@@ -1,3 +1,4 @@
+import { safeAuditSummary } from '@cauce/store';
 import type { Principal } from './auth.js';
 
 type Row = Record<string, unknown>;
@@ -70,6 +71,174 @@ export function visibleQueue(value: Row, principal: Principal): Row {
     return result;
   }, { pending: 0, retrying: 0, dead: 0 });
   return { ...value, ...counts, items };
+}
+
+const DLQ_TARGETS = new Set(['delivery', 'outbox']);
+const DLQ_DISPOSITIONS = new Set([
+  'ambiguous', 'safe_retry', 'missing_final', 'auth', 'expected_offline', 'unclassified',
+]);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const SHA256 = /^[a-f0-9]{64}$/u;
+const DLQ_RULE = /^[a-z0-9_]+_v[0-9]+$/u;
+const CANCELLABLE_DELIVERY_STATES = new Set(['pending', 'retry', 'leased', 'accepted', 'started']);
+const PARENT_NOTICE_DISPOSITIONS = new Set(['not_child', 'returned', 'denied', 'deferred', 'coalesced']);
+const AUDIT_ID = /^[1-9][0-9]{0,18}$/u;
+const AUDIT_ACTION = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
+const AUDIT_DECISIONS = new Set(['allow', 'deny', 'info']);
+
+function boundedString(value: unknown, maxLength: number): string | null {
+  return typeof value === 'string' && value.length <= maxLength ? value : null;
+}
+
+function matchingString(value: unknown, pattern: RegExp, maxLength: number): string | null {
+  return typeof value === 'string' && value.length <= maxLength && pattern.test(value) ? value : null;
+}
+
+function nonNegativeInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : null;
+}
+
+function safeDlqCursor(value: unknown): string | null {
+  return typeof value === 'string' && value.length >= 2 && value.length <= 1_024
+    && value.length % 2 === 0 && /^[a-f0-9]+$/u.test(value)
+    ? value
+    : null;
+}
+
+function safeAuditSummaryProjection(action: string | null, value: unknown): string | null {
+  if (action === null || typeof value !== 'string' || value.length > 4_096) return null;
+  try {
+    return safeAuditSummary(action, JSON.parse(value) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Exact browser projection for the participant-aware audit query.
+ *
+ * The repository deliberately returns cross-tenant rows when this principal is the sender or
+ * recipient participant. This facade therefore does not filter by `tenant_id`: it repeats only
+ * the privacy allowlist and never reflects raw metadata or unexpected fields from a test double.
+ */
+export function safeAuditPage(value: unknown): Row {
+  const page = object(value) ?? {};
+  const items = Array.isArray(page.items)
+    ? page.items.map(object).filter((item): item is Row => item !== undefined).map((item) => {
+      const action = matchingString(item.action, AUDIT_ACTION, 128);
+      return {
+        event_id: matchingString(item.event_id, AUDIT_ID, 19),
+        at: boundedString(item.at, 64),
+        tenant_id: boundedString(item.tenant_id, 128),
+        actor_alias: item.actor_alias === null ? null : boundedString(item.actor_alias, 128),
+        action,
+        decision: typeof item.decision === 'string' && AUDIT_DECISIONS.has(item.decision)
+          ? item.decision
+          : null,
+        request_id: item.request_id === null ? null : matchingString(item.request_id, UUID, 64),
+        trace_id: item.trace_id === null ? null : boundedString(item.trace_id, 256),
+        summary: safeAuditSummaryProjection(action, item.summary),
+      };
+    })
+    : [];
+  return {
+    items,
+    next_cursor: page.next_cursor === null ? null : matchingString(page.next_cursor, AUDIT_ID, 19),
+  };
+}
+
+/**
+ * Second allowlist for the browser-facing DLQ contract.
+ *
+ * PostgreSQL already returns a safe schema-030 projection.  This boundary intentionally repeats
+ * the projection so a regressed query or a permissive repository double cannot expose payload,
+ * errors, operator reasons, origins or provider/message identifiers through `/v3/console/*`.
+ */
+export function safeDlqPage(value: unknown): Row {
+  const page = object(value) ?? {};
+  const items = Array.isArray(page.items)
+    ? page.items.map(object).filter((item): item is Row => item !== undefined).map((item) => ({
+      target: typeof item.target === 'string' && DLQ_TARGETS.has(item.target) ? item.target : null,
+      id: matchingString(item.id, UUID, 64),
+      tenantId: boundedString(item.tenantId, 128),
+      kind: boundedString(item.kind, 128),
+      adapter: boundedString(item.adapter, 128),
+      disposition: typeof item.disposition === 'string' && DLQ_DISPOSITIONS.has(item.disposition)
+        ? item.disposition
+        : null,
+      open: typeof item.open === 'boolean' ? item.open : null,
+      actionable: typeof item.actionable === 'boolean' ? item.actionable : null,
+      evidenceSha256: matchingString(item.evidenceSha256, SHA256, 64),
+      attempts: nonNegativeInteger(item.attempts),
+      resolutionRule: matchingString(item.resolutionRule, DLQ_RULE, 128),
+      createdAt: boundedString(item.createdAt, 64),
+      dispositionAt: boundedString(item.dispositionAt, 64),
+      resolvedAt: boundedString(item.resolvedAt, 64),
+      reopenCount: nonNegativeInteger(item.reopenCount),
+      lastReopenedAt: boundedString(item.lastReopenedAt, 64),
+    }))
+    : [];
+  return {
+    schemaVersion: page.schemaVersion === 1 ? 1 : null,
+    items,
+    total: nonNegativeInteger(page.total),
+    truncated: typeof page.truncated === 'boolean' ? page.truncated : null,
+    nextCursor: safeDlqCursor(page.nextCursor),
+  };
+}
+
+/** Safe, exact acknowledgement for the no-replay mutation. */
+export function safeDlqResolution(value: unknown): Row {
+  const result = object(value) ?? {};
+  return {
+    schemaVersion: result.schemaVersion === 1 ? 1 : null,
+    suite: result.suite === 'cauce-v3-dlq-no-replay-resolution' ? result.suite : null,
+    phase: result.phase === 'resolved' ? result.phase : null,
+    appliedCount: nonNegativeInteger(result.appliedCount),
+    alreadyApplied: typeof result.alreadyApplied === 'boolean' ? result.alreadyApplied : null,
+    evidenceSha256: matchingString(result.evidenceSha256, SHA256, 64),
+    reasonSha256: matchingString(result.reasonSha256, SHA256, 64),
+    possibleDuplicateAcknowledged: typeof result.possibleDuplicateAcknowledged === 'boolean'
+      ? result.possibleDuplicateAcknowledged
+      : null,
+    possibleNoDeliveryAcknowledged: typeof result.possibleNoDeliveryAcknowledged === 'boolean'
+      ? result.possibleNoDeliveryAcknowledged
+      : null,
+  };
+}
+
+/** Browser-safe projection for a durable replay acknowledgement. */
+export function safeReplayReceipt(value: unknown): Row {
+  const result = object(value) ?? {};
+  return {
+    delivery_id: matchingString(result.delivery_id, UUID, 64),
+    replayed_from_delivery_id: matchingString(result.replayed_from_delivery_id, UUID, 64),
+    state: result.state === 'pending' ? 'pending' : null,
+    replayed: typeof result.replayed === 'boolean' ? result.replayed : null,
+  };
+}
+
+/**
+ * Browser-safe cancellation acknowledgement.  The durable reason remains in DB/audit; reflecting
+ * it here would disclose operator text through a response that only needs causal booleans.
+ */
+export function safeCancelReceipt(value: unknown): Row {
+  const result = object(value) ?? {};
+  return {
+    delivery_id: matchingString(result.delivery_id, UUID, 64),
+    state: result.state === 'dead' ? 'dead' : null,
+    cancelled: typeof result.cancelled === 'boolean' ? result.cancelled : null,
+    cancelled_from_state: typeof result.cancelled_from_state === 'string'
+      && CANCELLABLE_DELIVERY_STATES.has(result.cancelled_from_state)
+      ? result.cancelled_from_state
+      : null,
+    parent_notice: typeof result.parent_notice === 'string'
+      && PARENT_NOTICE_DISPOSITIONS.has(result.parent_notice)
+      ? result.parent_notice
+      : null,
+    origin_relayed: typeof result.origin_relayed === 'boolean' ? result.origin_relayed : null,
+    replayable: typeof result.replayable === 'boolean' ? result.replayable : null,
+  };
 }
 
 export function sameTenantRows(value: Row, principal: Principal): Row {

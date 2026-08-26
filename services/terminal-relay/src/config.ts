@@ -3,9 +3,18 @@
  * of its own beyond the gateway bearer token it reads from disk at call time.
  */
 
+import {
+  CLAIM_DEADLINE_SAFETY_MARGIN_MS,
+  DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
+  MAX_CLAIM_LEASE_MS,
+} from './gateway-client.js';
+import { isRelayInstanceId } from './relay-identity.js';
+
 export interface TerminalRelayConfig {
   readonly browserPort: number;
   readonly agentPort: number;
+  /** Loopback-only HTTP readiness listener; never published by Compose. */
+  readonly healthPort: number;
   readonly tlsCertFile: string;
   readonly tlsKeyFile: string;
   /** CA that signs the client certificate of the console nginx in front of the browser leg. */
@@ -19,24 +28,31 @@ export interface TerminalRelayConfig {
    * Identidad de cliente con la que el relay habla al gateway. El token compartido autentica en la
    * capa de aplicación, pero un gateway con `CAUCE_AUTH_PROVIDER=mtls` exige certificado de cliente
    * en el propio handshake TLS: sin esto, presencia y revalidación de autorización mueren con
-   * "tlsv13 alert certificate required" y toda sesión se corta al vencer la gracia. Opcional para
-   * no romper despliegues con otro proveedor de autenticación.
+   * "tlsv13 alert certificate required" y toda sesión se corta al vencer la gracia. También es la
+   * raíz criptográfica de `relay_instance_id`, por lo que no hay un modo sin este material.
    */
-  readonly gatewayClientCertFile: string | undefined;
-  readonly gatewayClientKeyFile: string | undefined;
+  readonly gatewayClientCertFile: string;
+  readonly gatewayClientKeyFile: string;
+  /** Release-manifest pin; must equal the digest derived from gatewayClientCertFile. */
+  readonly expectedRelayInstanceId: string;
   readonly idleTimeoutMs: number;
   readonly outputRateBytesPerSec: number;
   readonly scrollbackBytes: number;
   readonly maxSessions: number;
   readonly authzIntervalMs: number;
   readonly authzGraceMs: number;
+  /** Maximum age of the most recent gateway-accepted presence publication. */
+  readonly presenceMaxStaleMs: number;
+  /** Nominal gateway lease expected on every grant; checked against the relay fail-closed cycle. */
+  readonly expectedClaimLeaseMs: number;
   readonly reconnectGraceMs: number;
-  /** Atomic local spool; contains only session ids, reasons and byte counters. */
+  /** Atomic 0600 spool; v2 also carries the raw close fence and therefore must stay capability-private. */
   readonly closeSpoolFile: string;
 }
 
 export const DEFAULT_BROWSER_PORT = 8446;
 export const DEFAULT_AGENT_PORT = 8445;
+export const DEFAULT_HEALTH_PORT = 8085;
 export const DEFAULT_AGENT_REGISTRY_FILE = '/run/cauce-terminal/pty_agent_identities.json';
 export const DEFAULT_GATEWAY_URL = 'https://gateway:8443';
 
@@ -84,10 +100,44 @@ function gatewayUrl(environment: NodeJS.ProcessEnv): string {
   return url.origin;
 }
 
+function relayInstanceId(environment: NodeJS.ProcessEnv): string {
+  const value = required(environment, 'CAUCE_TERMINAL_RELAY_INSTANCE_ID');
+  if (!isRelayInstanceId(value)) {
+    throw new Error('CAUCE_TERMINAL_RELAY_INSTANCE_ID must be 64 lowercase hexadecimal characters');
+  }
+  return value;
+}
+
 export function loadRelayConfig(environment: NodeJS.ProcessEnv = process.env): TerminalRelayConfig {
+  const authzIntervalMs = positiveInteger(
+    environment, 'CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS', 30,
+  ) * 1_000;
+  const authzGraceMs = positiveInteger(
+    environment, 'CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS', 90,
+  ) * 1_000;
+  const expectedClaimLeaseMs = positiveInteger(
+    environment, 'CAUCE_TERMINAL_CLAIM_LEASE_SECONDS', 150,
+  ) * 1_000;
+  const requiredClaimLeaseMs = authzIntervalMs + authzGraceMs
+    + DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS + CLAIM_DEADLINE_SAFETY_MARGIN_MS;
+  if (expectedClaimLeaseMs > MAX_CLAIM_LEASE_MS || expectedClaimLeaseMs <= requiredClaimLeaseMs) {
+    throw new Error(
+      'CAUCE_TERMINAL_CLAIM_LEASE_SECONDS must strictly exceed authz interval, grace, gateway timeout and takeover margin',
+    );
+  }
+  const browserPort = port(environment, 'CAUCE_TERMINAL_RELAY_BROWSER_PORT', DEFAULT_BROWSER_PORT);
+  const agentPort = port(environment, 'CAUCE_TERMINAL_RELAY_AGENT_PORT', DEFAULT_AGENT_PORT);
+  const healthPort = port(environment, 'CAUCE_TERMINAL_RELAY_HEALTH_PORT', DEFAULT_HEALTH_PORT);
+  if (new Set([browserPort, agentPort, healthPort]).size !== 3) {
+    throw new Error('terminal relay browser, agent and health ports must be distinct');
+  }
+  const presenceMaxStaleMs = positiveInteger(
+    environment, 'CAUCE_TERMINAL_PRESENCE_MAX_STALE_SECONDS', 30,
+  ) * 1_000;
   return {
-    browserPort: port(environment, 'CAUCE_TERMINAL_RELAY_BROWSER_PORT', DEFAULT_BROWSER_PORT),
-    agentPort: port(environment, 'CAUCE_TERMINAL_RELAY_AGENT_PORT', DEFAULT_AGENT_PORT),
+    browserPort,
+    agentPort,
+    healthPort,
     tlsCertFile: required(environment, 'CAUCE_TERMINAL_RELAY_TLS_CERT_FILE'),
     tlsKeyFile: required(environment, 'CAUCE_TERMINAL_RELAY_TLS_KEY_FILE'),
     clientCaFile: required(environment, 'CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE'),
@@ -96,14 +146,17 @@ export function loadRelayConfig(environment: NodeJS.ProcessEnv = process.env): T
     agentRegistryFile: environment.CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE ?? DEFAULT_AGENT_REGISTRY_FILE,
     gatewayUrl: gatewayUrl(environment),
     tokenFile: required(environment, 'CAUCE_TERMINAL_RELAY_TOKEN_FILE'),
-    gatewayClientCertFile: environment.CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE,
-    gatewayClientKeyFile: environment.CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE,
+    gatewayClientCertFile: required(environment, 'CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE'),
+    gatewayClientKeyFile: required(environment, 'CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE'),
+    expectedRelayInstanceId: relayInstanceId(environment),
     idleTimeoutMs: positiveInteger(environment, 'CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS', 600) * 1_000,
     outputRateBytesPerSec: positiveInteger(environment, 'CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC', 262_144),
     scrollbackBytes: positiveInteger(environment, 'CAUCE_TERMINAL_SCROLLBACK_BYTES', 20_480),
     maxSessions: positiveInteger(environment, 'CAUCE_TERMINAL_MAX_SESSIONS', 16),
-    authzIntervalMs: positiveInteger(environment, 'CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS', 30) * 1_000,
-    authzGraceMs: positiveInteger(environment, 'CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS', 90) * 1_000,
+    authzIntervalMs,
+    authzGraceMs,
+    presenceMaxStaleMs,
+    expectedClaimLeaseMs,
     reconnectGraceMs: positiveInteger(environment, 'CAUCE_TERMINAL_RECONNECT_GRACE_SECONDS', 30) * 1_000,
     closeSpoolFile: environment.CAUCE_TERMINAL_CLOSE_SPOOL_FILE ?? '/tmp/cauce-terminal-close-reports.json'
   };

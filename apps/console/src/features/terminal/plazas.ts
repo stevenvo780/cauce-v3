@@ -21,32 +21,27 @@
 import type { TerminalSessionListItem } from './api';
 
 /**
- * Espejo EXACTO del `openPredicate` del gateway (`services/gateway/src/terminal/plugin.ts`):
+ * Proyección del `openPredicate` del gateway (`services/gateway/src/terminal/plugin.ts`):
  *
  *   closed_at IS NULL AND revoked_at IS NULL
  *   AND ((consumed_at IS NULL AND expires_at > now())
  *        OR (consumed_at IS NOT NULL AND consumed_at + ttl > now()))
  *
- * El listado ya trae resuelta la primera mitad en `state` (`closed` = cerrada o revocada) y la
- * segunda en `expires_at` (para una sesión consumida el servidor manda `consumed_at + ttl`, no el
- * vencimiento del ticket). O sea que acá alcanza con las dos comprobaciones de abajo — pero las
- * DOS: sin la del reloj, un ticket que caducó a las 17:50 se sigue listando como `issued` y la
- * consola le pediría al operador que cierre una sesión que no ocupa nada.
+ * PostgreSQL evalúa la expresión ENTERA con su reloj y el gateway proyecta `state: closed` cuando
+ * ya no ocupa. El navegador no vuelve a comparar `expires_at` con `Date.now()`: un portátil con
+ * el reloj adelantado ocultaría precisamente la sesión que bloquea al operador. La fecha queda
+ * sólo para explicar aproximadamente cuánto falta.
  */
-export function ocupaPlaza(item: TerminalSessionListItem, ahora: number = Date.now()): boolean {
-  if (item.state === 'closed') return false;
-  const vence = Date.parse(item.expires_at);
-  if (!Number.isFinite(vence)) return false;
-  return vence > ahora;
+export function ocupaPlaza(item: TerminalSessionListItem): boolean {
+  return item.state !== 'closed';
 }
 
 /** Las sesiones que hoy le están gastando plazas a este operador, de la más reciente a la más vieja. */
 export function plazasOcupadas(
   items: readonly TerminalSessionListItem[],
-  ahora: number = Date.now(),
 ): TerminalSessionListItem[] {
   return items
-    .filter((item) => ocupaPlaza(item, ahora))
+    .filter((item) => ocupaPlaza(item))
     .sort((a, b) => Date.parse(b.opened_at) - Date.parse(a.opened_at));
 }
 
@@ -57,10 +52,9 @@ export function plazasOcupadas(
 export function plazasColgadas(
   items: readonly TerminalSessionListItem[],
   conocidas: readonly string[],
-  ahora: number = Date.now(),
 ): TerminalSessionListItem[] {
   const propias = new Set(conocidas);
-  return plazasOcupadas(items, ahora).filter((item) => !propias.has(item.session_id));
+  return plazasOcupadas(items).filter((item) => !propias.has(item.session_id));
 }
 
 /** Minutos que le quedan a una sesión antes de soltar la plaza sola. Para no mentir con «se libera ya». */

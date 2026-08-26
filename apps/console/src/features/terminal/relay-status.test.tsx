@@ -35,15 +35,20 @@ describe('deriveTerminalRelayState', () => {
       .toEqual({ status: 'unavailable', cause: 'no-desplegado', reason: TERMINAL_RELAY_NOT_DEPLOYED_REASON });
   });
 
-  it('treats a malformed/ambiguous available value as unavailable, never as available', () => {
-    expect(deriveTerminalRelayState({ available: undefined as never }, undefined).status).toBe('unavailable');
+  it('treats a malformed available value as sin-comprobar, never as absent or available', () => {
+    const state = deriveTerminalRelayState({ available: undefined as never }, undefined);
+    expect(state.status).toBe('unavailable');
+    expect(state.cause).toBe('sin-comprobar');
+    expect(state.reason).not.toContain(TERMINAL_RELAY_NOT_DEPLOYED_REASON);
   });
 
-  it('collapses any thrown error — including a raw 502 with no JSON body — into unavailable with a one-line reason', () => {
+  it('classifies a transport error without status as sin-comprobar with an actionable reason', () => {
     const state = deriveTerminalRelayState(undefined, new Error('Bad Gateway'));
     expect(state.status).toBe('unavailable');
-    expect(state.reason).toContain(TERMINAL_RELAY_NOT_DEPLOYED_REASON);
+    expect(state.cause).toBe('sin-comprobar');
+    expect(state.reason).toMatch(/no se pudo consultar o alcanzar/i);
     expect(state.reason).toContain('Bad Gateway');
+    expect(state.reason).not.toContain(TERMINAL_RELAY_NOT_DEPLOYED_REASON);
   });
 
   it('never reports available on an error, even if a stale capability payload is also passed', () => {
@@ -107,13 +112,27 @@ describe('deriveTerminalRelayState', () => {
       expect(state.reason).toMatch(/no dice que el relay falte/i);
     });
 
-    /** CONTROL NEGATIVO: los estados que SÍ prueban ausencia siguen diciendo «no desplegado». */
-    it.each([404, 501, 502, 503, 504])('con %s la causa sigue siendo no-desplegado', (status) => {
+    it.each([502, 503, 504])(
+      'con upstream HTTP %s dice que no se pudo alcanzar, nunca que no esté desplegado',
+      (status) => {
+        const state = deriveTerminalRelayState(undefined, new ApiError('upstream unavailable', status));
+        expect(state.cause).toBe('sin-comprobar');
+        expect(state.reason).toMatch(/no se pudo alcanzar/i);
+        expect(state.reason).toContain(`HTTP ${status}`);
+        expect(state.reason).not.toContain(TERMINAL_RELAY_NOT_DEPLOYED_REASON);
+      },
+    );
+
+    /** CONTROL NEGATIVO: sólo los estados que acreditan ausencia dicen «no desplegado». */
+    it.each([404, 501])('con %s la causa sigue siendo no-desplegado', (status) => {
       expect(deriveTerminalRelayState(undefined, new ApiError('x', status)).cause).toBe('no-desplegado');
     });
 
-    it('un fallo de red sin código sigue siendo no-desplegado, como desde 0a1d0e3', () => {
-      expect(deriveTerminalRelayState(undefined, new Error('Failed to fetch')).cause).toBe('no-desplegado');
+    it('un TypeError de red sin status queda sin-comprobar y no inventa ausencia', () => {
+      const state = deriveTerminalRelayState(undefined, new TypeError('Failed to fetch'));
+      expect(state.cause).toBe('sin-comprobar');
+      expect(state.reason).toMatch(/no se pudo consultar o alcanzar/i);
+      expect(state.reason).not.toContain(TERMINAL_RELAY_NOT_DEPLOYED_REASON);
     });
   });
 });
@@ -142,12 +161,14 @@ describe('useTerminalRelayStatus', () => {
     expect(await screen.findByText(/^available:/)).toBeInTheDocument();
   });
 
-  it('treats a raw 502 (no JSON body) the same as an absent relay, not as a crash', async () => {
+  it('treats a raw 502 as sin-comprobar and says the upstream could not be reached', async () => {
     server.use(http.get('*/v3/console/terminal/capability', () => new HttpResponse('<html>Bad Gateway</html>', {
       status: 502,
       headers: { 'content-type': 'text/html' },
     })));
     renderWithApi(<Probe />);
     await waitFor(() => expect(screen.getByText(/^unavailable:/)).toBeInTheDocument());
+    expect(screen.getByText(/no se pudo alcanzar el relay de terminales/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no está desplegado/i)).not.toBeInTheDocument();
   });
 });

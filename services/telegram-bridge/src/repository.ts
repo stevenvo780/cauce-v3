@@ -50,6 +50,8 @@ interface EffectRow {
 
 const EFFECT_COLUMNS = `effect_id,outbox_id,tenant_id,bridge_alias,chunk_index,chunk_count,
   payload_hash,state,provider_message_id,diagnostic,diagnosed_at,replay_count,replayed_at`;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const SHA256 = /^[a-f0-9]{64}$/u;
 
 function durableDiagnostic(value: string): string {
   const diagnostic = value.replace(/[\r\n\t]/g, ' ').trim().slice(0, 1_000);
@@ -84,64 +86,11 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
   }
 
   private async reconcileTerminalEffects(): Promise<void> {
-    const diagnostic = 'Interrupted on the final outbox attempt while a Telegram request may have been in flight; '
-      + 'automatic replay is disabled';
     await withTransaction(this.pool, async (client) => {
-      // A remote effect in `sent` is stronger evidence than an outbox lease timeout. If every
-      // expected piece is durably confirmed, finish the outbox and resolve only the mechanical
-      // expiry DLQ. This sends nothing and never touches ambiguous/sending effects.
-      const provenSent = await client.query<{ id: string }>(
-        `WITH proof AS (
-           SELECT outbox.id,max(effect.sent_at) AS sent_at
-           FROM adapter_outbox outbox
-           JOIN telegram_egress_effects effect ON effect.outbox_id=outbox.id
-           WHERE outbox.adapter='telegram' AND outbox.kind='origin_relay'
-             AND outbox.status='dead'
-             AND outbox.last_error='outbox lease expired: max attempts exhausted'
-           GROUP BY outbox.id
-           HAVING count(*)=max(effect.chunk_count)
-              AND count(*) FILTER (WHERE effect.state='sent')=count(*)
-              AND min(effect.chunk_index)=0
-              AND max(effect.chunk_index)=max(effect.chunk_count)-1
-         )
-         UPDATE adapter_outbox outbox SET
-           status='sent',sent_at=proof.sent_at,dead_at=NULL,claimed_by=NULL,claim_token=NULL,
-           claim_expires_at=NULL,last_error=NULL
-         FROM proof WHERE outbox.id=proof.id
-         RETURNING outbox.id`,
-        []
-      );
-      const recoveredIds = provenSent.rows.map((row) => row.id);
-      if (recoveredIds.length > 0) {
-        await client.query(
-          `UPDATE outbox_dead_letters SET resolved_at=now()
-           WHERE outbox_id=ANY($1::uuid[]) AND resolved_at IS NULL`,
-          [recoveredIds]
-        );
-      }
-      await client.query(
-        `UPDATE telegram_egress_effects effect SET
-           state='ambiguous',diagnostic=$1,diagnosed_at=now()
-         FROM adapter_outbox outbox
-         WHERE effect.outbox_id=outbox.id AND effect.state='sending' AND outbox.status='dead'`,
-        [diagnostic]
-      );
-      const affected = await client.query<{ id: string }>(
-        `UPDATE adapter_outbox outbox SET last_error=effect.diagnostic
-         FROM telegram_egress_effects effect
-         WHERE effect.outbox_id=outbox.id AND effect.state='ambiguous'
-           AND outbox.status='dead'
-           AND outbox.last_error='outbox lease expired: max attempts exhausted'
-         RETURNING outbox.id`
-      );
-      const outboxIds = [...new Set(affected.rows.map((row) => row.id))];
-      if (outboxIds.length === 0) return;
-      await client.query(
-        `UPDATE outbox_dead_letters letter SET reason=outbox.last_error
-         FROM adapter_outbox outbox
-         WHERE letter.outbox_id=outbox.id AND letter.outbox_id=ANY($1::uuid[])`,
-        [outboxIds]
-      );
+      // Migration 030 owns the invariant and the exactly-once audit ledger.  It takes both the
+      // global DLQ fence and the same causal Telegram advisory locks as the claimant, proves every
+      // chunk (including provider id and sent_at), and never performs a remote side effect.
+      await client.query(`SELECT cauce_reconcile_telegram_terminal_030('telegram-bridge')`);
     });
   }
 
@@ -258,18 +207,26 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
         throw new Error('Telegram sent ACK requires a positive effect count');
       }
       const confirmed = await this.pool.query<{
-        total: string; sent: string; matching_count: boolean; first_chunk: number | null; last_chunk: number | null;
+        total: string; sent: string; matching_count: boolean; distinct_indices: string;
+        first_chunk: number | null; last_chunk: number | null;
+        provider_confirmed: boolean; sent_at_confirmed: boolean;
       }>(
         `SELECT count(*)::text AS total,
                 count(*) FILTER (WHERE state='sent')::text AS sent,
                 COALESCE(bool_and(chunk_count=$2),false) AS matching_count,
-                min(chunk_index) AS first_chunk,max(chunk_index) AS last_chunk
+                count(DISTINCT chunk_index)::text AS distinct_indices,
+                min(chunk_index) AS first_chunk,max(chunk_index) AS last_chunk,
+                COALESCE(bool_and(provider_message_id IS NOT NULL
+                  AND btrim(provider_message_id)<>''),false) AS provider_confirmed,
+                COALESCE(bool_and(sent_at IS NOT NULL),false) AS sent_at_confirmed
          FROM telegram_egress_effects WHERE outbox_id=$1`,
         [acknowledgement.event_id, expected]
       );
       const row = confirmed.rows[0];
       if (!row || Number(row.total) !== expected || Number(row.sent) !== expected ||
-          !row.matching_count || row.first_chunk !== 0 || row.last_chunk !== expected - 1) {
+          Number(row.distinct_indices) !== expected || !row.matching_count ||
+          row.first_chunk !== 0 || row.last_chunk !== expected - 1 ||
+          !row.provider_confirmed || !row.sent_at_confirmed) {
         throw new Error('Telegram sent ACK requires every chunk effect to be confirmed sent');
       }
     }
@@ -392,96 +349,44 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
     return selected.rows[0] ? effect(selected.rows[0]) : undefined;
   }
 
-  async manualReplayEffect(effectId: string, payloadHash: string, reason: string): Promise<TelegramEffect> {
+  async manualReplayEffect(
+    chunkIndex: number,
+    payloadHash: string,
+    reason: string,
+    actorTenant: Tenant,
+    actorAlias: string,
+    duplicateRiskAcknowledged: boolean,
+    requestId: string,
+    deadLetterId: string,
+    incidentEvidenceSha256: string,
+    expectedReplayCount: number
+  ): Promise<TelegramEffect> {
     const replayReason = durableDiagnostic(reason);
+    if (!actorTenant || !actorAlias.trim()) {
+      throw new Error('Telegram manual replay requires an explicit control-authorized actor');
+    }
+    if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || !SHA256.test(payloadHash)
+      || !UUID.test(requestId) || !UUID.test(deadLetterId) || !SHA256.test(incidentEvidenceSha256)
+      || !Number.isSafeInteger(expectedReplayCount) || expectedReplayCount < 0) {
+      throw new Error('Telegram manual replay requires exact incident evidence and replay count');
+    }
     return withTransaction(this.pool, async (client) => {
-      const selected = await client.query<EffectRow>(
-        `SELECT ${EFFECT_COLUMNS} FROM telegram_egress_effects
-         WHERE effect_id=$1 AND payload_hash=$2 FOR UPDATE`, [effectId, payloadHash]
-      );
-      const row = selected.rows[0];
-      if (!row) throw new Error('Telegram effect does not exist or payload changed');
-      if (row.state !== 'ambiguous' && row.state !== 'dead') {
-        throw new Error('Only an ambiguous or dead Telegram effect can be manually replayed');
-      }
-      const outboxIdentity = await client.query<{
-        acknowledgement: boolean;
-        root_message_id: string | null;
-      }>(
-        `SELECT payload->>'relay_kind'='ack' AS acknowledgement,
-                COALESCE(
-                  payload#>>'{correlation,root_message_id}',
-                  payload#>>'{correlation,message_id}'
-                ) AS root_message_id
-         FROM adapter_outbox WHERE id=$1`,
-        [row.outbox_id]
-      );
-      const identity = outboxIdentity.rows[0];
-      if (identity?.acknowledgement && identity.root_message_id) {
-        await client.query(
-          `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
-          [`telegram-origin-relay:${identity.root_message_id}`]
-        );
-      }
-      const outbox = await client.query<{ status: string; acknowledgement: boolean }>(
-        `SELECT status,payload->>'relay_kind'='ack' AS acknowledgement
-         FROM adapter_outbox WHERE id=$1 FOR UPDATE`,
-        [row.outbox_id]
-      );
-      const outboxRow = outbox.rows[0];
-      if (outboxRow?.status !== 'dead') {
-        throw new Error('Telegram manual replay requires a dead outbox event');
-      }
-      if (outboxRow.acknowledgement) {
-        // Lock every correlated final, including pending ones, so a concurrent
-        // final claim cannot cross the replay transition.
-        const correlatedFinals = await client.query<{ status: string }>(
-          `SELECT final.status
-           FROM adapter_outbox final
-           JOIN adapter_outbox acknowledgement ON acknowledgement.id=$1
-           WHERE final.tenant_id=acknowledgement.tenant_id
-             AND final.adapter=acknowledgement.adapter
-             AND final.kind=acknowledgement.kind
-             AND final.id<>acknowledgement.id
-             AND final.payload->>'relay_kind' IS DISTINCT FROM 'ack'
-             AND COALESCE(
-               final.payload#>>'{correlation,root_message_id}',
-               final.payload#>>'{correlation,message_id}'
-             )=COALESCE(
-               acknowledgement.payload#>>'{correlation,root_message_id}',
-               acknowledgement.payload#>>'{correlation,message_id}'
-             )
-           FOR UPDATE OF final`,
-          [row.outbox_id]
-        );
-        if (correlatedFinals.rows.some(
-          (final) => final.status === 'processing' || final.status === 'sent' || final.status === 'dead'
-        )) {
-          throw new Error(
-            'Telegram acceptance ACK replay is forbidden after its final relay was claimed or completed'
-          );
-        }
-      }
+      // The database function verifies role/tenant control, exact effect hash, causal ordering and
+      // the explicit duplicate-risk acknowledgement.  It resolves (never deletes) the incident.
       await client.query(
-        `UPDATE telegram_egress_effects SET
-           state='prepared',sending_at=NULL,provider_message_id=NULL,
-           diagnostic=$3,diagnosed_at=now(),replay_count=replay_count+1,replayed_at=now()
-         WHERE effect_id=$1 AND payload_hash=$2 AND state IN ('ambiguous','dead')`,
-        [effectId, payloadHash, `Manual replay authorized: ${replayReason}`]
+        `SELECT cauce_manual_replay_telegram_030(
+           $1,$2,$3,$4,$5,$6,$7::uuid,$8::uuid,$9,$10
+         )`,
+        [
+          payloadHash, chunkIndex, replayReason, actorTenant, actorAlias.trim(),
+          duplicateRiskAcknowledged, requestId, deadLetterId, incidentEvidenceSha256,
+          expectedReplayCount,
+        ]
       );
-      await client.query(
-        `UPDATE adapter_outbox SET
-           status='failed',available_at=now(),claimed_by=NULL,claim_token=NULL,
-           claim_expires_at=NULL,dead_at=NULL,last_error=$2,
-           max_attempts=GREATEST(max_attempts,attempts+1)
-         WHERE id=$1 AND status='dead'`,
-        [row.outbox_id, `Manual Telegram replay authorized: ${replayReason}`]
-      );
-      // The effect retains the durable diagnosis and replay audit. Removing the stale DLQ
-      // projection lets a subsequent terminal result publish the current diagnosis.
-      await client.query(`DELETE FROM outbox_dead_letters WHERE outbox_id=$1`, [row.outbox_id]);
       const replayed = await client.query<EffectRow>(
-        `SELECT ${EFFECT_COLUMNS} FROM telegram_egress_effects WHERE effect_id=$1`, [effectId]
+        `SELECT ${EFFECT_COLUMNS} FROM telegram_egress_effects
+          WHERE effect_id=(SELECT effect_id FROM telegram_manual_replays WHERE request_id=$1::uuid)`,
+        [requestId]
       );
       if (!replayed.rows[0]) throw new Error('Telegram manual replay was fenced');
       return effect(replayed.rows[0]);

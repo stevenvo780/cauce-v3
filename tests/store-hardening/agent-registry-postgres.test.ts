@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigMutation } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
+import { buildGateway } from '../../services/gateway/src/index.js';
+import {
+  FixedAuthProvider, grants, noDeliveryWakes, testPrincipal,
+} from '../gateway-hardening/helpers.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 let database: TestDatabase;
@@ -357,6 +361,99 @@ describe('cross-tenant subscription pool', () => {
 });
 
 describe('agent fleet read endpoints', () => {
+  it('serves at most 100 role-history rows newest-first and distinguishes empty from hidden', async () => {
+    await pool.query(`
+      INSERT INTO agents(tenant_id,alias,display_name,enabled)
+      VALUES ('Steven','zeus','Zeus',false),('Steven','kant','Kant',false)
+      ON CONFLICT (tenant_id,alias) DO NOTHING;
+      TRUNCATE agent_role_brief_history RESTART IDENTITY;
+      DO $body$
+      BEGIN
+        FOR version IN 1..105 LOOP
+          UPDATE agents
+             SET role_brief='role history version ' || version,role_template_slug=NULL
+           WHERE tenant_id='Steven' AND alias='zeus';
+        END LOOP;
+      END
+      $body$;
+    `);
+    const hub = await buildGateway({
+      pool,
+      repository,
+      authProvider: new FixedAuthProvider(testPrincipal({
+        tenant_id: 'Steven', alias: 'kant', roles: [], permissions: grants('read'),
+      })),
+      deliveryWakeSubscriber: noDeliveryWakes,
+      outboxPollMs: 60_000,
+    });
+    try {
+      const history = await hub.inject({
+        method: 'GET', url: '/v3/console/role-assignments/Steven/zeus/history',
+      });
+      expect(history.statusCode).toBe(200);
+      const entries = history.json<{ entries: Array<{ id: string }> }>().entries;
+      expect(entries).toHaveLength(100);
+      const ids = entries.map((entry) => Number(entry.id));
+      expect(ids).toEqual([...ids].sort((left, right) => right - left));
+      expect(ids[0]).toBe(105);
+      expect(ids[ids.length - 1]).toBe(6);
+
+      const empty = await hub.inject({
+        method: 'GET', url: '/v3/console/role-assignments/Steven/kant/history',
+      });
+      expect(empty.statusCode).toBe(200);
+      expect(empty.json()).toMatchObject({ tenant_id: 'Steven', alias: 'kant', entries: [] });
+    } finally {
+      await hub.close();
+    }
+
+    const clientReader = await buildGateway({
+      pool,
+      repository,
+      authProvider: new FixedAuthProvider(testPrincipal({
+        tenant_id: 'Isa', alias: 'salva', roles: [], permissions: grants('read'),
+      })),
+      deliveryWakeSubscriber: noDeliveryWakes,
+      outboxPollMs: 60_000,
+    });
+    try {
+      const hidden = await clientReader.inject({
+        method: 'GET', url: '/v3/console/role-assignments/Pablo/midas/history',
+      });
+      const absent = await clientReader.inject({
+        method: 'GET', url: '/v3/console/role-assignments/Pablo/ghost/history',
+      });
+      expect(hidden.statusCode).toBe(404);
+      expect(absent.statusCode).toBe(404);
+      expect(hidden.body).toBe(absent.body);
+    } finally {
+      await clientReader.close();
+    }
+  });
+
+  it('resolves duplicate aliases by exact tenant and never lets legacy pick a foreign row', async () => {
+    await pool.query(`
+      INSERT INTO agents(tenant_id,alias,display_name,enabled)
+      VALUES ('Isa','dupe','Isa duplicate',false),('Pablo','dupe','Pablo duplicate',false)
+    `);
+
+    const ownLegacy = await repository.getAgent('dupe', 'Isa', 'salva');
+    expect(ownLegacy).toMatchObject({
+      tenant_id: 'Isa', alias: 'dupe', display_name: 'Isa duplicate',
+    });
+    expect(await repository.getAgentByIdentity('Pablo', 'dupe', 'Isa', 'salva')).toBeUndefined();
+
+    const hubForeign = await repository.getAgentByIdentity('Pablo', 'dupe', 'Steven', 'kant');
+    expect(hubForeign).toMatchObject({
+      tenant_id: 'Pablo', alias: 'dupe', display_name: 'Pablo duplicate',
+    });
+
+    await pool.query(`DELETE FROM agents WHERE tenant_id='Isa' AND alias='dupe'`);
+    // Even after the local duplicate disappears, the compatibility lookup does not fall through
+    // to the still-visible Pablo row.
+    expect(await repository.getAgent('dupe', 'Isa', 'salva')).toBeUndefined();
+  });
+
   it('scopes listAgents/getAgent to the actor tenant plus ACL-readable tenants', async () => {
     await applyAll([
       salvaAgent,
@@ -385,7 +482,8 @@ describe('agent fleet read endpoints', () => {
 
   it('derives deployment_status from registry state and live connection presence', async () => {
     await applyAll([salvaAgent]);
-    expect(await repository.getAgent('salva', 'Steven', 'kant')).toMatchObject({ deployment_status: 'disabled' });
+    expect(await repository.getAgentByIdentity('Isa', 'salva', 'Steven', 'kant'))
+      .toMatchObject({ deployment_status: 'disabled' });
 
     await applyAll([{
       resource: 'agent', action: 'update', tenant_id: 'Isa', alias: 'salva',
@@ -396,17 +494,17 @@ describe('agent fleet read endpoints', () => {
     }], 1);
     // Enabled, but no connection_leases row has ever existed for this alias: presence is unknown,
     // not "offline" — those are deliberately different states (never connected vs. connected then lost).
-    expect(await repository.getAgent('salva', 'Steven', 'kant'))
+    expect(await repository.getAgentByIdentity('Isa', 'salva', 'Steven', 'kant'))
       .toMatchObject({ deployment_status: 'unknown', online: null });
 
     await repository.acquireLease('Isa', 'salva', 'salva-instance', [], 30_000);
-    expect(await repository.getAgent('salva', 'Steven', 'kant'))
+    expect(await repository.getAgentByIdentity('Isa', 'salva', 'Steven', 'kant'))
       .toMatchObject({ deployment_status: 'online', online: true });
 
     await pool.query(
       `UPDATE connection_leases SET lease_until=now()-interval '1 minute' WHERE tenant_id='Isa' AND alias='salva'`
     );
-    expect(await repository.getAgent('salva', 'Steven', 'kant'))
+    expect(await repository.getAgentByIdentity('Isa', 'salva', 'Steven', 'kant'))
       .toMatchObject({ deployment_status: 'offline', online: false });
   });
 

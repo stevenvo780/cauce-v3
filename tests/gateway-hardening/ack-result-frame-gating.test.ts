@@ -70,6 +70,12 @@ const rejections = [
   }
 ];
 const chainGate = { gate_id: 'a1b2c3d4-0000-4000-8000-00000000ffff', question: worstCaseGateQuestion };
+const materializations = [{
+  output_index: 1,
+  target_tenant: 'Steven' as const,
+  target_alias: 'socrates',
+  child_delivery_id: 'a1b2c3d4-0000-4000-8000-000000000123'
+}];
 
 /**
  * Levanta un gateway y un adaptador que declara EXACTAMENTE las capabilities que se le pasan.
@@ -86,6 +92,7 @@ async function connectAdapter(capabilities: readonly string[]): Promise<{
     applied: true,
     receipt: 'applied',
     delegation_rejections: rejections,
+    delegation_materializations: materializations,
     chain_gate: chainGate
   });
   const app = await buildGateway({
@@ -179,10 +186,11 @@ describe('ack_result delegation feedback is gated by a negotiated capability', (
     });
     // Y no llegan por el spread: el gateway los saca a mano de `legacyResult`.
     expect(frame).not.toHaveProperty('delegation_rejections');
+    expect(frame).not.toHaveProperty('delegation_materializations');
     expect(frame).not.toHaveProperty('chain_gate');
   });
 
-  it('sends a capable adapter both fields, intactos y dentro del esquema', async () => {
+  it('sends a capable adapter all feedback fields, intactos y dentro del esquema', async () => {
     const adapter = await connectAdapter([
       'acks.v3', 'renewable_delivery_claims_v1', 'delegation_feedback_v1'
     ]);
@@ -194,6 +202,7 @@ describe('ack_result delegation feedback is gated by a negotiated capability', (
     // El gate no puede degradar el contenido: el peor caso que el store sabe generar —una
     // pregunta de 8 KiB y un destino en el tope— viaja completo y valida.
     expect(frame).toHaveProperty('delegation_rejections', rejections);
+    expect(frame).toHaveProperty('delegation_materializations', materializations);
     expect(frame).toHaveProperty('chain_gate', chainGate);
   });
 
@@ -204,6 +213,7 @@ describe('ack_result delegation feedback is gated by a negotiated capability', (
     const frame = await adapter.nextFrame();
 
     expect(frame).not.toHaveProperty('delegation_rejections');
+    expect(frame).not.toHaveProperty('delegation_materializations');
     expect(frame).not.toHaveProperty('chain_gate');
     // `receipt` sigue con su propio gate: este test también protege ese precedente.
     expect(frame).not.toHaveProperty('receipt');

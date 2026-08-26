@@ -6,8 +6,8 @@ import { countCodePoints } from './schemas.js';
  * ============================================================================================
  * QUÉ PROBLEMA RESUELVE
  * ============================================================================================
- * Hoy Cauce reinyecta información FIJA en CADA entrega. Medido el 2026-08-24 llamando a
- * `protocolPrompt()` del build desplegado (`bus-v3-20260814-umbral`), con 13 destinos y un rol de
+ * La evidencia privada mostró, al medir la información fija que Cauce reinyecta en cada entrega,
+ * que `protocolPrompt()` de un build desplegado con 13 destinos y un rol de
  * 1.097 caracteres:
  *
  *     sobre COMPLETO   : 11.546 caracteres
@@ -36,7 +36,7 @@ import { countCodePoints } from './schemas.js';
  * ============================================================================================
  * LA UNIDAD: SE MIDE EN LAS DOS Y MANDA LA MÁS ESTRICTA
  * ============================================================================================
- * El 16-ago un alias se quedó SORDO —dejó de recibir entregas, sin un solo error visible— porque
+ * Un incidente operativo dejó a un alias SORDO —sin entregas ni error visible— porque
  * dos capas medían el mismo 1200 en unidades distintas: `char_length` de Postgres cuenta PUNTOS DE
  * CÓDIGO y `z.string().max()` de zod cuenta unidades UTF-16. Un texto de 1200 puntos de código con
  * cien emojis mide 1300 en UTF-16: la base lo guardaba, la pantalla decía «guardado» y el
@@ -71,7 +71,7 @@ import { countCodePoints } from './schemas.js';
  * `z.string().max()` el día que dejó a un alias sordo.
  *
  * Está escrita aparte, y no en línea, para que las dos unidades tengan NOMBRE en el código: la
- * confusión del 16-ago fue posible porque una de las dos no lo tenía y se leía como «el largo».
+ * confusión del incidente fue posible porque una de las dos no tenía nombre y se leía como «el largo».
  */
 export function countUtf16Units(text: string): number {
   return text.length;
@@ -110,8 +110,8 @@ export const AGENT_PROFILE_LIMITS = {
   /**
    * Quién es el humano de este alias y cómo tratarlo.
    *
-   * Existe porque el arnés `openclaw` lee un `USER.md` aparte —uno de los siete Markdown medidos el
-   * 2026-08-24— y ninguna de las otras caras responde esa pregunta. Sin este campo el generador
+   * Existe porque el arnés `openclaw` lee un `USER.md` aparte —uno de sus Markdown gestionados—
+   * y ninguna de las otras caras responde esa pregunta. Sin este campo el generador
    * tendría dos salidas y las dos malas: dejar `USER.md` vacío, o rellenarlo deduciendo el humano
    * del `tenant_id`, que es inventarle a un agente cómo tratar a una persona. Un fichero de persona
    * equivocado es peor que ninguno.
@@ -401,8 +401,8 @@ export function vinetas(items: readonly string[]): string {
  * Devolver `undefined` y no una cadena vacía es lo que hace que la sección desaparezca entera en
  * vez de dejar un encabezado hueco. Un encabezado sin nada debajo le enseña al agente que el
  * sistema no sabe la respuesta, que es peor que no preguntar — la misma regla por la que el
- * adaptador omite `Tu rol:` cuando el brief es NULL, y la lección del SOUL.md de fábrica de `iza`.
- */
+ * adaptador omite `Tu rol:` cuando el brief es NULL; un fixture sintético fija la misma regla.
+*/
 export function seccion(titulo: string, cuerpo: string | undefined): string | undefined {
   if (cuerpo === undefined || cuerpo.trim().length === 0) return undefined;
   return `## ${titulo}\n\n${cuerpo.trim()}`;
@@ -507,4 +507,3 @@ export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAl
 
   return secciones.join("\n\n");
 }
-

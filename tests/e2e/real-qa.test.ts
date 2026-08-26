@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
@@ -17,8 +17,26 @@ let app: Awaited<ReturnType<typeof buildGateway>>;
 let stopDispatcher: (() => void) | undefined;
 let httpUrl: string;
 
+interface DatabaseImageBinding {
+  role: 'postgresql-test-dependency';
+  repositoryDigest: string;
+  imageId: string;
+  containerConfigImage: string;
+  containerIdSha256: string;
+  verifiedAgainstRunningContainer: true;
+}
+
+let databaseImageBinding: DatabaseImageBinding | undefined;
+
 beforeAll(async () => {
   database = await startTestDatabase();
+  if (process.env.CAUCE_EVIDENCE_CLASS === 'testcontainers') {
+    databaseImageBinding = await inspectDatabaseImage();
+    process.env.CAUCE_TESTCONTAINERS_DB_REPOSITORY_DIGEST = databaseImageBinding.repositoryDigest;
+    process.env.CAUCE_TESTCONTAINERS_DB_IMAGE_ID = databaseImageBinding.imageId;
+    process.env.CAUCE_TESTCONTAINERS_DB_CONFIG_IMAGE = databaseImageBinding.containerConfigImage;
+    process.env.CAUCE_TESTCONTAINERS_DB_CONTAINER_ID_SHA256 = databaseImageBinding.containerIdSha256;
+  }
   app = await buildGateway({
     pool: database.pool,
     authProvider: DevOnlyAuthProvider.forTests(),
@@ -43,7 +61,64 @@ afterAll(async () => {
   if (app) await app.close();
   if (database?.pool) await database.pool.end();
   if (database?.container) await database.container.stop();
+  for (const key of [
+    'CAUCE_TESTCONTAINERS_DB_REPOSITORY_DIGEST', 'CAUCE_TESTCONTAINERS_DB_IMAGE_ID',
+    'CAUCE_TESTCONTAINERS_DB_CONFIG_IMAGE', 'CAUCE_TESTCONTAINERS_DB_CONTAINER_ID_SHA256',
+  ]) delete process.env[key];
 });
+
+async function inspectDatabaseImage(): Promise<DatabaseImageBinding> {
+  const containerId = database.container.getId();
+  const container = JSON.parse((await execute(
+    'docker', ['inspect', '--format', '{{json .}}', containerId], { maxBuffer: 1024 * 1024 },
+  )).stdout) as { Image?: unknown; Config?: { Image?: unknown } };
+  if (typeof container.Image !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(container.Image)
+      || typeof container.Config?.Image !== 'string' || !container.Config.Image) {
+    throw new Error('running Testcontainers database has no exact Docker image identity');
+  }
+  const repositoryDigests = JSON.parse((await execute(
+    'docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', container.Image], { maxBuffer: 1024 * 1024 },
+  )).stdout) as unknown;
+  if (!Array.isArray(repositoryDigests)) throw new Error('Testcontainers database image has no RepoDigests');
+  const raw = repositoryDigests.find((value): value is string =>
+    typeof value === 'string' && /(?:^|\/)postgres@sha256:[a-f0-9]{64}$/u.test(value));
+  if (!raw) throw new Error('Testcontainers PostgreSQL image is not repository-digest recoverable');
+  const repositoryDigest = raw.startsWith('postgres@') ? `docker.io/library/${raw}` : raw;
+  return {
+    role: 'postgresql-test-dependency',
+    repositoryDigest,
+    imageId: container.Image,
+    containerConfigImage: container.Config.Image,
+    containerIdSha256: `sha256:${createHash('sha256').update(containerId).digest('hex')}`,
+    verifiedAgainstRunningContainer: true,
+  };
+}
+
+function sourceDigest(domain: 'runtime' | 'testcontainers'): string {
+  const value = execFileSync('python3', [
+    'ops/scripts/source-digest.py', '--domain', domain,
+  ], { cwd: process.cwd(), env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' }, encoding: 'utf8' }).trim();
+  if (!/^sha256:[a-f0-9]{64}$/u.test(value)) throw new Error(`invalid ${domain} source digest`);
+  return value;
+}
+
+function testcontainersBindings() {
+  if (process.env.CAUCE_EVIDENCE_CLASS !== 'testcontainers') return {};
+  if (!databaseImageBinding) throw new Error('Testcontainers database image binding is unavailable');
+  return {
+    evidenceClass: 'testcontainers-source-execution',
+    executionTarget: {
+      application: 'source-tree',
+      database: 'immutable-testcontainer-image',
+      finalCauceImageExecuted: false,
+    },
+    sourceDigest: sourceDigest('runtime'),
+    sourceDigestDomain: 'runtime',
+    harnessDigest: sourceDigest('testcontainers'),
+    harnessDigestDomain: 'testcontainers',
+    databaseImage: databaseImageBinding,
+  };
+}
 
 describe('real external QA harness', () => {
   it('passes against Fastify WebSocket and PostgreSQL and emits evidence', async () => {
@@ -96,6 +171,10 @@ describe('real external QA harness', () => {
 
   it('runs two permanent-style fake adapters through async push and terminal ACK', async () => {
     await resetTestDatabase(database.pool);
+    await declareDeliveryConsumers([
+      ['Isa', 'salva', 'codex'],
+      ['Jhon', 'hegel', 'openclaw'],
+    ]);
     const root = await mkdtemp(join(process.cwd(), '.adapter-e2e-'));
     const adapters: ChildProcess[] = [];
     const diagnostics: string[] = [];
@@ -179,24 +258,58 @@ describe('real external QA harness', () => {
   }, 60_000);
 
   it('preserves offline deliveries across authentic gateway and PostgreSQL restarts', async () => {
+    const startedAt = new Date().toISOString();
     const results: RestartResult[] = [];
 
     await resetTestDatabase(database.pool);
+    await declareDeliveryConsumers([['Miguel', 'kratos', 'codex']]);
     const gatewayMessage = await publishForRestart('Miguel', 'kratos', 'grp.steven');
     await restartGateway();
     await consumeAfterRestart('Miguel', 'kratos', gatewayMessage);
     results.push({ name: 'gateway restart preserves queued delivery', status: 'passed', evidence: 'real' });
 
     await resetTestDatabase(database.pool);
+    await declareDeliveryConsumers([['Pablo', 'seneca', 'openclaw']]);
     const postgresMessage = await publishForRestart('Pablo', 'seneca', 'grp.steven');
     await database.container.restart({ timeout: 30_000 });
     await waitFor(async () => database.pool.query('SELECT 1').then(() => true).catch(() => false), 45_000);
     await consumeAfterRestart('Pablo', 'seneca', postgresMessage);
     results.push({ name: 'PostgreSQL restart preserves queued delivery', status: 'passed', evidence: 'real' });
 
-    await writeRestartArtifacts(results);
+    await writeRestartArtifacts(results, startedAt);
   }, 120_000);
 });
+
+type DeliveryConsumerIdentity =
+  | readonly ['Isa', 'salva', 'codex']
+  | readonly ['Jhon', 'hegel', 'openclaw']
+  | readonly ['Miguel', 'kratos', 'codex']
+  | readonly ['Pablo', 'seneca', 'openclaw'];
+
+/**
+ * `resetTestDatabase()` deliberately truncates the mutable agent registry. Since lease admission
+ * now fails closed when an agent has no durable concurrency declaration, every authentic consumer
+ * used after a reset must be restored explicitly. The complete placement is intentionally local
+ * to this disposable test database: production placement has its own manifest parity gates, and
+ * copying it here would create a second source of truth. What this scenario proves is the durable
+ * declared-consumer contract instead of weakening gateway admission for a missing fixture row.
+ */
+async function declareDeliveryConsumers(identities: readonly DeliveryConsumerIdentity[]): Promise<void> {
+  for (const [tenant, alias, harness] of identities) {
+    await database.pool.query(
+      `INSERT INTO agents(
+         tenant_id,alias,harness_id,display_name,enabled,
+         container_name,runtime_user,home_directory,state_directory,max_concurrent_deliveries
+       ) VALUES ($1,$2,$3,initcap($2),true,$4,'test','/tmp',$5,2)
+       ON CONFLICT (tenant_id,alias) DO UPDATE SET
+         harness_id=EXCLUDED.harness_id,display_name=EXCLUDED.display_name,enabled=true,
+         container_name=EXCLUDED.container_name,runtime_user=EXCLUDED.runtime_user,
+         home_directory=EXCLUDED.home_directory,state_directory=EXCLUDED.state_directory,
+         max_concurrent_deliveries=EXCLUDED.max_concurrent_deliveries,updated_at=now()`,
+      [tenant, alias, harness, `e2e-${alias}`, `/tmp/cauce-v3-e2e/${alias}`],
+    );
+  }
+}
 
 async function restartGateway(): Promise<void> {
   await app.close();
@@ -248,18 +361,22 @@ interface RestartResult {
   error?: string;
 }
 
-async function writeRestartArtifacts(results: RestartResult[]): Promise<void> {
+async function writeRestartArtifacts(results: RestartResult[], startedAt: string): Promise<void> {
   const directory = join(process.cwd(), 'ops/artifacts/restarts');
   await mkdir(directory, { recursive: true });
   const report = `${JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     suite: 'cauce-v3-restart-e2e',
     mode: 'real',
+    ...testcontainersBindings(),
+    startedAt,
+    finishedAt: new Date().toISOString(),
     summary: {
       tests: results.length,
       passed: results.filter((result) => result.status === 'passed').length,
       failed: 0,
       skipped: results.filter((result) => result.status === 'skipped').length,
+      criticalSkipped: 0,
       real: results.filter((result) => result.evidence === 'real').length,
       mocked: 0,
     },

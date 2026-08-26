@@ -1,23 +1,38 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { ServerOptions as HttpsServerOptions } from 'node:https';
+import { isDeepStrictEqual } from 'node:util';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { WebSocket, type RawData } from 'ws';
 import {
-  AliasSchema, AuthenticatedPublishSchema, ClaimedAckSchema, clampAgentPriority,
-  ConfigChangeRequestSchema, ConfigRollbackRequestSchema,
-  CreateJobSchema, DeliveryIdSchema, HeartbeatSchema, HelloSchema, isAgentToAgentBody,
-  isSystemGateProbeBody, NotifyRequestSchema, PROTOCOL_VERSION,
+  AliasSchema, AuthenticatedPublishSchema, ClaimedAckSchema,
+  ConsolePublishIntentConfirmResultSchema, ConsolePublishIntentConfirmSchema,
+  ConsolePublishIntentExpiredSchema,
+  ConsolePublishIntentPrepareResultSchema, ConsolePublishIntentPrepareSchema,
+  ConsolePublishIntentRateLimitedSchema,
+  ConsolePublishIntentReconciliationSchema,
+  ConfigChangeRequestSchema, ConfigMutationSchema, ConfigRollbackRequestSchema,
+  CreateJobSchema, DeliveryIdSchema, HeartbeatSchema, HelloSchema,
+  NotifyRequestSchema, PROTOCOL_VERSION,
+  publishReceiptCausalHash, publishRequestHash, PublishResultSchema,
   QueryDeliveriesSchema, QuotaSampleRequestSchema, TenantSchema,
   SYSTEM_GATE_PROBE_MESSAGE_TYPE, SystemGateProbeBodySchema,
-  type ClaimedAck, type ConfigMutation, type DeliveryEnvelope, type Hello, type NotifyRequest,
+  type ClaimedAck, type ConfigMutation, type ConsolePublishIntentCommand,
+  type ConsolePublishIntentConfirm, type ConsolePublishIntentConfirmResult,
+  type ConsolePublishIntentPrepare, type ConsolePublishIntentPrepareResult,
+  type DeliveryEnvelope, type Hello, type NotifyRequest,
+  type ProfileRuntimeAdoptionEvidence, type ProfileRuntimeContract, type PublishMessage,
   type QuotaSampleRequest, type Tenant
 } from '@cauce/protocol';
 import {
-  AgentProfileRepository, CauceRepository, StoreError, subscribeDeliveryWakes,
+  AgentProfileRepository, CauceRepository, PublishIntentExpiredError,
+  PublishIntentRateLimitedError, PublishIntentReconciliationRequired,
+  StoreError, subscribeDeliveryWakes,
   type AccountSelection, type AckResult, type DatabasePool, type DeliveryLeaseCap,
-  type LeaseResult, type NotificationVerdict, type OutboxEvent, type PublishResult,
-  type QuotaSampleIngestResult
+  type ConnectionSessionFence, type FencedWakeOutboxRecipient, type LeaseResult,
+  type NotificationVerdict, type OperationalDlqPage, type OperationalDlqResolutionRequest,
+  type OperationalDlqResolutionResult, type OutboxEvent, type PublishResult,
+  type QuotaSampleIngestResult, type WakeOutboxClaimFence
 } from '@cauce/store';
 import {
   AuthError, AuthorizationError, MtlsAuthProvider, requireOperatorPermission, requirePermission, validatePrincipal,
@@ -26,8 +41,11 @@ import {
 import { registerAgentDocumentRoutes } from './console/agent-documents.routes.js';
 import { prepareAgentProfileRuntime } from './console/agent-profile-runtime.js';
 import { SondaCompartida, sondaDiferida } from './console/sonda-compartida.js';
-import { registerAgentProfileRoutes } from './console/agent-profile.routes.js';
+import {
+  registerAgentProfileRoutes, type ProfileRuntimeVerification,
+} from './console/agent-profile.routes.js';
 import { createConsoleSecurityHook } from './console-security.js';
+import { ConsolePublishTelemetry } from './console-publish-telemetry.js';
 import {
   DEFAULT_ACK_DEADLINE_MS, DEFAULT_HUMAN_RESERVED_DELIVERIES, DEFAULT_MAX_INFLIGHT_DELIVERIES,
   validateAckDeadlineMs, validateDeliveryAdmission, type DeliveryAdmissionConfig
@@ -35,28 +53,25 @@ import {
 import { registerHealthRoutes } from './health.js';
 import { OidcBffAuthProvider, registerOidcBff } from './oidc-bff.js';
 import { PasswordAuthProvider, registerPasswordAuth } from './password-auth.js';
+import { WakePumpTelemetry } from './wake-pump-telemetry.js';
+import { publishPriorityDecision } from './publish-priority-policy.js';
 import {
-  sameTenantRows, visibleMessage, visibleMessageList, visibleOriginRelays, visibleQueue
+  safeAuditPage, safeCancelReceipt, safeDlqPage, safeDlqResolution, safeReplayReceipt, sameTenantRows,
+  visibleMessage, visibleMessageList, visibleOriginRelays, visibleQueue
 } from './facades.js';
 
-interface TrustedPublishCommand {
-  version: typeof PROTOCOL_VERSION;
-  request_id: string;
-  trace_id: string;
-  tenant_id: Tenant;
-  room_id: string;
-  actor_alias: string;
-  recipients: Array<{ tenant_id: Tenant; alias: string }>;
-  body: Record<string, unknown>;
-  idempotency_key: string;
-  lane: 'interactive' | 'batch';
-  priority: number;
-  authenticated_context: {
-    session_id: string;
-    channel: string;
-    origin?: Principal['origin'];
-  };
-}
+export { WakePumpTelemetry } from './wake-pump-telemetry.js';
+export type {
+  WakePumpOutcome, WakePumpTelemetrySnapshot
+} from './wake-pump-telemetry.js';
+
+type TrustedPublishCommand = PublishMessage & {
+  authenticated_context: NonNullable<PublishMessage['authenticated_context']>;
+};
+
+type TrustedPublishIntentCommand = ConsolePublishIntentCommand & {
+  authenticated_context: NonNullable<PublishMessage['authenticated_context']>;
+};
 
 export type GatewayAck = ClaimedAck;
 
@@ -74,11 +89,35 @@ export interface OutboxLeaseAck {
   status: 'sent' | 'retry' | 'dead';
   error?: string;
   retry_after_ms?: number;
+  connection: ConnectionSessionFence;
+}
+
+export interface OutboxLeaseAckResult {
+  status: 'sent' | 'failed' | 'dead';
+  applied: boolean;
 }
 
 /** Contract implemented by the hardened store; current method names remain stable. */
 export interface GatewayRepository {
-  publish(input: TrustedPublishCommand): Promise<PublishResult>;
+  publish(
+    input: TrustedPublishCommand,
+    options?: {
+      readonly requirePreparedConsoleIntent?: boolean;
+      readonly consoleIntentOperatorScope?: string;
+    },
+  ): Promise<PublishResult>;
+  prepareConsolePublishIntent?(
+    input: TrustedPublishIntentCommand,
+    operatorScopeHash: string,
+  ): Promise<ConsolePublishIntentPrepareResult>;
+  confirmConsolePublishIntent?(
+    tenantId: Tenant,
+    actorAlias: string,
+    operatorScopeHash: string,
+    input: ConsolePublishIntentConfirm,
+  ): Promise<ConsolePublishIntentConfirmResult>;
+  /** Independent durable reconciliation; receipt-contained hashes are not an authority for IDs. */
+  verifyPublishReceipt(input: TrustedPublishCommand, receipt: PublishResult): Promise<boolean>;
   assertPrincipal(tenantId: Tenant, alias: string): Promise<void>;
   assertPermission(tenantId: Tenant, alias: string, permission: 'route' | 'read' | 'control' | 'notify'): Promise<void>;
   principalAccess(tenantId: Tenant, alias: string): Promise<{ roles: string[]; permissions: Array<'route' | 'read' | 'control' | 'notify'> }>;
@@ -87,6 +126,17 @@ export interface GatewayRepository {
   topology(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listMessages(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   queueSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  listOperationalDlq(
+    actorTenant: Tenant,
+    actorAlias: string,
+    limit?: number,
+    cursor?: string | null,
+  ): Promise<OperationalDlqPage>;
+  resolveOperationalDlqWithoutReplay(
+    actorTenant: Tenant,
+    actorAlias: string,
+    request: OperationalDlqResolutionRequest,
+  ): Promise<OperationalDlqResolutionResult>;
   replayDelivery(deliveryId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   cancelDelivery(
     deliveryId: string, actorTenant: Tenant, actorAlias: string, reason?: string
@@ -96,6 +146,10 @@ export interface GatewayRepository {
   listAdapters(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listAgents(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   getAgent(alias: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown> | undefined>;
+  /** Canonical detail. Optional only so narrow pre-existing repository doubles stay usable. */
+  getAgentByIdentity?(
+    tenantId: Tenant, alias: string, actorTenant: Tenant, actorAlias: string,
+  ): Promise<Record<string, unknown> | undefined>;
   /**
    * Lookup autorizado por identidad canónica. Opcional sólo para dobles legacy de test: las rutas
    * tenant-qualified fallan cerradas cuando no está implementado.
@@ -116,7 +170,11 @@ export interface GatewayRepository {
   listOriginRelays(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   enqueueNotification(actorTenant: Tenant, actorAlias: string, input: NotifyRequest): Promise<NotificationVerdict>;
   listNotifications(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  listAudit(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  listAudit(
+    actorTenant: Tenant,
+    actorAlias: string,
+    options?: { limit?: number; before?: string | null },
+  ): Promise<Record<string, unknown>>;
   agentChain(traceId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   /**
    * Opcionales por la misma razón que `liveDeliveryClaims`: los dobles de test del gateway no
@@ -147,16 +205,28 @@ export interface GatewayRepository {
   applyConfigurationChange(actorTenant: Tenant, actorAlias: string, mutation: ConfigMutation, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
   rollbackConfiguration(actorTenant: Tenant, actorAlias: string, revisionId: number, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
   getMessage(messageId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
+  recordProfileRuntimeExpectation?(
+    tenantId: Tenant, alias: string, contract: ProfileRuntimeContract,
+  ): Promise<void>;
+  readProfileRuntimeAdoption?(
+    tenantId: Tenant, alias: string, contract: ProfileRuntimeContract,
+  ): Promise<(ProfileRuntimeAdoptionEvidence & { readonly adopted_at: string }) | undefined>;
   acquireLease(
     tenantId: Tenant,
     alias: string,
     instanceId: string,
     capabilities: string[],
     ttlMs: number,
-    options?: { resume?: boolean; resumeWindowMs?: number },
+    options?: { resume?: boolean; resumeWindowMs?: number; requireDeclaredCapacity?: boolean },
   ): Promise<LeaseResult>;
-  heartbeat(tenantId: Tenant, alias: string, instanceId: string, epoch: number, ttlMs: number): Promise<string>;
-  releaseLease(tenantId: Tenant, alias: string, instanceId: string, epoch: number): Promise<void>;
+  heartbeat(
+    tenantId: Tenant, alias: string, instanceId: string, epoch: number, ttlMs: number,
+    connectionToken: string, signal?: AbortSignal,
+  ): Promise<string>;
+  releaseLease(
+    tenantId: Tenant, alias: string, instanceId: string, epoch: number,
+    connectionToken: string, signal?: AbortSignal,
+  ): Promise<boolean>;
   claimDeliveries(
     tenantId: Tenant,
     alias: string,
@@ -165,19 +235,26 @@ export interface GatewayRepository {
     limit?: number,
     ackDeadlineMs?: number,
     interactiveBurst?: number,
-    admission?: { humanReservedLimit?: number; humanBurst?: number },
+    admission?: {
+      generalCapacity?: number;
+      humanReservedCapacity?: number;
+      maxClaims?: number;
+      humanBurst?: number;
+      requireDeclaredCapacity?: boolean;
+    },
+    connectionToken?: string,
+    signal?: AbortSignal,
   ): Promise<DeliveryClaimRecord[]>;
   /**
-   * Opcional a propósito: los dobles de test que sólo ejercitan el camino de ACK no la
-   * implementan, y sin ella el gateway simplemente arranca la sesión con el cupo vacío, que es
-   * el comportamiento anterior. Ver `rehydrateClaims`.
+   * Opcional sólo para dobles en modo test. Producción no arranca sin esta lectura: reconstruir
+   * claims es parte del fence de reconexión y fallar abierto multiplicaría el cupo.
    */
   liveDeliveryClaims?(tenantId: Tenant, alias: string, limit?: number): Promise<readonly {
     delivery_id: string;
     attempt: number;
     claim_token: string;
     ack_deadline_at: string;
-    agent_to_agent: boolean;
+    human_originated: boolean;
   }[]>;
   ackDelivery(
     deliveryId: string,
@@ -188,7 +265,19 @@ export interface GatewayRepository {
     leaseCap?: DeliveryLeaseCap,
   ): Promise<AckResult>;
   claimOutbox(kind: 'wake', worker: string, limit?: number, leaseMs?: number): Promise<OutboxLeaseEvent[]>;
-  ackOutbox?(ack: OutboxLeaseAck): Promise<unknown>;
+  claimWakeOutbox(
+    worker: string,
+    recipients: readonly FencedWakeOutboxRecipient[],
+    limit?: number,
+    leaseMs?: number,
+    signal?: AbortSignal,
+  ): Promise<OutboxLeaseEvent[]>;
+  renewWakeOutbox(
+    fence: WakeOutboxClaimFence,
+    leaseMs?: number,
+    signal?: AbortSignal,
+  ): Promise<boolean>;
+  ackOutbox(ack: OutboxLeaseAck, signal?: AbortSignal): Promise<OutboxLeaseAckResult>;
   completeOutbox?(id: string, worker: string, claimToken: string): Promise<boolean>;
   retryOutbox?(id: string, worker: string, claimToken: string, delayMs?: number, error?: string): Promise<'retry' | 'dead' | 'fenced'>;
 }
@@ -211,6 +300,14 @@ export interface GatewayOptions {
   admission?: DeliveryAdmissionConfig;
   outboxPollMs?: number;
   outboxLeaseMs?: number;
+  /** Máximo de destinatarios cuyos claims de wake pueden estar en I/O simultáneamente. */
+  outboxWakeConcurrency?: number;
+  /** Espera máxima del cierre por un pump que no responde; después se continúa abortado. */
+  outboxShutdownTimeoutMs?: number;
+  /** Acumulador identity-free que el proceso puede conectar luego a su endpoint de métricas. */
+  wakePumpTelemetry?: WakePumpTelemetry;
+  /** Resultados agregados, sin identidades, del journal durable de publicación de consola. */
+  consolePublishTelemetry?: ConsolePublishTelemetry;
   deliveryClaimLimit?: number;
   requireAckClaims?: boolean;
   consoleOrigins?: readonly string[];
@@ -223,14 +320,12 @@ export interface GatewayOptions {
 
 /**
  * Una garra viva de la sesión. Además del par (attempt, claim_token) que ya fenceaba los ACKs,
- * lleva las dos cosas que necesita el control de admisión: de qué clase es la entrega (para
- * saber qué cupo ocupa) y hasta cuándo cuenta como en vuelo.
+ * conserva la correlación exacta del ACK y hasta cuándo sigue viva. La capacidad ya no se decide
+ * en RAM: PostgreSQL la comparte durablemente entre HTTP, WebSocket, reconexiones y gateways.
  */
 interface SessionClaim {
   readonly attempt: GatewayAck['attempt'];
   readonly claim_token: GatewayAck['claim_token'];
-  /** False para agente-a-agente. Determina si ocupa el cupo reservado o el general. */
-  readonly humanOriginated: boolean;
   /**
    * Instante en que la garra deja de ocupar cupo. Arranca en el `ack_deadline_at` que puso la
    * base y se corre con cada ACK 'started' aplicado, que es exactamente lo que hace el store.
@@ -254,9 +349,13 @@ interface Session {
   alias: string;
   instanceId: string;
   epoch: number;
-  draining: boolean;
+  /** Rotated by PostgreSQL on every hello, including a same-instance/same-epoch resume. */
+  connectionToken: string;
+  abort: AbortController;
   /** Un wake que llegó mientras drenábamos. Se atiende al terminar, nunca se pierde. */
   drainAgain: boolean;
+  /** Promesa compartida por todos los wakes que se pliegan sobre el mismo drenaje. */
+  drainPromise: Promise<boolean> | undefined;
   renewableDeliveryClaims: boolean;
   /**
    * El adaptador declaró entender la disciplina de delegación, así que `ack_result` puede llevar
@@ -285,6 +384,8 @@ const MAX_DRAIN_ROUNDS = 16;
 // que este cambio no altere por sí solo cuánto se reclama: lo que cambia es que ahora el número
 // está escrito donde se usa en vez de heredarse en silencio del esquema de un endpoint HTTP.
 const DEFAULT_DELIVERY_CLAIM_LIMIT = 20;
+const DEFAULT_WAKE_PUMP_CONCURRENCY = 4;
+const DEFAULT_OUTBOX_SHUTDOWN_TIMEOUT_MS = 1_000;
 
 // Estados de ACK que devuelven la entrega al mundo terminal o reintentable y por lo tanto la sacan
 // de agents.max_concurrent_deliveries. Es el conjunto complementario de ('leased','accepted',
@@ -295,8 +396,295 @@ function sessionKey(tenantId: Tenant, alias: string): string {
   return `${tenantId}:${alias}`;
 }
 
-function send(socket: WebSocket, message: unknown): void {
-  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+const CONNECTION_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const DLQ_ID_PATTERN = CONNECTION_TOKEN_PATTERN;
+const DLQ_EVIDENCE_PATTERN = /^[a-f0-9]{64}$/u;
+const DLQ_CURSOR_PATTERN = /^(?:[a-f0-9]{2}){1,512}$/u;
+const DLQ_RESOLUTION_KEYS = new Set([
+  'evidence_sha256',
+  'reason',
+  'possible_duplicate_acknowledged',
+  'possible_no_delivery_acknowledged',
+]);
+const AUDIT_CURSOR_PATTERN = /^[1-9][0-9]{0,18}$/u;
+const AUDIT_QUERY_KEYS = new Set(['limit', 'before']);
+
+function parseDlqLimit(value: unknown): number {
+  if (value === undefined) return 200;
+  if (typeof value !== 'string' || !/^[1-9][0-9]{0,2}$/u.test(value)) {
+    throw new StoreError('invalid_input', 'DLQ limit must be an integer between 1 and 500');
+  }
+  const limit = Number(value);
+  if (!Number.isSafeInteger(limit) || limit > 500) {
+    throw new StoreError('invalid_input', 'DLQ limit must be an integer between 1 and 500');
+  }
+  return limit;
+}
+
+function parseDlqCursor(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || !DLQ_CURSOR_PATTERN.test(value)) {
+    throw new StoreError('invalid_input', 'DLQ cursor is invalid');
+  }
+  return value;
+}
+
+function parseAuditQuery(value: unknown): { limit: number; before: string | null } {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new StoreError('invalid_input', 'audit query must be an object');
+  }
+  const query = value as Record<string, unknown>;
+  if (Object.keys(query).some((key) => !AUDIT_QUERY_KEYS.has(key))) {
+    throw new StoreError('invalid_input', 'audit query contains an unknown field');
+  }
+  const rawLimit = query.limit;
+  if (rawLimit !== undefined && (
+    typeof rawLimit !== 'string'
+    || !/^[1-9][0-9]{0,2}$/u.test(rawLimit)
+    || Number(rawLimit) > 500
+  )) {
+    throw new StoreError('invalid_input', 'audit limit must be an integer between 1 and 500');
+  }
+  const rawBefore = query.before;
+  if (rawBefore !== undefined && (
+    typeof rawBefore !== 'string'
+    || !AUDIT_CURSOR_PATTERN.test(rawBefore)
+    || BigInt(rawBefore) > 9_223_372_036_854_775_807n
+  )) {
+    throw new StoreError('invalid_input', 'audit cursor is invalid');
+  }
+  return { limit: rawLimit === undefined ? 100 : Number(rawLimit), before: rawBefore ?? null };
+}
+
+function parseDlqResolution(
+  target: unknown,
+  id: unknown,
+  value: unknown,
+): OperationalDlqResolutionRequest {
+  if (target !== 'delivery' && target !== 'outbox') {
+    throw new StoreError('invalid_input', 'DLQ target is invalid');
+  }
+  if (typeof id !== 'string' || !DLQ_ID_PATTERN.test(id)) {
+    throw new StoreError('invalid_input', 'DLQ incident id is invalid');
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new StoreError('invalid_input', 'DLQ resolution body must be an object');
+  }
+  const body = value as Record<string, unknown>;
+  if (Object.keys(body).length !== DLQ_RESOLUTION_KEYS.size
+      || Object.keys(body).some((key) => !DLQ_RESOLUTION_KEYS.has(key))) {
+    throw new StoreError('invalid_input', 'DLQ resolution body has unexpected or missing fields');
+  }
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (reason.length < 1 || reason.length > 1_000
+      || [...reason].some((character) => {
+        const code = character.codePointAt(0) ?? 0;
+        return code <= 31 || code === 127;
+      })) {
+    throw new StoreError('invalid_input', 'DLQ resolution reason is invalid');
+  }
+  if (typeof body.evidence_sha256 !== 'string'
+      || !DLQ_EVIDENCE_PATTERN.test(body.evidence_sha256)) {
+    throw new StoreError('invalid_input', 'DLQ evidence hash is invalid');
+  }
+  if (typeof body.possible_duplicate_acknowledged !== 'boolean'
+      || typeof body.possible_no_delivery_acknowledged !== 'boolean') {
+    throw new StoreError('invalid_input', 'DLQ risk acknowledgements must be booleans');
+  }
+  return {
+    target,
+    id,
+    evidenceSha256: body.evidence_sha256,
+    reason,
+    possibleDuplicateAcknowledged: body.possible_duplicate_acknowledged,
+    possibleNoDeliveryAcknowledged: body.possible_no_delivery_acknowledged,
+  };
+}
+
+function validatedDlqResolutionReceipt(
+  value: unknown,
+  request: OperationalDlqResolutionRequest,
+): Record<string, unknown> {
+  const receipt = safeDlqResolution(value);
+  const appliedCount = receipt.appliedCount;
+  const alreadyApplied = receipt.alreadyApplied;
+  const countMatchesReceipt = (appliedCount === 1 && alreadyApplied === false)
+    || (appliedCount === 0 && alreadyApplied === true);
+  if (receipt.schemaVersion !== 1
+      || receipt.suite !== 'cauce-v3-dlq-no-replay-resolution'
+      || receipt.phase !== 'resolved'
+      || !countMatchesReceipt
+      || receipt.evidenceSha256 !== request.evidenceSha256
+      || typeof receipt.reasonSha256 !== 'string'
+      || !DLQ_EVIDENCE_PATTERN.test(receipt.reasonSha256)
+      || receipt.possibleDuplicateAcknowledged !== request.possibleDuplicateAcknowledged
+      || receipt.possibleNoDeliveryAcknowledged !== request.possibleNoDeliveryAcknowledged) {
+    // The transaction may already have committed. Return no false 2xx: an exact retry is safe and
+    // the store will answer with its idempotent alreadyApplied receipt.
+    throw new StoreError('conflict', 'DLQ resolution did not return an exact durable receipt');
+  }
+  return receipt;
+}
+
+function validatedPublishReceipt(
+  value: unknown,
+  command: TrustedPublishCommand,
+  expectedDeliveries: number,
+): PublishResult {
+  const parsed = PublishResultSchema.safeParse(value);
+  const expectedRequestHash = publishRequestHash(command);
+  if (!parsed.success
+      || parsed.data.delivery_ids.length !== expectedDeliveries
+      || new Set(parsed.data.delivery_ids).size !== parsed.data.delivery_ids.length
+      // A real receipt for another tenant/actor/request must never credit this invocation.
+      || parsed.data.tenant_id !== command.tenant_id
+      || parsed.data.actor_alias !== command.actor_alias
+      || parsed.data.idempotency_key !== command.idempotency_key
+      || parsed.data.request_hash !== expectedRequestHash
+      // Recompute instead of trusting a self-described hash: this rejects a response assembled
+      // from the request half of one publish and the IDs of another.
+      || parsed.data.causal_hash !== publishReceiptCausalHash(parsed.data)
+      // A fresh insert must carry the exact request/trace generated for this invocation. An
+      // idempotent duplicate intentionally carries the original pair; request_hash is stable
+      // across those generated transport values and remains the causal proof for that branch.
+      || (parsed.data.duplicate === false
+        && (parsed.data.request_id !== command.request_id || parsed.data.trace_id !== command.trace_id))) {
+    // Igual que DLQ/replay/cancel: el commit pudo ocurrir. Un 409 obliga a conciliar por lectura
+    // y nunca acredita con un 2xx una respuesta truncada, duplicada o de otra versión del store.
+    throw new StoreError('conflict', 'publish did not return an exact durable receipt');
+  }
+  return parsed.data;
+}
+
+function validatedReplayReceipt(value: unknown, sourceDeliveryId: string): Record<string, unknown> {
+  const receipt = safeReplayReceipt(value);
+  if (receipt.delivery_id === null
+      || receipt.delivery_id === sourceDeliveryId
+      || receipt.replayed_from_delivery_id !== sourceDeliveryId
+      || receipt.state !== 'pending'
+      || receipt.replayed !== true) {
+    throw new StoreError('conflict', 'replay did not return an exact durable receipt');
+  }
+  return receipt;
+}
+
+function validatedCancelReceipt(value: unknown, deliveryId: string): Record<string, unknown> {
+  const receipt = safeCancelReceipt(value);
+  if (receipt.delivery_id !== deliveryId
+      || receipt.state !== 'dead'
+      || receipt.cancelled !== true
+      || receipt.cancelled_from_state === null
+      || receipt.parent_notice === null
+      || typeof receipt.origin_relayed !== 'boolean'
+      || receipt.replayable !== true) {
+    throw new StoreError('conflict', 'cancel did not return an exact durable receipt');
+  }
+  return receipt;
+}
+
+function validatedConfigurationReceipt(
+  value: unknown,
+  dryRun: boolean,
+  expectedRolledBackRevisionId: number | null,
+  expectedMutation?: ConfigMutation,
+): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new StoreError('conflict', 'configuration change did not return an exact durable receipt');
+  }
+  const result = value as Record<string, unknown>;
+  const mutation = ConfigMutationSchema.safeParse(result.mutation);
+  const inverse = ConfigMutationSchema.safeParse(result.inverse_mutation);
+  const revision = result.revision;
+  const rolledBackRevisionId = result.rolled_back_revision_id;
+  const summary = result.summary;
+  const exact = result.applied === !dryRun
+    && result.dry_run === dryRun
+    && Number.isSafeInteger(revision)
+    && Number(revision) >= (dryRun ? 0 : 1)
+    && rolledBackRevisionId === expectedRolledBackRevisionId
+    && typeof summary === 'string'
+    && summary.length >= 1
+    && summary.length <= 2_000
+    && mutation.success
+    && inverse.success
+    && (expectedMutation === undefined || isDeepStrictEqual(mutation.data, expectedMutation));
+  if (!exact) {
+    // La escritura pudo confirmar antes de que una capa incompatible truncara su recibo. La
+    // respuesta no refleja campos crudos del store y obliga al cliente a releer la revisión.
+    throw new StoreError('conflict', 'configuration change did not return an exact durable receipt');
+  }
+  return {
+    applied: result.applied,
+    dry_run: result.dry_run,
+    revision,
+    rolled_back_revision_id: rolledBackRevisionId,
+    summary,
+    mutation: mutation.data,
+    inverse_mutation: inverse.data,
+  };
+}
+
+function connectionToken(value: unknown): string {
+  if (typeof value !== 'string' || !CONNECTION_TOKEN_PATTERN.test(value)) {
+    throw new StoreError('fenced', 'connection token is required');
+  }
+  return value;
+}
+
+function parseConnectionBoundBody<T extends Record<string, unknown>>(
+  body: unknown,
+  parse: (value: unknown) => T,
+): T & { connection_token: string } {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new StoreError('invalid_input', 'connection-bound request must be an object');
+  }
+  const { connection_token: rawToken, ...withoutToken } = body as Record<string, unknown>;
+  return { ...parse(withoutToken), connection_token: connectionToken(rawToken) };
+}
+
+function sessionFence(session: Session): ConnectionSessionFence {
+  return {
+    tenant_id: session.tenantId,
+    alias: session.alias,
+    instance_id: session.instanceId,
+    epoch: session.epoch,
+    connection_token: session.connectionToken,
+  };
+}
+
+function send(socket: WebSocket, message: unknown): boolean {
+  if (socket.readyState !== WebSocket.OPEN) return false;
+  try {
+    socket.send(JSON.stringify(message));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** `Promise.allSettled`, pero con un número fijo de workers y resultados por entrada. */
+async function allSettledBounded<T>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T) => Promise<void>
+): Promise<Array<PromiseSettledResult<void>>> {
+  const results = new Array<PromiseSettledResult<void>>(values.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= values.length) return;
+      try {
+        await operation(values[index]!);
+        results[index] = { status: 'fulfilled', value: undefined };
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason };
+      }
+    }
+  });
+  await Promise.allSettled(workers);
+  return results;
 }
 
 function rawDataText(data: RawData): string {
@@ -338,34 +726,95 @@ function publicPublish(value: unknown): ReturnType<typeof AuthenticatedPublishSc
   return AuthenticatedPublishSchema.parse(value);
 }
 
+function publicPublishIntent(value: unknown): ConsolePublishIntentPrepare {
+  return ConsolePublishIntentPrepareSchema.parse(value);
+}
+
 /**
  * The ceiling an agent cannot publish over.
  *
  * This is the only surface where an agent chooses its own `priority`, and the only place in the
- * process that knows whether the caller is a machine or a person: the number arrives in an
- * anonymous public payload, the ROLE comes from the certificate. An `operator` is a human at the
- * console (or the tooling one runs on purpose) and keeps the whole range, including the band above
- * HUMAN_PRIORITY_FLOOR; that authority is already strictly weaker than what the operator role can
- * do elsewhere here — replay deliveries, mutate config, enqueue jobs.
+ * process that can prove whether a browser action is attributed to a person. `operator` by itself
+ * is not enough: password/OIDC authentication must also provide a server-verified `operator_id`.
+ * Only that principal, entering through the interactive console compose surface, can reach the
+ * human band; that surface also floors its historical priority 10 at HUMAN_CHAT_PRIORITY.
  *
  * Everything else is held at AGENT_PRIORITY_CEILING. Clamping rather than rejecting keeps a
  * misconfigured canary or an old adapter publishing instead of 400-ing; the drop is logged so the
  * misconfiguration is still visible.
  */
-function routedPriority(actor: Principal, requested: number, request: FastifyRequest): number {
-  if (actor.roles.includes('operator')) return requested;
-  const allowed = clampAgentPriority(requested);
-  if (allowed !== requested) {
+function routedPriority(
+  actor: Principal,
+  requested: number,
+  lane: PublishMessage['lane'],
+  request: FastifyRequest,
+): number {
+  const decision = publishPriorityDecision(actor, requested, {
+    interactiveHumanEntry: (
+      request.routeOptions.url === '/v3/console/messages'
+        || request.routeOptions.url === '/v3/console/publish-intents'
+    )
+      && lane === 'interactive',
+  });
+  if (decision.reason === 'agent_ceiling') {
     request.log?.warn?.({
       event: 'publish_priority_clamped',
       tenant_id: actor.tenant_id,
       alias: actor.alias,
       channel: actor.channel,
       requested,
-      applied: allowed
+      applied: decision.applied
     }, 'agent priority clamped to the agent band');
+  } else if (decision.reason === 'human_entry_floor') {
+    request.log?.info?.({
+      event: 'publish_priority_human_floor',
+      tenant_id: actor.tenant_id,
+      alias: actor.alias,
+      channel: actor.channel,
+      requested,
+      applied: decision.applied,
+    }, 'authenticated interactive publish entered the human band');
   }
-  return allowed;
+  return decision.applied;
+}
+
+function trustedPublishSemantics(
+  actor: Principal,
+  command: Pick<
+    ConsolePublishIntentPrepare,
+    'room_id' | 'recipients' | 'body' | 'lane' | 'priority'
+  >,
+  request: FastifyRequest,
+  actorAlias = actor.alias,
+): Omit<TrustedPublishCommand, 'idempotency_key'> {
+  return {
+    version: PROTOCOL_VERSION,
+    request_id: randomUUID(),
+    trace_id: `trace-${randomUUID()}`,
+    tenant_id: actor.tenant_id,
+    actor_alias: actorAlias,
+    authenticated_context: {
+      session_id: actor.session_id,
+      channel: actor.channel,
+      ...(actor.origin === undefined ? {} : { origin: actor.origin }),
+    },
+    room_id: command.room_id,
+    recipients: [...command.recipients].sort((left, right) => (
+      `${left.tenant_id}\u0000${left.alias}`.localeCompare(`${right.tenant_id}\u0000${right.alias}`)
+    )),
+    body: command.body,
+    lane: command.lane,
+    priority: routedPriority(actor, command.priority, command.lane, request),
+  };
+}
+
+function consolePublishOperatorScope(actor: Principal): string {
+  const authority = actor.operator_id === undefined
+    ? `principal:${actor.tenant_id}:${actor.alias}:${actor.channel}`
+    : `operator:${actor.tenant_id}:${actor.alias}:${actor.operator_id}`;
+  return createHash('sha256')
+    .update(`cauce-v3:console-publish-operator-scope:v1\n${authority}`)
+    .digest('hex');
 }
 
 function claimFromDelivery(delivery: DeliveryClaimRecord, fallbackDeadlineMs: number): SessionClaim {
@@ -381,7 +830,6 @@ function claimFromDelivery(delivery: DeliveryClaimRecord, fallbackDeadlineMs: nu
   return {
     attempt: delivery.attempt,
     claim_token: delivery.claim_token,
-    humanOriginated: !isAgentToAgentBody(delivery.body) && !isSystemGateProbeBody(delivery.body),
     admissionExpiresAtMs: Number.isFinite(deadlineMs) ? deadlineMs : Date.now() + fallbackDeadlineMs
   };
 }
@@ -393,6 +841,27 @@ function normalizeDeliveryClaim(delivery: DeliveryClaimRecord, fallbackDeadlineM
 
 function parseAck(value: unknown): GatewayAck {
   return ClaimedAckSchema.parse(value);
+}
+
+function runtimeContractFromVerification(
+  revision: number,
+  verification: ProfileRuntimeVerification,
+): ProfileRuntimeContract {
+  if (verification.state !== 'current' || verification.generation === null
+    || verification.documents.length === 0
+    || verification.documents.some((document) => !document.current
+      || document.observed_sha !== document.expected_sha)) {
+    throw new Error('runtime profile expectation requires an exact current verification');
+  }
+  return {
+    revision,
+    generation: verification.generation,
+    documents: verification.documents.map((document) => ({
+      name: document.name,
+      path: document.path,
+      sha: document.expected_sha,
+    })),
+  };
 }
 
 function assertAckClaim(ack: GatewayAck, expected?: Pick<SessionClaim, 'attempt' | 'claim_token'>): void {
@@ -412,7 +881,7 @@ function rememberRecentClaim(session: Session, deliveryId: string, claim: Sessio
 }
 
 /**
- * Cuánto cupo hay libre AHORA, por clase.
+ * Saca de RAM las garras cuyo plazo ya venció.
  *
  * De paso saca de `claims` las garras cuyo plazo ya venció. No es una optimización: una garra
  * vencida no se puede renovar nunca más (`ackDelivery` exige `ack_deadline_at > now()`, misma
@@ -421,32 +890,16 @@ function rememberRecentClaim(session: Session, deliveryId: string, claim: Sessio
  * borrarla haría que un ACK tardío no correlacione y un cliente legacy se comiera un 'fenced'
  * con cierre de socket, cuando hoy recibe un `ownership_lost` y sigue vivo.
  *
- * El error de reloj entre gateway y PostgreSQL sólo puede sobre-admitir de a una garra, y el
- * store igual la va a reclamar en el mismo instante: es el lado seguro del error.
+ * El presupuesto no se calcula aquí: la base lo descuenta bajo el lock durable por alias. Este
+ * mapa sólo conserva correlación de ACK y programa el próximo drenaje por expiración.
  */
-function admissionBudget(
-  session: Session,
-  admission: DeliveryAdmissionConfig,
-  nowMs: number
-): { limit: number; humanReservedLimit: number } {
-  let human = 0;
-  let agent = 0;
+function pruneExpiredClaims(session: Session, nowMs: number): void {
   for (const [deliveryId, claim] of [...session.claims]) {
     if (claim.admissionExpiresAtMs <= nowMs) {
       session.claims.delete(deliveryId);
       rememberRecentClaim(session, deliveryId, claim);
-      continue;
     }
-    if (claim.humanOriginated) human += 1;
-    else agent += 1;
   }
-  // El tráfico humano gasta primero su cupo reservado; sólo cuando lo agota empieza a comerse
-  // el general. Por eso el general se descuenta con el excedente humano, no con todo el humano.
-  const humanOverflow = Math.max(0, human - admission.humanReservedDeliveries);
-  return {
-    limit: Math.max(0, admission.maxInflightDeliveries - agent - humanOverflow),
-    humanReservedLimit: Math.max(0, admission.humanReservedDeliveries - human)
-  };
 }
 
 export async function buildGateway(options: GatewayOptions): Promise<FastifyInstance> {
@@ -466,9 +919,24 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     ...(options.https === undefined ? {} : { https: options.https })
   });
   const repository: GatewayRepository = options.repository ?? new CauceRepository(options.pool);
+  if (options.authProvider.mode === 'production' && repository.liveDeliveryClaims === undefined) {
+    throw new Error('production gateway requires durable live-delivery claim recovery');
+  }
   const leaseTtlMs = options.leaseTtlMs ?? 30_000;
   const outboxPollMs = options.outboxPollMs ?? 100;
   const outboxLeaseMs = options.outboxLeaseMs ?? 30_000;
+  const outboxWakeConcurrency = options.outboxWakeConcurrency ?? DEFAULT_WAKE_PUMP_CONCURRENCY;
+  if (!Number.isInteger(outboxWakeConcurrency) || outboxWakeConcurrency < 1 || outboxWakeConcurrency > 32) {
+    throw new Error('outboxWakeConcurrency must be an integer between 1 and 32');
+  }
+  const outboxShutdownTimeoutMs = options.outboxShutdownTimeoutMs
+    ?? DEFAULT_OUTBOX_SHUTDOWN_TIMEOUT_MS;
+  if (!Number.isInteger(outboxShutdownTimeoutMs)
+      || outboxShutdownTimeoutMs < 1 || outboxShutdownTimeoutMs > 30_000) {
+    throw new Error('outboxShutdownTimeoutMs must be an integer between 1 and 30000');
+  }
+  const wakePumpTelemetry = options.wakePumpTelemetry ?? new WakePumpTelemetry();
+  const consolePublishTelemetry = options.consolePublishTelemetry ?? new ConsolePublishTelemetry();
   // Cota superior de un drain. Antes iba `undefined` y caía en el default 20 de
   // QueryDeliveriesSchema — un 20 que nadie eligió para este camino y que nadie podía ver leyendo
   // el gateway. El techo real por agente vive en agents.max_concurrent_deliveries y lo aplica
@@ -486,6 +954,15 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     'system.database.probe', ...(process.env.NODE_ENV === 'test' ? ['qa.fairness'] : [])
   ]);
   const sessions = new Map<string, Session>();
+  // A successful lease acquisition starts one local hello admission. Rehydration contains I/O,
+  // so an older hello can finish after a newer resume rotated the durable connection token. The
+  // opaque marker lets only the most recently acquired hello install/replace the local session.
+  const helloAdmissions = new Map<string, object>();
+  let outboxPumpPromise: Promise<void> | undefined;
+  const outboxPumpAbort = new AbortController();
+  const pendingDrains = new Set<Promise<boolean>>();
+  const pendingSessionTasks = new Set<Promise<unknown>>();
+  let wakeRecipientCursor = 0;
 
   await app.register(websocket);
   app.addHook('onRequest', createConsoleSecurityHook({
@@ -512,14 +989,13 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
         ...(await repository.status(actor.tenant_id, actor.alias)),
         presence: await repository.listPresence(actor.tenant_id, actor.alias)
       };
-    } catch (error) {
-      replyError(reply, error);
-    }
+    } catch (error) { replyError(reply, error); }
   });
 
   app.get('/v3/console/access', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
+      requirePermission(actor, 'read');
       const databaseAccess = await repository.principalAccess(actor.tenant_id, actor.alias);
       const effectiveRoles = actor.roles.filter((role) => databaseAccess.roles.includes(role));
       const effectivePermissions = actor.permissions.filter((permission) => databaseAccess.permissions.includes(permission));
@@ -527,7 +1003,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
         ...(effectivePermissions.includes('route') ? ['message.publish'] : []),
         ...(effectivePermissions.includes('notify') ? ['message.notify'] : []),
         ...(effectiveRoles.includes('operator') && effectivePermissions.includes('control')
-          ? ['delivery.replay', 'delivery.cancel', 'job.create', 'config.write', 'config.rollback'] : []),
+          ? ['delivery.replay', 'delivery.cancel', 'job.create', 'config.write', 'config.rollback', 'dlq.resolve'] : []),
         ...(options.terminalCapability?.available === true && effectiveRoles.includes('operator') && effectivePermissions.includes('control')
           ? ['ultimate-terminal.connect'] : [])
       ];
@@ -541,6 +1017,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   });
 
   const publishHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
+    const consolePublish = request.routeOptions.url === '/v3/console/messages';
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
@@ -563,27 +1040,41 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           throw new Error('system gate probe payload is not canonical');
         }
       }
+      // `gate-probe` intentionally has no membership/agent/lease and can never become a routing
+      // target. Kant is only the durable actor required by the messages FK; the authenticated
+      // context still preserves the exact mTLS gate authority.
       const trustedCommand: TrustedPublishCommand = {
-        version: PROTOCOL_VERSION,
-        request_id: randomUUID(),
-        trace_id: `trace-${randomUUID()}`,
-        tenant_id: actor.tenant_id,
-        // `gate-probe` intentionally has no membership/agent/lease and can never become a
-        // routing target. Kant is only the already-declared durable actor required by the
-        // messages FK; auth_session_id/auth_channel preserve the exact mTLS gate authority.
-        actor_alias: systemGateProbe ? 'kant' : actor.alias,
-        authenticated_context: {
-          session_id: actor.session_id,
-          channel: actor.channel,
-          ...(actor.origin === undefined ? {} : { origin: actor.origin })
-        },
-        ...command,
-        // After the spread on purpose: `command` carries the caller's requested number and this
-        // must be the value that survives.
-        priority: routedPriority(actor, command.priority, request)
+        ...trustedPublishSemantics(actor, command, request, systemGateProbe ? 'kant' : actor.alias),
+        idempotency_key: command.idempotency_key,
       };
-      return reply.code(202).send(await repository.publish(trustedCommand));
+      const receipt = validatedPublishReceipt(
+        await repository.publish(trustedCommand, {
+          requirePreparedConsoleIntent: consolePublish,
+          ...(consolePublish
+            ? { consoleIntentOperatorScope: consolePublishOperatorScope(actor) }
+            : {}),
+        }),
+        trustedCommand,
+        command.recipients.length,
+      );
+      if (typeof repository.verifyPublishReceipt !== 'function'
+          || !(await repository.verifyPublishReceipt(trustedCommand, receipt))) {
+        throw new StoreError('conflict', 'publish receipt does not match its durable effect');
+      }
+      if (consolePublish) {
+        consolePublishTelemetry.record({ operation: 'publish', result: 'committed' });
+      }
+      return reply.code(202).send(receipt);
     } catch (error) {
+      if (error instanceof PublishIntentExpiredError) {
+        if (consolePublish) {
+          consolePublishTelemetry.record({ operation: 'publish', result: 'expired' });
+        }
+        return reply.code(410).send(
+          ConsolePublishIntentExpiredSchema.parse(error.expiration),
+        );
+      }
+      if (consolePublish) consolePublishTelemetry.record({ operation: 'publish', result: 'error' });
       replyError(reply, error);
     }
   };
@@ -672,6 +1163,70 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       return visibleMessageList(await repository.listMessages(actor.tenant_id, actor.alias), actor);
     } catch (error) { replyError(reply, error); }
   });
+
+  app.post('/v3/console/publish-intents', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requirePermission(actor, 'route');
+      if (repository.prepareConsolePublishIntent === undefined) {
+        throw new StoreError('not_found', 'durable console publish intents are unavailable');
+      }
+      const publicCommand = publicPublishIntent(request.body);
+      const command: TrustedPublishIntentCommand = {
+        ...trustedPublishSemantics(actor, publicCommand, request),
+        intent_nonce: publicCommand.intent_nonce,
+        requested_priority: publicCommand.priority,
+      };
+      const result = ConsolePublishIntentPrepareResultSchema.parse(
+        await repository.prepareConsolePublishIntent(
+          command,
+          consolePublishOperatorScope(actor),
+        ),
+      );
+      consolePublishTelemetry.record({ operation: 'prepare', result: result.state });
+      return reply.code(200).send(result);
+    } catch (error) {
+      if (error instanceof PublishIntentReconciliationRequired) {
+        consolePublishTelemetry.record({ operation: 'prepare', result: 'reconciliation_required' });
+        return reply.code(409).send(
+          ConsolePublishIntentReconciliationSchema.parse(error.reconciliation),
+        );
+      }
+      if (error instanceof PublishIntentRateLimitedError) {
+        consolePublishTelemetry.record({ operation: 'prepare', result: 'rate_limited' });
+        const limited = ConsolePublishIntentRateLimitedSchema.parse(error.rateLimit);
+        return reply.header('Retry-After', String(limited.retry_after_seconds))
+          .code(429).send(limited);
+      }
+      consolePublishTelemetry.record({ operation: 'prepare', result: 'error' });
+      replyError(reply, error);
+    }
+  });
+
+  app.post('/v3/console/publish-intents/confirm', async (request, reply) => {
+    try {
+      const actor = await principal(request, options.authProvider);
+      requirePermission(actor, 'route');
+      if (repository.confirmConsolePublishIntent === undefined) {
+        throw new StoreError('not_found', 'durable console publish intents are unavailable');
+      }
+      const confirmation = ConsolePublishIntentConfirmSchema.parse(request.body);
+      const result = ConsolePublishIntentConfirmResultSchema.parse(
+        await repository.confirmConsolePublishIntent(
+          actor.tenant_id,
+          actor.alias,
+          consolePublishOperatorScope(actor),
+          confirmation,
+        ),
+      );
+      consolePublishTelemetry.record({ operation: 'confirm', result: 'confirmed' });
+      return reply.code(200).send(result);
+    } catch (error) {
+      consolePublishTelemetry.record({ operation: 'confirm', result: 'error' });
+      replyError(reply, error);
+    }
+  });
+
   app.post('/v3/console/messages', publishHandler);
 
   /**
@@ -713,11 +1268,60 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     } catch (error) { replyError(reply, error); }
   });
 
+  // La reconciliación causal es superficie de operador, no una segunda lista de colas. Tanto la
+  // lectura como la decisión exigen `control`: la lista revela que existe un incidente operativo
+  // y cada fila puede convertirse inmediatamente en una mutación auditada. El store repite la
+  // autorización y aplica visibilidad multi-tenant; la fachada es una segunda allowlist para que
+  // una regresión SQL nunca filtre payloads, errores ni ids del proveedor al navegador.
+  app.get<{ Querystring: { limit?: string; cursor?: string } }>(
+    '/v3/console/dlq',
+    async (request, reply) => {
+      try {
+        const actor = await principal(request, options.authProvider);
+        requireOperatorPermission(actor, 'control');
+        const limit = parseDlqLimit(request.query.limit);
+        const cursor = parseDlqCursor(request.query.cursor);
+        return safeDlqPage(await repository.listOperationalDlq(
+          actor.tenant_id,
+          actor.alias,
+          limit,
+          cursor,
+        ));
+      } catch (error) { replyError(reply, error); }
+    },
+  );
+
+  // Esta ruta nunca reinyecta un efecto. Registra una decisión humana contra la huella exacta
+  // de la evidencia vigente; si la fila cambió, el CAS del store falla. Target/id vienen de la
+  // ruta pero actor/tenant sólo del principal autenticado, y el body es exacto para no aceptar
+  // autoridad accidental en campos que un cliente viejo o comprometido pudiera agregar.
+  app.post<{
+    Params: { target: string; id: string };
+  }>(
+    '/v3/console/dlq/:target/:id/resolve-without-replay',
+    async (request, reply) => {
+      try {
+        const actor = await principal(request, options.authProvider);
+        requireOperatorPermission(actor, 'control');
+        const resolution = parseDlqResolution(request.params.target, request.params.id, request.body);
+        return validatedDlqResolutionReceipt(await repository.resolveOperationalDlqWithoutReplay(
+          actor.tenant_id,
+          actor.alias,
+          resolution,
+        ), resolution);
+      } catch (error) { replyError(reply, error); }
+    },
+  );
+
   app.post<{ Params: { deliveryId: string } }>('/v3/console/deliveries/:deliveryId/replay', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
       requireOperatorPermission(actor, 'control');
-      return await repository.replayDelivery(request.params.deliveryId, actor.tenant_id, actor.alias);
+      const deliveryId = DeliveryIdSchema.parse(request.params.deliveryId);
+      return validatedReplayReceipt(
+        await repository.replayDelivery(deliveryId, actor.tenant_id, actor.alias),
+        deliveryId,
+      );
     } catch (error) { replyError(reply, error); }
   });
 
@@ -733,16 +1337,17 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       // de rechazarse: la cancelación no puede fallar por un campo decorativo.
       const body = request.body as { reason?: unknown } | undefined;
       const reason = typeof body?.reason === 'string' ? body.reason : undefined;
-      return await repository.cancelDelivery(
-        request.params.deliveryId, actor.tenant_id, actor.alias, reason
-      );
+      const deliveryId = DeliveryIdSchema.parse(request.params.deliveryId);
+      return validatedCancelReceipt(await repository.cancelDelivery(
+        deliveryId, actor.tenant_id, actor.alias, reason
+      ), deliveryId);
     } catch (error) { replyError(reply, error); }
   });
 
   app.get('/v3/console/jobs', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
-      requireOperatorPermission(actor, 'read');
+      requirePermission(actor, 'read');
       return sameTenantRows(await repository.listJobs(actor.tenant_id, actor.alias), actor);
     } catch (error) { replyError(reply, error); }
   });
@@ -778,7 +1383,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   app.get('/v3/console/activity', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
-      requireOperatorPermission(actor, 'read');
+      requirePermission(actor, 'read');
       return await repository.fleetActivity(actor.tenant_id, actor.alias);
     } catch (error) { replyError(reply, error); }
   });
@@ -789,7 +1394,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   app.get('/v3/console/quotas', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
-      requireOperatorPermission(actor, 'read');
+      requirePermission(actor, 'read');
       return await repository.quotaSnapshot(actor.tenant_id, actor.alias);
     } catch (error) { replyError(reply, error); }
   });
@@ -831,7 +1436,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       request: unknown, permission: 'read' | 'control'
     ): Promise<{ tenant_id: Tenant; alias: string }> => {
       const actor = await principal(request as FastifyRequest, options.authProvider);
-      requireOperatorPermission(actor, permission);
+      if (permission === 'read') requirePermission(actor, 'read');
+      else requireOperatorPermission(actor, 'control');
       return { tenant_id: actor.tenant_id, alias: actor.alias };
     };
     const autorizarDestino = async (
@@ -880,6 +1486,26 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
         perfiles.replace(profile, expectedRevision, actor),
       prepareRuntime: (tenantId, alias, contexto) =>
         prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),
+      ...(repository.recordProfileRuntimeExpectation === undefined
+        ? {}
+        : {
+            recordRuntimeExpectation: (tenantId, alias, revision, verification) =>
+              repository.recordProfileRuntimeExpectation!(
+                tenantId,
+                alias,
+                runtimeContractFromVerification(revision, verification),
+              ),
+          }),
+      ...(repository.readProfileRuntimeAdoption === undefined
+        ? {}
+        : {
+            readRuntimeAdoption: (tenantId, alias, revision, verification) =>
+              repository.readProfileRuntimeAdoption!(
+                tenantId,
+                alias,
+                runtimeContractFromVerification(revision, verification),
+              ),
+          }),
       markProfileApplied: (tenantId, alias, revision, actor) =>
         perfiles.markApplied(tenantId, alias, revision, actor),
     });
@@ -899,23 +1525,93 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
        */
       probe: profileProbe,
     });
+
+    app.get<{ Params: { tenantId: string; alias: string } }>(
+      '/v3/console/role-assignments/:tenantId/:alias/history',
+      async (request, reply) => {
+        try {
+          const tenant = TenantSchema.safeParse(request.params.tenantId);
+          const alias = AliasSchema.safeParse(request.params.alias);
+          if (!tenant.success || !alias.success) {
+            return reply.code(400).send({
+              error: 'invalid_input', message: 'tenantId or alias is invalid',
+            });
+          }
+          const actor = await autorizarPerfil(request, 'read');
+          const target = await autorizarDestino(
+            actor, tenant.data, alias.data, 'read', false,
+          );
+          if (!target || target.tenant_id !== tenant.data || target.alias !== alias.data) {
+            return reply.code(404).send({
+              error: 'not_found', message: 'agent not found or not visible',
+            });
+          }
+          const history = await options.pool.query<Record<string, unknown>>(
+            `SELECT id::text,tenant_id,alias,operation,previous_brief,new_brief,
+                    previous_template_slug,new_template_slug,actor_tenant,actor_alias,changed_at
+               FROM agent_role_brief_history
+              WHERE tenant_id=$1 AND alias=$2
+              ORDER BY agent_role_brief_history.id DESC LIMIT 100`,
+            [target.tenant_id, target.alias],
+          );
+          return {
+            observed_at: new Date().toISOString(),
+            tenant_id: target.tenant_id,
+            alias: target.alias,
+            entries: history.rows,
+          };
+        } catch (error) { replyError(reply, error); }
+      },
+    );
   }
 
   app.get('/v3/console/agents', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
-      requireOperatorPermission(actor, 'read');
+      requirePermission(actor, 'read');
       return await repository.listAgents(actor.tenant_id, actor.alias);
     } catch (error) { replyError(reply, error); }
   });
 
+  app.get<{ Params: { tenantId: string; alias: string } }>(
+    '/v3/console/tenants/:tenantId/agents/:alias',
+    async (request, reply) => {
+      try {
+        const actor = await principal(request, options.authProvider);
+        requirePermission(actor, 'read');
+        const tenant = TenantSchema.safeParse(request.params.tenantId);
+        const alias = AliasSchema.safeParse(request.params.alias);
+        if (!tenant.success || !alias.success) {
+          return reply.code(400).send({
+            error: 'invalid_input', message: 'tenantId or alias is invalid',
+          });
+        }
+        const agent = repository.getAgentByIdentity === undefined
+          ? tenant.data === actor.tenant_id
+            ? await repository.getAgent(alias.data, actor.tenant_id, actor.alias)
+            : undefined
+          : await repository.getAgentByIdentity(
+              tenant.data, alias.data, actor.tenant_id, actor.alias,
+            );
+        if (!agent || agent.tenant_id !== tenant.data || agent.alias !== alias.data) {
+          throw new StoreError('not_found', 'agent not found or not visible');
+        }
+        return agent;
+      } catch (error) { replyError(reply, error); }
+    },
+  );
+
+  // Compatibilidad sin tenant: significa estrictamente el tenant autenticado. Un alias visible
+  // en otro tenant jamás puede ganar por orden alfabético ni por el orden físico de PostgreSQL.
   app.get<{ Params: { alias: string } }>('/v3/console/agents/:alias', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
-      requireOperatorPermission(actor, 'read');
+      requirePermission(actor, 'read');
       const alias = AliasSchema.parse(request.params.alias);
       const agent = await repository.getAgent(alias, actor.tenant_id, actor.alias);
-      if (!agent) throw new StoreError('not_found', 'agent not found or not visible');
+      if (!agent || agent.tenant_id !== actor.tenant_id || agent.alias !== alias) {
+        throw new StoreError('not_found', 'agent not found or not visible');
+      }
       return agent;
     } catch (error) { replyError(reply, error); }
   });
@@ -936,11 +1632,12 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     } catch (error) { replyError(reply, error); }
   });
 
-  app.get('/v3/console/audit', async (request, reply) => {
+  app.get<{ Querystring: Record<string, unknown> }>('/v3/console/audit', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
-      requireOperatorPermission(actor, 'read');
-      return sameTenantRows(await repository.listAudit(actor.tenant_id, actor.alias), actor);
+      requirePermission(actor, 'read');
+      const query = parseAuditQuery(request.query);
+      return safeAuditPage(await repository.listAudit(actor.tenant_id, actor.alias, query));
     } catch (error) { replyError(reply, error); }
   });
 
@@ -951,7 +1648,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   app.get<{ Params: { traceId: string } }>('/v3/console/chains/:traceId', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
-      requireOperatorPermission(actor, 'read');
+      requirePermission(actor, 'read');
       return await repository.agentChain(request.params.traceId, actor.tenant_id, actor.alias);
     } catch (error) { replyError(reply, error); }
   });
@@ -1022,7 +1719,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   app.get('/v3/console/config', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
-      requireOperatorPermission(actor, 'control');
+      requirePermission(actor, 'read');
       return await repository.getConfiguration(actor.tenant_id, actor.alias);
     } catch (error) { replyError(reply, error); }
   });
@@ -1035,7 +1732,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const result = await repository.applyConfigurationChange(
         actor.tenant_id, actor.alias, change.mutation, change.dry_run, change.expected_revision
       );
-      return reply.code(change.dry_run ? 200 : 201).send(result);
+      return reply.code(change.dry_run ? 200 : 201).send(validatedConfigurationReceipt(
+        result, change.dry_run, null, change.mutation,
+      ));
     } catch (error) { replyError(reply, error); }
   });
 
@@ -1049,14 +1748,16 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       const result = await repository.rollbackConfiguration(
         actor.tenant_id, actor.alias, revisionId, rollback.dry_run, rollback.expected_revision
       );
-      return reply.code(rollback.dry_run ? 200 : 201).send(result);
+      return reply.code(rollback.dry_run ? 200 : 201).send(validatedConfigurationReceipt(
+        result, rollback.dry_run, revisionId,
+      ));
     } catch (error) { replyError(reply, error); }
   });
 
   app.get('/v3/console/observability', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
-      requireOperatorPermission(actor, 'read');
+      requirePermission(actor, 'read');
       const [status, queues, jobs, relays] = await Promise.all([
         repository.status(actor.tenant_id, actor.alias),
         repository.queueSnapshot(actor.tenant_id, actor.alias),
@@ -1098,47 +1799,44 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
         throw new StoreError('forbidden', 'authenticated identity does not match hello');
       }
       const lease = await repository.acquireLease(
-        hello.tenant_id, hello.alias, hello.instance_id, hello.capabilities, leaseTtlMs
+        hello.tenant_id, hello.alias, hello.instance_id, hello.capabilities, leaseTtlMs,
+        { requireDeclaredCapacity: true },
       );
-      return reply.code(lease.acquired ? 200 : 409).send(lease);
+      if (!lease.acquired) return reply.code(409).send(lease);
+      if (!lease.epoch) throw new StoreError('conflict', 'lease acquisition returned no epoch');
+      const leaseConnectionToken = connectionToken(lease.connection_token);
+      return reply.code(200).send({
+        ...lease,
+        connection_token: leaseConnectionToken,
+      });
     } catch (error) {
       replyError(reply, error);
     }
   });
 
   /**
-   * Reclamo por HTTP. Es el otro punto por donde se puede vaciar la cola de un agente, y hasta
-   * ahora el `limit` lo elegía el cliente sin techo.
-   *
-   * Decisión: se topea al mismo presupuesto total configurado, y además —si hay una sesión
-   * WebSocket viva del mismo (tenant, alias)— se le descuentan las garras que esa sesión ya
-   * tiene en vuelo, para que las dos superficies compartan un solo presupuesto en vez de
-   * duplicarlo. No se puede hacer un control de admisión completo acá porque el POST es sin
-   * estado: no hay nada que sobreviva entre dos polls de un cliente que no tenga socket, así
-   * que cualquier acumulado sería una invención. Topear el lote sí acota el daño de UN poll a
-   * exactamente lo que puede tomar un drain, que es lo que rompía hoy: el SDK cayendo al
-   * camino HTTP heredaba el default 20 del store.
+   * Reclamo por HTTP. Es el otro punto por donde se puede vaciar la cola de un agente. El cliente
+   * sólo elige un máximo de lote: las capacidades general y humana viajan por separado y el store
+   * descuenta bajo lock todas las garras vivas del alias. Así dos polls, un socket y otro gateway
+   * comparten el mismo presupuesto aunque este endpoint sea sin estado.
    */
   const queryHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
-      const query = QueryDeliveriesSchema.parse(request.body);
-      const live = sessions.get(sessionKey(actor.tenant_id, actor.alias));
-      const budget = live !== undefined && live.instanceId === query.instance_id
-        && live.epoch === query.epoch
-        ? admissionBudget(live, admission, Date.now())
-        : { limit: admission.maxInflightDeliveries, humanReservedLimit: admission.humanReservedDeliveries };
-      // `query.limit` es un techo total pedido por el cliente (el schema le pone default 20).
-      // Se reparte primero contra el cupo general y el resto contra el reservado, para que un
-      // cliente que pide 1 no se lleve 1 general + 1 reservado.
+      const query = parseConnectionBoundBody(
+        request.body,
+        (value) => QueryDeliveriesSchema.parse(value),
+      );
       const requested = Math.min(query.limit, maxQueryLimit);
-      const generalLimit = Math.min(requested, budget.limit);
-      const humanReservedLimit = Math.min(requested - generalLimit, budget.humanReservedLimit);
-      if (generalLimit + humanReservedLimit < 1) return { deliveries: [] };
       const deliveries = (await repository.claimDeliveries(
         actor.tenant_id, actor.alias, query.instance_id, query.epoch,
-        generalLimit, ackDeadlineMs, undefined, { humanReservedLimit }
+        requested, ackDeadlineMs, undefined, {
+          generalCapacity: admission.maxInflightDeliveries,
+          humanReservedCapacity: admission.humanReservedDeliveries,
+          maxClaims: requested,
+          requireDeclaredCapacity: true,
+        }, query.connection_token
       )).map((delivery) => normalizeDeliveryClaim(delivery, ackDeadlineMs));
       return {
         deliveries
@@ -1154,9 +1852,13 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
-      const heartbeat = HeartbeatSchema.parse(request.body);
+      const heartbeat = parseConnectionBoundBody(
+        request.body,
+        (value) => HeartbeatSchema.parse(value),
+      );
       const leaseExpiresAt = await repository.heartbeat(
-        actor.tenant_id, actor.alias, heartbeat.instance_id, heartbeat.epoch, leaseTtlMs
+        actor.tenant_id, actor.alias, heartbeat.instance_id, heartbeat.epoch, leaseTtlMs,
+        heartbeat.connection_token,
       );
       return { lease_expires_at: leaseExpiresAt };
     } catch (error) {
@@ -1215,29 +1917,23 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
    * capacidad existe justamente para CONSERVAR el lease y la época entre reconexiones: las
    * garras viejas siguen vivas en la base y el gateway las olvidaba.
    *
-   * Falla abierta a propósito. Si la consulta revienta, se arranca con el cupo vacío —el
-   * comportamiento anterior— en vez de dejar al adaptador sin poder reclamar nada: un agente
-   * que no recibe trabajo es peor que el bug que estamos arreglando. El techo de la base
-   * (`ack_deadline_at`) sigue acotando el daño en el peor caso.
+   * Falla cerrado. La consulta es parte del fence de reconexión: inventar un mapa vacío ante un
+   * error permite multiplicar claims y pierde correlación de ACK. El llamador libera el lease que
+   * acaba de adquirir antes de rechazar el hello, para que el siguiente intento no quede bloqueado.
    */
   async function rehydrateClaims(tenantId: Tenant, alias: string): Promise<Map<string, SessionClaim>> {
     const claims = new Map<string, SessionClaim>();
     if (repository.liveDeliveryClaims === undefined) return claims;
-    try {
-      const live = await repository.liveDeliveryClaims(tenantId, alias, MAX_REHYDRATED_CLAIMS);
-      for (const claim of live) {
-        const deadlineMs = Date.parse(claim.ack_deadline_at);
-        if (!Number.isFinite(deadlineMs) || deadlineMs <= Date.now()) continue;
-        claims.set(claim.delivery_id, {
-          attempt: claim.attempt,
-          claim_token: claim.claim_token,
-          humanOriginated: claim.agent_to_agent !== true,
-          admissionExpiresAtMs: deadlineMs,
-          rehydrated: true
-        });
-      }
-    } catch (error) {
-      app.log.error(error);
+    const live = await repository.liveDeliveryClaims(tenantId, alias, MAX_REHYDRATED_CLAIMS);
+    for (const claim of live) {
+      const deadlineMs = Date.parse(claim.ack_deadline_at);
+      if (!Number.isFinite(deadlineMs) || deadlineMs <= Date.now()) continue;
+      claims.set(claim.delivery_id, {
+        attempt: claim.attempt,
+        claim_token: claim.claim_token,
+        admissionExpiresAtMs: deadlineMs,
+        rehydrated: true
+      });
     }
     return claims;
   }
@@ -1266,51 +1962,94 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
    *     primer vencimiento conocido: la liveness queda acotada por el plazo de ACK, no por la
    *     suerte.
    */
-  async function drain(session: Session): Promise<void> {
-    if (session.socket.readyState !== WebSocket.OPEN) return;
-    if (session.draining) {
-      session.drainAgain = true;
-      return;
+  function drain(session: Session): Promise<boolean> {
+    if (session.abort.signal.aborted || session.socket.readyState !== WebSocket.OPEN) {
+      return Promise.resolve(false);
     }
-    session.draining = true;
+    if (session.drainPromise !== undefined) {
+      session.drainAgain = true;
+      return session.drainPromise;
+    }
+    // El salto de microtarea garantiza que `drainPromise` quede publicado antes de que una rama
+    // sin I/O (por ejemplo cupo cero) llegue al `finally` y permita otro drenaje concurrente.
+    const operation = Promise.resolve()
+      .then(async () => drainExclusively(session))
+      .finally(() => {
+        if (session.drainPromise === operation) session.drainPromise = undefined;
+      });
+    session.drainPromise = operation;
+    pendingDrains.add(operation);
+    void operation.then(
+      () => pendingDrains.delete(operation),
+      () => pendingDrains.delete(operation),
+    );
+    return operation;
+  }
+
+  async function drainExclusively(session: Session): Promise<boolean> {
     try {
       // El tope existe sólo contra las vueltas IMPRODUCTIVAS: las productivas ya están
       // acotadas por el cupo, que baja con cada garra tomada. Sin tope, dos gateways contra la
       // misma cola podrían pasarse wakes de entregas que el otro ya se llevó y girar en vacío.
       for (let round = 0; round < MAX_DRAIN_ROUNDS; round += 1) {
+        if (session.abort.signal.aborted) return false;
         session.drainAgain = false;
-        const budget = admissionBudget(session, admission, Date.now());
-        if (budget.limit + budget.humanReservedLimit < 1) return;
-        // INTEGRACIÓN 2026-07-29: quien manda es el cupo de admisión (`budget.limit`), que sale
-        // de las garras vivas de ESTA sesión. `deliveryClaimLimit` queda como techo de lote
-        // explícito por encima: con los defaults (cupo 2, lote 20) nunca ata, y existe para
-        // poder bajarle el lote a un gateway sin tocar el cupo. Lo que ya no puede pasar —que era
-        // el punto del parche de concurrencia— es que este argumento viaje `undefined` y caiga en
-        // silencio en el default 20 del esquema de un endpoint HTTP.
-        const generalLimit = Math.min(budget.limit, deliveryClaimLimit);
-        if (generalLimit + budget.humanReservedLimit < 1) return;
+        pruneExpiredClaims(session, Date.now());
+        // `deliveryClaimLimit` es sólo el techo explícito de lote. Las capacidades durables
+        // viajan separadas y PostgreSQL descuenta los claims vivos de todo el alias; la RAM de
+        // esta sesión ya no decide cuánto se puede reclamar.
+        const requested = Math.min(deliveryClaimLimit, maxQueryLimit);
         const deliveries = (await repository.claimDeliveries(
           session.tenantId, session.alias, session.instanceId, session.epoch,
-          generalLimit, ackDeadlineMs, undefined,
-          { humanReservedLimit: budget.humanReservedLimit }
+          requested, ackDeadlineMs, undefined,
+          {
+            generalCapacity: admission.maxInflightDeliveries,
+            humanReservedCapacity: admission.humanReservedDeliveries,
+            maxClaims: requested,
+            requireDeclaredCapacity: true,
+          },
+          session.connectionToken,
+          session.abort.signal,
         )).map((delivery) => normalizeDeliveryClaim(delivery, ackDeadlineMs));
+        if (session.abort.signal.aborted
+            || sessions.get(sessionKey(session.tenantId, session.alias)) !== session
+            || session.socket.readyState !== WebSocket.OPEN) return false;
+        let allFramesQueued = true;
         for (const delivery of deliveries) {
           const claim = claimFromDelivery(delivery, ackDeadlineMs);
           session.recentClaims.delete(delivery.delivery_id);
           session.claims.set(delivery.delivery_id, claim);
-          send(session.socket, delivery);
+          allFramesQueued = send(session.socket, delivery) && allFramesQueued;
         }
-        if (!session.drainAgain) return;
+        // El store ya otorgó estas garras. Si el socket cayó mientras esperaba el claim, el wake
+        // no puede declararse entregado: la reconexión lo volverá a reclamar selectivamente y el
+        // lease de la entrega seguirá su recuperación normal.
+        if (!allFramesQueued) return false;
+        if (!session.drainAgain) return true;
       }
+      return true;
     } catch (error) {
+      if (session.abort.signal.aborted) return false;
       if (error instanceof StoreError && error.code === 'fenced') {
         send(session.socket, { type: 'error', code: 'fenced', message: error.message });
         session.socket.close(4401, 'fenced');
+      } else if (error instanceof StoreError && error.code === 'conflict'
+          && error.message === 'delivery consumer is missing its durable agent capacity') {
+        send(session.socket, {
+          type: 'error', code: 'consumer_not_declared',
+          message: 'consumer has no durable delivery capacity declaration',
+        });
+        session.socket.close(4403, 'consumer not declared');
       } else {
         app.log.error(error);
+        send(session.socket, {
+          type: 'error', code: 'delivery_unavailable',
+          message: 'durable delivery admission is unavailable',
+        });
+        session.socket.close(1011, 'delivery unavailable');
       }
+      return false;
     } finally {
-      session.draining = false;
       scheduleExpiryDrain(session);
     }
   }
@@ -1324,7 +2063,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   function scheduleExpiryDrain(session: Session): void {
     if (session.expiryTimer !== undefined) clearTimeout(session.expiryTimer);
     session.expiryTimer = undefined;
-    if (session.socket.readyState !== WebSocket.OPEN || session.claims.size === 0) return;
+    if (session.abort.signal.aborted
+        || session.socket.readyState !== WebSocket.OPEN || session.claims.size === 0) return;
     let earliest = Number.POSITIVE_INFINITY;
     for (const claim of session.claims.values()) {
       earliest = Math.min(earliest, claim.admissionExpiresAtMs);
@@ -1360,16 +2100,35 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
             }
             const renewableDeliveryClaims = hello.capabilities.includes('renewable_delivery_claims_v1');
             const delegationFeedback = hello.capabilities.includes('delegation_feedback_v1');
-            const lease = await repository.acquireLease(
-              hello.tenant_id,
-              hello.alias,
-              hello.instance_id,
-              hello.capabilities,
-              leaseTtlMs,
-              renewableDeliveryClaims
-                ? { resume: true, resumeWindowMs: ackDeadlineMs }
-                : {}
-            );
+            let lease: LeaseResult;
+            try {
+              lease = await repository.acquireLease(
+                hello.tenant_id,
+                hello.alias,
+                hello.instance_id,
+                hello.capabilities,
+                leaseTtlMs,
+                renewableDeliveryClaims
+                  ? {
+                      resume: true,
+                      resumeWindowMs: ackDeadlineMs,
+                      requireDeclaredCapacity: true,
+                    }
+                  : { requireDeclaredCapacity: true }
+              );
+            } catch (error) {
+              if (error instanceof StoreError && error.code === 'conflict'
+                  && (error.message === 'delivery consumer is missing its durable agent capacity'
+                    || error.message === 'delivery consumer capacity is invalid')) {
+                send(socket, {
+                  type: 'error', code: 'consumer_not_declared',
+                  message: 'consumer has no valid durable delivery capacity declaration',
+                });
+                socket.close(4403, 'consumer not declared');
+                return;
+              }
+              throw error;
+            }
             if (!lease.acquired || !lease.epoch) {
               send(socket, {
                 type: 'takeover_rejected',
@@ -1380,23 +2139,82 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
               socket.close(4409, 'live consumer exists');
               return;
             }
-            const key = sessionKey(hello.tenant_id, hello.alias);
-            const previous = sessions.get(key);
-            current = {
-              socket, tenantId: hello.tenant_id, alias: hello.alias,
-              instanceId: hello.instance_id,
-              epoch: lease.epoch,
-              draining: false,
-              drainAgain: false,
-              renewableDeliveryClaims,
-              delegationFeedback,
-              // El cupo NO arranca vacío: se reconstruye desde la base. Ver `rehydrateClaims`.
-              claims: await rehydrateClaims(hello.tenant_id, hello.alias),
-              recentClaims: new Map(),
-              expiryTimer: undefined
+            const leaseConnectionToken = connectionToken(lease.connection_token);
+            const releaseHelloLease = async (event: string): Promise<void> => {
+              if (renewableDeliveryClaims) return;
+              try {
+                await repository.releaseLease(
+                  hello.tenant_id,
+                  hello.alias,
+                  hello.instance_id,
+                  lease.epoch!,
+                  leaseConnectionToken,
+                );
+              } catch {
+                app.log.error({ event, tenant_id: hello.tenant_id, alias: hello.alias });
+              }
             };
-            sessions.set(key, current);
-            if (previous && previous.socket !== socket) previous.socket.close(4401, 'superseded by newer epoch');
+            try {
+              await repository.heartbeat(
+                hello.tenant_id,
+                hello.alias,
+                hello.instance_id,
+                lease.epoch,
+                leaseTtlMs,
+                leaseConnectionToken,
+              );
+            } catch (error) {
+              await releaseHelloLease('initial_hello_fence_release_failed');
+              if (error instanceof StoreError && error.code === 'fenced') {
+                send(socket, {
+                  type: 'error', code: 'fenced',
+                  message: 'a newer hello owns this consumer connection',
+                });
+                socket.close(4401, 'superseded during hello');
+              } else {
+                app.log.error(error);
+                send(socket, {
+                  type: 'error', code: 'delivery_unavailable',
+                  message: 'durable delivery admission is unavailable',
+                });
+                socket.close(1011, 'delivery unavailable');
+              }
+              return;
+            }
+            const key = sessionKey(hello.tenant_id, hello.alias);
+            const helloAdmission = {};
+            helloAdmissions.set(key, helloAdmission);
+            const rejectInactiveHello = async (): Promise<boolean> => {
+              const ownsAdmission = helloAdmissions.get(key) === helloAdmission;
+              if (!closed && socket.readyState === WebSocket.OPEN && ownsAdmission) return false;
+              if (ownsAdmission) helloAdmissions.delete(key);
+              await releaseHelloLease(closed || socket.readyState !== WebSocket.OPEN
+                ? 'closed_hello_release_failed'
+                : 'superseded_hello_release_failed');
+              if (!closed && socket.readyState === WebSocket.OPEN) {
+                send(socket, {
+                  type: 'error', code: 'fenced',
+                  message: 'a newer hello owns this consumer connection',
+                });
+                socket.close(4401, 'superseded during hello');
+              }
+              return true;
+            };
+            let recoveredClaims: Map<string, SessionClaim>;
+            try {
+              recoveredClaims = await rehydrateClaims(hello.tenant_id, hello.alias);
+            } catch (error) {
+              if (helloAdmissions.get(key) === helloAdmission) helloAdmissions.delete(key);
+              await releaseHelloLease('delivery_claim_recovery_release_failed');
+              app.log.error(error);
+              send(socket, {
+                type: 'error', code: 'delivery_unavailable',
+                message: 'durable delivery claim recovery is unavailable',
+              });
+              socket.close(1011, 'delivery unavailable');
+              return;
+            }
+            if (await rejectInactiveHello()) return;
             /*
              * EL PERFIL VIAJA EN EL SALUDO, UNA VEZ, y sólo a quien lo pidió.
              *
@@ -1422,12 +2240,73 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
                 agentProfile = undefined;
               }
             }
+            if (await rejectInactiveHello()) return;
+            let confirmedLeaseExpiresAt: string;
+            try {
+              confirmedLeaseExpiresAt = await repository.heartbeat(
+                hello.tenant_id,
+                hello.alias,
+                hello.instance_id,
+                lease.epoch,
+                leaseTtlMs,
+                leaseConnectionToken,
+              );
+            } catch (error) {
+              if (helloAdmissions.get(key) === helloAdmission) helloAdmissions.delete(key);
+              await releaseHelloLease('hello_fence_release_failed');
+              if (error instanceof StoreError && error.code === 'fenced') {
+                send(socket, {
+                  type: 'error', code: 'fenced',
+                  message: 'a newer hello owns this consumer connection',
+                });
+                socket.close(4401, 'superseded during hello');
+              } else {
+                app.log.error(error);
+                send(socket, {
+                  type: 'error', code: 'delivery_unavailable',
+                  message: 'durable delivery admission is unavailable',
+                });
+                socket.close(1011, 'delivery unavailable');
+              }
+              return;
+            }
+            if (closed || socket.readyState !== WebSocket.OPEN
+                || helloAdmissions.get(key) !== helloAdmission) {
+              await rejectInactiveHello();
+              return;
+            }
+            const previous = sessions.get(key);
+            current = {
+              socket, tenantId: hello.tenant_id, alias: hello.alias,
+              instanceId: hello.instance_id,
+              epoch: lease.epoch,
+              connectionToken: leaseConnectionToken,
+              abort: new AbortController(),
+              drainAgain: false,
+              drainPromise: undefined,
+              renewableDeliveryClaims,
+              delegationFeedback,
+              // El cupo NO arranca vacío: se reconstruye desde la base. Ver `rehydrateClaims`.
+              claims: recoveredClaims,
+              recentClaims: new Map(),
+              expiryTimer: undefined
+            };
+            sessions.set(key, current);
+            if (helloAdmissions.get(key) === helloAdmission) helloAdmissions.delete(key);
+            if (previous && previous.socket !== socket) {
+              previous.abort.abort(new Error('connection superseded by a newer hello'));
+              previous.socket.close(4401, 'superseded by newer connection');
+            }
             send(socket, {
               type: 'hello_ack', version: '3.0', epoch: lease.epoch,
-              lease_expires_at: lease.lease_expires_at,
+              lease_expires_at: confirmedLeaseExpiresAt,
               ...(agentProfile === undefined ? {} : { agent_profile: agentProfile })
             });
-            await drain(current);
+            const initialDrainReady = await drain(current);
+            if (!initialDrainReady || socket.readyState !== WebSocket.OPEN) return;
+            // El hello es también la señal durable de que este destinatario volvió. No hace falta
+            // esperar al siguiente tick para recoger los wakes que permanecieron intactos offline.
+            void pumpOutbox().catch((error: unknown) => app.log.error(error));
             return;
           }
 
@@ -1442,7 +2321,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
               throw new StoreError('fenced', 'heartbeat identity does not match socket lease');
             }
             const leaseExpiresAt = await repository.heartbeat(
-              current.tenantId, current.alias, current.instanceId, current.epoch, leaseTtlMs
+              current.tenantId, current.alias, current.instanceId, current.epoch, leaseTtlMs,
+              current.connectionToken,
+              current.abort.signal,
             );
             send(socket, { type: 'heartbeat_ack', lease_expires_at: leaseExpiresAt });
             return;
@@ -1456,7 +2337,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           if (incoming.instance_id !== current.instanceId) {
             throw new StoreError('fenced', 'ACK identity does not match socket lease');
           }
-          if (incoming.epoch < current.epoch) {
+          const staleTerminalReplay = incoming.epoch < current.epoch
+            && (incoming.status === 'done' || incoming.status === 'failed');
+          if (incoming.epoch < current.epoch && !staleTerminalReplay) {
             send(socket, {
               type: 'ack_result',
               event_id: incoming.event_id,
@@ -1489,19 +2372,33 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           // base sin saber si el adaptador la conoce con ese mismo intento, así que exigirle
           // que coincida convertiría un ACK viejo en un cierre de socket 4401 donde antes había
           // un `ownership_lost` recuperable.
-          if (sessionClaim !== undefined && sessionClaim.rehydrated !== true) {
+          if (!staleTerminalReplay && sessionClaim !== undefined && sessionClaim.rehydrated !== true) {
             assertAckClaim(incoming, sessionClaim);
-          } else if (sessionClaim === undefined && !current.renewableDeliveryClaims) {
+          } else if (!staleTerminalReplay && sessionClaim === undefined && !current.renewableDeliveryClaims) {
             throw new StoreError('fenced', 'ACK has no claim in the live socket session');
           }
           // A renewable client can resume the same fenced DB lease after a
           // socket or gateway restart. In that case the in-memory claim map is
           // intentionally empty; repository.ackDelivery remains authoritative
           // for delivery id, attempt, token, instance, epoch and deadline.
-          const result = await repository.ackDelivery(
-            deliveryId, current.tenantId, current.alias, incoming, ackDeadlineMs,
-            deliveryLeaseCap
-          );
+          let result: AckResult;
+          try {
+            result = await repository.ackDelivery(
+              deliveryId, current.tenantId, current.alias, incoming, ackDeadlineMs,
+              deliveryLeaseCap
+            );
+          } catch (error) {
+            // El evento terminal viejo sí llegó a la autoridad durable. Si no era un duplicado
+            // exacto, el store puede fencearlo contra la garra nueva: para este frame eso es una
+            // prueba concluyente de ownership_lost, no razón para cerrar el socket de época N+1.
+            if (!staleTerminalReplay || !(error instanceof StoreError) || error.code !== 'fenced') throw error;
+            result = {
+              delivery_id: deliveryId,
+              status: incoming.status,
+              applied: false,
+              receipt: 'ownership_lost',
+            };
+          }
           // Todo campo que el store agregue a `AckResult` se saca de `legacyResult` A MANO y se
           // vuelve a poner detrás de su capability. `legacyResult` es lo que un adaptador de
           // cualquier versión sabe leer, así que el spread NO puede ser la vía por la que entra
@@ -1511,6 +2408,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           const {
             receipt,
             delegation_rejections: delegationRejections,
+            delegation_materializations: delegationMaterializations,
             chain_gate: chainGate,
             ...legacyResult
           } = result;
@@ -1524,6 +2422,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
             ...(current.renewableDeliveryClaims ? { receipt } : {}),
             ...(feedback && delegationRejections !== undefined
               ? { delegation_rejections: delegationRejections }
+              : {}),
+            ...(feedback && delegationMaterializations !== undefined
+              ? { delegation_materializations: delegationMaterializations }
               : {}),
             ...(feedback && chainGate !== undefined ? { chain_gate: chainGate } : {})
           });
@@ -1555,11 +2456,16 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
           let releasedSlot = false;
           if (['done', 'failed', 'dead', 'retry'].includes(result.status)) {
             const completedClaim = current.claims.get(deliveryId);
-            releasedSlot = current.claims.delete(deliveryId);
+            const closesCurrentClaim = completedClaim !== undefined
+              && completedClaim.attempt === incoming.attempt
+              && completedClaim.claim_token === incoming.claim_token;
+            releasedSlot = closesCurrentClaim && current.claims.delete(deliveryId);
             // No se borra: se mueve a `recentClaims`. Un ACK tardío de esta misma entrega tiene
             // que seguir correlacionando, o un cliente viejo se come un 'fenced' con cierre de
             // socket donde hoy recibe un `ownership_lost` y sigue vivo.
-            if (completedClaim !== undefined) rememberRecentClaim(current, deliveryId, completedClaim);
+            if (releasedSlot && completedClaim !== undefined) {
+              rememberRecentClaim(current, deliveryId, completedClaim);
+            }
           }
           // ESTE es el punto que hace viable el control de admisión: si una garra se liberó,
           // hay que volver a drenar acá mismo. Si sólo se drenara con el 'retry' de antes, un
@@ -1579,6 +2485,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       closed = true;
       const closing = current;
       if (!closing) return;
+      closing.abort.abort(new Error('consumer connection closed'));
       if (closing.expiryTimer !== undefined) clearTimeout(closing.expiryTimer);
       closing.expiryTimer = undefined;
       const key = sessionKey(closing.tenantId, closing.alias);
@@ -1588,14 +2495,23 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       // socket or gateway restart does not abort a multi-hour harness.
       if (!closing.renewableDeliveryClaims) {
         const pendingFrames = frameQueue;
-        void pendingFrames.finally(async () => {
+        const releaseTask = pendingFrames.finally(async () => {
           await repository.releaseLease(
             closing.tenantId,
             closing.alias,
             closing.instanceId,
-            closing.epoch
+            closing.epoch,
+            closing.connectionToken,
           );
-        }).catch((error: unknown) => app.log.error(error));
+        });
+        pendingSessionTasks.add(releaseTask);
+        void releaseTask.then(
+          () => pendingSessionTasks.delete(releaseTask),
+          (error: unknown) => {
+            pendingSessionTasks.delete(releaseTask);
+            app.log.error(error);
+          },
+        );
       }
     });
   });
@@ -1610,47 +2526,239 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     void drain(active);
   });
 
-  async function pumpOutbox(): Promise<void> {
-    if (sessions.size === 0) return;
-    const events = await repository.claimOutbox('wake', workerId, 50, outboxLeaseMs);
-    for (const event of events) {
-      const alias = typeof event.payload.recipient_alias === 'string' ? event.payload.recipient_alias : undefined;
-      const active = alias ? sessions.get(sessionKey(event.tenant_id, alias)) : undefined;
-      if (!active || active.socket.readyState !== WebSocket.OPEN) {
-        await ackWake(event, 'retry', 'recipient is offline');
-        continue;
+  function pumpOutbox(): Promise<void> {
+    if (outboxPumpAbort.signal.aborted) return Promise.resolve();
+    if (outboxPumpPromise !== undefined) return outboxPumpPromise;
+    const operation = Promise.resolve()
+      .then(async () => pumpOutboxOnce())
+      .finally(() => {
+        if (outboxPumpPromise === operation) outboxPumpPromise = undefined;
+      });
+    outboxPumpPromise = operation;
+    return operation;
+  }
+
+  async function pumpOutboxOnce(): Promise<void> {
+    wakePumpTelemetry.beginCycle();
+    try {
+      await pumpOutboxCycle();
+    } catch (error) {
+      if (outboxPumpAbort.signal.aborted) {
+        wakePumpTelemetry.recordOutcome('cancelled');
+        return;
       }
-      send(active.socket, { type: 'wake', alias: active.alias, reason: 'delivery_available' });
-      await drain(active);
-      await ackWake(event, 'sent');
+      wakePumpTelemetry.recordOutcome(
+        error instanceof StoreError && error.code === 'fenced' ? 'fenced' : 'error'
+      );
+      throw error;
+    } finally {
+      wakePumpTelemetry.finishCycle();
     }
   }
 
-  async function ackWake(event: OutboxLeaseEvent, status: 'sent' | 'retry', error?: string): Promise<void> {
+  async function pumpOutboxCycle(): Promise<void> {
+    if (outboxPumpAbort.signal.aborted) return;
+    const sortedRecipients: FencedWakeOutboxRecipient[] = [...sessions.values()]
+      .filter((session) => session.socket.readyState === WebSocket.OPEN)
+      .map((session) => sessionFence(session))
+      .sort((left, right) => sessionKey(left.tenant_id, left.alias)
+        .localeCompare(sessionKey(right.tenant_id, right.alias)));
+    if (sortedRecipients.length === 0) return;
+
+    // Rota el primero de cada tick para que el primer alias lexicográfico no monopolice siempre
+    // el primer worker. El FIFO de eventos dentro de cada identidad lo conserva el store.
+    const offset = wakeRecipientCursor % sortedRecipients.length;
+    wakeRecipientCursor = (wakeRecipientCursor + 1) % sortedRecipients.length;
+    const recipients = [
+      ...sortedRecipients.slice(offset),
+      ...sortedRecipients.slice(0, offset)
+    ];
+    // One SQL claim per cycle. PostgreSQL returns at most one row per requested identity in this
+    // same rotated order, so an old backlog cannot monopolise all leases.
+    const events = await repository.claimWakeOutbox(
+      workerId,
+      recipients,
+      recipients.length,
+      outboxLeaseMs,
+      outboxPumpAbort.signal,
+    );
+    wakePumpTelemetry.markProgress();
+    for (let claimed = 0; claimed < events.length; claimed += 1) {
+      wakePumpTelemetry.markClaimed();
+    }
+    if (outboxPumpAbort.signal.aborted) {
+      if (events.length === 0) wakePumpTelemetry.recordOutcome('cancelled');
+      for (let cancelled = 0; cancelled < events.length; cancelled += 1) {
+        wakePumpTelemetry.recordOutcome('cancelled');
+      }
+      return;
+    }
+    if (events.length > recipients.length) {
+      throw new StoreError('fenced', 'wake outbox batch exceeded the requested identity count');
+    }
+    const recipientsByIdentity = new Map(
+      recipients.map((recipient) => [sessionKey(recipient.tenant_id, recipient.alias), recipient]),
+    );
+    const seen = new Set<string>();
+    for (const event of events) {
+      const parsedAlias = AliasSchema.safeParse(event.payload.recipient_alias);
+      const key = parsedAlias.success ? sessionKey(event.tenant_id, parsedAlias.data) : '';
+      if (!parsedAlias.success || !recipientsByIdentity.has(key) || seen.has(key)) {
+        throw new StoreError('fenced', 'wake outbox returned an invalid or duplicate batch identity');
+      }
+      seen.add(key);
+    }
+    const results = await allSettledBounded(
+      events,
+      outboxWakeConcurrency,
+      async (event) => processWakeEvent(
+        event,
+        recipientsByIdentity,
+        outboxPumpAbort.signal,
+      ),
+    );
+    for (const result of results) {
+      if (result.status !== 'rejected') continue;
+      wakePumpTelemetry.recordOutcome(
+        result.reason instanceof StoreError && result.reason.code === 'fenced'
+          ? 'fenced' : 'error'
+      );
+      app.log.error(result.reason);
+    }
+  }
+
+  async function processWakeEvent(
+    event: OutboxLeaseEvent,
+    recipients: ReadonlyMap<string, FencedWakeOutboxRecipient>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (signal.aborted) {
+      wakePumpTelemetry.recordOutcome('cancelled');
+      return;
+    }
+    const parsedAlias = AliasSchema.safeParse(event.payload.recipient_alias);
+    const key = parsedAlias.success ? sessionKey(event.tenant_id, parsedAlias.data) : '';
+    const recipient = recipients.get(key);
+    if (!parsedAlias.success || recipient === undefined) {
+      throw new StoreError('fenced', 'wake outbox returned an event outside the requested recipient');
+    }
+    assertWakeClaimShape(event);
+    const active = sessions.get(key);
+    if (!active || active.socket.readyState !== WebSocket.OPEN
+        || active.connectionToken !== recipient.connection_token
+        || active.instanceId !== recipient.instance_id || active.epoch !== recipient.epoch) {
+      const result = await ackWake(
+        event,
+        recipient,
+        'retry',
+        'recipient disconnected during wake delivery',
+        signal,
+      );
+      wakePumpTelemetry.recordOutcome(result === 'dead' ? 'dead' : 'retry');
+      return;
+    }
+    if (signal.aborted || active.abort.signal.aborted) {
+      wakePumpTelemetry.recordOutcome('cancelled');
+      return;
+    }
+    const renewed = await repository.renewWakeOutbox(
+      wakeClaimFence(event, recipient),
+      outboxLeaseMs,
+      signal,
+    );
+    // No await is allowed between the SQL CAS and the frame. A local resume replaces `active`
+    // synchronously; a remote resume rotates the same DB token and fences the later ACK.
+    if (!renewed) throw new StoreError('fenced', 'wake outbox pre-send renewal was fenced');
+    if (signal.aborted || active.abort.signal.aborted
+        || sessions.get(key) !== active || active.socket.readyState !== WebSocket.OPEN
+        || !send(active.socket, {
+          type: 'wake', alias: active.alias, reason: 'delivery_available'
+        })) {
+      const result = await ackWake(
+        event,
+        recipient,
+        'retry',
+        'recipient disconnected during wake delivery',
+        signal,
+      );
+      wakePumpTelemetry.recordOutcome(result === 'dead' ? 'dead' : 'retry');
+      return;
+    }
+    const drained = await drain(active);
+    if (!drained) {
+      if (signal.aborted || active.abort.signal.aborted) {
+        wakePumpTelemetry.recordOutcome('cancelled');
+        return;
+      }
+      const result = await ackWake(
+        event,
+        recipient,
+        'retry',
+        'delivery drain did not complete',
+        signal,
+      );
+      wakePumpTelemetry.recordOutcome(result === 'dead' ? 'dead' : 'retry');
+      return;
+    }
+    await ackWake(event, recipient, 'sent', undefined, signal);
+    wakePumpTelemetry.recordOutcome('sent');
+  }
+
+  function assertWakeClaimShape(event: OutboxLeaseEvent): void {
     const eventId = event.event_id ?? event.id;
     const attempt = event.attempt ?? event.attempts;
     const claimToken = event.claim_token;
-    if (typeof claimToken !== 'string' || claimToken.length === 0) throw new Error('wake outbox claim token is missing');
-    if (repository.ackOutbox) {
-      await repository.ackOutbox({
-        event_id: eventId,
-        attempt,
-        claim_token: claimToken,
-        status,
-        ...(error === undefined ? {} : { error }),
-        ...(status === 'retry' ? { retry_after_ms: 250 } : {})
-      });
-      return;
+    if (typeof eventId !== 'string' || eventId.length === 0
+        || !Number.isInteger(attempt) || attempt < 1
+        || typeof claimToken !== 'string' || claimToken.length === 0
+        || event.claimed_by !== workerId) {
+      throw new StoreError('fenced', 'wake outbox claim correlation is invalid');
     }
-    if (status === 'sent' && repository.completeOutbox) {
-      const applied = await repository.completeOutbox(event.id, workerId, claimToken);
-      if (!applied) throw new StoreError('fenced', 'wake outbox ACK was fenced');
-    } else if (status === 'retry' && repository.retryOutbox) {
-      const result = await repository.retryOutbox(event.id, workerId, claimToken, 250, error);
-      if (result === 'fenced') throw new StoreError('fenced', 'wake outbox retry was fenced');
-    } else {
-      throw new Error('repository does not implement fenced outbox ACK');
+  }
+
+  function wakeClaimFence(
+    event: OutboxLeaseEvent,
+    connection: ConnectionSessionFence,
+  ): WakeOutboxClaimFence {
+    assertWakeClaimShape(event);
+    return {
+      event_id: event.event_id ?? event.id,
+      attempt: event.attempt ?? event.attempts,
+      claim_token: event.claim_token,
+      worker: workerId,
+      connection,
+    };
+  }
+
+  async function ackWake(
+    event: OutboxLeaseEvent,
+    connection: ConnectionSessionFence,
+    status: 'sent' | 'retry',
+    error: string | undefined,
+    signal: AbortSignal,
+  ): Promise<'sent' | 'failed' | 'dead'> {
+    const fence = wakeClaimFence(event, connection);
+    const result = await repository.ackOutbox({
+      event_id: fence.event_id,
+      attempt: fence.attempt,
+      claim_token: fence.claim_token,
+      connection,
+      status,
+      ...(error === undefined ? {} : { error }),
+      ...(status === 'retry' ? { retry_after_ms: 250 } : {})
+    }, signal);
+    if (result.applied !== true) {
+      throw new StoreError('fenced', 'wake outbox ACK was fenced');
     }
+    const validStatus = result.status === 'sent' || result.status === 'failed'
+      || result.status === 'dead';
+    const expectedStatus = status === 'sent'
+      ? result.status === 'sent'
+      : result.status === 'failed' || result.status === 'dead';
+    if (!validStatus || !expectedStatus) {
+      throw new StoreError('fenced', 'wake outbox ACK returned an invalid terminal status');
+    }
+    return result.status;
   }
 
   const timer = setInterval(() => {
@@ -1660,8 +2768,42 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
 
   app.addHook('onClose', async () => {
     clearInterval(timer);
+    wakePumpTelemetry.markStopping();
+    outboxPumpAbort.abort(new Error('gateway shutdown'));
     await stopDeliveryWakes();
-    for (const session of sessions.values()) session.socket.close(1001, 'gateway shutdown');
+    const closingSessions = [...sessions.values()];
+    for (const session of closingSessions) {
+      session.abort.abort(new Error('gateway shutdown'));
+      if (session.expiryTimer !== undefined) clearTimeout(session.expiryTimer);
+      session.expiryTimer = undefined;
+      session.socket.close(1001, 'gateway shutdown');
+    }
+    // This timer is diagnostic only. Shutdown never abandons an await: abortable store operations
+    // destroy their dedicated backend, settle, and are then joined below.
+    const warning = setTimeout(() => {
+      app.log.error(new Error(
+        `gateway shutdown is still waiting for cancelled work after ${outboxShutdownTimeoutMs}ms`,
+      ));
+    }, outboxShutdownTimeoutMs);
+    warning.unref();
+    try {
+      while (true) {
+        const pending: Promise<unknown>[] = [
+          ...(outboxPumpPromise === undefined ? [] : [outboxPumpPromise]),
+          ...pendingDrains,
+          ...pendingSessionTasks,
+        ];
+        if (pending.length === 0) break;
+        const settled = await Promise.allSettled(pending);
+        for (const outcome of settled) {
+          if (outcome.status === 'rejected' && !outboxPumpAbort.signal.aborted) {
+            app.log.error(outcome.reason);
+          }
+        }
+      }
+    } finally {
+      clearTimeout(warning);
+    }
     sessions.clear();
   });
 

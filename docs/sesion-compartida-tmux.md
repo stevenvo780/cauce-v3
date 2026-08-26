@@ -1,7 +1,7 @@
 # Sesión compartida: la TUI real y el bus, una sola conversación
 
-**Pilotos:** `kratos` (harness **claude**, `ws-humanizar`) · `socrates` (harness **codex**, `ws-prizma`).
-`argos` no se toca.
+**Pilotos:** `<agent-alias>` (harness **claude**, `<private-host>`) · `<agent-alias>` (harness **codex**, `<private-host>`).
+`<agent-alias>` no se toca.
 
 Lo que el dueño pidió, y que ahora se cumple entero:
 
@@ -14,7 +14,7 @@ Lo que el dueño pidió, y que ahora se cumple entero:
 
 ## Cada harness usa un mecanismo distinto, y eso es correcto
 
-|  | claude (`kratos`) | codex (`socrates`) |
+|  | claude (`<agent-alias>`) | codex (`<agent-alias>`) |
 |---|---|---|
 | Mecanismo | tmux + cosecha del transcript | app-server de primera parte |
 | Cómo entra el turno del bus | pegado entre corchetes en la caja de entrada | `turn/start` por WebSocket |
@@ -34,9 +34,11 @@ Era la salida favorita del enunciado y está **descartada por medición**. El tu
 `--print --resume` sí corre con la TUI viva y sí hereda su contexto, pero **la TUI no ve nunca el
 turno del bus** — ni al turno siguiente. En el DAG del transcript los dos cuelgan del mismo padre:
 
+El flujo siguiente es un fixture sintético derivado de evidencia privada; el identificador real no se versiona:
+
 ```
-37  user  1c8baf8b  parent f6e4aff8   <- turno del BUS
-49  user  ad72e337  parent f6e4aff8   <- siguiente turno de la TUI
+user  <bus-turn>  parent <shared-parent>   <- turno del BUS
+user  <tui-turn>  parent <shared-parent>   <- siguiente turno de la TUI
 ```
 
 La TUI encadena desde su cabeza en memoria, así que cada turno del bus queda en una **rama hermana
@@ -89,7 +91,7 @@ ventana `agente`. El adaptador entra como **segundo cliente** del mismo app-serv
 
 ```
 initialize               -> ok
-thread/loaded/list       -> ["019fb4a9-…"]      el hilo VIVO de la TUI
+thread/loaded/list       -> ["<thread-id>"]      el hilo VIVO de la TUI
 thread/resume {threadId} -> ok   <- esto es lo que SUSCRIBE; sin esto no llega ninguna notificación
 turn/start {threadId,…}  -> turn inProgress
 ```
@@ -101,7 +103,7 @@ El socket habla **WebSocket**, no JSON crudo: sin handshake el servidor responde
 
 `ws` ofrece **permessage-deflate** por defecto, y con esa extensión ofrecida el app-server **aborta
 el upgrade**: el cliente ve un `socket hang up` seco y el servidor no registra nada. Medido el
-2026-07-30 contra `codex-cli 0.144.6`, con el `ws@8.21.1` que va en el bundle:
+<private-date> contra `codex-cli <private-version>`, con el `ws@<private-version>` que va en el bundle:
 
 | Opciones del cliente | Resultado |
 |---|---|
@@ -137,7 +139,7 @@ El sobre llega como campo tipado (`agentMessage`, `phase:"final_answer"`) y el p
 
 El intento anterior no falló por no funcionar: falló porque **cuando no funcionaba, nadie se
 enteraba**. Su log decía `bus_client_connected` → `client_gone` sin turno mientras el adaptador
-contestaba por su vía de siempre en 15-18 s.
+contestaba por su vía de siempre en <private-duration>.
 
 Acá una caída se ve en **cuatro** sitios:
 
@@ -151,7 +153,7 @@ Acá una caída se ve en **cuatro** sitios:
 > La ventana **no** se renombra. Antes se renombraba a `⚠ CAUCE-DEGRADADO` y eso se auto-enclavaba:
 > el adaptador busca la ventana por su nombre (`cauce-<alias>:agente`), así que en cuanto salía el
 > primer aviso dejaba de encontrarla y **todas** las entregas siguientes degradaban `tui_absent` en
-> 0,2 s, para siempre, con la TUI viva delante y diciendo la mentira «la sesión existe pero no tiene
+> <private-duration>, para siempre, con la TUI viva delante y diciendo la mentira «la sesión existe pero no tiene
 > panel de TUI». Una sesión que haya quedado así con el build viejo se repara sola en el siguiente
 > turno: se le devuelve el nombre.
 
@@ -181,12 +183,12 @@ completa». Van con marca propia (`⚠ CAUCE — LA TERMINAL SE REINICIÓ` los d
 dueño, sin rojo: él es el único que puede compensar una compactación volviendo a pegar lo
 importante.
 
-Cómo se detecta cada uno, todo medido el 2026-07-30:
+Cómo se detecta cada uno, todo medido el <private-date>:
 
 - `context_reset`: cambia el `pane_pid`. La causa medida es que `claude` se auto-actualiza y se
-  relanza solo (visto `Auto-updating…` con la TUI reportando 2.1.179 y el binario en 2.1.220).
+  relanza solo (visto `Auto-updating…` con la TUI reportando <private-version> y el binario en <private-version>).
 - `session_created`: `ensure` tuvo que crear la sesión. Antes se descartaba ese dato: con la sesión
-  borrada, la entrega se respondía en 75,9 s con `exitCode 0` y **cero** avisos.
+  borrada, la entrega se respondía en <private-duration> con `exitCode 0` y **cero** avisos.
 - `context_cleared`: en claude, el `.jsonl` activo cambia de `sessionId` **sin** que cambie el
   `pane_pid` —por eso el heurístico del PID no lo ve nunca—; en codex, `thread/loaded/list` empieza
   a devolver un hilo más. En codex hay un corolario obligatorio: se sigue el hilo **nuevo**.
@@ -197,7 +199,7 @@ Cómo se detecta cada uno, todo medido el 2026-07-30:
 Una compactación además **corta la cadena de padres** del transcript (`parentUuid: null`, la
 continuidad sólo en `logicalParentUuid`) y **reemite** el segmento preservado con los mismos uuid
 recolgados del resumen. Sin tratar las dos cosas, una compactación a mitad del turno del bus hacía
-que la respuesta no se cosechara **nunca**: una hora de presupuesto y `EXECUTION_TIMEOUT_AMBIGUOUS`
+que la respuesta no se cosechara **nunca**: todo el presupuesto y `EXECUTION_TIMEOUT_AMBIGUOUS`
 con el agente ya habiendo contestado. Eso no es contexto perdido, es **entrega** perdida, y es un
 bug, no una política.
 
@@ -228,14 +230,14 @@ ops/scripts/retire-session-host.sh   # retira el anfitrión anterior (una sola v
 `cauce-v3-session-host@.service`, su lanzador y el cliente de línea `ia-tui-session`. Resolvían el
 mismo problema con un socket propio y una TUI imitada; con el binario real dentro de tmux no aportan
 nada y sí restan, porque `cauce <alias>` tenía una rama que los prefería. Nada se borra: se mueven a
-`~/.local/share/cauce-v3/retirado/` y el código sigue en `b9efb7d`.
+`~/.local/share/cauce-v3/retirado/` y el código sigue en `<private-id>`.
 
 ## Lo que cuesta
 
 - **El acoplamiento de claude es por teclas**, que no es una API estable: un rediseño de la caja de
   entrada lo rompe.
 - **Una segunda terminal chica reflowea el panel para todos**: manda el cliente más pequeño
-  (200x50 + 100x30 → 100x29 para los dos).
+  (<private-dimensions> + <private-dimensions> → <private-dimensions> para los dos).
 - **En codex el app-server es punto único de fallo** para las dos puertas, y los dos subcomandos
   están marcados `[experimental]`.
 - **`/clear` y `/compact` del dueño** vacían el contexto que el bus creía compartir, y eso todavía no
@@ -243,6 +245,6 @@ nada y sí restan, porque `cauce <alias>` tenía una rama que los prefería. Nad
 
 ## Nota sobre el inventario
 
-`ops/container-aliases.json` en este árbol dice que `kratos` es **codex**; en kratos la copia viva ya
-dice **claude** (migrado el 2026-07-30). El inventario del host manda, y tocar el del repo movería el
-digest de release y los 14 units generados sin necesidad. Se deja constancia y se decide aparte.
+`ops/container-aliases.json` en este árbol dice que `<agent-alias>` es **codex**; en <agent-alias> la copia viva ya
+dice **claude** (migrado el <private-date>). El inventario del host manda, y tocar el del repo movería el
+digest de release y los los units generados sin necesidad. Se deja constancia y se decide aparte.

@@ -2,21 +2,30 @@
 set -euo pipefail
 
 readonly BASE_COMMIT='79d6d8f1eae00e733bf2aeddaffeb592e5944687'
-readonly PATCH_SHA256='f6c61ed1c8e2bc3e6c021ad56fa27142f8996571ae250e4484a464756bdb9733'
-readonly RESULT_TREE='72cb55a2b4a9413193da69298ebb0c548955d9a6'
+readonly PATCH_SHA256='76cb78aeea04ade9022593d18b2281b5d828711acf17f84fb4e6e419c1f4510a'
+readonly RESULT_TREE='cd97103c333d9b7c9cf8efbd9da1bfea0ac836f9'
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repository=$(git -C "$script_dir/../.." rev-parse --show-toplevel)
 patch="$script_dir/rollback-bridge-schema029.patch"
 git -C "$repository" cat-file -e "${BASE_COMMIT}^{commit}"
 printf '%s  %s\n' "$PATCH_SHA256" "$patch" | sha256sum --check --status
+node --test "$script_dir/publish.test.mjs"
+python3 -m py_compile \
+  "$repository/ops/scripts/produce-rollback-bridge-evidence.py" \
+  "$repository/ops/scripts/validate-rollback-bridge-evidence.py"
+pnpm --dir "$repository" exec vitest run \
+  tests/unit/rollback-bridge-producer.test.ts \
+  tests/unit/rollback-bridge-evidence.test.ts \
+  tests/unit/rollback-baseline.test.ts \
+  packages/store/test/agent-profile-runtime-adoption-migration-postgres.test.ts \
+  packages/store/test/agent-profile-runtime-adoption-postgres.test.ts \
+  tests/store-hardening/shadow-router-target-phase-postgres.test.ts \
+  --reporter=dot
 
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/cauce-rollback-bridge-test.XXXXXX")
 worktree="$scratch/source"
-core_log="$scratch/core-typecheck.log"
-repository_lint="$scratch/repository-eslint.json"
 cleanup() {
-  rm -f -- "$core_log" "$repository_lint"
   if [[ -d "$worktree" ]]; then
     git -C "$repository" worktree remove --force "$worktree" >/dev/null 2>&1 || true
   fi
@@ -35,45 +44,86 @@ tree=$(git -C "$worktree" write-tree)
 }
 
 cd "$worktree"
+node --check deploy/fleet-snapshot.mjs
+grep -Fq 'deploy/fleet-snapshot.mjs' deploy/Dockerfile
+if grep -Eq '^[[:space:]]*COPY[[:space:]].*--chmod=' deploy/Dockerfile; then
+  printf 'rollback bridge Dockerfile still requires COPY --chmod\n' >&2
+  exit 1
+fi
+if grep -Eq '^[[:space:]]*RUN[[:space:]].*apk[[:space:]]+add' deploy/Dockerfile; then
+  printf 'rollback bridge Dockerfile still performs a mutable apk install\n' >&2
+  exit 1
+fi
+grep -Fq 'FROM ${CAUCE_PYTHON_BASE} AS python-runtime' deploy/Dockerfile
+grep -Fq 'COPY --from=python-runtime /usr/local /usr/local' deploy/Dockerfile
+grep -Fq 'io.cauce.target-platform=${CAUCE_TARGET_PLATFORM}' deploy/Dockerfile
+grep -Fq 'io.cauce.rollback-bridge.read-only=server-v2' deploy/Dockerfile
+grep -Fq 'deploy/rollback-bridge-http-probe.mjs' deploy/Dockerfile
+node --check deploy/rollback-bridge-http-probe.mjs
 pnpm install --frozen-lockfile
 pnpm typecheck:adapter
-
-if ! pnpm typecheck:core >"$core_log" 2>&1; then
-  node --input-type=module -e '
-    import { readFileSync } from "node:fs";
-    const lines = readFileSync(process.argv[1], "utf8").split(/\r?\n/u)
-      .filter((line) => /error TS\d+:/u.test(line));
-    const dispatcher = lines.filter((line) => line.startsWith("services/dispatcher/test/liveness.test.ts(") && line.includes("TS2339")).length;
-    const gateway = lines.filter((line) => line.startsWith("services/gateway/src/health-progress.test.ts(") && line.includes("TS2353")).length;
-    if (lines.length !== 12 || dispatcher !== 7 || gateway !== 5) {
-      process.stderr.write("core typecheck differs from the exact origin/main baseline\n");
-      process.stderr.write(lines.join("\n") + "\n");
-      process.exit(1);
-    }
-  ' "$core_log"
-fi
+pnpm typecheck:core
 
 pnpm exec eslint \
   packages/protocol/src/schemas.ts \
   packages/store/src/agent-profile.ts \
   packages/store/src/configuration.ts \
+  packages/store/src/db.ts \
+  packages/store/src/migration-integrity.ts \
+  deploy/fleet-snapshot.mjs \
+  deploy/liveness-probe.mjs \
+  deploy/runtime-package-smoke.mjs \
   packages/adapter-sdk/src/sdk/engine.ts \
   packages/adapter-sdk/test/engine.test.ts \
+  services/dispatcher/src/config.ts \
+  services/dispatcher/src/main.ts \
+  services/dispatcher/src/metrics.ts \
+  services/dispatcher/test/liveness.test.ts \
+  services/gateway/src/app.ts \
+  services/gateway/src/health.ts \
+  services/gateway/src/health-progress.test.ts \
+  services/gateway/src/main.ts \
+  services/gateway/src/rollback-bridge-read-only.ts \
+  services/gateway/src/rollback-bridge-read-only.test.ts \
+  services/gateway/src/wake-pump-telemetry.ts \
+  services/shadow-router/src/errors.ts \
+  services/shadow-router/src/http.ts \
+  services/shadow-router/src/index.ts \
+  services/shadow-router/src/main.ts \
+  services/shadow-router/src/progress.ts \
+  services/shadow-router/src/repository.ts \
+  services/shadow-router/src/router.ts \
+  services/shadow-router/src/target.ts \
+  services/shadow-router/src/types.ts \
+  services/shadow-router/src/worker.ts \
+  services/shadow-router/test/http-health.test.ts \
+  services/shadow-router/test/progress.test.ts \
+  services/shadow-router/test/repository-health.test.ts \
+  services/shadow-router/test/router.test.ts \
+  services/shadow-router/test/worker-health.test.ts \
+  tests/store-hardening/shadow-router-target-phase-postgres.test.ts \
+  tests/unit/liveness-probe.test.ts \
+  packages/store/src/repository.ts \
   tests/unit/rollback-bridge.test.ts
 
-if ! pnpm exec eslint packages/store/src/repository.ts --format json >"$repository_lint"; then
-  node --input-type=module -e '
-    import { readFileSync } from "node:fs";
-    const reports = JSON.parse(readFileSync(process.argv[1], "utf8"));
-    const messages = reports.flatMap((report) => report.messages);
-    if (messages.length !== 1 || messages[0]?.ruleId !== "@typescript-eslint/no-unused-vars" || !messages[0]?.message.includes("_visible")) {
-      process.stderr.write("repository lint differs from the exact origin/main baseline\n");
-      process.exit(1);
-    }
-  ' "$repository_lint"
-fi
-
-pnpm exec vitest run tests/unit/rollback-bridge.test.ts --reporter=dot
+pnpm exec vitest run \
+  tests/unit/liveness-probe.test.ts \
+  tests/unit/rollback-bridge.test.ts \
+  packages/store/test/console-publish-intent-migration-postgres.test.ts \
+  services/gateway/src/health-progress.test.ts \
+  services/gateway/src/rollback-bridge-read-only.test.ts \
+  --reporter=dot
+pnpm --filter @cauce/dispatcher test
 pnpm --filter @cauce/adapter-sdk exec node --test --import tsx test/engine.test.ts
-git diff --cached --check
+
+# The frozen 031 migration intentionally contains one final empty line.  Its
+# byte identity is part of the accredited schema contract, so admit only this
+# exact diagnostic while continuing to fail on every other whitespace defect.
+whitespace_diagnostics=$(git diff --cached --check 2>&1 || true)
+readonly EXPECTED_WHITESPACE_DIAGNOSTIC='packages/store/migrations/031_connection_session_fencing.sql:13: new blank line at EOF.'
+[[ "$whitespace_diagnostics" == "$EXPECTED_WHITESPACE_DIAGNOSTIC" ]] || {
+  printf 'rollback bridge whitespace diagnostics differ from the frozen source exception:\n%s\n' \
+    "$whitespace_diagnostics" >&2
+  exit 1
+}
 printf 'rollback bridge source verification passed: tree=%s\n' "$tree"

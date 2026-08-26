@@ -118,7 +118,7 @@ export function DirectivaTab({
         <DirectivaModal
           tenantId={tenantId}
           alias={alias}
-          snapshot={config.data}
+          configuration={config}
           onEditarEnPerfil={onEditarEnPerfil}
           onRestaurarEnPerfil={onRestaurarEnPerfil}
           devolverFocoA={abridor}

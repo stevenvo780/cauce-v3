@@ -3,6 +3,7 @@ import {
   buildFleetAgents,
   countLiveTuiTargets,
   countOnlinePtyTargets,
+  fleetTerminalChip,
   preferredTerminalMode,
   resolveLiveTui,
   resolveTerminalTarget,
@@ -41,6 +42,29 @@ it('builds the fleet from server topology and merges authoritative lease observa
   expect(filterFleetAgents(agents, { tenantId: 'Steven', roomId: 'grp.steven', query: 'messages' }).map((agent) => agent.alias)).toEqual(['kant']);
 });
 
+it('does not resurrect an explicitly unregistered membership from a stale presence lease', () => {
+  const agents = buildFleetAgents({
+    presence: [
+      { tenant_id: 'Steven', alias: 'system-principal' },
+      { tenant_id: 'Miguel', alias: 'system-principal' },
+      { tenant_id: 'Steven', alias: 'legacy-agent' },
+    ],
+  }, {
+    tenants: [
+      {
+        id: 'Steven',
+        rooms: [{ id: 'grp.steven', members: [
+          { alias: 'system-principal', enabled: true, registered: false },
+          // Missing field is a legacy gateway and remains backward compatible.
+          { alias: 'legacy-agent', enabled: true },
+        ] }],
+      },
+    ],
+  });
+
+  expect(agents.map((agent) => agent.id)).toEqual(['Miguel:system-principal', 'Steven:legacy-agent']);
+});
+
 it('fails closed when a PTY target is not an exact agent identity', () => {
   const [agent] = buildFleetAgents({ presence: [{ tenant_id: 'Steven', alias: 'kant' }] });
   expect(terminalTargetMatchesAgent('Steven:kant', agent)).toBe(true);
@@ -76,6 +100,27 @@ it('resolves PTY authority per destination from the server inventory', () => {
   expect(countOnlinePtyTargets(targets)).toBe(1);
 });
 
+it.each([
+  ['not_installed', 'not_installed', 'ok', /no instalado/iu, 'Agente PTY no instalado'],
+  ['agent_offline', 'offline', ' OK ', /fuera de línea/iu, 'Agente PTY offline'],
+  ['unknown', 'unknown', 'Ok', /desconocido/iu, 'PTY desconocido'],
+] as const)(
+  'replaces a legacy ok placeholder for authorized %s with a state-specific UI reason',
+  (ptyState, status, reportedReason, expectedReason, label) => {
+    const [agent] = buildFleetAgents({ presence: [{ tenant_id: 'Steven', alias: 'jarvis' }] });
+    const targets = [target({
+      tenant_id: 'Steven', alias: 'jarvis', pty_state: ptyState, reason: reportedReason,
+    })];
+    const resolution = resolveTerminalTarget(targets, agent);
+    const chip = fleetTerminalChip(targets, agent);
+
+    expect(resolution.status).toBe(status);
+    expect(resolution.reason).toMatch(expectedReason);
+    expect(resolution.reason).not.toMatch(/\bok\b/iu);
+    expect(chip).toMatchObject({ status, label, reason: resolution.reason });
+  },
+);
+
 it('treats an absent inventory as UNKNOWN and authorises nothing', () => {
   const [agent] = buildFleetAgents({ presence: [{ tenant_id: 'Steven', alias: 'jarvis' }] });
   expect(resolveTerminalTarget(undefined, agent)).toMatchObject({ status: 'unknown' });
@@ -105,11 +150,26 @@ it('never resolves a duplicated alias without its tenant', () => {
   expect(terminalTargetMatchesAgent('Miguel:operator', agents.find((agent) => agent.tenantId === 'Miguel')!)).toBe(true);
 });
 
+it('keeps tenants that differ only by case as distinct identities', () => {
+  const agents = buildFleetAgents({ presence: [
+    { tenant_id: 'Steven', alias: 'operator' },
+    { tenant_id: 'steven', alias: 'operator' },
+  ] });
+  const upper = agents.find((agent) => agent.tenantId === 'Steven')!;
+  const lower = agents.find((agent) => agent.tenantId === 'steven')!;
+  const targets = [target({ tenant_id: 'steven', alias: 'operator', container: 'lower-tenant' })];
+
+  expect(new Set(agents.map((agent) => agent.id))).toEqual(new Set(['Steven:operator', 'steven:operator']));
+  expect(terminalTargetForAgent(targets, upper)).toBeUndefined();
+  expect(terminalTargetForAgent(targets, lower)?.container).toBe('lower-tenant');
+  expect(terminalTargetMatchesAgent('steven:operator', upper)).toBe(false);
+});
+
 /* -------------------------------------------------------------------------- */
 /* TUI en vivo                                                                */
 /* -------------------------------------------------------------------------- */
 
-const zeus = { id: 'steven:zeus', tenantId: 'Steven', alias: 'zeus', roomIds: [], roomMembership: {}, leaseState: 'online' as const };
+const zeus = { id: 'Steven:zeus', tenantId: 'Steven', alias: 'zeus', roomIds: [], roomMembership: {}, leaseState: 'online' as const };
 
 it('sólo declara TUI en vivo cuando el servidor publica el modo harness', () => {
   expect(resolveLiveTui([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })], zeus))

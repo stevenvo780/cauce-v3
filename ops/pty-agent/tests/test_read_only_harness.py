@@ -196,6 +196,37 @@ class PerSessionFlowControl(unittest.TestCase):
         instance._on_output_flow({"session_id": SESSION_ID}, False)
         self.assertFalse(first.output_paused)
 
+    def test_pause_holds_bytes_that_were_buffered_before_the_pause(self) -> None:
+        instance = agent.PtyAgent(_bundle())
+        session = agent.PtySession(SESSION_ID, 111, 10, "shell", ["/bin/sh"])
+        session.out.extend(b"x" * (agent.FLUSH_BYTES + 808))
+        instance.sessions = {SESSION_ID: session}
+
+        instance._on_output_flow({"session_id": SESSION_ID}, True)
+        instance._flush_session(session)
+
+        self.assertEqual(len(session.out), agent.FLUSH_BYTES + 808)
+        self.assertEqual(instance.outbound, b"")
+
+    def test_resume_flushes_only_the_named_session(self) -> None:
+        instance = agent.PtyAgent(_bundle())
+        first = agent.PtySession(SESSION_ID, 111, 10, "shell", ["/bin/sh"])
+        other_id = "22222222-3333-4444-5555-666666666666"
+        second = agent.PtySession(other_id, 222, 11, "shell", ["/bin/sh"])
+        first.out.extend(b"a" * agent.FLUSH_BYTES)
+        second.out.extend(b"b" * agent.FLUSH_BYTES)
+        instance.sessions = {SESSION_ID: first, other_id: second}
+        instance._on_output_flow({"session_id": SESSION_ID}, True)
+        instance._on_output_flow({"session_id": other_id}, True)
+
+        instance._on_output_flow({"session_id": SESSION_ID}, False)
+
+        self.assertFalse(first.output_paused)
+        self.assertEqual(first.out, b"")
+        self.assertTrue(instance.outbound)
+        self.assertTrue(second.output_paused)
+        self.assertEqual(second.out, b"b" * agent.FLUSH_BYTES)
+
     def test_invalid_flow_control_fails_closed(self) -> None:
         instance = agent.PtyAgent(_bundle())
         with self.assertRaises(agent.ProtocolError):
@@ -220,6 +251,42 @@ class PerSessionFlowControl(unittest.TestCase):
 
     def test_agent_advertises_session_scoped_flow_control(self) -> None:
         self.assertIn("session_output_flow_control", agent.FEATURES)
+
+    def test_paused_buffer_does_not_force_a_zero_timeout_busy_loop(self) -> None:
+        instance = agent.PtyAgent(_bundle())
+        session = agent.PtySession(SESSION_ID, 111, 10, "shell", ["/bin/sh"])
+        session.out.extend(b"x" * agent.FLUSH_BYTES)
+        session.output_paused = True
+        session.last_flush = 1.0
+        instance.sessions = {SESSION_ID: session}
+        instance.acknowledged = True
+        instance.last_ping = 100.0
+
+        with mock.patch.object(agent.time, "monotonic", return_value=100.0):
+            self.assertGreater(instance._timeout(), 0.0)
+
+    def test_reaped_paused_session_forces_final_stdout_before_closed(self) -> None:
+        instance = agent.PtyAgent(_bundle())
+        session = agent.PtySession(SESSION_ID, 111, -1, "shell", ["/bin/sh"])
+        session.out.extend(b"final output")
+        session.output_paused = True
+        session.reaped = True
+        session.eof = True
+        session.exit_code = 0
+        instance.sessions = {SESSION_ID: session}
+        instance.acknowledged = True
+        instance.last_ping = 100.0
+
+        with (
+            mock.patch.object(instance, "_reap"),
+            mock.patch.object(agent.time, "monotonic", return_value=100.0),
+        ):
+            instance._maintain()
+
+        frames = agent.FrameDecoder().feed(bytes(instance.outbound))
+        self.assertEqual([tag for tag, _ in frames], [agent.TAG_STDOUT, agent.TAG_CLOSED])
+        self.assertEqual(agent.decode_data(frames[0][1]), (SESSION_ID, b"final output"))
+        self.assertNotIn(SESSION_ID, instance.sessions)
 
 
 class CloseAlwaysReapsTheChild(unittest.TestCase):

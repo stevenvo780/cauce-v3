@@ -59,6 +59,24 @@ describe('el tope de espera del cliente HTTP', () => {
     expect(senales[0].aborted).toBe(true);
   });
 
+  it('mantiene el mismo tope después de los headers si el cuerpo JSON nunca termina', async () => {
+    let senal: AbortSignal | undefined;
+    const fetcher = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      senal = init?.signal ?? undefined;
+      return Promise.resolve(new Response(
+        new ReadableStream({ start() { /* headers llegan; el body nunca cierra */ } }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ));
+    }) as typeof fetch;
+    const api = new CauceApi('http://localhost', fetcher, undefined, 40);
+
+    const error = await api.getFleetActivity().then(() => undefined, (cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 504, code: 'timeout' });
+    expect(senal?.aborted).toBe(true);
+  });
+
   it('no toca las lecturas que sí llegan: ni las corta, ni les deja el reloj corriendo', async () => {
     // CONTROL NEGATIVO del propio tope: un guardia que corta todo no sirve de guardia.
     let senal: AbortSignal | undefined;

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { AckSchema, TenantSchema, type PublishMessage } from '@cauce/protocol';
+import {
+  AckSchema, HUMAN_CHAT_PRIORITY, TenantSchema, type PublishMessage,
+} from '@cauce/protocol';
 import {
   CauceRepository, createPool, subscribeDeliveryWakes, withTransaction, type DatabasePool
 } from '@cauce/store';
@@ -49,7 +51,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await resetTestDatabase(pool);
-  await pool.query('TRUNCATE delivery_lane_fairness,job_lane_fairness,outbox_dead_letters');
+  await pool.query(
+    'TRUNCATE delivery_lane_fairness,job_lane_fairness,outbox_dead_letters CASCADE',
+  );
   await pool.query(`
     DELETE FROM memberships WHERE tenant_id='Acme';
     DELETE FROM rooms WHERE tenant_id='Acme';
@@ -274,8 +278,16 @@ describe('adversarial PostgreSQL store hardening', () => {
   });
 
   it('preserves ownership_lost when replaying a rejected renewal event', async () => {
+    // This collision scenario deliberately keeps two deliveries live. Declare that durable
+    // capacity explicitly; relying on the legacy direct-caller fallback of one would make the
+    // second claim impossible and would test admission instead of event-id ownership.
+    await pool.query(
+      `INSERT INTO agents(tenant_id,alias,enabled,max_concurrent_deliveries)
+       VALUES('Isa','salva',false,2)`,
+    );
     const lease = await repository.acquireLease(
-      'Isa', 'salva', 'renewal-replay-worker', [], 60_000
+      'Isa', 'salva', 'renewal-replay-worker', [], 60_000,
+      { requireDeclaredCapacity: true },
     );
     await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
@@ -548,6 +560,62 @@ describe('adversarial PostgreSQL store hardening', () => {
     ])).rowCount).toBe(1);
   });
 
+  it('claims wake outbox rows only for exact connected tenant and alias pairs', async () => {
+    await repository.publish(command({
+      recipients: [{ tenant_id: 'Isa', alias: 'salva' }],
+      idempotency_key: `wake-filter-${randomUUID()}`
+    }));
+    const source = await pool.query<{ id: string }>(
+      `SELECT id FROM adapter_outbox WHERE kind='wake' AND tenant_id='Isa' ORDER BY created_at LIMIT 1`
+    );
+    expect(source.rows).toHaveLength(1);
+    await pool.query(
+      `INSERT INTO adapter_outbox(
+         tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,
+         origin,payload,available_at,created_at
+       )
+       SELECT 'Pablo',adapter,kind,idempotency_key || ':other-tenant',request_id,message_id,
+              delivery_id,trace_id,origin,
+              jsonb_set(payload,'{recipient_alias}',to_jsonb('salva'::text)),available_at,
+              created_at + interval '1 millisecond'
+       FROM adapter_outbox WHERE id=$1`,
+      [source.rows[0]!.id]
+    );
+
+    // Vacío e inválido fallan cerrados: ninguna fila cambia de estado ni consume un intento.
+    await expect(repository.claimWakeOutbox('gateway-empty', [], 10, 5_000)).resolves.toEqual([]);
+    await expect(repository.claimWakeOutbox('gateway-invalid', [
+      { tenant_id: 'Pablo', alias: 'INVALID' }
+    ], 10, 5_000)).rejects.toMatchObject({ code: 'invalid_input' });
+    expect((await pool.query<{ attempts: number }>(
+      `SELECT attempts FROM adapter_outbox WHERE kind='wake' ORDER BY tenant_id`
+    )).rows).toEqual([{ attempts: 0 }, { attempts: 0 }]);
+
+    // El alias es deliberadamente igual en ambos tenants. Duplicar el selector no duplica el
+    // resultado, y la fila del otro tenant permanece pendiente con attempts=0.
+    const pablo = await repository.claimWakeOutbox('gateway-pablo', [
+      { tenant_id: 'Pablo', alias: 'salva' },
+      { tenant_id: 'Pablo', alias: 'salva' }
+    ], 10, 5_000);
+    expect(pablo).toHaveLength(1);
+    expect(pablo[0]).toMatchObject({ tenant_id: 'Pablo', attempt: 1 });
+    expect(pablo[0]!.payload).toMatchObject({ recipient_alias: 'salva' });
+    expect((await pool.query<{ tenant_id: string; status: string; attempts: number }>(
+      `SELECT tenant_id,status,attempts FROM adapter_outbox WHERE kind='wake' ORDER BY tenant_id`
+    )).rows).toEqual([
+      { tenant_id: 'Isa', status: 'pending', attempts: 0 },
+      { tenant_id: 'Pablo', status: 'processing', attempts: 1 }
+    ]);
+
+    // Los locks siguen siendo los de la cola original: aun con varios gateways compitiendo por
+    // el mismo par exacto, una fila sólo obtiene una garra.
+    const raced = await Promise.all(Array.from({ length: 8 }, (_, index) =>
+      repository.claimWakeOutbox(`gateway-isa-${index}`, [{ tenant_id: 'Isa', alias: 'salva' }], 1, 5_000)
+    ));
+    expect(raced.flat()).toHaveLength(1);
+    expect(raced.flat()[0]).toMatchObject({ tenant_id: 'Isa', attempt: 1 });
+  });
+
   it('applies migration 005 and fences Telegram cursors and shadow inbox claims', async () => {
     const telegram = new PostgresTelegramBridgeRepository(pool);
     await telegram.initializeCursor('900001', 'Steven', 'kant');
@@ -575,8 +643,26 @@ describe('adversarial PostgreSQL store hardening', () => {
     await expect(shadow.enqueue(envelope, 'shadow')).resolves.toMatchObject({ duplicate: true });
     const [claim] = await shadow.claim('shadow-a', 1, 10_000);
     expect(claim).toMatchObject({ source_event_id: envelope.source_event_id, attempt: 1 });
-    await shadow.completeInbox(claim!);
-    await expect(shadow.claim('shadow-b', 1, 10_000)).resolves.toEqual([]);
+    await expect(shadow.health()).resolves.toMatchObject({
+      processing: 1, owned_processing: 1, orphaned_processing: 0,
+    });
+
+    // A fresh process cannot prove ownership of the still-live lease and must expose it as
+    // orphaned until recovery.  The original process can return a provably unstarted claim
+    // without burning an attempt, after which the replacement owns the exact new token.
+    const replacementShadow = new PostgresShadowRepository(pool);
+    await expect(replacementShadow.health()).resolves.toMatchObject({
+      processing: 1, owned_processing: 0, orphaned_processing: 1,
+    });
+    await shadow.releaseUnstartedInbox(claim!, 'test process stopped before route');
+    await expect(pool.query<{ status: string; attempts: number }>(
+      `SELECT status,attempts FROM shadow_router_inbox WHERE direction=$1 AND source_event_id=$2`,
+      [envelope.direction, envelope.source_event_id],
+    )).resolves.toMatchObject({ rows: [{ status: 'pending', attempts: 0 }] });
+    const [replacementClaim] = await replacementShadow.claim('shadow-b', 1, 10_000);
+    expect(replacementClaim).toMatchObject({ attempt: 1 });
+    await replacementShadow.completeInbox(replacementClaim!);
+    await expect(replacementShadow.claim('shadow-c', 1, 10_000)).resolves.toEqual([]);
   });
 
   it('bounds pool readiness waits and survives ten backend-loss cycles without unhandled rejection', async () => {
@@ -713,7 +799,10 @@ describe('adversarial PostgreSQL store hardening', () => {
     for (let index = 0; index < 6; index += 1) {
       await repository.publish(command({
         recipients: [{ tenant_id: 'Pablo', alias: 'midas' }],
-        lane: 'interactive', body: { index }
+        // `claimDeliveries` receives priority only after trusted ingress policy. At this direct
+        // store boundary, seed the resulting human band explicitly; body shape and lane are not
+        // authority and priority 0 correctly belongs to the non-human class.
+        lane: 'interactive', priority: HUMAN_CHAT_PRIORITY, body: { index }
       }));
       const [delivery] = await repository.claimDeliveries(
         'Pablo', 'midas', 'fair-delivery', lease.epoch!, 1, 5_000, 2

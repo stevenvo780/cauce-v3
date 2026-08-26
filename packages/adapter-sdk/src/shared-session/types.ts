@@ -35,6 +35,12 @@ export type DegradationReason =
   | "session_absent"
   /** La sesión existe pero no hay TUI viva del harness dentro. */
   | "tui_absent"
+  /** La sesión exacta declara otro alias; nunca se reutiliza ni se destruye automáticamente. */
+  | "session_alias_mismatch"
+  /** La sesión exacta pertenece a otro harness (por ejemplo claude tras migrar a codex). */
+  | "session_harness_mismatch"
+  /** Una sesión legacy no dio evidencia suficiente para acreditar alias+harness. */
+  | "session_identity_unverified"
   /** El dueño tenía texto a medio escribir en la caja y nunca la soltó dentro del plazo. */
   | "input_busy"
   /**
@@ -182,11 +188,17 @@ export interface TranscriptReader<E> {
    * sobre apareció después del pegado, la entrega no muere.
    *
    * Se le pasa siempre y sólo lo escrito DESPUÉS del pegado —o, cuando el turno propio sí se
-   * localizó pero su cadena de padres está rota, `desde` acota a partir de él— así que un sobre
-   * anterior no se puede colar. Ausente = este registro no sabe reconocer un sobre, y el runner se
-   * comporta como antes.
+   * localizó pero su cadena de padres está rota, `desde` acota a partir de él— y además el nonce
+   * criptográfico que se pidió copiar en el sobre. Las dos cotas son necesarias: varios rollouts o
+   * transcripts pueden crecer a la vez por procesos headless, y «es un JSON con forma de sobre» no
+   * acredita por sí solo que sea el de esta entrega. Ausente = este registro no sabe reconocer un
+   * sobre, y el runner se comporta como antes.
    */
-  findEnvelope?(entries: readonly E[], desde?: string): TurnOutcome | undefined;
+  findEnvelope?(
+    entries: readonly E[],
+    correlationId: string,
+    desde?: string,
+  ): TurnOutcome | undefined;
   compactions(appended: readonly E[]): readonly CompactionNotice[];
   /**
    * ¿Arrancó ALGÚN turno en lo nuevo? Ausente = este registro no lo sabe decir.

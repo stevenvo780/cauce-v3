@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/testcontainers-evidence.schema.json",
+  "title": "Cauce V3 source-executed Testcontainers evidence",
+  "type": "object",
+  "required": [
+    "schemaVersion", "suite", "evidenceClass", "mode", "executionTarget",
+    "sourceDigest", "sourceDigestDomain", "harnessDigest", "harnessDigestDomain",
+    "databaseImage", "startedAt", "finishedAt", "summary", "tests"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "suite": { "enum": ["cauce-v3-real-e2e", "cauce-v3-restart-e2e"] },
+    "evidenceClass": { "const": "testcontainers-source-execution" },
+    "mode": { "const": "real" },
+    "executionTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["application", "database", "finalCauceImageExecuted"],
+      "properties": {
+        "application": { "const": "source-tree" },
+        "database": { "const": "immutable-testcontainer-image" },
+        "finalCauceImageExecuted": { "const": false }
+      }
+    },
+    "sourceDigest": { "$ref": "#/$defs/digest" },
+    "sourceDigestDomain": { "const": "runtime" },
+    "harnessDigest": { "$ref": "#/$defs/digest" },
+    "harnessDigestDomain": { "const": "testcontainers" },
+    "databaseImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role", "repositoryDigest", "imageId", "containerConfigImage",
+        "containerIdSha256", "verifiedAgainstRunningContainer"
+      ],
+      "properties": {
+        "role": { "const": "postgresql-test-dependency" },
+        "repositoryDigest": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$"
+        },
+        "imageId": { "$ref": "#/$defs/digest" },
+        "containerConfigImage": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "containerIdSha256": { "$ref": "#/$defs/digest" },
+        "verifiedAgainstRunningContainer": { "const": true }
+      }
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" },
+    "summary": {
+      "type": "object",
+      "required": ["tests", "passed", "failed", "skipped", "criticalSkipped", "real", "mocked"],
+      "properties": {
+        "tests": { "type": "integer", "minimum": 1 },
+        "passed": { "type": "integer", "minimum": 1 },
+        "failed": { "const": 0 },
+        "skipped": { "const": 0 },
+        "criticalSkipped": { "const": 0 },
+        "real": { "type": "integer", "minimum": 1 },
+        "mocked": { "const": 0 }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "evidence"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "status": { "const": "passed" },
+          "evidence": { "const": "real" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

@@ -398,7 +398,14 @@ describe('migración 018: rescate de las entregas que ya murieron sin dead lette
       delivery.delivery_id, 'Steven', 'argos',
       nonRetryableFailure(delivery, 'legacy-failed', epoch, 'OpenClaw result contained a malformed JSON object')
     );
-    await pool.query(`DELETE FROM dead_letters WHERE delivery_id=$1`, [failedId]);
+    // Fixture histórico anterior a 030: la producción 030 prohíbe borrar incidentes.  El trigger
+    // se deshabilita sólo en esta base descartable para recrear exactamente el estado legado.
+    await pool.query(`ALTER TABLE dead_letters DISABLE TRIGGER cauce_fence_dead_letter_030`);
+    try {
+      await pool.query(`DELETE FROM dead_letters WHERE delivery_id=$1`, [failedId]);
+    } finally {
+      await pool.query(`ALTER TABLE dead_letters ENABLE TRIGGER cauce_fence_dead_letter_030`);
+    }
 
     // (b) el caso 'cancelado por zeus': UPDATE a mano, sin dead letter y sin terminal_at.
     const manual = await repository.publish(command());

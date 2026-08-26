@@ -275,17 +275,17 @@ describe('lane fairness burst', () => {
    * INTEGRACIÓN 2026-07-29 — este test cambió de forma porque cambió el mecanismo, no el
    * objetivo. Nació contra la equidad POR CARRIL (`interactive_streak` contaba reclamos del
    * carril 'interactive' y cada `interactiveBurst` le cedía un turno a 'batch'). La línea que se
-   * integra reemplazó esa partición por la clasificación HUMANO / AGENTE-A-AGENTE, porque el
+   * integra reemplazó esa partición por la clasificación HUMANO / NO-HUMANO, porque el
    * carril se heredaba literal en cada salto y una cadena de agentes entera viajaba en
    * 'interactive' junto con los mensajes de las personas (2.374 de 2.429 entregas medidas).
    *
    * Con eso, "tráfico de máquinas esperando en el carril interactivo" ya no se escribe con un
-   * `telegram.message` de prioridad 0 —eso es clase HUMANA para el clasificador— sino con un
-   * `agent.message`, que además desde esta misma integración nace en 'batch'.
+   * `telegram.message` de prioridad 0 —el tipo de body no puede conferir autoridad— sino con una
+   * prioridad por debajo de la banda humana, como el `agent.message` en 'batch' de este caso.
    *
-   * Lo que se sigue probando es lo mismo que antes: **el trabajo entre agentes no se muere de
+   * Lo que se sigue probando es lo mismo que antes: **el trabajo no humano no se muere de
    * hambre**. Sólo que ahora quien le cede el turno es la ráfaga HUMANA (`humanBurst`), no la de
-   * carril. Si alguien borrara el `yieldTurn` de `claimDeliveries`, este test se pondría rojo.
+   * carril. Si alguien borrara el `yieldTurn` de `claimDeliveries`, estos tests se pondrían rojos.
    */
   it('gives agent-to-agent work its turn once the human burst is spent', async () => {
     const instanceId = 'burst-control';
@@ -299,7 +299,7 @@ describe('lane fairness burst', () => {
     expect(claimed.map((delivery) => delivery.body.text)).toEqual(['person one', 'agent work']);
   });
 
-  it('does not spend the batch turn while a person is waiting', async () => {
+  it('gives any trusted non-human work its bounded turn even while another person waits', async () => {
     const instanceId = 'burst-human';
     const epoch = await lease('Steven', 'jarvis', instanceId);
     await seedInteractive('jarvis', HUMAN_CHAT_PRIORITY, 'person one');
@@ -307,7 +307,7 @@ describe('lane fairness burst', () => {
     await seedBatch('jarvis', 'background');
 
     const claimed = await repository.claimDeliveries('Steven', 'jarvis', instanceId, epoch, 2, 30_000, 1);
-    expect(claimed.map((delivery) => delivery.body.text)).toEqual(['person one', 'person two']);
+    expect(claimed.map((delivery) => delivery.body.text)).toEqual(['person one', 'background']);
   });
 
   it('returns the batch turn as soon as the person queue drains', async () => {

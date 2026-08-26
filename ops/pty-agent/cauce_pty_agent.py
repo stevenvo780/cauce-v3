@@ -70,6 +70,9 @@ TAG_WRITE_BATCH_DATA = 0x5A
 TAG_WRITE_BATCH_OK = 0x5B
 TAG_WRITE_BATCH_ERR = 0x5C
 TAG_WRITE_BATCH_CANCEL = 0x5D
+# Cierre inequivoco de una lectura exitosa. READ_ERR ya es terminal por si mismo; READ_DONE solo
+# aparece despues de READ_OK y de todos sus READ_DATA, incluso cuando el indice/directiva es vacio.
+TAG_READ_DONE = 0x5E
 
 MAX_FRAME = 65536
 # DATA frames carry the 36 ASCII bytes of the session UUID before the raw bytes.
@@ -122,6 +125,8 @@ MAX_TERMINAL_RESPONSE_BYTES = 256
 TERMINAL_FIXED_RESPONSES = (b"\x1b[?1;2c", b"\x1b[>0;276;0c", b"\x1b[0n")
 TERMINAL_CURSOR_RESPONSE_RE = re.compile(rb"^\x1b\[(?:\?)?([1-9][0-9]{0,2});([1-9][0-9]{0,2})R")
 OPENCLAW_NATIVE_SESSION_RE = re.compile(r"^[A-Za-z0-9._:-]{1,512}$")
+TMUX_SOCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+TMUX_IDENTITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SESSION_STORE_BYTES = 1 << 20
 
 # Modos de VISOR: se miran, no se teclean. El agente nunca acepta STDIN humano; sólo puede escribir
@@ -139,21 +144,20 @@ READ_ONLY_MODES = frozenset({"harness"})
 
 # --- Lectura de ficheros de gobierno ----------------------------------------------------------
 #
-# El agente NO conoce el juego cerrado del gateway (no sabe que arnes corre de verdad ni cual es
-# el HOME del arnes, que puede no ser el suyo). Por eso no puede comprobar "esta ruta es la que el
-# gateway resolvio". Lo que SI puede hacer, y hace, es no ser nunca la pieza que entrega algo
-# distinto de un manual: una lista BLANCA de nombres base, contencion dentro de su propio home, y
-# nada de enlaces. Con eso, un gateway comprometido no consigue `/etc/passwd` ni `~/.ssh/id_ed25519`
-# aunque los pida: el peor caso es leer un CLAUDE.md, que es exactamente el proposito de la via.
+# El bundle trae harness, HOME y los overrides medidos que el agente publica en AGENT_HELLO. La
+# lectura de directorio acepta UNICAMENTE la raiz de memoria derivada de esos mismos hechos; los
+# nombres sensibles de abajo son redaccion en profundidad, nunca la fuente de autorizacion. Los
+# documentos de perfil usan su propio juego cerrado por arnes. Ninguna de las dos rutas sigue
+# enlaces ni sale del HOME del alias.
 FEATURES = (
     "read_governance", "write_governance_v1", "write_governance_batch_v1",
-    "session_output_flow_control",
+    "session_output_flow_control", "read_governance_done_v1",
 )
 
 # Unicos nombres que esta via sirve. Cualquier otro se rechaza aunque el gateway lo pida.
 READ_ALLOWED_BASENAMES = frozenset({
-    "CLAUDE.md", "AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md",
-    "MEMORY.md", "HEARTBEAT.md",
+    "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.override.md", "SOUL.md",
+    "IDENTITY.md", "USER.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md",
 })
 
 # Nunca se sirven ni se listan, esten donde esten. Espejo de NEVER_SERVE_BASENAMES del gateway
@@ -186,7 +190,16 @@ BUNDLE_KEYS = (
     "runtime_gid", "home", "shell_candidates", "harness", "relay_host", "relay_port",
     "alias_key_hex", "client_cert_pem", "client_key_pem", "ca_pem", "agent_version",
 )
-RUNTIME_FACT_KEYS = frozenset(("codex_home", "claude_config_dir", "openclaw_workspace"))
+RUNTIME_FACT_KEYS = frozenset((
+    "codex_home", "claude_config_dir", "openclaw_workspace", "cwd", "workspace_root",
+    "project_root", "project_doc_max_bytes", "project_doc_fallback_filenames",
+))
+RUNTIME_PATH_FACT_KEYS = frozenset((
+    "codex_home", "claude_config_dir", "openclaw_workspace", "cwd", "workspace_root",
+    "project_root",
+))
+PROJECT_DOC_MAX_BYTES_LIMIT = 16 * 1024 * 1024
+PROJECT_DOC_FALLBACK_LIMIT = 16
 
 
 class PermanentError(RuntimeError):
@@ -204,6 +217,14 @@ class TicketError(RuntimeError):
         super().__init__(reason if not detail else f"{reason}:{detail}")
         self.reason = reason
         self.detail = detail
+
+
+class ReadSymlinkError(OSError):
+    """A requested READ path became, or already was, a symbolic link."""
+
+
+class ReadPathTypeError(OSError):
+    """A requested READ component exists but is not the required filesystem type."""
 
 
 def fail(message: str, code: int = ARGUMENT_EXIT) -> None:
@@ -417,48 +438,142 @@ def validate_bundle(document: dict[str, Any]) -> dict[str, Any]:
     document["openclaw_tui"] = _openclaw_tui_config(
         document.get("openclaw_tui"), document["harness"], document["home"]
     )
+    document["tmux_tui"] = _tmux_tui_config(
+        document.get("tmux_tui"), document["harness"], document["alias"]
+    )
     document["runtime_facts"] = _runtime_facts_config(
         document.get("runtime_facts", {}), document["harness"], document["home"]
     )
-    if document["harness_command"] is not None and document["openclaw_tui"] is not None:
-        raise PermanentError("bundle defines two harness resolvers")
+    harness_resolvers = (
+        document["harness_command"], document["openclaw_tui"], document["tmux_tui"],
+    )
+    if sum(value is not None for value in harness_resolvers) > 1:
+        raise PermanentError("bundle defines multiple harness resolvers")
     for key in ("client_cert_pem", "client_key_pem", "ca_pem"):
         if not isinstance(document.get(key), str) or "-----BEGIN" not in document[key]:
             raise PermanentError(f"bundle field is invalid: {key}")
     return document
 
 
-def _runtime_facts_config(value: Any, harness: str, home: str) -> dict[str, str]:
+def _runtime_facts_config(value: Any, harness: str, home: str) -> dict[str, Any]:
     """Validate only non-secret paths measured from the live adapter environment.
 
-    The object is optional during rolling upgrades. An advertised value, however, must name a
-    real alias-owned directory below HOME and must match this harness; otherwise publishing it
-    would let the gateway edit a sibling alias' profile.
+    The object is optional during rolling upgrades. Profile roots must name a real alias-owned
+    directory below HOME. Project context is different: a measured cwd/workspace can legitimately
+    live at `/workspace`, outside HOME, but it must be canonical, non-symlinked, and an advertised
+    workspace root must contain the measured cwd. The root `/` is never accepted.
     """
+    # These facts enrich terminal presence; they are not the transport identity. A launcher from a
+    # newer rolling release may publish an unknown optional fact and a measured directory can
+    # disappear between bundle assembly and agent startup. Neither event may permanently stop the
+    # shell. Ignore an unrecognised document and let the gateway render context as unmeasured.
     if not isinstance(value, dict) or not set(value).issubset(RUNTIME_FACT_KEYS):
-        raise PermanentError("bundle field is invalid: runtime_facts")
+        return {}
     expected = {
         "codex": "codex_home",
         "claude": "claude_config_dir",
         "openclaw": "openclaw_workspace",
     }.get(harness)
-    if any(key != expected for key in value):
-        raise PermanentError("bundle runtime facts do not match the harness")
-    validated: dict[str, str] = {}
+    profile_keys = {"codex_home", "claude_config_dir", "openclaw_workspace"}
+    if any(key in profile_keys and key != expected for key in value):
+        return {}
+    validated: dict[str, Any] = {}
     normalized_home = os.path.normpath(home)
-    for key, path in value.items():
-        if not isinstance(path, str) or not path.startswith("/") or os.path.normpath(path) != path:
-            raise PermanentError(f"bundle runtime fact is invalid: {key}")
+    for key in RUNTIME_PATH_FACT_KEYS.intersection(value):
+        path = value[key]
+        if (not isinstance(path, str) or not path.startswith("/") or path == "/"
+                or len(path) > MAX_READ_PATH or "\0" in path or os.path.normpath(path) != path):
+            return {}
         try:
-            contained = os.path.commonpath((normalized_home, path)) == normalized_home
             details = os.lstat(path)
         except (OSError, ValueError):
-            raise PermanentError(f"bundle runtime fact is unavailable: {key}") from None
-        if (not contained or not stat.S_ISDIR(details.st_mode)
-                or os.path.realpath(path) != path or details.st_uid != os.geteuid()):
-            raise PermanentError(f"bundle runtime fact is unsafe: {key}")
+            return {}
+        if not stat.S_ISDIR(details.st_mode) or stat.S_ISLNK(details.st_mode) \
+                or os.path.realpath(path) != path:
+            return {}
+        if key in profile_keys:
+            try:
+                contained = os.path.commonpath((normalized_home, path)) == normalized_home
+            except ValueError:
+                contained = False
+            if not contained or details.st_uid != os.geteuid():
+                return {}
         validated[key] = path
+    workspace_root = validated.get("workspace_root")
+    cwd = validated.get("cwd")
+    if workspace_root is not None and cwd is None:
+        for key in ("cwd", "workspace_root", "project_root"):
+            validated.pop(key, None)
+    elif workspace_root is not None and cwd is not None:
+        try:
+            contains_cwd = os.path.commonpath((workspace_root, cwd)) == workspace_root
+        except ValueError:
+            contains_cwd = False
+        if not contains_cwd:
+            for key in ("cwd", "workspace_root", "project_root"):
+                validated.pop(key, None)
+    project_root = validated.get("project_root")
+    if project_root is not None and cwd is None:
+        for key in ("cwd", "workspace_root", "project_root"):
+            validated.pop(key, None)
+    elif project_root is not None and cwd is not None:
+        try:
+            contains_cwd = os.path.commonpath((project_root, cwd)) == project_root
+            inside_workspace = workspace_root is None \
+                or os.path.commonpath((workspace_root, project_root)) == workspace_root
+        except ValueError:
+            contains_cwd = False
+            inside_workspace = False
+        if not contains_cwd or not inside_workspace:
+            for key in ("cwd", "workspace_root", "project_root"):
+                validated.pop(key, None)
+
+    # Codex exposes exactly this pair from config.toml. It is optional and all-or-nothing: an old
+    # agent, a partial rollout, a malformed type or one secret-looking fallback simply omits the
+    # pair while preserving independently valid path facts and terminal identity.
+    maximum_present = "project_doc_max_bytes" in value
+    fallbacks_present = "project_doc_fallback_filenames" in value
+    maximum = value.get("project_doc_max_bytes")
+    fallbacks = value.get("project_doc_fallback_filenames")
+    if harness == "codex" and maximum_present and fallbacks_present \
+            and isinstance(maximum, int) and not isinstance(maximum, bool) \
+            and 1 <= maximum <= PROJECT_DOC_MAX_BYTES_LIMIT \
+            and isinstance(fallbacks, list) and len(fallbacks) <= PROJECT_DOC_FALLBACK_LIMIT:
+        safe_fallbacks: list[str] = []
+        seen = {"agents.override.md", "agents.md"}
+        for name in fallbacks:
+            if not _valid_project_doc_fallback(name, seen):
+                break
+            seen.add(name.casefold())
+            safe_fallbacks.append(name)
+        else:
+            validated["project_doc_max_bytes"] = maximum
+            validated["project_doc_fallback_filenames"] = safe_fallbacks
     return validated
+
+
+def _valid_project_doc_fallback(value: Any, seen: set[str] | None = None) -> bool:
+    """A Codex fallback is one bounded basename, never a path or credential-shaped file."""
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        # JavaScript's String.length counts UTF-16 code units. Match the gateway exactly so a
+        # fallback cannot be accepted by one leg and silently dropped by the next.
+        js_length = len(value.encode("utf-16-le")) // 2
+    except UnicodeEncodeError:
+        return False
+    if js_length > 128:
+        return False
+    if value in (".", "..") or ".." in value or "/" in value or "\\" in value or "\0" in value:
+        return False
+    if any(ord(character) <= 0x1f or ord(character) == 0x7f for character in value):
+        return False
+    normalized = value.casefold()
+    if normalized in NEVER_SERVE_BASENAMES or normalized.endswith(NEVER_SERVE_SUFFIXES):
+        return False
+    if seen is not None and normalized in seen:
+        return False
+    return True
 
 
 def _command(value: Any, label: str) -> list[str]:
@@ -512,6 +627,65 @@ def _openclaw_tui_config(value: Any, harness: str, home: str) -> dict[str, Any] 
         "state_directory": state_directory,
         "history_limit": history_limit,
     }
+
+
+def _tmux_tui_config(value: Any, harness: str, alias: str) -> dict[str, str] | None:
+    """Validate the tiny descriptor used to resolve a shared tmux TUI on every OPEN.
+
+    No session id is persisted here: tmux ids are only stable for one server lifetime and are
+    reused after a server restart.  The eventual argv performs identity checks and attach as one
+    command in the current tmux server, so a stale bundle can never retarget another alias.
+    """
+    if value in (None, "", {}):
+        return None
+    if harness not in ("claude", "codex") or not isinstance(value, dict):
+        raise PermanentError("bundle field is invalid: tmux_tui")
+    if set(value) != {"path", "socket"} or not TMUX_IDENTITY_RE.fullmatch(alias):
+        raise PermanentError("bundle field is invalid: tmux_tui")
+    path = value.get("path")
+    socket_name = value.get("socket")
+    if (not isinstance(path, str) or not os.path.isabs(path) or "\x00" in path
+            or os.path.normpath(path) != path
+            or not isinstance(socket_name, str) or not TMUX_SOCKET_RE.fullmatch(socket_name)):
+        raise PermanentError("bundle field is invalid: tmux_tui")
+    try:
+        details = os.stat(path, follow_symlinks=False)
+    except OSError:
+        raise PermanentError("bundle tmux executable is unavailable") from None
+    if (not stat.S_ISREG(details.st_mode) or details.st_uid != 0
+            or details.st_mode & 0o022 or not os.access(path, os.X_OK)):
+        raise PermanentError("bundle tmux executable is unsafe")
+    return {"path": path, "socket": socket_name}
+
+
+def resolve_tmux_tui_command(bundle: dict[str, Any]) -> list[str] | None:
+    """Build one fail-closed tmux command that validates and attaches on the same server.
+
+    `if-shell -F` evaluates the target formats and executes `attach-session` inside one tmux
+    command. If the server was restarted, the mutable name was reused, a marker changed, or the
+    pane died, the false branch exits 77. There is no preflight/attach TOCTOU and no frozen `$N`.
+    """
+    config = bundle.get("tmux_tui")
+    if not isinstance(config, dict):
+        return None
+    alias = bundle["alias"]
+    harness = bundle["harness"]
+    if not TMUX_IDENTITY_RE.fullmatch(alias) or harness not in ("claude", "codex"):
+        return None
+    target = f"cauce-{alias}:tui"
+    conditions = (
+        f"#{{&&:#{{==:#{{session_name}},cauce-{alias}}},"
+        f"#{{&&:#{{==:#{{window_name}},tui}},"
+        f"#{{&&:#{{==:#{{window_panes}},1}},"
+        f"#{{&&:#{{==:#{{@cauce_alias}},{alias}}},"
+        f"#{{&&:#{{==:#{{@cauce_harness}},{harness}}},"
+        "#{==:#{pane_dead},0}}}}}}}}}}"
+    )
+    attach = f"attach-session -r -f ignore-size -t {target}"
+    return [
+        config["path"], "-L", config["socket"],
+        "if-shell", "-F", "-t", target, conditions, attach, 'run-shell "exit 77"',
+    ]
 
 
 def resolve_openclaw_tui_command(bundle: dict[str, Any]) -> list[str] | None:
@@ -719,7 +893,9 @@ class PtyAgent:
             "generation": bundle["generation"],
             "runtime_uid": bundle["runtime_uid"],
         }
-        self.modes = ["shell"] + (["harness"] if bundle.get("harness_command") or bundle.get("openclaw_tui") else [])
+        self.modes = ["shell"] + (["harness"] if any((
+            bundle.get("harness_command"), bundle.get("openclaw_tui"), bundle.get("tmux_tui"),
+        )) else [])
         self.sessions: dict[str, PtySession] = {}
         self.pending_writes: dict[str, GovernanceWrite] = {}
         self.pending_write_batches: dict[str, GovernanceWriteBatch] = {}
@@ -849,6 +1025,10 @@ class PtyAgent:
             # lanzo, dentro del contenedor. Va aqui y no en el `.env` del gateway por lo mismo que
             # el `harness`: quien tiene el dato delante es quien lo dice.
             "home": self.bundle["home"],
+            # `harness` and `home` identify the configured container, but they do not prove that
+            # the adapter process was alive and measured.  Keep that distinction explicit so an
+            # empty recovery bundle cannot be promoted to measured context by downstream defaults.
+            "runtime_facts_observed": bool(self.bundle["runtime_facts"]),
             **self.bundle["runtime_facts"],
             "agent_version": self.bundle["agent_version"],
             "modes": self.modes,
@@ -883,7 +1063,7 @@ class PtyAgent:
         if not self.acknowledged:
             deadlines.append(self.connected_at + HELLO_TIMEOUT)
         for session in self.sessions.values():
-            if session.out:
+            if session.out and not session.output_paused:
                 deadlines.append(session.last_flush + FLUSH_INTERVAL)
             if session.kill_deadline is not None:
                 deadlines.append(session.kill_deadline)
@@ -1075,6 +1255,11 @@ class PtyAgent:
                 self._send_document(request_id, path)
             else:
                 self._send_memory_index(request_id, path)
+            self._queue(encode_json(TAG_READ_DONE, {"request_id": request_id}))
+        except ReadSymlinkError:
+            self._read_error(request_id, "symlink_detected", "path contains a symbolic link")
+        except ReadPathTypeError:
+            self._read_error(request_id, "invalid_path", "path component has the wrong type")
         except PermissionError:
             self._read_error(request_id, "permission_denied", "permission denied")
         except FileNotFoundError:
@@ -1104,17 +1289,30 @@ class PtyAgent:
         # las diferencias entre lo que valida el gateway y lo que abre el agente.
         if ".." in segments or "." in segments or "" in segments[1:]:
             return ("invalid_path", "path is not canonical")
+        if kind == "dir":
+            memory_root = self._memory_root_for_harness()
+            if memory_root is None or path != memory_root:
+                return ("permission_denied", "path is not the measured memory root")
+            home = str(self.bundle["home"]).rstrip("/") or "/"
+            if home == "/" or not memory_root.startswith(home + "/"):
+                return ("permission_denied", "measured memory root is outside the agent home")
+            return None
+
         base = segments[-1]
-        if base in NEVER_SERVE_BASENAMES:
+        normalized_base = base.casefold()
+        if normalized_base in NEVER_SERVE_BASENAMES:
             return ("permission_denied", f"{base} is never served")
-        if base.endswith(NEVER_SERVE_SUFFIXES):
+        if normalized_base.endswith(NEVER_SERVE_SUFFIXES):
             return ("permission_denied", "looks like credential material")
-        if kind == "file" and not self._is_governance_file_path(path):
+        if not self._is_readable_governance_file_path(path):
             return ("permission_denied", f"{base} is not a governance document")
-        # Contencion: el agente no sirve nada fuera de su propio home, lo pida quien lo pida.
-        home = str(self.bundle["home"]).rstrip("/")
-        if not home.startswith("/") or (path != home and not path.startswith(home + "/")):
-            return ("permission_denied", "path is outside the agent home")
+        # Los manuales de proyecto pueden vivir en `/workspace`, fuera de HOME. No se autoriza por
+        # contención amplia: la lista exacta de arriba sale de cwd/root medidos. Los documentos de
+        # perfil sí siguen confinados a HOME, también cuando un test construye el bundle a mano.
+        if not self._is_project_manual_path(path):
+            home = str(self.bundle["home"]).rstrip("/")
+            if not home.startswith("/") or (path != home and not path.startswith(home + "/")):
+                return ("permission_denied", "path is outside the agent home")
         # `realpath` resuelve TODOS los componentes, asi que esto tambien caza un directorio padre
         # enlazado — que es exactamente el vector que una lista negra de nombres no ve.
         try:
@@ -1131,10 +1329,8 @@ class PtyAgent:
             return ("permission_denied", "permission denied")
         except OSError:
             return ("unknown", "stat failed")
-        if kind == "file" and not stat.S_ISREG(info.st_mode):
+        if not stat.S_ISREG(info.st_mode):
             return ("invalid_path", "not a regular file")
-        if kind == "dir" and not stat.S_ISDIR(info.st_mode):
-            return ("invalid_path", "not a directory")
         return None
 
     def _send_document(self, request_id: str, path: str) -> None:
@@ -1188,35 +1384,76 @@ class PtyAgent:
             self._queue(encode_data(TAG_READ_DATA, request_id, chunk))
 
     def _send_memory_index(self, request_id: str, root: str) -> None:
-        """Indice de memoria: sale METADATO, nunca contenido."""
+        """Indice de memoria: sale METADATO, nunca contenido.
+
+        La raiz se abre una sola vez desde HOME, componente por componente con openat(2). Desde
+        ahi el barrido usa exclusivamente descriptores: un rename+symlink entre el descubrimiento
+        y la recursion no puede redirigirnos fuera de la memoria medida.
+        """
         found: list[tuple[str, int, float]] = []
         capped = False
-        stack = [(root, 0)]
-        while stack and not capped:
-            current, depth = stack.pop()
+        scanned = 0
+        root_fd = self._open_memory_root(root)
+
+        def walk(directory: int, current: str, depth: int) -> None:
+            nonlocal capped, scanned
             try:
-                with os.scandir(current) as entries:
+                with os.scandir(directory) as entries:
                     for entry in entries:
-                        if len(found) >= DIR_SCAN_CAP:
+                        # La cota cuenta entradas inspeccionadas, no solo ficheros publicables. De
+                        # otro modo miles de directorios, sockets o nombres secretos harian el
+                        # barrido ilimitado aunque `found` nunca creciese.
+                        if scanned >= DIR_SCAN_CAP:
                             capped = True
-                            break
+                            return
+                        scanned += 1
+                        name = entry.name
+                        normalized_name = name.casefold()
+                        if not self._safe_memory_entry_name(name):
+                            continue
+                        if (normalized_name in NEVER_SERVE_BASENAMES
+                                or normalized_name.endswith(NEVER_SERVE_SUFFIXES)):
+                            continue
+                        logical_path = f"{current}/{name}"
+                        if len(logical_path.encode("utf-8")) > MAX_READ_PATH:
+                            continue
+                        try:
+                            discovered = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                        except OSError:
+                            continue
                         # Ni se siguen los enlaces ni se nombran: el nombre de un enlace ya dice
                         # que algo existe al otro lado.
-                        if entry.is_symlink():
+                        if stat.S_ISLNK(discovered.st_mode):
                             continue
-                        if entry.name in NEVER_SERVE_BASENAMES or entry.name.endswith(NEVER_SERVE_SUFFIXES):
-                            continue
-                        if entry.is_dir(follow_symlinks=False):
+                        if stat.S_ISDIR(discovered.st_mode):
                             if depth + 1 < MAX_DIR_DEPTH:
-                                stack.append((entry.path, depth + 1))
+                                try:
+                                    child = self._open_memory_directory_at(directory, name)
+                                except OSError:
+                                    # Un subdirectorio ilegible, sustituido o enlazado se omite.
+                                    # O_NOFOLLOW asegura que la omision nunca se convierta en fuga.
+                                    continue
+                                try:
+                                    walk(child, logical_path, depth + 1)
+                                finally:
+                                    os.close(child)
+                                if capped:
+                                    return
                             continue
-                        if not entry.is_file(follow_symlinks=False):
+                        if not stat.S_ISREG(discovered.st_mode):
                             continue
-                        info = entry.stat(follow_symlinks=False)
-                        found.append((entry.path, info.st_size, info.st_mtime))
+                        info = self._memory_regular_stat_at(directory, name)
+                        if info is not None:
+                            found.append((logical_path, info.st_size, info.st_mtime))
             except OSError:
+                if depth == 0:
+                    raise
                 # Un subdirectorio ilegible no invalida el indice: se omite y se sigue.
-                continue
+
+        try:
+            walk(root_fd, root, 0)
+        finally:
+            os.close(root_fd)
         found.sort(key=lambda item: item[2], reverse=True)
         # El indice viaja en UNA trama y una trama tiene tope duro (MAX_FRAME). 200 rutas de 4 KB
         # no caben, y pasarse no seria un indice recortado sino una ProtocolError que tira la
@@ -1237,9 +1474,11 @@ class PtyAgent:
             "request_id": request_id,
             "kind": "dir",
             "path": root,
-            # `total` es lo que se encontro. Cuando `truncated` es cierto es un SUELO, no el total
-            # del disco: el barrido para en DIR_SCAN_CAP.
-            "total": len(found),
+            # Si el cap de barrido corto el arbol no existe un total exacto: `null` impide que una
+            # capa posterior convierta el prefijo observado en un conteo del disco completo. Un
+            # recorte exclusivo de filas/bytes conserva `total`, porque el barrido si termino.
+            "total": None if capped else len(found),
+            "observed_at_least": len(found),
             "truncated": capped or len(rows) < len(found),
             "entries": rows,
         }))
@@ -1721,38 +1960,253 @@ class PtyAgent:
         if ".." in segments or "." in segments or "" in segments[1:]:
             return ("invalid_path", "path is not canonical")
         base = segments[-1]
-        if base in NEVER_SERVE_BASENAMES:
+        normalized_base = base.casefold()
+        if normalized_base in NEVER_SERVE_BASENAMES:
             return ("permission_denied", f"{base} is never served")
-        if base.endswith(NEVER_SERVE_SUFFIXES):
+        if normalized_base.endswith(NEVER_SERVE_SUFFIXES):
             return ("permission_denied", "looks like credential material")
-        if not self._is_governance_file_path(path):
+        if not self._is_writable_governance_file_path(path):
             return ("permission_denied", f"{base} is not a governance document")
         home = str(self.bundle["home"]).rstrip("/")
         if not home.startswith("/") or not path.startswith(home + "/"):
             return ("permission_denied", "path is outside the agent home")
         return None
 
-    def _is_governance_file_path(self, path: str) -> bool:
-        """Exact per-harness roots; a basename match elsewhere in HOME is never enough."""
-        base = os.path.basename(path)
+    def _profile_governance_file_paths(self) -> frozenset[str]:
+        """Exact profile roots. These remain the only writable governance destinations."""
         harness = self.bundle.get("harness")
         facts = self.bundle.get("runtime_facts", {})
         home = str(self.bundle["home"]).rstrip("/")
+        # HOME and the configured harness are container identity, not proof that the adapter was
+        # alive.  Recovery shells intentionally start with `{}` facts; in that state no profile,
+        # memory or manual path may be inferred from conventional defaults.
+        if not isinstance(facts, dict) or not facts:
+            return frozenset()
         if harness == "openclaw":
             root = facts.get("openclaw_workspace")
             allowed = {"SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md"}
         elif harness == "claude":
-            root = facts.get("claude_config_dir", f"{home}/.claude")
+            root = facts.get("claude_config_dir")
             allowed = {"CLAUDE.md"}
         elif harness == "codex":
-            root = facts.get("codex_home", f"{home}/.codex")
+            root = facts.get("codex_home")
             allowed = {"AGENTS.md"}
         elif harness == "hermes":
             root = home
             allowed = {"AGENTS.md"}
         else:
+            return frozenset()
+        if not isinstance(root, str):
+            return frozenset()
+        return frozenset(f"{root.rstrip('/')}/{name}" for name in allowed)
+
+    def _readable_global_governance_file_paths(self) -> frozenset[str]:
+        paths = set(self._profile_governance_file_paths())
+        if self.bundle.get("harness") == "codex":
+            facts = self.bundle.get("runtime_facts", {})
+            root = facts.get("codex_home") if isinstance(facts, dict) else None
+            if isinstance(root, str):
+                paths.add(f"{root.rstrip('/')}/AGENTS.override.md")
+        return frozenset(paths)
+
+    def _project_manual_paths(self) -> tuple[str, ...]:
+        """Project manuals in effective precedence order, derived only from measured facts.
+
+        With an accredited workspace root, every directory from root to cwd participates. Without
+        one, cwd itself is still a real `/proc` measurement and authorizes exactly one level; the
+        agent never walks towards `/` looking for a plausible repository root.
+        """
+        harness = self.bundle.get("harness")
+        if harness not in ("claude", "codex"):
+            return ()
+        facts = self.bundle.get("runtime_facts", {})
+        if not isinstance(facts, dict):
+            return ()
+        codex_fallbacks: tuple[str, ...] = ()
+        if harness == "codex":
+            raw_fallbacks = facts.get("project_doc_fallback_filenames")
+            if isinstance(raw_fallbacks, list) and len(raw_fallbacks) <= PROJECT_DOC_FALLBACK_LIMIT:
+                accepted: list[str] = []
+                seen = {"AGENTS.override.md", "AGENTS.md"}
+                for name in raw_fallbacks:
+                    if not _valid_project_doc_fallback(name, seen):
+                        accepted = []
+                        break
+                    seen.add(name)
+                    accepted.append(name)
+                codex_fallbacks = tuple(accepted)
+        cwd = facts.get("cwd")
+        # Both runtimes start at the measured project marker. A workspace mount can contain
+        # several repositories and its top-level manual need not govern the current process.
+        root = facts.get("project_root")
+        if not isinstance(cwd, str) or not self._canonical_context_directory(cwd):
+            return ()
+        directories: list[str]
+        if root is None:
+            directories = [cwd]
+        else:
+            if not isinstance(root, str) or not self._canonical_context_directory(root):
+                return ()
+            try:
+                if os.path.commonpath((root, cwd)) != root:
+                    return ()
+                relative = os.path.relpath(cwd, root)
+            except ValueError:
+                return ()
+            parts = [] if relative == "." else relative.split(os.sep)
+            # A measured context this deep is not operationally useful and would amplify one READ
+            # into an unbounded sequence. Fail closed instead of silently dropping ancestors.
+            if len(parts) > 64 or any(part in ("", ".", "..") for part in parts):
+                return ()
+            directories = [root]
+            current = root
+            for part in parts:
+                current = f"{current.rstrip('/')}/{part}"
+                directories.append(current)
+        paths: list[str] = []
+        for directory in directories:
+            root = directory.rstrip("/")
+            if harness == "claude":
+                paths.extend((
+                    f"{root}/CLAUDE.md", f"{root}/.claude/CLAUDE.md",
+                    f"{root}/CLAUDE.local.md",
+                ))
+            else:
+                paths.extend((
+                    f"{root}/AGENTS.override.md", f"{root}/AGENTS.md",
+                    *(f"{root}/{fallback}" for fallback in codex_fallbacks),
+                ))
+        return tuple(paths)
+
+    @staticmethod
+    def _canonical_context_directory(path: str) -> bool:
+        if not path.startswith("/") or path == "/" or len(path) > MAX_READ_PATH or "\0" in path:
             return False
-        return isinstance(root, str) and path == f"{root.rstrip('/')}/{base}" and base in allowed
+        segments = path.split("/")
+        return os.path.normpath(path) == path \
+            and not any(segment in ("", ".", "..") for segment in segments[1:])
+
+    def _is_project_manual_path(self, path: str) -> bool:
+        return path in self._project_manual_paths()
+
+    def _is_readable_governance_file_path(self, path: str) -> bool:
+        return path in self._readable_global_governance_file_paths() or self._is_project_manual_path(path)
+
+    def _is_writable_governance_file_path(self, path: str) -> bool:
+        return path in self._profile_governance_file_paths()
+
+    def _memory_root_for_harness(self) -> str | None:
+        """Exact root mirrored by the gateway from the facts published in AGENT_HELLO."""
+        harness = self.bundle.get("harness")
+        facts = self.bundle.get("runtime_facts", {})
+        home = str(self.bundle.get("home", "")).rstrip("/")
+        if not home.startswith("/") or not isinstance(facts, dict) or not facts:
+            return None
+        if harness == "claude":
+            base = facts.get("claude_config_dir")
+            leaf = "projects"
+        elif harness == "codex":
+            base = facts.get("codex_home")
+            leaf = "memories"
+        elif harness == "openclaw":
+            base = facts.get("openclaw_workspace")
+            leaf = "memory"
+        else:
+            return None
+        if not isinstance(base, str) or not base.startswith("/"):
+            return None
+        return f"{base.rstrip('/')}/{leaf}"
+
+    @staticmethod
+    def _safe_memory_entry_name(name: str) -> bool:
+        if not name or name in (".", "..") or "/" in name or "\0" in name:
+            return False
+        if any(ord(character) <= 0x1F or ord(character) == 0x7F for character in name):
+            return False
+        try:
+            name.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
+        return True
+
+    @staticmethod
+    def _classify_directory_open_error(directory: int, segment: str, error: OSError) -> None:
+        """Translate a no-follow open failure without trusting a preflight stat."""
+        try:
+            details = os.stat(segment, dir_fd=directory, follow_symlinks=False)
+        except OSError:
+            raise error
+        if stat.S_ISLNK(details.st_mode):
+            raise ReadSymlinkError(segment) from None
+        if not stat.S_ISDIR(details.st_mode):
+            raise ReadPathTypeError(segment) from None
+        raise error
+
+    @staticmethod
+    def _open_memory_directory_at(directory: int, segment: str) -> int:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        try:
+            child = os.open(segment, flags, dir_fd=directory)
+        except OSError as error:
+            PtyAgent._classify_directory_open_error(directory, segment, error)
+            raise AssertionError("directory open classifier returned")
+        if not stat.S_ISDIR(os.fstat(child).st_mode):
+            os.close(child)
+            raise ReadPathTypeError(segment)
+        return child
+
+    @staticmethod
+    def _memory_regular_stat_at(directory: int, basename: str) -> os.stat_result | None:
+        # O_PATH obtiene metadata sin abrir el contenido (ni activar dispositivos/FIFOs si el
+        # nombre fue sustituido tras el lstat). Con O_NOFOLLOW, un swap a symlink produce un fd al
+        # propio enlace y fstat lo descarta abajo.
+        flags = getattr(os, "O_PATH", os.O_RDONLY | os.O_NONBLOCK)
+        flags |= os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        try:
+            descriptor = os.open(basename, flags, dir_fd=directory)
+        except OSError:
+            return None
+        try:
+            details = os.fstat(descriptor)
+            return details if stat.S_ISREG(details.st_mode) else None
+        finally:
+            os.close(descriptor)
+
+    def _open_memory_root(self, root: str) -> int:
+        """Open the authorized memory root using only fd-relative no-follow traversal."""
+        home = str(self.bundle["home"]).rstrip("/") or "/"
+        if home == "/" or not root.startswith(home + "/"):
+            raise PermissionError("memory root is outside HOME")
+        relative = root[len(home) + 1:].split("/")
+        # HOME tambien se recorre desde `/` con openat: O_NOFOLLOW sobre un path absoluto solo
+        # protege su ultimo componente y podria seguir un enlace en cualquiera de sus padres.
+        directory = self._open_absolute_memory_directory(home)
+        try:
+            for segment in relative:
+                child = self._open_memory_directory_at(directory, segment)
+                os.close(directory)
+                directory = child
+            return directory
+        except BaseException:
+            os.close(directory)
+            raise
+
+    @classmethod
+    def _open_absolute_memory_directory(cls, path: str) -> int:
+        """Use `/` as trust anchor and reject symlinks in every absolute-path component."""
+        if path == "/" or not path.startswith("/") or os.path.normpath(path) != path:
+            raise ReadPathTypeError(path)
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        directory = os.open("/", flags)
+        try:
+            for segment in path.split("/")[1:]:
+                child = cls._open_memory_directory_at(directory, segment)
+                os.close(directory)
+                directory = child
+            return directory
+        except BaseException:
+            os.close(directory)
+            raise
 
     def _open_governance_parent(self, path: str) -> tuple[int, str]:
         """Abre cada padre con O_NOFOLLOW y devuelve `(dirfd, basename)`.
@@ -1760,21 +2214,13 @@ class PtyAgent:
         Resolver con `realpath` y luego abrir por nombre deja una carrera entre ambos pasos. Esta
         caminata queda anclada en descriptores: cambiar un padre por un enlace no redirige la E/S.
         """
-        home = str(self.bundle["home"]).rstrip("/")
-        if os.path.realpath(home) != home:
-            raise PermissionError("agent home is a symlink")
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        directory = os.open(home, flags)
-        try:
-            relative = path[len(home) + 1:].split("/")
-            for segment in relative[:-1]:
-                child = os.open(segment, flags, dir_fd=directory)
-                os.close(directory)
-                directory = child
-            return directory, relative[-1]
-        except BaseException:
-            os.close(directory)
-            raise
+        parent, basename = os.path.split(path)
+        if not parent or not basename or os.path.normpath(path) != path:
+            raise ReadPathTypeError(path)
+        # Anchor at `/` and reject symlinks component-by-component. Project manuals legitimately
+        # live outside HOME; exact-path authorization happened before this routine is reached.
+        directory = self._open_absolute_memory_directory(parent)
+        return directory, basename
 
     @staticmethod
     def _hash_regular_at(directory: int, basename: str) -> tuple[str, os.stat_result]:
@@ -1899,6 +2345,8 @@ class PtyAgent:
         if mode == "harness":
             if self.bundle["harness_command"] is not None:
                 return self.bundle["harness_command"]
+            if self.bundle.get("tmux_tui") is not None:
+                return resolve_tmux_tui_command(self.bundle)
             return resolve_openclaw_tui_command(self.bundle)
         for candidate in self.bundle["shell_candidates"]:
             if os.access(candidate[0], os.X_OK):
@@ -1991,7 +2439,13 @@ class PtyAgent:
             raise ProtocolError("output flow control carries an invalid session id")
         session = self.sessions.get(session_id)
         if session is not None:
+            was_paused = session.output_paused
             session.output_paused = paused
+            # RESUME is session-scoped and makes already-buffered bytes eligible immediately.
+            # Waiting for a later timer made a resumed terminal appear stuck for another flush
+            # interval; touching no other session is part of the wire contract.
+            if was_paused and not paused:
+                self._flush_session(session)
 
     def _enqueue_session_input(self, session: PtySession, data: bytes) -> None:
         if len(session.pending_input) + len(data) > SESSION_INPUT_HIGH_WATER:
@@ -2053,6 +2507,12 @@ class PtyAgent:
     def _flush_session(self, session: PtySession, force: bool = False) -> None:
         if not session.out:
             return
+        # PAUSE_OUTPUT means that bytes already buffered before the pause must stop as well. The
+        # old guard existed only on read(), so a pending >= FLUSH_BYTES chunk leaked through from
+        # _maintain. `force` is reserved for the explicit terminal CLOSED path: once the child is
+        # retired its last bytes and CLOSED must stay ordered and the session cannot await RESUME.
+        if session.output_paused and not force:
+            return
         if not force and len(self.outbound) >= OUTBOUND_HIGH_WATER:
             return  # the relay is not draining; hold the bytes where the backpressure works
         now = time.monotonic()
@@ -2074,7 +2534,7 @@ class PtyAgent:
                 session.kill_deadline = now + KILL_GRACE
                 self._signal(session, signal.SIGKILL)
             self._flush_session(session)
-            if session.reaped and session.eof and not session.out:
+            if session.reaped and session.eof:
                 self._retire(session)
         for session_id, expiry in list(self.tombstones.items()):
             if now >= expiry:

@@ -43,7 +43,9 @@ function recordChanges(sink: ChangeRequest[]) {
     sink.push(input);
     return HttpResponse.json({
       applied: input.dry_run !== true, dry_run: input.dry_run === true,
-      revision: input.dry_run ? 4 : 5, mutation: input.mutation, summary: 'mock registry validation',
+      revision: input.dry_run ? 4 : 5, mutation: input.mutation,
+      inverse_mutation: input.mutation, rolled_back_revision_id: null,
+      summary: 'mock registry validation',
     }, { status: input.dry_run ? 200 : 201 });
   }));
 }

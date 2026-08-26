@@ -13,6 +13,7 @@ export type TerminalAuditAction =
   | 'terminal.session.request'
   | 'terminal.session.consume'
   | 'terminal.session.resume'
+  | 'terminal.session.owner_rotated'
   | 'terminal.session.revoked'
   | 'terminal.session.close';
 

@@ -12,7 +12,7 @@ export type EstadoRecarga =
 
 export type ConfigChangeOutcome =
   | { ok: true; result: ConfigurationChangeResult; recarga?: EstadoRecarga }
-  | { ok: false; message: string; conflict: boolean; recarga?: EstadoRecarga };
+  | { ok: false; message: string; conflict: boolean; uncertain?: boolean; recarga?: EstadoRecarga };
 
 /**
  * Frase que se le AGREGA al aviso para contar el desenlace de la relectura. `undefined` (un

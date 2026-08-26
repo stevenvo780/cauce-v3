@@ -25,6 +25,25 @@ test("Hermes bridge imports run_oneshot from the selected Python and emits only 
   assert.equal(parseHermesOutput(result.stdout).output.reply, "hermes bridge success");
 });
 
+test("Hermes bridge rejects an invalid accredited source before the execution witness", () => {
+  const result = spawnSync("python3", [sourceHermes], {
+    input: "private prompt",
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PYTHONDONTWRITEBYTECODE: "1",
+      PYTHONPATH: fakeHermes,
+      CAUCE_HERMES_RUNTIME_DIR: "/definitely/absent/cauce-hermes-runtime",
+      CAUCE_HERMES_SOURCE_DIR: "/definitely/absent/cauce-hermes-source",
+    },
+    timeout: 5_000,
+  });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "hermes stdin bridge failed\n");
+  assert.doesNotMatch(result.stderr, /private prompt/u);
+});
+
 for (const [prompt, expected] of [
   ["HERMES_MULTILINE", "hermes bridge success"],
   ["HERMES_PLAIN", "hermes plain final"],

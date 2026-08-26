@@ -77,18 +77,38 @@ it('redirige /audit a «Señales y auditoría», donde la auditoría es una pest
   await waitFor(() => expect(window.location.pathname).toBe('/observability'));
 });
 
-it('cae en la PORTADA para un id de ruta desconocido, aunque traiga segmentos de más', async () => {
+it('muestra una ruta desconocida sin sustituirla por la portada, aunque traiga segmentos de más', async () => {
   window.history.pushState({}, '', '/unknown/nested/segment');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeInTheDocument();
+  expect(screen.getByText('/unknown/nested/segment')).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeNull();
+  expect(window.location.pathname).toBe('/unknown/nested/segment');
 });
 
-it('ignores extra pathname segments on non-fleet routes and keeps rendering the existing page', async () => {
-  window.history.pushState({}, '', '/terminal/unused/segment');
+it('rechaza segmentos extra en /fleet/:tenant/:alias en vez de abrir otro agente', async () => {
+  window.history.pushState({}, '', '/fleet/Steven/kant/sesion-vieja');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeInTheDocument();
+  expect(screen.getByText('/fleet/Steven/kant/sesion-vieja')).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { level: 1, name: 'kant' })).toBeNull();
+  expect(window.location.pathname).toBe('/fleet/Steven/kant/sesion-vieja');
+});
+
+it.each([
+  '/terminal/unused/segment',
+  '/config/sobrante',
+  '/live/sobrante',
+  '/licenses/sobrante',
+])('%s conserva la URL como 404 en vez de ignorar segmentos no declarados', async (ruta) => {
+  window.history.pushState({}, '', ruta);
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeInTheDocument();
+  expect(screen.getByText(ruta)).toBeInTheDocument();
+  expect(window.location.pathname).toBe(ruta);
 });
 
 it('navega dentro de la aplicación sin recargar la página al hacer clic en el menú', async () => {
@@ -102,7 +122,7 @@ it('navega dentro de la aplicación sin recargar la página al hacer clic en el 
   // Si el enlace no interceptara el clic, jsdom no cambiaría la ruta y seguiríamos donde estábamos:
   // el router escucha popstate, y pushState no lo dispara solo.
   expect(window.location.pathname).toBe('/queues');
-  expect(await screen.findByRole('heading', { level: 1, name: /queues/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /colas y dlq operativo/i })).toBeInTheDocument();
 });
 
 it('conserva el href real que permite abrir una ruta en otra pestaña', async () => {
@@ -178,11 +198,13 @@ it('/activity sigue llegando a la vista viva, como antes', async () => {
   expect(window.location.pathname).toBe('/live');
 });
 
-it('/fleet/:cliente sin alias no identifica a nadie y lo dice, en vez de caer en el fallback mudo', async () => {
+it('/fleet/:cliente sin alias conserva la dirección incompleta como 404', async () => {
   window.history.pushState({}, '', '/fleet/Steven');
   renderWithApi(<App />);
 
-  expect(await screen.findByText(/ya no identifica a nadie/i)).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeInTheDocument();
+  expect(screen.getByText('/fleet/Steven')).toBeInTheDocument();
+  expect(window.location.pathname).toBe('/fleet/Steven');
 });
 
 /**

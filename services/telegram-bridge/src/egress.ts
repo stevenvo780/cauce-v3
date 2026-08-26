@@ -53,6 +53,8 @@ function object(value: unknown): Record<string, unknown> | undefined {
 }
 
 const VISIBLE_TEXT = /[\p{L}\p{N}\p{P}\p{S}]/u;
+const MISSING_FINAL_REPLY_NOTICE =
+  'No pude completar una respuesta para este turno. Volvé a preguntarme para intentarlo de nuevo.';
 
 function hasVisibleText(value: unknown): value is string {
   return typeof value === 'string' && VISIBLE_TEXT.test(value);
@@ -168,7 +170,10 @@ function candidate(payload: Record<string, unknown>): string | undefined {
  * vale mucho más que el silencio que había hasta ahora.
  */
 export function telegramTextChunks(payload: Record<string, unknown>, footer = ''): string[] {
-  if (isMissingFinalReply(payload)) return [];
+  // MISSING_FINAL_REPLY es una etiqueta de control, no contenido. Ningún campo del payload ni el
+  // footer se interpreta en esa rama: pueden contener diagnóstico interno, un sobre roto o
+  // artifacts controlados por el arnés. La salida es exactamente una constante conocida.
+  if (isMissingFinalReply(payload)) return [MISSING_FINAL_REPLY_NOTICE];
   const original = candidate(payload);
   const value = original === undefined
     ? (footer === '' ? undefined : footer.trim())
@@ -521,16 +526,24 @@ export class TelegramEgressWorker {
     }
 
     try {
-      // Los adjuntos se planifican ANTES de trocear: el pie que resume lo que no viajó forma parte
-      // del texto, y los bytes que sí viajan son piezas más de la misma secuencia durable.
-      const plan = planArtifacts(event.payload);
-      const chunks = telegramTextChunks(event.payload, plan.footer);
-      const pieces: EgressPiece[] = [
-        ...chunks.map((text): EgressPiece => ({ kind: 'text', text })),
-        ...plan.uploads.map((upload): EgressPiece => ({ kind: 'upload', upload }))
-      ];
-      if (plan.listed > 0) this.onMetric('egress_attachment_listed');
-      if (pieces.length === 0 || (!interimAcknowledgement && isMissingFinalReply(event.payload))) {
+      // En MISSING_FINAL_REPLY no se inspecciona NI se planifica el payload: incluso un artifact
+      // data:/http:/file: es entrada no confiable y la respuesta debe ser una sola pieza fija.
+      const missingFinalReply = isMissingFinalReply(event.payload);
+      let pieces: EgressPiece[];
+      if (missingFinalReply) {
+        pieces = [{ kind: 'text', text: MISSING_FINAL_REPLY_NOTICE }];
+      } else {
+        // Los adjuntos se planifican ANTES de trocear: el pie que resume lo que no viajó forma
+        // parte del texto, y los bytes que sí viajan son piezas más de la misma secuencia durable.
+        const plan = planArtifacts(event.payload);
+        const chunks = telegramTextChunks(event.payload, plan.footer);
+        pieces = [
+          ...chunks.map((text): EgressPiece => ({ kind: 'text', text })),
+          ...plan.uploads.map((upload): EgressPiece => ({ kind: 'upload', upload }))
+        ];
+        if (plan.listed > 0) this.onMetric('egress_attachment_listed');
+      }
+      if (pieces.length === 0) {
         const diagnostic = 'Telegram relay has no visible final reply; no message was sent';
         await this.durableAck(event, { status: 'dead', error: diagnostic });
         if (!interimAcknowledgement) this.finishActivity(event, bridgeAlias, api, 'failed');

@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { DatabasePool } from '@cauce/store';
 import {
   AuthError, AuthorizationError, JwksJwtVerifier, principalFromJwtClaims,
+  validatePrincipal,
   type AuthProvider, type JwtClaims, type Principal
 } from './auth.js';
 
@@ -397,7 +398,13 @@ export class OidcBffAuthProvider implements AuthProvider {
     const accessClaims = await this.accessVerifier.verify(accessToken);
     const accessSubject = subject(accessClaims);
     if (previousSubject !== undefined && accessSubject !== previousSubject) throw new AuthError('OIDC refresh changed subject');
-    const principal = principalFromJwtClaims(accessClaims);
+    const tokenPrincipal = principalFromJwtClaims(accessClaims);
+    // A successful browser Authorization Code + PKCE flow establishes a person, not merely an
+    // operator-capable service principal.  Bind that verified OIDC subject into the encrypted BFF
+    // session.  Raw bearer clients do not take this path and therefore gain no implicit human band.
+    const principal = tokenPrincipal.roles.includes('operator')
+      ? validatePrincipal({ ...tokenPrincipal, operator_id: accessSubject })
+      : tokenPrincipal;
     let idToken: string | undefined;
     if (tokens.id_token !== undefined) {
       idToken = requiredString(tokens.id_token, 'ID token');

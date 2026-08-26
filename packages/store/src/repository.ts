@@ -1,16 +1,28 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type {
-  Ack, ChainGateNotice, ConfigMutation, DelegationRejectionNotice, DeliveryEnvelope, DeliveryState,
-  NotifyRequest, Origin, PublishMessage, QuotaSampleRequest, Tenant
+  Ack, ChainGateNotice, ConfigMutation, DelegationMaterializationNotice, DelegationRejectionNotice,
+  ConsolePublishIntentCommand, ConsolePublishIntentConfirm, ConsolePublishIntentConfirmResult,
+  ConsolePublishIntentExpired, ConsolePublishIntentPrepareResult,
+  ConsolePublishIntentRateLimited, ConsolePublishIntentReconciliation,
+  DeliveryEnvelope, DeliveryState,
+  NotifyRequest, Origin, PublishMessage, PublishResult as ProtocolPublishResult,
+  ProfileRuntimeAdoptionEvidence, ProfileRuntimeContract, QuotaSampleRequest, Tenant
 } from '@cauce/protocol';
 import {
-  NON_HUMAN_DELIVERY_MESSAGE_TYPES, SYSTEM_GATE_PROBE_MESSAGE_TYPE, SYSTEM_PRINCIPAL_ALIASES,
+  AliasSchema, CanonicalUuidV4Schema, SYSTEM_GATE_PROBE_MESSAGE_TYPE, SYSTEM_PRINCIPAL_ALIASES,
+  buildPublishReceipt,
   clampAgentPriority, isAmbiguousAckErrorCode, isSystemGateProbeBody,
-  MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs, NOTIFY_KINDS, PROTOCOL_VERSION,
-  SUPPORTED_QUOTA_SCHEMA_VERSIONS
+  ConsolePublishIntentConfirmSchema, consolePublishIntentRequestedHash,
+  consolePublishIntentSemanticHash,
+  DelegationMaterializationSchema, DelegationRejectionSchema,
+  MAX_DELEGATION_FEEDBACK_ITEMS,
+  HUMAN_PRIORITY_FLOOR, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs, NOTIFY_KINDS, PROTOCOL_VERSION,
+  OriginSchema, ProfileRuntimeAdoptionEvidenceSchema, ProfileRuntimeContractSchema,
+  PublishMessageSchema, publishReceiptCausalHash, publishRequestHash, PublishResultSchema,
+  SUPPORTED_QUOTA_SCHEMA_VERSIONS, TenantSchema
 } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
-import { withTransaction } from './db.js';
+import { withAbortableTransaction, withTransaction } from './db.js';
 import {
   ConfigurationError, ConfigurationRepository, type ConfigurationChangeResult
 } from './configuration.js';
@@ -19,6 +31,7 @@ import {
   FLEET_WORK_STATES, type FleetActivityFlag, type FleetWorkState
 } from './fleet-activity.js';
 import { selectAccountForAlias, type AccountSelection } from './accounts.js';
+import { safeAuditSummary } from './audit-summary.js';
 import {
   boundedRejectionTarget,
   describeDelegationRejection, DISABLED_DELEGATION_CAPS, fanoutCapForTurn, HUMAN_GATE_TARGET,
@@ -27,12 +40,51 @@ import {
 } from './delegation-guard.js';
 
 export type StoreErrorCode =
-  'forbidden' | 'no_route' | 'conflict' | 'fenced' | 'not_found' | 'invalid_actor' | 'invalid_input';
+  'forbidden' | 'no_route' | 'conflict' | 'fenced' | 'not_found' | 'invalid_actor'
+  | 'invalid_input' | 'rate_limited';
 
 export class StoreError extends Error {
   constructor(public readonly code: StoreErrorCode, message: string) {
     super(message);
     this.name = 'StoreError';
+  }
+}
+
+export class PublishIntentReconciliationRequired extends StoreError {
+  constructor(readonly reconciliation: ConsolePublishIntentReconciliation) {
+    super('conflict', 'a committed console publish intent requires explicit reconciliation');
+    this.name = 'PublishIntentReconciliationRequired';
+  }
+}
+
+export class PublishIntentExpiredError extends StoreError {
+  readonly expiration: ConsolePublishIntentExpired;
+
+  constructor(idempotencyKey: string) {
+    super('conflict', 'console publish intent expired before it produced an effect');
+    this.name = 'PublishIntentExpiredError';
+    this.expiration = {
+      version: 1,
+      error: 'publish_intent_expired',
+      state: 'expired',
+      idempotency_key: idempotencyKey,
+      safe_to_resubmit: true,
+    };
+  }
+}
+
+export class PublishIntentRateLimitedError extends StoreError {
+  readonly rateLimit: ConsolePublishIntentRateLimited;
+
+  constructor(retryAfterSeconds: number) {
+    super('rate_limited', 'console publish intent creation is rate limited');
+    this.name = 'PublishIntentRateLimitedError';
+    this.rateLimit = {
+      version: 1,
+      error: 'publish_intent_rate_limited',
+      retry_after_seconds: retryAfterSeconds,
+      safe_to_retry: true,
+    };
   }
 }
 
@@ -55,17 +107,24 @@ class NotificationPreview extends Error {
   }
 }
 
-export interface PublishResult {
-  message_id: string;
-  delivery_ids: string[];
-  duplicate: boolean;
-  request_id: string;
-  trace_id: string;
+/** One protocol-owned publish receipt type; the store re-exports it for existing consumers. */
+export type PublishResult = ProtocolPublishResult;
+
+export interface PublishOptions {
+  /** Console-only gate. Machine endpoints deliberately leave it disabled. */
+  readonly requirePreparedConsoleIntent?: boolean;
+  readonly consoleIntentOperatorScope?: string;
 }
+
+export type ProfileRuntimeAdoptionAck = ProfileRuntimeAdoptionEvidence & {
+  readonly adopted_at: string;
+};
 
 export interface LeaseResult {
   acquired: boolean;
   epoch?: number;
+  /** Opaque per-hello fence. Present on every successful acquisition/resume. */
+  connection_token?: string;
   lease_expires_at: string;
   active_instance_id?: string;
 }
@@ -79,14 +138,22 @@ export interface LeaseResult {
  */
 export interface DeliveryAdmission {
   /**
-   * Cupo ADICIONAL al general que sólo puede ocupar una entrega originada por un humano.
-   * Es aditivo, no una porción: con el cupo general en cero, un mensaje de una persona sigue
-   * entrando por acá aunque el agente tenga una tarea de 40 minutos en curso.
+   * Capacidad general DURABLE del consumidor, compartida por HTTP, WebSocket, reconexiones e
+   * instancias de gateway. Si se omite, manda `agents.max_concurrent_deliveries`.
    */
-  readonly humanReservedLimit?: number;
+  readonly generalCapacity?: number;
   /**
-   * Cuántos reclamos humanos seguidos antes de dejar pasar uno agente-a-agente. Evita que una
-   * ráfaga de mensajes humanos mate de hambre al trabajo entre agentes. Por defecto toma el
+   * Capacidad ADICIONAL durable que sólo puede ocupar prioridad autenticada de persona. No es un
+   * cupo nuevo por llamada: se descuentan todas las garras vivas del alias bajo el mismo lock.
+   */
+  readonly humanReservedCapacity?: number;
+  /** Techo TOTAL de filas devueltas por esta llamada; `limit + reserva` si se omite. */
+  readonly maxClaims?: number;
+  /** Runtime gate: reject aliases absent from the durable agent inventory. */
+  readonly requireDeclaredCapacity?: boolean;
+  /**
+   * Cuántos reclamos humanos seguidos antes de dejar pasar un trabajo no humano. Evita que una
+   * ráfaga de mensajes humanos mate de hambre al trabajo de máquina. Por defecto toma el
    * mismo valor que `interactiveBurst` (3), que es el que ya usaba la alternancia de carriles.
    */
   readonly humanBurst?: number;
@@ -101,8 +168,8 @@ export interface LiveDeliveryClaim {
   readonly attempt: number;
   readonly claim_token: string;
   readonly ack_deadline_at: string;
-  /** Clase de la entrega: decide qué cupo ocupa (general o reservado al humano). */
-  readonly agent_to_agent: boolean;
+  /** Hecho derivado de prioridad trusted-at-ingress, nunca del body controlado por el productor. */
+  readonly human_originated: boolean;
 }
 
 /**
@@ -401,6 +468,7 @@ interface DeliveryRow {
  * no sepa validar: no compilaría.
  */
 export type DelegationRejection = DelegationRejectionNotice;
+export type DelegationMaterialization = DelegationMaterializationNotice;
 
 /**
  * Columnas de `deliveries` que agrega la migración 017_late_terminal_ack. Van aparte de
@@ -444,6 +512,8 @@ export interface AckResult {
   receipt: 'applied' | 'duplicate' | 'superseded' | 'ownership_lost';
   /** Presente sólo cuando alguna salida `messages` no se convirtió en entrega. */
   delegation_rejections?: DelegationRejection[];
+  /** Salidas materializadas con la identidad exacta de la entrega hija; nunca incluye bodies. */
+  delegation_materializations?: DelegationMaterialization[];
   /**
    * La rama quedó suspendida esperando a una persona; hay un gate abierto que la reanudará.
    *
@@ -464,6 +534,7 @@ interface AgentOutputOutcome {
    */
   suspended: boolean;
   rejections: DelegationRejection[];
+  materializations: DelegationMaterialization[];
   /** El gate vigente de la raíz, si esta materialización se topó con uno o abrió uno. */
   gate?: OpenChainGate;
 }
@@ -498,6 +569,57 @@ export interface OutboxEvent {
   event_id?: string;
 }
 
+/** Privacy-bounded operational DLQ row.  No message, delivery, outbox or provider id is exposed. */
+export interface OperationalDlqItem {
+  readonly target: 'delivery' | 'outbox';
+  readonly id: string;
+  readonly tenantId: Tenant;
+  readonly kind: string;
+  readonly adapter: string | null;
+  readonly disposition: 'ambiguous' | 'safe_retry' | 'missing_final' | 'auth'
+    | 'expected_offline' | 'unclassified';
+  readonly open: boolean;
+  readonly actionable: boolean;
+  readonly evidenceSha256: string | null;
+  readonly attempts: number;
+  readonly resolutionRule: string | null;
+  readonly createdAt: string;
+  readonly dispositionAt: string | null;
+  readonly resolvedAt: string | null;
+  readonly reopenCount: number;
+  readonly lastReopenedAt: string | null;
+}
+
+/** One deterministic keyset page.  `nextCursor` is opaque and bound to the actor scope in SQL. */
+export interface OperationalDlqPage {
+  readonly schemaVersion: 1;
+  readonly items: OperationalDlqItem[];
+  readonly total: number;
+  readonly truncated: boolean;
+  readonly nextCursor: string | null;
+}
+
+export interface OperationalDlqResolutionRequest {
+  readonly target: 'delivery' | 'outbox';
+  readonly id: string;
+  readonly evidenceSha256: string;
+  readonly reason: string;
+  readonly possibleDuplicateAcknowledged: boolean;
+  readonly possibleNoDeliveryAcknowledged: boolean;
+}
+
+export interface OperationalDlqResolutionResult {
+  readonly schemaVersion: 1;
+  readonly suite: 'cauce-v3-dlq-no-replay-resolution';
+  readonly phase: 'resolved';
+  readonly appliedCount: number;
+  readonly alreadyApplied: boolean;
+  readonly evidenceSha256: string;
+  readonly reasonSha256: string;
+  readonly possibleDuplicateAcknowledged: boolean;
+  readonly possibleNoDeliveryAcknowledged: boolean;
+}
+
 export interface ClaimedOutboxEvent extends OutboxEvent {
   max_attempts: number;
   claimed_by: string;
@@ -505,6 +627,38 @@ export interface ClaimedOutboxEvent extends OutboxEvent {
   claim_expires_at: Date;
   event_id: string;
   attempt: number;
+}
+
+/**
+ * Destinatario conectado que puede recibir un wake durable en este instante.
+ *
+ * El par completo es intencional: los alias no son globales y filtrar sólo por alias permite que
+ * una sesión de otro tenant reclame (y queme) el wake de un destinatario desconectado.
+ */
+export interface WakeOutboxRecipient {
+  readonly tenant_id: Tenant;
+  readonly alias: string;
+  /**
+   * Legacy direct store callers may omit the session fields. The gateway runtime always supplies
+   * all three; a partial fence is rejected before SQL.
+   */
+  readonly instance_id?: string;
+  readonly epoch?: number;
+  readonly connection_token?: string;
+}
+
+export interface FencedWakeOutboxRecipient extends WakeOutboxRecipient {
+  readonly instance_id: string;
+  readonly epoch: number;
+  readonly connection_token: string;
+}
+
+export interface ConnectionSessionFence {
+  readonly tenant_id: Tenant;
+  readonly alias: string;
+  readonly instance_id: string;
+  readonly epoch: number;
+  readonly connection_token: string;
 }
 
 export interface JobClaim extends Record<string, unknown> {
@@ -525,6 +679,8 @@ export interface LeaseAcquireOptions {
   resume?: boolean;
   /** Maximum age of the previous lease for a same-instance resume. */
   resumeWindowMs?: number;
+  /** Refuse the lease atomically unless the consumer has a valid durable capacity row. */
+  requireDeclaredCapacity?: boolean;
 }
 
 export type OutboxRetryResult = 'retry' | 'dead' | 'fenced';
@@ -536,6 +692,70 @@ export interface OutboxAck {
   status: 'sent' | 'retry' | 'dead';
   error?: string;
   retry_after_ms?: number;
+  /** Required by the gateway for wake ACKs; omitted only by legacy/direct non-gateway callers. */
+  connection?: ConnectionSessionFence;
+}
+
+export interface WakeOutboxClaimFence {
+  readonly event_id: string;
+  readonly attempt: number;
+  readonly claim_token: string;
+  readonly worker: string;
+  readonly connection: ConnectionSessionFence;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function validConnectionToken(value: unknown): value is string {
+  return typeof value === 'string' && UUID_PATTERN.test(value);
+}
+
+function normalizedWakeRecipients(recipients: readonly WakeOutboxRecipient[]): WakeOutboxRecipient[] {
+  if (!Array.isArray(recipients)) {
+    throw new StoreError('invalid_input', 'wake outbox recipients must be an array');
+  }
+  const unique = new Map<string, WakeOutboxRecipient>();
+  for (const rawRecipient of recipients as readonly unknown[]) {
+    const recipient = rawRecipient !== null && typeof rawRecipient === 'object'
+      ? rawRecipient as Record<string, unknown>
+      : {};
+    const tenant = TenantSchema.safeParse(recipient.tenant_id);
+    const alias = AliasSchema.safeParse(recipient.alias);
+    if (!tenant.success || !alias.success) {
+      throw new StoreError('invalid_input', 'wake outbox recipient identity is invalid');
+    }
+    const hasAnyFence = recipient.instance_id !== undefined
+      || recipient.epoch !== undefined || recipient.connection_token !== undefined;
+    const fenced = typeof recipient.instance_id === 'string'
+      && recipient.instance_id.length >= 1 && recipient.instance_id.length <= 128
+      && Number.isSafeInteger(recipient.epoch) && Number(recipient.epoch) >= 1
+      && validConnectionToken(recipient.connection_token);
+    if (hasAnyFence && !fenced) {
+      throw new StoreError('invalid_input', 'wake outbox recipient session fence is incomplete or invalid');
+    }
+    const parsed: WakeOutboxRecipient = hasAnyFence
+      ? {
+        tenant_id: tenant.data,
+        alias: alias.data,
+        instance_id: String(recipient.instance_id),
+        epoch: Number(recipient.epoch),
+        connection_token: String(recipient.connection_token),
+      }
+      : { tenant_id: tenant.data, alias: alias.data };
+    const key = `${parsed.tenant_id}\u0000${parsed.alias}`;
+    const previous = unique.get(key);
+    if (previous !== undefined && JSON.stringify(previous) !== JSON.stringify(parsed)) {
+      throw new StoreError('invalid_input', 'wake outbox recipient has conflicting session fences');
+    }
+    // Preserve caller order: the gateway rotates this list once per cycle for durable fairness.
+    if (previous === undefined) unique.set(key, parsed);
+  }
+  const normalized = [...unique.values()];
+  const fencedCount = normalized.filter((recipient) => recipient.connection_token !== undefined).length;
+  if (fencedCount !== 0 && fencedCount !== normalized.length) {
+    throw new StoreError('invalid_input', 'wake outbox recipients cannot mix fenced and legacy identities');
+  }
+  return normalized;
 }
 
 function canonical(value: unknown): unknown {
@@ -550,11 +770,230 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
-function requestHash(input: PublishMessage): string {
-  const semanticCommand: Record<string, unknown> = { ...input };
-  delete semanticCommand.request_id;
-  delete semanticCommand.trace_id;
-  return createHash('sha256').update(JSON.stringify(canonical(semanticCommand))).digest('hex');
+function canonicallyEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+}
+
+interface DurablePublishedMessage {
+  id: string;
+  version: string;
+  request_id: string;
+  trace_id: string;
+  tenant_id: string;
+  room_id: string;
+  actor_alias: string;
+  body: unknown;
+  origin: unknown;
+  lane: string;
+  priority: number;
+  auth_session_id: string | null;
+  auth_channel: string | null;
+}
+
+interface DurablePublishedDelivery {
+  id: string;
+  recipient_tenant: string;
+  recipient_alias: string;
+}
+
+const legacyPublishReceiptKeys = new Set([
+  'message_id', 'delivery_ids', 'duplicate', 'request_id', 'trace_id',
+  'idempotency_key', 'tenant_id', 'actor_alias', 'request_hash', 'causal_hash',
+]);
+const legacyPublishReceiptRequiredKeys = [
+  'message_id', 'delivery_ids', 'duplicate', 'request_id', 'trace_id',
+] as const;
+
+/**
+ * A stored JSON receipt is only an optimization. The message/delivery rows are the durable
+ * effect, so every replay reconstructs their exact identity and treats the historical JSON as a
+ * consistency witness. This is what lets an old receipt gain new fields after a process restart
+ * without ever inserting a second message.
+ */
+async function reconstructPublishReceipt(
+  client: DatabaseClient,
+  input: PublishMessage,
+  messageId: string,
+  requestHash: string,
+  storedResponse: unknown,
+): Promise<PublishResult> {
+  const messageResult = await client.query<DurablePublishedMessage>(
+    `SELECT id,version,request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
+            auth_session_id,auth_channel
+       FROM messages WHERE id=$1 FOR SHARE`,
+    [messageId],
+  );
+  const message = messageResult.rows[0];
+  const authenticated = input.authenticated_context;
+  const expectedOrigin = authenticated?.origin ?? input.origin ?? null;
+  const expectedSession = authenticated?.session_id ?? input.session_id ?? null;
+  const expectedChannel = authenticated?.channel ?? input.channel ?? null;
+  if (messageResult.rowCount !== 1 || !message
+      || message.id !== messageId
+      || message.version !== input.version
+      || message.tenant_id !== input.tenant_id
+      || message.room_id !== input.room_id
+      || message.actor_alias !== input.actor_alias
+      || message.lane !== input.lane
+      || message.priority !== input.priority
+      || message.auth_session_id !== expectedSession
+      || message.auth_channel !== expectedChannel
+      || !canonicallyEqual(message.body, input.body)
+      || !canonicallyEqual(message.origin, expectedOrigin)) {
+    throw new StoreError('conflict', 'idempotent publish durable message differs from its request');
+  }
+
+  const deliveryResult = await client.query<DurablePublishedDelivery>(
+    `SELECT id,recipient_tenant,recipient_alias FROM deliveries WHERE message_id=$1 FOR SHARE`,
+    [messageId],
+  );
+  const byRecipient = new Map<string, string>();
+  for (const row of deliveryResult.rows) {
+    const key = `${row.recipient_tenant}\u0000${row.recipient_alias}`;
+    if (byRecipient.has(key)) {
+      throw new StoreError('conflict', 'idempotent publish has duplicate durable recipients');
+    }
+    byRecipient.set(key, row.id);
+  }
+  const deliveryIds = input.recipients.map((recipient) => (
+    byRecipient.get(`${recipient.tenant_id}\u0000${recipient.alias}`)
+  ));
+  if (deliveryResult.rowCount !== input.recipients.length
+      || deliveryIds.some((deliveryId) => deliveryId === undefined)) {
+    throw new StoreError('conflict', 'idempotent publish deliveries differ from its request');
+  }
+
+  const receipt = buildPublishReceipt(input, {
+    message_id: message.id,
+    delivery_ids: deliveryIds as string[],
+    duplicate: false,
+    request_id: message.request_id,
+    trace_id: message.trace_id,
+  });
+  const parsed = PublishResultSchema.safeParse(receipt);
+  if (!parsed.success) {
+    throw new StoreError('conflict', 'idempotent publish durable effect is not canonical');
+  }
+
+  if (storedResponse === null || typeof storedResponse !== 'object' || Array.isArray(storedResponse)) {
+    throw new StoreError('conflict', 'idempotent publish has no durable historical receipt');
+  }
+  const historical = storedResponse as Record<string, unknown>;
+  const keys = Object.keys(historical);
+  if (keys.some((key) => !legacyPublishReceiptKeys.has(key))
+      || legacyPublishReceiptRequiredKeys.some((key) => !Object.hasOwn(historical, key))
+      || historical.message_id !== parsed.data.message_id
+      || historical.request_id !== parsed.data.request_id
+      || historical.trace_id !== parsed.data.trace_id
+      || historical.duplicate !== false
+      || !Array.isArray(historical.delivery_ids)
+      || historical.delivery_ids.length !== parsed.data.delivery_ids.length
+      || historical.delivery_ids.some((value, index) => value !== parsed.data.delivery_ids[index])
+      || (Object.hasOwn(historical, 'idempotency_key')
+        && historical.idempotency_key !== parsed.data.idempotency_key)
+      || (Object.hasOwn(historical, 'tenant_id') && historical.tenant_id !== parsed.data.tenant_id)
+      || (Object.hasOwn(historical, 'actor_alias') && historical.actor_alias !== parsed.data.actor_alias)
+      || (Object.hasOwn(historical, 'request_hash') && historical.request_hash !== requestHash)
+      || (Object.hasOwn(historical, 'causal_hash')
+        && historical.causal_hash !== parsed.data.causal_hash)) {
+    throw new StoreError('conflict', 'historical publish receipt differs from its durable effect');
+  }
+  return parsed.data;
+}
+
+/** Rebuild and authenticate a console receipt exclusively from durable effect rows. */
+async function reconstructCommittedConsoleIntentReceipt(
+  client: DatabaseClient,
+  expected: {
+    tenant_id: Tenant;
+    actor_alias: string;
+    idempotency_key: string;
+    semantic_hash: string;
+    conversation_hash: string;
+  },
+  durable: { request_hash: string; response: unknown; message_id: string },
+): Promise<PublishResult> {
+  const storedReceipt = PublishResultSchema.safeParse(durable.response);
+  if (!storedReceipt.success
+      || storedReceipt.data.duplicate
+      || storedReceipt.data.tenant_id !== expected.tenant_id
+      || storedReceipt.data.actor_alias !== expected.actor_alias
+      || storedReceipt.data.idempotency_key !== expected.idempotency_key
+      || storedReceipt.data.message_id !== durable.message_id
+      || storedReceipt.data.request_hash !== durable.request_hash
+      || publishReceiptCausalHash(storedReceipt.data) !== storedReceipt.data.causal_hash) {
+    throw new StoreError('conflict', 'committed console publish receipt is invalid');
+  }
+  const messageResult = await client.query<DurablePublishedMessage>(
+    `SELECT id,version,request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
+            auth_session_id,auth_channel
+       FROM messages WHERE id=$1 FOR SHARE`,
+    [durable.message_id],
+  );
+  const message = messageResult.rows[0];
+  if (messageResult.rowCount !== 1 || message === undefined
+      || message.auth_session_id === null || message.auth_channel === null) {
+    throw new StoreError('conflict', 'committed console publish auth context is unavailable');
+  }
+  const origin = message.origin === null ? undefined : OriginSchema.safeParse(message.origin);
+  if (origin !== undefined && !origin.success) {
+    throw new StoreError('conflict', 'committed console publish origin is invalid');
+  }
+  const deliveryResult = await client.query<DurablePublishedDelivery>(
+    `SELECT id,recipient_tenant,recipient_alias
+       FROM deliveries WHERE message_id=$1 FOR SHARE`,
+    [durable.message_id],
+  );
+  const deliveriesById = new Map(deliveryResult.rows.map((delivery) => [delivery.id, delivery]));
+  if (deliveryResult.rowCount !== storedReceipt.data.delivery_ids.length
+      || deliveriesById.size !== deliveryResult.rowCount) {
+    throw new StoreError('conflict', 'committed console publish deliveries are inconsistent');
+  }
+  const recipients = storedReceipt.data.delivery_ids.map((deliveryId) => {
+    const delivery = deliveriesById.get(deliveryId);
+    if (delivery === undefined) {
+      throw new StoreError('conflict', 'committed console publish receipt names an alien delivery');
+    }
+    return { tenant_id: delivery.recipient_tenant, alias: delivery.recipient_alias };
+  });
+  const originalCommand = PublishMessageSchema.safeParse({
+    version: message.version,
+    request_id: message.request_id,
+    trace_id: message.trace_id,
+    tenant_id: message.tenant_id,
+    room_id: message.room_id,
+    actor_alias: message.actor_alias,
+    recipients,
+    body: message.body,
+    idempotency_key: expected.idempotency_key,
+    lane: message.lane,
+    priority: message.priority,
+    authenticated_context: {
+      session_id: message.auth_session_id,
+      channel: message.auth_channel,
+      ...(origin === undefined ? {} : { origin: origin.data }),
+    },
+  });
+  if (!originalCommand.success
+      || consolePublishIntentSemanticHash(originalCommand.data) !== expected.semantic_hash
+      || consolePublishConversationHash(originalCommand.data) !== expected.conversation_hash) {
+    throw new StoreError('conflict', 'committed console publish semantic effect is inconsistent');
+  }
+  const requestHash = publishRequestHash(originalCommand.data);
+  if (durable.request_hash !== requestHash) {
+    throw new StoreError('conflict', 'committed console publish request hash is inconsistent');
+  }
+  const reconstructed = await reconstructPublishReceipt(
+    client,
+    originalCommand.data,
+    durable.message_id,
+    requestHash,
+    durable.response,
+  );
+  if (!canonicallyEqual(reconstructed, storedReceipt.data)) {
+    throw new StoreError('conflict', 'committed console publish receipt differs from durable rows');
+  }
+  return reconstructed;
 }
 
 function ackRank(status: Ack['status']): number {
@@ -584,12 +1023,6 @@ const reservedInternalMessageTypes = new Set([
   'agent.fanin',
   'agent.notify'
 ]);
-/**
- * Se pasa como `text[]` a las consultas de reclamo para que el predicado
- * "esta entrega nació de otro agente" tenga UNA sola definición en todo el árbol
- * (`NON_HUMAN_DELIVERY_MESSAGE_TYPES` en @cauce/protocol) y no dos que se desincronizan.
- */
-const nonHumanDeliveryMessageTypes: string[] = [...NON_HUMAN_DELIVERY_MESSAGE_TYPES];
 const maxNotifyDirectives = 4;
 const maxNotifyBodyBytes = 4 * 1024;
 const maxNotifyAggregateBytes = 8 * 1024;
@@ -896,6 +1329,28 @@ function postgresTextSafe(value: string | undefined): string | undefined {
   return value?.replaceAll(nulCharacter, '');
 }
 
+function canonicalProfileRuntimeContract(value: unknown): ProfileRuntimeContract | undefined {
+  const parsed = ProfileRuntimeContractSchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  return {
+    ...parsed.data,
+    documents: [...parsed.data.documents].sort((left, right) =>
+      left.name.localeCompare(right.name) || left.path.localeCompare(right.path)),
+  };
+}
+
+function profileRuntimeAdoptionEvidence(
+  result: Record<string, unknown> | undefined,
+): ProfileRuntimeAdoptionEvidence | undefined {
+  const parsed = ProfileRuntimeAdoptionEvidenceSchema.safeParse(result?.profile_adoption);
+  if (!parsed.success) return undefined;
+  return {
+    ...parsed.data,
+    documents: [...parsed.data.documents].sort((left, right) =>
+      left.name.localeCompare(right.name) || left.path.localeCompare(right.path)),
+  };
+}
+
 /** Prefijo estable del motivo de una cancelación: es lo que permite contarlas sin heurística. */
 const cancellationReasonPrefix = 'Cancelled by operator';
 const maxCancellationReasonBytes = 500;
@@ -1004,17 +1459,28 @@ function agentNotifyEntries(result: Record<string, unknown> | undefined): AgentN
     : entries;
 }
 
-/** Bodies and destinations become real messages or hashed rejections, never ACK/relay payload residue. */
+/**
+ * Bodies, destinations and runtime-adoption assertions become normalized durable facts, never
+ * opaque ACK/relay residue. `profile_adoption` is validated and written separately under the
+ * delivery/profile locks; persisting the untrusted assertion here would make a rejected mismatch
+ * look like evidence to every reader of `deliveries.result` or `delivery_acks.payload`.
+ */
 function sanitizedAckResult(result: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  const output = objectRecord(result?.output);
-  if (!result || !output) return result;
+  if (!result) return result;
+  const withoutProfileAdoption = { ...result };
+  delete withoutProfileAdoption.profile_adoption;
+  const normalized = Object.keys(withoutProfileAdoption).length === 0
+    ? undefined
+    : withoutProfileAdoption;
+  const output = objectRecord(normalized?.output);
+  if (!normalized || !output) return normalized;
   const hasMessages = Object.prototype.hasOwnProperty.call(output, 'messages');
   const hasNotify = Object.prototype.hasOwnProperty.call(output, 'notify');
-  if (!hasMessages && !hasNotify) return result;
+  if (!hasMessages && !hasNotify) return normalized;
   // Absence is preserved on purpose: injecting a key an output never had would
   // change the bytes persisted in delivery_acks.payload and in the relay payload.
   return {
-    ...result,
+    ...normalized,
     output: {
       ...output,
       ...(hasMessages ? { messages: [] } : {}),
@@ -1511,10 +1977,1285 @@ interface MutableQuotaSnapshotGroup {
   windows: QuotaSnapshotWindow[];
 }
 
+const MAX_OPEN_CONSOLE_PUBLISH_INTENTS = 32;
+// Human-console abuse bounds. Every accepted nonce appends both prepare and head state, so the
+// daily ceiling is deliberately much lower than a generic API quota; exact nonce retries append
+// nothing and remain exempt.
+const MAX_NEW_CONSOLE_PUBLISH_INTENTS_PER_TEN_MINUTES = 60;
+const MAX_NEW_CONSOLE_PUBLISH_INTENTS_PER_DAY = 200;
+const CONSOLE_PUBLISH_PREPARE_ACTION = 'console.publish.prepare';
+const CONSOLE_PUBLISH_CONFIRM_ACTION = 'console.publish.confirm';
+const CONSOLE_PUBLISH_EXPIRE_ACTION = 'console.publish.expire';
+const CONSOLE_PUBLISH_HEAD_ACTION = 'console.publish.head';
+
+type PublishRouteCommand = Pick<
+  PublishMessage,
+  'tenant_id' | 'room_id' | 'actor_alias' | 'recipients'
+>;
+
+interface ConsolePublishPrepareMetadata {
+  readonly version: 1;
+  readonly idempotency_key: string;
+  readonly semantic_hash: string;
+  readonly requested_hash: string;
+  readonly conversation_hash: string;
+  readonly intent_nonce_hash: string;
+  readonly operator_scope_hash: string;
+}
+
+interface ConsolePublishConfirmMetadata extends ConsolePublishPrepareMetadata {
+  readonly causal_hash: string;
+}
+
+interface ConsolePublishJournalPrepare extends ConsolePublishPrepareMetadata {
+  readonly stale: boolean;
+  readonly prepare_audit_id: string;
+}
+
+interface ConsolePublishIntentKeyState {
+  readonly prepared: ConsolePublishJournalPrepare | undefined;
+  readonly confirmed: (ConsolePublishConfirmMetadata & { readonly message_id: string }) | undefined;
+  readonly expired: boolean;
+}
+
+interface ConsolePublishHeadIntent {
+  readonly idempotency_key: string;
+  readonly semantic_hash: string;
+  readonly requested_hash: string;
+  readonly intent_nonce_hash: string;
+  readonly prepare_audit_id: string;
+}
+
+interface ConsolePublishHeadMetadata {
+  readonly version: 1;
+  readonly operator_scope_hash: string;
+  readonly conversation_hash: string;
+  readonly sequence: number;
+  readonly intents: readonly ConsolePublishHeadIntent[];
+}
+
+interface ConsolePublishHeadState extends ConsolePublishHeadMetadata {
+  readonly states: readonly ConsolePublishIntentKeyState[];
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value);
+}
+
+function hasExactKeys(metadata: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(metadata);
+  return keys.length === expected.length && expected.every((key) => Object.hasOwn(metadata, key));
+}
+
+function consolePrepareMetadata(value: unknown): ConsolePublishPrepareMetadata | undefined {
+  const metadata = objectRecord(value);
+  if (metadata === undefined
+      || !hasExactKeys(metadata, [
+        'version', 'idempotency_key', 'semantic_hash', 'conversation_hash',
+        'requested_hash', 'intent_nonce_hash', 'operator_scope_hash',
+      ])
+      || metadata.version !== 1
+      || typeof metadata.idempotency_key !== 'string'
+      || metadata.idempotency_key.length < 1
+      || metadata.idempotency_key.length > 200
+      || !isSha256(metadata.semantic_hash)
+      || !isSha256(metadata.requested_hash)
+      || !isSha256(metadata.conversation_hash)
+      || !isSha256(metadata.intent_nonce_hash)
+      || !isSha256(metadata.operator_scope_hash)) return undefined;
+  return {
+    version: 1,
+    idempotency_key: metadata.idempotency_key,
+    semantic_hash: metadata.semantic_hash,
+    requested_hash: metadata.requested_hash,
+    conversation_hash: metadata.conversation_hash,
+    intent_nonce_hash: metadata.intent_nonce_hash,
+    operator_scope_hash: metadata.operator_scope_hash,
+  };
+}
+
+function consoleConfirmMetadata(value: unknown): ConsolePublishConfirmMetadata | undefined {
+  const metadata = objectRecord(value);
+  if (metadata === undefined
+      || !hasExactKeys(metadata, [
+        'version', 'idempotency_key', 'semantic_hash', 'conversation_hash',
+        'requested_hash', 'intent_nonce_hash', 'operator_scope_hash', 'causal_hash',
+      ])) return undefined;
+  const { causal_hash: causalHash, ...prepareValue } = metadata;
+  const prepared = consolePrepareMetadata(prepareValue);
+  if (prepared === undefined || !isSha256(causalHash)) return undefined;
+  return { ...prepared, causal_hash: causalHash };
+}
+
+function positiveAuditId(value: unknown): value is string {
+  return typeof value === 'string' && /^[1-9][0-9]*$/u.test(value);
+}
+
+function consoleHeadMetadata(value: unknown): ConsolePublishHeadMetadata | undefined {
+  const metadata = objectRecord(value);
+  if (metadata === undefined
+      || !hasExactKeys(metadata, [
+        'version', 'operator_scope_hash', 'conversation_hash', 'sequence', 'intents',
+      ])
+      || metadata.version !== 1
+      || !isSha256(metadata.operator_scope_hash)
+      || !isSha256(metadata.conversation_hash)
+      || !Number.isSafeInteger(metadata.sequence)
+      || Number(metadata.sequence) < 1
+      || !Array.isArray(metadata.intents)
+      || metadata.intents.length > MAX_OPEN_CONSOLE_PUBLISH_INTENTS) return undefined;
+  const intents: ConsolePublishHeadIntent[] = [];
+  const keys = new Set<string>();
+  const nonces = new Set<string>();
+  let previousAuditId = 0n;
+  for (const value of metadata.intents) {
+    const intent = objectRecord(value);
+    if (intent === undefined
+        || !hasExactKeys(intent, [
+          'idempotency_key', 'semantic_hash', 'intent_nonce_hash', 'prepare_audit_id',
+          'requested_hash',
+        ])
+        || typeof intent.idempotency_key !== 'string'
+        || intent.idempotency_key.length < 1
+        || intent.idempotency_key.length > 200
+        || !isSha256(intent.semantic_hash)
+        || !isSha256(intent.requested_hash)
+        || !isSha256(intent.intent_nonce_hash)
+        || !positiveAuditId(intent.prepare_audit_id)
+        || keys.has(intent.idempotency_key)
+        || nonces.has(intent.intent_nonce_hash)) return undefined;
+    const auditId = BigInt(intent.prepare_audit_id);
+    if (auditId <= previousAuditId) return undefined;
+    previousAuditId = auditId;
+    keys.add(intent.idempotency_key);
+    nonces.add(intent.intent_nonce_hash);
+    intents.push({
+      idempotency_key: intent.idempotency_key,
+      semantic_hash: intent.semantic_hash,
+      requested_hash: intent.requested_hash,
+      intent_nonce_hash: intent.intent_nonce_hash,
+      prepare_audit_id: intent.prepare_audit_id,
+    });
+  }
+  return {
+    version: 1,
+    operator_scope_hash: metadata.operator_scope_hash,
+    conversation_hash: metadata.conversation_hash,
+    sequence: Number(metadata.sequence),
+    intents,
+  };
+}
+
+function consolePublishConversationHash(input: PublishRouteCommand): string {
+  const recipients = [...input.recipients].sort((left, right) => (
+    `${left.tenant_id}\u0000${left.alias}`.localeCompare(`${right.tenant_id}\u0000${right.alias}`)
+  ));
+  return sha256({
+    version: 1,
+    tenant_id: input.tenant_id,
+    actor_alias: input.actor_alias,
+    room_id: input.room_id,
+    recipients,
+  });
+}
+
+function consolePublishIntentNonceHash(nonce: string): string {
+  return sha256(`cauce-v3:console-publish-intent-nonce:v1\n${nonce}`);
+}
+
+function validConsoleOperatorScope(scope: string): boolean {
+  return isSha256(scope);
+}
+
+async function lockConsolePublishIntents(
+  client: DatabaseClient,
+  tenantId: Tenant,
+  actorAlias: string,
+): Promise<void> {
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+    `console-publish-intents:${tenantId}:${actorAlias}`,
+  ]);
+}
+
+function sameConsoleIntentBinding(
+  prepared: ConsolePublishPrepareMetadata,
+  closure: ConsolePublishPrepareMetadata,
+): boolean {
+  return prepared.idempotency_key === closure.idempotency_key
+    && prepared.semantic_hash === closure.semantic_hash
+    && prepared.requested_hash === closure.requested_hash
+    && prepared.conversation_hash === closure.conversation_hash
+    && prepared.intent_nonce_hash === closure.intent_nonce_hash
+    && prepared.operator_scope_hash === closure.operator_scope_hash;
+}
+
+async function loadConsolePublishIntentByKey(
+  client: DatabaseClient,
+  tenantId: Tenant,
+  actorAlias: string,
+  idempotencyKey: string,
+): Promise<ConsolePublishIntentKeyState> {
+  const result = await client.query<{
+    audit_id: string;
+    action: string;
+    decision: string;
+    metadata: unknown;
+    message_id: string | null;
+    stale: boolean;
+  }>(
+    `SELECT id::text AS audit_id,action,decision,metadata,message_id,
+            (created_at <= now()-interval '15 minutes') AS stale
+      FROM audit_events
+      WHERE tenant_id=$1 AND actor_alias=$2
+        AND metadata->>'idempotency_key'=$3
+        AND action IN (
+          'console.publish.prepare','console.publish.confirm','console.publish.expire'
+        )
+      ORDER BY id
+      LIMIT 4`,
+    [tenantId, actorAlias, idempotencyKey],
+  );
+  if ((result.rowCount ?? 0) > 3) {
+    throw new StoreError('conflict', 'durable console publish journal has duplicate key state');
+  }
+  let prepared: ConsolePublishJournalPrepare | undefined;
+  let confirmed: (ConsolePublishConfirmMetadata & { readonly message_id: string }) | undefined;
+  let expiration: ConsolePublishPrepareMetadata | undefined;
+
+  for (const row of result.rows) {
+    if (row.decision !== 'allow') {
+      throw new StoreError('conflict', 'durable console publish journal decision is invalid');
+    }
+    if (row.action === CONSOLE_PUBLISH_PREPARE_ACTION) {
+      const metadata = consolePrepareMetadata(row.metadata);
+      if (metadata === undefined || metadata.idempotency_key !== idempotencyKey
+          || row.message_id !== null || prepared !== undefined) {
+        throw new StoreError('conflict', 'durable console publish prepare journal is invalid');
+      }
+      prepared = { ...metadata, stale: row.stale, prepare_audit_id: row.audit_id };
+      continue;
+    }
+    if (row.action === CONSOLE_PUBLISH_CONFIRM_ACTION) {
+      const metadata = consoleConfirmMetadata(row.metadata);
+      if (metadata === undefined || metadata.idempotency_key !== idempotencyKey
+          || row.message_id === null || confirmed !== undefined) {
+        throw new StoreError('conflict', 'durable console publish confirm journal is invalid');
+      }
+      confirmed = { ...metadata, message_id: row.message_id };
+      continue;
+    }
+    const metadata = consolePrepareMetadata(row.metadata);
+    if (metadata === undefined || metadata.idempotency_key !== idempotencyKey
+        || row.message_id !== null || expiration !== undefined) {
+      throw new StoreError('conflict', 'durable console publish expiration journal is invalid');
+    }
+    expiration = metadata;
+  }
+  if ((confirmed !== undefined || expiration !== undefined)
+      && (prepared === undefined
+        || (confirmed !== undefined && !sameConsoleIntentBinding(prepared, confirmed))
+        || (expiration !== undefined && !sameConsoleIntentBinding(prepared, expiration))
+        || (confirmed !== undefined && expiration !== undefined))) {
+    throw new StoreError('conflict', 'durable console publish journal closure is inconsistent');
+  }
+  return { prepared, confirmed, expired: expiration !== undefined };
+}
+
+async function loadConsolePublishIntentByNonce(
+  client: DatabaseClient,
+  tenantId: Tenant,
+  actorAlias: string,
+  operatorScopeHash: string,
+  intentNonceHash: string,
+): Promise<ConsolePublishIntentKeyState | undefined> {
+  const result = await client.query<{ metadata: unknown }>(
+    `SELECT metadata FROM audit_events
+      WHERE tenant_id=$1 AND actor_alias=$2
+        AND action='console.publish.prepare'
+        AND metadata->>'operator_scope_hash'=$3
+        AND metadata->>'intent_nonce_hash'=$4
+      ORDER BY id DESC
+      LIMIT 2`,
+    [
+      tenantId,
+      actorAlias,
+      operatorScopeHash,
+      intentNonceHash,
+    ],
+  );
+  if ((result.rowCount ?? 0) > 1) {
+    throw new StoreError('conflict', 'console publish intent nonce has duplicate durable state');
+  }
+  if (result.rowCount === 0) return undefined;
+  const metadata = consolePrepareMetadata(result.rows[0]?.metadata);
+  if (metadata === undefined
+      || metadata.operator_scope_hash !== operatorScopeHash
+      || metadata.intent_nonce_hash !== intentNonceHash) {
+    throw new StoreError('conflict', 'console publish intent nonce state is invalid');
+  }
+  const state = await loadConsolePublishIntentByKey(
+    client, tenantId, actorAlias, metadata.idempotency_key,
+  );
+  if (state.prepared === undefined || !sameConsoleIntentBinding(metadata, state.prepared)) {
+    throw new StoreError('conflict', 'console publish intent nonce state is inconsistent');
+  }
+  return state;
+}
+
+async function loadConsolePublishHead(
+  client: DatabaseClient,
+  tenantId: Tenant,
+  actorAlias: string,
+  operatorScopeHash: string,
+  conversationHash: string,
+): Promise<ConsolePublishHeadState> {
+  const result = await client.query<{
+    audit_id: string;
+    decision: string;
+    message_id: string | null;
+    metadata: unknown;
+  }>(
+    `SELECT id::text AS audit_id,decision,message_id,metadata
+       FROM audit_events
+      WHERE tenant_id=$1 AND actor_alias=$2
+        AND action='console.publish.head'
+        AND metadata->>'operator_scope_hash'=$3
+        AND metadata->>'conversation_hash'=$4
+      ORDER BY id DESC
+      LIMIT 2`,
+    [tenantId, actorAlias, operatorScopeHash, conversationHash],
+  );
+  if (result.rowCount === 0) {
+    return {
+      version: 1,
+      operator_scope_hash: operatorScopeHash,
+      conversation_hash: conversationHash,
+      sequence: 0,
+      intents: [],
+      states: [],
+    };
+  }
+  const parsed = result.rows.map((row) => {
+    const metadata = consoleHeadMetadata(row.metadata);
+    if (row.decision !== 'allow' || row.message_id !== null || metadata === undefined
+        || metadata.operator_scope_hash !== operatorScopeHash
+        || metadata.conversation_hash !== conversationHash) {
+      throw new StoreError('conflict', 'durable console publish head is invalid');
+    }
+    return metadata;
+  });
+  const latest = parsed[0];
+  if (latest === undefined) {
+    throw new StoreError('conflict', 'durable console publish head is unavailable');
+  }
+  const previous = parsed[1];
+  if ((previous === undefined && latest.sequence !== 1)
+      || (previous !== undefined && latest.sequence !== previous.sequence + 1)) {
+    throw new StoreError('conflict', 'durable console publish head sequence is invalid');
+  }
+  const states: ConsolePublishIntentKeyState[] = [];
+  for (const intent of latest.intents) {
+    const state = await loadConsolePublishIntentByKey(
+      client, tenantId, actorAlias, intent.idempotency_key,
+    );
+    const prepared = state.prepared;
+    if (prepared === undefined
+        || prepared.operator_scope_hash !== operatorScopeHash
+        || prepared.conversation_hash !== conversationHash
+        || prepared.semantic_hash !== intent.semantic_hash
+        || prepared.requested_hash !== intent.requested_hash
+        || prepared.intent_nonce_hash !== intent.intent_nonce_hash
+        || prepared.prepare_audit_id !== intent.prepare_audit_id
+        || state.confirmed !== undefined || state.expired) {
+      throw new StoreError('conflict', 'durable console publish head binding is inconsistent');
+    }
+    states.push(state);
+  }
+  return { ...latest, states };
+}
+
+async function appendConsolePublishHead(
+  client: DatabaseClient,
+  tenantId: Tenant,
+  actorAlias: string,
+  current: ConsolePublishHeadState,
+  intents: readonly ConsolePublishHeadIntent[],
+): Promise<void> {
+  if (current.sequence >= Number.MAX_SAFE_INTEGER) {
+    throw new StoreError('conflict', 'durable console publish head sequence is exhausted');
+  }
+  const metadata: ConsolePublishHeadMetadata = {
+    version: 1,
+    operator_scope_hash: current.operator_scope_hash,
+    conversation_hash: current.conversation_hash,
+    sequence: current.sequence + 1,
+    intents,
+  };
+  if (consoleHeadMetadata(metadata) === undefined) {
+    throw new StoreError('conflict', 'durable console publish head transition is invalid');
+  }
+  await client.query(
+    `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
+     VALUES($1,$2,$3,'allow',$4::jsonb)`,
+    [tenantId, actorAlias, CONSOLE_PUBLISH_HEAD_ACTION, JSON.stringify(metadata)],
+  );
+}
+
+async function assertConsolePublishIntentWriteRate(
+  client: DatabaseClient,
+  tenantId: Tenant,
+  actorAlias: string,
+  operatorScopeHash: string,
+): Promise<void> {
+  const result = await client.query<{ retry_after_seconds: number }>(
+    `WITH recent AS MATERIALIZED (
+       SELECT created_at
+         FROM audit_events
+        WHERE tenant_id=$1 AND actor_alias=$2
+          AND action='console.publish.prepare'
+          AND metadata->>'operator_scope_hash'=$3
+          AND created_at>now()-interval '24 hours'
+        ORDER BY created_at DESC,id DESC
+        LIMIT $5
+     ), boundaries AS (
+       SELECT (
+                SELECT created_at FROM recent
+                 WHERE created_at>now()-interval '10 minutes'
+                 OFFSET $4 LIMIT 1
+              ) AS short_boundary,
+              (
+                SELECT created_at FROM recent OFFSET ($5-1) LIMIT 1
+              ) AS daily_boundary
+     )
+     SELECT GREATEST(
+              1,
+              LEAST(
+                86400,
+                ceil(extract(epoch FROM (
+                  GREATEST(
+                    short_boundary+interval '10 minutes',
+                    daily_boundary+interval '24 hours'
+                  )-now()
+                )))::integer
+              )
+            ) AS retry_after_seconds
+       FROM boundaries
+      WHERE short_boundary IS NOT NULL OR daily_boundary IS NOT NULL`,
+    [
+      tenantId,
+      actorAlias,
+      operatorScopeHash,
+      MAX_NEW_CONSOLE_PUBLISH_INTENTS_PER_TEN_MINUTES - 1,
+      MAX_NEW_CONSOLE_PUBLISH_INTENTS_PER_DAY,
+    ],
+  );
+  const retryAfterSeconds = result.rows[0]?.retry_after_seconds;
+  if (retryAfterSeconds !== undefined) {
+    throw new PublishIntentRateLimitedError(retryAfterSeconds);
+  }
+}
+
+async function expireStaleConsolePublishIntent(
+  client: DatabaseClient,
+  tenantId: Tenant,
+  actorAlias: string,
+  state: ConsolePublishIntentKeyState,
+  forceUneffected = false,
+): Promise<ConsolePublishIntentKeyState> {
+  const prepared = state.prepared;
+  if (prepared === undefined || (!prepared.stale && !forceUneffected)
+      || state.confirmed !== undefined || state.expired) {
+    return state;
+  }
+  const durable = await client.query(
+    `SELECT 1 FROM idempotency_keys
+      WHERE tenant_id=$1 AND actor_alias=$2 AND idempotency_key=$3 FOR SHARE`,
+    [tenantId, actorAlias, prepared.idempotency_key],
+  );
+  if (durable.rowCount !== 0) return state;
+  const head = await loadConsolePublishHead(
+    client,
+    tenantId,
+    actorAlias,
+    prepared.operator_scope_hash,
+    prepared.conversation_hash,
+  );
+  const headIndex = head.intents.findIndex(
+    (intent) => intent.idempotency_key === prepared.idempotency_key,
+  );
+  if (headIndex < 0) {
+    throw new StoreError('conflict', 'console publish expiration is absent from its durable head');
+  }
+  const metadata: ConsolePublishPrepareMetadata = {
+    version: 1,
+    idempotency_key: prepared.idempotency_key,
+    semantic_hash: prepared.semantic_hash,
+    requested_hash: prepared.requested_hash,
+    conversation_hash: prepared.conversation_hash,
+    intent_nonce_hash: prepared.intent_nonce_hash,
+    operator_scope_hash: prepared.operator_scope_hash,
+  };
+  await client.query(
+    `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
+     VALUES($1,$2,$3,'allow',$4::jsonb)`,
+    [tenantId, actorAlias, CONSOLE_PUBLISH_EXPIRE_ACTION, JSON.stringify(metadata)],
+  );
+  await appendConsolePublishHead(
+    client,
+    tenantId,
+    actorAlias,
+    head,
+    head.intents.filter((_, index) => index !== headIndex),
+  );
+  return { ...state, expired: true };
+}
+
+async function assertPublishRoute(
+  client: DatabaseClient,
+  input: PublishRouteCommand,
+): Promise<void> {
+  const actor = await client.query(
+    `SELECT 1 FROM memberships m JOIN role_policies p ON p.role=m.role
+     JOIN tenants t ON t.id=m.tenant_id JOIN rooms r ON r.id=m.room_id AND r.tenant_id=m.tenant_id
+     WHERE m.tenant_id=$1 AND m.room_id=$2 AND m.alias=$3 AND m.enabled
+       AND t.enabled AND r.enabled AND p.allow_route`,
+    [input.tenant_id, input.room_id, input.actor_alias],
+  );
+  if (actor.rowCount !== 1) {
+    throw new StoreError('invalid_actor', 'actor lacks route permission in the source room');
+  }
+
+  for (const recipient of input.recipients) {
+    const member = await client.query(
+      `SELECT 1 FROM memberships m JOIN tenants t ON t.id=m.tenant_id
+       JOIN rooms r ON r.id=m.room_id AND r.tenant_id=m.tenant_id
+       WHERE m.tenant_id=$1 AND m.alias=$2 AND m.enabled AND t.enabled AND r.enabled
+         AND NOT (m.alias=ANY($3::text[])) LIMIT 1`,
+      [recipient.tenant_id, recipient.alias, SYSTEM_PRINCIPAL_ALIASES],
+    );
+    if (member.rowCount !== 1) {
+      throw new StoreError('no_route', `recipient ${recipient.alias} is not routable`);
+    }
+    if (recipient.tenant_id !== input.tenant_id) {
+      const edge = await client.query(
+        `SELECT 1 FROM acl_edges edge
+         JOIN tenants source ON source.id=edge.from_tenant
+         JOIN tenants target ON target.id=edge.to_tenant
+         WHERE edge.from_tenant=$1 AND edge.to_tenant=$2
+           AND edge.enabled AND edge.allow_route AND (source.is_hub OR target.is_hub)`,
+        [input.tenant_id, recipient.tenant_id],
+      );
+      if (edge.rowCount !== 1) {
+        throw new StoreError('forbidden', 'cross-tenant route denied by default');
+      }
+    }
+  }
+}
+
 export class CauceRepository {
   constructor(private readonly pool: DatabasePool) {}
 
-  async publish(input: PublishMessage): Promise<PublishResult> {
+  async recordProfileRuntimeExpectation(
+    tenantId: Tenant,
+    alias: string,
+    input: ProfileRuntimeContract,
+  ): Promise<void> {
+    const contract = canonicalProfileRuntimeContract(input);
+    if (contract === undefined) {
+      throw new StoreError('invalid_input', 'runtime profile expectation is invalid');
+    }
+    await withTransaction(this.pool, async (client) => {
+      const profile = await client.query<{ revision: string | number }>(
+        `SELECT revision FROM agent_profiles
+          WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
+        [tenantId, alias],
+      );
+      if (profile.rowCount !== 1 || Number(profile.rows[0]?.revision) !== contract.revision) {
+        throw new StoreError('conflict', 'runtime profile expectation is not the desired revision');
+      }
+      await client.query(
+        `INSERT INTO agent_profile_runtime_expectations(
+           tenant_id,alias,revision,generation,documents
+         ) VALUES($1,$2,$3,$4,$5::jsonb)
+         ON CONFLICT(tenant_id,alias) DO UPDATE SET
+           revision=EXCLUDED.revision,
+           generation=EXCLUDED.generation,
+           documents=EXCLUDED.documents,
+           updated_at=clock_timestamp()`,
+        [tenantId, alias, contract.revision, contract.generation, JSON.stringify(contract.documents)],
+      );
+    });
+  }
+
+  async readProfileRuntimeAdoption(
+    tenantId: Tenant,
+    alias: string,
+    input: ProfileRuntimeContract,
+  ): Promise<ProfileRuntimeAdoptionAck | undefined> {
+    const expected = canonicalProfileRuntimeContract(input);
+    if (expected === undefined) return undefined;
+    const result = await this.pool.query<{
+      revision: string | number;
+      generation: string;
+      documents: unknown;
+      adopted_at: Date;
+    }>(
+      `SELECT adoption.revision,adoption.generation,adoption.documents,adoption.adopted_at
+         FROM agent_profile_runtime_adoptions adoption
+         JOIN agent_profile_runtime_expectations expectation
+           ON expectation.tenant_id=adoption.tenant_id
+          AND expectation.alias=adoption.alias
+          AND expectation.revision=adoption.revision
+          AND expectation.generation=adoption.generation
+          AND expectation.documents=adoption.documents
+         JOIN agent_profiles profile
+           ON profile.tenant_id=adoption.tenant_id AND profile.alias=adoption.alias
+          AND profile.revision=adoption.revision
+        WHERE adoption.tenant_id=$1 AND adoption.alias=$2
+          AND adoption.revision=$3 AND adoption.generation=$4`,
+      [tenantId, alias, expected.revision, expected.generation],
+    );
+    const row = result.rows[0];
+    if (row === undefined) return undefined;
+    const actual = canonicalProfileRuntimeContract({
+      revision: Number(row.revision), generation: row.generation, documents: row.documents,
+    });
+    if (actual === undefined || !canonicallyEqual(actual, expected)) return undefined;
+    return {
+      evidence: 'adapter_delivery',
+      revision: actual.revision,
+      generation: actual.generation,
+      documents: actual.documents,
+      adopted_at: row.adopted_at.toISOString(),
+    };
+  }
+
+  private async profileRuntimeExpectation(
+    client: DatabaseClient,
+    tenantId: Tenant,
+    alias: string,
+  ): Promise<ProfileRuntimeContract | undefined> {
+    const result = await client.query<{
+      revision: string | number;
+      generation: string;
+      documents: unknown;
+    }>(
+      `SELECT expectation.revision,expectation.generation,expectation.documents
+         FROM agent_profile_runtime_expectations expectation
+         JOIN agent_profiles profile
+           ON profile.tenant_id=expectation.tenant_id AND profile.alias=expectation.alias
+          AND profile.revision=expectation.revision
+        WHERE expectation.tenant_id=$1 AND expectation.alias=$2
+        FOR SHARE OF expectation,profile`,
+      [tenantId, alias],
+    );
+    const row = result.rows[0];
+    return row === undefined ? undefined : canonicalProfileRuntimeContract({
+      revision: Number(row.revision), generation: row.generation, documents: row.documents,
+    });
+  }
+
+  private async recordProfileRuntimeAdoption(
+    client: DatabaseClient,
+    tenantId: Tenant,
+    alias: string,
+    row: DeliveryRow,
+    ack: Ack,
+    evidence: ProfileRuntimeAdoptionEvidence | undefined,
+  ): Promise<boolean> {
+    if (ack.status !== 'done' || evidence === undefined) return false;
+    const expected = await this.profileRuntimeExpectation(client, tenantId, alias);
+    const actual = canonicalProfileRuntimeContract({
+      revision: evidence.revision,
+      generation: evidence.generation,
+      documents: evidence.documents,
+    });
+    if (expected === undefined || actual === undefined || !canonicallyEqual(actual, expected)) {
+      return false;
+    }
+    const inserted = await client.query(
+      `INSERT INTO agent_profile_runtime_adoptions(
+         tenant_id,alias,revision,generation,documents,delivery_id,attempt,instance_id,epoch
+       ) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9)
+       ON CONFLICT(tenant_id,alias,revision,generation) DO NOTHING
+       RETURNING 1`,
+      [
+        tenantId, alias, actual.revision, actual.generation, JSON.stringify(actual.documents),
+        row.id, ack.attempt, ack.instance_id, ack.epoch,
+      ],
+    );
+    await client.query(
+      `UPDATE agent_profiles SET applied_revision=$3
+        WHERE tenant_id=$1 AND alias=$2 AND revision=$3
+          AND (applied_revision IS NULL OR applied_revision<$3)`,
+      [tenantId, alias, actual.revision],
+    );
+    if (inserted.rowCount === 1) {
+      await client.query(
+        `INSERT INTO audit_events(
+           tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+         ) VALUES($1,$2,'agent_profile.adopted','allow',$3,$4,$5,$6,$7::jsonb)`,
+        [
+          tenantId, alias, row.request_id, row.message_id, row.id, row.trace_id,
+          JSON.stringify({
+            revision: actual.revision,
+            generation: actual.generation,
+            document_count: actual.documents.length,
+            attempt: ack.attempt,
+            epoch: ack.epoch,
+          }),
+        ],
+      );
+    }
+    return true;
+  }
+
+  /**
+   * Durably reserve the server-generated key for one authenticated console publish meaning.
+   * The append-only audit rows are state: neither prepare nor confirm belongs to the disposable
+   * observability allowlist.
+   */
+  async prepareConsolePublishIntent(
+    input: ConsolePublishIntentCommand,
+    operatorScopeHash: string,
+  ): Promise<ConsolePublishIntentPrepareResult> {
+    if (!validConsoleOperatorScope(operatorScopeHash)) {
+      throw new StoreError('forbidden', 'console publish operator scope is invalid');
+    }
+    const intentNonce = CanonicalUuidV4Schema.parse(input.intent_nonce);
+    if (input.recipients.length === 0) {
+      throw new StoreError('no_route', 'message has zero recipients');
+    }
+    if (!Number.isInteger(input.requested_priority)
+        || input.requested_priority < -100 || input.requested_priority > 100) {
+      throw new StoreError('invalid_input', 'console publish requested priority is invalid');
+    }
+    if (input.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE
+        || (typeof input.body.type === 'string' && reservedInternalMessageTypes.has(input.body.type))) {
+      throw new StoreError('forbidden', 'reserved internal message types cannot be published by clients');
+    }
+    const uniqueRecipients = new Map(
+      input.recipients.map((item) => [`${item.tenant_id}:${item.alias}`, item]),
+    );
+    if (uniqueRecipients.size !== input.recipients.length) {
+      throw new StoreError('conflict', 'recipient list contains duplicates');
+    }
+    const normalizedInput: ConsolePublishIntentCommand = {
+      ...input,
+      intent_nonce: intentNonce,
+      recipients: [...uniqueRecipients.values()].sort((left, right) => (
+        `${left.tenant_id}\u0000${left.alias}`.localeCompare(`${right.tenant_id}\u0000${right.alias}`)
+      )),
+    };
+    const semanticHash = consolePublishIntentSemanticHash(normalizedInput);
+    const requestedHash = consolePublishIntentRequestedHash(normalizedInput);
+    const conversationHash = consolePublishConversationHash(normalizedInput);
+    const intentNonceHash = consolePublishIntentNonceHash(intentNonce);
+    return withTransaction(this.pool, async (client) => {
+      await assertPublishRoute(client, normalizedInput);
+      await lockConsolePublishIntents(
+        client, normalizedInput.tenant_id, normalizedInput.actor_alias,
+      );
+      const nonceState = await loadConsolePublishIntentByNonce(
+        client,
+        normalizedInput.tenant_id,
+        normalizedInput.actor_alias,
+        operatorScopeHash,
+        intentNonceHash,
+      );
+      if (nonceState !== undefined) {
+        const state = await expireStaleConsolePublishIntent(
+          client,
+          normalizedInput.tenant_id,
+          normalizedInput.actor_alias,
+          nonceState,
+        );
+        const prepared = state.prepared;
+        if (prepared === undefined || state.expired
+            || prepared.requested_hash !== requestedHash
+            || prepared.conversation_hash !== conversationHash
+            || prepared.intent_nonce_hash !== intentNonceHash
+            || prepared.operator_scope_hash !== operatorScopeHash) {
+          throw new StoreError('conflict', 'console publish intent nonce was reused inconsistently');
+        }
+        if (state.confirmed === undefined) {
+          const head = await loadConsolePublishHead(
+            client,
+            normalizedInput.tenant_id,
+            normalizedInput.actor_alias,
+            operatorScopeHash,
+            conversationHash,
+          );
+          if (!head.intents.some((intent) => (
+            intent.idempotency_key === prepared.idempotency_key
+              && intent.prepare_audit_id === prepared.prepare_audit_id
+          ))) {
+            throw new StoreError('conflict', 'console publish intent is absent from its durable head');
+          }
+        }
+        const durableResult = await client.query<{
+          request_hash: string;
+          response: unknown;
+          message_id: string | null;
+        }>(
+          `SELECT request_hash,response,message_id FROM idempotency_keys
+            WHERE tenant_id=$1 AND actor_alias=$2 AND idempotency_key=$3 FOR SHARE`,
+          [normalizedInput.tenant_id, normalizedInput.actor_alias, prepared.idempotency_key],
+        );
+        const durable = durableResult.rows[0];
+        if (durable !== undefined) {
+          if (durable.message_id === null || durable.response === null) {
+            throw new StoreError('conflict', 'prepared console publish durable effect is inconsistent');
+          }
+          const receipt = await reconstructCommittedConsoleIntentReceipt(
+            client,
+            {
+              tenant_id: normalizedInput.tenant_id,
+              actor_alias: normalizedInput.actor_alias,
+              idempotency_key: prepared.idempotency_key,
+              semantic_hash: prepared.semantic_hash,
+              conversation_hash: prepared.conversation_hash,
+            },
+            { ...durable, message_id: durable.message_id },
+          );
+          return {
+            version: 1,
+            state: 'committed',
+            idempotency_key: prepared.idempotency_key,
+            receipt,
+          };
+        }
+        if (state.confirmed !== undefined) {
+          throw new StoreError('conflict', 'confirmed console publish intent lost its durable effect');
+        }
+        if (prepared.semantic_hash !== semanticHash) {
+          throw new StoreError(
+            'conflict',
+            'console publish intent effective policy changed before producing an effect',
+          );
+        }
+        return {
+          version: 1,
+          state: 'prepared',
+          idempotency_key: prepared.idempotency_key,
+          receipt: null,
+        };
+      }
+
+      let head = await loadConsolePublishHead(
+        client,
+        normalizedInput.tenant_id,
+        normalizedInput.actor_alias,
+        operatorScopeHash,
+        conversationHash,
+      );
+      for (const candidate of head.states) {
+        await expireStaleConsolePublishIntent(
+          client,
+          normalizedInput.tenant_id,
+          normalizedInput.actor_alias,
+          candidate,
+        );
+      }
+      head = await loadConsolePublishHead(
+        client,
+        normalizedInput.tenant_id,
+        normalizedInput.actor_alias,
+        operatorScopeHash,
+        conversationHash,
+      );
+      let activeStates = [...head.states];
+      if (activeStates.length > MAX_OPEN_CONSOLE_PUBLISH_INTENTS) {
+        throw new StoreError('conflict', 'console publish intent capacity state exceeds its bound');
+      }
+      const committedMatches: Array<{
+        readonly idempotency_key: string;
+        readonly receipt: ProtocolPublishResult;
+      }> = [];
+      const uneffectedMatches: ConsolePublishIntentKeyState[] = [];
+      for (const state of activeStates) {
+        const prepared = state.prepared;
+        if (prepared === undefined || prepared.requested_hash !== requestedHash) continue;
+        const durableResult = await client.query<{
+          request_hash: string;
+          response: unknown;
+          message_id: string | null;
+        }>(
+          `SELECT request_hash,response,message_id FROM idempotency_keys
+            WHERE tenant_id=$1 AND actor_alias=$2 AND idempotency_key=$3 FOR SHARE`,
+          [normalizedInput.tenant_id, normalizedInput.actor_alias, prepared.idempotency_key],
+        );
+        const durable = durableResult.rows[0];
+        if (durable === undefined) {
+          uneffectedMatches.push(state);
+          continue;
+        }
+        if (durable.message_id === null || durable.response === null) {
+          throw new StoreError('conflict', 'prepared console publish durable effect is inconsistent');
+        }
+        const receipt = await reconstructCommittedConsoleIntentReceipt(
+          client,
+          {
+            tenant_id: normalizedInput.tenant_id,
+            actor_alias: normalizedInput.actor_alias,
+            idempotency_key: prepared.idempotency_key,
+            semantic_hash: prepared.semantic_hash,
+            conversation_hash: prepared.conversation_hash,
+          },
+          { ...durable, message_id: durable.message_id },
+        );
+        committedMatches.push({ idempotency_key: prepared.idempotency_key, receipt });
+      }
+      // `activeStates` follows the head's strictly increasing prepare_audit_id order. Reconcile
+      // one durable effect at a time in that authenticated order: confirming it removes exactly
+      // that binding from the head, making the next lost effect recoverable on the next prepare.
+      // All matching effects were reconstructed above before selecting one, so corruption in a
+      // later binding still fails closed instead of being hidden by the first valid receipt.
+      const committedMatch = committedMatches[0];
+      if (committedMatch !== undefined) {
+        throw new PublishIntentReconciliationRequired({
+          version: 1,
+          error: 'publish_intent_reconciliation_required',
+          state: 'committed',
+          idempotency_key: committedMatch.idempotency_key,
+          receipt: committedMatch.receipt,
+        });
+      }
+
+      const reusableMatches = uneffectedMatches.filter(
+        (state) => state.prepared?.semantic_hash === semanticHash,
+      );
+      const reusable = reusableMatches[0]?.prepared;
+      if (reusable !== undefined) {
+        // A new browser nonce can be a reload after the prepare response was lost. Reusing the
+        // oldest exact reservation closes prepare-B -> late-publish-A -> publish-B duplication.
+        // Any additional legacy reservations for that same requested meaning are closed before
+        // returning so a late owner gets the explicit 410 instead of producing another effect.
+        for (const state of uneffectedMatches) {
+          if (state.prepared?.idempotency_key === reusable.idempotency_key) continue;
+          await expireStaleConsolePublishIntent(
+            client,
+            normalizedInput.tenant_id,
+            normalizedInput.actor_alias,
+            state,
+            true,
+          );
+        }
+        return {
+          version: 1,
+          state: 'prepared',
+          idempotency_key: reusable.idempotency_key,
+          receipt: null,
+        };
+      }
+
+      if (uneffectedMatches.length > 0) {
+        // The public meaning is stable but the effective policy changed before any effect. Close
+        // the obsolete reservation under the actor lock; an already-waiting old publish then
+        // receives the typed 410 and only the newly prepared policy can commit.
+        for (const state of uneffectedMatches) {
+          await expireStaleConsolePublishIntent(
+            client,
+            normalizedInput.tenant_id,
+            normalizedInput.actor_alias,
+            state,
+            true,
+          );
+        }
+        head = await loadConsolePublishHead(
+          client,
+          normalizedInput.tenant_id,
+          normalizedInput.actor_alias,
+          operatorScopeHash,
+          conversationHash,
+        );
+        activeStates = [...head.states];
+      }
+      await assertConsolePublishIntentWriteRate(
+        client,
+        normalizedInput.tenant_id,
+        normalizedInput.actor_alias,
+        operatorScopeHash,
+      );
+      if (activeStates.length >= MAX_OPEN_CONSOLE_PUBLISH_INTENTS) {
+        // A reservation with no idempotency row is not an effect. Lost prepare responses must
+        // not deny the conversation for the whole expiry window, so bounded-capacity pressure
+        // closes the oldest such reservation append-only. A committed/unconfirmed effect is
+        // never evicted: `expireStaleConsolePublishIntent` rechecks idempotency under this lock.
+        for (const candidate of activeStates) {
+          const expired = await expireStaleConsolePublishIntent(
+            client,
+            normalizedInput.tenant_id,
+            normalizedInput.actor_alias,
+            candidate,
+            true,
+          );
+          if (expired.expired) {
+            head = await loadConsolePublishHead(
+              client,
+              normalizedInput.tenant_id,
+              normalizedInput.actor_alias,
+              operatorScopeHash,
+              conversationHash,
+            );
+            activeStates = [...head.states];
+            break;
+          }
+        }
+        if (activeStates.length >= MAX_OPEN_CONSOLE_PUBLISH_INTENTS) {
+          throw new StoreError('conflict', 'console publish intent capacity reached');
+        }
+      }
+
+      const idempotencyKey = `console:${randomUUID()}`;
+      const collision = await client.query(
+        `SELECT 1
+           FROM audit_events
+          WHERE tenant_id=$1 AND actor_alias=$2
+            AND metadata->>'idempotency_key'=$3
+            AND action IN (
+              'console.publish.prepare','console.publish.confirm','console.publish.expire'
+            )
+         UNION ALL
+         SELECT 1
+           FROM idempotency_keys
+          WHERE tenant_id=$1 AND actor_alias=$2 AND idempotency_key=$3
+          LIMIT 1`,
+        [normalizedInput.tenant_id, normalizedInput.actor_alias, idempotencyKey],
+      );
+      if (collision.rowCount !== 0) {
+        throw new StoreError('conflict', 'opaque console publish intent key collision');
+      }
+      const metadata: ConsolePublishPrepareMetadata = {
+        version: 1,
+        idempotency_key: idempotencyKey,
+        semantic_hash: semanticHash,
+        requested_hash: requestedHash,
+        conversation_hash: conversationHash,
+        intent_nonce_hash: intentNonceHash,
+        operator_scope_hash: operatorScopeHash,
+      };
+      const insertedPrepare = await client.query<{ audit_id: string }>(
+        `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
+         VALUES($1,$2,$3,'allow',$4::jsonb)
+         RETURNING id::text AS audit_id`,
+        [
+          normalizedInput.tenant_id,
+          normalizedInput.actor_alias,
+          CONSOLE_PUBLISH_PREPARE_ACTION,
+          JSON.stringify(metadata),
+        ],
+      );
+      const prepareAuditId = insertedPrepare.rows[0]?.audit_id;
+      if (!positiveAuditId(prepareAuditId)) {
+        throw new StoreError('conflict', 'durable console publish prepare id is invalid');
+      }
+      await appendConsolePublishHead(
+        client,
+        normalizedInput.tenant_id,
+        normalizedInput.actor_alias,
+        head,
+        [...head.intents, {
+          idempotency_key: idempotencyKey,
+          semantic_hash: semanticHash,
+          requested_hash: requestedHash,
+          intent_nonce_hash: intentNonceHash,
+          prepare_audit_id: prepareAuditId,
+        }],
+      );
+      return {
+        version: 1,
+        state: 'prepared',
+        idempotency_key: idempotencyKey,
+        receipt: null,
+      };
+    });
+  }
+
+  /** Confirm a committed intent exactly once; an identical retry returns the same receipt. */
+  async confirmConsolePublishIntent(
+    tenantId: Tenant,
+    actorAlias: string,
+    operatorScopeHash: string,
+    candidate: ConsolePublishIntentConfirm,
+  ): Promise<ConsolePublishIntentConfirmResult> {
+    if (!validConsoleOperatorScope(operatorScopeHash)) {
+      throw new StoreError('forbidden', 'console publish operator scope is invalid');
+    }
+    const input = ConsolePublishIntentConfirmSchema.parse(candidate);
+    return withTransaction(this.pool, async (client) => {
+      await lockConsolePublishIntents(client, tenantId, actorAlias);
+      const state = await expireStaleConsolePublishIntent(
+        client,
+        tenantId,
+        actorAlias,
+        await loadConsolePublishIntentByKey(
+          client, tenantId, actorAlias, input.idempotency_key,
+        ),
+      );
+      const prepared = state.prepared;
+      if (prepared === undefined || state.expired
+          || prepared.operator_scope_hash !== operatorScopeHash) {
+        throw new StoreError('conflict', 'console publish intent was not prepared by this actor');
+      }
+
+      const confirmed = state.confirmed;
+      let head: ConsolePublishHeadState | undefined;
+      let headIndex = -1;
+      if (confirmed !== undefined) {
+        if (confirmed.message_id !== input.message_id
+            || confirmed.causal_hash !== input.causal_hash
+            || confirmed.semantic_hash !== prepared.semantic_hash
+            || confirmed.conversation_hash !== prepared.conversation_hash) {
+          throw new StoreError('conflict', 'console publish intent was confirmed with another effect');
+        }
+      } else {
+        head = await loadConsolePublishHead(
+          client,
+          tenantId,
+          actorAlias,
+          prepared.operator_scope_hash,
+          prepared.conversation_hash,
+        );
+        headIndex = head.intents.findIndex((intent) => (
+          intent.idempotency_key === prepared.idempotency_key
+            && intent.prepare_audit_id === prepared.prepare_audit_id
+        ));
+        if (headIndex < 0) {
+          throw new StoreError('conflict', 'console publish confirmation is absent from its durable head');
+        }
+      }
+
+      const durableResult = await client.query<{
+        request_hash: string;
+        response: unknown;
+        message_id: string | null;
+      }>(
+        `SELECT request_hash,response,message_id FROM idempotency_keys
+          WHERE tenant_id=$1 AND actor_alias=$2 AND idempotency_key=$3 FOR UPDATE`,
+        [tenantId, actorAlias, input.idempotency_key],
+      );
+      const durable = durableResult.rows[0];
+      if (durableResult.rowCount !== 1 || durable === undefined
+          || durable.message_id !== input.message_id
+          || durable.message_id === null || durable.response === null) {
+        throw new StoreError('conflict', 'console publish confirmation does not match its durable effect');
+      }
+      const receipt = await reconstructCommittedConsoleIntentReceipt(
+        client,
+        {
+          tenant_id: tenantId,
+          actor_alias: actorAlias,
+          idempotency_key: input.idempotency_key,
+          semantic_hash: prepared.semantic_hash,
+          conversation_hash: prepared.conversation_hash,
+        },
+        { ...durable, message_id: durable.message_id },
+      );
+      if (receipt.message_id !== input.message_id || receipt.causal_hash !== input.causal_hash) {
+        throw new StoreError('conflict', 'console publish confirmation does not match its durable effect');
+      }
+
+      if (confirmed === undefined) {
+        const metadata: ConsolePublishConfirmMetadata = {
+          version: 1,
+          idempotency_key: prepared.idempotency_key,
+          semantic_hash: prepared.semantic_hash,
+          requested_hash: prepared.requested_hash,
+          conversation_hash: prepared.conversation_hash,
+          intent_nonce_hash: prepared.intent_nonce_hash,
+          operator_scope_hash: prepared.operator_scope_hash,
+          causal_hash: input.causal_hash,
+        };
+        await client.query(
+          `INSERT INTO audit_events(
+             tenant_id,actor_alias,action,decision,message_id,metadata
+           ) VALUES($1,$2,$3,'allow',$4,$5::jsonb)`,
+          [
+            tenantId,
+            actorAlias,
+            CONSOLE_PUBLISH_CONFIRM_ACTION,
+            input.message_id,
+            JSON.stringify(metadata),
+          ],
+        );
+        if (head === undefined || headIndex < 0) {
+          throw new StoreError('conflict', 'console publish confirmation head transition is missing');
+        }
+        await appendConsolePublishHead(
+          client,
+          tenantId,
+          actorAlias,
+          head,
+          head.intents.filter((_, index) => index !== headIndex),
+        );
+      }
+      return {
+        version: 1,
+        confirmed: true,
+        idempotency_key: input.idempotency_key,
+        message_id: input.message_id,
+        causal_hash: input.causal_hash,
+      };
+    });
+  }
+
+  /**
+   * Independently proves that a publish receipt names the effect committed for this exact
+   * idempotency tuple.  The gateway calls this after `publish`: a digest carried by the receipt
+   * cannot authenticate IDs that came from that same receipt, while the locked idempotency,
+   * message and delivery rows can.
+   */
+  async verifyPublishReceipt(input: PublishMessage, candidate: PublishResult): Promise<boolean> {
+    const parsed = PublishResultSchema.safeParse(candidate);
+    if (!parsed.success) return false;
+    const hash = publishRequestHash(input);
+    return withTransaction(this.pool, async (client) => {
+      const result = await client.query<{
+        request_hash: string;
+        response: unknown;
+        message_id: string | null;
+      }>(
+        `SELECT request_hash,response,message_id FROM idempotency_keys
+         WHERE tenant_id=$1 AND actor_alias=$2 AND idempotency_key=$3 FOR SHARE`,
+        [input.tenant_id, input.actor_alias, input.idempotency_key],
+      );
+      const durableKey = result.rows[0];
+      if (result.rowCount !== 1 || !durableKey || durableKey.request_hash !== hash
+          || durableKey.message_id === null || durableKey.response === null) {
+        return false;
+      }
+      try {
+        const durable = await reconstructPublishReceipt(
+          client,
+          input,
+          durableKey.message_id,
+          hash,
+          durableKey.response,
+        );
+        // The stored form is always duplicate:false. A retry may only change that response flag;
+        // every identity and causal field still has to be byte-for-byte the durable projection.
+        return canonicallyEqual(durable, { ...parsed.data, duplicate: false });
+      } catch (error) {
+        if (error instanceof StoreError && error.code === 'conflict') return false;
+        throw error;
+      }
+    });
+  }
+
+  async publish(input: PublishMessage, options: PublishOptions = {}): Promise<PublishResult> {
+    if (options.requirePreparedConsoleIntent === true) {
+      if (options.consoleIntentOperatorScope === undefined
+          || !validConsoleOperatorScope(options.consoleIntentOperatorScope)) {
+        throw new StoreError('forbidden', 'console publish operator scope is invalid');
+      }
+      input = {
+        ...input,
+        recipients: [...input.recipients].sort((left, right) => (
+          `${left.tenant_id}\u0000${left.alias}`.localeCompare(`${right.tenant_id}\u0000${right.alias}`)
+        )),
+      };
+    }
     if (input.recipients.length === 0) throw new StoreError('no_route', 'message has zero recipients');
     if (input.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE) {
       const recipient = input.recipients[0];
@@ -1542,46 +3283,73 @@ export class CauceRepository {
       throw new StoreError('conflict', 'recipient list contains duplicates');
     }
     return withTransaction(this.pool, async (client) => {
-      const actor = await client.query(
-        `SELECT 1 FROM memberships m JOIN role_policies p ON p.role=m.role
-         JOIN tenants t ON t.id=m.tenant_id JOIN rooms r ON r.id=m.room_id AND r.tenant_id=m.tenant_id
-         WHERE m.tenant_id=$1 AND m.room_id=$2 AND m.alias=$3 AND m.enabled
-           AND t.enabled AND r.enabled AND p.allow_route`,
-        [input.tenant_id, input.room_id, input.actor_alias]
-      );
-      if (actor.rowCount !== 1) throw new StoreError('invalid_actor', 'actor lacks route permission in the source room');
+      await assertPublishRoute(client, input);
 
-      for (const recipient of uniqueRecipients) {
-        const member = await client.query(
-          `SELECT 1 FROM memberships m JOIN tenants t ON t.id=m.tenant_id
-           JOIN rooms r ON r.id=m.room_id AND r.tenant_id=m.tenant_id
-           WHERE m.tenant_id=$1 AND m.alias=$2 AND m.enabled AND t.enabled AND r.enabled
-             AND NOT (m.alias=ANY($3::text[])) LIMIT 1`,
-          [recipient.tenant_id, recipient.alias, SYSTEM_PRINCIPAL_ALIASES]
+      if (options.requirePreparedConsoleIntent === true) {
+        await lockConsolePublishIntents(client, input.tenant_id, input.actor_alias);
+        const semanticHash = consolePublishIntentSemanticHash(input);
+        const conversationHash = consolePublishConversationHash(input);
+        const state = await expireStaleConsolePublishIntent(
+          client,
+          input.tenant_id,
+          input.actor_alias,
+          await loadConsolePublishIntentByKey(
+            client, input.tenant_id, input.actor_alias, input.idempotency_key,
+          ),
         );
-        if (member.rowCount !== 1) throw new StoreError('no_route', `recipient ${recipient.alias} is not routable`);
-         if (recipient.tenant_id !== input.tenant_id) {
-          const edge = await client.query(
-            `SELECT 1 FROM acl_edges edge
-             JOIN tenants source ON source.id=edge.from_tenant
-             JOIN tenants target ON target.id=edge.to_tenant
-             WHERE edge.from_tenant=$1 AND edge.to_tenant=$2
-               AND edge.enabled AND edge.allow_route AND (source.is_hub OR target.is_hub)`,
-            [input.tenant_id, recipient.tenant_id]
+        const prepared = state.prepared;
+        if (prepared === undefined
+            || prepared.operator_scope_hash !== options.consoleIntentOperatorScope
+            || prepared.semantic_hash !== semanticHash
+            || prepared.conversation_hash !== conversationHash) {
+          throw new StoreError(
+            'conflict',
+            'console publish key was not prepared for this authenticated request',
           );
-          if (edge.rowCount !== 1) throw new StoreError('forbidden', 'cross-tenant route denied by default');
+        }
+        if (state.expired) {
+          throw new PublishIntentExpiredError(prepared.idempotency_key);
+        }
+        if (state.confirmed === undefined) {
+          const head = await loadConsolePublishHead(
+            client,
+            input.tenant_id,
+            input.actor_alias,
+            prepared.operator_scope_hash,
+            prepared.conversation_hash,
+          );
+          if (!head.intents.some((intent) => (
+            intent.idempotency_key === prepared.idempotency_key
+              && intent.prepare_audit_id === prepared.prepare_audit_id
+          ))) {
+            throw new StoreError('conflict', 'console publish key is absent from its durable head');
+          }
         }
       }
 
-      const hash = requestHash(input);
+      const hash = publishRequestHash(input);
       const insertedKey = await client.query(
-        `INSERT INTO idempotency_keys(tenant_id,actor_alias,idempotency_key,request_hash)
-         VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
-        [input.tenant_id, input.actor_alias, input.idempotency_key, hash]
+        `INSERT INTO idempotency_keys(
+           tenant_id,actor_alias,idempotency_key,request_hash,expires_at
+         ) VALUES(
+           $1,$2,$3,$4,
+           CASE WHEN $5::boolean THEN 'infinity'::timestamptz ELSE now()+interval '7 days' END
+         ) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
+        [
+          input.tenant_id,
+          input.actor_alias,
+          input.idempotency_key,
+          hash,
+          options.requirePreparedConsoleIntent === true,
+        ]
       );
       if (insertedKey.rowCount === 0) {
-        const prior = await client.query<{ request_hash: string; response: PublishResult | null }>(
-          `SELECT request_hash,response FROM idempotency_keys
+        const prior = await client.query<{
+          request_hash: string;
+          response: unknown;
+          message_id: string | null;
+        }>(
+          `SELECT request_hash,response,message_id FROM idempotency_keys
            WHERE tenant_id=$1 AND actor_alias=$2 AND idempotency_key=$3 FOR UPDATE`,
           [input.tenant_id, input.actor_alias, input.idempotency_key]
         );
@@ -1589,8 +3357,24 @@ export class CauceRepository {
         if (!existing || existing.request_hash !== hash) {
           throw new StoreError('conflict', 'idempotency key reused with a different request');
         }
-        if (!existing.response) throw new StoreError('conflict', 'idempotency request is still in progress');
-        return { ...existing.response, duplicate: true };
+        if (!existing.message_id || existing.response === null) {
+          throw new StoreError('conflict', 'idempotency request is still in progress');
+        }
+        const repaired = await reconstructPublishReceipt(
+          client,
+          input,
+          existing.message_id,
+          hash,
+          existing.response,
+        );
+        // Upgrade old JSON in place while the idempotency row is locked. The stored form remains
+        // duplicate:false; only this retry response is marked duplicate.
+        await client.query(
+          `UPDATE idempotency_keys SET response=$4::jsonb
+           WHERE tenant_id=$1 AND actor_alias=$2 AND idempotency_key=$3`,
+          [input.tenant_id, input.actor_alias, input.idempotency_key, JSON.stringify(repaired)],
+        );
+        return { ...repaired, duplicate: true };
       }
 
       const authenticated = input.authenticated_context;
@@ -1691,13 +3475,16 @@ export class CauceRepository {
           ]
         );
       }
-      const response: PublishResult = {
+      const response = buildPublishReceipt(input, {
         message_id: messageId,
         delivery_ids: deliveryIds,
         duplicate: false,
         request_id: input.request_id,
-        trace_id: input.trace_id
-      };
+        trace_id: input.trace_id,
+      });
+      if (!PublishResultSchema.safeParse(response).success) {
+        throw new StoreError('conflict', 'publish durable effect did not produce a canonical receipt');
+      }
       await client.query(
         `UPDATE idempotency_keys SET message_id=$4,response=$5::jsonb
          WHERE tenant_id=$1 AND actor_alias=$2 AND idempotency_key=$3`,
@@ -1764,8 +3551,27 @@ export class CauceRepository {
     if (!Number.isSafeInteger(resumeWindowMs) || resumeWindowMs <= 0) {
       throw new StoreError('conflict', 'lease resume window must be a positive integer');
     }
+    if (options.requireDeclaredCapacity !== undefined
+        && typeof options.requireDeclaredCapacity !== 'boolean') {
+      throw new StoreError('conflict', 'lease capacity requirement must be boolean');
+    }
     return withTransaction(this.pool, async (client) => {
       await this.assertRuntimeRoute(client, tenantId, alias);
+      if (options.requireDeclaredCapacity === true) {
+        const capacity = await client.query<{ cap: number | null }>(
+          `SELECT max_concurrent_deliveries AS cap
+             FROM agents WHERE tenant_id=$1 AND alias=$2 FOR SHARE`,
+          [tenantId, alias],
+        );
+        const row = capacity.rows[0];
+        if (row === undefined) {
+          throw new StoreError('conflict', 'delivery consumer is missing its durable agent capacity');
+        }
+        if (row.cap !== null
+            && (!Number.isSafeInteger(row.cap) || row.cap < 1 || row.cap > 100)) {
+          throw new StoreError('conflict', 'delivery consumer capacity is invalid');
+        }
+      }
       // A missing row cannot be protected by SELECT ... FOR UPDATE. The keyed transaction
       // lock serializes the initial insert as well as all later takeovers.
       await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [
@@ -1785,17 +3591,18 @@ export class CauceRepository {
       );
       const active = current.rows[0];
       if (options.resume === true && active?.resumable) {
-        const resumed = await client.query<{ lease_until: Date }>(
+        const resumed = await client.query<{ lease_until: Date; connection_token: string }>(
           `UPDATE connection_leases
            SET capabilities=$5::jsonb,lease_until=now()+$6*interval '1 millisecond',
-               last_heartbeat_at=now()
+               last_heartbeat_at=now(),connection_token=gen_random_uuid()
            WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4
-           RETURNING lease_until`,
+           RETURNING lease_until,connection_token::text`,
           [tenantId, alias, instanceId, Number(active.epoch), JSON.stringify(capabilities), ttlMs]
         );
         return {
           acquired: true,
           epoch: Number(active.epoch),
+          connection_token: resumed.rows[0]!.connection_token,
           lease_expires_at: resumed.rows[0]!.lease_until.toISOString()
         };
       }
@@ -1807,48 +3614,86 @@ export class CauceRepository {
         };
       }
       const nextEpoch = active ? Number(active.epoch) + 1 : 1;
-      const lease = await client.query<{ lease_until: Date }>(
+      const lease = await client.query<{ lease_until: Date; connection_token: string }>(
         `INSERT INTO connection_leases(tenant_id,alias,instance_id,epoch,capabilities,lease_until,last_heartbeat_at,connected_at)
          VALUES($1,$2,$3,$4,$5::jsonb,now()+$6*interval '1 millisecond',now(),now())
          ON CONFLICT(tenant_id,alias) DO UPDATE SET
            instance_id=EXCLUDED.instance_id,epoch=EXCLUDED.epoch,capabilities=EXCLUDED.capabilities,
-           lease_until=EXCLUDED.lease_until,last_heartbeat_at=now(),connected_at=now()
-         RETURNING lease_until`, [tenantId, alias, instanceId, nextEpoch, JSON.stringify(capabilities), ttlMs]
+           lease_until=EXCLUDED.lease_until,last_heartbeat_at=now(),connected_at=now(),
+           connection_token=gen_random_uuid()
+         RETURNING lease_until,connection_token::text`, [tenantId, alias, instanceId, nextEpoch, JSON.stringify(capabilities), ttlMs]
       );
-      return { acquired: true, epoch: nextEpoch, lease_expires_at: lease.rows[0]!.lease_until.toISOString() };
+      return {
+        acquired: true,
+        epoch: nextEpoch,
+        connection_token: lease.rows[0]!.connection_token,
+        lease_expires_at: lease.rows[0]!.lease_until.toISOString(),
+      };
     });
   }
 
-  async heartbeat(tenantId: Tenant, alias: string, instanceId: string, epoch: number, ttlMs: number): Promise<string> {
-    return withTransaction(this.pool, async (client) => {
+  async heartbeat(
+    tenantId: Tenant,
+    alias: string,
+    instanceId: string,
+    epoch: number,
+    ttlMs: number,
+    connectionToken?: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    if (connectionToken !== undefined && !validConnectionToken(connectionToken)) {
+      throw new StoreError('fenced', 'heartbeat requires a valid connection token');
+    }
+    const work = async (client: DatabaseClient): Promise<string> => {
       await this.assertRuntimeRoute(client, tenantId, alias);
       const result = await client.query<{ lease_until: Date }>(
         `UPDATE connection_leases SET lease_until=now()+$5*interval '1 millisecond',last_heartbeat_at=now()
          WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4 AND lease_until > now()
-         RETURNING lease_until`, [tenantId, alias, instanceId, epoch, ttlMs]
+           AND ($6::uuid IS NULL OR connection_token=$6::uuid)
+         RETURNING lease_until`, [tenantId, alias, instanceId, epoch, ttlMs, connectionToken ?? null]
       );
       const lease = result.rows[0];
       if (!lease) throw new StoreError('fenced', 'heartbeat rejected by lease fencing');
       return lease.lease_until.toISOString();
-    });
+    };
+    return signal === undefined
+      ? withTransaction(this.pool, work)
+      : withAbortableTransaction(this.pool, signal, work);
   }
 
-  async releaseLease(tenantId: Tenant, alias: string, instanceId: string, epoch: number): Promise<void> {
-    await withTransaction(this.pool, async (client) => {
-      await client.query(
-        `UPDATE connection_leases SET lease_until=now()
-         WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4`,
-        [tenantId, alias, instanceId, epoch]
-      );
-      await client.query(
-        `UPDATE deliveries
+  async releaseLease(
+    tenantId: Tenant,
+    alias: string,
+    instanceId: string,
+    epoch: number,
+    connectionToken?: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (connectionToken !== undefined && !validConnectionToken(connectionToken)) return false;
+    const work = async (client: DatabaseClient): Promise<boolean> => {
+      const result = await client.query<{ released: boolean }>(
+        `WITH released AS (
+           UPDATE connection_leases SET lease_until=now()
+            WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4
+              AND ($5::uuid IS NULL OR connection_token=$5::uuid)
+            RETURNING 1
+         ), released_deliveries AS (
+           UPDATE deliveries
          SET ack_deadline_at=LEAST(COALESCE(ack_deadline_at,now()),now()),
              claim_expires_at=now(),updated_at=now()
          WHERE recipient_tenant=$1 AND recipient_alias=$2 AND consumer_instance_id=$3
-           AND consumer_epoch=$4 AND status IN ('leased','accepted','started')`,
-        [tenantId, alias, instanceId, epoch]
+             AND consumer_epoch=$4 AND status IN ('leased','accepted','started')
+             AND EXISTS(SELECT 1 FROM released)
+           RETURNING 1
+         )
+         SELECT EXISTS(SELECT 1 FROM released) AS released`,
+        [tenantId, alias, instanceId, epoch, connectionToken ?? null]
       );
-    });
+      return result.rows[0]?.released === true;
+    };
+    return signal === undefined
+      ? withTransaction(this.pool, work)
+      : withAbortableTransaction(this.pool, signal, work);
   }
 
   async listPresence(actorTenant?: Tenant, actorAlias?: string): Promise<Array<Record<string, unknown>>> {
@@ -1941,18 +3786,16 @@ export class CauceRepository {
   /**
    * Reclama trabajo para un consumidor, respetando dos cupos separados.
    *
-   * `limit` es el cupo general: lo puede ocupar cualquier entrega. `admission.humanReservedLimit`
-   * es un cupo ADICIONAL que sólo puede ocupar una entrega originada por un humano (o por
-   * cualquier cosa que no sea agente-a-agente; ver `isAgentToAgentBody`). Que sea aditivo y no
-   * una porción del general es todo el punto: si el gateway pide `limit=0` porque el agente ya
-   * tiene sus dos tareas largas en vuelo, un mensaje nuevo de una persona TODAVÍA entra por el
-   * cupo reservado, en el mismo tick, sin esperar a que la tarea de 40 minutos termine.
+   * `admission.generalCapacity` y `humanReservedCapacity` son capacidades DURABLES, no límites
+   * frescos por llamada. Se descuentan las garras vivas bajo el lock por alias. `maxClaims` sólo
+   * acota el lote devuelto al llamador. La clase humana sale exclusivamente de la banda de
+   * prioridad autenticada en el ingreso; jamás de `body.type`, controlado por productores.
    *
    * El desempate lo sigue haciendo el mecanismo que ya existía (`delivery_lane_fairness`), sólo
    * que su contador pasa a contar rachas de humano en vez de rachas de carril 'interactive'.
    * Es literalmente la misma columna y el mismo default (3): después de 3 reclamos humanos
-   * seguidos deja pasar uno agente-a-agente, para que el trabajo entre agentes no se muera de
-   * hambre. Como reclamar es un UPDATE de una fila, ese "esperar un turno" cuesta milisegundos:
+   * seguidos deja pasar un trabajo no humano, para que la cola de máquina no se muera de hambre.
+   * Como reclamar es un UPDATE de una fila, ese "esperar un turno" cuesta milisegundos:
    * el humano nunca queda detrás de la DURACIÓN de una tarea, sólo detrás de un reclamo.
    */
   async claimDeliveries(
@@ -1963,21 +3806,37 @@ export class CauceRepository {
     limit = 20,
     ackDeadlineMs = 30_000,
     interactiveBurst = 3,
-    admission: DeliveryAdmission = {}
+    admission: DeliveryAdmission = {},
+    connectionToken?: string,
+    signal?: AbortSignal,
   ): Promise<ClaimedDeliveryEnvelope[]> {
-    const humanReservedLimit = Math.trunc(admission.humanReservedLimit ?? 0);
-    const humanBurst = Math.trunc(admission.humanBurst ?? interactiveBurst);
-    if (limit < 0 || humanReservedLimit < 0 || limit + humanReservedLimit < 1
-      || ackDeadlineMs <= 0 || interactiveBurst < 1 || humanBurst < 1) {
+    const generalCapacity = admission.generalCapacity;
+    const humanReservedCapacity = admission.humanReservedCapacity ?? 0;
+    const maxClaims = admission.maxClaims ?? Math.min(100, limit + humanReservedCapacity);
+    const humanBurst = admission.humanBurst ?? interactiveBurst;
+    if (!Number.isSafeInteger(limit) || limit < 0
+      || (generalCapacity !== undefined
+        && (!Number.isSafeInteger(generalCapacity) || generalCapacity < 0))
+      || !Number.isSafeInteger(humanReservedCapacity) || humanReservedCapacity < 0
+      || !Number.isSafeInteger(maxClaims) || maxClaims < 1 || maxClaims > 100
+      || (admission.requireDeclaredCapacity !== undefined
+        && typeof admission.requireDeclaredCapacity !== 'boolean')
+      || !Number.isSafeInteger(ackDeadlineMs) || ackDeadlineMs <= 0
+      || !Number.isSafeInteger(interactiveBurst) || interactiveBurst < 1
+      || !Number.isSafeInteger(humanBurst) || humanBurst < 1) {
       throw new StoreError('conflict', 'claim limits and deadlines must be positive');
     }
-    return withTransaction(this.pool, async (client) => {
+    if (connectionToken !== undefined && !validConnectionToken(connectionToken)) {
+      throw new StoreError('fenced', 'delivery claim requires a valid connection token');
+    }
+    const work = async (client: DatabaseClient): Promise<ClaimedDeliveryEnvelope[]> => {
       await this.assertRuntimeRoute(client, tenantId, alias);
       const lease = await client.query<{ capabilities: unknown }>(
         `SELECT capabilities FROM connection_leases
          WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4 AND lease_until>now()
+           AND ($5::uuid IS NULL OR connection_token=$5::uuid)
          FOR UPDATE`,
-        [tenantId, alias, instanceId, epoch]
+        [tenantId, alias, instanceId, epoch, connectionToken ?? null]
       );
       if (lease.rowCount !== 1) throw new StoreError('fenced', 'delivery claim rejected by lease fencing');
       const capabilities = lease.rows[0]?.capabilities;
@@ -1988,6 +3847,8 @@ export class CauceRepository {
       // no conoce y se quedaría sin consumir NINGUNA entrega. Sólo se manda a quien lo declaró.
       const includeSelfRole = Array.isArray(capabilities)
         && capabilities.includes('agent_identity_v1');
+      const includeProfileRuntimeContract = Array.isArray(capabilities)
+        && capabilities.includes('agent_profile_adoption_v1');
 
       await client.query(
         `INSERT INTO delivery_lane_fairness(tenant_id,alias) VALUES($1,$2)
@@ -2021,9 +3882,11 @@ export class CauceRepository {
        * MISMO alias ya está serializado en este punto. El conteo no puede quedar viejo entre
        * que se lee y que se reclama, y dos reclamos simultáneos no pueden superar el techo.
        *
-       * Ausencia de fila en `agents` o columna NULL => sin techo. Fail-open deliberado: los 15
-       * alias vivos tienen fila, y el consumidor que no está modelado como agente (un puente,
-       * un recolector) tiene que seguir comportándose como antes.
+       * El runtime manda `requireDeclaredCapacity=true`: allí, ausencia de fila en `agents` es
+       * rechazo. Los llamadores directos legacy conservan compatibilidad, pero quedan durablemente
+       * acotados al `limit` de su llamada en vez de recibir capacidad infinita. NULL en una fila
+       * existente conserva el escape hatch explícito del techo por agente; una capacidad general
+       * que mande el gateway sigue vigente.
        *
        * INTEGRACIÓN 2026-07-29 — DÓNDE SE APLICA EL TECHO, que es la decisión de fusión.
        * El techo acota el cupo GENERAL, no el total. La reserva humana queda por encima, igual
@@ -2038,53 +3901,93 @@ export class CauceRepository {
        *  2. Si el techo (default 2) se aplicara al total, con dos delegaciones en vuelo la
        *     reserva humana quedaría permanentemente inalcanzable y el arreglo de prioridad —
        *     que existe porque el dueño esperaba 114 min de mediana — quedaría muerto en la
-       *     práctica. El peor caso combinado sigue acotado: `cap` + `humanReservedLimit`.
+       *     práctica. El peor caso combinado sigue acotado: capacidad general + reserva humana.
        */
-      const capacity = await client.query<{ cap: number | null; in_flight: string }>(
+      /*
+       * Hold the durable capacity row through the claim commit. Configuration mutations take
+       * `FOR UPDATE` on this same row, so a concurrent reduction either commits before we read
+       * the new cap or waits until this claim has committed under the old cap. Lock order here is
+       * lease -> fairness -> agent; configuration never takes either of the first two locks.
+       */
+      const configuredCapacity = await client.query<{ cap: number | null }>(
+        `SELECT max_concurrent_deliveries AS cap FROM agents
+          WHERE tenant_id=$1 AND alias=$2 FOR SHARE`,
+        [tenantId, alias],
+      );
+      const capacity = await client.query<{
+        in_flight: string; human_in_flight: string;
+      }>(
         `SELECT
-           (SELECT a.max_concurrent_deliveries FROM agents a
-             WHERE a.tenant_id=$1 AND a.alias=$2) AS cap,
            (SELECT count(*) FROM deliveries d
              WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
-               AND d.status IN ('leased','accepted','started')) AS in_flight`,
-        [tenantId, alias]
+               AND d.status IN ('leased','accepted','started')
+               AND d.claim_token IS NOT NULL
+               AND d.ack_deadline_at IS NOT NULL AND d.ack_deadline_at>now()) AS in_flight,
+           (SELECT count(*) FROM deliveries d JOIN messages m ON m.id=d.message_id
+             WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
+               AND d.status IN ('leased','accepted','started')
+               AND d.claim_token IS NOT NULL
+               AND d.ack_deadline_at IS NOT NULL AND d.ack_deadline_at>now()
+               AND m.priority >= $3) AS human_in_flight`,
+        [tenantId, alias, HUMAN_PRIORITY_FLOOR]
       );
-      const concurrencyCap = capacity.rows[0]?.cap ?? null;
-      const inFlight = Number(capacity.rows[0]?.in_flight ?? 0);
-      // Un techo ya consumido da 0: el cupo general no reclama nada y lo no reclamado sigue
-      // 'pending'/'retry' esperando el próximo wake. El drenaje depende de que el gateway
-      // vuelva a llamar cuando se libere capacidad — ver el drain tras un ACK terminal.
-      const capRemaining = concurrencyCap === null
-        ? Number.POSITIVE_INFINITY
-        : Math.max(0, concurrencyCap - inFlight);
+      const capacityRow = capacity.rows[0];
+      if (capacityRow === undefined) {
+        throw new StoreError('conflict', 'delivery consumer capacity could not be evaluated');
+      }
+      const configured = configuredCapacity.rowCount === 1;
+      if (!configured && admission.requireDeclaredCapacity === true) {
+        throw new StoreError('conflict', 'delivery consumer is missing its durable agent capacity');
+      }
+      const concurrencyCap = configured ? configuredCapacity.rows[0]!.cap : null;
+      const inFlight = Number(capacityRow.in_flight);
+      const humanInFlight = Number(capacityRow.human_in_flight);
+      if (!Number.isSafeInteger(inFlight) || inFlight < 0
+        || !Number.isSafeInteger(humanInFlight) || humanInFlight < 0
+        || humanInFlight > inFlight
+        || (concurrencyCap !== null
+          && (!Number.isSafeInteger(concurrencyCap) || concurrencyCap < 1))) {
+        throw new StoreError('conflict', 'delivery consumer capacity is invalid');
+      }
 
-      // Cupo general (cualquier entrega) y cupo reservado (sólo humano). Se cuentan por
-      // separado y el humano gasta PRIMERO el reservado, para no comerse el cupo con el que
-      // el agente pipelinea su trabajo largo.
-      let generalRemaining = Math.min(limit, 100, capRemaining);
-      let humanReservedRemaining = Math.min(humanReservedLimit, 100);
-      const maxClaims = Math.min(generalRemaining + humanReservedRemaining, 100);
+      // Una persona ocupa primero la reserva. Sólo el excedente humano consume capacidad
+      // general. La fila de fairness serializa este conteo con todo claim concurrente del alias,
+      // así que HTTP, WebSocket, reconexión y varios gateways comparten el mismo presupuesto.
+      const reservedInFlight = Math.min(humanInFlight, humanReservedCapacity);
+      const generalInFlight = inFlight - reservedInFlight;
+      const effectiveGeneralCapacity = generalCapacity === undefined
+        ? configured
+          ? concurrencyCap ?? Number.POSITIVE_INFINITY
+          : limit
+        : concurrencyCap === null ? generalCapacity : Math.min(generalCapacity, concurrencyCap);
+      let generalRemaining = Math.min(
+        maxClaims,
+        Math.max(0, effectiveGeneralCapacity - generalInFlight),
+      );
+      let humanReservedRemaining = Math.min(
+        maxClaims,
+        Math.max(0, humanReservedCapacity - reservedInFlight),
+      );
 
       /**
        * Reclama exactamente una entrega de la clase pedida, o `undefined` si no hay ninguna
        * disponible (o si otro worker se la llevó primero: SKIP LOCKED).
        *
-       * El predicado de clase (`body->>'type'`) NO es indexable y no hay índice que lo vuelva
-       * indexable barato: vive en `messages` y el escaneo lo maneja `deliveries_claim_idx`, que
-       * ya es parcial sobre `status IN ('pending','retry')` y cubre (tenant, alias,
-       * available_at). Por eso el arreglo no fue agregar un índice sino dejar de preguntar dos
-       * veces: la versión anterior corría DOS `EXISTS` de sondeo por cada vuelta de cupo, sobre
-       * la cola entera del alias, antes de reclamar. Con colas de horas —que es lo que reporta
-       * el incidente— eso era el escaneo caro repetido 2·N veces. Ahora se intenta el reclamo
-       * directo, que usa el mismo índice y corta en LIMIT 1.
+       * El predicado de clase por prioridad trusted-at-ingress vive en `messages`; el escaneo lo
+       * maneja `deliveries_claim_idx`, parcial sobre `status IN ('pending','retry')` y con
+       * (tenant, alias, available_at). Por eso el arreglo no fue agregar un índice sino dejar de
+       * preguntar dos veces: la versión anterior corría DOS `EXISTS` de sondeo por cada vuelta
+       * de cupo, sobre la cola entera del alias, antes de reclamar. Con colas de horas —que es lo
+       * que reporta el incidente— eso era el escaneo caro repetido 2·N veces. Ahora se intenta el
+       * reclamo directo, que usa el mismo índice y corta en LIMIT 1.
        */
-      const claimOne = async (agentToAgent: boolean): Promise<DeliveryRow | undefined> => {
+      const claimOne = async (humanOriginated: boolean): Promise<DeliveryRow | undefined> => {
         const claimed = await client.query<DeliveryRow>(
           `WITH picked AS (
              SELECT d.id FROM deliveries d JOIN messages m ON m.id=d.message_id
              WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
                AND d.status IN ('pending','retry') AND d.available_at<=now()
-               AND (COALESCE(m.body->>'type','') = ANY($5::text[]))=$7::boolean
+               AND (m.priority >= $5)=$7::boolean
              ORDER BY (m.lane='interactive') DESC,m.priority DESC,d.available_at,d.created_at
              FOR UPDATE OF d SKIP LOCKED LIMIT 1
            ), updated AS (
@@ -2099,7 +4002,7 @@ export class CauceRepository {
                    m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,m.body,m.lane,m.priority,m.origin,
                    m.auth_session_id,m.auth_channel
            FROM updated u JOIN messages m ON m.id=u.message_id`,
-          [tenantId, alias, epoch, instanceId, nonHumanDeliveryMessageTypes, ackDeadlineMs, agentToAgent]
+          [tenantId, alias, epoch, instanceId, HUMAN_PRIORITY_FLOOR, ackDeadlineMs, humanOriginated]
         );
         return claimed.rows[0];
       };
@@ -2109,43 +4012,42 @@ export class CauceRepository {
         const agentSlotFree = generalRemaining > 0;
         if (!humanSlotFree && !agentSlotFree) break;
         // El humano gana siempre, salvo que ya haya ganado `humanBurst` veces seguidas: ahí
-        // cede exactamente un turno para que el trabajo entre agentes no se muera de hambre.
+        // cede exactamente un turno para que el trabajo no humano no se muera de hambre.
         const yieldTurn = humanSlotFree && agentSlotFree && humanStreak >= humanBurst;
-        // `agentToAgent=false` es la clase humana. Con el cupo general agotado y reserva libre
-        // sólo queda la humana; el caso simétrico no existe porque sin cupo general tampoco hay
-        // cupo humano general y ya habríamos cortado arriba.
+        // `true` es la clase humana. Con el cupo general agotado y reserva libre sólo queda esa
+        // clase; las máquinas nunca pueden ocupar el reservado.
         const order: boolean[] = !agentSlotFree
-          ? [false]
-          : yieldTurn ? [true, false] : [false, true];
+          ? [true]
+          : yieldTurn ? [false, true] : [true, false];
 
         let row: DeliveryRow | undefined;
-        let claimedAgentToAgent = false;
+        let claimedHuman = false;
         let yieldedToNobody = false;
-        for (const agentToAgent of order) {
-          row = await claimOne(agentToAgent);
+        for (const humanOriginated of order) {
+          row = await claimOne(humanOriginated);
           if (row !== undefined) {
-            claimedAgentToAgent = agentToAgent;
+            claimedHuman = humanOriginated;
             break;
           }
           // Cedimos el turno y no había nadie del otro lado esperándolo. La racha se reinicia
           // acá mismo para no volver a pagar el intento fallido en cada vuelta siguiente.
-          if (agentToAgent && yieldTurn) yieldedToNobody = true;
+          if (!humanOriginated && yieldTurn) yieldedToNobody = true;
         }
         // Ni una ni otra clase: o la cola está vacía o todo lo disponible está bloqueado por
         // otro worker, que es lo mismo desde acá — ese trabajo ya lo está tomando alguien.
         if (row === undefined) break;
 
         claimedRows.push(row);
-        if (claimedAgentToAgent) {
-          generalRemaining -= 1;
-          humanStreak = 0;
-        } else {
+        if (claimedHuman) {
           if (humanReservedRemaining > 0) humanReservedRemaining -= 1;
           else generalRemaining -= 1;
           // Saturado en el umbral, igual que el scheduler de jobs: la columna es un contador
           // durable y no tiene por qué crecer sin techo cuando un asistente recibe una ráfaga
-          // de mensajes de su dueño y no hay trabajo entre agentes que le dispute el turno.
+          // de mensajes de su dueño y no hay trabajo no humano que le dispute el turno.
           humanStreak = yieldedToNobody ? 1 : Math.min(humanBurst, humanStreak + 1);
+        } else {
+          generalRemaining -= 1;
+          humanStreak = 0;
         }
       }
       await client.query(
@@ -2160,6 +4062,9 @@ export class CauceRepository {
       // rol de otro alias.
       const selfRole = includeSelfRole && claimedRows.length > 0
         ? await this.selfRoleFromProfile(client, tenantId, alias)
+        : undefined;
+      const profileRuntimeContract = includeProfileRuntimeContract && claimedRows.length > 0
+        ? await this.profileRuntimeExpectation(client, tenantId, alias)
         : undefined;
 
       return claimedRows.map((row) => ({
@@ -2181,6 +4086,9 @@ export class CauceRepository {
         body: row.body,
         ...(routingTargets === undefined ? {} : { routing_targets: routingTargets }),
         ...(selfRole === undefined ? {} : { self_role: selfRole }),
+        ...(profileRuntimeContract === undefined
+          ? {}
+          : { profile_runtime_contract: profileRuntimeContract }),
         ...(row.origin ? { origin: row.origin } : {}),
         ...(row.auth_session_id && row.auth_channel ? {
           authenticated_context: {
@@ -2190,7 +4098,10 @@ export class CauceRepository {
           }
         } : {})
       }));
-    });
+    };
+    return signal === undefined
+      ? withTransaction(this.pool, work)
+      : withAbortableTransaction(this.pool, signal, work);
   }
 
   /**
@@ -2225,16 +4136,16 @@ export class CauceRepository {
       attempt: number;
       claim_token: string | null;
       ack_deadline_at: Date | null;
-      agent_to_agent: boolean;
+      human_originated: boolean;
     }>(
       `SELECT d.id,d.attempt,d.claim_token,d.ack_deadline_at,
-              COALESCE(m.body->>'type','') = ANY($3::text[]) AS agent_to_agent
+              m.priority >= $3 AS human_originated
        FROM deliveries d JOIN messages m ON m.id=d.message_id
        WHERE d.recipient_tenant=$1 AND d.recipient_alias=$2
          AND d.status IN ('leased','accepted','started')
          AND d.ack_deadline_at IS NOT NULL AND d.ack_deadline_at>now()
        ORDER BY d.ack_deadline_at LIMIT $4`,
-      [tenantId, alias, nonHumanDeliveryMessageTypes, limit]
+      [tenantId, alias, HUMAN_PRIORITY_FLOOR, limit]
     );
     return rows.rows
       .filter((row): row is typeof row & { claim_token: string; ack_deadline_at: Date } =>
@@ -2244,7 +4155,7 @@ export class CauceRepository {
         attempt: row.attempt,
         claim_token: row.claim_token,
         ack_deadline_at: row.ack_deadline_at.toISOString(),
-        agent_to_agent: row.agent_to_agent === true
+        human_originated: row.human_originated === true
       }));
   }
 
@@ -2308,6 +4219,7 @@ export class CauceRepository {
       const safeAckResult = postgresJsonSafe(ack.result) as Record<string, unknown> | undefined;
       const outputs = agentOutputEntries(safeAckResult);
       const notifications = agentNotifyEntries(safeAckResult);
+      const runtimeAdoption = profileRuntimeAdoptionEvidence(safeAckResult);
       const persistedResult = sanitizedAckResult(safeAckResult);
       const repeated = await client.query<{
         delivery_id: string;
@@ -2343,11 +4255,15 @@ export class CauceRepository {
         // connection lease remain live, because the client may use that
         // receipt as fresh proof of ownership.
         if (repeatedAck.applied && ack.status !== 'started') {
+          const feedback = terminal(ack.status)
+            ? await this.delegationFeedbackForAck(client, deliveryId, ack.attempt)
+            : {};
           return {
             delivery_id: deliveryId,
             status: row.status,
             applied: false,
             receipt: 'duplicate',
+            ...feedback,
           };
         }
         // Un evento EXACTO que ya fue rechazado no se corta acá. Antes sí, y eso convertía el
@@ -2356,6 +4272,18 @@ export class CauceRepository {
         // mirara el contenido. Sigue hacia abajo y lo juzga el mismo camino que a un ACK nuevo;
         // si tampoco es rescatable, el `return` de `!exactClaim` devuelve el mismo receipt de
         // siempre. `insertAck` sube `applied` de false a true si esta vuelta sí se aplica.
+      }
+      // Una fila terminal sólo admite el replay exacto y aplicado resuelto arriba. En particular,
+      // un event_id nuevo con el resto de la correlación vieja NO se guarda como ACK rechazado:
+      // eso mutaría el historial tras un resultado final y permitiría poblarlo sin límite durante
+      // cada reconnect. Tampoco vuelve a materializar ni reconstruye feedback.
+      if (row.status === 'done' || row.status === 'failed') {
+        return {
+          delivery_id: deliveryId,
+          status: row.status,
+          applied: false,
+          receipt: 'ownership_lost',
+        };
       }
       if (row.claim_token === ack.claim_token && row.attempt === ack.attempt &&
           (row.consumer_instance_id !== ack.instance_id || Number(row.consumer_epoch) !== ack.epoch)) {
@@ -2395,10 +4323,9 @@ export class CauceRepository {
         };
       }
       const rank = ackRank(ack.status);
-      // "El harness arrancó de verdad". Se aplica en las dos ramas de 'started' (la primera y
-      // las renovaciones) porque un adaptador podría mandarla ya en la primera si algún día
-      // reserva el candado antes de ACKear. COALESCE: es el instante del PRIMER arranque del
-      // intento, no el de la última renovación.
+      // Punto durable de no retorno. El SDK nuevo lo fsynca después de reservar la sesión y
+      // espera este receipt ANTES de invocar; por eso un crash posterior puede haber tenido
+      // efectos y no admite retry automático. COALESCE conserva el primer compromiso del intento.
       const executionStarted = ack.status === 'started' && ack.execution_started === true;
       const leaseCapMs = deliveryLeaseCapMs(row.body, leaseCap);
       /**
@@ -2417,9 +4344,9 @@ export class CauceRepository {
        *   mientras su entrega hace fila deja de latir y el reaper la recoge a los 30 min, que es
        *   exactamente lo que debe pasar.
        * - NO mueve `status` (sigue 'accepted'), NO toca `last_ack_rank` (sigue 1) y NO sella
-       *   `execution_started_at`. Esa marca queda para el primer 'started' aplicado, que ahora sí
-       *   significa "el harness arrancó". El reaper conserva sin cambios su criterio de retener
-       *   una entrega para replay manual, y lo aplica sobre una marca que por fin es cierta.
+       *   `execution_started_at`. Esa marca queda para el primer 'started' aplicado: acredita que
+       *   el adaptador entró al tramo preinvoke protegido, no que el hijo ya emitió bytes. La
+       *   barrera exacta del SDK añade el receipt durable antes de permitir la invocación.
        *
        * Nada de esto pide esquema nuevo: 'accepted' ya está en el CHECK de `delivery_acks.status`
        * y en `deliveries.status`, y `last_ack_rank` no se mueve. El reaper tampoco cambia: ya
@@ -2637,6 +4564,11 @@ export class CauceRepository {
           persistedResult ? JSON.stringify(persistedResult) : null, backoffSeconds,
           ackDeadlineMs, executionStarted, leaseCapMs]
       );
+      if (nextStatus === 'done') {
+        await this.recordProfileRuntimeAdoption(
+          client, tenantId, alias, row, ack, runtimeAdoption,
+        );
+      }
       if (nextStatus === 'retry') {
         await client.query(
           `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload,available_at)
@@ -2647,7 +4579,7 @@ export class CauceRepository {
             JSON.stringify({ recipient_alias: alias, reason: 'delivery_available' }), backoffSeconds]
         );
       }
-      // TODO final de ERROR deja rastro replayable, no sólo 'dead'.
+      // Todo ERROR final deja rastro replayable, no sólo 'dead'.
       //
       // Antes esta rama era `if (nextStatus === 'dead')` y ese `if` era, medido, el agujero por
       // el que se caía el trabajo: el 28-jul-2026 la base de producción tenía 197 entregas en
@@ -2685,6 +4617,7 @@ export class CauceRepository {
       await this.insertAck(client, row, ack, true, persistedResult);
       let notified = { allowed: 0, denied: 0, errors: 0 };
       let delegationRejections: DelegationRejection[] = [];
+      let delegationMaterializations: DelegationMaterialization[] = [];
       let chainGate: OpenChainGate | undefined;
       if (terminal(nextStatus)) {
         const policy = await this.loadChainPolicy(client);
@@ -2698,11 +4631,16 @@ export class CauceRepository {
         notified = await this.materializeAgentNotifications(
           client, row, ack, notifications, ambiguousFailure
         );
-        let outputOutcome: AgentOutputOutcome = { materialized: 0, suspended: false, rejections: [] };
+        let outputOutcome: AgentOutputOutcome = {
+          materialized: 0, suspended: false, rejections: [], materializations: []
+        };
         if (nextStatus === 'done' && row.body.type !== 'agent.fanin') {
           outputOutcome = await this.materializeAgentOutputs(client, row, ack, outputs, policy);
         }
-        delegationRejections = outputOutcome.rejections;
+        delegationRejections = [...outputOutcome.rejections]
+          .sort((left, right) => left.output_index - right.output_index);
+        delegationMaterializations = [...outputOutcome.materializations]
+          .sort((left, right) => left.output_index - right.output_index);
         chainGate = outputOutcome.gate;
         const materializedOutputs = outputOutcome.materialized;
         // A child that successfully delegated work is not terminal from its
@@ -2774,6 +4712,9 @@ export class CauceRepository {
         ...(delegationRejections.length === 0
           ? {}
           : { delegation_rejections: delegationRejections }),
+        ...(delegationMaterializations.length === 0
+          ? {}
+          : { delegation_materializations: delegationMaterializations }),
         ...(chainGate === undefined
           ? {}
           : { chain_gate: { gate_id: chainGate.id, question: chainGate.question } })
@@ -2840,10 +4781,12 @@ export class CauceRepository {
    *      respuesta llega. No corrompe nada porque nadie contestó por ella: el único aviso que
    *      salió fue "esto quedó a medias", y se lo corrige explícitamente.
    *  (c) La entrega ya es `done` (o `failed`) y llega otro 'done' de una corrida vieja. S5 lo
-   *      bloquea. Se devuelve `ownership_lost` y el ACK queda en `delivery_acks` con
-   *      `applied=false`, igual que hoy. Pisar un resultado ya entregado al padre y al humano
-   *      sería la única forma real de corromper: dos respuestas distintas para una pregunta, y
-   *      la segunda sin ningún criterio que la haga mejor que la primera.
+   *      bloquea. Se devuelve `ownership_lost` y un event_id nuevo NO amplía `delivery_acks`: el
+   *      ACK aplicado de la corrida ganadora ya conserva el resultado canónico, mientras guardar
+   *      cada frame posterior permitiría poblar sin límite el historial de una fila terminal.
+   *      Pisar un resultado ya entregado al padre y al humano sería la única forma real de
+   *      corromper: dos respuestas distintas para una pregunta, y la segunda sin ningún criterio
+   *      que la haga mejor que la primera.
    *
    * LA CARRERA (dos corridas devolviendo 'done' a la vez) la resuelve el `SELECT ... FOR UPDATE
    * OF d` que `ackDelivery` ya toma sobre la fila: la segunda transacción se bloquea, y al
@@ -3230,6 +5173,68 @@ export class CauceRepository {
     return parent.rows[0];
   }
 
+  /**
+   * Rebuild the capability-gated receipt from durable materialization rows.
+   *
+   * This is used for an exact repeated event after the DB committed but the adapter died before
+   * receiving ack_result. It returns the same ordered identities/notices as the fresh ACK and
+   * never selects target_ref_hash, body_hash, messages or bodies.
+   */
+  private async delegationFeedbackForAck(
+    client: DatabaseClient,
+    deliveryId: string,
+    attempt: number,
+  ): Promise<Pick<AckResult, "delegation_rejections" | "delegation_materializations">> {
+    const rows = await client.query<{
+      output_index: number;
+      status: 'materialized' | 'rejected';
+      target_tenant: Tenant | null;
+      target_alias: string | null;
+      produced_delivery_id: string | null;
+      rejection: unknown;
+    }>(
+      `SELECT output_index,status,target_tenant,target_alias,produced_delivery_id,
+              correlation->'rejection' AS rejection
+       FROM agent_output_materializations
+       WHERE source_delivery_id=$1 AND source_attempt=$2
+       ORDER BY output_index
+       LIMIT $3`,
+      [deliveryId, attempt, MAX_DELEGATION_FEEDBACK_ITEMS + 1],
+    );
+    if (rows.rows.length > MAX_DELEGATION_FEEDBACK_ITEMS) {
+      throw new StoreError('conflict', 'durable delegation feedback exceeds the wire limit');
+    }
+    const delegationRejections: DelegationRejection[] = [];
+    const delegationMaterializations: DelegationMaterialization[] = [];
+    for (const row of rows.rows) {
+      if (row.status === 'materialized') {
+        delegationMaterializations.push(DelegationMaterializationSchema.parse({
+          output_index: row.output_index,
+          target_tenant: row.target_tenant,
+          target_alias: row.target_alias,
+          child_delivery_id: row.produced_delivery_id,
+        }));
+        continue;
+      }
+      const rejection = objectRecord(row.rejection);
+      const parsed = DelegationRejectionSchema.safeParse({
+        output_index: row.output_index,
+        ...rejection,
+      });
+      // Rows written before readable rejection notices existed cannot reconstruct text exactly.
+      // Omitting legacy feedback is safer than breaking every reconnect with an invalid frame.
+      if (parsed.success) delegationRejections.push(parsed.data);
+    }
+    return {
+      ...(delegationRejections.length === 0
+        ? {}
+        : { delegation_rejections: delegationRejections }),
+      ...(delegationMaterializations.length === 0
+        ? {}
+        : { delegation_materializations: delegationMaterializations }),
+    };
+  }
+
   private async materializeAgentOutputs(
     client: DatabaseClient,
     row: DeliveryRow,
@@ -3237,7 +5242,9 @@ export class CauceRepository {
     outputs: AgentOutputEntry[],
     policy: ChainPolicy
   ): Promise<AgentOutputOutcome> {
-    if (outputs.length === 0) return { materialized: 0, suspended: false, rejections: [] };
+    if (outputs.length === 0) {
+      return { materialized: 0, suspended: false, rejections: [], materializations: [] };
+    }
 
     const sourceMembership = await client.query<{ room_id: string }>(
       `SELECT membership.room_id
@@ -3398,10 +5405,13 @@ export class CauceRepository {
       const expandedBytes = typeof directive.body === 'string'
         ? Buffer.byteLength(directive.body, 'utf8') * targets.length
         : 0;
-      expandedOutputs = targets.length === 0 || expandedBytes > maxAgentOutputExpandedBytes
+      expandedOutputs = targets.length === 0
+        || targets.length > MAX_DELEGATION_FEEDBACK_ITEMS
+        || expandedBytes > maxAgentOutputExpandedBytes
         ? [{
           ...directive,
-          ...(expandedBytes > maxAgentOutputExpandedBytes
+          ...(targets.length > MAX_DELEGATION_FEEDBACK_ITEMS
+            || expandedBytes > maxAgentOutputExpandedBytes
             ? { rejection: 'invalid_output' as const }
             : {})
         }]
@@ -3435,6 +5445,7 @@ export class CauceRepository {
     let materialized = 0;
     let suspended = false;
     const rejections: DelegationRejection[] = [];
+    const materializations: DelegationMaterialization[] = [];
     /** Un gate abierto en ESTE turno pesa igual que uno heredado para las salidas siguientes. */
     let activeGate = openGate;
     const materializedTargets: string[] = [];
@@ -3510,7 +5521,7 @@ export class CauceRepository {
         });
         await this.insertAgentOutputRejection(
           client, row, ack, output.index, requestId, targetRefHash, bodyHash,
-          hopCount, hopBudget, correlation, code, notice
+          hopCount, hopBudget, correlation, code, notice, boundedTarget
         );
       };
 
@@ -3722,6 +5733,12 @@ export class CauceRepository {
         JSON.stringify({ tenant_id: targetTenant, alias: targetAlias })
       ]);
       materialized += 1;
+      materializations.push({
+        output_index: output.index,
+        target_tenant: targetTenant,
+        target_alias: targetAlias,
+        child_delivery_id: producedDeliveryId,
+      });
       materializedTargets.push(targetNode);
     }
     // Rendered here because hop_count, hop_budget and the accepted destinations only exist
@@ -3737,6 +5754,7 @@ export class CauceRepository {
       materialized,
       suspended,
       rejections,
+      materializations,
       ...(activeGate === undefined ? {} : { gate: activeGate })
     };
   }
@@ -4927,14 +6945,23 @@ export class CauceRepository {
     hopBudget: number,
     correlation: Record<string, unknown>,
     rejectionCode: AgentOutputRejectionCode,
-    notice?: RejectionNotice
+    notice?: RejectionNotice,
+    target?: string,
   ): Promise<void> {
     // El motivo legible entra en la correlación de la fila, no en una columna nueva: así el
     // read-model de la cadena y cualquier lectura forense lo encuentran sin migración extra, y
     // la fila sigue sin guardar el cuerpo (sólo su hash), que es la regla de esta tabla.
     const rejectionCorrelation = notice === undefined
       ? correlation
-      : { ...correlation, rejection: { code: notice.code, reason: notice.reason, guidance: notice.guidance } };
+      : {
+          ...correlation,
+          rejection: {
+            code: notice.code,
+            reason: notice.reason,
+            guidance: notice.guidance,
+            ...(target === undefined ? {} : { target }),
+          },
+        };
     await client.query(
       `INSERT INTO agent_output_materializations(
          source_delivery_id,source_attempt,output_index,source_message_id,source_tenant,source_alias,
@@ -5568,11 +7595,11 @@ export class CauceRepository {
    * Recolecta las garras vencidas. Distingue dos casos que antes se trataban igual y por eso
    * el bus pagaba el trabajo dos veces:
    *
-   *  (a) La entrega NO CONSTA que haya arrancado: `execution_started_at IS NULL`.
+   *  (a) La entrega NO cruzó el compromiso durable: `execution_started_at IS NULL`.
    *      Reintentar es correcto: no hay evidencia de que se haya gastado nada.
-   *  (b) La entrega SÍ arrancó: el adaptador ACKeó `execution_started` y la base guardó el
-   *      instante. El agente estuvo trabajando, muy probablemente terminó, y lo único que se
-   *      perdió fue el ACK final. Reintentar acá significa volver a pagar una corrida entera de
+   *  (b) La entrega comprometió ejecución: el adaptador ACKeó `execution_started` y la base
+   *      guardó el instante antes de liberar el harness. El agente pudo trabajar y terminar;
+   *      reintentar acá puede volver a pagar una corrida entera de
    *      un modelo de suscripción. Medido el 2026-07-27: en los agentes con harness codex, 2.240
    *      corridas para 1.312 entregas — 71% de desperdicio — y eso agotó la cuota SEMANAL de una
    *      cuenta ChatGPT Pro en 5 horas.
@@ -6496,7 +8523,196 @@ export class CauceRepository {
     leaseMs = 30_000,
     adapter?: string
   ): Promise<ClaimedOutboxEvent[]> {
+    return this.claimOutboxMatching(kind, worker, limit, leaseMs, adapter);
+  }
+
+  /**
+   * Reclama wakes sólo para identidades que el gateway observó conectadas.
+   *
+   * El filtro vive dentro del mismo CTE que toma el lock y aumenta `attempts`: aplicarlo después
+   * de `claimOutbox` ya habría consumido un intento de cada alias offline del lote. Una lista vacía
+   * falla cerrada y no toca la cola. Los pares se validan y deduplican antes de llegar a SQL.
+   */
+  async claimWakeOutbox(
+    worker: string,
+    recipients: readonly WakeOutboxRecipient[],
+    limit = 50,
+    leaseMs = 30_000,
+    signal?: AbortSignal,
+  ): Promise<ClaimedOutboxEvent[]> {
+    if (leaseMs <= 0 || limit < 1) {
+      throw new StoreError('conflict', 'outbox lease and limit must be positive');
+    }
+    const selected = normalizedWakeRecipients(recipients);
+    if (selected.length === 0) return [];
+    const work = async (client: DatabaseClient): Promise<ClaimedOutboxEvent[]> => {
+      let activeRecipients = selected;
+      if (selected[0]?.connection_token !== undefined) {
+        const locked = await client.query<{ tenant_id: Tenant; alias: string }>(
+          `SELECT requested.tenant_id,requested.alias
+             FROM jsonb_to_recordset($1::jsonb) AS requested(
+                    tenant_id text,alias text,instance_id text,epoch bigint,connection_token uuid
+                  )
+             JOIN connection_leases lease
+               ON lease.tenant_id=requested.tenant_id AND lease.alias=requested.alias
+              AND lease.instance_id=requested.instance_id AND lease.epoch=requested.epoch
+              AND lease.connection_token=requested.connection_token AND lease.lease_until>now()
+            FOR UPDATE OF lease`,
+          [JSON.stringify(selected)],
+        );
+        const live = new Set(locked.rows.map((recipient) =>
+          `${recipient.tenant_id}\u0000${recipient.alias}`));
+        activeRecipients = selected.filter((recipient) =>
+          live.has(`${recipient.tenant_id}\u0000${recipient.alias}`));
+        if (activeRecipients.length === 0) return [];
+      }
+      const requested = JSON.stringify(activeRecipients.map((recipient, recipientOrder) => ({
+        ...recipient,
+        recipient_order: recipientOrder,
+      })));
+      // Retire exhausted expired claims without letting one identity consume the whole cleanup
+      // budget. The requested order is the gateway's rotated fairness order.
+      await client.query(
+        `WITH requested AS (
+           SELECT identity.tenant_id,identity.alias,identity.recipient_order
+             FROM jsonb_to_recordset($1::jsonb)
+                  AS identity(tenant_id text,alias text,instance_id text,epoch bigint,
+                              connection_token uuid,recipient_order integer)
+         ), expired AS (
+           SELECT candidate.id
+             FROM requested
+             JOIN LATERAL (
+               SELECT outbox.id
+                 FROM adapter_outbox outbox
+                WHERE outbox.kind='wake' AND outbox.tenant_id=requested.tenant_id
+                  AND outbox.payload->>'recipient_alias'=requested.alias
+                  AND outbox.status='processing'
+                  AND COALESCE(outbox.claim_expires_at,outbox.claimed_at,outbox.created_at)<=now()
+                  AND outbox.attempts>=outbox.max_attempts
+                ORDER BY outbox.claim_expires_at,outbox.created_at
+                FOR UPDATE OF outbox SKIP LOCKED LIMIT 1
+             ) candidate ON true
+            ORDER BY requested.recipient_order LIMIT $2
+         ), dead AS (
+           UPDATE adapter_outbox outbox
+              SET status='dead',dead_at=now(),claim_expires_at=NULL,
+                  last_error='outbox lease expired: max attempts exhausted'
+             FROM expired WHERE outbox.id=expired.id
+           RETURNING outbox.id,outbox.tenant_id,outbox.adapter,outbox.kind,
+                     outbox.payload,outbox.attempts,outbox.last_error
+         )
+         INSERT INTO outbox_dead_letters(outbox_id,tenant_id,adapter,kind,reason,payload,attempts)
+         SELECT id,tenant_id,adapter,kind,last_error,payload,attempts FROM dead
+         ON CONFLICT(outbox_id) DO NOTHING`,
+        [requested, Math.min(limit, activeRecipients.length, 100)],
+      );
+      const result = await client.query<ClaimedOutboxEvent>(
+        `WITH requested AS (
+           SELECT identity.tenant_id,identity.alias,identity.recipient_order
+             FROM jsonb_to_recordset($1::jsonb)
+                  AS identity(tenant_id text,alias text,instance_id text,epoch bigint,
+                              connection_token uuid,recipient_order integer)
+         ), picked AS (
+           SELECT candidate.id
+             FROM requested
+             JOIN LATERAL (
+               SELECT outbox.id
+                 FROM adapter_outbox outbox
+                WHERE outbox.kind='wake' AND outbox.tenant_id=requested.tenant_id
+                  AND outbox.payload->>'recipient_alias'=requested.alias
+                  AND (
+                    (outbox.status IN ('pending','failed') AND outbox.available_at<=now())
+                    OR (outbox.status='processing'
+                        AND COALESCE(outbox.claim_expires_at,outbox.claimed_at,outbox.created_at)<=now())
+                  )
+                  AND outbox.attempts<outbox.max_attempts
+                ORDER BY CASE WHEN outbox.status='processing'
+                              THEN outbox.claim_expires_at ELSE outbox.available_at END,
+                         outbox.created_at
+                FOR UPDATE OF outbox SKIP LOCKED LIMIT 1
+             ) candidate ON true
+            ORDER BY requested.recipient_order LIMIT $3
+         )
+         UPDATE adapter_outbox outbox
+            SET status='processing',attempts=outbox.attempts+1,claimed_at=now(),
+                claimed_by=$2,claim_token=gen_random_uuid(),
+                claim_expires_at=now()+$4*interval '1 millisecond',last_error=NULL
+           FROM picked WHERE outbox.id=picked.id
+         RETURNING outbox.id,outbox.id AS event_id,outbox.tenant_id,outbox.adapter,outbox.kind,
+                   outbox.request_id,outbox.message_id,outbox.delivery_id,outbox.trace_id,
+                   outbox.origin,outbox.payload,outbox.attempts,outbox.max_attempts,
+                   outbox.claimed_by,outbox.claim_token,outbox.claim_expires_at,
+                   outbox.attempts AS attempt`,
+        [requested, worker, Math.min(limit, activeRecipients.length), leaseMs],
+      );
+      return result.rows;
+    };
+    return signal === undefined
+      ? withTransaction(this.pool, work)
+      : withAbortableTransaction(this.pool, signal, work);
+  }
+
+  /** Revalidates and renews one exact wake immediately before the gateway emits its frame. */
+  async renewWakeOutbox(
+    fence: WakeOutboxClaimFence,
+    leaseMs = 30_000,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (!Number.isSafeInteger(fence.attempt) || fence.attempt < 1 || leaseMs <= 0
+        || !fence.claim_token || !fence.worker
+        || !validConnectionToken(fence.connection.connection_token)) return false;
+    const work = async (client: DatabaseClient): Promise<boolean> => {
+      const lease = await client.query(
+        `SELECT 1 FROM connection_leases
+          WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4
+            AND connection_token=$5::uuid AND lease_until>now()
+          FOR UPDATE`,
+        [
+          fence.connection.tenant_id,
+          fence.connection.alias,
+          fence.connection.instance_id,
+          fence.connection.epoch,
+          fence.connection.connection_token,
+        ],
+      );
+      if (lease.rowCount !== 1) return false;
+      const renewed = await client.query(
+        `UPDATE adapter_outbox
+            SET claim_expires_at=now()+$5*interval '1 millisecond'
+          WHERE id=$1 AND kind='wake' AND status='processing' AND attempts=$2
+            AND claim_token=$3::uuid AND claimed_by=$4 AND claim_expires_at>now()
+            AND tenant_id=$6 AND payload->>'recipient_alias'=$7
+          RETURNING 1`,
+        [
+          fence.event_id,
+          fence.attempt,
+          fence.claim_token,
+          fence.worker,
+          leaseMs,
+          fence.connection.tenant_id,
+          fence.connection.alias,
+        ],
+      );
+      return renewed.rowCount === 1;
+    };
+    return signal === undefined
+      ? withTransaction(this.pool, work)
+      : withAbortableTransaction(this.pool, signal, work);
+  }
+
+  private async claimOutboxMatching(
+    kind: 'wake' | 'origin_relay',
+    worker: string,
+    limit: number,
+    leaseMs: number,
+    adapter?: string,
+    wakeRecipients?: readonly WakeOutboxRecipient[]
+  ): Promise<ClaimedOutboxEvent[]> {
     if (leaseMs <= 0 || limit < 1) throw new StoreError('conflict', 'outbox lease and limit must be positive');
+    if (wakeRecipients !== undefined && kind !== 'wake') {
+      throw new StoreError('invalid_input', 'recipient filtering is valid only for wake outbox claims');
+    }
+    const wakeRecipientFilter = wakeRecipients === undefined ? null : JSON.stringify(wakeRecipients);
     return withTransaction(this.pool, async (client) => {
       // A claimed or terminal final response supersedes an unclaimed ACK, plus
       // any expired ACK claim. Close it durably so it cannot arrive after the final.
@@ -6560,11 +8776,18 @@ export class CauceRepository {
       // forever. Move them to the durable DLQ in the same transaction as the next claim.
       await client.query(
         `WITH expired AS (
-           SELECT id FROM adapter_outbox
-           WHERE kind=$1 AND status='processing'
-             AND COALESCE(claim_expires_at,claimed_at,created_at)<=now()
-             AND attempts>=max_attempts AND ($3::text IS NULL OR adapter=$3)
-           ORDER BY claim_expires_at FOR UPDATE SKIP LOCKED LIMIT $2
+           SELECT outbox.id FROM adapter_outbox outbox
+           WHERE outbox.kind=$1 AND outbox.status='processing'
+             AND COALESCE(outbox.claim_expires_at,outbox.claimed_at,outbox.created_at)<=now()
+             AND outbox.attempts>=outbox.max_attempts
+             AND ($3::text IS NULL OR outbox.adapter=$3)
+             AND ($4::jsonb IS NULL OR EXISTS (
+               SELECT 1
+               FROM jsonb_to_recordset($4::jsonb) AS recipient(tenant_id text, alias text)
+               WHERE recipient.tenant_id=outbox.tenant_id
+                 AND recipient.alias=outbox.payload->>'recipient_alias'
+             ))
+           ORDER BY outbox.claim_expires_at FOR UPDATE OF outbox SKIP LOCKED LIMIT $2
          ), dead AS (
            UPDATE adapter_outbox outbox SET status='dead',dead_at=now(),claim_expires_at=NULL,
              last_error='outbox lease expired: max attempts exhausted'
@@ -6575,7 +8798,7 @@ export class CauceRepository {
          INSERT INTO outbox_dead_letters(outbox_id,tenant_id,adapter,kind,reason,payload,attempts)
          SELECT id,tenant_id,adapter,kind,last_error,payload,attempts FROM dead
          ON CONFLICT(outbox_id) DO NOTHING`,
-        [kind, Math.min(limit, 100), adapter ?? null]
+        [kind, Math.min(limit, 100), adapter ?? null, wakeRecipientFilter]
       );
       const result = await client.query<ClaimedOutboxEvent>(
         `WITH picked AS (
@@ -6629,6 +8852,12 @@ export class CauceRepository {
               )
               AND outbox.attempts<outbox.max_attempts
               AND ($5::text IS NULL OR outbox.adapter=$5)
+              AND ($6::jsonb IS NULL OR EXISTS (
+                SELECT 1
+                FROM jsonb_to_recordset($6::jsonb) AS recipient(tenant_id text, alias text)
+                WHERE recipient.tenant_id=outbox.tenant_id
+                  AND recipient.alias=outbox.payload->>'recipient_alias'
+              ))
               AND relay_fence.acquired
               AND (
                 outbox.adapter<>'telegram'
@@ -6673,17 +8902,41 @@ export class CauceRepository {
           RETURNING o.id,o.id AS event_id,o.tenant_id,o.adapter,o.kind,o.request_id,o.message_id,o.delivery_id,
                     o.trace_id,o.origin,o.payload,o.attempts,o.max_attempts,o.claimed_by,
                     o.claim_token,o.claim_expires_at,o.attempts AS attempt`,
-        [kind, worker, limit, leaseMs, adapter ?? null]
+        [kind, worker, limit, leaseMs, adapter ?? null, wakeRecipientFilter]
       );
       return result.rows;
     });
   }
 
-  async ackOutbox(ack: OutboxAck): Promise<{ status: 'sent' | 'failed' | 'dead'; applied: boolean }> {
+  async ackOutbox(
+    ack: OutboxAck,
+    signal?: AbortSignal,
+  ): Promise<{ status: 'sent' | 'failed' | 'dead'; applied: boolean }> {
     if (!Number.isInteger(ack.attempt) || ack.attempt < 1 || !ack.claim_token) {
       throw new StoreError('fenced', 'outbox ACK requires claim token and positive attempt');
     }
-    return withTransaction(this.pool, async (client) => {
+    if (ack.connection !== undefined && !validConnectionToken(ack.connection.connection_token)) {
+      return { status: 'failed', applied: false };
+    }
+    const work = async (client: DatabaseClient): Promise<{
+      status: 'sent' | 'failed' | 'dead'; applied: boolean;
+    }> => {
+      if (ack.connection !== undefined) {
+        const lease = await client.query(
+          `SELECT 1 FROM connection_leases
+            WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4
+              AND connection_token=$5::uuid AND lease_until>now()
+            FOR UPDATE`,
+          [
+            ack.connection.tenant_id,
+            ack.connection.alias,
+            ack.connection.instance_id,
+            ack.connection.epoch,
+            ack.connection.connection_token,
+          ],
+        );
+        if (lease.rowCount !== 1) return { status: 'failed', applied: false };
+      }
       const selected = await client.query<{
         id: string; tenant_id: Tenant; adapter: string; kind: string; payload: Record<string, unknown>;
         attempts: number; max_attempts: number;
@@ -6695,6 +8948,11 @@ export class CauceRepository {
       );
       const event = selected.rows[0];
       if (!event) return { status: 'failed', applied: false };
+      if (ack.connection !== undefined && (
+        event.kind !== 'wake'
+        || event.tenant_id !== ack.connection.tenant_id
+        || event.payload.recipient_alias !== ack.connection.alias
+      )) return { status: 'failed', applied: false };
       if (ack.status === 'sent') {
         await client.query(
           `UPDATE adapter_outbox SET status='sent',sent_at=now(),claim_expires_at=NULL WHERE id=$1`,
@@ -6722,7 +8980,10 @@ export class CauceRepository {
         [event.id, Math.max(0, ack.retry_after_ms ?? 250), reason]
       );
       return { status: 'failed', applied: true };
-    });
+    };
+    return signal === undefined
+      ? withTransaction(this.pool, work)
+      : withAbortableTransaction(this.pool, signal, work);
   }
 
   async completeOutbox(id: string, worker?: string, claimToken?: string): Promise<boolean> {
@@ -7235,8 +9496,25 @@ export class CauceRepository {
         `SELECT t.id,COALESCE(t.display_name,t.id) AS label,t.is_hub,t.enabled,COALESCE((
            SELECT jsonb_agg(jsonb_build_object(
               'id',r.id,'label',COALESCE(r.display_name,r.id),'enabled',r.enabled,'members',COALESCE((
-                SELECT jsonb_agg(jsonb_build_object('alias',m.alias,'role',m.role,'enabled',m.enabled) ORDER BY m.alias)
-               FROM memberships m WHERE m.tenant_id=t.id AND m.room_id=r.id
+                SELECT jsonb_agg(jsonb_build_object(
+                  'alias',m.alias,
+                  'role',m.role,
+                  'enabled',m.enabled,
+                  'registered',(agent.tenant_id IS NOT NULL),
+                  'agent_enabled',agent.enabled,
+                  'harness_id',agent.harness_id,
+                  'display_name',agent.display_name,
+                  'off_reason',CASE
+                    WHEN agent.tenant_id IS NULL THEN 'not_registered'
+                    WHEN NOT agent.enabled AND NOT m.enabled THEN 'agent_and_membership_disabled'
+                    WHEN NOT agent.enabled THEN 'agent_disabled'
+                    WHEN NOT m.enabled THEN 'membership_disabled'
+                    ELSE NULL END
+                ) ORDER BY m.alias)
+               FROM memberships m
+               LEFT JOIN agents agent
+                 ON agent.tenant_id=m.tenant_id AND agent.alias=m.alias
+               WHERE m.tenant_id=t.id AND m.room_id=r.id
              ),'[]'::jsonb)
            ) ORDER BY r.id) FROM rooms r WHERE r.tenant_id=t.id
          ),'[]'::jsonb) AS rooms
@@ -7895,12 +10173,25 @@ export class CauceRepository {
     return { items: result.rows.map((row) => ({ ...row, deployment_status: agentDeploymentStatus(row) })) };
   }
 
+  /**
+   * Legacy detail without a tenant in its resource identifier. It means exactly the actor's own
+   * tenant; an equally named visible foreign agent must never win by `ORDER BY`.
+   */
+  async getAgent(alias: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown> | undefined> {
+    return this.getAgentByIdentity(actorTenant, alias, actorTenant, actorAlias);
+  }
+
   /** Single-agent detail: same visibility rule as listAgents, plus the ordered fallback accounts
    *  this alias may be routed to. external_account_id is disclosed only for accounts the actor's
    *  own tenant pays for: a borrowed pool account shows who pays, which provider and the label,
    *  never the payer's account identity. Returns undefined rather than throwing so the route can
    *  answer a uniform 404 whether the alias is unknown or simply not visible to this actor. */
-  async getAgent(alias: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown> | undefined> {
+  async getAgentByIdentity(
+    tenantId: Tenant,
+    alias: string,
+    actorTenant: Tenant,
+    actorAlias: string,
+  ): Promise<Record<string, unknown> | undefined> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
     const agentResult = await this.pool.query<Record<string, unknown>>(
       `SELECT a.tenant_id,a.alias,a.harness_id,h.display_name AS harness_label,a.display_name,
@@ -7913,11 +10204,11 @@ export class CauceRepository {
          SELECT (l.lease_until>now()) AS online, l.last_heartbeat_at, l.instance_id
          FROM connection_leases l WHERE l.tenant_id=a.tenant_id AND l.alias=a.alias
        ) lease ON true
-       WHERE a.alias=$1 AND (a.tenant_id=$2 OR EXISTS (
-         SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$2 AND edge.to_tenant=a.tenant_id
+       WHERE a.tenant_id=$1 AND a.alias=$2 AND (a.tenant_id=$3 OR EXISTS (
+         SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$3 AND edge.to_tenant=a.tenant_id
            AND edge.enabled AND edge.allow_read
        ))
-       ORDER BY a.tenant_id LIMIT 1`, [alias, actorTenant]
+       LIMIT 1`, [tenantId, alias, actorTenant]
     );
     const agent = agentResult.rows[0];
     if (!agent) return undefined;
@@ -7933,7 +10224,7 @@ export class CauceRepository {
          AND b.agent_alias=ceiling.alias AND b.account_id=ceiling.account_id
        WHERE ceiling.tenant_id=$1 AND ceiling.alias=$2
        ORDER BY b.priority NULLS LAST,ceiling.account_id`,
-      [agent.tenant_id, agent.alias, actorTenant]
+      [tenantId, alias, actorTenant]
     );
     return { ...agent, deployment_status: agentDeploymentStatus(agent), routing_accounts: routing.rows };
   }
@@ -8462,26 +10753,71 @@ export class CauceRepository {
     };
   }
 
-  async listAudit(actorTenant: Tenant, actorAlias: string, limit = 200): Promise<Record<string, unknown>> {
+  async listAudit(
+    actorTenant: Tenant,
+    actorAlias: string,
+    options: { limit?: number; before?: string | null } = {},
+  ): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
-    const result = await this.pool.query<Record<string, unknown>>(
+    const limit = options.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new StoreError('invalid_input', 'audit limit must be an integer between 1 and 500');
+    }
+    const before = options.before ?? null;
+    if (before !== null && (
+      !/^[1-9][0-9]{0,18}$/u.test(before)
+      || BigInt(before) > 9_223_372_036_854_775_807n
+    )) {
+      throw new StoreError('invalid_input', 'audit cursor is invalid');
+    }
+    const result = await this.pool.query<{
+      event_id: string;
+      at: Date | string;
+      tenant_id: string | null;
+      actor_alias: string | null;
+      action: string;
+      decision: string;
+      request_id: string | null;
+      trace_id: string | null;
+      metadata: unknown;
+    }>(
       `SELECT audit.id AS event_id,audit.created_at AS at,audit.tenant_id,audit.actor_alias,
-              audit.action,audit.decision,audit.request_id,audit.trace_id,left(audit.metadata::text,500) AS summary
+              audit.action,audit.decision,audit.request_id,audit.trace_id,audit.metadata
        FROM audit_events audit
        LEFT JOIN messages message ON message.id=audit.message_id
-       WHERE (audit.tenant_id=$1 AND audit.actor_alias=$2)
-          OR (message.id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM memberships source_member WHERE source_member.tenant_id=$1
-              AND source_member.room_id=message.room_id AND source_member.alias=$2
-              AND source_member.enabled AND message.tenant_id=$1
-          ))
-          OR (audit.delivery_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM deliveries participant WHERE participant.id=audit.delivery_id
-              AND participant.recipient_tenant=$1 AND participant.recipient_alias=$2
-          ))
-       ORDER BY audit.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
+       WHERE (
+         (audit.tenant_id=$1 AND audit.actor_alias=$2)
+         OR (message.id IS NOT NULL AND EXISTS (
+           SELECT 1 FROM memberships source_member WHERE source_member.tenant_id=$1
+             AND source_member.room_id=message.room_id AND source_member.alias=$2
+             AND source_member.enabled AND message.tenant_id=$1
+         ))
+         OR (audit.delivery_id IS NOT NULL AND EXISTS (
+           SELECT 1 FROM deliveries participant WHERE participant.id=audit.delivery_id
+             AND participant.recipient_tenant=$1 AND participant.recipient_alias=$2
+         ))
+       )
+         AND ($3::bigint IS NULL OR audit.id < $3::bigint)
+       ORDER BY audit.id DESC LIMIT $4`, [actorTenant, actorAlias, before, limit + 1]
     );
-    return { items: result.rows };
+    const hasMore = result.rows.length > limit;
+    const visible = result.rows.slice(0, limit);
+    return {
+      items: visible.map((row) => ({
+        event_id: String(row.event_id),
+        at: row.at instanceof Date ? row.at.toISOString() : String(row.at),
+        tenant_id: row.tenant_id,
+        actor_alias: row.actor_alias,
+        action: row.action,
+        decision: row.decision,
+        request_id: row.request_id,
+        trace_id: row.trace_id,
+        summary: safeAuditSummary(row.action, row.metadata),
+      })),
+      next_cursor: hasMore && visible.length > 0
+        ? String(visible[visible.length - 1]!.event_id)
+        : null,
+    };
   }
 
   /**
@@ -9051,6 +11387,68 @@ export class CauceRepository {
         pruned_collections: prunedCollections.rowCount ?? 0
       };
     });
+  }
+
+  /**
+   * Inventario DLQ operativo sin payloads ni ids externos. La base aplica control multi-tenant y
+   * liga el cursor opaco a la identidad del operador; cambiar actor o reutilizar un cursor de otro
+   * scope falla cerrado. No es una firma: un actor autorizado sólo puede alterar navegación dentro
+   * de su scope. El orden keyset es estable ante reaperturas porque usa el
+   * `created_at` inmutable de la carta, más target e id como desempates.
+   */
+  async listOperationalDlq(
+    actorTenant: Tenant,
+    actorAlias: string,
+    limit = 200,
+    cursor: string | null = null
+  ): Promise<OperationalDlqPage> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new StoreError('invalid_input', 'DLQ list limit must be between 1 and 500');
+    }
+    if (cursor !== null && (cursor.length < 2 || cursor.length > 1024
+      || cursor.length % 2 !== 0 || !/^[a-f0-9]+$/.test(cursor))) {
+      throw new StoreError('invalid_input', 'DLQ list cursor is invalid');
+    }
+    const result = await this.pool.query<{ value: OperationalDlqPage }>(
+      `SELECT cauce_list_dlq_030($1,$2,$3,$4) AS value`,
+      [actorTenant, actorAlias, limit, cursor]
+    );
+    const value = result.rows[0]?.value;
+    if (!value) throw new StoreError('conflict', 'DLQ list did not return a page');
+    return value;
+  }
+
+  /** Exact, operator-audited closure of one classified incident without replay or side effects. */
+  async resolveOperationalDlqWithoutReplay(
+    actorTenant: Tenant,
+    actorAlias: string,
+    request: OperationalDlqResolutionRequest
+  ): Promise<OperationalDlqResolutionResult> {
+    const reason = request.reason.trim();
+    if ((request.target !== 'delivery' && request.target !== 'outbox')
+      || !UUID_PATTERN.test(request.id)
+      || !/^[a-f0-9]{64}$/.test(request.evidenceSha256)
+      || reason.length < 1 || reason.length > 1_000
+      || [...reason].some((character) => {
+        const code = character.charCodeAt(0);
+        return code < 0x20 || code === 0x7f;
+      })
+      || typeof request.possibleDuplicateAcknowledged !== 'boolean'
+      || typeof request.possibleNoDeliveryAcknowledged !== 'boolean') {
+      throw new StoreError('invalid_input', 'DLQ no-replay resolution request is invalid');
+    }
+    const result = await this.pool.query<{ value: OperationalDlqResolutionResult }>(
+      `SELECT cauce_resolve_dlq_without_replay_030(
+         $1,$2::uuid,$3,$4,$5,$6,$7,$8
+       ) AS value`,
+      [
+        request.target, request.id, request.evidenceSha256, reason, actorTenant, actorAlias,
+        request.possibleDuplicateAcknowledged, request.possibleNoDeliveryAcknowledged,
+      ]
+    );
+    const value = result.rows[0]?.value;
+    if (!value) throw new StoreError('conflict', 'DLQ no-replay resolution returned no receipt');
+    return value;
   }
 
   /**

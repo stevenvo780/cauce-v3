@@ -127,6 +127,7 @@ test("una entrega en cola late en 'accepted' y sólo pasa a 'started' cuando tom
   const events: DeliveryEvent[] = [];
   const engine: AdapterEngine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: harnessFor(store, runner),
     publish: confirmingPublisher(() => engine, events),
     claimRenewalMs: 10,
@@ -185,6 +186,7 @@ test("la entrega que ejecuta sí renueva, y renueva con 'started'", async () => 
   const events: DeliveryEvent[] = [];
   const engine: AdapterEngine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: harnessFor(store, runner),
     publish: confirmingPublisher(() => engine, events),
     claimRenewalMs: 10,
@@ -216,6 +218,7 @@ test("la espera en cola tiene techo: vence RETRYABLE y sin haber declarado ejecu
   const events: DeliveryEvent[] = [];
   const engine: AdapterEngine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: harnessFor(store, runner),
     publish: confirmingPublisher(() => engine, events),
     claimRenewalMs: 10,
@@ -258,6 +261,7 @@ test("un latido de cola que el gateway no aplica no es pérdida de propiedad", a
   const logs: Array<Record<string, unknown>> = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: harnessFor(store, runner),
     // Gateway anterior a esta versión: nunca confirma el latido de cola.
     publish: async (event) => { events.push(event); },

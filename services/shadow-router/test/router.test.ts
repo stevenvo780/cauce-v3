@@ -116,7 +116,7 @@ describe('identity-free shadow routing', () => {
 
     const result = await instance.route(envelope());
 
-    expect(result).toMatchObject({ status: 'shadowed', human_reply: false });
+    expect(result).toMatchObject({ status: 'shadowed', human_reply: false, target_invoked: true });
     expect(target.previews).toHaveLength(1);
     expect(target.previews[0]).toMatchObject({ allow_human_reply: false, allow_harness: false });
     expect(target.deliveries).toHaveLength(0);
@@ -146,8 +146,10 @@ describe('identity-free shadow routing', () => {
     const first = await instance.route(input);
     const duplicate = await instance.route(input);
 
-    expect(first).toMatchObject({ status: 'delivered', human_reply: true, duplicate: false });
-    expect(duplicate).toMatchObject({ status: 'delivered', duplicate: true });
+    expect(first).toMatchObject({
+      status: 'delivered', human_reply: true, duplicate: false, target_invoked: true,
+    });
+    expect(duplicate).toMatchObject({ status: 'delivered', duplicate: true, target_invoked: false });
     expect(duplicate.target_event_id).toBe(first.target_event_id);
     expect(target.deliveries).toHaveLength(1);
     expect(target.deliveries[0]).toMatchObject({
@@ -165,7 +167,7 @@ describe('identity-free shadow routing', () => {
 
     const second = await instance.route(envelope({ source_event_id: 'v2-event-2' }));
 
-    expect(second).toMatchObject({ status: 'blocked', human_reply: false });
+    expect(second).toMatchObject({ status: 'blocked', human_reply: false, target_invoked: false });
     expect(target.deliveries).toHaveLength(1);
   });
 

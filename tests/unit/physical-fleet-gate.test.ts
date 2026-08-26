@@ -21,20 +21,25 @@ async function fixture(containers: string[]) {
       dedalo: {
         tenant: 'Pablo', room: 'grp.pablo', container: 'ws-pablo', user: 'dev',
         home: '/home/dev', stateDirectory: '/state/dedalo', harness: 'codex', membershipRole: 'agent',
+        dockerHost: 'kratos', systemdUser: 'stev',
       },
       vulcano: {
         tenant: 'Pablo', room: 'grp.pablo', container: 'ws-pablo', user: 'dev',
         home: '/home/dev', stateDirectory: '/state/vulcano', harness: 'claude', membershipRole: 'agent',
+        dockerHost: 'kratos', systemdUser: 'stev',
       },
       midas: {
         tenant: 'Pablo', room: 'grp.pablo', container: 'agv2-pablo-infra-oc', user: 'claw',
         home: '/home/claw', workspace: '/workspace', stateDirectory: '/state/midas',
-        harness: 'openclaw', membershipRole: 'agent',
+        harness: 'openclaw', membershipRole: 'agent', dockerHost: 'kratos', systemdUser: 'stev',
       },
     },
   }));
   const snapshot = join(root, 'physical.json');
-  await writeFile(snapshot, JSON.stringify({ schemaVersion: 1, containers }));
+  await writeFile(snapshot, JSON.stringify({
+    schemaVersion: 2,
+    hosts: { kratos: containers },
+  }));
   return { root, snapshot };
 }
 
@@ -53,14 +58,14 @@ describe('physical fleet pre-migration gate', () => {
     const { root, snapshot } = await fixture(['ws-pablo', 'agv2-pablo-infra-oc', 'unrelated']);
     const result = run(root, snapshot);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('2 declared containers exist for 3 enabled aliases');
+    expect(result.stdout).toContain('2 declared host/container placements exist across 1 hosts');
   });
 
   test('fails closed and names a declared container absent from the host inventory', async () => {
     const { root, snapshot } = await fixture(['ws-pablo']);
     const result = run(root, snapshot);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('declared container does not exist: agv2-pablo-infra-oc');
+    expect(result.stderr).toContain('declared container does not exist: kratos/agv2-pablo-infra-oc');
   });
 
   test('rejects malformed evidence and duplicate names', async () => {

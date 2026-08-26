@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
 import {
   type AgentDocument, type DocumentKind, type HarnessKind, type RuntimeFacts,
-  documentForKind, resolveAgentDocuments, verifyWritablePath
+  documentForKind, resolveAgentDocuments, verifyReadableDocument, verifyWritablePath
 } from './agent-documents.js';
 
 /**
@@ -72,8 +72,10 @@ export interface GovernanceBatchWriteAck {
 export interface MemoryDirectoryListing {
   /** Raíz del directorio de memoria (~/.claude/projects, etc.) */
   readonly root: string;
-  /** Total de ficheros en el directorio, aunque entries venga recortado. */
-  readonly total: number;
+  /** Total exacto sólo cuando el barrido terminó; null si el cap dejó un límite inferior. */
+  readonly total: number | null;
+  /** Entradas realmente observadas, incluso si el total exacto no se conoce. */
+  readonly observed_at_least: number;
   /** true si la lista fue recortada. */
   readonly truncated: boolean;
   /** Entrada de fichero: ruta relativa a root. */
@@ -91,7 +93,7 @@ export interface MemoryDirectoryListing {
 export interface GovernanceReadError {
   readonly error:
     | 'not_found' | 'permission_denied' | 'invalid_path' | 'symlink_detected'
-    | 'too_large' | 'timeout'
+    | 'too_large' | 'timeout' | 'cancelled' | 'busy'
     /** No hay por dónde preguntar: sin pty-agent conectado, o el que hay no sabe leer. */
     | 'unavailable'
     | 'unknown';
@@ -122,6 +124,7 @@ export interface AgentFactsProbe {
     facts: RuntimeFacts,
     tenantId: string,
     alias: string,
+    signal?: AbortSignal,
   ): Promise<GovernanceDocumentContent | GovernanceReadError>;
 
   /**
@@ -135,6 +138,7 @@ export interface AgentFactsProbe {
     facts: RuntimeFacts,
     tenantId: string,
     alias: string,
+    signal?: AbortSignal,
   ): Promise<MemoryDirectoryListing | GovernanceReadError>;
 
   /**
@@ -190,6 +194,8 @@ export interface AgentDocumentsDeps {
 }
 
 export interface DocumentRow extends AgentDocument {
+  /** El contenido se puede pedir por `:kind/content`; no implica que se pueda escribir. */
+  readonly readable: boolean;
   /** Nunca `true` si los hechos no están medidos: lo dice el propio campo, no un comentario. */
   readonly editable: boolean;
 }
@@ -211,7 +217,8 @@ const CAVEAT_NO_MEDIDO =
   'como la verdad. Nada es editable hasta que el pty-agent mida el entorno del proceso.';
 
 function harnessFromRegistry(value: string | null | undefined): HarnessKind {
-  return value === 'claude' || value === 'codex' || value === 'openclaw' ? value : 'unknown';
+  return value === 'claude' || value === 'codex' || value === 'openclaw' || value === 'hermes'
+    ? value : 'unknown';
 }
 
 export function buildDocumentsResponse(
@@ -229,11 +236,25 @@ export function buildDocumentsResponse(
     harness: facts.harness,
     home: facts.home || null,
     ...(medido ? {} : { caveat: CAVEAT_NO_MEDIDO }),
-    items: resolved.map((doc) => (medido ? doc : {
-      ...doc,
-      editable: false,
-      reason: doc.reason ?? 'los hechos de este alias no están medidos todavía',
-    })),
+    items: resolved.map((doc) => {
+      if (!medido) {
+        return {
+          ...doc,
+          readable: false,
+          editable: false,
+          reason: doc.reason ?? 'los hechos de este alias no están medidos todavía',
+        };
+      }
+      const verdict = verifyReadableDocument(facts, doc);
+      if (!verdict.allowed) {
+        return {
+          ...doc,
+          readable: false,
+          reason: doc.reason ?? verdict.reason ?? 'el contenido no se sirve por esta vía',
+        };
+      }
+      return { ...doc, readable: true };
+    }),
   };
 }
 
@@ -251,7 +272,10 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
    * acreditar la aplicación. Un 404 del manejador queda reservado para un destino ausente o no
    * autorizado; la consola no lo disfraza como una ruta sin publicar.
    */
-  const KINDS: readonly DocumentKind[] = ['directive', 'tools', 'prompts', 'mcp'];
+  const KINDS: readonly DocumentKind[] = [
+    'directive', 'tools', 'prompts', 'mcp', 'identity', 'human',
+    'memory', 'heartbeat', 'configuration',
+  ];
 
   function kindValido(valor: string): valor is DocumentKind {
     return (KINDS as readonly string[]).includes(valor);
@@ -269,6 +293,20 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
 
   function esError(valor: object): valor is GovernanceReadError {
     return 'error' in valor;
+  }
+
+  function contenidoGobernadoValido(valor: GovernanceDocumentContent): boolean {
+    const raw = valor as unknown as Record<string, unknown>;
+    if (typeof raw.text !== 'string'
+        || !Number.isSafeInteger(raw.bytes) || Number(raw.bytes) < 0
+        || typeof raw.truncated !== 'boolean'
+        || typeof raw.modified_at !== 'string' || raw.modified_at.length === 0
+        || typeof raw.sha !== 'string' || !SHA256_PATTERN.test(raw.sha)) return false;
+    const visibleBytes = Buffer.byteLength(raw.text, 'utf8');
+    if (visibleBytes > Number(raw.bytes)) return false;
+    return raw.truncated === true
+      || (visibleBytes === Number(raw.bytes)
+        && createHash('sha256').update(raw.text, 'utf8').digest('hex') === raw.sha);
   }
 
   type BaseParams = { tenantId?: string; alias: string };
@@ -336,11 +374,11 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       const { target } = resuelto;
 
       const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
-      if (!medido) {
+      if (medido?.source !== 'measured') {
         /*
-         * 409 y no 404. Sin hechos medidos NO se puede saber qué fichero es «la directiva» de este
-         * alias: el registro se equivocaba de arnés en 5 de los 14 el 23-ago, así que deducirlo
-         * serviría el fichero de OTRO arnés. Se dice que no se midió, con esas palabras.
+         * 409 y no 404. Que `factsFor` devuelva una fila no prueba medición: `registry` y
+         * `database` siguen siendo configuración no acreditada. Sólo `measured` permite resolver
+         * y abrir un path; de otro modo podríamos servir el fichero de OTRO arnés.
          */
         return reply.code(409).send({
           error: 'no_medido',
@@ -352,6 +390,16 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       const doc = documentForKind(medido.facts, kind);
       if (!doc) {
         return reply.code(404).send({ error: 'not_found', message: 'ese alias no tiene ese documento' });
+      }
+
+      // El inventario y el endpoint comparten esta puerta. Una fila de configuración sensible o
+      // un directorio no se convierte en lectura sólo porque alguien construya la URL a mano.
+      const readable = verifyReadableDocument(medido.facts, doc);
+      if (!readable.allowed) {
+        return reply.code(403).send({
+          error: 'not_readable',
+          message: readable.reason ?? doc.reason ?? 'el contenido de este elemento no se sirve por esta vía',
+        });
       }
 
       const leido = await deps.probe.readGovernanceDocument(
@@ -379,6 +427,13 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
           };
         }
         return reply.code(codigoDe(leido.error)).send({ error: leido.error, message: leido.reason });
+      }
+
+      if (!contenidoGobernadoValido(leido)) {
+        return reply.code(502).send({
+          error: 'invalid_probe_response',
+          message: 'la sonda respondió, pero no acreditó un contenido completo y coherente',
+        });
       }
 
       return {
@@ -454,7 +509,7 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       }
 
       const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
-      if (!medido) {
+      if (medido?.source !== 'measured') {
         return reply.code(409).send({
           error: 'no_medido',
           message: 'los hechos de este alias no están medidos dentro de su contenedor. Escribir sin '

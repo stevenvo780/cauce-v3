@@ -1,9 +1,10 @@
 import { ArchiveX, Ban, Clock, RotateCcw, Rows3, TriangleAlert } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { DeliveryState, QueueItem } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
+import { exactCancelReceipt, exactReplayReceipt } from './delivery-receipts';
 import { leerUltimoError } from './ultimo-error';
 
 /**
@@ -66,6 +67,22 @@ interface Pendiente {
   alias: string;
 }
 
+export type DeliverySnapshotRefresh =
+  | { data: unknown; error?: undefined }
+  | { data?: undefined; error: Error };
+
+function addId(current: ReadonlySet<string>, deliveryId: string): ReadonlySet<string> {
+  if (current.has(deliveryId)) return current;
+  return new Set([...current, deliveryId]);
+}
+
+function removeId(current: ReadonlySet<string>, deliveryId: string): ReadonlySet<string> {
+  if (!current.has(deliveryId)) return current;
+  const next = new Set(current);
+  next.delete(deliveryId);
+  return next;
+}
+
 /**
  * **La tabla de entregas con su replay y su cancel** — extraída de `QueuesPage` el 2026-08-22.
  *
@@ -86,11 +103,16 @@ interface Pendiente {
  * siguiente fetch. Un replay «aplicado» pintado en el browser sin confirmación del servidor es
  * exactamente la clase de mentira que esta consola existe para no contar.
  */
-export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, caption, resaltada }: {
+export function DeliveryTable({
+  rows, canReplay, canCancel, onChanged, snapshotVersion, empty, caption, resaltada,
+}: {
   rows: readonly QueueItem[];
   canReplay: boolean;
   canCancel: boolean;
-  onChanged: () => void;
+  /** Resolves only after a new server read has either produced data or produced an error. */
+  onChanged: () => Promise<DeliverySnapshotRefresh>;
+  /** A later verified manual refresh also releases uncertainty left by an earlier failed read. */
+  snapshotVersion?: string | null;
   empty?: string;
   caption?: string;
   /**
@@ -101,9 +123,11 @@ export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, ca
   resaltada?: string;
 }) {
   const api = useApi();
-  const [replaying, setReplaying] = useState<string>();
-  const [cancelling, setCancelling] = useState<string>();
+  const [replaying, setReplaying] = useState<ReadonlySet<string>>(() => new Set());
+  const [cancelling, setCancelling] = useState<ReadonlySet<string>>(() => new Set());
+  const [uncertain, setUncertain] = useState<ReadonlySet<string>>(() => new Set());
   const [notice, setNotice] = useState<string>();
+  const previousSnapshotVersion = useRef(snapshotVersion);
   /**
    * 🔴 Ninguna de las dos acciones sale al servidor con un solo clic.
    *
@@ -113,35 +137,74 @@ export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, ca
    */
   const [pendiente, setPendiente] = useState<Pendiente>();
 
+  useEffect(() => {
+    if (previousSnapshotVersion.current === snapshotVersion) return;
+    previousSnapshotVersion.current = snapshotVersion;
+    // A changed version is evidence of a later successful server snapshot, including one loaded
+    // from the page-level refresh after an earlier reconciliation request failed.
+    setUncertain((current) => current.size === 0 ? current : new Set());
+  }, [snapshotVersion]);
+
+  async function rereadAfterUncertain(deliveryId: string): Promise<boolean> {
+    setUncertain((current) => addId(current, deliveryId));
+    try {
+      const refreshed = await onChanged();
+      if (refreshed.data === undefined) return false;
+      setUncertain((current) => removeId(current, deliveryId));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function replay(deliveryId: string) {
-    setReplaying(deliveryId);
+    setReplaying((current) => addId(current, deliveryId));
     setNotice(undefined);
     try {
       const result = await api.replayDelivery(deliveryId);
-      setNotice(result.replayed ? `Replay encolado para ${compactId(deliveryId)}` : `Replay no aplicado: ${compactId(deliveryId)}`);
-      onChanged();
+      if (!exactReplayReceipt(result, deliveryId)) {
+        throw new Error('el gateway no devolvió un recibo durable exacto del replay');
+      }
+      setNotice(`Replay encolado para ${compactId(deliveryId)}`);
+      void onChanged().catch(() => undefined);
     } catch (error) {
-      setNotice(`El reinyectado falló: ${error instanceof Error ? error.message : 'el servidor no dijo por qué'}`);
+      // Un error de red o un 2xx truncado puede ocurrir DESPUES del commit. Replay no tiene una
+      // clave que el browser pueda reutilizar sin riesgo, asi que no se reintenta a ciegas: se
+      // relee la fila y se declara el resultado incierto.
+      const detail = error instanceof Error ? error.message : 'el servidor no dijo por qué';
+      setNotice(`Resultado incierto del reinyectado: ${detail}. Se debe releer la cola antes de volver a intentarlo; la acción queda bloqueada durante esa lectura.`);
+      const verified = await rereadAfterUncertain(deliveryId);
+      setNotice(`Resultado incierto del reinyectado: ${detail}. ${verified
+        ? 'La cola ya se releyó; revisá el estado antes de decidir otra acción.'
+        : 'No hubo una relectura verificable y la acción permanece bloqueada.'}`);
     } finally {
-      setReplaying(undefined);
+      setReplaying((current) => removeId(current, deliveryId));
     }
   }
 
   async function cancel(deliveryId: string) {
-    setCancelling(deliveryId);
+    setCancelling((current) => addId(current, deliveryId));
     setNotice(undefined);
     try {
       const result = await api.cancelDelivery(deliveryId);
+      if (!exactCancelReceipt(result, deliveryId)) {
+        throw new Error('el gateway no devolvió un recibo durable exacto de la cancelación');
+      }
       // Se dice explícitamente que sigue siendo replayable: la queja documentada del operador es
       // que cancelar a mano en la base era irreversible.
-      setNotice(result.cancelled
-        ? `Cancelada ${compactId(deliveryId)} (queda en DLQ, se puede replayar)`
-        : `Cancelación no aplicada: ${compactId(deliveryId)}`);
-      onChanged();
+      setNotice(`Cancelada ${compactId(deliveryId)} (queda en DLQ, se puede replayar)`);
+      void onChanged().catch(() => undefined);
     } catch (error) {
-      setNotice(`La cancelación falló: ${error instanceof Error ? error.message : 'el servidor no dijo por qué'}`);
+      // Cancelar tambien puede haber confirmado antes de perder su respuesta. La unica autoridad
+      // segura es la relectura; repetir el POST sin verla podria competir con el nuevo estado.
+      const detail = error instanceof Error ? error.message : 'el servidor no dijo por qué';
+      setNotice(`Resultado incierto de la cancelación: ${detail}. Se debe releer la cola antes de volver a intentarlo; la acción queda bloqueada durante esa lectura.`);
+      const verified = await rereadAfterUncertain(deliveryId);
+      setNotice(`Resultado incierto de la cancelación: ${detail}. ${verified
+        ? 'La cola ya se releyó; revisá el estado antes de decidir otra acción.'
+        : 'No hubo una relectura verificable y la acción permanece bloqueada.'}`);
     } finally {
-      setCancelling(undefined);
+      setCancelling((current) => removeId(current, deliveryId));
     }
   }
 
@@ -149,6 +212,8 @@ export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, ca
     if (!pendiente) return;
     const { accion, deliveryId } = pendiente;
     setPendiente(undefined);
+    if (uncertain.has(deliveryId) || replaying.has(deliveryId) || cancelling.has(deliveryId)
+        || (accion === 'replay' ? !canReplay : !canCancel)) return;
     void (accion === 'replay' ? replay(deliveryId) : cancel(deliveryId));
   }
 
@@ -197,6 +262,9 @@ export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, ca
                 const enfocada = resaltada != null && deliveryId === resaltada;
                 const alias = item.recipient_alias ?? 'UNKNOWN';
                 const error = leerUltimoError(state, item.last_error);
+                const replayInFlight = deliveryId != null && replaying.has(deliveryId);
+                const cancelInFlight = deliveryId != null && cancelling.has(deliveryId);
+                const outcomeUncertain = deliveryId != null && uncertain.has(deliveryId);
                 return <tr
                   key={deliveryId ?? index}
                   className={enfocada ? 'fila-enfocada' : undefined}
@@ -234,12 +302,12 @@ export function DeliveryTable({ rows, canReplay, canCancel, onChanged, empty, ca
                   </td>
                   <td data-label="Acción">
                     {replayable ? (
-                      <button className="button small" type="button" onClick={() => setPendiente({ accion: 'replay', deliveryId: deliveryId!, alias })} disabled={!canReplay || replaying === deliveryId} aria-label={`Replay delivery ${deliveryId}`}>
-                        <RotateCcw size={15} aria-hidden="true" />{replaying === deliveryId ? 'Enviando…' : 'Replay'}
+                      <button className="button small" type="button" onClick={() => setPendiente({ accion: 'replay', deliveryId: deliveryId!, alias })} disabled={!canReplay || replayInFlight || outcomeUncertain} aria-label={`Replay delivery ${deliveryId}`}>
+                        <RotateCcw size={15} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : replayInFlight ? 'Enviando…' : 'Replay'}
                       </button>
                     ) : cancellable ? (
-                      <button className="button small" type="button" onClick={() => setPendiente({ accion: 'cancel', deliveryId: deliveryId!, alias })} disabled={!canCancel || cancelling === deliveryId} aria-label={`Cancelar delivery ${deliveryId}`}>
-                        <Ban size={15} aria-hidden="true" />{cancelling === deliveryId ? 'Cancelando…' : 'Cancelar'}
+                      <button className="button small" type="button" onClick={() => setPendiente({ accion: 'cancel', deliveryId: deliveryId!, alias })} disabled={!canCancel || cancelInFlight || outcomeUncertain} aria-label={`Cancelar delivery ${deliveryId}`}>
+                        <Ban size={15} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : cancelInFlight ? 'Cancelando…' : 'Cancelar'}
                       </button>
                     ) : <span className="muted"><ArchiveX size={15} aria-hidden="true" /> No aplica</span>}
                   </td>

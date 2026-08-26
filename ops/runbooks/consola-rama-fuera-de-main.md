@@ -1,283 +1,94 @@
-# Runbook: la consola de producción vive en una rama que no está en `main`
+# Consola: incidente de rama y camino historico retirado
 
-**Estado al 2026-08-22.** Todo lo que sigue está medido en este repo, con los comandos que se citan.
-Lo que no pude comprobar desde acá va marcado como **NO COMPROBADO** y con qué comando comprobarlo.
+## Estado actual
 
----
+La divergencia que dio origen a este documento ya no define el procedimiento de produccion. La
+consola y el runtime se publican desde un mismo commit limpio de `main`; una rama larga de consola
+no es una fuente de release. Este fichero conserva la decision operativa para que una referencia
+antigua no reactive el segundo camino de despliegue.
 
-## 1. El riesgo, en una frase
+`ops/scripts/release-console.sh desplegar` y `revertir` son tombstones fail-closed. No construyen,
+transfieren, etiquetan, cambian selectores ni recrean servicios. Los targets historicos
+`release-console` y `release-console-rollback` conservan el mismo fallo explicito para detener
+automatizaciones antiguas de forma visible.
 
-**Quien construya la consola desde `main` manda a producción una consola sin la vista «La flota
-ahora», sin login por contraseña y sin la vista de licencias — y no recibe un solo error que se lo
-avise.** El build pasa, los tests pasan, el gate pasa. Lo único que cambia es que la pantalla que el
-dueño usa todos los días deja de existir, y nadie se entera hasta que alguien la abre.
+## Unica ruta de release
 
-No es una hipótesis. Es lo que produce hoy `git checkout main && pnpm build:console`.
+1. Integrar consola y runtime en `main`, con el arbol rastreado limpio y las pruebas completas.
+2. Ejecutar `ops/scripts/release-build.sh`. Siempre construye y publica runtime y consola del mismo
+   commit, recupera cada `repository@sha256` desde el registry y exige que el image ID recuperado
+   sea el mismo que paso los smokes. `build.json` conserva ambos RepoDigests, IDs, fuentes y bases.
+3. Crear y autenticar el baseline indicado en `ops/runbooks/deploy.md`. El baseline liga el runtime
+   candidato, el runtime bridge, la consola anterior, el manifest anterior y la evidencia de
+   rollback reproducible.
+4. Preparar los tres selectores no derivados de `build.json` como variables de entorno. Son rutas y
+   hashes, nunca contenido secreto:
 
----
+   ```sh
+   export CAUCE_ENV_FILE=/etc/cauce-v3/prod.env
+   export CAUCE_DEPLOY_TARGET_OVERRIDE_MANIFEST=/etc/cauce-v3/compose-overrides/release-<commit>.manifest
+   export CAUCE_DEPLOY_TARGET_OVERRIDE_MANIFEST_SHA256=sha256:<64-hex>
+   export CAUCE_DEPLOY_TARGET_ROLLBACK_BASELINE_FILE=/etc/cauce-v3/releases/rollback-baseline-<commit>.json
+   export CAUCE_DEPLOY_TARGET_ROLLBACK_BASELINE_SHA256=sha256:<64-hex>
+   ```
 
-## 2. Qué está medido
+5. Ejecutar `make -C ops release-deploy-preflight`. Es read-only respecto de selectores, DB y
+   servicios: valida evidencia, baseline, manifest, topologia, health y que los containers actuales
+   correspondan exactamente con el expected-old. Devuelve un `CAUCE_DEPLOY_CONFIRM` ligado por hash
+   a los seis valores old y los seis target. Si otro proceso cambia uno, el deploy lo rechaza.
+6. Con esa confirmacion exacta, ejecutar `make -C ops release-deploy`. El driver canonico
+   `ops/scripts/deploy-release.sh` entra por `pin-production-release.py locked-exec` y conserva el
+   mismo FD/token de lock durante toda la transaccion. Compara y reemplaza juntos:
 
-```sh
-# La rama NO es ancestro de main:
-git merge-base --is-ancestor feat/consola-flota-ahora-20260822 main && echo SI || echo NO
-# → NO
+   - `CAUCE_RUNTIME_IMAGE`;
+   - `CAUCE_CONSOLE_IMAGE`;
+   - `CAUCE_COMPOSE_OVERRIDE_MANIFEST`;
+   - `CAUCE_COMPOSE_OVERRIDE_MANIFEST_SHA256`;
+   - `CAUCE_ROLLBACK_BASELINE_FILE`;
+   - `CAUCE_ROLLBACK_BASELINE_SHA256`.
 
-# Cuánto han divergido (izquierda = commits sólo en main, derecha = sólo en la rama):
-git rev-list --left-right --count main...feat/consola-flota-ahora-20260822
-# → 19    16
+   Dentro de ese lock recupera por registry los RepoDigests de old y target, corre `migrator` como
+   `run --rm`, recrea el conjunto exacto de servicios runtime/consola con `--no-build`, verifica
+   image ID, `Config.Image`, config hash y health, y produce `release-host-ready`. Un fallo posterior
+   al CAS, antes de schema durable, ejecuta el CAS inverso de los seis campos. Después de schema
+   durable selecciona el bridge acreditado y la consola/manifest previos, conservando path+SHA
+   atómicos. Si la propia compensacion falla, usa códigos diferenciados y un error CRITICAL; nunca
+   declara un rollback exitoso a medias.
 
-# El tamaño de lo que main no tiene:
-git diff --stat main...feat/consola-flota-ahora-20260822 | tail -1
-# → 76 files changed, 13386 insertions(+), 737 deletions(-)
+El baseline target puede codificar un runtime bridge distinto y acreditado para el schema durable;
+la consola y el manifest path+SHA sí deben coincidir exactamente con lo observado antes del deploy.
+Eso vuelve reproducible la compensacion incluso si falla el migrator. Un arbol vivo con
+imagenes o config-hashes fragmentados falla en preflight: primero necesita una recuperacion
+controlada que produzca un expected-old coherente; el driver no inventa un selector retroactivo.
 
-# Y el hecho más concreto: en main la carpeta de la vista no existe.
-git ls-tree -r --name-only main -- apps/console/src/features/live | wc -l
-# → 0
-```
+Durante la ventana autorizada con Zeus apagado, fijar `CAUCE_DEPLOY_ZEUS_MAINTENANCE=1`,
+`CAUCE_CHANGE_ID` y `CAUCE_MAINTENANCE_CONFIRM=offline:Steven:zeus:<mismo-change-id>`. Ese modo exige el gate acotado de mantenimiento y dice
+explicitamente que `release-host-ready` estricto sigue cerrado. Tras reactivar Zeus, el gate y la
+evidencia estrictos se ejecutan sin la excepcion; el resultado acotado nunca se renombra como final.
 
-La rama cuelga de `feat/consola-viva-20260806`, que tampoco está en `main`
-(`git merge-base --is-ancestor feat/consola-viva-20260806 main` → NO). El antepasado común de las
-dos historias es `0166e598`.
+No hay transferencia directa de imagen, etiquetas locales como selector, edicion remota del env ni
+un `swap` suelto. Un digest de configuracion local tampoco sustituye al RepoDigest recuperable del
+registry. El driver no ejecuta cutover ni toca unidades/adapters por alias.
 
-### Lo que `main` NO tiene (se perdería al construir desde `main`)
+## Reversa
 
-| Qué | Dónde |
-|---|---|
-| La vista «La flota ahora» entera | `apps/console/src/features/live/` (13 ficheros, 0 en `main`) |
-| Login humano por contraseña + JWT | `services/gateway/src/password-auth.ts`, `password.ts`, `console-users.ts`, `console-user-cli.ts` |
-| La tabla de usuarios de consola | `packages/store/migrations/023_console_users.sql` |
-| Vista única de licencias | `apps/console/src/features/licenses/` |
-| Lista blanca de rutas en el borde público | `ops/console-login/patch-caddy-lista-blanca.py`, `deploy/nginx-console-tls.conf` |
-| El E2E real del login contra Postgres efímero | `tests/e2e/console-login.test.ts` |
+La unica reversa de consola es `ops/scripts/rollback.sh console`. Lee el target de la consola
+anterior desde el baseline autenticado, mantiene runtime y manifest como un conjunto verificado,
+aplica el mismo CAS de seis campos, recrea solo los servicios necesarios y comprueba image ID y
+health. Si la comprobacion falla, compensa el CAS y restaura los selectores anteriores bajo el mismo
+lock. No se pasa un tag o digest elegido a mano.
 
-### Lo que la RAMA no tiene (se perdería al desplegar el runtime desde la rama)
+## Verificacion local read-only
 
-Los 19 commits de `main` son casi todos de runtime, no de consola, y varios son arreglos caros:
-política de reintentos R1/R2/R3/R6, «un ambiguo sin ejecución se reintenta en vez de morir en el
-intento 1», el adjunto inválido que mataba la cola de un alias, el cursor de codex 0.145, y la
-sesión compartida que ya no le borra la conversación al alias.
-
-**Por eso el riesgo es simétrico y por eso la salida no es «desplegar la rama»: es fusionar.**
-
----
-
-## 3. La buena noticia: la fusión no tiene conflictos
-
-Medido, no supuesto:
-
-```sh
-# Ningún fichero fue tocado por los dos lados desde el antepasado común:
-comm -12 <(git diff --name-only 0166e598..main | sort) \
-         <(git diff --name-only 0166e598..feat/consola-flota-ahora-20260822 | sort)
-# → (vacío)
-
-# Y la fusión en seco sale limpia (exit 0, sólo el OID del árbol resultante):
-git merge-tree --write-tree main feat/consola-flota-ahora-20260822
-# → 567a05d4e12c6291faced2039030e30fb8f14815   (sin bloque de conflictos)
-```
-
-Un `merge-tree` limpio dice que **git** no encuentra choque textual. No dice que el resultado
-compile ni que los tests pasen: los dos lados tocan `services/gateway/src/*` en ficheros distintos y
-un `main.ts` que registra rutas nuevas puede chocar semánticamente con un `auth.ts` que main movió.
-Por eso el plan de abajo compila y prueba ANTES de empujar nada.
-
----
-
-## 4. Las dos cosas que sí hay que mirar a mano
-
-### 4.1 El hueco del `022` en las migraciones
-
-`main` llega hasta `021_failure_notice_coalescing.sql`. La rama añade `023_console_users.sql`.
-**Ninguno de los dos tiene un `022`**: existió (`50b539e`, `022_execution_lifetime.sql`) y ya no está
-en la punta de `main`.
-
-El hueco en sí es inofensivo: `applyMigrations` (`packages/store/src/db.ts:81-99`) ordena por nombre
-de fichero y salta las que ya figuran en `schema_migrations` por su nombre EXACTO — no exige que la
-numeración sea contigua.
-
-Lo que sí sería un problema es que otra rama viva reutilice el número `022` con otro contenido: dos
-ficheros distintos con el mismo prefijo se aplicarían en un orden que depende del resto del nombre, y
-en una base donde uno ya está aplicado el otro entraría sin que nada lo note. **Antes de fusionar,
-comprobar que nadie más está usando `022`:**
+La tombstone conserva una comprobacion deliberadamente limitada:
 
 ```sh
-git log --all --oneline --diff-filter=A -- 'packages/store/migrations/022_*'
+CAUCE_CONSOLE_IMAGE='registry.example:5000/cauce/console@sha256:<64-hex>' \
+  ops/scripts/release-console.sh verificar
 ```
 
-### 4.2 El runtime de producción tiene que traer ya el login
-
-La consola de la rama pide `POST /v3/console/auth/login`. Si el runtime que corre en producción
-saliera de `main`, esa ruta no existiría y la consola nueva quedaría con una pantalla de login que no
-puede autenticar contra nada.
-
-**NO COMPROBADO desde este worktree** — no tengo acceso al host. Se comprueba así, y hay que hacerlo
-ANTES de tocar nada:
-
-```sh
-# ¿La ruta existe en el gateway que está corriendo?
-ssh kratos "cd /datos/workspaces/cauce-v3 && docker compose -f deploy/compose.yaml exec -T gateway \
-  node -e \"process.exit(0)\" && docker compose -f deploy/compose.yaml exec -T gateway \
-  sh -c 'grep -rl \"console/auth/login\" dist | head -1'"
-
-# ¿La migración 023 está aplicada?
-ssh kratos "cd /datos/workspaces/cauce-v3 && docker compose -f deploy/compose.yaml exec -T gateway \
-  node -e 'import(\"@cauce/store\").then(async m => { /* … */ })'"
-# o, más simple y directo, contra la DB:
-#   SELECT version FROM schema_migrations ORDER BY version;
-```
-
-Si el runtime de producción NO trae el login, el orden correcto es: fusionar → desplegar runtime →
-migrar → recién entonces desplegar la consola. Nunca al revés.
-
----
-
-## 5. El plan de fusión, con los comandos
-
-Se hace con **una rama de integración**, no fusionando directo sobre `main`: si algo no compila hay
-que poder tirar la rama y volver a empezar sin haber tocado la punta de la que todos parten.
-
-```sh
-# 0 — punto de partida limpio y con la rama ya empujada a kratos (zeus la empujó el 2026-08-22).
-git fetch kratos
-git rev-parse kratos/desde-zeus/feat/consola-flota-ahora-20260822
-# → d3411debcf53b75b180c5516cf11d329fbc1c144   (la que está desplegada, más los arreglos de esta tanda)
-
-# 1 — rama de integración desde main.
-git switch -c integracion/consola-a-main main
-
-# 2 — la fusión. Sin --squash: los 16 commits cuentan una historia y el squash la borra,
-#     y esta rama tiene tres cambios independientes (login, licencias, vista live) que
-#     mañana hay que poder revertir por separado.
-git merge --no-ff kratos/desde-zeus/feat/consola-flota-ahora-20260822
-# medido el 2026-08-22: sin conflictos.
-
-# 3 — LO QUE DE VERDAD ACREDITA LA FUSIÓN. El merge-tree limpio no prueba nada de esto.
-pnpm install --frozen-lockfile
-pnpm -C apps/console exec tsc --noEmit -p tsconfig.app.json
-pnpm -C apps/console exec eslint . --max-warnings 0
-pnpm -C apps/console exec vitest run
-pnpm build:core && pnpm build:console
-pnpm test            # la suite entera, no sólo la de consola: la rama toca el gateway
-
-# 4 — comprobación de que lo que se estaba perdiendo está DENTRO del resultado.
-#     No basta con que compile: hay que ver la vista y el login en el árbol fusionado.
-git ls-tree -r --name-only HEAD -- apps/console/src/features/live | wc -l   # > 0
-git ls-tree -r --name-only HEAD -- services/gateway/src/password-auth.ts    # existe
-grep -rn "R1\|ambiguo" packages/store/src --include=*.ts | head -3          # lo de main sigue ahí
-
-# 5 — y que el BUNDLE construido contiene la vista, que es lo único que llega al navegador.
-grep -rq "La flota ahora" apps/console/dist/assets/*.js && echo "la vista está en el bundle"
-
-# 6 — recién ahora, a main.
-git switch main
-git merge --ff-only integracion/consola-a-main
-git push origin main
-git push kratos main
-```
-
-### Si el paso 3 falla
-
-No se arregla sobre `main`. Se arregla en `integracion/consola-a-main`, con un commit propio que
-explique el choque semántico, y se vuelve al paso 3. La punta de `main` no se toca hasta que la
-secuencia entera pasa.
-
----
-
-## 6. Después de fusionar: qué desplegar y en qué orden
-
-1. **Runtime**, si y sólo si el punto 4.2 dijo que hace falta. `ops/runbooks/deploy.md`, con
-   `make -C ops release-build` + `release-gate`. Es el paso caro y el que puede tirar entregas en
-   vuelo: si el runtime de producción ya trae el login y las migraciones, **saltearlo**.
-2. **Migraciones**, si `023` no estaba aplicada: `ops/scripts/migrate.sh`. Forward-only.
-3. **Consola sola**: `ops/scripts/release-console.sh desplegar` (o `make -C ops release-console`) — construye
-   `--target console`, pinea `CAUCE_CONSOLE_IMAGE` con respaldo previo, recrea sólo el servicio
-   `console` y verifica por efecto que el bundle servido contiene la vista. Trae su propia vuelta
-   atrás: `release-console.sh revertir`.
-
----
-
-## 7. Cómo evitar que vuelva a pasar
-
-Lo que hizo posible este agujero es que **construir desde `main` produce un artefacto plausible**:
-sin error, sin aviso, sólo con menos cosas dentro. Dos guardas baratas lo cierran:
-
-- **Una comprobación de bundle en el gate.** `release-gate.sh` ya exige que los digests coincidan con
-  la evidencia; añadirle un `grep` del bundle de consola por una marca de la vista convierte
-  «se construyó» en «se construyó CON la vista». Es exactamente lo que hace el paso (b) de
-  `release-console.sh`, y no cuesta nada moverlo al gate.
-- **Que la rama de producción sea `main`.** Mientras la consola desplegada viva en una rama larga,
-  cada despliegue es una decisión sobre qué historia usar, y esa decisión se toma a las tres de la
-  mañana. La fusión de arriba no es sólo higiene: es lo que quita la decisión.
-
----
-
-## 8. Lo que este runbook NO acredita
-
-- **No probé la fusión más allá de `merge-tree --write-tree`.** No ejecuté los pasos 3 a 6; están
-  escritos para que los ejecute quien fusione.
-- **No comprobé el estado de producción**: ni qué runtime corre, ni si `023` está aplicada, ni si
-  `/v3/console/auth/login` existe en el gateway desplegado. El § 4.2 dice cómo comprobarlo.
-- **No empujé nada.** La rama `desde-zeus/feat/consola-flota-ahora-20260822` ya estaba en `kratos`
-  antes de esta tanda; los arreglos de los diez defectos van en una rama aparte.
-
----
-
-## 9. «El bundle cambió» NO acredita que el dueño lo vea
-
-**Añadido el 2026-08-22, después de que Steven se quejara dos veces de un despliegue sano.**
-
-El 22-ago a las 20:20 se desplegó la consola. La verificación que se hizo fue la de siempre: el
-bundle cambió de hash y contiene la cadena nueva. Pasó. Steven siguió diciendo que no veía nada.
-
-No era caché, ni un service worker, ni un permiso. Su navegador **ya tenía el código nuevo** —
-`docker logs cauce-v3-prod-console-1` lo registra bajándose el bundle entero (200, no 304) cuatro
-minutos después del despliegue, y otra vez trece minutos más tarde. Lo que pasaba es que **todo lo
-que cambió vivía en `/config`** (14 selectores nuevos, todos con prefijo `.config-`; 18 textos
-nuevos, todos de `ConfigPage`) **y él estaba mirando `/live`**. Fuera de esa ruta el despliegue no
-movió un solo píxel. Y la entrada del menú que lleva allí se llamaba «Configuration», en inglés y
-la 10ª de 11, mientras que el panel de dentro se llama «Alta rápida»: nadie que busque «Alta
-rápida» pulsa «Configuration».
-
-**La verificación de un despliegue de consola tiene que decir en qué RUTA cae cada cambio.** Con
-eso escrito, la respuesta correcta a la primera queja habría sido «entrá a /config», no otro
-despliegue.
-
-### Cómo se comprueba
-
-```sh
-# 1. Sacar el dist de la imagen vieja y de la nueva.
-for T in IMAGEN_VIEJA IMAGEN_NUEVA; do
-  cid=$(docker create "$T"); docker cp "$cid":/usr/share/nginx/html/assets "/tmp/dist-$T"; docker rm "$cid"
-done
-
-# 2. Diff de lo que se VE, no de lo que cambió de hash.
-ops/scripts/diff-consola-visible.py \
-  /tmp/dist-IMAGEN_VIEJA/index-*.js  /tmp/dist-IMAGEN_NUEVA/index-*.js \
-  /tmp/dist-IMAGEN_VIEJA/index-*.css /tmp/dist-IMAGEN_NUEVA/index-*.css
-```
-
-El veredicto que importa es **el reparto de los selectores nuevos por prefijo**. Si salen todos con
-el mismo prefijo, el cambio se ve en una sola pantalla, y hay que decir cuál y avisar de que en las
-demás no cambió nada. Si no entra ningún texto ni ningún selector, **el cambio no llegó**: no se
-canta como hecho.
-
-Dos cosas medidas sobre el propio script, para que nadie lo dé por bueno sin mirar:
-
-- El listado de textos **arrastra ruido del minificador**, que al renombrar variables mueve tramos
-  de prosa que no cambiaron. En el caso del 22-ago daba 271 textos «nuevos» de los que sólo 38 eran
-  copy de verdad. Por eso separa los que llevan tilde o comillas latinas —copy del producto casi
-  seguro— del resto, que sólo se lista con `--todo`. **El diff de selectores CSS no tiene ese ruido:
-  es el que manda.**
-- Extraer las cadenas emparejando comillas **no funciona** y se probó: en un bundle minificado hay
-  plantillas con backticks y literales de expresión regular, y el emparejado se traga regiones
-  enteras. Esa versión sacaba 1193 «cadenas», casi todas mazacotes de código, y no veía un rótulo
-  que se acababa de desplegar. El script busca tramos de prosa sin mirar la sintaxis: mete ruido, y
-  no importa, porque el ruido idéntico en los dos ficheros se cancela al restar los conjuntos.
-
-### Y una cosa que el diff no ve
-
-Que el cambio se vea **no quiere decir que se encuentre**. Una entrada de menú en otro idioma que
-el panel que abre es invisible aunque esté pintada. Al desplegar una pantalla nueva, comprobá que
-el rótulo del menú y el título de dentro se parezcan lo bastante como para que quien busca lo uno
-pulse lo otro.
+Tambien puede leer exclusivamente `CAUCE_CONSOLE_IMAGE` desde `CAUCE_ENV_FILE`, sin sourcear ni
+mostrar el resto del fichero. Esta comprobacion valida que el selector sea un RepoDigest canonico e
+inmutable, incluido un registry con puerto. No consulta produccion y no acredita que la imagen sea
+recuperable, que el CAS haya ocurrido o que el servicio este sano; esas afirmaciones pertenecen al
+release gate y a la evidencia final del host.

@@ -9,7 +9,7 @@ import {
   fakeDefinition,
 } from "../src/harnesses/index.js";
 import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterEngine } from "../src/sdk/engine.js";
+import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
 import type {
   CancelDelivery,
   CommandRunRequest,
@@ -80,6 +80,41 @@ function delivery(id: string, epoch = 1, attempt = 1, claim = claimToken(attempt
     body: { prompt: "perform the task", timeout_ms: 2_000, session_key: "thread-1" },
   };
 }
+
+test("profile adoption requires the exact measured document set from the delivery contract", () => {
+  const path = "/runtime/.codex/AGENTS.md";
+  const sha = "a".repeat(64);
+  const contracted: Delivery = {
+    ...delivery("profile001"),
+    profile_runtime_contract: {
+      revision: 7,
+      generation: "runtime-generation-7",
+      documents: [{ name: "AGENTS.md", path, sha }],
+    },
+  };
+  const measured = {
+    source: "runtime-files" as const,
+    sha256: "b".repeat(64),
+    documents: [{ path, sha256: sha }],
+    text: "managed profile",
+  };
+
+  assert.deepEqual(profileAdoptionFor(contracted, measured), {
+    evidence: "adapter_delivery",
+    revision: 7,
+    generation: "runtime-generation-7",
+    documents: [{ name: "AGENTS.md", path, sha }],
+  });
+  assert.equal(profileAdoptionFor(contracted, {
+    ...measured,
+    documents: [{ path, sha256: "c".repeat(64) }],
+  }), undefined);
+  assert.equal(profileAdoptionFor(contracted, {
+    ...measured,
+    documents: [...measured.documents, { path: "/runtime/extra.md", sha256: sha }],
+  }), undefined);
+  assert.equal(profileAdoptionFor({ ...contracted, profile_runtime_contract: undefined }, measured), undefined);
+});
 
 const SUCCESS = JSON.stringify({
   reply: "completed",
@@ -196,6 +231,7 @@ async function setup(
   const harness = new HarnessAdapter({ definition: fakeDefinition, runner, store });
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness,
     publish: async (event) => {
       events.push(event);
@@ -263,6 +299,7 @@ async function setupSessionConcurrency(name: string, claimRenewalMs?: number): P
   const harness = new HarnessAdapter({ definition: fakeDefinition, runner, store });
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness,
     publish: async (event) => {
       events.push(event);
@@ -347,6 +384,7 @@ test("concurrent deliveries for one authenticated session share one UUID and exe
   const harness = new HarnessAdapter({ definition: fakeDefinition, runner, store });
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness,
     publish: async (event) => {
       if (event.delivery_id === "session-serialized-a"
@@ -1254,6 +1292,7 @@ test("every harness runtime bypasses providers and native sessions for agent fan
     const harness = new CountingHarnessAdapter({ definition, runner, store });
     const engine = new AdapterEngine({
       store,
+      executionIntentMode: "local-test-only",
       harness,
       publish: async (event) => { events.push(event); },
     });
@@ -1400,6 +1439,7 @@ test("ambiguous execution timeout is terminal and a higher attempt is never run 
   const events: DeliveryEvent[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
     publish: async (event) => { events.push(event); },
   });
@@ -1437,6 +1477,7 @@ test("a running harness emits durable started renewals until it completes", asyn
   const events: DeliveryEvent[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
     publish: async (event) => { events.push(event); },
     claimRenewalMs: 10,
@@ -1486,6 +1527,7 @@ test("a renewal fsync failure aborts the harness instead of running without owne
   });
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
     publish: async (event) => { events.push(event); },
     claimRenewalMs: 10,
@@ -1506,6 +1548,58 @@ test("a renewal fsync failure aborts the harness instead of running without owne
   assert.equal(store.getDelivery("renewal-persistence-failure")?.state, "failed");
   assert.equal(events.at(-1)?.phase, "failed");
   assert.equal(events.at(-1)?.error?.code, "EXECUTION_CANCELLED_AMBIGUOUS");
+});
+
+test("a durable intent fsync failure prevents even a witnessed harness from being invoked", async () => {
+  class WitnessedRunner extends ControlledRunner {
+    readonly witnessesHarnessStart = true;
+  }
+
+  const store = await storeFor("engine-witnessed-start-persistence-failure");
+  const runner = new WitnessedRunner();
+  const events: DeliveryEvent[] = [];
+  const enqueue = store.enqueue.bind(store);
+  let failedMarkers = 0;
+  Object.defineProperty(store, "enqueue", {
+    configurable: true,
+    value: async (event: DeliveryEvent) => {
+      if (event.execution_started === true) {
+        failedMarkers += 1;
+        throw new Error("injected execution-start fsync failure");
+      }
+      return enqueue(event);
+    },
+  });
+  const engine = new AdapterEngine({
+    store,
+    executionIntentMode: "local-test-only",
+    harness: new HarnessAdapter({
+      definition: {
+        ...fakeDefinition,
+        startWitness: { kind: "stdout-first-byte" },
+      },
+      runner,
+      store,
+    }),
+    publish: async (event) => { events.push(event); },
+  });
+  await engine.activateEpoch(1);
+
+  await engine.handleDelivery(delivery("witnessed-start-fsync-failure"));
+
+  assert.equal(runner.calls, 0);
+  assert.equal(failedMarkers, 1);
+  assert.equal(
+    events.some((event) => event.execution_started === true),
+    false,
+    "a marker that failed fsync cannot be published as durable",
+  );
+  assert.equal(events.some((event) => event.phase === "done"), false);
+  const failed = events.at(-1);
+  assert.equal(failed?.phase, "failed");
+  assert.equal(failed?.error?.code, "EXECUTION_INTENT_PERSISTENCE_FAILED");
+  assert.equal(failed?.error?.retryable, true);
+  assert.equal(store.getDelivery("witnessed-start-fsync-failure")?.state, "failed");
 });
 
 test("body timeout cannot exceed the seven-day operator ceiling", async () => {
@@ -1542,10 +1636,10 @@ test("an exhausted ACK budget fails before starting a harness", async () => {
 
 test("a failure before started never creates a renewal timer", async () => {
   const context = await setup("engine-renewal-transition-fault");
-  const transition = context.store.transition.bind(context.store);
-  Object.defineProperty(context.store, "transition", {
+  const transition = context.store.transitionAndEnqueue.bind(context.store);
+  Object.defineProperty(context.store, "transitionAndEnqueue", {
     configurable: true,
-    value: async (...args: Parameters<DurableStore["transition"]>) => {
+    value: async (...args: Parameters<DurableStore["transitionAndEnqueue"]>) => {
       if (args[1] === "started") throw new Error("injected transition failure");
       return transition(...args);
     },
@@ -1660,6 +1754,7 @@ test("recovery fails previously started work rather than executing it twice", as
   const events: DeliveryEvent[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
     publish: async (event) => {
       events.push(event);
@@ -1667,8 +1762,9 @@ test("recovery fails previously started work rather than executing it twice", as
   });
   await engine.recover();
   assert.equal(runner.calls, 0);
-  assert.equal(events[0]?.error?.code, "INTERRUPTED_AMBIGUOUS");
-  assert.equal(events[0]?.error?.retryable, false);
+  assert.deepEqual(events.map((event) => event.phase), ["started", "failed"]);
+  assert.equal(events.at(-1)?.error?.code, "INTERRUPTED_AMBIGUOUS");
+  assert.equal(events.at(-1)?.error?.retryable, false);
   assert.equal(store.getDelivery(input.delivery_id)?.state, "failed");
 });
 
@@ -1680,6 +1776,7 @@ test("recovery may execute an accepted record that never reached dispatch", asyn
   const runner = new ControlledRunner();
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
     publish: async () => undefined,
   });
@@ -1749,7 +1846,7 @@ test("delayed attempt-one ACK cannot acknowledge attempt-two events", async () =
   assert.equal(context.store.pendingEvents().some((event) => event.event_id === currentAccepted.event_id), true);
 });
 
-test("crash recovery marks started work ambiguous and blocks automatic redelivery", async () => {
+test("crash recovery holds a preinvoke-v1 attempt once its exact intent receipt exists", async () => {
   const store = await storeFor("engine-crash-redelivery");
   await store.activateEpoch(1);
   const first = delivery("crash-redelivery", 1, 1);
@@ -1758,11 +1855,32 @@ test("crash recovery marks started work ambiguous and blocks automatic redeliver
     retainRequest: true,
     attempt: first.attempt,
     claimToken: first.claim_token,
+    executionIntentProtocol: "preinvoke-v1",
   });
+  const intent: DeliveryEvent = {
+    event_id: "40000000-0000-4000-8000-000000000001",
+    delivery_id: first.delivery_id,
+    attempt: first.attempt,
+    claim_token: first.claim_token,
+    epoch: 1,
+    phase: "started",
+    occurred_at: new Date().toISOString(),
+    claim_renewal: true,
+    execution_started: true,
+  };
+  await store.enqueue(intent);
+  assert.equal(await store.acknowledgeResult(intent, {
+    execution_intent_receipt: "applied",
+  }), true);
+  assert.equal(
+    store.getDelivery(first.delivery_id)?.execution_intent_receipt_event_id,
+    intent.event_id,
+  );
   const runner = new ControlledRunner();
   const events: DeliveryEvent[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
     publish: async (event) => { events.push(event); },
   });
@@ -1772,6 +1890,167 @@ test("crash recovery marks started work ambiguous and blocks automatic redeliver
   assert.equal(events.at(-1)?.error?.code, "INTERRUPTED_AMBIGUOUS");
   assert.equal(events.at(-1)?.error?.retryable, false);
   await engine.handleDelivery(delivery("crash-redelivery", 1, 2));
+  assert.equal(runner.calls, 0);
+  assert.equal(store.getDelivery(first.delivery_id)?.state, "failed");
+  assert.equal(store.getDelivery(first.delivery_id)?.attempt, 1);
+});
+
+test("crash recovery retries preinvoke-v1 when a local intent has no remote receipt", async () => {
+  const store = await storeFor("engine-crash-intent-no-receipt");
+  await store.activateEpoch(1);
+  const first = delivery("crash-intent-no-receipt", 1, 1);
+  await store.accept(first, new Date().toISOString());
+  await store.transition(first.delivery_id, "started", new Date().toISOString(), {
+    retainRequest: true,
+    attempt: first.attempt,
+    claimToken: first.claim_token,
+    executionIntentProtocol: "preinvoke-v1",
+  });
+  await store.enqueue({
+    event_id: "40000000-0000-4000-8000-000000000002",
+    delivery_id: first.delivery_id,
+    attempt: first.attempt,
+    claim_token: first.claim_token,
+    epoch: 1,
+    phase: "started",
+    occurred_at: new Date().toISOString(),
+    claim_renewal: true,
+    execution_started: true,
+  });
+  const runner = new ControlledRunner();
+  const events: DeliveryEvent[] = [];
+  const engine = new AdapterEngine({
+    store,
+    executionIntentMode: "local-test-only",
+    harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
+    publish: async (event) => { events.push(event); },
+  });
+
+  await engine.recover();
+  assert.equal(runner.calls, 0);
+  assert.equal(events.at(-1)?.error?.code, "INTERRUPTED_PREFLIGHT");
+  assert.equal(events.at(-1)?.error?.retryable, true);
+
+  await engine.handleDelivery(delivery("crash-intent-no-receipt", 1, 2));
+  assert.equal(runner.calls, 1);
+  assert.equal(store.getDelivery(first.delivery_id)?.state, "done");
+  assert.equal(store.getDelivery(first.delivery_id)?.attempt, 2);
+});
+
+test("crash recovery retries a preinvoke-v1 attempt that never committed execution intent", async () => {
+  const store = await storeFor("engine-crash-before-intent");
+  await store.activateEpoch(1);
+  const first = delivery("crash-before-intent", 1, 1);
+  await store.accept(first, new Date().toISOString());
+  await store.transition(first.delivery_id, "started", new Date().toISOString(), {
+    retainRequest: true,
+    attempt: first.attempt,
+    claimToken: first.claim_token,
+    executionIntentProtocol: "preinvoke-v1",
+  });
+  const runner = new ControlledRunner();
+  const events: DeliveryEvent[] = [];
+  const engine = new AdapterEngine({
+    store,
+    executionIntentMode: "local-test-only",
+    harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
+    publish: async (event) => { events.push(event); },
+  });
+
+  await engine.recover();
+  assert.equal(runner.calls, 0);
+  assert.equal(events.at(-1)?.error?.code, "INTERRUPTED_PREFLIGHT");
+  assert.equal(events.at(-1)?.error?.retryable, true);
+
+  await engine.handleDelivery(delivery("crash-before-intent", 1, 2));
+  assert.equal(runner.calls, 1);
+  assert.equal(store.getDelivery(first.delivery_id)?.state, "done");
+  assert.equal(store.getDelivery(first.delivery_id)?.attempt, 2);
+});
+
+test("a duplicate started frame retries a local intent that has no remote receipt", async () => {
+  const store = await storeFor("engine-duplicate-before-intent");
+  await store.activateEpoch(1);
+  const first = delivery("duplicate-before-intent", 1, 1);
+  await store.accept(first, new Date().toISOString());
+  await store.transition(first.delivery_id, "started", new Date().toISOString(), {
+    retainRequest: true,
+    attempt: first.attempt,
+    claimToken: first.claim_token,
+    executionIntentProtocol: "preinvoke-v1",
+  });
+  await store.enqueue({
+    event_id: "40000000-0000-4000-8000-000000000003",
+    delivery_id: first.delivery_id,
+    attempt: first.attempt,
+    claim_token: first.claim_token,
+    epoch: 1,
+    phase: "started",
+    occurred_at: new Date().toISOString(),
+    claim_renewal: true,
+    execution_started: true,
+  });
+  const runner = new ControlledRunner();
+  const events: DeliveryEvent[] = [];
+  const engine = new AdapterEngine({
+    store,
+    executionIntentMode: "local-test-only",
+    harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
+    publish: async (event) => { events.push(event); },
+  });
+
+  await engine.handleDelivery(first);
+  assert.equal(runner.calls, 0);
+  assert.equal(events.at(-1)?.error?.code, "INTERRUPTED_PREFLIGHT");
+  assert.equal(events.at(-1)?.error?.retryable, true);
+
+  await engine.handleDelivery(delivery("duplicate-before-intent", 1, 2));
+  assert.equal(runner.calls, 1);
+  assert.equal(store.getDelivery(first.delivery_id)?.state, "done");
+  assert.equal(store.getDelivery(first.delivery_id)?.attempt, 2);
+});
+
+test("a duplicate started frame holds once its exact remote intent receipt exists", async () => {
+  const store = await storeFor("engine-duplicate-intent-receipt");
+  await store.activateEpoch(1);
+  const first = delivery("duplicate-intent-receipt", 1, 1);
+  await store.accept(first, new Date().toISOString());
+  await store.transition(first.delivery_id, "started", new Date().toISOString(), {
+    retainRequest: true,
+    attempt: first.attempt,
+    claimToken: first.claim_token,
+    executionIntentProtocol: "preinvoke-v1",
+  });
+  const intent: DeliveryEvent = {
+    event_id: "40000000-0000-4000-8000-000000000004",
+    delivery_id: first.delivery_id,
+    attempt: first.attempt,
+    claim_token: first.claim_token,
+    epoch: 1,
+    phase: "started",
+    occurred_at: new Date().toISOString(),
+    claim_renewal: true,
+    execution_started: true,
+  };
+  await store.enqueue(intent);
+  assert.equal(await store.acknowledgeResult(intent, {
+    execution_intent_receipt: "duplicate",
+  }), true);
+  const runner = new ControlledRunner();
+  const events: DeliveryEvent[] = [];
+  const engine = new AdapterEngine({
+    store,
+    executionIntentMode: "local-test-only",
+    harness: new HarnessAdapter({ definition: fakeDefinition, runner, store }),
+    publish: async (event) => { events.push(event); },
+  });
+
+  await engine.handleDelivery(first);
+  assert.equal(runner.calls, 0);
+  assert.equal(events.at(-1)?.error?.code, "INTERRUPTED_AMBIGUOUS");
+  assert.equal(events.at(-1)?.error?.retryable, false);
+
+  await engine.handleDelivery(delivery("duplicate-intent-receipt", 1, 2));
   assert.equal(runner.calls, 0);
   assert.equal(store.getDelivery(first.delivery_id)?.state, "failed");
   assert.equal(store.getDelivery(first.delivery_id)?.attempt, 1);
@@ -2280,6 +2559,150 @@ test("cada agent.response de un abanico llega con el estado de sus ramas hermana
   );
   assert.match(second, /Carry every already_returned branch into this reply/u);
   assert.match(second, /do not re-send this task to any alias in either list/u);
+});
+
+test("a rejected output is durable feedback and never remains as a phantom pending branch", async () => {
+  const runner = new ControlledRunner();
+  runner.stdout = JSON.stringify({
+    reply: "abro dos ramas",
+    messages: [
+      { to: "socrates", body: "rama aceptada" },
+      { to: "seneca", body: "rama que el store rechaza" },
+    ],
+    status: "done",
+    retryable: false,
+    artifacts: [],
+  });
+  const context = await setup("engine-branch-feedback-rejection", runner);
+  const rootDelivery: Delivery = {
+    ...delivery("branch-feedback-root"),
+    trace_id: "trace-branch-feedback",
+    routing_targets: [
+      { tenant_id: "Steven", alias: "socrates", online: true },
+      { tenant_id: "Steven", alias: "seneca", online: true },
+    ],
+  };
+  await context.engine.handleDelivery(rootDelivery);
+  const rootTerminal = context.store.pendingEvents().find((event) => (
+    event.delivery_id === rootDelivery.delivery_id && event.phase === "done"
+  ));
+  assert.ok(rootTerminal);
+  const childId = "71000000-0000-4000-8000-000000000001";
+  await context.store.acknowledgeResult(rootTerminal, {
+    delegation_materializations: [{
+      output_index: 0,
+      target_tenant: "Steven",
+      target_alias: "socrates",
+      child_delivery_id: childId,
+    }],
+    delegation_rejections: [{
+      output_index: 1,
+      target: "seneca",
+      code: "fanout_exceeded",
+      reason: "The fan-out cap rejected this output.",
+      guidance: "Do not retry this rejected branch.",
+    }],
+  });
+
+  runner.stdout = SUCCESS;
+  await context.engine.handleDelivery({
+    ...delivery("branch-feedback-response"),
+    actor_alias: "socrates",
+    recipient_alias: "argos",
+    trace_id: rootDelivery.trace_id,
+    body: {
+      type: "agent.response",
+      text: "rama aceptada completa",
+      correlation: {
+        root_message_id: rootDelivery.message_id,
+        root_delivery_id: rootDelivery.delivery_id,
+        response_to_delivery_id: rootDelivery.delivery_id,
+        child_delivery_id: childId,
+      },
+    },
+  });
+  const prompt = runner.requests[1]?.stdin ?? "";
+  assert.match(prompt, /"delegated_to":\["socrates"\]/u);
+  assert.match(prompt, /"rejected_delegations":\[\{"output_index":1,"target":"seneca","code":"fanout_exceeded"\}\]/u);
+  assert.match(prompt, /"still_pending":\[\]/u);
+  assert.doesNotMatch(prompt, /"still_pending":\["seneca"\]/u);
+  assert.doesNotMatch(prompt, /The fan-out cap rejected this output/u, "receipt prose leaked into the prompt");
+});
+
+test("two materialized outputs to one alias close only by their exact child delivery ids", async () => {
+  const runner = new ControlledRunner();
+  runner.stdout = JSON.stringify({
+    reply: "dos trabajos distintos para el mismo agente",
+    messages: [
+      { to: "socrates", body: "rama cero" },
+      { to: "socrates", body: "rama uno" },
+    ],
+    status: "done",
+    retryable: false,
+    artifacts: [],
+  });
+  const context = await setup("engine-branch-same-alias", runner);
+  const rootDelivery: Delivery = {
+    ...delivery("branch-same-alias-root"),
+    trace_id: "trace-branch-same-alias",
+    routing_targets: [{ tenant_id: "Steven", alias: "socrates", online: true }],
+  };
+  await context.engine.handleDelivery(rootDelivery);
+  const rootTerminal = context.store.pendingEvents().find((event) => (
+    event.delivery_id === rootDelivery.delivery_id && event.phase === "done"
+  ));
+  assert.ok(rootTerminal);
+  const firstChild = "72000000-0000-4000-8000-000000000001";
+  const secondChild = "72000000-0000-4000-8000-000000000002";
+  await context.store.acknowledgeResult(rootTerminal, {
+    delegation_materializations: [{
+      output_index: 0,
+      target_tenant: "Steven",
+      target_alias: "socrates",
+      child_delivery_id: firstChild,
+    }, {
+      output_index: 1,
+      target_tenant: "Steven",
+      target_alias: "socrates",
+      child_delivery_id: secondChild,
+    }],
+  });
+
+  const correlation = (child_delivery_id: string) => ({
+    root_message_id: rootDelivery.message_id,
+    root_delivery_id: rootDelivery.delivery_id,
+    response_to_delivery_id: rootDelivery.delivery_id,
+    child_delivery_id,
+  });
+  runner.stdout = JSON.stringify({
+    reply: "cerré solamente la rama cero",
+    messages: [], status: "done", retryable: false, artifacts: [],
+  });
+  await context.engine.handleDelivery({
+    ...delivery("branch-same-alias-first"),
+    actor_alias: "socrates",
+    recipient_alias: "argos",
+    trace_id: rootDelivery.trace_id,
+    body: { type: "agent.response", text: "primera", correlation: correlation(firstChild) },
+  });
+
+  runner.stdout = SUCCESS;
+  await context.engine.handleDelivery({
+    ...delivery("branch-same-alias-second"),
+    actor_alias: "socrates",
+    recipient_alias: "argos",
+    trace_id: rootDelivery.trace_id,
+    body: { type: "agent.response", text: "segunda", correlation: correlation(secondChild) },
+  });
+
+  const firstPrompt = runner.requests[1]?.stdin ?? "";
+  const secondPrompt = runner.requests[2]?.stdin ?? "";
+  assert.match(firstPrompt, /"still_pending":\["socrates"\]/u);
+  assert.match(firstPrompt, new RegExp(`"child_delivery_id":"${secondChild}"`, "u"));
+  assert.doesNotMatch(firstPrompt, /"still_pending":\[\]/u);
+  assert.match(secondPrompt, /"still_pending":\[\]/u);
+  assert.match(secondPrompt, new RegExp(`"child_delivery_id":"${firstChild}"`, "u"));
+  assert.match(secondPrompt, /"output_index":0/u);
 });
 
 /** Una delegación de una sola rama no tiene nada que consolidar: el prompt queda como estaba. */

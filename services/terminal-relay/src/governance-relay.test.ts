@@ -8,14 +8,16 @@ import { join } from 'node:path';
 import type { TLSSocket } from 'node:tls';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  AgentConnection, FEATURE_WRITE_GOVERNANCE, FEATURE_WRITE_GOVERNANCE_BATCH, type AgentHello,
+  AgentConnection, FEATURE_READ_GOVERNANCE_DONE, FEATURE_WRITE_GOVERNANCE,
+  FEATURE_WRITE_GOVERNANCE_BATCH, type AgentHello,
 } from './agent-leg.js';
 import {
   FRAME_TAGS, FrameDecoder, decodeDataFrame, decodeJsonFrame, encodeFrame, encodeJsonFrame, type Frame,
 } from './framing.js';
+import { requestDirectoryRead } from './gateway-client.js';
 import {
-  GOVERNANCE_READ_PATH, GOVERNANCE_WRITE_BATCH_PATH, GOVERNANCE_WRITE_PATH,
-  parseWriteBatchRequest, parseWriteRequest, setupGovernanceRelay,
+  GOVERNANCE_LIST_PATH, GOVERNANCE_READ_PATH, GOVERNANCE_WRITE_BATCH_PATH, GOVERNANCE_WRITE_PATH,
+  parseDirectoryRequest, parseWriteBatchRequest, parseWriteRequest, setupGovernanceRelay,
 } from './governance-relay.js';
 
 /**
@@ -39,13 +41,15 @@ const HELLO: AgentHello = {
   image_id: 'sha256:beef',
   runtime_user: 'dev',
   runtime_uid: 1000,
+  home: '/home/dev',
   harness: 'claude',
   agent_version: '0.4.0',
   modes: ['shell', 'harness'],
-  features: ['read_governance']
+  features: ['read_governance', FEATURE_READ_GOVERNANCE_DONE]
 };
 
 const RUTA = '/home/dev/.claude/CLAUDE.md';
+const MEMORY_ROOT = '/home/dev/.claude/projects';
 /** Corto a propósito: el test de vencimiento cuesta este tiempo de reloj y nada más. */
 const TIEMPO_LIMITE_MS = 300;
 
@@ -178,6 +182,27 @@ function readOk(requestId: string, overrides: Record<string, unknown> = {}): Fra
     chunks: 1,
     ...overrides
   }))[0]!;
+}
+
+function directoryOk(requestId: string, overrides: Record<string, unknown> = {}): Frame {
+  return new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, {
+    request_id: requestId,
+    kind: 'dir',
+    path: MEMORY_ROOT,
+    total: 1,
+    observed_at_least: 1,
+    truncated: false,
+    entries: [{
+      path: `${MEMORY_ROOT}/sesion.md`, bytes: 12, modified_at: '2026-08-24T10:00:00Z',
+    }],
+    ...overrides,
+  }))[0]!;
+}
+
+function readDone(requestId: string): Frame {
+  return new FrameDecoder().push(
+    encodeJsonFrame(FRAME_TAGS.READ_DONE, { request_id: requestId }),
+  )[0]!;
 }
 
 /** READ_DATA lleva el `request_id` como prefijo de 36 bytes ASCII. */
@@ -329,6 +354,107 @@ describe('la lectura falla explicando por qué', () => {
       error: 'timeout',
       reason: `el pty-agent no contestó en ${TIEMPO_LIMITE_MS} ms`
     });
+  });
+});
+
+describe('el índice de memoria tiene un endpoint y contrato propios', () => {
+  function pedirIndice(overrides: Parameters<typeof pedir>[0] = {}): Promise<Respuesta> {
+    return pedir({
+      ruta: GOVERNANCE_LIST_PATH,
+      cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: MEMORY_ROOT }),
+      ...overrides,
+    });
+  }
+
+  it('transporta kind=dir y devuelve sólo metadata validada', async () => {
+    const { socket, connection } = conectar();
+    const pending = pedirIndice();
+    const id = await esperarRequestId(socket);
+    const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ)!;
+    expect(decodeJsonFrame(read.payload)).toMatchObject({ kind: 'dir', path: MEMORY_ROOT });
+    connection.handleFrame(directoryOk(id), Date.now);
+    connection.handleFrame(readDone(id), Date.now);
+
+    expect(cuerpo(await pending)).toEqual({
+      path: MEMORY_ROOT,
+      total: 1,
+      observed_at_least: 1,
+      truncated: false,
+      entries: [{
+        path: `${MEMORY_ROOT}/sesion.md`, bytes: 12, modified_at: '2026-08-24T10:00:00Z',
+      }],
+    });
+  });
+
+  it('distingue alias offline y timeout sin inventar una lista vacía', async () => {
+    expect(cuerpo(await pedirIndice())).toEqual({
+      error: 'unavailable', reason: 'no hay ningún pty-agent conectado para ese alias',
+    });
+
+    conectar();
+    expect(cuerpo(await pedirIndice())).toEqual({
+      error: 'timeout', reason: `el pty-agent no contestó en ${TIEMPO_LIMITE_MS} ms`,
+    });
+  });
+
+  it('exige autenticación y una raíz canónica antes de tocar al agente', async () => {
+    const unauthenticated = conectar();
+    expect((await pedirIndice({ autorizacion: null })).status).toBe(401);
+    expect(unauthenticated.socket.frames()).toEqual([]);
+
+    const invalid = conectar();
+    const response = await pedirIndice({
+      cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: `${MEMORY_ROOT}/../secrets` }),
+    });
+    expect(response.status).toBe(400);
+    expect(invalid.socket.frames()).toEqual([]);
+  });
+
+  it('propaga el cierre HTTP y libera el cupo en vuelo del alias', async () => {
+    const { socket, connection } = conectar();
+    const payload = Buffer.from(JSON.stringify({
+      tenant_id: 'Steven', alias: 'zeus', path: MEMORY_ROOT,
+    }), 'utf8');
+    const request = httpsRequest(
+      new URL(GOVERNANCE_LIST_PATH, `https://127.0.0.1:${puerto}`),
+      {
+        method: 'POST',
+        ca: tls.cert,
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          'content-type': 'application/json',
+          'content-length': payload.byteLength,
+        },
+      },
+    );
+    request.on('error', () => { /* ECONNRESET esperado por la cancelación del cliente. */ });
+    request.end(payload);
+    await esperarRequestId(socket);
+
+    const closed = new Promise<void>((resolve) => request.once('close', resolve));
+    request.destroy();
+    await closed;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+    const before = socket.frames().filter((frame) => frame.tag === FRAME_TAGS.READ).length;
+    const reads = Array.from({ length: 4 }, () => requestDirectoryRead(
+      connection, 'Steven', 'zeus', MEMORY_ROOT, 60_000,
+    ));
+    const after = socket.frames().filter((frame) => frame.tag === FRAME_TAGS.READ).length;
+    expect(after - before).toBe(4);
+
+    connection.destroy('test_cleanup');
+    const outcomes = await Promise.all(reads);
+    expect(outcomes.some((outcome) => 'error' in outcome && outcome.error === 'busy')).toBe(false);
+  });
+
+  it('el parser del endpoint es de objeto cerrado', () => {
+    expect(parseDirectoryRequest(JSON.stringify({
+      tenant_id: 'Steven', alias: 'zeus', path: MEMORY_ROOT,
+    }))).toEqual({ tenantId: 'Steven', alias: 'zeus', path: MEMORY_ROOT });
+    expect(parseDirectoryRequest(JSON.stringify({
+      tenant_id: 'Steven', alias: 'zeus', path: MEMORY_ROOT, extra: true,
+    }))).toHaveProperty('rejected');
   });
 });
 

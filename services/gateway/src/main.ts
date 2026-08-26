@@ -14,6 +14,8 @@ import { PostgresConsoleUserStore } from './console-users.js';
 import { PasswordAuthProvider } from './password-auth.js';
 import { loadTerminalConfig, terminalCapabilityAnnouncement } from './terminal/config.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
+import { WakePumpTelemetry } from './wake-pump-telemetry.js';
+import { ConsolePublishTelemetry } from './console-publish-telemetry.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
@@ -210,6 +212,8 @@ const https = await configuredHttps(authProvider);
 // --- PTY control plane (module M1-gateway-control-plane) -------------------------------
 // Undefined unless CAUCE_TERMINAL_ENABLED=1; in that case the gateway boots exactly as today.
 const terminal = await loadTerminalConfig();
+const wakePumpTelemetry = new WakePumpTelemetry();
+const consolePublishTelemetry = new ConsolePublishTelemetry();
 const app = await buildGateway({
   pool,
   authProvider,
@@ -217,6 +221,8 @@ const app = await buildGateway({
   ackDeadlineMs,
   deliveryLeaseCap,
   admission,
+  wakePumpTelemetry,
+  consolePublishTelemetry,
   requireAckClaims: process.env.CAUCE_REQUIRE_ACK_CLAIMS !== '0',
   exposeHealthRoutes: !isolatedHealth,
   ...(consoleOrigins === undefined ? {} : { consoleOrigins }),
@@ -236,7 +242,9 @@ const health = isolatedHealth ? await buildLoopbackHealthProbe({
   dataApp: app,
   ackProbe: async () => probeAckPath(pool),
   logger: true,
-  requirePostgresTls: process.env.NODE_ENV === 'production'
+  requirePostgresTls: process.env.NODE_ENV === 'production',
+  wakePumpTelemetry,
+  consolePublishTelemetry,
 }) : undefined;
 const port = Number(process.env.PORT ?? 8080);
 const healthPort = Number(process.env.CAUCE_HEALTH_PORT ?? 8081);
@@ -255,7 +263,10 @@ async function shutdown(): Promise<void> {
 process.once('SIGINT', () => { void shutdown(); });
 process.once('SIGTERM', () => { void shutdown(); });
 try {
-  if (health) await health.listen({ host: '127.0.0.1', port: healthPort });
+  // 8081 is not published on the host. Binding the identity-free health/metrics listener to the
+  // container networks lets Prometheus observe a live-but-stalled pump instead of trusting Docker
+  // process health. The data API remains the only host-published gateway listener.
+  if (health) await health.listen({ host: '0.0.0.0', port: healthPort });
   await app.listen({ host: '0.0.0.0', port });
 } catch (error) {
   if (health) await health.close();

@@ -76,7 +76,7 @@ describe('configNavAvailability', () => {
     expect(configNavAvailability('allowed')).toEqual({ hidden: false, disabled: false });
   });
 
-  it('tampoco la toca cuando el RBAC no se pudo leer: ante la duda no se le quita nada a nadie', () => {
+  it('mantiene navegable la vista si el RBAC no se pudo leer; la página bloquea las escrituras', () => {
     expect(configNavAvailability('unknown')).toEqual({ hidden: false, disabled: false });
   });
 

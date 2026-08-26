@@ -1,11 +1,13 @@
 import type {
   Ack,
   ChainGateNotice,
+  DelegationMaterializationNotice,
   DelegationRejectionNotice,
   DeliveryEnvelope,
   DeliveryState,
   Hello,
   Origin,
+  ProfileRuntimeAdoptionEvidence,
   WsInbound,
   WsOutbound,
 } from '@cauce/protocol';
@@ -56,6 +58,11 @@ export interface AdapterCapabilities {
    * la cola entera de la conexión.
    */
   readonly agent_profile_v1?: true;
+  /**
+   * Accepts the per-delivery `profile_runtime_contract` and emits durable consumption evidence
+   * only after a real harness turn used the exact measured files.
+   */
+  readonly agent_profile_adoption_v1?: true;
 }
 
 export type RelayOrigin = Origin;
@@ -135,6 +142,8 @@ export interface AckResultFrame {
   readonly receipt?: 'applied' | 'duplicate' | 'superseded' | 'ownership_lost';
   /** Salidas `messages` que NO se convirtieron en entrega. Sólo con `delegation_feedback_v1`. */
   readonly delegation_rejections?: readonly DelegationRejectionNotice[];
+  /** Identidad exacta de cada salida que sí produjo una entrega. Sólo con la misma capability. */
+  readonly delegation_materializations?: readonly DelegationMaterializationNotice[];
   /** La rama quedó suspendida esperando a una persona. Sólo con `delegation_feedback_v1`. */
   readonly chain_gate?: ChainGateNotice;
 }
@@ -151,6 +160,8 @@ export interface DeliveryAckFrame {
   readonly instance_id: string;
   readonly epoch: number;
   readonly retryable: boolean;
+  /** Durable pre-invocation execution fence; only present on its exact `started` ACK. */
+  readonly execution_started?: true;
   readonly error?: string;
   readonly error_code?: string;
   readonly result?: Readonly<Record<string, unknown>>;
@@ -184,21 +195,25 @@ export interface DeliveryEvent {
   /** Local-only marker; the transport maps it to a normal `started` ACK. */
   readonly claim_renewal?: true;
   /**
-   * "El harness EMPEZÓ a ejecutar", no "la entrega fue admitida". Se emite una vez por intento,
-   * después de obtener la reserva de sesión y justo antes de invocar al harness. El ACK
+   * Intención durable de cruzar el punto de efectos, no simple admisión. Se emite una vez por
+   * intento, después de obtener la reserva de sesión y ANTES de invocar al harness; producción
+   * espera además el receipt exacto del gateway antes de soltar la ejecución. El ACK
    * `started` normal no sirve para esto: sale ANTES de todo eso, y el reaper que lo tomaba como
-   * prueba de ejecución mandaba a `dead` entregas que nunca habían corrido. A diferencia de
+   * prueba del punto de no retorno mandaba a `dead` entregas que seguían en cola. A diferencia de
    * `claim_renewal`, este campo SÍ viaja por el cable; es opcional en el protocolo y un gateway
    * viejo simplemente lo ignora.
    */
   readonly execution_started?: true;
   readonly output?: StructuredOutput;
+  /** Adapter-generated proof that this exact turn consumed the contracted runtime profile. */
+  readonly profile_adoption?: ProfileRuntimeAdoptionEvidence;
   readonly error?: AdapterErrorPayload;
 }
 
 export interface ConsumerConnection {
   readonly mode: 'consumer';
   readonly ephemeral: false;
+  /** Resolves after the frame is flushed, or rejects when this connection closes or cannot flush. */
   send(frame: ClientFrame): Promise<void>;
   frames(): AsyncIterable<ServerFrame>;
   close(): Promise<void>;
@@ -273,8 +288,8 @@ export interface CommandRunRequest extends CommandInvocation {
   /** Testigo declarado por el harness. Ausente = el transporte no atestigua nada. */
   readonly startWitness?: HarnessStartWitness;
   /**
-   * Se invoca UNA sola vez, en el instante exacto en que el testigo se cumple. Es lo que permite
-   * que `execution_started_at` se selle con el primer byte del harness y no con el `spawn`.
+   * Observador opcional invocado una sola vez al cumplirse el testigo. No es una barrera de
+   * durabilidad: el engine fsynca su intención antes de invocar el harness.
    */
   readonly onHarnessStart?: () => void;
 }
@@ -311,10 +326,8 @@ export interface CommandRunner {
    * sesión compartida cosecha un panel de tmux y el cliente HTTP de OpenClaw recibe una
    * respuesta entera, así que ninguno de los dos puede decir cuándo salió el primer byte.
    *
-   * Ausente = no atestigua, y ése es el default correcto: el motor entonces sella
-   * `execution_started_at` antes de invocar, como siempre. Si esto se declarara de más, un turno
-   * largo que perdiera su ACK final quedaría marcado como «nunca arrancó» y el reaper lo
-   * volvería a pagar entero.
+   * Ausente = no atestigua. Esta capacidad sólo clasifica fallos preflight; no decide el punto
+   * durable de no reintento, que siempre se guarda antes de invocar.
    */
   readonly witnessesHarnessStart?: boolean;
   run(request: CommandRunRequest): Promise<CommandRunResult>;

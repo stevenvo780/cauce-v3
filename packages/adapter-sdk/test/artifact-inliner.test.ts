@@ -424,6 +424,7 @@ test("CONTROL NEGATIVO: el PNG de Miguel llegaba al ACK como file:// y ahora lle
   const events: DeliveryEvent[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: new HarnessAdapter({ definition: fakeDefinition, runner: new StdoutRunner(stdout), store }),
     publish: async (event) => {
       events.push(event);
@@ -460,6 +461,7 @@ test("un adjunto ilegible no le cuesta el turno a nadie: el ACK sale igual, con 
   const events: DeliveryEvent[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: new HarnessAdapter({ definition: fakeDefinition, runner: new StdoutRunner(stdout), store }),
     publish: async (event) => {
       events.push(event);

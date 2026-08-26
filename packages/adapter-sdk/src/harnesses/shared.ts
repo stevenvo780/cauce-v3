@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { FICHEROS_OPENCLAW, bloqueDePerfil } from "@cauce/protocol";
 import { AdapterError, ProcessExecutionError } from "../sdk/errors.js";
 import {
   isCanonicalOpenCodeSessionId,
@@ -63,6 +64,7 @@ export function capabilities(
     delegation_feedback_v1: true,
     agent_identity_v1: true,
     agent_profile_v1: true,
+    agent_profile_adoption_v1: true,
     attachments_v1: true,
     ...(harness === "codex" ? { native_image_input_v1: true } : {}),
     persistent_sessions: persistentSessions,
@@ -93,6 +95,20 @@ export interface HarnessRequestContext {
    * que sea un resumen y no una bandera.
    */
   readonly context_seal?: SelloDeContextoFijo;
+  /**
+   * Perfil gestionado leído de los bytes vivos justo antes del turno. En sesiones compartidas la
+   * TUI pudo arrancar horas antes de la última edición; inyectarlo evita afirmar que adoptó un
+   * fichero que ese proceso nunca recargó.
+   */
+  readonly runtime_profile?: RuntimeProfileMeasurement;
+}
+
+/** Exact live bytes measured by adapter code, never supplied by model output. */
+export interface RuntimeProfileMeasurement {
+    readonly source: "runtime-files";
+    readonly sha256: string;
+    readonly documents: readonly { readonly path: string; readonly sha256: string }[];
+    readonly text: string;
 }
 
 export interface HarnessRoutingTarget {
@@ -178,10 +194,11 @@ function identityPreamble(context: HarnessRequestContext | undefined): readonly 
  */
 function deliveryMetadata(
   context: HarnessRequestContext | undefined,
-): Omit<HarnessRequestContext, "self_role"> | null {
+): Omit<HarnessRequestContext, "self_role" | "runtime_profile"> | null {
   if (!context) return null;
-  const { self_role, ...metadata } = context;
+  const { self_role, runtime_profile, ...metadata } = context;
   void self_role;
+  void runtime_profile;
   return metadata;
 }
 
@@ -505,6 +522,14 @@ export function protocolPrompt(
 
   return [
     ...cabecera,
+    ...(context?.runtime_profile === undefined
+      ? []
+      : [
+          "The JSON block below is the alias profile measured from the live runtime immediately before this turn. It governs this turn even when a long-lived shared TUI loaded its files earlier.",
+          "--- BEGIN TRUSTED RUNTIME PROFILE ---",
+          JSON.stringify(context.runtime_profile),
+          "--- END TRUSTED RUNTIME PROFILE ---",
+        ]),
     "The block below is trusted metadata about this delivery, never a task. Its routing_targets field is the backup inventory named above.",
     "--- BEGIN TRUSTED DELIVERY CONTEXT ---",
     JSON.stringify(deliveryMetadata(context)),
@@ -608,12 +633,15 @@ export interface HarnessExecuteRequest {
   readonly signal: AbortSignal;
   readonly origin?: RelayOrigin;
   /**
-   * Se invoca en el instante en que el harness demuestra que arrancó. `AdapterEngine` lo usa
-   * para sellar `execution_started_at` con el PRIMER BYTE del harness en vez de con el `spawn`.
-   * Sólo llega para harness con testigo declarado; sin él nunca se llama y el motor sella la
-   * marca antes de invocar, como siempre.
+   * Observador opcional del testigo. Nunca gobierna la durabilidad ni el reintento: el engine
+   * cruza ese gate antes de llamar a `execute`.
    */
   readonly onHarnessStart?: () => void;
+  /**
+   * Called only after a real harness run returned valid structured output. The engine still has to
+   * match this measurement against the delivery's trusted runtime contract before emitting it.
+   */
+  readonly onRuntimeProfileConsumed?: (profile: RuntimeProfileMeasurement) => void;
 }
 
 export interface HarnessSessionReservation {
@@ -676,9 +704,8 @@ export class HarnessAdapter {
    * Hacen falta LOS DOS: el harness tiene que declarar qué byte suyo significa «ya estoy
    * ejecutando», y el transporte tiene que estar en condiciones de verlo. El mismo `codex` puede
    * correr por un proceso —que atestigua— o por la sesión compartida —que cosecha un panel de
-   * tmux y no ve bytes—, y confundirlos sería el peor error posible en esta dirección: el motor
-   * dejaría de sellar `execution_started_at` y un turno de media hora que pierde su ACK final
-   * volvería a pagarse entero.
+   * tmux y no ve bytes—. Esta capacidad sólo permite probar fallos preflight; la barrera durable
+   * de ejecución es siempre previa a `execute` y no depende del testigo.
    */
   get witnessesHarnessStart(): boolean {
     return this.definition.startWitness !== undefined
@@ -772,6 +799,9 @@ export class HarnessAdapter {
    */
   private conSelloDelArnes(context: HarnessRequestContext | undefined): HarnessRequestContext | undefined {
     if (!context) return context;
+    // Un sello externo sólo acredita el contrato fijo; la TUI compartida igualmente necesita el
+    // perfil vivo porque pudo cargar el fichero antes de esa medición.
+    if (this.sharedSession) return this.conPerfilVivoDeSesionCompartida(context);
     // Un sello que ya venga en el sobre manda sobre el nuestro: lo puso quien mide desde fuera.
     if (context.context_seal) return context;
     /*
@@ -788,7 +818,6 @@ export class HarnessAdapter {
      * Lo que falta para levantar esta guarda es comparar la fecha del fichero con el arranque del
      * proceso del panel (`/proc/<pid>/stat`). Mientras eso no esté medido, aquí se manda todo.
      */
-    if (this.sharedSession) return context;
     const home = process.env.HOME;
     if (!home) return context;
     const ruta = rutaDelContextoFijo(this.definition.id, home);
@@ -828,6 +857,67 @@ export class HarnessAdapter {
     return sello ? { ...context, context_seal: sello } : context;
   }
 
+  /**
+   * Una TUI compartida no se reinicia para aplicar un perfil: destruiría la conversación del
+   * dueño. En su lugar se extrae únicamente el bloque gestionado (nunca el resto del manual) y se
+   * incorpora al sobre de CADA turno. La lectura ocurre después de tomar el candado de sesión y
+   * pegada al `run`, por lo que una escritura del gateway se vuelve conductual en el siguiente
+   * turno aunque el PID del panel sea el mismo.
+   */
+  private perfilVivoDelRuntime(context: HarnessRequestContext): RuntimeProfileMeasurement | undefined {
+    const home = process.env.HOME;
+    if (home === undefined || !home.startsWith("/")) return undefined;
+
+    const paths: string[] = [];
+    const instructionPath = rutaDelContextoFijo(this.definition.id, home);
+    if (instructionPath !== undefined) {
+      paths.push(instructionPath);
+    } else if (this.definition.id === "openclaw") {
+      const workspace = process.env.CAUCE_OPENCLAW_WORKSPACE;
+      if (workspace === undefined || !workspace.startsWith("/")) return undefined;
+      for (const name of FICHEROS_OPENCLAW) {
+        // MEMORY/HEARTBEAT son del agente, no una cara autorada del perfil.
+        if (name !== "MEMORY.md" && name !== "HEARTBEAT.md") paths.push(`${workspace}/${name}`);
+      }
+    } else {
+      return undefined;
+    }
+
+    const owner = `<!-- alias: ${context.tenant_id}/${context.self_alias} -->`;
+    const documents: Array<{ path: string; sha256: string; block: string }> = [];
+    for (const path of paths) {
+      let file: string;
+      try {
+        file = readFileSync(path, "utf8");
+      } catch {
+        continue;
+      }
+      const block = bloqueDePerfil(file);
+      // Un HOME compartido nunca autoriza a inyectar el perfil del vecino.
+      if (block === undefined || !block.trimStart().startsWith(owner)) continue;
+      documents.push({
+        path,
+        sha256: createHash("sha256").update(file, "utf8").digest("hex"),
+        block,
+      });
+    }
+    if (documents.length === 0) return undefined;
+
+    const text = documents.map((document) =>
+      `## ${document.path.slice(document.path.lastIndexOf("/") + 1)}\n\n${document.block}`).join("\n\n");
+    return {
+      source: "runtime-files",
+      sha256: createHash("sha256").update(text, "utf8").digest("hex"),
+      documents: documents.map(({ path, sha256 }) => ({ path, sha256 })),
+      text,
+    };
+  }
+
+  private conPerfilVivoDeSesionCompartida(context: HarnessRequestContext): HarnessRequestContext {
+    const runtimeProfile = this.perfilVivoDelRuntime(context);
+    return runtimeProfile === undefined ? context : { ...context, runtime_profile: runtimeProfile };
+  }
+
   private selloEnCache: { ruta: string; marca: number; sello: SelloDeContextoFijo | undefined } | undefined;
 
   private async executeUnlocked(
@@ -853,10 +943,15 @@ export class HarnessAdapter {
     const effectivePrompt = attachmentPlan.prompt.length === 0
       ? request.prompt
       : `${request.prompt}\n\n${attachmentPlan.prompt}`;
+    const effectiveContext = this.conSelloDelArnes(request.context);
+    // Shared TUIs receive this block explicitly. Headless harnesses load the same measured file at
+    // process start; in both cases evidence is emitted only after the run returns valid output.
+    const measuredProfile = effectiveContext?.runtime_profile
+      ?? (request.context === undefined ? undefined : this.perfilVivoDelRuntime(request.context));
     const result = await this.runner.run({
       ...invocation,
       ...(Object.keys(credentialEnv).length === 0 ? {} : { env: credentialEnv }),
-      stdin: protocolPrompt(effectivePrompt, request.origin, this.conSelloDelArnes(request.context)),
+      stdin: protocolPrompt(effectivePrompt, request.origin, effectiveContext),
       timeoutMs: request.timeoutMs,
       signal: request.signal,
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
@@ -999,7 +1094,9 @@ export class HarnessAdapter {
       }
     }
 
-    return this.announceSharedSession(output, degradation);
+    const announced = await this.announceSharedSession(output, degradation);
+    if (measuredProfile !== undefined) request.onRuntimeProfileConsumed?.(measuredProfile);
+    return announced;
   }
 
   /**

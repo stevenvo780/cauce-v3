@@ -103,6 +103,7 @@ async function corre(nombre: string, delivery: Delivery): Promise<Record<string,
   const events: DeliveryEvent[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: new HarnessAdapter({
       definition: fakeDefinition,
       runner: new OkRunner(),
@@ -159,6 +160,7 @@ test("OpenClaw mueve el pointer estable a la conversación humana real sin colap
   const events: DeliveryEvent[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness: new HarnessAdapter({
       definition: openClawDefinition,
       runner: new OkRunner(),

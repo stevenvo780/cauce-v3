@@ -32,6 +32,7 @@
     "delegation_feedback_v1": true,
     "agent_identity_v1": true,
     "agent_profile_v1": true,
+    "agent_profile_adoption_v1": true,
     "attachments_v1": true,
     "persistent_sessions": false
   }

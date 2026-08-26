@@ -50,6 +50,7 @@ describe('agent framing', () => {
     expect(FRAME_TAGS.WRITE_OK).toBe(0x56);
     expect(FRAME_TAGS.WRITE_ERR).toBe(0x57);
     expect(FRAME_TAGS.WRITE_CANCEL).toBe(0x58);
+    expect(FRAME_TAGS.READ_DONE).toBe(0x5e);
     const frame = encodeDataFrame(
       FRAME_TAGS.WRITE_DATA,
       '11111111-2222-3333-4444-555555555555',

@@ -4,7 +4,20 @@
 
 Esta variante supervisa desde systemd del host Kratos un `docker exec -i` por alias. Soporta systemd de **usuario/rootless** (modo recomendado en Kratos, UID 1000 miembro de `docker`, linger habilitado) y conserva las units system/root como opción. No crea/reinicia containers, no toca V2 y no maneja prompts: el adapter entrega cada prompt al harness exclusivamente por stdin. Las units host-native `cauce-v3-alias-*` permanecen disponibles y no deben estar habilitadas a la vez que `cauce-v3-container-*` para el mismo alias.
 
-`ops/container-aliases.json` fija los 12 pares alias/container, usuario, harness y state dir. Ya **no** fija un destino de mount dedicado: en los containers reales ningún alias tiene un mount propio en su state dir; el state vive dentro de un bind persistente amplio (p.ej. `/home/dev/.local`, `/home/claw/.openclaw` o `/workspace`). Antes de leer PKI, el supervisor fija el ID completo del container, valida el `EXPECTED_IMAGE_ID` obligatorio, valida la label sólo si el config la declara, y **descubre** en el JSON estructurado de Docker (`{{json .Mounts}}`) el mount cuyo `Destination` es el ancestro más cercano que **contiene** el state dir, exigiendo que sea un bind/volumen con `RW=true` (nunca `tmpfs`/efímero) para que el state sobreviva un recreate; `Type`/`Source`/`Name`/`RW` se re-verifican sólo si el config los declara. Después de ese primer lookup por nombre, todo `inspect/exec/cp` usa exclusivamente el ID completo. El `CAUCE_INSTANCE_ID=systemd-container-<alias>` no depende del ID efímero del container.
+`ops/container-aliases.json` fija los 15 pares alias/container, usuario, harness y state dir, y liga
+cada placement al `dockerHost` (local cuando se omite) y al `systemdUser` obligatorio. Esos dos
+campos forman parte de la identidad del manager: un release consulta cada nombre de unit en todos
+los managers declarados y rechaza una copia homónima activa o habilitada fuera de su placement.
+Ya **no** fija un destino de mount dedicado: en los containers reales ningún alias tiene un mount
+propio en su state dir; el state vive dentro de un bind persistente amplio (p.ej.
+`/home/dev/.local`, `/home/claw/.openclaw` o `/workspace`). Antes de leer PKI, el supervisor fija el
+ID completo del container, valida el `EXPECTED_IMAGE_ID` obligatorio, valida la label sólo si el
+config la declara, y **descubre** en el JSON estructurado de Docker (`{{json .Mounts}}`) el mount
+cuyo `Destination` es el ancestro más cercano que **contiene** el state dir, exigiendo que sea un
+bind/volumen con `RW=true` (nunca `tmpfs`/efímero) para que el state sobreviva un recreate;
+`Type`/`Source`/`Name`/`RW` se re-verifican sólo si el config lo declara. Después de ese primer lookup
+por nombre, todo `inspect/exec/cp` usa exclusivamente el ID completo. El
+`CAUCE_INSTANCE_ID=systemd-container-<alias>` no depende del ID efímero del container.
 
 ## Preparación e instalación
 
@@ -19,6 +32,13 @@ El supervisor usa defaults rootless cuando el host caller no es root:
 Todos se pueden fijar con `CAUCE_CONTAINER_{OPS,CONFIG,PKI,BUNDLE,LOCK}_ROOT`. Son paths del **host**. `CONTROL_ROOT=/run/cauce-v3-supervisor` y `/opt/cauce-v3-secrets` siguen siendo paths **dentro del container**, creados por `docker exec --user 0`; rootless host no debilita esa separación.
 
 En modo rootless, el UID instalador completo es un único dominio de confianza: cualquier otro proceso que corra con ese mismo UID puede modificar config, PKI y locks user-owned. No ejecutar workloads host no confiables bajo ese usuario. Las variables de identidad `CAUCE_*` tampoco son autoridad para seleccionar procesos: un match ambiental fuera del leader registrado, su process-group o sus descendientes hace que `stop`/`stopped` fallen cerrado con `78`; nunca se señala ese proceso sólo por copiar el entorno.
+
+La transición de release conserva además una sesión SSH persistente y un `flock` por
+`dockerHost + systemdUser` remoto durante todo stop/drain/CAS/migración/restauración. Ese lock vive
+en el runtime privado `0700` del mismo usuario rootless; por eso el UID instalador sigue siendo el
+dominio de confianza explícito. Si la sesión cae, el controlador termina la transacción hija,
+mantiene ingress cerrado y sólo permite reconciliar desde el snapshot content-addressed. No
+restaurar una unit manualmente mientras exista esa transición.
 
 ### Compatibilidad histórica OpenCode de Kant
 
@@ -102,7 +122,7 @@ La preparación root del state usa descriptores `openat` con `O_NOFOLLOW`, `mkdi
 Detener y drenar primero el consumer V3 anterior. No copiar un state vivo. Si ya existe state durable del mismo alias, copiarlo conservando ownership al path asignado y verificar que ese path esté respaldado por el mount persistente del container. Paths objetivo:
 
 - `jarvis/janus/hegel/midas/seneca`: `/home/claw/.openclaw/cauce-v3/<alias>`;
-- `kant/socrates/argos/kratos/salva`: `/home/dev/.local/state/cauce-v3/<alias>`;
+- `kant/socrates/argos/kratos/atlas/iza/salva/zeus`: `/home/dev/.local/state/cauce-v3/<alias>`;
 - `dedalo/vulcano`: `/workspace/.cauce-v3/<alias>`.
 
 El lock y `cauce-v3-adapter.json` NO viven en el state dir (que el runtime user posee), sino en el control dir root-owned `/run/cauce-v3-supervisor/<alias>`, de modo que el UID del adapter no puede desenlazarlos ni forjarlos. La metadata atómica se publica en fase `starting` (controller PID/starttime, alias, control dir, runtime UID/GID, ID/generación, ejecutable, digest) apenas se toma el control —antes de cualquier operación larga— y luego se actualiza a `running` con PID/PGID/SID/starttime del hijo. Metadata incompleta o con un PID vivo discrepante se preserva y bloquea con exit `78`; solo se limpia cuando el PID no existe y la generación almacenada es verificablemente anterior. `stop` nunca hace fail-open: sin metadata inspecciona el lock y `/proc` por alias+generación y devuelve `78` ante cualquier proceso/lock vivo o ambigüedad; sólo reporta detenido con ausencia total demostrada. Habilitar un alias recién después del gate explícito de drain/cutover:

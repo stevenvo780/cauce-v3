@@ -11,8 +11,9 @@
  * no avisa, arranca igual y se queda mudo de capacidades. Eso ya se pagó una vez.
  *
  * Por eso aquí no basta con que el plan "funcione": se exige EXPLÍCITAMENTE que `.claude.json`
- * esté entre las copias y que lleve escrito el motivo. Una prueba que sólo mirara el directorio
- * pasaría con el fallo dentro.
+ * esté entre las operaciones y que lleve escrito el motivo. Se enlaza al origen autorizado en vez
+ * de copiar sus posibles secretos. Una prueba que sólo mirara el directorio pasaría con el fallo
+ * dentro.
  *
  * Y la lista de BORRADOS tiene que estar vacía siempre: el origen es la reversa. Mientras el
  * directorio original siga ahí, revertir es quitar una variable de entorno; si el plan lo borra,
@@ -46,11 +47,11 @@ function copiaDe(plan, destino) {
 // El destino: derivado, nunca a mano.
 // ---------------------------------------------------------------------------
 
-test("el destino es <home>/.cauce/<alias>/<dir del arnés>, derivado del alias", () => {
-  assert.equal(directorioDeAlias("/home/dev", "kratos", "codex"), "/home/dev/.cauce/kratos/.codex");
-  assert.equal(directorioDeAlias("/home/dev", "atlas", "codex"), "/home/dev/.cauce/atlas/.codex");
-  assert.equal(directorioDeAlias("/home/dev", "zeus", "claude"), "/home/dev/.cauce/zeus/.claude");
-  assert.equal(directorioDeAlias("/home/claw", "hegel", "claude"), "/home/claw/.cauce/hegel/.claude");
+test("el destino vive bajo el árbol persistente .local/share, derivado del alias", () => {
+  assert.equal(directorioDeAlias("/home/dev", "kratos", "codex"), "/home/dev/.local/share/cauce-v3/config/kratos/.codex");
+  assert.equal(directorioDeAlias("/home/dev", "atlas", "codex"), "/home/dev/.local/share/cauce-v3/config/atlas/.codex");
+  assert.equal(directorioDeAlias("/home/dev", "zeus", "claude"), "/home/dev/.local/share/cauce-v3/config/zeus/.claude");
+  assert.equal(directorioDeAlias("/home/claw", "hegel", "claude"), "/home/claw/.local/share/cauce-v3/config/hegel/.claude");
 });
 
 test("kratos y atlas, mismo home y mismo contenedor, salen a destinos DISTINTOS", () => {
@@ -59,8 +60,8 @@ test("kratos y atlas, mismo home y mismo contenedor, salen a destinos DISTINTOS"
   const atlas = planificarSeparacion({ alias: "atlas", home: "/home/dev", arnes: "codex" });
   assert.equal(kratos.directorioOrigen, atlas.directorioOrigen, "hoy comparten el origen");
   assert.notEqual(kratos.directorioDestino, atlas.directorioDestino);
-  assert.equal(kratos.directorioDestino, "/home/dev/.cauce/kratos/.codex");
-  assert.equal(atlas.directorioDestino, "/home/dev/.cauce/atlas/.codex");
+  assert.equal(kratos.directorioDestino, "/home/dev/.local/share/cauce-v3/config/kratos/.codex");
+  assert.equal(atlas.directorioDestino, "/home/dev/.local/share/cauce-v3/config/atlas/.codex");
 });
 
 // ---------------------------------------------------------------------------
@@ -69,13 +70,13 @@ test("kratos y atlas, mismo home y mismo contenedor, salen a destinos DISTINTOS"
 
 test("EXIGENCIA: .claude.json está entre las copias, y con el motivo escrito", () => {
   const plan = planificarSeparacion(ZEUS);
-  const copia = copiaDe(plan, "/home/dev/.cauce/zeus/.claude/.claude.json");
+  const copia = copiaDe(plan, "/home/dev/.local/share/cauce-v3/config/zeus/.claude/.claude.json");
   assert.ok(
     copia,
     "sin .claude.json en el destino el alias pierde TODOS sus MCP sin un solo error de arranque",
   );
   assert.equal(copia.origen, "/home/dev/.claude.json");
-  assert.equal(copia.tipo, "fichero");
+  assert.equal(copia.tipo, "enlace", "los MCP pueden contener secretos y no se duplican");
   assert.equal(copia.obligatorio, true, "no es opcional: su ausencia es silenciosa");
   assert.match(
     copia.motivo,
@@ -94,7 +95,7 @@ test("si el alias YA tiene CLAUDE_CONFIG_DIR puesto, el .claude.json se toma de 
     entornoActual: { CLAUDE_CONFIG_DIR: "/datos/agents/zeus/.claude" },
   });
   assert.equal(plan.directorioOrigen, "/datos/agents/zeus/.claude");
-  const copia = copiaDe(plan, "/home/dev/.cauce/zeus/.claude/.claude.json");
+  const copia = copiaDe(plan, "/home/dev/.local/share/cauce-v3/config/zeus/.claude/.claude.json");
   assert.equal(copia.origen, "/datos/agents/zeus/.claude/.claude.json");
 });
 
@@ -104,8 +105,9 @@ test("codex no tiene .claude.json: todo cuelga de CODEX_HOME", () => {
     !plan.copias.some((copia) => copia.destino.endsWith(".claude.json")),
     "inventarle un .claude.json a codex haría fallar la comprobación del ejecutor por un fichero que no existe",
   );
-  assert.equal(plan.copias[0].origen, "/home/dev/.codex");
-  assert.equal(plan.copias[0].tipo, "directorio");
+  assert.equal(plan.copias[0].origen, "/home/dev/.codex/AGENTS.md");
+  assert.equal(plan.copias[0].tipo, "fichero");
+  assert.equal(plan.copias[0].destino, `${plan.directorioDestino}/AGENTS.md`);
 });
 
 test("si el alias ya tiene CODEX_HOME puesto, el origen es ese y no ~/.codex", () => {
@@ -114,7 +116,7 @@ test("si el alias ya tiene CODEX_HOME puesto, el origen es ese y no ~/.codex", (
     entornoActual: { CODEX_HOME: "/home/dev/.codex/cuenta-b" },
   });
   assert.equal(plan.directorioOrigen, "/home/dev/.codex/cuenta-b");
-  assert.equal(plan.copias[0].origen, "/home/dev/.codex/cuenta-b");
+  assert.equal(plan.copias[0].origen, "/home/dev/.codex/cuenta-b/AGENTS.md");
 });
 
 // ---------------------------------------------------------------------------
@@ -147,12 +149,12 @@ test("CONTROL NEGATIVO: ninguna copia escribe DENTRO del directorio de origen", 
 });
 
 test("CONTROL NEGATIVO: el destino no puede caer dentro del origen ni al revés", () => {
-  // Si alguien pidiera separar un alias cuyo origen ya fuese `<home>/.cauce/<alias>/...`, copiar
+  // Si el origen ya estuviera bajo el destino persistente del alias, copiar
   // el directorio dentro de sí mismo es una recursión infinita, no una separación.
   assert.throws(
     () => planificarSeparacion({
       ...KRATOS,
-      entornoActual: { CODEX_HOME: "/home/dev/.cauce/kratos" },
+      entornoActual: { CODEX_HOME: "/home/dev/.local/share/cauce-v3/config/kratos" },
     }),
     ErrorDePlan,
   );
@@ -163,8 +165,8 @@ test("CONTROL NEGATIVO: el destino no puede caer dentro del origen ni al revés"
 // ---------------------------------------------------------------------------
 
 test("el entorno nuevo declara exactamente UNA variable, la del arnés", () => {
-  assert.deepEqual(planificarSeparacion(KRATOS).entorno, { CODEX_HOME: "/home/dev/.cauce/kratos/.codex" });
-  assert.deepEqual(planificarSeparacion(ZEUS).entorno, { CLAUDE_CONFIG_DIR: "/home/dev/.cauce/zeus/.claude" });
+  assert.deepEqual(planificarSeparacion(KRATOS).entorno, { CODEX_HOME: "/home/dev/.local/share/cauce-v3/config/kratos/.codex" });
+  assert.deepEqual(planificarSeparacion(ZEUS).entorno, { CLAUDE_CONFIG_DIR: "/home/dev/.local/share/cauce-v3/config/zeus/.claude" });
   assert.equal(Object.keys(planificarSeparacion(KRATOS).entorno).length, 1);
 });
 
@@ -174,7 +176,10 @@ test("el entorno apunta al MISMO sitio que el destino de las copias", () => {
   for (const entrada of [KRATOS, ZEUS]) {
     const plan = planificarSeparacion(entrada);
     assert.equal(Object.values(plan.entorno)[0], plan.directorioDestino);
-    assert.equal(plan.copias[0].destino, plan.directorioDestino);
+    assert.ok(
+      plan.copias.every((operacion) => operacion.destino.startsWith(`${plan.directorioDestino}/`)),
+      "todas las operaciones quedan dentro del perfil gobernado por la variable",
+    );
   }
 });
 
@@ -191,20 +196,38 @@ test("el plan nombra el fichero testigo cuyo inodo tiene que dejar de coincidir"
 // Advertencias: lo que el plan NO resuelve y hay que decir en voz alta.
 // ---------------------------------------------------------------------------
 
-test("el plan advierte de la credencial duplicada en vez de callarlo", () => {
-  // Separar el directorio duplica `auth.json` / `.credentials.json`. Si dos alias comparten UNA
-  // cuenta, codex mantiene una sola credencial viva: cuando una rota el refresh token, la otra
-  // copia queda muerta. El plan no puede decidir eso — pero callarlo es peor.
+test("el plan conserva una sola fuente de credencial y lo advierte", () => {
+  // Separar el directorio no puede duplicar `auth.json` / `.credentials.json`: si dos alias usan
+  // una misma cuenta, una copia queda obsoleta cuando la otra rota el refresh token. Los enlaces
+  // mantienen una sola fuente y hacen visible esa decisión.
   const codex = planificarSeparacion(KRATOS);
   assert.ok(codex.advertencias.some((aviso) => /auth\.json/u.test(aviso)));
-  assert.ok(codex.advertencias.some((aviso) => /cuenta/iu.test(aviso)));
+  assert.ok(codex.advertencias.some((aviso) => /no se copian|compartid/iu.test(aviso)));
   const claude = planificarSeparacion(ZEUS);
   assert.ok(claude.advertencias.some((aviso) => /\.credentials\.json/u.test(aviso)));
 });
 
+test("CONTROL DE SECRETOS: identidad se copia; credenciales/config se enlazan y sesiones no viajan", () => {
+  for (const entrada of [KRATOS, ZEUS]) {
+    const plan = planificarSeparacion(entrada);
+    assert.ok(!plan.copias.some((operacion) => operacion.tipo === "directorio"));
+    const testigo = plan.copias.find((operacion) => operacion.destino.endsWith(`/${plan.testigo}`));
+    assert.equal(testigo?.tipo, "fichero", "sólo la identidad recibe un inodo propio");
+
+    for (const nombre of ["auth.json", ".credentials.json", ".claude.json", "config.toml"]) {
+      const operacion = plan.copias.find((copia) => copia.destino.endsWith(`/${nombre}`));
+      if (operacion) assert.equal(operacion.tipo, "enlace", `${nombre} no puede copiar bytes`);
+    }
+    assert.ok(
+      !plan.copias.some((operacion) => /(?:^|\/)(?:sessions?|history(?:\.jsonl)?)(?:\/|$)/iu.test(operacion.origen)),
+      "historiales y sesiones no se copian ni enlazan",
+    );
+  }
+});
+
 test("el plan lleva escrita la reversa exacta", () => {
   const plan = planificarSeparacion(KRATOS);
-  assert.match(plan.reversa, /\/home\/dev\/\.cauce\/kratos\/\.codex/u, "dice QUÉ borrar");
+  assert.match(plan.reversa, /\/home\/dev\/\.local\/share\/cauce-v3\/config\/kratos\/\.codex/u, "dice QUÉ borrar");
   assert.match(plan.reversa, /CODEX_HOME/u, "dice QUÉ variable quitar");
 });
 
@@ -250,7 +273,7 @@ test("el guion imprime el plan en JSON y sale con 0", () => {
   const resultado = spawnSync(process.execPath, [guion, "--alias", "kratos", "--home", "/home/dev", "--arnes", "codex"], { encoding: "utf8" });
   assert.equal(resultado.status, 0, resultado.stderr);
   const plan = JSON.parse(resultado.stdout);
-  assert.equal(plan.directorioDestino, "/home/dev/.cauce/kratos/.codex");
+  assert.equal(plan.directorioDestino, "/home/dev/.local/share/cauce-v3/config/kratos/.codex");
   assert.deepEqual(plan.borrados, []);
 });
 

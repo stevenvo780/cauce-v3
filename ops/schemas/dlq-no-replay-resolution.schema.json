@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/dlq-no-replay-resolution.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "phase", "generatedAt", "appliedCount", "alreadyApplied", "evidenceSha256", "reasonSha256", "possibleDuplicateAcknowledged", "possibleNoDeliveryAcknowledged"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "suite": { "const": "cauce-v3-dlq-no-replay-resolution" },
+    "phase": { "const": "resolved" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "appliedCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "alreadyApplied": { "type": "boolean" },
+    "evidenceSha256": { "$ref": "#/$defs/sha256" },
+    "reasonSha256": { "$ref": "#/$defs/sha256" },
+    "possibleDuplicateAcknowledged": { "type": "boolean" },
+    "possibleNoDeliveryAcknowledged": { "const": true }
+  },
+  "$defs": { "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+}

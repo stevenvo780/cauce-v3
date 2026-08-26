@@ -121,7 +121,7 @@ primera regla que aplica gana):
 
 La supresión en P3 solo se aplica contra los alias que efectivamente **participan**
 de ese chat (`chatParticipants`, calculado desde el archivo completo), no contra los
-12 alias de la flota: mencionar a un alias ausente del grupo cae a P4/P7-P9 en vez de
+15 alias de la flota: mencionar a un alias ausente del grupo cae a P4/P7-P9 en vez de
 silenciar a todos.
 
 Generación y validación de estas claves están centralizadas en
@@ -265,9 +265,25 @@ respuesta, aunque una caída entre el fence local y el inicio de la petición pu
 omitirla. La métrica `egress_ambiguous` y `getEffect()` permiten inspeccionarla.
 
 El único reenvío posible es la acción explícita y cercada
-`manualReplayEffect(effectId, payloadHash, reason)`: exige efecto `ambiguous/dead`,
-outbox `dead`, hash exacto y motivo no vacío; registra el replay y vuelve a encolar
-una sola vez. Nunca admite un efecto `sent` o `sending`. No se registran bodies,
-tokens ni IDs completos. Al primer uso de egress, el repositorio amplía de forma
+`manualReplayEffect(chunkIndex, payloadHash, reason, actorTenant, actorAlias,
+duplicateRiskAcknowledged, requestId, deadLetterId, incidentEvidenceSha256,
+expectedReplayCount)`: exige efecto `ambiguous/dead` o `prepared` sin ninguna prueba de inicio
+remoto, outbox `dead`, hash exacto, evidencia exacta del incidente y generación inspeccionada,
+UUID idempotente de la decisión,
+motivo no vacío, actor con `allow_control` y alcance de tenant, y confirmación explícita
+`duplicateRiskAcknowledged=true`; registra el replay y vuelve a encolar
+una sola vez. Repetir el mismo `requestId` y exactamente la misma decisión no vuelve a programar;
+reutilizarlo con otros argumentos falla cerrado. Nunca admite un efecto `sent` o `sending`. El
+ledger interno conserva las FK exactas de effect/outbox para causalidad, pero ningún body, token ni
+ID de effect/outbox sale en el audit o la evidencia operativa. Al primer uso de egress, el repositorio amplía de forma
 idempotente y bajo advisory lock el esquema original de
 `telegram_egress_effects` con estos estados y campos de diagnóstico.
+
+La operación manual requiere además que el release haya aplicado
+`030_dlq_causal_reconciliation.sql`: la autorización, el alcance de tenant, el CAS del hash,
+la exclusión causal de ACK y la historia de replay se verifican en
+`cauce_manual_replay_telegram_030`. No existe confirmación implícita: todos los callers deben
+proveer actor, ACK de riesgo, `requestId`, `deadLetterId`, `incidentEvidenceSha256` y
+`expectedReplayCount`; `false` se rechaza antes de
+reencolar. El contrato operativo completo, incluido listado seguro y cierre sin replay, está en
+`ops/runbooks/dlq-causal-reconciliation.md`.

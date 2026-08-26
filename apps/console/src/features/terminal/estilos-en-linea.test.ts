@@ -43,7 +43,10 @@ function abrirSesion(sessionId: string): StubWebSocket {
   abiertas.push(sessionId);
   const socket = StubWebSocket.last();
   socket.acceptOpen();
-  socket.emitControl({ type: 'ready' });
+  socket.emitControl({
+    type: 'ready', claim_token: '12345678-1234-4234-8234-123456789abc',
+    claim_epoch: '1', claim_lease_ms: 45_000,
+  });
   return socket;
 }
 

@@ -1,7 +1,7 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { DeliveryTable } from './DeliveryTable';
+import { DeliveryTable, type DeliverySnapshotRefresh } from './DeliveryTable';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import type { QueueItem } from '../../api/types';
@@ -25,26 +25,36 @@ async function confirmar(user: ReturnType<typeof userEvent.setup>, boton: HTMLEl
  * que hay que releer.
  */
 
-const DEAD: QueueItem = { delivery_id: 'delivery-dead-1', state: 'dead', attempts: 5, max_attempts: 5, recipient_alias: 'kant', tenant_id: 'Steven' };
-const LIVE: QueueItem = { delivery_id: 'delivery-pending-1', state: 'pending', attempts: 0, max_attempts: 5, recipient_alias: 'zeus', tenant_id: 'Steven' };
-const FAILED: QueueItem = { delivery_id: 'delivery-failed-1', state: 'failed', attempts: 3, max_attempts: 5, recipient_alias: 'socrates', tenant_id: 'Steven' };
+const DEAD_ID = '10000000-0000-4000-8000-000000000001';
+const LIVE_ID = '10000000-0000-4000-8000-000000000002';
+const FAILED_ID = '10000000-0000-4000-8000-000000000003';
+const DEAD: QueueItem = { delivery_id: DEAD_ID, state: 'dead', attempts: 5, max_attempts: 5, recipient_alias: 'kant', tenant_id: 'Steven' };
+const LIVE: QueueItem = { delivery_id: LIVE_ID, state: 'pending', attempts: 0, max_attempts: 5, recipient_alias: 'zeus', tenant_id: 'Steven' };
+const FAILED: QueueItem = { delivery_id: FAILED_ID, state: 'failed', attempts: 3, max_attempts: 5, recipient_alias: 'socrates', tenant_id: 'Steven' };
+const verifiedRefresh = async () => ({ data: {} });
 
 it('la monta cualquier vista con sus propias filas y avisa a su dueño que hay que releer', async () => {
   let replayed = '';
   let recargas = 0;
   server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', ({ params }) => {
     replayed = String(params.deliveryId);
-    return HttpResponse.json({ delivery_id: replayed, state: 'pending', replayed: true }, { status: 202 });
+    return HttpResponse.json({
+      delivery_id: '20000000-0000-4000-8000-000000000001', replayed_from_delivery_id: replayed,
+      state: 'pending', replayed: true,
+    }, { status: 202 });
   }));
   const user = userEvent.setup();
   renderWithApi(
-    <DeliveryTable rows={[DEAD, LIVE]} canReplay canCancel onChanged={() => { recargas += 1; }} />,
+    <DeliveryTable rows={[DEAD, LIVE]} canReplay canCancel onChanged={async () => {
+      recargas += 1;
+      return { data: {} };
+    }} />,
   );
 
-  await confirmar(user, screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
+  await confirmar(user, screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') }));
 
   expect(await screen.findByText(/Replay encolado/)).toBeInTheDocument();
-  expect(replayed).toBe('delivery-dead-1');
+  expect(replayed).toBe(DEAD_ID);
   // El dueño del snapshot es quien relee: la tabla no muta estado local para simular el efecto.
   expect(recargas).toBe(1);
 
@@ -64,32 +74,109 @@ it('🔴 CONTROL NEGATIVO: sin permiso el botón queda inerte y no sale ni una p
     return HttpResponse.json({ replayed: true }, { status: 202 });
   }));
   const user = userEvent.setup();
-  renderWithApi(<DeliveryTable rows={[DEAD]} canReplay={false} canCancel={false} onChanged={() => undefined} />);
+  renderWithApi(<DeliveryTable rows={[DEAD]} canReplay={false} canCancel={false} onChanged={verifiedRefresh} />);
 
-  const boton = screen.getByRole('button', { name: /replay delivery delivery-dead-1/i });
+  const boton = screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') });
   expect(boton).toBeDisabled();
   await user.click(boton);
   expect(intentos).toBe(0);
   expect(screen.queryByText(/Replay encolado/)).not.toBeInTheDocument();
 });
 
-it('dice qué pasó cuando el servidor rechaza el replay, en vez de callarse', async () => {
+it('dice que el outcome es incierto y relee cuando el replay no obtiene recibo', async () => {
+  let recargas = 0;
   server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', () => HttpResponse.json(
     { error: 'conflict', message: 'la entrega ya fue reencolada' }, { status: 409 },
   )));
   const user = userEvent.setup();
-  renderWithApi(<DeliveryTable rows={[DEAD]} canReplay canCancel onChanged={() => undefined} />);
+  renderWithApi(<DeliveryTable
+    rows={[DEAD]}
+    canReplay
+    canCancel
+    onChanged={async () => { recargas += 1; return { data: {} }; }}
+  />);
 
-  // La confirmación sigue en medio (consola/real-1) y el texto del desenlace es el castellano
-  // único de la vista (consola/fix-vocabulario): «El reinyectado falló», no «Replay falló».
-  await confirmar(user, screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
-  expect(await screen.findByText(/El reinyectado falló/)).toHaveTextContent(/ya fue reencolada/i);
+  await confirmar(user, screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') }));
+  expect(await screen.findByText(/Resultado incierto del reinyectado/)).toHaveTextContent(/ya fue reencolada/i);
+  expect(screen.getByRole('status')).toHaveTextContent(/cola ya se releyó/i);
+  expect(recargas).toBe(1);
+});
+
+it('no afirma replay aplicado ante un 2xx sin recibo durable exacto', async () => {
+  let recargas = 0;
+  server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', () => HttpResponse.json(
+    { delivery_id: DEAD_ID, state: 'pending', replayed: true }, { status: 202 },
+  )));
+  const user = userEvent.setup();
+  renderWithApi(<DeliveryTable
+    rows={[DEAD]}
+    canReplay
+    canCancel
+    onChanged={async () => { recargas += 1; return { data: {} }; }}
+  />);
+
+  await confirmar(user, screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') }));
+  expect(await screen.findByText(/Resultado incierto del reinyectado/)).toHaveTextContent(/recibo durable exacto/i);
+  expect(screen.queryByText(/Replay encolado/)).not.toBeInTheDocument();
+  // El efecto remoto pudo aplicarse: se relee la verdad aunque el recibo haya sido ambiguo.
+  expect(recargas).toBe(1);
+});
+
+it('keeps an uncertain replay locked until its deferred server reread is verified', async () => {
+  let replayPosts = 0;
+  let finishRefresh!: (result: DeliverySnapshotRefresh) => void;
+  const refresh = new Promise<DeliverySnapshotRefresh>((resolve) => { finishRefresh = resolve; });
+  server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', () => {
+    replayPosts += 1;
+    return HttpResponse.json(
+      { delivery_id: DEAD_ID, state: 'pending', replayed: true }, { status: 202 },
+    );
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<DeliveryTable
+    rows={[DEAD]}
+    canReplay
+    canCancel
+    onChanged={() => refresh}
+  />);
+
+  const replayButton = screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') });
+  await confirmar(user, replayButton);
+  expect(await screen.findByText(/acción queda bloqueada durante esa lectura/i)).toBeInTheDocument();
+  expect(replayButton).toBeDisabled();
+  await user.click(replayButton);
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  expect(replayPosts).toBe(1);
+
+  finishRefresh({ data: {} });
+  await waitFor(() => expect(replayButton).toBeEnabled());
+  expect(screen.getByRole('status')).toHaveTextContent(/cola ya se releyó/i);
+  expect(replayPosts).toBe(1);
+});
+
+it('trata una cancelación 2xx truncada como incierta y relee sin afirmar que canceló', async () => {
+  let recargas = 0;
+  server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/cancel', () => HttpResponse.json(
+    { delivery_id: LIVE_ID, state: 'dead', cancelled: true }, { status: 202 },
+  )));
+  const user = userEvent.setup();
+  renderWithApi(<DeliveryTable
+    rows={[LIVE]}
+    canReplay
+    canCancel
+    onChanged={async () => { recargas += 1; return { data: {} }; }}
+  />);
+
+  await confirmar(user, screen.getByRole('button', { name: new RegExp(`cancelar delivery ${LIVE_ID}`, 'i') }));
+  expect(await screen.findByText(/Resultado incierto de la cancelación/)).toHaveTextContent(/recibo durable exacto/i);
+  expect(screen.queryByText(/^Cancelada /i)).not.toBeInTheDocument();
+  expect(recargas).toBe(1);
 });
 
 it('con cero filas dice el vacío que le pasa quien la monta, no uno genérico', async () => {
   // Messages la va a montar filtrada por conversación: «no hay deliveries informadas» sería falso
   // ahí, porque las hay — no las hay para ESA conversación.
-  renderWithApi(<DeliveryTable rows={[]} canReplay canCancel onChanged={() => undefined} empty="Esta conversación no tiene entregas en cola." />);
+  renderWithApi(<DeliveryTable rows={[]} canReplay canCancel onChanged={verifiedRefresh} empty="Esta conversación no tiene entregas en cola." />);
   expect(screen.getByText('Esta conversación no tiene entregas en cola.')).toBeInTheDocument();
 });
 
@@ -102,15 +189,18 @@ it('🔴 ofrece replay en «failed», no sólo en «dead»: la extracción no pu
   let replayed = '';
   server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', ({ params }) => {
     replayed = String(params.deliveryId);
-    return HttpResponse.json({ delivery_id: replayed, state: 'pending', replayed: true }, { status: 202 });
+    return HttpResponse.json({
+      delivery_id: '20000000-0000-4000-8000-000000000002', replayed_from_delivery_id: replayed,
+      state: 'pending', replayed: true,
+    }, { status: 202 });
   }));
   const user = userEvent.setup();
-  renderWithApi(<DeliveryTable rows={[FAILED]} canReplay canCancel onChanged={() => undefined} />);
+  renderWithApi(<DeliveryTable rows={[FAILED]} canReplay canCancel onChanged={verifiedRefresh} />);
 
   const fila = screen.getByRole('row', { name: /socrates/ });
-  await confirmar(user, within(fila).getByRole('button', { name: /replay delivery delivery-failed-1/i }));
+  await confirmar(user, within(fila).getByRole('button', { name: new RegExp(`replay delivery ${FAILED_ID}`, 'i') }));
   expect(await screen.findByText(/Replay encolado/)).toBeInTheDocument();
-  expect(replayed).toBe('delivery-failed-1');
+  expect(replayed).toBe(FAILED_ID);
   // Y no se le ofrece cancelar: una entrega fallida ya no está viva.
   expect(within(fila).queryByRole('button', { name: /cancelar delivery/i })).toBeNull();
 });

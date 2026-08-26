@@ -9,6 +9,7 @@ source for a reference, bootstrap fails instead of guessing it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import pathlib
 import re
@@ -21,6 +22,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_TEMPLATE = ROOT / "ops" / "config" / "prod.env.example"
 KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
 DIGEST_IMAGE = re.compile(r"^.+@sha256:[a-f0-9]{64}$")
+DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 
 
 class BootstrapError(ValueError):
@@ -78,6 +80,59 @@ def validate(values: dict[str, str]) -> None:
     manifest = pathlib.Path(nonempty(values, "CAUCE_COMPOSE_OVERRIDE_MANIFEST"))
     if not manifest.is_absolute() or manifest.is_symlink() or not manifest.is_file():
         raise BootstrapError("CAUCE_COMPOSE_OVERRIDE_MANIFEST must reference an absolute regular manifest")
+    private_regular_file(manifest, "CAUCE_COMPOSE_OVERRIDE_MANIFEST")
+    manifest_sha256 = nonempty(values, "CAUCE_COMPOSE_OVERRIDE_MANIFEST_SHA256")
+    if DIGEST.fullmatch(manifest_sha256) is None:
+        raise BootstrapError("CAUCE_COMPOSE_OVERRIDE_MANIFEST_SHA256 must be a sha256 digest")
+    try:
+        manifest_content = manifest.read_bytes()
+    except OSError as error:
+        raise BootstrapError("CAUCE_COMPOSE_OVERRIDE_MANIFEST is unreadable") from error
+    observed_manifest_sha256 = f"sha256:{hashlib.sha256(manifest_content).hexdigest()}"
+    if observed_manifest_sha256 != manifest_sha256:
+        raise BootstrapError("CAUCE_COMPOSE_OVERRIDE_MANIFEST_SHA256 does not match the manifest")
+    baseline = pathlib.Path(nonempty(values, "CAUCE_ROLLBACK_BASELINE_FILE"))
+    baseline_sha256 = nonempty(values, "CAUCE_ROLLBACK_BASELINE_SHA256")
+    if not baseline.is_absolute() or baseline.is_symlink() or not baseline.is_file():
+        raise BootstrapError("CAUCE_ROLLBACK_BASELINE_FILE must reference an absolute regular file")
+    private_regular_file(baseline, "CAUCE_ROLLBACK_BASELINE_FILE")
+    if DIGEST.fullmatch(baseline_sha256) is None:
+        raise BootstrapError("CAUCE_ROLLBACK_BASELINE_SHA256 must be a sha256 digest")
+    try:
+        baseline_content = baseline.read_bytes()
+    except OSError as error:
+        raise BootstrapError("CAUCE_ROLLBACK_BASELINE_FILE is unreadable") from error
+    observed_baseline_sha256 = f"sha256:{hashlib.sha256(baseline_content).hexdigest()}"
+    if observed_baseline_sha256 != baseline_sha256:
+        raise BootstrapError("CAUCE_ROLLBACK_BASELINE_SHA256 does not match the baseline")
+    writer_snapshot = pathlib.Path(nonempty(values, "CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE"))
+    writer_snapshot_sha256 = nonempty(values, "CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256")
+    if not writer_snapshot.is_absolute() or writer_snapshot.is_symlink() or not writer_snapshot.is_file():
+        raise BootstrapError("CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE must reference an absolute regular file")
+    private_regular_file(writer_snapshot, "CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE")
+    if DIGEST.fullmatch(writer_snapshot_sha256) is None:
+        raise BootstrapError("CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256 must be a sha256 digest")
+    try:
+        writer_content = writer_snapshot.read_bytes()
+    except OSError as error:
+        raise BootstrapError("CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE is unreadable") from error
+    if f"sha256:{hashlib.sha256(writer_content).hexdigest()}" != writer_snapshot_sha256:
+        raise BootstrapError("CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256 does not match the snapshot")
+    if writer_snapshot.parent != baseline.parent:
+        raise BootstrapError("rollback writer snapshot must be beside the durable rollback baseline")
+    marker = pathlib.Path(f"{writer_snapshot}.state.json")
+    try:
+        marker_metadata = marker.lstat()
+    except OSError as error:
+        raise BootstrapError("rollback writer snapshot state marker is unavailable") from error
+    if (
+        not stat.S_ISREG(marker_metadata.st_mode)
+        or stat.S_ISLNK(marker_metadata.st_mode)
+        or marker_metadata.st_nlink != 1
+        or stat.S_IMODE(marker_metadata.st_mode) != 0o444
+        or marker_metadata.st_uid not in {0, os.geteuid()}
+    ):
+        raise BootstrapError("rollback writer snapshot state marker must be owned mode-0444")
     local_postgres = nonempty(values, "CAUCE_LOCAL_POSTGRES")
     if local_postgres not in {"0", "1"}:
         raise BootstrapError("CAUCE_LOCAL_POSTGRES must be 0 or 1")

@@ -183,11 +183,9 @@ describe('drain keeps moving when capacity is what gates the claim', () => {
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
-  // INTEGRACIÓN 2026-07-29. Estos dos tests nacieron contra un `drain()` que pasaba
-  // `deliveryClaimLimit` como límite. En la línea integrada quien manda es el cupo de admisión
-  // por sesión (`admissionBudget`), y `deliveryClaimLimit` es el techo de lote por encima de él:
-  // el gateway pide `min(cupo, lote)`. Lo que estos tests cuidan sigue siendo lo mismo — que el
-  // límite sea un número elegido acá y nunca `undefined` — pero contra la expresión real.
+  // INTEGRACIÓN 2026-08-26. El gateway pasa siempre un lote explícito y, por separado, las
+  // capacidades durables. PostgreSQL descuenta de ellas todos los claims vivos del alias entre
+  // sockets, rutas HTTP, reconexiones e instancias de gateway.
   it('asks the store for an explicit batch size instead of leaving it undefined', async () => {
     // Cupo holgado a propósito: así el que ata es el lote y se ve que el techo explícito manda.
     const repository = fakeRepository();
@@ -196,7 +194,12 @@ describe('drain keeps moving when capacity is what gates the claim', () => {
       admission: { maxInflightDeliveries: 10, humanReservedDeliveries: 0 }
     });
     expect(vi.mocked(repository.claimDeliveries)).toHaveBeenCalledWith(
-      'Pablo', 'midas', 'midas-1', 1, 4, 600_000, undefined, { humanReservedLimit: 0 }
+      'Pablo', 'midas', 'midas-1', 1, 4, 600_000, undefined,
+      {
+        generalCapacity: 10, humanReservedCapacity: 0, maxClaims: 4,
+        requireDeclaredCapacity: true,
+      },
+      expect.stringMatching(/^[0-9a-f-]{36}$/u), expect.any(AbortSignal),
     );
   });
 
@@ -204,9 +207,14 @@ describe('drain keeps moving when capacity is what gates the claim', () => {
     const repository = fakeRepository();
     await connect(repository);
     const [, , , , limit, , , admission] = vi.mocked(repository.claimDeliveries).mock.calls[0]!;
-    // Con los defaults ata el cupo de admisión (2 general + 2 reservado al humano), no el lote.
-    expect(limit).toBe(DEFAULT_MAX_INFLIGHT_DELIVERIES);
-    expect(admission).toEqual({ humanReservedLimit: DEFAULT_HUMAN_RESERVED_DELIVERIES });
+    // Con los defaults el lote coincide con la capacidad total (2 general + 2 humana).
+    expect(limit).toBe(DEFAULT_MAX_INFLIGHT_DELIVERIES + DEFAULT_HUMAN_RESERVED_DELIVERIES);
+    expect(admission).toEqual({
+      generalCapacity: DEFAULT_MAX_INFLIGHT_DELIVERIES,
+      humanReservedCapacity: DEFAULT_HUMAN_RESERVED_DELIVERIES,
+      maxClaims: DEFAULT_MAX_INFLIGHT_DELIVERIES + DEFAULT_HUMAN_RESERVED_DELIVERIES,
+      requireDeclaredCapacity: true,
+    });
   });
 
   it('rejects a batch size the store would refuse anyway', async () => {

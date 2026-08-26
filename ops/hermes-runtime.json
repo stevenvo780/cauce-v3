@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/NousResearch/hermes-agent.git",
+  "commit": "62b2d78025c349996e753c6f7c748de035eb8048",
+  "packageVersion": "0.20.5",
+  "runtimeRoot": "/opt/cauce-v3-hermes-runtime",
+  "runtimeId": "hermes-0.20.5-62b2d78025c3-uv0.11.21-2856d1bf7e5b",
+  "uvVersion": "0.11.21",
+  "uvTarget": "x86_64-unknown-linux-gnu",
+  "uvSha256": "2856d1bf7e5bcfba7df20ae6f939340ae1f8022d2d103cada1a6da597df86e32",
+  "uvLockSha256": "64a66f8a0ce1d23ea10c16ca89b7104f1828a8f21cf1dd95d7cb74e4bd3efa10",
+  "uvArchiveUrl": "https://github.com/astral-sh/uv/releases/download/0.11.21/uv-x86_64-unknown-linux-gnu.tar.gz",
+  "uvArchiveSha256": "8c88519b0ef0af9801fcdee419bbb12116bd9e6b18e162ae093c932d8b264050"
+}

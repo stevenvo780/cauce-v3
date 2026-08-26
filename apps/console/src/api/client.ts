@@ -16,16 +16,26 @@ import type {
   ConfigurationChangeResult,
   ConfigurationSnapshot,
   ConfigMutation,
+  DlqPage,
   FleetActivitySnapshot,
   MessageDetail,
   MessagePage,
   OriginRelayPage,
   ObservabilitySnapshot,
+  ConfirmPublishIntentInput,
+  ConfirmPublishIntentResult,
+  PreparePublishIntentInput,
+  PreparePublishIntentRateLimited,
+  PreparePublishIntentReconciliation,
+  PreparePublishIntentResult,
+  PublishIntentExpired,
   PublishMessageInput,
   PublishResult,
   QueueSnapshot,
   QuotaSnapshot,
   ReplayResult,
+  ResolveDlqWithoutReplayInput,
+  ResolveDlqWithoutReplayResult,
   SystemStatus,
   TerminalCapability,
   TopologySnapshot,
@@ -41,6 +51,40 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = 'ApiError';
+  }
+}
+
+/** 409 confiable y acotado: hay un efecto previo exacto que debe cerrarse antes de publicar otro. */
+export class PublishIntentReconciliationError extends ApiError {
+  constructor(readonly reconciliation: PreparePublishIntentReconciliation) {
+    super('Hay una publicación durable anterior que requiere reconciliación.', 409,
+      'publish_intent_reconciliation_required');
+    this.name = 'PublishIntentReconciliationError';
+  }
+}
+
+/** 410 exacto: el servidor cerró la reserva y demostró que nunca hubo efecto. */
+export class PublishIntentExpiredError extends ApiError {
+  constructor(readonly expiration: PublishIntentExpired) {
+    super(
+      'La reserva durable expiró sin publicar ningún mensaje. El borrador sigue intacto; volvé a enviarlo.',
+      410,
+      'publish_intent_expired',
+    );
+    this.name = 'PublishIntentExpiredError';
+  }
+}
+
+/** 429 exacto: el servidor preservó el journal pero no admite otra reserva todavía. */
+export class PublishIntentRateLimitedError extends ApiError {
+  constructor(readonly rateLimit: PreparePublishIntentRateLimited) {
+    super(
+      `Hay demasiadas reservas durables recientes. Reintentá en ${rateLimit.retry_after_seconds} s; `
+      + 'el borrador sigue intacto.',
+      429,
+      'publish_intent_rate_limited',
+    );
+    this.name = 'PublishIntentRateLimitedError';
   }
 }
 
@@ -63,6 +107,60 @@ function errorBody(value: unknown): { message?: string; error?: string } {
     ...(typeof record.message === 'string' ? { message: record.message } : {}),
     ...(typeof record.error === 'string' ? { error: record.error } : {}),
   };
+}
+
+function reconciliationBody(value: unknown): PreparePublishIntentReconciliation | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  const expected = ['error', 'idempotency_key', 'receipt', 'state', 'version'];
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])
+      || record.version !== 1
+      || record.error !== 'publish_intent_reconciliation_required'
+      || record.state !== 'committed'
+      || typeof record.idempotency_key !== 'string'
+      || record.idempotency_key.length < 1
+      || record.idempotency_key.length > 200
+      || record.receipt === null
+      || typeof record.receipt !== 'object'
+      || Array.isArray(record.receipt)) return undefined;
+  return record as unknown as PreparePublishIntentReconciliation;
+}
+
+function expirationBody(value: unknown): PublishIntentExpired | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  const expected = ['error', 'idempotency_key', 'safe_to_resubmit', 'state', 'version'];
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])
+      || record.version !== 1
+      || record.error !== 'publish_intent_expired'
+      || record.state !== 'expired'
+      || typeof record.idempotency_key !== 'string'
+      || record.idempotency_key.length < 1
+      || record.idempotency_key.length > 200
+      || record.safe_to_resubmit !== true) return undefined;
+  return record as unknown as PublishIntentExpired;
+}
+
+function rateLimitBody(value: unknown): PreparePublishIntentRateLimited | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  const expected = ['error', 'retry_after_seconds', 'safe_to_retry', 'version'];
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])
+      || record.version !== 1
+      || record.error !== 'publish_intent_rate_limited'
+      || !Number.isSafeInteger(record.retry_after_seconds)
+      || Number(record.retry_after_seconds) < 1
+      || Number(record.retry_after_seconds) > 86_400
+      || record.safe_to_retry !== true) return undefined;
+  return record as unknown as PreparePublishIntentRateLimited;
+}
+
+interface RequestOptions {
+  requireCsrf?: boolean;
+  mapError?: (status: number, body: unknown) => Error | undefined;
 }
 
 /**
@@ -151,7 +249,8 @@ export class CauceApi {
    * protegido en el gateway por el chequeo de `Origin`/`Sec-Fetch-Site` del mismo origen.
    */
   private async request<T>(
-    path: string, init: RequestInit = {}, { requireCsrf = true }: { requireCsrf?: boolean } = {},
+    path: string, init: RequestInit = {},
+    { requireCsrf = true, mapError }: RequestOptions = {},
   ): Promise<T> {
     const method = init.method?.toUpperCase() ?? 'GET';
     const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(method);
@@ -166,27 +265,45 @@ export class CauceApi {
     const propio = init.signal || !(this.tiempoMaximoMs > 0) ? undefined : new AbortController();
     const reloj = propio ? setTimeout(() => propio.abort(), this.tiempoMaximoMs) : undefined;
 
-    let response: Response;
+    let response: Response | undefined;
+    let body: unknown;
     try {
-      const peticion = (this.fetcher ?? fetch)(`${this.baseUrl}${path}`, {
-        ...init,
-        credentials: 'include',
-        signal: init.signal ?? propio?.signal,
-        headers: {
-          Accept: 'application/json',
-          'X-Cauce-Console': '1',
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
-          ...(this.developmentIdentity ? {
-            'X-Cauce-Tenant': this.developmentIdentity.tenant,
-            'X-Cauce-Alias': this.developmentIdentity.alias,
-          } : {}),
-          ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-          ...init.headers,
-        },
-      });
-      response = propio
-        ? await Promise.race([peticion, corteAlVencer(propio.signal, method, path, this.tiempoMaximoMs)])
-        : await peticion;
+      const peticionCompleta = async () => {
+        response = await (this.fetcher ?? fetch)(`${this.baseUrl}${path}`, {
+          ...init,
+          credentials: 'include',
+          signal: init.signal ?? propio?.signal,
+          headers: {
+            Accept: 'application/json',
+            'X-Cauce-Console': '1',
+            ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+            ...(this.developmentIdentity ? {
+              'X-Cauce-Tenant': this.developmentIdentity.tenant,
+              'X-Cauce-Alias': this.developmentIdentity.alias,
+            } : {}),
+            ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+            ...init.headers,
+          },
+        });
+
+        // Recibir headers no completa la lectura. Un proxy puede anunciar JSON y dejar el body
+        // abierto para siempre; el mismo deadline abarca fetch + consumo íntegro del cuerpo.
+        const contentType = response.headers.get('content-type') ?? '';
+        body = response.status === 204
+          ? undefined
+          : contentType.includes('application/json')
+            ? await response.json()
+            : await response.text();
+      };
+      const completa = peticionCompleta();
+      if (propio) {
+        await Promise.race([
+          completa,
+          corteAlVencer(propio.signal, method, path, this.tiempoMaximoMs),
+        ]);
+      } else {
+        await completa;
+      }
     } catch (cause) {
       if (cause instanceof ApiError) throw cause;
       // El fetch que SÍ respeta la señal rechaza con un `AbortError` sin traducir. Se convierte
@@ -198,15 +315,12 @@ export class CauceApi {
       if (reloj !== undefined) clearTimeout(reloj);
     }
 
-    const contentType = response.headers.get('content-type') ?? '';
-    const body: unknown = response.status === 204
-      ? undefined
-      : contentType.includes('application/json')
-        ? await response.json()
-        : await response.text();
+    if (response === undefined) throw new Error('la petición terminó sin respuesta HTTP');
 
     if (!response.ok) {
       if (response.status === 401) this.csrfToken = undefined;
+      const mapped = mapError?.(response.status, body);
+      if (mapped !== undefined) throw mapped;
       const detail = errorBody(body);
       throw new ApiError(detail.message ?? response.statusText ?? 'API request failed', response.status, detail.error);
     }
@@ -331,11 +445,89 @@ export class CauceApi {
       priority: input.priority,
       idempotency_key: input.idempotency_key,
     };
-    return this.request('/v3/console/messages', { method: 'POST', body: JSON.stringify(payload) });
+    return this.request('/v3/console/messages', {
+      method: 'POST', body: JSON.stringify(payload),
+    }, {
+      mapError: (status, body) => {
+        if (status !== 410) return undefined;
+        const expiration = expirationBody(body);
+        return expiration === undefined ? undefined : new PublishIntentExpiredError(expiration);
+      },
+    });
+  }
+
+  preparePublishIntent(input: PreparePublishIntentInput): Promise<PreparePublishIntentResult> {
+    // Same deliberate allow-list as publishMessage. Identity and the idempotency key are minted
+    // by the authenticated gateway; the browser stores neither one.
+    const payload: PreparePublishIntentInput = {
+      room_id: input.room_id,
+      recipients: input.recipients.map(({ tenant_id, alias }) => ({ tenant_id, alias })),
+      body: { text: input.body.text },
+      lane: input.lane,
+      priority: input.priority,
+      intent_nonce: input.intent_nonce,
+    };
+    return this.request('/v3/console/publish-intents', {
+      method: 'POST', body: JSON.stringify(payload),
+    }, {
+      mapError: (status, body) => {
+        if (status === 409) {
+          const reconciliation = reconciliationBody(body);
+          return reconciliation === undefined
+            ? undefined
+            : new PublishIntentReconciliationError(reconciliation);
+        }
+        if (status === 429) {
+          const rateLimit = rateLimitBody(body);
+          return rateLimit === undefined ? undefined : new PublishIntentRateLimitedError(rateLimit);
+        }
+        return undefined;
+      },
+    });
+  }
+
+  confirmPublishIntent(input: ConfirmPublishIntentInput): Promise<ConfirmPublishIntentResult> {
+    const payload: ConfirmPublishIntentInput = {
+      idempotency_key: input.idempotency_key,
+      message_id: input.message_id,
+      causal_hash: input.causal_hash,
+    };
+    return this.request('/v3/console/publish-intents/confirm', {
+      method: 'POST', body: JSON.stringify(payload),
+    });
   }
 
   getQueues(): Promise<QueueSnapshot> {
     return this.request('/v3/console/queues');
+  }
+
+  getDlq(limit = 200, cursor?: string, signal?: AbortSignal): Promise<DlqPage> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new RangeError('DLQ limit must be an integer between 1 and 500');
+    }
+    if (cursor !== undefined && (
+      cursor.length < 2 || cursor.length > 1_024 || cursor.length % 2 !== 0
+      || !/^[a-f0-9]+$/u.test(cursor)
+    )) {
+      throw new RangeError('DLQ cursor must be a bounded lower-case hexadecimal token');
+    }
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (cursor !== undefined) query.set('cursor', cursor);
+    return this.request(`/v3/console/dlq?${query.toString()}`, { signal });
+  }
+
+  resolveDlqWithoutReplay(input: ResolveDlqWithoutReplayInput): Promise<ResolveDlqWithoutReplayResult> {
+    const target = encodeURIComponent(input.target);
+    const id = encodeURIComponent(input.id);
+    return this.request(`/v3/console/dlq/${target}/${id}/resolve-without-replay`, {
+      method: 'POST',
+      body: JSON.stringify({
+        evidence_sha256: input.evidenceSha256,
+        reason: input.reason,
+        possible_duplicate_acknowledged: input.possibleDuplicateAcknowledged,
+        possible_no_delivery_acknowledged: input.possibleNoDeliveryAcknowledged,
+      }),
+    });
   }
 
   replayDelivery(deliveryId: string): Promise<ReplayResult> {
@@ -358,8 +550,20 @@ export class CauceApi {
     return this.request('/v3/console/adapters');
   }
 
-  listAudit(): Promise<AuditPage> {
-    return this.request('/v3/console/audit');
+  listAudit(options: { limit?: number; before?: string; signal?: AbortSignal } = {}): Promise<AuditPage> {
+    const limit = options.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new RangeError('Audit limit must be an integer between 1 and 500');
+    }
+    if (options.before !== undefined && (
+      !/^[1-9][0-9]{0,18}$/u.test(options.before)
+      || BigInt(options.before) > 9_223_372_036_854_775_807n
+    )) {
+      throw new RangeError('Audit cursor must be a canonical positive bigint');
+    }
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (options.before !== undefined) query.set('before', options.before);
+    return this.request(`/v3/console/audit?${query.toString()}`, { signal: options.signal });
   }
 
   listOriginRelays(): Promise<OriginRelayPage> {
@@ -453,7 +657,8 @@ export class CauceApi {
       const cuerpo = await this.request<Omit<AgentDirective, 'publicado'>>(ruta);
       return { ...cuerpo, publicado: true };
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
+      if (error instanceof ApiError
+        && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
         return {
           publicado: false,
           motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
@@ -486,7 +691,8 @@ export class CauceApi {
       const cuerpo = await this.request<Omit<RoleBriefHistory, 'publicado'>>(ruta);
       return { ...cuerpo, publicado: true };
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
+      if (error instanceof ApiError
+        && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
         return {
           publicado: false,
           motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
@@ -533,9 +739,43 @@ export class CauceApi {
   async getAgentDocumentContent(
     tenantId: string, alias: string, kind: AgentDocumentKind,
   ): Promise<AgentDocumentContent> {
-    return this.request<AgentDocumentContent>(
+    const value = await this.request<unknown>(
       `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents/${encodeURIComponent(kind)}/content`,
     );
+    const malformed = (): never => {
+      throw new ApiError(
+        'El gateway devolvió un contenido de documento incompleto o incoherente; no se mostrará como si el fichero estuviera vacío.',
+        502,
+        'invalid_document_content',
+      );
+    };
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return malformed();
+    const row = value as Record<string, unknown>;
+    const path = row.path;
+    const exists = row.exists;
+    const content = row.content;
+    const sha = row.sha;
+    const bytes = row.bytes;
+    const truncated = row.truncated;
+    if (row.tenant_id !== tenantId || row.alias !== alias || row.kind !== kind
+        || typeof path !== 'string' || !path.startsWith('/') || path.includes('\0')
+        || path.split('/').slice(1).some((segment) => segment === '' || segment === '.' || segment === '..')
+        || typeof row.format !== 'string' || row.format.length === 0
+        || typeof exists !== 'boolean' || typeof content !== 'string'
+        || !(sha === null || (typeof sha === 'string' && /^[0-9a-f]{64}$/u.test(sha)))
+        || !Number.isSafeInteger(bytes) || Number(bytes) < 0
+        || typeof row.editable !== 'boolean' || typeof truncated !== 'boolean'
+        || typeof row.projected !== 'boolean'
+        || (row.modified_at !== undefined && typeof row.modified_at !== 'string')
+        || (row.warning !== undefined && typeof row.warning !== 'string')) return malformed();
+
+    const visibleBytes = new TextEncoder().encode(content).byteLength;
+    if ((!exists && (content !== '' || sha !== null || bytes !== 0 || truncated))
+        || (exists && typeof sha !== 'string')
+        || visibleBytes > Number(bytes)
+        || (!truncated && visibleBytes !== Number(bytes))
+        || (truncated && row.editable === true)) return malformed();
+    return value as AgentDocumentContent;
   }
 
   /**

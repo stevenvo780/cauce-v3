@@ -67,8 +67,9 @@ async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
 }
 
 /**
- * `resetTestDatabase` trunca `agents`, así que por defecto ningún alias tiene fila y el techo no
- * aplica. Cada prueba declara explícitamente el agente que quiere acotar. Se inserta con
+ * `resetTestDatabase` trunca `agents`, así que por defecto ningún alias tiene fila. Reclamar en
+ * ese estado falla cerrado: un consumidor debe declarar su capacidad durable. Cada prueba
+ * declara explícitamente el agente que quiere acotar. Se inserta con
  * enabled=false y sin placement para no arrastrar las constraints agents_enabled_requires_runtime
  * ni agents_placement_atomic, que no tienen nada que ver con lo que se está probando.
  */
@@ -187,6 +188,38 @@ describe('per-agent delivery concurrency cap', () => {
     expect(await statusCounts('argos')).toEqual({ leased: 3, pending: 6 });
   });
 
+  it('serializes a claim with a concurrent durable cap reduction', async () => {
+    await declareAgent('Steven', 'argos', 2);
+    await publishMany(2);
+    const argos = await consumer('Steven', 'argos');
+    const configuration = await pool.connect();
+    let settled = false;
+    try {
+      await configuration.query('BEGIN');
+      await configuration.query(
+        `SELECT 1 FROM agents WHERE tenant_id='Steven' AND alias='argos' FOR UPDATE`,
+      );
+      await configuration.query(
+        `UPDATE agents SET max_concurrent_deliveries=1
+          WHERE tenant_id='Steven' AND alias='argos'`,
+      );
+
+      const claiming = repository.claimDeliveries(
+        argos.tenant, argos.alias, argos.instanceId, argos.epoch, 20, 30_000,
+      ).finally(() => { settled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(settled).toBe(false);
+
+      await configuration.query('COMMIT');
+      const claimed = await claiming;
+      expect(claimed).toHaveLength(1);
+      expect(await statusCounts('argos')).toEqual({ leased: 1, pending: 1 });
+    } finally {
+      if (!settled) await configuration.query('ROLLBACK').catch(() => undefined);
+      configuration.release();
+    }
+  });
+
   it('keeps counting a delivery the harness has accepted or started', async () => {
     // 'accepted' y 'started' son ocupación real: el harness ya la tiene. Si el conteo mirara sólo
     // 'leased', el primer ACK de progreso liberaría un cupo falso y volvería el sobre-reclamo.
@@ -248,17 +281,42 @@ describe('per-agent delivery concurrency cap', () => {
     expect(delivered.size).toBe(5);
   });
 
-  it('does not cap a consumer that has no row in agents', async () => {
-    // Fail-open deliberado: puentes y recolectores no están modelados como agentes y tienen que
-    // seguir comportándose exactamente como antes de este cambio.
+  it('does not let an expired durable claim block the alias when the dispatcher is absent', async () => {
+    await declareAgent('Steven', 'argos', 1);
+    await publishMany(2);
+    const argos = await consumer('Steven', 'argos');
+    const first = await repository.claimDeliveries(
+      argos.tenant, argos.alias, argos.instanceId, argos.epoch, 20, 30_000,
+    );
+    expect(first).toHaveLength(1);
+    await pool.query(
+      `UPDATE deliveries SET ack_deadline_at=now()-interval '1 second' WHERE id=$1`,
+      [first[0]!.delivery_id],
+    );
+
+    // No dispatcher/reaper runs between the two claims. The expired ownership is no longer a
+    // live concurrency slot, so the pending delivery must still progress.
+    const afterExpiry = await repository.claimDeliveries(
+      argos.tenant, argos.alias, argos.instanceId, argos.epoch, 20, 30_000,
+    );
+    expect(afterExpiry).toHaveLength(1);
+    expect(afterExpiry[0]?.delivery_id).not.toBe(first[0]?.delivery_id);
+    expect(await statusCounts('argos')).toEqual({ leased: 2 });
+  });
+
+  it('rejects a consumer that has no durable capacity row', async () => {
+    // Fail-open convertía un inventario roto en capacidad ilimitada. Un lease no basta para
+    // inventar cuánto trabajo puede ejecutar un alias.
     await publishMany(9);
     const argos = await consumer('Steven', 'argos');
 
-    const claimed = await repository.claimDeliveries(
-      argos.tenant, argos.alias, argos.instanceId, argos.epoch, 20, 30_000
-    );
-
-    expect(claimed).toHaveLength(9);
+    await expect(repository.claimDeliveries(
+      argos.tenant, argos.alias, argos.instanceId, argos.epoch, 20, 30_000, 3,
+      { requireDeclaredCapacity: true },
+    )).rejects.toMatchObject({
+      code: 'conflict',
+      message: 'delivery consumer is missing its durable agent capacity',
+    });
   });
 
   it('treats a NULL cap as unlimited, the in-place escape hatch', async () => {
@@ -272,6 +330,20 @@ describe('per-agent delivery concurrency cap', () => {
     );
 
     expect(claimed).toHaveLength(9);
+  });
+
+  it('still applies a gateway general capacity when the agent cap is explicitly NULL', async () => {
+    await declareAgent('Steven', 'argos', null);
+    await publishMany(9);
+    const argos = await consumer('Steven', 'argos');
+
+    const claimed = await repository.claimDeliveries(
+      argos.tenant, argos.alias, argos.instanceId, argos.epoch, 9, 30_000, 3,
+      { generalCapacity: 2, humanReservedCapacity: 0, maxClaims: 9 },
+    );
+
+    expect(claimed).toHaveLength(2);
+    expect(await statusCounts('argos')).toEqual({ leased: 2, pending: 7 });
   });
 
   it('still honours a caller limit below the cap', async () => {

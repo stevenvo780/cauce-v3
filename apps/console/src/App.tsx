@@ -1,7 +1,6 @@
 import {
   Activity,
   Boxes,
-  RadioTower,
   ShieldCheck,
 } from 'lucide-react';
 import { lazy, Suspense, useEffect, useSyncExternalStore, type ComponentType } from 'react';
@@ -181,15 +180,6 @@ const routes: Route[] = [
     component: PAGES[entry.id],
   })),
   /**
-   * Entrada OCULTA (sin `label`, excluida del render del menú).
-   *
-   * `/fleet` como lista dejó de existir, pero `/fleet/:tenant/:alias` NO: es el detalle de un bot
-   * y sigue siendo el destino del pie del cajón. Sin esta entrada, `matchRoute` no reconocería el
-   * id y la ruta caería al fallback, o sea que abrir un agente desde el cajón llevaría a la
-   * portada. Es la clase de defecto que sólo se descubre haciendo clic.
-   */
-  { id: 'fleet', label: '', icon: RadioTower, component: FleetRouteNotice },
-  /**
    * Entrada OCULTA: `/jobs` no tiene heredera, así que tampoco tiene alias. Ver
    * `JobsRetiredNotice` para la medición que la retiró y para por qué es un aviso y no una
    * redirección muda.
@@ -289,10 +279,10 @@ const ROUTE_ALIASES: Record<string, string> = {
  *
  * No es una comodidad de test: es la única forma de comprobar por TABLA —y no con casos sueltos
  * escritos a mano— que cada entrada del menú y cada alias declarado llegan a una vista real. Los
- * fallos de este router no se ven: un id que no está en `routes` cae al `fallback` sin un error,
- * sin un log y sin cambiar de aspecto, y un alias encadenado (a → b → c) hace exactamente lo
- * mismo porque `matchRoute` resuelve el mapa UNA sola vez. Las dos cosas se descubren haciendo
- * clic, y en producción.
+ * Históricamente los fallos de este router no se veían: un id ausente caía en la portada y un
+ * alias encadenado (a → b → c) hacía lo mismo porque `matchRoute` resuelve el mapa UNA sola vez.
+ * Hoy la ruta ausente muestra un 404 explícito; la tabla sigue siendo la barrera que evita mandar
+ * allí rutas y alias que la propia consola declara compatibles.
  *
  * Ver `App.invariantes.test.tsx`. Sólo lectura: nadie debe escribir en estas listas desde fuera.
  */
@@ -300,21 +290,22 @@ export const ROUTE_TABLE: readonly Readonly<Route>[] = routes;
 export const ROUTE_ALIAS_TABLE: Readonly<Record<string, string>> = ROUTE_ALIASES;
 
 /**
- * Lo que queda de `/fleet` cuando la URL no alcanza para identificar a un bot.
- *
- * `/fleet` a secas redirige a `/live`, y `/fleet/:tenant/:alias` abre el detalle. Entre medio está
- * `/fleet/:tenant`, que no es ninguna de las dos cosas: nombra un cliente, no un agente. Antes caía
- * en la lista de la flota; ahora esa lista no existe, y mandarlo al fallback sin decir nada dejaría
- * al operador en una página que no pidió — el mismo defecto que `ROUTE_ALIASES` existe para evitar.
+ * Una URL que la consola no declara no se convierte silenciosamente en una vista válida. Conservar
+ * la dirección permite corregir un marcador o reportar el enlace exacto que quedó obsoleto.
  */
-function FleetRouteNotice() {
+function RouteNotFound({ path }: { path: string }) {
   return (
-    <div className="state-card">
-      <div>
-        <strong>Esa dirección ya no identifica a nadie</strong>
+    <div className="state-card" role="alert">
+      <div className="state-card-texto">
+        <h1>Ruta no encontrada</h1>
         <p>
-          La lista de la flota es ahora <a href="/live" onClick={(event) => onNavClick(event, '/live')}>La flota ahora</a>.
-          El detalle de un bot sigue viviendo en <span className="mono">/fleet/:cliente/:alias</span>, con los dos datos.
+          La consola no declara <code>{path}</code>. No se mostró otra vista en su lugar porque eso
+          ocultaría un enlace roto.
+        </p>
+        <p>
+          <a href="/" onClick={(event) => onNavClick(event, '/')}>Ir a la portada</a>
+          {' · '}
+          <a href="/live" onClick={(event) => onNavClick(event, '/live')}>Abrir la flota</a>
         </p>
       </div>
     </div>
@@ -327,6 +318,8 @@ interface RouteMatch {
   params: string[];
   /** Id tal como venía en la URL cuando era un alias retirado; `undefined` si la ruta es canónica. */
   aliasedFrom?: string;
+  /** Dirección original que no corresponde a ninguna vista declarada. */
+  notFoundPath?: string;
 }
 
 /** Snapshot crudo para useSyncExternalStore: debe ser un primitivo estable, no un objeto recién creado. */
@@ -359,9 +352,15 @@ function matchRoute(path: string): RouteMatch {
    * diciendo `/adapters` para siempre. Es exactamente el defecto que `ROUTE_ALIASES` existe para
    * evitar, colado por la puerta de atrás de un valor falsy.
    */
-  return routes.some((route) => route.id === id)
-    ? { id, params: segments.slice(1), aliasedFrom: alias !== undefined ? requested : undefined }
-    : { id: '', params: [] };
+  const params = segments.slice(1);
+  // `/fleet/:tenant/:alias` es el único subdetalle declarado y no necesita una página estática
+  // ficticia dentro de `routes`. Todas las demás vistas y aliases tienen aridad cero.
+  const detalleFleet = requested === 'fleet' && alias === undefined && params.length === 2;
+  const existe = detalleFleet || routes.some((route) => route.id === id);
+  const aridadInvalida = params.length > 0 && !detalleFleet;
+  return existe && !aridadInvalida
+    ? { id, params, aliasedFrom: alias !== undefined ? requested : undefined }
+    : { id: requested, params, notFoundPath: `/${path}` };
 }
 
 function subscribe(callback: () => void): () => void {
@@ -374,7 +373,7 @@ export function App() {
 }
 
 function ConsoleShell({ gate }: { gate: AuthGateState }) {
-  // El snapshot de servidor es la portada, que es también el fallback de `matchRoute`.
+  // El snapshot de servidor es la portada. Las rutas desconocidas tienen un estado explícito.
   const path = useSyncExternalStore(subscribe, currentPath, () => '');
   /**
    * El menú tiene que decir la verdad ANTES del clic. Las dos funciones que deciden esto ya
@@ -388,8 +387,8 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
    * agrega una petición por navegación.
    */
   const navAvailability = useNavAvailability();
-  const { id: routeId, params, aliasedFrom } = matchRoute(path);
-  const route = routes.find((candidate) => candidate.id === routeId) ?? routes[0];
+  const { id: routeId, params, aliasedFrom, notFoundPath } = matchRoute(path);
+  const route = routes.find((candidate) => candidate.id === routeId);
 
   // La vista correcta ya se eligió arriba (`matchRoute` resuelve el alias); esto sólo pone la barra
   // de direcciones de acuerdo con lo que se está viendo. Si fallara, la página igual es la buena.
@@ -398,12 +397,12 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
     redirect(`/${routeId}`);
   }, [aliasedFrom, routeId]);
 
-  const Page = route.component;
+  const Page = route?.component;
   // Único sub-detalle soportado hoy: /fleet/:tenant/:alias reutiliza el workspace de terminal.
   // Se comprueba contra el primer segmento CRUDO y no contra `routeId`: ahora `fleet` es también
   // un alias hacia `live`, así que preguntarle al id resuelto daría siempre `false`.
   const requestedSegment = path.split('/').filter(Boolean).map(decodeSegment)[0] ?? '';
-  const fleetAgentTarget = requestedSegment === 'fleet' && params.length >= 2
+  const fleetAgentTarget = !notFoundPath && requestedSegment === 'fleet' && params.length === 2
     ? { tenantId: params[0], alias: params[1] }
     : undefined;
 
@@ -426,7 +425,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
                   <a
                     href={`/${item.id}`}
                     onClick={(event) => onNavClick(event, `/${item.id}`, disponible.reason)}
-                    aria-current={route.id === item.id ? 'page' : undefined}
+                    aria-current={!notFoundPath && route?.id === item.id ? 'page' : undefined}
                     aria-disabled={disponible.disabled ? true : undefined}
                     className={disponible.disabled ? 'nav-inerte' : undefined}
                     title={disponible.reason}
@@ -454,7 +453,9 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
         </header>
         <main id="main-content" tabIndex={-1}>
           {gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}
-          {fleetAgentTarget
+          {notFoundPath
+            ? <RouteNotFound path={notFoundPath} />
+            : fleetAgentTarget
             ? (
               <Suspense fallback={<p className="muted" role="status">Cargando agente…</p>}>
                 <FleetAgentDetailPage
@@ -463,7 +464,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
                 />
               </Suspense>
             )
-            : <Page />}
+            : Page ? <Page /> : null}
         </main>
       </div>
     </div>

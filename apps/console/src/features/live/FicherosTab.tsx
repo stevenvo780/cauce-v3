@@ -5,6 +5,7 @@ import { useApi } from '../../api/context';
 import type { AgentDocumentContent, AgentDocumentItem, AgentDocumentKind } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { EmptyState } from '../../components/ui';
+import { permissionState } from '../../lib';
 import {
   avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios, mensajeDeGuardado,
   modoDeDocumento,
@@ -28,10 +29,10 @@ import {
  * LO QUE ESTA PANTALLA NO HACE, DICHO AQUÍ Y DICHO TAMBIÉN EN PANTALLA
  * ─────────────────────────────────────────────────────────────────────────────────────────────
  *
- * Hoy el gateway NO tiene ningún camino hasta el disco de un agente: no monta el socket de
- * docker, el relay de terminal llama al gateway y nunca al revés, y dos alias corren en otra
- * máquina. Mientras esa pieza no exista, pedir un fichero devuelve 503 y esta vista lo dice con
- * esas palabras.
+ * El camino al disco es una sonda allowlisted del pty-agent: el navegador sólo manda `kind`, el
+ * gateway deriva una ruta desde hechos observados y el relay nunca acepta una ruta arbitraria.
+ * Si cualquiera de esas piezas no está disponible, pedir el contenido devuelve un fallo explícito
+ * y esta vista no lo convierte en un fichero vacío.
  *
  * Eso es deliberado y es la parte que más importa. Lo fácil —y lo que haría esto inútil— sería
  * pintar un editor vacío y un botón de guardar: Steven vería una caja en blanco donde debería
@@ -49,10 +50,13 @@ export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
   const mapa = useResource(
     `ficheros-${tenantId}-${alias}`, () => api.getAgentDocuments(tenantId, alias),
   );
+  const access = useResource('console-access', () => api.getConsoleAccess());
   const [abierto, setAbierto] = useState<AgentDocumentKind | undefined>(undefined);
 
   const aviso = mapa.data ? avisoDeFuente(mapa.data) : undefined;
   const items = mapa.data?.items ?? [];
+  const estadoPermiso = permissionState(access.data, 'config.write');
+  const canWrite = estadoPermiso === 'allowed';
 
   if (mapa.loading) return <p className="muted">Leyendo el mapa de ficheros…</p>;
 
@@ -102,6 +106,7 @@ export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
               item={item}
               tenantId={tenantId}
               alias={alias}
+              canWrite={canWrite}
               abierto={abierto === item.kind}
               onAbrir={() => setAbierto(abierto === item.kind ? undefined : item.kind)}
             />
@@ -109,48 +114,159 @@ export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
         </ul>
       )}
 
+      {!canWrite ? (
+        <p className="ficheros-caveat" role="status">
+          <Lock size={14} aria-hidden="true" />
+          {estadoPermiso === 'unknown'
+            ? 'No se pudo acreditar config.write; todo guardado queda bloqueado.'
+            : 'Tu sesión puede inspeccionar, pero no escribir configuración.'}
+        </p>
+      ) : null}
+
       <HuecoDeclarado />
     </div>
   );
 }
 
 function FilaDeFichero(
-  { item, tenantId, alias, abierto, onAbrir }:
+  { item, tenantId, alias, canWrite, abierto, onAbrir }:
   {
     item: AgentDocumentItem;
     tenantId: string;
     alias: string;
+    canWrite: boolean;
     abierto: boolean;
     onAbrir: () => void;
   },
 ) {
   const modo = modoDeDocumento(item);
+  const readable = item.readable === true;
+  const reason = item.reason ?? (!readable
+    ? 'El gateway no acreditó que este contenido sea servible; no se envió ninguna lectura.'
+    : undefined);
+  const cabecera = (
+    <>
+      {item.editable ? <FileText size={14} aria-hidden="true" /> : <Lock size={14} aria-hidden="true" />}
+      <span className="ficheros-rotulo">{item.label}</span>
+      <code className="ficheros-ruta">{item.path}</code>
+      <span className={`ficheros-modo ficheros-modo-${readable ? modo : 'solo-lectura'}`}>
+        {!readable
+          ? 'no se sirve'
+          : item.editable
+            ? 'editable'
+            : 'visor · sólo lectura'}
+      </span>
+    </>
+  );
   return (
     <li className="ficheros-fila">
-      <button type="button" className="ficheros-cabecera" onClick={onAbrir} aria-expanded={abierto}>
-        {modo === 'solo-lectura' ? <Lock size={14} aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
-        <span className="ficheros-rotulo">{item.label}</span>
-        <code className="ficheros-ruta">{item.path}</code>
-        <span className={`ficheros-modo ficheros-modo-${modo}`}>
-          {modo === 'entero' ? 'editable' : modo === 'proyectado' ? 'editable por campos' : 'sólo lectura'}
-        </span>
-      </button>
+      {readable ? (
+        <button
+          type="button"
+          className="ficheros-cabecera"
+          onClick={onAbrir}
+          aria-expanded={abierto}
+        >
+          {cabecera}
+        </button>
+      ) : <div className="ficheros-cabecera">{cabecera}</div>}
 
       {/* La razón se enseña SIEMPRE que exista, esté la fila abierta o no. Un candado sin
           explicación es justo lo que hace que alguien pida por Telegram que le desbloqueen algo
           que está bloqueado a propósito. */}
-      {item.reason ? <p className="ficheros-razon">{item.reason}</p> : null}
+      {reason ? <p className="ficheros-razon">{reason}</p> : null}
 
-      {abierto && modo !== 'solo-lectura'
-        ? <Editor item={item} tenantId={tenantId} alias={alias} />
+      {abierto && readable
+        ? item.editable
+          ? <Editor item={item} tenantId={tenantId} alias={alias} canWrite={canWrite} />
+          : <Visor item={item} tenantId={tenantId} alias={alias} />
         : null}
     </li>
   );
 }
 
-function Editor(
-  { item, tenantId, alias }: { item: AgentDocumentItem; tenantId: string; alias: string },
-) {
+/** Un GET explícito sin superficie de mutación. Nunca renderiza Guardar ni llama PUT. */
+function Visor({ item, tenantId, alias }: {
+  item: AgentDocumentItem; tenantId: string; alias: string;
+}) {
+  const api = useApi();
+  const [cargando, setCargando] = useState(true);
+  const [servido, setServido] = useState<AgentDocumentContent | undefined>(undefined);
+  const [fallo, setFallo] = useState<{ titulo: string; detalle: string } | undefined>(undefined);
+
+  const cargar = useCallback(async () => {
+    setCargando(true);
+    setFallo(undefined);
+    try {
+      setServido(await api.getAgentDocumentContent(tenantId, alias, item.kind));
+    } catch (error) {
+      const status = error instanceof ApiError ? error.status : undefined;
+      const explicado = explicarFallo(status, error instanceof Error ? error.message : undefined);
+      setFallo({ titulo: explicado.titulo, detalle: explicado.detalle });
+      setServido(undefined);
+    } finally {
+      setCargando(false);
+    }
+  }, [api, tenantId, alias, item.kind]);
+
+  useEffect(() => { void cargar(); }, [cargar]);
+
+  if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
+  if (fallo) {
+    return (
+      <div className="ficheros-fallo" role="status">
+        <strong>{fallo.titulo}</strong>
+        <p>{fallo.detalle}</p>
+      </div>
+    );
+  }
+  if (!servido) return null;
+  if (!servido.exists) {
+    return (
+      <div className="ficheros-editor">
+        <p className="ficheros-nota">
+          La sonda comprobó que este fichero todavía no existe. No se muestra como texto vacío y
+          este visor no lo puede crear.
+        </p>
+        <button type="button" className="button small secondary" onClick={() => void cargar()}>
+          Volver a comprobar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ficheros-editor">
+      {servido.truncated ? (
+        <p className="ficheros-aviso" role="alert">
+          <AlertTriangle size={14} aria-hidden="true" /> Esta lectura está recortada. El visor
+          muestra sólo el prefijo recibido y no permite modificarlo.
+        </p>
+      ) : null}
+      <textarea
+        className="ficheros-texto"
+        aria-label={`Contenido de ${item.label}`}
+        value={servido.content}
+        spellCheck={false}
+        rows={18}
+        readOnly
+        aria-readonly="true"
+      />
+      <div className="ficheros-pie">
+        <span className="muted">
+          {servido.bytes} bytes · visor de sólo lectura{servido.truncated ? ' · prefijo recortado' : ''}
+        </span>
+        <button type="button" className="button small secondary" onClick={() => void cargar()}>
+          Releer
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Editor({ item, tenantId, alias, canWrite }: {
+  item: AgentDocumentItem; tenantId: string; alias: string; canWrite: boolean;
+}) {
   const api = useApi();
   const [cargando, setCargando] = useState(true);
   const [servido, setServido] = useState<AgentDocumentContent | undefined>(undefined);
@@ -181,6 +297,13 @@ function Editor(
 
   const guardar = useCallback(async () => {
     if (!servido) return;
+    if (!canWrite) {
+      setFallo({
+        titulo: 'Permiso de escritura no acreditado',
+        detalle: 'No se envió ninguna mutación porque config.write no está permitido.',
+      });
+      return;
+    }
     if (!servido.editable || servido.truncated !== false) {
       setFallo({
         titulo: 'Este contenido no se puede reemplazar',
@@ -231,7 +354,7 @@ function Editor(
     } finally {
       setGuardando(false);
     }
-  }, [api, tenantId, alias, item.kind, borrador, servido]);
+  }, [api, tenantId, alias, item.kind, borrador, servido, canWrite]);
 
   if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
 
@@ -277,8 +400,8 @@ function Editor(
         value={borrador}
         spellCheck={false}
         rows={18}
-        readOnly={!servido.editable || servido.truncated !== false}
-        aria-readonly={!servido.editable || servido.truncated !== false}
+        readOnly={!canWrite || !servido.editable || servido.truncated !== false}
+        aria-readonly={!canWrite || !servido.editable || servido.truncated !== false}
         onChange={(event) => {
           setBorrador(event.target.value);
           setGuardado(undefined);
@@ -298,7 +421,8 @@ function Editor(
           type="button"
           className="button small"
           onClick={() => void guardar()}
-          disabled={!sucio || guardando || !servido.editable || servido.truncated !== false}
+          disabled={!canWrite || !sucio || guardando || !servido.editable
+            || servido.truncated !== false}
         >
           <Save size={14} aria-hidden="true" /> {guardando ? 'Guardando…' : 'Guardar'}
         </button>

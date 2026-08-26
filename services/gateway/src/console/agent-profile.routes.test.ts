@@ -349,11 +349,35 @@ const PERFIL_BODY = {
 const REPLACE_PROFILE: NonNullable<AgentProfileDeps['replaceProfile']> = async (profile) => ({
   perfil: profile, exists: true, revision: 2, applied_revision: 1,
 });
+const RUNTIME_VERIFICATION = {
+  state: 'current' as const,
+  generation: 'gen-1',
+  container_id: 'ws-zeus',
+  observed_at: '2026-08-26T00:00:00.000Z',
+  documents: [{
+    name: 'AGENTS.md', path: '/home/dev/.codex/AGENTS.md',
+    expected_sha: sha('nuevo'), observed_sha: sha('nuevo'),
+    expected_bytes: 5, observed_bytes: 5, current: true,
+  }],
+};
+const RUNTIME_ADOPTION: NonNullable<AgentProfileDeps['readRuntimeAdoption']> = async (
+  _tenant, _alias, revision, verification,
+) => ({
+  evidence: 'adapter_delivery', revision,
+  generation: verification.generation ?? 'sin-generacion',
+  adopted_at: '2026-08-26T00:01:00.000Z',
+  documents: verification.documents.map((document) => ({
+    name: document.name, path: document.path, sha: document.expected_sha,
+  })),
+});
 const PREPARE_RUNTIME: NonNullable<AgentProfileDeps['prepareRuntime']> = async () => ({
   documents: ['AGENTS.md'],
+  harness: 'codex',
+  preview: [{ nombre: 'AGENTS.md', politica: 'bloque-gestionado', texto: 'nuevo', unidades: 5 }],
+  verification: RUNTIME_VERIFICATION,
   apply: async () => ([{
     name: 'AGENTS.md', path: '/home/dev/.codex/AGENTS.md', state: 'written',
-    sha: sha('nuevo'), bytes: 5,
+    sha: sha('nuevo'), bytes: 5, generation: 'gen-1', container_id: 'ws-zeus',
   }]),
 });
 const MARK_PROFILE_APPLIED: NonNullable<AgentProfileDeps['markProfileApplied']> = async (
@@ -375,6 +399,7 @@ function depsDeEscritura(overrides: Partial<AgentProfileDeps> = {}): AgentProfil
     }),
     replaceProfile: REPLACE_PROFILE,
     prepareRuntime: PREPARE_RUNTIME,
+    readRuntimeAdoption: RUNTIME_ADOPTION,
     markProfileApplied: MARK_PROFILE_APPLIED,
     ...overrides,
   };
@@ -388,11 +413,146 @@ async function appDeEscritura(overrides: Partial<AgentProfileDeps> = {}) {
   return app;
 }
 
+describe('GET perfil: convergencia medida del runtime', () => {
+  it('sólo marca applied con revisión durable igual y ruta+SHA+generación actuales', async () => {
+    const app = await appDeEscritura();
+
+    const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
+
+    expect(body).toMatchObject({
+      runtime_state: 'applied', harness: 'codex', base: 'runtime-medido',
+      runtime_verification: { state: 'current', generation: 'gen-1', container_id: 'ws-zeus' },
+      ficheros: [{ nombre: 'AGENTS.md', texto: 'nuevo' }],
+    });
+  });
+
+  it('misma revisión con bytes distintos se declara drifted, nunca applied', async () => {
+    const app = await appDeEscritura({
+      prepareRuntime: async () => ({
+        ...(await PREPARE_RUNTIME('Steven', 'zeus', contexto(PERFIL_BODY, 'codex'))),
+        verification: {
+          ...RUNTIME_VERIFICATION,
+          state: 'drifted',
+          documents: RUNTIME_VERIFICATION.documents.map((document) => ({
+            ...document, observed_sha: sha('edición directa'), current: false,
+          })),
+        },
+      }),
+    });
+
+    const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
+
+    expect(body.runtime_state).toBe('drifted');
+    expect(body.runtime_verification?.documents[0]).toMatchObject({ current: false });
+  });
+
+  it('ruta+SHA actuales sin ACK de la TUI quedan pending_session_refresh', async () => {
+    const app = await appDeEscritura({ readRuntimeAdoption: async () => undefined });
+
+    const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
+
+    expect(body).toMatchObject({
+      runtime_state: 'pending_session_refresh',
+      runtime_verification: { state: 'current', generation: 'gen-1' },
+      runtime_adoption: null,
+    });
+  });
+
+  it('registra la expectativa exacta antes de consultar la adopción durable', async () => {
+    const recordRuntimeExpectation = vi.fn(async () => undefined);
+    const readRuntimeAdoption = vi.fn(RUNTIME_ADOPTION);
+    const app = await appDeEscritura({ recordRuntimeExpectation, readRuntimeAdoption });
+
+    const res = await app.inject({ method: 'GET', url: RUTA });
+
+    expect(res.statusCode).toBe(200);
+    expect(recordRuntimeExpectation).toHaveBeenCalledWith(
+      'Steven', 'zeus', 1, expect.objectContaining({ state: 'current', generation: 'gen-1' }),
+    );
+    expect(recordRuntimeExpectation.mock.invocationCallOrder[0])
+      .toBeLessThan(readRuntimeAdoption.mock.invocationCallOrder[0]!);
+  });
+
+  it('desired nueva ya escrita sigue pending_session_refresh hasta que la TUI la adopta', async () => {
+    const readRuntimeAdoption = vi.fn(async () => undefined);
+    const app = await appDeEscritura({
+      readContext: async () => ({
+        contexto: contexto(PERFIL_BODY, 'codex'), exists: true,
+        revision: 2, applied_revision: 1,
+      }),
+      readRuntimeAdoption,
+    });
+
+    const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
+
+    expect(body.runtime_state).toBe('pending_session_refresh');
+    expect(readRuntimeAdoption).toHaveBeenCalledWith(
+      'Steven', 'zeus', 2, expect.objectContaining({ state: 'current', generation: 'gen-1' }),
+    );
+  });
+
+  it('ACK de sesión con applied_revision aún atrasada queda pending durable, no applied', async () => {
+    const app = await appDeEscritura({
+      readContext: async () => ({
+        contexto: contexto(PERFIL_BODY, 'codex'), exists: true,
+        revision: 2, applied_revision: 1,
+      }),
+    });
+
+    const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
+
+    expect(body).toMatchObject({
+      runtime_state: 'pending', revision: 2, applied_revision: 1,
+      runtime_adoption: { evidence: 'adapter_delivery', revision: 2, generation: 'gen-1' },
+    });
+  });
+
+  it('sin sonda de generación expone runtime_unverified y vista no medida', async () => {
+    const deps = depsDeEscritura();
+    delete deps.prepareRuntime;
+    const app = Fastify();
+    registerAgentProfileRoutes(app, deps);
+    await app.ready();
+    abierto = app;
+
+    const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
+
+    expect(body).toMatchObject({
+      runtime_state: 'runtime_unverified', runtime_verification: null, base: 'fichero-vacio',
+    });
+  });
+
+  it('el arnés y la vista vienen del runtime medido, no de la columna declarada', async () => {
+    const app = await appDeEscritura({
+      prepareRuntime: async () => ({
+        documents: ['CLAUDE.md'], harness: 'claude',
+        preview: [{ nombre: 'CLAUDE.md', politica: 'bloque-gestionado', texto: 'medido', unidades: 6 }],
+        verification: {
+          ...RUNTIME_VERIFICATION,
+          documents: [{
+            ...RUNTIME_VERIFICATION.documents[0]!,
+            name: 'CLAUDE.md', path: '/home/dev/.claude/CLAUDE.md',
+          }],
+        },
+        apply: async () => [],
+      }),
+    });
+
+    const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
+
+    expect(body).toMatchObject({
+      harness: 'claude', base: 'runtime-medido',
+      ficheros: [{ nombre: 'CLAUDE.md', texto: 'medido' }],
+    });
+  });
+});
+
 describe('PUT perfil: desired durable + ACK runtime', () => {
   it('sólo responde applied cuando CAS, lote completo y applied_revision coinciden', async () => {
     const replaceProfile = vi.fn(REPLACE_PROFILE);
+    const readRuntimeAdoption = vi.fn(RUNTIME_ADOPTION);
     const markProfileApplied = vi.fn(MARK_PROFILE_APPLIED);
-    const app = await appDeEscritura({ replaceProfile, markProfileApplied });
+    const app = await appDeEscritura({ replaceProfile, readRuntimeAdoption, markProfileApplied });
 
     const res = await app.inject({
       method: 'PUT', url: RUTA,
@@ -403,9 +563,63 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     expect(res.json()).toMatchObject({
       ok: true, state: 'applied', revision: 2, applied_revision: 2,
       acknowledgements: [{ name: 'AGENTS.md', sha: sha('nuevo'), bytes: 5 }],
+      runtime_adoption: {
+        evidence: 'adapter_delivery', revision: 2, generation: 'gen-1',
+      },
     });
     expect(replaceProfile).toHaveBeenCalledWith(expect.objectContaining(PERFIL_BODY), 1, ACTOR);
+    expect(readRuntimeAdoption).toHaveBeenCalledWith(
+      'Steven', 'zeus', 2, expect.objectContaining({ state: 'current', generation: 'gen-1' }),
+    );
     expect(markProfileApplied).toHaveBeenCalledWith('Steven', 'zeus', 2, ACTOR);
+    expect(readRuntimeAdoption.mock.invocationCallOrder[0])
+      .toBeLessThan(markProfileApplied.mock.invocationCallOrder[0]!);
+  });
+
+  it('un ACK de escritura sin adopción de sesión responde 202 y no marca applied', async () => {
+    const markProfileApplied = vi.fn(MARK_PROFILE_APPLIED);
+    const app = await appDeEscritura({
+      readRuntimeAdoption: async () => undefined,
+      markProfileApplied,
+    });
+
+    const res = await app.inject({
+      method: 'PUT', url: RUTA,
+      payload: { expected_revision: 1, profile: PERFIL_BODY },
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toMatchObject({
+      ok: true, state: 'pending_session_refresh', revision: 2, applied_revision: 1,
+      runtime_verification: { state: 'current', generation: 'gen-1' },
+      runtime_adoption: null,
+    });
+    expect(markProfileApplied).not.toHaveBeenCalled();
+  });
+
+  it('si no puede registrar la expectativa después del lote, conserva desired y no acredita adopción', async () => {
+    const readRuntimeAdoption = vi.fn(RUNTIME_ADOPTION);
+    const markProfileApplied = vi.fn(MARK_PROFILE_APPLIED);
+    const app = await appDeEscritura({
+      recordRuntimeExpectation: async () => {
+        throw Object.assign(new Error('la revisión cambió durante el lote'), { code: 'conflict' });
+      },
+      readRuntimeAdoption,
+      markProfileApplied,
+    });
+
+    const res = await app.inject({
+      method: 'PUT', url: RUTA,
+      payload: { expected_revision: 1, profile: PERFIL_BODY },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({
+      error: 'conflict', state: 'pending', revision: 2, applied_revision: 1,
+      acknowledgements: [{ name: 'AGENTS.md', generation: 'gen-1' }],
+    });
+    expect(readRuntimeAdoption).not.toHaveBeenCalled();
+    expect(markProfileApplied).not.toHaveBeenCalled();
   });
 
   it('un ACK parcial deja desired pendiente y nunca llama markApplied', async () => {
@@ -413,9 +627,22 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     const app = await appDeEscritura({
       prepareRuntime: async () => ({
         documents: ['AGENTS.md', 'TOOLS.md'],
+        harness: 'codex',
+        preview: [],
+        verification: {
+          ...RUNTIME_VERIFICATION,
+          documents: [
+            ...RUNTIME_VERIFICATION.documents,
+            {
+              name: 'TOOLS.md', path: '/workspace/TOOLS.md',
+              expected_sha: sha('y'), observed_sha: null,
+              expected_bytes: 1, observed_bytes: null, current: false,
+            },
+          ],
+        },
         apply: async () => ([{
           name: 'AGENTS.md', path: '/workspace/AGENTS.md', state: 'written',
-          sha: sha('x'), bytes: 1,
+          sha: sha('x'), bytes: 1, generation: 'gen-1', container_id: 'ws-zeus',
         }]),
       }),
       markProfileApplied,
@@ -455,6 +682,9 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     const app = await appDeEscritura({
       prepareRuntime: async () => ({
         documents: ['AGENTS.md'],
+        harness: 'codex',
+        preview: [],
+        verification: RUNTIME_VERIFICATION,
         apply: async () => {
           throw Object.assign(new Error('rollback completo del lote'), { code: 'conflict' });
         },

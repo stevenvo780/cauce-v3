@@ -1,11 +1,11 @@
-# Plan dual-stack, shadow y cutover progresivo de 12 agentes
+# Plan dual-stack, shadow y cutover progresivo de 15 agentes
 
 ## Invariantes
 
 - V2 sigue autoritativo durante shadow/canary. En cutover por alias su owner lo
   drena y confirma V2=0 antes de que los scripts inicien V3.
 - Primero solo tenant `Steven`, agents `jarvis` y `socrates`, entra en allowlist piloto.
-- `kant`, `argos` y todos los tenants Miguel/Isa/Jhon/Pablo siguen 100% V2.
+- `kant`, `argos`, `zeus` y todos los tenants Miguel/Isa/Jhon/Pablo siguen 100% V2.
 - Un único sistema puede producir side effects/ACK/wake por mensaje.
 - IDs de correlación se preservan; payloads no se copian a observabilidad.
 - Kill switch revierte el **ruteo**, no tumba procesos ni borra colas.
@@ -53,14 +53,14 @@ una conversación en vuelo. Router elige V3 como único primario para el par y
 conserva V2 como fallback frío, sin envío duplicado. Empezar 1%, luego 10%, 50%
 y 100%, con hold de al menos dos ventanas de lease/retry por escalón.
 
-### 4 — soak y expansión a los 12 agentes
+### 4 — soak y expansión a los 15 agentes
 
 Mantener 48–72 h del par. Luego expandir en cuatro lotes, cada uno como cambio
 separado de configuración con preview, revisión, audit y rollback probado:
 
-1. `Steven`: `jarvis`, `socrates` (piloto) y después `kant`, `argos`;
+1. `Steven`: `jarvis`, `socrates` (piloto) y después `kant`, `argos`, `zeus`;
 2. `Isa/Jhon`: `salva`, `hegel`;
-3. `Miguel`: `kratos`, `janus`;
+3. `Miguel`: `kratos`, `janus`, `iza`, `atlas`;
 4. `Pablo`: `dedalo`, `midas`, `seneca`, `vulcano`.
 
 Para **cada alias** seguir `alias-cutover.md`: snapshot fresco, preflight, drain
@@ -80,7 +80,7 @@ receiver idempotente y build de imagen por digest deben validarse en el entorno 
 
 ### 6 — cierre del cutover
 
-Solo después de los cuatro lotes: verificar 12/12 aliases online con epochs únicos,
+Solo después de los cuatro lotes: verificar 15/15 aliases online con epochs únicos,
 colas/retries/DLQ en umbral, config revision y SHA de artefactos archivados. V2 queda
 en fallback frío durante la ventana acordada; su retiro es un cambio posterior, no
 parte de este runbook.

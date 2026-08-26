@@ -10,8 +10,8 @@ SELECT pg_advisory_xact_lock(783_003_003);
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM fleet_reconciliation_runs WHERE active) <> 1 THEN
-    RAISE EXCEPTION '029 rollback requires exactly one active fleet reconciliation run';
+  IF (SELECT count(*) FROM fleet_reconciliation_runs WHERE active AND completed_at IS NOT NULL) <> 1 THEN
+    RAISE EXCEPTION '029 rollback requires exactly one completed active fleet reconciliation run';
   END IF;
 END $$;
 
@@ -24,33 +24,60 @@ CREATE TEMP TABLE fleet_029_rollback_conflicts(kind text PRIMARY KEY,count bigin
 ON COMMIT DROP;
 
 INSERT INTO fleet_029_rollback_conflicts
-SELECT 'agent',count(*)
-  FROM fleet_reconciliation_history history
-  JOIN fleet_reconciliation_runs run ON run.id=history.run_id AND run.active
-  LEFT JOIN agents agent
-    ON agent.tenant_id=history.tenant_id AND agent.alias=history.alias
- WHERE history.entity='agent'
-   AND CASE WHEN agent.alias IS NULL THEN NULL ELSE jsonb_build_object(
-     'harness_id',agent.harness_id,
-     'enabled',agent.enabled,
-     'container_name',agent.container_name,
-     'runtime_user',agent.runtime_user,
-     'home_directory',agent.home_directory,
-     'state_directory',agent.state_directory
-   ) END IS DISTINCT FROM history.applied;
+SELECT 'agent',count(*) FROM (
+  SELECT history.tenant_id,history.alias
+    FROM fleet_reconciliation_history history
+    JOIN fleet_reconciliation_runs run ON run.id=history.run_id AND run.active
+    LEFT JOIN agents agent
+      ON agent.tenant_id=history.tenant_id AND agent.alias=history.alias
+   WHERE history.entity='agent'
+     AND CASE WHEN agent.alias IS NULL THEN NULL ELSE jsonb_build_object(
+       'harness_id',agent.harness_id,
+       'enabled',agent.enabled,
+       'container_name',agent.container_name,
+       'runtime_user',agent.runtime_user,
+       'home_directory',agent.home_directory,
+       'state_directory',agent.state_directory
+     ) END IS DISTINCT FROM history.applied
+  UNION ALL
+  SELECT agent.tenant_id,agent.alias
+    FROM agents agent
+   WHERE NOT EXISTS (
+     SELECT 1
+       FROM fleet_reconciliation_history history
+       JOIN fleet_reconciliation_runs run ON run.id=history.run_id AND run.active
+      WHERE history.entity='agent'
+        AND history.tenant_id=agent.tenant_id
+        AND history.alias=agent.alias
+   )
+) conflicts;
 
 INSERT INTO fleet_029_rollback_conflicts
-SELECT 'membership',count(*)
-  FROM fleet_reconciliation_history history
-  JOIN fleet_reconciliation_runs run ON run.id=history.run_id AND run.active
-  LEFT JOIN memberships membership
-    ON membership.tenant_id=history.tenant_id
-   AND membership.alias=history.alias
-   AND membership.room_id=history.room_id
- WHERE history.entity='membership'
-   AND CASE WHEN membership.alias IS NULL THEN NULL ELSE
-     jsonb_build_object('role',membership.role,'enabled',membership.enabled)
-   END IS DISTINCT FROM history.applied;
+SELECT 'membership',count(*) FROM (
+  SELECT history.tenant_id,history.alias,history.room_id
+    FROM fleet_reconciliation_history history
+    JOIN fleet_reconciliation_runs run ON run.id=history.run_id AND run.active
+    LEFT JOIN memberships membership
+      ON membership.tenant_id=history.tenant_id
+     AND membership.alias=history.alias
+     AND membership.room_id=history.room_id
+   WHERE history.entity='membership'
+     AND CASE WHEN membership.alias IS NULL THEN NULL ELSE
+       jsonb_build_object('role',membership.role,'enabled',membership.enabled)
+     END IS DISTINCT FROM history.applied
+  UNION ALL
+  SELECT membership.tenant_id,membership.alias,membership.room_id
+    FROM memberships membership
+   WHERE NOT EXISTS (
+     SELECT 1
+       FROM fleet_reconciliation_history history
+       JOIN fleet_reconciliation_runs run ON run.id=history.run_id AND run.active
+      WHERE history.entity='membership'
+        AND history.tenant_id=membership.tenant_id
+        AND history.alias=membership.alias
+        AND history.room_id=membership.room_id
+   )
+) conflicts;
 
 DO $$
 DECLARE agent_conflicts bigint;

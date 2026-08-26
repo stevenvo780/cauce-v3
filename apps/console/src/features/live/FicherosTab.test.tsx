@@ -17,6 +17,8 @@ import { LiveFleetPage } from './LiveFleetPage';
 const RUTA_MAPA = 'http://localhost/v3/console/tenants/Steven/agents/kant/documents';
 const RUTA_CONTENIDO =
   'http://localhost/v3/console/tenants/Steven/agents/kant/documents/directive/content';
+const rutaContenido = (kind: string) =>
+  `http://localhost/v3/console/tenants/Steven/agents/kant/documents/${kind}/content`;
 const SHA_VIEJO = 'a'.repeat(64);
 const SHA_NUEVO = 'b'.repeat(64);
 
@@ -32,6 +34,7 @@ const CLAUDE_MD = {
   label: 'CLAUDE.md (manual del sitio)',
   path: '/home/stev/.claude/CLAUDE.md',
   format: 'markdown',
+  readable: true,
   editable: true,
 };
 
@@ -40,8 +43,31 @@ const MCP_CERRADO = {
   label: 'Servidores MCP',
   path: '/home/stev/.claude.json',
   format: 'json',
+  readable: false,
   editable: false,
   reason: 'Los MCP viven en `.claude.json`, junto al OAuth de la cuenta.',
+};
+
+const DIRECTIVA_DE_PROYECTO = {
+  kind: 'directive',
+  category: 'manual',
+  label: 'AGENTS.md del proyecto',
+  path: '/workspace/cauce-v3/AGENTS.md',
+  format: 'markdown',
+  readable: true,
+  editable: false,
+  reason: 'El proceso lo carga desde el proyecto; se inspecciona aquí sin reescribirlo.',
+};
+
+const IDENTIDAD_DE_PERFIL = {
+  kind: 'identity',
+  category: 'profile',
+  label: 'Identidad (IDENTITY.md)',
+  path: '/home/claw/workspace/IDENTITY.md',
+  format: 'markdown',
+  readable: true,
+  editable: false,
+  reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
 };
 
 beforeEach(() => {
@@ -72,16 +98,106 @@ it('la pestaña existe en el cajón y enseña el mapa de ficheros del alias', as
  * Un candado sin explicación es lo que hace que alguien pida por Telegram que le desbloqueen algo
  * que está cerrado a propósito. La razón se enseña SIEMPRE, sin desplegar nada.
  */
-it('lo que no se puede tocar dice por qué, sin tener que abrirlo', async () => {
-  mapaDeKant([CLAUDE_MD, MCP_CERRADO]);
-  const { cajon } = await abrirFicheros();
+it('lo no servido dice por qué y no finge ser desplegable ni hace GET', async () => {
+  const PROMPTS_DIRECTORIO = {
+    kind: 'prompts', category: 'configuration', label: 'Subagentes (~/.claude/agents)',
+    path: '/home/stev/.claude/agents', format: 'markdown', readable: false, editable: false,
+    reason: 'Es un directorio; sólo se lista, no se sirve como si fuera un fichero.',
+  };
+  mapaDeKant([CLAUDE_MD, MCP_CERRADO, PROMPTS_DIRECTORIO]);
+  let gets = 0;
+  server.use(
+    http.get(rutaContenido('mcp'), () => { gets += 1; return HttpResponse.json({}); }),
+    http.get(rutaContenido('prompts'), () => { gets += 1; return HttpResponse.json({}); }),
+  );
+  const { user, cajon } = await abrirFicheros();
 
   // Acotado a la FILA: el «hueco declarado» del pie también habla del OAuth, y una búsqueda a
   // secas encontraría los dos. Lo que hay que probar es que la razón viaja pegada al fichero.
   const fila = (await within(cajon).findByText('Servidores MCP')).closest('li');
   expect(fila).not.toBeNull();
   expect(within(fila as HTMLElement).getByText(/junto al OAuth de la cuenta/)).toBeInTheDocument();
-  expect(within(fila as HTMLElement).getByText('sólo lectura')).toBeInTheDocument();
+  expect(within(fila as HTMLElement).getByText('no se sirve')).toBeInTheDocument();
+  expect(within(fila as HTMLElement).queryByRole('button')).not.toBeInTheDocument();
+  expect(within(fila as HTMLElement).getByText('Servidores MCP').closest('.ficheros-cabecera'))
+    .not.toHaveAttribute('aria-expanded');
+
+  const directorio = within(cajon).getByText('Subagentes (~/.claude/agents)').closest('li');
+  expect(directorio).not.toBeNull();
+  expect(within(directorio as HTMLElement).queryByRole('button')).not.toBeInTheDocument();
+  await user.click(within(fila as HTMLElement).getByText('Servidores MCP'));
+  await user.click(within(directorio as HTMLElement).getByText('Subagentes (~/.claude/agents)'));
+  expect(gets).toBe(0);
+});
+
+it('abre manuales y perfil allowlisted en visor readonly, sin Guardar ni PUT', async () => {
+  mapaDeKant([DIRECTIVA_DE_PROYECTO, IDENTIDAD_DE_PERFIL]);
+  let puts = 0;
+  server.use(
+    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+      path: '/workspace/cauce-v3/AGENTS.md', format: 'markdown', exists: true,
+      content: '# reglas del proyecto\n', sha: SHA_VIEJO, bytes: 22,
+      editable: false, projected: false, truncated: false,
+    })),
+    http.get(rutaContenido('identity'), () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'identity',
+      path: '/home/claw/workspace/IDENTITY.md', format: 'markdown', exists: true,
+      content: '# identidad\n', sha: SHA_NUEVO, bytes: 12,
+      editable: false, projected: false, truncated: false,
+    })),
+    http.put(/\/documents\/[^/]+\/content$/u, () => {
+      puts += 1;
+      return HttpResponse.json({ error: 'unexpected_put' }, { status: 500 });
+    }),
+  );
+
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('AGENTS.md del proyecto'));
+  const manual = await within(cajon).findByLabelText('Contenido de AGENTS.md del proyecto');
+  expect(manual).toHaveValue('# reglas del proyecto\n');
+  expect(manual).toHaveAttribute('readonly');
+  expect(within(cajon).queryByRole('button', { name: /^Guardar/i })).not.toBeInTheDocument();
+
+  await user.click(within(cajon).getByText('Identidad (IDENTITY.md)'));
+  const perfil = await within(cajon).findByLabelText('Contenido de Identidad (IDENTITY.md)');
+  expect(perfil).toHaveValue('# identidad\n');
+  expect(perfil).toHaveAttribute('readonly');
+  expect(within(cajon).queryByRole('button', { name: /^Guardar/i })).not.toBeInTheDocument();
+  expect(puts).toBe(0);
+});
+
+it('un 200 malformado se muestra como fallo verificable, nunca como ausencia', async () => {
+  mapaDeKant([IDENTIDAD_DE_PERFIL]);
+  server.use(http.get(rutaContenido('identity'), () => HttpResponse.json({
+    tenant_id: 'Steven', alias: 'kant', kind: 'identity',
+    path: '/home/claw/workspace/IDENTITY.md', format: 'markdown', exists: true,
+    // Sin content/sha/bytes: un cliente sin validación lo confundía con un documento vacío.
+    editable: false, projected: false, truncated: false,
+  })));
+
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('Identidad (IDENTITY.md)'));
+
+  expect(await within(cajon).findByText(/contenido de documento incompleto o incoherente/i))
+    .toBeInTheDocument();
+  expect(within(cajon).queryByText(/comprobó que este fichero todavía no existe/i))
+    .not.toBeInTheDocument();
+});
+
+it('una sonda unavailable queda visible y tampoco se convierte en ausencia', async () => {
+  mapaDeKant([IDENTIDAD_DE_PERFIL]);
+  server.use(http.get(rutaContenido('identity'), () => HttpResponse.json(
+    { error: 'unavailable', message: 'la sonda allowlisted no está conectada' }, { status: 503 },
+  )));
+
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('Identidad (IDENTITY.md)'));
+
+  expect(await within(cajon).findByText(/Todavía no hay camino hasta el disco/i)).toBeInTheDocument();
+  expect(within(cajon).getByText(/sonda allowlisted no está conectada/i)).toBeInTheDocument();
+  expect(within(cajon).queryByText(/comprobó que este fichero todavía no existe/i))
+    .not.toBeInTheDocument();
 });
 
 it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', async () => {
@@ -126,8 +242,8 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
 });
 
 /**
- * EL CASO QUE DECIDE SI ESTA PANTALLA ES HONESTA. Hoy el gateway no tiene camino hasta el disco
- * del agente y contesta 503. Lo fácil sería pintar una caja vacía con un botón de guardar: Steven
+ * EL CASO QUE DECIDE SI ESTA PANTALLA ES HONESTA. Si el relay/pty-agent no está disponible, el
+ * gateway contesta 503. Lo fácil sería pintar una caja vacía con un botón de guardar: Steven
  * la leería como «este agente no tiene manual» y al guardar escribiría un fichero en blanco
  * encima del suyo.
  */
@@ -278,6 +394,33 @@ it('cuando las rutas no están medidas, la cabecera lo advierte', async () => {
   const { cajon } = await abrirFicheros();
 
   expect(await within(cajon).findByText(/DEDUCIDAS del registro/)).toBeInTheDocument();
+});
+
+it('sin config.write acreditado deja inspeccionar pero bloquea edición y PUT', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  let puts = 0;
+  server.use(
+    http.get('http://localhost/v3/console/access', () => HttpResponse.json({ authenticated: true })),
+    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      exists: true, content: '# visible\n', sha: SHA_VIEJO, bytes: 10,
+      editable: true, projected: false, truncated: false,
+    })),
+    http.put(RUTA_CONTENIDO, () => {
+      puts += 1;
+      return HttpResponse.json({ error: 'forbidden' }, { status: 403 });
+    }),
+  );
+
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  expect(caja).toHaveAttribute('readonly');
+  expect(within(cajon).getByText(/No se pudo acreditar config\.write/)).toBeInTheDocument();
+  expect(within(cajon).getByRole('button', { name: /Guardar/i })).toBeDisabled();
+  expect(puts).toBe(0);
 });
 
 /** El hueco declarado tiene que estar en la vista, no sólo en un comentario del código. */

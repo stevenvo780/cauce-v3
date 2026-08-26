@@ -19,7 +19,7 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | `contenedor/polidin-fwd.sh` | `ws-zeus:/home/dev/` | El túnel en sí; corre **dentro** del contenedor |
 | `cauce-kratos.sh` | `kratos:~/.local/bin/cauce` | El CLI de verdad de la flota |
 | `cauce-envoltorio-local.sh` | `<contenedor>:~/.local/bin/cauce` | Envoltorio que hace el `ssh kratos` por vos |
-| `cauce-huerfanas.sh` | `<contenedor>:~/.local/bin/` | Lista lo que pidió una PERSONA y se perdió sin respuesta |
+| `cauce-huerfanas.sh` | `<contenedor>:~/.local/bin/` | Wrapper compatible del comando canónico `ops/cli/cauce-huerfanas` |
 | `telegram-bridge.override.yaml` | `agora-storage:/etc/cauce-v3/compose-overrides/` | Monta el parche que apaga la redacción de la ingesta |
 | `hegel-ventas-checkin.py` | `agora-storage:/usr/local/sbin/` | Publica el check-in diario de ventas de `hegel` (`POST /v3/messages` con cert mTLS de hegel) |
 | `systemd/hegel-ventas-checkin.{service,timer}` | `agora-storage:/etc/systemd/system/` | Disparan el inyector todos los días a las 13:00 UTC (08:00 America/Bogota) |

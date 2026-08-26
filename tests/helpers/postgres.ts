@@ -84,6 +84,9 @@ export async function startTestDatabase(): Promise<TestDatabase> {
    */
   const externa = process.env.CAUCE_TEST_DATABASE_URL;
   if (externa) {
+    if (process.env.CAUCE_REQUIRE_TESTCONTAINERS === '1') {
+      throw new Error('CAUCE_REQUIRE_TESTCONTAINERS=1 rejects the external database fallback');
+    }
     if (!esBaseDePruebas(externa)) {
       throw new Error(
         `CAUCE_TEST_DATABASE_URL apunta a la base "${nombreDeBase(externa)}" y las pruebas ` +
@@ -253,6 +256,8 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
       // agent_failure_notices and its event ledger are in the same situation (migration 014),
       // y agent_chain_closures también (migración 016 del vigía de cadenas mudas).
       await client.query(`TRUNCATE TABLE
+        dlq_operator_resolutions,telegram_manual_replays,dlq_reconciliation_runs,
+        dlq_reconciliation_transitions,
         gateway_oidc_sessions,telegram_egress_effects,channel_bridge_cursors,channel_bridge_leases,
         shadow_compare_verdicts,shadow_human_reply_guards,shadow_router_mappings,shadow_router_inbox,
         egress_notifications,egress_destinations,egress_contacts,

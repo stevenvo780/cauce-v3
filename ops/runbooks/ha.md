@@ -23,7 +23,7 @@ Cauce usa PostgreSQL durable, `SKIP LOCKED`, leases/epoch y gateways stateless. 
 - Failover writer administrado: readiness cae, no confirma trabajo y recupera sin pérdida.
 - Detener dispatcher durante handler: lease expira y retry/DLQ refleja resultado.
 - Interrumpir relay/Telegram: outbox queda failed/pending, jamás sent sin `sent_at`; reintento es idempotente.
-- Ejecutar watchdog/reconciler para los 12 aliases durante soak y verificar cero overlap V2/V3.
+- Ejecutar watchdog/reconciler para los 15 aliases durante soak y verificar cero overlap V2/V3.
 - Restaurar tráfico solo después de dos ventanas de lease/retry estables.
 
 ## Criterios de aborto

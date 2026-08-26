@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { QueuesPage } from './QueuesPage';
@@ -6,22 +6,26 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 
 it('requests replay from the API and reports the accepted action', async () => {
+  const sourceDeliveryId = '10000000-0000-4000-8000-000000000001';
   let replayed = '';
   server.use(
-    http.get('http://localhost/v3/console/queues', () => HttpResponse.json({ dead: 1, items: [{ delivery_id: 'delivery-dead-1', state: 'dead', attempts: 5, max_attempts: 5 }] })),
+    http.get('http://localhost/v3/console/queues', () => HttpResponse.json({ dead: 1, items: [{ delivery_id: sourceDeliveryId, state: 'dead', attempts: 5, max_attempts: 5 }] })),
     http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', ({ params }) => {
       replayed = String(params.deliveryId);
-      return HttpResponse.json({ delivery_id: replayed, state: 'pending', replayed: true }, { status: 202 });
+      return HttpResponse.json({
+        delivery_id: '20000000-0000-4000-8000-000000000001', replayed_from_delivery_id: replayed,
+        state: 'pending', replayed: true,
+      }, { status: 202 });
     }),
   );
   const user = userEvent.setup();
   renderWithApi(<QueuesPage />);
-  await user.click(await screen.findByRole('button', { name: /replay delivery delivery-dead-1/i }));
+  await user.click(await screen.findByRole('button', { name: new RegExp(`replay delivery ${sourceDeliveryId}`, 'i') }));
   // Desde el 2026-08-23 hay una pregunta antes de reinyectar a la flota.
   await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: /^sí,/i }));
 
   expect(await screen.findByText(/Replay encolado/)).toBeInTheDocument();
-  expect(replayed).toBe('delivery-dead-1');
+  expect(replayed).toBe(sourceDeliveryId);
 });
 
 /**
@@ -53,7 +57,7 @@ describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
   it('filtra a la entrega pedida, la resalta y escribe su id completo', async () => {
     abrir('/queues?delivery=22222222-2222-4222-8222-222222222222');
 
-    const tabla = await screen.findByRole('table');
+    const tabla = await screen.findByRole('table', { name: /colas, retries y dead letters/i });
     const filas = within(tabla).getAllByRole('row').slice(1); // sin la cabecera
     expect(filas).toHaveLength(1);
     expect(filas[0]).toHaveAttribute('aria-current', 'true');
@@ -71,7 +75,7 @@ describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
     // consulta por entrega. Dice las dos posibilidades.
     expect(screen.getByText(/puede que ya no exista/)).toBeInTheDocument();
     expect(screen.getByText(/más antigua que las que caben/)).toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: /colas, retries y dead letters/i })).not.toBeInTheDocument();
     expect(screen.queryByText('zeus')).not.toBeInTheDocument();
     expect(screen.queryByText('kant')).not.toBeInTheDocument();
   });
@@ -79,7 +83,7 @@ describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
   it('sin el parámetro pinta la lista entera y no resalta ninguna fila', async () => {
     abrir('/queues');
 
-    const tabla = await screen.findByRole('table');
+    const tabla = await screen.findByRole('table', { name: /colas, retries y dead letters/i });
     expect(within(tabla).getAllByRole('row').slice(1)).toHaveLength(3);
     expect(screen.queryByText(/Filtrado a la entrega/)).not.toBeInTheDocument();
     expect(tabla.querySelector('[aria-current]')).toBeNull();
@@ -88,20 +92,22 @@ describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
   it('«Ver todas las entregas» quita el filtro de la URL y devuelve las tres filas', async () => {
     const user = userEvent.setup();
     abrir('/queues?delivery=22222222-2222-4222-8222-222222222222');
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     await user.click(screen.getByRole('button', { name: 'Ver todas las entregas' }));
 
     expect(window.location.search).toBe('');
-    expect(within(await screen.findByRole('table')).getAllByRole('row').slice(1)).toHaveLength(3);
+    expect(within(await screen.findByRole('table', { name: /colas, retries y dead letters/i })).getAllByRole('row').slice(1)).toHaveLength(3);
   });
 
   it('vuelve a enfocar cuando llega un segundo enlace profundo sin cambiar de pathname', async () => {
     abrir('/queues?delivery=22222222-2222-4222-8222-222222222222');
     await screen.findByText(/kant/);
 
-    window.history.pushState({}, '', '/queues?delivery=11111111-1111-4111-8111-111111111111');
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    act(() => {
+      window.history.pushState({}, '', '/queues?delivery=11111111-1111-4111-8111-111111111111');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
 
     expect(await screen.findByText(/zeus/)).toBeInTheDocument();
     expect(screen.queryByText('kant')).not.toBeInTheDocument();

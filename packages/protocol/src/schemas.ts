@@ -11,6 +11,10 @@ export const DeliveryIdSchema = z.uuid();
 export const EventIdSchema = z.uuid();
 export const ClaimTokenSchema = z.uuid();
 export const TraceIdSchema = z.string().min(1).max(256);
+export const CanonicalUuidV4Schema = z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+);
+export const Sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/u);
 export const AckStatusSchema = z.enum(['accepted', 'started', 'done', 'failed']);
 export const AckErrorCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/);
 export const AMBIGUOUS_ACK_ERROR_CODES = [
@@ -39,14 +43,18 @@ export function isAmbiguousAckErrorCode(code: unknown): code is AmbiguousAckErro
  * relaja: lo que cambia es que ahora hay una manera de DEMOSTRAR el caso fácil, y sólo se usa
  * cuando la prueba existe.
  *
- * La prueba nunca es el tiempo. Son dos señales positivas, y las dos exigen además que el
- * proceso no escribiera ni un byte por stdout, que es el canal donde vive la salida del turno
- * (`packages/adapter-sdk/src/harnesses/shared.ts`):
+ * La prueba nunca es el tiempo. Para un proceso ya invocado son dos señales positivas, y las dos
+ * exigen además que no escribiera ni un byte por stdout, que es el canal donde vive la salida del
+ * turno (`packages/adapter-sdk/src/harnesses/shared.ts`):
  *   1. el TESTIGO de arranque del transporte: el harness declara qué byte suyo significa «ya
  *      estoy ejecutando» y el runner atestigua que nunca llegó (`CommandRunResult.harnessStarted`);
  *   2. el DIAGNÓSTICO DE ARRANQUE que el propio CLI imprime en vez de trabajar —config que no
  *      parsea, sesión que no existe, binario ausente, argumento que no entiende—, de una lista
  *      blanca de mensajes que son imposibles una vez que el turno empezó.
+ *
+ * Hay además dos fallos anteriores a toda invocación: no poder fsyncar la intención durable y
+ * recuperar un registro `preinvoke-v1` que todavía no la contiene. En ambos casos el propio orden
+ * persistido prueba que el harness no pudo ser llamado.
  *
  * NUNCA pueden solaparse con `AMBIGUOUS_ACK_ERROR_CODES`: `BaseAckSchema` descarta
  * `retryable:true` junto a un código ambiguo, así que un código en las dos listas volvería a
@@ -55,7 +63,10 @@ export function isAmbiguousAckErrorCode(code: unknown): code is AmbiguousAckErro
  */
 export const PREFLIGHT_ACK_ERROR_CODES = [
   'PROCESS_EXIT_PREFLIGHT',
-  'EXECUTION_CANCELLED_PREFLIGHT'
+  'EXECUTION_CANCELLED_PREFLIGHT',
+  'EXECUTION_INTENT_CONFIRMATION_FAILED',
+  'EXECUTION_INTENT_PERSISTENCE_FAILED',
+  'INTERRUPTED_PREFLIGHT'
 ] as const;
 export const PreflightAckErrorCodeSchema = z.enum(PREFLIGHT_ACK_ERROR_CODES);
 export type PreflightAckErrorCode = z.infer<typeof PreflightAckErrorCodeSchema>;
@@ -434,6 +445,18 @@ export const AuthenticatedPublishSchema = z.object({
   priority: z.number().int().min(-100).max(100).default(0)
 }).strict();
 
+/**
+ * Console preflight for a durable publish intent. The server supplies the opaque idempotency key
+ * after binding this exact semantic command to the authenticated principal; a browser can never
+ * choose or forge that key through this surface.
+ */
+export const ConsolePublishIntentPrepareSchema = AuthenticatedPublishSchema.omit({
+  idempotency_key: true,
+}).safeExtend({
+  /** Fresh per deliberate submit; retries of that submit reuse it. */
+  intent_nonce: CanonicalUuidV4Schema,
+}).strict();
+
 /** Proactive egress. An agent never names a chat: it names a logical handle an operator created. */
 export const NOTIFY_KINDS = ['task_complete', 'decision_request', 'digest', 'alert'] as const;
 export const NotifyKindSchema = z.enum(NOTIFY_KINDS);
@@ -749,11 +772,81 @@ export const ConfigRollbackRequestSchema = z.object({
 }).strict();
 
 export const PublishResultSchema = z.object({
-  message_id: MessageIdSchema,
-  delivery_ids: z.array(DeliveryIdSchema),
+  message_id: CanonicalUuidV4Schema,
+  delivery_ids: z.array(CanonicalUuidV4Schema).min(1).max(100),
   duplicate: z.boolean(),
+  // A request id is caller-owned and historically includes deterministic UUIDv5 values (Telegram
+  // ingress). Durable effect ids are generated here and remain canonical UUIDv4 above.
   request_id: RequestIdSchema,
-  trace_id: TraceIdSchema
+  trace_id: TraceIdSchema,
+  /**
+   * Correlacion causal que el publicador ya conoce antes del POST. `request_id` y `trace_id`
+   * nacen en el gateway, por lo que un cliente no puede usarlos para distinguir su recibo de
+   * otro recibo estructuralmente valido. La clave viaja de vuelta para cerrar ese hueco sin
+   * exponer identidad ni contenido del mensaje.
+   */
+  idempotency_key: z.string().min(1).max(200),
+  tenant_id: TenantSchema,
+  actor_alias: AliasSchema,
+  /** Exact bytes already persisted in idempotency_keys.request_hash. */
+  request_hash: Sha256HexSchema,
+  /** Canonical binding of request_hash/request identity to message_id and ordered delivery_ids. */
+  causal_hash: Sha256HexSchema,
+}).strict();
+
+/** A prepare retry either returns the still-open key or the exact durable publish receipt. */
+export const ConsolePublishIntentPrepareResultSchema = z.discriminatedUnion('state', [
+  z.object({
+    version: z.literal(1),
+    state: z.literal('prepared'),
+    idempotency_key: z.string().min(1).max(200),
+    receipt: z.null(),
+  }).strict(),
+  z.object({
+    version: z.literal(1),
+    state: z.literal('committed'),
+    idempotency_key: z.string().min(1).max(200),
+    receipt: PublishResultSchema,
+  }).strict(),
+]);
+
+export const ConsolePublishIntentReconciliationSchema = z.object({
+  version: z.literal(1),
+  error: z.literal('publish_intent_reconciliation_required'),
+  state: z.literal('committed'),
+  idempotency_key: z.string().min(1).max(200),
+  receipt: PublishResultSchema,
+}).strict();
+
+/** A prepared reservation was closed before it produced an effect; resubmit as a new intent. */
+export const ConsolePublishIntentExpiredSchema = z.object({
+  version: z.literal(1),
+  error: z.literal('publish_intent_expired'),
+  state: z.literal('expired'),
+  idempotency_key: z.string().min(1).max(200),
+  safe_to_resubmit: z.literal(true),
+}).strict();
+
+/** Durable per-operator write bound for brand-new intent nonces. */
+export const ConsolePublishIntentRateLimitedSchema = z.object({
+  version: z.literal(1),
+  error: z.literal('publish_intent_rate_limited'),
+  retry_after_seconds: z.number().int().min(1).max(86_400),
+  safe_to_retry: z.literal(true),
+}).strict();
+
+export const ConsolePublishIntentConfirmSchema = z.object({
+  idempotency_key: z.string().min(1).max(200),
+  message_id: CanonicalUuidV4Schema,
+  causal_hash: Sha256HexSchema,
+}).strict();
+
+export const ConsolePublishIntentConfirmResultSchema = z.object({
+  version: z.literal(1),
+  confirmed: z.literal(true),
+  idempotency_key: z.string().min(1).max(200),
+  message_id: CanonicalUuidV4Schema,
+  causal_hash: Sha256HexSchema,
 }).strict();
 
 export const BaseAckSchema = z.object({
@@ -763,13 +856,16 @@ export const BaseAckSchema = z.object({
   epoch: z.number().int().positive(),
   retryable: z.boolean().default(false),
   /**
-   * "El harness EMPEZÓ a ejecutar de verdad", no "la entrega fue admitida".
+   * El adaptador comprometió durablemente invocar el harness, no sólo admitió la entrega.
    *
    * Hace falta porque el ACK `started` NO prueba ejecución: el SDK lo emite en
    * `handleDelivery` antes de llamar al harness, y entre medio la entrega puede quedarse
    * minutos esperando el candado de sesión sin gastar un centavo. El reaper usaba esa señal
-   * para decidir si una garra vencida ya se había pagado; con `started` a secas mandaba a
+   * para decidir si una garra vencida podía haber tenido efectos; con `started` a secas mandaba a
    * `dead` trabajo que nunca corrió — trabajo del usuario perdido para siempre.
+   *
+   * El SDK nuevo la fsynca después de tomar la reserva y espera el receipt exacto del store antes
+   * de invocar. Un crash posterior puede haber ejecutado, por eso ya no admite retry automático.
    *
    * OPCIONAL a propósito. Un adaptador viejo nunca la manda y el sistema tiene que seguir
    * funcionando: sin la marca, el reaper vuelve al reintento de siempre. El error cae del lado
@@ -810,6 +906,54 @@ export const HeartbeatSchema = z.object({
   type: z.literal('heartbeat'),
   instance_id: z.string().min(1).max(128),
   epoch: z.number().int().positive()
+}).strict();
+
+/**
+ * Exact runtime files which a real harness turn must have consumed before a profile revision can
+ * be called applied.  Paths and hashes are evidence, not instructions; the gateway only adds the
+ * contract to adapters which explicitly advertise `agent_profile_adoption_v1`.
+ */
+export const ProfileRuntimeDocumentSchema = z.object({
+  name: z.string().min(1).max(128).regex(/^[A-Za-z0-9._-]+$/u),
+  path: z.string().min(1).max(4_096).refine((path) => path.startsWith('/') && !path.includes('\0'), {
+    message: 'profile runtime document path must be absolute',
+  }),
+  sha: Sha256HexSchema,
+}).strict().refine(
+  (document) => document.path.slice(document.path.lastIndexOf('/') + 1) === document.name,
+  { path: ['path'], message: 'profile runtime document name must match the path basename' },
+);
+
+const ProfileRuntimeDocumentsSchema = z.array(ProfileRuntimeDocumentSchema).min(1).max(7)
+  .superRefine((documents, context) => {
+    const names = new Set<string>();
+    const paths = new Set<string>();
+    documents.forEach((document, index) => {
+      if (names.has(document.name)) {
+        context.addIssue({
+          code: 'custom', path: [index, 'name'], message: 'profile runtime document names must be unique',
+        });
+      }
+      if (paths.has(document.path)) {
+        context.addIssue({
+          code: 'custom', path: [index, 'path'], message: 'profile runtime document paths must be unique',
+        });
+      }
+      names.add(document.name);
+      paths.add(document.path);
+    });
+  });
+
+export const ProfileRuntimeContractSchema = z.object({
+  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  /** Opaque container generation measured by the terminal plane. */
+  generation: z.string().min(1).max(128),
+  documents: ProfileRuntimeDocumentsSchema,
+}).strict();
+
+/** Evidence produced locally by the adapter after a real harness result, never by model stdout. */
+export const ProfileRuntimeAdoptionEvidenceSchema = ProfileRuntimeContractSchema.safeExtend({
+  evidence: z.literal('adapter_delivery'),
 }).strict();
 
 export const QueryDeliveriesSchema = z.object({
@@ -871,7 +1015,12 @@ export const DeliveryEnvelopeSchema = z.object({
       code: 'custom',
       message: `self_role admits ${ROLE_BRIEF_MAX_CODE_POINTS} code points at most; ${codePoints} were sent`
     });
-  }).optional()
+  }).optional(),
+  /**
+   * Desired profile revision and exact live files for this runtime generation. Optional and sent
+   * only behind `agent_profile_adoption_v1`; old strict adapters must never see it.
+   */
+  profile_runtime_contract: ProfileRuntimeContractSchema.optional(),
 }).strict();
 
 /**
@@ -910,6 +1059,12 @@ export const MAX_DELEGATION_REJECTION_TARGET_CHARS = 256;
  */
 export const MAX_DELEGATION_REJECTION_REASON_CHARS = 12_000;
 
+/**
+ * Wire and durable replay share one hard ceiling. Producers must reject an oversized fan-out
+ * before writing any child row; consumers must never silently truncate a durable receipt.
+ */
+export const MAX_DELEGATION_FEEDBACK_ITEMS = 1_000;
+
 export const DelegationRejectionSchema = z.object({
   code: z.enum(DELEGATION_REJECTION_CODES),
   reason: z.string().min(1).max(MAX_DELEGATION_REJECTION_REASON_CHARS),
@@ -922,6 +1077,45 @@ export const DelegationRejectionSchema = z.object({
   output_index: z.number().int().min(0),
   target: z.string().min(1).max(MAX_DELEGATION_REJECTION_TARGET_CHARS).optional()
 }).strict();
+
+/**
+ * Exact branch identity materialized from one StructuredOutput.messages entry.
+ *
+ * Bodies and hashes deliberately stay server-side. The adapter only needs the stable output
+ * index, authorized destination pair and child delivery id to correlate later agent.response
+ * frames without collapsing two branches sent to the same alias.
+ */
+export const DelegationMaterializationSchema = z.object({
+  output_index: z.number().int().min(0),
+  target_tenant: TenantSchema,
+  target_alias: AliasSchema,
+  child_delivery_id: DeliveryIdSchema
+}).strict();
+
+export const DelegationMaterializationsSchema = z.array(DelegationMaterializationSchema)
+  .max(MAX_DELEGATION_FEEDBACK_ITEMS)
+  .superRefine((items, context) => {
+    const outputIndexes = new Set<number>();
+    const childDeliveries = new Set<string>();
+    items.forEach((item, index) => {
+      if (outputIndexes.has(item.output_index)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'delegation output_index values must be unique',
+          path: [index, 'output_index']
+        });
+      }
+      if (childDeliveries.has(item.child_delivery_id)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'delegation child_delivery_id values must be unique',
+          path: [index, 'child_delivery_id']
+        });
+      }
+      outputIndexes.add(item.output_index);
+      childDeliveries.add(item.child_delivery_id);
+    });
+  });
 
 export const ChainGateSchema = z.object({
   gate_id: z.string().min(1).max(128),
@@ -1011,7 +1205,9 @@ export const WsOutboundSchema = z.discriminatedUnion('type', [
      * porque un adaptador viejo valida con `.strict()` y, al fallar, mata la cola entera de la
      * conexión — no descarta el frame.
      */
-    delegation_rejections: z.array(DelegationRejectionSchema).max(1_000).optional(),
+    delegation_rejections: z.array(DelegationRejectionSchema)
+      .max(MAX_DELEGATION_FEEDBACK_ITEMS).optional(),
+    delegation_materializations: DelegationMaterializationsSchema.optional(),
     chain_gate: ChainGateSchema.optional()
   }).strict(),
   z.object({ type: z.literal('error'), code: z.string(), message: z.string() }).strict()
@@ -1021,6 +1217,13 @@ export type Tenant = z.infer<typeof TenantSchema>;
 export type PublishMessage = z.infer<typeof PublishMessageSchema>;
 export type AuthenticatedPublish = z.infer<typeof AuthenticatedPublishSchema>;
 export type PublishResult = z.infer<typeof PublishResultSchema>;
+export type ConsolePublishIntentPrepare = z.infer<typeof ConsolePublishIntentPrepareSchema>;
+export type ConsolePublishIntentPrepareResult = z.infer<typeof ConsolePublishIntentPrepareResultSchema>;
+export type ConsolePublishIntentReconciliation = z.infer<typeof ConsolePublishIntentReconciliationSchema>;
+export type ConsolePublishIntentExpired = z.infer<typeof ConsolePublishIntentExpiredSchema>;
+export type ConsolePublishIntentRateLimited = z.infer<typeof ConsolePublishIntentRateLimitedSchema>;
+export type ConsolePublishIntentConfirm = z.infer<typeof ConsolePublishIntentConfirmSchema>;
+export type ConsolePublishIntentConfirmResult = z.infer<typeof ConsolePublishIntentConfirmResultSchema>;
 export type Ack = z.infer<typeof AckSchema>;
 export type ClaimedAck = Ack;
 export type Hello = z.infer<typeof HelloSchema>;
@@ -1031,8 +1234,12 @@ export type AttachmentContent = z.infer<typeof AttachmentContentSchema>;
 export type Lane = z.infer<typeof LaneSchema>;
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 export type DeliveryEnvelope = z.infer<typeof DeliveryEnvelopeSchema>;
+export type ProfileRuntimeDocument = z.infer<typeof ProfileRuntimeDocumentSchema>;
+export type ProfileRuntimeContract = z.infer<typeof ProfileRuntimeContractSchema>;
+export type ProfileRuntimeAdoptionEvidence = z.infer<typeof ProfileRuntimeAdoptionEvidenceSchema>;
 export type DelegationRejectionCode = (typeof DELEGATION_REJECTION_CODES)[number];
 export type DelegationRejectionNotice = z.infer<typeof DelegationRejectionSchema>;
+export type DelegationMaterializationNotice = z.infer<typeof DelegationMaterializationSchema>;
 export type ChainGateNotice = z.infer<typeof ChainGateSchema>;
 export type ConfigMutation = z.infer<typeof ConfigMutationSchema>;
 export type NotifyKind = z.infer<typeof NotifyKindSchema>;

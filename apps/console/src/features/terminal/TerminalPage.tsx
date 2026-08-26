@@ -60,8 +60,8 @@ export function TerminalPage() {
     : fleetError && agents.length === 0
       ? 'Operación privilegiada · no se pudo leer la flota'
       : `Operación privilegiada · ${agents.length} agentes`;
-  // El relay PTY es opt-in por stack (ver 0a1d0e3): su ausencia tiene un aviso propio, calmo y
-  // con motivo explícito, en vez de sumarse como un "PTY: Bad Gateway" al banner de incidentes.
+  // El relay PTY es opt-in por stack (ver 0a1d0e3): ausencia, permiso y medición inconclusa tienen
+  // un aviso propio y explícito, en vez de sumarse como un "PTY: Bad Gateway" sin clasificación.
   const relay = deriveTerminalRelayState(capability.data, capability.error);
   const relayUnavailable = relay.status === 'unavailable';
   const failures = [
@@ -69,8 +69,8 @@ export function TerminalPage() {
     topology.error ? `Salas: ${topology.error.message}` : undefined,
     adapters.error ? `Adaptadores: ${adapters.error.message}` : undefined,
     access.error ? `Permisos: ${access.error.message}` : undefined,
-    // El inventario de targets depende del mismo relay; si ya sabemos que está ausente, no
-    // duplicamos el aviso con su propio error técnico.
+    // El inventario de targets depende de la misma consulta; si el aviso del relay ya explica su
+    // fallo, no lo duplicamos con el mismo error técnico.
     targets.error && !relayUnavailable ? `Destinos PTY: ${targets.error.message}` : undefined,
   ].filter((value): value is string => Boolean(value));
 

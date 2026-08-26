@@ -4,13 +4,18 @@
   "title": "Sanitized physical Docker inventory for deterministic gate tests",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "containers"],
+  "required": ["schemaVersion", "hosts"],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "containers": {
-      "type": "array",
-      "uniqueItems": true,
-      "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+    "schemaVersion": { "const": 2 },
+    "hosts": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9.-]*$" },
+      "additionalProperties": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
     }
   }
 }

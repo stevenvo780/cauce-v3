@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
@@ -36,6 +37,52 @@ const unique = (prefix) => `${prefix}-${crypto.randomUUID()}`;
 const restartEvidence = [];
 const liveSockets = new Set();
 const socketShutdowns = new WeakMap();
+
+function sourceDigest(domain) {
+  const result = spawnSync('python3', [path.join(here, '..', 'scripts', 'source-digest.py'), '--domain', domain], {
+    cwd: path.join(here, '..', '..'),
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+    encoding: 'utf8',
+  });
+  const value = result.stdout.trim();
+  if (result.status !== 0 || !/^sha256:[a-f0-9]{64}$/u.test(value)) {
+    throw new Error(`could not bind ${domain} source digest`);
+  }
+  return value;
+}
+
+function testcontainersBindings() {
+  if (process.env.CAUCE_EVIDENCE_CLASS !== 'testcontainers') return {};
+  const repositoryDigest = required('CAUCE_TESTCONTAINERS_DB_REPOSITORY_DIGEST');
+  const imageId = required('CAUCE_TESTCONTAINERS_DB_IMAGE_ID');
+  const containerConfigImage = required('CAUCE_TESTCONTAINERS_DB_CONFIG_IMAGE');
+  const containerIdSha256 = required('CAUCE_TESTCONTAINERS_DB_CONTAINER_ID_SHA256');
+  if (!/^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$/u.test(repositoryDigest)
+      || !/^sha256:[a-f0-9]{64}$/u.test(imageId)
+      || !/^sha256:[a-f0-9]{64}$/u.test(containerIdSha256)) {
+    throw new Error('Testcontainers image binding is malformed');
+  }
+  return {
+    evidenceClass: 'testcontainers-source-execution',
+    executionTarget: {
+      application: 'source-tree',
+      database: 'immutable-testcontainer-image',
+      finalCauceImageExecuted: false,
+    },
+    sourceDigest: sourceDigest('runtime'),
+    sourceDigestDomain: 'runtime',
+    harnessDigest: sourceDigest('testcontainers'),
+    harnessDigestDomain: 'testcontainers',
+    databaseImage: {
+      role: 'postgresql-test-dependency',
+      repositoryDigest,
+      imageId,
+      containerConfigImage,
+      containerIdSha256,
+      verifiedAgainstRunningContainer: true,
+    },
+  };
+}
 
 function trackSocket(socket) {
   liveSockets.add(socket);
@@ -237,7 +284,7 @@ function identity(tenant, alias = topology[tenant].aliases[0]) {
 
 async function api(actor, method, pathname, body, expectedStatus) {
   const consoleMutation = pathname.startsWith('/v3/console/') && !['GET', 'HEAD', 'OPTIONS'].includes(method);
-  const response = await fetch(new URL(pathname, baseUrl), {
+  const response = await globalThis.fetch(new URL(pathname, baseUrl), {
     method,
     headers: {
       accept: 'application/json',
@@ -247,7 +294,7 @@ async function api(actor, method, pathname, body, expectedStatus) {
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(httpTimeoutMs),
+    signal: globalThis.AbortSignal.timeout(httpTimeoutMs),
   });
   const contentType = response.headers.get('content-type') || '';
   const data = response.status === 204 ? undefined
@@ -611,6 +658,7 @@ async function main() {
     schemaVersion: 2,
     suite: 'cauce-v3-real-e2e',
     mode: 'real',
+    ...testcontainersBindings(),
     target: { baseUrl: redactUrl(baseUrl), wsUrl: redactUrl(wsBaseUrl) },
     evidence: {
       transport: 'real Fastify HTTP/WebSocket gateway',

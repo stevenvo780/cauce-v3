@@ -38,6 +38,65 @@ afterAll(async () => {
 });
 
 describe('atomic configuration CRUD and rollback', () => {
+  it('lets a read-only non-hub principal inspect only its tenant and performs zero writes', async () => {
+    await pool.query(`
+      INSERT INTO role_policies(role,allow_route,allow_read,allow_control,allow_notify)
+      VALUES('observer',false,true,false,false);
+      UPDATE memberships SET role='observer' WHERE tenant_id='Pablo' AND alias='midas';
+      INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary)
+      VALUES
+        ('Steven','kant','{}'::jsonb,'{}'::jsonb,'hub revision'),
+        ('Pablo','midas','{}'::jsonb,'{}'::jsonb,'tenant revision');
+    `);
+    const before = (await pool.query<{
+      revisions: string; audits: string; tenants: string; memberships: string;
+    }>(`
+      SELECT
+        (SELECT count(*)::text FROM config_revisions) AS revisions,
+        (SELECT count(*)::text FROM audit_events) AS audits,
+        (SELECT count(*)::text FROM tenants) AS tenants,
+        (SELECT count(*)::text FROM memberships) AS memberships
+    `)).rows[0]!;
+
+    const snapshot = await repository.getConfiguration('Pablo', 'midas');
+    expect((snapshot.tenants as Array<{ id: string }>).map((row) => row.id)).toEqual(['Pablo']);
+    expect((snapshot.rooms as Array<{ tenant_id: string }>).every((row) => row.tenant_id === 'Pablo')).toBe(true);
+    expect((snapshot.memberships as Array<{ tenant_id: string }>).every(
+      (row) => row.tenant_id === 'Pablo'
+    )).toBe(true);
+    expect((snapshot.agents as Array<{ tenant_id: string }>).every((row) => row.tenant_id === 'Pablo')).toBe(true);
+    expect((snapshot.agent_profiles as Array<{ tenant_id: string }>).every(
+      (row) => row.tenant_id === 'Pablo'
+    )).toBe(true);
+    expect(snapshot.revisions).toEqual([
+      expect.objectContaining({ actor_tenant: 'Pablo', actor_alias: 'midas' }),
+    ]);
+    expect((snapshot.acl_edges as Array<{ from_tenant: string; to_tenant: string }>).every(
+      (edge) => edge.from_tenant === 'Pablo' || edge.to_tenant === 'Pablo'
+    )).toBe(true);
+
+    const mutation: ConfigMutation = {
+      resource: 'room', action: 'create', tenant_id: 'Pablo', id: 'reader-must-not-write',
+      value: { enabled: true },
+    };
+    await expect(repository.applyConfigurationChange('Pablo', 'midas', mutation, false, 2))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    await expect(repository.rollbackConfiguration('Pablo', 'midas', 2, false, 2))
+      .rejects.toMatchObject({ code: 'forbidden' });
+
+    const after = (await pool.query<typeof before>(`
+      SELECT
+        (SELECT count(*)::text FROM config_revisions) AS revisions,
+        (SELECT count(*)::text FROM audit_events) AS audits,
+        (SELECT count(*)::text FROM tenants) AS tenants,
+        (SELECT count(*)::text FROM memberships) AS memberships
+    `)).rows[0]!;
+    expect(after).toEqual(before);
+    expect((await pool.query(`
+      SELECT 1 FROM rooms WHERE tenant_id='Pablo' AND id='reader-must-not-write'
+    `)).rowCount).toBe(0);
+  });
+
   it('re-runs migration 003 without granting a new default-deny edge', async () => {
     await pool.query(`INSERT INTO tenants(id,display_name) VALUES('Acme','Acme')`);
     await pool.query(`INSERT INTO acl_edges(
@@ -55,7 +114,9 @@ describe('atomic configuration CRUD and rollback', () => {
       resource: 'tenant', action: 'create', id: 'Acme',
       value: { display_name: 'Acme', is_hub: false, enabled: true }
     }, true, 0);
-    expect(preview).toMatchObject({ applied: false, dry_run: true, revision: 0 });
+    expect(preview).toMatchObject({
+      applied: false, dry_run: true, revision: 0, rolled_back_revision_id: null,
+    });
     expect((await pool.query(`SELECT 1 FROM tenants WHERE id='Acme'`)).rowCount).toBe(0);
 
     let revision = 0;
@@ -104,12 +165,17 @@ describe('atomic configuration CRUD and rollback', () => {
     }, false, 2)).rejects.toMatchObject({ code: 'conflict' });
 
     const preview = await repository.rollbackConfiguration('Steven', 'kant', granted.revision, true, 3);
-    expect(preview).toMatchObject({ applied: false, dry_run: true, revision: 3 });
+    expect(preview).toMatchObject({
+      applied: false, dry_run: true, revision: 3,
+      rolled_back_revision_id: granted.revision,
+    });
     expect((await pool.query(`SELECT allow_route FROM acl_edges WHERE from_tenant='Steven' AND to_tenant='Acme'`)).rows[0])
       .toEqual({ allow_route: true });
 
     const rolledBack = await repository.rollbackConfiguration('Steven', 'kant', granted.revision, false, 3);
-    expect(rolledBack).toMatchObject({ applied: true, revision: 4 });
+    expect(rolledBack).toMatchObject({
+      applied: true, revision: 4, rolled_back_revision_id: granted.revision,
+    });
     expect((await pool.query(`SELECT allow_route FROM acl_edges WHERE from_tenant='Steven' AND to_tenant='Acme'`)).rows[0])
       .toEqual({ allow_route: false });
     expect((await pool.query(`SELECT rolled_back_revision_id::int AS source FROM config_revisions WHERE id=4`)).rows[0])

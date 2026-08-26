@@ -1,12 +1,9 @@
 /**
  * Redacción de secretos en la INGESTA, antes de que nada se persista.
  *
- * El dato que lo motivó: el 2026-08-02 a las 13:00 UTC, Pablo le pasó a `seneca` por Telegram un
- * `.env` entero. La fila `ced40f3c-62f6-48a1-8967-f2d06a93a96b` de `messages` quedó con
- * `DATABASE_URL=postgresql://neondb_owner:npg_…@ep-…neon.tech/neondb` en claro, con usuario y
- * contraseña completos. Esa fila la lee el harness, la lee la consola, y sobrevive a cualquier
- * rotación de la credencial: el secreto queda escrito para siempre en una base que no está pensada
- * para guardar secretos.
+ * Este control nació de un incidente real en el que un mensaje contenía un archivo de entorno
+ * completo y llegó a persistirse. La evidencia original se conserva fuera del código; este
+ * comentario no incluye identificadores, endpoints ni fragmentos de credenciales.
  *
  * Se redacta acá, en el puente, y no más adelante, porque éste es el ÚLTIMO punto donde el texto
  * todavía no se escribió en ningún sitio. `StoreTelegramIngress.publish` ya persiste.
@@ -174,15 +171,12 @@ const MAX_SCANNED_CHARACTERS = 256 * 1024;
 /**
  * Interruptor de la redacción en la ingesta. POR DEFECTO NO REDACTA.
  *
- * Decisión de Steven, 2026-08-02, después de medir el daño real: la redacción le impidió pasarle a
- * `socrates` el token de @polidinamica_sell_bot TRES veces seguidas (21:10, 21:26 y 21:59 UTC), y
- * el agente le contestó literalmente "Cauce me entregó el token como [secreto-redactado], así que
- * no puedo leerlo ni instalarlo". Montar un sistema de punta a punta implica pasarle credenciales
- * a quien lo monta; un canal que las mutila no sirve para trabajar.
+ * Una decisión operativa documentada con evidencia privada mantiene esta redacción desactivada
+ * por defecto: al activarla durante una instalación, una credencial necesaria llegó sustituida por
+ * el marcador de redacción y el agente no pudo completar el trabajo.
  *
- * Le planteé el costo —el texto queda escrito en `messages.body` y sobrevive a la rotación— y lo
- * asumió: tiene limpieza periódica de historiales, y le da igual que las credenciales pasen por
- * el proveedor del modelo. Es su postura de seguridad y es su decisión, no la mía.
+ * El riesgo de persistir el texto y la política de retención quedaron aceptados fuera del código.
+ * No se transcriben aquí identidades, horarios, handles, cuerpos de mensaje ni datos de acceso.
  *
  * Se deja el módulo ENTERO vivo y encendible con `CAUCE_TELEGRAM_REDACT_INGRESS=1`, porque el
  * riesgo que documenta la cabecera de este archivo sigue siendo real para un tenant cliente que no

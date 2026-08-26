@@ -1,0 +1,78 @@
+name: ${COMPOSE_PROJECT_NAME:?set a unique rollback-bridge project name}
+
+x-runtime: &runtime
+  user: "0:0"
+  init: true
+  restart: "no"
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=32m
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  cap_add: [DAC_OVERRIDE]
+  entrypoint: ["/app/deploy/runtime-entrypoint.sh"]
+  environment:
+    DATABASE_URL_FILE: /run/secrets/database_url
+    NODE_ENV: rollback-bridge-test
+  secrets: [database_url]
+  networks: [rollback_bridge]
+
+services:
+  postgres:
+    image: ${CAUCE_ROLLBACK_POSTGRES_IMAGE:?set an immutable PostgreSQL 16 image digest}
+    restart: "no"
+    environment:
+      POSTGRES_DB: cauce_rollback_bridge
+      POSTGRES_USER: cauce_rollback_bridge
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes:
+      - rollback_bridge_pgdata:/var/lib/postgresql/data
+      - type: bind
+        source: ${CAUCE_ROLLBACK_BACKUP_FILE:?set the private backup file}
+        target: /backup/source.dump
+        read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cauce_rollback_bridge -d cauce_rollback_bridge"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    networks: [rollback_bridge]
+
+  candidate:
+    <<: *runtime
+    image: ${CAUCE_ROLLBACK_CANDIDATE_IMAGE:?set the immutable candidate runtime digest}
+    command: ["node", "deploy/runtime-package-smoke.mjs"]
+    profiles: [probe]
+    volumes:
+      - type: bind
+        source: ${CAUCE_ROLLBACK_PROBE_DIR:?set the private generated probe directory}
+        target: /rollback-probes
+        read_only: true
+
+  bridge:
+    <<: *runtime
+    image: ${CAUCE_ROLLBACK_BRIDGE_IMAGE:?set the immutable bridge runtime digest}
+    command: ["node", "deploy/runtime-package-smoke.mjs"]
+    profiles: [probe]
+    volumes:
+      - type: bind
+        source: ${CAUCE_ROLLBACK_PROBE_DIR:?set the private generated probe directory}
+        target: /rollback-probes
+        read_only: true
+
+secrets:
+  postgres_password:
+    file: ${CAUCE_ROLLBACK_POSTGRES_PASSWORD_FILE:?set the private generated password file}
+  database_url:
+    file: ${CAUCE_ROLLBACK_DATABASE_URL_FILE:?set the private generated database URL file}
+
+volumes:
+  rollback_bridge_pgdata: {}
+
+networks:
+  rollback_bridge:
+    internal: true

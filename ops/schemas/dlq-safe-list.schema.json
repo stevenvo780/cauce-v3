@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/dlq-safe-list.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "phase", "generatedAt", "items", "total", "truncated", "nextCursor"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "suite": { "const": "cauce-v3-dlq-safe-list" },
+    "phase": { "const": "list" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "total": { "type": "integer", "minimum": 0 },
+    "truncated": { "type": "boolean" },
+    "nextCursor": {
+      "type": ["string", "null"],
+      "minLength": 2,
+      "maxLength": 1024,
+      "pattern": "^(?:[a-f0-9]{2})+$"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target", "id", "tenantId", "kind", "adapter", "disposition", "open", "actionable", "evidenceSha256", "attempts", "resolutionRule", "createdAt", "dispositionAt", "resolvedAt", "reopenCount", "lastReopenedAt"],
+        "properties": {
+          "target": { "enum": ["delivery", "outbox"] },
+          "id": { "type": "string", "format": "uuid" },
+          "tenantId": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "kind": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "adapter": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+          "disposition": { "enum": ["ambiguous", "safe_retry", "missing_final", "auth", "expected_offline", "unclassified"] },
+          "open": { "type": "boolean" },
+          "actionable": { "type": "boolean" },
+          "evidenceSha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+          "attempts": { "type": "integer", "minimum": 0 },
+          "resolutionRule": { "type": ["string", "null"], "pattern": "^[a-z0-9_]+_v[0-9]+$" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "dispositionAt": { "type": ["string", "null"], "format": "date-time" },
+          "resolvedAt": { "type": ["string", "null"], "format": "date-time" },
+          "reopenCount": { "type": "integer", "minimum": 0 },
+          "lastReopenedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      }
+    }
+  }
+}

@@ -33,9 +33,14 @@ import type {
 } from './agent-documents.routes.js';
 
 /** Arnés REAL, deducido del binario que corre. Nunca de `agents.harness_id`. */
-export type HarnessKind = 'claude' | 'codex' | 'openclaw' | 'unknown';
+export type HarnessKind = 'claude' | 'codex' | 'openclaw' | 'hermes' | 'unknown';
 
-export type DocumentKind = 'directive' | 'tools' | 'prompts' | 'mcp';
+export type DocumentKind =
+  | 'directive' | 'tools' | 'prompts' | 'mcp' | 'identity' | 'human'
+  | 'memory' | 'heartbeat' | 'configuration';
+
+/** Evita volver a mezclar manual, inventario sensible y memoria en una sola lista semántica. */
+export type DocumentCategory = 'manual' | 'profile' | 'configuration' | 'memory';
 
 export type DocumentFormat = 'markdown' | 'json' | 'toml' | 'json-fragment';
 
@@ -55,12 +60,27 @@ export interface RuntimeFacts {
   readonly codexHome?: string;
   /** `cwd` del proceso: de ahí salen los CLAUDE.md/AGENTS.md de nivel proyecto. */
   readonly cwd?: string;
+  /** Raíz explícita del workspace compartido; nunca se descubre caminando hacia `/`. */
+  readonly workspaceRoot?: string;
+  /** Raíz de proyecto acreditada por un marcador real dentro del workspace (p. ej. `.git`). */
+  readonly projectRoot?: string;
+  /** Proyección no sensible de config.toml; sólo válida para Codex. */
+  readonly projectDocMaxBytes?: number;
+  /** Basenames de fallback medidos, nunca rutas ni el resto de config.toml. */
+  readonly projectDocFallbackFilenames?: readonly string[];
   /** Workspace efectivo de OpenClaw; no se deduce de HOME ni de openclaw.json. */
   readonly openclawWorkspace?: string;
+  /** Generación opaca del contenedor que midió estos hechos. Obligatoria para acreditar escritura. */
+  readonly generation?: string;
+  /** Contenedor que publicó la medición; evidencia, nunca se deriva del registro SQL. */
+  readonly containerId?: string;
+  /** Capacidades de terminal publicadas por ese mismo proceso. */
+  readonly modes?: readonly string[];
 }
 
 export interface AgentDocument {
   readonly kind: DocumentKind;
+  readonly category: DocumentCategory;
   /** Rótulo en castellano, el que ve Steven. */
   readonly label: string;
   /** Ruta absoluta DENTRO del contenedor del agente. */
@@ -107,17 +127,205 @@ function codexDir(facts: RuntimeFacts): string {
   return facts.codexHome?.trim() || join(facts.home, '.codex');
 }
 
+/** Raíz de memoria para cada arnés, derivada de los overrides medidos dentro del proceso. */
+export function memoryRootForHarness(facts: RuntimeFacts): string | null {
+  const home = facts.home.replace(/\/+$/, '');
+  switch (facts.harness) {
+    case 'claude':
+      return `${(facts.claudeConfigDir?.trim() || `${home}/.claude`).replace(/\/+$/, '')}/projects`;
+    case 'codex':
+      return `${(facts.codexHome?.trim() || `${home}/.codex`).replace(/\/+$/, '')}/memories`;
+    case 'openclaw': {
+      const workspace = facts.openclawWorkspace?.trim().replace(/\/+$/, '');
+      return workspace?.startsWith('/') ? `${workspace}/memory` : null;
+    }
+    default:
+      return null;
+  }
+}
+
 /** Juego cerrado de ficheros de PERFIL, separado del inventario de configuración sensible. */
 export function profileDocumentPaths(facts: RuntimeFacts): readonly string[] {
   if (!facts.home.startsWith('/')) return [];
   if (facts.harness === 'claude') return [join(claudeDir(facts), 'CLAUDE.md')];
   if (facts.harness === 'codex') return [join(codexDir(facts), 'AGENTS.md')];
+  if (facts.harness === 'hermes') return [join(facts.home, 'AGENTS.md')];
   if (facts.harness === 'openclaw') {
     const workspace = facts.openclawWorkspace?.trim();
     if (workspace === undefined || !workspace.startsWith('/')) return [];
     return FICHEROS_OPENCLAW.map((name) => join(workspace, name));
   }
   return [];
+}
+
+export interface EffectiveManualPath {
+  readonly path: string;
+  readonly scope: 'user' | 'workspace';
+  /** Menor primero. En Claude describe carga; en Codex los posteriores tienen mayor precedencia. */
+  readonly precedence: number;
+  /** Candidatos del mismo grupo se prueban en orden y sólo carga el primero que existe. */
+  readonly selection: 'all' | 'first_existing';
+  readonly group: string;
+}
+
+/** Valor que Codex aplica cuando config.toml no lo cambia. */
+export const DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES = 32 * 1024;
+
+function validCodexFallbackBasename(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return value.length > 0 && value.length <= 128 && !value.includes('/') && !value.includes('\\')
+    && !value.includes('\0') && !value.includes('..')
+    && ![...value].some((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 0x1f || code === 0x7f;
+    })
+    && !NEVER_SERVE_BASENAMES.includes(normalized)
+    && !NEVER_SERVE_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+}
+
+export interface CodexProjectDocumentConfig {
+  readonly maxBytes: number;
+  readonly fallbackFilenames: readonly string[];
+}
+
+/**
+ * Los dos knobs forman una sola proyección acreditada. Un agente viejo no manda ninguno y uno
+ * parcialmente actualizado podría mandar sólo uno: en ambos casos se usan los defaults, nunca
+ * una mezcla que Codex no aplicó. La validación se repite en relay y gateway porque la presencia
+ * es autenticada pero no confiable a ciegas.
+ */
+export function measuredCodexProjectDocumentConfig(
+  facts: RuntimeFacts,
+): CodexProjectDocumentConfig | undefined {
+  const maxBytes = facts.projectDocMaxBytes;
+  const rawFallbacks = facts.projectDocFallbackFilenames;
+  if (facts.harness !== 'codex' || !Number.isSafeInteger(maxBytes)
+      || (maxBytes ?? 0) < 1 || (maxBytes ?? 0) > 16 * 1024 * 1024
+      || !Array.isArray(rawFallbacks) || rawFallbacks.length > 16) return undefined;
+  const seen = new Set<string>(['AGENTS.override.md', 'AGENTS.md']);
+  const fallbackFilenames: string[] = [];
+  for (const value of rawFallbacks) {
+    if (typeof value !== 'string' || !validCodexFallbackBasename(value) || seen.has(value)) {
+      return undefined;
+    }
+    seen.add(value);
+    fallbackFilenames.push(value);
+  }
+  return { maxBytes: maxBytes!, fallbackFilenames };
+}
+
+export function codexProjectDocMaxBytes(facts: RuntimeFacts): number {
+  return measuredCodexProjectDocumentConfig(facts)?.maxBytes
+    ?? DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES;
+}
+
+function codexFallbackFilenames(facts: RuntimeFacts): readonly string[] {
+  return measuredCodexProjectDocumentConfig(facts)?.fallbackFilenames ?? [];
+}
+
+function canonicalContextDirectory(value: string): boolean {
+  if (!value.startsWith('/') || value === '/' || value.length > 4096 || value.includes('\0')) return false;
+  const segments = value.split('/');
+  return !segments.slice(1).some((segment) => segment === '' || segment === '.' || segment === '..');
+}
+
+/**
+ * Juego cerrado y ordenado de manuales que el proceso realmente aplica.
+ *
+ * La capa global va primero. Con `projectRoot` acreditado se añaden todos los niveles desde esa
+ * raíz hasta cwd; sin raíz sólo se añade el fichero exacto de cwd, que sí fue medido, y nunca se
+ * sube buscando `.git` ni otro marcador plausible. OpenClaw conserva exclusivamente el AGENTS.md
+ * de su workspace medido. Una misma ruta se devuelve una vez, en su primera posición efectiva.
+ */
+export function effectiveManualPaths(facts: RuntimeFacts): readonly EffectiveManualPath[] {
+  if (!facts.home.startsWith('/')) return [];
+  const candidates: Array<Omit<EffectiveManualPath, 'precedence'>> = [];
+  if (facts.harness === 'claude') {
+    candidates.push({
+      path: join(claudeDir(facts), 'CLAUDE.md'), scope: 'user', selection: 'all', group: 'user',
+    });
+  } else if (facts.harness === 'codex') {
+    const dir = codexDir(facts);
+    candidates.push(
+      { path: join(dir, 'AGENTS.override.md'), scope: 'user', selection: 'first_existing', group: 'user' },
+      { path: join(dir, 'AGENTS.md'), scope: 'user', selection: 'first_existing', group: 'user' },
+    );
+  } else if (facts.harness === 'hermes') {
+    candidates.push({
+      path: join(facts.home, 'AGENTS.md'), scope: 'user', selection: 'all', group: 'user',
+    });
+  } else if (facts.harness === 'openclaw') {
+    const workspace = facts.openclawWorkspace?.trim();
+    if (workspace !== undefined && canonicalContextDirectory(workspace)) {
+      candidates.push({
+        path: join(workspace, 'AGENTS.md'), scope: 'workspace', selection: 'all', group: 'workspace',
+      });
+    }
+  } else {
+    return [];
+  }
+
+  if (facts.harness === 'claude' || facts.harness === 'codex') {
+    const cwd = facts.cwd;
+    // El contrato auditado parte de la raíz de proyecto real para ambos arneses. El mount puede
+    // contener varios repositorios y su CLAUDE.md no gobierna necesariamente el proceso actual.
+    const root = facts.projectRoot;
+    if (cwd !== undefined && canonicalContextDirectory(cwd)) {
+      let directories: string[] = [];
+      if (root === undefined) {
+        // Sin raíz acreditada, un único nivel exacto. No se inventa jerarquía.
+        directories = [cwd];
+      } else if (canonicalContextDirectory(root)
+          && (cwd === root || cwd.startsWith(`${root}/`))) {
+        const relative = cwd === root ? [] : cwd.slice(root.length + 1).split('/');
+        if (relative.length <= 64) {
+          directories = [root];
+          let current = root;
+          for (const segment of relative) {
+            current = join(current, segment);
+            directories.push(current);
+          }
+        }
+      }
+      for (const [level, directory] of directories.entries()) {
+        const group = `workspace:${level}`;
+        if (facts.harness === 'claude') {
+          candidates.push(
+            { path: join(directory, 'CLAUDE.md'), scope: 'workspace', selection: 'all', group },
+            {
+              path: join(join(directory, '.claude'), 'CLAUDE.md'), scope: 'workspace',
+              selection: 'all', group,
+            },
+            { path: join(directory, 'CLAUDE.local.md'), scope: 'workspace', selection: 'all', group },
+          );
+        } else {
+          candidates.push(
+            {
+              path: join(directory, 'AGENTS.override.md'), scope: 'workspace',
+              selection: 'first_existing', group,
+            },
+            {
+              path: join(directory, 'AGENTS.md'), scope: 'workspace',
+              selection: 'first_existing', group,
+            },
+            ...codexFallbackFilenames(facts).map((name) => ({
+              path: join(directory, name), scope: 'workspace' as const,
+              selection: 'first_existing' as const, group,
+            })),
+          );
+        }
+      }
+    }
+  }
+
+  const seen = new Set<string>();
+  const result: EffectiveManualPath[] = [];
+  for (const candidate of candidates) {
+    if (seen.has(candidate.path)) continue;
+    seen.add(candidate.path);
+    result.push({ ...candidate, precedence: result.length });
+  }
+  return result;
 }
 
 /**
@@ -151,6 +359,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
       return [
         {
           kind: 'directive',
+          category: 'manual',
           label: 'CLAUDE.md (manual del sitio)',
           path: join(dir, 'CLAUDE.md'),
           format: 'markdown',
@@ -158,6 +367,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
         },
         {
           kind: 'tools',
+          category: 'configuration',
           label: 'Herramientas y permisos (settings.json)',
           path: join(dir, 'settings.json'),
           format: 'json',
@@ -168,6 +378,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
         },
         {
           kind: 'prompts',
+          category: 'configuration',
           label: 'Subagentes (~/.claude/agents)',
           path: join(dir, 'agents'),
           format: 'markdown',
@@ -176,6 +387,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
         },
         {
           kind: 'mcp',
+          category: 'configuration',
           label: 'Servidores MCP',
           path: join(facts.home, '.claude.json'),
           format: 'json',
@@ -191,6 +403,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
       return [
         {
           kind: 'directive',
+          category: 'manual',
           label: 'AGENTS.md (manual del sitio)',
           path: join(dir, 'AGENTS.md'),
           format: 'markdown',
@@ -198,6 +411,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
         },
         {
           kind: 'tools',
+          category: 'configuration',
           label: 'Herramientas y MCP (config.toml)',
           path: join(dir, 'config.toml'),
           format: 'toml',
@@ -206,6 +420,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
         },
         {
           kind: 'prompts',
+          category: 'configuration',
           label: 'Prompts guardados (~/.codex/prompts)',
           path: join(dir, 'prompts'),
           format: 'markdown',
@@ -215,19 +430,77 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
       ];
     }
     case 'openclaw': {
+      const workspace = facts.openclawWorkspace?.trim();
+      if (workspace === undefined || !workspace.startsWith('/')) return [];
       const dir = join(facts.home, '.openclaw');
       return [
         {
-          kind: 'directive',
-          label: 'Directiva del agente (openclaw.json → agents)',
-          path: join(dir, 'openclaw.json'),
-          format: 'json-fragment',
+          kind: 'prompts',
+          category: 'profile',
+          label: 'Propósito (SOUL.md)',
+          path: join(workspace, 'SOUL.md'),
+          format: 'markdown',
           editable: false,
-          reason: RAZON_OPENCLAW,
+          reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
+        },
+        {
+          kind: 'identity',
+          category: 'profile',
+          label: 'Identidad (IDENTITY.md)',
+          path: join(workspace, 'IDENTITY.md'),
+          format: 'markdown',
+          editable: false,
+          reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
+        },
+        {
+          kind: 'human',
+          category: 'profile',
+          label: 'Contexto humano (USER.md)',
+          path: join(workspace, 'USER.md'),
+          format: 'markdown',
+          editable: false,
+          reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
+        },
+        {
+          kind: 'memory',
+          category: 'memory',
+          label: 'Memoria viva del agente (MEMORY.md)',
+          path: join(workspace, 'MEMORY.md'),
+          format: 'markdown',
+          editable: false,
+          reason: 'Pertenece al agente. Cauce acredita su SHA y tamaño, pero no la reescribe.',
+        },
+        {
+          kind: 'heartbeat',
+          category: 'memory',
+          label: 'Estado vivo del agente (HEARTBEAT.md)',
+          path: join(workspace, 'HEARTBEAT.md'),
+          format: 'markdown',
+          editable: false,
+          reason: 'Pertenece al agente. Cauce acredita su SHA y tamaño, pero no lo reescribe.',
+        },
+        {
+          kind: 'directive',
+          category: 'manual',
+          label: 'Manual del sitio (AGENTS.md)',
+          path: join(workspace, 'AGENTS.md'),
+          format: 'markdown',
+          editable: false,
+          reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
         },
         {
           kind: 'tools',
-          label: 'Herramientas y skills (openclaw.json → tools/skills)',
+          category: 'configuration',
+          label: 'Herramientas declaradas (TOOLS.md)',
+          path: join(workspace, 'TOOLS.md'),
+          format: 'markdown',
+          editable: false,
+          reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
+        },
+        {
+          kind: 'configuration',
+          category: 'configuration',
+          label: 'Configuración sensible (openclaw.json)',
           path: join(dir, 'openclaw.json'),
           format: 'json-fragment',
           editable: false,
@@ -235,6 +508,15 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
         },
       ];
     }
+    case 'hermes':
+      return [{
+        kind: 'directive',
+        category: 'manual',
+        label: 'AGENTS.md (manual de Hermes)',
+        path: join(facts.home, 'AGENTS.md'),
+        format: 'markdown',
+        editable: true,
+      }];
     default:
       return [];
   }
@@ -327,7 +609,7 @@ export function verifyWritableProfilePath(
 export const MAX_DOCUMENT_BYTES = 256 * 1024;
 
 export function harnessFromCommand(cmdline: string): HarnessKind {
-  const match = /\bbin\/(claude|codex|openclaw)\.js\b/.exec(cmdline);
+  const match = /\bbin\/(claude|codex|openclaw|hermes)\.js\b/.exec(cmdline);
   return match ? (match[1] as HarnessKind) : 'unknown';
 }
 
@@ -352,6 +634,7 @@ export function harnessFromCapabilities(capabilities: readonly string[]): Harnes
     if (capability === 'harness.claude') return 'claude';
     if (capability === 'harness.codex') return 'codex';
     if (capability === 'harness.openclaw') return 'openclaw';
+    if (capability === 'harness.hermes') return 'hermes';
   }
   return 'unknown';
 }
@@ -362,7 +645,9 @@ export function harnessFromCapabilities(capabilities: readonly string[]): Harnes
  * `resolveAgentDocuments` porque hay que poder verlos y editarlos, pero por el canal de LECTURA
  * del pty-agent no viajan — y el propio pty-agent los rechaza aunque el gateway los pida.
  */
-export const READ_ALLOWED_BASENAMES: readonly string[] = ['CLAUDE.md', 'AGENTS.md'];
+export const READ_ALLOWED_BASENAMES: readonly string[] = [
+  'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'AGENTS.override.md',
+];
 const PROFILE_READ_BASENAMES: readonly string[] = [...FICHEROS_OPENCLAW, ...READ_ALLOWED_BASENAMES];
 
 /**
@@ -394,16 +679,47 @@ export function verifyReadablePath(facts: RuntimeFacts, requested: string): Path
     return { allowed: false, reason: `\`${base}\` parece material de credencial` };
   }
   const profilePath = profileDocumentPaths(facts).includes(requested);
-  if (!READ_ALLOWED_BASENAMES.includes(base) && !(profilePath && PROFILE_READ_BASENAMES.includes(base))) {
-    return { allowed: false, reason: `\`${base}\` no es un manual del sitio; esta vía sólo lee CLAUDE.md y AGENTS.md` };
+  const effectiveManual = effectiveManualPaths(facts).some((manual) => manual.path === requested);
+  const configuredCodexFallback = facts.harness === 'codex'
+    && codexFallbackFilenames(facts).includes(base) && effectiveManual;
+  if (!READ_ALLOWED_BASENAMES.includes(base)
+      && !(profilePath && PROFILE_READ_BASENAMES.includes(base)) && !configuredCodexFallback) {
+    return {
+      allowed: false,
+      reason: `\`${base}\` no es un manual efectivo permitido para ese arnés`,
+    };
   }
 
   // El juego CERRADO manda: la ruta tiene que ser una de las que se derivan de hechos medidos.
   // El navegador manda un alias, nunca una ruta, y esto lo vuelve a exigir aquí abajo.
-  if (!resolveAgentDocuments(facts).some((doc) => doc.path === requested) && !profilePath) {
+  if (!resolveAgentDocuments(facts).some((doc) => doc.path === requested)
+      && !profilePath && !effectiveManual) {
     return { allowed: false, reason: 'la ruta no es la de ningún documento de ese alias' };
   }
   return { allowed: true };
+}
+
+/**
+ * Decide si una fila del inventario tiene contenido servible por la ruta `:kind/content`.
+ *
+ * `editable` no sirve para tomar esta decisión: los manuales de proyecto y los ficheros que
+ * componen el perfil OpenClaw se pueden inspeccionar, pero sus escrituras pasan por otras reglas
+ * (o por el lote canónico de Perfil). A la inversa, que una fila exista en el inventario tampoco
+ * la vuelve legible: `settings.json`, `config.toml`, directorios y configuraciones con secretos se
+ * enumeran para explicar dónde viven, pero nunca se abren desde el navegador.
+ *
+ * La categoría sólo acota la intención. La autoridad final sigue siendo `verifyReadablePath`,
+ * que exige una ruta absoluta y canónica dentro del juego cerrado derivado de hechos medidos.
+ */
+export function verifyReadableDocument(facts: RuntimeFacts, document: AgentDocument): PathVerdict {
+  const profilePath = profileDocumentPaths(facts).includes(document.path);
+  if (document.category !== 'manual' && !profilePath) {
+    return {
+      allowed: false,
+      reason: document.reason ?? 'este elemento se inventaría, pero su contenido no se sirve por esta vía',
+    };
+  }
+  return verifyReadablePath(facts, document.path);
 }
 
 /** Lo que el pty-agent devuelve tras leer, ya acumulado por el terminal-relay. */
@@ -415,6 +731,19 @@ export interface RelayFileRead {
   readonly modified_at: string;
   readonly sha: string;
   readonly content: string;
+}
+
+/** Forma interna del índice del relay: todavía usa rutas absolutas acreditadas por el agente. */
+export interface RelayDirectoryRead {
+  readonly path: string;
+  readonly total: number | null;
+  readonly observed_at_least: number;
+  readonly truncated: boolean;
+  readonly entries: ReadonlyArray<{
+    readonly path: string;
+    readonly bytes: number;
+    readonly modified_at: string;
+  }>;
 }
 
 export interface RelayFileWrite {
@@ -435,7 +764,19 @@ export type GovernanceWriteError = GovernanceReadError | { readonly error: 'conf
  * paquete del relay, porque son dos procesos en dos máquinas: lo que los une es este contrato.
  */
 export interface GovernanceRelayClient {
-  readFile(tenantId: string, alias: string, path: string): Promise<RelayFileRead | GovernanceReadError>;
+  readFile(
+    tenantId: string,
+    alias: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<RelayFileRead | GovernanceReadError>;
+  /** Ausente sólo en implementaciones legacy; nunca se sustituye por un índice vacío. */
+  listDirectory?(
+    tenantId: string,
+    alias: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<RelayDirectoryRead | GovernanceReadError>;
   /** Ausente en dobles/clientes antiguos; la sonda falla honesta y no afirma aplicación. */
   writeFile?(
     tenantId: string,
@@ -480,6 +821,7 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
     facts: RuntimeFacts,
     tenantId: string,
     alias: string,
+    signal?: AbortSignal,
   ): Promise<GovernanceDocumentContent | GovernanceReadError> {
     const verdict = verifyReadablePath(facts, path);
     if (!verdict.allowed) {
@@ -488,7 +830,7 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
 
     let answer: RelayFileRead | GovernanceReadError;
     try {
-      answer = await this.relay.readFile(tenantId, alias, path);
+      answer = await this.relay.readFile(tenantId, alias, path, signal);
     } catch (error) {
       // Que el relay reviente no puede tumbar la pantalla entera: se cuenta como lectura fallida.
       return { error: 'unknown', reason: `la lectura falló: ${error instanceof Error ? error.message : 'sin detalle'}` };
@@ -636,14 +978,138 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
     return acknowledgements;
   }
 
-  /**
-   * TODAVÍA NO. El pty-agent ya sabe barrer un directorio y devolver el índice (`kind: "dir"`),
-   * pero ni el relay ni esta clase lo usan, y prefiero un error explícito antes que un índice
-   * vacío que se lea como «este agente no tiene memoria».
-   */
-  async listMemoryDirectory(memoryRoot: string): Promise<MemoryDirectoryListing | GovernanceReadError> {
-    return { error: 'unavailable', reason: `el índice de memoria (${memoryRoot}) todavía no se sirve por esta vía` };
+  async listMemoryDirectory(
+    memoryRoot: string,
+    facts: RuntimeFacts,
+    tenantId: string,
+    alias: string,
+    signal?: AbortSignal,
+  ): Promise<MemoryDirectoryListing | GovernanceReadError> {
+    const expectedRoot = memoryRootForHarness(facts);
+    if (expectedRoot === null || memoryRoot !== expectedRoot || !canonicalAbsoluteMemoryPath(memoryRoot)) {
+      return { error: 'invalid_path', reason: 'la raíz pedida no es la memoria medida de ese arnés' };
+    }
+    if (this.relay.listDirectory === undefined) {
+      return { error: 'unavailable', reason: 'el cliente del terminal-relay no publica índices de memoria' };
+    }
+
+    let answer: RelayDirectoryRead | GovernanceReadError;
+    try {
+      answer = await this.relay.listDirectory(tenantId, alias, memoryRoot, signal);
+    } catch (error) {
+      return { error: 'unknown', reason: `el índice falló: ${error instanceof Error ? error.message : 'sin detalle'}` };
+    }
+    if ('error' in answer) return answer;
+
+    const response = answer as unknown as Record<string, unknown>;
+    const topKeys = Object.keys(response).sort();
+    if (topKeys.length !== 5 || topKeys.some((key, index) => key !== [
+      'entries', 'observed_at_least', 'path', 'total', 'truncated',
+    ][index])) {
+      return { error: 'unknown', reason: 'el relay devolvió un índice con campos desconocidos' };
+    }
+    const total = response.total;
+    const observedAtLeast = response.observed_at_least;
+    const truncated = response.truncated;
+    const rawEntries = response.entries;
+    if (response.path !== memoryRoot
+        || (total !== null && (!Number.isSafeInteger(total) || (total as number) < 0))
+        || !Number.isSafeInteger(observedAtLeast) || (observedAtLeast as number) < 0
+        || typeof truncated !== 'boolean' || !Array.isArray(rawEntries)
+        || rawEntries.length > MAX_MEMORY_DIRECTORY_ENTRIES
+        || (observedAtLeast as number) < rawEntries.length
+        || (total !== null && total !== observedAtLeast)
+        || (total === null && !truncated)
+        || (!truncated && (total !== rawEntries.length || observedAtLeast !== rawEntries.length))) {
+      return { error: 'unknown', reason: 'el relay devolvió un índice con raíz, límites o conteos inválidos' };
+    }
+
+    const entries: MemoryDirectoryListing['entries'] = [];
+    const seen = new Set<string>();
+    for (const rawEntry of rawEntries as unknown[]) {
+      if (rawEntry === null || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
+        return { error: 'unknown', reason: 'el relay devolvió una entrada de memoria inválida' };
+      }
+      const record = rawEntry as Record<string, unknown>;
+      if (record.symlink === true || record.type === 'symlink') {
+        return { error: 'symlink_detected', reason: 'el índice intentó publicar un enlace simbólico' };
+      }
+      const keys = Object.keys(record).sort();
+      if (keys.length !== 3 || keys.some((key, index) => key !== ['bytes', 'modified_at', 'path'][index])) {
+        return { error: 'unknown', reason: 'el relay devolvió una entrada con campos desconocidos' };
+      }
+      const entryPath = record.path;
+      const bytes = record.bytes;
+      const modifiedAt = record.modified_at;
+      if (!canonicalAbsoluteMemoryPath(entryPath)
+          || !entryPath.startsWith(`${memoryRoot}/`)
+          || seen.has(entryPath)
+          || !Number.isSafeInteger(bytes) || (bytes as number) < 0
+          || !validMemoryTimestamp(modifiedAt)) {
+        return { error: 'unknown', reason: 'el relay devolvió una ruta, fecha o tamaño de memoria inválidos' };
+      }
+      const relative = entryPath.slice(memoryRoot.length + 1);
+      if (!canonicalRelativeMemoryPath(relative)) {
+        return { error: 'unknown', reason: 'el relay devolvió una entrada fuera de la raíz de memoria' };
+      }
+      if (sensitiveMemoryPath(relative)) {
+        return { error: 'permission_denied', reason: 'el índice intentó publicar metadata de credenciales' };
+      }
+      seen.add(entryPath);
+      entries.push({ path: relative, bytes: bytes as number, modified_at: modifiedAt });
+    }
+
+    return {
+      root: memoryRoot,
+      total: total as number | null,
+      observed_at_least: observedAtLeast as number,
+      truncated,
+      entries,
+    };
   }
+}
+
+const MAX_MEMORY_DIRECTORY_ENTRIES = 200;
+const MAX_MEMORY_PATH_BYTES = 4_096;
+const MAX_MEMORY_DATE_BYTES = 64;
+
+function canonicalAbsoluteMemoryPath(value: unknown): value is string {
+  if (typeof value !== 'string' || value === '/' || !value.startsWith('/')
+      || Buffer.byteLength(value, 'utf8') > MAX_MEMORY_PATH_BYTES
+      || hasMemoryControlCharacter(value)) return false;
+  const segments = value.split('/');
+  return !segments.slice(1).some((segment) => segment === '' || segment === '.' || segment === '..');
+}
+
+function canonicalRelativeMemoryPath(value: string): boolean {
+  if (value.length === 0 || value.startsWith('/') || Buffer.byteLength(value, 'utf8') > MAX_MEMORY_PATH_BYTES
+      || hasMemoryControlCharacter(value)) return false;
+  return !value.split('/').some((segment) => segment === '' || segment === '.' || segment === '..');
+}
+
+function hasMemoryControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 0x1f || code === 0x7f;
+  });
+}
+
+function sensitiveMemoryPath(relative: string): boolean {
+  return relative.split('/').some((segment) => NEVER_SERVE_BASENAMES.includes(segment)
+    || NEVER_SERVE_SUFFIXES.some((suffix) => segment.endsWith(suffix)));
+}
+
+function validMemoryTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_MEMORY_DATE_BYTES) return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/u.exec(value);
+  if (match === null || Number.isNaN(Date.parse(value))) return false;
+  const date = new Date(value);
+  return date.getUTCFullYear() === Number(match[1])
+    && date.getUTCMonth() + 1 === Number(match[2])
+    && date.getUTCDate() === Number(match[3])
+    && date.getUTCHours() === Number(match[4])
+    && date.getUTCMinutes() === Number(match[5])
+    && date.getUTCSeconds() === Number(match[6]);
 }
 
 /** `verifyWritablePath` exige kind: lo deriva sólo del mismo juego cerrado que produjo la ruta. */

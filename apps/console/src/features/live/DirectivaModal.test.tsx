@@ -140,3 +140,46 @@ it('la columna 1 muestra la proyección sólo lectura y dirige al perfil canóni
   expect(within(capa1).queryByRole('button', { name: /guardar el rol/i })).not.toBeInTheDocument();
   expect(within(capa1).getByRole('button', { name: /editar el perfil canónico/i })).toBeInTheDocument();
 }, 25_000);
+
+it('no afirma que falta un manual cuando el runtime no fue medido', async () => {
+  server.use(http.get('*/v3/console/agents/:tenantId/:alias/directive', () => HttpResponse.json({
+    publicado: true,
+    medido: false,
+    motivo: 'contenedor no medido todavía (sin hechos de entorno)',
+    files: null,
+    memory: null,
+  })));
+  const { dialogo } = await abrir();
+  expect(within(dialogo).getAllByText(/contenedor no medido todavía/i)).toHaveLength(2);
+  expect(within(dialogo).queryByText(/Ningún manual: este alias arranca sin contexto operativo/i))
+    .not.toBeInTheDocument();
+  expect(within(dialogo).queryByText(/El servidor miró y no hay/i)).not.toBeInTheDocument();
+}, 25_000);
+
+it('muestra orden, cobertura parcial y un timeout sin convertirlo en ausencia', async () => {
+  server.use(http.get('*/v3/console/agents/:tenantId/:alias/directive', () => HttpResponse.json({
+    publicado: true,
+    medido: true,
+    container_id: 'ws-kant',
+    manual_order: 'codex_precedence',
+    context_coverage: 'standard_manuals',
+    context_limitations: ['project_doc_fallback_filenames no está proyectado'],
+    files: [
+      {
+        path: '/workspace/repo/AGENTS.md', scope: 'workspace', precedence: 2,
+        bytes: 10, modified_at: '2026-08-26T00:00:00Z', text: '# manual\n', sha: 'a'.repeat(64),
+      },
+      {
+        path: '/workspace/repo/sub/AGENTS.override.md', scope: 'workspace', precedence: 3,
+        bytes: null, modified_at: null, text: null, error: 'timeout', reason: 'panel sin respuesta',
+      },
+    ],
+    memory: { error: 'unavailable', reason: 'sin índice' },
+  })));
+  const { dialogo } = await abrir();
+  const capa2 = within(dialogo).getByLabelText('Capa 2: manual del sitio');
+  expect(within(capa2).getByText(/más profundo prevalece; override gana/i)).toBeInTheDocument();
+  expect(within(capa2).getByText(/Cobertura limitada:.*fallback_filenames/i)).toBeInTheDocument();
+  expect(within(capa2).getByRole('alert')).toHaveTextContent(/timeout.*panel sin respuesta.*No se toma como ausencia/i);
+  expect(within(capa2).queryByText(/no hay ningún manual estándar/i)).not.toBeInTheDocument();
+}, 25_000);

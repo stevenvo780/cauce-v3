@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { AccountsPage } from './AccountsPage';
@@ -23,7 +23,9 @@ function recordChanges(sink: ChangeRequest[], response?: (input: ChangeRequest) 
     if (response) return response(input);
     return HttpResponse.json({
       applied: input.dry_run !== true, dry_run: input.dry_run === true,
-      revision: input.dry_run ? 4 : 5, mutation: input.mutation, summary: 'mock registry validation',
+      revision: input.dry_run ? 4 : 5, mutation: input.mutation,
+      inverse_mutation: input.mutation, rolled_back_revision_id: null,
+      summary: 'mock registry validation',
     }, { status: input.dry_run ? 200 : 201 });
   }));
 }
@@ -64,8 +66,10 @@ it('queda enrutada en /accounts sin desplazar a las pantallas existentes', async
   renderWithApi(<App />);
   expect(await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i })).toBeInTheDocument();
 
-  window.history.pushState({}, '', '/config');
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  act(() => {
+    window.history.pushState({}, '', '/config');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
   expect(await screen.findByRole('heading', { level: 1, name: /ajustes/i })).toBeInTheDocument();
 });
 
@@ -155,6 +159,29 @@ it('exige dry-run antes de aplicar el alta y manda la mutación de provider_acco
   expect(await screen.findByText(/aplicado en revisión 5/i)).toBeInTheDocument();
   expect(changes[1]?.dry_run).toBe(false);
 });
+
+it('no habilita ni acredita escrituras del registro con recibos 2xx truncados', async () => {
+  const changes: ChangeRequest[] = [];
+  configuration({ provider_accounts: [], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  recordChanges(changes, (input) => input.dry_run
+    ? HttpResponse.json({
+      applied: false, dry_run: true, revision: 4, summary: 'preview exacto',
+      mutation: input.mutation, inverse_mutation: input.mutation,
+      rolled_back_revision_id: null,
+    })
+    : HttpResponse.json({ applied: true, dry_run: false, revision: 5 }, { status: 201 }));
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+
+  await openInventory(user);
+  await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
+  await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
+  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(accountActions().getByRole('button', { name: /^aplicar$/i }));
+
+  expect(await screen.findByText(/la escritura puede haberse aplicado/i)).toBeInTheDocument();
+  expect(screen.queryByText(/aplicado en revisión 5/i)).not.toBeInTheDocument();
+}, 20_000);
 
 it('no reimprime el locator en el dry-run que el servidor devuelve', async () => {
   const changes: ChangeRequest[] = [];

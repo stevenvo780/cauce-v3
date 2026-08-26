@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 from jsonschema import Draft202012Validator, FormatChecker
+from manifest_lib import safe_schema_diagnostic, schema_error_sort_key
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -49,6 +50,16 @@ REQUIRED_FAULTS = {"gateway-process-kill", "postgres-container-kill"}
 # the failure so a timing flake is not mistaken for tampering, which would push the operator back
 # towards editing the artifact instead of re-running it.
 FLAKY_ON_LOADED_HOSTS = {"gateway-process-kill", "postgres-container-kill"}
+BASE_REPOSITORIES = {
+    "node": "docker.io/library/node",
+    "python": "docker.io/library/python",
+    "nginx": "docker.io/nginxinc/nginx-unprivileged",
+}
+SINGLE_MANIFEST_MEDIA_TYPES = {
+    "application/vnd.docker.distribution.manifest.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+}
+LINUX_AMD64 = {"os": "linux", "architecture": "amd64"}
 
 
 def load(path: pathlib.Path) -> dict:
@@ -67,10 +78,9 @@ def validate_schema(instance: dict, schema_name: str, label: str) -> bool:
     if not instance or not schema:
         return False
     validator = Draft202012Validator(schema, format_checker=FormatChecker())
-    failures = sorted(validator.iter_errors(instance), key=lambda item: list(item.absolute_path))
+    failures = sorted(validator.iter_errors(instance), key=schema_error_sort_key)
     for failure in failures:
-        location = ".".join(str(part) for part in failure.absolute_path) or "<root>"
-        ERRORS.append(f"{label}.{location}: {failure.message}")
+        ERRORS.append(f"{label}.{safe_schema_diagnostic(failure)}")
     return not failures
 
 
@@ -101,6 +111,66 @@ def timestamp(value: str, label: str) -> datetime.datetime | None:
         return None
 
 
+def validate_platform_evidence(build: dict, label: str = "build") -> None:
+    """Enforce cross-field meaning that JSON Schema cannot express."""
+    bases = build.get("baseImages", {})
+    if not isinstance(bases, dict):
+        ERRORS.append(f"{label}.baseImages is not an object")
+        return
+    identifiers: list[str] = []
+    manifest_digests: list[str] = []
+    references: list[str] = []
+    for role, expected_repository in BASE_REPOSITORIES.items():
+        base = bases.get(role)
+        if not isinstance(base, dict):
+            ERRORS.append(f"{label}.baseImages.{role} is absent")
+            continue
+        reference = base.get("repositoryDigest")
+        manifest_digest = base.get("manifestDigest")
+        if base.get("role") != role:
+            ERRORS.append(f"{label}.baseImages.{role}.role does not match its evidence slot")
+        if not isinstance(reference, str) or not reference.startswith(f"{expected_repository}@"):
+            ERRORS.append(f"{label}.baseImages.{role} uses the wrong repository role")
+        elif reference.rsplit("@", 1)[1] != manifest_digest:
+            ERRORS.append(f"{label}.baseImages.{role} manifestDigest differs from its RepoDigest")
+        if base.get("mediaType") not in SINGLE_MANIFEST_MEDIA_TYPES:
+            ERRORS.append(f"{label}.baseImages.{role} is not a single image manifest")
+        if base.get("platform") != LINUX_AMD64:
+            ERRORS.append(f"{label}.baseImages.{role} is not linux/amd64")
+        if isinstance(reference, str):
+            references.append(reference)
+        if isinstance(manifest_digest, str):
+            manifest_digests.append(manifest_digest)
+        identifier = base.get("imageId")
+        if isinstance(identifier, str):
+            identifiers.append(identifier)
+    if len(references) == 3 and len(set(references)) != 3:
+        ERRORS.append(f"{label}.baseImages reuses one RepoDigest across different roles")
+    if len(manifest_digests) == 3 and len(set(manifest_digests)) != 3:
+        ERRORS.append(f"{label}.baseImages reuses one manifest across different roles")
+    if len(identifiers) == 3 and len(set(identifiers)) != 3:
+        ERRORS.append(f"{label}.baseImages reuses one image ID across different roles")
+
+    final_references: list[str] = []
+    for image_name in ("runtime", "console"):
+        image = build.get(image_name)
+        if not isinstance(image, dict):
+            continue
+        reference = image.get("repositoryDigest")
+        manifest_digest = image.get("manifestDigest")
+        if not isinstance(reference, str) or "@" not in reference:
+            continue
+        if reference.rsplit("@", 1)[1] != manifest_digest:
+            ERRORS.append(f"{label}.{image_name}.manifestDigest differs from its RepoDigest")
+        if image.get("mediaType") not in SINGLE_MANIFEST_MEDIA_TYPES:
+            ERRORS.append(f"{label}.{image_name} is not a single image manifest")
+        if image.get("platform") != LINUX_AMD64:
+            ERRORS.append(f"{label}.{image_name} is not linux/amd64")
+        final_references.append(reference)
+    if len(final_references) == 2 and final_references[0] == final_references[1]:
+        ERRORS.append(f"{label} runtime and console reuse one final RepoDigest")
+
+
 def release_checkout_is_clean() -> bool:
     """Require clean tracked/index state and tolerate only the exact operator scratch prefix."""
     for arguments in (("diff", "--quiet", "--no-ext-diff", "--"),
@@ -123,6 +193,7 @@ build_valid = validate_schema(build, "build-evidence.schema.json", "build")
 report_valid = validate_schema(report, "test-evidence.schema.json", "compose-authentic")
 
 if build_valid:
+    validate_platform_evidence(build)
     expected_dockerfile = f"sha256:{hashlib.sha256((ROOT / 'deploy' / 'Dockerfile').read_bytes()).hexdigest()}"
     if build["dockerfileSha256"] != expected_dockerfile:
         ERRORS.append("build.dockerfileSha256 does not match the current Dockerfile")

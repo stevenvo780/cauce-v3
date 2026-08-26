@@ -171,13 +171,17 @@ export class TelegramHttpClient implements TelegramApi {
     };
   }
 
-  async getUpdates(offset: number, timeoutSeconds: number): Promise<TelegramUpdate[]> {
+  async getUpdates(
+    offset: number,
+    timeoutSeconds: number,
+    signal?: AbortSignal
+  ): Promise<TelegramUpdate[]> {
     const result = await this.call<unknown[]>('getUpdates', {
       offset,
       timeout: timeoutSeconds,
       limit: 100,
       allowed_updates: ['message']
-    });
+    }, signal);
     if (!Array.isArray(result)) throw new TelegramApiError('Telegram returned invalid updates', true);
     return result.map(parseUpdate).sort((left, right) => left.update_id - right.update_id);
   }

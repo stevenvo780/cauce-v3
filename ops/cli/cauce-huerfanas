@@ -13,8 +13,8 @@
 #
 # Uso:  cauce-huerfanas [dias]        (por defecto 7)
 #
-# Las conversaciones conocidas se traducen a nombre para que no haya que buscar el id a mano.
-# Un id desconocido es alguien REAL: averigualo antes de descartarlo.
+# La identidad externa no se imprime ni se traduce mediante IDs hardcodeados. El tenant durable
+# ya expresa el dueño operativo y evita convertir este diagnóstico en un inventario de personas.
 set -uo pipefail
 DIAS=${1:-7}
 
@@ -28,22 +28,10 @@ SELECT
   d.created_at::timestamp(0)                                   AS cuando,
   d.recipient_alias                                            AS agente,
   d.status                                                     AS estado,
-  CASE m.origin->>'conversation_id'
-    WHEN '6979524541'    THEN 'Steven'
-    WHEN '8530844312'    THEN 'Pablo'
-    WHEN '7084929277'    THEN 'Jhon'
-    WHEN '-1003969325671' THEN 'grupo Miguel'
-    ELSE coalesce(m.origin->>'conversation_id','?')
-  END                                                          AS quien,
-  -- El cuerpo se enmascara ANTES de recortarlo. La gente pega credenciales en el chat: la primera
-  -- corrida de esto imprimió una contraseña de Neon en claro en la terminal del operador. Un
-  -- listado de diagnóstico no puede ser una vía nueva por la que un secreto sale a un log.
-  left(regexp_replace(
-         regexp_replace(
-           regexp_replace(m.body->>'text', '(://[^:/@\s]+:)[^@\s]+@', '\1***@', 'g'),
-           '(?i)(api[_-]?key|token|secret|password|passwd|bearer|npg_|sk-|ghp_)[=:\s"'']*[A-Za-z0-9_\-\.]{6,}',
-           '\1***', 'g'),
-         '\s+', ' ', 'g'), 90)                                  AS pedido,
+  m.tenant_id                                                  AS tenant,
+  -- No se imprime el cuerpo ni siquiera redactado: un resumen truncado sigue pudiendo contener
+  -- datos personales. La consola autenticada es el lugar para inspeccionar el pedido concreto.
+  char_length(coalesce(m.body->>'text', ''))                   AS pedido_chars,
   left(coalesce(d.last_error, '-'), 60)                        AS por_que
 FROM deliveries d
 JOIN messages m ON m.id = d.message_id

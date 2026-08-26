@@ -10,7 +10,17 @@ const downPath = new URL('../migrations/down/029_reconcile_declared_fleet.sql', 
 const notifyRolePath = new URL('../migrations/027_rol_agent_notify.sql', import.meta.url);
 
 async function runDown(): Promise<void> {
-  await pool.query(await readFile(downPath, 'utf8'));
+  const client = await pool.connect();
+  try {
+    await client.query(await readFile(downPath, 'utf8'));
+  } catch (error) {
+    // The migration owns its BEGIN. A refusal leaves that transaction aborted, so explicitly
+    // release it before returning this pooled connection to later assertions.
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 beforeAll(async () => {
@@ -33,6 +43,74 @@ afterAll(async () => {
 });
 
 describe('029 reconciles desired catalog without inventing runtime presence', () => {
+  it('bootstraps the exact active and historical catalog when all three retired rows are absent', async () => {
+    await runDown();
+    await pool.query(`
+      DELETE FROM memberships
+       WHERE (tenant_id,alias) IN (('Jhon','heraclito'),('Jhon','tales'),('Miguel','gaia'));
+      DELETE FROM agents
+       WHERE (tenant_id,alias) IN (('Jhon','heraclito'),('Jhon','tales'),('Miguel','gaia'));
+    `);
+
+    await applyMigrations(pool);
+
+    const activeAgents = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM agents WHERE enabled`,
+    );
+    expect(activeAgents.rows).toEqual([{ count: '15' }]);
+    const activeMemberships = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM memberships WHERE enabled`,
+    );
+    expect(activeMemberships.rows).toEqual([{ count: '16' }]);
+    const historical = await pool.query(
+      `SELECT tenant_id,alias,harness_id,container_name,runtime_user,home_directory,
+              state_directory,enabled
+         FROM agents
+        WHERE (tenant_id,alias) IN (('Jhon','heraclito'),('Jhon','tales'),('Miguel','gaia'))
+        ORDER BY alias`,
+    );
+    expect(historical.rows).toEqual([
+      {
+        tenant_id: 'Miguel', alias: 'gaia', harness_id: null, container_name: null,
+        runtime_user: null, home_directory: null, state_directory: null, enabled: false,
+      },
+      {
+        tenant_id: 'Jhon', alias: 'heraclito', harness_id: 'openclaw',
+        container_name: 'agv2-jhon-heraclito-oc', runtime_user: 'claw',
+        home_directory: '/home/claw', state_directory: '/home/claw/.openclaw/cauce-v3/heraclito',
+        enabled: false,
+      },
+      {
+        tenant_id: 'Jhon', alias: 'tales', harness_id: null, container_name: null,
+        runtime_user: null, home_directory: null, state_directory: null, enabled: false,
+      },
+    ]);
+
+    // Reapplication cannot recapture the freshly seeded rows as a different before-image.
+    await pool.query(`DELETE FROM schema_migrations WHERE version='029_reconcile_declared_fleet.sql'`);
+    await applyMigrations(pool);
+    expect((await pool.query(
+      `SELECT 1 FROM fleet_reconciliation_runs WHERE active`,
+    )).rowCount).toBe(1);
+    expect((await pool.query(
+      `SELECT 1 FROM agents
+        WHERE (tenant_id,alias) IN (('Jhon','heraclito'),('Jhon','tales'),('Miguel','gaia'))`,
+    )).rowCount).toBe(3);
+
+    await runDown();
+    const afterRollback = await pool.query<{ alias: string; enabled: boolean }>(
+      `SELECT alias,enabled FROM agents
+        WHERE (tenant_id,alias) IN (('Jhon','heraclito'),('Jhon','tales'),('Miguel','gaia'))
+        ORDER BY alias`,
+    );
+    expect(afterRollback.rows).toEqual([
+      { alias: 'gaia', enabled: false },
+      { alias: 'heraclito', enabled: false },
+      { alias: 'tales', enabled: false },
+    ]);
+    await applyMigrations(pool);
+  });
+
   it('027 creates the exact notify policy idempotently and refuses pre-existing permission drift', async () => {
     const source = await readFile(notifyRolePath, 'utf8');
 
@@ -130,6 +208,9 @@ describe('029 reconciles desired catalog without inventing runtime presence', ()
         'Jhon','heraclito','openclaw','Heraclito',true,
         'agv2-jhon-heraclito-oc','claw','/home/claw','/home/claw/.openclaw/cauce-v3/heraclito'
       ) ON CONFLICT (tenant_id,alias) DO UPDATE SET enabled=true;
+      UPDATE agents
+         SET container_name='historical-placement-preserved'
+       WHERE tenant_id='Jhon' AND alias='heraclito';
       INSERT INTO memberships(tenant_id,room_id,alias,role,enabled)
       VALUES ('Jhon','grp.jhon','heraclito','agent',true)
       ON CONFLICT (tenant_id,room_id,alias) DO UPDATE SET enabled=true,role='agent';
@@ -137,6 +218,17 @@ describe('029 reconciles desired catalog without inventing runtime presence', ()
       VALUES
         ('Steven','kant','instance-kant',41,now()+interval '5 minutes'),
         ('Jhon','heraclito','instance-heraclito',73,now()+interval '5 minutes');
+      INSERT INTO agents(
+        tenant_id,alias,harness_id,display_name,enabled,
+        container_name,runtime_user,home_directory,state_directory
+      ) VALUES (
+        'Steven','rogue','codex','Rogue',true,
+        'rogue-container','dev','/home/dev','/home/dev/.local/state/cauce-v3/rogue'
+      ) ON CONFLICT (tenant_id,alias) DO UPDATE SET enabled=true;
+      INSERT INTO memberships(tenant_id,room_id,alias,role,enabled) VALUES
+        ('Steven','grp.steven','rogue','agent',true),
+        ('Steven','grp.steven','membership-only','agent',true)
+      ON CONFLICT (tenant_id,room_id,alias) DO UPDATE SET enabled=true,role='agent';
     `);
 
     const leasesBefore = await pool.query(
@@ -160,10 +252,12 @@ describe('029 reconciles desired catalog without inventing runtime presence', ()
     );
     expect(keyRows.rows).toEqual([
       expect.objectContaining({ alias: 'argos', harness_id: 'claude', container_name: 'ctrl-infra', enabled: true }),
-      expect.objectContaining({ alias: 'heraclito', enabled: false }),
       expect.objectContaining({
-        alias: 'kant', container_name: 'host:kratos', runtime_user: 'stev',
-        home_directory: '/home/stev', state_directory: '/home/stev/.local/state/cauce-v3/kant', enabled: true,
+        alias: 'heraclito', container_name: 'historical-placement-preserved', enabled: false,
+      }),
+      expect.objectContaining({
+        alias: 'kant', container_name: 'host:kratos', runtime_user: 'dev',
+        home_directory: '/home/dev', state_directory: '/home/dev/.local/state/cauce-v3/kant', enabled: true,
       }),
       expect.objectContaining({ alias: 'zeus', harness_id: 'claude', container_name: 'ws-zeus', enabled: true }),
     ]);
@@ -179,6 +273,16 @@ describe('029 reconciles desired catalog without inventing runtime presence', ()
     ]));
     expect(await pool.query(`SELECT 1 FROM agents WHERE alias='quota-collector'`)
       .then((result) => result.rowCount)).toBe(0);
+    expect((await pool.query<{ alias: string; enabled: boolean }>(
+      `SELECT alias,enabled FROM agents WHERE tenant_id='Steven' AND alias='rogue'`,
+    )).rows).toEqual([{ alias: 'rogue', enabled: false }]);
+    expect((await pool.query<{ alias: string; enabled: boolean }>(
+      `SELECT alias,enabled FROM memberships
+        WHERE tenant_id='Steven' AND alias IN ('rogue','membership-only') ORDER BY alias`,
+    )).rows).toEqual([
+      { alias: 'membership-only', enabled: false },
+      { alias: 'rogue', enabled: false },
+    ]);
 
     const leasesAfter = await pool.query(
       `SELECT tenant_id,alias,instance_id,epoch,lease_until,last_heartbeat_at,connected_at
@@ -194,6 +298,18 @@ describe('029 reconciles desired catalog without inventing runtime presence', ()
       `SELECT count(*)::text AS count FROM fleet_reconciliation_runs WHERE active`,
     );
     expect(activeRuns.rows[0]?.count).toBe('1');
+
+    // Removing only the migration ledger row must never turn a reapply into a drift-overwriter.
+    await pool.query(`UPDATE agents SET state_directory='/forward/reapply'
+                       WHERE tenant_id='Steven' AND alias='zeus'`);
+    await pool.query(`DELETE FROM schema_migrations WHERE version='029_reconcile_declared_fleet.sql'`);
+    await expect(applyMigrations(pool)).rejects.toThrow(/029 reapply refused: CAS conflicts/);
+    expect((await pool.query<{ state_directory: string }>(
+      `SELECT state_directory FROM agents WHERE tenant_id='Steven' AND alias='zeus'`,
+    )).rows).toEqual([{ state_directory: '/forward/reapply' }]);
+    await pool.query(`UPDATE agents SET state_directory='/home/dev/.local/state/cauce-v3/zeus'
+                       WHERE tenant_id='Steven' AND alias='zeus'`);
+    await applyMigrations(pool);
 
     // A forward writer makes rollback fail closed. The SAME transaction keeps the run/version
     // active and writes no partial rollback audit or data mutation.
@@ -225,6 +341,16 @@ describe('029 reconciles desired catalog without inventing runtime presence', ()
         WHERE tenant_id='Steven' AND alias='zeus'`,
     );
     await runDown();
+    expect((await pool.query<{ enabled: boolean }>(
+      `SELECT enabled FROM agents WHERE tenant_id='Steven' AND alias='rogue'`,
+    )).rows).toEqual([{ enabled: true }]);
+    expect((await pool.query<{ alias: string; enabled: boolean }>(
+      `SELECT alias,enabled FROM memberships
+        WHERE tenant_id='Steven' AND alias IN ('rogue','membership-only') ORDER BY alias`,
+    )).rows).toEqual([
+      { alias: 'membership-only', enabled: true },
+      { alias: 'rogue', enabled: true },
+    ]);
     const leasesAfterDown = await pool.query(
       `SELECT tenant_id,alias,instance_id,epoch,lease_until,last_heartbeat_at,connected_at
          FROM connection_leases ORDER BY tenant_id,alias`,
@@ -232,5 +358,121 @@ describe('029 reconciles desired catalog without inventing runtime presence', ()
     expect(leasesAfterDown.rows).toEqual(leasesBefore.rows);
 
     await applyMigrations(pool);
+  });
+
+  it('captures a writer that commits before the forward table barrier and restores it on down', async () => {
+    await runDown();
+    const source = await readFile(new URL('../migrations/029_reconcile_declared_fleet.sql', import.meta.url), 'utf8');
+    const writer = await pool.connect();
+    const migrator = await pool.connect();
+    let forward: Promise<unknown> | undefined;
+    try {
+      await writer.query('BEGIN');
+      await writer.query(
+        `UPDATE agents SET state_directory='/forward/concurrent'
+          WHERE tenant_id='Steven' AND alias='zeus'`,
+      );
+      await migrator.query('BEGIN');
+      const migratorPid = await migrator.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      forward = migrator.query(source);
+
+      let waiting = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const lock = await pool.query<{ waiting: boolean }>(
+          `SELECT EXISTS(
+             SELECT 1 FROM pg_locks
+              WHERE pid=$1 AND locktype='relation' AND NOT granted
+           ) AS waiting`,
+          [migratorPid.rows[0]!.pid],
+        );
+        if (lock.rows[0]?.waiting) {
+          waiting = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(true);
+
+      await writer.query('COMMIT');
+      await forward;
+      forward = undefined;
+      await migrator.query('COMMIT');
+
+      const captured = await pool.query<{ previous: { state_directory: string } }>(
+        `SELECT history.previous
+           FROM fleet_reconciliation_history history
+           JOIN fleet_reconciliation_runs run ON run.id=history.run_id AND run.active
+          WHERE history.entity='agent' AND history.tenant_id='Steven' AND history.alias='zeus'`,
+      );
+      expect(captured.rows[0]?.previous.state_directory).toBe('/forward/concurrent');
+      expect((await pool.query<{ state_directory: string }>(
+        `SELECT state_directory FROM agents WHERE tenant_id='Steven' AND alias='zeus'`,
+      )).rows).toEqual([{ state_directory: '/home/dev/.local/state/cauce-v3/zeus' }]);
+
+      await runDown();
+      expect((await pool.query<{ state_directory: string }>(
+        `SELECT state_directory FROM agents WHERE tenant_id='Steven' AND alias='zeus'`,
+      )).rows).toEqual([{ state_directory: '/forward/concurrent' }]);
+      await applyMigrations(pool);
+    } finally {
+      await writer.query('ROLLBACK').catch(() => undefined);
+      await migrator.query('ROLLBACK').catch(() => undefined);
+      if (forward !== undefined) await forward.catch(() => undefined);
+      writer.release();
+      migrator.release();
+    }
+  });
+
+  it('down029 refuses new agents and memberships missing from active-run history atomically', async () => {
+    const rollbackAuditBefore = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM audit_events WHERE action='fleet.rollback.029'`,
+    );
+    const assertRollbackMetadataUntouched = async (): Promise<void> => {
+      expect((await pool.query(
+        `SELECT 1 FROM schema_migrations WHERE version='029_reconcile_declared_fleet.sql'`,
+      )).rowCount).toBe(1);
+      expect((await pool.query(
+        `SELECT 1 FROM fleet_reconciliation_runs
+          WHERE active AND completed_at IS NOT NULL AND rolled_back_at IS NULL`,
+      )).rowCount).toBe(1);
+      expect((await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM audit_events WHERE action='fleet.rollback.029'`,
+      )).rows).toEqual(rollbackAuditBefore.rows);
+    };
+
+    await pool.query(`
+      INSERT INTO agents(
+        tenant_id,alias,harness_id,display_name,enabled,
+        container_name,runtime_user,home_directory,state_directory
+      ) VALUES (
+        'Steven','late-agent','codex','Late Agent',true,
+        'late-container','dev','/home/dev','/home/dev/.local/state/cauce-v3/late-agent'
+      );
+    `);
+    await expect(runDown()).rejects.toThrow(
+      /029 rollback refused: CAS conflicts \(agents 1, memberships 0\)/,
+    );
+    expect((await pool.query<{ enabled: boolean }>(
+      `SELECT enabled FROM agents WHERE tenant_id='Steven' AND alias='late-agent'`,
+    )).rows).toEqual([{ enabled: true }]);
+    await assertRollbackMetadataUntouched();
+    await pool.query(`DELETE FROM agents WHERE tenant_id='Steven' AND alias='late-agent'`);
+
+    await pool.query(`
+      INSERT INTO memberships(tenant_id,room_id,alias,role,enabled)
+      VALUES ('Steven','grp.steven','late-membership','agent',true);
+    `);
+    await expect(runDown()).rejects.toThrow(
+      /029 rollback refused: CAS conflicts \(agents 0, memberships 1\)/,
+    );
+    expect((await pool.query<{ enabled: boolean }>(
+      `SELECT enabled FROM memberships
+        WHERE tenant_id='Steven' AND room_id='grp.steven' AND alias='late-membership'`,
+    )).rows).toEqual([{ enabled: true }]);
+    await assertRollbackMetadataUntouched();
+    await pool.query(`
+      DELETE FROM memberships
+       WHERE tenant_id='Steven' AND room_id='grp.steven' AND alias='late-membership';
+    `);
   });
 });

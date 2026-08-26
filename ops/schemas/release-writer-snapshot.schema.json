@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cauce.invalid/schemas/release-writer-snapshot.schema.json",
+  "title": "Cauce V3 distributed release writer snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "aliases",
+    "composeWriters",
+    "kind",
+    "manifestSha256",
+    "schemaVersion",
+    "writersExpectedCandidate"
+  ],
+  "properties": {
+    "kind": { "const": "cauce-v3-release-writer-snapshot" },
+    "schemaVersion": { "const": 2 },
+    "manifestSha256": { "$ref": "#/$defs/digest" },
+    "writersExpectedCandidate": { "type": "integer", "minimum": 0 },
+    "composeWriters": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$" }
+    },
+    "aliases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/alias" }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "activeState",
+        "family",
+        "fragmentSha256",
+        "loadState",
+        "mainPid",
+        "name",
+        "scope",
+        "subState",
+        "unitFileState"
+      ],
+      "properties": {
+        "activeState": { "enum": ["active", "inactive"] },
+        "family": { "enum": ["host-native", "container-system", "container-rootless"] },
+        "fragmentSha256": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "loadState": { "enum": ["loaded", "not-found"] },
+        "mainPid": { "type": "integer", "minimum": 0 },
+        "name": {
+          "type": "string",
+          "pattern": "^cauce-v3-(alias|container)-[a-z][a-z0-9-]*\\.service$"
+        },
+        "scope": { "enum": ["system", "user"] },
+        "subState": { "type": "string", "pattern": "^[^\\u0000-\\u001f]*$" },
+        "unitFileState": { "enum": ["enabled", "disabled", "not-found", ""] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "loadState": { "const": "loaded" } }, "required": ["loadState"] },
+          "then": {
+            "properties": {
+              "fragmentSha256": { "$ref": "#/$defs/digest" },
+              "unitFileState": { "enum": ["enabled", "disabled"] }
+            }
+          },
+          "else": {
+            "properties": {
+              "activeState": { "const": "inactive" },
+              "fragmentSha256": { "type": "null" },
+              "unitFileState": { "enum": ["not-found", ""] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "activeState": { "const": "active" } }, "required": ["activeState"] },
+          "then": { "properties": { "mainPid": { "type": "integer", "minimum": 1 } } },
+          "else": { "properties": { "mainPid": { "const": 0 } } }
+        }
+      ]
+    },
+    "alias": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alias", "host", "leaseActive", "systemdUser", "tenant", "units"],
+      "properties": {
+        "alias": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "host": { "type": "string", "pattern": "^[a-z][a-z0-9.-]*$" },
+        "leaseActive": { "type": "boolean" },
+        "systemdUser": { "type": "string", "pattern": "^[a-z_][a-z0-9_-]*[$]?$" },
+        "tenant": { "type": "string", "minLength": 1, "pattern": "^[^\\u0000-\\u001f]+$" },
+        "units": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {
+              "allOf": [
+                { "$ref": "#/$defs/unit" },
+                {
+                  "properties": {
+                    "family": { "const": "host-native" },
+                    "scope": { "const": "system" },
+                    "name": { "pattern": "^cauce-v3-alias-[a-z][a-z0-9-]*\\.service$" }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/unit" },
+                {
+                  "properties": {
+                    "family": { "const": "container-system" },
+                    "scope": { "const": "system" },
+                    "name": { "pattern": "^cauce-v3-container-[a-z][a-z0-9-]*\\.service$" }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                { "$ref": "#/$defs/unit" },
+                {
+                  "properties": {
+                    "family": { "const": "container-rootless" },
+                    "scope": { "const": "user" },
+                    "name": { "pattern": "^cauce-v3-container-[a-z][a-z0-9-]*\\.service$" }
+                  }
+                }
+              ]
+            }
+          ],
+          "items": false
+        }
+      }
+    }
+  }
+}

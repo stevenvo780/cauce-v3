@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { conBloqueDePerfil } from "@cauce/protocol";
 import { DurableStore } from "../src/sdk/durable-store.js";
 import { HARNESS_DEFINITIONS } from "../src/harnesses/index.js";
 import { conBloqueGestionado } from "../src/harnesses/contexto-fijo.js";
@@ -210,6 +212,106 @@ test("CONTROL NEGATIVO: con la siembra APAGADA, el segundo turno sigue yendo ent
     assert.equal(existsSync(join(home, ".claude", "CLAUDE.md")), false, "escribió el fichero estando apagada");
   } finally {
     if (previo !== undefined) process.env.CAUCE_SEMBRAR_CONTEXTO = previo;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("la TUI compartida recibe el perfil vivo en cada turno sin reiniciar su proceso", async () => {
+  const home = mkdtempSync(join(tmpdir(), "cauce-home-shared-profile-"));
+  const estado = mkdtempSync(join(tmpdir(), "cauce-shared-profile-state-"));
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(join(home, ".claude"), { recursive: true });
+  const path = join(home, ".claude", "CLAUDE.md");
+  const profile = (purpose: string) => conBloqueDePerfil(
+    "# Manual humano\n",
+    `<!-- alias: Steven/zeus -->\n## Identidad y propósito\n\n${purpose}`,
+  );
+  writeFileSync(path, profile("perfil de la primera generación"), "utf8");
+
+  const { runner, visto } = runnerEspia();
+  const adapter = new HarnessAdapter({
+    definition: HARNESS_DEFINITIONS.claude,
+    runner,
+    store: await DurableStore.open(estado),
+    sharedSession: { alias: "zeus", harness: "claude", stateDirectory: estado },
+  });
+  const previousHome = process.env.HOME;
+  const previousConfig = process.env.CLAUDE_CONFIG_DIR;
+  process.env.HOME = home;
+  delete process.env.CLAUDE_CONFIG_DIR;
+  try {
+    const consumidos: Array<{ readonly documents: readonly { readonly path: string; readonly sha256: string }[] }> = [];
+    const run = () => adapter.execute({
+      prompt: "Revisa el perfil.",
+      context: contexto("zeus"),
+      timeoutMs: 30_000,
+      signal: AbortSignal.timeout(30_000),
+      onRuntimeProfileConsumed: (profile) => consumidos.push(profile),
+    });
+    await run();
+    writeFileSync(path, profile("perfil actualizado sin reiniciar la TUI"), "utf8");
+    await run();
+
+    assert.match(visto[0] ?? "", /BEGIN TRUSTED RUNTIME PROFILE/u);
+    assert.match(visto[0] ?? "", /perfil de la primera generación/u);
+    assert.match(visto[1] ?? "", /perfil actualizado sin reiniciar la TUI/u);
+    assert.doesNotMatch(visto[1] ?? "", /perfil de la primera generación/u);
+    assert.equal(consumidos.length, 2);
+    assert.equal(consumidos[0]?.documents[0]?.path, path);
+    assert.notEqual(consumidos[0]?.documents[0]?.sha256, consumidos[1]?.documents[0]?.sha256);
+    assert.equal(
+      consumidos[1]?.documents[0]?.sha256,
+      createHash("sha256").update(profile("perfil actualizado sin reiniciar la TUI"), "utf8").digest("hex"),
+    );
+    // Una TUI vieja no acredita el contrato fijo: éste sigue viajando completo.
+    assert.match(visto[1] ?? "", new RegExp(PRIMARY_DUTY_HEADER, "u"));
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = previousConfig;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(estado, { recursive: true, force: true });
+  }
+});
+
+test("CONTROL NEGATIVO: HOME compartido no inyecta el bloque de otro alias", async () => {
+  const home = mkdtempSync(join(tmpdir(), "cauce-home-shared-foreign-"));
+  try {
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", "CLAUDE.md"),
+      conBloqueDePerfil("", "<!-- alias: Steven/atlas -->\nperfil ajeno"),
+      "utf8",
+    );
+    const estado = mkdtempSync(join(tmpdir(), "cauce-shared-foreign-state-"));
+    const { runner, visto } = runnerEspia();
+    const adapter = new HarnessAdapter({
+      definition: HARNESS_DEFINITIONS.claude,
+      runner,
+      store: await DurableStore.open(estado),
+      sharedSession: { alias: "zeus", harness: "claude", stateDirectory: estado },
+    });
+    const previousHome = process.env.HOME;
+    const previousConfig = process.env.CLAUDE_CONFIG_DIR;
+    process.env.HOME = home;
+    delete process.env.CLAUDE_CONFIG_DIR;
+    try {
+      await adapter.execute({
+        prompt: "x", context: contexto("zeus"), timeoutMs: 30_000,
+        signal: AbortSignal.timeout(30_000),
+      });
+      assert.doesNotMatch(visto[0] ?? "", /perfil ajeno/u);
+      assert.doesNotMatch(visto[0] ?? "", /BEGIN TRUSTED RUNTIME PROFILE/u);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousConfig;
+      rmSync(estado, { recursive: true, force: true });
+    }
+  } finally {
     rmSync(home, { recursive: true, force: true });
   }
 });

@@ -18,14 +18,41 @@ Siempre a DB V3 vacía/aislada y con checksum:
 
 ```sh
 export NODE_ENV=production DATABASE_URL_FILE=/run/secrets/restore_database_url
-export RESTORE_EXPECT_DB=cauce_drill RESTORE_CONFIRM=restore:cauce_drill
-export ALLOW_REMOTE_RESTORE=yes
+export RESTORE_EXPECT_DB=cauce_drill
+export RESTORE_EXPECT_BACKUP_SHA256='sha256:<digest-autorizado-fuera-del-sidecar>'
+export RESTORE_TARGET_CLASS=isolated-non-production
+export RESTORE_NETWORK_ISOLATION=private-test-network-no-egress
+export RESTORE_CONFIRM=restore:cauce_drill:isolated-non-production
+export RESTORE_EVIDENCE_FILE=/ruta/privada/evidencia/restore-<id-unico>.json
 ops/scripts/restore.sh /ruta/cauce-YYYYmmddTHHMMSSZ.dump
 ```
 
-El script verifica DB destino, TLS, host remoto autorizado, contenido y SHA antes de `--clean --single-transaction`. `RESTORE_ALLOW_UNSIGNED=yes` solo existe para legado documentado y bloquea evidencia de release.
+La DB se crea vacía con nombre que contenga `_drill` o `_restore` y se marca de forma persistente
+antes de conectar el restore (reconectar después del `ALTER DATABASE`):
 
-Después: migrations, integridad/conteos, `stack-health.sh prod`, E2E real y alias gates sin iniciar consumers. Registrar inicio/fin, tamaño, edad del backup (RPO) y restore+health (RTO). Ensayo trimestral mínimo; un dump no restaurado no es evidencia.
+```sql
+ALTER DATABASE cauce_drill SET cauce.environment = 'restore-drill';
+```
+
+`DATABASE_URL_FILE` debe ser absoluto, de una sola línea, sin symlink/hardlinks y sin permisos para
+grupo/otros (`0400` o `0600`); `DATABASE_URL` directo se rechaza. El restore transforma la URL en
+archivos libpq/pgpass efímeros `0600`: ni la URL ni la contraseña entran en argv, entorno del cliente
+o salida. El script exige PostgreSQL 16, `sslmode=verify-full`, CA absoluta legible, TLS observado en
+`pg_stat_ssl`, el marker persistente, cero conexiones ajenas y cero objetos de usuario. Verifica un
+sidecar SHA privado con una única entrada exacta y además exige
+`RESTORE_EXPECT_BACKUP_SHA256` obtenido del ledger autorizado —el sidecar no se autentica a sí
+mismo—. Restaura sin `--clean`: un destino no vacío siempre falla,
+nunca se barre. Al terminar comprueba las ocho tablas núcleo y migraciones, y crea exclusivamente un
+JSON nuevo modo `0600` mediante `O_EXCL` en un directorio dueño/protegido. Reserva, escritura, fsync y
+cleanup revalidan inode de archivo y directorio; una sustitución de ruta nunca se sobreescribe ni se
+borra. No hay bypass para backups sin firma. La evidencia registra
+sólo hashes, clasificación del destino, la declaración explícita de red aislada y conteos técnicos,
+nunca URL, CA, filas ni secretos. Para loopback se admite `network-none`; un servidor remoto exige
+`private-test-network-no-egress` y esa declaración queda diferenciada de las observaciones directas.
+
+Después: migrations, `migration-integrity-gate.sh post`, integridad/conteos, `stack-health.sh prod`,
+E2E real y alias gates sin iniciar consumers. Registrar inicio/fin, tamaño, edad del backup (RPO) y
+restore+health (RTO). Ensayo trimestral mínimo; un dump no restaurado no es evidencia.
 
 ## Respaldo automático de host (agora-storage) — 2026-07-25
 
@@ -85,6 +112,12 @@ cat /var/log/cauce-v3-backup/status.json   # resumen máquina-legible de la últ
   `host-backup-monitor.sh`: relee `status.json` y falla si la última corrida
   no fue `overall=ok` o si tiene más de 30h (para atrapar un timer muerto o
   enmascarado, no solo una corrida que falló activamente).
+
+El monitor abre status, dump, sidecar y evidencia con `O_NOFOLLOW`, exige owner, modo privado y un
+solo link, y recalcula el SHA del dump real. `restore.evidence_file` debe ser exactamente
+`db.file + .restore.json`, su digest debe coincidir con esos bytes y su timestamp debe caer dentro
+de la corrida. En release, `CAUCE_BACKUP_STATUS_FILE` sólo se toma del `prod.env` autenticado: una
+variable ambiental no puede redirigir el gate a evidencia fabricada.
 - Ambos servicios declaran `OnFailure=cauce-v3-backup-alert@%n.service`, que
   escribe un `logger -p daemon.crit` (syslog/journal) identificando la unidad
   que falló. Esto es deliberadamente el mecanismo más simple posible (sin

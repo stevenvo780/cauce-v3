@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -212,8 +212,10 @@ it('🔴 ofrece «Ir al último» cuando el operador se fue hacia arriba, y no a
   expect(within(hilo).queryByRole('button', { name: /ir al último/i })).toBeNull();
 
   // El operador sube a leer: la caja deja de estar al final.
-  Object.defineProperty(caja, 'scrollTop', { configurable: true, value: 0, writable: true });
-  caja.dispatchEvent(new Event('scroll', { bubbles: false }));
+  act(() => {
+    Object.defineProperty(caja, 'scrollTop', { configurable: true, value: 0, writable: true });
+    caja.dispatchEvent(new Event('scroll', { bubbles: false }));
+  });
 
   expect(await within(hilo).findByRole('button', { name: /ir al último/i })).toBeInTheDocument();
 }, 25_000);

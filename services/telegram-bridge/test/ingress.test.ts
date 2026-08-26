@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AGENT_PRIORITY_CEILING, HUMAN_CHAT_PRIORITY, isHumanPriority, type PublishMessage
+  AGENT_PRIORITY_CEILING, buildPublishReceipt, HUMAN_CHAT_PRIORITY, isHumanPriority,
+  type PublishMessage,
 } from '@cauce/protocol';
-import type { CauceRepository, PublishResult } from '@cauce/store';
+import { StoreError, type CauceRepository, type PublishResult } from '@cauce/store';
 import { StoreTelegramIngress } from '../src/ingress.js';
 import type { TelegramIngressMessage } from '../src/types.js';
 
@@ -11,13 +12,13 @@ class RecordingRepository implements Pick<CauceRepository, 'publish'> {
 
   async publish(input: PublishMessage): Promise<PublishResult> {
     this.published.push(input);
-    return {
+    return buildPublishReceipt(input, {
       message_id: '11111111-1111-4111-8111-111111111111',
       delivery_ids: ['22222222-2222-4222-8222-222222222222'],
       duplicate: false,
       request_id: input.request_id,
-      trace_id: input.trace_id
-    };
+      trace_id: input.trace_id,
+    });
   }
 }
 
@@ -73,5 +74,14 @@ describe('Telegram ingress priority', () => {
     await new StoreTelegramIngress(repository).publish(ingressMessage());
 
     expect(repository.published[0]?.priority).toBeGreaterThan(AGENT_PRIORITY_CEILING);
+  });
+
+  it('fails closed on a hash conflict instead of treating message JSON as cursor authority', async () => {
+    const conflict = new StoreError('conflict', 'idempotency key reused with a different request');
+    const repository = {
+      async publish(): Promise<PublishResult> { throw conflict; }
+    };
+
+    await expect(new StoreTelegramIngress(repository).publish(ingressMessage())).rejects.toBe(conflict);
   });
 });

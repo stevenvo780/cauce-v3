@@ -22,7 +22,11 @@ describe('la respuesta degradada de /directive dice que no midió', () => {
     expect(r!.publicado).toBe(true); // la ruta SÍ existe: eso no es lo que está en duda
     expect(r!.medido).toBe(false);
     expect(r!.files).toBeNull();
-    expect(r!.memory).toBeNull();
+    expect(r!.memory).toEqual({
+      root: null,
+      error: 'unavailable',
+      reason: 'contenedor no medido todavía (sin hechos de entorno)',
+    });
     expect(r!.motivo).toMatch(/no medido/);
   });
 
@@ -49,17 +53,19 @@ describe('la respuesta degradada de /directive dice que no midió', () => {
 /*
  * La capa 3 tenía el MISMO defecto que la capa 2, en otro sitio: cuando el listado de memoria
  * fallaba, la ruta devolvía `{total: 0, entries: []}`, y ese cero llegaba a la pantalla como
- * «miró y este alias no tiene memoria escrita». Medido el 23-ago-2026, `zeus` tiene 18.212
- * ficheros en `~/.claude/projects` y `janus` 639: el cero no era de nadie.
+ * «miró y este alias no tiene memoria escrita». El contrato nuevo conserva el motivo mediante
+ * el discriminante `error`; `null` sólo queda como compatibilidad con gateways anteriores.
  */
-describe('la memoria que no se pudo listar es null, no un índice de cero', () => {
+describe('la memoria que no se pudo listar es un fallo discriminado, no un índice de cero', () => {
   it('el índice vacío y la ausencia de índice NO son el mismo valor', async () => {
     const fuente = await import('./console/agent-directive.routes.js');
     const codigo = fuente.construirRespuestaDegradada(undefined);
-    expect(codigo!.memory).toBeNull();
-    // Control negativo: un índice de cero legítimo sigue siendo representable y NO es null.
+    expect(codigo!.memory).toMatchObject({ error: 'unavailable', root: null });
+    expect(codigo!.memory).not.toHaveProperty('total');
+    expect(codigo!.memory).not.toHaveProperty('entries');
+    // Control negativo: un índice de cero legítimo sigue siendo representable y no tiene error.
     const indiceRealVacio = { root: '/home/dev/.claude/projects', total: 0, truncated: false, entries: [] };
-    expect(indiceRealVacio).not.toBeNull();
+    expect(indiceRealVacio).not.toHaveProperty('error');
     expect(indiceRealVacio.total).toBe(0);
   });
 });

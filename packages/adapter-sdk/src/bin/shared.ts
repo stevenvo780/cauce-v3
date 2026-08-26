@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
 import { DurableStore } from "../sdk/durable-store.js";
 import { SpawnCommandRunner } from "../sdk/process-runner.js";
@@ -178,6 +179,7 @@ function sharedSessionRunner(
     tmux,
     fallback,
     sleep,
+    quarantineFile: join(shared.stateDirectory, ".shared-session-quarantine"),
     onDegradation,
     onNotice: (detail: string): void => {
       logger({ event: "shared_session_resume", alias: shared.alias, error_message: detail });

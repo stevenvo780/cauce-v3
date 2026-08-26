@@ -122,13 +122,35 @@ describe('Telegram PostgreSQL crash recovery', () => {
     expect(dead.rows[0]).toMatchObject({ status: 'dead' });
     expect(dead.rows[0]?.last_error).toContain('automatic replay is disabled');
     expect(api.sends).toHaveLength(0);
+    const incident = (await database.pool.query<{ id: string; evidence_sha256: string }>(
+      `SELECT id,evidence_sha256 FROM outbox_dead_letters WHERE outbox_id=$1`, [EVENT_ID],
+    )).rows[0]!;
 
-    await expect(restartedRepository.manualReplayEffect(`${EVENT_ID}:0`, 'wrong-hash', 'ticket 42'))
-      .rejects.toThrow('payload changed');
+    await expect(restartedRepository.manualReplayEffect(
+      0, 'b'.repeat(64), 'ticket 42', 'Steven', 'kant', true, randomUUID(),
+      incident.id, incident.evidence_sha256, 0
+    ))
+      .rejects.toThrow('exactly one current effect');
     const replayed = await restartedRepository.manualReplayEffect(
-      `${EVENT_ID}:0`, ambiguous!.payload_hash, 'ticket 42'
+      0, ambiguous!.payload_hash, 'ticket 42', 'Steven', 'kant', true, randomUUID(),
+      incident.id, incident.evidence_sha256, 0
     );
     expect(replayed).toMatchObject({ state: 'prepared', replay_count: 1 });
+    const preservedIncident = await database.pool.query<{
+      resolved_at: Date | null; resolution_rule: string; disposition: string;
+    }>(
+      `SELECT resolved_at,resolution_rule,disposition
+       FROM outbox_dead_letters WHERE outbox_id=$1`,
+      [EVENT_ID]
+    );
+    expect(preservedIncident.rows[0]).toMatchObject({
+      resolution_rule: 'telegram_manual_replay_v1',
+      disposition: 'safe_retry'
+    });
+    expect(preservedIncident.rows[0]?.resolved_at).toBeInstanceOf(Date);
+    expect((await database.pool.query(
+      `SELECT 1 FROM telegram_manual_replays WHERE effect_id=$1`, [`${EVENT_ID}:0`]
+    )).rowCount).toBe(1);
 
     await new TelegramEgressWorker({
       repository: restartedRepository,
@@ -144,6 +166,9 @@ describe('Telegram PostgreSQL crash recovery', () => {
       `SELECT status FROM adapter_outbox WHERE id=$1`, [EVENT_ID]
     );
     expect(sent.rows[0]?.status).toBe('sent');
+    expect((await database.pool.query(
+      `SELECT 1 FROM outbox_dead_letters WHERE outbox_id=$1`, [EVENT_ID]
+    )).rowCount).toBe(1);
   });
 
   it('reconciles an expired final lease only when every remote effect is durably sent', async () => {

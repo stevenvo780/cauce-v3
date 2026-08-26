@@ -24,10 +24,15 @@ export interface Resource<T> {
   reload: () => Promise<RecargaResultado<T>>;
 }
 
+interface ResourceState<T> extends Omit<Resource<T>, 'reload'> {
+  /** Clave exacta a la que pertenecen `data` y `error`. Nunca se muestran bajo otra clave. */
+  key: string;
+}
+
 export function useResource<T>(key: string, loader: () => Promise<T>): Resource<T> {
   const loaderRef = useRef(loader);
   loaderRef.current = loader;
-  const [state, setState] = useState<Omit<Resource<T>, 'reload'>>({ loading: true });
+  const [state, setState] = useState<ResourceState<T>>({ key, loading: true });
   const mountedRef = useRef(false);
   const inFlightRef = useRef(false);
   const pendingRef = useRef(false);
@@ -37,6 +42,7 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
   const esperandoRef = useRef<Array<(resultado: RecargaResultado<T>) => void>>([]);
   // Quien ya fue adoptado por el fetch en curso: se le contesta cuando ese fetch termine.
   const adoptadosRef = useRef<Array<(resultado: RecargaResultado<T>) => void>>([]);
+  const claveRef = useRef(key);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -63,6 +69,7 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
     adoptadosRef.current = esperandoRef.current;
     esperandoRef.current = [];
     const generation = generationRef.current;
+    const runKey = claveRef.current;
     let resultado: RecargaResultado<T> | undefined;
     /**
      * 🔴 **Un reintento NO borra el fallo mientras no haya un solo dato que mostrar.**
@@ -79,24 +86,28 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
      * error es lo ÚNICO que se sabe, y esconderlo detrás de un spinner es afirmar «estoy
      * leyendo» cuando lo comprobado es «no se pudo leer».
      */
-    setState((current) => ({
-      ...current,
-      loading: true,
-      error: current.data === undefined ? current.error : undefined,
-    }));
+    setState((current) => current.key === runKey
+      ? {
+          ...current,
+          loading: true,
+          error: current.data === undefined ? current.error : undefined,
+        }
+      : { key: runKey, loading: true });
     void Promise.resolve().then(() => loaderRef.current()).then(
       (data) => {
         resultado = { data };
-        if (mountedRef.current && generation === generationRef.current) setState({ data, loading: false });
+        if (mountedRef.current && generation === generationRef.current) {
+          setState({ key: runKey, data, loading: false });
+        }
       },
       (cause: unknown) => {
         const error = cause instanceof Error ? cause : new Error('Error desconocido');
         resultado = { error };
-        if (mountedRef.current && generation === generationRef.current) setState((current) => ({
-          ...current,
-          error,
-          loading: false,
-        }));
+        if (mountedRef.current && generation === generationRef.current) setState((current) => (
+          current.key === runKey
+            ? { ...current, error, loading: false }
+            : { key: runKey, error, loading: false }
+        ));
       },
     ).finally(() => {
       inFlightRef.current = false;
@@ -140,14 +151,24 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
    * Es el mismo fallo de fondo que el resto de esta ronda: algo que se mide, se sabe y no llega
    * a decirse.
    */
-  const claveRef = useRef(key);
   useEffect(() => {
     if (claveRef.current !== key) {
       claveRef.current = key;
       generationRef.current += 1;
+      // El snapshot anterior pertenece a otra identidad. Se invalida aunque la lectura previa
+      // siga en vuelo: conservarlo permitiría rotular datos de A con la cabecera de B.
+      setState({ key, loading: true });
     }
     void queueReload();
   }, [key, queueReload]);
 
-  return { ...state, reload: queueReload };
+  // Los efectos corren después del render. Este guard evita incluso ese primer frame en el que
+  // React ya entregó la nueva `key` pero todavía no ejecutó la invalidación de arriba.
+  if (state.key !== key) return { loading: true, reload: queueReload };
+  return {
+    data: state.data,
+    error: state.error,
+    loading: state.loading,
+    reload: queueReload,
+  };
 }

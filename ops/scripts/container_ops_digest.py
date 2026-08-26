@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import pathlib
+import subprocess
 import sys
 
 
@@ -70,6 +71,7 @@ OPERATIONAL_TREES = (
     "harness",
     "guardias",
     "openclaw-gateway",
+    "rollback-bridge",
     "cli",
     "generated/systemd",
 )
@@ -79,8 +81,10 @@ OPERATIONAL_ROOT_FILES = (
     "INSTALLATION.md",
     "GATE_CONTRACT.md",
     "compose.authentic.yaml",
+    "compose.rollback-bridge.yaml",
     "compose.test.yaml",
     "container-aliases.json",
+    "hermes-runtime.json",
     "config/prod.env.example",
     "config/host-backup.env.example",
 )
@@ -91,14 +95,55 @@ def generated_logical_path(path: pathlib.Path, generated: pathlib.Path, *, rootl
     return f"{prefix}/{path.relative_to(generated).as_posix()}"
 
 
+def tracked_tree_files(root: pathlib.Path) -> set[pathlib.Path] | None:
+    """Return release-candidate files below *root* when this is a Git checkout.
+
+    Release contexts are produced with ``git archive`` and intentionally do not contain ``.git``.
+    There the physical tree is already the committed tree and recursive discovery is correct. In
+    an operator checkout, include tracked plus non-ignored new source so a newly added operational
+    script cannot evade the digest before its commit. Ignored backups/editor files remain outside
+    the domain, preserving parity with the eventual archive.
+    """
+    try:
+        probe = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if probe.returncode != 0:
+        return None
+    repository = pathlib.Path(probe.stdout.strip()).resolve()
+    try:
+        prefix = root.resolve().relative_to(repository).as_posix()
+    except ValueError:
+        return None
+    listed = subprocess.run(
+        ["git", "-C", str(repository), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", prefix],
+        check=False,
+        capture_output=True,
+    )
+    if listed.returncode != 0:
+        raise ValueError("could not enumerate tracked operational inputs")
+    return {
+        (repository / entry.decode("utf-8")).resolve()
+        for entry in listed.stdout.split(b"\0")
+        if entry
+    }
+
+
 def operational_files(root: pathlib.Path, generated: pathlib.Path, *, rootless: bool = False) -> list[pathlib.Path]:
     files = [root / relative for relative in (*STATIC_INPUTS, *OPERATIONAL_ROOT_FILES)]
+    tracked = tracked_tree_files(root)
     for relative in OPERATIONAL_TREES:
         tree = root / relative
         files.extend(
             path for path in tree.rglob("*")
             if path.is_file()
             and not path.is_symlink()
+            and (tracked is None or path.resolve() in tracked)
             and "__pycache__" not in path.parts
             and ".pytest_cache" not in path.parts
             and path.suffix not in {".pyc", ".pyo"}

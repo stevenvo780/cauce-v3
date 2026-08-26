@@ -66,9 +66,11 @@ function terminalConfig(overrides: Partial<TerminalConfig> = {}): TerminalConfig
     wsPath: '/v3/console/terminal/ws',
     ticketKey: Buffer.alloc(32),
     relayToken: 'r'.repeat(48),
+    relayInstanceIds: new Set(['a'.repeat(64)]),
     grantsFile: '/run/cauce-terminal/grants.json',
     ticketTtlSeconds: 30,
     sessionTtlSeconds: 900,
+    claimLeaseSeconds: 150,
     maxSessionsPerOperator: 2,
     operatorHeader: 'x-cauce-operator',
     operators: new Set<string>(),
@@ -111,15 +113,18 @@ describe('terminal configuration', () => {
     const config = await loadTerminalConfig({
       CAUCE_TERMINAL_ENABLED: '1',
       CAUCE_TERMINAL_TICKET_KEY_FILE: keyFile,
-      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile
+      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile,
+      CAUCE_TERMINAL_RELAY_INSTANCE_ID: 'a'.repeat(64),
     });
     expect(config).toMatchObject({
       wsPath: '/v3/console/terminal/ws',
       grantsFile: '/run/cauce-terminal/grants.json',
       ticketTtlSeconds: 30,
       sessionTtlSeconds: 900,
+      claimLeaseSeconds: 150,
       maxSessionsPerOperator: 2,
-      operatorHeader: 'x-cauce-operator'
+      operatorHeader: 'x-cauce-operator',
+      relayInstanceIds: new Set(['a'.repeat(64)]),
     });
     expect(config?.ticketKey.toString('hex')).toBe('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f');
     // No enrolled operators means nobody is ever attributed, hence no cross-tenant terminal.
@@ -129,7 +134,8 @@ describe('terminal configuration', () => {
     const hex = await loadTerminalConfig({
       CAUCE_TERMINAL_ENABLED: '1',
       CAUCE_TERMINAL_TICKET_KEY_FILE: hexFile,
-      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile
+      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile,
+      CAUCE_TERMINAL_RELAY_INSTANCE_ID: 'a'.repeat(64),
     });
     expect(hex?.ticketKey.equals(config!.ticketKey)).toBe(true);
   });
@@ -144,14 +150,37 @@ describe('terminal configuration', () => {
     })).rejects.toThrow(/at least 32 characters/);
     await expect(loadTerminalConfig({
       CAUCE_TERMINAL_ENABLED: '1', CAUCE_TERMINAL_TICKET_KEY_FILE: keyFile,
-      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile, CAUCE_TERMINAL_TICKET_TTL_SECONDS: '600'
+      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile, CAUCE_TERMINAL_TICKET_TTL_SECONDS: '600',
+      CAUCE_TERMINAL_RELAY_INSTANCE_ID: 'a'.repeat(64),
     })).rejects.toThrow(/between 1 and 120/);
     await expect(loadTerminalConfig({
       CAUCE_TERMINAL_ENABLED: '1', CAUCE_TERMINAL_TICKET_KEY_FILE: keyFile,
-      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile, CAUCE_TERMINAL_SESSION_TTL_SECONDS: '99999'
+      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile, CAUCE_TERMINAL_SESSION_TTL_SECONDS: '99999',
+      CAUCE_TERMINAL_RELAY_INSTANCE_ID: 'a'.repeat(64),
     })).rejects.toThrow(/between 1 and 3600/);
+    await expect(loadTerminalConfig({
+      CAUCE_TERMINAL_ENABLED: '1', CAUCE_TERMINAL_TICKET_KEY_FILE: keyFile,
+      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile, CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '130',
+      CAUCE_TERMINAL_RELAY_INSTANCE_ID: 'a'.repeat(64),
+    })).rejects.toThrow(/between 131 and 300/);
     await expect(loadTerminalConfig({ CAUCE_TERMINAL_ENABLED: '1' }))
       .rejects.toThrow(/CAUCE_TERMINAL_TICKET_KEY_FILE is required/);
+  });
+
+  it('requires an exact lowercase relay certificate digest and rejects duplicate mesh entries', async () => {
+    const { keyFile, tokenFile } = await fixtures();
+    const base = {
+      CAUCE_TERMINAL_ENABLED: '1',
+      CAUCE_TERMINAL_TICKET_KEY_FILE: keyFile,
+      CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile,
+    };
+    await expect(loadTerminalConfig(base)).rejects.toThrow(/RELAY_INSTANCE_ID is required/);
+    await expect(loadTerminalConfig({
+      ...base, CAUCE_TERMINAL_RELAY_INSTANCE_ID: 'A'.repeat(64),
+    })).rejects.toThrow(/64 lowercase hexadecimal/);
+    await expect(loadTerminalConfig({
+      ...base, CAUCE_TERMINAL_RELAY_INSTANCE_IDS: `${'a'.repeat(64)},${'a'.repeat(64)}`,
+    })).rejects.toThrow(/must not contain duplicates/);
   });
 
   it('announces the capability that unblocks ultimate-terminal.connect in the console', () => {

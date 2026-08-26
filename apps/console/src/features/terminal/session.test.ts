@@ -10,7 +10,7 @@ import {
 
 function agent(tenantId: string, alias: string): FleetAgent {
   return {
-    id: `${tenantId.toLocaleLowerCase()}:${alias.toLocaleLowerCase()}`,
+    id: `${tenantId}:${alias}`,
     tenantId,
     alias,
     roomIds: [],
@@ -18,6 +18,31 @@ function agent(tenantId: string, alias: string): FleetAgent {
     leaseState: 'unknown',
   };
 }
+
+it('does not borrow topology or transcripts from a tenant that differs only by case', () => {
+  const target = agent('steven', 'operator');
+  const topology = {
+    tenants: [
+      { id: 'Steven', rooms: [{ id: 'grp.upper', members: [
+        { alias: 'kant', enabled: true }, { alias: 'operator', enabled: true },
+      ] }] },
+      { id: 'steven', rooms: [{ id: 'grp.lower', members: [{ alias: 'operator', enabled: true }] }] },
+    ],
+    acl_edges: [],
+  };
+
+  expect(operatorRouteForAgent(topology, { subject: 'Steven:kant' }, target)).toMatchObject({
+    allowed: false,
+    sourceRoomIds: ['grp.upper'],
+  });
+
+  const session: OperatorSession = {
+    id: 'session:steven:operator', agent: target, sourceRoomId: 'grp.upper', openedAt: '', mode: 'transcript',
+  };
+  expect(transcriptForSession({ items: [{
+    message_id: 'wrong-case', tenant_id: 'Steven', actor_alias: 'operator', deliveries: [],
+  }] }, session)).toEqual([]);
+});
 
 it('publishes cross-tenant only from an operator room allowed by directed ACL', () => {
   const target = agent('Miguel', 'kratos');
@@ -95,5 +120,4 @@ it('cuenta atrás hasta el vencimiento del permiso y dice «sin dato» en vez de
   expect(formatCountdown(95)).toBe('1:35');
   expect(formatCountdown(5)).toBe('0:05');
 });
-
 

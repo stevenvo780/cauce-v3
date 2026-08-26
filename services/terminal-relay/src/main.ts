@@ -4,7 +4,9 @@ import { BrowserLeg, createBrowserHttpsServer } from './browser-leg.js';
 import { loadRelayConfig } from './config.js';
 import { HttpsTerminalGatewayClient } from './gateway-client.js';
 import { setupGovernanceRelay } from './governance-relay.js';
+import { createRelayHealthServer, RelayHealthState } from './health.js';
 import { errorLabel, logEvent } from './log.js';
+import { relayProcessIdentity } from './relay-identity.js';
 import { CLOSE_CODES, SessionManager } from './sessions.js';
 
 /**
@@ -29,30 +31,60 @@ const [cert, key, clientCa, agentCa] = await Promise.all([
   readFile(config.agentCaFile)
 ]);
 
-// La identidad de cliente hacia el gateway es opcional (sólo hace falta con CAUCE_AUTH_PROVIDER=mtls),
-// pero si está configurada se lee ACÁ, al arrancar: así el relay muere de entrada si el material no
-// se puede leer, en vez de levantar sano y descubrirlo cuando la primera revalidación no llegue.
+// La identidad mTLS hacia el gateway es parte del fence multi-relay. Se lee al arrancar para que
+// el proceso falle antes de publicar readiness si el certificado no existe o no se puede derivar.
 const [gatewayClientCert, gatewayClientKey] = await Promise.all([
-  config.gatewayClientCertFile === undefined ? undefined : readFile(config.gatewayClientCertFile),
-  config.gatewayClientKeyFile === undefined ? undefined : readFile(config.gatewayClientKeyFile)
+  readFile(config.gatewayClientCertFile),
+  readFile(config.gatewayClientKeyFile)
 ]);
+const relayIdentity = relayProcessIdentity(gatewayClientCert);
+if (relayIdentity.relayInstanceId !== config.expectedRelayInstanceId) {
+  throw new Error('terminal relay mTLS certificate does not match the release-manifest instance id');
+}
 
 const gateway = new HttpsTerminalGatewayClient({
   gatewayUrl: config.gatewayUrl,
   tokenFile: config.tokenFile,
-  ...(gatewayClientCert === undefined ? {} : { clientCert: gatewayClientCert }),
-  ...(gatewayClientKey === undefined ? {} : { clientKey: gatewayClientKey })
+  clientCert: gatewayClientCert,
+  clientKey: gatewayClientKey,
+  identity: relayIdentity,
 });
 const sessions = new SessionManager({ gateway, limits: config, closeSpoolFile: config.closeSpoolFile });
 
 // Presence is republished as soon as the connected set changes, debounced so a fleet-wide
 // reconnect is one publish: the console must not show "no PTY agent" for an agent that is up.
 let presenceDebounce: NodeJS.Timeout | undefined;
+let presencePublishing = false;
+let presencePublishPending = false;
+const healthState = new RelayHealthState({
+  listenersReady: () => agentServer.listening && browserServer.listening,
+  presenceMaxStaleMs: config.presenceMaxStaleMs,
+});
+const publishPresence = async (): Promise<void> => {
+  if (presencePublishing) {
+    presencePublishPending = true;
+    return;
+  }
+  presencePublishing = true;
+  try {
+    do {
+      presencePublishPending = false;
+      try {
+        await gateway.publishPresence(agents.presence());
+        healthState.presenceAccepted();
+      } catch {
+        healthState.presenceFailed();
+      }
+    } while (presencePublishPending);
+  } finally {
+    presencePublishing = false;
+  }
+};
 const announcePresence = (): void => {
   if (presenceDebounce !== undefined) return;
   presenceDebounce = setTimeout(() => {
     presenceDebounce = undefined;
-    void gateway.publishPresence(agents.presence());
+    void publishPresence();
   }, 100);
   presenceDebounce.unref?.();
 };
@@ -66,11 +98,13 @@ const agents = new AgentLeg({
 const browserServer = createBrowserHttpsServer({ cert, key, clientCa });
 const browser = new BrowserLeg({
   server: browserServer,
+  relayInstanceId: relayIdentity.relayInstanceId,
   consoleCommonNames: config.consoleCommonNames,
   gateway,
   agents,
   sessions
 });
+const healthServer = createRelayHealthServer(healthState);
 // La lectura de gobierno comparte el listener del lado navegador: es HTTP normal, no un WebSocket,
 // así que convive con `BrowserLeg` (que sólo escucha `upgrade`) sin pisarle nada. El token es el
 // MISMO fichero con el que el relay se autentica contra el gateway, sólo que en el sentido
@@ -93,24 +127,35 @@ agentServer.listen(config.agentPort, '0.0.0.0', () => {
 browserServer.listen(config.browserPort, '0.0.0.0', () => {
   logEvent('terminal_relay_browser_listening', { port: config.browserPort });
 });
+healthServer.on('error', (error: unknown) => {
+  logEvent('terminal_relay_health_server_error', { error: errorLabel(error) });
+});
+healthServer.listen(config.healthPort, '127.0.0.1', () => {
+  logEvent('terminal_relay_health_listening', { port: config.healthPort });
+});
 
 // Presence is how the gateway learns which alias has a terminal at all; it is not a heartbeat
 // of this process, so a failed publish is logged and retried on the next tick.
 const presence = setInterval(() => {
-  void gateway.publishPresence(agents.presence());
+  void publishPresence();
 }, PRESENCE_INTERVAL_MS);
-void gateway.publishPresence(agents.presence());
+void publishPresence();
 
 let stopping = false;
 const stop = (signal: string): void => {
   if (stopping) return;
   stopping = true;
+  healthState.beginShutdown();
   logEvent('terminal_relay_stopping', { signal });
   clearInterval(presence);
   if (presenceDebounce !== undefined) clearTimeout(presenceDebounce);
   sessions.closeAll(CLOSE_CODES.going_away, 'relay_shutdown');
   void sessions.flush()
-    .then(() => Promise.all([browser.close(), agents.close()]))
+    .then(() => Promise.all([
+      browser.close(),
+      agents.close(),
+      new Promise<void>((resolve) => healthServer.close(() => resolve())),
+    ]))
     .catch((error: unknown) => logEvent('terminal_relay_shutdown_failed', { error: errorLabel(error) }))
     .finally(() => process.exit(0));
 };

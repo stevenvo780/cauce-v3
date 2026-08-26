@@ -31,6 +31,9 @@ export const MERGED_MARK = "⚠ CAUCE — EL TURNO SE FUNDIÓ CON OTRO EN CURSO"
 const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> = {
   session_absent: "no hay sesión compartida abierta para este alias",
   tui_absent: "la sesión existe pero no hay una TUI viva adentro",
+  session_alias_mismatch: "la sesión tmux declara un alias distinto",
+  session_harness_mismatch: "la sesión tmux pertenece a otro harness",
+  session_identity_unverified: "la identidad alias+harness de la sesión no pudo acreditarse",
   input_busy: "la caja de entrada quedó ocupada con texto a medio escribir",
   modal_blocking: "la TUI está esperando que el dueño conteste un diálogo",
   handshake_failed: "el mecanismo de sesión compartida no respondió",
@@ -104,10 +107,16 @@ export function degradationNotice(
       context.consequence,
     ].join("\n");
   }
+  const identityFailure = degradation.reason === "session_alias_mismatch"
+    || degradation.reason === "session_harness_mismatch"
+    || degradation.reason === "session_identity_unverified";
   const remedio = degradation.reason === "modal_blocking"
     ? `Para restablecerlo: contestá el diálogo abierto en el panel de \`cauce ${alias}\``
       + ` (mecanismo: ${mecanismo}).`
-    : `Para restablecerlo: abrí \`cauce ${alias}\` (mecanismo: ${mecanismo}).`;
+    : identityFailure
+      ? `Para restablecerlo: revisá y drená/archivá la sesión incompatible de \`cauce ${alias}\``
+        + ` antes de crear la correcta; el adaptador la conservó intacta (mecanismo: ${mecanismo}).`
+      : `Para restablecerlo: abrí \`cauce ${alias}\` (mecanismo: ${mecanismo}).`;
   return [
     DEGRADED_MARK,
     `Este turno NO pasó por la terminal de ${alias}: ${REASON_TEXT[degradation.reason]}`

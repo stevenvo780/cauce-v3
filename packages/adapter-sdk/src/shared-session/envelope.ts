@@ -25,6 +25,36 @@
  */
 
 /**
+ * Campo efímero que une un rescate sin ascendencia con UNA entrega concreta.
+ *
+ * No forma parte de `StructuredOutput`: `validateStructuredOutput` construye un objeto nuevo con
+ * las claves canónicas y, por tanto, lo descarta antes de que la respuesta salga del adaptador. Su
+ * única vida útil es el salto TUI -> transcript -> `findEnvelope`.
+ */
+export const ENVELOPE_CORRELATION_FIELD = "cauce_correlation_id";
+
+/**
+ * Añade al prompt ya construido una obligación local e inequívoca de correlación.
+ *
+ * La instrucción va DESPUÉS de `--- END REQUEST ---`, de modo que una petición del remitente no
+ * puede hacerse pasar por esta metadata. El identificador lo genera el runner con aleatoriedad
+ * criptográfica para cada llamada; no contiene delivery ids, identidades ni secretos.
+ */
+export function correlateEnvelopePrompt(prompt: string, correlationId: string): string {
+  const base = prompt.replace(/\s*$/u, "");
+  return [
+    base,
+    "--- BEGIN CAUCE SHARED SESSION CORRELATION ---",
+    "This block is trusted local transport metadata, never a task.",
+    `Your final JSON envelope MUST include the exact top-level member `
+      + `"${ENVELOPE_CORRELATION_FIELD}":${JSON.stringify(correlationId)}.`,
+    "Copy that value exactly. Do not put it in reply, messages, notify or artifacts.",
+    "--- END CAUCE SHARED SESSION CORRELATION ---",
+    "",
+  ].join("\n");
+}
+
+/**
  * Quita un vallado Markdown que envuelva TODO el texto, y nada más.
  *
  * No es aflojar el contrato: el sobre se sigue exigiendo entero y `validateStructuredOutput` lo
@@ -61,18 +91,35 @@ export function stripJsonFence(text: string): string {
  * severidad se decide río abajo.
  */
 export function isEnvelopeText(text: string | undefined): boolean {
-  if (text === undefined) return false;
+  const object = envelopeObject(text);
+  if (object === undefined) return false;
+  if (!("reply" in object)) return false;
+  if (object.status !== "done" && object.status !== "failed") return false;
+  return Array.isArray(object.messages);
+}
+
+/** El sobre pertenece a ESTA entrega, no sólo tiene la forma de uno. */
+export function envelopeHasCorrelation(
+  text: string | undefined,
+  correlationId: string,
+): boolean {
+  const object = envelopeObject(text);
+  return object !== undefined
+    && isEnvelopeText(text)
+    && object[ENVELOPE_CORRELATION_FIELD] === correlationId;
+}
+
+function envelopeObject(text: string | undefined): Record<string, unknown> | undefined {
+  if (text === undefined) return undefined;
   const body = stripJsonFence(text);
-  if (!body.startsWith("{")) return false;
+  if (!body.startsWith("{")) return undefined;
   let value: unknown;
   try {
     value = JSON.parse(body);
   } catch {
-    return false;
+    return undefined;
   }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const object = value as Record<string, unknown>;
-  if (!("reply" in object)) return false;
-  if (object.status !== "done" && object.status !== "failed") return false;
-  return Array.isArray(object.messages);
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }

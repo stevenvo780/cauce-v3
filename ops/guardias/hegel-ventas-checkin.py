@@ -49,7 +49,7 @@ CERT_FILE = os.path.join(PKI_DIR, "agent-hegel.crt")
 KEY_FILE = os.path.join(PKI_DIR, "agent-hegel.key")
 
 # EXACTO — es el prompt que hegel ejecuta. No editar sin intención.
-MENSAJE = "Check-in de ventas con Jhon: leer ventas/CRM.md y ventas/JHON.md y enviar a Jhon (Telegram 7084929277) un repaso corto y proactivo (saludo, en qué anda hoy, acciones urgentes del pipeline, 1-2 preguntas para llenar el CRM) y volcar la respuesta al CRM."
+MENSAJE = "Check-in de ventas con Jhon: leer ventas/CRM.md y ventas/JHON.md y enviar a Jhon por su canal directo ya autorizado un repaso corto y proactivo (saludo, en qué anda hoy, acciones urgentes del pipeline, 2-3 preguntas para llenar el CRM) y volcar la respuesta al CRM."
 
 
 def main() -> int:

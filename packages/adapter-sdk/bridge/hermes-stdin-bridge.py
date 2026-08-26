@@ -6,6 +6,8 @@ import contextlib
 import inspect
 import io
 import json
+import os
+import pathlib
 import re
 import sys
 
@@ -80,6 +82,31 @@ def final_value(captured: str, returned):
 
 def main() -> int:
     prompt = read_prompt()
+    # Hermes contiene imports absolutos legacy (por ejemplo `from utils import ...`). El proceso
+    # corre dentro del workspace del agente, donde un `utils/` ajeno puede eclipsar silenciosamente
+    # al módulo del runtime. El supervisor acredita un checkout Git exacto y pasa su ruta no
+    # secreta; ponerla primero reproduce la resolución soportada por el CLI oficial.
+    source_value = os.environ.get("CAUCE_HERMES_SOURCE_DIR")
+    runtime_value = os.environ.get("CAUCE_HERMES_RUNTIME_DIR")
+    if (source_value is None) != (runtime_value is None):
+        raise ValueError("incomplete Hermes runtime accreditation")
+    if source_value and runtime_value:
+        runtime_dir = pathlib.Path(runtime_value)
+        source_dir = pathlib.Path(source_value)
+        if (
+            not runtime_dir.is_absolute()
+            or runtime_dir.resolve() != runtime_dir
+            or not source_dir.is_absolute()
+            or source_dir.resolve() != source_dir
+            or source_dir != runtime_dir / "source"
+            or ".." in runtime_dir.parts
+        ):
+            raise ValueError("invalid Hermes source directory")
+        for checked in (runtime_dir, source_dir):
+            details = checked.stat(follow_symlinks=False)
+            if not checked.is_dir() or details.st_uid != 0 or details.st_mode & 0o022:
+                raise ValueError("untrusted Hermes runtime directory")
+        sys.path.insert(0, str(source_dir))
     from hermes_cli.oneshot import run_oneshot
 
     # Desde la linea siguiente el turno PUEDE tener efectos. La marca sale aqui y no antes ni

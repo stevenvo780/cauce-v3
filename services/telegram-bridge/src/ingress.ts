@@ -16,7 +16,7 @@ function stableUuid(namespace: string): string {
 export class StoreTelegramIngress implements TelegramIngress {
   constructor(private readonly repository: Pick<CauceRepository, 'publish'>) {}
 
-  async publish(message: TelegramIngressMessage): Promise<{ duplicate: boolean }> {
+  async publish(message: TelegramIngressMessage): ReturnType<TelegramIngress['publish']> {
     const correlation = `telegram:${message.bot_id}:${message.update_id}`;
     const command: PublishMessage = {
       version: PROTOCOL_VERSION,

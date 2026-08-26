@@ -66,8 +66,32 @@ describe('medicionDeCapa — no se afirma una ausencia que nadie midió', () => 
     expect(medicionDeCapa({ data: medido, loading: false }, 'memory')).toBe('miro-y-no-hay');
   });
 
+  it('un fallo discriminado de memoria es «no se miró», nunca vacío', () => {
+    const fallido = {
+      publicado: true, medido: true, files: [],
+      memory: { error: 'timeout' as const, reason: 'el agente no contestó' },
+    };
+    expect(medicionDeCapa({ data: fallido, loading: false }, 'memory')).toBe('no-se-miro');
+  });
+
+  it('un barrido cortado con total desconocido acredita datos como límite inferior', () => {
+    const parcial = {
+      publicado: true, medido: true, files: [],
+      memory: { total: null, observed_at_least: 5_000, truncated: true, entries: [] },
+    };
+    expect(medicionDeCapa({ data: parcial, loading: false }, 'memory')).toBe('hay-datos');
+  });
+
   it('con ficheros de verdad es «hay-datos»', () => {
     const medido = { publicado: true, medido: true, files: [{ path: '/home/dev/.claude/CLAUDE.md', bytes: 10_733 }] };
+    expect(medicionDeCapa({ data: medido, loading: false }, 'files')).toBe('hay-datos');
+  });
+
+  it('un fallo de fichero discriminado es visible, nunca «miró y no hay»', () => {
+    const medido = {
+      publicado: true, medido: true,
+      files: [{ path: '/workspace/CLAUDE.md', error: 'timeout', reason: 'sin respuesta' }],
+    };
     expect(medicionDeCapa({ data: medido, loading: false }, 'files')).toBe('hay-datos');
   });
 

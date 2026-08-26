@@ -14,3 +14,7 @@ allowBuilds:
   msw: true
   protobufjs: true
   ssh2: true
+overrides:
+  # dockerode 4 still declares uuid 10, but the bounds-check fix exists only in >=11.1.1.
+  # Testcontainers exercises this parent edge in the release QA, so the major override is pinned.
+  "dockerode>uuid": 11.1.1

@@ -25,6 +25,16 @@ env_value() {
   line=${lines[0]}; value=${line#*=}; value=${value%$'\r'}
   printf '%s\n' "$value"
 }
+
+file_env_value() {
+  local key=$1 fallback=$2 line value
+  local -a lines=()
+  mapfile -t lines < <(sed -n "/^${key}=/p" "$env_file")
+  ((${#lines[@]} <= 1)) || { printf 'release gate failed: duplicate %s in env file\n' "$key" >&2; return 2; }
+  if ((${#lines[@]} == 0)); then printf '%s\n' "$fallback"; return; fi
+  line=${lines[0]}; value=${line#*=}; value=${value%$'\r'}
+  printf '%s\n' "$value"
+}
 # Resolve through the same entry point used by deploy and rollback.  The env
 # file is parsed by Docker Compose as data (never sourced as shell code), and
 # compose-files.sh authenticates the complete ordered override set first.
@@ -63,7 +73,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/source-hygiene.py"
 python3 "$ROOT/scripts/validate-terminal-release.py" --compose-json "$compose_json_file"
 CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/migration-integrity-gate.sh" pre
 CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/reconcile-stale-console-outbox.sh" pre
-backup_status=$(env_value CAUCE_BACKUP_STATUS_FILE /var/log/cauce-v3-backup/status.json)
+# This selector is evidence input, not an operator convenience override.  Read
+# it only from the authenticated production env file so an ambient process env
+# cannot redirect the release gate at a fabricated status/evidence pair.
+backup_status=$(file_env_value CAUCE_BACKUP_STATUS_FILE /var/log/cauce-v3-backup/status.json)
 STATUS_FILE="$backup_status" MAX_AGE_HOURS=30 REQUIRE_RETENTION_PRESERVED=1 \
   "$ROOT/scripts/host-backup-monitor.sh"
 tmp_units=$(mktemp -d)
@@ -94,11 +107,77 @@ node "$ROOT/tests/container-ops-evidence.test.mjs"
 node "$ROOT/tests/source-digest-domains.test.mjs"
 for dir in compose-authentic release; do "$ROOT/scripts/verify-manifest.sh" "$ROOT/artifacts/$dir"; done
 python3 "$ROOT/scripts/validate-release-evidence.py"
-python3 "$ROOT/scripts/release-candidate.py"
+# `pre` proves that the inherited schema is admissible.  A general release is
+# not admissible until `post` proves every migration shipped by the candidate is
+# applied and atomically ledgered; release-candidate consumes both artifacts.
+CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/migration-integrity-gate.sh" post
+# Canonical readiness is an executable product gate, not an inference from
+# Compose "running" or from the fleet lease matrix.  stack-health exercises the
+# real in-container readiness paths (including PostgreSQL TLS), Docker health for
+# terminal relay, and the appropriately strict fleet mode.
+health_args=(prod)
+[[ $fleet_mode == final ]] || health_args+=(--maintenance-offline-zeus)
 CAUCE_FLEET_SNAPSHOT_FILE= CAUCE_FLEET_TEST_MODE=0 \
-  CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/fleet-gate-mode.sh" "$fleet_mode"
+  CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/stack-health.sh" "${health_args[@]}"
+python3 "$ROOT/scripts/release-candidate.py"
 runtime_id=$(docker image inspect --format '{{.Id}}' "$runtime_ref") || { printf 'release gate failed: runtime digest is not present locally\n' >&2; exit 1; }
 console_id=$(docker image inspect --format '{{.Id}}' "$console_ref") || { printf 'release gate failed: console digest is not present locally\n' >&2; exit 1; }
+validate_selected_image() {
+  local kind=$1 reference=$2 serialized
+  serialized=$(docker image inspect --format '{{json .}}' "$reference") || return 1
+  IMAGE_KIND=$kind IMAGE_REFERENCE=$reference IMAGE_INSPECT=$serialized \
+    python3 - "$ROOT/artifacts/release/build.json" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+manifest_types = {
+    "application/vnd.docker.distribution.manifest.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+}
+try:
+    build = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+    image = json.loads(os.environ["IMAGE_INSPECT"])
+    kind = os.environ["IMAGE_KIND"]
+    reference = os.environ["IMAGE_REFERENCE"]
+    evidence = build[kind]
+    descriptor = image["Descriptor"]
+    labels = image["Config"]["Labels"]
+    bases = build["baseImages"]
+    assert image["Id"] == evidence["imageId"]
+    assert image["Os"] == "linux" and image["Architecture"] == "amd64"
+    assert evidence["platform"] == {"os": "linux", "architecture": "amd64"}
+    assert descriptor["digest"] == evidence["manifestDigest"] == reference.rsplit("@", 1)[1]
+    assert descriptor["mediaType"] == evidence["mediaType"] in manifest_types
+    assert reference in image["RepoDigests"]
+    assert labels["io.cauce.source.digest"] == evidence["sourceDigest"]
+    assert labels["org.opencontainers.image.revision"] == build["sourceRevision"]["commit"]
+    assert labels["io.cauce.target-platform"] == "linux/amd64"
+    if kind == "runtime":
+        assert labels["org.opencontainers.image.base.name"] == bases["node"]["repositoryDigest"]
+        assert labels["io.cauce.base.node.repository-digest"] == bases["node"]["repositoryDigest"]
+        assert labels["io.cauce.base.python.repository-digest"] == bases["python"]["repositoryDigest"]
+        assert labels["io.cauce.schema.compatible-through"] == build["schemaCompatibility"]["compatibleThrough"]
+        assert labels.get("io.cauce.base.nginx.repository-digest") is None
+    else:
+        assert labels["org.opencontainers.image.base.name"] == bases["nginx"]["repositoryDigest"]
+        assert labels["io.cauce.base.nginx.repository-digest"] == bases["nginx"]["repositoryDigest"]
+        assert labels.get("io.cauce.base.node.repository-digest") is None
+        assert labels.get("io.cauce.base.python.repository-digest") is None
+        assert labels["io.cauce.console.publish-journal"] == evidence["publishJournalCapability"]
+except (AssertionError, KeyError, TypeError, ValueError, json.JSONDecodeError, OSError):
+    raise SystemExit(1)
+PY
+}
+validate_selected_image runtime "$runtime_ref" || {
+  printf 'release gate failed: runtime descriptor, labels or platform differ from build evidence\n' >&2
+  exit 1
+}
+validate_selected_image console "$console_ref" || {
+  printf 'release gate failed: console descriptor, labels or platform differ from build evidence\n' >&2
+  exit 1
+}
 read -r expected_runtime_id expected_console_id expected_compose_id < <(python3 - "$ROOT/artifacts/release/build.json" "$ROOT/artifacts/compose-authentic/report.json" <<'PY'
 import json, pathlib, sys
 build = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:https';
 import { isIP } from 'node:net';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -11,6 +11,53 @@ const busyboxImage = process.env.CAUCE_BUSYBOX_TEST_IMAGE ?? 'nginxinc/nginx-unp
 const caPath = '/run/secrets/console_tls_ca';
 const tlsWgetCommand = `SSL_CERT_FILE=${caPath} wget -q -O /dev/null`;
 const healthcheckCommand = `test -r ${caPath} && ${tlsWgetCommand}`;
+
+interface DockerReachability {
+  readonly network: string;
+  readonly targetHost: string;
+}
+
+interface DockerNetworkInspection {
+  readonly IPAddress?: unknown;
+}
+
+/**
+ * `--network host` reaches the test listener only when Vitest itself runs on the Docker host.
+ * In the production operator workspace it runs inside a container, where host networking points
+ * at a different namespace. Prefer an actual shared network and the runner's address there, while
+ * retaining host networking for native CI runners.
+ */
+async function resolveDockerReachability(): Promise<DockerReachability> {
+  const requestedNetwork = process.env.CAUCE_TEST_DOCKER_NETWORK;
+  try {
+    const inspection = await execFileAsync('docker', [
+      'inspect', '--format', '{{json .NetworkSettings.Networks}}', hostname(),
+    ]);
+    const parsed: unknown = JSON.parse(inspection.stdout);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new Error('Docker returned an invalid network inspection');
+    }
+    const networks = Object.entries(parsed as Record<string, DockerNetworkInspection>)
+      .sort(([left], [right]) => left.localeCompare(right));
+    const selected = requestedNetwork === undefined
+      ? networks.find(([, value]) => typeof value.IPAddress === 'string' && isIP(value.IPAddress) !== 0)
+      : networks.find(([name]) => name === requestedNetwork);
+    if (selected === undefined) {
+      if (requestedNetwork !== undefined) {
+        throw new Error(`test runner is not attached to Docker network ${requestedNetwork}`);
+      }
+      throw new Error('test runner has no reachable Docker network');
+    }
+    const [network, details] = selected;
+    if (typeof details.IPAddress !== 'string' || isIP(details.IPAddress) === 0) {
+      throw new Error(`test runner has no valid address on Docker network ${network}`);
+    }
+    return { network, targetHost: details.IPAddress };
+  } catch (error) {
+    if (requestedNetwork !== undefined) throw error;
+    return { network: 'host', targetHost: 'localhost' };
+  }
+}
 
 function close(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -36,14 +83,7 @@ describe('BusyBox console healthcheck runtime', () => {
     const serverKeyPath = join(directory, 'console.key');
     const signingRequestPath = join(directory, 'console.csr');
     const extensionsPath = join(directory, 'console.ext');
-    const dockerNetwork = process.env.CAUCE_TEST_DOCKER_NETWORK;
-    const targetHost = dockerNetwork
-      ? (await execFileAsync('docker', [
-        'inspect', '--format', `{{with index .NetworkSettings.Networks "${dockerNetwork}"}}{{.IPAddress}}{{end}}`,
-        process.env.HOSTNAME ?? '',
-      ])).stdout.trim()
-      : 'localhost';
-    if (!targetHost) throw new Error('could not resolve the test runner address for the Docker network');
+    const { network: dockerNetwork, targetHost } = await resolveDockerReachability();
     const subjectAlternativeName = isIP(targetHost) ? `IP:${targetHost}` : `DNS:${targetHost}`;
     await execFileAsync('openssl', [
       'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '1',
@@ -98,7 +138,7 @@ describe('BusyBox console healthcheck runtime', () => {
     });
     const certificate = await readFile(certificatePath, 'utf8');
     const commonArguments = [
-      'run', '--rm', '--network', dockerNetwork ?? 'host',
+      'run', '--rm', '--network', dockerNetwork,
       '--tmpfs', '/run/secrets:rw,noexec,nosuid,mode=0777,size=1m',
       '--env', `CAUCE_TEST_CONSOLE_CA=${certificate}`,
       '--entrypoint', 'sh', busyboxImage, '-c',

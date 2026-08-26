@@ -198,6 +198,7 @@ export function MessagesPage() {
             error={messages.error}
             route={operatorRouteForAgent(topologiaVerificada, accesoVerificado, seleccionado)}
             canPublish={canPublish}
+            publisherSubject={accesoVerificado?.subject}
             salud={salud[seleccionado.id]}
             onReload={messages.reload}
           />

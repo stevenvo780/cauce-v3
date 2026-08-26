@@ -1,4 +1,34 @@
 groups:
+  - name: cauce-v3-alert-delivery
+    rules:
+      - alert: CauceAlertmanagerDown
+        expr: absent(up{job="cauce-alertmanager"}) or up{job="cauce-alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Alertmanager is unavailable; Cauce alerts cannot reach the operator"
+      - alert: CauceAlertDeliveryErrors
+        expr: sum(increase(prometheus_notifications_errors_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus is failing to deliver alerts"
+      - alert: CauceAlertDeliveryDropped
+        expr: sum(increase(prometheus_notifications_dropped_total[10m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus dropped queued alert notifications"
+      - alert: CauceAlertDeliveryQueueSaturated
+        expr: prometheus_notifications_queue_length / prometheus_notifications_queue_capacity > 0.8
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus alert notification queue is near capacity"
+
   - name: cauce-v3-dispatcher-availability
     rules:
       - alert: CauceDispatcherDown
@@ -35,6 +65,48 @@ groups:
           severity: critical
         annotations:
           summary: "Dispatcher cannot collect exact PostgreSQL gauges"
+
+  - name: cauce-v3-gateway-availability
+    rules:
+      - alert: CauceGatewayMetricsDown
+        expr: absent(up{job="cauce-gateway"}) or up{job="cauce-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway health and wake-pump metrics are unavailable"
+      - alert: CauceGatewayWakePumpStale
+        expr: absent(cauce_gateway_wake_pump_last_success_timestamp_seconds) or time() - cauce_gateway_wake_pump_last_success_timestamp_seconds > 60
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway is live but its durable wake pump has no clean completed cycle"
+      - alert: CauceGatewayWakePumpFenced
+        expr: increase(cauce_gateway_wake_pump_outcomes_total{result="fenced"}[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway emitted a wake whose durable ACK was fenced"
+      - alert: CauceGatewayWakePumpErrors
+        expr: increase(cauce_gateway_wake_pump_outcomes_total{result="error"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway wake-pump operations are failing"
+      - alert: CauceConsolePublishIntentRateLimited
+        expr: increase(cauce_gateway_console_publish_operations_total{operation="prepare",result="rate_limited"}[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Console publish journal reached its per-operator durable reservation bound"
+      - alert: CauceConsolePublishIntentExpiryBurst
+        expr: increase(cauce_gateway_console_publish_operations_total{operation="publish",result="expired"}[15m]) >= 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "Console publish owners are repeatedly arriving after their durable reservations expired"
 
   - name: cauce-v3-queues
     rules:
@@ -131,7 +203,7 @@ groups:
         annotations:
           summary: "Origin relay egress is stalled in lane {{ $labels.lane }}"
       - alert: CauceOriginRelayDead
-        expr: sum(cauce_dispatcher_origin_relay_depth{status="dead"}) > 0 or increase(cauce_origin_relay_results_total{result="dead"}[10m]) > 0
+        expr: increase(cauce_origin_relay_results_total{result="dead"}[10m]) > 0
         for: 1m
         labels:
           severity: critical
@@ -191,6 +263,39 @@ groups:
           severity: critical
         annotations:
           summary: "Outbox exporter cannot collect exact PostgreSQL gauges"
+      - alert: CauceReleaseStateMissing
+        expr: absent(cauce_release_state_valid) or cauce_release_state_valid != 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Durable release and writer state is absent or invalid"
+      - alert: CauceRollbackBridgeDegraded
+        expr: cauce_release_rollback_bridge_degraded == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cauce is running in central-only rollback bridge mode"
+      - alert: CauceReleaseWriterCountMismatch
+        expr: cauce_release_writers_declared != cauce_release_writers_expected
+        labels:
+          severity: critical
+        annotations:
+          summary: "Observed release writers differ from the durable writer snapshot"
+      - alert: CauceRollbackBridgeWriterActive
+        expr: cauce_release_rollback_bridge_degraded == 1 and cauce_release_writer_leases_active != 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "An external writer is active while Cauce is in rollback bridge mode"
+      - alert: CauceOutboxDlqClassificationMetricsMissing
+        expr: absent(cauce_outbox_dead_letters_open_by_disposition)
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox exporter is not publishing schema-030 DLQ classification metrics"
       - alert: CauceWakeOutboxStalled
         expr: max(cauce_outbox_oldest_seconds{kind="wake",status=~"pending|processing|failed"}) > 60
         for: 5m
@@ -212,10 +317,36 @@ groups:
           severity: critical
         annotations:
           summary: "Origin relay outbox is stalled"
-      - alert: CauceOutboxDeadLettersOpen
-        expr: sum by (kind) (cauce_outbox_dead_letters_open) > 0
-        for: 1m
+      - alert: CauceOriginOutboxDeadLetterNew
+        expr: sum(cauce_outbox_dead_letters_new{kind="origin_relay",actionable="true"}) > 0
         labels:
           severity: critical
         annotations:
-          summary: "Open {{ $labels.kind }} outbox dead letters exist"
+          summary: "A new actionable origin relay incident exists"
+      - alert: CauceWakeOutboxDeadLetterNew
+        expr: sum(cauce_outbox_dead_letters_new{kind="wake",actionable="true"}) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "A new actionable wake incident exists"
+      - alert: CauceOutboxDlqUnclassified
+        expr: sum(cauce_outbox_dead_letters_open_by_disposition{actionable="true",disposition="unclassified"}) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox incidents remain unclassified; causal reconciliation is not converging"
+      - alert: CauceOriginOutboxDlqActionableStale
+        expr: max(cauce_outbox_dead_letter_oldest_actionable_seconds{kind="origin_relay"}) > 1800
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "An actionable origin relay incident has remained unresolved for more than 30 minutes"
+      - alert: CauceWakeOutboxDlqActionableStale
+        expr: max(cauce_outbox_dead_letter_oldest_actionable_seconds{kind="wake"}) > 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "An actionable wake incident has remained unresolved for more than one hour"

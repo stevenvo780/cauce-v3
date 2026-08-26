@@ -205,6 +205,253 @@ afterAll(async () => {
   if (database?.container) await database.container.stop();
 });
 
+describe('receipt durable de materialización', () => {
+  it('reconstruye feedback idéntico tras commit y replay sin duplicar ramas', async () => {
+    const argos = await consumer('Steven', 'argos');
+    await repository.publish(command());
+    const root = await nextDelivery(argos);
+    const ack = terminalAck(root, argos, [
+      { to: 'socrates', body: 'primera rama al mismo alias' },
+      { to: 'INVALID ALIAS', body: 'esta rama debe rechazarse' },
+      { to: 'socrates', body: 'segunda rama al mismo alias' }
+    ]);
+
+    const fresh = await repository.ackDelivery(
+      root.delivery_id, argos.tenant, argos.alias, ack
+    );
+    expect(fresh.applied).toBe(true);
+    expect(fresh.receipt).toBe('applied');
+    expect(fresh.delegation_rejections).toHaveLength(1);
+    expect(fresh.delegation_rejections?.[0]).toMatchObject({
+      output_index: 1,
+      target: 'INVALID ALIAS',
+      code: 'unroutable_alias'
+    });
+    expect(fresh.delegation_materializations?.map((item) => ({
+      output_index: item.output_index,
+      target_tenant: item.target_tenant,
+      target_alias: item.target_alias
+    }))).toEqual([
+      { output_index: 0, target_tenant: 'Steven', target_alias: 'socrates' },
+      { output_index: 2, target_tenant: 'Steven', target_alias: 'socrates' }
+    ]);
+    expect(new Set(fresh.delegation_materializations?.map(
+      (item) => item.child_delivery_id
+    )).size).toBe(2);
+
+    // Simula caída después del COMMIT del ACK y antes de que el adaptador procese ack_result:
+    // la conexión vieja desaparece, el mismo instance adquiere época N+1 y recién entonces el
+    // evento vuelve por el outbox local. El store debe reconstruir bytes equivalentes sin exigir
+    // que la lease N siga viva.
+    expect(await repository.releaseLease(
+      argos.tenant, argos.alias, argos.instanceId, argos.epoch,
+    )).toBe(true);
+    const epochTwoLease = await repository.acquireLease(
+      argos.tenant, argos.alias, argos.instanceId, [], 30_000,
+    );
+    expect(epochTwoLease).toMatchObject({ acquired: true, epoch: argos.epoch + 1 });
+    const replay = await repository.ackDelivery(
+      root.delivery_id, argos.tenant, argos.alias, ack
+    );
+    expect(replay.applied).toBe(false);
+    expect(replay.receipt).toBe('duplicate');
+    expect(replay.delegation_rejections).toEqual(fresh.delegation_rejections);
+    expect(replay.delegation_materializations).toEqual(fresh.delegation_materializations);
+    expect(JSON.stringify(replay)).not.toContain('primera rama al mismo alias');
+    expect(JSON.stringify(replay)).not.toContain('segunda rama al mismo alias');
+    expect((await pool.query(
+      `SELECT 1 FROM agent_output_materializations WHERE source_delivery_id=$1`,
+      [root.delivery_id]
+    )).rowCount).toBe(3);
+    expect((await pool.query(
+      `SELECT 1 FROM deliveries WHERE id IN (
+         SELECT produced_delivery_id FROM agent_output_materializations
+         WHERE source_delivery_id=$1 AND status='materialized'
+       )`,
+      [root.delivery_id]
+    )).rowCount).toBe(2);
+
+    // Sólo la correlación completa reconstruye feedback. Cada diferencia, incluido un event_id
+    // nuevo sobre la misma fila terminal, devuelve ownership_lost sin agregar ACKs ni tocar las
+    // tres materializaciones del commit original.
+    await repository.publish(command());
+    const epochTwoArgos: Consumer = { ...argos, epoch: epochTwoLease.epoch! };
+    const otherDelivery = await nextDelivery(epochTwoArgos);
+    const before = (await pool.query<{
+      ack_count: string;
+      materialization_count: string;
+      status: string;
+      result: unknown;
+    }>(
+      `SELECT
+         (SELECT count(*) FROM delivery_acks WHERE delivery_id=$1)::text AS ack_count,
+         (SELECT count(*) FROM agent_output_materializations WHERE source_delivery_id=$1)::text
+           AS materialization_count,
+         delivery.status,delivery.result
+       FROM deliveries delivery WHERE delivery.id=$1`,
+      [root.delivery_id],
+    )).rows[0]!;
+    const mismatchCases: Array<{ name: string; deliveryId: string; candidate: Ack }> = [
+      {
+        name: 'event_id',
+        deliveryId: root.delivery_id,
+        candidate: { ...ack, event_id: randomUUID() },
+      },
+      {
+        name: 'delivery_id',
+        deliveryId: otherDelivery.delivery_id,
+        candidate: ack,
+      },
+      {
+        name: 'status',
+        deliveryId: root.delivery_id,
+        candidate: { ...ack, status: 'failed' },
+      },
+      {
+        name: 'instance_id',
+        deliveryId: root.delivery_id,
+        candidate: { ...ack, instance_id: `other-${randomUUID()}` },
+      },
+      {
+        name: 'epoch',
+        deliveryId: root.delivery_id,
+        candidate: { ...ack, epoch: ack.epoch + 1 },
+      },
+      {
+        name: 'claim_token',
+        deliveryId: root.delivery_id,
+        candidate: { ...ack, claim_token: randomUUID() },
+      },
+      {
+        name: 'attempt',
+        deliveryId: root.delivery_id,
+        candidate: { ...ack, attempt: ack.attempt + 1 },
+      },
+    ];
+    for (const mismatch of mismatchCases) {
+      const fenced = await repository.ackDelivery(
+        mismatch.deliveryId,
+        argos.tenant,
+        argos.alias,
+        mismatch.candidate,
+      );
+      expect(fenced, mismatch.name).toMatchObject({
+        applied: false,
+        receipt: 'ownership_lost',
+      });
+      expect(fenced, mismatch.name).not.toHaveProperty('delegation_rejections');
+      expect(fenced, mismatch.name).not.toHaveProperty('delegation_materializations');
+    }
+    const after = (await pool.query<{
+      ack_count: string;
+      materialization_count: string;
+      status: string;
+      result: unknown;
+    }>(
+      `SELECT
+         (SELECT count(*) FROM delivery_acks WHERE delivery_id=$1)::text AS ack_count,
+         (SELECT count(*) FROM agent_output_materializations WHERE source_delivery_id=$1)::text
+           AS materialization_count,
+         delivery.status,delivery.result
+       FROM deliveries delivery WHERE delivery.id=$1`,
+      [root.delivery_id],
+    )).rows[0]!;
+    expect(after).toEqual(before);
+  }, 180_000);
+
+  it('rechaza @all sobre el límite antes de escribir hijos y replays sin truncación', async () => {
+    const argos = await consumer('Steven', 'argos');
+    await repository.publish(command());
+    const root = await nextDelivery(argos);
+    type RoutingTargetForTest = { tenant_id: Tenant; alias: string; online: boolean };
+    const mutableRepository = repository as unknown as {
+      routingTargets(
+        client: unknown,
+        sourceTenant: Tenant,
+        sourceAlias: string,
+      ): Promise<RoutingTargetForTest[]>;
+    };
+    const originalRoutingTargets = mutableRepository.routingTargets.bind(repository);
+    mutableRepository.routingTargets = async () => Array.from(
+      { length: 1_001 },
+      (_, index): RoutingTargetForTest => ({
+        tenant_id: 'Steven',
+        alias: `peer_${String(index).padStart(4, '0')}`,
+        online: true,
+      }),
+    );
+    try {
+      const ack = terminalAck(root, argos, [{ to: '@all', body: 'fanout acotado' }]);
+      const fresh = await repository.ackDelivery(
+        root.delivery_id, argos.tenant, argos.alias, ack,
+      );
+      expect(fresh).toMatchObject({ applied: true, receipt: 'applied' });
+      expect(fresh.delegation_materializations).toBeUndefined();
+      expect(fresh.delegation_rejections).toEqual([
+        expect.objectContaining({ output_index: 0, target: '@all', code: 'invalid_output' }),
+      ]);
+      expect((await pool.query(
+        `SELECT 1 FROM agent_output_materializations
+         WHERE source_delivery_id=$1 AND status='materialized'`,
+        [root.delivery_id],
+      )).rowCount).toBe(0);
+      expect((await pool.query(
+        `SELECT 1 FROM agent_output_materializations WHERE source_delivery_id=$1`,
+        [root.delivery_id],
+      )).rowCount).toBe(1);
+
+      const replay = await repository.ackDelivery(
+        root.delivery_id, argos.tenant, argos.alias, ack,
+      );
+      expect(replay).toEqual({
+        delivery_id: root.delivery_id,
+        status: 'done',
+        applied: false,
+        receipt: 'duplicate',
+        delegation_rejections: fresh.delegation_rejections,
+      });
+    } finally {
+      mutableRepository.routingTargets = originalRoutingTargets;
+    }
+  }, 180_000);
+
+  it('falla cerrado si feedback durable legado supera el límite en vez de truncarlo', async () => {
+    const argos = await consumer('Steven', 'argos');
+    await repository.publish(command());
+    const root = await nextDelivery(argos);
+    const ack = terminalAck(root, argos, [{ to: 'socrates', body: 'rama original' }]);
+    await repository.ackDelivery(root.delivery_id, argos.tenant, argos.alias, ack);
+    await pool.query(
+      `INSERT INTO agent_output_materializations(
+         source_delivery_id,source_attempt,output_index,source_message_id,source_tenant,
+         source_alias,target_ref_hash,body_hash,status,rejection_code,request_id,trace_id,
+         hop_count,hop_budget,correlation
+       )
+       SELECT delivery.id,delivery.attempt,series.index,delivery.message_id,message.tenant_id,
+              delivery.recipient_alias,repeat('a',64),repeat('b',64),'rejected','invalid_output',
+              message.request_id,message.trace_id,1,16,
+              jsonb_build_object('rejection',jsonb_build_object(
+                'code','invalid_output',
+                'reason','legacy feedback exceeds the wire boundary',
+                'guidance','split the fanout into bounded batches'
+              ))
+       FROM deliveries delivery
+       JOIN messages message ON message.id=delivery.message_id
+       CROSS JOIN generate_series(1,1000) AS series(index)
+       WHERE delivery.id=$1`,
+      [root.delivery_id],
+    );
+
+    await expect(repository.ackDelivery(
+      root.delivery_id, argos.tenant, argos.alias, ack,
+    )).rejects.toMatchObject({
+      name: 'StoreError',
+      code: 'conflict',
+      message: 'durable delegation feedback exceeds the wire limit',
+    });
+  }, 180_000);
+});
+
 describe('cadena que cicla -> se corta', () => {
   it('corta la rotación por continuación, que NINGUN guarda anterior veía', async () => {
     // Este es el modo de fallo dominante medido en prod, y el que ningún guarda previo tocaba:
@@ -501,14 +748,23 @@ describe('el rechazo es legible', () => {
     expect(rejection?.guidance).toBeTruthy();
   }, 120_000);
 
-  it('no agrega la clave cuando no hubo ningún rechazo', async () => {
-    // Los bytes de la respuesta del ACK no cambian para el 100% de los ACK sanos.
+  it('omite rechazos vacíos pero informa la materialización exacta del ACK sano', async () => {
     await setCaps({ delegation_caps_enabled: true });
     const argos = await consumer('Steven', 'argos');
     await repository.publish(command());
     const result = await ackWith(argos, await nextDelivery(argos), [
       { to: 'socrates', body: 'una' }
     ]);
-    expect(Object.keys(result).sort()).toEqual(['applied', 'delivery_id', 'receipt', 'status']);
+    expect(result).not.toHaveProperty('delegation_rejections');
+    expect(result.delegation_materializations).toEqual([
+      expect.objectContaining({
+        output_index: 0,
+        target_tenant: 'Steven',
+        target_alias: 'socrates'
+      })
+    ]);
+    expect(result.delegation_materializations?.[0]?.child_delivery_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+    );
   }, 120_000);
 });

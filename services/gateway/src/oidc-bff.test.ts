@@ -1,4 +1,5 @@
 import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
+import type { FastifyRequest } from 'fastify';
 import type { DatabasePool } from '@cauce/store';
 import { buildGateway, type GatewayRepository } from './app.js';
 import { MemoryOidcSessionStore, OidcBffAuthProvider } from './oidc-bff.js';
@@ -42,7 +43,8 @@ function fakeRepository(): GatewayRepository {
     assertPrincipal: vi.fn(async () => undefined),
     status: vi.fn(async () => ({ online: 1 })),
     listPresence: vi.fn(async () => []),
-    claimOutbox: vi.fn(async () => [])
+    claimOutbox: vi.fn(async () => []),
+    liveDeliveryClaims: vi.fn(async () => []),
   } as unknown as GatewayRepository;
 }
 
@@ -126,7 +128,7 @@ async function fixture(idTokenClaims: Record<string, unknown> = {}) {
   });
   const sessionCookie = callback.statusCode === 302 ? cookieFrom(callback, '__Host-cauce_session') : '';
   return {
-    app,
+    app, provider,
     callback,
     sessionCookie,
     get refreshes() { return refreshes; },
@@ -158,6 +160,10 @@ describe('OIDC console BFF', () => {
       const api = await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie: test.sessionCookie } });
       expect(api.statusCode).toBe(200);
       expect(api.json()).toMatchObject({ online: 1, auth_provider: 'oidc-bff' });
+      const principal = await test.provider.authenticateHttp({
+        headers: { cookie: test.sessionCookie }
+      } as unknown as FastifyRequest);
+      expect(principal.operator_id).toBe('operator-1');
       const bearerAttempt = await test.app.inject({
         method: 'GET', url: '/v3/status',
         headers: { cookie: test.sessionCookie, authorization: 'Bearer browser-must-not-send-this' }

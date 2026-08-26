@@ -26,6 +26,8 @@ const SAFE_ENVIRONMENT = [
   // Non-secret Hermes profile/model discovery only; Hermes resolves authentication from local storage.
   "HERMES_HOME",
   "HERMES_INFERENCE_MODEL",
+  "CAUCE_HERMES_RUNTIME_DIR",
+  "CAUCE_HERMES_SOURCE_DIR",
   // Non-secret module discovery path consumed only by the OpenClaw bridge.
   "CAUCE_OPENCLAW_DIST_DIR",
 ];
@@ -158,9 +160,7 @@ export class SpawnCommandRunner {
         try {
           request.onHarnessStart?.();
         } catch {
-          // Sellar la marca de arranque es un efecto colateral del transporte: si el llamador
-          // falla al anotarla, la ejecución del turno no se toca. Fallar acá convertiría un
-          // problema de observabilidad en una entrega perdida.
+          // Es un observador, no el gate durable del turno; nunca altera el proceso.
         }
       };
       let timedOut = false;

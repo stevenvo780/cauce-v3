@@ -132,7 +132,15 @@ export function LandingPage() {
                 </small>
               )}
             </span>
-            <a href={grupo.ruta} onClick={(event) => onNavClick(event, grupo.ruta)}>{grupo.rutaLabel}</a>
+            {/* El destino ya está en el contexto de la alerta. Repetir acá el rótulo literal de
+                la barra convertía estos CTA en una segunda copia parcial del menú. El nombre
+                accesible conserva el destino y añade la acción, para que en una lista de enlaces
+                siga siendo inequívoco sin volver a llamarse igual que la entrada de navegación. */}
+            <a
+              href={grupo.ruta}
+              aria-label={`Revisar ${grupo.alertas.length === 1 ? 'alerta' : 'alertas'} en ${grupo.rutaLabel}`}
+              onClick={(event) => onNavClick(event, grupo.ruta)}
+            >Revisar</a>
           </p>
         )) : null}
 

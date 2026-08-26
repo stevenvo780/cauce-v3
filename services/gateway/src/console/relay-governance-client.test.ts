@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { HttpGovernanceRelayClient } from './relay-governance-client.js';
+import { HttpGovernanceRelayClient, parseDirectoryOutcome } from './relay-governance-client.js';
 
 /**
  * El cliente contra un terminal-relay de mentira pero un HTTPS de verdad: certificado propio,
@@ -18,6 +18,7 @@ import { HttpGovernanceRelayClient } from './relay-governance-client.js';
 
 const TOKEN = 'token-compartido-con-el-relay-0123456789';
 const RUTA = '/home/dev/.claude/CLAUDE.md';
+const MEMORY_ROOT = '/home/dev/.claude/projects';
 const CONTENIDO = '# Manual\n';
 
 function sha(text: string): string {
@@ -118,6 +119,127 @@ describe('lo que el cliente pone en el cable', () => {
     await cliente().readFile('Steven', 'zeus', RUTA);
 
     expect(recibidas[0]?.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('usa el endpoint explícito /list para índices de directorio', async () => {
+    contestar(200, {
+      path: MEMORY_ROOT, total: 0, observed_at_least: 0, truncated: false, entries: [],
+    });
+
+    await cliente().listDirectory('Steven', 'zeus', MEMORY_ROOT);
+
+    expect(recibidas[0]?.url).toBe('/v3/terminal/relay/list');
+    expect(recibidas[0]?.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.parse(recibidas[0]?.body ?? '')).toEqual({
+      tenant_id: 'Steven', alias: 'zeus', path: MEMORY_ROOT,
+    });
+  });
+});
+
+describe('índice de directorio', () => {
+  function listing(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      path: MEMORY_ROOT,
+      total: 1,
+      observed_at_least: 1,
+      truncated: false,
+      entries: [{
+        path: `${MEMORY_ROOT}/sesion.md`, bytes: 12, modified_at: '2026-08-24T10:00:00Z',
+      }],
+      ...overrides,
+    };
+  }
+
+  it('acepta metadata absoluta, acotada y coherente', async () => {
+    contestar(200, listing());
+    expect(await cliente().listDirectory('Steven', 'zeus', MEMORY_ROOT)).toEqual(listing());
+  });
+
+  it('conserva un límite inferior cuando el cap impide conocer el total', async () => {
+    const lowerBound = listing({ total: null, observed_at_least: 5_000, truncated: true });
+    contestar(200, lowerBound);
+    expect(await cliente().listDirectory('Steven', 'zeus', MEMORY_ROOT)).toEqual(lowerBound);
+  });
+
+  it.each([
+    ['escape ..', listing({ entries: [{
+      path: `${MEMORY_ROOT}/../auth.json`, bytes: 1, modified_at: '2026-08-24T10:00:00Z',
+    }] })],
+    ['prefix collision', listing({ entries: [{
+      path: `${MEMORY_ROOT}-otra/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z',
+    }] })],
+    ['absolute outside', listing({ entries: [{
+      path: '/etc/passwd', bytes: 1, modified_at: '2026-08-24T10:00:00Z',
+    }] })],
+    ['duplicate', listing({ total: 2, entries: [
+      { path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z' },
+      { path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z' },
+    ] })],
+    ['credential', listing({ entries: [{
+      path: `${MEMORY_ROOT}/id_ed25519`, bytes: 1, modified_at: '2026-08-24T10:00:00Z',
+    }] })],
+    ['invalid date', listing({ entries: [{
+      path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-02-30T10:00:00Z',
+    }] })],
+    ['symlink marker', listing({ entries: [{
+      path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z', symlink: true,
+    }] })],
+  ])('rechaza %s', (_label, body) => {
+    expect(parseDirectoryOutcome(JSON.stringify(body))).toHaveProperty('error');
+  });
+
+  it('rechaza más de 200 entradas y totales incoherentes', () => {
+    expect(parseDirectoryOutcome(JSON.stringify(listing({
+      total: 201,
+      truncated: true,
+      entries: Array.from({ length: 201 }, (_, index) => ({
+        path: `${MEMORY_ROOT}/${index}.md`, bytes: index, modified_at: '2026-08-24T10:00:00Z',
+      })),
+    })))).toHaveProperty('error');
+    expect(parseDirectoryOutcome(JSON.stringify(listing({ total: 0 })))).toHaveProperty('error');
+    expect(parseDirectoryOutcome(JSON.stringify(listing({ total: 2, truncated: false })))).toHaveProperty('error');
+    expect(parseDirectoryOutcome(JSON.stringify(listing({ total: -1, entries: [] })))).toHaveProperty('error');
+  });
+
+  it('rechaza cuerpos no JSON, campos extra y fallos deformes', () => {
+    expect(parseDirectoryOutcome('<html>')).toHaveProperty('error');
+    expect(parseDirectoryOutcome(JSON.stringify(listing({ extra: true })))).toHaveProperty('error');
+    expect(parseDirectoryOutcome(JSON.stringify({ error: 'timeout', reason: 'tarde', extra: true }))).toEqual({
+      error: 'unknown', reason: 'el terminal-relay contestó un fallo de índice inválido',
+    });
+  });
+
+  it('propaga auth, timeout y relay offline sin inventar vacío', async () => {
+    contestar(401, '');
+    expect(await cliente().listDirectory('Steven', 'zeus', MEMORY_ROOT)).toMatchObject({
+      error: 'permission_denied',
+    });
+
+    responder = () => { /* relay vivo pero mudo */ };
+    expect(await cliente({ timeoutMs: 150 }).listDirectory('Steven', 'zeus', MEMORY_ROOT)).toMatchObject({
+      error: 'timeout',
+    });
+
+    expect(await cliente({ puerto: 1, timeoutMs: 500 }).listDirectory('Steven', 'zeus', MEMORY_ROOT)).toMatchObject({
+      error: 'unavailable',
+    });
+  });
+
+  it('aborta el socket saliente y devuelve cancelled cuando cierra el HTTP de la consola', async () => {
+    let received!: () => void;
+    const reachedRelay = new Promise<void>((resolve) => { received = resolve; });
+    responder = () => { received(); };
+    const abort = new AbortController();
+
+    const pending = cliente({ timeoutMs: 60_000 }).listDirectory(
+      'Steven', 'zeus', MEMORY_ROOT, abort.signal,
+    );
+    await reachedRelay;
+    abort.abort();
+
+    await expect(pending).resolves.toEqual({
+      error: 'cancelled', reason: 'se cerró la petición antes de terminar el índice',
+    });
   });
 });
 

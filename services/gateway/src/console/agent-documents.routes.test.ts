@@ -5,6 +5,8 @@ import type { RuntimeFacts } from './agent-documents.js';
 import {
   type AgentFactsProbe, type DocumentsResponse, type FactsSource, registerAgentDocumentRoutes
 } from './agent-documents.routes.js';
+import { hechosDelRegistro } from '../terminal/hechos-del-registro.js';
+import { AgentRegistry, parseAgentPresence } from '../terminal/registry.js';
 
 /**
  * La ruta se levanta de verdad y se le pega con `app.inject`. No es un test del objeto que
@@ -72,7 +74,11 @@ describe('GET tenant-qualified del mapa de documentos', () => {
     expect(body.caveat).toBeUndefined();
     const directiva = body.items.find((d) => d.kind === 'directive');
     expect(directiva?.path).toBe('/home/dev/.claude/CLAUDE.md');
+    expect(directiva?.readable).toBe(true);
     expect(directiva?.editable).toBe(true);
+    expect(body.items.find((d) => d.kind === 'tools')?.readable).toBe(false);
+    expect(body.items.find((d) => d.kind === 'prompts')?.readable).toBe(false);
+    expect(body.items.find((d) => d.kind === 'mcp')?.readable).toBe(false);
   });
 
   /**
@@ -91,6 +97,7 @@ describe('GET tenant-qualified del mapa de documentos', () => {
     const body = res.json<DocumentsResponse>();
     expect(body.facts_source).toBe('database');
     expect(body.caveat).toMatch(/5 de los 14/);
+    expect(body.items.every((d) => !d.readable)).toBe(true);
     expect(body.items.every((d) => !d.editable)).toBe(true);
     // Y encima la ruta que da la BD es la equivocada: kant corre claude.js, no codex.
     expect(body.items.find((d) => d.kind === 'directive')?.path).toBe('/home/stev/.codex/AGENTS.md');
@@ -99,7 +106,7 @@ describe('GET tenant-qualified del mapa de documentos', () => {
   it('un arnés que la BD no reconoce no inventa rutas', async () => {
     vivo = servidor({
       authorizeTarget: async () => ({
-        tenant_id: 'Steven', alias: 'argos', harness_id: 'hermes', home_directory: '/home/dev',
+        tenant_id: 'Steven', alias: 'argos', harness_id: 'opencode', home_directory: '/home/dev',
       }),
     });
     const body = (await vivo.inject({ method: 'GET', url: rutaMapa('Steven', 'argos') }))
@@ -178,7 +185,101 @@ describe('GET tenant-qualified del mapa de documentos', () => {
 });
 
 describe('contenido y escritura tenant-qualified', () => {
+  it('un hello base sin marcador observado conserva terminal pero autoriza cero lecturas', async () => {
+    const registry = new AgentRegistry();
+    registry.observe({
+      relay_instance_id: 'a'.repeat(64),
+      relay_boot_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    }, [parseAgentPresence({
+      tenant_id: 'Steven', alias: 'zeus', container_id: 'ws-zeus', generation: '1',
+      image_id: 'img', runtime_user: 'dev', runtime_uid: 1000, harness: 'claude',
+      // Incluso con roots plausibles del bundle, sin observación explícita no son autoridad.
+      home: '/home/dev', claude_config_dir: '/home/dev/.claude',
+      modes: ['shell', 'harness'], connected_since: '2026-08-26T00:00:00.000Z',
+    })]);
+    const read = vi.fn(async () => ({ error: 'unavailable' as const, reason: 'no debe ocurrir' }));
+    const measuredFacts = hechosDelRegistro(registry);
+    vivo = servidor({
+      probe: {
+        factsFor: (tenantId, alias) => measuredFacts.factsFor(tenantId, alias),
+        readGovernanceDocument: read,
+        listMemoryDirectory: async () => ({ error: 'unavailable', reason: 'no debe ocurrir' }),
+      },
+    });
+    expect(registry.state('Steven', 'zeus')).toBe('online');
+    const response = await vivo.inject({
+      method: 'GET', url: rutaContenido('Steven', 'zeus'),
+    });
+    expect(response.statusCode).toBe(409);
+    expect(read).not.toHaveBeenCalled();
+  });
+
   const FACTS: RuntimeFacts = { harness: 'claude', home: '/home/dev' };
+  const NO_MEDIDO_CASES: ReadonlyArray<readonly [
+    string,
+    { facts: RuntimeFacts; source: FactsSource } | undefined,
+  ]> = [
+    ['ausente', undefined],
+    ['registry', { facts: FACTS, source: 'registry' }],
+    ['database', { facts: FACTS, source: 'database' }],
+  ];
+
+  it.each(NO_MEDIDO_CASES)(
+    'GET rechaza hechos %s antes de leer el home compartido',
+    async (_label, facts) => {
+      const readGovernanceDocument = vi.fn(async () => ({
+        text: '# no debe leerse', bytes: 17, truncated: false,
+        modified_at: '2026-08-25T00:00:00Z', sha: sha('# no debe leerse'),
+      }));
+      const writeGovernanceDocument = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
+      vivo = servidor({
+        probe: {
+          ...probe({}),
+          factsFor: vi.fn(async () => facts),
+          readGovernanceDocument,
+          writeGovernanceDocument,
+        },
+      });
+
+      const res = await vivo.inject({
+        method: 'GET', url: rutaContenido('Miguel', 'kant'),
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ error: 'no_medido' });
+      expect(readGovernanceDocument).not.toHaveBeenCalled();
+      expect(writeGovernanceDocument).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(NO_MEDIDO_CASES)(
+    'PUT rechaza hechos %s antes de leer o escribir el home compartido',
+    async (_label, facts) => {
+      const readGovernanceDocument = vi.fn(async () => ({
+        text: '# anterior', bytes: 10, truncated: false,
+        modified_at: '2026-08-25T00:00:00Z', sha: sha('# anterior'),
+      }));
+      const writeGovernanceDocument = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
+      vivo = servidor({
+        probe: {
+          ...probe({}),
+          factsFor: vi.fn(async () => facts),
+          readGovernanceDocument,
+          writeGovernanceDocument,
+        },
+      });
+
+      const res = await vivo.inject({
+        method: 'PUT', url: rutaContenido('Miguel', 'kant'),
+        payload: { content: 'nuevo', create_if_absent: true },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ error: 'no_medido' });
+      expect(readGovernanceDocument).not.toHaveBeenCalled();
+      expect(writeGovernanceDocument).not.toHaveBeenCalled();
+    },
+  );
 
   it('lee el contenido del tenant objetivo, no del tenant del actor', async () => {
     const readGovernanceDocument = vi.fn(async () => ({
@@ -201,6 +302,111 @@ describe('contenido y escritura tenant-qualified', () => {
     expect(readGovernanceDocument).toHaveBeenCalledWith(
       '/home/dev/.claude/CLAUDE.md', FACTS, 'Miguel', 'kant',
     );
+  });
+
+  it('sirve perfil y manual allowlisted como sólo lectura sin habilitar PUT', async () => {
+    const OPENCLAW: RuntimeFacts = {
+      harness: 'openclaw', home: '/home/claw', openclawWorkspace: '/home/claw/workspace',
+    };
+    const readGovernanceDocument = vi.fn(async () => ({
+      text: '# identidad\n', bytes: 12, truncated: false,
+      modified_at: '2026-08-25T00:00:00Z', sha: sha('# identidad\n'),
+    }));
+    const writeGovernanceDocument = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
+    vivo = servidor({
+      probe: {
+        ...probe({ 'Miguel:kant': { facts: OPENCLAW, source: 'measured' } }),
+        readGovernanceDocument,
+        writeGovernanceDocument,
+      },
+    });
+
+    const map = (await vivo.inject({ method: 'GET', url: rutaMapa('Miguel', 'kant') }))
+      .json<DocumentsResponse>();
+    expect(map.items.find((item) => item.kind === 'identity')).toMatchObject({
+      category: 'profile', readable: true, editable: false,
+    });
+    expect(map.items.find((item) => item.kind === 'directive')).toMatchObject({
+      category: 'manual', readable: true, editable: false,
+    });
+
+    const get = await vivo.inject({
+      method: 'GET', url: rutaContenido('Miguel', 'kant', 'identity'),
+    });
+    expect(get.statusCode).toBe(200);
+    expect(get.json()).toMatchObject({
+      kind: 'identity', path: '/home/claw/workspace/IDENTITY.md',
+      content: '# identidad\n', editable: false, exists: true,
+    });
+    expect(readGovernanceDocument).toHaveBeenCalledWith(
+      '/home/claw/workspace/IDENTITY.md', OPENCLAW, 'Miguel', 'kant',
+    );
+
+    const put = await vivo.inject({
+      method: 'PUT', url: rutaContenido('Miguel', 'kant', 'identity'),
+      payload: { content: 'nuevo', expected_sha: sha('# identidad\n') },
+    });
+    expect(put.statusCode).toBe(403);
+    expect(writeGovernanceDocument).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['settings de Claude', FACTS, 'tools'],
+    ['directorio de subagentes', FACTS, 'prompts'],
+    ['MCP con OAuth', FACTS, 'mcp'],
+    ['configuración OpenClaw con secretos', {
+      harness: 'openclaw', home: '/home/claw', openclawWorkspace: '/home/claw/workspace',
+    }, 'configuration'],
+  ] as const)('%s no llama a la sonda aunque se construya el GET a mano', async (_label, facts, kind) => {
+    const readGovernanceDocument = vi.fn(async () => ({
+      text: 'no debe salir', bytes: 13, truncated: false,
+      modified_at: '2026-08-25T00:00:00Z', sha: sha('no debe salir'),
+    }));
+    vivo = servidor({
+      probe: {
+        ...probe({ 'Miguel:kant': { facts, source: 'measured' } }),
+        readGovernanceDocument,
+      },
+    });
+
+    const res = await vivo.inject({
+      method: 'GET', url: rutaContenido('Miguel', 'kant', kind),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: 'not_readable' });
+    expect(readGovernanceDocument).not.toHaveBeenCalled();
+  });
+
+  it('una respuesta malformada de la sonda es 502 y nunca una ausencia', async () => {
+    vivo = servidor({
+      probe: {
+        ...probe({ 'Miguel:kant': { facts: FACTS, source: 'measured' } }),
+        readGovernanceDocument: async () => ({
+          text: '# roto', bytes: 6, truncated: false,
+          modified_at: '2026-08-25T00:00:00Z', sha: '0'.repeat(64),
+        }),
+      },
+    });
+
+    const res = await vivo.inject({ method: 'GET', url: rutaContenido('Miguel', 'kant') });
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toMatchObject({ error: 'invalid_probe_response' });
+    expect(res.json()).not.toHaveProperty('exists', false);
+  });
+
+  it('unavailable se conserva como 503 y nunca se traduce a fichero ausente', async () => {
+    vivo = servidor({
+      probe: {
+        ...probe({ 'Miguel:kant': { facts: FACTS, source: 'measured' } }),
+        readGovernanceDocument: async () => ({ error: 'unavailable', reason: 'relay desconectado' }),
+      },
+    });
+
+    const res = await vivo.inject({ method: 'GET', url: rutaContenido('Miguel', 'kant') });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toEqual({ error: 'unavailable', message: 'relay desconectado' });
+    expect(res.json()).not.toHaveProperty('exists', false);
   });
 
   it('si la sonda no sabe escribir responde 503 honesto', async () => {

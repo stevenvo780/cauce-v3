@@ -42,7 +42,7 @@ de un vistazo qué contenedores están compartidos.
 | Alias | Tenant | Contenedor | Usuario | Home | Harness |
 |---|---|---|---|---|---|
 | argos | Steven | `ctrl-infra` | `dev` | `/home/dev` | claude |
-| kant | Steven | `ctrl-infra` | `stev` | `/home/stev` | codex |
+| kant | Steven | `ctrl-infra` | `dev` | `/home/dev` | codex |
 | jarvis | Steven | `claw` | `claw` | `/home/claw` | openclaw |
 | socrates | Steven | `ws-prizma` | `dev` | `/home/dev` | codex |
 | zeus | Steven | `ws-zeus` | `dev` | `/home/dev` | claude |
@@ -116,8 +116,8 @@ ALIAS_KEY_FILE=/home/stev/.config/cauce-v3/pty-pki/jarvis/alias-key.hex
 # Opcional. Sólo si el cert del relay NO trae SAN de IP:
 # RELAY_SERVER_NAME=relay.cauce.internal
 # Opcional. Modo harness: argv FIJO, en JSON, para adjuntarse a la TUI del agente.
-# Si NO se declara, el lanzador prueba primero la sesión tmux viva y luego, sólo para un harness
-# OpenClaw, publica un resolvedor dinámico que el agente evalúa en cada OPEN (ver abajo).
+# Si NO se declara, Claude/Codex publican un resolvedor tmux aunque la sesión todavía no exista;
+# OpenClaw publica su resolvedor nativo. Ambos se evalúan de nuevo en cada OPEN (ver abajo).
 # HARNESS_COMMAND=["/usr/local/bin/openclaw","attach","--session","jarvis"]
 # Opcional. Por defecto: [["/bin/bash","-l"],["/bin/sh","-l"]]
 # SHELL_CANDIDATES=[["/bin/bash","-l"],["/bin/sh","-l"]]
@@ -125,16 +125,24 @@ ALIAS_KEY_FILE=/home/stev/.config/cauce-v3/pty-pki/jarvis/alias-key.hex
 
 #### Modo `harness` = la TUI que el agente ya está corriendo
 
-Cada agente de la flota vive dentro de una sesión tmux `cauce-<alias>` **en el socket `cauce`**
-(`tmux -L cauce`, no el socket por defecto: `tmux ls` a secas no la ve, y por eso durante meses
-pareció que esa TUI no existía). El modo `harness` es lo único que emite esa pantalla; `shell`
-abre una terminal nueva, que no es lo que se pide cuando se quiere *ver qué está haciendo*.
+Los harness compartidos Claude/Codex viven dentro de una sesión tmux `cauce-<alias>` **en el
+socket `cauce`** (`tmux -L cauce`, no el socket por defecto). El modo `harness` es lo único que
+emite esa pantalla; `shell` abre una terminal nueva, que no es lo que se pide cuando se quiere
+*ver qué está haciendo*. OpenClaw usa el resolvedor nativo descrito más abajo.
 
-Si `HARNESS_COMMAND` no está declarado, `cauce-pty-launcher.sh` prueba primero, dentro del
-contenedor y como el usuario del agente, la sesión tmux compartida:
+Si `HARNESS_COMMAND` no está declarado, `cauce-pty-launcher.sh` descubre dentro del contenedor y
+como el usuario del agente el binario tmux. El bundle guarda únicamente ese binario y el socket,
+incluso si todavía no existe servidor o sesión: una `cauce-<alias>:tui` creada después queda visible
+en el siguiente **OPEN**, sin reiniciar el PTY. La sonda inicial de una sesión viva sirve sólo para
+medir el cwd del panel y no congela su ID `$N`, porque tmux lo reutiliza después de reiniciar su
+servidor. En cada OPEN el agente ejecuta una sola orden tmux que vuelve a exigir nombre exacto,
+marcadores `@cauce_alias`/`@cauce_harness`, ventana única `tui` y panel vivo, y sólo en la rama
+verdadera hace el attach. Validación y attach ocurren en la misma conexión al mismo servidor tmux,
+por lo que ni reutilizar el nombre ni reiniciar el servidor puede redirigir el visor a otro alias:
 
 ```
-tmux -L cauce attach-session -r -f ignore-size -t cauce-<alias>
+tmux -L cauce if-shell -F -t cauce-ALIAS:tui '<identidad completa>' \
+  'attach-session -r -f ignore-size -t cauce-ALIAS:tui' 'run-shell "exit 77"'
 ```
 
 * `-r` → cliente de **solo lectura** como defensa en profundidad. La frontera común a tmux y a
@@ -144,7 +152,7 @@ tmux -L cauce attach-session -r -f ignore-size -t cauce-<alias>
 * `-f ignore-size` → el tamaño del navegador no renegocia el de la sesión, así mirar no le
   encoge el panel a la persona que está trabajando en esa misma tmux.
 
-Si no hay tmux viva y el harness medido es `openclaw`, el launcher comprueba la entrada real de
+Para un harness `openclaw`, el launcher comprueba la entrada real de
 Node y que la versión instalada exponga `tui --session`. No elige una conversación en ese momento:
 incluye en el bundle el `stateDirectory` confiable del mapeo del alias y el agente resuelve **en
 cada `OPEN`** la única entrada exacta `openclaw:<alias>:shared:<alias>` de
@@ -158,8 +166,14 @@ no se escriben en journal ni se publican en presencia. Si falta o no pasa valida
 responde `mode_unavailable`; el próximo `OPEN` vuelve a medir el store. Si tampoco existe una TUI
 OpenClaw compatible, el agente anuncia sólo `shell`.
 
-En el journal queda la capacidad elegida (`harness derived from tmux ...`, `dynamic openclaw tui
-resolver enabled ...` o que no existe TUI), nunca la conversación seleccionada.
+En el journal queda la capacidad elegida (`dynamic tmux resolver enabled ...`, `dynamic openclaw
+tui resolver enabled ...` o que no existe TUI), nunca la conversación seleccionada.
+
+Los hechos de contexto (`cwd`, raíz de workspace/proyecto y perfil efectivo) son evidencia
+opcional. Se miden del proceso adaptador exacto; cero procesos, varios procesos ambiguos o una ruta
+insegura publican `{}` y **no** detienen la terminal. En un workspace compartido, sin panel tmux
+validado se conserva el cwd de `/proc` sólo si está dentro de la raíz declarada; nunca se sustituye
+por la raíz del workspace. Un `HARNESS_COMMAND` explícito tampoco habilita esa sustitución.
 
 Para que la consola pueda pedirlo, el `grants.json` del gateway tiene que listar `harness`
 además de `shell` en los modos de ese alias.
@@ -227,7 +241,7 @@ Frames `[tag:1][len:4 big-endian][payload]`, `len <= 65536`.
 | `0x21` STDOUT | agente -> relay | 36 bytes ASCII de session_id + bytes crudos |
 | `0x22` RESIZE | relay -> agente | JSON `{session_id, rows, cols}` |
 | `0x23` TERMINAL_RESPONSE | relay -> agente | 36 bytes ASCII de session_id + respuesta DA/DSR validada; sólo `harness` |
-| `0x24` PAUSE_OUTPUT / `0x25` RESUME_OUTPUT | relay -> agente | JSON `{session_id}`; se negocia con `session_output_flow_control` |
+| `0x24` PAUSE_OUTPUT / `0x25` RESUME_OUTPUT | relay -> agente | JSON `{session_id}`; pausa también bytes ya bufferizados y reanuda sólo esa sesión; se negocia con `session_output_flow_control` |
 | `0x30` CLOSE | relay -> agente | JSON `{session_id, reason}` |
 | `0x31` CLOSED | agente -> relay | JSON `{session_id, exit_code, signal, reason}` |
 | `0x40` PING / `0x41` PONG | relay <-> agente | payload vacío |
@@ -266,8 +280,9 @@ El navegador **jamás** nombra contenedor, usuario ni comando: sólo viaja un al
 está fijado en el bundle que escribió el lanzador.
 
 - modo `shell`: el primer ejecutable que exista de `shell_candidates` (`/bin/bash -l`, `/bin/sh -l`).
-- modo `harness`: el `harness_command` fijo/tmux del bundle o, para OpenClaw, el comando derivado
-  del pointer durable exacto en ese `OPEN`. Si la fuente confiable no produce uno:
+- modo `harness`: el `harness_command` fijo, el resolvedor tmux revalidado atómicamente en ese
+  `OPEN` o, para OpenClaw, el comando derivado del pointer durable exacto en ese `OPEN`. Si la
+  fuente confiable no produce uno:
   `OPEN_ERR mode_unavailable`.
 
 Entorno mínimo y construido por el agente: `TERM=xterm-256color`, `COLORTERM=truecolor`, `HOME`,

@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { isEnvelopeText } from "./envelope.js";
+import { envelopeHasCorrelation } from "./envelope.js";
 import type {
   CompactionNotice,
   InjectedTurn,
@@ -18,24 +18,24 @@ import type {
  * TIPADO en cada línea del turno, así que la correlación no depende de reconstruir una cadena de
  * padres como en claude.
  *
- * Forma medida en `ws-prizma` el 2026-07-31 (codex-cli 0.144.6), sobre 6.511 rollouts reales:
+ * Fixture sintético que reproduce la forma validada con evidencia privada:
  *
  * ```
- * {"timestamp":…,"type":"event_msg","payload":{"type":"task_started","turn_id":"019fb910-…"}}
+ * {"timestamp":…,"type":"event_msg","payload":{"type":"task_started","turn_id":"<turn-id>"}}
  * {"timestamp":…,"type":"response_item","payload":{"type":"message","role":"user",
- *   "content":[{"type":"input_text","text":"responde solo con la palabra PEGADO"}],
- *   "internal_chat_message_metadata_passthrough":{"turn_id":"019fb910-…"}}}
- * {"timestamp":…,"type":"event_msg","payload":{"type":"agent_message","message":"PEGADO",
- *   "phase":"final_answer"}}
- * {"timestamp":…,"type":"event_msg","payload":{"type":"task_complete","turn_id":"019fb910-…",
- *   "last_agent_message":"PEGADO"}}
+ *   "content":[{"type":"input_text","text":"<fixture-message>"}],
+ *   "internal_chat_message_metadata_passthrough":{"turn_id":"<turn-id>"}}}
+ * {"timestamp":…,"type":"event_msg","payload":{"type":"agent_message",
+ *   "message":"<fixture-response>","phase":"final_answer"}}
+ * {"timestamp":…,"type":"event_msg","payload":{"type":"task_complete","turn_id":"<turn-id>",
+ *   "last_agent_message":"<fixture-response>"}}
  * ```
  *
- * Invariantes comprobadas contando turnos, no leyendo documentación:
- *  - de los 146 `response_item` de rol `user` de la muestra, los 146 traen `turn_id`;
- *  - los 44 turnos de rollouts abiertos por la TUI cierran con `task_complete` y los 44 traen
- *    `last_agent_message` — el único que no, cerró con `turn_aborted` porque el dueño lo cortó;
- *  - el `event_msg` `user_message` NO trae `turn_id`, así que la correlación se hace por el
+ * Invariantes cubiertas por fixtures:
+ *  - cada `response_item` de rol `user` trae `turn_id`;
+ *  - un turno completado por la TUI trae `task_complete` y `last_agent_message`, mientras que
+ *    uno abortado cierra con `turn_aborted`;
+ *  - el `event_msg` `user_message` no trae `turn_id`, así que la correlación usa el
  *    `response_item`, que sí.
  */
 
@@ -55,15 +55,16 @@ export function rolloutDirectory(codexHome: string): string {
 }
 
 /**
- * El id de conversación, sacado del nombre del fichero.
+ * El id de conversación se extrae del nombre canónico del rollout:
+ * `rollout-<timestamp>-<uuid>.jsonl`.
  *
- * `rollout-2026-07-31T16-33-07-019fb905-b920-7981-8493-0a16191588e8.jsonl` lleva el mismo valor que
- * el `session_id` del `session_meta` de su primera línea (comprobado sobre el rollout vivo de
- * socrates). Sacarlo del nombre evita tener que leer la cabecera de un fichero que puede pesar
- * decenas de megabytes cuando lo único que hace falta son 36 caracteres.
+ * El UUID coincide con el `session_id` de la primera entrada `session_meta`. Este contrato se
+ * valida con fixtures sintéticos; la evidencia privada no se transcribe en el código. Extraerlo
+ * del nombre evita leer la cabecera de un fichero potencialmente grande cuando sólo hace falta el
+ * identificador de sesión.
  *
- * Importa de verdad: es lo que el adaptador guarda como sesión observada, y por tanto lo que el
- * camino de siempre usaría para reanudar ESTA conversación con `codex exec resume`.
+ * Ese valor es el que el adaptador guarda como sesión observada y el que se usa para reanudar la
+ * conversación con `codex exec resume`.
  */
 export function rolloutSessionId(file: string): string | undefined {
   const found = /-([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\.jsonl$/u.exec(file);
@@ -87,7 +88,7 @@ export async function rolloutFiles(directory: string): Promise<readonly string[]
  *
  * A diferencia de claude, acá no hace falta el fichero completo: el `turn_id` identifica el turno
  * por sí solo, así que todo lo que se necesita está en lo escrito después de pegar. Y hace falta
- * que así sea: el rollout más grande de `ws-prizma` pesa 69 MB, y releerlo en cada sondeo de 750 ms
+ * que así sea: los rollouts pueden ser grandes, y releerlos completos en cada sondeo
  * costaría más que el turno.
  *
  * La última línea sin salto se descarta: es la que la TUI está volcando en este preciso momento.
@@ -180,8 +181,8 @@ function asText(value: unknown): string | undefined {
 /**
  * El texto tal como la caja de entrada de codex lo ENVÍA, que no es tal como se pegó.
  *
- * Medido en `ws-prizma` el 2026-07-31 pegando un fichero de 88 bytes acabado en salto de línea: el
- * `response_item` guardó 87. codex recorta el blanco final al enviar; claude NO lo hace, y por eso
+ * La forma se validó con un fixture sintético acabado en salto de línea: el `response_item`
+ * conservó el texto sin el blanco final. codex recorta ese blanco al enviar; claude NO lo hace, y por eso
  * su igualdad exacta funciona hoy y esta no funcionaría.
  *
  * Importa hasta el punto de invalidar el trabajo entero: `protocolPrompt` termina en `""` unido
@@ -259,22 +260,25 @@ function findRolloutOutcome(
 /**
  * El SOBRE de un turno que cerró después de que pegáramos, sin exigir que sea el NUESTRO.
  *
- * El rescate equivalente al de claude, y hace falta por lo mismo: si el pegado se funde con un turno
+ * El rescate equivalente al de claude, y hace falta por lo mismo: si la inyección sintética se funde con un turno
  * en curso, el `turn_id` con el que seguiríamos el nuestro no existe, y `findRolloutOutcome` no
  * puede devolver nada nunca. Lo que sí existe es el `task_complete` del turno fundido, y su
  * `last_agent_message` trae el sobre entero.
  *
  * Se exige `task_complete` —el cierre real del turno— y que el mensaje SEA un sobre. El runner le
- * pasa sólo lo escrito después del pegado, así que un cierre anterior no puede colarse.
+ * pasa sólo lo escrito después de la inyección, así que un cierre anterior no puede colarse.
  */
-function findRolloutEnvelope(entries: readonly RolloutLine[]): TurnOutcome | undefined {
+function findRolloutEnvelope(
+  entries: readonly RolloutLine[],
+  correlationId: string,
+): TurnOutcome | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const payload = eventPayload(entries[index]);
     if (payload === undefined || payload.type !== "task_complete") continue;
     const turnId = typeof payload.turn_id === "string" ? payload.turn_id : undefined;
     const text = asText(payload.last_agent_message)
       ?? (turnId === undefined ? undefined : finalAnswerOf(entries, turnId));
-    if (!isEnvelopeText(text)) continue;
+    if (!envelopeHasCorrelation(text, correlationId)) continue;
     return { kind: "answer", text: text! };
   }
   return undefined;
@@ -313,7 +317,7 @@ function rolloutCompactions(appended: readonly RolloutLine[]): readonly Compacti
 }
 
 /**
- * El registro de codex, visto por el runner de pegado.
+ * El registro de codex, visto por el runner de la inyección sintética.
  *
  * `stdout` devuelve exactamente las dos líneas que emite `codex exec --json`, que es lo que espera
  * `parseCodexOutput`. El transporte cambia; el contrato de salida no se toca.
@@ -325,10 +329,10 @@ export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine
     read: (file, offset) => readRolloutSince(file, offset),
     findInjected: findInjectedRolloutTurn,
     findAnswer: findRolloutOutcome,
-    findEnvelope: (entries) => findRolloutEnvelope(entries),
+    findEnvelope: (entries, correlationId) => findRolloutEnvelope(entries, correlationId),
     compactions: rolloutCompactions,
     // `task_started` es la primera línea de cualquier turno, venga del bus o del dueño. Que no haya
-    // ninguna nueva es la prueba de que el pegado no llegó a la caja y de que NADA corrió.
+    // ninguna nueva prueba que la inyección no llegó a la caja y que NADA corrió.
     startedTurn: (appended) => appended.some((line) => eventPayload(line)?.type === "task_started"),
     stdout: (text, sessionId) => [
       ...(sessionId === undefined

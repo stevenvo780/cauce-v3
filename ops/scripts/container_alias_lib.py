@@ -8,11 +8,15 @@ from typing import Any
 
 
 FIELDS = ("tenant", "room", "container", "user", "home", "stateDirectory", "harness")
-ALIAS_REQUIRED_FIELDS = (*FIELDS, "membershipRole")
-ALIAS_OPTIONAL_FIELDS = ("registryContainer", "workspace")
+ALIAS_REQUIRED_FIELDS = (*FIELDS, "membershipRole", "systemdUser")
+ALIAS_OPTIONAL_FIELDS = ("registryContainer", "workspace", "dockerHost")
 PRINCIPAL_FIELDS = ("tenant", "room", "membershipRole")
 HISTORICAL_FIELDS = (
-    "tenant", "expectedEnabled", "placementPolicy", "retiredByMigration", "lastDeclaredRuntime"
+    "tenant",
+    "expectedEnabled",
+    "placementPolicy",
+    "retiredByMigration",
+    "lastDeclaredRuntime",
 )
 HISTORICAL_RUNTIME_FIELDS = ("container", "user", "home", "stateDirectory", "harness")
 NAME_RE = re.compile(r"^[a-z][a-z0-9.-]*$")
@@ -45,9 +49,14 @@ def _absolute_path(value: Any, label: str) -> str:
 def _document(root: pathlib.Path) -> dict[str, Any]:
     source = root / "container-aliases.json"
     document = _mapping(json.loads(source.read_text(encoding="utf-8")), str(source))
-    if set(document) != {"schemaVersion", "systemPrincipals", "historicalAliases", "aliases"} \
-            or document["schemaVersion"] != 2:
-        raise ContainerAliasError("container alias mapping must use exact schemaVersion 2")
+    if (
+        set(document)
+        != {"schemaVersion", "systemPrincipals", "historicalAliases", "aliases"}
+        or document["schemaVersion"] != 2
+    ):
+        raise ContainerAliasError(
+            "container alias mapping must use exact schemaVersion 2"
+        )
     return document
 
 
@@ -61,17 +70,20 @@ def load_container_aliases(root: pathlib.Path) -> dict[str, dict[str, str]]:
         if not NAME_RE.fullmatch(alias):
             raise ContainerAliasError(f"invalid alias: {alias}")
         entry = _mapping(aliases[alias], alias)
-        if set(entry) - set(ALIAS_REQUIRED_FIELDS) - set(ALIAS_OPTIONAL_FIELDS) \
-                or set(ALIAS_REQUIRED_FIELDS) - set(entry):
+        if set(entry) - set(ALIAS_REQUIRED_FIELDS) - set(ALIAS_OPTIONAL_FIELDS) or set(
+            ALIAS_REQUIRED_FIELDS
+        ) - set(entry):
             raise ContainerAliasError(
                 f"{alias} must have required fields {ALIAS_REQUIRED_FIELDS} "
                 f"and optional fields {ALIAS_OPTIONAL_FIELDS}"
             )
-        if not isinstance(entry["tenant"], str) or not TENANT_RE.fullmatch(entry["tenant"]):
+        if not isinstance(entry["tenant"], str) or not TENANT_RE.fullmatch(
+            entry["tenant"]
+        ):
             raise ContainerAliasError(f"{alias}.tenant is invalid")
         if not isinstance(entry["room"], str) or not ROOM_RE.fullmatch(entry["room"]):
             raise ContainerAliasError(f"{alias}.room is invalid")
-        for field in ("container", "user"):
+        for field in ("container", "user", "systemdUser"):
             if not isinstance(entry[field], str) or not NAME_RE.fullmatch(entry[field]):
                 raise ContainerAliasError(f"{alias}.{field} is invalid")
         for field in ("home", "stateDirectory"):
@@ -81,8 +93,13 @@ def load_container_aliases(root: pathlib.Path) -> dict[str, dict[str, str]]:
         if entry["membershipRole"] not in MEMBERSHIP_ROLES:
             raise ContainerAliasError(f"{alias}.membershipRole is invalid")
         registry_container = entry.get("registryContainer", entry["container"])
-        if not isinstance(registry_container, str) or not PLACEMENT_RE.fullmatch(registry_container):
+        if not isinstance(registry_container, str) or not PLACEMENT_RE.fullmatch(
+            registry_container
+        ):
             raise ContainerAliasError(f"{alias}.registryContainer is invalid")
+        docker_host = entry.get("dockerHost", "local")
+        if not isinstance(docker_host, str) or not NAME_RE.fullmatch(docker_host):
+            raise ContainerAliasError(f"{alias}.dockerHost is invalid")
         workspace = entry.get("workspace")
         if entry["harness"] == "openclaw":
             _absolute_path(workspace, f"{alias}.workspace")
@@ -94,6 +111,7 @@ def load_container_aliases(root: pathlib.Path) -> dict[str, dict[str, str]]:
         validated[alias] = {
             **{field: str(entry[field]) for field in ALIAS_REQUIRED_FIELDS},
             "registryContainer": registry_container,
+            "dockerHost": docker_host,
             **({"workspace": str(workspace)} if workspace is not None else {}),
         }
     return validated
@@ -108,17 +126,25 @@ def load_system_principals(root: pathlib.Path) -> dict[str, dict[str, str]]:
             raise ContainerAliasError(f"invalid system principal: {alias}")
         entry = _mapping(principals[alias], f"systemPrincipals.{alias}")
         if set(entry) != set(PRINCIPAL_FIELDS):
-            raise ContainerAliasError(f"system principal {alias} must have exact fields {PRINCIPAL_FIELDS}")
-        if not isinstance(entry["tenant"], str) or not TENANT_RE.fullmatch(entry["tenant"]):
+            raise ContainerAliasError(
+                f"system principal {alias} must have exact fields {PRINCIPAL_FIELDS}"
+            )
+        if not isinstance(entry["tenant"], str) or not TENANT_RE.fullmatch(
+            entry["tenant"]
+        ):
             raise ContainerAliasError(f"system principal {alias}.tenant is invalid")
         if not isinstance(entry["room"], str) or not ROOM_RE.fullmatch(entry["room"]):
             raise ContainerAliasError(f"system principal {alias}.room is invalid")
         if entry["membershipRole"] not in MEMBERSHIP_ROLES:
-            raise ContainerAliasError(f"system principal {alias}.membershipRole is invalid")
+            raise ContainerAliasError(
+                f"system principal {alias}.membershipRole is invalid"
+            )
         validated[alias] = {field: str(entry[field]) for field in PRINCIPAL_FIELDS}
     overlap = set(validated) & set(load_container_aliases(root))
     if overlap:
-        raise ContainerAliasError(f"system principals overlap fleet aliases: {sorted(overlap)}")
+        raise ContainerAliasError(
+            f"system principals overlap fleet aliases: {sorted(overlap)}"
+        )
     return validated
 
 
@@ -132,33 +158,51 @@ def load_historical_aliases(root: pathlib.Path) -> dict[str, dict[str, str]]:
             raise ContainerAliasError(f"invalid historical alias: {alias}")
         entry = _mapping(historical[alias], f"historicalAliases.{alias}")
         if set(entry) != set(HISTORICAL_FIELDS):
-            raise ContainerAliasError(f"historical alias {alias} must have exact fields {HISTORICAL_FIELDS}")
+            raise ContainerAliasError(
+                f"historical alias {alias} must have exact fields {HISTORICAL_FIELDS}"
+            )
         tenant = entry["tenant"]
         if not isinstance(tenant, str) or not TENANT_RE.fullmatch(tenant):
             raise ContainerAliasError(f"historical alias {alias}.tenant is invalid")
         if entry["expectedEnabled"] is not False:
             raise ContainerAliasError(f"historical alias {alias} must remain disabled")
         if entry["placementPolicy"] != "preserve-database":
-            raise ContainerAliasError(f"historical alias {alias} must preserve database placement")
+            raise ContainerAliasError(
+                f"historical alias {alias} must preserve database placement"
+            )
         if entry["retiredByMigration"] != "029_reconcile_declared_fleet.sql":
-            raise ContainerAliasError(f"historical alias {alias}.retiredByMigration is invalid")
+            raise ContainerAliasError(
+                f"historical alias {alias}.retiredByMigration is invalid"
+            )
         runtime = entry["lastDeclaredRuntime"]
         if runtime is not None:
-            runtime = _mapping(runtime, f"historicalAliases.{alias}.lastDeclaredRuntime")
+            runtime = _mapping(
+                runtime, f"historicalAliases.{alias}.lastDeclaredRuntime"
+            )
             if set(runtime) != set(HISTORICAL_RUNTIME_FIELDS):
                 raise ContainerAliasError(
                     f"historical alias {alias}.lastDeclaredRuntime must have exact fields "
                     f"{HISTORICAL_RUNTIME_FIELDS}"
                 )
             for field in ("container", "user"):
-                if not isinstance(runtime[field], str) or not NAME_RE.fullmatch(runtime[field]):
-                    raise ContainerAliasError(f"historical alias {alias}.{field} is invalid")
+                if not isinstance(runtime[field], str) or not NAME_RE.fullmatch(
+                    runtime[field]
+                ):
+                    raise ContainerAliasError(
+                        f"historical alias {alias}.{field} is invalid"
+                    )
             for field in ("home", "stateDirectory"):
                 _absolute_path(runtime[field], f"historicalAliases.{alias}.{field}")
             if runtime["harness"] not in HARNESS:
-                raise ContainerAliasError(f"historical alias {alias}.harness is invalid")
+                raise ContainerAliasError(
+                    f"historical alias {alias}.harness is invalid"
+                )
         validated[alias] = {"tenant": tenant, "expectedEnabled": "false"}
-    overlap = set(validated) & (set(load_container_aliases(root)) | set(load_system_principals(root)))
+    overlap = set(validated) & (
+        set(load_container_aliases(root)) | set(load_system_principals(root))
+    )
     if overlap:
-        raise ContainerAliasError(f"historical aliases overlap active identities: {sorted(overlap)}")
+        raise ContainerAliasError(
+            f"historical aliases overlap active identities: {sorted(overlap)}"
+        )
     return validated

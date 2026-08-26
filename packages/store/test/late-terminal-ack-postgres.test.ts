@@ -451,11 +451,13 @@ describe('(c) la entrega ya es done y llega otro done de una corrida vieja', () 
     const row = await deliveryRow(first.delivery_id);
     expect(row.reply).toBe('respuesta de la corrida nueva');
     expect(row.late_result_at).toBeNull();
-    // Y el descarte queda registrado, que es lo que permitió medir el agujero en primer lugar.
+    // Un event_id nuevo sobre una fila terminal no amplía el historial para siempre. El ACK
+    // aplicado de la corrida ganadora ya conserva el resultado canónico; la corrida vieja recibe
+    // ownership_lost pero no puede poblar delivery_acks después del cierre.
     expect((await pool.query(
       `SELECT 1 FROM delivery_acks WHERE delivery_id=$1 AND applied=false AND status='done'`,
       [first.delivery_id]
-    )).rowCount).toBe(1);
+    )).rowCount).toBe(0);
   });
 
   it('la carrera de dos corridas devolviendo done a la vez la gana una sola', async () => {

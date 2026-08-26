@@ -24,7 +24,7 @@ reciben agregados sin tenant/payload.
 | Terminal como broker implícito | Ultimate Terminal es plugin cliente lazy, same-origin, sin query credentials, y exige plugin id, capability `terminal.pty.client` y permiso `ultimate-terminal.connect`. |
 | DB sin cifrar en producción | Readiness exige modo TLS y confirma `pg_stat_ssl.ssl=true`; probes Compose y backup/restore aplican la misma política. `verify-full` es la recomendación operativa. |
 | Runtime con toolchain | Imagen final usa usuario `node`, JS compilado y dependencias production; comandos son `node .../dist/main.js`, sin tsx/devDependencies. |
-| Observabilidad engañosa | Dispatcher y `outbox-metrics` consultan PostgreSQL en cada scrape y emiten gauges para queue/retry/DLQ/leases y wake/outbox/relay; si falla, la serie `*_query_success=0` evita inventar ceros. |
+| Observabilidad engañosa | Dispatcher y `outbox-metrics` consultan PostgreSQL en cada scrape y emiten gauges para queue/retry/DLQ/leases y wake/outbox/relay; si falla, la serie `*_query_success=0` evita inventar ceros. Gateway expone progreso y resultados agregados de su wake pump en un listener interno sin labels de identidad; se alerta tanto target caído como loop vivo pero estancado y ACK cercado. |
 | QA mocked acreditado como real | Reportes separan `protocol-double`, mocked y authentic restart. Evidencia real/restart exige cero skips; un perfil restart mal configurado falla antes de ejecutar y conserva PID/container/timestamps cuando aplica faults. |
 | XSS/estilos dinámicos de xterm | CSP mantiene scripts y style elements en `self`; solo `style-src-attr 'unsafe-inline'` permite la geometría dinámica de xterm. |
 
@@ -43,8 +43,6 @@ reciben agregados sin tenant/payload.
   completa de retención/particionado de ACK/audit.
 - El modo `sslmode=require` cifra pero no valida identidad del servidor;
   producción debe usar `verify-full` y CA gestionada fuera del repositorio.
-- Gateway aún no expone métricas propias; las alertas incluidas cubren el
-  dispatcher y estado durable, mientras gateway se vigila por health/orquestador.
 - HA administrada (failover PostgreSQL, LB multi-gateway, RPO/RTO) no está
   acreditada por Compose. Ver `ops/runbooks/ha.md`; hasta completar ese gate la
   arquitectura es piloto, no producción HA.

@@ -278,6 +278,12 @@ test("the delegation feedback fields are part of the ack_result frame contract",
       output_index: 0,
       target: "kratos",
     }],
+    delegation_materializations: [{
+      output_index: 1,
+      target_tenant: "Steven",
+      target_alias: "socrates",
+      child_delivery_id: "70000000-0000-4000-8000-000000000001",
+    }],
     chain_gate: { gate_id: "gate-1", question: "¿Sigo?" },
   }));
 
@@ -292,6 +298,12 @@ test("the delegation feedback fields are part of the ack_result frame contract",
     guidance: "No reintentes.",
     output_index: 0,
     target: "kratos",
+  }]);
+  assert.deepEqual(frame.delegation_materializations, [{
+    output_index: 1,
+    target_tenant: "Steven",
+    target_alias: "socrates",
+    child_delivery_id: "70000000-0000-4000-8000-000000000001",
   }]);
   assert.deepEqual(frame.chain_gate, { gate_id: "gate-1", question: "¿Sigo?" });
   assert.deepEqual(entries, []);

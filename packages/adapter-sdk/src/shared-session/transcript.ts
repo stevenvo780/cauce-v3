@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isEnvelopeText, stripJsonFence } from "./envelope.js";
+import { envelopeHasCorrelation, stripJsonFence } from "./envelope.js";
 import { transcriptDirectoryIn } from "./session.js";
 import type { TranscriptReader, TranscriptSlice } from "./types.js";
 
@@ -98,10 +98,10 @@ function asString(value: unknown): string | undefined {
 /**
  * El texto de una entrada de usuario, tal como quedó escrito.
  *
- * Medido el 2026-07-30 con pegado entre corchetes: un prompt de 6 líneas entra en el transcript
- * como `message.content` de tipo STRING y VERBATIM, con `promptSource: "typed"`. No queda una
- * referencia a un adjunto ni un `[Pasted text #1]`. Por eso la correlación por igualdad exacta es
- * sólida y no hace falta ensuciar el prompt con un marcador.
+ * Validado con un fixture sintético: un prompt multilínea entra en el transcript como
+ * `message.content` de tipo STRING y VERBATIM, con `promptSource: "typed"`. No queda una
+ * referencia a un adjunto ni un marcador de texto pegado. Por eso la correlación por igualdad
+ * exacta es sólida y no hace falta ensuciar el prompt con un marcador.
  */
 export function userText(entry: TranscriptEntry): string | undefined {
   const message = entry.message;
@@ -204,14 +204,12 @@ export function descendsFrom(
 /**
  * Rescate cuando la cadena lógica que escribe claude está ROTA y no se puede probar descendencia.
  *
- * Medido en kratos el 2026-08-04: el `compact_boundary` `fee7e005` traía `parentUuid: null` y un
- * `logicalParentUuid` que apuntaba HACIA ADELANTE (`7afcfe7d`, cuatro entradas DESPUÉS del propio
- * boundary), y esa entrada volvía a colgar del boundary. Un ciclo cerrado de cinco nodos: ninguna
- * ruta llega ya a la entrada inyectada. Sin esto, `findAnswer` devuelve `undefined` en cada sondeo y
- * `harvest` gira hasta agotar el presupuesto de la entrega RETENIENDO el lock de la sesión: kratos
- * estuvo 8 h sin contestar con la respuesta ya escrita en su propio registro desde hacía 6 h, y las
- * 8 entregas siguientes encoladas detrás. No es un caso de borde: le pasa a cualquier alias claude
- * que compacte a mitad de turno.
+ * En evidencia privada se observó un `compact_boundary` con `parentUuid: null` y un
+ * `logicalParentUuid` hacia una entrada posterior que volvía a colgar del mismo boundary. Ese
+ * ciclo cerrado deja a la entrada inyectada fuera de toda ruta demostrable. Sin el rescate,
+ * `findAnswer` devuelve `undefined` y `harvest` retiene el lock hasta agotar el presupuesto,
+ * aunque la respuesta ya esté escrita. El caso está reproducido con fixtures sintéticos; los
+ * identificadores, el host y las métricas del incidente original quedan fuera del código.
  *
  * El criterio de rescate es CONVERSACIONAL, no sintáctico: una compactación no abre una rama nueva,
  * resume lo anterior y sigue el MISMO hilo. Así que si la subida cruzó una compactación y la entrada
@@ -258,11 +256,10 @@ export function positionByUuid(
  * nunca: agota el presupuesto (1 h) y devuelve `timedOut` -> AMBIGUO. El agente contestó y el dueño
  * ve una entrega muerta. No es "contexto perdido", es ENTREGA perdida.
  *
- * Medido el 2026-07-30 sobre un transcript real de este contenedor: con la cadena cortada,
- * `findFinalAssistant` devolvía `undefined` para el turno `e8f1e4b6…` del fichero
- * `6d9e6ff0-0462-413c-bf97-ec65b5613799.jsonl`, mientras un turno de control del MISMO fichero sin
- * compactación de por medio sí se cosechaba. En una muestra de 25 ficheros, 36 de 49 compactaciones
- * cayeron justo entre un prompt y su respuesta final, así que no es un caso de borde.
+ * El comportamiento se reprodujo sobre evidencia privada y quedó cubierto con casos sintéticos:
+ * cuando la compactación corta la cadena, `findFinalAssistant` no encuentra la respuesta; el
+ * control equivalente sin compactación sí conserva la continuidad. Los identificadores y
+ * referencias del corpus original se mantienen fuera del código.
  *
  * `parentUuid` manda siempre que exista: `logicalParentUuid` es el respaldo, no un atajo.
  */
@@ -312,19 +309,17 @@ export function compactBoundaries(
 /**
  * Índice por uuid quedándose con la PRIMERA aparición de cada uno.
  *
- * En un `.jsonl` los uuid NO son únicos: al compactar, claude REEMITE el segmento preservado con
- * los mismos uuid pero RECOLGADO del resumen. Medido sobre un transcript real de este contenedor:
- * 1.873 uuid repetidos en 13.976 entradas.
+ * En un transcript compactado los uuid NO son únicos: al compactar, el arnés puede reemitir el
+ * segmento preservado con los mismos uuid, pero recolgado del resumen.
  *
- * Quedarse con la última copia crea un CICLO real, no teórico: la copia reemitida de
- * `0cf696e4` cuelga del usuario-resumen `35bf3ef8`, que cuelga del `compact_boundary` `ec421d80`,
- * cuyo `logicalParentUuid` vuelve a `6b60f3c8`, que cuelga otra vez de la copia reemitida. La
- * cota de ciclos evitaba el cuelgue, pero la respuesta quedaba sin cosechar igual.
+ * Quedarse con la última copia puede crear un ciclo: la copia reemitida enlaza al resumen y al
+ * límite de compactación, cuya continuidad lógica puede volver al segmento reemitido. La cota de
+ * ciclos evita el cuelgue, pero no recupera por sí sola la respuesta.
  *
- * La primera aparición conserva el padre ORIGINAL, es decir la cadena cronológica de verdad, que
- * es la única que llega hasta la entrada que inyectamos. Medido: con la última copia, la respuesta
- * del turno `e8f1e4b6…` NO se alcanza (ciclo a los 421 saltos); con la primera y siguiendo
- * `logicalParentUuid`, se alcanza en 434.
+ * La primera aparición conserva el padre ORIGINAL y, por tanto, la cadena cronológica que llega
+ * hasta la entrada inyectada. El comportamiento se reprodujo con evidencia privada y quedó
+ * cubierto por casos sintéticos; paths, identificadores y conteos originales quedan fuera del
+ * código.
  */
 export function indexByUuid(
   entries: readonly TranscriptEntry[],
@@ -388,6 +383,7 @@ export function findFinalAssistant(
  */
 export function findEnvelopeTurn(
   entries: readonly TranscriptEntry[],
+  correlationId: string,
   desde?: string,
 ): { readonly text: string; readonly sessionId?: string } | undefined {
   const floor = desde === undefined ? 0 : (positionByUuid(entries).get(desde) ?? 0);
@@ -397,7 +393,7 @@ export function findEnvelopeTurn(
     if (entry.type !== "assistant" || entry.isSidechain === true) continue;
     if (stopReason(entry) !== "end_turn") continue;
     const text = assistantText(entry);
-    if (text === undefined || !isEnvelopeText(text)) continue;
+    if (text === undefined || !envelopeHasCorrelation(text, correlationId)) continue;
     const sessionId = asString(entry.sessionId);
     const body = stripJsonFence(text);
     return sessionId === undefined ? { text: body } : { text: body, sessionId };
@@ -441,8 +437,8 @@ export function claudeTranscript(
         ? { kind: "answer", text }
         : { kind: "answer", text, sessionId: answer.sessionId };
     },
-    findEnvelope: (entries, desde) => {
-      const found = findEnvelopeTurn(entries, desde);
+    findEnvelope: (entries, correlationId, desde) => {
+      const found = findEnvelopeTurn(entries, correlationId, desde);
       if (found === undefined) return undefined;
       return found.sessionId === undefined
         ? { kind: "answer", text: found.text }

@@ -93,6 +93,11 @@ if (argv[0] !== "exec") process.exit(0);
 if (command === "id" && commandArgs[0] === "-u") process.stdout.write("1000\n");
 if (command === "id" && commandArgs[0] === "-g") process.stdout.write("1000\n");
 if (command === "/usr/bin/python3" && commandArgs[0] === "-c") process.stdout.write(`${state.initStarttime}\n`);
+if (command === "/usr/bin/python3" && commandArgs[0] === "-c"
+  && commandArgs[1]?.includes("def exact_link") && state.isolatedConfigOk === false) process.exit(1);
+if ((command === "sh" || command === "bash") && commandArgs[0] === "-c"
+  && commandArgs.some((value) => value.includes("hermes_cli.oneshot"))
+  && state.hermesRuntimeOk === false) process.exit(1);
 if (command === "test") {
   if (commandArgs[0] === "-x") process.exit(state.controlExists === false ? 1 : 0);
   if (commandArgs[0] === "-e") process.exit(state.stateExists === false ? 1 : 0);

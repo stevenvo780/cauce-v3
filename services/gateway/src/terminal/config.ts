@@ -6,6 +6,10 @@ export const DEFAULT_TICKET_TTL_SECONDS = 30;
 export const MAX_TICKET_TTL_SECONDS = 120;
 export const DEFAULT_SESSION_TTL_SECONDS = 900;
 export const MAX_SESSION_TTL_SECONDS = 3_600;
+export const DEFAULT_CLAIM_LEASE_SECONDS = 150;
+/** Default relay contract: 30s authz + 90s grace + 5s HTTP + 5s takeover margin, strictly exceeded. */
+export const MIN_CLAIM_LEASE_SECONDS = 131;
+export const MAX_CLAIM_LEASE_SECONDS = 300;
 export const DEFAULT_MAX_SESSIONS_PER_OPERATOR = 2;
 export const DEFAULT_OPERATOR_HEADER = 'x-cauce-operator';
 
@@ -22,6 +26,8 @@ export interface TerminalConfig {
    * procesos, no la credencial de uno de ellos, así que no hace falta un segundo token.
    */
   readonly relayToken: string;
+  /** Authenticated relay mTLS leaf digests allowed to publish presence or own a session. */
+  readonly relayInstanceIds: ReadonlySet<string>;
   /**
    * Origen HTTPS del lado navegador del terminal-relay, para pedirle lecturas de gobierno.
    *
@@ -42,6 +48,8 @@ export interface TerminalConfig {
   readonly grantsFile: string;
   readonly ticketTtlSeconds: number;
   readonly sessionTtlSeconds: number;
+  /** PostgreSQL-clock lease for one exact terminal-relay ownership generation. */
+  readonly claimLeaseSeconds: number;
   readonly maxSessionsPerOperator: number;
   readonly operatorHeader: string;
   /** Operators the console may attribute a session to; empty means nobody is attributed. */
@@ -69,6 +77,24 @@ function boundedInteger(value: string | undefined, fallback: number, max: number
 
 function commaList(value: string | undefined): string[] {
   return (value ?? '').split(',').map((item) => item.trim()).filter((item) => item.length > 0);
+}
+
+function relayInstanceIds(environment: NodeJS.ProcessEnv): ReadonlySet<string> {
+  // The release currently supplies the singular variable and is gated to one replica. The
+  // plural form is the explicit future mesh contract; it is not enabled by scaling Compose.
+  const raw = environment.CAUCE_TERMINAL_RELAY_INSTANCE_IDS
+    ?? environment.CAUCE_TERMINAL_RELAY_INSTANCE_ID;
+  const values = commaList(raw);
+  if (values.length === 0) {
+    throw new Error('CAUCE_TERMINAL_RELAY_INSTANCE_ID is required when the terminal plane is enabled');
+  }
+  if (values.some((value) => !/^[0-9a-f]{64}$/.test(value))) {
+    throw new Error('terminal relay instance ids must be 64 lowercase hexadecimal characters');
+  }
+  if (new Set(values).size !== values.length) {
+    throw new Error('terminal relay instance ids must not contain duplicates');
+  }
+  return new Set(values);
 }
 
 /**
@@ -118,10 +144,22 @@ export async function loadTerminalConfig(
   const relayClientCertFile = optionalPath(environment.CAUCE_TERMINAL_RELAY_CLIENT_CERT_FILE);
   const relayClientKeyFile = optionalPath(environment.CAUCE_TERMINAL_RELAY_CLIENT_KEY_FILE);
   const relayCaFile = optionalPath(environment.CAUCE_TERMINAL_RELAY_CA_FILE);
+  const claimLeaseSeconds = boundedInteger(
+    environment.CAUCE_TERMINAL_CLAIM_LEASE_SECONDS,
+    DEFAULT_CLAIM_LEASE_SECONDS,
+    MAX_CLAIM_LEASE_SECONDS,
+    'CAUCE_TERMINAL_CLAIM_LEASE_SECONDS',
+  );
+  if (claimLeaseSeconds < MIN_CLAIM_LEASE_SECONDS) {
+    throw new Error(
+      `CAUCE_TERMINAL_CLAIM_LEASE_SECONDS must be between ${MIN_CLAIM_LEASE_SECONDS} and ${MAX_CLAIM_LEASE_SECONDS}`,
+    );
+  }
   return {
     wsPath,
     ticketKey: await readTicketKey(ticketKeyPath),
     relayToken,
+    relayInstanceIds: relayInstanceIds(environment),
     ...(readUrl === undefined ? {} : { relayUrl: readUrl }),
     ...(relayClientCertFile === undefined ? {} : { relayClientCertFile }),
     ...(relayClientKeyFile === undefined ? {} : { relayClientKeyFile }),
@@ -135,6 +173,7 @@ export async function loadTerminalConfig(
       environment.CAUCE_TERMINAL_SESSION_TTL_SECONDS, DEFAULT_SESSION_TTL_SECONDS, MAX_SESSION_TTL_SECONDS,
       'CAUCE_TERMINAL_SESSION_TTL_SECONDS'
     ),
+    claimLeaseSeconds,
     maxSessionsPerOperator: maxSessions,
     operatorHeader,
     operators: new Set(commaList(environment.CAUCE_TERMINAL_OPERATORS))

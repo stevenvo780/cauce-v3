@@ -6,12 +6,9 @@ import {
 } from './helpers.js';
 
 /**
- * Las tres rutas nuevas del panel de flota (GET /v3/console/activity, GET /v3/console/quotas,
- * POST /v3/quotas/samples) comparten el mismo requisito duro: rol operator + el permiso puntual,
- * verificado dos veces (Principal + store). Acá se prueba la mitad que NO necesita Postgres: que
- * un agente común con el permiso correcto pero SIN el rol operator recibe 403 en la ruta, antes
- * de que el store llegue a correr una sola consulta -- eso lo demuestra fakeRepository, que
- * lanzaría si se lo llamara con datos inesperados pero acá directamente no debería ser invocado.
+ * Las lecturas del panel de flota requieren `read`; la ingesta de muestras sigue siendo una
+ * mutación de operador con `control`, verificada además por el store. Esta separación permite que
+ * una cuenta `reader` navegue la consola sin adquirir autoridad para cambiar el estado operativo.
  *
  * Lo que este archivo NO prueba (requiere Postgres real, no disponible en esta máquina): que un
  * operator de un tenant no-hub sólo ve sus propias filas en fleetActivity()/quotaSnapshot(), y
@@ -53,12 +50,12 @@ function validQuotaSample() {
 }
 
 describe('GET /v3/console/activity', () => {
-  it('403 para un agente con permiso read pero sin rol operator', async () => {
+  it('200 para un reader con permiso read y sin rol operator', async () => {
     const repository = fakeRepository();
     const app = await gateway(repository, testPrincipal({ roles: roles('agent'), permissions: grants('read') }));
     const response = await app.inject({ method: 'GET', url: '/v3/console/activity' });
-    expect(response.statusCode).toBe(403);
-    expect(repository.fleetActivity).not.toHaveBeenCalled();
+    expect(response.statusCode).toBe(200);
+    expect(repository.fleetActivity).toHaveBeenCalledWith('Pablo', 'midas');
   });
 
   it('200 para un operator con permiso read, delegando en fleetActivity()', async () => {
@@ -85,12 +82,12 @@ describe('GET /v3/console/activity', () => {
 });
 
 describe('GET /v3/console/quotas', () => {
-  it('403 para un agente con permiso read pero sin rol operator', async () => {
+  it('200 para un reader con permiso read y sin rol operator', async () => {
     const repository = fakeRepository();
     const app = await gateway(repository, testPrincipal({ roles: roles('agent'), permissions: grants('read') }));
     const response = await app.inject({ method: 'GET', url: '/v3/console/quotas' });
-    expect(response.statusCode).toBe(403);
-    expect(repository.quotaSnapshot).not.toHaveBeenCalled();
+    expect(response.statusCode).toBe(200);
+    expect(repository.quotaSnapshot).toHaveBeenCalledWith('Pablo', 'midas');
   });
 
   it('200 para un operator con permiso read, delegando en quotaSnapshot()', async () => {

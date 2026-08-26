@@ -2,8 +2,8 @@
 set -euo pipefail
 
 readonly BASE_COMMIT='79d6d8f1eae00e733bf2aeddaffeb592e5944687'
-readonly PATCH_SHA256='f6c61ed1c8e2bc3e6c021ad56fa27142f8996571ae250e4484a464756bdb9733'
-readonly RESULT_TREE='72cb55a2b4a9413193da69298ebb0c548955d9a6'
+readonly PATCH_SHA256='76cb78aeea04ade9022593d18b2281b5d828711acf17f84fb4e6e419c1f4510a'
+readonly RESULT_TREE='cd97103c333d9b7c9cf8efbd9da1bfea0ac836f9'
 
 if [[ $# -ne 1 ]]; then
   printf 'usage: %s OUTPUT.tar\n' "$0" >&2
@@ -49,7 +49,7 @@ export GIT_AUTHOR_DATE='2000-01-01T00:00:00Z'
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
 export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 export GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"
-synthetic_commit=$(git -C "$worktree" commit-tree "$tree" -p "$BASE_COMMIT" -m 'Cauce schema-029 rollback bridge')
+synthetic_commit=$(git -C "$worktree" commit-tree "$tree" -p "$BASE_COMMIT" -m 'Cauce schema-037 rollback bridge')
 git -C "$worktree" archive --format=tar --output="$temporary_output" "$synthetic_commit"
 mv -- "$temporary_output" "$output"
 printf 'rollback bridge build context: tree=%s archive=%s\n' "$tree" "$output"

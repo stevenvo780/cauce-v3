@@ -157,6 +157,21 @@ async function gatewayCanonico(supersedeAfterBatch = false) {
       tenant_id: 'Steven', alias: 'zeus', enabled: true,
       harness_id: 'claude', home_directory: '/home/dev',
     }),
+    recordProfileRuntimeExpectation: async () => undefined,
+    readProfileRuntimeAdoption: async (
+      _tenantId: string,
+      _alias: string,
+      contract: {
+        revision: number;
+        generation: string;
+        documents: readonly { name: string; path: string; sha: string }[];
+      },
+    ) => ({
+      evidence: 'adapter_delivery' as const,
+      ...contract,
+      documents: [...contract.documents],
+      adopted_at: '2026-08-26T18:00:00.000Z',
+    }),
   };
   const app = await buildGateway({
     pool: poolDePerfil(state),
@@ -175,13 +190,18 @@ async function gatewayCanonico(supersedeAfterBatch = false) {
   const probe: AgentFactsProbe = {
     factsFor: async () => ({
       source: 'measured',
-      facts: { harness: 'claude', home: '/home/dev' },
+      facts: {
+        harness: 'claude', home: '/home/dev',
+        generation: 'generation-profile-route-test', containerId: 'ws-zeus-test',
+      },
     }),
     readGovernanceDocument: async () => ({
       text: disco, bytes: Buffer.byteLength(disco), truncated: false,
       modified_at: '2026-08-25T18:00:00.000Z', sha: sha(disco),
     }),
-    listMemoryDirectory: async () => ({ root: '/none', total: 0, truncated: false, entries: [] }),
+    listMemoryDirectory: async () => ({
+      root: '/none', total: 0, observed_at_least: 0, truncated: false, entries: [],
+    }),
     writeGovernanceBatch: async (writes) => {
       batches.push([...writes]);
       const entry = writes[0];

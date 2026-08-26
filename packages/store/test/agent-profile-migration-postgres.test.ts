@@ -25,6 +25,12 @@ let pool: DatabasePool;
 const upPath = new URL('../migrations/026_agent_profile.sql', import.meta.url);
 const downPath = new URL('../migrations/down/026_agent_profile.sql', import.meta.url);
 const canonicalDownPath = new URL('../migrations/down/028_canonical_agent_role.sql', import.meta.url);
+const profileRuntimeDownPath = new URL(
+  '../migrations/down/035_agent_profile_runtime_adoption.sql', import.meta.url,
+);
+const shadowPhaseDownPath = new URL(
+  '../migrations/down/036_shadow_router_target_phase.sql', import.meta.url,
+);
 
 async function runSql(url: URL): Promise<void> {
   await pool.query(await readFile(url, 'utf8'));
@@ -44,13 +50,25 @@ async function functionExists(name: string): Promise<boolean> {
   return result.rows[0]?.exists === true;
 }
 
-async function downCanonicalIfApplied(): Promise<void> {
+async function migrationApplied(version: string): Promise<boolean> {
   const applied = await pool.query<{ exists: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1 FROM schema_migrations WHERE version='028_canonical_agent_role.sql'
-     ) AS exists`
+    `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1) AS exists`, [version],
   );
-  if (applied.rows[0]?.exists) await runSql(canonicalDownPath);
+  return applied.rows[0]?.exists === true;
+}
+
+async function downProfileDependentsIfApplied(): Promise<void> {
+  // 035 owns tables with FKs to agent_profiles. Its down in turn refuses to run while 036 is
+  // present, so exercise the real dependency order instead of using CASCADE or deleting ledger
+  // rows. Migrations 029-034 do not reference agent_profiles and remain deliberately untouched.
+  const dependents = [
+    ['036_shadow_router_target_phase.sql', shadowPhaseDownPath],
+    ['035_agent_profile_runtime_adoption.sql', profileRuntimeDownPath],
+    ['028_canonical_agent_role.sql', canonicalDownPath],
+  ] as const;
+  for (const [version, path] of dependents) {
+    if (await migrationApplied(version)) await runSql(path);
+  }
 }
 
 beforeAll(async () => {
@@ -78,7 +96,7 @@ describe('026 arriba, abajo y arriba otra vez', () => {
   });
 
   it('el down/ la revierte entera: se va la tabla, se van las funciones y se va la anotación', async () => {
-    await downCanonicalIfApplied();
+    await downProfileDependentsIfApplied();
     await runSql(downPath);
     expect(await tableExists('agent_profiles')).toBe(false);
     expect(await functionExists('cauce_utf16_units')).toBe(false);
@@ -170,7 +188,7 @@ describe('026 arriba, abajo y arriba otra vez', () => {
     expect(await functionExists('cauce_text_items_ok')).toBe(true);
 
     // Y el orden CORRECTO —el del down/— sí funciona, entero y en una sola pasada.
-    await downCanonicalIfApplied();
+    await downProfileDependentsIfApplied();
     await runSql(downPath);
     expect(await tableExists('agent_profiles')).toBe(false);
     expect(await functionExists('cauce_utf16_units')).toBe(false);

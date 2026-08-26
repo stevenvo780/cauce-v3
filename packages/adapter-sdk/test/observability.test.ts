@@ -142,6 +142,7 @@ test("delivery_start and delivery_state events are emitted", async () => {
 
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness,
     publish: (event) => {
       events.push(event);
@@ -213,6 +214,7 @@ test("a claim renewal carries no field the wire mapping drops", async () => {
   const events: DeliveryEvent[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness,
     publish: (event) => {
       events.push(event);
@@ -254,6 +256,7 @@ test("logger is optional (graceful degradation)", async () => {
   // Engine without logger should not throw
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness,
     publish: () => Promise.resolve(),
     // No logger provided
@@ -285,6 +288,7 @@ test("error messages include sanitized stderr detail", async () => {
   const logs: AdapterLog[] = [];
   const engine = new AdapterEngine({
     store,
+    executionIntentMode: "local-test-only",
     harness,
     publish: () => Promise.resolve(),
     logger: (log) => logs.push(log),

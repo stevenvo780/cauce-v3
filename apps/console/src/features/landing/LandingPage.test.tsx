@@ -99,7 +99,7 @@ it('escribe las alertas que el snapshot acredita, con su enlace a la vista que l
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
   const dlq = await within(banda).findByText(/entrega muerta en la DLQ/i);
   expect(dlq).toBeInTheDocument();
-  expect(within(banda).getByRole('link', { name: 'Queues & DLQ' })).toHaveAttribute('href', '/queues');
+  expect(within(banda).getByRole('link', { name: /revisar alerta en queues & dlq/i })).toHaveAttribute('href', '/queues');
 });
 
 /**

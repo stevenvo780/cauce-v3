@@ -57,7 +57,7 @@ function servidorConLas38() {
 }
 
 function filasDeLaTabla(): HTMLElement[] {
-  const tabla = screen.getByRole('table');
+  const tabla = screen.getByRole('table', { name: /colas, retries y dead letters/i });
   return within(tabla).getAllByRole('row').slice(1);
 }
 
@@ -73,7 +73,7 @@ describe('llegar a las entregas que hay que revisar', () => {
     servidorConLas38();
     renderWithApi(<QueuesPage />);
 
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: /colas, retries y dead letters/i });
     expect(filasDeLaTabla()).toHaveLength(38);
 
     await user.click(screen.getByRole('button', { name: /dead letters/i }));
@@ -89,7 +89,7 @@ describe('llegar a las entregas que hay que revisar', () => {
     const user = userEvent.setup();
     servidorConLas38();
     renderWithApi(<QueuesPage />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     const tarjeta = screen.getByRole('button', { name: /dead letters/i });
     expect(tarjeta).toHaveAttribute('aria-pressed', 'false');
@@ -105,7 +105,7 @@ describe('llegar a las entregas que hay que revisar', () => {
     const user = userEvent.setup();
     servidorConLas38();
     renderWithApi(<QueuesPage />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     await user.type(screen.getByRole('searchbox', { name: /buscar entrega/i }), 'zeus');
     expect(filasDeLaTabla()).toHaveLength(7);
@@ -118,7 +118,7 @@ describe('llegar a las entregas que hay que revisar', () => {
   it('sin tocar nada siguen estando las 38 filas y ninguna tarjeta apretada', async () => {
     servidorConLas38();
     renderWithApi(<QueuesPage />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     expect(filasDeLaTabla()).toHaveLength(38);
     for (const nombre of [/pendientes/i, /en retry/i, /dead letters/i]) {
@@ -136,7 +136,7 @@ describe('llegar a las entregas que hay que revisar', () => {
     window.history.pushState({}, '', '/queues?delivery=bien-3');
     renderWithApi(<QueuesPage />);
 
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: /colas, retries y dead letters/i });
     expect(filasDeLaTabla()).toHaveLength(1);
     expect(screen.getByRole('button', { name: /dead letters/i })).toBeDisabled();
   }, 20_000);
@@ -150,7 +150,7 @@ describe('la columna «Último error»', () => {
   it('🔴 una entrega que salió BIEN no grita UNKNOWN en ámbar', async () => {
     servidorConLas38();
     renderWithApi(<QueuesPage />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     const terminadaBien = screen.getByRole('row', { name: /bien-0/ });
     const celda = within(terminadaBien).getAllByRole('cell').at(-2)!;
@@ -167,7 +167,7 @@ describe('la columna «Último error»', () => {
   it('🔴 una entrega MUERTA sin motivo sigue marcada como UNKNOWN', async () => {
     servidorConLas38();
     renderWithApi(<QueuesPage />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     const muertaSinMotivo = screen.getByRole('row', { name: /muerta-0/ });
     const celda = within(muertaSinMotivo).getAllByRole('cell').at(-2)!;
@@ -197,7 +197,7 @@ describe('la confirmación antes de mover trabajo de la flota', () => {
       return HttpResponse.json({ replayed: true }, { status: 202 });
     }));
     const user = userEvent.setup();
-    renderWithApi(<DeliveryTable rows={[MUERTA]} canReplay canCancel onChanged={() => undefined} />);
+    renderWithApi(<DeliveryTable rows={[MUERTA]} canReplay canCancel onChanged={async () => ({ data: {} })} />);
 
     await user.click(screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
 
@@ -215,7 +215,7 @@ describe('la confirmación antes de mover trabajo de la flota', () => {
       return HttpResponse.json({ replayed: true }, { status: 202 });
     }));
     const user = userEvent.setup();
-    renderWithApi(<DeliveryTable rows={[MUERTA]} canReplay canCancel onChanged={() => undefined} />);
+    renderWithApi(<DeliveryTable rows={[MUERTA]} canReplay canCancel onChanged={async () => ({ data: {} })} />);
 
     await user.click(screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
     await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: /no hacer nada/i }));
@@ -228,7 +228,7 @@ describe('la confirmación antes de mover trabajo de la flota', () => {
   it('🔴 la explicación de qué hace Replay está en la página ANTES de apretar nada', async () => {
     servidorConLas38();
     renderWithApi(<QueuesPage />);
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     expect(screen.getByText(/vuelve a encolar esta entrega/i)).toBeInTheDocument();
     expect(screen.getByText(/queda en dead letters y se puede replayar/i)).toBeInTheDocument();

@@ -4,13 +4,14 @@ import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
 import type { JobLane, MessagePage } from '../../api/types';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
-import { compactId, createId, safeDeliveryState, safeJobLane } from '../../lib';
+import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../navigation';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada, textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
 import { fleetAgentId } from '../terminal/fleet';
 import { transcriptForSession, type OperatorRoute, type OperatorSession, type TranscriptItem } from '../terminal/session';
 import { TerminalTranscript } from '../terminal/TerminalTranscript';
 import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
+import { publishDurably } from './durable-publish';
 import { MessageTimeline } from './MessageTimeline';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
@@ -32,6 +33,7 @@ interface ConversationPaneProps {
   error?: Error;
   route: OperatorRoute;
   canPublish: boolean;
+  publisherSubject?: string | null;
   salud?: SaludDeCola;
   onReload: () => void;
 }
@@ -55,7 +57,9 @@ type CuerpoEntero =
  * a partir de la topología del actor. El formulario viejo pedía el room y un «Tenant:alias» a
  * mano; eso no era información que el operador tuviera que aportar, era una forma de equivocarse.
  */
-export function ConversationPane({ agent, page, loading, error, route, canPublish, salud, onReload }: ConversationPaneProps) {
+export function ConversationPane({
+  agent, page, loading, error, route, canPublish, publisherSubject, salud, onReload,
+}: ConversationPaneProps) {
   const api = useApi();
   const [draft, setDraft] = useState('');
   const [roomElegido, setRoomElegido] = useState<string>();
@@ -216,7 +220,7 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
     setEnviando(true);
     setAviso(undefined);
     try {
-      const resultado = await api.publishMessage({
+      const semantics = {
         room_id: roomOrigen,
         recipients: [{ tenant_id: agent.tenantId, alias: agent.alias }],
         body: { text: texto },
@@ -224,10 +228,25 @@ export function ConversationPane({ agent, page, loading, error, route, canPublis
         // La MISMA prioridad por carril que publicaba el formulario anterior: interactivo 10,
         // batch 0. No es una constante nueva, es la que ya estaba y se perdió con el rediseño.
         priority: lane === 'interactive' ? 10 : 0,
-        idempotency_key: createId(`consola-mensajes-${agent.alias}`),
+      } satisfies Omit<Parameters<typeof api.publishMessage>[0], 'idempotency_key'>;
+      const { receipt: resultado, reconciled, journalStatus } = await publishDurably({
+        api,
+        input: semantics,
+        publisherSubject,
+        expectedDeliveries: 1,
+        reconcile: onReload,
       });
+
       setDraft('');
-      setAviso({ tone: 'success', text: `Aceptado por el control plane · ${compactId(resultado.message_id)}. El ACK llega por polling.` });
+      setAviso({
+        tone: 'success',
+        text: `${reconciled ? 'Publicación reconciliada desde el journal durable' : 'Aceptado por el control plane'} · ${compactId(resultado.message_id)}. `
+          + `${journalStatus === 'confirmed'
+            ? 'Intención confirmada'
+            : journalStatus === 'pending'
+              ? 'Confirmación incierta; intención pendiente y cercada'
+              : 'Confirmación rechazada; intención cercada contra duplicados'}; el ACK llega por polling.`,
+      });
       // Lo que uno acaba de escribir se mira: publicar vuelve a pegar el hilo al final.
       pegadoRef.current = true;
       setPegado(true);

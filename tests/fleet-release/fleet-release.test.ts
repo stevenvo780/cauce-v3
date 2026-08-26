@@ -218,9 +218,13 @@ async function startAdapter(
   diagnostics: Map<string, string>,
 ): Promise<ChildProcess> {
   const aliasRoot = path.join(workRoot, manifest.alias);
+  const openClawWorkspace = path.join(aliasRoot, 'openclaw-workspace');
   await Promise.all([
     mkdir(path.join(aliasRoot, 'home'), { recursive: true, mode: 0o700 }),
     mkdir(path.join(aliasRoot, 'state'), { recursive: true, mode: 0o700 }),
+    ...(manifest.harness === 'openclaw'
+      ? [mkdir(openClawWorkspace, { recursive: true, mode: 0o700 })]
+      : []),
   ]);
   const environment = minimalAdapterEnvironment(manifest, wsUrl, aliasRoot);
   if (manifest.harness === 'openclaw') {
@@ -229,6 +233,7 @@ async function startAdapter(
     environment.CAUCE_OPENCLAW_TRANSPORT = 'api';
     environment.CAUCE_OPENCLAW_API_URL = openClaw.endpoint;
     environment.CAUCE_OPENCLAW_TOKEN_FILE = canaryPath;
+    environment.CAUCE_OPENCLAW_WORKSPACE = openClawWorkspace;
   } else {
     environment.CAUCE_HARNESS_COMMAND = harnessDouble;
   }
@@ -350,23 +355,41 @@ async function validateAlias(
   expect(Number(lease?.epoch)).toBeGreaterThan(0);
   checks.lease = true;
 
-  const delivery = await database.pool.query<{ status: string; attempt: number }>(
-    'SELECT status,attempt FROM deliveries WHERE id=$1', [deliveryId],
+  const delivery = await database.pool.query<{
+    status: string;
+    attempt: number;
+    execution_started: boolean;
+  }>(
+    `SELECT status,attempt,(execution_started_at IS NOT NULL) AS execution_started
+       FROM deliveries WHERE id=$1`, [deliveryId],
   );
-  expect(delivery.rows[0]).toEqual({ status: 'done', attempt: 2 });
+  expect(delivery.rows[0]).toEqual({ status: 'done', attempt: 2, execution_started: true });
   checks.retry = true;
-  const acknowledgements = await database.pool.query<{ status: string; attempt: number; applied: boolean; payload: Record<string, unknown> }>(
-    'SELECT status,attempt,applied,payload FROM delivery_acks WHERE delivery_id=$1 ORDER BY id', [deliveryId],
+  const acknowledgements = await database.pool.query<{
+    status: string;
+    attempt: number;
+    applied: boolean;
+    renewal: boolean;
+    payload: Record<string, unknown>;
+  }>(
+    'SELECT status,attempt,applied,renewal,payload FROM delivery_acks WHERE delivery_id=$1 ORDER BY id', [deliveryId],
   );
-  expect(acknowledgements.rows.map(({ status, attempt, applied }) => ({ status, attempt, applied }))).toEqual([
-    { status: 'accepted', attempt: 1, applied: true },
-    { status: 'started', attempt: 1, applied: true },
-    { status: 'failed', attempt: 1, applied: true },
-    { status: 'accepted', attempt: 2, applied: true },
-    { status: 'started', attempt: 2, applied: true },
-    { status: 'done', attempt: 2, applied: true },
+  expect(acknowledgements.rows.map(({ status, attempt, applied, renewal }) => ({
+    status,
+    attempt,
+    applied,
+    executionIntent: renewal,
+  }))).toEqual([
+    { status: 'accepted', attempt: 1, applied: true, executionIntent: false },
+    { status: 'started', attempt: 1, applied: true, executionIntent: false },
+    { status: 'started', attempt: 1, applied: true, executionIntent: true },
+    { status: 'failed', attempt: 1, applied: true, executionIntent: false },
+    { status: 'accepted', attempt: 2, applied: true, executionIntent: false },
+    { status: 'started', attempt: 2, applied: true, executionIntent: false },
+    { status: 'started', attempt: 2, applied: true, executionIntent: true },
+    { status: 'done', attempt: 2, applied: true, executionIntent: false },
   ]);
-  expect(acknowledgements.rows[2]?.payload).toMatchObject({ retryable: true });
+  expect(acknowledgements.rows[3]?.payload).toMatchObject({ retryable: true });
   checks.ack = true;
 
   const sessionMode = await validateSession(manifest, openClaw);

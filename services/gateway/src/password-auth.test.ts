@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import type { FastifyRequest } from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
+import { buildPublishReceipt } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 import { buildGateway, type GatewayRepository } from './app.js';
 import { AuthError, validatePrincipal, type AuthProvider, type Principal } from './auth.js';
@@ -26,16 +28,51 @@ function fakeRepository(): {
   publish: ReturnType<typeof vi.fn>;
 } {
   const publish = vi.fn(async (input: Parameters<GatewayRepository['publish']>[0]) => {
-    void input;
-    return { message_id: '11111111-2222-4333-8444-555555555556' };
+    return buildPublishReceipt(input, {
+      message_id: '11111111-2222-4333-8444-555555555556',
+      delivery_ids: ['21111111-2222-4333-8444-555555555556'],
+      duplicate: false,
+      request_id: input.request_id,
+      trace_id: input.trace_id,
+    });
   });
   return { publish, repository: {
     assertPrincipal: vi.fn(async () => undefined),
+    assertPermission: vi.fn(async () => undefined),
     status: vi.fn(async () => ({ online: 1 })),
     listPresence: vi.fn(async () => []),
     principalAccess: vi.fn(async () => ({ roles: ['operator'], permissions: ['route', 'read', 'control'] })),
+    topology: vi.fn(async () => ({ tenants: [], acl_edges: [] })),
+    listMessages: vi.fn(async () => ({ items: [], next_cursor: null })),
+    queueSnapshot: vi.fn(async () => ({ pending: 0, retrying: 0, dead: 0, items: [] })),
+    listJobs: vi.fn(async () => ({ items: [] })),
+    enqueueJob: vi.fn(async () => 'job-no-debe-crearse'),
+    listAdapters: vi.fn(async () => ({ items: [] })),
+    fleetActivity: vi.fn(async () => ({ observed_at: new Date().toISOString(), agents: [] })),
+    quotaSnapshot: vi.fn(async () => ({ observed_at: new Date().toISOString(), providers: [] })),
+    recordQuotaSample: vi.fn(async () => ({
+      collection_id: '81111111-2222-4333-8444-555555555556',
+    })),
+    listAgents: vi.fn(async () => ({ items: [] })),
+    getAgent: vi.fn(async (alias: string) => ({ tenant_id: 'Steven', alias })),
+    getAgentByIdentity: vi.fn(async (tenantId: string, alias: string) => ({ tenant_id: tenantId, alias })),
+    listOriginRelays: vi.fn(async () => ({ items: [] })),
+    listAudit: vi.fn(async () => ({ items: [], next_cursor: null })),
+    agentChain: vi.fn(async (traceId: string) => ({
+      trace_id: traceId, nodes: [], edges: [], origin_relays: [], redacted_endpoints: 0,
+    })),
+    getConfiguration: vi.fn(async () => ({ revision: 0, tenants: [], rooms: [], memberships: [] })),
+    applyConfigurationChange: vi.fn(async () => ({ applied: true })),
+    rollbackConfiguration: vi.fn(async () => ({ applied: true })),
+    replayDelivery: vi.fn(async () => ({ replayed: true })),
+    cancelDelivery: vi.fn(async () => ({ cancelled: true })),
     publish,
-    claimOutbox: vi.fn(async () => [])
+    verifyPublishReceipt: vi.fn(async () => true),
+    claimOutbox: vi.fn(async () => []),
+    // PasswordAuthProvider is intentionally production-mode. Its repository double must therefore
+    // implement the same durable reconnect fence as production, even though these auth tests have
+    // no outstanding deliveries to recover.
+    liveDeliveryClaims: vi.fn(async () => []),
   } as unknown as GatewayRepository };
 }
 
@@ -151,6 +188,100 @@ function cookieFrom(headers: Record<string, unknown>): string {
 }
 
 describe('login por contraseña de la consola', () => {
+  it('reader navega lecturas generales y no puede ejecutar ninguna mutación de consola', async () => {
+    const test = await fixture({ user: await makeUser({ role: 'reader' }) });
+    try {
+      const login = await test.login('steven@elenxos.com', PASSWORD);
+      expect(login.statusCode).toBe(200);
+      expect(login.json()).toMatchObject({ roles: [], permissions: ['read'] });
+      const cookie = cookieFrom(login.headers);
+      const csrf = login.json<{ csrf_token: string }>().csrf_token;
+
+      const reads = [
+        '/v3/console/access',
+        '/v3/console/topology',
+        '/v3/console/messages',
+        '/v3/console/queues',
+        '/v3/console/jobs',
+        '/v3/console/adapters',
+        '/v3/console/activity',
+        '/v3/console/quotas',
+        '/v3/console/agents',
+        '/v3/console/agents/kant',
+        '/v3/console/tenants/Steven/agents/kant',
+        '/v3/console/audit',
+        '/v3/console/chains/trace-reader',
+        '/v3/console/config',
+        '/v3/console/observability',
+      ];
+      for (const url of reads) {
+        const response = await test.app.inject({ method: 'GET', url, headers: { cookie } });
+        expect(response.statusCode, url).toBe(200);
+      }
+
+      const mutationHeaders = {
+        cookie,
+        origin: 'http://localhost',
+        'x-csrf-token': csrf,
+      };
+      const mutations: Array<{
+        method: 'POST' | 'PUT'; url: string; payload: Record<string, unknown>;
+      }> = [
+        {
+          method: 'POST', url: '/v3/console/messages',
+          payload: {
+            room_id: 'grp.steven', recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
+            body: { text: 'no debe publicarse' }, idempotency_key: 'reader-no-publish',
+          },
+        },
+        {
+          method: 'POST', url: '/v3/console/jobs',
+          payload: { lane: 'batch', priority: 0, kind: 'system.database.probe', payload: {} },
+        },
+        {
+          method: 'POST', url: '/v3/console/config/changes',
+          payload: {
+            dry_run: false, expected_revision: 0,
+            mutation: { resource: 'tenant', action: 'update', id: 'Steven', value: { enabled: true } },
+          },
+        },
+        {
+          method: 'POST', url: '/v3/console/config/revisions/1/rollback',
+          payload: { dry_run: false, expected_revision: 0 },
+        },
+        {
+          method: 'POST', url: '/v3/console/deliveries/20000000-0000-4000-8000-000000000001/replay',
+          payload: {},
+        },
+        {
+          method: 'POST', url: '/v3/console/deliveries/20000000-0000-4000-8000-000000000001/cancel',
+          payload: { reason: 'reader no cancela' },
+        },
+        {
+          method: 'PUT', url: '/v3/console/tenants/Steven/agents/kant/perfil',
+          payload: { expected_revision: null, profile: {} },
+        },
+        {
+          method: 'PUT', url: '/v3/console/tenants/Steven/agents/kant/documents/directive/content',
+          payload: { content: 'no escribir', create_if_absent: true },
+        },
+      ];
+      for (const mutation of mutations) {
+        const response = await test.app.inject({ ...mutation, headers: mutationHeaders });
+        expect(response.statusCode, `${mutation.method} ${mutation.url}`).toBe(403);
+      }
+
+      expect(test.publish).not.toHaveBeenCalled();
+      expect(test.repository.enqueueJob).not.toHaveBeenCalled();
+      expect(test.repository.applyConfigurationChange).not.toHaveBeenCalled();
+      expect(test.repository.rollbackConfiguration).not.toHaveBeenCalled();
+      expect(test.repository.replayDelivery).not.toHaveBeenCalled();
+      expect(test.repository.cancelDelivery).not.toHaveBeenCalled();
+    } finally {
+      await test.app.close();
+    }
+  });
+
   it('publica sin fabricar un origin_relay hacia un adapter console inexistente', async () => {
     const test = await fixture();
     try {

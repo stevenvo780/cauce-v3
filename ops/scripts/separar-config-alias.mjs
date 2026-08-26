@@ -20,8 +20,11 @@
  * ======
  *
  * `CLAUDE_CONFIG_DIR` y `CODEX_HOME` ya gobiernan dónde busca cada CLI, y el supervisor ya
- * construye el entorno del adaptador por alias. Se apunta cada alias a `<home>/.cauce/<alias>/`,
- * se COPIA el contenido actual y se deja el original INTACTO como reversa.
+ * construye el entorno del adaptador por alias. Se apunta cada alias a
+ * `<home>/.local/share/cauce-v3/config/<alias>/`, dentro del árbol persistente de la flota. Sólo
+ * se COPIA el fichero de identidad; configuración, MCP y credencial se referencian mediante
+ * enlaces al origen único. Historiales y sesiones no se copian ni comparten. El original queda
+ * INTACTO como reversa.
  *
  * LA TRAMPA, QUE YA SE PAGÓ UNA VEZ
  * =================================
@@ -86,7 +89,7 @@ export function directorioDeAlias(home, alias, arnes) {
   if (!perfil) throw new ErrorDePlan(`arnés sin directorio de configuración: '${arnes}'`);
   rutaAbsolutaCanonica(home, "home");
   if (!ALIAS_VALIDO.test(alias)) throw new ErrorDePlan(`alias inválido: '${alias}'`);
-  return `${home}/.cauce/${alias}/${perfil.directorio}`;
+  return `${home}/.local/share/cauce-v3/config/${alias}/${perfil.directorio}`;
 }
 
 /**
@@ -134,13 +137,13 @@ export function planificarSeparacion(entrada) {
   }
 
   const copias = [{
-    origen: directorioOrigen,
-    destino: directorioDestino,
-    tipo: "directorio",
+    origen: `${directorioOrigen}/${perfil.testigo}`,
+    destino: `${directorioDestino}/${perfil.testigo}`,
+    tipo: "fichero",
     obligatorio: true,
     motivo:
-      `Todo lo que ${perfil.variable} gobierna cuelga de aquí (${perfil.testigo}, credenciales, ` +
-      "historial y registro de sesiones). Se COPIA, no se mueve: el original queda como reversa.",
+      `${perfil.testigo} define la identidad del alias. Es el único contenido que se copia para ` +
+      "darle un inodo propio; el original queda como reversa.",
   }];
 
   const advertencias = [];
@@ -153,33 +156,57 @@ export function planificarSeparacion(entrada) {
     copias.push({
       origen: yaTeniaVariable ? `${directorioOrigen}/.claude.json` : `${home}/.claude.json`,
       destino: `${directorioDestino}/.claude.json`,
-      tipo: "fichero",
+      tipo: "enlace",
       obligatorio: true,
       motivo:
-        "CLAUDE_CONFIG_DIR mueve TAMBIÉN el .claude.json, y ahí viven todos los servidores MCP del " +
-        "alias. Si no llega, el alias pierde todas sus herramientas sin un solo error: no falla, " +
-        "arranca igual y se queda mudo de capacidades. Es el fallo que ya se pagó una vez.",
+        "CLAUDE_CONFIG_DIR mueve TAMBIÉN el .claude.json, donde viven los MCP; perderlo deja al " +
+        "alias sin herramientas y sin un solo error. Se enlaza al origen único: copiarlo podría " +
+        "duplicar secretos y separaría futuras rotaciones.",
+    });
+    copias.push({
+      origen: `${directorioOrigen}/.credentials.json`,
+      destino: `${directorioDestino}/.credentials.json`,
+      tipo: "enlace",
+      obligatorio: true,
+      motivo: "La credencial permanece en un único fichero; nunca se copian sus bytes.",
+    });
+    copias.push({
+      origen: `${directorioOrigen}/settings.json`,
+      destino: `${directorioDestino}/settings.json`,
+      tipo: "enlace",
+      obligatorio: false,
+      motivo: "Si existe, conserva permisos/hooks sin duplicar posibles valores sensibles.",
     });
     advertencias.push(
-      "El .credentials.json del alias queda DUPLICADO: el original sigue en el origen y la copia " +
-      "vive en el destino. Si dos alias comparten una misma cuenta Claude, ahora hay dos copias " +
-      "del mismo token y la rotación de una no alcanza a la otra. Comprobá a qué cuenta pertenece " +
-      "cada alias ANTES de aplicar; este plan no puede decidirlo.",
+      ".credentials.json y los MCP siguen siendo compartidos por enlace con el origen autorizado. " +
+      "La identidad sí queda separada; una rotación sigue teniendo una sola fuente.",
     );
   }
 
   if (arnes === "codex") {
+    copias.push({
+      origen: `${directorioOrigen}/config.toml`,
+      destino: `${directorioDestino}/config.toml`,
+      tipo: "enlace",
+      obligatorio: true,
+      motivo: "La configuración/MCP conserva una sola fuente y no duplica valores sensibles.",
+    });
+    copias.push({
+      origen: `${directorioOrigen}/auth.json`,
+      destino: `${directorioDestino}/auth.json`,
+      tipo: "enlace",
+      obligatorio: true,
+      motivo: "La credencial permanece en un único fichero; nunca se copian sus bytes.",
+    });
     advertencias.push(
-      "El auth.json del alias queda DUPLICADO. Codex mantiene UNA sola credencial viva por cuenta: " +
-      "si dos alias comparten cuenta, en cuanto una copia refresque el token la otra queda muerta " +
-      "y ese alias deja de responder sin decir por qué. Comprobá que cada alias separado tiene su " +
-      "propia cuenta ANTES de aplicar; este plan no puede decidirlo.",
+      "auth.json y config.toml siguen siendo compartidos por enlace con el origen autorizado. " +
+      "No se copian tokens, sesiones ni history.jsonl.",
     );
   }
 
   advertencias.push(
-    "La copia es una FOTO. Todo lo que el alias escriba en el origen después de aplicar esto (y " +
-    "todo lo que el despliegue monte encima) deja de verse desde el destino.",
+    "El fichero de identidad es una FOTO deliberada; credenciales y configuración permanecen " +
+    "enlazadas. Los historiales nuevos son propios del alias y no se importan del origen ambiguo.",
   );
 
   return {

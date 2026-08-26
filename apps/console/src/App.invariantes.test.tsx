@@ -15,13 +15,13 @@ import { renderWithApi } from './test/render';
  * es el conflicto ruidoso —ese lo canta git— sino el SILENCIOSO, y este router tiene dos de los
  * peores que hay:
  *
- *   1. **Un id de ruta que no está en `routes` cae al `fallback` sin decir nada.** No hay error, no
- *      hay log, no hay 404: se dibuja otra página. Basta con que una fusión retire una vista y otra
- *      rama deje un enlace apuntándole.
+ *   1. **Un id de ruta que no está en `routes` antes caía al `fallback` sin decir nada.** Ahora
+ *      tiene un estado 404 explícito, pero la tabla sigue impidiendo que una ruta declarada o un
+ *      enlace del menú llegue allí por una integración incompleta.
  *   2. **Un alias ENCADENADO (a → b → c) hace exactamente lo mismo.** `matchRoute` resuelve
  *      `ROUTE_ALIASES` **una sola vez**: si `licenses → quotas` y `quotas → accounts`, entonces
- *      `/licenses` resuelve a `quotas`, que ya no es una ruta, y termina en el fallback. Un alias
- *      encadenado no es un alias: es un 404 silencioso con otra cara.
+ *      `/licenses` resuelve a `quotas`, que ya no es una ruta, y termina en el 404. Un alias
+ *      encadenado no es un alias: es un marcador roto con otra cara.
  *
  * Escrito como casos sueltos, esto envejece: se agrega una entrada al menú y nadie escribe su
  * caso. Escrito como tabla, agregar una entrada sin página o un alias que apunte a otro alias
@@ -49,7 +49,7 @@ const DESTINOS: Record<string, Destino> = {
   live: { encabezado: /^la flota ahora$/i },
   accounts: { encabezado: /^cuentas y cuotas$/i },
   messages: { encabezado: /^mensajes$/i },
-  queues: { encabezado: /queues, retries & dlq/i },
+  queues: { encabezado: /colas y dlq operativo/i },
   observability: { encabezado: /^señales y auditoría$/i },
   /*
    * El `h1` dice EXACTAMENTE lo que dice la entrada del menú. Decía «Ajustes & rollback» debajo de
@@ -59,28 +59,12 @@ const DESTINOS: Record<string, Destino> = {
    */
   config: { encabezado: /^ajustes y altas$/i },
   terminal: { encabezado: /^terminal de agentes$/i },
-  /** Sin `<h1>`: son avisos, no vistas. Ver `FleetRouteNotice` y `JobsRetiredNotice`. */
-  fleet: { marca: /esa dirección ya no identifica a nadie/i },
+  /** Sin `<h1>`: es un aviso, no una vista. Ver `JobsRetiredNotice`. */
   jobs: { marca: /«Jobs» ya no es una vista de esta consola/i },
 };
 
-/**
- * `/fleet` es el ÚNICO id que a la vez es una ruta declarada y una clave de alias, y no es un
- * descuido: el alias vale para `/fleet` a secas —la lista, que se fundió en «La flota ahora»— y
- * NO para `/fleet/:tenant/:alias`, que es el detalle de un bot y sigue siendo el destino del pie
- * del cajón. `matchRoute` tiene ese caso escrito con nombre y apellido.
- *
- * La excepción se declara acá, en una lista de UNO, justamente para que agregar una segunda rompa
- * la suite: cualquier otro id tapado por un alias es inalcanzable y nadie se entera. Fue lo que
- * pasó con `topology`, que tenía entrada de ruta, alias hacia `live` y un comentario en
- * `TopologyPage.tsx` prometiendo que «sigue siendo alcanzable». No lo era.
- */
-const SOMBRA_PERMITIDA = ['fleet'];
-
-/** Cómo se alcanza cada ruta oculta: no tienen entrada de menú, y algunas piden parámetros. */
+/** Cómo se alcanza cada ruta oculta: no tienen entrada de menú. */
 const RUTA_DIRECTA: Record<string, string> = {
-  /** Con UN parámetro: con dos sería el detalle de un bot, y con cero manda el alias a `/live`. */
-  fleet: '/fleet/Miguel',
   jobs: '/jobs',
 };
 
@@ -142,14 +126,14 @@ describe('la tabla de alias', () => {
     expect(encadenados).toEqual([]);
   });
 
-  it('🔴 ningún id de ruta queda TAPADO por un alias, salvo la excepción declarada de /fleet', () => {
+  it('🔴 ningún id de ruta queda TAPADO por un alias', () => {
     // Un id que es también clave de alias no se puede alcanzar nunca: `matchRoute` mira el mapa
     // ANTES que `routes`. La entrada de ruta queda viva en el código, con su import y su
     // componente, y sin forma de llegar. Pasó con `topology`.
     const claves = new Set(Object.keys(ROUTE_ALIAS_TABLE));
     const tapadas = ROUTE_TABLE
       .map((route) => route.id)
-      .filter((id) => claves.has(id) && !SOMBRA_PERMITIDA.includes(id));
+      .filter((id) => claves.has(id));
     expect(tapadas).toEqual([]);
   });
 
@@ -220,22 +204,26 @@ describe('cada ALIAS declarado llega a su heredera y reescribe la barra de direc
 /**
  * El CONTROL NEGATIVO de todo lo de arriba.
  *
- * Sin él, esta suite podría estar pasando porque el fallback dibuja algo parecido a todo. Estos
- * dos casos fijan qué pinta tiene el fallback de verdad, para que «resolvió bien» signifique algo.
+ * Sin él, la suite no demostraría que una dirección ajena a las tablas conserva su URL y se
+ * distingue de una vista válida. Estos casos fijan la cara del 404 explícito.
  */
-describe('el fallback, para que «no cayó al fallback» quiera decir algo', () => {
-  it('un id que NO existe cae en la portada, y ahí sí se ve su encabezado', async () => {
+describe('el estado explícito para direcciones desconocidas', () => {
+  it('un id que NO existe conserva la URL y no inventa la portada', async () => {
     window.history.pushState({}, '', '/ruta-que-nadie-declaro');
     renderWithApi(<App />);
 
-    expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeInTheDocument();
+    expect(screen.getByText('/ruta-que-nadie-declaro')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeNull();
+    expect(window.location.pathname).toBe('/ruta-que-nadie-declaro');
   });
 
-  it('un id retirado SIN alias ni ruta oculta también cae ahí: por eso /jobs tiene su aviso', async () => {
-    // `/adapters` tiene alias, `/jobs` tiene aviso. Éste no tiene ninguno de los dos, y se ve.
+  it('un id retirado SIN alias ni aviso también se declara roto: por eso /jobs tiene su aviso', async () => {
+    // `/adapters` tiene alias, `/jobs` tiene aviso. Éste no tiene ninguno de los dos.
     window.history.pushState({}, '', '/assignments-viejo');
     renderWithApi(<App />);
 
-    expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeNull();
   });
 });

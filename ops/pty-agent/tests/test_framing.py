@@ -85,6 +85,9 @@ class GoldenVectorTests(unittest.TestCase):
         self.assertEqual(tag, agent.TAG_WRITE_BATCH_DATA)
         self.assertEqual(agent.decode_data(payload), (GOLDEN_SESSION, b"profile"))
 
+    def test_governance_read_done_tag_matches_the_relay(self) -> None:
+        self.assertEqual(agent.TAG_READ_DONE, 0x5E)
+
 
 class DecoderTests(unittest.TestCase):
     def test_one_byte_at_a_time_reassembles_the_golden_vector(self) -> None:

@@ -226,6 +226,8 @@ export function esPerfilAplicado(
 
   const pendientes = new Set(esperado.nombres);
   if (pendientes.size !== esperado.nombres.length) return false;
+  let generation: string | undefined;
+  const ackPorNombre = new Map<string, { path: string; sha: string }>();
   for (const rawAck of record.acknowledgements) {
     if (rawAck === null || typeof rawAck !== 'object' || Array.isArray(rawAck)) return false;
     const ack = rawAck as Record<string, unknown>;
@@ -234,11 +236,36 @@ export function esPerfilAplicado(
       || !ack.path.endsWith(`/${ack.name}`)
       || !['written', 'already_current', 'preserved'].includes(String(ack.state))
       || typeof ack.sha !== 'string' || !SHA256.test(ack.sha)
-      || typeof ack.bytes !== 'number' || !Number.isSafeInteger(ack.bytes) || ack.bytes < 0) {
+      || typeof ack.bytes !== 'number' || !Number.isSafeInteger(ack.bytes) || ack.bytes < 0
+      || typeof ack.generation !== 'string' || ack.generation.length === 0
+      || (ack.container_id !== null
+        && (typeof ack.container_id !== 'string' || ack.container_id.length === 0))) {
       return false;
     }
+    generation ??= ack.generation;
+    if (ack.generation !== generation) return false;
+    ackPorNombre.set(ack.name, { path: ack.path, sha: ack.sha });
   }
-  return pendientes.size === 0;
+  if (pendientes.size !== 0 || generation === undefined
+    || record.runtime_adoption === null || typeof record.runtime_adoption !== 'object'
+    || Array.isArray(record.runtime_adoption)) return false;
+  const adoption = record.runtime_adoption as Record<string, unknown>;
+  if (adoption.evidence !== 'adapter_delivery' || adoption.revision !== record.revision
+    || adoption.generation !== generation || typeof adoption.adopted_at !== 'string'
+    || !Number.isFinite(Date.parse(adoption.adopted_at))
+    || !Array.isArray(adoption.documents)
+    || adoption.documents.length !== ackPorNombre.size) return false;
+  const adoptados = new Set(ackPorNombre.keys());
+  for (const rawDocument of adoption.documents) {
+    if (rawDocument === null || typeof rawDocument !== 'object' || Array.isArray(rawDocument)) {
+      return false;
+    }
+    const document = rawDocument as Record<string, unknown>;
+    if (typeof document.name !== 'string' || !adoptados.delete(document.name)) return false;
+    const ack = ackPorNombre.get(document.name);
+    if (ack === undefined || document.path !== ack.path || document.sha !== ack.sha) return false;
+  }
+  return adoptados.size === 0;
 }
 
 /**

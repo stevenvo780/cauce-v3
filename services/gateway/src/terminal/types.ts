@@ -38,6 +38,8 @@ export interface AgentPresence {
   readonly runtime_user: string;
   readonly runtime_uid: number;
   readonly harness: string;
+  /** Marca del launcher: harness/home provienen del proceso real, no del bundle declarado. */
+  readonly runtime_facts_observed?: boolean;
   /**
    * El `$HOME` del alias dentro de su contenedor, medido por el agente que corre ahí.
    *
@@ -54,6 +56,12 @@ export interface AgentPresence {
   readonly codex_home?: string;
   readonly claude_config_dir?: string;
   readonly openclaw_workspace?: string;
+  readonly cwd?: string;
+  readonly workspace_root?: string;
+  readonly project_root?: string;
+  /** Proyección cerrada de config.toml; ausente si es legacy, no-Codex o malformada. */
+  readonly project_doc_max_bytes?: number;
+  readonly project_doc_fallback_filenames?: readonly string[];
   readonly modes: readonly string[];
   readonly connected_since: string;
 }
@@ -87,10 +95,22 @@ export type TerminalDenial =
   | 'no_grant'
   | 'control_permission_required';
 
-export type TerminalConflict = 'agent_offline' | 'session_limit' | 'container_busy';
+export type TerminalConflict =
+  | 'agent_offline'
+  | 'session_limit'
+  | 'container_busy'
+  | 'request_conflict';
 
 export interface TerminalSessionRow {
   id: string;
+  /** Stable browser admission id. PostgreSQL UUID is decoded as its canonical text form. */
+  request_id: string;
+  /** Canonical digest of authenticated immutable admission semantics. */
+  request_sha256: Buffer;
+  /** Only the digest of the current browser revocation capability is durable. */
+  browser_owner_sha256: Buffer;
+  /** PostgreSQL bigint stays a decimal string on the wire; never coerce the fence to Number. */
+  browser_owner_generation: string;
   operator_id: string;
   attributed: boolean;
   console_subject: string;
@@ -109,6 +129,16 @@ export interface TerminalSessionRow {
   issued_at: Date;
   expires_at: Date;
   consumed_at: Date | null;
+  /** PostgreSQL bigint is intentionally decoded as a decimal string; never coerce this fence to Number. */
+  relay_claim_epoch: string;
+  /** Only the digest is durable. The raw capability-like UUID never enters PostgreSQL. */
+  relay_claim_sha256: Buffer | null;
+  relay_claimed_at: Date | null;
+  relay_claim_expires_at: Date | null;
+  /** SHA-256 of the authenticated relay client-certificate leaf selected at browser admission. */
+  relay_instance_id: string;
+  /** Current relay process generation; null until the one-shot ticket is consumed. */
+  relay_boot_id: string | null;
   revoked_at: Date | null;
   closed_at: Date | null;
   close_reason: string | null;

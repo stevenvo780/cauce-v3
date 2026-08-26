@@ -94,7 +94,7 @@ describe('gateway WebSocket ACK correlation', () => {
       'serial-consumer',
       ['acks.v3', 'renewable_delivery_claims_v1'],
       30_000,
-      { resume: true, resumeWindowMs: 600_000 }
+      { resume: true, resumeWindowMs: 600_000, requireDeclaredCapacity: true }
     );
     const delivered = [await nextFrame(), await nextFrame()];
     expect(delivered.map((item) => item.delivery_id)).toEqual([ids.delivery, ids.deliveryTwo]);
@@ -132,7 +132,13 @@ describe('gateway WebSocket ACK correlation', () => {
     // Ya no se llama con `undefined` en la posición de `limit` (que se comía el default 20 del
     // store): el primer drain de la sesión pide exactamente el presupuesto vacío.
     expect(repository.claimDeliveries).toHaveBeenNthCalledWith(
-      1, 'Pablo', 'midas', 'serial-consumer', 1, 2, 600_000, undefined, { humanReservedLimit: 2 }
+      1, 'Pablo', 'midas', 'serial-consumer', 1, 4, 600_000, undefined,
+      {
+        generalCapacity: 2, humanReservedCapacity: 2, maxClaims: 4,
+        requireDeclaredCapacity: true,
+      },
+      expect.stringMatching(/^[0-9a-f-]{36}$/u),
+      expect.any(AbortSignal),
     );
     // Tres drains y no uno: el del hello, y uno por cada ACK terminal. Cada ACK terminal libera un
     // cupo de agents.max_concurrent_deliveries y es el único instante en que el agente vuelve a
@@ -194,7 +200,7 @@ describe('gateway WebSocket ACK correlation', () => {
     await legacyClosed;
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(repository.releaseLease).toHaveBeenCalledWith(
-      'Pablo', 'midas', 'legacy-consumer', 1
+      'Pablo', 'midas', 'legacy-consumer', 1, expect.stringMatching(/^[0-9a-f-]{36}$/u),
     );
   });
 
@@ -298,7 +304,7 @@ describe('gateway WebSocket ACK correlation', () => {
     await vi.waitFor(() => {
       expect(repository.releaseLease).toHaveBeenCalledTimes(1);
       expect(repository.releaseLease).toHaveBeenCalledWith(
-        'Pablo', 'midas', 'legacy-consumer', 1
+        'Pablo', 'midas', 'legacy-consumer', 1, expect.stringMatching(/^[0-9a-f-]{36}$/u),
       );
     });
   });
@@ -421,9 +427,37 @@ describe('gateway WebSocket ACK correlation', () => {
 
   it('correlates an ACK from an older epoch of the same instance without fencing the live session', async () => {
     const repository = fakeRepository();
+    const feedback = {
+      delegation_rejections: [{
+        output_index: 1,
+        target: 'missing_peer',
+        code: 'unroutable_alias' as const,
+        reason: 'The requested target is not routable.',
+        guidance: 'Choose a target advertised by the trusted routing inventory.',
+      }],
+      delegation_materializations: [{
+        output_index: 0,
+        target_tenant: 'Steven' as const,
+        target_alias: 'socrates',
+        child_delivery_id: '72000000-0000-4000-8000-000000000001',
+      }, {
+        output_index: 2,
+        target_tenant: 'Steven' as const,
+        target_alias: 'socrates',
+        child_delivery_id: '72000000-0000-4000-8000-000000000002',
+      }],
+    };
+    vi.mocked(repository.ackDelivery).mockResolvedValue({
+      delivery_id: ids.delivery,
+      status: 'done',
+      applied: false,
+      receipt: 'duplicate',
+      ...feedback,
+    });
     vi.mocked(repository.acquireLease).mockResolvedValue({
       acquired: true,
       epoch: 2,
+      connection_token: '90000000-0000-4000-8000-000000000002',
       lease_expires_at: new Date(Date.now() + 60_000).toISOString()
     });
     const currentClaim: DeliveryClaimRecord = {
@@ -468,7 +502,8 @@ describe('gateway WebSocket ACK correlation', () => {
     });
     socket.send(JSON.stringify({
       type: 'hello', version: '3.0', tenant_id: 'Pablo', alias: 'midas',
-      instance_id: 'durable-consumer', capabilities: ['acks.v3']
+      instance_id: 'durable-consumer',
+      capabilities: ['acks.v3', 'renewable_delivery_claims_v1', 'delegation_feedback_v1']
     }));
     expect(await nextFrame()).toMatchObject({ type: 'hello_ack', epoch: 2 });
     expect(await nextFrame()).toMatchObject({
@@ -481,14 +516,33 @@ describe('gateway WebSocket ACK correlation', () => {
     }));
     expect(await nextFrame()).toEqual({
       type: 'ack_result', event_id: ids.event, delivery_id: ids.delivery,
-      attempt: 1, claim_token: ids.claim, status: 'done', applied: false
+      attempt: 1, claim_token: ids.claim, status: 'done', applied: false,
+      receipt: 'duplicate',
+      ...feedback,
     });
-    expect(repository.ackDelivery).not.toHaveBeenCalled();
+    expect(repository.ackDelivery).toHaveBeenCalledWith(
+      ids.delivery,
+      'Pablo',
+      'midas',
+      expect.objectContaining({
+        event_id: ids.event,
+        attempt: 1,
+        claim_token: ids.claim,
+        status: 'done',
+        instance_id: 'durable-consumer',
+        epoch: 1,
+      }),
+      600_000,
+      expect.any(Object),
+    );
     expect(socket.readyState).toBe(WebSocket.OPEN);
 
     socket.send(JSON.stringify({ type: 'heartbeat', instance_id: 'durable-consumer', epoch: 2 }));
     expect(await nextFrame()).toMatchObject({ type: 'heartbeat_ack' });
-    expect(repository.heartbeat).toHaveBeenCalledWith('Pablo', 'midas', 'durable-consumer', 2, 30_000);
+    expect(repository.heartbeat).toHaveBeenCalledWith(
+      'Pablo', 'midas', 'durable-consumer', 2, 30_000,
+      '90000000-0000-4000-8000-000000000002', expect.any(AbortSignal),
+    );
 
     expect(wake).toBeTypeOf('function');
     wake?.({ tenant_id: 'Pablo', alias: 'midas' });
@@ -507,6 +561,7 @@ describe('gateway WebSocket ACK correlation', () => {
     vi.mocked(repository.acquireLease).mockResolvedValue({
       acquired: true,
       epoch: 2,
+      connection_token: '90000000-0000-4000-8000-000000000002',
       lease_expires_at: new Date(Date.now() + 60_000).toISOString()
     });
     if (hasCurrentClaim) {

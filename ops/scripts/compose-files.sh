@@ -18,6 +18,7 @@ OPS=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REPO=$(cd "$OPS/.." && pwd)
 overrides_dir=${CAUCE_COMPOSE_OVERRIDES_DIR:-/etc/cauce-v3/compose-overrides}
 manifest=${CAUCE_COMPOSE_OVERRIDE_MANIFEST:-}
+manifest_sha256=${CAUCE_COMPOSE_OVERRIDE_MANIFEST_SHA256:-}
 
 fail() {
   printf 'compose-files: %s\n' "$*" >&2
@@ -25,11 +26,12 @@ fail() {
 }
 
 list_overrides() {
-  local manifest_dir line state digest filename extra path actual found
+  local manifest_dir line state digest filename extra path actual found manifest_actual
   local -a active=() discovered=()
   local -A declared=()
 
   if [[ -z $manifest ]]; then
+    [[ -z $manifest_sha256 ]] || fail 'manifest SHA-256 is set while CAUCE_COMPOSE_OVERRIDE_MANIFEST is unset'
     if [[ -e $overrides_dir ]]; then
       [[ -d $overrides_dir && -r $overrides_dir && -x $overrides_dir ]] ||
         fail "$overrides_dir exists but cannot be enumerated"
@@ -43,8 +45,12 @@ list_overrides() {
   fi
 
   [[ $manifest = /* ]] || fail 'CAUCE_COMPOSE_OVERRIDE_MANIFEST must be an absolute path'
+  [[ $manifest_sha256 =~ ^sha256:[a-f0-9]{64}$ ]] ||
+    fail 'CAUCE_COMPOSE_OVERRIDE_MANIFEST_SHA256 must be an explicit sha256 digest'
   [[ -f $manifest && -r $manifest && ! -L $manifest ]] ||
     fail "override manifest is missing, unreadable or a symlink: $manifest"
+  manifest_actual="sha256:$(sha256sum "$manifest" | cut -d' ' -f1)"
+  [[ $manifest_actual == "$manifest_sha256" ]] || fail 'override manifest differs from its selected SHA-256'
   manifest_dir=$(cd "$(dirname "$manifest")" && pwd -P)
 
   while IFS= read -r line || [[ -n $line ]]; do
@@ -78,6 +84,9 @@ list_overrides() {
     for path in "${discovered[@]}"; do [[ ${path##*/} == "$filename" ]] && found=1; done
     ((found == 1)) || fail "manifest entry escaped directory inventory: $filename"
   done
+
+  manifest_actual="sha256:$(sha256sum "$manifest" | cut -d' ' -f1)"
+  [[ $manifest_actual == "$manifest_sha256" ]] || fail 'override manifest changed while resolving Compose files'
 
   ((${#active[@]} == 0)) || printf '%s\n' "${active[@]}"
 }

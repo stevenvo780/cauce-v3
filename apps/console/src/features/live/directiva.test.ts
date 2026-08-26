@@ -33,7 +33,8 @@ describe('girosDeAutonomia', () => {
    */
   it('NO marca un manual que habla de permisos de fichero o de rutas', () => {
     const manual = '# Cómo se despliega\n\nEl script necesita permiso de lectura sobre /etc/cauce.\n'
-      + 'Las migraciones se aplican con `pnpm migrate`.';
+      + 'Producción migra dentro de `ops/scripts/deploy-release.sh deploy`; '
+      + '`pnpm migrate:dev` queda sólo para una DB descartable con entorno explícito.';
     expect(girosDeAutonomia(manual)).toEqual([]);
   });
 
@@ -87,21 +88,58 @@ describe('avisosDeCapas', () => {
     expect(avisos.filter((aviso) => aviso.tono === 'choque')).toEqual([]);
   });
 
-  it('marca el caso janus: dos manuales a la vez, sin decidir cuál manda', () => {
+  it('Codex explica precedencia y deja de afirmar que no está decidido cuál manda', () => {
     const avisos = avisosDeCapas(BRIEF_REAL, directiva({
+      manual_order: 'codex_precedence',
       files: [
         { path: '~/.claude/CLAUDE.md', scope: 'user', text: '# flota\n' },
         { path: '~/CLAUDE.md', scope: 'workspace', text: '# espacio\n' },
       ],
     }));
     const dos = avisos.find((aviso) => aviso.id === 'dos-manuales');
-    expect(dos?.titulo).toMatch(/2 manuales/);
+    expect(dos?.titulo).toMatch(/carga 2 manuales/);
+    expect(dos?.detalle).toMatch(/más profundos.*precedencia.*override/u);
+    expect(dos?.detalle).not.toMatch(/no está decidido/u);
     expect(dos?.evidencia).toEqual(['~/.claude/CLAUDE.md', '~/CLAUDE.md']);
+  });
+
+  it('Claude muestra orden de carga sin inventar una precedencia dura', () => {
+    const dos = avisosDeCapas(BRIEF_REAL, directiva({
+      manual_order: 'claude_load_order',
+      files: [
+        { path: '/home/dev/.claude/CLAUDE.md', text: '# user\n' },
+        { path: '/workspace/CLAUDE.local.md', text: '# local\n' },
+      ],
+    })).find((aviso) => aviso.id === 'dos-manuales');
+    expect(dos?.detalle).toMatch(/orden mostrado.*no.*precedencia/u);
   });
 
   it('marca el caso gaia: el servidor miró y no hay ningún manual', () => {
     const avisos = avisosDeCapas(BRIEF_REAL, directiva({ files: [] }));
     expect(avisos.find((aviso) => aviso.id === 'sin-manual')?.tono).toBe('hueco');
+  });
+
+  it('un timeout explícito no cuenta como fichero ni como ausencia', () => {
+    const avisos = avisosDeCapas(BRIEF_REAL, directiva({
+      files: [{
+        path: '/workspace/CLAUDE.md', error: 'timeout', reason: 'sin respuesta', text: null,
+      }],
+    }));
+    expect(avisos.find((aviso) => aviso.id.startsWith('lectura-fallida:'))?.detalle)
+      .toMatch(/timeout.*no se toma como ausente ni como existente/iu);
+    expect(avisos.map((aviso) => aviso.id)).not.toContain('sin-manual');
+    expect(avisos.map((aviso) => aviso.id)).not.toContain('dos-manuales');
+  });
+
+  it('detecta duplicados por SHA aunque vivan en rutas distintas', () => {
+    const avisos = avisosDeCapas(BRIEF_REAL, directiva({
+      files: [
+        { path: '/a/CLAUDE.md', text: '# igual\n', sha: 'a'.repeat(64) },
+        { path: '/b/CLAUDE.md', text: '# igual\n', sha: 'a'.repeat(64) },
+      ],
+    }));
+    expect(avisos.find((aviso) => aviso.id.startsWith('manuales-duplicados:'))?.evidencia)
+      .toEqual(['/a/CLAUDE.md', '/b/CLAUDE.md']);
   });
 
   /**
@@ -112,6 +150,15 @@ describe('avisosDeCapas', () => {
    */
   it('sin el endpoint publicado no emite NINGÚN aviso sobre ficheros: no se miró', () => {
     const avisos = avisosDeCapas(BRIEF_REAL, { publicado: false, motivo: 'el gateway respondió 404' });
+    expect(avisos).toEqual([]);
+    expect(avisos.map((aviso) => aviso.id)).not.toContain('sin-manual');
+  });
+
+  it.each([
+    ['el gateway declara medido:false', directiva({ medido: false, files: [] })],
+    ['un gateway legacy devuelve files:null', directiva({ files: null })],
+  ])('%s: no inventa que el servidor miró ni que falta el manual', (_caso, respuesta) => {
+    const avisos = avisosDeCapas(BRIEF_REAL, respuesta);
     expect(avisos).toEqual([]);
     expect(avisos.map((aviso) => aviso.id)).not.toContain('sin-manual');
   });
@@ -145,5 +192,19 @@ describe('totalDeMemoria', () => {
     expect(totalDeMemoria({ publicado: false })).toBeUndefined();
     expect(totalDeMemoria(undefined)).toBeUndefined();
     expect(totalDeMemoria({ publicado: true, memory: { total: 0, entries: [] } })).toBe(0);
+  });
+
+  it('devuelve el límite inferior sin inventarlo como total exacto', () => {
+    expect(totalDeMemoria({
+      publicado: true,
+      memory: { total: null, observed_at_least: 5_000, truncated: true, entries: [] },
+    })).toBe(5_000);
+  });
+
+  it('un error discriminado no se convierte en cero', () => {
+    expect(totalDeMemoria({
+      publicado: true,
+      memory: { error: 'timeout', reason: 'el agente no contestó' },
+    })).toBeUndefined();
   });
 });
