@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -281,6 +281,7 @@ describe('release build clean RC and registry evidence', () => {
     const evidence = parseReleaseBuildEvidence(
       await readFile(join(value.root, 'ops/artifacts/release/build.json'), 'utf8'),
     );
+    expect((await stat(join(value.root, 'ops/artifacts/release/build.json'))).mode & 0o777).toBe(0o600);
     expect(evidence.schemaVersion).toBe(7);
     expect(evidence.console.publishJournalCapability).toBe('multi-intent-v1');
     expect(evidence.sourceRevision).toMatchObject({
