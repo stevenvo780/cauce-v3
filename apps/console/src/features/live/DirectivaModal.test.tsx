@@ -71,6 +71,17 @@ it('el foco entra al diálogo al abrir y vuelve al botón que lo abrió al cerra
   expect(document.activeElement).toBe(boton);
 }, 25_000);
 
+it('desde la capa manual abre directamente el editor real de ficheros del mismo alias', async () => {
+  const { user, dialogo, cajon } = await abrir();
+  await user.click(within(dialogo).getByRole('button', {
+    name: /editar claude\.md \/ agents\.md/i,
+  }));
+
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(within(cajon).getByRole('tab', { name: 'Ficheros' })).toHaveAttribute('aria-selected', 'true');
+  expect(await within(cajon).findByText('CLAUDE.md (manual del sitio)')).toBeInTheDocument();
+}, 25_000);
+
 /**
  * Escape cierra el DIÁLOGO y sólo el diálogo. `AgentDrawer` tiene su propio escuchador de Escape
  * en `document` para cerrarse; sin cortar la propagación, una sola pulsación se llevaba los dos

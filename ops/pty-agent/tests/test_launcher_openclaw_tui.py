@@ -57,7 +57,8 @@ state_directory=/home/claw/.openclaw/cauce-v3/jarvis
 harness=openclaw
 runtime_uid=1000
 runtime_gid=1000
-OPENCLAW_ENTRY=${CAUCE_PTY_OPENCLAW_ENTRY:-/usr/lib/node_modules/openclaw/dist/index.js}
+declare -A CONFIG=()
+OPENCLAW_ENTRY=''
 OPENCLAW_HISTORY_LIMIT=200
 """
 
@@ -126,6 +127,18 @@ class DeriveOpenClawTuiTest(unittest.TestCase):
 
     def test_a_live_openclaw_yields_capability_without_freezing_a_session(self) -> None:
         self.assertEqual(self._run(), "DERIVED /usr/bin/node")
+
+    def test_the_user_local_installation_is_the_first_bounded_candidate(self) -> None:
+        text = _function_source("derive_openclaw_tui_command")
+        local_entry = '${container_home%/}/.openclaw/node_modules/openclaw/dist/index.js'
+        self.assertIn(local_entry, text)
+        self.assertLess(text.index(local_entry), text.index('/usr/lib/node_modules/openclaw/dist/index.js'))
+
+    def test_an_explicit_dist_dir_is_allowlisted_and_wins_over_fallbacks(self) -> None:
+        launcher = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn('SHELL_CANDIDATES|OPENCLAW_DIST_DIR)', launcher)
+        function = _function_source("derive_openclaw_tui_command")
+        self.assertIn('entry_candidates+=("${configured_dist%/}/index.js")', function)
 
     def test_control_negativo_sin_node_no_hay_tui(self) -> None:
         self.assertEqual(self._run(node_path=None), "NO_TUI")

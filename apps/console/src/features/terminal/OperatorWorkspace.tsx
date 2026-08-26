@@ -834,7 +834,7 @@ function SessionStage({ session, sessionToken, agents, access, topologyAccess, c
           pending={requesting}
           {...(requestError ? { error: requestError } : {})}
           onCancel={() => setShowPtyDialog(false)}
-          onConfirm={(reason) => void requestChannel(reason, channelTarget?.modes.includes(SHELL_MODE) ? SHELL_MODE : channelTarget?.modes[0] ?? SHELL_MODE)}
+          onConfirm={(reason) => void requestChannel(reason, SHELL_MODE)}
         />
       ) : null}
     </div>

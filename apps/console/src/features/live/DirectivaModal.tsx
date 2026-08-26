@@ -38,6 +38,8 @@ import { avisosDeCapas, medicionDeCapa, totalDeMemoria, type AvisoDeCapas } from
  */
 
 export interface DirectivaModalProps extends RoleBriefTabProps {
+  /** Lleva desde la capa manual al editor real del mismo alias, sin cerrar el cajón. */
+  onEditarEnFicheros: () => void;
   /**
    * `configuration` viene de la lectura que YA hizo el cajón. Tanto los avisos como la columna
    * visible consumen ese MISMO snapshot; ninguna capa hace un segundo GET de configuración.
@@ -62,7 +64,8 @@ function briefGuardado(snapshot: ConfigurationSnapshot | undefined, tenantId: st
 }
 
 export function DirectivaModal({
-  tenantId, alias, configuration, onEditarEnPerfil, onRestaurarEnPerfil, devolverFocoA, onCerrar,
+  tenantId, alias, configuration, onEditarEnPerfil, onRestaurarEnPerfil, onEditarEnFicheros,
+  devolverFocoA, onCerrar,
 }: DirectivaModalProps) {
   const api = useApi();
   /*
@@ -216,6 +219,20 @@ export function DirectivaModal({
                 }
               />
               <CapaDeFicheros recurso={directiva} />
+              <button
+                type="button"
+                className="button small directiva-editar-fichero"
+                onClick={onEditarEnFicheros}
+              >
+                Editar CLAUDE.md / AGENTS.md
+              </button>
+              <button
+                type="button"
+                className="button small secondary directiva-editar-fichero"
+                onClick={onEditarEnPerfil}
+              >
+                Editar perfil / OpenClaw (7 ficheros)
+              </button>
             </section>
 
             <section className="directiva-capa" aria-label="Capa 3: memoria">

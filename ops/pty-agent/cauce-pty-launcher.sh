@@ -103,7 +103,7 @@ load_config() {
     [[ -n $value ]] || die "PTY alias config value is empty: $key"
     [[ ! -v "CONFIG[$key]" ]] || die "PTY alias config key is duplicated: $key"
     case "$key" in
-      RELAY_HOST|RELAY_PORT|RELAY_SERVER_NAME|PKI_DIR|ALIAS_KEY_FILE|HARNESS_COMMAND|SHELL_CANDIDATES) ;;
+      RELAY_HOST|RELAY_PORT|RELAY_SERVER_NAME|PKI_DIR|ALIAS_KEY_FILE|HARNESS_COMMAND|SHELL_CANDIDATES|OPENCLAW_DIST_DIR) ;;
       *) die "PTY alias config key is not allowlisted: $key" ;;
     esac
     CONFIG[$key]=$value
@@ -119,6 +119,11 @@ load_config() {
   [[ ${CONFIG[PKI_DIR]} == "$PKI_ROOT/$alias_name" ]] || die 'PKI_DIR is outside its alias-scoped path'
   valid_absolute_path "${CONFIG[ALIAS_KEY_FILE]}" || die 'ALIAS_KEY_FILE path is invalid'
   [[ ${CONFIG[ALIAS_KEY_FILE]} == "${CONFIG[PKI_DIR]}/alias-key.hex" ]] || die 'ALIAS_KEY_FILE must live inside PKI_DIR'
+  if [[ -v 'CONFIG[OPENCLAW_DIST_DIR]' ]]; then
+    valid_absolute_path "${CONFIG[OPENCLAW_DIST_DIR]}" || die 'OPENCLAW_DIST_DIR path is invalid'
+    [[ ${CONFIG[OPENCLAW_DIST_DIR]} == "$container_home/"* ]] \
+      || die 'OPENCLAW_DIST_DIR must live below the mapped container home'
+  fi
 }
 
 validate_channel_material() {
@@ -259,7 +264,6 @@ derive_harness_command() {
 # Se invoca la entrada y no el envoltorio `openclaw`: ese re-ejecuta y deja su argv en «openclaw»
 # a secas —por eso el supervisor del gateway tampoco lo usa— y un argv que no se puede reconocer
 # no se puede supervisar ni auditar.
-OPENCLAW_ENTRY=${CAUCE_PTY_OPENCLAW_ENTRY:-/usr/lib/node_modules/openclaw/dist/index.js}
 OPENCLAW_HISTORY_LIMIT=${CAUCE_PTY_OPENCLAW_HISTORY_LIMIT:-200}
 [[ $OPENCLAW_HISTORY_LIMIT =~ ^[0-9]{1,5}$ && $((10#$OPENCLAW_HISTORY_LIMIT)) -ge 1 \
   && $((10#$OPENCLAW_HISTORY_LIMIT)) -le 10000 ]] || die 'OpenClaw history limit is invalid'
@@ -284,26 +288,41 @@ OPENCLAW_HISTORY_LIMIT=${CAUCE_PTY_OPENCLAW_HISTORY_LIMIT:-200}
 # despues, por cada OPEN: si el pointer durable falta o no pasa validacion, ese OPEN falla cerrado
 # sin congelar una clave vieja en el launcher.
 derive_openclaw_tui_command() {
-  local node_path tui_help
+  local node_path tui_help entry configured_dist
+  local -a entry_candidates=()
   node_path=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
     sh -c 'command -v node' 2>/dev/null) || return 1
   node_path=${node_path//[$'\r\n']/}
   valid_absolute_path "$node_path" || return 1
 
-  docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
-    test -f "$OPENCLAW_ENTRY" >/dev/null 2>&1 || return 1
+  configured_dist=${CONFIG[OPENCLAW_DIST_DIR]:-}
+  if [[ -n $configured_dist ]]; then
+    entry_candidates+=("${configured_dist%/}/index.js")
+  else
+    # La instalación canónica de la flota es user-local. La global queda como compatibilidad
+    # medida para contenedores antiguos; nunca se camina PATH ni el filesystem buscando candidatos.
+    entry_candidates+=(
+      "${container_home%/}/.openclaw/node_modules/openclaw/dist/index.js"
+      "/usr/lib/node_modules/openclaw/dist/index.js"
+    )
+  fi
 
-  # Se le pregunta al binario INSTALADO si tiene la TUI y si acepta `--session`. openclaw se
-  # actualiza solo, asi que la memoria de nadie sirve como fuente: el dia que el subcomando o el
-  # flag cambien, esto deja de anunciar la TUI en vez de anunciar una pantalla vacia.
-  tui_help=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
-    "$node_path" "$OPENCLAW_ENTRY" tui --help 2>/dev/null) || return 1
-  [[ $tui_help == *"--session"* ]] || return 1
+  for entry in "${entry_candidates[@]}"; do
+    docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+      test -f "$entry" >/dev/null 2>&1 || continue
 
-  # La sesion NO se elige aca. El launcher vive durante meses y congelarla en este bundle deja la
-  # TUI mirando una conversacion vieja. El agente lee el pointer durable exacto en CADA OPEN.
-  OPENCLAW_NODE_FOUND=$node_path
-  return 0
+    # Se le pregunta al binario INSTALADO si tiene la TUI y si acepta `--session`. openclaw se
+    # actualiza solo, asi que la memoria de nadie sirve como fuente: el dia que el subcomando o el
+    # flag cambien, esto deja de anunciar la TUI en vez de anunciar una pantalla vacia.
+    tui_help=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+      "$node_path" "$entry" tui --help 2>/dev/null) || continue
+    [[ $tui_help == *"--session"* ]] || continue
+    OPENCLAW_ENTRY=$entry
+    OPENCLAW_NODE_FOUND=$node_path
+    return 0
+  done
+
+  return 1
 }
 
 # Read only non-secret path facts from the adapter that is actually running for this

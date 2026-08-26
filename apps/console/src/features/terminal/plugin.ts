@@ -1,7 +1,10 @@
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
 import { permissionState } from '../../lib';
 import type { TerminalTargetsSnapshot } from './api';
-import { resolveLiveTui, resolveTerminalTarget, type FleetAgent, type LiveTuiStatus, type TerminalAccessStatus } from './fleet';
+import {
+  resolveLiveTui, resolveTerminalTarget, SHELL_MODE,
+  type FleetAgent, type LiveTuiStatus, type TerminalAccessStatus,
+} from './fleet';
 
 export const ULTIMATE_TERMINAL_PLUGIN_ID = 'ultimate-terminal.client';
 export const ULTIMATE_TERMINAL_CAPABILITY = 'terminal.pty.client';
@@ -75,6 +78,15 @@ export function terminalChannelGate(
   }
 
   const resolution = resolveTerminalTarget(targets?.items, agent);
+  if (resolution.status === 'allowed' && !resolution.target?.modes.includes(SHELL_MODE)) {
+    return {
+      enabled: false,
+      status: 'unknown',
+      reason: `El agente PTY de ${agent.alias} está conectado, pero no publica el modo shell. `
+        + 'La consola no convierte una TUI de solo lectura en una terminal interactiva.',
+      websocketPath: declared,
+    };
+  }
   return {
     enabled: resolution.status === 'allowed',
     status: resolution.status,
@@ -102,13 +114,17 @@ export function liveTuiGate(
   targets: TerminalTargetsSnapshot | undefined,
   agent: FleetAgent,
 ): LiveTuiGate {
-  const channel = terminalChannelGate(capability, access, targets, agent);
-  if (channel.status === 'blocked') return { enabled: false, status: 'blocked', reason: channel.reason };
+  const gate = ultimateTerminalGate(capability, access);
+  if (!gate.enabled) return { enabled: false, status: 'blocked', reason: gate.reason };
+  const declared = targets?.websocket_path ?? gate.websocketPath;
+  if (!sameOriginWebsocketPath(declared)) {
+    return { enabled: false, status: 'blocked', reason: 'Endpoint WebSocket inválido o no same-origin.' };
+  }
   const live = resolveLiveTui(targets?.items, agent);
   return {
     enabled: live.status === 'available',
     status: live.status,
     reason: live.reason,
-    ...(channel.websocketPath ? { websocketPath: channel.websocketPath } : {}),
+    websocketPath: declared,
   };
 }

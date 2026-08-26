@@ -29,6 +29,7 @@ export interface DirectivaTabProps {
   tenantId: string;
   alias: string;
   onEditarEnPerfil: () => void;
+  onEditarEnFicheros: () => void;
   onRestaurarEnPerfil: (texto: string) => void;
 }
 
@@ -54,7 +55,7 @@ function buscarEnRegistro(snapshot: ConfigurationSnapshot | undefined, tenantId:
 }
 
 export function DirectivaTab({
-  tenantId, alias, onEditarEnPerfil, onRestaurarEnPerfil,
+  tenantId, alias, onEditarEnPerfil, onEditarEnFicheros, onRestaurarEnPerfil,
 }: DirectivaTabProps) {
   const api = useApi();
   const config = useResource(`directiva-config-${tenantId}-${alias}`, () => api.getConfiguration());
@@ -120,6 +121,7 @@ export function DirectivaTab({
           alias={alias}
           configuration={config}
           onEditarEnPerfil={onEditarEnPerfil}
+          onEditarEnFicheros={onEditarEnFicheros}
           onRestaurarEnPerfil={onRestaurarEnPerfil}
           devolverFocoA={abridor}
           onCerrar={() => {

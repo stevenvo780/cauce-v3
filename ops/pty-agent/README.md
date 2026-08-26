@@ -106,7 +106,7 @@ Del PKI del canal PTY (distinto del PKI del bus): `client.crt`, `client.key` par
 ```
 
 `jarvis.env` (claves permitidas: `RELAY_HOST`, `RELAY_PORT`, `RELAY_SERVER_NAME`, `PKI_DIR`,
-`ALIAS_KEY_FILE`, `SHELL_CANDIDATES`, `HARNESS_COMMAND`):
+`ALIAS_KEY_FILE`, `SHELL_CANDIDATES`, `HARNESS_COMMAND`, `OPENCLAW_DIST_DIR`):
 
 ```
 RELAY_HOST=100.64.0.6
@@ -121,6 +121,8 @@ ALIAS_KEY_FILE=/home/stev/.config/cauce-v3/pty-pki/jarvis/alias-key.hex
 # HARNESS_COMMAND=["/usr/local/bin/openclaw","attach","--session","jarvis"]
 # Opcional. Por defecto: [["/bin/bash","-l"],["/bin/sh","-l"]]
 # SHELL_CANDIDATES=[["/bin/bash","-l"],["/bin/sh","-l"]]
+# Opcional para OpenClaw: directorio dist exacto de la instalación que usa el adaptador.
+# OPENCLAW_DIST_DIR=/home/claw/.openclaw/node_modules/openclaw/dist
 ```
 
 #### Modo `harness` = la TUI que el agente ya está corriendo

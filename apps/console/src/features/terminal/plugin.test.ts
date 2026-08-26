@@ -1,6 +1,9 @@
 import type { TerminalTarget } from './api';
 import { buildFleetAgents } from './fleet';
-import { terminalChannelGate, ultimateTerminalGate, ULTIMATE_TERMINAL_CAPABILITY, ULTIMATE_TERMINAL_PLUGIN_ID } from './plugin';
+import {
+  liveTuiGate, terminalChannelGate, ultimateTerminalGate,
+  ULTIMATE_TERMINAL_CAPABILITY, ULTIMATE_TERMINAL_PLUGIN_ID,
+} from './plugin';
 
 const CAPABILITY = {
   available: true,
@@ -60,6 +63,23 @@ it('opens the channel only when the plugin gate AND the destination are both exp
   // Plugin gate fine, destination refused by the server.
   expect(terminalChannelGate(CAPABILITY, ACCESS, { items: [target({ authorized: false, reason: 'attribution_required' })] }, JARVIS))
     .toMatchObject({ enabled: false, status: 'denied', reason: 'attribution_required' });
+});
+
+it('never presents a harness-only viewer as an interactive PTY shell', () => {
+  const targets = {
+    websocket_path: '/v3/console/terminal/ws',
+    items: [target({ modes: ['harness'] })],
+  };
+
+  expect(terminalChannelGate(CAPABILITY, ACCESS, targets, JARVIS)).toMatchObject({
+    enabled: false,
+    status: 'unknown',
+    reason: expect.stringMatching(/no publica el modo shell.*solo lectura/iu),
+  });
+  expect(liveTuiGate(CAPABILITY, ACCESS, targets, JARVIS)).toMatchObject({
+    enabled: true,
+    status: 'available',
+  });
 });
 
 it('stays closed when the destination inventory is UNKNOWN', () => {

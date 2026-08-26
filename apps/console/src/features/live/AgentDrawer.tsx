@@ -137,6 +137,7 @@ export function AgentDrawer({
             tenantId={view.tenantId}
             alias={view.alias}
             onEditarEnPerfil={() => onTab('perfil')}
+            onEditarEnFicheros={() => onTab('ficheros')}
             onRestaurarEnPerfil={(texto) => {
               // Sólo cambia `role_summary`: una restauración nunca pisa los otros seis campos que
               // el operador ya tuviera en borrador para este alias.
