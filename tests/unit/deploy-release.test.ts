@@ -2143,7 +2143,8 @@ describe('canonical forward release transaction', () => {
     expect(captureWriter).not.toContain("--format '{{.State.Status}}\\t{{.State.ExitCode}}'");
     expect(captureWriter).toContain('mktemp -d /tmp/cauce-fleet-snapshot.XXXXXX');
     expect(captureWriter).toContain('probe=$probe_dir/probe.mjs');
-    expect(captureWriter).toContain("health_env+=('CAUCE_BOOTSTRAP_LEGACY_FLEET_PROBE=1')");
+    expect(captureWriter).toContain('health_args+=(--bootstrap-legacy)');
+    expect(captureWriter).toContain('capture_args+=(--legacy-pre-migration)');
     expect(captureWriter).toContain('migrator /bin/sh -ceu');
     expect(captureWriter).not.toContain('--entrypoint /bin/sh');
     expect(captureWriter).toContain('<"$fleet_probe"');
@@ -2152,6 +2153,7 @@ describe('canonical forward release transaction', () => {
     expect(fleetParity).toContain('bootstrap probe requires the authenticated release lock');
     expect(fleetParity).toContain('mktemp -d /tmp/cauce-fleet-snapshot.XXXXXX');
     expect(fleetParity).not.toContain('--entrypoint /bin/sh');
+    expect(source).toContain('writer_check_args+=(--legacy-pre-migration)');
     expect(captureWriter).toContain('if ((bootstrap_legacy == 1)); then');
     expect(captureWriter).toContain('legacy-fleet is not selected by its baseline');
     expect(captureWriter).toContain('refuses an ambient bootstrap legacy-fleet capability');

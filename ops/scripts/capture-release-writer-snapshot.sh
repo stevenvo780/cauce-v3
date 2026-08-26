@@ -220,8 +220,15 @@ migrator_state=$("${canonical_env[@]}" docker inspect \
   exit 1
 }
 health_args=(prod)
-((maintenance == 0)) || health_args+=(--maintenance-offline-zeus)
-health_env=("${canonical_env[@]}")
+if ((bootstrap_legacy == 1)); then
+  ((maintenance == 1)) || {
+    printf 'writer snapshot capture requires bounded Zeus maintenance during legacy bootstrap\n' >&2
+    exit 2
+  }
+  health_args+=(--bootstrap-legacy)
+elif ((maintenance == 1)); then
+  health_args+=(--maintenance-offline-zeus)
+fi
 if ((bootstrap_legacy == 1)); then
   # El runtime pre-bootstrap puede ser anterior a la sonda que autentica writers. La única
   # excepción permitida transmite exactamente el fichero versionado del mismo checkout que
@@ -236,9 +243,8 @@ if ((bootstrap_legacy == 1)); then
     printf 'writer snapshot capture refused: versioned bootstrap fleet probe is unsafe\n' >&2
     exit 1
   }
-  health_env+=('CAUCE_BOOTSTRAP_LEGACY_FLEET_PROBE=1')
 fi
-"${health_env[@]}" "$health_helper" "${health_args[@]}" >/dev/null
+"${canonical_env[@]}" "$health_helper" "${health_args[@]}" >/dev/null
 if ((bootstrap_legacy == 1)); then
   fleet=$(compose_prod run --rm --no-deps -T migrator /bin/sh -ceu \
     'probe_dir=$(mktemp -d /tmp/cauce-fleet-snapshot.XXXXXX); probe=$probe_dir/probe.mjs; trap '\''rm -f -- "$probe"; rmdir -- "$probe_dir"'\'' EXIT HUP INT TERM; cat >"$probe"; chmod 0600 "$probe"; node "$probe"' \
@@ -247,6 +253,7 @@ else
   fleet=$(compose_prod run --rm --no-deps -T migrator node deploy/fleet-snapshot.mjs)
 fi
 capture_args=(--ops-root "$ROOT" capture)
+((bootstrap_legacy == 0)) || capture_args+=(--legacy-pre-migration)
 for service in "${writers[@]}"; do capture_args+=(--compose-writer "$service"); done
 snapshot=$(printf '%s' "$fleet" | "${canonical_env[@]}" "$writer_helper" "${capture_args[@]}")
 snapshot+=$'\n'

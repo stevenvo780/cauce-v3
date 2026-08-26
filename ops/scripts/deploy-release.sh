@@ -488,7 +488,15 @@ compose_current() {
 health_current() {
   local result
   health_args=(prod)
-  ((maintenance == 0)) || health_args+=(--maintenance-offline-zeus)
+  if [[ ${active_baseline_kind:-} == legacy-pre-migration ]]; then
+    ((maintenance == 1)) || {
+      printf 'release deploy refused: legacy pre-migration health requires bounded Zeus maintenance\n' >&2
+      return 1
+    }
+    health_args+=(--bootstrap-legacy)
+  elif ((maintenance == 1)); then
+    health_args+=(--maintenance-offline-zeus)
+  fi
   manifest_check "$active_manifest" "$active_manifest_sha" 1 || return 1
   set +e
   "${canonical_env[@]}" "$health_helper" "${health_args[@]}"
@@ -506,6 +514,7 @@ baseline_field() {
   "$baseline_helper" field --baseline "$baseline" \
     --expected-baseline-sha256 "$digest" --name "$name"
 }
+active_baseline_kind=$(baseline_field "$current_baseline" "$current_baseline_sha" baseline-kind)
 
 writer_snapshot_count() {
   python3 - "$1" <<'PY'
@@ -1082,7 +1091,7 @@ target_schema=${build_fields[6]}
   exit 1
 }
 
-current_baseline_kind=$(baseline_field "$current_baseline" "$current_baseline_sha" baseline-kind)
+current_baseline_kind=$active_baseline_kind
 current_forward_commit=$(baseline_field "$current_baseline" "$current_baseline_sha" forward-release-commit)
 current_forward_runtime=$(baseline_field "$current_baseline" "$current_baseline_sha" forward-runtime-image)
 current_forward_source=$(baseline_field "$current_baseline" "$current_baseline_sha" forward-runtime-source-digest)
@@ -1570,6 +1579,8 @@ writer_check_args=(
   --ops-root "$ROOT" check --snapshot "$target_writer_snapshot"
   --expected-sha256 "$target_writer_snapshot_sha"
 )
+[[ $current_baseline_kind != legacy-pre-migration ]] \
+  || writer_check_args+=(--legacy-pre-migration)
 for service in "${bridge_writer_services[@]}"; do
   writer_check_args+=(--compose-writer "$service")
 done
@@ -2520,11 +2531,13 @@ if ! pin_transition swap "${forward_transition[@]}" >/dev/null; then
     active_manifest_sha=$current_manifest_sha
     active_writer_snapshot=$current_writer_snapshot
     active_writer_snapshot_sha=$current_writer_snapshot_sha
+    active_baseline_kind=$current_baseline_kind
   elif pin_transition check "${current_state_transition[@]}" >/dev/null; then
     active_manifest=$current_manifest
     active_manifest_sha=$current_manifest_sha
     active_writer_snapshot=$current_writer_snapshot
     active_writer_snapshot_sha=$current_writer_snapshot_sha
+    active_baseline_kind=$current_baseline_kind
   else
     printf 'CRITICAL: forward CAS failed with selectors in neither exact old nor exact target state\n' >&2
     exit 75
@@ -2541,6 +2554,7 @@ active_manifest=$target_manifest
 active_manifest_sha=$target_manifest_sha
 active_writer_snapshot=$target_writer_snapshot
 active_writer_snapshot_sha=$target_writer_snapshot_sha
+active_baseline_kind=$target_baseline_kind
 
 failure=0
 migration_durable=0
@@ -2603,6 +2617,7 @@ if ((migration_durable == 1)); then
   active_manifest_sha=$current_manifest_sha
   active_writer_snapshot=$target_writer_snapshot
   active_writer_snapshot_sha=$target_writer_snapshot_sha
+  active_baseline_kind=$target_baseline_kind
   if ! restore_bridge; then
     printf 'CRITICAL: post-migration compensation selected bridge selectors but did not restore healthy target-schema services\n' >&2
     exit 71
@@ -2621,6 +2636,7 @@ else
   active_manifest_sha=$current_manifest_sha
   active_writer_snapshot=$current_writer_snapshot
   active_writer_snapshot_sha=$current_writer_snapshot_sha
+  active_baseline_kind=$current_baseline_kind
   if ! restore_current; then
     printf 'CRITICAL: pre-migration compensation restored selectors but not the prior healthy services\n' >&2
     exit 71

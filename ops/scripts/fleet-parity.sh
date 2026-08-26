@@ -8,6 +8,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 env_file=${CAUCE_ENV_FILE:-"$ROOT/config/prod.env"}
 snapshot=$(mktemp)
 trap 'rm -f "$snapshot"' EXIT
+parity_args=()
 
 if [[ -n ${CAUCE_FLEET_SNAPSHOT_FILE:-} ]]; then
   [[ ${CAUCE_FLEET_TEST_MODE:-0} == 1 && ${NODE_ENV:-} == test ]] || {
@@ -55,6 +56,10 @@ fi
 args=()
 while (($#)); do
   case "$1" in
+    --legacy-pre-migration)
+      parity_args+=(--legacy-pre-migration)
+      shift
+      ;;
     --expect-offline|--allow-extra-lease)
       (($# >= 2)) || { printf 'fleet parity: %s requires TENANT:ALIAS\n' "$1" >&2; exit 2; }
       args+=("$1" "$2")
@@ -64,4 +69,4 @@ while (($#)); do
   esac
 done
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/fleet-parity.py" \
-  --ops-root "$ROOT" --snapshot "$snapshot" "${args[@]}"
+  --ops-root "$ROOT" --snapshot "$snapshot" "${parity_args[@]}" "${args[@]}"

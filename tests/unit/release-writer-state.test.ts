@@ -912,6 +912,35 @@ describe('durable release writer state', () => {
     expect(marker.stderr).toContain('release ID is invalid');
   });
 
+  test('legacy pre-migration capture derives recovery state from units and still rejects active Zeus', async () => {
+    const value = await fixture();
+    const legacyFleet = fleet(false, [
+      { tenant_id: 'Legacy', alias: 'retired', active: true },
+    ]);
+    const captured = run(value, ['capture', '--legacy-pre-migration'], legacyFleet);
+    expect(captured.status, captured.stderr).toBe(0);
+    const document = JSON.parse(captured.stdout) as {
+      aliases: Array<{ alias: string; leaseActive: boolean }>;
+    };
+    expect(document.aliases).toEqual([
+      expect.objectContaining({ alias: 'kant', leaseActive: true }),
+    ]);
+
+    const published = runMutating(value, ['publish', '--path', value.snapshot], captured.stdout);
+    expect(published.status, published.stderr).toBe(0);
+    const checked = run(value, [
+      'check', '--snapshot', value.snapshot, '--expected-sha256', published.stdout.trim(),
+      '--mode', 'captured', '--fleet-stdin', '--legacy-pre-migration',
+    ], legacyFleet);
+    expect(checked.status, checked.stderr).toBe(0);
+
+    const zeusActive = run(value, ['capture', '--legacy-pre-migration'], fleet(false, [
+      { tenant_id: 'Steven', alias: 'zeus', active: true },
+    ]));
+    expect(zeusActive.status).toBe(1);
+    expect(zeusActive.stderr).toContain('requires Zeus lease offline');
+  });
+
   test('publishes canonical read-only markers and enforces candidate and bridge counts', async () => {
     const value = await fixture();
     const captured = run(value, ['capture'], fleet(true));

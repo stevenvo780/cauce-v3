@@ -147,6 +147,24 @@ describe('bounded fleet maintenance mode', () => {
     expect(mismatch.stderr).toContain('CAUCE_MAINTENANCE_CONFIRM');
   });
 
+  test('legacy bootstrap mode is bounded to the same exact offline Zeus authority', async () => {
+    const zeusOffline = await snapshot({ zeusActive: false });
+    const confirmed = run('bootstrap-legacy', zeusOffline, {
+      CAUCE_CHANGE_ID: 'CHG-LEGACY',
+      CAUCE_MAINTENANCE_CONFIRM: 'offline:Steven:zeus:CHG-LEGACY',
+    });
+    expect(confirmed.status, confirmed.stderr).toBe(0);
+    expect(confirmed.stdout).toContain('legacy pre-migration validation passed');
+
+    const zeusActive = await snapshot({ zeusActive: true });
+    const rejected = run('bootstrap-legacy', zeusActive, {
+      CAUCE_CHANGE_ID: 'CHG-LEGACY',
+      CAUCE_MAINTENANCE_CONFIRM: 'offline:Steven:zeus:CHG-LEGACY',
+    });
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain('maintenance-offline agent is active: Steven:zeus');
+  });
+
   test('release and health entry points reject broader or misplaced maintenance arguments', () => {
     expect(spawnSync(releaseGate, ['--maintenance-offline-kant'], { encoding: 'utf8' }).status).toBe(2);
     expect(spawnSync(stackHealth, ['dev', '--maintenance-offline-zeus'], { encoding: 'utf8' }).status).toBe(2);

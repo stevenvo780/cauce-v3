@@ -1417,6 +1417,8 @@ def unit_inventory(
 def fleet_leases(
     document: dict[str, Any],
     aliases: dict[str, dict[str, str]],
+    *,
+    allow_unknown_active: bool = False,
 ) -> dict[tuple[str, str], bool]:
     if document.get("schemaVersion") != 3:
         fail("fleet snapshot schemaVersion is unsupported")
@@ -1441,13 +1443,17 @@ def fleet_leases(
     unknown_active = sorted(
         key for key, active in leases.items() if active and key not in declared
     )
-    if unknown_active:
+    if unknown_active and not allow_unknown_active:
         fail("fleet snapshot contains an active undeclared writer lease")
     return leases
 
 
 def build_snapshot(
-    ops_root: pathlib.Path, fleet: dict[str, Any], compose_writers: list[str]
+    ops_root: pathlib.Path,
+    fleet: dict[str, Any],
+    compose_writers: list[str],
+    *,
+    legacy_pre_migration: bool = False,
 ) -> dict[str, Any]:
     manifest_path = ops_root / "container-aliases.json"
     manifest_sha256 = sha256_bytes(manifest_path.read_bytes())
@@ -1456,16 +1462,20 @@ def build_snapshot(
         re.fullmatch(r"[a-z0-9][a-z0-9_-]*", item) is None for item in compose_writers
     ):
         fail("Compose writer inventory is invalid or duplicated")
-    leases = fleet_leases(fleet, aliases)
+    leases = fleet_leases(fleet, aliases, allow_unknown_active=legacy_pre_migration)
+    if legacy_pre_migration and leases.get(("Steven", "zeus"), False):
+        fail("legacy pre-migration writer capture requires Zeus lease offline")
     unit_rows = unit_inventory(ops_root, aliases)
     active_aliases = 0
     for row in unit_rows:
         alias = row["alias"]
         key = (row["tenant"], alias)
-        lease_active = leases.get(key, False)
         unit_active = any(item["activeState"] == "active" for item in row["units"])
-        if lease_active != unit_active:
+        lease_active = unit_active if legacy_pre_migration else leases.get(key, False)
+        if not legacy_pre_migration and lease_active != unit_active:
             fail(f"alias {alias} unit/lease writer state is inconsistent")
+        if legacy_pre_migration and alias == "zeus" and unit_active:
+            fail("legacy pre-migration writer capture requires Zeus unit offline")
         row["leaseActive"] = lease_active
         active_aliases += int(unit_active)
     if sha256_bytes(manifest_path.read_bytes()) != manifest_sha256:
@@ -2094,7 +2104,11 @@ def systemctl_mutate(
 
 
 def validate_fleet_against_snapshot(
-    snapshot: dict[str, Any], fleet: dict[str, Any], mode: str
+    snapshot: dict[str, Any],
+    fleet: dict[str, Any],
+    mode: str,
+    *,
+    legacy_pre_migration: bool = False,
 ) -> None:
     aliases = {
         row["alias"]: {
@@ -2104,7 +2118,13 @@ def validate_fleet_against_snapshot(
         }
         for row in snapshot["aliases"]
     }
-    leases = fleet_leases(fleet, aliases)
+    leases = fleet_leases(fleet, aliases, allow_unknown_active=legacy_pre_migration)
+    if legacy_pre_migration:
+        if mode != "captured":
+            fail("legacy pre-migration lease exception is valid only for captured state")
+        if leases.get(("Steven", "zeus"), False):
+            fail("legacy pre-migration writer check requires Zeus lease offline")
+        return
     for row in snapshot["aliases"]:
         observed = leases.get((row["tenant"], row["alias"]), False)
         expected = row["leaseActive"] if mode in {"captured", "restored"} else False
@@ -2340,6 +2360,7 @@ def main(argv: list[str]) -> int:
     subparsers = parser.add_subparsers(dest="action", required=True)
     capture = subparsers.add_parser("capture")
     capture.add_argument("--compose-writer", action="append", default=[])
+    capture.add_argument("--legacy-pre-migration", action="store_true")
     publish = subparsers.add_parser("publish")
     publish.add_argument("--path", required=True, type=pathlib.Path)
     publish.add_argument("--allow-identical", action="store_true")
@@ -2360,6 +2381,7 @@ def main(argv: list[str]) -> int:
             )
             child.add_argument("--fleet-stdin", action="store_true")
             child.add_argument("--compose-writer", action="append", default=[])
+            child.add_argument("--legacy-pre-migration", action="store_true")
     marker = subparsers.add_parser("marker")
     marker.add_argument("--snapshot", required=True, type=pathlib.Path)
     marker.add_argument("--expected-sha256", required=True)
@@ -2414,7 +2436,12 @@ def main(argv: list[str]) -> int:
             return guarded_exec(ops_root, arguments.command)
         if arguments.action == "capture":
             fleet = read_json_bytes(sys.stdin.buffer.read(), "fleet snapshot")
-            snapshot = build_snapshot(ops_root, fleet, arguments.compose_writer)
+            snapshot = build_snapshot(
+                ops_root,
+                fleet,
+                arguments.compose_writer,
+                legacy_pre_migration=arguments.legacy_pre_migration,
+            )
             print(json.dumps(snapshot, sort_keys=True, separators=(",", ":")))
             return 0
         if arguments.action == "publish":
@@ -2458,7 +2485,12 @@ def main(argv: list[str]) -> int:
             assert_unit_state(ops_root, snapshot, arguments.mode)
             if arguments.fleet_stdin:
                 fleet = read_json_bytes(sys.stdin.buffer.read(), "fleet snapshot")
-                validate_fleet_against_snapshot(snapshot, fleet, arguments.mode)
+                validate_fleet_against_snapshot(
+                    snapshot,
+                    fleet,
+                    arguments.mode,
+                    legacy_pre_migration=arguments.legacy_pre_migration,
+                )
         elif arguments.action == "fence":
             authenticated_remote_guard(snapshot)
             assert_unit_transitionable(ops_root, snapshot, "fence")

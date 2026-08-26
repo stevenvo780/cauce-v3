@@ -6,16 +6,23 @@ target=${1:-dev}
 case "$target" in
   dev) default_env="$ROOT/config/dev.env" ;;
   prod) default_env="$ROOT/config/prod.env" ;;
-  *) printf 'usage: stack-health.sh [dev|prod] [--maintenance-offline-zeus]\n' >&2; exit 2 ;;
+  *) printf 'usage: stack-health.sh [dev|prod] [--maintenance-offline-zeus|--bootstrap-legacy]\n' >&2; exit 2 ;;
 esac
 if (($#)); then shift; fi
 fleet_mode=final
 if (($#)); then
-  [[ $target == prod && $# == 1 && $1 == --maintenance-offline-zeus ]] || {
-    printf 'usage: stack-health.sh [dev|prod] [--maintenance-offline-zeus]\n' >&2
+  [[ $target == prod && $# == 1 ]] || {
+    printf 'usage: stack-health.sh [dev|prod] [--maintenance-offline-zeus|--bootstrap-legacy]\n' >&2
     exit 2
   }
-  fleet_mode=maintenance-zeus
+  case $1 in
+    --maintenance-offline-zeus) fleet_mode=maintenance-zeus ;;
+    --bootstrap-legacy) fleet_mode=bootstrap-legacy ;;
+    *)
+      printf 'usage: stack-health.sh [dev|prod] [--maintenance-offline-zeus|--bootstrap-legacy]\n' >&2
+      exit 2
+      ;;
+  esac
 fi
 env_file=${CAUCE_ENV_FILE:-$default_env}
 [[ -f "$env_file" ]] || { printf 'missing env file: %s\n' "$env_file" >&2; exit 2; }
@@ -64,6 +71,8 @@ if [[ $target == prod ]]; then
     CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/fleet-gate-mode.sh" "$fleet_mode"
   if [[ $fleet_mode == final ]]; then
     printf 'production core, configured relay/Telegram/terminal/shadow services, strict fleet parity and PostgreSQL TLS are ready\n'
+  elif [[ $fleet_mode == bootstrap-legacy ]]; then
+    printf 'production legacy core, registry probe and PostgreSQL TLS are ready; post-migration parity remains mandatory\n'
   else
     printf 'production core and bounded Zeus maintenance checks are ready; final strict fleet gate remains mandatory\n'
   fi

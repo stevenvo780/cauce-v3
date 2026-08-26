@@ -104,6 +104,7 @@ def compare(
     snapshot: dict[str, Any],
     expected_offline: set[tuple[str, str]],
     allowed_extra_leases: set[tuple[str, str]],
+    legacy_pre_migration: bool = False,
 ) -> list[str]:
     expected_snapshot_keys = {
         "schemaVersion", "agents", "memberships", "rolePolicies", "leases",
@@ -164,6 +165,16 @@ def compare(
             )
             if actual_value is not expected_value:
                 problems.append(f"role policy mismatch: {role} field={permission}")
+    if legacy_pre_migration:
+        # Before the one-time schema transition, the registry is expected to differ from the
+        # current declarative inventory: later migrations retire historical rows and add newer
+        # tenants.  This bounded gate still validates the complete sanitized snapshot shape,
+        # role-policy safety and every lease boolean, and it proves Zeus is actually offline.
+        for key, row in leases.items():
+            active = boolean_field(row, "active", f"leases[{key[0]}:{key[1]}]")
+            if key in expected_offline and active:
+                problems.append(f"maintenance-offline agent is active: {key[0]}:{key[1]}")
+        return problems
     for key in sorted(expected.keys() - enabled.keys()):
         problems.append(f"enabled agent missing: {key[0]}:{key[1]}")
     for key in sorted(enabled.keys() - expected.keys()):
@@ -243,7 +254,17 @@ def main() -> int:
         help="require this declared identity to be offline during a bounded maintenance gate",
     )
     parser.add_argument("--allow-extra-lease", action="append", type=parse_identity, default=[])
+    parser.add_argument(
+        "--legacy-pre-migration", action="store_true",
+        help="validate the authenticated legacy registry shape without requiring post-migration parity",
+    )
     args = parser.parse_args()
+    if args.legacy_pre_migration and (
+        set(args.expect_offline) != {("Steven", "zeus")} or args.allow_extra_lease
+    ):
+        parser.error(
+            "--legacy-pre-migration requires exactly --expect-offline Steven:zeus and no lease exceptions"
+        )
     try:
         inventory = load_container_aliases(args.ops_root)
         system_principals = load_system_principals(args.ops_root)
@@ -256,6 +277,7 @@ def main() -> int:
             snapshot,
             set(args.expect_offline),
             set(args.allow_extra_lease),
+            args.legacy_pre_migration,
         )
     except (OSError, json.JSONDecodeError, ContainerAliasError, ParityError) as error:
         print(f"fleet parity: invalid evidence: {error}", file=sys.stderr)
@@ -264,13 +286,16 @@ def main() -> int:
         for problem in problems:
             print(f"fleet parity: {problem}", file=sys.stderr)
         return 1
-    print(
-        f"fleet parity passed: {len(inventory)} enabled aliases, "
-        f"{len(system_principals)} system principals, "
-        f"{len(historical_aliases)} disabled historical aliases, "
-        f"{len(args.expect_offline)} expected-offline maintenance identities, "
-        f"{len(args.allow_extra_lease)} transitional lease exceptions"
-    )
+    if args.legacy_pre_migration:
+        print("fleet legacy pre-migration validation passed with Zeus offline")
+    else:
+        print(
+            f"fleet parity passed: {len(inventory)} enabled aliases, "
+            f"{len(system_principals)} system principals, "
+            f"{len(historical_aliases)} disabled historical aliases, "
+            f"{len(args.expect_offline)} expected-offline maintenance identities, "
+            f"{len(args.allow_extra_lease)} transitional lease exceptions"
+        )
     return 0
 
 

@@ -183,4 +183,30 @@ describe('fleet parity gate', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('historical agent missing: Jhon:heraclito');
   });
+
+  test('legacy pre-migration mode validates shape and policy while requiring only Zeus offline', async () => {
+    const { root, snapshot, base } = await fixture();
+    base.agents = base.agents.filter((item) => item.alias !== 'iza');
+    base.memberships = base.memberships.filter((item) => item.alias !== 'iza');
+    base.leases.push({ tenant_id: 'Legacy', alias: 'retired', active: true });
+    await writeFile(snapshot, JSON.stringify(base));
+
+    let result = run(root, snapshot, [
+      '--legacy-pre-migration', '--expect-offline', 'Steven:zeus',
+    ]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('legacy pre-migration validation passed');
+
+    base.leases.push({ tenant_id: 'Steven', alias: 'zeus', active: true });
+    await writeFile(snapshot, JSON.stringify(base));
+    result = run(root, snapshot, [
+      '--legacy-pre-migration', '--expect-offline', 'Steven:zeus',
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('maintenance-offline agent is active: Steven:zeus');
+
+    result = run(root, snapshot, ['--legacy-pre-migration']);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('requires exactly --expect-offline Steven:zeus');
+  });
 });
