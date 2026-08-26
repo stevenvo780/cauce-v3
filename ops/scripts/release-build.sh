@@ -266,7 +266,12 @@ schema_compatible_through=$(find "$context/packages/store/migrations" -maxdepth 
 
 runtime_tag="${CAUCE_RUNTIME_REPOSITORY}:rc-${actual_commit}"
 console_tag="${CAUCE_CONSOLE_REPOSITORY}:rc-${actual_commit}"
-docker build "${pull_args[@]}" --platform "$target_platform" \
+# Docker 29/BuildKit emits a provenance attestation by default. That turns the
+# pushed tag into an OCI index, so a digest pull no longer identifies the exact
+# single-platform image ID that passed the package smoke below. Release evidence
+# deliberately accepts only a child manifest; disable the default attestation
+# at build time instead of weakening the recovery gate.
+docker build "${pull_args[@]}" --provenance=false --platform "$target_platform" \
   --build-arg "CAUCE_NODE_BASE=$CAUCE_NODE_BASE_IMAGE" \
   --build-arg "CAUCE_PYTHON_BASE=$CAUCE_PYTHON_BASE_IMAGE" \
   --build-arg "CAUCE_NGINX_BASE=$CAUCE_NGINX_BASE_IMAGE" \
@@ -275,7 +280,7 @@ docker build "${pull_args[@]}" --platform "$target_platform" \
   --build-arg "CAUCE_RELEASE_COMMIT=$actual_commit" \
   --build-arg "CAUCE_SCHEMA_COMPATIBLE_THROUGH=$schema_compatible_through" \
   --target runtime -t "$runtime_tag" -f "$context/deploy/Dockerfile" "$context"
-docker build "${pull_args[@]}" --platform "$target_platform" \
+docker build "${pull_args[@]}" --provenance=false --platform "$target_platform" \
   --build-arg "CAUCE_NODE_BASE=$CAUCE_NODE_BASE_IMAGE" \
   --build-arg "CAUCE_PYTHON_BASE=$CAUCE_PYTHON_BASE_IMAGE" \
   --build-arg "CAUCE_NGINX_BASE=$CAUCE_NGINX_BASE_IMAGE" \

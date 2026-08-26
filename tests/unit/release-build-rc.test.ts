@@ -327,7 +327,7 @@ describe('release build clean RC and registry evidence', () => {
     expect(calls).not.toContain(`pull --platform linux/amd64 ${value.env.CAUCE_NODE_BASE_IMAGE}`);
     expect(calls).not.toContain(`pull --platform linux/amd64 ${value.env.CAUCE_PYTHON_BASE_IMAGE}`);
     expect(calls).not.toContain(`pull --platform linux/amd64 ${value.env.CAUCE_NGINX_BASE_IMAGE}`);
-    expect(calls).toContain('build --platform linux/amd64');
+    expect(calls.match(/build --provenance=false --platform linux\/amd64/g)).toHaveLength(2);
     expect(calls).toContain(`--build-arg CAUCE_NODE_BASE=${value.env.CAUCE_NODE_BASE_IMAGE}`);
     expect(calls).toContain(`--build-arg CAUCE_PYTHON_BASE=${value.env.CAUCE_PYTHON_BASE_IMAGE}`);
     expect(calls).toContain(`--build-arg CAUCE_NGINX_BASE=${value.env.CAUCE_NGINX_BASE_IMAGE}`);
