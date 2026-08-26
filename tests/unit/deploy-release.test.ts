@@ -2135,6 +2135,10 @@ describe('canonical forward release transaction', () => {
     expect(source).toContain('bootstrap_capture_env=');
     expect(source).toContain('CAUCE_BOOTSTRAP_CAPTURE_LEGACY_FLEET_FILE=$legacy_fleet');
     expect(source).toContain('CAUCE_BOOTSTRAP_CAPTURE_LEGACY_FLEET_SHA256=$legacy_fleet_sha');
+    expect(source).toContain("--format '{{.State.Status}} {{.State.ExitCode}}'");
+    expect(source).not.toContain("--format '{{.State.Status}}\\t{{.State.ExitCode}}'");
+    expect(captureWriter).toContain("--format '{{.State.Status}} {{.State.ExitCode}}'");
+    expect(captureWriter).not.toContain("--format '{{.State.Status}}\\t{{.State.ExitCode}}'");
     expect(captureWriter).toContain('legacy-fleet is not selected by its baseline');
     expect(captureWriter).toContain('refuses an ambient bootstrap legacy-fleet capability');
     expect(runbook).toContain('CAUCE_DEPLOY_TARGET_OVERRIDE_MANIFEST_SHA256');

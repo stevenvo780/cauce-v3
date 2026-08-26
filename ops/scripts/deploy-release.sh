@@ -1331,9 +1331,9 @@ migrator_container=$(compose_current ps --all -q migrator) || exit 1
   printf 'release deploy refused: materialized migrator identity is ambiguous\n' >&2
   exit 1
 }
-migrator_state=$(docker_cli inspect --format '{{.State.Status}}\t{{.State.ExitCode}}' \
+migrator_state=$(docker_cli inspect --format '{{.State.Status}} {{.State.ExitCode}}' \
   "$migrator_container") || exit 1
-[[ $migrator_state == $'exited\t0' ]] || {
+[[ $migrator_state == 'exited 0' ]] || {
   printf 'release deploy refused: materialized migrator is not exited/0\n' >&2
   exit 1
 }

@@ -214,8 +214,8 @@ migrator_container=$(compose_prod ps --all -q migrator)
   exit 1
 }
 migrator_state=$("${canonical_env[@]}" docker inspect \
-  --format '{{.State.Status}}\t{{.State.ExitCode}}' "$migrator_container")
-[[ $migrator_state == $'exited\t0' ]] || {
+  --format '{{.State.Status}} {{.State.ExitCode}}' "$migrator_container")
+[[ $migrator_state == 'exited 0' ]] || {
   printf 'writer snapshot capture refused: materialized migrator is not exited/0\n' >&2
   exit 1
 }
