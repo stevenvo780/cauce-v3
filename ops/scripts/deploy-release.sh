@@ -23,21 +23,21 @@ shift || true
 maintenance=0
 if (($#)); then
   [[ $# == 1 && $1 == --maintenance-offline-zeus \
-     && $action =~ ^(preflight|dry-run|deploy)$ ]] || {
-    printf 'usage: %s preflight|dry-run|deploy [--maintenance-offline-zeus] | rotate-writer-snapshot | prod-up | prod-down | migrate\n' "$0" >&2
+     && $action =~ ^(preflight|dry-run|deploy|bootstrap-production-legacy)$ ]] || {
+    printf 'usage: %s preflight|dry-run|deploy|bootstrap-production-legacy [--maintenance-offline-zeus] | rotate-writer-snapshot | prod-up | prod-down | migrate\n' "$0" >&2
     exit 2
   }
   maintenance=1
 fi
 case $action in
   preflight|dry-run) action=preflight ;;
-  deploy|rotate-writer-snapshot|prod-up|prod-down|migrate) ;;
+  deploy|bootstrap-production-legacy|rotate-writer-snapshot|prod-up|prod-down|migrate) ;;
   help|-h|--help)
-    printf 'usage: %s preflight|dry-run|deploy [--maintenance-offline-zeus] | rotate-writer-snapshot | prod-up | prod-down | migrate\n' "$0"
+    printf 'usage: %s preflight|dry-run|deploy|bootstrap-production-legacy [--maintenance-offline-zeus] | rotate-writer-snapshot | prod-up | prod-down | migrate\n' "$0"
     exit 0
     ;;
   *)
-    printf 'usage: %s preflight|dry-run|deploy [--maintenance-offline-zeus] | rotate-writer-snapshot | prod-up | prod-down | migrate\n' "$0" >&2
+    printf 'usage: %s preflight|dry-run|deploy|bootstrap-production-legacy [--maintenance-offline-zeus] | rotate-writer-snapshot | prod-up | prod-down | migrate\n' "$0" >&2
     exit 2
     ;;
 esac
@@ -50,6 +50,18 @@ if [[ $action == preflight || $action == deploy ]]; then
   : "${CAUCE_DEPLOY_TARGET_ROLLBACK_BASELINE_SHA256:?set the target rollback baseline SHA-256}"
   : "${CAUCE_DEPLOY_TARGET_WRITER_SNAPSHOT_FILE:?set the absolute target writer snapshot}"
   : "${CAUCE_DEPLOY_TARGET_WRITER_SNAPSHOT_SHA256:?set the target writer snapshot SHA-256}"
+fi
+if [[ $action == bootstrap-production-legacy ]]; then
+  : "${CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256:?set the authenticated two-selector env SHA-256}"
+  : "${CAUCE_BOOTSTRAP_RUNTIME_IMAGE:?set the normalized legacy runtime RepoDigest}"
+  : "${CAUCE_BOOTSTRAP_CONSOLE_IMAGE:?set the normalized legacy console RepoDigest}"
+  : "${CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST:?set the initial authenticated override manifest}"
+  : "${CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256:?set the initial override manifest SHA-256}"
+  : "${CAUCE_BOOTSTRAP_LEGACY_FLEET_SNAPSHOT_FILE:?set the durable legacy fleet snapshot path}"
+  : "${CAUCE_BOOTSTRAP_ROLLBACK_BASELINE:?set the durable legacy baseline path}"
+  : "${CAUCE_BOOTSTRAP_BACKUP_ENV_FILE:?set the create-only legacy env backup path}"
+  : "${CAUCE_BOOTSTRAP_FORWARD_RELEASE_ID:?set the non-secret legacy release ID}"
+  : "${CAUCE_RELEASE_WRITER_SNAPSHOT_FILE:?set the durable writer snapshot path}"
 fi
 if ((maintenance == 1)); then
   : "${CAUCE_CHANGE_ID:?set the non-secret maintenance change ID}"
@@ -80,6 +92,7 @@ release_gate="$ROOT/scripts/release-gate.sh"
 release_candidate="$ROOT/scripts/release-candidate.py"
 release_evidence_validator="$ROOT/scripts/validate-release-evidence.py"
 writer_state_helper="$ROOT/scripts/release-writer-state.py"
+capture_writer_helper="$ROOT/scripts/capture-release-writer-snapshot.sh"
 build_dir="$ROOT/artifacts/release"
 build_evidence="$build_dir/build.json"
 build_schema="$ROOT/schemas/build-evidence.schema.json"
@@ -93,6 +106,10 @@ for executable in \
     exit 2
   }
 done
+if [[ $action == bootstrap-production-legacy && ! -x $capture_writer_helper ]]; then
+  printf 'production legacy bootstrap refused: canonical writer capture helper is absent\n' >&2
+  exit 2
+fi
 [[ $CAUCE_ENV_FILE = /* ]] || {
   printf 'release deploy refused: production env path must be absolute\n' >&2
   exit 2
@@ -132,6 +149,12 @@ if [[ -z ${CAUCE_RELEASE_TRANSITION_LOCK_FD:-} ]]; then
     CAUCE_DEPLOY_TARGET_WRITER_SNAPSHOT_FILE \
     CAUCE_DEPLOY_TARGET_WRITER_SNAPSHOT_SHA256 \
     CAUCE_DEPLOY_LEGACY_SNAPSHOT_FILE CAUCE_DEPLOY_CONFIRM \
+    CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256 CAUCE_BOOTSTRAP_RUNTIME_IMAGE \
+    CAUCE_BOOTSTRAP_CONSOLE_IMAGE CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST \
+    CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256 \
+    CAUCE_BOOTSTRAP_LEGACY_FLEET_SNAPSHOT_FILE \
+    CAUCE_BOOTSTRAP_ROLLBACK_BASELINE CAUCE_BOOTSTRAP_BACKUP_ENV_FILE \
+    CAUCE_BOOTSTRAP_FORWARD_RELEASE_ID CAUCE_RELEASE_WRITER_SNAPSHOT_FILE \
     CAUCE_CHANGE_ID CAUCE_MAINTENANCE_CONFIRM \
     CAUCE_WRITER_ROTATION_FILE CAUCE_WRITER_ROTATION_CONFIRM; do
     if [[ -v $allowed ]]; then
@@ -154,7 +177,7 @@ transition_lock_fd=$CAUCE_RELEASE_TRANSITION_LOCK_FD
 # The helper keeps one SSH/flock session per declared remote systemd manager
 # alive for this entire child transaction and aborts the child if any session
 # is lost. The local production selector lock remains held by the parent.
-if [[ $action =~ ^(deploy|rotate-writer-snapshot|prod-up|prod-down)$ \
+if [[ $action =~ ^(deploy|bootstrap-production-legacy|rotate-writer-snapshot|prod-up|prod-down)$ \
    && -z ${CAUCE_WRITER_REMOTE_GUARD_FD:-} ]]; then
   guarded_command=("$ROOT/scripts/deploy-release.sh" "$action")
   ((maintenance == 0)) || guarded_command+=(--maintenance-offline-zeus)
@@ -247,6 +270,140 @@ if ((maintenance == 1)); then
     "CAUCE_CHANGE_ID=$CAUCE_CHANGE_ID"
     "CAUCE_MAINTENANCE_CONFIRM=$CAUCE_MAINTENANCE_CONFIRM"
   )
+fi
+
+if [[ $action == bootstrap-production-legacy ]]; then
+  legacy_runtime=$CAUCE_BOOTSTRAP_RUNTIME_IMAGE
+  legacy_console=$CAUCE_BOOTSTRAP_CONSOLE_IMAGE
+  legacy_manifest=$CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST
+  legacy_manifest_sha=$CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256
+  legacy_fleet=$CAUCE_BOOTSTRAP_LEGACY_FLEET_SNAPSHOT_FILE
+  legacy_baseline=$CAUCE_BOOTSTRAP_ROLLBACK_BASELINE
+  legacy_backup=$CAUCE_BOOTSTRAP_BACKUP_ENV_FILE
+  legacy_writer=$CAUCE_RELEASE_WRITER_SNAPSHOT_FILE
+  [[ $CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256 =~ ^sha256:[a-f0-9]{64}$ \
+     && $legacy_runtime =~ ^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$ \
+     && $legacy_console =~ ^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$ \
+     && $legacy_manifest = /* && $legacy_manifest_sha =~ ^sha256:[a-f0-9]{64}$ \
+     && $legacy_fleet = /* && $legacy_baseline = /* && $legacy_backup = /* \
+     && $legacy_writer = /* \
+     && $CAUCE_BOOTSTRAP_FORWARD_RELEASE_ID =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+    printf 'production legacy bootstrap refused: inputs are not canonical\n' >&2
+    exit 2
+  }
+  already_complete=0
+  if selected_writer=$("$pin_helper" field --env-file "$CAUCE_ENV_FILE" \
+      --name CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE --lock-fd "$transition_lock_fd" \
+      2>/dev/null); then
+    selected_writer_sha=$("$pin_helper" field --env-file "$CAUCE_ENV_FILE" \
+      --name CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256 --lock-fd "$transition_lock_fd")
+    [[ $selected_writer == "$legacy_writer" ]] || {
+      printf 'production legacy bootstrap refused: completed selector uses another writer snapshot\n' >&2
+      exit 1
+    }
+    already_complete=1
+  fi
+
+  legacy_fleet_sha=$("$pin_helper" capture-production-legacy \
+    --env-file "$CAUCE_ENV_FILE" \
+    --expected-env-sha256 "$CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256" \
+    --runtime-image "$legacy_runtime" --console-image "$legacy_console" \
+    --override-manifest "$legacy_manifest" \
+    --override-manifest-sha256 "$legacy_manifest_sha" \
+    --output "$legacy_fleet" --backup-env-file "$legacy_backup" \
+    --lock-fd "$transition_lock_fd") || {
+    printf 'production legacy bootstrap refused: physical fleet capture failed\n' >&2
+    exit 1
+  }
+  legacy_baseline_sha=$("${canonical_env[@]}" "$baseline_helper" create-legacy \
+    --output "$legacy_baseline" \
+    --forward-release-commit "$CAUCE_BOOTSTRAP_FORWARD_RELEASE_ID" \
+    --forward-runtime-image "$legacy_runtime" --console-image "$legacy_console" \
+    --override-manifest "$legacy_manifest" \
+    --legacy-fleet-snapshot "$legacy_fleet" \
+    --legacy-fleet-snapshot-sha256 "$legacy_fleet_sha") || {
+    printf 'production legacy bootstrap refused: authenticated legacy baseline failed\n' >&2
+    exit 1
+  }
+
+  if ((already_complete == 0)); then
+    "$pin_helper" bootstrap-production-legacy \
+      --env-file "$CAUCE_ENV_FILE" \
+      --expected-env-sha256 "$CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256" \
+      --runtime-image "$legacy_runtime" --console-image "$legacy_console" \
+      --override-manifest "$legacy_manifest" \
+      --override-manifest-sha256 "$legacy_manifest_sha" \
+      --rollback-baseline "$legacy_baseline" \
+      --rollback-baseline-sha256 "$legacy_baseline_sha" \
+      --legacy-fleet-snapshot "$legacy_fleet" \
+      --legacy-fleet-snapshot-sha256 "$legacy_fleet_sha" \
+      --backup-env-file "$legacy_backup" --lock-fd "$transition_lock_fd" >/dev/null || {
+      printf 'production legacy bootstrap refused: selector promotion failed\n' >&2
+      exit 1
+    }
+  fi
+
+  bootstrap_capture_args=("$legacy_writer")
+  ((maintenance == 0)) || bootstrap_capture_args+=(--maintenance-offline-zeus)
+  set +e
+  "${canonical_env[@]}" "$capture_writer_helper" "${bootstrap_capture_args[@]}"
+  capture_status=$?
+  set -e
+  if ((capture_status == 0)); then
+    legacy_writer_sha="sha256:$(sha256sum "$legacy_writer" | cut -d' ' -f1)"
+    six_selector_sha=$(python3 - "$CAUCE_ENV_FILE" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+content = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+lines = [line for line in content.splitlines(keepends=True)
+         if not line.startswith("CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE=")
+         and not line.startswith("CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256=")]
+print("sha256:" + hashlib.sha256("".join(lines).encode()).hexdigest())
+PY
+    )
+    set +e
+    "$pin_helper" bootstrap-writer-snapshot --env-file "$CAUCE_ENV_FILE" \
+      --expected-env-sha256 "$six_selector_sha" \
+      --writer-snapshot "$legacy_writer" \
+      --writer-snapshot-sha256 "$legacy_writer_sha" \
+      --lock-fd "$transition_lock_fd" >/dev/null
+    capture_status=$?
+    set -e
+  else
+    legacy_writer_sha=${selected_writer_sha:-sha256:$(printf absent | sha256sum | cut -d' ' -f1)}
+  fi
+  if ((capture_status != 0)); then
+    if ((already_complete == 0)); then
+      if ! "$pin_helper" restore-production-legacy \
+        --env-file "$CAUCE_ENV_FILE" \
+        --expected-env-sha256 "$CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256" \
+        --runtime-image "$legacy_runtime" --console-image "$legacy_console" \
+        --override-manifest "$legacy_manifest" \
+        --override-manifest-sha256 "$legacy_manifest_sha" \
+        --rollback-baseline "$legacy_baseline" \
+        --rollback-baseline-sha256 "$legacy_baseline_sha" \
+        --writer-snapshot "$legacy_writer" \
+        --writer-snapshot-sha256 "$legacy_writer_sha" \
+        --backup-env-file "$legacy_backup" --lock-fd "$transition_lock_fd" >/dev/null; then
+        printf 'CRITICAL: production legacy bootstrap failed and exact two-selector compensation failed\n' >&2
+        exit 74
+      fi
+      printf 'production legacy bootstrap failed safely; exact two-selector env restored\n' >&2
+    fi
+    exit "$capture_status"
+  fi
+  final_writer=$("$pin_helper" field --env-file "$CAUCE_ENV_FILE" \
+    --name CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE --lock-fd "$transition_lock_fd")
+  final_writer_sha=$("$pin_helper" field --env-file "$CAUCE_ENV_FILE" \
+    --name CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256 --lock-fd "$transition_lock_fd")
+  [[ $final_writer == "$legacy_writer" && $final_writer_sha == "$legacy_writer_sha" ]] || {
+    printf 'CRITICAL: production legacy bootstrap final eight-selector read-back failed\n' >&2
+    exit 74
+  }
+  printf 'production legacy bootstrap committed an authenticated eight-selector pre-migration state\n'
+  exit 0
 fi
 
 selector() {
@@ -917,10 +1074,23 @@ target_schema=${build_fields[6]}
   exit 1
 }
 
+current_baseline_kind=$(baseline_field "$current_baseline" "$current_baseline_sha" baseline-kind)
 current_forward_commit=$(baseline_field "$current_baseline" "$current_baseline_sha" forward-release-commit)
 current_forward_runtime=$(baseline_field "$current_baseline" "$current_baseline_sha" forward-runtime-image)
 current_forward_source=$(baseline_field "$current_baseline" "$current_baseline_sha" forward-runtime-source-digest)
-current_bridge_runtime=$(baseline_field "$current_baseline" "$current_baseline_sha" bridge-runtime-image)
+if [[ $current_baseline_kind == legacy-pre-migration ]]; then
+  current_bridge_runtime=$current_forward_runtime
+elif [[ $current_baseline_kind == canonical-bridge ]]; then
+  current_bridge_runtime=$(baseline_field "$current_baseline" "$current_baseline_sha" bridge-runtime-image)
+else
+  printf 'release deploy refused: current rollback baseline kind is unsupported\n' >&2
+  exit 1
+fi
+target_baseline_kind=$(baseline_field "$target_baseline" "$target_baseline_sha" baseline-kind)
+[[ $target_baseline_kind == canonical-bridge ]] || {
+  printf 'release deploy refused: target baseline must contain an accredited rollback bridge\n' >&2
+  exit 1
+}
 target_forward_commit=$(baseline_field "$target_baseline" "$target_baseline_sha" forward-release-commit)
 target_forward_runtime=$(baseline_field "$target_baseline" "$target_baseline_sha" forward-runtime-image)
 target_forward_source=$(baseline_field "$target_baseline" "$target_baseline_sha" forward-runtime-source-digest)
@@ -1114,6 +1284,7 @@ materialized_normalized=$(normalize_inventory <<<"$materialized") || {
   exit 1
 }
 expected_long_lived=$(printf '%s\n' "${configured_services[@]}" | grep -Fvx migrator | LC_ALL=C sort)
+expected_materialized=$(printf '%s\n' "$expected_long_lived" migrator | LC_ALL=C sort)
 bridge_expected_running=$(printf '%s\n' "$expected_long_lived" \
   | LC_ALL=C sort)
 bridge_stopped_services=(dispatcher "${bridge_writer_services[@]}")
@@ -1135,15 +1306,27 @@ materialized_is_valid_for_mode() {
     # Admission may observe retained stopped containers only before the durable
     # bridge fence removes them.  The established bridge is verified separately
     # as exact safe-only materialization; partial sets remain ambiguous.
-    [[ $observed_materialized == "$expected_long_lived" \
-       || $observed_materialized == "$bridge_expected_running" ]]
+    bridge_materialized=$(printf '%s\n' "$bridge_expected_running" migrator | LC_ALL=C sort)
+    [[ $observed_materialized == "$expected_materialized" \
+       || $observed_materialized == "$bridge_materialized" ]]
   else
-    [[ $observed_materialized == "$expected_long_lived" ]]
+    [[ $observed_materialized == "$expected_materialized" ]]
   fi
 }
 [[ -n $expected_running && $running_normalized == "$expected_running" ]] \
   && materialized_is_valid_for_mode "$expected_running" "$materialized_normalized" || {
   printf 'release deploy refused: running/materialized services differ from the exact selected release mode\n' >&2
+  exit 1
+}
+migrator_container=$(compose_current ps --all -q migrator) || exit 1
+[[ -n $migrator_container && $migrator_container != *$'\n'* ]] || {
+  printf 'release deploy refused: materialized migrator identity is ambiguous\n' >&2
+  exit 1
+}
+migrator_state=$(docker_cli inspect --format '{{.State.Status}}\t{{.State.ExitCode}}' \
+  "$migrator_container") || exit 1
+[[ $migrator_state == $'exited\t0' ]] || {
+  printf 'release deploy refused: materialized migrator is not exited/0\n' >&2
   exit 1
 }
 
@@ -1155,6 +1338,27 @@ local_image_id() {
   grep -Fqx -- "$reference" <<<"$digests" || return 1
   printf '%s\n' "$output"
 }
+physical_image_binding() {
+  local reference=$1 running_id=$2 preferred=$3 output digests candidate count=0
+  output=$(docker_cli image inspect --format '{{.Id}}' "$reference") || return 1
+  [[ $output == "$running_id" && $output =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
+  digests=$(docker_cli image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+    "$reference") || return 1
+  if grep -Fqx -- "$preferred" <<<"$digests"; then
+    candidate=$preferred
+  elif [[ $reference =~ ^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$ ]] \
+       && grep -Fqx -- "$reference" <<<"$digests"; then
+    candidate=$reference
+  else
+    while IFS= read -r digest; do
+      [[ $digest =~ ^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$ ]] || continue
+      candidate=$digest
+      ((count += 1))
+    done <<<"$digests"
+    ((count == 1)) || return 1
+  fi
+  printf '%s\t%s\n' "$output" "$candidate"
+}
 current_runtime_id=$(local_image_id "$current_runtime") || {
   printf 'release deploy refused: current runtime selector is not locally bound to its RepoDigest\n' >&2
   exit 1
@@ -1163,7 +1367,7 @@ current_console_id=$(local_image_id "$current_console") || {
   printf 'release deploy refused: current console selector is not locally bound to its RepoDigest\n' >&2
   exit 1
 }
-declare -A current_image_ids=() observed_service_images=() observed_service_ids=()
+declare -A current_image_ids=() observed_service_images=() observed_service_recovery_images=() observed_service_ids=()
 declare -A observed_service_config_hashes=() observed_service_containers=()
 declare -A canonical_service_config_hashes=()
 current_image_ids[$current_runtime]=$current_runtime_id
@@ -1196,19 +1400,22 @@ for service in ${expected_long_lived}; do
   [[ $config_hash_service == "$service" && -z ${extra:-} \
      && $expected_config_hash =~ ^[a-f0-9]{64}$ \
      && $running_config_hash =~ ^[a-f0-9]{64}$ \
-     && $configured_reference =~ @sha256:[a-f0-9]{64}$ ]] || {
+     && -n $configured_reference && $configured_reference != *$'\t'* ]] || {
     printf 'release deploy refused: running service identity/config evidence is invalid\n' >&2
     exit 1
   }
-  observed_id=$(local_image_id "$configured_reference") || {
-    printf 'release deploy refused: a running service image is not locally bound to its RepoDigest\n' >&2
+  physical_binding=$(physical_image_binding \
+    "$configured_reference" "$running_id" "$expected_reference") || {
+    printf 'release deploy refused: a running service image is not bound to one recoverable RepoDigest\n' >&2
     exit 1
   }
-  [[ $running_id == "$observed_id" ]] || {
-    printf 'release deploy refused: a running service ID differs from its immutable Config.Image\n' >&2
+  IFS=$'\t' read -r observed_id recovery_reference physical_extra <<<"$physical_binding"
+  [[ $running_id == "$observed_id" && -n $recovery_reference && -z ${physical_extra:-} ]] || {
+    printf 'release deploy refused: a running service ID differs from its recoverable image binding\n' >&2
     exit 1
   }
   observed_service_images[$service]=$configured_reference
+  observed_service_recovery_images[$service]=$recovery_reference
   observed_service_ids[$service]=$running_id
   observed_service_config_hashes[$service]=$running_config_hash
   observed_service_containers[$service]=$container_id
@@ -1267,10 +1474,11 @@ if (not path.is_absolute() or resolved_parent != parent or parent.is_symlink()
     raise SystemExit("legacy snapshot parent is not an owned non-writable-by-others directory")
 PY
   fragment_records=$(for service in ${expected_long_lived}; do
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$service" "${observed_service_images[$service]}" "${observed_service_ids[$service]}" \
       "${observed_service_config_hashes[$service]}" "${current_service_images[$service]}" \
-      "${observed_service_containers[$service]}"
+      "${observed_service_containers[$service]}" \
+      "${observed_service_recovery_images[$service]}"
   done)
   fragment_compose_yaml=$(printf '%s\n' "$fragment_records" | "${canonical_env[@]}" \
     python3 -c '
@@ -1322,10 +1530,11 @@ for raw in sys.stdin:
     raw = raw.rstrip("\n")
     if not raw:
         continue
-    name, image, image_id, config_hash, canonical_image, container_id = raw.split("\t")
+    name, image, image_id, config_hash, canonical_image, container_id, recovery_image = raw.split("\t")
     services.append({"canonicalImage": canonical_image, "configHash": config_hash,
                      "containerIdBefore": container_id, "image": image,
-                     "imageId": image_id, "service": name})
+                     "imageId": image_id, "recoveryImage": recovery_image,
+                     "service": name})
 report = {
     "kind": "cauce-v3-fragmented-legacy-release-snapshot",
     "schemaVersion": 1,
@@ -1487,7 +1696,8 @@ recovered_bridge_runtime_id=$(pull_and_resolve "$target_rollback_runtime")
 }
 if ((fragmented_legacy == 1)); then
   for service in ${expected_long_lived}; do
-    recovered_fragment_id=$(pull_and_resolve "${observed_service_images[$service]}") || exit 1
+    recovered_fragment_id=$(pull_and_resolve \
+      "${observed_service_recovery_images[$service]}") || exit 1
     [[ $recovered_fragment_id == "${observed_service_ids[$service]}" ]] || {
       printf 'release deploy failed: a fragmented snapshot image cannot be recovered by its exact RepoDigest/ID\n' >&2
       exit 1
@@ -1996,7 +2206,7 @@ verify_fragment_services() {
   running_normalized_now=$(normalize_inventory <<<"$running_now") || return 1
   materialized_normalized_now=$(normalize_inventory <<<"$materialized_now") || return 1
   [[ $running_normalized_now == "$expected_long_lived" \
-     && $materialized_normalized_now == "$expected_long_lived" ]] || return 1
+     && $materialized_normalized_now == "$expected_materialized" ]] || return 1
   for service in ${expected_long_lived}; do
     container_id=$(compose_current ps -q "$service") || return 1
     [[ -n $container_id && $container_id != *$'\n'* ]] || return 1
@@ -2034,7 +2244,7 @@ verify_current_canonical_fleet() {
   running_normalized_now=$(normalize_inventory <<<"$running_now") || return 1
   materialized_normalized_now=$(normalize_inventory <<<"$materialized_now") || return 1
   [[ $running_normalized_now == "$expected_long_lived" \
-     && $materialized_normalized_now == "$expected_long_lived" ]] || return 1
+     && $materialized_normalized_now == "$expected_materialized" ]] || return 1
   for service in ${expected_long_lived}; do
     container_id=$(compose_current ps -q "$service") || return 1
     [[ -n $container_id && $container_id != *$'\n'* ]] || return 1

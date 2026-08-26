@@ -154,19 +154,21 @@ tmux -L cauce if-shell -F -t cauce-ALIAS:tui '<identidad completa>' \
 * `-f ignore-size` → el tamaño del navegador no renegocia el de la sesión, así mirar no le
   encoge el panel a la persona que está trabajando en esa misma tmux.
 
-Para un harness `openclaw`, el launcher comprueba la entrada real de
-Node y que la versión instalada exponga `tui --session`. No elige una conversación en ese momento:
-incluye en el bundle el `stateDirectory` confiable del mapeo del alias y el agente resuelve **en
-cada `OPEN`** la única entrada exacta `openclaw:<alias>:shared:<alias>` de
+Para un harness `openclaw`, el launcher comprueba la entrada real de Node, que la versión instalada
+exponga `tui --session` **y que ya exista un pointer canónico, válido e inicializado**. No copia ni
+registra el identificador: incluye en el bundle el `stateDirectory` confiable del mapeo del alias y
+el agente resuelve **en cada `OPEN`** la única entrada exacta `openclaw:<alias>:shared:<alias>` de
 `<stateDirectory>/sessions.json`. No usa el transcript más nuevo ni `mtime`, por lo que un cambio
 atómico del pointer se ve en la sesión siguiente sin reiniciar el launcher.
 
 El store falla cerrado: directorio canónico, propiedad del uid efectivo y no escribible por grupo
 o mundo; fichero regular 0600 del mismo uid, sin symlink, con un solo enlace, máximo 1 MiB; schema
-`{version:1,sessions:{...}}`, pointer inicializado y native id acotado. El store key y el native id
-no se escriben en journal ni se publican en presencia. Si falta o no pasa validación, ese `OPEN`
-responde `mode_unavailable`; el próximo `OPEN` vuelve a medir el store. Si tampoco existe una TUI
-OpenClaw compatible, el agente anuncia sólo `shell`.
+`{version:1,sessions:{...}}`, sin claves JSON duplicadas, pointer inicializado y native id acotado.
+El store key y el native id no se escriben en journal ni se publican en presencia. Si falta, está
+corrupto, no inicializado o es ambiguo, el launcher **no anuncia `harness`**: presencia ofrece sólo
+`shell`. El agente vuelve a validar antes de cada `OPEN`; si el pointer cambia de válido a inválido
+durante una conexión, fuerza un HELLO nuevo para retirar la capacidad en vez de conservar un verde
+falso. Un cambio a partir de un lanzamiento que nació sin resolver requiere reiniciar esa unit.
 
 En el journal queda la capacidad elegida (`dynamic tmux resolver enabled ...`, `dynamic openclaw
 tui resolver enabled ...` o que no existe TUI), nunca la conversación seleccionada.
@@ -321,6 +323,71 @@ Entorno mínimo y construido por el agente: `TERM=xterm-256color`, `COLORTERM=tr
 `CONNECTION_ZODERROR`), la terminal tiene que seguir funcionando: ése es justamente el caso de uso más
 valioso. Instalar o habilitar el PTY **no reinicia ni toca ningún adaptador**.
 
+## Rollout reproducible en `server` y `kratos`
+
+`rollout-pty.py` toma `ops/container-aliases.json` como fuente única. Un alias sin `dockerHost` va al
+manager `server`; `dockerHost=kratos` va al manager `kratos`. Cualquier tercer manager, alias
+retirado, alias desconocido, duplicado entre managers o placement distinto aborta antes de publicar.
+La única migración histórica admitida es `kant` desde kratos a server, y exige `--migrate-kant`: la
+unit anterior queda detenida, deshabilitada y respaldada antes de comprobar que no existe doble
+presencia.
+
+Desde el runtime de coordinación, que ya tiene acceso administrativo a `vpstn` y acceso directo
+como `stev` a `kratos`, se declaran ambos destinos en cada invocación. No hay un manager local por
+defecto: omitir uno falla cerrado para no confundir el contenedor del operador con el host físico.
+
+```bash
+MANAGERS=(--manager server=sudo-ssh:vpstn:stev --manager kratos=ssh:kratos)
+
+# Inventario y preflight completo; no publica releases ni toca units.
+python3 ops/pty-agent/rollout-pty.py preflight "${MANAGERS[@]}"
+python3 ops/pty-agent/rollout-pty.py rollout --preflight-only "${MANAGERS[@]}"
+
+# El estado legacy medido conserva heraclito/tales: retirarlos es una acción explícita,
+# transaccional y respaldada. Sin este paso el inventario falla cerrado.
+python3 ops/pty-agent/rollout-pty.py retire-historical "${MANAGERS[@]}"
+# Equivalente integrado al rollout:
+python3 ops/pty-agent/rollout-pty.py rollout --retire-historical "${MANAGERS[@]}"
+
+# Rollout secuencial. Zeus PTY queda excluido por defecto.
+python3 ops/pty-agent/rollout-pty.py rollout "${MANAGERS[@]}"
+
+# Por defecto claude/codex/openclaw/hermes deben acreditar shell y TUI. Un canary explícito:
+python3 ops/pty-agent/rollout-pty.py rollout --aliases janus \
+  --require-mode janus=shell,harness "${MANAGERS[@]}"
+
+# Una excepción shell-only debe quedar escrita; nunca es el default silencioso.
+python3 ops/pty-agent/rollout-pty.py rollout --aliases iza --require-mode iza=shell "${MANAGERS[@]}"
+
+# Sólo cuando se decida expresamente: Zeus PTY se procesa al final. Nunca toca el adapter Zeus.
+python3 ops/pty-agent/rollout-pty.py rollout --include-zeus "${MANAGERS[@]}"
+
+# Rollback recuperable del último cambio de un alias.
+python3 ops/pty-agent/rollout-pty.py rollback janus "${MANAGERS[@]}"
+```
+
+`sudo-ssh:vpstn:stev` entra por el canal administrativo y baja al dueño real de `systemd --user`,
+con su HOME y su bus; `ssh:kratos` entra directamente como `stev`. Si se ejecuta físicamente desde
+`server`, se puede declarar `--manager server=local`. El controlador envía únicamente código y
+artefactos versionados; los `.env`, certificados y claves permanecen en el manager y sólo los lee
+el preflight existente.
+
+La release se identifica con el SHA-256 del manifiesto exacto de launcher, agente, mapping, helper,
+unit e instalador. Se publica create-only en
+`~/.local/share/cauce-v3/pty-releases/<sha>/`; un retry valida byte por byte y conserva releases
+anteriores. Cada alias recibe por `os.replace` un selector systemd que pinnea el path inmutable y
+`CAUCE_PTY_AGENT_VERSION=<sha>`. El health exige simultáneamente unit activa, SHA dentro del proceso,
+HELLO aceptado y todos los modos declarados por `--require-mode`; si falla, restaura automáticamente
+selector y estado enabled/active previos. Si un alias posterior falla, el controlador compensa en
+orden inverso todas las mutaciones de esa invocación para no dejar una flota a medio release.
+
+Las rutas legacy divergentes se preservan para recuperación: en server era
+`~/.local/share/cauce-v3/ops/pty-agent` y en kratos
+`~/.local/share/cauce-v3-pty/pty-agent`. Después del rollout no son fuente de verdad: cada selector
+apunta directamente a su release inmutable. Los backups privados quedan bajo
+`~/.local/state/cauce-v3/pty-rollout/transactions/<alias>/`; no se eliminan durante publish, retry ni
+rollback.
+
 ## Tests
 
 ```bash
@@ -330,5 +397,6 @@ python3 -m unittest discover ops/pty-agent/tests
 Cubren el framing (incluido el vector de oro y la decodificación con fragmentación de 1 byte), la
 verificación del ticket (válido, vencido, alias equivocado por target y por clave de firma, tenant
 equivocado, generación equivocada, HMAC alterado, sesión equivocada), HKDF, geometría, viewer
-read-only, DA/DSR, pausa por sesión, input flood y resolución dinámica de OpenClaw con cambio
-atómico del pointer y fuentes hostiles. La negativa a correr como root también está cubierta.
+read-only, DA/DSR, pausa por sesión, input flood, resolución dinámica de OpenClaw con pointer
+missing/corrupto/no inicializado/ambiguo y rollout positivo/adversarial/rollback/retry. La negativa a
+correr como root también está cubierta.

@@ -49,11 +49,18 @@ valid_absolute_path() {
   [[ $1 =~ ^/[A-Za-z0-9._/-]+$ ]] || return 1
   [[ $1 != *'//'* && $1 != */../* && $1 != */./* && $1 != */.. && $1 != */. ]]
 }
-docker_control() { "$FAKE_DOCKER" "$@"; }
+docker_control() {
+  if [[ $* == *"/usr/bin/python3 -"* ]]; then
+    CAUCE_PTY_OPENCLAW_POINTER_ALIAS=$alias_name \
+      CAUCE_PTY_OPENCLAW_POINTER_STATE=$state_directory /usr/bin/python3 -
+  else
+    "$FAKE_DOCKER" "$@"
+  fi
+}
 alias_name=jarvis
 container_id=deadbeef
 container_home=/home/claw
-state_directory=/home/claw/.openclaw/cauce-v3/jarvis
+state_directory=$TEST_STATE
 harness=openclaw
 runtime_uid=1000
 runtime_gid=1000
@@ -110,16 +117,47 @@ def _fake_docker(
 
 
 class DeriveOpenClawTuiTest(unittest.TestCase):
-    def _run(self, **kwargs: object) -> str:
+    def _run(self, *, pointer: str = "valid", **kwargs: object) -> str:
         with tempfile.TemporaryDirectory() as raw:
             tmp = pathlib.Path(raw)
+            state = tmp / "state"
+            state.mkdir(mode=0o700)
+            canonical = "openclaw:jarvis:shared:jarvis"
+            if pointer == "valid":
+                body = json.dumps({
+                    "version": 1,
+                    "sessions": {canonical: {"native_id": "conversation-safe", "initialized": True}},
+                })
+            elif pointer == "corrupt":
+                body = '{not-json'
+            elif pointer == "ambiguous":
+                value = '{"native_id":"one","initialized":true}'
+                body = f'{{"version":1,"sessions":{{"{canonical}":{value},"{canonical}":{value}}}}}'
+            elif pointer == "uninitialized":
+                body = json.dumps({
+                    "version": 1,
+                    "sessions": {canonical: {"native_id": "conversation-safe", "initialized": False}},
+                })
+            elif pointer == "missing":
+                body = ""
+            else:  # pragma: no cover - helper misuse
+                raise AssertionError(pointer)
+            if pointer != "missing":
+                store = state / "sessions.json"
+                store.write_text(body, encoding="utf-8")
+                store.chmod(0o600)
             fake = _fake_docker(tmp, **kwargs)  # type: ignore[arg-type]
-            script = PRELUDE + _function_source("derive_openclaw_tui_command") + EPILOGUE
+            script = (
+                PRELUDE
+                + _function_source("validate_openclaw_tui_pointer")
+                + _function_source("derive_openclaw_tui_command")
+                + EPILOGUE
+            )
             done = subprocess.run(
                 ["bash", "-c", script],
                 capture_output=True,
                 text=True,
-                env={"PATH": "/usr/bin:/bin", "FAKE_DOCKER": str(fake)},
+                env={"PATH": "/usr/bin:/bin", "FAKE_DOCKER": str(fake), "TEST_STATE": str(state)},
                 check=False,
             )
             self.assertEqual(done.returncode, 0, done.stderr)
@@ -161,6 +199,16 @@ class DeriveOpenClawTuiTest(unittest.TestCase):
             self._run(tui_help="Usage: openclaw tui [--conversation <key>]"),
             "NO_TUI",
         )
+
+    def test_missing_corrupt_uninitialized_or_ambiguous_pointer_is_not_advertised(self) -> None:
+        for pointer in ("missing", "corrupt", "uninitialized", "ambiguous"):
+            with self.subTest(pointer=pointer):
+                self.assertEqual(self._run(pointer=pointer), "NO_TUI")
+
+    def test_pointer_validator_never_emits_the_native_session_id(self) -> None:
+        source = _function_source("validate_openclaw_tui_pointer")
+        self.assertNotIn("print(", source)
+        self.assertNotIn("printf", source)
 
 class DerivedOpenClawArgvTest(unittest.TestCase):
     """El bundle lleva un resolver, nunca el native id congelado."""

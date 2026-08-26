@@ -8,6 +8,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 AGENT_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(AGENT_DIR) not in sys.path:
@@ -72,6 +73,42 @@ class DynamicOpenClawSessionTests(unittest.TestCase):
         self.assertIsNone(agent.resolve_openclaw_tui_command(self.bundle))
         self._write("other-conversation", key="openclaw:jarvis:alias-default")
         self.assertIsNone(agent.resolve_openclaw_tui_command(self.bundle))
+
+    def test_presence_advertises_harness_only_while_the_canonical_pointer_is_valid(self) -> None:
+        instance = agent.PtyAgent.__new__(agent.PtyAgent)
+        instance.bundle = self.bundle
+        self.assertEqual(instance._advertised_modes(), ["shell"])
+        self._write("conversation-safe")
+        self.assertEqual(instance._advertised_modes(), ["shell", "harness"])
+        self._write("conversation-not-ready", initialized=False)
+        self.assertEqual(instance._advertised_modes(), ["shell"])
+
+    def test_duplicate_canonical_pointer_is_ambiguous_and_fails_closed(self) -> None:
+        key = "openclaw:jarvis:shared:jarvis"
+        pointer = '{"native_id":"conversation-safe","initialized":true}'
+        self.store.write_text(
+            f'{{"version":1,"sessions":{{"{key}":{pointer},"{key}":{pointer}}}}}',
+            encoding="utf-8",
+        )
+        self.store.chmod(0o600)
+        self.assertIsNone(agent.resolve_openclaw_tui_command(self.bundle))
+
+    def test_pointer_degradation_forces_a_new_hello_instead_of_stale_presence(self) -> None:
+        self._write("conversation-safe")
+        instance = agent.PtyAgent.__new__(agent.PtyAgent)
+        instance.bundle = self.bundle
+        instance.modes = ["shell", "harness"]
+        instance.sessions = {}
+        instance.tombstones = {}
+        instance.acknowledged = True
+        instance.last_ping = 100.0
+        instance.connected_at = 100.0
+        instance.next_dynamic_capability_check = 0.0
+        self.store.write_text("{corrupt", encoding="utf-8")
+        self.store.chmod(0o600)
+        with mock.patch.object(agent.time, "monotonic", return_value=100.0):
+            with self.assertRaisesRegex(agent.ProtocolError, "dynamic harness capability changed"):
+                instance._maintain()
 
     def test_hostile_native_id_and_permissive_store_are_rejected(self) -> None:
         self._write("value;touch-/tmp/no")

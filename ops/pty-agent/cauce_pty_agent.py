@@ -100,6 +100,7 @@ SESSION_INPUT_HIGH_WATER = 262144
 # into it, so a slow relay pushes the pressure back to SESSION_HIGH_WATER and from there to the pty.
 OUTBOUND_HIGH_WATER = 1 << 20
 PING_TIMEOUT = 45.0
+DYNAMIC_CAPABILITY_CHECK_INTERVAL = 5.0
 TOMBSTONE_SECONDS = 30.0
 KILL_GRACE = 2.0
 HELLO_TIMEOUT = 15.0
@@ -734,8 +735,18 @@ def resolve_openclaw_tui_command(bundle: dict[str, Any]) -> list[str] | None:
             return None
     finally:
         os.close(descriptor)
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        document: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in document:
+                raise ValueError("duplicate key")
+            document[key] = value
+        return document
+
     try:
-        document = json.loads(bytes(chunks).decode("utf-8"))
+        document = json.loads(
+            bytes(chunks).decode("utf-8"), object_pairs_hook=reject_duplicates
+        )
     except (ValueError, UnicodeDecodeError):
         return None
     if (not isinstance(document, dict) or set(document) != {"version", "sessions"}
@@ -893,9 +904,7 @@ class PtyAgent:
             "generation": bundle["generation"],
             "runtime_uid": bundle["runtime_uid"],
         }
-        self.modes = ["shell"] + (["harness"] if any((
-            bundle.get("harness_command"), bundle.get("openclaw_tui"), bundle.get("tmux_tui"),
-        )) else [])
+        self.modes = self._advertised_modes()
         self.sessions: dict[str, PtySession] = {}
         self.pending_writes: dict[str, GovernanceWrite] = {}
         self.pending_write_batches: dict[str, GovernanceWriteBatch] = {}
@@ -906,7 +915,16 @@ class PtyAgent:
         self.acknowledged = False
         self.connected_at = 0.0
         self.last_ping = 0.0
+        self.next_dynamic_capability_check = 0.0
         self.stopping = False
+
+    def _advertised_modes(self) -> list[str]:
+        static_or_tmux = any((self.bundle.get("harness_command"), self.bundle.get("tmux_tui")))
+        openclaw_ready = (
+            self.bundle.get("openclaw_tui") is not None
+            and resolve_openclaw_tui_command(self.bundle) is not None
+        )
+        return ["shell"] + (["harness"] if static_or_tmux or openclaw_ready else [])
 
     # -- connection lifecycle ------------------------------------------------------------------
 
@@ -1002,6 +1020,10 @@ class PtyAgent:
         self.connection = connection
         self.connected_at = time.monotonic()
         self.last_ping = self.connected_at
+        # El pointer puede haber cambiado entre el bundle del launcher y la conexión al relay.
+        # La presencia nace de la observación actual, no de que exista un binario OpenClaw.
+        self.modes = self._advertised_modes()
+        self.next_dynamic_capability_check = self.connected_at + DYNAMIC_CAPABILITY_CHECK_INTERVAL
         self._queue(encode_json(TAG_AGENT_HELLO, {
             "v": AGENT_PROTOCOL_VERSION,
             "tenant_id": self.bundle["tenant_id"],
@@ -2539,6 +2561,12 @@ class PtyAgent:
         for session_id, expiry in list(self.tombstones.items()):
             if now >= expiry:
                 del self.tombstones[session_id]
+        if self.bundle.get("openclaw_tui") is not None and now >= self.next_dynamic_capability_check:
+            self.next_dynamic_capability_check = now + DYNAMIC_CAPABILITY_CHECK_INTERVAL
+            if self._advertised_modes() != self.modes:
+                # Reconectar retira/publica la capacidad mediante un HELLO nuevo. Mantener el
+                # socket anunciaría una TUI que el siguiente OPEN ya no puede resolver.
+                raise ProtocolError("dynamic harness capability changed")
         if self.acknowledged and now - self.last_ping > PING_TIMEOUT:
             raise ProtocolError("relay stopped sending PING")
         if not self.acknowledged and now - self.connected_at > HELLO_TIMEOUT:

@@ -23,12 +23,14 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 OPS = ROOT / "ops"
 DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 GIT_OBJECT = re.compile(r"^(?:[a-f0-9]{40}|[a-f0-9]{64})$")
+RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 IMAGE_REF = re.compile(
     r"^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?"
     r"(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[a-f0-9]{64}$"
 )
 SAFE_PATH = re.compile(r"^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$")
 FIELDS = {
+    "baseline-kind": ("baselineKind",),
     "bridge-runtime-image": ("bridgeRuntime", "repositoryDigest"),
     "bridge-runtime-image-id": ("bridgeRuntime", "imageId"),
     "console-image": ("console", "repositoryDigest"),
@@ -41,7 +43,10 @@ FIELDS = {
     "forward-runtime-image": ("forwardRuntime", "repositoryDigest"),
     "forward-runtime-image-id": ("forwardRuntime", "imageId"),
     "forward-runtime-source-digest": ("forwardRuntime", "sourceDigest"),
+    "legacy-fleet-snapshot": ("legacyFleetSnapshot", "path"),
+    "legacy-fleet-snapshot-sha256": ("legacyFleetSnapshot", "sha256"),
 }
+LEGACY_SOURCE_SENTINEL = "legacy-pre-migration-unavailable"
 
 
 class BaselineError(ValueError):
@@ -257,36 +262,140 @@ def _manifest(path: pathlib.Path, expected_sha256: str | None = None) -> str:
 
 
 def _check_expected(report: dict[str, Any], arguments: argparse.Namespace) -> None:
+    legacy = report.get("baselineKind") == "legacy-pre-migration"
     comparisons = (
+        (arguments.expected_baseline_kind, report.get("baselineKind", "canonical-bridge")),
         (arguments.expected_forward_release_commit, report["forwardReleaseCommit"]),
         (arguments.expected_forward_runtime_image, report["forwardRuntime"]["repositoryDigest"]),
         (arguments.expected_forward_runtime_image_id, report["forwardRuntime"]["imageId"]),
-        (arguments.expected_forward_runtime_source_digest, report["forwardRuntime"]["sourceDigest"]),
-        (arguments.expected_runtime_image, report["bridgeRuntime"]["repositoryDigest"]),
+        (
+            arguments.expected_forward_runtime_source_digest,
+            report["forwardRuntime"].get("sourceDigest", LEGACY_SOURCE_SENTINEL),
+        ),
+        (
+            arguments.expected_runtime_image,
+            report.get("bridgeRuntime", {}).get("repositoryDigest"),
+        ),
         (arguments.expected_console_image, report["console"]["repositoryDigest"]),
         (arguments.expected_override_manifest, report["overrideManifest"]["path"]),
-        (arguments.expected_bridge_evidence, report["bridgeEvidence"]["path"]),
-        (arguments.expected_bridge_evidence_sha256, report["bridgeEvidence"]["sha256"]),
+        (
+            arguments.expected_bridge_evidence,
+            report.get("bridgeEvidence", {}).get("path"),
+        ),
+        (
+            arguments.expected_bridge_evidence_sha256,
+            report.get("bridgeEvidence", {}).get("sha256"),
+        ),
+        (
+            arguments.expected_legacy_fleet_snapshot,
+            report.get("legacyFleetSnapshot", {}).get("path"),
+        ),
+        (
+            arguments.expected_legacy_fleet_snapshot_sha256,
+            report.get("legacyFleetSnapshot", {}).get("sha256"),
+        ),
     )
     if any(expected is not None and expected != observed for expected, observed in comparisons):
         raise BaselineError("rollback baseline differs from an explicitly expected release field")
+    if legacy and any(
+        value is not None
+        for value in (
+            arguments.expected_runtime_image,
+            arguments.expected_bridge_evidence,
+            arguments.expected_bridge_evidence_sha256,
+        )
+    ):
+        raise BaselineError("legacy pre-migration baseline cannot claim a rollback bridge")
+
+
+def _legacy_fleet_report(path: pathlib.Path, expected_sha256: str) -> dict[str, Any]:
+    if DIGEST.fullmatch(expected_sha256) is None:
+        raise BaselineError("legacy fleet snapshot SHA-256 is invalid")
+    content, _ = _private_file(path, label="legacy fleet snapshot")
+    if _digest(content) != expected_sha256:
+        raise BaselineError("legacy fleet snapshot differs from its authorized SHA-256")
+    try:
+        report = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise BaselineError("legacy fleet snapshot is not valid UTF-8 JSON") from error
+    if not isinstance(report, dict):
+        raise BaselineError("legacy fleet snapshot root is invalid")
+    required = {"kind", "schemaVersion", "project", "selectors", "services"}
+    if set(report) != required or report.get("kind") != "cauce-v3-legacy-pre-migration-fleet" \
+            or report.get("schemaVersion") != 1 or report.get("project") != "cauce-v3-prod":
+        raise BaselineError("legacy fleet snapshot envelope is invalid")
+    selectors = report.get("selectors")
+    services = report.get("services")
+    if not isinstance(selectors, dict) or set(selectors) != {
+        "console", "manifest", "manifestSha256", "normalizedConsole",
+        "normalizedRuntime", "runtime",
+    } or not isinstance(services, list) or not services:
+        raise BaselineError("legacy fleet snapshot selectors or services are invalid")
+    seen: set[str] = set()
+    saw_migrator = False
+    for item in services:
+        if not isinstance(item, dict) or set(item) != {
+            "configHash", "configImage", "containerId", "exitCode", "imageId",
+            "repositoryDigest", "service", "status",
+        }:
+            raise BaselineError("legacy fleet snapshot service record is invalid")
+        service = item["service"]
+        if not isinstance(service, str) or re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,127}", service) is None \
+                or service in seen:
+            raise BaselineError("legacy fleet snapshot service identity is invalid")
+        seen.add(service)
+        if DIGEST.fullmatch(item["imageId"]) is None or IMAGE_REF.fullmatch(item["repositoryDigest"]) is None \
+                or re.fullmatch(r"[a-f0-9]{64}", item["configHash"]) is None \
+                or re.fullmatch(r"[a-f0-9]{12,64}", item["containerId"]) is None \
+                or not isinstance(item["configImage"], str):
+            raise BaselineError("legacy fleet snapshot image/config identity is invalid")
+        if service == "migrator":
+            saw_migrator = True
+            if item["status"] != "exited" or item["exitCode"] != 0:
+                raise BaselineError("legacy fleet snapshot migrator is not exited/0")
+        elif item["status"] != "running" or item["exitCode"] != 0:
+            raise BaselineError("legacy fleet snapshot long-lived service is not running")
+    if not saw_migrator:
+        raise BaselineError("legacy fleet snapshot omits the materialized migrator")
+    return report
 
 
 def _check_external(report: dict[str, Any]) -> None:
     forward = report["forwardRuntime"]
-    runtime = report["bridgeRuntime"]
     console = report["console"]
     forward_id = _docker_image(forward["repositoryDigest"])
     if forward_id != forward["imageId"]:
         raise BaselineError("registry-recovered forward runtime ID differs from the baseline")
-    runtime_id = _docker_image(runtime["repositoryDigest"])
-    if runtime_id != runtime["imageId"]:
-        raise BaselineError("registry-recovered bridge runtime ID differs from the baseline")
     console_id = _docker_image(console["repositoryDigest"])
     if console_id != console["imageId"]:
         raise BaselineError("registry-recovered rollback console ID differs from the baseline")
     manifest = report["overrideManifest"]
     _manifest(_safe_path(manifest["path"], label="rollback override manifest"), manifest["sha256"])
+    if report.get("baselineKind") == "legacy-pre-migration":
+        snapshot = report["legacyFleetSnapshot"]
+        fleet = _legacy_fleet_report(
+            _safe_path(snapshot["path"], label="legacy fleet snapshot"),
+            snapshot["sha256"],
+        )
+        selectors = fleet["selectors"]
+        if selectors["normalizedRuntime"] != forward["repositoryDigest"] \
+                or selectors["normalizedConsole"] != console["repositoryDigest"] \
+                or selectors["manifest"] != manifest["path"] \
+                or selectors["manifestSha256"] != manifest["sha256"]:
+            raise BaselineError("legacy fleet snapshot differs from baseline selectors")
+        recovered: dict[str, str] = {}
+        for item in fleet["services"]:
+            reference = item["repositoryDigest"]
+            if reference not in recovered:
+                recovered[reference] = _docker_image(reference)
+            image_id = recovered[reference]
+            if image_id != item["imageId"]:
+                raise BaselineError("registry-recovered legacy fleet image ID differs from snapshot")
+        return
+    runtime = report["bridgeRuntime"]
+    runtime_id = _docker_image(runtime["repositoryDigest"])
+    if runtime_id != runtime["imageId"]:
+        raise BaselineError("registry-recovered bridge runtime ID differs from the baseline")
     evidence = report["bridgeEvidence"]
     bridge = _validate_bridge(
         _safe_path(evidence["path"], label="rollback bridge evidence"),
@@ -434,7 +543,69 @@ def _create(arguments: argparse.Namespace) -> str:
     return _digest(content)
 
 
+def _create_legacy(arguments: argparse.Namespace) -> str:
+    """Publish the one-time pre-migration baseline without inventing a bridge."""
+    if RELEASE_ID.fullmatch(arguments.forward_release_commit) is None:
+        raise BaselineError("legacy release ID is invalid")
+    runtime_id = _docker_image(arguments.forward_runtime_image)
+    console_id = _docker_image(arguments.console_image)
+    manifest_path = _safe_path(arguments.override_manifest, label="rollback override manifest")
+    snapshot_path = _safe_path(arguments.legacy_fleet_snapshot, label="legacy fleet snapshot")
+    manifest_sha = _manifest(manifest_path)
+    fleet = _legacy_fleet_report(snapshot_path, arguments.legacy_fleet_snapshot_sha256)
+    selectors = fleet["selectors"]
+    if selectors["normalizedRuntime"] != arguments.forward_runtime_image \
+            or selectors["normalizedConsole"] != arguments.console_image \
+            or selectors["manifest"] != os.fspath(manifest_path) \
+            or selectors["manifestSha256"] != manifest_sha:
+        raise BaselineError("legacy fleet snapshot does not bind the requested selectors")
+    service_ids = {item["imageId"] for item in fleet["services"]}
+    if runtime_id not in service_ids or console_id not in service_ids:
+        raise BaselineError("legacy fleet does not exercise both normalized image selectors")
+    report = _validate_report({
+        "schemaVersion": 2,
+        "suite": "cauce-v3-rollback-baseline",
+        "baselineKind": "legacy-pre-migration",
+        "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "forwardReleaseCommit": arguments.forward_release_commit,
+        "forwardRuntime": {
+            "repositoryDigest": arguments.forward_runtime_image,
+            "imageId": runtime_id,
+        },
+        "console": {
+            "repositoryDigest": arguments.console_image,
+            "imageId": console_id,
+        },
+        "overrideManifest": {"path": os.fspath(manifest_path), "sha256": manifest_sha},
+        "legacyFleetSnapshot": {
+            "path": os.fspath(snapshot_path),
+            "sha256": arguments.legacy_fleet_snapshot_sha256,
+        },
+    })
+    if arguments.output.exists() or arguments.output.is_symlink():
+        existing_content, _ = _private_file(arguments.output, label="legacy rollback baseline")
+        existing = _decode_report(existing_content)
+        if existing.get("baselineKind") != "legacy-pre-migration":
+            raise BaselineError("existing rollback baseline is not a legacy pre-migration baseline")
+        comparable_existing = dict(existing)
+        comparable_report = dict(report)
+        comparable_existing.pop("createdAt", None)
+        comparable_report.pop("createdAt", None)
+        if comparable_existing != comparable_report:
+            raise BaselineError("existing legacy rollback baseline differs from the retry candidate")
+        _check_external(existing)
+        return _digest(existing_content)
+    content = (json.dumps(report, indent=2, ensure_ascii=True) + "\n").encode("utf-8")
+    _publish(arguments.output, content)
+    published, _ = _private_file(arguments.output, label="published legacy rollback baseline")
+    if published != content:
+        raise BaselineError("published legacy rollback baseline failed its atomic read-back")
+    _check_external(report)
+    return _digest(content)
+
+
 def _add_expected(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--expected-baseline-kind")
     parser.add_argument("--expected-forward-release-commit")
     parser.add_argument("--expected-forward-runtime-image")
     parser.add_argument("--expected-forward-runtime-image-id")
@@ -444,6 +615,8 @@ def _add_expected(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--expected-override-manifest")
     parser.add_argument("--expected-bridge-evidence")
     parser.add_argument("--expected-bridge-evidence-sha256")
+    parser.add_argument("--expected-legacy-fleet-snapshot")
+    parser.add_argument("--expected-legacy-fleet-snapshot-sha256")
 
 
 def main(argv: list[str]) -> int:
@@ -459,6 +632,14 @@ def main(argv: list[str]) -> int:
     create.add_argument("--override-manifest", required=True)
     create.add_argument("--bridge-evidence", required=True)
     create.add_argument("--bridge-evidence-sha256", required=True)
+    legacy = subparsers.add_parser("create-legacy")
+    legacy.add_argument("--output", required=True, type=pathlib.Path)
+    legacy.add_argument("--forward-release-commit", required=True)
+    legacy.add_argument("--forward-runtime-image", required=True)
+    legacy.add_argument("--console-image", required=True)
+    legacy.add_argument("--override-manifest", required=True)
+    legacy.add_argument("--legacy-fleet-snapshot", required=True)
+    legacy.add_argument("--legacy-fleet-snapshot-sha256", required=True)
     check = subparsers.add_parser("check")
     check.add_argument("--baseline", required=True, type=pathlib.Path)
     check.add_argument("--expected-baseline-sha256", required=True)
@@ -472,12 +653,21 @@ def main(argv: list[str]) -> int:
         if arguments.action == "create":
             print(_create(arguments))
             return 0
+        if arguments.action == "create-legacy":
+            print(_create_legacy(arguments))
+            return 0
         report = _load_baseline(arguments.baseline, arguments.expected_baseline_sha256)
         if arguments.action == "field":
-            value: object = report
-            for key in FIELDS[arguments.name]:
-                assert isinstance(value, dict)
-                value = value[key]
+            if arguments.name == "baseline-kind":
+                value: object = report.get("baselineKind", "canonical-bridge")
+            elif arguments.name == "forward-runtime-source-digest" \
+                    and report.get("baselineKind") == "legacy-pre-migration":
+                value = LEGACY_SOURCE_SENTINEL
+            else:
+                value = report
+                for key in FIELDS[arguments.name]:
+                    assert isinstance(value, dict)
+                    value = value[key]
             if not isinstance(value, str) or "\n" in value or "\r" in value:
                 raise BaselineError("rollback baseline field is invalid")
             print(value)

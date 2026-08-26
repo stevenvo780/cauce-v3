@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish an immutable manifest that retains every production override as inactive."""
+"""Publish a create-only production override manifest from an exact YAML inventory."""
 
 from __future__ import annotations
 
@@ -43,8 +43,19 @@ def discover(directory: pathlib.Path) -> list[pathlib.Path]:
 def publish(output: pathlib.Path, content: bytes) -> None:
     if not output.is_absolute() or output.parent.is_symlink() or not output.parent.is_dir():
         raise ManifestError("output must be an absolute path in an existing non-symlink directory")
+    parent_metadata = output.parent.lstat()
+    if parent_metadata.st_uid not in {0, os.geteuid()} \
+            or stat.S_IMODE(parent_metadata.st_mode) & 0o022:
+        raise ManifestError("output directory must be owned and not writable by group/others")
     if output.exists() or output.is_symlink():
-        raise ManifestError("output already exists; immutable release manifests are never overwritten")
+        metadata = output.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode) \
+                or metadata.st_nlink != 1 or stat.S_IMODE(metadata.st_mode) != 0o600 \
+                or metadata.st_uid not in {0, os.geteuid()}:
+            raise ManifestError("existing output is not an owned single-link mode-0600 file")
+        if output.read_bytes() != content:
+            raise ManifestError("existing output differs from the idempotent manifest candidate")
+        return
     temporary = output.parent / f".{output.name}.inactive-{os.getpid()}-{secrets.token_hex(8)}"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
     if hasattr(os, "O_NOFOLLOW"):
@@ -81,17 +92,52 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--overrides-dir", required=True, type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--expected-yaml-count",
+        type=int,
+        metavar="COUNT",
+        help="fail unless the directory contains exactly this many YAML files",
+    )
+    parser.add_argument(
+        "--active",
+        action="append",
+        default=[],
+        metavar="BASENAME",
+        help="mark this YAML active in the supplied order; all remaining YAML stays inactive",
+    )
     arguments = parser.parse_args(argv)
     try:
         if arguments.output.parent != arguments.overrides_dir:
             raise ManifestError("output manifest must be published inside the override directory")
         entries = discover(arguments.overrides_dir)
-        content = "".join(f"inactive {sha256(path)} {path.name}\n" for path in entries).encode("utf-8")
+        if arguments.expected_yaml_count is not None:
+            if arguments.expected_yaml_count < 1:
+                raise ManifestError("expected YAML count must be positive")
+            if len(entries) != arguments.expected_yaml_count:
+                raise ManifestError(
+                    f"expected exactly {arguments.expected_yaml_count} YAML files, found {len(entries)}"
+                )
+        by_name = {path.name: path for path in entries}
+        if len(arguments.active) != len(set(arguments.active)):
+            raise ManifestError("active override list contains duplicates")
+        missing = [name for name in arguments.active if name not in by_name]
+        if missing:
+            raise ManifestError("active override list names a missing or non-YAML file")
+        ordered = [("active", by_name[name]) for name in arguments.active]
+        ordered.extend(
+            ("inactive", path) for path in entries if path.name not in set(arguments.active)
+        )
+        content = "".join(
+            f"{state} {sha256(path)} {path.name}\n" for state, path in ordered
+        ).encode("utf-8")
         publish(arguments.output, content)
     except (OSError, ManifestError) as error:
-        print(f"inactive override manifest failed: {error}", file=sys.stderr)
+        print(f"override manifest failed: {error}", file=sys.stderr)
         return 1
-    print(f"inactive override manifest published for {len(entries)} retained override(s)")
+    print(
+        f"override manifest admitted for {len(entries)} retained override(s), "
+        f"{len(arguments.active)} active"
+    )
     return 0
 
 

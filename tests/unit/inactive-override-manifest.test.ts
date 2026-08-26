@@ -18,7 +18,7 @@ function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-describe('inactive production override manifest', () => {
+describe('create-only production override manifest', () => {
   test('retains every historical YAML by hash without changing it and publishes once', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'cauce-inactive-overrides-'));
     scratch.push(directory);
@@ -45,8 +45,53 @@ describe('inactive production override manifest', () => {
     const repeated = spawnSync('python3', [helper, '--overrides-dir', overrides, '--output', output], {
       encoding: 'utf8',
     });
-    expect(repeated.status).toBe(1);
+    expect(repeated.status, repeated.stderr).toBe(0);
     expect(await readFile(output, 'utf8')).toContain(`inactive ${digest(first)} a-first.yml`);
+  });
+
+  test('publishes four active overrides in authorized order and retains three inactive', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-initial-overrides-'));
+    scratch.push(directory);
+    const overrides = join(directory, 'overrides');
+    await mkdir(overrides);
+    const names = [
+      'directiva-20260825.yaml', 'store-fanin.yaml', 'terminal-minrows.yaml',
+      'telegram-bridge.active.yaml', 'old-a.yaml', 'old-b.yml', 'old-c.yaml',
+    ];
+    const bodies = new Map<string, string>();
+    for (const name of names) {
+      const body = `services:\n  ${name.replace(/[^a-z]/gu, '_')}: {}\n`;
+      bodies.set(name, body);
+      await writeFile(join(overrides, name), body);
+    }
+    const output = join(overrides, 'active.manifest');
+    const active = [
+      'telegram-bridge.active.yaml', 'store-fanin.yaml',
+      'terminal-minrows.yaml', 'directiva-20260825.yaml',
+    ];
+    const args = [helper, '--overrides-dir', overrides, '--output', output,
+      '--expected-yaml-count', '7',
+      ...active.flatMap((name) => ['--active', name])];
+    const result = spawnSync('python3', args, { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    const expectedActive = active.map(
+      (name) => `active ${digest(bodies.get(name)!)} ${name}\n`,
+    ).join('');
+    const expectedInactive = ['old-a.yaml', 'old-b.yml', 'old-c.yaml'].map(
+      (name) => `inactive ${digest(bodies.get(name)!)} ${name}\n`,
+    ).join('');
+    expect(await readFile(output, 'utf8')).toBe(expectedActive + expectedInactive);
+
+    await writeFile(output, 'attacker replacement\n', { mode: 0o600 });
+    const poisonedRetry = spawnSync('python3', args, { encoding: 'utf8' });
+    expect(poisonedRetry.status).toBe(1);
+    expect(poisonedRetry.stderr).toContain('differs from the idempotent manifest candidate');
+
+    await writeFile(join(overrides, 'unexpected-eighth.yaml'), 'services: {}\n');
+    await rm(output);
+    const widenedInventory = spawnSync('python3', args, { encoding: 'utf8' });
+    expect(widenedInventory.status).toBe(1);
+    expect(widenedInventory.stderr).toContain('expected exactly 7 YAML files, found 8');
   });
 
   test('fails closed on a symlinked YAML instead of omitting or following it', async () => {

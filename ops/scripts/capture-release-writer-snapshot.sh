@@ -165,10 +165,22 @@ mapfile -t configured < <(cut -f2 <<<"$classified" | LC_ALL=C sort)
 mapfile -t writers < <(awk -F '\t' '$1 == "writer" {print $2}' <<<"$classified" | LC_ALL=C sort)
 mapfile -t expected_long_lived < <(printf '%s\n' "${configured[@]}" | grep -Fvx migrator)
 expected=$(printf '%s\n' "${expected_long_lived[@]}" | LC_ALL=C sort)
+expected_materialized=$(printf '%s\n' "${configured[@]}" | LC_ALL=C sort)
 running=$(compose_prod ps --services --status running | LC_ALL=C sort)
 materialized=$(compose_prod ps --all --services | LC_ALL=C sort)
-[[ -n $expected && $running == "$expected" && $materialized == "$expected" ]] || {
+[[ -n $expected && $running == "$expected" && $materialized == "$expected_materialized" ]] || {
   printf 'writer snapshot capture refused: running/materialized Compose topology is not exact\n' >&2
+  exit 1
+}
+migrator_container=$(compose_prod ps --all -q migrator)
+[[ -n $migrator_container && $migrator_container != *$'\n'* ]] || {
+  printf 'writer snapshot capture refused: materialized migrator identity is ambiguous\n' >&2
+  exit 1
+}
+migrator_state=$("${canonical_env[@]}" docker inspect \
+  --format '{{.State.Status}}\t{{.State.ExitCode}}' "$migrator_container")
+[[ $migrator_state == $'exited\t0' ]] || {
+  printf 'writer snapshot capture refused: materialized migrator is not exited/0\n' >&2
   exit 1
 }
 health_args=(prod)
@@ -180,7 +192,7 @@ for service in "${writers[@]}"; do capture_args+=(--compose-writer "$service"); 
 snapshot=$(printf '%s' "$fleet" | "${canonical_env[@]}" "$writer_helper" "${capture_args[@]}")
 snapshot+=$'\n'
 snapshot_sha=$(printf '%s' "$snapshot" | "${canonical_env[@]}" "$writer_helper" \
-  --ops-root "$ROOT" publish --path "$output")
+  --ops-root "$ROOT" publish --path "$output" --allow-identical)
 expected_count=$(python3 - "$output" <<'PY'
 import json
 import pathlib

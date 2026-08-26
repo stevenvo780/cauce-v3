@@ -35,68 +35,82 @@ actual.
 
 ### Bootstrap reproducible del host actual
 
-El host legado actual sí tiene `prod.env`, pero sólo contiene los dos selectores de imagen del
-contrato histórico y éstos todavía son tags mutables. No se edita, se sourcea ni se reconstruye
-leyendo valores de `docker inspect` o del historial de shell. Primero se autentica el conjunto
-Compose observado: base, PostgreSQL local y los cuatro overrides existentes. Dentro de
-`/etc/cauce-v3/compose-overrides`, crear
-`active.manifest` con una línea `active <sha256> <basename>` en este orden exacto:
+El host legado actual sí tiene `prod.env`, pero sólo contiene los dos selectores históricos
+`CAUCE_RUNTIME_IMAGE` y `CAUCE_CONSOLE_IMAGE`. Son referencias `repositorio@sha256` sin
+registry/path y no satisfacen el formato canónico; no son tags y no se editan a mano. El mosaico
+físico tampoco es homogéneo: `gateway` y `terminal-relay` pueden conservar tags en
+`.Config.Image`, otros servicios usan los bare digests o RepoDigests, y `migrator` está
+materializado `exited/0`. Esta forma sólo se admite por la capacidad one-time
+`bootstrap-production-legacy`; `check`, `swap` y releases nuevos siguen exigiendo RepoDigests
+canónicos.
+
+El manifest inicial tampoco se redacta. `release-bootstrap-production-legacy` inventaría demasiado
+si omitiera un YAML, por eso enumera exactamente los siete YAML del directorio y publica
+create-only `active.manifest`: cuatro entradas `active` en este orden exacto y los otros tres YAML
+como `inactive` ordenados por basename:
 
 1. `telegram-bridge.active.yaml`
 2. `store-fanin.yaml`
 3. `terminal-minrows.yaml`
 4. `directiva-20260825.yaml`
 
-No usar glob; cualquier YAML adicional debe declararse `inactive` con su hash o el resolver falla.
-`ops/scripts/compose-files.sh` verifica contenido, inventario, orden y ausencia de symlinks antes de
-invocar Docker.
+El helper falla si falta uno, aparece un octavo YAML, un nombre activo se repite, hay symlinks o el
+parent es escribible por grupo/otros. Un reintento sólo admite bytes idénticos; nunca sobrescribe un
+manifest distinto. `ops/scripts/compose-files.sh` vuelve a verificar contenido, inventario, orden y
+ausencia de symlinks antes de invocar Docker.
 
-Un host cuyo `prod.env` realmente no exista usa el bootstrap create-only descrito más abajo. El
-host actual no entra por esa ruta. El paso 2→6 es únicamente una normalización del release vivo:
-primero se publican RepoDigests que recuperen exactamente los mismos image IDs que los dos tags
-seleccionados, junto con la evidencia bridge y el baseline del estado actual. No se usa aquí el
-runtime del release nuevo. El baseline debe declarar exactamente ese runtime vivo, esa consola y el
-manifest anterior; cualquier divergencia falla antes de tocar el selector. El cambio real de
-release ocurre después, exclusivamente mediante el CAS completo de ocho campos.
+Un host cuyo `prod.env` realmente no exista usa el bootstrap create-only descrito más abajo. El host
+actual no entra por esa ruta. Para el host actual se autorizan los bytes completos de `prod.env` y
+dos RepoDigests recuperables que resuelvan exactamente a los image IDs de los bare selectors. No se
+usa aquí el runtime del release nuevo.
 
 ```sh
 two_selector_sha=$(sudo sha256sum /etc/cauce-v3/prod.env | awk '{print "sha256:" $1}')
 current_manifest=/etc/cauce-v3/compose-overrides/active.manifest
-current_manifest_sha=$(sudo sha256sum "$current_manifest" | awk '{print "sha256:" $1}')
 sudo install -d -m 0700 -o root -g root /etc/cauce-v3/releases/bootstrap-<change-id>
 sudo env \
   CAUCE_ENV_FILE=/etc/cauce-v3/prod.env \
-  CAUCE_BOOTSTRAP_TWO_SELECTOR_ENV_SHA256="$two_selector_sha" \
+  CAUCE_BOOTSTRAP_LEGACY_ENV_SHA256="$two_selector_sha" \
   CAUCE_BOOTSTRAP_RUNTIME_IMAGE='<RepoDigest-del-tag-runtime-vivo@sha256>' \
   CAUCE_BOOTSTRAP_CONSOLE_IMAGE='<RepoDigest-del-tag-console-vivo@sha256>' \
   CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST="$current_manifest" \
-  CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256="$current_manifest_sha" \
-  CAUCE_BOOTSTRAP_ROLLBACK_BASELINE=/etc/cauce-v3/releases/<release>/rollback-baseline.json \
-  CAUCE_BOOTSTRAP_ROLLBACK_BASELINE_SHA256='sha256:<64-hex>' \
+  CAUCE_BOOTSTRAP_LEGACY_FLEET_SNAPSHOT_FILE=/etc/cauce-v3/releases/bootstrap-<change-id>/legacy-fleet.json \
+  CAUCE_BOOTSTRAP_ROLLBACK_BASELINE=/etc/cauce-v3/releases/bootstrap-<change-id>/legacy-baseline.json \
   CAUCE_BOOTSTRAP_BACKUP_ENV_FILE=/etc/cauce-v3/releases/bootstrap-<change-id>/prod.env.before \
-  make -C ops release-bootstrap-two-selector
+  CAUCE_BOOTSTRAP_FORWARD_RELEASE_ID='legacy-pre-024-<change-id>' \
+  CAUCE_RELEASE_WRITER_SNAPSHOT_FILE=/etc/cauce-v3/releases/bootstrap-<change-id>/writer-snapshot.json \
+  make -C ops release-bootstrap-production-legacy
 ```
 
-El helper exige exactamente dos selectores de entrada, autoriza todos sus bytes por SHA y conserva
-byte a byte el resto. Contra el daemon local canónico exige que cada tag resuelva al mismo image ID
-que su RepoDigest target. Enumera además todos los containers `running` del proyecto
-`cauce-v3-prod`: runtime y consola deben ejercer sus tags/digests y cada fragmento restante debe
-estar configurado por RepoDigest, con image ID y `com.docker.compose.config-hash` válidos. No
-homogeneiza ni relaja el gate posterior del mosaico.
+Todo ocurre bajo el lock local autenticado y el guard remoto de writers. Primero captura todos los
+containers materializados del proyecto: referencia configurada (incluido tag), RepoDigest
+recuperable, image ID, container ID, config hash y estado; exige exactamente un `migrator exited/0`
+y todos los long-lived `running`. Cada referencia física no canónica debe resolver sin ambigüedad a
+un RepoDigest recuperable del mismo ID. Después publica una baseline schema v2
+`legacy-pre-migration` que autentica selectors, manifest y snapshot físico. Esa baseline omite
+deliberadamente `bridgeRuntime` y `bridgeEvidence`: antes de migrar no existe provenance válida para
+un bridge viejo y el contrato no la finge.
 
-El backup debe vivir bajo un parent canónico, propiedad del operador y no escribible por
+Recién entonces el selector pasa por CAS 2→6, se captura el snapshot global de writers con el
+migrator materializado todavía `exited/0`, y se completa 6→8. Si falla después del primer CAS, el
+helper restaura byte a byte el `prod.env` de dos campos; no borra evidencia durable. `SIGKILL` en una
+frontera de publicación o replace deja un estado exacto reconocible: el mismo comando reanuda sólo
+si backup, manifest, baseline, fleet y writer snapshot siguen idénticos.
+
+El backup y los snapshots deben vivir bajo parents canónicos, propiedad del operador y no escribibles por
 grupo/otros; nunca puede ser el env, el lock, el manifest, el baseline ni compartir su inode. La
 publicación create-only usa un descriptor autenticado del directorio y la secuencia
 `fsync(file) → link → unlink(temp) → fsync(directory)`. Una caída en cualquiera de esas fronteras
 se reanuda recuperando únicamente el temporal reservado y los mismos bytes autorizados. Manifest,
-baseline, prueba Docker y nombre/inode del backup se revalidan después del replace; cualquier
-carrera restaura el selector original por CAS bajo el mismo lock antes de devolver error. Ya con
-seis selectores, capturar el writer snapshot y ejecutar 6→8 como se indica en la sección «Baseline
-y CAS de release»; esa transición aplica la misma compensación si el snapshot o baseline cambia.
+baseline, snapshot físico, prueba Docker y nombre/inode del backup se revalidan después del replace;
+cualquier carrera restaura el selector original por CAS bajo el mismo lock antes de devolver error.
 Si el proceso recibe `SIGKILL` después del replace 2→6, el reintento con la misma autorización
 reconoce únicamente el replacement exacto derivado del backup autenticado. Repite toda la admisión
 y finaliza idempotentemente; si ya no pasa, restaura byte a byte el preestado del backup. No se
-edita el selector para «destrabar» el reintento.
+edita el selector para «destrabar» el reintento. Terminada esta etapa, el deploy normal vuelve a
+capturar el mosaico inmediatamente antes de normalizarlo dentro de la transacción compensable. Antes
+de COMMIT puede restaurar tags/IDs/config hashes exactos; después de COMMIT nunca selecciona el
+runtime viejo ni el mosaico y sólo usa el bridge acreditado por la baseline del target.
 
 El parent canónico de `prod.env` y de `.<nombre>.release-pin.lock` también debe pertenecer a root o
 al operador efectivo y cumplir `mode & 022 == 0`; un parent `0777` se rechaza antes de mutar. El

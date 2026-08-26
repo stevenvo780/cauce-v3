@@ -160,6 +160,8 @@ async function fixture(realPostgres?: RealPostgres, writerCount = 0): Promise<Fi
     targetRuntime: image('runtime', '3'),
     targetConsole: image('console', '4'),
     bridgeRuntime: image('runtime-bridge', 'f'),
+    legacyRuntimeTag: 'cauce-v3-runtime:legacy-live',
+    legacyConsoleTag: 'cauce-console:legacy-live',
     currentRuntimeId: digest('5'),
     currentConsoleId: digest('6'),
     targetRuntimeId: digest('7'),
@@ -347,6 +349,7 @@ fs.appendFileSync(${JSON.stringify(log)}, 'BASELINE ' + args[0] + ' lock=' + (pr
 const target = option('--baseline') === fixture.targetBaseline;
 if (args[0] === 'check') process.exit(state.FAKE_FAIL_STAGE === 'baseline' ? 44 : 0);
 const current = {
+  'baseline-kind': 'canonical-bridge',
   'forward-release-commit': fixture.currentCommit,
   'forward-runtime-image': fixture.currentRuntime,
   'forward-runtime-source-digest': fixture.currentSource,
@@ -356,6 +359,7 @@ const current = {
   'override-manifest-sha256': fixture.currentManifestSha,
 };
 const next = {
+  'baseline-kind': 'canonical-bridge',
   'forward-release-commit': fixture.targetCommit,
   'forward-runtime-image': fixture.targetRuntime,
   'forward-runtime-source-digest': fixture.targetSource,
@@ -536,6 +540,7 @@ if (args.includes('config') && args.includes('json')) {
 }
 if (args[1] === 'ps' && args.includes('--services')) {
   let services = ['gateway', 'dispatcher', 'outbox-metrics', 'console'];
+  if (args.includes('--all')) services.push('migrator');
   if (state.FAKE_WITH_WRITERS) services.push('relay-worker', 'terminal-relay');
   if (state.FAKE_WRITERS_ABSENT && !args.includes('--status')) {
     services = services.filter((item) => !['relay-worker', 'terminal-relay'].includes(item));
@@ -735,6 +740,8 @@ const id = (reference) => {
   if (reference === fixture.targetRuntime) return fixture.targetRuntimeId;
   if (reference === fixture.targetConsole) return fixture.targetConsoleId;
   if (reference === fixture.bridgeRuntime) return fixture.bridgeRuntimeId;
+  if (reference === fixture.legacyRuntimeTag) return fixture.targetRuntimeId;
+  if (reference === fixture.legacyConsoleTag) return fixture.targetConsoleId;
   return '';
 };
 fs.appendFileSync(${JSON.stringify(log)}, 'DOCKER ' + args.join(' ') + ' lock=' + (process.env.CAUCE_RELEASE_TRANSITION_LOCK_FD || '') +
@@ -782,11 +789,17 @@ if (args[0] === 'image' && args[1] === 'inspect') {
       Config: { Labels: labels },
     }) + '\\n');
   } else if (format.includes('.Id')) process.stdout.write(id(reference) + '\\n');
+  else if (reference === fixture.legacyRuntimeTag) process.stdout.write(fixture.targetRuntime + '\\n');
+  else if (reference === fixture.legacyConsoleTag) process.stdout.write(fixture.targetConsole + '\\n');
   else process.stdout.write(reference + '\\n');
   process.exit(0);
 }
 if (args[0] === 'inspect') {
   const service = args.at(-1).slice(4);
+  if (args[2].includes('.State.Status')) {
+    process.stdout.write(service === 'migrator' ? 'exited\\t0\\n' : 'running\\t0\\n');
+    process.exit(0);
+  }
   if (args[2].includes('.State.Running')) {
     const stopped = (state.COMPOSE_WRITERS_STOPPED && ['relay-worker', 'terminal-relay'].includes(service))
       || (state.DISPATCHER_STOPPED && service === 'dispatcher')
@@ -796,7 +809,9 @@ if (args[0] === 'inspect') {
   }
   let reference = service === 'console' ? selected.CAUCE_CONSOLE_IMAGE : selected.CAUCE_RUNTIME_IMAGE;
   if (fragmentedServices.includes(service) && !state.FRAGMENT_NORMALIZED) {
-    reference = service === 'console' ? fixture.targetConsole : fixture.targetRuntime;
+    reference = state.FAKE_FRAGMENT_CONFIG_TAG
+      ? (service === 'console' ? fixture.legacyConsoleTag : fixture.legacyRuntimeTag)
+      : (service === 'console' ? fixture.targetConsole : fixture.targetRuntime);
   }
   if (args[2].includes('config-hash')) {
     process.stdout.write((state.FAKE_RUNNING_CONFIG_HASH || 'a'.repeat(64)) + '\\n');
@@ -1564,6 +1579,32 @@ describe('canonical forward release transaction', () => {
     );
   });
 
+  test('one-time legacy deploy binds mutable physical tags to recoverable digests before normalization', async () => {
+    const value = await fixture();
+    const snapshot = join(value.root, 'legacy-tag-snapshot.json');
+    const fragment = {
+      FAKE_FRAGMENTED_SERVICES: 'gateway,terminal-relay,console',
+      FAKE_WITH_WRITERS: '1',
+      FAKE_FRAGMENT_CONFIG_TAG: '1',
+      CAUCE_DEPLOY_LEGACY_SNAPSHOT_FILE: snapshot,
+    };
+    const token = await confirmation(value, fragment);
+    await writeFile(value.log, '');
+    const result = run(value, 'deploy', { ...fragment, CAUCE_DEPLOY_CONFIRM: token });
+    const report = JSON.parse(await readFile(snapshot, 'utf8')) as {
+      services: Array<{ service: string; image: string; recoveryImage: string; imageId: string }>;
+    };
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(report.services).toContainEqual(expect.objectContaining({
+      service: 'gateway', image: value.values.legacyRuntimeTag,
+      recoveryImage: value.values.targetRuntime, imageId: value.values.targetRuntimeId,
+    }));
+    expect(report.services).toContainEqual(expect.objectContaining({
+      service: 'console', image: value.values.legacyConsoleTag,
+      recoveryImage: value.values.targetConsole, imageId: value.values.targetConsoleId,
+    }));
+  });
+
   test('partial normalization failure restores the exact fragmented snapshot before CAS', async () => {
     const value = await fixture();
     const snapshot = join(value.root, 'legacy-fragment-snapshot.json');
@@ -2077,6 +2118,7 @@ describe('canonical forward release transaction', () => {
     expect(make).toMatch(/^release-deploy:/mu);
     expect(make).toMatch(/^release-rotate-writer-snapshot:/mu);
     expect(make).toMatch(/^release-bootstrap-legacy:/mu);
+    expect(make).toMatch(/^release-bootstrap-production-legacy:/mu);
     expect(make).toMatch(/^release-bootstrap-manifest-sha:/mu);
     expect(make).toMatch(/^prod-up:[^\n]*\n\s+.*deploy-release\.sh prod-up/mu);
     expect(make).toMatch(/^prod-down:[^\n]*\n\s+.*deploy-release\.sh prod-down/mu);
@@ -2088,6 +2130,8 @@ describe('canonical forward release transaction', () => {
     expect(runbook).toContain('release-deploy-preflight');
     expect(runbook).toContain('release-deploy');
     expect(runbook).toContain('release-bootstrap-legacy');
+    expect(runbook).toContain('legacy-pre-migration');
+    expect(source).toContain('bootstrap-production-legacy');
     expect(runbook).toContain('CAUCE_DEPLOY_TARGET_OVERRIDE_MANIFEST_SHA256');
     expect(runbook).toContain('CAUCE_DEPLOY_LEGACY_SNAPSHOT_FILE');
     expect(runbook).toContain('`make -C ops migrate` es un tombstone que falla cerrado');

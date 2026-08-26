@@ -34,6 +34,9 @@ LEGACY_IMAGE_REF = re.compile(
     r"(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*"
     r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?$"
 )
+LEGACY_BARE_DIGEST_REF = re.compile(
+    r"^[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[a-f0-9]{64}$"
+)
 DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 CONTAINER_ID = re.compile(r"^[a-f0-9]{12,64}$")
 COMPOSE_SERVICE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,127}$")
@@ -2107,6 +2110,358 @@ def _validate_live_image_normalization(
         )
 
 
+def _image_identity(reference: str, *, label: str) -> tuple[str, list[str]]:
+    output = _docker_output(
+        ["image", "inspect", "--format", "{{.Id}}\t{{json .RepoDigests}}", reference],
+        label=label,
+    ).strip("\n")
+    fields = output.split("\t")
+    if len(fields) != 2 or DIGEST.fullmatch(fields[0]) is None:
+        raise PinError(f"legacy fleet {label} returned an invalid image identity")
+    try:
+        raw_digests = json.loads(fields[1])
+    except json.JSONDecodeError as error:
+        raise PinError(f"legacy fleet {label} returned invalid repository metadata") from error
+    if not isinstance(raw_digests, list) or any(not isinstance(item, str) for item in raw_digests):
+        raise PinError(f"legacy fleet {label} returned invalid repository metadata")
+    digests = sorted(set(item for item in raw_digests if IMAGE_REF.fullmatch(item)))
+    if not digests:
+        raise PinError(f"legacy fleet {label} has no recoverable repository digest")
+    return fields[0], digests
+
+
+def _legacy_selector_content(
+    content: bytes,
+    *,
+    expected_sha256: str,
+) -> tuple[str, str]:
+    if f"sha256:{hashlib.sha256(content).hexdigest()}" != expected_sha256:
+        raise PinError("legacy production env differs from its authorized SHA-256")
+    try:
+        decoded = content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise PinError("legacy production env is not valid UTF-8") from error
+    _validate_canonical_compose_controls(decoded)
+    present = {
+        raw.split("=", 1)[0]
+        for raw in decoded.splitlines()
+        if raw and not raw.startswith("#") and "=" in raw
+    }
+    if present & set(KEYS) != set(KEYS[:2]):
+        raise PinError("production env is not an exact two-selector legacy input")
+    _lines, values = _parse(decoded, KEYS[:2])
+    runtime = values["CAUCE_RUNTIME_IMAGE"][1]
+    console = values["CAUCE_CONSOLE_IMAGE"][1]
+    allowed = lambda value: (
+        LEGACY_IMAGE_REF.fullmatch(value) is not None
+        or LEGACY_BARE_DIGEST_REF.fullmatch(value) is not None
+    )
+    if not allowed(runtime) or not allowed(console) or runtime == console:
+        raise PinError("legacy production image selectors are invalid or identical")
+    return runtime, console
+
+
+def _legacy_fleet_content(
+    legacy_content: bytes,
+    *,
+    expected_env_sha256: str,
+    runtime_image: str,
+    console_image: str,
+    override_manifest: str,
+    override_manifest_sha256: str,
+) -> bytes:
+    """Capture the real pre-migration mosaic without claiming it is canonical."""
+    if IMAGE_REF.fullmatch(runtime_image) is None or IMAGE_REF.fullmatch(console_image) is None:
+        raise PinError("legacy normalized images must be immutable repository digests")
+    if DIGEST.fullmatch(override_manifest_sha256) is None:
+        raise PinError("legacy override manifest SHA-256 is invalid")
+    _validate_manifest_digest(
+        override_manifest,
+        override_manifest_sha256,
+        label="legacy override manifest",
+    )
+    legacy_runtime, legacy_console = _legacy_selector_content(
+        legacy_content,
+        expected_sha256=expected_env_sha256,
+    )
+    runtime_id, runtime_digests = _image_identity(runtime_image, label="runtime normalization")
+    console_id, console_digests = _image_identity(console_image, label="console normalization")
+    if runtime_image not in runtime_digests or console_image not in console_digests \
+            or runtime_id == console_id:
+        raise PinError("legacy normalized selectors are not locally bound to distinct images")
+    selected_runtime_id, _ = _image_identity(legacy_runtime, label="runtime selector")
+    selected_console_id, _ = _image_identity(legacy_console, label="console selector")
+    if selected_runtime_id != runtime_id or selected_console_id != console_id:
+        raise PinError("legacy selector images differ from their normalized repository digests")
+
+    raw_ids = _docker_output(
+        [
+            "container", "ls", "-a", "--filter",
+            "label=com.docker.compose.project=cauce-v3-prod", "--format", "{{.ID}}",
+        ],
+        label="materialized container inventory",
+    )
+    container_ids = [line for line in raw_ids.splitlines() if line]
+    if not container_ids or len(container_ids) != len(set(container_ids)) \
+            or any(CONTAINER_ID.fullmatch(item) is None for item in container_ids):
+        raise PinError("legacy fleet has an invalid materialized container inventory")
+    services: list[dict[str, object]] = []
+    seen_services: set[str] = set()
+    saw_runtime = False
+    saw_console = False
+    saw_migrator = False
+    for short_id in container_ids:
+        output = _docker_output(
+            [
+                "container", "inspect", "--format",
+                (
+                    "{{.Id}}\t{{.Image}}\t{{.Config.Image}}\t"
+                    '{{index .Config.Labels "com.docker.compose.project"}}\t'
+                    '{{index .Config.Labels "com.docker.compose.service"}}\t'
+                    '{{index .Config.Labels "com.docker.compose.config-hash"}}\t'
+                    "{{.State.Status}}\t{{.State.ExitCode}}"
+                ),
+                short_id,
+            ],
+            label="materialized container identity",
+        ).strip("\n")
+        fields = output.split("\t")
+        if len(fields) != 8:
+            raise PinError("legacy fleet contains a malformed container record")
+        full_id, image_id, configured, project, service, config_hash, status, exit_code = fields
+        if CONTAINER_ID.fullmatch(full_id) is None or not full_id.startswith(short_id) \
+                or DIGEST.fullmatch(image_id) is None or project != "cauce-v3-prod" \
+                or COMPOSE_SERVICE.fullmatch(service) is None or service in seen_services \
+                or re.fullmatch(r"[a-f0-9]{64}", config_hash) is None \
+                or re.fullmatch(r"-?[0-9]+", exit_code) is None \
+                or any(character in configured for character in "\t\r\n"):
+            raise PinError("legacy fleet contains an invalid container identity/config record")
+        seen_services.add(service)
+        if service == "migrator":
+            saw_migrator = True
+            if status != "exited" or exit_code != "0":
+                raise PinError("legacy fleet migrator must be materialized exited/0")
+        elif status != "running" or exit_code != "0":
+            raise PinError("legacy fleet long-lived containers must all be running")
+        observed_id, repository_digests = _image_identity(
+            configured,
+            label=f"service {service} image",
+        )
+        if observed_id != image_id:
+            raise PinError("legacy fleet container image differs from Config.Image")
+        if configured == runtime_image or image_id == runtime_id:
+            repository_digest = runtime_image
+            saw_runtime = True
+        elif configured == console_image or image_id == console_id:
+            repository_digest = console_image
+            saw_console = True
+        elif IMAGE_REF.fullmatch(configured) is not None and configured in repository_digests:
+            repository_digest = configured
+        elif len(repository_digests) == 1:
+            repository_digest = repository_digests[0]
+        else:
+            raise PinError("legacy mutable Config.Image is ambiguous across repository digests")
+        services.append({
+            "configHash": config_hash,
+            "configImage": configured,
+            "containerId": full_id,
+            "exitCode": int(exit_code),
+            "imageId": image_id,
+            "repositoryDigest": repository_digest,
+            "service": service,
+            "status": status,
+        })
+    if not saw_runtime or not saw_console or not saw_migrator:
+        raise PinError("legacy fleet omits runtime, console, or the materialized migrator")
+    report = {
+        "kind": "cauce-v3-legacy-pre-migration-fleet",
+        "project": "cauce-v3-prod",
+        "schemaVersion": 1,
+        "selectors": {
+            "console": legacy_console,
+            "manifest": override_manifest,
+            "manifestSha256": override_manifest_sha256,
+            "normalizedConsole": console_image,
+            "normalizedRuntime": runtime_image,
+            "runtime": legacy_runtime,
+        },
+        "services": sorted(services, key=lambda item: str(item["service"])),
+    }
+    _validate_manifest_digest(
+        override_manifest,
+        override_manifest_sha256,
+        label="legacy override manifest",
+    )
+    return (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+
+
+def capture_legacy_fleet(
+    env_file: pathlib.Path,
+    *,
+    expected_env_sha256: str,
+    runtime_image: str,
+    console_image: str,
+    override_manifest: str,
+    override_manifest_sha256: str,
+    output: pathlib.Path,
+    backup_env_file: pathlib.Path | None,
+    inherited_lock: int | None,
+) -> str:
+    if DIGEST.fullmatch(expected_env_sha256) is None:
+        raise PinError("legacy production env SHA-256 is invalid")
+    env_directory, env_parent_identity = _open_protected_parent(
+        env_file, label="legacy production env"
+    )
+    output_directory, output_parent_identity = _open_protected_parent(
+        output, label="legacy fleet snapshot"
+    )
+    lock_descriptor = _transition_lock(
+        env_file, inherited_lock, env_directory, env_parent_identity
+    )
+    try:
+        current, current_metadata = _read_private_name(
+            env_file,
+            env_directory,
+            env_parent_identity,
+            label="legacy production env",
+            recover_interrupted_link=False,
+        )
+        if f"sha256:{hashlib.sha256(current).hexdigest()}" == expected_env_sha256:
+            legacy_content = current
+        elif backup_env_file is not None:
+            _validate_private_file(backup_env_file, label="legacy selector backup")
+            legacy_content, _ = _read_exact(backup_env_file)
+            _legacy_selector_content(legacy_content, expected_sha256=expected_env_sha256)
+        else:
+            raise PinError("legacy production env differs from its authorized SHA-256")
+        content = _legacy_fleet_content(
+            legacy_content,
+            expected_env_sha256=expected_env_sha256,
+            runtime_image=runtime_image,
+            console_image=console_image,
+            override_manifest=override_manifest,
+            override_manifest_sha256=override_manifest_sha256,
+        )
+        try:
+            existing, _ = _read_private_name(
+                output,
+                output_directory,
+                output_parent_identity,
+                label="legacy fleet snapshot",
+                recover_interrupted_link=True,
+            )
+        except PinError as error:
+            if "missing or unreadable" not in str(error):
+                raise
+            _publish_absent_at(
+                output,
+                content,
+                current_metadata,
+                output_directory,
+                output_parent_identity,
+                label="legacy fleet snapshot",
+            )
+            existing, _ = _read_private_name(
+                output,
+                output_directory,
+                output_parent_identity,
+                label="legacy fleet snapshot",
+                recover_interrupted_link=True,
+            )
+        if existing != content:
+            raise PinError("existing legacy fleet snapshot differs from the retry capture")
+        return f"sha256:{hashlib.sha256(content).hexdigest()}"
+    finally:
+        os.close(lock_descriptor)
+        os.close(output_directory)
+        os.close(env_directory)
+
+
+def restore_production_legacy(
+    env_file: pathlib.Path,
+    *,
+    expected_env_sha256: str,
+    runtime_image: str,
+    console_image: str,
+    override_manifest: str,
+    override_manifest_sha256: str,
+    rollback_baseline: str,
+    rollback_baseline_sha256: str,
+    backup_env_file: pathlib.Path,
+    writer_snapshot: str,
+    writer_snapshot_sha256: str,
+    inherited_lock: int | None,
+) -> None:
+    """Compensate only the exact 2->6/8 one-time bootstrap replacement."""
+    directory, parent_identity = _open_protected_parent(
+        env_file, label="legacy production env compensation"
+    )
+    lock_descriptor = _transition_lock(
+        env_file, inherited_lock, directory, parent_identity
+    )
+    try:
+        original, _ = _read_exact(backup_env_file)
+        _legacy_selector_content(original, expected_sha256=expected_env_sha256)
+        current, current_metadata = _read_private_name(
+            env_file,
+            directory,
+            parent_identity,
+            label="legacy production env compensation",
+            recover_interrupted_link=False,
+        )
+        if current == original:
+            return
+        try:
+            current_text = current.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise PinError("legacy compensation current selector is not UTF-8") from error
+        _lines, values = _parse_current_or_six_selector(current_text)
+        expected = {
+            "CAUCE_RUNTIME_IMAGE": runtime_image,
+            "CAUCE_CONSOLE_IMAGE": console_image,
+            "CAUCE_COMPOSE_OVERRIDE_MANIFEST": override_manifest,
+            "CAUCE_COMPOSE_OVERRIDE_MANIFEST_SHA256": override_manifest_sha256,
+            "CAUCE_ROLLBACK_BASELINE_FILE": rollback_baseline,
+            "CAUCE_ROLLBACK_BASELINE_SHA256": rollback_baseline_sha256,
+        }
+        if any(values[key][1] != value for key, value in expected.items()):
+            raise PinError("legacy compensation selector is not the exact bootstrap state")
+        writer_present = "CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE" in values
+        if writer_present and (
+            values["CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE"][1] != writer_snapshot
+            or values["CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256"][1]
+            != writer_snapshot_sha256
+        ):
+            raise PinError("legacy compensation writer snapshot is not the exact bootstrap state")
+
+        def admit_original() -> None:
+            restored, restored_metadata = _read_private_name(
+                env_file,
+                directory,
+                parent_identity,
+                label="legacy production env compensation",
+                recover_interrupted_link=False,
+            )
+            if restored != original or stat.S_IMODE(restored_metadata.st_mode) != 0o600:
+                raise PinError("legacy compensation failed its exact read-back")
+            _legacy_selector_content(restored, expected_sha256=expected_env_sha256)
+
+        _replace_with_compensating_admission(
+            env_file,
+            original,
+            current,
+            current_metadata,
+            directory,
+            parent_identity,
+            barrier="legacy-compensation-after-replace",
+            label="legacy production selector compensation",
+            admit=admit_original,
+        )
+    finally:
+        os.close(lock_descriptor)
+        os.close(directory)
+
+
 def bootstrap_two_selector_env(
     env_file: pathlib.Path,
     *,
@@ -2118,6 +2473,9 @@ def bootstrap_two_selector_env(
     rollback_baseline: str,
     rollback_baseline_sha256: str,
     backup_env_file: pathlib.Path,
+    legacy_fleet_snapshot: str | None = None,
+    legacy_fleet_snapshot_sha256: str | None = None,
+    inherited_lock: int | None = None,
 ) -> None:
     """Upgrade one authenticated two-selector legacy env to the six-selector contract.
 
@@ -2142,6 +2500,12 @@ def bootstrap_two_selector_env(
         raise PinError("two-selector rollback baseline SHA-256 is invalid")
     manifest_path = pathlib.Path(override_manifest)
     baseline_path = pathlib.Path(rollback_baseline)
+    production_legacy = legacy_fleet_snapshot is not None
+    if production_legacy != (legacy_fleet_snapshot_sha256 is not None):
+        raise PinError("legacy fleet snapshot path and SHA-256 must be supplied together")
+    if legacy_fleet_snapshot_sha256 is not None \
+            and DIGEST.fullmatch(legacy_fleet_snapshot_sha256) is None:
+        raise PinError("legacy fleet snapshot SHA-256 is invalid")
 
     def prepare_original(content: bytes) -> tuple[bytes, str, str]:
         if f"sha256:{hashlib.sha256(content).hexdigest()}" != expected_env_sha256:
@@ -2168,6 +2532,8 @@ def bootstrap_two_selector_env(
             )
         legacy_runtime = values["CAUCE_RUNTIME_IMAGE"][1]
         legacy_console = values["CAUCE_CONSOLE_IMAGE"][1]
+        if production_legacy:
+            _legacy_selector_content(content, expected_sha256=expected_env_sha256)
         lines[values["CAUCE_RUNTIME_IMAGE"][0]] = (
             f"CAUCE_RUNTIME_IMAGE={runtime_image}\n"
         )
@@ -2200,6 +2566,18 @@ def bootstrap_two_selector_env(
                     console_image,
                     "--expected-override-manifest",
                     override_manifest,
+                    *(
+                        [
+                            "--expected-baseline-kind",
+                            "legacy-pre-migration",
+                            "--expected-legacy-fleet-snapshot",
+                            legacy_fleet_snapshot,
+                            "--expected-legacy-fleet-snapshot-sha256",
+                            legacy_fleet_snapshot_sha256,
+                        ]
+                        if production_legacy
+                        else []
+                    ),
                 ],
                 check=True,
                 stdout=subprocess.DEVNULL,
@@ -2225,12 +2603,32 @@ def bootstrap_two_selector_env(
             label="two-selector rollback baseline",
         )
         check_baseline()
-        _validate_live_image_normalization(
-            legacy_runtime=legacy_runtime,
-            legacy_console=legacy_console,
-            runtime_image=runtime_image,
-            console_image=console_image,
-        )
+        if production_legacy:
+            assert legacy_fleet_snapshot is not None
+            assert legacy_fleet_snapshot_sha256 is not None
+            _validate_manifest_digest(
+                legacy_fleet_snapshot,
+                legacy_fleet_snapshot_sha256,
+                label="legacy fleet snapshot",
+            )
+            expected_snapshot = _legacy_fleet_content(
+                original,
+                expected_env_sha256=expected_env_sha256,
+                runtime_image=runtime_image,
+                console_image=console_image,
+                override_manifest=override_manifest,
+                override_manifest_sha256=override_manifest_sha256,
+            )
+            observed_snapshot, _ = _read_exact(pathlib.Path(legacy_fleet_snapshot))
+            if observed_snapshot != expected_snapshot:
+                raise PinError("legacy fleet changed after its authenticated snapshot")
+        else:
+            _validate_live_image_normalization(
+                legacy_runtime=legacy_runtime,
+                legacy_console=legacy_console,
+                runtime_image=runtime_image,
+                console_image=console_image,
+            )
         _validate_manifest_digest(
             override_manifest,
             override_manifest_sha256,
@@ -2271,7 +2669,7 @@ def bootstrap_two_selector_env(
         )
         lock_descriptor = _transition_lock(
             env_file,
-            None,
+            inherited_lock,
             env_directory,
             env_parent_identity,
         )
@@ -2578,6 +2976,7 @@ def bootstrap_writer_snapshot_selectors(
     expected_env_sha256: str,
     writer_snapshot: str,
     writer_snapshot_sha256: str,
+    inherited_lock: int | None = None,
 ) -> None:
     """Atomically upgrade one authenticated six-selector env to eight selectors."""
     if DIGEST.fullmatch(expected_env_sha256) is None:
@@ -2590,7 +2989,7 @@ def bootstrap_writer_snapshot_selectors(
     )
     lock_descriptor = _transition_lock(
         env_file,
-        None,
+        inherited_lock,
         directory,
         parent_identity,
     )
@@ -2859,6 +3258,42 @@ def main(argv: list[str]) -> int:
     two_selector.add_argument("--rollback-baseline", required=True)
     two_selector.add_argument("--rollback-baseline-sha256", required=True)
     two_selector.add_argument("--backup-env-file", required=True, type=pathlib.Path)
+    production_legacy = subparsers.add_parser("bootstrap-production-legacy")
+    production_legacy.add_argument("--env-file", required=True, type=pathlib.Path)
+    production_legacy.add_argument("--expected-env-sha256", required=True)
+    production_legacy.add_argument("--runtime-image", required=True)
+    production_legacy.add_argument("--console-image", required=True)
+    production_legacy.add_argument("--override-manifest", required=True)
+    production_legacy.add_argument("--override-manifest-sha256", required=True)
+    production_legacy.add_argument("--rollback-baseline", required=True)
+    production_legacy.add_argument("--rollback-baseline-sha256", required=True)
+    production_legacy.add_argument("--legacy-fleet-snapshot", required=True)
+    production_legacy.add_argument("--legacy-fleet-snapshot-sha256", required=True)
+    production_legacy.add_argument("--backup-env-file", required=True, type=pathlib.Path)
+    production_legacy.add_argument("--lock-fd", type=int)
+    capture_legacy = subparsers.add_parser("capture-production-legacy")
+    capture_legacy.add_argument("--env-file", required=True, type=pathlib.Path)
+    capture_legacy.add_argument("--expected-env-sha256", required=True)
+    capture_legacy.add_argument("--runtime-image", required=True)
+    capture_legacy.add_argument("--console-image", required=True)
+    capture_legacy.add_argument("--override-manifest", required=True)
+    capture_legacy.add_argument("--override-manifest-sha256", required=True)
+    capture_legacy.add_argument("--output", required=True, type=pathlib.Path)
+    capture_legacy.add_argument("--backup-env-file", type=pathlib.Path)
+    capture_legacy.add_argument("--lock-fd", type=int)
+    restore_legacy = subparsers.add_parser("restore-production-legacy")
+    restore_legacy.add_argument("--env-file", required=True, type=pathlib.Path)
+    restore_legacy.add_argument("--expected-env-sha256", required=True)
+    restore_legacy.add_argument("--runtime-image", required=True)
+    restore_legacy.add_argument("--console-image", required=True)
+    restore_legacy.add_argument("--override-manifest", required=True)
+    restore_legacy.add_argument("--override-manifest-sha256", required=True)
+    restore_legacy.add_argument("--rollback-baseline", required=True)
+    restore_legacy.add_argument("--rollback-baseline-sha256", required=True)
+    restore_legacy.add_argument("--writer-snapshot", required=True)
+    restore_legacy.add_argument("--writer-snapshot-sha256", required=True)
+    restore_legacy.add_argument("--backup-env-file", required=True, type=pathlib.Path)
+    restore_legacy.add_argument("--lock-fd", type=int)
     legacy_manifest = subparsers.add_parser("bootstrap-manifest-sha")
     legacy_manifest.add_argument("--env-file", required=True, type=pathlib.Path)
     legacy_manifest.add_argument("--expected-env-sha256", required=True)
@@ -2869,6 +3304,7 @@ def main(argv: list[str]) -> int:
     legacy_writer.add_argument("--expected-env-sha256", required=True)
     legacy_writer.add_argument("--writer-snapshot", required=True)
     legacy_writer.add_argument("--writer-snapshot-sha256", required=True)
+    legacy_writer.add_argument("--lock-fd", type=int)
     arguments = parser.parse_args(argv)
     try:
         if arguments.action == "locked-exec":
@@ -2914,6 +3350,53 @@ def main(argv: list[str]) -> int:
             )
             print("production release two-selector bootstrap passed")
             return 0
+        if arguments.action == "capture-production-legacy":
+            print(capture_legacy_fleet(
+                arguments.env_file,
+                expected_env_sha256=arguments.expected_env_sha256,
+                runtime_image=arguments.runtime_image,
+                console_image=arguments.console_image,
+                override_manifest=arguments.override_manifest,
+                override_manifest_sha256=arguments.override_manifest_sha256,
+                output=arguments.output,
+                backup_env_file=arguments.backup_env_file,
+                inherited_lock=arguments.lock_fd,
+            ))
+            return 0
+        if arguments.action == "bootstrap-production-legacy":
+            bootstrap_two_selector_env(
+                arguments.env_file,
+                expected_env_sha256=arguments.expected_env_sha256,
+                runtime_image=arguments.runtime_image,
+                console_image=arguments.console_image,
+                override_manifest=arguments.override_manifest,
+                override_manifest_sha256=arguments.override_manifest_sha256,
+                rollback_baseline=arguments.rollback_baseline,
+                rollback_baseline_sha256=arguments.rollback_baseline_sha256,
+                backup_env_file=arguments.backup_env_file,
+                legacy_fleet_snapshot=arguments.legacy_fleet_snapshot,
+                legacy_fleet_snapshot_sha256=arguments.legacy_fleet_snapshot_sha256,
+                inherited_lock=arguments.lock_fd,
+            )
+            print("production legacy selector bootstrap passed")
+            return 0
+        if arguments.action == "restore-production-legacy":
+            restore_production_legacy(
+                arguments.env_file,
+                expected_env_sha256=arguments.expected_env_sha256,
+                runtime_image=arguments.runtime_image,
+                console_image=arguments.console_image,
+                override_manifest=arguments.override_manifest,
+                override_manifest_sha256=arguments.override_manifest_sha256,
+                rollback_baseline=arguments.rollback_baseline,
+                rollback_baseline_sha256=arguments.rollback_baseline_sha256,
+                writer_snapshot=arguments.writer_snapshot,
+                writer_snapshot_sha256=arguments.writer_snapshot_sha256,
+                backup_env_file=arguments.backup_env_file,
+                inherited_lock=arguments.lock_fd,
+            )
+            print("production legacy selector compensation passed")
+            return 0
         if arguments.action == "bootstrap-manifest-sha":
             bootstrap_legacy_manifest_sha(
                 arguments.env_file,
@@ -2929,6 +3412,7 @@ def main(argv: list[str]) -> int:
                 expected_env_sha256=arguments.expected_env_sha256,
                 writer_snapshot=arguments.writer_snapshot,
                 writer_snapshot_sha256=arguments.writer_snapshot_sha256,
+                inherited_lock=arguments.lock_fd,
             )
             print("production release rollback writer snapshot bootstrap passed")
             return 0

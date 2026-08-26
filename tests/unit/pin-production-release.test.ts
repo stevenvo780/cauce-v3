@@ -18,6 +18,8 @@ const currentConsole = `registry.invalid/cauce/console@sha256:${'c'.repeat(64)}`
 const targetConsole = `registry.invalid/cauce/console@sha256:${'d'.repeat(64)}`;
 const legacyRuntime = 'cauce-v3-runtime:legacy-fragment';
 const legacyConsole = 'cauce-console:legacy-fragment';
+const bareLegacyRuntime = `cauce-v3-runtime@sha256:${'a'.repeat(64)}`;
+const bareLegacyConsole = `cauce-console@sha256:${'c'.repeat(64)}`;
 const runtimeImageId = `sha256:${'e'.repeat(64)}`;
 const consoleImageId = `sha256:${'f'.repeat(64)}`;
 const sha256 = (content: string | Buffer): string =>
@@ -87,6 +89,8 @@ runtime_target = ${JSON.stringify(current)}
 console_target = ${JSON.stringify(currentConsole)}
 runtime_tag = ${JSON.stringify(legacyRuntime)}
 console_tag = ${JSON.stringify(legacyConsole)}
+runtime_bare = ${JSON.stringify(bareLegacyRuntime)}
+console_bare = ${JSON.stringify(bareLegacyConsole)}
 runtime_target_id = os.environ.get("CAUCE_TEST_RUNTIME_TARGET_ID", ${JSON.stringify(runtimeImageId)})
 runtime_tag_id = os.environ.get("CAUCE_TEST_RUNTIME_TAG_ID", runtime_target_id)
 runtime_container_id = os.environ.get("CAUCE_TEST_RUNTIME_CONTAINER_ID", runtime_target_id)
@@ -97,11 +101,11 @@ console_container_id = os.environ.get("CAUCE_TEST_CONSOLE_CONTAINER_ID", console
 def image(reference):
     if reference == runtime_target:
         return runtime_target_id, [runtime_target]
-    if reference == runtime_tag:
+    if reference in (runtime_tag, runtime_bare):
         return runtime_tag_id, [runtime_target]
     if reference == console_target:
         return console_target_id, [console_target]
-    if reference == console_tag:
+    if reference in (console_tag, console_bare):
         return console_tag_id, [console_target]
     if "@sha256:" in reference:
         return "sha256:" + "7" * 64, [reference]
@@ -114,6 +118,8 @@ if arguments[:3] == ["image", "inspect", "--format"] and len(arguments) == 5:
 if arguments[:2] == ["container", "ls"]:
     print("a" * 12)
     print("b" * 12)
+    if "-a" in arguments:
+        print("c" * 12)
     raise SystemExit(0)
 if arguments[:3] == ["container", "inspect", "--format"] and len(arguments) == 5:
     requested = arguments[4]
@@ -127,11 +133,19 @@ if arguments[:3] == ["container", "inspect", "--format"] and len(arguments) == 5
         identifier = console_container_id
         service = "console"
         full = "b" * 64
+    elif requested == "c" * 12:
+        configured = runtime_target
+        identifier = runtime_target_id
+        service = "migrator"
+        full = "c" * 64
     else:
         raise SystemExit(9)
-    print("\\t".join([
-        full, identifier, configured, "cauce-v3-prod", service, "1" * 64, "running",
-    ]))
+    fields = [full, identifier, configured, "cauce-v3-prod", service, "1" * 64]
+    if "ExitCode" in arguments[3]:
+        fields.extend(["exited" if service == "migrator" else "running", "0"])
+    else:
+        fields.append("running")
+    print("\\t".join(fields))
     raise SystemExit(0)
 raise SystemExit(9)
 `, { mode: 0o755 });
@@ -807,6 +821,94 @@ if result.returncode == 0 or "not already exclusive" not in result.stderr:
     expect(repeated.stdout).toBe('production release two-selector bootstrap passed\n');
     expect(await readFile(value.envFile, 'utf8')).toBe(expected);
     expect(await readFile(backup, 'utf8')).toBe(twoSelectors);
+  });
+
+  test('captures and promotes the real bare-digest mosaic with exited migrator evidence', async () => {
+    const value = await fixture();
+    const complete = await readFile(value.envFile, 'utf8');
+    const twoSelectors = complete
+      .replace(current, bareLegacyRuntime)
+      .replace(currentConsole, bareLegacyConsole)
+      .replace(`CAUCE_COMPOSE_OVERRIDE_MANIFEST=${value.currentManifest}\n`, '')
+      .replace(`CAUCE_COMPOSE_OVERRIDE_MANIFEST_SHA256=${currentManifestSha}\n`, '')
+      .replace(`CAUCE_ROLLBACK_BASELINE_FILE=${value.currentBaseline}\n`, '')
+      .replace(`CAUCE_ROLLBACK_BASELINE_SHA256=${currentBaselineSha}\n`, '')
+      .replace(`CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE=${value.currentWriterSnapshot}\n`, '')
+      .replace(`CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256=${value.currentWriterSnapshotSha}\n`, '');
+    await writeFile(value.envFile, twoSelectors, { mode: 0o600 });
+    const snapshot = join(value.directory, 'legacy-fleet.json');
+    const backup = join(value.directory, 'legacy-prod.env.before');
+    const common = [
+      '--env-file', value.envFile,
+      '--expected-env-sha256', sha256(twoSelectors),
+      '--runtime-image', current,
+      '--console-image', currentConsole,
+      '--override-manifest', value.currentManifest,
+      '--override-manifest-sha256', currentManifestSha,
+    ];
+    const captured = run(value, [
+      'capture-production-legacy', ...common, '--output', snapshot,
+      '--backup-env-file', backup,
+    ]);
+    expect(captured.status, captured.stderr).toBe(0);
+    const snapshotSha = captured.stdout.trim();
+    expect(snapshotSha).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    const report = JSON.parse(await readFile(snapshot, 'utf8')) as {
+      selectors: { runtime: string; console: string };
+      services: Array<{ service: string; status: string; exitCode: number; repositoryDigest: string }>;
+    };
+    expect(report.selectors).toMatchObject({
+      runtime: bareLegacyRuntime,
+      console: bareLegacyConsole,
+    });
+    expect(report.services).toContainEqual(expect.objectContaining({
+      service: 'migrator', status: 'exited', exitCode: 0, repositoryDigest: current,
+    }));
+
+    const promoteArgs = [
+      'bootstrap-production-legacy', ...common,
+      '--rollback-baseline', value.currentBaseline,
+      '--rollback-baseline-sha256', currentBaselineSha,
+      '--legacy-fleet-snapshot', snapshot,
+      '--legacy-fleet-snapshot-sha256', snapshotSha,
+      '--backup-env-file', backup,
+    ];
+    const killed = await sigkillAtBarrier(value, promoteArgs, 'two-selector-after-replace');
+    expect(killed.signal).toBe('SIGKILL');
+    const promoted = run(value, promoteArgs);
+    expect(promoted.status, promoted.stderr).toBe(0);
+    expect(await readFile(backup, 'utf8')).toBe(twoSelectors);
+    const selected = await readFile(value.envFile, 'utf8');
+    expect(selected).toContain(`CAUCE_RUNTIME_IMAGE=${current}\n`);
+    expect(selected).toContain(`CAUCE_CONSOLE_IMAGE=${currentConsole}\n`);
+    expect(selected).toContain(`CAUCE_ROLLBACK_BASELINE_FILE=${value.currentBaseline}\n`);
+  });
+
+  test('legacy fleet capture fails closed when a bare selector no longer resolves to its authorized image', async () => {
+    const value = await fixture();
+    const complete = await readFile(value.envFile, 'utf8');
+    const twoSelectors = complete
+      .replace(current, bareLegacyRuntime)
+      .replace(currentConsole, bareLegacyConsole)
+      .split('\n')
+      .filter((line) => !line.startsWith('CAUCE_COMPOSE_OVERRIDE_MANIFEST=')
+        && !line.startsWith('CAUCE_COMPOSE_OVERRIDE_MANIFEST_SHA256=')
+        && !line.startsWith('CAUCE_ROLLBACK_BASELINE_')
+        && !line.startsWith('CAUCE_ROLLBACK_WRITER_SNAPSHOT_'))
+      .join('\n');
+    await writeFile(value.envFile, twoSelectors, { mode: 0o600 });
+    const snapshot = join(value.directory, 'rejected-legacy-fleet.json');
+    const captured = run(value, [
+      'capture-production-legacy', '--env-file', value.envFile,
+      '--expected-env-sha256', sha256(twoSelectors),
+      '--runtime-image', current, '--console-image', currentConsole,
+      '--override-manifest', value.currentManifest,
+      '--override-manifest-sha256', currentManifestSha,
+      '--output', snapshot,
+    ], { CAUCE_TEST_RUNTIME_TAG_ID: `sha256:${'0'.repeat(64)}` });
+    expect(captured.status).toBe(1);
+    expect(captured.stderr).toContain('legacy selector images differ');
+    await expect(readFile(snapshot)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   test('two-selector bootstrap rejects stale, partial, mutable-target and concurrent mutation safely', async () => {

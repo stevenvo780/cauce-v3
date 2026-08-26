@@ -6,7 +6,7 @@ ENV_PROD ?= config/prod.env
 ARTIFACT_DIR ?= artifacts
 
 .PHONY: help test test-contract test-doubles test-real test-compose test-compose-authentic test-runtime-authentic test-restarts test-container-supervisor test-container-reaping test-container-cutover smoke-cli smoke-adapters validate manifest verify-manifest \
-	dev-up dev-down dev-health prod-up prod-down prod-health migrate backup restore manifests release-build release-gate release-bootstrap-legacy release-bootstrap-two-selector release-bootstrap-manifest-sha release-capture-writer-snapshot release-bootstrap-writer-snapshot release-deploy-preflight release-deploy release-rotate-writer-snapshot release-console release-console-rollback release-console-verify
+	dev-up dev-down dev-health prod-up prod-down prod-health migrate backup restore manifests release-build release-gate release-bootstrap-legacy release-bootstrap-production-legacy release-bootstrap-two-selector release-bootstrap-manifest-sha release-capture-writer-snapshot release-bootstrap-writer-snapshot release-deploy-preflight release-deploy release-rotate-writer-snapshot release-console release-console-rollback release-console-verify
 
 help: ## Lista objetivos
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_.-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -105,6 +105,20 @@ release-bootstrap-two-selector: ## Migra atomicamente un selector fragmentado de
 	    --rollback-baseline "$${CAUCE_BOOTSTRAP_ROLLBACK_BASELINE:?definir CAUCE_BOOTSTRAP_ROLLBACK_BASELINE}" \
 	    --rollback-baseline-sha256 "$${CAUCE_BOOTSTRAP_ROLLBACK_BASELINE_SHA256:?definir CAUCE_BOOTSTRAP_ROLLBACK_BASELINE_SHA256}" \
 	    --backup-env-file "$${CAUCE_BOOTSTRAP_BACKUP_ENV_FILE:?definir CAUCE_BOOTSTRAP_BACKUP_ENV_FILE}"
+
+release-bootstrap-production-legacy: ## Captura el mosaico real y migra 2→8 bajo lock, sin inventar bridge
+	@manifest="$${CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST:?definir CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST}"; \
+	  overrides="$$(dirname -- "$$manifest")"; \
+	  python3 ./scripts/create-inactive-override-manifest.py \
+	    --overrides-dir "$$overrides" --output "$$manifest" --expected-yaml-count 7 \
+	    --active telegram-bridge.active.yaml \
+	    --active store-fanin.yaml \
+	    --active terminal-minrows.yaml \
+	    --active directiva-20260825.yaml; \
+	  manifest_sha="sha256:$$(sha256sum "$$manifest" | cut -d' ' -f1)"; \
+	  CAUCE_BOOTSTRAP_OVERRIDE_MANIFEST_SHA256="$$manifest_sha" \
+	  CAUCE_ENV_FILE="$${CAUCE_ENV_FILE:-$(ENV_PROD)}" \
+	    ./scripts/deploy-release.sh bootstrap-production-legacy
 
 release-bootstrap-manifest-sha: ## Migra atomicamente un selector legacy de 5 a 6 campos
 	@python3 ./scripts/pin-production-release.py bootstrap-manifest-sha \
