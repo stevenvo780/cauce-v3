@@ -2,8 +2,8 @@
 set -euo pipefail
 
 readonly BASE_COMMIT='79d6d8f1eae00e733bf2aeddaffeb592e5944687'
-readonly PATCH_SHA256='76cb78aeea04ade9022593d18b2281b5d828711acf17f84fb4e6e419c1f4510a'
-readonly RESULT_TREE='cd97103c333d9b7c9cf8efbd9da1bfea0ac836f9'
+readonly PATCH_SHA256='b782f27857ebb688228bf958beaddb01a7f05af546267c8c10fccd604414283f'
+readonly RESULT_TREE='c43adddfb54d26d6fc88b334613669d66fa0a656'
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repository=$(git -C "$script_dir/../.." rev-parse --show-toplevel)
@@ -116,14 +116,5 @@ pnpm exec vitest run \
 pnpm --filter @cauce/dispatcher test
 pnpm --filter @cauce/adapter-sdk exec node --test --import tsx test/engine.test.ts
 
-# The frozen 031 migration intentionally contains one final empty line.  Its
-# byte identity is part of the accredited schema contract, so admit only this
-# exact diagnostic while continuing to fail on every other whitespace defect.
-whitespace_diagnostics=$(git diff --cached --check 2>&1 || true)
-readonly EXPECTED_WHITESPACE_DIAGNOSTIC='packages/store/migrations/031_connection_session_fencing.sql:13: new blank line at EOF.'
-[[ "$whitespace_diagnostics" == "$EXPECTED_WHITESPACE_DIAGNOSTIC" ]] || {
-  printf 'rollback bridge whitespace diagnostics differ from the frozen source exception:\n%s\n' \
-    "$whitespace_diagnostics" >&2
-  exit 1
-}
+git diff --cached --check
 printf 'rollback bridge source verification passed: tree=%s\n' "$tree"

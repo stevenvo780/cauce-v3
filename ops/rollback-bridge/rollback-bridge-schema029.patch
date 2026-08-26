@@ -4207,7 +4207,7 @@ new file mode 100644
 index 0000000..26f6fa1
 --- /dev/null
 +++ b/packages/store/migrations/031_connection_session_fencing.sql
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,12 @@
 +-- Fence every live transport connection independently from the durable execution epoch.
 +--
 +-- Renewable consumers deliberately keep (instance_id, epoch) across a reconnect so their
@@ -4220,7 +4220,6 @@ index 0000000..26f6fa1
 +
 +COMMENT ON COLUMN connection_leases.connection_token IS
 +  'Ephemeral per-hello fence. Rotated for every acquired/resumed connection; never an identity or execution epoch.';
-+
 diff --git a/packages/store/migrations/032_terminal_session_claim_fencing.sql b/packages/store/migrations/032_terminal_session_claim_fencing.sql
 new file mode 100644
 index 0000000..284ad9c

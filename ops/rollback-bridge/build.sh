@@ -2,8 +2,8 @@
 set -euo pipefail
 
 readonly BASE_COMMIT='79d6d8f1eae00e733bf2aeddaffeb592e5944687'
-readonly PATCH_SHA256='76cb78aeea04ade9022593d18b2281b5d828711acf17f84fb4e6e419c1f4510a'
-readonly RESULT_TREE='cd97103c333d9b7c9cf8efbd9da1bfea0ac836f9'
+readonly PATCH_SHA256='b782f27857ebb688228bf958beaddb01a7f05af546267c8c10fccd604414283f'
+readonly RESULT_TREE='c43adddfb54d26d6fc88b334613669d66fa0a656'
 
 if [[ $# -ne 1 ]]; then
   printf 'usage: %s OUTPUT.tar\n' "$0" >&2
