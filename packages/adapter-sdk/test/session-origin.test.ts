@@ -183,20 +183,23 @@ test("OpenClaw mueve el pointer estable a la conversación humana real sin colap
   const pointerKey = "openclaw:jarvis:shared:jarvis";
   const first = store.getSession(pointerKey);
   assert.ok(first);
-  assert.deepEqual(first.origin, {
-    adapter: "telegram", channel: "telegram", conversation_id: "8981434475",
-  });
+  assert.deepEqual(Object.keys(first).sort(), ["initialized", "native_id"]);
 
   await engine.handleDelivery(consoleDelivery("oc-console"));
   const second = store.getSession(pointerKey);
   assert.ok(second);
-  assert.notEqual(second.native_id, first.native_id, "el pointer cambia de conversación nativa");
-  assert.deepEqual(second.origin, {
-    adapter: "console", channel: "console", conversation_id: "operator:Steven:kant",
-  });
+  assert.notEqual(second.native_id, first?.native_id, "el pointer cambia de conversación nativa");
+  assert.deepEqual(Object.keys(second).sort(), ["initialized", "native_id"]);
   const persisted = JSON.parse(
     await readFile(resolve(root, nombre, "sessions.json"), "utf8"),
   ) as { sessions: Record<string, unknown> };
   assert.equal(Object.keys(persisted.sessions).length, 3, "dos conversaciones más un pointer, sin colapsarlas");
+  const sources = Object.entries(persisted.sessions)
+    .filter(([key]) => key !== pointerKey)
+    .map(([, value]) => value as { origin?: unknown });
+  assert.deepEqual(sources.map((source) => source.origin), [
+    { adapter: "telegram", channel: "telegram", conversation_id: "8981434475" },
+    { adapter: "console", channel: "console", conversation_id: "operator:Steven:kant" },
+  ]);
   assert.equal(events.filter((event) => event.phase === "done").length, 2);
 });

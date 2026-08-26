@@ -841,6 +841,12 @@ export function isCanonicalOpenCodeSessionId(value: string): boolean {
   return /^ses_[A-Za-z0-9_-]{4,124}$/u.test(value);
 }
 
+function canonicalOpenClawTerminalKey(alias: string): string | undefined {
+  return /^[a-z][a-z0-9_-]{0,63}$/u.test(alias)
+    ? `openclaw:${alias}:shared:${alias}`
+    : undefined;
+}
+
 function unavailableCanonicalOpenCodeSession(
   reason: "missing" | "ambiguous" | "invalid",
 ): CanonicalOpenCodeSessionPointer {
@@ -1791,11 +1797,113 @@ export class DurableStore {
 
   async setSession(key: string, record: SessionRecord): Promise<void> {
     await this.serialized(async () => {
-      this.sessions = validateSessionsFile({
+      const next = validateSessionsFile({
         version: 1,
         sessions: { ...this.sessions.sessions, [key]: record },
       });
-      await this.atomicWrite("sessions.json", this.sessions);
+      await this.atomicWrite("sessions.json", next);
+      this.sessions = next;
+    });
+  }
+
+  /**
+   * Confirma una sesión nativa OpenClaw y publica en el MISMO rename el selector que consume la
+   * TUI de terminal.
+   *
+   * La entrada fuente conserva `origin` para que las herramientas operativas puedan distinguir
+   * conversaciones. El pointer fijo, en cambio, contiene sólo el identificador nativo opaco y el
+   * bit de inicialización: copiar el `conversation_id` ahí duplicaba un identificador de usuario
+   * sin que el consumidor lo necesitara. Una sola escritura evita que un reinicio deje publicada
+   * una sesión que todavía figura como no inicializada, o viceversa.
+   */
+  async setCanonicalOpenClawTerminalSession(
+    alias: string,
+    sourceKey: string,
+    record: SessionRecord,
+  ): Promise<void> {
+    const pointerKey = canonicalOpenClawTerminalKey(alias);
+    if (pointerKey === undefined || !sourceKey.startsWith(`openclaw:${alias}:`)) {
+      throw new Error("Invalid canonical OpenClaw terminal session scope");
+    }
+    if (record.initialized !== true) {
+      throw new Error("Canonical OpenClaw terminal session must be initialized");
+    }
+    await this.serialized(async () => {
+      const pointer: SessionRecord = {
+        native_id: record.native_id,
+        initialized: true,
+      };
+      const next = validateSessionsFile({
+        version: 1,
+        sessions: {
+          ...this.sessions.sessions,
+          [sourceKey]: record,
+          [pointerKey]: pointer,
+        },
+      });
+      await this.atomicWrite("sessions.json", next);
+      this.sessions = next;
+    });
+  }
+
+  /**
+   * Repara el pointer OpenClaw bajo la lease estable del alias, antes de conectar al relay.
+   *
+   * Un pointer ya publicado es la única selección canónica y sobrevive reinicios. Para stores
+   * anteriores a este contrato sólo se adopta automáticamente una sesión humana cuando existe
+   * exactamente una; con cero o varias se deja ausente para no convertir `mtime` ni el orden del
+   * JSON en una elección de conversación inventada. El siguiente turno humano válido lo publica.
+   */
+  async reconcileCanonicalOpenClawTerminalSession(alias: string): Promise<boolean> {
+    const pointerKey = canonicalOpenClawTerminalKey(alias);
+    if (pointerKey === undefined) {
+      throw new Error("Invalid canonical OpenClaw terminal session scope");
+    }
+    return this.serialized(async () => {
+      await recoverAtomicArtifacts(
+        this.directory,
+        ["sessions.json"],
+        this.directoryFsync,
+      );
+      this.sessions = await readSessionsSecure(this.path("sessions.json"));
+
+      const current = this.sessions.sessions[pointerKey];
+      if (current?.initialized === true) {
+        // Los primeros writers copiaban también `origin`. Se corrige in-place sin cambiar la
+        // sesión seleccionada ni revelar el valor en errores o logs.
+        if (current.origin !== undefined) {
+          const next = validateSessionsFile({
+            version: 1,
+            sessions: {
+              ...this.sessions.sessions,
+              [pointerKey]: { native_id: current.native_id, initialized: true },
+            },
+          });
+          await this.atomicWrite("sessions.json", next);
+          this.sessions = next;
+        }
+        return true;
+      }
+
+      const prefix = `openclaw:${alias}:`;
+      const candidates = Object.entries(this.sessions.sessions).filter(([key, candidate]) => (
+        key.startsWith(prefix)
+        && key !== pointerKey
+        && !key.endsWith(".agent-lane")
+        && candidate.initialized === true
+      ));
+      const sessions = { ...this.sessions.sessions };
+      delete sessions[pointerKey];
+      if (candidates.length === 1) {
+        const candidate = candidates[0]![1];
+        sessions[pointerKey] = { native_id: candidate.native_id, initialized: true };
+      }
+      const next = validateSessionsFile({ version: 1, sessions });
+      if (JSON.stringify(next) !== JSON.stringify(this.sessions)) {
+        await this.atomicWrite("sessions.json", next);
+        this.sessions = next;
+      }
+      return candidates.length === 1;
     });
   }
 

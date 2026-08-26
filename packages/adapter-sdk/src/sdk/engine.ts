@@ -72,8 +72,6 @@ const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
 const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
 const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 const MAX_AGENT_EXECUTION_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
-const OPENCLAW_FALLBACK_SESSION_KEY = "alias-default";
-
 /**
  * Techo absoluto de la espera en el candado de sesión, medido desde que la entrega se acepta.
  *
@@ -660,22 +658,6 @@ export class AdapterEngine {
           signal: controller.signal,
           onRuntimeProfileConsumed: (profile) => { consumedProfile = profile; },
         });
-        await this.publishOpenClawTerminalPointer(
-          delivery,
-          session,
-          session.sessionLane ?? "human",
-        ).catch((error: unknown) => {
-          // Observation must never turn a completed harness side effect into an ambiguous retry.
-          // The PTY fails closed (no pointer => no TUI); the delivery itself keeps its real result.
-          this.logger({
-            event: "shared_session_degraded",
-            delivery_id: delivery.delivery_id,
-            alias: delivery.recipient_alias,
-            reason: "openclaw_terminal_pointer_failed",
-            error_code: error instanceof Error ? error.name : "unknown",
-            timestamp: this.clock.now().toISOString(),
-          });
-        });
       }
       if (controller.signal.aborted) {
         throw controller.signal.reason instanceof Error
@@ -746,30 +728,6 @@ export class AdapterEngine {
       },
     );
     await this.publishLifecycleEvent(done.event);
-  }
-
-  /**
-   * Publish a stable, non-secret pointer for the read-only OpenClaw TUI.
-   *
-   * The harness keeps one durable mapping per authenticated conversation. The PTY cannot guess
-   * that hash, so after a human turn finishes we mirror the exact mapping to a fixed key. This
-   * does not collapse conversations and does not restart either process; every PTY OPEN rereads
-   * the fixed key and therefore follows a channel switch on the next attach.
-   */
-  private async publishOpenClawTerminalPointer(
-    delivery: Delivery,
-    session: HarnessSessionRequestScope,
-    lane: SessionLane,
-  ): Promise<void> {
-    if (this.harness.definition.id !== "openclaw" || lane !== "human") return;
-    const base = session.sessionKey ?? OPENCLAW_FALLBACK_SESSION_KEY;
-    const source = `openclaw:${delivery.recipient_alias}:${base}`;
-    const record = this.store.getSession(source);
-    if (record === undefined) return;
-    await this.store.setSession(
-      `openclaw:${delivery.recipient_alias}:shared:${delivery.recipient_alias}`,
-      record,
-    );
   }
 
   /**

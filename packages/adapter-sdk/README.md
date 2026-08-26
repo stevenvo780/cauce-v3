@@ -102,6 +102,29 @@ observed returning 404. A legacy configuration has this shape:
 
 API URLs are restricted to loopback HTTP(S), the exact `/v1/chat/completions` path, no redirects and no URL credentials/query/fragment. The `0600` bearer token reloads per request. A durable native session ID is sent as OpenAI `user`; cancellation and timeout abort HTTP. API mode requires both `api_url` and `token_file` paths.
 
+#### Canonical OpenClaw terminal session
+
+After a valid human-lane OpenClaw turn adopts its generated native session, the adapter writes the
+conversation mapping and the terminal selector in one atomic `sessions.json` replacement. The
+selector key is `openclaw:<alias>:shared:<alias>` and its value has exactly
+`{native_id, initialized}`. It deliberately omits `origin`: channel and conversation identifiers
+remain only on their source mappings and are not duplicated into the PTY contract. Agent-lane
+sessions never move the selector. Multiple human conversations remain separate; the most recently
+completed human turn becomes the selector without deleting or merging any other mapping.
+
+The state path is the configured `state_directory`, not `$HOME`, `OPENCLAW_HOME` or the OpenClaw
+installation directory. This keeps container homes and `/home/claw/.openclaw` installs compatible
+as long as the adapter and terminal agent mount the same owner-only state directory. The file is
+written `0600` inside the SDK's `0700` directory using rename plus directory fsync.
+
+On every OpenClaw adapter restart, reconciliation runs only after the stable-alias consumer lease
+is acquired. An existing initialized selector is preserved (and old copies containing `origin` are
+sanitized). A legacy store with exactly one initialized non-agent session is adopted. With no
+session, corrupt or insecure state, or multiple legacy candidates, the adapter does not guess:
+startup either leaves the selector absent or fails closed. Terminal capability consumers must
+therefore require a valid initialized selector in addition to an installed `tui --session` binary;
+binary discovery alone is not proof that an attachable OpenClaw session exists.
+
 ### Historical OpenCode compatibility for Kant
 
 Kant has used the Codex harness in the live fleet since the 2026-07-23 cutover.

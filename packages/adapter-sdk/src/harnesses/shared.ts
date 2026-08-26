@@ -1071,11 +1071,22 @@ export class HarnessAdapter {
         ? {}
         : { origin: request.sessionOrigin };
       if (this.definition.sessionStrategy.kind === "generated" && session.nativeId !== undefined) {
-        await this.store.setSession(this.sessionStoreKey(effectiveSessionKey), {
+        const record = {
           native_id: session.nativeId,
           initialized: true,
           ...origin,
-        });
+        };
+        if (this.definition.id === "openclaw"
+          && this.sessionNamespace !== undefined
+          && request.sessionLane !== "agent") {
+          await this.store.setCanonicalOpenClawTerminalSession(
+            this.sessionNamespace,
+            this.sessionStoreKey(effectiveSessionKey),
+            record,
+          );
+        } else {
+          await this.store.setSession(this.sessionStoreKey(effectiveSessionKey), record);
+        }
       }
       if (this.definition.sessionStrategy.kind === "observed" && parsed.nativeSessionId !== undefined) {
         if (this.canonicalOpenCodeSession) {

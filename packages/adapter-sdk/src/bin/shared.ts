@@ -205,9 +205,12 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     runtime.openClaw?.transport,
   );
   const canonicalOpenCodeSession = harnessId === "opencode" && runtime.alias === "kant";
+  const canonicalOpenClawTerminalSession = harnessId === "openclaw";
   const store = await DurableStore.open(
     runtime.stateDirectory,
-    canonicalOpenCodeSession ? { deferSessions: true } : {},
+    canonicalOpenCodeSession || canonicalOpenClawTerminalSession
+      ? { deferSessions: true }
+      : {},
   );
   const baseRunner = harnessId === "openclaw" && runtime.openClaw?.transport === "api"
     ? new OpenClawApiRunner({
@@ -260,8 +263,17 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     }),
     store,
     harness,
-    ...(canonicalOpenCodeSession
-      ? { onLeaseAcquired: () => store.reconcileCanonicalOpenCodeSession().then(() => undefined) }
+    ...(canonicalOpenCodeSession || canonicalOpenClawTerminalSession
+      ? {
+          onLeaseAcquired: async () => {
+            if (canonicalOpenCodeSession) {
+              await store.reconcileCanonicalOpenCodeSession();
+            }
+            if (canonicalOpenClawTerminalSession) {
+              await store.reconcileCanonicalOpenClawTerminalSession(runtime.alias);
+            }
+          },
+        }
       : {}),
     onError: (code) => process.stderr.write(`${code}: adapter retry\n`),
     logger,
