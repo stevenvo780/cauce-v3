@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tenantAgents } from './fleet.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -18,13 +19,7 @@ if (mockMode === liveMode) {
 const artifactFlag = args.indexOf('--artifact-dir');
 const artifactDir = path.resolve(artifactFlag >= 0 ? args[artifactFlag + 1] : path.join(here, '..', 'artifacts'));
 
-const tenants = {
-  steven: ['jarvis', 'kant', 'socrates', 'argos'],
-  miguel: ['kratos', 'janus'],
-  isa: ['salva'],
-  jhon: ['hegel'],
-  pablo: ['dedalo', 'midas', 'seneca', 'vulcano'],
-};
+const tenants = tenantAgents;
 const kinds = ['Hermes', 'OpenCode', 'ClaudeCode', 'Codex'];
 const retryWaitMs = Number(process.env.CAUCE_RETRY_WAIT_MS || 120);
 const presenceLeaseMs = Number(process.env.CAUCE_PRESENCE_LEASE_MS || 1200);
@@ -206,7 +201,7 @@ async function main() {
           assert.equal(presence.data.harnessKind, kind);
         }
       }
-      assert.equal(clients.length, 14);
+      assert.equal(clients.length, Object.values(tenants).flat().length);
       assert.deepEqual(new Set(kinds), new Set(['Hermes', 'OpenCode', 'ClaudeCode', 'Codex']));
       await Promise.all(clients.map((client) => client.close()));
     }],
@@ -258,9 +253,9 @@ async function main() {
     }],
 
     ['idempotency key suppresses duplicate delivery', async () => {
-      const recipient = await connect(context, 'pablo', 'seneca', 'Codex');
+      const recipient = await connect(context, 'steven', 'socrates', 'Codex');
       const idempotencyKey = unique('stable');
-      const request = { tenant: 'pablo', originAgent: 'dedalo', recipientAgent: 'seneca', idempotencyKey };
+      const request = { tenant: 'steven', originAgent: 'jarvis', recipientAgent: 'socrates', idempotencyKey };
       const first = await postMessage(context, request);
       const duplicate = await postMessage(context, request);
       assert.equal(first.status, 202);
@@ -317,7 +312,7 @@ async function main() {
           checked += 1;
         }
       }
-      assert.equal(checked, 25);
+      assert.equal(checked, entries.length ** 2);
     }],
 
     ['zero-recipient request returns no_route', async () => {
@@ -328,8 +323,8 @@ async function main() {
     }],
 
     ['retry exhaustion moves delivery to DLQ', async () => {
-      const recipient = await connect(context, 'pablo', 'vulcano');
-      const sent = await postMessage(context, { tenant: 'pablo', originAgent: 'midas', recipientAgent: 'vulcano' });
+      const recipient = await connect(context, 'miguel', 'janus');
+      const sent = await postMessage(context, { tenant: 'miguel', originAgent: 'kratos', recipientAgent: 'janus' });
       const attempts = [];
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         const frame = await recipient.next((message) => message.type === 'message' && message.messageId === sent.data.messageId);
@@ -337,7 +332,7 @@ async function main() {
       }
       assert.deepEqual(attempts, [1, 2, 3]);
       const item = await waitUntil(async () => {
-        const dlq = await api(context, 'GET', '/v3/dlq/pablo', undefined, 200);
+        const dlq = await api(context, 'GET', '/v3/dlq/miguel', undefined, 200);
         return dlq.data.items.find((entry) => entry.messageId === sent.data.messageId);
       });
       assert.equal(item.reason, 'ack_timeout');
@@ -347,10 +342,10 @@ async function main() {
 
     ['lane scheduler prioritizes without starving bulk', async () => {
       if (context.faultMode !== 'mock-control') throw new SkipError('requires mock dispatch control endpoint');
-      const recipient = await connect(context, 'pablo', 'midas');
+      const recipient = await connect(context, 'steven', 'kant');
       await api(context, 'POST', '/__control/dispatch', { paused: true }, 200);
       const lanes = ['bulk', 'bulk', 'bulk', 'bulk', 'normal', 'normal', 'interactive', 'interactive', 'control'];
-      for (const lane of lanes) await postMessage(context, { tenant: 'pablo', originAgent: 'dedalo', recipientAgent: 'midas', lane, payload: { lane } });
+      for (const lane of lanes) await postMessage(context, { tenant: 'steven', originAgent: 'socrates', recipientAgent: 'kant', lane, payload: { lane } });
       await api(context, 'POST', '/__control/dispatch', { paused: false }, 200);
       const observed = [];
       for (let index = 0; index < lanes.length; index += 1) {

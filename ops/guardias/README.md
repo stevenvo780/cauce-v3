@@ -17,7 +17,6 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | `polidin-guard.sh` | `kratos:~/.local/bin/` | Repone el túnel `ws-zeus:12222 → 10.88.88.31:22` cuando muere |
 | `systemd/*.timer`, `systemd/*.service` | `kratos:~/.config/systemd/user/` | Disparan los dos guardias (credenciales cada 30 min, túnel cada 2 min) |
 | `contenedor/polidin-fwd.sh` | `ws-zeus:/home/dev/` | El túnel en sí; corre **dentro** del contenedor |
-| `cauce-kratos.sh` | `kratos:~/.local/bin/cauce` | El CLI de verdad de la flota |
 | `cauce-envoltorio-local.sh` | `<contenedor>:~/.local/bin/cauce` | Envoltorio que hace el `ssh kratos` por vos |
 | `cauce-huerfanas.sh` | `<contenedor>:~/.local/bin/` | Wrapper compatible del comando canónico `ops/cli/cauce-huerfanas` |
 | `telegram-bridge.override.yaml` | `agora-storage:/etc/cauce-v3/compose-overrides/` | Monta el parche que apaga la redacción de la ingesta |
@@ -68,7 +67,7 @@ Probar el efecto (crea una entrega real y hace correr a hegel):
 install -m755 ops/guardias/cred-guard.py    ~/.local/bin/
 install -m755 ops/guardias/cred-guard.sh    ~/.local/bin/
 install -m755 ops/guardias/polidin-guard.sh ~/.local/bin/
-install -m755 ops/guardias/cauce-kratos.sh  ~/.local/bin/cauce
+install -m755 ops/cli/cauce  ~/.local/bin/cauce   # fuente única del CLI (1.138 líneas reales)
 install -m644 ops/guardias/systemd/*        ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now cred-guard.timer polidin-guard.timer

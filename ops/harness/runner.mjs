@@ -8,6 +8,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
+import { topology } from './fleet.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -125,13 +126,6 @@ async function shutdownSocket(socket, graceful = true) {
   }
 }
 
-const topology = {
-  Steven: { room: 'grp.steven', aliases: ['argos', 'jarvis', 'kant', 'socrates', 'zeus'] },
-  Miguel: { room: 'grp.miguel', aliases: ['atlas', 'iza', 'janus', 'kratos'] },
-  Isa: { room: 'grp.isa', aliases: ['salva'] },
-  Jhon: { room: 'grp.jhon', aliases: ['hegel'] },
-  Pablo: { room: 'grp.pablo', aliases: ['dedalo', 'midas', 'seneca', 'vulcano'] },
-};
 const harnessKinds = ['hermes', 'opencode', 'claude', 'codex'];
 const allIdentities = Object.entries(topology).flatMap(([tenant, value]) =>
   value.aliases.map((alias) => ({ tenant, alias, room: value.room })));

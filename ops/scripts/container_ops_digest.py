@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 
-STATIC_INPUTS = (
+OPERATIONS_SOURCES = (
     "container-aliases.json",
     "scripts/container-adapter-supervisor.sh",
     "scripts/alias-runner.sh",
@@ -116,7 +116,7 @@ def tracked_tree_files(root: pathlib.Path) -> set[pathlib.Path] | None:
 
 
 def operational_files(root: pathlib.Path, generated: pathlib.Path, *, rootless: bool = False) -> list[pathlib.Path]:
-    files = [root / relative for relative in (*STATIC_INPUTS, *OPERATIONAL_ROOT_FILES)]
+    files = [root / relative for relative in (*OPERATIONS_SOURCES, *OPERATIONAL_ROOT_FILES)]
     tracked = tracked_tree_files(root)
     for relative in OPERATIONAL_TREES:
         tree = root / relative

@@ -2,6 +2,7 @@
 
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { tenantAgents } from './fleet.mjs';
 
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 8080);
@@ -9,13 +10,6 @@ const presenceLeaseMs = Number(process.env.PRESENCE_LEASE_MS || 1200);
 const ackTimeoutMs = Number(process.env.ACK_TIMEOUT_MS || 120);
 const maxAttempts = Number(process.env.MAX_DELIVERY_ATTEMPTS || 3);
 
-const tenantAgents = {
-  steven: ['jarvis', 'kant', 'socrates', 'argos'],
-  miguel: ['kratos', 'janus'],
-  isa: ['salva'],
-  jhon: ['hegel'],
-  pablo: ['dedalo', 'midas', 'seneca', 'vulcano'],
-};
 const knownAgents = new Map(Object.entries(tenantAgents).flatMap(([tenant, agents]) => agents.map((agent) => [agent, tenant])));
 const laneCycle = ['control', 'interactive', 'interactive', 'normal', 'normal', 'normal', 'bulk'];
 

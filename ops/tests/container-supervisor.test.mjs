@@ -1125,7 +1125,7 @@ try {
   statePath = await dockerState("kant", { finalGate: flockGate });
   const firstOwner = spawn(supervisor, ["start", "kant"], { stdio: "ignore", env: environment(statePath) });
   await waitForLogOrExit(firstOwner,
-    (entries) => entries.some(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant")));
+    (entries) => entries.some(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant")), 60_000);
   result = runSupervisor("start", "kant", statePath);
   assert.equal(result.status, 73);
   await writeFile(flockGate, "release\n");

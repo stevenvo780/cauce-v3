@@ -4,8 +4,9 @@
 # Reemplaza a: ia, ia-ver, ia-tui, ia-tui-session, cauce-attach, cauce-estado.
 # La regla: `cauce <alias>` hace LO CORRECTO sin que tengas que elegir entre variantes.
 #
-# ESTE FICHERO ES LA FUENTE. Se instala en kratos como ~/.local/bin/cauce
-# mediante `ops/scripts/install-cauce-cli.sh`.
+# ESTE FICHERO ES LA FUENTE. Se instala en kratos como ~/.local/bin/cauce.
+# Vivió catorce meses sólo en el home de stev y por eso nadie podía revisarlo ni revertirlo;
+# ahora se edita acá y se instala con `ops/scripts/install-cauce-cli.sh`.
 #
 # MODO COMPARTIDA: `cauce <alias>` abre la TUI REAL del harness (claude o codex) dentro de una
 # sesión tmux que el adaptador también usa para los turnos del bus. No es un cliente de línea que
@@ -71,19 +72,80 @@ helper_en_contenedor() {  # $1=alias
   printf '/opt/cauce-v3-adapter/%s/releases/%s/packages/adapter-sdk/dist/src/bin/shared-session.js\n' "$1" "$release"
 }
 
+# El directorio de credenciales que el .env del alias declara para su harness, ya con el NOMBRE de
+# variable que ese harness entiende. Es la MISMA clave (`CREDENTIAL_HOME`) y la misma traducción que
+# hace el supervisor en `container-adapter-supervisor.sh:571`; no hay una segunda fuente.
+#
+# Por qué existe (medido 2026-08-13 sobre atlas): el panel de la TUI y el adaptador son los DOS
+# creadores posibles de la sesión tmux, y el que gana la carrera le impone su entorno al servidor
+# para siempre. El adaptador nacía con `CODEX_HOME=/home/dev/.codex/cuenta-b` (de su .env) y el panel
+# que crea este CLI nacía sin la variable, así que `harnessConfigDirectory()` le devolvía el default
+# `/home/dev/.codex`. Resultado: el codex vivo escribía sus rollouts en un home y el adaptador tenía
+# apuntado un thread del otro — `thread/resume: no rollout found for thread id ...`, un turno entero
+# perdido, y volvía a pasar en cada recreación del panel.
+#
+# Vacío cuando el alias no declara la clave: ahí el panel hereda el default del harness, que es el
+# comportamiento de siempre para los demás alias (hoy sólo atlas la declara).
+credencial_env_de() {  # $1=alias $2=harness  -> "VAR=valor", o nada
+  local h
+  h=$(sed -n 's/^CREDENTIAL_HOME=//p' "$CONFIG/$1.env" 2>/dev/null | head -1)
+  [ -n "$h" ] || return 0
+  case "$2" in
+    codex)  printf 'CODEX_HOME=%s\n' "$h" ;;
+    claude) printf 'CLAUDE_CONFIG_DIR=%s\n' "$h" ;;
+  esac
+}
+
+# 2026-08-19 (zeus): el modo de permisos del panel de claude. Mismo motivo que la credencial de
+# arriba —el `docker exec` no hereda el entorno del supervisor—, con un agravante: el panel tiene
+# DOS creadores posibles (este CLI y el adaptador) y el que gana la carrera le impone su linea de
+# arranque a la sesion. En un `cauce <alias> on` gana SIEMPRE el CLI, asi que sin esto el panel
+# nace con `--continue` a secas aunque el `.env` del alias pida el modo, y `--continue` restaura el
+# modo guardado en la conversacion: el alias se queda para siempre en el que nacio.
+modo_permisos_de() {  # $1=alias $2=harness  -> "VAR=valor", o nada
+  local m
+  [ "$2" = claude ] || return 0
+  m=$(sed -n 's/^CLAUDE_PERMISSION_MODE=//p' "$CONFIG/$1.env" 2>/dev/null | head -1)
+  [ -n "$m" ] || return 0
+  printf 'CAUCE_CLAUDE_PERMISSION_MODE=%s\n' "$m"
+}
+
 # `ensure|status` de la sesión compartida, ejecutado dentro del contenedor como el usuario del alias.
 sesion() {  # $1=accion $2=alias $3=contenedor $4=usuario $5=harness
-  local helper ws
+  local helper ws panel cred modo
+  local -a env_cred=()
   helper=$(helper_en_contenedor "$2") || return 3
   if es_host_native "$2"; then
     [ -f "$helper" ] || return 3
+    # `ensure` de un alias host-native va por SU PANEL, no por el helper del SDK. Dos motivos, los
+    # dos medidos el 2026-08-06 sobre kant: (1) el helper toma el CODEX_HOME del shell que ejecuta
+    # `cauce`, asi que un `cauce kant on` escrito en fish le impuso a kant el home de la flota y
+    # arranco donde su conversacion no existia; (2) el helper arranca el harness EN BLANCO, asi que
+    # aunque el home fuera el bueno el contexto se perdia igual. El panel fija el home correcto y
+    # reanuda. Es idempotente: si la sesion ya existe, no la toca.
+    if [ "$1" = ensure ]; then
+      panel=$(systemctl --user show "cauce-v3-tmux-$2.service" -p ExecStart --value 2>/dev/null \
+              | sed -n 's/.*path=\([^ ;]*\).*/\1/p' | head -1)
+      if [ -n "$panel" ] && [ -x "$panel" ]; then
+        "$panel"
+        return $?
+      fi
+    fi
     ws=$(systemctl --user show "cauce-v3-host-$2.service" -p Environment --value 2>/dev/null \
          | tr ' ' '\n' | sed -n 's/^CAUCE_SHARED_SESSION_WORKSPACE=//p' | head -1)
+    modo=$(modo_permisos_de "$2" "$5")
+    [ -n "$modo" ] && export CAUCE_CLAUDE_PERMISSION_MODE="${modo#*=}"
     node "$helper" "$1" --alias "$2" --harness "$5" --workspace "${ws:-$HOME}"
     return $?
   fi
   docker exec --user "$4" "$3" test -f "$helper" || return 3
-  docker exec --user "$4" "$3" node "$helper" "$1" --alias "$2" --harness "$5" --workspace /workspace
+  # El `docker exec` NO hereda el entorno del supervisor: sin este `-e` el helper resuelve el home
+  # del harness con el `process.env` de dentro del contenedor y el panel nace en el sitio equivocado.
+  cred=$(credencial_env_de "$2" "$5")
+  [ -n "$cred" ] && env_cred=(-e "$cred")
+  modo=$(modo_permisos_de "$2" "$5")
+  [ -n "$modo" ] && env_cred+=(-e "$modo")
+  docker exec --user "$4" "${env_cred[@]}" "$3" node "$helper" "$1" --alias "$2" --harness "$5" --workspace /workspace
 }
 
 # Los avisos de caída que quedaron registrados mientras el dueño no estaba mirando.
@@ -108,6 +170,8 @@ ${c_b}cauce${c_reset} — operar la flota Cauce V3
   ${c_b}cauce <alias> estado${c_reset}     detalle de un agente
   ${c_b}cauce <alias> sesiones${c_reset}   que conversaciones tiene y cual comparte
   ${c_b}cauce <alias> on|off${c_reset}     encender / apagar su adaptador
+  ${c_b}cauce <alias> login${c_reset}      renovar su credencial (elige solo claude o codex)
+  ${c_b}cauce <alias> login --ver${c_reset} solo mirar que credencial tiene, sin tocar nada
   ${c_b}cauce ver [alias...]${c_reset}     mirar varios a la vez
 
 Al entrar con ${c_b}cauce <alias>${c_reset} te dice en la cabecera cual de los tres modos te toco:
@@ -124,6 +188,10 @@ cmd_flota() {
   local a line ctr cuser harness ad modo color term
   local -a sin_gateway=()
   for a in $(todos_los_alias); do
+    # Un alias que vive en el VPS no se puede pintar desde aca: su docker y su systemd son otros.
+    # Mostrarlo igual lo dibujaba como "parado" cuando esta perfectamente vivo del otro lado, que
+    # es peor que no mostrarlo. Va en su propia tabla, mas abajo, preguntada al host que si lo ve.
+    [ "$(sitio "$a")" = vps ] && continue
     line=$(alias_info "$a") || continue
     IFS=$'\t' read -r _ _ ctr cuser _ _ harness _ <<<"$line"
     ad=$(adaptador_activo "$a")
@@ -155,6 +223,14 @@ cmd_flota() {
     printf "  ${c_dim}siguen contestando Telegram por el camino embebido, en una conversacion que vos NO ves.${c_reset}\n"
     printf "  ${c_dim}levantar:  systemctl --user start cauce-v3-openclaw-gateway@<alias>${c_reset}\n"
   fi
+  # Los alias que viven en el VPS van en su propia tabla, preguntada al `cauce` de alla, que es el
+  # unico que ve su docker y su systemd. Si el VPS no contesta se dice, no se finge una tabla vacia.
+  if [ -r "$MAPA_HOST" ] && awk '$2=="vps"{f=1} END{exit !f}' "$MAPA_HOST"; then
+    printf "\n  ${c_dim}--- en el VPS (100.64.0.11) ---${c_reset}\n"
+    if ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 vps "U=\$(id -u stev); sudo -u stev XDG_RUNTIME_DIR=/run/user/\$U HOME=/home/stev /home/stev/.local/bin/cauce flota" 2>/dev/null | sed -n '/ALIAS/,/entrar:/p' | grep -v 'entrar:'; then
+      printf "  ${c_err}no pude preguntarle al VPS${c_reset}\n"
+    fi
+  fi
   printf "\n  ${c_dim}entrar:  cauce <alias>      mirar:  cauce <alias> ver${c_reset}\n\n"
 }
 
@@ -170,9 +246,10 @@ openclaw_sesiones() {  # $1=alias $2=contenedor $3=usuario $4=stateDirectory
   docker exec --user "$3" "$2" python3 -c '
 import json, os, subprocess, sys
 alias = sys.argv[1]
-# El stateDirectory viene de container-alias-query.py y NO se deduce del HOME: los alias
-# openclaw lo tienen en <home>/.openclaw/cauce-v3/<alias>, NO en <home>/.local/state/... —
-# con la ruta deducida el CLI lee un fichero inexistente y pinta una sesion huerfana como COMPARTIDA.
+# El stateDirectory REAL viene de container-alias-query.py, no se deduce del HOME: los alias
+# openclaw lo tienen en <home>/.openclaw/cauce-v3/<alias>, no en <home>/.local/state/... Con la
+# ruta deducida el CLI leia un fichero inexistente y mostraba una sesion huerfana que el bus nunca
+# toca, con el cartel verde de COMPARTIDA. Medido el 2026-07-31: solo argos coincidia, por azar.
 state = sys.argv[2]
 home = os.path.expanduser("~")
 
@@ -468,28 +545,55 @@ pids_del_alias() {  # $1=alias -> un PID por linea (vacio = de verdad no hay nad
 cmd_on() {
   local a=$1 u; u=$(unit_del_alias "$a")
   systemctl --user start "$u" || true
-  sleep 6
-  # Tres comprobaciones independientes, porque cada una sola ya mintio alguna vez.
-  local pids tui line ctr cuser harness
+  # El adaptador hace STAGING del bundle (docker cp del release + chmod/chown -R recursivos +
+  # verificacion del binario de claude) ANTES de que exista el proceso real: medido entre 45 y
+  # 75s en un despliegue real. Un `sleep 6` fijo con una sola comprobacion reporta "NO arranco"
+  # sobre un alias que solo esta a mitad de copiar. El operador que le cree o reintenta el on, o
+  # peor: da el alias por muerto y le repone el panel, que le BORRA la conversacion. Se sondea la
+  # CONDICION (el proceso vivo en /proc, no lo que dice systemd) con reintentos hasta un techo
+  # generoso, avisando que sigue esperando para que no parezca colgado.
+  local techo=120 paso=5 transcurrido=0 pids
   pids=$(pids_del_alias "$a" | tr '\n' ' ')
+  if [ -z "${pids// /}" ]; then
+    printf "  ${c_dim}%s arrancando… el staging del bundle puede tardar 45-75s; sondeando hasta %ss${c_reset}\n" "$a" "$techo"
+    while (( transcurrido < techo )); do
+      sleep "$paso"
+      transcurrido=$((transcurrido + paso))
+      pids=$(pids_del_alias "$a" | tr '\n' ' ')
+      [ -n "${pids// /}" ] && break
+      (( transcurrido % 20 == 0 )) && printf "  ${c_dim}%s sigue esperando (%ss/%ss)…${c_reset}\n" "$a" "$transcurrido" "$techo"
+    done
+  fi
+  local line ctr cuser harness
   line=$(alias_info "$a") && IFS=$'\t' read -r _ _ ctr cuser _ _ harness <<<"$line"
   if [ -z "${pids// /}" ]; then
-    printf "  ${c_err}%s NO arranco${c_reset}  (systemd dice: %s)\n" "$a" "$(adaptador_activo "$a")"
-    printf "  ${c_dim}journalctl --user -u %s -n 30 --no-pager${c_reset}\n" "$u"
+    printf "  ${c_err}%s: todavia sin proceso vivo tras %ss${c_reset}  (systemd dice: %s)\n" "$a" "$techo" "$(adaptador_activo "$a")"
+    printf "  ${c_dim}comprobado: ningun proceso con CAUCE_ALIAS=%s (ni cmdline .../cauce-v3-adapter/%s/) en su contenedor/host.${c_reset}\n" "$a" "$a"
+    printf "  ${c_dim}puede seguir en staging si el bundle es grande, o haber fallado de verdad — no asumas que esta muerto:${c_reset}\n"
+    printf "  ${c_dim}  journalctl --user -u %s -n 40 --no-pager${c_reset}\n" "$u"
+    printf "  ${c_dim}  cauce %s estado${c_reset}\n" "$a"
     return 1
   fi
-  printf "  %s proceso vivo: ${c_ok}%s procesos${c_reset} ${c_dim}(PID %s...)${c_reset}\n" \
-    "$a" "$(printf '%s\n' $pids | grep -c .)" "$(printf '%s' "$pids" | cut -d" " -f1)"
+  printf "  %s proceso vivo: ${c_ok}%s procesos${c_reset} ${c_dim}(PID %s...) tras %ss${c_reset}\n" \
+    "$a" "$(printf '%s\n' $pids | grep -c .)" "$(printf '%s' "$pids" | cut -d" " -f1)" "$transcurrido"
   if compartida_configurada "$a"; then
-    # Arrancar el adaptador no crea la TUI: la sesion se crea aparte, y sin ella el preflight
-    # deja al alias en tui_absent. Crearla aca es lo que hace que "on" quiera decir encendido.
-    sesion ensure "$a" "$ctr" "$cuser" "$harness" >/dev/null 2>&1 || true
-    if tui=$(sesion status "$a" "$ctr" "$cuser" "$harness" 2>&1) && \
-       printf '%s' "$tui" | grep -q '"present":true'; then
+    # Misma logica que arriba: la sesion tmux se crea DESPUES del proceso y puede tardar unos
+    # segundos mas en aparecer. `ensure` es idempotente, asi que reintentarlo no hace dano.
+    local s_techo=30 s_paso=3 s_transcurrido=0 tui=''
+    while :; do
+      sesion ensure "$a" "$ctr" "$cuser" "$harness" >/dev/null 2>&1 || true
+      tui=$(sesion status "$a" "$ctr" "$cuser" "$harness" 2>&1)
+      printf '%s' "$tui" | grep -q '"present":true' && break
+      (( s_transcurrido >= s_techo )) && break
+      sleep "$s_paso"
+      s_transcurrido=$((s_transcurrido + s_paso))
+    done
+    if printf '%s' "$tui" | grep -q '"present":true'; then
       printf "  %s sesion compartida: ${c_ok}lista${c_reset}\n" "$a"
     else
-      printf "  ${c_err}%s arranco SIN sesion compartida${c_reset} — Telegram y tu TUI quedan separados\n" "$a"
+      printf "  ${c_warn}%s: proceso VIVO pero SIN sesion compartida${c_reset} tras %ss de intentos — Telegram y tu TUI quedan separados\n" "$a" "$s_techo"
       printf "  ${c_dim}%s${c_reset}\n" "$(printf '%s' "$tui" | tail -2)"
+      printf "  ${c_dim}ya reintente 'ensure' solo varias veces; a mano: cauce %s${c_reset}\n" "$a"
     fi
   fi
   printf "  ${c_dim}entrar: cauce %s${c_reset}\n" "$a"
@@ -548,12 +652,479 @@ cmd_off() {
   fi
 }
 
+# --- MULTI-HOST (2026-08-05, zeus) -------------------------------------------------------------
+# La flota dejo de vivir en un solo host: 11 alias se mudaron al VPS y este CLI hablaba SIEMPRE
+# con el docker y el systemd locales. Sin esto, `cauce argos estado` en la torre contesta sobre un
+# contenedor apagado: no falla, MIENTE, que es peor.
+# El mapa se genera de la realidad (que host tiene la unidad habilitada), no de una lista a mano:
+#   ~/.config/cauce-v3/alias-host.tsv   ->   <alias>\t<local|vps>
+# Para los remotos este CLI no reimplementa nada: reenvia el mismo comando al `cauce` del otro
+# host, que es el que sí ve su docker y su systemd.
+MAPA_HOST=$HOME/.config/cauce-v3/alias-host.tsv
+sitio() {
+  [ -r "$MAPA_HOST" ] || { echo local; return; }
+  awk -v a="$1" '$1==a {print $2; f=1} END{if(!f) print "local"}' "$MAPA_HOST"
+}
+remoto_cauce() {  # $1=alias, resto=argumentos tal cual
+  local a=$1; shift
+  # Sin -t hay que pasar -n. Sin ninguno de los dos, el ssh se traga el stdin de quien invoco
+  # a cauce: medido, un `cauce <alias> login --ver` dentro de un script se comio el resto del
+  # script y las ordenes siguientes no llegaron a correr nunca.
+  local tty=(-n); [ -t 0 ] && [ -t 1 ] && tty=(-t)
+  ssh "${tty[@]}" vps "U=\$(id -u stev); sudo -u stev XDG_RUNTIME_DIR=/run/user/\$U HOME=/home/stev /home/stev/.local/bin/cauce $a $*"
+}
+
+# ---------- login: renovar la credencial del arnes ----------
+# Esto vivio como quince scripts agente-<alias>.sh en el home, cada uno con el contenedor escrito a
+# mano. Dos de los quince ya apuntaban al contenedor EQUIVOCADO (agente-zeus.sh decia ws-prizma, que
+# es socrates; agente-iza.sh decia ws-humanizar, que es atlas). Aca no hay tabla que se desincronice:
+# contenedor, usuario, home y arnes salen del mismo resolvedor que usa el resto del CLI.
+#
+# Lo unico configurable por alias es donde vive el CODEX_HOME, y va en su .env del host — nunca en
+# el repo, porque el repo no tiene por que saber de cuentas.
+#
+# 2026-08-13: la clave se llama `CREDENTIAL_HOME`, NO `CODEX_HOME`. Esto leia `CODEX_HOME`, un
+# nombre que el allowlist de `container-adapter-supervisor.sh` (~lineas 112-135) ni siquiera acepta:
+# escribirlo en un .env deja al alias sin arrancar. O sea que este `sed` no podia acertar nunca y
+# `codex_home_de atlas` devolvia el fallback `/home/dev/.codex` mientras su adaptador corria con
+# `/home/dev/.codex/cuenta-b` — `cauce atlas login` renovaba la credencial en el home equivocado.
+codex_home_de() {  # $1=alias $2=home-del-usuario
+  local h
+  h=$(sed -n 's/^CREDENTIAL_HOME=//p' "$CONFIG/$1.env" 2>/dev/null | head -1)
+  printf '%s\n' "${h:-$2/.codex}"
+}
+
+# El equivalente para claude: DONDE vive su `.credentials.json`. Existe para que el sitio donde se
+# ESCRIBE el token y el sitio que se COMPRUEBA despues sean el MISMO por construccion — esa
+# divergencia es exactamente el defecto que se arregla mas abajo en `login_claude`.
+#
+# Solo se honra `CREDENTIAL_HOME` cuando el arnes es `claude` a secas: es la MISMA condicion que
+# aplica `credencial_env_de`, que para `openclaw` no traduce nada (una sola clave no puede
+# significar el home de codex y el de claude a la vez). Para openclaw y para todo lo demas devuelve
+# el default `$HOME/.claude`, que es lo que hacia este CLI hasta hoy: aqui no cambia nada.
+claude_home_de() {  # $1=alias $2=home-del-usuario $3=harness
+  local h=
+  [ "$3" = claude ] && h=$(sed -n 's/^CREDENTIAL_HOME=//p' "$CONFIG/$1.env" 2>/dev/null | head -1)
+  printf '%s\n' "${h:-$2/.claude}"
+}
+
+# Leer un fichero DONDE VIVA el alias. kant es host-native: ahi no hay docker que valga.
+leer_en_alias() {  # $1=alias $2=contenedor $3=usuario $4=ruta
+  if es_host_native "$1"; then cat "$4" 2>/dev/null
+  else docker exec --user "$3" "$2" cat "$4" 2>/dev/null; fi
+}
+existe_en_alias() {  # $1=alias $2=contenedor $3=usuario $4=ruta
+  if es_host_native "$1"; then [ -f "$4" ]
+  else docker exec --user "$3" "$2" test -f "$4" 2>/dev/null; fi
+}
+
+# 2026-08-22 (zeus): el binario del arnes NO viene garantizado en la imagen. `claw:latest` trae
+# `claude` y `openclaw`; `codex` se instala SOLO en los alias que lo usan. Medido ese dia:
+#     agv2-miguel-finca-oc (gaia)  codex AUSENTE   claude /usr/bin/claude   openclaw /usr/bin/openclaw
+#     agv2-jhon-hegel-oc   (hegel) codex AUSENTE   claude /usr/bin/claude   openclaw /usr/bin/openclaw
+#     agv2-jhon-tales-oc   (tales) codex /usr/bin/codex
+# Sin esta comprobacion, `cauce gaia login` ofrecia "c) claude  x) codex" —porque su arnes es
+# openclaw y openclaw lleva pool de los dos— y al elegir codex el CLI apagaba el alias y escupia el
+# error crudo del runtime: `OCI runtime exec failed: ... exec: "codex": executable file not found in
+# $PATH`. Un error de docker en la cara del dueno, con el alias ya apagado, por una opcion que
+# nunca se pudo cumplir.
+#
+# Ojo: el fichero de credencial NO sirve de proxy del binario. hegel TIENE `auth.json` de codex
+# (cuenta valida) y NO tiene `codex`. Lo que decide si se puede renovar es el BINARIO, porque la
+# renovacion se hace ejecutandolo.
+binario_en_alias() {  # $1=alias $2=contenedor $3=usuario $4=binario
+  if es_host_native "$1"; then command -v "$4" >/dev/null 2>&1
+  else docker exec --user "$3" "$2" sh -lc "command -v $4" >/dev/null 2>&1; fi
+}
+
+# El docker de ESTA maquina puede no ser el de la flota. Medido: en la torre, `cauce socrates
+# login --ver` pinto "sin fichero legible" porque ws-prizma no existe aca — indistinguible de una
+# credencial vacia. Un lector que confunde "no lo veo" con "esta vacio" hace que el dueno concluya
+# lo contrario de la verdad, asi que esto se comprueba ANTES de leer nada y se dice en voz alta.
+contenedor_alcanzable() {  # $1=alias $2=contenedor
+  es_host_native "$1" && return 0
+  [ -n "$2" ] || return 1
+  docker inspect -f '{{.State.Running}}' "$2" 2>/dev/null | grep -qx true
+}
+
+# NUNCA imprime un token: tipo, huella corta y —en codex— cuenta y correo. La huella es lo que
+# permite decir "cambio" o "no cambio" despues del login, que es la unica prueba que vale.
+huella_claude() {  # $1=alias $2=contenedor $3=usuario $4=CONFIG-DIR de claude (el que sale de claude_home_de)
+  leer_en_alias "$1" "$2" "$3" "$4/.credentials.json" | python3 -c '
+import json,sys,hashlib
+try: o=(json.load(sys.stdin).get("claudeAiOauth") or {})
+except Exception: print("sin fichero legible|-"); raise SystemExit
+a=o.get("accessToken") or ""; r=o.get("refreshToken") or ""
+print("%s|%s" % ("oauth" if r else ("setup-token" if a else "VACIA"),
+                 hashlib.sha256(a.encode()).hexdigest()[:12] if a else "-"))' 2>/dev/null \
+  || printf 'no pude leerla|-\n'
+}
+huella_codex() {  # $1=alias $2=contenedor $3=usuario $4=codex-home
+  leer_en_alias "$1" "$2" "$3" "$4/auth.json" | python3 -c '
+import json,sys,base64
+try: d=json.load(sys.stdin)
+except Exception: print("sin fichero legible|-|"); raise SystemExit
+t=d.get("tokens") or {}
+em=""
+try:
+    p=(t.get("id_token") or "").split(".")[1]; p+="="*(-len(p)%4)
+    em=json.loads(base64.urlsafe_b64decode(p)).get("email","")
+except Exception: pass
+print("%s|%s|%s" % ("ok" if (t.get("access_token") or d.get("OPENAI_API_KEY")) else "VACIA",
+                    (t.get("account_id") or "?")[:13], em))' 2>/dev/null \
+  || printf 'no pude leerla|-|\n'
+}
+
+pinta_credencial() {  # $1=que(claude|codex) $2=alias $3=ctr $4=usu $5=ruta-base
+  local tipo huella cuenta correo
+  if [ "$1" = claude ]; then
+    IFS='|' read -r tipo huella <<<"$(huella_claude "$2" "$3" "$4" "$5")"
+    printf "  Claude : %-14s ${c_dim}huella=%s${c_reset}\n" "$tipo" "$huella"
+  else
+    IFS='|' read -r tipo cuenta correo <<<"$(huella_codex "$2" "$3" "$4" "$5")"
+    printf "  Codex  : %-14s ${c_dim}cuenta=%s %s${c_reset}\n" "$tipo" "$cuenta" "$correo"
+  fi
+}
+
+# ¿Tiene un turno del bus EN VUELO? El adaptador emite delivery_start al tomar la entrega y
+# delivery_end al cerrarla: si el ultimo de los dos es un start, hay un turno corriendo y pararlo
+# ahora lo mata. Un login no vale un turno perdido.
+turno_en_vuelo() {  # $1=alias -> 0 = SI hay turno en vuelo
+  local ultimo
+  ultimo=$(journalctl --user -u "$(unit_del_alias "$1")" -n 400 --no-pager -o cat 2>/dev/null \
+           | grep -oE '"event":"delivery_(start|end)"' | tail -1)
+  [[ $ultimo == *delivery_start* ]]
+}
+
+# Que arnes se le renueva. El harness manda: a un agente de codex no se le pregunta por claude, que
+# era justo la pregunta que sobraba. openclaw lleva un pool y puede necesitar los dos.
+#
+# Esto dice lo que el arnes DECLARA. Lo que de verdad se puede renovar se filtra despues con
+# `binario_en_alias`, en cmd_login, para poder decir con palabras cual falta y por que.
+objetivos_declarados() {  # $1=harness $2=alias $3=ctr $4=usu $5=cfgdir-claude $6=codexhome
+  case "$1" in
+    claude) printf 'claude\n' ;;
+    codex)  printf 'codex\n' ;;
+    openclaw) printf 'claude\ncodex\n' ;;
+    *)  # arnes que no conocemos: se ofrece lo que el contenedor REALMENTE tiene
+        existe_en_alias "$2" "$3" "$4" "$5/.credentials.json" && printf 'claude\n'
+        existe_en_alias "$2" "$3" "$4" "$6/auth.json" && printf 'codex\n'
+        ;;
+  esac
+}
+
+# 2026-08-22 (zeus). ESTO ESTABA CONDENADO A FALLAR SIEMPRE, por diseno.
+#
+# Lo que hacia: lanzar `claude setup-token` dentro del contenedor y nada mas. Pero `setup-token`
+# IMPRIME un token `sk-ant-oat01-...` por pantalla y NO ESCRIBE NINGUN FICHERO — esta pensado para
+# que lo exportes como `CLAUDE_CODE_OAUTH_TOKEN`. Acto seguido este mismo CLI comprobaba
+# `.credentials.json`, lo encontraba igual que antes, y remataba con "la credencial NO cambio — el
+# login no prendio". O sea: el CLI corria un comando que no podia satisfacer su propia comprobacion,
+# dejaba el secreto en pantalla y informaba de que no habia servido. Steven quemo asi un token de un
+# ANO de validez el 2026-08-22: se genero, se imprimio y se perdio, porque nadie lo instalo.
+#
+# POR QUE SE INSTALA EN VEZ DE SOLO AVISAR. Porque el hermano que SI funciona ya esta montado asi.
+# Medido con `cauce hegel login --ver` (solo lectura): hegel tiene
+# `/home/claw/.claude/.credentials.json` de tipo `setup-token` — accessToken sin refreshToken,
+# huella ff4f377d8a74. No es una invencion: es la configuracion que hoy atiende entregas. Y el
+# patron ya existe en este fichero para codex (`login_codex` opcion 2): el token entra por STDIN,
+# nunca por argumento. Avisar y no instalar dejaria a Steven pegando JSON a mano por `docker exec`,
+# que es justo la clase de error que este CLI existe para quitar de en medio.
+#
+# LA FORMA DEL FICHERO ESTA MEDIDA, NO RECORDADA. Probado el 2026-08-22 dentro de
+# agv2-miguel-finca-oc con un MARCADOR que no es un token, y contra un directorio vacio como control
+# negativo (`claude auth status --text`, que lee el estado local):
+#     dir vacio, sin fichero                            -> "Not logged in."        rc=1   <- control
+#     {"claudeAiOauth":{"accessToken":X}}               -> "Not logged in."        rc=1   <- INDISTINGUIBLE del control
+#     {..., "expiresAt":...}                            -> "Not logged in."        rc=1
+#     {..., "subscriptionType":"max"}                   -> "Not logged in."        rc=1
+#     {..., "scopes":["user:inference"]}                -> "Login method: ..."     rc=0   <- el campo que MANDA es `scopes`
+# Escribir el fichero "minimo" hubiera cambiado un fallo ruidoso por uno SILENCIOSO: un
+# `.credentials.json` presente y con el token bueno dentro, que claude ignora como si no existiera.
+# Por eso se escriben `scopes` y `subscriptionType`, y no solo el token.
+instala_token_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir ; el TOKEN entra por STDIN
+  local json
+  # El JSON se arma en el HOST (aqui hay python3 seguro: lo usan las huellas). El contenedor solo
+  # necesita `sh`. `expiresAt` a un ano, que es lo que dura un setup-token.
+  json=$(python3 -c '
+import json,sys,time
+t=sys.stdin.read().strip()
+if not t: raise SystemExit(9)
+print(json.dumps({"claudeAiOauth":{"accessToken":t,"refreshToken":"",
+  "expiresAt":int(time.time()*1000)+31536000000,
+  "scopes":["user:inference","user:profile"],"subscriptionType":"max"}}))') || return 9
+  [ -n "$json" ] || return 9
+  # Se escribe a un temporal y se mueve encima: un `mv` es atomico, asi que no existe el estado
+  # intermedio "fichero a medio escribir" que ya nos dejo una credencial VACIA en otra rotacion.
+  if es_host_native "$1"; then
+    ( umask 077; mkdir -p "$4" \
+      && printf '%s' "$json" > "$4/.credentials.json.nuevo" \
+      && chmod 600 "$4/.credentials.json.nuevo" \
+      && mv -f "$4/.credentials.json.nuevo" "$4/.credentials.json" )
+  else
+    printf '%s' "$json" | docker exec -i --user "$3" -e CD="$4" "$2" sh -c '
+      umask 077; mkdir -p "$CD" \
+      && cat > "$CD/.credentials.json.nuevo" \
+      && chmod 600 "$CD/.credentials.json.nuevo" \
+      && mv -f "$CD/.credentials.json.nuevo" "$CD/.credentials.json"'
+  fi
+}
+
+# La comprobacion por EFECTO: no "existe el fichero", sino que el propio claude se da por logueado.
+# `claude auth status` lee el estado local y sale 0/1; es de solo lectura y no gasta turno.
+estado_auth_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir
+  if es_host_native "$1"; then
+    CLAUDE_CONFIG_DIR="$4" claude auth status --text 2>&1 | head -2
+  else
+    docker exec --user "$3" -e CLAUDE_CONFIG_DIR="$4" "$2" claude auth status --text 2>&1 | head -2
+  fi
+}
+
+login_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir de claude
+  local opcion token
+  printf "\n  ${c_warn}Como funciona esto de verdad:${c_reset} ${c_b}claude setup-token${c_reset} SOLO IMPRIME un token.\n"
+  printf "  ${c_dim}No escribe ninguna credencial en ningun sitio. Si lo dejas en pantalla, se pierde.${c_reset}\n"
+  printf "  ${c_dim}Este CLI lo instala por vos en %s/.credentials.json,${c_reset}\n" "$4"
+  printf "  ${c_dim}que es EXACTAMENTE el fichero que comprueba despues.${c_reset}\n"
+  printf "\n  ${c_b}1)${c_reset} generar un token nuevo    ${c_dim}(lanza 'claude setup-token' y luego lo instalo)${c_reset}\n"
+  printf "  ${c_b}2)${c_reset} pegar uno que ya tengas   ${c_dim}(sk-ant-oat01-...; no gasta uno nuevo)${c_reset}\n"
+  read -r -p "  opcion [1/2]: " opcion
+  if [ "${opcion:-1}" != 2 ]; then
+    printf "\n  ${c_dim}-- 'claude setup-token' dentro de %s: abri la URL, autoriza, y COPIA el token --${c_reset}\n\n" "$2"
+    if es_host_native "$1"; then claude setup-token
+    else docker exec -it --user "$3" "$2" claude setup-token; fi
+    printf "\n  ${c_warn}Ese token de arriba TODAVIA NO esta instalado.${c_reset} Pegalo aca y lo instalo.\n"
+  fi
+  printf "  Pega el token y ENTER ${c_dim}(no se muestra)${c_reset}: "
+  read -r -s token; printf '\n'
+  # Mejor no tocar nada que dejar la credencial vacia o con basura: una credencial rota se ve igual
+  # que una cuenta agotada, y esa confusion ya costo dias.
+  if [ -z "$token" ]; then
+    printf "  ${c_warn}token vacio: no toco nada${c_reset} ${c_dim}(la credencial anterior sigue como estaba)${c_reset}\n"
+    return 1
+  fi
+  case "$token" in
+    *[[:space:]]*)
+      printf "  ${c_err}eso lleva espacios o saltos de linea: no es el token. No toco nada.${c_reset}\n"
+      unset token; return 1 ;;
+    sk-ant-*) ;;
+    *)
+      printf "  ${c_err}eso no empieza por 'sk-ant-': no lo instalo.${c_reset} ${c_dim}Pega solo el token.${c_reset}\n"
+      unset token; return 1 ;;
+  esac
+  printf '%s' "$token" | instala_token_claude "$1" "$2" "$3" "$4"
+  local rc=$?
+  unset token
+  if [ "$rc" != 0 ]; then
+    printf "  ${c_err}no pude escribir %s/.credentials.json${c_reset} ${c_dim}(rc=%s)${c_reset}\n" "$4" "$rc"
+    return "$rc"
+  fi
+  printf "  ${c_ok}token instalado en %s/.credentials.json${c_reset} ${c_dim}(modo 600)${c_reset}\n" "$4"
+}
+
+# El flujo por defecto es --device-auth, y no es una preferencia: el login de navegador a secas
+# levanta un servidor de callback en localhost DENTRO del contenedor, y el navegador del dueno esta
+# en otra maquina. Ese camino practicamente nunca cierra.
+#
+# `--device-auth` SI existe, en 0.144.5 y en 0.145.0 (comprobado en ws-humanizar y aca). Estuvo
+# documentado al reves durante un tiempo —"no existe, si alguien te lo dijo era falso"— porque en
+# `codex login --help` sale con la descripcion VACIA, en la penultima posicion: quien leyo el help
+# con un `head` se lo perdio. Medido: imprime https://auth.openai.com/codex/device y un codigo de
+# ocho letras que caduca en 15 minutos.
+login_codex() {  # $1=alias $2=ctr $3=usu $4=codex-home
+  local opcion token
+  printf "\n  ${c_b}1)${c_reset} codigo de dispositivo   ${c_dim}(por defecto: te da una URL y un codigo de 8 letras)${c_reset}\n"
+  printf "  ${c_b}2)${c_reset} pegar un access token   ${c_dim}(si ya lo tenes a mano)${c_reset}\n"
+  printf "  ${c_dim}el flujo de navegador a secas no se ofrece: su callback vive en el localhost del${c_reset}\n"
+  printf "  ${c_dim}contenedor, no en el tuyo.${c_reset}\n"
+  read -r -p "  opcion [1/2]: " opcion
+  if [ "${opcion:-1}" = 2 ]; then
+    printf "  Pega el access token y ENTER ${c_dim}(no se muestra)${c_reset}: "
+    read -r -s token; printf '\n'
+    [ -n "$token" ] || { printf "  ${c_warn}token vacio: no toco nada${c_reset}\n"; return 1; }
+    # Por stdin, NUNCA como argumento: los argumentos se leen en `ps` desde cualquier proceso.
+    if es_host_native "$1"; then
+      printf '%s' "$token" | CODEX_HOME="$4" codex login --with-access-token
+    else
+      printf '%s' "$token" | docker exec -i --user "$3" -e CODEX_HOME="$4" "$2" codex login --with-access-token
+    fi
+    unset token
+  else
+    printf "  ${c_dim}abri la URL que imprima y escribi el codigo; la sesion se cierra sola al autorizar.${c_reset}\n\n"
+    if es_host_native "$1"; then CODEX_HOME="$4" codex login --device-auth
+    else docker exec -it --user "$3" -e CODEX_HOME="$4" "$2" codex login --device-auth; fi
+  fi
+}
+
+# Codex admite UNA sola sesion viva por cuenta: dos alias en la misma se invalidan el uno al otro.
+# Por eso, despues de tocar codex, se dice con quien acaba de quedar emparejado.
+choques_de_codex() {  # $1=alias-que-acabo-de-tocar $2=cuenta
+  local otro line ctr cuser uhome ch cuenta _r
+  [ -n "$2" ] && [ "$2" != '?' ] || return 0
+  for otro in $(todos_los_alias); do
+    [ "$otro" = "$1" ] && continue
+    line=$(alias_info "$otro") || continue
+    IFS=$'\t' read -r _ _ ctr cuser uhome _ _ <<<"$line"
+    [ -n "$ctr" ] || continue
+    ch=$(codex_home_de "$otro" "$uhome")
+    IFS='|' read -r _r cuenta _ <<<"$(huella_codex "$otro" "$ctr" "$cuser" "$ch")"
+    [ "$cuenta" = "$2" ] && printf "  ${c_err}choca con %s${c_reset} ${c_dim}(misma cuenta de codex)${c_reset}\n" "$otro"
+  done
+}
+
+cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
+  local a=$1 arg=${2:-} line ctr cuser uhome harness chome cchome
+  line=$(alias_info "$a") || { printf "  ${c_err}no conozco el alias %s${c_reset}\n" "$a"; return 2; }
+  IFS=$'\t' read -r _ _ ctr cuser uhome _ harness <<<"$line"
+  chome=$(codex_home_de "$a" "$uhome")
+  cchome=$(claude_home_de "$a" "$uhome" "$harness")
+
+  local solo_ver=0
+  [ "$arg" = --ver ] && { solo_ver=1; arg=; }
+
+  if [ -n "$arg" ] && [ "$arg" != claude ] && [ "$arg" != codex ]; then
+    printf "  no entiendo '%s'. Usa: cauce %s login [claude|codex|--ver]\n" "$arg" "$a"; return 2
+  fi
+
+  printf "\n  ${c_b}%s${c_reset}  ${c_dim}·  contenedor %s  ·  arnes %s${c_reset}\n" \
+    "$a" "${ctr:-(host-native)}" "$harness"
+  printf "  ${c_dim}%s${c_reset}\n" "$(printf '─%.0s' $(seq 1 62))"
+
+  if ! contenedor_alcanzable "$a" "$ctr"; then
+    # 2026-08-22 (zeus): antes esto decia SIEMPRE "corre esto donde vivan los contenedores", incluso
+    # ejecutandose EN la maquina donde viven. A Steven le mando a otro host con `cauce gaia login`
+    # cuando la verdad era que el contenedor no existia en ninguno. Un mensaje que manda a un sitio
+    # equivocado cuesta mas que no decir nada.
+    printf "  ${c_err}el contenedor %s no aparece en el docker de esta maquina (ni parado)${c_reset}\n" "${ctr:-?}"
+    if [ "$(sitio "$a")" = local ]; then
+      printf "  ${c_warn}y esta ES la maquina donde deberia vivir: no esta creado todavia.${c_reset}\n"
+      printf "  ${c_dim}%s no esta provisionada: crear el contenedor es paso PREVIO al login.${c_reset}\n" "$a"
+    else
+      printf "  ${c_warn}esto NO quiere decir que la credencial este vacia: quiere decir que no la puedo leer.${c_reset}\n"
+      printf "  ${c_dim}el docker de aqui no es el de la flota. Corre esto donde vivan los contenedores.${c_reset}\n"
+    fi
+    return 3
+  fi
+
+  # Los objetivos se calculan AQUI, despues de saber que el contenedor responde: comprobar el
+  # binario exige poder ejecutar algo dentro. Lo que el arnes declara y lo que el contenedor tiene
+  # instalado son dos cosas distintas, y ofrecer la segunda como si fuera la primera es el defecto
+  # que documenta `binario_en_alias`.
+  local -a declarados=() objetivos=() faltan=()
+  if [ -n "$arg" ]; then declarados=("$arg")
+  else mapfile -t declarados < <(objetivos_declarados "$harness" "$a" "$ctr" "$cuser" "$cchome" "$chome"); fi
+
+  local o
+  for o in "${declarados[@]}"; do
+    if binario_en_alias "$a" "$ctr" "$cuser" "$o"; then objetivos+=("$o"); else faltan+=("$o"); fi
+  done
+
+  for o in "${objetivos[@]}"; do
+    [ "$o" = claude ] && pinta_credencial claude "$a" "$ctr" "$cuser" "$cchome"
+    [ "$o" = codex ]  && pinta_credencial codex  "$a" "$ctr" "$cuser" "$chome"
+  done
+  # Se dice en voz alta, no se esconde: si el dueno pidio ese arnes a proposito tiene que saber por
+  # que no se lo ofrezco, y con palabras — nunca con el error crudo del runtime.
+  for o in "${faltan[@]}"; do
+    case "$o" in
+      claude) printf "  Claude : ${c_warn}%-14s${c_reset} ${c_dim}no hay binario 'claude' en %s${c_reset}\n" "NO INSTALADO" "${ctr:-(host-native)}" ;;
+      codex)  printf "  Codex  : ${c_warn}%-14s${c_reset} ${c_dim}no hay binario 'codex' en %s${c_reset}\n"  "NO INSTALADO" "${ctr:-(host-native)}" ;;
+    esac
+  done
+
+  if [ ${#objetivos[@]} -eq 0 ]; then
+    if [ ${#faltan[@]} -gt 0 ]; then
+      printf "\n  ${c_err}%s no tiene instalado ese arnes: no hay nada que renovar por aqui.${c_reset}\n" "$a"
+      printf "  ${c_dim}el binario no viene en la imagen, se instala por alias. Tenerlo es paso PREVIO${c_reset}\n"
+      printf "  ${c_dim}al login: sin binario no hay comando de login que ejecutar dentro del contenedor.${c_reset}\n"
+      return 4
+    fi
+    printf "  ${c_warn}no encuentro ninguna credencial que renovar en este alias${c_reset}\n"
+    return 1
+  fi
+  [ "$solo_ver" = 1 ] && return 0
+
+  # Antes de tocar: un turno a medias muere si paramos el adaptador.
+  if turno_en_vuelo "$a"; then
+    printf "\n  ${c_err}%s TIENE UN TURNO EN VUELO ahora mismo${c_reset} — pararlo lo mata.\n" "$a"
+    printf "  ${c_dim}salgo sin tocar nada; reintenta cuando cierre.${c_reset}\n"
+    return 1
+  fi
+
+  # El aviso va ANTES de la pregunta, no despues de parar: quien confirma tiene que saber que a
+  # partir de ese "si" el alias queda APAGADO, y cuanto puede durar. Paso dos veces la noche del
+  # 2026-08-12: el codigo de un solo uso de --device-auth dura hasta 15 minutos, el humano se
+  # demoro, y el alias se comio ese cuarto de hora caido — entregas encoladas y el guardia
+  # reportandolo caido con gravedad 95. Nadie tiene que adivinar esto leyendo el codigo.
+  local tiene_codex=0 o2
+  for o2 in "${objetivos[@]}"; do [ "$o2" = codex ] && tiene_codex=1; done
+  printf "\n  ${c_warn}AVISO — a partir de que confirmes, %s queda APAGADO hasta terminar el login.${c_reset}\n" "$a"
+  printf "  ${c_warn}Lo que le escriban mientras tanto no se pierde: se encola y lo atiende al volver.${c_reset}\n"
+  if [ "$tiene_codex" = 1 ]; then
+    printf "  ${c_warn}Si renovas codex por codigo de dispositivo, eso puede ser hasta 15 MINUTOS${c_reset}\n"
+    printf "  ${c_warn}(es lo que tarda en caducar el codigo). Tene el navegador abierto ANTES de seguir.${c_reset}\n"
+  fi
+  printf "  ${c_dim}mientras este apagado el guardia lo va a reportar caido: es esperado, no es un fallo.${c_reset}\n"
+
+  local que=${objetivos[0]}
+  if [ ${#objetivos[@]} -gt 1 ]; then
+    printf "\n  este alias usa los dos. ${c_b}c${c_reset}) claude   ${c_b}x${c_reset}) codex   ${c_b}n${c_reset}) nada\n"
+    local q; read -r -p "  opcion [c/x/n]: " q
+    case "$q" in c|C) que=claude ;; x|X) que=codex ;; *) printf "  no toco nada.\n"; return 0 ;; esac
+  else
+    local q; read -r -p "  renovar la credencial de ${que}? [s/N]: " q
+    [[ $q == [sS] ]] || { printf "  no toco nada.\n"; return 0; }
+  fi
+
+  # Huella ANTES, para poder decir despues si cambio de verdad o si el login se quedo a medias.
+  local antes despues tipo cuenta correo
+  if [ "$que" = claude ]; then antes=$(huella_claude "$a" "$ctr" "$cuser" "$cchome")
+  else antes=$(huella_codex "$a" "$ctr" "$cuser" "$chome"); fi
+
+  printf "\n  ${c_dim}-- apagando el adaptador de %s --${c_reset}\n" "$a"
+  cmd_off "$a" || { printf "  ${c_err}no lo pude apagar: no sigo${c_reset}\n"; return 1; }
+
+  if [ "$que" = claude ]; then login_claude "$a" "$ctr" "$cuser" "$cchome"
+  else login_codex "$a" "$ctr" "$cuser" "$chome"; fi
+
+  printf "\n  ${c_dim}-- como quedo --${c_reset}\n"
+  if [ "$que" = claude ]; then
+    despues=$(huella_claude "$a" "$ctr" "$cuser" "$cchome")
+    pinta_credencial claude "$a" "$ctr" "$cuser" "$cchome"
+    # El fichero puede estar y aun asi no valer: lo que decide es que el propio claude se de por
+    # logueado. Sin `scopes` el fichero existe y claude dice "Not logged in" igual que si no
+    # estuviera — medido. Por eso se pregunta al harness, no al inodo.
+    printf "  ${c_dim}claude dice:${c_reset} %s\n" "$(estado_auth_claude "$a" "$ctr" "$cuser" "$cchome" | head -1)"
+  else
+    despues=$(huella_codex "$a" "$ctr" "$cuser" "$chome")
+    pinta_credencial codex "$a" "$ctr" "$cuser" "$chome"
+    IFS='|' read -r tipo cuenta correo <<<"$despues"
+    choques_de_codex "$a" "$cuenta"
+  fi
+  # El login puede salir con codigo 0 y no haber escrito nada. Lo que se afirma es el EFECTO.
+  if [ "$antes" = "$despues" ]; then
+    printf "  ${c_err}la credencial NO cambio${c_reset} — quedo la misma de antes. El login no prendio.\n"
+  else
+    printf "  ${c_ok}credencial nueva escrita${c_reset}\n"
+  fi
+
+  printf "\n  ${c_dim}-- levantando el adaptador de %s --${c_reset}\n" "$a"
+  cmd_on "$a"
+}
+
+
 case "${1:-}" in
   ""|flota|estado) [[ ${1:-} == estado ]] && cmd_estado "${2:-}" || cmd_flota ;;
   -h|--help|help|ayuda) uso ;;
   ver) shift; cmd_ver "$@" ;;
   *)
     a=$1; shift || true
+    if [ "$(sitio "$a")" = vps ]; then
+      exec_remoto=1
+      printf "  \033[2m%s vive en el VPS; reenvio el comando alla\033[0m\n" "$a" >&2
+      remoto_cauce "$a" "${@:-}"
+      exit $?
+    fi
     case "${1:-}" in
       "")        cmd_entrar "$a" ;;
       ver)       cmd_ver "$a" ;;
@@ -561,6 +1132,7 @@ case "${1:-}" in
       sesiones)  cmd_sesiones "$a" ;;
       on)        cmd_on "$a" ;;
       off)       cmd_off "$a" ;;
+      login|auth) shift; cmd_login "$a" "${1:-}" ;;
       *)         echo "no entiendo '$1'"; uso; exit 2 ;;
     esac ;;
 esac

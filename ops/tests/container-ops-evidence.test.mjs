@@ -8,6 +8,15 @@ import { fileURLToPath } from "node:url";
 
 const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const digestScript = path.join(ops, "scripts/container_ops_digest.py");
+const sources = spawnSync("python3", ["-c", [
+  "import importlib.util, json, sys",
+  "spec = importlib.util.spec_from_file_location('container_ops_digest', sys.argv[1])",
+  "module = importlib.util.module_from_spec(spec)",
+  "spec.loader.exec_module(module)",
+  "print(json.dumps(module.OPERATIONS_SOURCES))",
+].join("\n"), digestScript], { encoding: "utf8" });
+assert.equal(sources.status, 0, sources.stderr);
+const operationsSources = JSON.parse(sources.stdout);
 
 // 1. The operational digest must cover the critical adversarial suites, their fakes and
 //    the operator runbooks, not only the shipped scripts. --list prints exactly what is hashed.
@@ -17,6 +26,7 @@ const covered = new Set(list.stdout.trim().split("\n"));
 assert(!covered.has("cli/cauce.bak-login-20260823T000500Z"),
   "ignored operator backups must not contaminate the committed operations digest");
 for (const required of [
+  ...operationsSources,
   "container-runtime/cauce-container-runtime.py",
   "hermes-runtime.json",
   "scripts/container-adapter-supervisor.sh",
@@ -31,17 +41,6 @@ for (const required of [
   "tests/test_verify_hermes_runtime.py",
   "scripts/host-backup.sh",
   "scripts/host-backup-monitor.sh",
-  "tests/container-supervisor.test.mjs",
-  "tests/test_container_runtime_reaping.py",
-  "tests/alias-runner.test.mjs",
-  "tests/container-cutover.test.mjs",
-  "tests/container-ops-evidence.test.mjs",
-  "tests/fake-docker.mjs",
-  "tests/fake-systemctl.mjs",
-  "tests/fake-container-supervisor.mjs",
-  "tests/fake-gate-collector.mjs",
-  "runbooks/container-adapters.md",
-  "runbooks/alias-cutover.md",
   "runbooks/backup-restore.md",
   "config/prod.env.example",
   "config/host-backup.env.example",
