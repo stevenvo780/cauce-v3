@@ -1,7 +1,7 @@
 # 32 — Flota PTY y guardias del host
 
 **Fase:** 3 (la parte URGENTE puede adelantarse, es estado, no código) · **Tamaño:** pequeño-mediano · **Ejecutor:** Claude CON el dueño · **Revisor:** Codex
-**Rama:** `reestructura/32-flota` · **Depende de:** 31 para lo de código; la limpieza de huérfanos NO depende de nada
+**Rama:** ninguna — directo a `main` · **Depende de:** 31 para lo de código; la limpieza de huérfanos NO depende de nada
 
 ## A. URGENTE — el bucle de expulsión mutua (estado, no código)
 Diagnóstico verificado: hay 24 procesos `cauce-pty-agent-<alias>.py` dentro de los contenedores para 10 clientes `docker exec` vivos (huérfanos de los rollouts del 25-ago 13:54, 26-ago 23:07/23:08 y 27-ago 00:01; argos y atlas con 4–5 cada uno). Todos los procesos de un alias comparten certificado → el relay no los distingue → cada HELLO expulsa al anterior (`agent-leg.ts: previous.destroy('superseded')`) → ~46.000 conexiones/93 min, sesiones humanas muertas en ~1 s, 92% del tráfico del gateway, log útil reducido a 2,2 h.

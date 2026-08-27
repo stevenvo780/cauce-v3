@@ -1,7 +1,7 @@
 # 12 — Cuarentena de subsistemas sin uso
 
 **Fase:** 1 · **Tamaño:** mediano · **Ejecutor:** Claude (Sonnet) · **Revisor:** GPT 5.6 Ultra
-**Rama:** `reestructura/12-cuarentena` · **Depende de:** nada (paralelo a 11; coordina con 13 solo en gateway)
+**Rama:** ninguna — directo a `main` · **Depende de:** nada (paralelo a 11; coordina con 13 solo en gateway)
 
 ## Objetivo
 Sacar de la vista de los agentes (y del build) los subsistemas que la auditoría midió como **nunca usados en producción**. Regla: **mover, no borrar** — todo va a `_legado/` con un README de 3 líneas por pieza (qué es, por qué está aquí, evidencia). La tala definitiva se decide después con la cabeza fría.

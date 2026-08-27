@@ -19,7 +19,7 @@ Informe completo: https://claude.ai/code/artifact/fe3022ea-7c0b-4a47-8093-9389f7
 
 ## Reglas globales (aplican a TODA tarea, cualquier modelo)
 
-1. **Rama siempre.** Nunca trabajar sobre `main` directo. Una rama por tarea: `reestructura/<nn>-<slug>`.
+1. **Todo directo a `main`, sin ramas** (decisión del dueño 27-08: las ramas fueron el cementerio del proyecto). Sectores disjuntos + `git add` solo por rutas propias sustituyen a las ramas. Ver `ordenes/00-PROTOCOLO.md`.
 2. **Gate mínimo por commit**: `pnpm typecheck && pnpm lint` en verde (hoy pasan; deben seguir pasando). Tras el fichero 21, también `pnpm test:unit`.
 3. **Mover ≠ editar.** Los `git mv` van en commits separados de cualquier cambio de contenido. Un commit mezcla las dos cosas = rechazado.
 4. **Commits pequeños.** Nada de monolitos de 400 ficheros. Máximo ~20 ficheros por commit salvo mv masivos mecánicos.

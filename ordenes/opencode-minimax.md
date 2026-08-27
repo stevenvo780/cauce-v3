@@ -1,6 +1,6 @@
 # Órdenes — OpenCode/MiniMax (sector: higiene de disco, docs y verificaciones mecánicas)
 
-Lee `ordenes/00-PROTOCOLO.md` primero. Tareas de rutina, mecánicas y verificables. Trabaja en tu clon para lo que toque el repo; lo de disco es directo. NO toques código fuente (.ts/.tsx/.py de producto) — si una tarea parece pedirlo, repórtalo y para.
+Lee `ordenes/00-PROTOCOLO.md` primero. Tareas de rutina, mecánicas y verificables. Trabaja DIRECTO en `main` del checkout principal (commits pequeños, `git add` solo de tus rutas, prohibido crear ramas); lo de disco es directo. NO toques código fuente (.ts/.tsx/.py de producto) — si una tarea parece pedirlo, repórtalo y para.
 
 ## Tarea 1 — Consolidar `basura/` en `docs/bitacora/`
 `git mv basura/ARQUITECTURA_DETALLADA.md basura/INFORME_*.md basura/PLAN-DIRECTIVE-CONTENT-LECTURA.md docs/bitacora/ && rmdir basura`. Revisa después `docs/`: lo fechado o de sesión que quede suelto también va a `docs/bitacora/` (los ADR, threat-model, terminal-pty.md y directiva-ficheros-del-agente.md se quedan).

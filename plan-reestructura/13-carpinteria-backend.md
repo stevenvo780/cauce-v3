@@ -1,7 +1,7 @@
 # 13 — Carpintería de backend (partir los monolitos)
 
 **Fase:** 1 · **Tamaño:** grande, cirugía · **Ejecutor:** GPT 5.6 Ultra o Claude (Opus) · **Revisor:** Codex
-**Rama:** `reestructura/13-backend` · **Depende de:** 12 mergeado (para no carpintear lo que va a cuarentena)
+**Rama:** ninguna — directo a `main` · **Depende de:** 12 mergeado (para no carpintear lo que va a cuarentena)
 
 ## Objetivo
 Los tres archivos monstruo del backend crecieron por acreción pura (repository.ts: 40 commits, ratio 18:1 añadido:borrado, jamás podado). Partirlos en módulos por responsabilidad, **sin cambiar comportamiento**.

@@ -1,6 +1,6 @@
 # Órdenes — Codex ultra (sector: store + gateway + maquinaria de release)
 
-Lee `ordenes/00-PROTOCOLO.md` primero. Trabaja en tu clon, rama `tarea/<slug>` por tarea. Tienes subagentes: úsalos con ficheros DISJUNTOS por subagente, máximo 4 concurrentes, y tú integras — la auditoría midió que el fan-out sin dueño único por fichero produjo 10 versiones simultáneas del mismo fichero. Detalle de fondo: `plan-reestructura/12` (final), `13` y `21`.
+Lee `ordenes/00-PROTOCOLO.md` primero. Trabaja DIRECTO en `main` del checkout principal: commits pequeños con gate, `git add` solo de tus rutas, prohibido crear ramas. Tienes subagentes: úsalos con ficheros DISJUNTOS por subagente, máximo 4 concurrentes, y tú integras — la auditoría midió que el fan-out sin dueño único por fichero produjo 10 versiones simultáneas del mismo fichero. Detalle de fondo: `plan-reestructura/12` (final), `13` y `21`.
 
 ## Tarea 1 — Terminar la cuarentena de la maquinaria de release
 Claude ya movió a `_legado/`: shadow-router, relay-worker, rollback-bridge (+ tests/scripts dedicados). Falta lo grande (ver `_legado/README.md`, sección "Pendiente"):

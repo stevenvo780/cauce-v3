@@ -1,7 +1,7 @@
 # 21 — Correcciones sobre lo mapeado (sin desplegar)
 
 **Fase:** 2 · **Tamaño:** mediano · **Ejecutor:** Codex o Claude (Sonnet) · **Revisor:** GPT 5.6 Ultra
-**Rama:** `reestructura/21-correcciones` · **Depende de:** FASE 1 mergeada en el sector que toque
+**Rama:** ninguna — directo a `main` · **Depende de:** FASE 1 mergeada en el sector que toque
 
 ## Objetivo
 Corregir los defectos concretos que la auditoría dejó con archivo:línea, todos verificables en local sin tocar producción. Al cerrar este fichero, `pnpm test:unit` entra al gate global.

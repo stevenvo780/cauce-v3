@@ -1,7 +1,7 @@
 # 11 — Higiene de raíz, worktrees y residuos
 
 **Fase:** 1 · **Tamaño:** mediano, mecánico · **Ejecutor:** Gemini o MiniMax · **Revisor:** Codex
-**Rama:** `reestructura/11-higiene` · **Depende de:** nada (puede empezar ya)
+**Rama:** ninguna — directo a `main` · **Depende de:** nada (puede empezar ya)
 
 ## Objetivo
 Que la raíz del repo y el disco dejen de mentir: hoy la raíz mezcla producto con informes sueltos, y hay 75 árboles de trabajo (2,6 GB), 620 MB de copias en /opt y contenedores de test huérfanos. Todo esto contamina el contexto de cada agente que abre el repo.

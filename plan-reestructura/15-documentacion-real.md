@@ -1,7 +1,7 @@
 # 15 — Documentación real (para humanos y para las IA operadoras)
 
 **Fase:** 1 · **Tamaño:** mediano · **Ejecutor:** Claude · **Revisor:** el dueño (lectura humana)
-**Rama:** `reestructura/15-docs` · **Depende de:** 11 y 12 mergeados (documenta el árbol ya ordenado)
+**Rama:** ninguna — directo a `main` · **Depende de:** 11 y 12 mergeados (documenta el árbol ya ordenado)
 
 ## Objetivo
 Hoy la "documentación" son 715 líneas de admiración arquitectónica + 88 informes sueltos fuera del repo + comentarios que mienten. Este repo lo operan esencialmente IAs: **el repo es su contexto**. La documentación debe ser corta, exacta y verificada, porque cada palabra falsa envenena a cada agente que la lee.

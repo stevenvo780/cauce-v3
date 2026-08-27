@@ -1,7 +1,7 @@
 # 31 — Despliegue simple (la pieza que faltó siempre)
 
 **Fase:** 3 · **Tamaño:** mediano pero delicado · **Ejecutor:** Claude (Opus) CON el dueño presente · **Revisor:** GPT 5.6 Ultra
-**Rama:** `reestructura/31-deploy` · **Depende de:** 21 cerrado (gate completo en verde)
+**Rama:** ninguna — directo a `main` · **Depende de:** 21 cerrado (gate completo en verde)
 
 ## Contexto (por qué esto es LA tarea)
 Las dos features pedidas están escritas desde el 26-ago y hay 7 pares de imágenes RC construidas y paradas. No se desplegaron porque el gate exige evidencia imposible (gitignored, borrada por clean, caducada por cualquier commit; 6 de 8 paquetes jamás existieron). Producción hoy: corre desde `/opt/cauce-v3` (no es repo git, compose que ningún commit produjo), mosaico de 3–4 imágenes, BD en migración 024 de 037, y el pin de prod.env es decorativo para 3 de 6 servicios. Se intentó desplegar 17 veces en una noche: 0 éxitos.

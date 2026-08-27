@@ -19,7 +19,7 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 
 ## Reglas (las completas: `ordenes/00-PROTOCOLO.md`)
 
-1. Trabaja SOLO en tu sector (tabla del protocolo), en TU clon, rama `tarea/<slug>` que vive <1 día. `main` solo recibe merges del integrador.
+1. Trabaja SOLO en tu sector (tabla del protocolo), DIRECTO en `main` — **prohibido crear ramas** (decisión del dueño: aquí las ramas fueron el cementerio). `git add` solo por rutas propias; nunca `git add -A`, `git add .` ni `commit -a`.
 2. Gate por commit: `pnpm typecheck && pnpm lint` en verde (hoy lo están; deben seguir).
 3. `git mv` en commits separados de cualquier edición de contenido. Commits ≤20 ficheros.
 4. Comentarios: solo restricciones que el código no puede expresar. Prohibido narrar historia, fechar, citar incidentes o personas — los comentarios-ensayo de este repo llegaron a MENTIR y envenenaron a los modelos que los leían.

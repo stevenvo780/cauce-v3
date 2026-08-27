@@ -1,7 +1,7 @@
 # 14 — Carpintería de la consola
 
 **Fase:** 1 · **Tamaño:** mediano · **Ejecutor:** Codex · **Revisor:** Gemini
-**Rama:** `reestructura/14-consola` · **Depende de:** nada (sector disjunto de 13)
+**Rama:** ninguna — directo a `main` · **Depende de:** nada (sector disjunto de 13)
 
 ## Objetivo
 La consola (29.6K líneas src + 22.9K test + 6.6K css) está mejor de lo que parecía — la auditoría confirmó que el editor de ficheros y las vistas están conectados de verdad. La carpintería aquí es quitar lo muerto, terminar la limpieza de prosa y ordenar nombres, sin rediseñar nada.
