@@ -155,12 +155,6 @@ FEATURES = (
     "session_output_flow_control", "read_governance_done_v1",
 )
 
-# Unicos nombres que esta via sirve. Cualquier otro se rechaza aunque el gateway lo pida.
-READ_ALLOWED_BASENAMES = frozenset({
-    "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.override.md", "SOUL.md",
-    "IDENTITY.md", "USER.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md",
-})
-
 # Nunca se sirven ni se listan, esten donde esten. Espejo de NEVER_SERVE_BASENAMES del gateway
 # (`services/gateway/src/console/agent-documents.ts`): las dos listas se defienden por separado a
 # proposito, porque un fallo en una sola no debe bastar para filtrar una credencial.

@@ -164,11 +164,20 @@ class WriteGovernanceBatchTests(unittest.TestCase):
         self.assertEqual(pathlib.Path(tools).read_bytes(), b"old tools")
         self.assertEqual(list(pathlib.Path(self.workspace).glob(".cauce-profile-*")), [])
 
-    def test_allowlist_is_exact_and_never_accepts_openclaw_json(self) -> None:
+    def test_allowlist_is_exact_and_rejects_non_governance_document(self) -> None:
         tag, body = run_batch(self.instance, "55555555-5555-5555-5555-555555555555", [
+            write_entry(self.path("settings.json"), b"{}", "create"),
+        ])
+        self.assertEqual((tag, body["error"]), (agent.TAG_WRITE_BATCH_ERR, "permission_denied"))
+        self.assertIn("not a governance document", body.get("reason", ""))
+        self.assertFalse(os.path.exists(self.path("settings.json")))
+
+    def test_never_serve_rejects_openclaw_json_as_credential_file(self) -> None:
+        tag, body = run_batch(self.instance, "55555555-5555-5555-5555-666666666666", [
             write_entry(self.path("openclaw.json"), b"{}", "create"),
         ])
         self.assertEqual((tag, body["error"]), (agent.TAG_WRITE_BATCH_ERR, "permission_denied"))
+        self.assertIn("never served", body.get("reason", ""))
         self.assertFalse(os.path.exists(self.path("openclaw.json")))
 
 

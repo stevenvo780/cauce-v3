@@ -109,9 +109,12 @@ class RolloutPtyTest(unittest.TestCase):
         home = pathlib.Path(temporary.name)
         unit_root = home / ".config/systemd/user"
         unit_root.mkdir(parents=True, mode=0o700)
-        (unit_root / "cauce-v3-pty@.service").write_text("[Service]\n", encoding="utf-8")
+        unit_file = unit_root / "cauce-v3-pty@.service"
+        unit_file.write_text("[Service]\n", encoding="utf-8")
+        unit_file.chmod(0o600)
         runner = FakeRunner()
-        worker = TestWorker(manager, home=home, runner=runner, sleep=lambda _: None)
+        with mock.patch.object(rollout.os, "geteuid", return_value=1000):
+            worker = TestWorker(manager, home=home, runner=runner, sleep=lambda _: None)
         return temporary, worker, runner
 
     def test_mapping_assigns_exactly_two_managers_and_recalculates_source_hashes(self) -> None:

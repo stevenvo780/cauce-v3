@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 const SUITES = [
   'test:unit',
   'test:terminal-pty',
+  'test:pty',
   'test:services',
   'test:gateway-hardening',
   'test:store-hardening',
