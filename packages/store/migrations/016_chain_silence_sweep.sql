@@ -1,4 +1,25 @@
--- 016: Tabla agent_chain_closures e índices de soporte para barrido de cadenas inactivas.
+-- P0-4 — Ninguna tarea de un humano puede morir en silencio.
+--
+-- Medido en producción el 2026-07-29 sobre la base viva:
+--   * 23 raíces con origen humano (15 de Steven) terminaron SIN ninguna respuesta final
+--     al humano. Ninguna tiene un `origin_relay` final; la más vieja lleva 138 h.
+--   * En 39 raíces con abanico el fan-in nunca se agendó. En TODAS ellas las ramas ya
+--     estaban terminales: el fan-in sólo se re-evalúa como efecto lateral de un ACK o del
+--     reaper, así que cuando el último evento de la cadena es justo el que deja el fan-in
+--     bloqueado, nadie vuelve a mirar. No hay vencimiento ni barrido: el silencio es eterno.
+--   * Una sola raíz (2f4d1592) tiene 1.425 ramas y 820 muertes. Cualquier aviso por muerte
+--     individual inunda Telegram; el cierre tiene que ser UNO por raíz.
+--
+-- Esta migración no cambia ninguna semántica existente. Aporta:
+--   1. `agent_chain_closures`: el ancla de idempotencia del vigía. Una fila por raíz, para
+--      siempre. Es lo que garantiza «un aviso por raíz» aunque el outbox se purgue, aunque
+--      corran dos dispatchers y aunque el barrido se repita cada minuto.
+--   2. Cuatro índices. Tres de ellos aceleran consultas que YA existen en la ruta caliente
+--      (el fan-in y el vallado de relays de Telegram hacen hoy seq scan sobre las mismas
+--      expresiones); el cuarto es el que hace barato el barrido.
+--
+-- Idempotente de punta a punta: todo es IF NOT EXISTS, y el CHECK se agrega dentro de un
+-- bloque DO consultando pg_constraint porque ADD CONSTRAINT no acepta IF NOT EXISTS.
 
 CREATE TABLE IF NOT EXISTS agent_chain_closures (
   root_message_id uuid PRIMARY KEY,
