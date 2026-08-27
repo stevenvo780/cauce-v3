@@ -24,7 +24,15 @@ import { describe, expect, it } from 'vitest';
 import { FUENTE_TERMINAL, PTY_CUERPO_BASE, PTY_CUERPO_MINIMO, TEMA_TERMINAL } from './pty-session';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
-const PIEL = readFileSync(resolve(AQUI, 'xterm-csp.css'), 'utf8');
+
+function readCssWithImports(filePath: string): string {
+  const content = readFileSync(filePath, 'utf8');
+  return content.replace(/@import\s+['"]([^'"]+)['"];/g, (_, relPath) => {
+    return readCssWithImports(resolve(dirname(filePath), relPath));
+  });
+}
+
+const PIEL = readCssWithImports(resolve(AQUI, 'xterm-csp.css'));
 const SESION = readFileSync(resolve(AQUI, 'pty-session.ts'), 'utf8');
 
 /** Los literales de la paleta salen del bundle de xterm, para que un cambio suyo se note acá. */

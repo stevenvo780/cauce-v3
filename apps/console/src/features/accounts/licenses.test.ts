@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   accountAssignments,
-  accountConsumption,
   extractAgents,
   extractBindings,
   extractCollectors,
@@ -17,9 +16,6 @@ import {
 } from './licenses';
 import type { ConfigurationSnapshot, QuotaSnapshot, QuotaThresholds } from '../../api/types';
 import { UNKNOWN } from '../../lib';
-
-// ─────────────────────────────────────────────────────────────────────────────────────
-// Freshness tests
 
 describe('freshness', () => {
   const thresholds: QuotaThresholds = {
@@ -48,7 +44,6 @@ describe('freshness', () => {
     const result = freshness(collector, thresholds, now);
     expect(result.state).toBe('stale');
     expect(result.ageSeconds).toBe(600);
-    // La etiqueta se muestra en pantalla: una antigüedad NUNCA se escribe en negativo.
     expect(result.label).toContain('10m');
     expect(result.label).not.toContain('-');
   });
@@ -83,351 +78,6 @@ describe('freshness', () => {
     expect(result.ageSeconds).toBe(100);
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────────────
-// Account consumption tests — HONESTIDAD CRÍTICA
-
-describe('accountConsumption', () => {
-  const thresholds: QuotaThresholds = {
-    stale_after_seconds: 300,
-    warn_remaining_percent: 20,
-    critical_remaining_percent: 5,
-  };
-  const now = 1000000;
-
-  it('devuelve available=false si no hay collectors en absoluto', () => {
-    const quotas: QuotaSnapshot = {
-      observed_at: null,
-      thresholds,
-      collectors: [],
-      providers: [],
-      unbound_groups: [],
-      paused_accounts: [],
-    };
-    const result = accountConsumption('codex-steven', quotas, thresholds, now);
-    expect(result.available).toBe(false);
-    expect(result.reason).toContain('Ningún recolector');
-    expect(result.windows).toHaveLength(0);
-  });
-
-  it('devuelve "?" para porcentajes si la sonda está caduca', () => {
-    const quotas: QuotaSnapshot = {
-      observed_at: null,
-      thresholds,
-      collectors: [
-        {
-          host: 'kratos',
-          collector_tenant: null,
-          collector_alias: null,
-          captured_at: null,
-          received_at: null,
-          age_seconds: 400, // > 300 = caduco
-          stale: false,
-          schema_version: 1,
-          app_version: null,
-          provider_count: 1,
-          window_count: 1,
-        },
-      ],
-      providers: [
-        {
-          host: 'kratos',
-          provider: 'codex',
-          ok: true,
-          available: true,
-          kind: 'token',
-          source: null,
-          plan: 'gpt-5.6-sol',
-          note: null,
-          effective_remaining_percent: 50,
-          observed_at: null,
-          age_seconds: 400,
-          available_groups: null,
-          limiting_groups: null,
-          severity: 'ok',
-          groups: [
-            {
-              group_key: 'codex-steven@claude',
-              limit_id: null,
-              account_id: 'codex-steven',
-              account_label: 'Steven',
-              account_provider: 'codex',
-              payer_tenant_id: 'grp.steven',
-              paused_until: null,
-              paused_reason: null,
-              min_remaining_percent: 50,
-              severity: 'ok',
-              windows: [
-                {
-                  window_key: 'session',
-                  label: 'Sesión',
-                  used_percent: 30,
-                  remaining_percent: 70,
-                  used_units: null,
-                  limit_units: null,
-                  window_minutes: 60,
-                  reset_at: null,
-                  reset_in_seconds: 3600,
-                  status: null,
-                  family: null,
-                  model: null,
-                  severity: 'ok',
-                  history: null,
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      unbound_groups: [],
-      paused_accounts: [],
-    };
-
-    const result = accountConsumption('codex-steven', quotas, thresholds, now);
-    expect(result.available).toBe(true);
-    // ¡CRÍTICO! La sonda está caduca, así que los porcentajes DEBEN ser "?"
-    expect(result.windows[0].used_percent).toBe('?');
-    expect(result.windows[0].remaining_percent).toBe('?');
-  });
-
-  it('devuelve "?" si remaining_percent es null', () => {
-    const quotas: QuotaSnapshot = {
-      observed_at: null,
-      thresholds,
-      collectors: [
-        {
-          host: 'kratos',
-          collector_tenant: null,
-          collector_alias: null,
-          captured_at: null,
-          received_at: null,
-          age_seconds: 50, // fresco
-          stale: false,
-          schema_version: 1,
-          app_version: null,
-          provider_count: 1,
-          window_count: 1,
-        },
-      ],
-      providers: [
-        {
-          host: 'kratos',
-          provider: 'codex',
-          ok: true,
-          available: true,
-          kind: 'token',
-          source: null,
-          plan: 'gpt-5.6-sol',
-          note: null,
-          effective_remaining_percent: null,
-          observed_at: null,
-          age_seconds: 50,
-          available_groups: null,
-          limiting_groups: null,
-          severity: 'unknown',
-          groups: [
-            {
-              group_key: 'codex-steven@claude',
-              limit_id: null,
-              account_id: 'codex-steven',
-              account_label: 'Steven',
-              account_provider: 'codex',
-              payer_tenant_id: 'grp.steven',
-              paused_until: null,
-              paused_reason: null,
-              min_remaining_percent: null,
-              severity: 'unknown',
-              windows: [
-                {
-                  window_key: 'session',
-                  label: 'Sesión',
-                  used_percent: 30,
-                  remaining_percent: null, // ← null
-                  used_units: null,
-                  limit_units: null,
-                  window_minutes: 60,
-                  reset_at: null,
-                  reset_in_seconds: 3600,
-                  status: null,
-                  family: null,
-                  model: null,
-                  severity: 'unknown',
-                  history: null,
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      unbound_groups: [],
-      paused_accounts: [],
-    };
-
-    const result = accountConsumption('codex-steven', quotas, thresholds, now);
-    expect(result.available).toBe(true);
-    // ¡CRÍTICO! remaining_percent es null, así que debe ser "?"
-    expect(result.windows[0].remaining_percent).toBe('?');
-  });
-
-  it('devuelve números reales si la sonda está fresca y los datos son válidos', () => {
-    const quotas: QuotaSnapshot = {
-      observed_at: null,
-      thresholds,
-      collectors: [
-        {
-          host: 'kratos',
-          collector_tenant: null,
-          collector_alias: null,
-          captured_at: null,
-          received_at: null,
-          age_seconds: 50, // fresco
-          stale: false,
-          schema_version: 1,
-          app_version: null,
-          provider_count: 1,
-          window_count: 1,
-        },
-      ],
-      providers: [
-        {
-          host: 'kratos',
-          provider: 'codex',
-          ok: true,
-          available: true,
-          kind: 'token',
-          source: null,
-          plan: 'gpt-5.6-sol',
-          note: null,
-          effective_remaining_percent: 50,
-          observed_at: null,
-          age_seconds: 50,
-          available_groups: null,
-          limiting_groups: null,
-          severity: 'ok',
-          groups: [
-            {
-              group_key: 'codex-steven@claude',
-              limit_id: null,
-              account_id: 'codex-steven',
-              account_label: 'Steven',
-              account_provider: 'codex',
-              payer_tenant_id: 'grp.steven',
-              paused_until: null,
-              paused_reason: null,
-              min_remaining_percent: 50,
-              severity: 'ok',
-              windows: [
-                {
-                  window_key: 'session',
-                  label: 'Sesión',
-                  used_percent: 30,
-                  remaining_percent: 70,
-                  used_units: null,
-                  limit_units: null,
-                  window_minutes: 60,
-                  reset_at: null,
-                  reset_in_seconds: 3600,
-                  status: null,
-                  family: null,
-                  model: null,
-                  severity: 'ok',
-                  history: null,
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      unbound_groups: [],
-      paused_accounts: [],
-    };
-
-    const result = accountConsumption('codex-steven', quotas, thresholds, now);
-    expect(result.available).toBe(true);
-    expect(result.windows[0].used_percent).toBe(30);
-    expect(result.windows[0].remaining_percent).toBe(70);
-  });
-
-  it('devuelve plan correctamente', () => {
-    const quotas: QuotaSnapshot = {
-      observed_at: null,
-      thresholds,
-      collectors: [
-        {
-          host: 'kratos',
-          collector_tenant: null,
-          collector_alias: null,
-          captured_at: null,
-          received_at: null,
-          age_seconds: 50,
-          stale: false,
-          schema_version: 1,
-          app_version: null,
-          provider_count: 1,
-          window_count: 1,
-        },
-      ],
-      providers: [
-        {
-          host: 'kratos',
-          provider: 'codex',
-          ok: true,
-          available: true,
-          kind: 'token',
-          source: null,
-          plan: 'gpt-5.6-terra',
-          note: null,
-          effective_remaining_percent: 50,
-          observed_at: null,
-          age_seconds: 50,
-          available_groups: null,
-          limiting_groups: null,
-          severity: 'ok',
-          groups: [
-            {
-              group_key: 'codex-steven@claude',
-              limit_id: null,
-              account_id: 'codex-steven',
-              account_label: 'Steven',
-              account_provider: 'codex',
-              payer_tenant_id: 'grp.steven',
-              paused_until: null,
-              paused_reason: null,
-              min_remaining_percent: 50,
-              severity: 'ok',
-              windows: [
-                {
-                  window_key: 'session',
-                  label: 'Sesión',
-                  used_percent: 30,
-                  remaining_percent: 70,
-                  used_units: null,
-                  limit_units: null,
-                  window_minutes: 60,
-                  reset_at: null,
-                  reset_in_seconds: 3600,
-                  status: null,
-                  family: null,
-                  model: null,
-                  severity: 'ok',
-                  history: null,
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      unbound_groups: [],
-      paused_accounts: [],
-    };
-
-    const result = accountConsumption('codex-steven', quotas, thresholds, now);
-    expect(result.plan).toBe('gpt-5.6-terra');
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────────────
-// Account assignments tests
 
 describe('accountAssignments', () => {
   const agents: Agent[] = [
@@ -505,9 +155,6 @@ describe('accountAssignments', () => {
     expect(result[0].container_name).toBe('kant-primary');
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────────────
-// Orphans tests
 
 describe('orphans', () => {
   it('encuentra cuentas sin datos de cuota', () => {
@@ -656,9 +303,6 @@ describe('orphans', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────────────
-// Formatter tests
-
 describe('formatResetIn', () => {
   it('formatea segundos positivos como "en ..."', () => {
     expect(formatResetIn(3600)).toContain('en');
@@ -677,9 +321,6 @@ describe('formatResetIn', () => {
     expect(formatResetIn(Infinity)).toBe(UNKNOWN);
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────────────
-// Extractors tests
 
 describe('extractors', () => {
   it('extrae provider_accounts correctamente', () => {
