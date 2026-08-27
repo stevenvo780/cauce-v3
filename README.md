@@ -2,6 +2,8 @@
 
 Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de 4 tenants (Steven, Miguel, Jhon, Isa), con consola web de operador y puente Telegram. Monorepo pnpm (Node 22, TypeScript) + un agente PTY en Python.
 
+**¿Primera vez aquí (humano)?** Empieza por [`docs/arquitectura.md`](docs/arquitectura.md): el orden de lectura de cada flujo, qué ignorar y dónde vive lo operativo.
+
 ## Cómo funciona de verdad
 
 - **PostgreSQL es la única fuente durable.** Mensajes, entregas, ACKs, leases y outbox viven en la base; los WebSockets solo aceleran.
