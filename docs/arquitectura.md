@@ -40,8 +40,8 @@ El gateway ya no es un monolito: `services/gateway/src/app.ts` (408 líneas) sol
 
 | # | Archivo | Qué buscar |
 |---|---|---|
-| 1 | `apps/console/src/features/terminal/pty-connection.ts` (orquestador: `pty-session.ts`, 308) | el cliente WS (xterm.js, reconexión, frames de control): `new WebSocket`, `openSocket`, `startViewerHeartbeat`, `stopHandshake/Reconnect` viven en `pty-connection.ts`; `pty-session.ts` los compone con `pty-input.ts`/`pty-output.ts`/`pty-theme.ts`/`pty-types.ts` |
-| 2 | `apps/console/nginx.conf` | el proxy `/v3/console/terminal/ws` → relay :8446 con mTLS |
+| 1 | `console/src/features/terminal/pty-connection.ts` (orquestador: `pty-session.ts`, 308) | el cliente WS (xterm.js, reconexión, frames de control): `new WebSocket`, `openSocket`, `startViewerHeartbeat`, `stopHandshake/Reconnect` viven en `pty-connection.ts`; `pty-session.ts` los compone con `pty-input.ts`/`pty-output.ts`/`pty-theme.ts`/`pty-types.ts` |
+| 2 | `console/nginx.conf` | el proxy `/v3/console/terminal/ws` → relay :8446 con mTLS |
 | 3 | `services/gateway/src/terminal/plugin.ts` (326) + `services/gateway/src/terminal/{session-control,relay-proxy}.ts` (902 + 1141) | el plano de control PTY: `registerTerminalControlPlane()` registra `/v3/console/terminal/{targets,sessions,sessions/:sid/owner,sessions/:sid}` (navegador) y `/v3/terminal/relay/{agents,sessions/:sid/{consume,resume,authz,close}}` (relay). El gateway DECIDE y AUDITA — no carga bytes de PTY |
 | 4 | `services/terminal-relay/src/browser-leg.ts` (508) + `agent-leg.ts` (1065) | pierna navegador vs pierna agente: la primera canjea el ticket contra el gateway, la segunda abre TLS mutuo :8445 con identidad por fingerprint y aplica el `superseded` que expulsa conexiones duplicadas |
 | 5 | `services/terminal-relay/src/sessions.ts` (1235) + `gateway-client.ts` (1244) | ciclo de vida de sesión + canje de tickets/authz/HTTP contra el gateway |
@@ -51,8 +51,8 @@ El gateway ya no es un monolito: `services/gateway/src/app.ts` (408 líneas) sol
 
 | # | Archivo | Qué buscar |
 |---|---|---|
-| 1 | `apps/console/src/features/live/FicherosTab.tsx` (+ `DirectivaModal.tsx`) | el editor: lee inventario, lee contenido, guarda con `expected_sha` |
-| 2 | `apps/console/src/api/client.ts` (840) | `GET|PUT …/documents/:kind/content` |
+| 1 | `console/src/features/live/FicherosTab.tsx` (+ `DirectivaModal.tsx`) | el editor: lee inventario, lee contenido, guarda con `expected_sha` |
+| 2 | `console/src/api/client.ts` (840) | `GET|PUT …/documents/:kind/content` |
 | 3 | `services/gateway/src/console/agent-documents.routes.ts` (622) + `services/gateway/src/console/agent-documents.ts` (1080) | las 6 rutas (`/v3/console/{tenants/:tenantId/agents/:alias,agents/:alias}/documents[/:kind/content]`); `TerminalRelayFactsProbe` (read/write/list contra el relay) |
 | 4 | `services/gateway/src/terminal/plugin.ts` → `governance-probes.ts` → `services/gateway/src/console/agent-directive.routes.ts` | el `GET /v3/console/agents/:tenant/:alias/directive` (DIRECTIVA de un alias) y los tags binarios 0x50–0x5E viajan por aquí; la sonda se instala en el hueco `app.sondaDeDocumentos` que `app.ts` dejó |
 | 5 | `services/terminal-relay/src/governance-relay.ts` (598) + `framing.ts` (158) | las operaciones read/write y los tags binarios 0x50–0x5E |
@@ -73,7 +73,7 @@ El gateway ya no es un monolito: `services/gateway/src/app.ts` (408 líneas) sol
 | `systemd/` + `generated/` | plantillas de unidades y su salida generada (`pnpm ops:manifests`) | Cuando toques la flota |
 | `manifests/` | un YAML de configuración por alias de agente | Cuando toques la flota |
 | `guardias/` | espejos de los guardianes del host (los reales corren desde `/usr/local/sbin`) | FASE 3 (fichero 32) |
-| `scripts/` | mitad utilidades vivas, mitad dudosos pendientes del dueño (`quota-collector`, `dlq_cli`, `generate-telegram-config`, `update-alias-config`) | Poco |
+| `scripts/` | mitad utilidades vivas, mitad dudosos pendientes del dueño (`quota-collector`, `generate-telegram-config`, `update-alias-config`) | Poco |
 | `harness/`, `tests/`, `schemas/` | QA con dobles de protocolo y sus contratos; las dos subcarpetas de tests (`tests/`, raíz del monorepo) cubren piezas vivas y cuarentena | Poco |
 | `observability/`, `config/` | Prometheus/otel y configs | Cuando toques alertas |
 | el resto (`cli/`, `patches/`, `security/`, `openclaw-gateway/`, `container-runtime/`, `console-login/`, `ai-live/`, `private/`) | piezas puntuales, autoexplicativas por su README o candidatas a limpieza | Rara vez |
@@ -93,7 +93,7 @@ El gateway ya no es un monolito: `services/gateway/src/app.ts` (408 líneas) sol
 | gateway (`services/gateway/src`) | 15,3K (`app.ts` 408 + `routes/*` ~2,8K + `console/*` ~5,2K + `terminal/*` ~3,5K + llanos ~3,4K) | 10,6K en `services/gateway/src/*.test.ts` + 5,5K en `tests/gateway-hardening/` |
 | store (`packages/store/src`) | 14,5K (`repository.ts` 42 fachada + `repository/*` 7,5K + 6 llanos ~6,9K) | 19,5K en `packages/store/test/` |
 | adapter-sdk (`packages/adapter-sdk/src`) | 16,3K | 20K en `packages/adapter-sdk/test/` |
-| consola (`apps/console/src`) | 28,3K TS/TSX + 6K CSS | 22,9K en `apps/console/src/**/*.test.ts(x)` |
+| consola (`console/src`) | 28,3K TS/TSX + 6K CSS | 22,9K en `console/src/**/*.test.ts(x)` |
 | terminal-relay (`services/terminal-relay/src`) | 5,3K | 4,3K |
 | telegram-bridge (`services/telegram-bridge/src`) | 5,5K | 5K en `services/telegram-bridge/test/` |
 | dispatcher (`services/dispatcher/src`) | 0,82K | 0,32K en `services/dispatcher/test/` |

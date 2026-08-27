@@ -55,11 +55,11 @@ No cambia la decisión (todo sigue siendo basura recuperable), pero el dueño de
 
 ### 2. «8 vistas de consola, ~1.027 líneas reales de src» → **783 líneas**, y solo 2 retiradas son limpias
 
-`PENDIENTES-DEL-DUEÑO.md:81`. Los 244 que faltan son `apps/console/src/features/topology/HyperGraph.tsx`, **borrado el mismo día a las 16:13, antes de que se firmara el documento a las 17:07**:
+`PENDIENTES-DEL-DUEÑO.md:81`. Los 244 que faltan son `console/src/features/topology/HyperGraph.tsx`, **borrado el mismo día a las 16:13, antes de que se firmara el documento a las 17:07**:
 
 ```
 $ git show 847e896 --stat | grep -i hyper
- apps/console/src/features/topology/HyperGraph.tsx  | 244 ----------
+ console/src/features/topology/HyperGraph.tsx  | 244 ----------
 ```
 
 Y de esas 783 líneas, solo una parte es retirable de verdad:
@@ -73,9 +73,9 @@ Y de esas 783 líneas, solo una parte es retirable de verdad:
 Dos de las ocho **no se pueden retirar**: `relays` es un sub-componente de `ObservabilityPage`, y `topology` ya es un alias en `App.tsx:110` cuyos ficheros los usa `/live`. La advertencia del doc sobre `hypergraph-layout` sigue vigente y verificada:
 
 ```
-$ grep -rn "hypergraph-layout" apps/console/src --include=*.tsx
-apps/console/src/features/live/LiveHypergraph.tsx:19:} from '../topology/hypergraph-layout';
-apps/console/src/features/live/live-hypergraph/FlowArrow.tsx:1:import type { Point } from '../../topology/hypergraph-layout';
+$ grep -rn "hypergraph-layout" console/src --include=*.tsx
+console/src/features/live/LiveHypergraph.tsx:19:} from '../topology/hypergraph-layout';
+console/src/features/live/live-hypergraph/FlowArrow.tsx:1:import type { Point } from '../../topology/hypergraph-layout';
 ```
 
 **Cifra firmable: 231 líneas de retirada limpia, 616 si se acepta la co-edición.** No 1.027.

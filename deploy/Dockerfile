@@ -108,13 +108,6 @@ RUN ln -s ../packages/adapter-sdk/node_modules/ws node_modules/ws
 USER node
 CMD ["node", "ops/harness/runner.mjs", "--live"]
 
-FROM runtime AS authentic-harness
-USER root
-COPY --chown=node:node ops/harness/authentic-fixture-init.mjs ops/harness/authentic-external-server.mjs ops/harness/authentic-unix-target.mjs ./ops/harness/
-RUN ln -s ../packages/adapter-sdk/node_modules/ws node_modules/ws
-USER node
-CMD ["node", "ops/harness/authentic-external-server.mjs"]
-
 FROM ${CAUCE_NGINX_BASE} AS console-base
 ARG CAUCE_NGINX_BASE
 ARG CAUCE_SOURCE_DIGEST

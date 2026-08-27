@@ -278,5 +278,5 @@ la exclusión causal de ACK y la historia de replay se verifican en
 `cauce_manual_replay_telegram_030`. No existe confirmación implícita: todos los callers deben
 proveer actor, ACK de riesgo, `requestId`, `deadLetterId`, `incidentEvidenceSha256` y
 `expectedReplayCount`; `false` se rechaza antes de
-reencolar. El contrato operativo completo, incluido listado seguro y cierre sin replay, está en
-`ops/runbooks/dlq-causal-reconciliation.md`.
+reencolar. El contrato operativo completo, incluido listado seguro y cierre sin replay, vive en la migración
+`030_dlq_causal_reconciliation.sql` y se opera desde la pestaña Observabilidad de la consola.

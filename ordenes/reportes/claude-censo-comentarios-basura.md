@@ -83,133 +83,133 @@ Contraejemplos positivos (para no sobre-corregir): packages/protocol/src/priorit
 | `services/gateway/src/publish-priority-policy.ts` | 8 | 17% | **0** | invariante | An operator role grants control operations; it does not prove that a person originated a message |
 | `services/terminal-relay/src/log.ts` | 7 | 32% | **0** | invariante | Certificate fingerprints are correlation handles, not secrets, but 16 hex is plenty |
 
-## Comentarios — apps/console/src y packages/adapter-sdk/src (cauce-v3) — censo de comentarios, sin modificar nada
+## Comentarios — console/src y packages/adapter-sdk/src (cauce-v3) — censo de comentarios, sin modificar nada
 
-ZONA CENSADA: 122 ficheros (103 fuente + 19 test que superan 25% de densidad) de apps/console/src y packages/adapter-sdk/src, sobre 36.526 líneas totales. TOTALES: 7.567 líneas de comentario en estos 122 ficheros (20,7% de densidad media dentro de la zona marcada; 15,1% sobre el total de la zona, 10.217/67.592). Estimación honesta de borrables: ~1.413 líneas (18,7% de las líneas de comentario de la zona marcada) — bastante menos de lo que "demasiado ruido" sugiere, porque el grueso de la densidad NO es cuento vacío: son 66/122 ficheros de clase INVARIANTE dominante (contratos de tipos, semántica de null/UNKNOWN, reglas de concurrencia/seguridad de ficheros) con muy poco recortable (5-15%). El ruido real está concentrado: 10 ficheros son NARRATIVO dominante — casi todos tests de legibilidad/CSS que narran una medición histórica en Chrome con cifras, fecha y a veces cita textual del dueño ("MEDIDO en Chrome...", "Steven, por SEGUNDA vez..."), donde 45-65% de sus líneas de comentario son prescindibles sin tocar el guardia real. Otros 46 ficheros son MIXTO: la regla es real pero está envuelta en un "antes se llamaba X / ahora Y", con fecha y cifra de incidente, que podría comprimirse a una línea por fichero (tal como pide el protocolo). CLASE "ceremonial" (JSDoc/@param): AUSENTE — 0 coincidencias de @param/@returns en toda la zona; esta base de código nunca usó ese estilo. CLASE "sql-string": NO APLICA en esta zona — no hay strings SQL con comentarios embebidos en apps/console/src ni packages/adapter-sdk/src (ese patrón, si existe, vive en packages/store, fuera del alcance pedido). HALLAZGO SEPARADO — MUTILADO REAL Y CONCRETO: confirmé al menos 15-17 fragmentos rotos dejados por la limpieza mecánica (commit 2a22107) en al menos 15 ficheros distintos, con dos firmas reconocibles: (a) un "**" de negrita huérfano seguido de doble espacio y texto en minúscula que empieza a mitad de frase (p.ej. agent-state.ts:535 "*  el veredicto decía...", denegaciones.ts:4 "Steven,  pedir una sesión PTY...", quotas.ts:154 "...misma línea.**  la tarjeta de codex..."); (b) un título o frase que quedó truncado a secas (capas-pendientes.ts:4 "LO QUE " sin nada más; deriva.ts:16 "Por qué existe este módulo.** " seguido de texto sin sujeto). Estos no son mayoría de ningún fichero (por eso ninguna fila usa "mutilado" como clase_dominante) pero son evidencia dura de que la limpieza anterior sí rompió frases, tal como sospecha el dueño. TRES PEORES FICHEROS por volumen absoluto de borrable: (1) apps/console/src/features/config/config-css.test.ts — 246 líneas de comentario, 35% densidad, ~160 borrables (narrativo: 8 repeticiones de "MEDIDO en Chrome" con cifras de contraste WCAG y una cita textual del dueño); (2) apps/console/src/styles.tipografia.test.ts — 134 líneas, 37% densidad, ~87 borrables (narrativo: tabla de medición por vista con fecha); (3) apps/console/src/features/live/agent-state.ts — 268 líneas, 31% densidad, ~75 borrables (mixto: el fichero con más comentario de toda la zona; mezcla reglas de estado reales de alto valor con largos "antes se llamaba X, decía Y" narrados como historia, más dos fragmentos mutilados confirmados).
+ZONA CENSADA: 122 ficheros (103 fuente + 19 test que superan 25% de densidad) de console/src y packages/adapter-sdk/src, sobre 36.526 líneas totales. TOTALES: 7.567 líneas de comentario en estos 122 ficheros (20,7% de densidad media dentro de la zona marcada; 15,1% sobre el total de la zona, 10.217/67.592). Estimación honesta de borrables: ~1.413 líneas (18,7% de las líneas de comentario de la zona marcada) — bastante menos de lo que "demasiado ruido" sugiere, porque el grueso de la densidad NO es cuento vacío: son 66/122 ficheros de clase INVARIANTE dominante (contratos de tipos, semántica de null/UNKNOWN, reglas de concurrencia/seguridad de ficheros) con muy poco recortable (5-15%). El ruido real está concentrado: 10 ficheros son NARRATIVO dominante — casi todos tests de legibilidad/CSS que narran una medición histórica en Chrome con cifras, fecha y a veces cita textual del dueño ("MEDIDO en Chrome...", "Steven, por SEGUNDA vez..."), donde 45-65% de sus líneas de comentario son prescindibles sin tocar el guardia real. Otros 46 ficheros son MIXTO: la regla es real pero está envuelta en un "antes se llamaba X / ahora Y", con fecha y cifra de incidente, que podría comprimirse a una línea por fichero (tal como pide el protocolo). CLASE "ceremonial" (JSDoc/@param): AUSENTE — 0 coincidencias de @param/@returns en toda la zona; esta base de código nunca usó ese estilo. CLASE "sql-string": NO APLICA en esta zona — no hay strings SQL con comentarios embebidos en console/src ni packages/adapter-sdk/src (ese patrón, si existe, vive en packages/store, fuera del alcance pedido). HALLAZGO SEPARADO — MUTILADO REAL Y CONCRETO: confirmé al menos 15-17 fragmentos rotos dejados por la limpieza mecánica (commit 2a22107) en al menos 15 ficheros distintos, con dos firmas reconocibles: (a) un "**" de negrita huérfano seguido de doble espacio y texto en minúscula que empieza a mitad de frase (p.ej. agent-state.ts:535 "*  el veredicto decía...", denegaciones.ts:4 "Steven,  pedir una sesión PTY...", quotas.ts:154 "...misma línea.**  la tarjeta de codex..."); (b) un título o frase que quedó truncado a secas (capas-pendientes.ts:4 "LO QUE " sin nada más; deriva.ts:16 "Por qué existe este módulo.** " seguido de texto sin sujeto). Estos no son mayoría de ningún fichero (por eso ninguna fila usa "mutilado" como clase_dominante) pero son evidencia dura de que la limpieza anterior sí rompió frases, tal como sospecha el dueño. TRES PEORES FICHEROS por volumen absoluto de borrable: (1) console/src/features/config/config-css.test.ts — 246 líneas de comentario, 35% densidad, ~160 borrables (narrativo: 8 repeticiones de "MEDIDO en Chrome" con cifras de contraste WCAG y una cita textual del dueño); (2) console/src/styles.tipografia.test.ts — 134 líneas, 37% densidad, ~87 borrables (narrativo: tabla de medición por vista con fecha); (3) console/src/features/live/agent-state.ts — 268 líneas, 31% densidad, ~75 borrables (mixto: el fichero con más comentario de toda la zona; mezcla reglas de estado reales de alto valor con largos "antes se llamaba X, decía Y" narrados como historia, más dos fragmentos mutilados confirmados).
 
 | Fichero | Coment. | % | Borrables | Clase | Ejemplo |
 |---|---|---|---|---|---|
-| `apps/console/src/features/config/config-css.test.ts` | 246 | 35% | **160** | narrativo | cita «Steven, por SEGUNDA vez: «la vista de configuraciones...»»; «MEDIDO en Chrome contra el snapshot real de |
-| `apps/console/src/styles.tipografia.test.ts` | 134 | 37% | **87** | narrativo | «El arreglo de legibilidad de 2026-08-24... MEDIDO por mí en Chrome de verdad» + tabla de cifras por vista, re |
-| `apps/console/src/features/live/agent-state.ts` | 268 | 31% | **75** | mixto | «Los siete estados que  cada uno con su muñeco» (mutilado, doble espacio) y «*  el veredicto decía «13 conecta |
-| `apps/console/src/styles.tipografia-montada.test.tsx` | 91 | 34% | **55** | narrativo | «EL SUELO TIPOGRÁFICO... MEDIDO acá, no supuesto» y cifras de medición en Chrome/jsdom |
-| `apps/console/src/features/live/LiveFleetPage.tsx` | 186 | 22% | **46** | mixto | bloques narrativos largos «Antes el mapa recibía... La cabecera decía...» y fecha 2026-08-23 mezclados con reg |
-| `apps/console/src/features/live/tira-de-pestanas.test.ts` | 59 | 52% | **35** | narrativo | «...cajón abierto en `/live?agente=Steven/zeus...» (mutilado); tabla de píxeles medidos en Chrome, relato de m |
-| `apps/console/src/api/types.ts` | 230 | 19% | **34** | mixto | bloque «LAS TRES CAPAS DE DIRECTIVA... Medido sobre producción el 23-ago-2026» narrativo; el resto son docs de |
-| `apps/console/src/api/use-resource.fallo-visible.test.tsx` | 57 | 33% | **26** | narrativo | «Este fichero existe porque mis propias pruebas dieron VERDE... 30 s clavados, medido sobre el build de produc |
-| `apps/console/src/features/config/collection-table.ts` | 124 | 42% | **25** | mixto | «...columna de la base.**  las tablas mostraban...» (mutilado, ** huérfano); resto es regla de UI real |
-| `apps/console/src/features/live/perfil-css.test.ts` | 44 | 42% | **24** | narrativo | «El editor de perfil no cabía en el cajón, y jsdom no lo puede ver.**  claro, alias con arnés `openclaw`...» ( |
+| `console/src/features/config/config-css.test.ts` | 246 | 35% | **160** | narrativo | cita «Steven, por SEGUNDA vez: «la vista de configuraciones...»»; «MEDIDO en Chrome contra el snapshot real de |
+| `console/src/styles.tipografia.test.ts` | 134 | 37% | **87** | narrativo | «El arreglo de legibilidad de 2026-08-24... MEDIDO por mí en Chrome de verdad» + tabla de cifras por vista, re |
+| `console/src/features/live/agent-state.ts` | 268 | 31% | **75** | mixto | «Los siete estados que  cada uno con su muñeco» (mutilado, doble espacio) y «*  el veredicto decía «13 conecta |
+| `console/src/styles.tipografia-montada.test.tsx` | 91 | 34% | **55** | narrativo | «EL SUELO TIPOGRÁFICO... MEDIDO acá, no supuesto» y cifras de medición en Chrome/jsdom |
+| `console/src/features/live/LiveFleetPage.tsx` | 186 | 22% | **46** | mixto | bloques narrativos largos «Antes el mapa recibía... La cabecera decía...» y fecha 2026-08-23 mezclados con reg |
+| `console/src/features/live/tira-de-pestanas.test.ts` | 59 | 52% | **35** | narrativo | «...cajón abierto en `/live?agente=Steven/zeus...» (mutilado); tabla de píxeles medidos en Chrome, relato de m |
+| `console/src/api/types.ts` | 230 | 19% | **34** | mixto | bloque «LAS TRES CAPAS DE DIRECTIVA... Medido sobre producción el 23-ago-2026» narrativo; el resto son docs de |
+| `console/src/api/use-resource.fallo-visible.test.tsx` | 57 | 33% | **26** | narrativo | «Este fichero existe porque mis propias pruebas dieron VERDE... 30 s clavados, medido sobre el build de produc |
+| `console/src/features/config/collection-table.ts` | 124 | 42% | **25** | mixto | «...columna de la base.**  las tablas mostraban...» (mutilado, ** huérfano); resto es regla de UI real |
+| `console/src/features/live/perfil-css.test.ts` | 44 | 42% | **24** | narrativo | «El editor de perfil no cabía en el cajón, y jsdom no lo puede ver.**  claro, alias con arnés `openclaw`...» ( |
 | `packages/adapter-sdk/src/harnesses/shared.ts` | 261 | 23% | **21** | invariante | documenta el contrato del sobre y por qué el sello es un resumen; denso pero sustantivo |
-| `apps/console/src/mocks/data.ts` | 173 | 20% | **21** | mixto | fixtures anotados con «por qué» reales; algunas referencias a Steven/incidentes son narrativas pero cortas |
-| `apps/console/src/vocabulario.test.tsx` | 41 | 39% | **21** | narrativo | «los 646 tests de esta consola pasaban con todos estos defectos delante»; enumera 4 defectos medidos con cifra |
-| `apps/console/src/features/terminal/denegaciones.ts` | 81 | 31% | **20** | mixto | «Steven,  pedir una sesión PTY...» (mutilado) y «...403 en 3 de 3 intentos, en dos alias...» (mutilado, arranc |
-| `apps/console/src/features/terminal/api.ts` | 95 | 13% | **19** | mixto | «LA COPIA SE HABÍA DESVIADO... Resultado medido contra producción el 2026-08-23: ... 403 ... 3 de 3» — inciden |
-| `apps/console/src/features/config/areas.test.ts` | 62 | 41% | **19** | mixto | «ARREGLADO el 2026-08-25» y «MEDIDO en Chrome sobre /config: entre el título...»; resto son CONTROL NEGATIVO r |
-| `apps/console/src/features/live/directiva.ts` | 82 | 27% | **18** | mixto | fecha «23-ago-2026»; «Lo que  es que la MISMA regla...» (mutilado, texto perdido tras «Lo que») |
-| `apps/console/src/features/landing/landing.ts` | 64 | 26% | **18** | mixto | «La portada gastaba la primera pantalla entera en avisos.**  1280×900:...» (mutilado); fecha 2026-08-22 |
-| `apps/console/src/features/topology/hypergraph-layout.ts` | 216 | 23% | **17** | invariante | explica por qué cada fórmula geométrica es así (áreas, bisectrices); documentación de diseño legítima |
-| `apps/console/src/features/config/ConfigPage.tsx` | 133 | 20% | **16** | invariante | explica por qué cada guard existe; poco narrativo puro |
-| `apps/console/src/features/terminal/fleet.ts` | 80 | 21% | **16** | mixto | «La vista rompía su propia promesa. **» (** huérfano, mutilado) + «Por qué «3 / 6» estaba mal.** Medido en pro |
-| `apps/console/src/features/config/areas.ts` | 65 | 38% | **16** | mixto | cita del dueño «pestañas, botones amigables, toggles, tooltips»; «ARREGLADO el 2026-08-25» con fecha |
-| `apps/console/src/api/client.timeout.test.ts` | 35 | 28% | **16** | narrativo | «//consola.humanizar.tech/live`, con la máquina del gateway al 89,9% de steal time: 180 segundos» |
-| `apps/console/src/features/live/deriva.ts` | 53 | 55% | **15** | mixto | «Por qué existe este módulo.**  `LiveFleetPage` con un comentario que afirmaba...» (mutilado); narra el incide |
-| `apps/console/src/features/config/interruptores.ts` | 71 | 29% | **14** | mixto | «Lo que había: ... Veinticuatro botones... Medido en Chrome» y cita del dueño «esto se resolvía fácil con togg |
-| `apps/console/src/features/config/Interruptor.tsx` | 62 | 33% | **14** | mixto | «MEDIDO en Chrome, con el teclado...»; cita «el dueño los pidió con esa palabra» |
-| `apps/console/src/features/accounts/quotas.ts` | 50 | 26% | **14** | mixto | ««AGOTADO» y «100% libre», en la misma línea.**  la tarjeta de `codex`...» (mutilado); «el equipo YA LO SABÍA» |
-| `apps/console/src/nav.ts` | 47 | 52% | **14** | mixto | «Este es el menú final del 2026-08-22, después de tres retiradas...»; «ROUTE_ALIASES`.** Un id...» (** huérfan |
-| `apps/console/src/features/live/vocabulario-de-estados.test.ts` | 41 | 41% | **14** | mixto | «**LA MISMA SITUACIÓN...**  Convivían dos vocabularios de estado en» (mutilado, arranca sin sujeto); resto es  |
-| `apps/console/src/features/live/LiveFleetPage.sin-salida.test.tsx` | 31 | 28% | **14** | narrativo | «tras tres HTTP 500 en `/v3/auth/session`, `/live` se quedó 180 s...» (mutilado línea 12, sin sujeto) |
-| `apps/console/src/features/landing/LandingPage.permisos.test.tsx` | 30 | 30% | **14** | narrativo | «Historia, porque explica por qué estas pruebas dicen ahora lo contrario...» enumera 3 rondas fechadas (commit |
+| `console/src/mocks/data.ts` | 173 | 20% | **21** | mixto | fixtures anotados con «por qué» reales; algunas referencias a Steven/incidentes son narrativas pero cortas |
+| `console/src/vocabulario.test.tsx` | 41 | 39% | **21** | narrativo | «los 646 tests de esta consola pasaban con todos estos defectos delante»; enumera 4 defectos medidos con cifra |
+| `console/src/features/terminal/denegaciones.ts` | 81 | 31% | **20** | mixto | «Steven,  pedir una sesión PTY...» (mutilado) y «...403 en 3 de 3 intentos, en dos alias...» (mutilado, arranc |
+| `console/src/features/terminal/api.ts` | 95 | 13% | **19** | mixto | «LA COPIA SE HABÍA DESVIADO... Resultado medido contra producción el 2026-08-23: ... 403 ... 3 de 3» — inciden |
+| `console/src/features/config/areas.test.ts` | 62 | 41% | **19** | mixto | «ARREGLADO el 2026-08-25» y «MEDIDO en Chrome sobre /config: entre el título...»; resto son CONTROL NEGATIVO r |
+| `console/src/features/live/directiva.ts` | 82 | 27% | **18** | mixto | fecha «23-ago-2026»; «Lo que  es que la MISMA regla...» (mutilado, texto perdido tras «Lo que») |
+| `console/src/features/landing/landing.ts` | 64 | 26% | **18** | mixto | «La portada gastaba la primera pantalla entera en avisos.**  1280×900:...» (mutilado); fecha 2026-08-22 |
+| `console/src/features/topology/hypergraph-layout.ts` | 216 | 23% | **17** | invariante | explica por qué cada fórmula geométrica es así (áreas, bisectrices); documentación de diseño legítima |
+| `console/src/features/config/ConfigPage.tsx` | 133 | 20% | **16** | invariante | explica por qué cada guard existe; poco narrativo puro |
+| `console/src/features/terminal/fleet.ts` | 80 | 21% | **16** | mixto | «La vista rompía su propia promesa. **» (** huérfano, mutilado) + «Por qué «3 / 6» estaba mal.** Medido en pro |
+| `console/src/features/config/areas.ts` | 65 | 38% | **16** | mixto | cita del dueño «pestañas, botones amigables, toggles, tooltips»; «ARREGLADO el 2026-08-25» con fecha |
+| `console/src/api/client.timeout.test.ts` | 35 | 28% | **16** | narrativo | «//consola.humanizar.tech/live`, con la máquina del gateway al 89,9% de steal time: 180 segundos» |
+| `console/src/features/live/deriva.ts` | 53 | 55% | **15** | mixto | «Por qué existe este módulo.**  `LiveFleetPage` con un comentario que afirmaba...» (mutilado); narra el incide |
+| `console/src/features/config/interruptores.ts` | 71 | 29% | **14** | mixto | «Lo que había: ... Veinticuatro botones... Medido en Chrome» y cita del dueño «esto se resolvía fácil con togg |
+| `console/src/features/config/Interruptor.tsx` | 62 | 33% | **14** | mixto | «MEDIDO en Chrome, con el teclado...»; cita «el dueño los pidió con esa palabra» |
+| `console/src/features/accounts/quotas.ts` | 50 | 26% | **14** | mixto | ««AGOTADO» y «100% libre», en la misma línea.**  la tarjeta de `codex`...» (mutilado); «el equipo YA LO SABÍA» |
+| `console/src/nav.ts` | 47 | 52% | **14** | mixto | «Este es el menú final del 2026-08-22, después de tres retiradas...»; «ROUTE_ALIASES`.** Un id...» (** huérfan |
+| `console/src/features/live/vocabulario-de-estados.test.ts` | 41 | 41% | **14** | mixto | «**LA MISMA SITUACIÓN...**  Convivían dos vocabularios de estado en» (mutilado, arranca sin sujeto); resto es  |
+| `console/src/features/live/LiveFleetPage.sin-salida.test.tsx` | 31 | 28% | **14** | narrativo | «tras tres HTTP 500 en `/v3/auth/session`, `/live` se quedó 180 s...» (mutilado línea 12, sin sujeto) |
+| `console/src/features/landing/LandingPage.permisos.test.tsx` | 30 | 30% | **14** | narrativo | «Historia, porque explica por qué estas pruebas dicen ahora lo contrario...» enumera 3 rondas fechadas (commit |
 | `packages/adapter-sdk/src/shared-session/tmux.ts` | 265 | 17% | **13** | invariante | prosa de concurrencia/TOCTOU real (CAS, if-shell, wait-for); casi todo es restricción de protocolo, muy poco r |
 | `packages/adapter-sdk/src/sdk/engine.ts` | 158 | 12% | **13** | invariante | reglas de estado durable/claim; sustantivo |
-| `apps/console/src/features/queues/colas-puras.test.ts` | 52 | 26% | **13** | mixto | «el fallo REAL que cometí dos veces»; resto CONTROL NEGATIVO real |
-| `apps/console/src/features/terminal/estilos-en-linea.test.ts` | 37 | 40% | **13** | mixto | «MEDIDO contra producción, abrir la terminal dejaba 22 violaciones»; resto es explicación técnica real de CSP |
+| `console/src/features/queues/colas-puras.test.ts` | 52 | 26% | **13** | mixto | «el fallo REAL que cometí dos veces»; resto CONTROL NEGATIVO real |
+| `console/src/features/terminal/estilos-en-linea.test.ts` | 37 | 40% | **13** | mixto | «MEDIDO contra producción, abrir la terminal dejaba 22 violaciones»; resto es explicación técnica real de CSP |
 | `packages/adapter-sdk/src/shared-session/paste-runner.ts` | 245 | 13% | **12** | invariante | reglas de exclusión/cuarentena del pane; casi todo es invariante de seguridad de concurrencia |
-| `apps/console/src/api/client.ts` | 151 | 18% | **12** | invariante | por qué cada endpoint hace lo que hace (CSRF, timeouts); sustantivo |
+| `console/src/api/client.ts` | 151 | 18% | **12** | invariante | por qué cada endpoint hace lo que hace (CSRF, timeouts); sustantivo |
 | `packages/adapter-sdk/src/context/perfil-a-contexto.ts` | 115 | 65% | **12** | invariante | documento de arquitectura del compilador de contexto; denso pero todo es invariante/porqué de diseño |
-| `apps/console/src/features/live/LiveHypergraph.tsx` | 82 | 17% | **12** | mixto | mezcla docs de honestidad de datos con «antes esto era ?? 'down', y era un BUG» narrativo puntual |
-| `apps/console/src/features/queues/DeliveryTable.tsx` | 49 | 16% | **12** | mixto | «...mostraba «UNKNOWN» en naranja bajo «Último» (mutilado, sin sujeto); «Salido del recorrido del 2026-08-23» |
-| `apps/console/src/features/terminal/cuerpo-del-mensaje.ts` | 39 | 67% | **12** | mixto | «...en ninguna parte.  100 items, largo máximo de `body_preview`...» (mutilado); cita textos truncados reales  |
-| `apps/console/src/features/accounts/licenses.ts` | 76 | 16% | **11** | mixto | «...tenía su propia página, `LicensesPage`;  página vive fusionada; » (mutilado, frase partida) |
-| `apps/console/src/features/live/AgentDrawer.tsx` | 63 | 16% | **11** | mixto | «...estaba escrita por duplicado en los 14 alias.  sitio; esto es ese sitio.» (mutilado, frase cortada) |
-| `apps/console/src/features/messages/roster.ts` | 57 | 29% | **11** | mixto | narra el incidente «gaia» (repetido en varios ficheros) como historia; regla real subyacente |
-| `apps/console/src/mocks/handlers.ts` | 55 | 14% | **11** | mixto | fechas «2026-08-24», «2026-08-23» de verificación contra producción dentro de comentarios de fixture |
-| `apps/console/src/features/config/campos-inertes.test.ts` | 43 | 32% | **11** | mixto | «MEDIDO en Chrome, mirando la pantalla...»; resto CONTROL NEGATIVO real con citas ruta:línea |
-| `apps/console/src/features/landing/LandingPage.tsx` | 41 | 23% | **11** | mixto | cita del dueño «adapters se convierte en landing con toda la data...»; «el precio se midió el 2026-08-22» |
-| `apps/console/src/features/terminal/plazas.ts` | 38 | 59% | **11** | mixto | «Esto existe por un fallo  Ultimate Terminal «nunca ha funcionado»...» (mutilado, sin sujeto) |
-| `apps/console/src/features/live/perfil.ts` | 69 | 24% | **10** | mixto | menciona incidente «el 16-ago un alias se quedó SORDO» con fecha, resto invariante |
-| `apps/console/src/features/messages/ConversationPane.tsx` | 65 | 13% | **10** | mixto | bloque narrativo con medición «Chrome a 1280x900... quedaban 42 px» |
-| `apps/console/src/features/config/CollectionTable.tsx` | 52 | 16% | **10** | mixto | «269 px de alto... 170 eran el volcado de JSON... medidos en Chrome» |
-| `apps/console/src/mocks/browser.ts` | 34 | 57% | **10** | mixto | «Medido en la consola desplegada: al entrar directo a una vista se dibujaba entera, pero...» |
-| `apps/console/src/features/live/capas-pendientes.ts` | 33 | 36% | **10** | mixto | «LO QUE » (título truncado, mutilado); cita «Qué preguntó Steven, en sus términos» |
-| `apps/console/src/features/messages/MessagesPage.tsx` | 46 | 20% | **9** | mixto | «Medido en producción a 1280x900: el `textarea` estaba en y=1546...» |
-| `apps/console/src/features/terminal/densidad-observacion.test.tsx` | 37 | 32% | **9** | mixto | CONTROL NEGATIVO real con aviso de método jsdom, poco narrativo puro |
-| `apps/console/src/features/messages/messages-css.test.ts` | 34 | 33% | **9** | mixto | «fallo que cometí escribiendo el arreglo del fan-out»; resto es regla real de clases CSS |
-| `apps/console/src/mocks/terminal-demo.ts` | 41 | 24% | **8** | mixto | «Acá decía `'live-tui'`, y el cliente busca `'harness'`... Se descubrió midiendo» |
-| `apps/console/src/features/queues/filtro-de-colas.ts` | 38 | 43% | **8** | mixto | «Recorrido de producción del 2026-08-23...»; resto regla real |
-| `apps/console/src/features/live/ficheros-legibilidad.test.ts` | 28 | 30% | **8** | mixto | «se midió con Chrome... a 1,36:1 de contraste... y con él sale a 7,44:1» |
-| `apps/console/src/features/queues/ultimo-error.ts` | 27 | 57% | **8** | mixto | «**«UNKNOWN» ÁMBAR...**  38 filas en la tabla de `/queues`, de las» (mutilado, sin sujeto) |
+| `console/src/features/live/LiveHypergraph.tsx` | 82 | 17% | **12** | mixto | mezcla docs de honestidad de datos con «antes esto era ?? 'down', y era un BUG» narrativo puntual |
+| `console/src/features/queues/DeliveryTable.tsx` | 49 | 16% | **12** | mixto | «...mostraba «UNKNOWN» en naranja bajo «Último» (mutilado, sin sujeto); «Salido del recorrido del 2026-08-23» |
+| `console/src/features/terminal/cuerpo-del-mensaje.ts` | 39 | 67% | **12** | mixto | «...en ninguna parte.  100 items, largo máximo de `body_preview`...» (mutilado); cita textos truncados reales  |
+| `console/src/features/accounts/licenses.ts` | 76 | 16% | **11** | mixto | «...tenía su propia página, `LicensesPage`;  página vive fusionada; » (mutilado, frase partida) |
+| `console/src/features/live/AgentDrawer.tsx` | 63 | 16% | **11** | mixto | «...estaba escrita por duplicado en los 14 alias.  sitio; esto es ese sitio.» (mutilado, frase cortada) |
+| `console/src/features/messages/roster.ts` | 57 | 29% | **11** | mixto | narra el incidente «gaia» (repetido en varios ficheros) como historia; regla real subyacente |
+| `console/src/mocks/handlers.ts` | 55 | 14% | **11** | mixto | fechas «2026-08-24», «2026-08-23» de verificación contra producción dentro de comentarios de fixture |
+| `console/src/features/config/campos-inertes.test.ts` | 43 | 32% | **11** | mixto | «MEDIDO en Chrome, mirando la pantalla...»; resto CONTROL NEGATIVO real con citas ruta:línea |
+| `console/src/features/landing/LandingPage.tsx` | 41 | 23% | **11** | mixto | cita del dueño «adapters se convierte en landing con toda la data...»; «el precio se midió el 2026-08-22» |
+| `console/src/features/terminal/plazas.ts` | 38 | 59% | **11** | mixto | «Esto existe por un fallo  Ultimate Terminal «nunca ha funcionado»...» (mutilado, sin sujeto) |
+| `console/src/features/live/perfil.ts` | 69 | 24% | **10** | mixto | menciona incidente «el 16-ago un alias se quedó SORDO» con fecha, resto invariante |
+| `console/src/features/messages/ConversationPane.tsx` | 65 | 13% | **10** | mixto | bloque narrativo con medición «Chrome a 1280x900... quedaban 42 px» |
+| `console/src/features/config/CollectionTable.tsx` | 52 | 16% | **10** | mixto | «269 px de alto... 170 eran el volcado de JSON... medidos en Chrome» |
+| `console/src/mocks/browser.ts` | 34 | 57% | **10** | mixto | «Medido en la consola desplegada: al entrar directo a una vista se dibujaba entera, pero...» |
+| `console/src/features/live/capas-pendientes.ts` | 33 | 36% | **10** | mixto | «LO QUE » (título truncado, mutilado); cita «Qué preguntó Steven, en sus términos» |
+| `console/src/features/messages/MessagesPage.tsx` | 46 | 20% | **9** | mixto | «Medido en producción a 1280x900: el `textarea` estaba en y=1546...» |
+| `console/src/features/terminal/densidad-observacion.test.tsx` | 37 | 32% | **9** | mixto | CONTROL NEGATIVO real con aviso de método jsdom, poco narrativo puro |
+| `console/src/features/messages/messages-css.test.ts` | 34 | 33% | **9** | mixto | «fallo que cometí escribiendo el arreglo del fan-out»; resto es regla real de clases CSS |
+| `console/src/mocks/terminal-demo.ts` | 41 | 24% | **8** | mixto | «Acá decía `'live-tui'`, y el cliente busca `'harness'`... Se descubrió midiendo» |
+| `console/src/features/queues/filtro-de-colas.ts` | 38 | 43% | **8** | mixto | «Recorrido de producción del 2026-08-23...»; resto regla real |
+| `console/src/features/live/ficheros-legibilidad.test.ts` | 28 | 30% | **8** | mixto | «se midió con Chrome... a 1,36:1 de contraste... y con él sale a 7,44:1» |
+| `console/src/features/queues/ultimo-error.ts` | 27 | 57% | **8** | mixto | «**«UNKNOWN» ÁMBAR...**  38 filas en la tabla de `/queues`, de las» (mutilado, sin sujeto) |
 | `packages/adapter-sdk/src/sdk/durable-store.ts` | 137 | 7% | **7** | invariante | WAL/recuperación; casi todo invariante |
-| `apps/console/src/features/live/historial-rol.ts` | 74 | 37% | **7** | invariante | reglas reales de ordenamiento/semántica del diario de roles |
-| `apps/console/src/features/live/role-brief.ts` | 59 | 68% | **7** | invariante | regla de tope real; incluye «GUARDA TEMPORAL — zeus 2026-08-22» que es un TODO operativo, no cuento |
-| `apps/console/src/features/queues/foco-de-entrega.ts` | 33 | 52% | **7** | mixto | cita commit `d3411de`; «Lo que la consola NO puede saber...** `GET /v3/console/queues`» (** huérfano leve) |
-| `apps/console/src/features/live/activity.ts` | 70 | 24% | **6** | invariante | semántica de null/UNKNOWN real |
-| `apps/console/src/features/live/ficheros.ts` | 59 | 34% | **6** | invariante | taxonomía real de motivos de bloqueo, una mención a Steven |
-| `apps/console/src/features/messages/queue-health.ts` | 58 | 40% | **6** | invariante | techos reales del servidor citados con archivo:línea |
-| `apps/console/src/components/ui.tsx` | 56 | 20% | **6** | invariante | vocabulario real de ausencia de dato |
-| `apps/console/src/features/live/FleetActivityTable.tsx` | 50 | 13% | **6** | invariante | por qué titular y señales salen de dos fuentes distintas; real |
-| `apps/console/src/features/terminal/session.ts` | 35 | 17% | **6** | mixto | «Vivió, entre el 2026-08-23 y la fusión de ese mismo día»; explica migración de lógica |
-| `apps/console/src/features/accounts/AccountRoutingDetail.tsx` | 23 | 24% | **6** | mixto | «El 2026-08-22 se midió... Steven pidió fundirlos...» |
+| `console/src/features/live/historial-rol.ts` | 74 | 37% | **7** | invariante | reglas reales de ordenamiento/semántica del diario de roles |
+| `console/src/features/live/role-brief.ts` | 59 | 68% | **7** | invariante | regla de tope real; incluye «GUARDA TEMPORAL — zeus 2026-08-22» que es un TODO operativo, no cuento |
+| `console/src/features/queues/foco-de-entrega.ts` | 33 | 52% | **7** | mixto | cita commit `d3411de`; «Lo que la consola NO puede saber...** `GET /v3/console/queues`» (** huérfano leve) |
+| `console/src/features/live/activity.ts` | 70 | 24% | **6** | invariante | semántica de null/UNKNOWN real |
+| `console/src/features/live/ficheros.ts` | 59 | 34% | **6** | invariante | taxonomía real de motivos de bloqueo, una mención a Steven |
+| `console/src/features/messages/queue-health.ts` | 58 | 40% | **6** | invariante | techos reales del servidor citados con archivo:línea |
+| `console/src/components/ui.tsx` | 56 | 20% | **6** | invariante | vocabulario real de ausencia de dato |
+| `console/src/features/live/FleetActivityTable.tsx` | 50 | 13% | **6** | invariante | por qué titular y señales salen de dos fuentes distintas; real |
+| `console/src/features/terminal/session.ts` | 35 | 17% | **6** | mixto | «Vivió, entre el 2026-08-23 y la fusión de ese mismo día»; explica migración de lógica |
+| `console/src/features/accounts/AccountRoutingDetail.tsx` | 23 | 24% | **6** | mixto | «El 2026-08-22 se midió... Steven pidió fundirlos...» |
 | `packages/adapter-sdk/src/shared-session/session.ts` | 92 | 10% | **5** | invariante | reglas de identidad de sesión tmux; sustantivo |
-| `apps/console/src/features/config/config-change.ts` | 36 | 37% | **5** | invariante | por qué 403 en lectura no es caída; real, algo de tono retórico |
-| `apps/console/src/features/audit/AuditPanel.tsx` | 33 | 20% | **5** | invariante | explica fusión de vistas con cita de otro comentario; algo de historia de refactor |
+| `console/src/features/config/config-change.ts` | 36 | 37% | **5** | invariante | por qué 403 en lectura no es caída; real, algo de tono retórico |
+| `console/src/features/audit/AuditPanel.tsx` | 33 | 20% | **5** | invariante | explica fusión de vistas con cita de otro comentario; algo de historia de refactor |
 | `packages/adapter-sdk/src/sdk/output-parser.ts` | 87 | 7% | **4** | invariante | parsing de dialectos de arnés; sustantivo |
 | `packages/adapter-sdk/src/sdk/types.ts` | 84 | 21% | **4** | invariante | docs de campo de protocolo, casi todo de una línea |
 | `packages/adapter-sdk/src/sdk/artifact-inliner.ts` | 83 | 34% | **4** | invariante | seguridad de ficheros (O_NOFOLLOW, symlinks); crítico, no tocar |
 | `packages/adapter-sdk/src/context/siembra-del-perfil.ts` | 73 | 14% | **4** | invariante | seguridad de escritura de ficheros (openat/O_NOFOLLOW); crítico |
-| `apps/console/src/features/accounts/registry.ts` | 52 | 9% | **4** | invariante | semántica real de campos redactados/visible/absent |
+| `console/src/features/accounts/registry.ts` | 52 | 9% | **4** | invariante | semántica real de campos redactados/visible/absent |
 | `packages/adapter-sdk/src/harnesses/contexto-fijo.ts` | 51 | 28% | **4** | invariante | reglas de sello/fusión de ficheros; sustantivo |
-| `apps/console/src/components/Tooltip.tsx` | 44 | 34% | **4** | invariante | por qué createPortal, por qué foco; real |
-| `apps/console/src/features/config/use-interruptores.ts` | 43 | 23% | **4** | invariante | regla real de reversión optimista |
-| `apps/console/src/features/config/SpaceWizard.tsx` | 37 | 13% | **4** | invariante | por qué se retiró un campo; real |
-| `apps/console/src/main.tsx` | 16 | 39% | **4** | mixto | «Medido: detrás de una auth básica, el registro del service worker puede recibir 401...» |
+| `console/src/components/Tooltip.tsx` | 44 | 34% | **4** | invariante | por qué createPortal, por qué foco; real |
+| `console/src/features/config/use-interruptores.ts` | 43 | 23% | **4** | invariante | regla real de reversión optimista |
+| `console/src/features/config/SpaceWizard.tsx` | 37 | 13% | **4** | invariante | por qué se retiró un campo; real |
+| `console/src/main.tsx` | 16 | 39% | **4** | mixto | «Medido: detrás de una auth básica, el registro del service worker puede recibir 401...» |
 | `packages/adapter-sdk/src/shared-session/types.ts` | 60 | 41% | **3** | invariante | enum docs de una línea, semántica real |
-| `apps/console/src/features/terminal/relay-status.ts` | 38 | 24% | **3** | invariante | doctrina real de ausente vs no-desplegado |
-| `apps/console/src/features/auth/AuthGate.tsx` | 36 | 17% | **3** | invariante | doctrina de sesión real, sin narrativa |
-| `apps/console/src/features/queues/QueuesPage.tsx` | 33 | 15% | **3** | invariante | real, por qué useSyncExternalStore/popstate |
-| `apps/console/src/features/config/campos-inertes.ts` | 32 | 37% | **3** | invariante | catálogo real con citas ruta:línea verificadas |
-| `apps/console/src/features/config/arneses.test.ts` | 25 | 35% | **3** | invariante | tabla real verificada contra el gateway |
-| `apps/console/src/features/live/FleetVerdict.tsx` | 21 | 23% | **3** | invariante | real, con leve tono retórico |
+| `console/src/features/terminal/relay-status.ts` | 38 | 24% | **3** | invariante | doctrina real de ausente vs no-desplegado |
+| `console/src/features/auth/AuthGate.tsx` | 36 | 17% | **3** | invariante | doctrina de sesión real, sin narrativa |
+| `console/src/features/queues/QueuesPage.tsx` | 33 | 15% | **3** | invariante | real, por qué useSyncExternalStore/popstate |
+| `console/src/features/config/campos-inertes.ts` | 32 | 37% | **3** | invariante | catálogo real con citas ruta:línea verificadas |
+| `console/src/features/config/arneses.test.ts` | 25 | 35% | **3** | invariante | tabla real verificada contra el gateway |
+| `console/src/features/live/FleetVerdict.tsx` | 21 | 23% | **3** | invariante | real, con leve tono retórico |
 | `packages/adapter-sdk/src/sdk/websocket-transport.ts` | 43 | 11% | **2** | invariante | seguridad de logging (nunca loguear el body); crítico |
 | `packages/adapter-sdk/src/shared-session/rollout.ts` | 42 | 16% | **2** | invariante | parsing de rollouts de Codex; sustantivo |
 | `packages/adapter-sdk/src/shared-session/transcript.ts` | 40 | 12% | **2** | invariante | parsing JSONL de Claude; sustantivo |
-| `apps/console/src/App.tsx` | 31 | 12% | **2** | invariante | real, code-splitting y rutas |
-| `apps/console/src/navigation.ts` | 28 | 37% | **2** | invariante | real, sin narrativa |
-| `apps/console/src/features/config/AltaRapida.tsx` | 28 | 16% | **2** | invariante | real, sin narrativa |
-| `apps/console/src/features/live/AgentTooltipCard.tsx` | 27 | 22% | **2** | invariante | real, doctrina de qué no se muestra en el tooltip |
-| `apps/console/src/features/config/roles.ts` | 27 | 28% | **2** | invariante | real |
-| `apps/console/src/api/use-resource.ts` | 26 | 18% | **2** | invariante | real, sin narrativa |
-| `apps/console/src/features/config/alta-rapida.ts` | 24 | 19% | **2** | invariante | real |
-| `apps/console/src/features/config/fecha-relativa.ts` | 24 | 41% | **2** | invariante | real, decisión de formato justificada |
-| `apps/console/src/features/live/ChainPanel.tsx` | 23 | 19% | **2** | invariante | real |
-| `apps/console/src/features/config/arneses.ts` | 22 | 23% | **2** | invariante | real |
-| `apps/console/src/features/live/DirectivaTab.tsx` | 20 | 16% | **2** | invariante | real |
+| `console/src/App.tsx` | 31 | 12% | **2** | invariante | real, code-splitting y rutas |
+| `console/src/navigation.ts` | 28 | 37% | **2** | invariante | real, sin narrativa |
+| `console/src/features/config/AltaRapida.tsx` | 28 | 16% | **2** | invariante | real, sin narrativa |
+| `console/src/features/live/AgentTooltipCard.tsx` | 27 | 22% | **2** | invariante | real, doctrina de qué no se muestra en el tooltip |
+| `console/src/features/config/roles.ts` | 27 | 28% | **2** | invariante | real |
+| `console/src/api/use-resource.ts` | 26 | 18% | **2** | invariante | real, sin narrativa |
+| `console/src/features/config/alta-rapida.ts` | 24 | 19% | **2** | invariante | real |
+| `console/src/features/config/fecha-relativa.ts` | 24 | 41% | **2** | invariante | real, decisión de formato justificada |
+| `console/src/features/live/ChainPanel.tsx` | 23 | 19% | **2** | invariante | real |
+| `console/src/features/config/arneses.ts` | 22 | 23% | **2** | invariante | real |
+| `console/src/features/live/DirectivaTab.tsx` | 20 | 16% | **2** | invariante | real |
 | `packages/adapter-sdk/src/shared-session/envelope.ts` | 24 | 29% | **1** | invariante | real, seguridad de correlación |
 | `packages/adapter-sdk/src/shared-session/pane.ts` | 23 | 18% | **1** | invariante | real |
-| `apps/console/src/features/messages/desplazamiento.ts` | 20 | 49% | **1** | invariante | real |
+| `console/src/features/messages/desplazamiento.ts` | 20 | 49% | **1** | invariante | real |
 | `packages/adapter-sdk/src/sdk/account-credentials.ts` | 19 | 23% | **1** | invariante | real |
 | `packages/adapter-sdk/src/shared-session/config.ts` | 19 | 17% | **1** | invariante | real |
-| `apps/console/src/features/auth/auth-session.ts` | 18 | 19% | **1** | invariante | real |
-| `apps/console/src/features/terminal/pty-socket-stub.ts` | 17 | 16% | **1** | invariante | real |
-| `apps/console/src/features/config/collections.ts` | 17 | 30% | **1** | invariante | real |
-| `apps/console/src/test/setup.ts` | 14 | 22% | **1** | invariante | real, por qué el polyfill existe |
-| `apps/console/src/features/config/ArnesesPanel.tsx` | 14 | 24% | **1** | invariante | real, fecha «23-ago-2026» breve dentro de justificación |
-| `apps/console/src/features/landing/HarnessStrip.tsx` | 13 | 16% | **1** | invariante | real |
+| `console/src/features/auth/auth-session.ts` | 18 | 19% | **1** | invariante | real |
+| `console/src/features/terminal/pty-socket-stub.ts` | 17 | 16% | **1** | invariante | real |
+| `console/src/features/config/collections.ts` | 17 | 30% | **1** | invariante | real |
+| `console/src/test/setup.ts` | 14 | 22% | **1** | invariante | real, por qué el polyfill existe |
+| `console/src/features/config/ArnesesPanel.tsx` | 14 | 24% | **1** | invariante | real, fecha «23-ago-2026» breve dentro de justificación |
+| `console/src/features/landing/HarnessStrip.tsx` | 13 | 16% | **1** | invariante | real |
 | `packages/adapter-sdk/src/shared-session/degradation-log.ts` | 13 | 18% | **1** | invariante | real |
-| `apps/console/src/features/accounts/MutationBar.tsx` | 11 | 25% | **1** | invariante | real |
-| `apps/console/src/features/terminal/doctrina.ts` | 9 | 82% | **0** | invariante | real, por qué existe en módulo propio |
-| `apps/console/src/features/topology/AclEdgeList.tsx` | 7 | 24% | **0** | invariante | real |
-| `apps/console/src/features/accounts/Sparkline.tsx` | 7 | 21% | **0** | invariante | real |
+| `console/src/features/accounts/MutationBar.tsx` | 11 | 25% | **1** | invariante | real |
+| `console/src/features/terminal/doctrina.ts` | 9 | 82% | **0** | invariante | real, por qué existe en módulo propio |
+| `console/src/features/topology/AclEdgeList.tsx` | 7 | 24% | **0** | invariante | real |
+| `console/src/features/accounts/Sparkline.tsx` | 7 | 21% | **0** | invariante | real |
 | `packages/adapter-sdk/src/index.ts` | 5 | 17% | **0** | invariante | real, por qué se reexporta |
 
 ## Comentarios — ops/**/*.py, ops/**/*.sh, ops/**/*.mjs, deploy/*.mjs, deploy/*.sh, scripts/*
@@ -271,9 +271,9 @@ ZONA ops/**+deploy/*+scripts/* (162 ficheros fuente .py/.sh/.mjs, sin contar tes
 | `.claude/` | otro | 16K | conservar | scheduled_tasks.lock contiene sessionId 'b878cae0-58ad-4046-96fa-2f4ef7455d07', que coincide exactamente con el ID de ES |
 | `.github/workflows/` | otro | 12K | conservar | Solo contiene ci.yml (1 job typecheck-lint + resto del pipeline). find .github -type f no devolvió nada más: sin CODEOWN |
 | `node_modules/ (raíz)` | otro | 268M | conservar | Estructura pnpm estándar (store .pnpm/ + symlinks), necesaria para build/test/lint del monorepo. Gitignored y en .docker |
-| `apps/console/node_modules/, packages/{adapter-sdk,mcp-fleet-monitor,protocol,store}/node_modules/, services/{dispatcher,gateway,telegram-bridge,terminal-relay}/node_modules/` | otro | apps/console: 196K; los 8 restantes: 292 | conservar | Verificado con `ls -la`: son symlinks al store central node_modules/.pnpm/ más .bin/ y cachés .vite/ — layout normal de  |
+| `console/node_modules/, packages/{adapter-sdk,mcp-fleet-monitor,protocol,store}/node_modules/, services/{dispatcher,gateway,telegram-bridge,terminal-relay}/node_modules/` | otro | console: 196K; los 8 restantes: 292 | conservar | Verificado con `ls -la`: son symlinks al store central node_modules/.pnpm/ más .bin/ y cachés .vite/ — layout normal de  |
 | `dist/ (raíz)` | build | 4.2M | conservar | Es el outDir real de tsconfig.build.json ('outDir: dist'), producido por el script 'build' de package.json (build:core → |
-| `packages/adapter-sdk/dist/, packages/mcp-fleet-monitor/dist/, packages/protocol/dist/, apps/console/dist/` | build | 3.8M, 3.1M, 276K, 4.5M respectivamente | conservar | Salidas de build por-paquete (tsc/vite) referenciadas por los scripts build:adapter/build:mcp/build:console de package.j |
+| `packages/adapter-sdk/dist/, packages/mcp-fleet-monitor/dist/, packages/protocol/dist/, console/dist/` | build | 3.8M, 3.1M, 276K, 4.5M respectivamente | conservar | Salidas de build por-paquete (tsc/vite) referenciadas por los scripts build:adapter/build:mcp/build:console de package.j |
 | `*.tsbuildinfo` | otro | 10 ficheros encontrados, todos dentro de | conservar | find . -name '*.tsbuildinfo' (excluyendo node_modules) devolvió CERO resultados propios del repo — ningún build del prop |
 | `coverage/` | otro | 0 (no existe) | conservar | find . -type d -name coverage (excluyendo node_modules) no devolvió nada, ni en raíz ni en ningún subnivel. Nada que cen |
 | `ops/artifacts/{real,release,restarts}/` | otro | 48K (junit.xml, report.json, SHA256SUMS, | conservar | Evidencia operativa real de corridas recientes (mtimes 25-26 ago: build.json de release, junit.xml/report.json de test r |
@@ -293,8 +293,8 @@ ZONA ops/**+deploy/*+scripts/* (162 ficheros fuente .py/.sh/.mjs, sin contar tes
 | `packages/adapter-sdk/manifests` | otro | 28K (6 JSON: claude/codex/fake/hermes/op | conservar | Fuente trackeada. Listado en `package.json` -> `files` (se publica con el paquete). Cubierto por packages/adapter-sdk/te |
 | `packages/adapter-sdk/scripts` | otro | 16K (chmod-bins.mjs, copy-bridges.mjs, p | conservar | Fuente trackeada, invocada directamente por los scripts `build` y `smoke:package` de packages/adapter-sdk/package.json.  |
 | `packages/adapter-sdk/node_modules` | otro | 52K hoy (solo symlinks pnpm: typescript, | conservar | El node_modules de 264MB mencionado vivía en un WORKTREE, no en este checkout. `git worktree list` hoy solo devuelve `/d |
-| `apps/console/dist` | build | 4.5M | borrar | gitignorado (`**/dist/`), `git ls-files apps/console | grep /dist/` = 0. Contiene apps/console/dist/assets, salida de vi |
-| `apps/console/public` | otro | 16K | conservar | Contiene mockServiceWorker.js, SÍ trackeado en git (único fichero del directorio). Usado por apps/console/src/mocks/brow |
+| `console/dist` | build | 4.5M | borrar | gitignorado (`**/dist/`), `git ls-files console | grep /dist/` = 0. Contiene console/dist/assets, salida de vi |
+| `console/public` | otro | 16K | conservar | Contiene mockServiceWorker.js, SÍ trackeado en git (único fichero del directorio). Usado por console/src/mocks/brow |
 | `ops/generated/container-systemd/rootless` | build | 140K (16 .service + 16 configs/*.env.exa | conservar | Generado por `pnpm ops:manifests` -> `generate-container-units.py --rootless --output ops/generated/container-systemd/ro |
 | `ops/generated/systemd` | build | 68K (15 cauce-v3-alias-*.service + SHA25 | conservar | Generado por `generate-units.py` (modo alias, sin --rootless). Trackeado íntegro en git. Mismo drift-check en ops/script |
 | `ops/artifacts` | cache | 48K (real/, restarts/, release/ — junit. | conservar | Ya gitignorado (`ops/artifacts/` en .gitignore) y `git ls-files ops/artifacts` = 0 — no ensucia el repo. Generado por `p |
@@ -331,13 +331,13 @@ ZONA ops/**+deploy/*+scripts/* (162 ficheros fuente .py/.sh/.mjs, sin contar tes
 | `el historial de git: minimax-enlaces-r5.md` | otro | 6.9K | conservar | histórico resuelto: barrido de enlaces post-mudanzas de ronda 4. Borrado en `2be4101`. |
 | `el historial de git: minimax-gitignore.md` | otro | 5.1K | conservar | histórico resuelto: auditoría de .gitignore de ronda 5, sin citas activas. Borrado en `2be4101`. |
 | `el historial de git: minimax-todos.md` | otro | 3.3K | conservar | histórico/caduco por naturaleza: censo puntual de TODO/FIXME de ronda 5 ('0 marcadores reales' en esa fecha). Borrado en `2be4101`. |
-| `plan-reestructura/21-correcciones-mapeadas.md` | otro | 3.8K | conservar | mezcla de ítems cerrados y abiertos, verificado línea a línea: ítem 1 (AbortSignal) CONFIRMADO arreglado en apps/console |
+| `plan-reestructura/21-correcciones-mapeadas.md` | otro | 3.8K | conservar | mezcla de ítems cerrados y abiertos, verificado línea a línea: ítem 1 (AbortSignal) CONFIRMADO arreglado en console |
 | `plan-reestructura/00-LEEME.md` | otro | 5.8K | dudoso | CONTRADICCIÓN vigente confirmada: su sección 'URGENTE' punto 2 dice 'Crear rama limpieza/comentarios-20260827, commitear |
 | `plan-reestructura/{31-despliegue-simple,32-flota-pty-y-guardias,33-gobierno-de-flota}.md + fase3/*.md` | otro | 44K | conservar | plan de FASE 3 vigente y citado activamente (README.md, 00-LEEME.md, arquitectura.md); contenido corroborado contra el á |
 | `plan-reestructura/censo-contingentes.md` | otro | 8.2K | conservar | tabla de '45 dudosos' pendientes de decisión del dueño, explícitamente preservada por ordenes/opencode-minimax.md (orden |
 | `tests/fleet-release/artifacts/{SHA256SUMS,binaries.sha256,junit.xml,report.json}` | build | 28K | gitignore-y-borrar | CONFIRMADO: tests/fleet-release/fleet-release.test.ts línea 450 hace mkdir de este directorio y línea 509 lo BORRA con r |
 | `.gitattributes` | config-muerta | 110B | dudoso | única regla '*.patch -whitespace'; find . -iname '*.patch' en todo el repo devuelve CERO resultados hoy. El .patch que l |
-| `.dockerignore (bloque `apps/console/src/features/_grafo/` + su comentario)` | config-muerta | ~200B | borrar | CONFIRMADO muerta: el directorio apps/console/src/features/_grafo/ NO EXISTE — fue eliminado en el commit 179d7bf ('refa |
+| `.dockerignore (bloque `console/src/features/_grafo/` + su comentario)` | config-muerta | ~200B | borrar | CONFIRMADO muerta: el directorio console/src/features/_grafo/ NO EXISTE — fue eliminado en el commit 179d7bf ('refa |
 | `.dockerignore (resto: node_modules, dist, coverage, .test-state, ops/artifacts, ops/backups, .git, .serena, *.log, .env*)` | otro | ~110B | conservar | todas con dueño vivo verificado: node_modules/dist/.test-state/.git/.serena existen hoy; coverage lo genera vitest.confi |
 | `pnpm-workspace.yaml` | otro | 455B | conservar | los 3 globs casan con directorios reales y no vacíos: packages/{adapter-sdk,mcp-fleet-monitor,protocol,store} (4), servi |
 

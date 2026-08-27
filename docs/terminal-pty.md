@@ -357,7 +357,7 @@ CAUCE_TERMINAL_CONFIG_DIR=/ruta/privada/cauce-terminal-dev \
 CAUCE_ENV_FILE=/ruta/privada/dev.env ops/scripts/compose.sh dev up --build -d --wait
 ```
 
-El nginx de dev (`apps/console/nginx.conf`) tiene el mismo `location` de match
+El nginx de dev (`console/nginx.conf`) tiene el mismo `location` de match
 exacto apuntando a `http://terminal-relay:8446`, sin mTLS. Dev no acredita
 producción: no hay TLS, la auth es de desarrollo y los grants son de juguete.
 
@@ -380,7 +380,3 @@ producción: no hay TLS, la auth es de desarrollo y los grants son de juguete.
 - El relay no declara `healthcheck` porque todavía no hay contrato de puerto de
   health. Cuando el servicio lo exponga, agregarlo con
   `deploy/readiness-probe.mjs` como el resto.
-- `ops/compose.authentic.yaml` **no** incluye el relay a propósito:
-  `ops/scripts/release-candidate.py` exige exactamente cinco servicios finales y
-  `ops/scripts/validate.sh` cuenta seis anclas `*final-runtime`. Sumar el relay
-  al stack auténtico obliga a mover esos dos números en el mismo cambio.

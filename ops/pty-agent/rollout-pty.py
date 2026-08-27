@@ -32,7 +32,6 @@ from rollout_pty_lib import (
     MODE_RE,
     NAME_RE,
     RELEASE_FILES,
-    RETIRED_REQUIRED_DISABLED,
     SCHEMA_VERSION,
     SHA_RE,
     UNIT_RE,

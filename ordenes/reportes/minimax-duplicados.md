@@ -41,13 +41,13 @@ todos_los_alias() {
 El `@import×11` del enunciado no eran los `@import` de los CSS (esos son **13, en 3 ficheros, sin ningún destino repetido** — legítimos). Es el **resolutor recursivo de `@import` copiado en los tests de legibilidad**, y son 15, no 11:
 
 ```
-$ grep -rn "@import" apps/console/src --include=*.css | wc -l
+$ grep -rn "@import" console/src --include=*.css | wc -l
 13
-$ grep -rln "replace(/@import" apps/console/src --include=*.test.* | wc -l
+$ grep -rln "replace(/@import" console/src --include=*.test.* | wc -l
 15
 ```
 
-**HOGAR ÚNICO:** `apps/console/src/test/leer-css.ts` con `leerCss(absPath)` + `leerCssDesdeRaiz(relPath)`. **Dueño:** Gemini. **Riesgo:** alto — `xterm-csp.test.ts:27-34` ya forkeó los nombres (`content`/`relPath`), y 3 ficheros usan una segunda variante con ruta absoluta. Un bug del resolutor (ciclo `@import` infinito, `@import url(...)`) se arreglaría solo en una parte del lote. Se cierra de una vez junto con G-C12 (`sinComentarios`, 6 copias) y G-C13 (`bloqueMedia`/`declaraciones`/`valor`, 4-5 copias) porque viajan siempre en el mismo bloque.
+**HOGAR ÚNICO:** `console/src/test/leer-css.ts` con `leerCss(absPath)` + `leerCssDesdeRaiz(relPath)`. **Dueño:** Gemini. **Riesgo:** alto — `xterm-csp.test.ts:27-34` ya forkeó los nombres (`content`/`relPath`), y 3 ficheros usan una segunda variante con ruta absoluta. Un bug del resolutor (ciclo `@import` infinito, `@import url(...)`) se arreglaría solo en una parte del lote. Se cierra de una vez junto con G-C12 (`sinComentarios`, 6 copias) y G-C13 (`bloqueMedia`/`declaraciones`/`valor`, 4-5 copias) porque viajan siempre en el mismo bloque.
 
 ### 3. `stringField` escrito 6 veces en el árbol vivo, y la 6ª acepta string vacío — DIVERGIÓ
 
@@ -119,8 +119,8 @@ El test pasa si las dos listas están sincronizadas, pero no comprueba que la li
 | G-C8 | helpers de fase de migración 036/037 (`shadowPhaseExists`, …) | 4 | ~30 | `packages/store/test/_fixtures/migration-phase.ts` | Codex | medio (120 líneas) |
 | G-C9 | array `apps` + `afterEach pop().close()` en tests de gateway | 5 | 5 | `services/gateway/src/__test-helpers__/close-apps.ts` | Codex | bajo |
 | G-C11 | preámbulo `const repository = resolve(dirname(fileURLToPath(...)))` | 13 | 6 | `tests/helpers/repository-root.ts` | Gemini | bajo |
-| G-C12 | `function sinComentarios(css)` | 6 | 3 | junto con G-C1 en `apps/console/src/test/` | Gemini | bajo |
-| G-C13 | `bloqueMedia` (+`declaraciones`, `valor`) | 4 (+5+5) | 18 | `apps/console/src/test/css-parser.ts` | Gemini | medio — `declaraciones` ya tiene DOS firmas semánticamente distintas (último bloque vs mapa propiedad→valor) |
+| G-C12 | `function sinComentarios(css)` | 6 | 3 | junto con G-C1 en `console/src/test/` | Gemini | bajo |
+| G-C13 | `bloqueMedia` (+`declaraciones`, `valor`) | 4 (+5+5) | 18 | `console/src/test/css-parser.ts` | Gemini | medio — `declaraciones` ya tiene DOS firmas semánticamente distintas (último bloque vs mapa propiedad→valor) |
 
 ### ops + scripts + deploy (20 grupos, ~1.180 línea-ocurrencias)
 

@@ -1,87 +1,87 @@
-# Parcial P14 · Comentarios borrables en tests de `apps/console`
+# Parcial P14 · Comentarios borrables en tests de `console`
 
-Lote exclusivo: los 19 ficheros de TEST de la zona `apps/console/src`/`packages/adapter-sdk/src` listados en el censo `claude-censo-comentarios-basura.md` (tercera tabla). Verificación de cada rango hecha leyendo el fichero en su estado actual. NO se ha tocado nada en el árbol.
+Lote exclusivo: los 19 ficheros de TEST de la zona `console/src`/`packages/adapter-sdk/src` listados en el censo `claude-censo-comentarios-basura.md` (tercera tabla). Verificación de cada rango hecha leyendo el fichero en su estado actual. NO se ha tocado nada en el árbol.
 
 ## Entradas por fichero
 
-`apps/console/src/features/config/config-css.test.ts:333-333` · ya limpio · sin rango · — —
+`console/src/features/config/config-css.test.ts:333-333` · ya limpio · sin rango · — —
 
-`apps/console/src/styles.tipografia.test.ts:20-20` · ceremonial · «Hojas»
-`apps/console/src/styles.tipografia.test.ts:34-34` · ceremonial · «lectura»
-`apps/console/src/styles.tipografia.test.ts:41-41` · ceremonial · «Todas»
-`apps/console/src/styles.tipografia.test.ts:66-66` · ceremonial · «14px»
-`apps/console/src/styles.tipografia.test.ts:139-139` · ceremonial · «premisa» · [compactar: línea 140 se reformatea como nuevo `/**` para no perder el contenido invariante 140-144]
-`apps/console/src/styles.tipografia.test.ts:168-168` · ceremonial · «escala» · [compactar: línea 169 se reformatea como nuevo `/**` para no perder el contenido invariante 169-174]
-`apps/console/src/styles.tipografia.test.ts:227-227` · ceremonial · «Ninguna»
-`apps/console/src/styles.tipografia.test.ts:274-274` · ceremonial · «Elementos»
-`apps/console/src/styles.tipografia.test.ts:294-294` · ceremonial · «excepción»
+`console/src/styles.tipografia.test.ts:20-20` · ceremonial · «Hojas»
+`console/src/styles.tipografia.test.ts:34-34` · ceremonial · «lectura»
+`console/src/styles.tipografia.test.ts:41-41` · ceremonial · «Todas»
+`console/src/styles.tipografia.test.ts:66-66` · ceremonial · «14px»
+`console/src/styles.tipografia.test.ts:139-139` · ceremonial · «premisa» · [compactar: línea 140 se reformatea como nuevo `/**` para no perder el contenido invariante 140-144]
+`console/src/styles.tipografia.test.ts:168-168` · ceremonial · «escala» · [compactar: línea 169 se reformatea como nuevo `/**` para no perder el contenido invariante 169-174]
+`console/src/styles.tipografia.test.ts:227-227` · ceremonial · «Ninguna»
+`console/src/styles.tipografia.test.ts:274-274` · ceremonial · «Elementos»
+`console/src/styles.tipografia.test.ts:294-294` · ceremonial · «excepción»
 
-`apps/console/src/styles.tipografia-montada.test.tsx:26-26` · ceremonial · «tokens»
-`apps/console/src/styles.tipografia-montada.test.tsx:45-45` · ceremonial · «Texto»
-`apps/console/src/styles.tipografia-montada.test.tsx:114-114` · ceremonial · «elementos»
-`apps/console/src/styles.tipografia-montada.test.tsx:133-135` · ceremonial · «vistas»
+`console/src/styles.tipografia-montada.test.tsx:26-26` · ceremonial · «tokens»
+`console/src/styles.tipografia-montada.test.tsx:45-45` · ceremonial · «Texto»
+`console/src/styles.tipografia-montada.test.tsx:114-114` · ceremonial · «elementos»
+`console/src/styles.tipografia-montada.test.tsx:133-135` · ceremonial · «vistas»
 
-`apps/console/src/features/live/tira-de-pestanas.test.ts:42-42` · ceremonial · «Contención»
-`apps/console/src/features/live/tira-de-pestanas.test.ts:54-54` · ceremonial · «Evita»
-`apps/console/src/features/live/tira-de-pestanas.test.ts:60-60` · ceremonial · «Ancho»
+`console/src/features/live/tira-de-pestanas.test.ts:42-42` · ceremonial · «Contención»
+`console/src/features/live/tira-de-pestanas.test.ts:54-54` · ceremonial · «Evita»
+`console/src/features/live/tira-de-pestanas.test.ts:60-60` · ceremonial · «Ancho»
 
-`apps/console/src/api/use-resource.fallo-visible.test.tsx:12-12` · ceremonial · «cargador»
+`console/src/api/use-resource.fallo-visible.test.tsx:12-12` · ceremonial · «cargador»
 
-`apps/console/src/features/live/perfil-css.test.ts:67-67` · ya limpio · sin rango · — —
+`console/src/features/live/perfil-css.test.ts:67-67` · ya limpio · sin rango · — —
 
-`apps/console/src/vocabulario.test.tsx:18-18` · ceremonial · «vistas»
-`apps/console/src/vocabulario.test.tsx:37-37` · ceremonial · «fecha»
+`console/src/vocabulario.test.tsx:18-18` · ceremonial · «vistas»
+`console/src/vocabulario.test.tsx:37-37` · ceremonial · «fecha»
 
-`apps/console/src/features/config/areas.test.ts:41-41` · ceremonial · «Regla»
-`apps/console/src/features/config/areas.test.ts:96-98` · ceremonial · «Verifica»
-`apps/console/src/features/config/areas.test.ts:108-111` · ceremonial · «Verifica»
+`console/src/features/config/areas.test.ts:41-41` · ceremonial · «Regla»
+`console/src/features/config/areas.test.ts:96-98` · ceremonial · «Verifica»
+`console/src/features/config/areas.test.ts:108-111` · ceremonial · «Verifica»
 
-`apps/console/src/api/client.timeout.test.ts:8-8` · ceremonial · «Simula»
+`console/src/api/client.timeout.test.ts:8-8` · ceremonial · «Simula»
 
-`apps/console/src/features/live/vocabulario-de-estados.test.ts:75-75` · ya limpio · sin rango · — —
+`console/src/features/live/vocabulario-de-estados.test.ts:75-75` · ya limpio · sin rango · — —
 
-`apps/console/src/features/live/LiveFleetPage.sin-salida.test.tsx:14-14` · ceremonial · «Simula»
-`apps/console/src/features/live/LiveFleetPage.sin-salida.test.tsx:19-19` · ceremonial · «página»
-`apps/console/src/features/live/LiveFleetPage.sin-salida.test.tsx:73-73` · ceremonial · «Indica»
+`console/src/features/live/LiveFleetPage.sin-salida.test.tsx:14-14` · ceremonial · «Simula»
+`console/src/features/live/LiveFleetPage.sin-salida.test.tsx:19-19` · ceremonial · «página»
+`console/src/features/live/LiveFleetPage.sin-salida.test.tsx:73-73` · ceremonial · «Indica»
 
-`apps/console/src/features/landing/LandingPage.permisos.test.tsx:58-58` · narrativo · «verificador»
+`console/src/features/landing/LandingPage.permisos.test.tsx:58-58` · narrativo · «verificador»
 
-`apps/console/src/features/queues/colas-puras.test.ts:91-91` · ceremonial · «TELÉFONO»
+`console/src/features/queues/colas-puras.test.ts:91-91` · ceremonial · «TELÉFONO»
 
-`apps/console/src/features/terminal/estilos-en-linea.test.ts:72-72` · ya limpio · sin rango · — —
+`console/src/features/terminal/estilos-en-linea.test.ts:72-72` · ya limpio · sin rango · — —
 
-`apps/console/src/features/config/campos-inertes.test.ts:113-117` · narrativo · «MEDIDO» · [compactar: conservar líneas 111-112 como invariante — título que explica la regla «aviso por las columnas QUE HAY, no por la colección»; eliminar 113-117 (MEDIDO en Chrome + descripción del defecto) y dejar `*/` cierra el bloque en línea 118]
+`console/src/features/config/campos-inertes.test.ts:113-117` · narrativo · «MEDIDO» · [compactar: conservar líneas 111-112 como invariante — título que explica la regla «aviso por las columnas QUE HAY, no por la colección»; eliminar 113-117 (MEDIDO en Chrome + descripción del defecto) y dejar `*/` cierra el bloque en línea 118]
 
-`apps/console/src/features/terminal/densidad-observacion.test.tsx:109-109` · ceremonial · «título»
+`console/src/features/terminal/densidad-observacion.test.tsx:109-109` · ceremonial · «título»
 
-`apps/console/src/features/messages/messages-css.test.ts:8-14` · narrativo · «fallo» · [compactar: conservar líneas 6-7 como título invariante («Ninguna clase de esta vista puede apuntar a una regla que no existe») y líneas 16-18 como invariante («La comprobación es la barata...»); eliminar 8-14 (incidente del fan-out + «483 pruebas»)]
+`console/src/features/messages/messages-css.test.ts:8-14` · narrativo · «fallo» · [compactar: conservar líneas 6-7 como título invariante («Ninguna clase de esta vista puede apuntar a una regla que no existe») y líneas 16-18 como invariante («La comprobación es la barata...»); eliminar 8-14 (incidente del fan-out + «483 pruebas»)]
 
-`apps/console/src/features/live/ficheros-legibilidad.test.ts:8-11` · narrativo · «midió» · [compactar: conservar línea 6 como título invariante («QUE EL AVISO MÁS IMPORTANTE...») y líneas 13-20 como invariante (justificación del punto crítico + explicación jsdom); eliminar 8-11 (Chrome a 1500 px + contrastes 1,36:1 / 7,44:1)]
-`apps/console/src/features/live/ficheros-legibilidad.test.ts:33-33` · ceremonial · «Devuelve»
+`console/src/features/live/ficheros-legibilidad.test.ts:8-11` · narrativo · «midió» · [compactar: conservar línea 6 como título invariante («QUE EL AVISO MÁS IMPORTANTE...») y líneas 13-20 como invariante (justificación del punto crítico + explicación jsdom); eliminar 8-11 (Chrome a 1500 px + contrastes 1,36:1 / 7,44:1)]
+`console/src/features/live/ficheros-legibilidad.test.ts:33-33` · ceremonial · «Devuelve»
 
-`apps/console/src/features/config/arneses.test.ts:71-71` · ya limpio · sin rango · — —
+`console/src/features/config/arneses.test.ts:71-71` · ya limpio · sin rango · — —
 
 ## Totales por fichero
 
-`TOTAL apps/console/src/features/config/config-css.test.ts: 0 líneas (ya limpiado)`
-`TOTAL apps/console/src/styles.tipografia.test.ts: 9 líneas`
-`TOTAL apps/console/src/styles.tipografia-montada.test.tsx: 6 líneas`
-`TOTAL apps/console/src/features/live/tira-de-pestanas.test.ts: 3 líneas`
-`TOTAL apps/console/src/api/use-resource.fallo-visible.test.tsx: 1 línea`
-`TOTAL apps/console/src/features/live/perfil-css.test.ts: 0 líneas (ya limpiado)`
-`TOTAL apps/console/src/vocabulario.test.tsx: 2 líneas`
-`TOTAL apps/console/src/features/config/areas.test.ts: 8 líneas`
-`TOTAL apps/console/src/api/client.timeout.test.ts: 1 línea`
-`TOTAL apps/console/src/features/live/vocabulario-de-estados.test.ts: 0 líneas (ya limpiado)`
-`TOTAL apps/console/src/features/live/LiveFleetPage.sin-salida.test.tsx: 3 líneas`
-`TOTAL apps/console/src/features/landing/LandingPage.permisos.test.tsx: 1 línea`
-`TOTAL apps/console/src/features/queues/colas-puras.test.ts: 1 línea`
-`TOTAL apps/console/src/features/terminal/estilos-en-linea.test.ts: 0 líneas (ya limpiado)`
-`TOTAL apps/console/src/features/config/campos-inertes.test.ts: 5 líneas`
-`TOTAL apps/console/src/features/terminal/densidad-observacion.test.tsx: 1 línea`
-`TOTAL apps/console/src/features/messages/messages-css.test.ts: 7 líneas`
-`TOTAL apps/console/src/features/live/ficheros-legibilidad.test.ts: 5 líneas`
-`TOTAL apps/console/src/features/config/arneses.test.ts: 0 líneas (ya limpiado)`
+`TOTAL console/src/features/config/config-css.test.ts: 0 líneas (ya limpiado)`
+`TOTAL console/src/styles.tipografia.test.ts: 9 líneas`
+`TOTAL console/src/styles.tipografia-montada.test.tsx: 6 líneas`
+`TOTAL console/src/features/live/tira-de-pestanas.test.ts: 3 líneas`
+`TOTAL console/src/api/use-resource.fallo-visible.test.tsx: 1 línea`
+`TOTAL console/src/features/live/perfil-css.test.ts: 0 líneas (ya limpiado)`
+`TOTAL console/src/vocabulario.test.tsx: 2 líneas`
+`TOTAL console/src/features/config/areas.test.ts: 8 líneas`
+`TOTAL console/src/api/client.timeout.test.ts: 1 línea`
+`TOTAL console/src/features/live/vocabulario-de-estados.test.ts: 0 líneas (ya limpiado)`
+`TOTAL console/src/features/live/LiveFleetPage.sin-salida.test.tsx: 3 líneas`
+`TOTAL console/src/features/landing/LandingPage.permisos.test.tsx: 1 línea`
+`TOTAL console/src/features/queues/colas-puras.test.ts: 1 línea`
+`TOTAL console/src/features/terminal/estilos-en-linea.test.ts: 0 líneas (ya limpiado)`
+`TOTAL console/src/features/config/campos-inertes.test.ts: 5 líneas`
+`TOTAL console/src/features/terminal/densidad-observacion.test.tsx: 1 línea`
+`TOTAL console/src/features/messages/messages-css.test.ts: 7 líneas`
+`TOTAL console/src/features/live/ficheros-legibilidad.test.ts: 5 líneas`
+`TOTAL console/src/features/config/arneses.test.ts: 0 líneas (ya limpiado)`
 
 ## CONSERVAR EXPLÍCITAMENTE
 
@@ -132,23 +132,23 @@ Lote exclusivo: los 19 ficheros de TEST de la zona `apps/console/src`/`packages/
 
 | fichero | líneas a borrar | narrativo | mutilado | ceremonial |
 |---|---:|---:|---:|---:|
-| apps/console/src/features/config/config-css.test.ts | 0 | 0 | 0 | 0 |
-| apps/console/src/styles.tipografia.test.ts | 9 | 0 | 0 | 9 |
-| apps/console/src/styles.tipografia-montada.test.tsx | 6 | 0 | 0 | 6 |
-| apps/console/src/features/live/tira-de-pestanas.test.ts | 3 | 0 | 0 | 3 |
-| apps/console/src/api/use-resource.fallo-visible.test.tsx | 1 | 0 | 0 | 1 |
-| apps/console/src/features/live/perfil-css.test.ts | 0 | 0 | 0 | 0 |
-| apps/console/src/vocabulario.test.tsx | 2 | 0 | 0 | 2 |
-| apps/console/src/features/config/areas.test.ts | 8 | 0 | 0 | 8 |
-| apps/console/src/api/client.timeout.test.ts | 1 | 0 | 0 | 1 |
-| apps/console/src/features/live/vocabulario-de-estados.test.ts | 0 | 0 | 0 | 0 |
-| apps/console/src/features/live/LiveFleetPage.sin-salida.test.tsx | 3 | 0 | 0 | 3 |
-| apps/console/src/features/landing/LandingPage.permisos.test.tsx | 1 | 1 | 0 | 0 |
-| apps/console/src/features/queues/colas-puras.test.ts | 1 | 0 | 0 | 1 |
-| apps/console/src/features/terminal/estilos-en-linea.test.ts | 0 | 0 | 0 | 0 |
-| apps/console/src/features/config/campos-inertes.test.ts | 5 | 5 | 0 | 0 |
-| apps/console/src/features/terminal/densidad-observacion.test.tsx | 1 | 0 | 0 | 1 |
-| apps/console/src/features/messages/messages-css.test.ts | 7 | 7 | 0 | 0 |
-| apps/console/src/features/live/ficheros-legibilidad.test.ts | 5 | 4 | 0 | 1 |
-| apps/console/src/features/config/arneses.test.ts | 0 | 0 | 0 | 0 |
+| console/src/features/config/config-css.test.ts | 0 | 0 | 0 | 0 |
+| console/src/styles.tipografia.test.ts | 9 | 0 | 0 | 9 |
+| console/src/styles.tipografia-montada.test.tsx | 6 | 0 | 0 | 6 |
+| console/src/features/live/tira-de-pestanas.test.ts | 3 | 0 | 0 | 3 |
+| console/src/api/use-resource.fallo-visible.test.tsx | 1 | 0 | 0 | 1 |
+| console/src/features/live/perfil-css.test.ts | 0 | 0 | 0 | 0 |
+| console/src/vocabulario.test.tsx | 2 | 0 | 0 | 2 |
+| console/src/features/config/areas.test.ts | 8 | 0 | 0 | 8 |
+| console/src/api/client.timeout.test.ts | 1 | 0 | 0 | 1 |
+| console/src/features/live/vocabulario-de-estados.test.ts | 0 | 0 | 0 | 0 |
+| console/src/features/live/LiveFleetPage.sin-salida.test.tsx | 3 | 0 | 0 | 3 |
+| console/src/features/landing/LandingPage.permisos.test.tsx | 1 | 1 | 0 | 0 |
+| console/src/features/queues/colas-puras.test.ts | 1 | 0 | 0 | 1 |
+| console/src/features/terminal/estilos-en-linea.test.ts | 0 | 0 | 0 | 0 |
+| console/src/features/config/campos-inertes.test.ts | 5 | 5 | 0 | 0 |
+| console/src/features/terminal/densidad-observacion.test.tsx | 1 | 0 | 0 | 1 |
+| console/src/features/messages/messages-css.test.ts | 7 | 7 | 0 | 0 |
+| console/src/features/live/ficheros-legibilidad.test.ts | 5 | 4 | 0 | 1 |
+| console/src/features/config/arneses.test.ts | 0 | 0 | 0 | 0 |
 | **TOTAL** | **53** | **17** | **0** | **36** |

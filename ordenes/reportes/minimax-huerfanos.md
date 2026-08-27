@@ -2,7 +2,7 @@
 
 Generado el 2026-08-27 con 4 subagentes en paralelo (MiniMax Tarea 3).
 **Conclusión: 0 ficheros HUERFANO-CONFIRMADO.** El grafo (`docs/grafo.md`)
-tiene una tasa de falsos positivos del **69 %** en `apps/console/` por no
+tiene una tasa de falsos positivos del **69 %** en `console/` por no
 rastrear `await import(...)` dentro de `deferredPage`, re-exports desde
 barrels (`components/ui.tsx`), imports cruzados entre features y Web Workers.
 
@@ -14,14 +14,14 @@ barrels (`components/ui.tsx`), imports cruzados entre features y Web Workers.
 | D — ops + adapter-sdk + pnpm | 32 | 0 | 0 | 27 | 5 |
 | **TOTAL** | **103** | **0** | **69** | **29** | **5** |
 
-## §1 — Causa raíz de los falsos positivos (todos en `apps/console/`)
+## §1 — Causa raíz de los falsos positivos (todos en `console/`)
 
 El generador del grafo (`scripts/grafo.mjs`, sector Codex) NO rastrea:
 
-1. **`await import(...)` dentro de `deferredPage()`** en `apps/console/src/App.tsx:37-56` — esto cubre los entry-points `live` (LiveFleetPage), `messages` (MessagesPage), `accounts` (AccountsPage), `observability` (ObservabilityPage), `queues` (QueuesPage), `terminal` (TerminalPage), `config` (ConfigPage) y `fleet/:tenant/:alias` (FleetAgentDetailPage). Por eso 14 de los 71 huérfanos de console son en realidad los entry-points conservados.
-2. **`new Worker(new URL('./terminal.worker.ts', import.meta.url), { type: 'module' })`** en `apps/console/src/features/terminal/pty-output.ts:29` — Web Worker no se detecta como importador.
-3. **Re-exports desde barrels** — `apps/console/src/components/ui.tsx:8-9` reexporta `Tooltip, FloatingTooltip, TOOLTIP_DELAY_MS` desde `./Tooltip`; el grafo no sigue re-exports.
-4. **Imports cruzados entre features** — p. ej. `apps/console/src/features/observability/ObservabilityPage.tsx:10` importa `'../audit/AuditPanel'`; el grafo sigue los imports pero pierde el sufijo del path.
+1. **`await import(...)` dentro de `deferredPage()`** en `console/src/App.tsx:37-56` — esto cubre los entry-points `live` (LiveFleetPage), `messages` (MessagesPage), `accounts` (AccountsPage), `observability` (ObservabilityPage), `queues` (QueuesPage), `terminal` (TerminalPage), `config` (ConfigPage) y `fleet/:tenant/:alias` (FleetAgentDetailPage). Por eso 14 de los 71 huérfanos de console son en realidad los entry-points conservados.
+2. **`new Worker(new URL('./terminal.worker.ts', import.meta.url), { type: 'module' })`** en `console/src/features/terminal/pty-output.ts:29` — Web Worker no se detecta como importador.
+3. **Re-exports desde barrels** — `console/src/components/ui.tsx:8-9` reexporta `Tooltip, FloatingTooltip, TOOLTIP_DELAY_MS` desde `./Tooltip`; el grafo no sigue re-exports.
+4. **Imports cruzados entre features** — p. ej. `console/src/features/observability/ObservabilityPage.tsx:10` importa `'../audit/AuditPanel'`; el grafo sigue los imports pero pierde el sufijo del path.
 
 Recomendación operativa: ampliar `scripts/grafo.mjs` para:
 - Detectar `(await import('...'))` (estático dentro de literales).
@@ -57,12 +57,12 @@ Detectado por subagente C. Estado actual:
 - **HEAD**: existe (`ad44c66`).
 - **Working tree**: staged `deleted:` (probable cierre del fix P9).
 - **Importadores en HEAD**: **0**. `git grep` no encuentra NADA en
-  `apps/console/`, `services/`, `packages/`, `docs/`, `plan-reestructura/`.
-- **Ruta**: ya redirigida a `/live` en `apps/console/src/App.tsx:110`
+  `console/`, `services/`, `packages/`, `docs/`, `plan-reestructura/`.
+- **Ruta**: ya redirigida a `/live` en `console/src/App.tsx:110`
   (`topology: 'live'`).
 - **Plan de retirada**: `plan-reestructura/plano-objetivo.md:550` (P9, gemini).
 
-**NO se ha tocado**. Es sector `apps/console/**` (Gemini). El integrador
+**NO se ha tocado**. Es sector `console/**` (Gemini). El integrador
 ejecutará el `git rm` + commit limpio para cerrar P9.
 
 ## §4 — Resumen ejecutivo (sin ambigüedad)

@@ -21,7 +21,6 @@ from typing import Any, Final
 
 SCHEMA_VERSION: Final = 1
 MANAGERS: Final = ("server", "kratos")
-RETIRED_REQUIRED_DISABLED: Final = frozenset(("gaia", "heraclito", "tales"))
 NAME_RE: Final = re.compile(r"^[a-z][a-z0-9.-]*$")
 SHA_RE: Final = re.compile(r"^[a-f0-9]{64}$")
 UNIT_RE: Final = re.compile(r"^cauce-v3-pty@([a-z][a-z0-9.-]*)\.service$")
@@ -120,8 +119,6 @@ class Fleet:
         overlap = set(parsed) & retired
         if overlap:
             fail(f"aliases activos e historicos se solapan: {sorted(overlap)}")
-        if not RETIRED_REQUIRED_DISABLED.issubset(retired):
-            fail("el catalogo perdio aliases historicos que deben seguir retirados")
         for alias, value in historical.items():
             if not isinstance(value, dict) or value.get("expectedEnabled") is not False:
                 fail(f"alias historico {alias} no permanece explicitamente deshabilitado")

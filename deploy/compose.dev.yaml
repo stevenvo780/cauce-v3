@@ -251,43 +251,6 @@ services:
         condition: service_completed_successfully
     networks: [backend]
 
-  shadow-router:
-    <<: *dev-runtime
-    profiles: [shadow]
-    command: ["node", "services/shadow-router/dist/main.js"]
-    environment:
-      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the private dev env}
-      NODE_ENV: development
-      SHADOW_ROUTER_MODE: ${SHADOW_ROUTER_MODE:-shadow}
-      SHADOW_ROUTER_TENANTS: ${SHADOW_ROUTER_TENANTS:-Steven}
-      SHADOW_ROUTER_SOCKET: /run/cauce-shadow/router/router.sock
-      SHADOW_ROUTER_V2_SOCKET: /run/cauce-shadow/v2/ingress.sock
-      SHADOW_ROUTER_V3_SOCKET: /run/cauce-shadow/v3/ingress.sock
-      SHADOW_ROUTER_CUTOVER_DIRECTION: ${SHADOW_ROUTER_CUTOVER_DIRECTION:-}
-      SHADOW_ROUTER_ENABLE_CUTOVER: ${SHADOW_ROUTER_ENABLE_CUTOVER:-}
-    volumes:
-      - type: bind
-        source: ${CAUCE_SHADOW_ROUTER_SOCKET_DIR:-/dev/null}
-        target: /run/cauce-shadow/router
-      - type: bind
-        source: ${CAUCE_SHADOW_V2_SOCKET_DIR:-/dev/null}
-        target: /run/cauce-shadow/v2
-        read_only: true
-      - type: bind
-        source: ${CAUCE_SHADOW_V3_SOCKET_DIR:-/dev/null}
-        target: /run/cauce-shadow/v3
-        read_only: true
-    healthcheck:
-      test: ["CMD", "node", "deploy/unix-readiness-probe.mjs", "/run/cauce-shadow/router/router.sock", "/health/ready", "ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-    depends_on:
-      migrator:
-        condition: service_completed_successfully
-    networks: [backend]
-
 volumes:
   cauce_pgdata:
   fake_isa_state:

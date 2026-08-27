@@ -114,6 +114,11 @@ for manifest in manifests:
     print(destination)
 
 if not args.alias:
+    for stale in sorted(args.output.glob("cauce-v3-alias-*.service")):
+        stale_alias = stale.name[len("cauce-v3-alias-"):-len(".service")]
+        if stale_alias not in aliases:
+            stale.unlink()
+            print(f"retired {stale}")
     checksum = args.output / "SHA256SUMS"
     lines = []
     for alias in sorted(aliases):

@@ -71,7 +71,7 @@ Un `toBeDefined()`/`toBeTruthy()` como ÚNICO assert aprueba cualquier valor no 
 ```
 El comentario dice que sin este test «una implementación que devolviera `undefined` siempre pasaría las cinco de arriba» — y es cierto; pero `toBeDefined()` también aprueba una implementación que devuelva el objeto de OTRO agente. El assert correcto compara los hechos con `presencia()`.
 
-2. `apps/console/src/features/config/campos-inertes.test.ts:26-30`:
+2. `console/src/features/config/campos-inertes.test.ts:26-30`:
 ```ts
   it('marca las tres columnas de emplazamiento de `agents` sin lector runtime', () => {
     for (const campo of ['harness_id', 'home_directory', 'state_directory']) {
@@ -80,7 +80,7 @@ El comentario dice que sin este test «una implementación que devolviera `undef
   });
 ```
 
-3. `apps/console/src/styles.tipografia.test.ts:182-187`:
+3. `console/src/styles.tipografia.test.ts:182-187`:
 ```ts
   it('los seis escalones están declarados en el `:root` de la hoja global', () => {
     for (const nombre of [...ESCALA, '--tipo-mono']) {
@@ -90,7 +90,7 @@ El comentario dice que sin este test «una implementación que devolviera `undef
   });
 ```
 
-4. `apps/console/src/features/terminal/api.test.ts:394-398` — `toBeInstanceOf` como único assert: no comprueba ni el `status` ni el mensaje que el propio nombre del test promete («callers can branch on status»):
+4. `console/src/features/terminal/api.test.ts:394-398` — `toBeInstanceOf` como único assert: no comprueba ni el `status` ni el mensaje que el propio nombre del test promete («callers can branch on status»):
 ```ts
 it('exposes TerminalApiError so callers can branch on status without parsing strings', async () => {
   server.use(http.get('*/v3/console/terminal/targets', () => new HttpResponse(null, { status: 503 })));
@@ -129,11 +129,11 @@ Categoría más grande y la única realmente sistémica: 6,4% de la suite (233/3
 | `packages/store/test/terminal-recovery-postgres.test.ts` | 10/10 |
 | `tests/unit/compose-files.test.ts` | 7/7 |
 | `tests/unit/observability-alerting.test.ts` | 7/7 |
-| `apps/console/src/features/live/perfil-css.test.ts` | 6/6 |
+| `console/src/features/live/perfil-css.test.ts` | 6/6 |
 | `tests/unit/perfil-espejo-sql.test.ts` | 5/5 |
-| `apps/console/src/features/live/ficheros-legibilidad.test.ts` | 4/4 |
-| `apps/console/src/features/messages/composer-anclado.test.ts` | 12/15 |
-| `apps/console/src/features/terminal/denegaciones.test.tsx` | 12/13 |
+| `console/src/features/live/ficheros-legibilidad.test.ts` | 4/4 |
+| `console/src/features/messages/composer-anclado.test.ts` | 12/15 |
+| `console/src/features/terminal/denegaciones.test.tsx` | 12/13 |
 | `services/gateway/src/health-progress.test.ts` | 18/34 |
 
 Los tres primeros y `observability-alerting` son los candidatos claros a convertir en test de comportamiento: hoy afirman que un `.sh`/`.yml` CONTIENE una cadena, sin ejecutarlo nunca.
@@ -144,12 +144,12 @@ Un solo assert por test no es un defecto por sí mismo, pero marca dónde la cob
 
 | fichero | tests | asserts | asserts/test |
 |---|---:|---:|---:|
-| `apps/console/src/vocabulario.test.tsx` | 4 | 4 | 1,0 |
+| `console/src/vocabulario.test.tsx` | 4 | 4 | 1,0 |
 | `tests/gateway-hardening/perfil-en-el-saludo.test.ts` | 6 | 6 | 1,0 |
 | `tests/unit/agent-profile-mutacion.test.ts` | 4 | 4 | 1,0 |
-| `apps/console/src/features/live/medicion-de-capa.test.ts` | 15 | 16 | 1,07 |
+| `console/src/features/live/medicion-de-capa.test.ts` | 15 | 16 | 1,07 |
 | `services/telegram-bridge/test/envelope.test.ts` | 11 | 12 | 1,09 |
-| `apps/console/src/features/terminal/nav-availability.test.tsx` | 10 | 11 | 1,10 |
+| `console/src/features/terminal/nav-availability.test.tsx` | 10 | 11 | 1,10 |
 
 ## Hallazgo colateral: `test:unit` no cubre la mitad de la suite
 
@@ -161,120 +161,120 @@ Columnas: tests declarados · con dientes · matcher-débil · skip ambiental ·
 
 | fichero | tests | con-dientes | débil | skip-amb | asserts | texto |
 |---|---:|---:|---:|---:|---:|---:|
-| `apps/console/src/App.invariantes.test.tsx` | 13 | 13 | 0 | 0 | 22 | 0 |
-| `apps/console/src/App.test.tsx` | 20 | 20 | 0 | 0 | 62 | 0 |
-| `apps/console/src/api/audit-client.test.ts` | 2 | 2 | 0 | 0 | 5 | 0 |
-| `apps/console/src/api/client.test.ts` | 12 | 12 | 0 | 0 | 30 | 0 |
-| `apps/console/src/api/client.timeout.test.ts` | 6 | 6 | 0 | 0 | 16 | 0 |
-| `apps/console/src/api/use-resource.fallo-visible.test.tsx` | 5 | 5 | 0 | 0 | 21 | 0 |
-| `apps/console/src/api/use-resource.test.tsx` | 2 | 2 | 0 | 0 | 14 | 0 |
-| `apps/console/src/components/Tooltip.test.tsx` | 5 | 5 | 0 | 0 | 9 | 0 |
-| `apps/console/src/components/view-tabs-legibilidad.test.ts` | 5 | 5 | 0 | 0 | 10 | 2 |
-| `apps/console/src/contraste-cascada.test.ts` | 3 | 3 | 0 | 0 | 8 | 1 |
-| `apps/console/src/features/accounts/AccountsPage.test.tsx` | 13 | 13 | 0 | 0 | 39 | 0 |
-| `apps/console/src/features/accounts/AssignmentMatrix.test.tsx` | 13 | 13 | 0 | 0 | 31 | 0 |
-| `apps/console/src/features/accounts/ConsumptionSection.test.tsx` | 10 | 10 | 0 | 0 | 54 | 0 |
-| `apps/console/src/features/accounts/licenses-calculation.test.ts` | 5 | 5 | 0 | 0 | 12 | 0 |
-| `apps/console/src/features/accounts/licenses.test.ts` | 17 | 17 | 0 | 0 | 38 | 0 |
-| `apps/console/src/features/accounts/quotas.test.ts` | 16 | 16 | 0 | 0 | 24 | 0 |
-| `apps/console/src/features/accounts/registry.test.ts` | 20 | 20 | 0 | 0 | 54 | 0 |
-| `apps/console/src/features/audit/AuditPanel.test.tsx` | 4 | 4 | 0 | 0 | 19 | 0 |
-| `apps/console/src/features/audit/audit-summary.test.ts` | 6 | 6 | 0 | 0 | 9 | 0 |
-| `apps/console/src/features/auth/AuthGate.test.tsx` | 7 | 7 | 0 | 0 | 21 | 0 |
-| `apps/console/src/features/config/ConfigPage.actions.test.tsx` | 18 | 18 | 0 | 0 | 69 | 0 |
-| `apps/console/src/features/config/ConfigPage.inertes.test.tsx` | 10 | 10 | 0 | 0 | 18 | 0 |
-| `apps/console/src/features/config/ConfigPage.tables.test.tsx` | 15 | 15 | 0 | 0 | 71 | 0 |
-| `apps/console/src/features/config/ConfigPage.test.tsx` | 21 | 21 | 0 | 0 | 79 | 0 |
-| `apps/console/src/features/config/Interruptores.test.tsx` | 14 | 14 | 0 | 0 | 49 | 0 |
-| `apps/console/src/features/config/SpaceWizard.test.tsx` | 10 | 10 | 0 | 0 | 40 | 0 |
-| `apps/console/src/features/config/alta-rapida.test.ts` | 5 | 5 | 0 | 0 | 10 | 0 |
-| `apps/console/src/features/config/areas.test.ts` | 8 | 8 | 0 | 0 | 22 | 0 |
-| `apps/console/src/features/config/arneses.test.ts` | 6 | 6 | 0 | 0 | 13 | 0 |
-| `apps/console/src/features/config/campos-inertes.test.ts` | 13 | 12 | 1 | 0 | 29 | 0 |
-| `apps/console/src/features/config/collection-table.test.ts` | 10 | 10 | 0 | 0 | 26 | 0 |
-| `apps/console/src/features/config/collections.test.ts` | 5 | 5 | 0 | 0 | 10 | 0 |
-| `apps/console/src/features/config/config-css-toggles.test.ts` | 13 | 13 | 0 | 0 | 26 | 2 |
-| `apps/console/src/features/config/config-css.test.ts` | 19 | 19 | 0 | 0 | 44 | 4 |
-| `apps/console/src/features/config/config-receipt.test.ts` | 3 | 3 | 0 | 0 | 10 | 0 |
-| `apps/console/src/features/config/fecha-relativa.test.ts` | 3 | 3 | 0 | 0 | 13 | 0 |
-| `apps/console/src/features/config/interruptores.test.ts` | 10 | 10 | 0 | 0 | 26 | 0 |
-| `apps/console/src/features/config/roles.test.ts` | 4 | 4 | 0 | 0 | 15 | 0 |
-| `apps/console/src/features/fleet/FleetAgentDetailPage.test.tsx` | 5 | 5 | 0 | 0 | 11 | 0 |
-| `apps/console/src/features/landing/LandingPage.permisos.test.tsx` | 4 | 4 | 0 | 0 | 8 | 0 |
-| `apps/console/src/features/landing/LandingPage.test.tsx` | 7 | 7 | 0 | 0 | 16 | 0 |
-| `apps/console/src/features/landing/landing.test.ts` | 14 | 14 | 0 | 0 | 37 | 0 |
-| `apps/console/src/features/live/ChainPanel.test.tsx` | 6 | 6 | 0 | 0 | 12 | 0 |
-| `apps/console/src/features/live/DirectivaModal.test.tsx` | 10 | 10 | 0 | 0 | 30 | 0 |
-| `apps/console/src/features/live/DirectivaTab.test.tsx` | 12 | 12 | 0 | 0 | 49 | 0 |
-| `apps/console/src/features/live/FicherosTab.test.tsx` | 16 | 16 | 0 | 0 | 54 | 0 |
-| `apps/console/src/features/live/FleetActivityTable.test.tsx` | 6 | 6 | 0 | 0 | 24 | 0 |
-| `apps/console/src/features/live/HistorialRol.test.tsx` | 17 | 17 | 0 | 0 | 46 | 0 |
-| `apps/console/src/features/live/LiveFleetPage.filters.test.tsx` | 15 | 15 | 0 | 0 | 41 | 0 |
-| `apps/console/src/features/live/LiveFleetPage.sin-salida.test.tsx` | 5 | 5 | 0 | 0 | 17 | 0 |
-| `apps/console/src/features/live/LiveFleetPage.test.tsx` | 23 | 23 | 0 | 0 | 60 | 0 |
-| `apps/console/src/features/live/PerfilTab.test.tsx` | 11 | 11 | 0 | 0 | 28 | 0 |
-| `apps/console/src/features/live/RoleBriefTab.test.tsx` | 3 | 3 | 0 | 0 | 10 | 0 |
-| `apps/console/src/features/live/activity.test.ts` | 22 | 22 | 0 | 0 | 53 | 0 |
-| `apps/console/src/features/live/agent-state-derivation.test.ts` | 28 | 28 | 0 | 0 | 52 | 0 |
-| `apps/console/src/features/live/agent-state.test.ts` | 31 | 31 | 0 | 0 | 78 | 0 |
-| `apps/console/src/features/live/deriva.test.ts` | 10 | 10 | 0 | 0 | 16 | 0 |
-| `apps/console/src/features/live/directiva.test.ts` | 20 | 20 | 0 | 0 | 36 | 0 |
-| `apps/console/src/features/live/estado-de-la-fila.test.tsx` | 4 | 4 | 0 | 0 | 9 | 0 |
-| `apps/console/src/features/live/ficheros-legibilidad.test.ts` | 4 | 4 | 0 | 0 | 6 | 4 |
-| `apps/console/src/features/live/ficheros.test.ts` | 17 | 17 | 0 | 0 | 28 | 0 |
-| `apps/console/src/features/live/historial-rol.test.ts` | 16 | 16 | 0 | 0 | 24 | 0 |
-| `apps/console/src/features/live/medicion-de-capa.test.ts` | 15 | 15 | 0 | 0 | 16 | 0 |
-| `apps/console/src/features/live/perfil-css.test.ts` | 6 | 6 | 0 | 0 | 11 | 6 |
-| `apps/console/src/features/live/perfil.test.ts` | 22 | 22 | 0 | 0 | 42 | 0 |
-| `apps/console/src/features/live/role-brief-runtime.test.ts` | 4 | 4 | 0 | 0 | 13 | 0 |
-| `apps/console/src/features/live/tira-de-pestanas.test.ts` | 4 | 4 | 0 | 0 | 5 | 2 |
-| `apps/console/src/features/live/veredicto-vocabulario.test.ts` | 4 | 4 | 0 | 0 | 11 | 0 |
-| `apps/console/src/features/live/vocabulario-de-estados.test.ts` | 6 | 6 | 0 | 0 | 9 | 0 |
-| `apps/console/src/features/messages/MessageTimeline.test.tsx` | 1 | 1 | 0 | 0 | 4 | 0 |
-| `apps/console/src/features/messages/MessagesPage.test.tsx` | 21 | 21 | 0 | 0 | 76 | 0 |
-| `apps/console/src/features/messages/composer-anclado.test.ts` | 15 | 15 | 0 | 0 | 27 | 12 |
-| `apps/console/src/features/messages/desplazamiento.test.ts` | 7 | 7 | 0 | 0 | 8 | 0 |
-| `apps/console/src/features/messages/durable-publish.test.ts` | 11 | 11 | 0 | 0 | 35 | 0 |
-| `apps/console/src/features/messages/hilo-legible.test.tsx` | 9 | 9 | 0 | 0 | 24 | 0 |
-| `apps/console/src/features/messages/messages-css.test.ts` | 2 | 2 | 0 | 0 | 3 | 0 |
-| `apps/console/src/features/messages/publish-receipt.test.ts` | 6 | 6 | 0 | 0 | 31 | 0 |
-| `apps/console/src/features/messages/queue-health.test.ts` | 12 | 12 | 0 | 0 | 26 | 0 |
-| `apps/console/src/features/messages/roster.test.ts` | 9 | 9 | 0 | 0 | 25 | 0 |
-| `apps/console/src/features/observability/ObservabilityPage.test.tsx` | 11 | 11 | 0 | 0 | 45 | 0 |
-| `apps/console/src/features/queues/DeliveryTable.test.tsx` | 8 | 8 | 0 | 0 | 28 | 0 |
-| `apps/console/src/features/queues/OperationalDlqPanel.test.tsx` | 13 | 13 | 0 | 0 | 51 | 0 |
-| `apps/console/src/features/queues/QueuesPage.test.tsx` | 6 | 6 | 0 | 0 | 20 | 0 |
-| `apps/console/src/features/queues/colas-accionables.test.tsx` | 10 | 10 | 0 | 0 | 26 | 0 |
-| `apps/console/src/features/queues/colas-puras.test.ts` | 14 | 14 | 0 | 0 | 22 | 3 |
-| `apps/console/src/features/queues/delivery-receipts.test.ts` | 2 | 2 | 0 | 0 | 15 | 0 |
-| `apps/console/src/features/queues/foco-de-entrega.test.ts` | 6 | 6 | 0 | 0 | 13 | 0 |
-| `apps/console/src/features/terminal/AckInspector.test.tsx` | 5 | 5 | 0 | 0 | 11 | 0 |
-| `apps/console/src/features/terminal/TerminalPage.test.tsx` | 20 | 20 | 0 | 0 | 104 | 0 |
-| `apps/console/src/features/terminal/api.test.ts` | 27 | 26 | 1 | 0 | 42 | 0 |
-| `apps/console/src/features/terminal/cuerpo-del-mensaje.test.ts` | 6 | 6 | 0 | 0 | 14 | 1 |
-| `apps/console/src/features/terminal/denegaciones.test.tsx` | 13 | 13 | 0 | 0 | 39 | 12 |
-| `apps/console/src/features/terminal/densidad-observacion.test.tsx` | 4 | 4 | 0 | 0 | 10 | 0 |
-| `apps/console/src/features/terminal/estilos-en-linea.test.ts` | 3 | 3 | 0 | 0 | 5 | 0 |
-| `apps/console/src/features/terminal/fleet.test.ts` | 12 | 12 | 0 | 0 | 46 | 0 |
-| `apps/console/src/features/terminal/live-tui.test.tsx` | 8 | 8 | 0 | 0 | 39 | 0 |
-| `apps/console/src/features/terminal/nav-availability.test.tsx` | 10 | 10 | 0 | 0 | 11 | 0 |
-| `apps/console/src/features/terminal/plazas.test.tsx` | 17 | 17 | 0 | 0 | 65 | 0 |
-| `apps/console/src/features/terminal/plugin.test.ts` | 7 | 7 | 0 | 0 | 15 | 0 |
-| `apps/console/src/features/terminal/pty-session.test.ts` | 24 | 24 | 0 | 0 | 95 | 0 |
-| `apps/console/src/features/terminal/redimensionado.test.ts` | 4 | 4 | 0 | 0 | 7 | 0 |
-| `apps/console/src/features/terminal/relay-status.test.tsx` | 21 | 21 | 0 | 0 | 46 | 0 |
-| `apps/console/src/features/terminal/session.test.ts` | 6 | 6 | 0 | 0 | 22 | 0 |
-| `apps/console/src/features/terminal/xterm-csp.test.ts` | 7 | 7 | 0 | 0 | 24 | 6 |
-| `apps/console/src/features/topology/hypergraph-layout.test.ts` | 16 | 16 | 0 | 0 | 35 | 0 |
-| `apps/console/src/lib.test.ts` | 1 | 1 | 0 | 0 | 7 | 0 |
-| `apps/console/src/menu-movil.test.ts` | 5 | 5 | 0 | 0 | 8 | 3 |
-| `apps/console/src/mocks/handlers.tenant.test.ts` | 2 | 2 | 0 | 0 | 5 | 0 |
-| `apps/console/src/mocks/terminal-demo.test.ts` | 1 | 1 | 0 | 0 | 4 | 0 |
-| `apps/console/src/styles.legibilidad-themes.test.ts` | 6 | 6 | 0 | 0 | 10 | 3 |
-| `apps/console/src/styles.legibilidad.test.ts` | 10 | 10 | 0 | 0 | 18 | 6 |
-| `apps/console/src/styles.tipografia-montada.test.tsx` | 4 | 4 | 0 | 0 | 10 | 3 |
-| `apps/console/src/styles.tipografia.test.ts` | 14 | 13 | 1 | 0 | 34 | 4 |
-| `apps/console/src/vocabulario.test.tsx` | 4 | 4 | 0 | 0 | 4 | 0 |
+| `console/src/App.invariantes.test.tsx` | 13 | 13 | 0 | 0 | 22 | 0 |
+| `console/src/App.test.tsx` | 20 | 20 | 0 | 0 | 62 | 0 |
+| `console/src/api/audit-client.test.ts` | 2 | 2 | 0 | 0 | 5 | 0 |
+| `console/src/api/client.test.ts` | 12 | 12 | 0 | 0 | 30 | 0 |
+| `console/src/api/client.timeout.test.ts` | 6 | 6 | 0 | 0 | 16 | 0 |
+| `console/src/api/use-resource.fallo-visible.test.tsx` | 5 | 5 | 0 | 0 | 21 | 0 |
+| `console/src/api/use-resource.test.tsx` | 2 | 2 | 0 | 0 | 14 | 0 |
+| `console/src/components/Tooltip.test.tsx` | 5 | 5 | 0 | 0 | 9 | 0 |
+| `console/src/components/view-tabs-legibilidad.test.ts` | 5 | 5 | 0 | 0 | 10 | 2 |
+| `console/src/contraste-cascada.test.ts` | 3 | 3 | 0 | 0 | 8 | 1 |
+| `console/src/features/accounts/AccountsPage.test.tsx` | 13 | 13 | 0 | 0 | 39 | 0 |
+| `console/src/features/accounts/AssignmentMatrix.test.tsx` | 13 | 13 | 0 | 0 | 31 | 0 |
+| `console/src/features/accounts/ConsumptionSection.test.tsx` | 10 | 10 | 0 | 0 | 54 | 0 |
+| `console/src/features/accounts/licenses-calculation.test.ts` | 5 | 5 | 0 | 0 | 12 | 0 |
+| `console/src/features/accounts/licenses.test.ts` | 17 | 17 | 0 | 0 | 38 | 0 |
+| `console/src/features/accounts/quotas.test.ts` | 16 | 16 | 0 | 0 | 24 | 0 |
+| `console/src/features/accounts/registry.test.ts` | 20 | 20 | 0 | 0 | 54 | 0 |
+| `console/src/features/audit/AuditPanel.test.tsx` | 4 | 4 | 0 | 0 | 19 | 0 |
+| `console/src/features/audit/audit-summary.test.ts` | 6 | 6 | 0 | 0 | 9 | 0 |
+| `console/src/features/auth/AuthGate.test.tsx` | 7 | 7 | 0 | 0 | 21 | 0 |
+| `console/src/features/config/ConfigPage.actions.test.tsx` | 18 | 18 | 0 | 0 | 69 | 0 |
+| `console/src/features/config/ConfigPage.inertes.test.tsx` | 10 | 10 | 0 | 0 | 18 | 0 |
+| `console/src/features/config/ConfigPage.tables.test.tsx` | 15 | 15 | 0 | 0 | 71 | 0 |
+| `console/src/features/config/ConfigPage.test.tsx` | 21 | 21 | 0 | 0 | 79 | 0 |
+| `console/src/features/config/Interruptores.test.tsx` | 14 | 14 | 0 | 0 | 49 | 0 |
+| `console/src/features/config/SpaceWizard.test.tsx` | 10 | 10 | 0 | 0 | 40 | 0 |
+| `console/src/features/config/alta-rapida.test.ts` | 5 | 5 | 0 | 0 | 10 | 0 |
+| `console/src/features/config/areas.test.ts` | 8 | 8 | 0 | 0 | 22 | 0 |
+| `console/src/features/config/arneses.test.ts` | 6 | 6 | 0 | 0 | 13 | 0 |
+| `console/src/features/config/campos-inertes.test.ts` | 13 | 12 | 1 | 0 | 29 | 0 |
+| `console/src/features/config/collection-table.test.ts` | 10 | 10 | 0 | 0 | 26 | 0 |
+| `console/src/features/config/collections.test.ts` | 5 | 5 | 0 | 0 | 10 | 0 |
+| `console/src/features/config/config-css-toggles.test.ts` | 13 | 13 | 0 | 0 | 26 | 2 |
+| `console/src/features/config/config-css.test.ts` | 19 | 19 | 0 | 0 | 44 | 4 |
+| `console/src/features/config/config-receipt.test.ts` | 3 | 3 | 0 | 0 | 10 | 0 |
+| `console/src/features/config/fecha-relativa.test.ts` | 3 | 3 | 0 | 0 | 13 | 0 |
+| `console/src/features/config/interruptores.test.ts` | 10 | 10 | 0 | 0 | 26 | 0 |
+| `console/src/features/config/roles.test.ts` | 4 | 4 | 0 | 0 | 15 | 0 |
+| `console/src/features/fleet/FleetAgentDetailPage.test.tsx` | 5 | 5 | 0 | 0 | 11 | 0 |
+| `console/src/features/landing/LandingPage.permisos.test.tsx` | 4 | 4 | 0 | 0 | 8 | 0 |
+| `console/src/features/landing/LandingPage.test.tsx` | 7 | 7 | 0 | 0 | 16 | 0 |
+| `console/src/features/landing/landing.test.ts` | 14 | 14 | 0 | 0 | 37 | 0 |
+| `console/src/features/live/ChainPanel.test.tsx` | 6 | 6 | 0 | 0 | 12 | 0 |
+| `console/src/features/live/DirectivaModal.test.tsx` | 10 | 10 | 0 | 0 | 30 | 0 |
+| `console/src/features/live/DirectivaTab.test.tsx` | 12 | 12 | 0 | 0 | 49 | 0 |
+| `console/src/features/live/FicherosTab.test.tsx` | 16 | 16 | 0 | 0 | 54 | 0 |
+| `console/src/features/live/FleetActivityTable.test.tsx` | 6 | 6 | 0 | 0 | 24 | 0 |
+| `console/src/features/live/HistorialRol.test.tsx` | 17 | 17 | 0 | 0 | 46 | 0 |
+| `console/src/features/live/LiveFleetPage.filters.test.tsx` | 15 | 15 | 0 | 0 | 41 | 0 |
+| `console/src/features/live/LiveFleetPage.sin-salida.test.tsx` | 5 | 5 | 0 | 0 | 17 | 0 |
+| `console/src/features/live/LiveFleetPage.test.tsx` | 23 | 23 | 0 | 0 | 60 | 0 |
+| `console/src/features/live/PerfilTab.test.tsx` | 11 | 11 | 0 | 0 | 28 | 0 |
+| `console/src/features/live/RoleBriefTab.test.tsx` | 3 | 3 | 0 | 0 | 10 | 0 |
+| `console/src/features/live/activity.test.ts` | 22 | 22 | 0 | 0 | 53 | 0 |
+| `console/src/features/live/agent-state-derivation.test.ts` | 28 | 28 | 0 | 0 | 52 | 0 |
+| `console/src/features/live/agent-state.test.ts` | 31 | 31 | 0 | 0 | 78 | 0 |
+| `console/src/features/live/deriva.test.ts` | 10 | 10 | 0 | 0 | 16 | 0 |
+| `console/src/features/live/directiva.test.ts` | 20 | 20 | 0 | 0 | 36 | 0 |
+| `console/src/features/live/estado-de-la-fila.test.tsx` | 4 | 4 | 0 | 0 | 9 | 0 |
+| `console/src/features/live/ficheros-legibilidad.test.ts` | 4 | 4 | 0 | 0 | 6 | 4 |
+| `console/src/features/live/ficheros.test.ts` | 17 | 17 | 0 | 0 | 28 | 0 |
+| `console/src/features/live/historial-rol.test.ts` | 16 | 16 | 0 | 0 | 24 | 0 |
+| `console/src/features/live/medicion-de-capa.test.ts` | 15 | 15 | 0 | 0 | 16 | 0 |
+| `console/src/features/live/perfil-css.test.ts` | 6 | 6 | 0 | 0 | 11 | 6 |
+| `console/src/features/live/perfil.test.ts` | 22 | 22 | 0 | 0 | 42 | 0 |
+| `console/src/features/live/role-brief-runtime.test.ts` | 4 | 4 | 0 | 0 | 13 | 0 |
+| `console/src/features/live/tira-de-pestanas.test.ts` | 4 | 4 | 0 | 0 | 5 | 2 |
+| `console/src/features/live/veredicto-vocabulario.test.ts` | 4 | 4 | 0 | 0 | 11 | 0 |
+| `console/src/features/live/vocabulario-de-estados.test.ts` | 6 | 6 | 0 | 0 | 9 | 0 |
+| `console/src/features/messages/MessageTimeline.test.tsx` | 1 | 1 | 0 | 0 | 4 | 0 |
+| `console/src/features/messages/MessagesPage.test.tsx` | 21 | 21 | 0 | 0 | 76 | 0 |
+| `console/src/features/messages/composer-anclado.test.ts` | 15 | 15 | 0 | 0 | 27 | 12 |
+| `console/src/features/messages/desplazamiento.test.ts` | 7 | 7 | 0 | 0 | 8 | 0 |
+| `console/src/features/messages/durable-publish.test.ts` | 11 | 11 | 0 | 0 | 35 | 0 |
+| `console/src/features/messages/hilo-legible.test.tsx` | 9 | 9 | 0 | 0 | 24 | 0 |
+| `console/src/features/messages/messages-css.test.ts` | 2 | 2 | 0 | 0 | 3 | 0 |
+| `console/src/features/messages/publish-receipt.test.ts` | 6 | 6 | 0 | 0 | 31 | 0 |
+| `console/src/features/messages/queue-health.test.ts` | 12 | 12 | 0 | 0 | 26 | 0 |
+| `console/src/features/messages/roster.test.ts` | 9 | 9 | 0 | 0 | 25 | 0 |
+| `console/src/features/observability/ObservabilityPage.test.tsx` | 11 | 11 | 0 | 0 | 45 | 0 |
+| `console/src/features/queues/DeliveryTable.test.tsx` | 8 | 8 | 0 | 0 | 28 | 0 |
+| `console/src/features/queues/OperationalDlqPanel.test.tsx` | 13 | 13 | 0 | 0 | 51 | 0 |
+| `console/src/features/queues/QueuesPage.test.tsx` | 6 | 6 | 0 | 0 | 20 | 0 |
+| `console/src/features/queues/colas-accionables.test.tsx` | 10 | 10 | 0 | 0 | 26 | 0 |
+| `console/src/features/queues/colas-puras.test.ts` | 14 | 14 | 0 | 0 | 22 | 3 |
+| `console/src/features/queues/delivery-receipts.test.ts` | 2 | 2 | 0 | 0 | 15 | 0 |
+| `console/src/features/queues/foco-de-entrega.test.ts` | 6 | 6 | 0 | 0 | 13 | 0 |
+| `console/src/features/terminal/AckInspector.test.tsx` | 5 | 5 | 0 | 0 | 11 | 0 |
+| `console/src/features/terminal/TerminalPage.test.tsx` | 20 | 20 | 0 | 0 | 104 | 0 |
+| `console/src/features/terminal/api.test.ts` | 27 | 26 | 1 | 0 | 42 | 0 |
+| `console/src/features/terminal/cuerpo-del-mensaje.test.ts` | 6 | 6 | 0 | 0 | 14 | 1 |
+| `console/src/features/terminal/denegaciones.test.tsx` | 13 | 13 | 0 | 0 | 39 | 12 |
+| `console/src/features/terminal/densidad-observacion.test.tsx` | 4 | 4 | 0 | 0 | 10 | 0 |
+| `console/src/features/terminal/estilos-en-linea.test.ts` | 3 | 3 | 0 | 0 | 5 | 0 |
+| `console/src/features/terminal/fleet.test.ts` | 12 | 12 | 0 | 0 | 46 | 0 |
+| `console/src/features/terminal/live-tui.test.tsx` | 8 | 8 | 0 | 0 | 39 | 0 |
+| `console/src/features/terminal/nav-availability.test.tsx` | 10 | 10 | 0 | 0 | 11 | 0 |
+| `console/src/features/terminal/plazas.test.tsx` | 17 | 17 | 0 | 0 | 65 | 0 |
+| `console/src/features/terminal/plugin.test.ts` | 7 | 7 | 0 | 0 | 15 | 0 |
+| `console/src/features/terminal/pty-session.test.ts` | 24 | 24 | 0 | 0 | 95 | 0 |
+| `console/src/features/terminal/redimensionado.test.ts` | 4 | 4 | 0 | 0 | 7 | 0 |
+| `console/src/features/terminal/relay-status.test.tsx` | 21 | 21 | 0 | 0 | 46 | 0 |
+| `console/src/features/terminal/session.test.ts` | 6 | 6 | 0 | 0 | 22 | 0 |
+| `console/src/features/terminal/xterm-csp.test.ts` | 7 | 7 | 0 | 0 | 24 | 6 |
+| `console/src/features/topology/hypergraph-layout.test.ts` | 16 | 16 | 0 | 0 | 35 | 0 |
+| `console/src/lib.test.ts` | 1 | 1 | 0 | 0 | 7 | 0 |
+| `console/src/menu-movil.test.ts` | 5 | 5 | 0 | 0 | 8 | 3 |
+| `console/src/mocks/handlers.tenant.test.ts` | 2 | 2 | 0 | 0 | 5 | 0 |
+| `console/src/mocks/terminal-demo.test.ts` | 1 | 1 | 0 | 0 | 4 | 0 |
+| `console/src/styles.legibilidad-themes.test.ts` | 6 | 6 | 0 | 0 | 10 | 3 |
+| `console/src/styles.legibilidad.test.ts` | 10 | 10 | 0 | 0 | 18 | 6 |
+| `console/src/styles.tipografia-montada.test.tsx` | 4 | 4 | 0 | 0 | 10 | 3 |
+| `console/src/styles.tipografia.test.ts` | 14 | 13 | 1 | 0 | 34 | 4 |
+| `console/src/vocabulario.test.tsx` | 4 | 4 | 0 | 0 | 4 | 0 |
 | `packages/adapter-sdk/test/account-credentials.test.ts` | 12 | 12 | 0 | 0 | 25 | 0 |
 | `packages/adapter-sdk/test/artifact-inliner.test.ts` | 19 | 19 | 0 | 0 | 66 | 0 |
 | `packages/adapter-sdk/test/bloque-gestionado.test.ts` | 14 | 14 | 0 | 0 | 33 | 0 |

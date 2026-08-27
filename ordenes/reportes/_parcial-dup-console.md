@@ -1,52 +1,52 @@
-# Auditoría de duplicación — sector tests/console (apps/console/** + tests/** + tests de packages/store, packages/adapter-sdk, services/**)
+# Auditoría de duplicación — sector tests/console (console/** + tests/** + tests de packages/store, packages/adapter-sdk, services/**)
 
-Sector: 320 ficheros `.ts/.tsx/.css/.mts/.mjs` en `apps/console/**` (test, fuente, css), `tests/**`, `packages/store/test/**`, `packages/adapter-sdk/test/**`, `services/dispatcher/test/**`, `services/telegram-bridge/test/**`, `services/terminal-relay/src/**/*.test.ts`, `services/gateway/src/**/*.test.ts` (los tests de servicios son del sector según la orden). Detector mecánico (`/tmp/opencode/dup-scan/dup.mjs`): normaliza (elimina `/* … */`, `// …` y `<!-- -->`, colapsa espacios), genera todas las ventanas de N líneas consecutivas no-neutras, agrupa por SHA-1, filtra `≥2 ficheros` y `≥2 ocurrencias`. Probado con N=6 y N=10. Salida bruta: 2665 grupos; verificación manual lectura de ambos lados descarta falsos positivos (boilerplate `describe`, `import` lícitos, aserciones legítimamente repetidas sobre casos distintos).
+Sector: 320 ficheros `.ts/.tsx/.css/.mts/.mjs` en `console/**` (test, fuente, css), `tests/**`, `packages/store/test/**`, `packages/adapter-sdk/test/**`, `services/dispatcher/test/**`, `services/telegram-bridge/test/**`, `services/terminal-relay/src/**/*.test.ts`, `services/gateway/src/**/*.test.ts` (los tests de servicios son del sector según la orden). Detector mecánico (`/tmp/opencode/dup-scan/dup.mjs`): normaliza (elimina `/* … */`, `// …` y `<!-- -->`, colapsa espacios), genera todas las ventanas de N líneas consecutivas no-neutras, agrupa por SHA-1, filtra `≥2 ficheros` y `≥2 ocurrencias`. Probado con N=6 y N=10. Salida bruta: 2665 grupos; verificación manual lectura de ambos lados descarta falsos positivos (boilerplate `describe`, `import` lícitos, aserciones legítimamente repetidas sobre casos distintos).
 
 Total mecánico: 2665 ventanas (1669 a N=6 + 996 a N=10, solapadas). Confirmados a mano: **13**. Descartados: ≈2652 (boilerplate de imports, `describe(...)`, asserts que parecen iguales pero verifican propiedades distintas del mismo caso, fixtures con datos diferentes por archivo — ej. `body.text` distinto en cada `command()`). Estimación de líneas-físicas duplicadas confirmadas: **≈580 línea-ocurrencias** (= Σ ocurrencias × líneas por bloque; ver tabla resumen).
 
 ## Caso del @import — medición exacta pedida
 
-- **`@import` repetidos en los CSS de apps/console**: 13 ocurrencias totales en **3 ficheros** (no hay ninguno repetido entre sí: cada `@import` apunta a un fichero destino distinto):
-  - `apps/console/src/styles.css` — 4 (base/components/views/responsive)
-  - `apps/console/src/features/terminal/xterm-csp.css` — 3 (terminal/ansi-base/ansi-cube)
-  - `apps/console/src/features/live/live.css` — 6 (avatar/fleet/drawer/directiva-modal/ficheros/perfil)
-- **El caso "11 veces"** que disparó la orden NO es de CSS sino del **resolutor recursivo de `@import`** que vive en los tests: el patrón `return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => { ... return leerCss(subAbs); })` aparece **en 15 ficheros distintos** (no 11 — medición directa con `grep -lr 'replace(/@import' apps/console/src --include='*.test.*' | wc -l` = **15**):
-  - `apps/console/src/styles.tipografia.test.ts:14`
-  - `apps/console/src/styles.legibilidad.test.ts:9`
-  - `apps/console/src/styles.legibilidad-themes.test.ts:9`
-  - `apps/console/src/styles.tipografia-montada.test.tsx:20`
-  - `apps/console/src/contraste-cascada.test.ts:8`
-  - `apps/console/src/menu-movil.test.ts:38`
-  - `apps/console/src/components/view-tabs-legibilidad.test.ts:24`
-  - `apps/console/src/features/messages/composer-anclado.test.ts:15`
-  - `apps/console/src/features/messages/messages-css.test.ts:39`
-  - `apps/console/src/features/terminal/xterm-csp.test.ts:30` (variable `content`/`relPath` en lugar de `contenido`/`importPath`, único diverge)
-  - `apps/console/src/features/live/tira-de-pestanas.test.ts:11`
-  - `apps/console/src/features/live/perfil-css.test.ts:10`
-  - `apps/console/src/features/live/ficheros-legibilidad.test.ts:27`
-  - `apps/console/src/features/config/config-css-toggles.test.ts:9`
-  - `apps/console/src/features/config/config-css.test.ts:9`
+- **`@import` repetidos en los CSS de console**: 13 ocurrencias totales en **3 ficheros** (no hay ninguno repetido entre sí: cada `@import` apunta a un fichero destino distinto):
+  - `console/src/styles.css` — 4 (base/components/views/responsive)
+  - `console/src/features/terminal/xterm-csp.css` — 3 (terminal/ansi-base/ansi-cube)
+  - `console/src/features/live/live.css` — 6 (avatar/fleet/drawer/directiva-modal/ficheros/perfil)
+- **El caso "11 veces"** que disparó la orden NO es de CSS sino del **resolutor recursivo de `@import`** que vive en los tests: el patrón `return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => { ... return leerCss(subAbs); })` aparece **en 15 ficheros distintos** (no 11 — medición directa con `grep -lr 'replace(/@import' console/src --include='*.test.*' | wc -l` = **15**):
+  - `console/src/styles.tipografia.test.ts:14`
+  - `console/src/styles.legibilidad.test.ts:9`
+  - `console/src/styles.legibilidad-themes.test.ts:9`
+  - `console/src/styles.tipografia-montada.test.tsx:20`
+  - `console/src/contraste-cascada.test.ts:8`
+  - `console/src/menu-movil.test.ts:38`
+  - `console/src/components/view-tabs-legibilidad.test.ts:24`
+  - `console/src/features/messages/composer-anclado.test.ts:15`
+  - `console/src/features/messages/messages-css.test.ts:39`
+  - `console/src/features/terminal/xterm-csp.test.ts:30` (variable `content`/`relPath` en lugar de `contenido`/`importPath`, único diverge)
+  - `console/src/features/live/tira-de-pestanas.test.ts:11`
+  - `console/src/features/live/perfil-css.test.ts:10`
+  - `console/src/features/live/ficheros-legibilidad.test.ts:27`
+  - `console/src/features/config/config-css-toggles.test.ts:9`
+  - `console/src/features/config/config-css.test.ts:9`
 
 ---
 
 ## Grupos confirmados (13)
 
 #### G-1 — Resolutor recursivo de `@import` para tests de CSS (`leer` / `leerCss` / `resolverCss`) — 15 ocurrencias — 6 líneas cada una
-- `apps/console/src/styles.tipografia.test.ts:11-18`
-- `apps/console/src/styles.legibilidad.test.ts:6-13`
-- `apps/console/src/styles.legibilidad-themes.test.ts:6-13`
-- `apps/console/src/styles.tipografia-montada.test.tsx:17-24`
-- `apps/console/src/contraste-cascada.test.ts:5-12`
-- `apps/console/src/menu-movil.test.ts:34-41`
-- `apps/console/src/components/view-tabs-legibilidad.test.ts:21-28`
-- `apps/console/src/features/messages/composer-anclado.test.ts:11-18`
-- `apps/console/src/features/messages/messages-css.test.ts:35-42`
-- `apps/console/src/features/terminal/xterm-csp.test.ts:27-34`
-- `apps/console/src/features/live/tira-de-pestanas.test.ts:9-15`
-- `apps/console/src/features/live/perfil-css.test.ts:8-14`
-- `apps/console/src/features/live/ficheros-legibilidad.test.ts:25-32`
-- `apps/console/src/features/config/config-css-toggles.test.ts:5-12`
-- `apps/console/src/features/config/config-css.test.ts:6-13`
+- `console/src/styles.tipografia.test.ts:11-18`
+- `console/src/styles.legibilidad.test.ts:6-13`
+- `console/src/styles.legibilidad-themes.test.ts:6-13`
+- `console/src/styles.tipografia-montada.test.tsx:17-24`
+- `console/src/contraste-cascada.test.ts:5-12`
+- `console/src/menu-movil.test.ts:34-41`
+- `console/src/components/view-tabs-legibilidad.test.ts:21-28`
+- `console/src/features/messages/composer-anclado.test.ts:11-18`
+- `console/src/features/messages/messages-css.test.ts:35-42`
+- `console/src/features/terminal/xterm-csp.test.ts:27-34`
+- `console/src/features/live/tira-de-pestanas.test.ts:9-15`
+- `console/src/features/live/perfil-css.test.ts:8-14`
+- `console/src/features/live/ficheros-legibilidad.test.ts:25-32`
+- `console/src/features/config/config-css-toggles.test.ts:5-12`
+- `console/src/features/config/config-css.test.ts:6-13`
 
 CITA LADO A (`styles.legibilidad.test.ts:6-13`):
 ```
@@ -74,7 +74,7 @@ const resolverCss = (ruta: string): string => {
 
 Difiere solo en el nombre de la función (`leer`/`leerCss`/`resolverCss`). Una variante (tira-de-pestanas.test.ts, perfil-css.test.ts, ficheros-legibilidad.test.ts, view-tabs-legibilidad.test.ts, xterm-csp.test.ts) opera sobre ruta absoluta y se salta el `RAIZ`. La `xterm-csp.test.ts:27-34` también diverge en nombres de variable local (`content`/`relPath`).
 
-HOGAR ÚNICO SUGERIDO: `apps/console/src/test/leer-css.ts` exportando `leerCss(absPath: string): string` y `leerCssDesdeRaiz(relPath: string): string` (con `RAIZ = resolve(process.cwd(), 'src')` interno, fijable también como argumento). Los tests importarían `leerCssDesdeRaiz` por defecto. Tests que necesitan ruta absoluta (`tira-de-pestanas.test.ts:16`, `perfil-css.test.ts:15`) importarían `leerCss`. Dueño `apps/console/**`: Gemini.
+HOGAR ÚNICO SUGERIDO: `console/src/test/leer-css.ts` exportando `leerCss(absPath: string): string` y `leerCssDesdeRaiz(relPath: string): string` (con `RAIZ = resolve(process.cwd(), 'src')` interno, fijable también como argumento). Los tests importarían `leerCssDesdeRaiz` por defecto. Tests que necesitan ruta absoluta (`tira-de-pestanas.test.ts:16`, `perfil-css.test.ts:15`) importarían `leerCss`. Dueño `console/**`: Gemini.
 
 RIESGO: **alto**. Ya hay fork: `xterm-csp.test.ts:27-34` renombró a `content`/`relPath`, lo que rompe la copia-pega silenciosa; los 3 tests que pasan ruta absoluta usan una segunda variante; y un fix de bugs en uno (p. ej. ciclo `@import` infinito, `@import` con `url(...)` no soportado) sólo se aplicaría a una parte del lote. 15 ficheros = 15 sitios a tocar hoy.
 
@@ -530,12 +530,12 @@ RIESGO: **bajo**. Es preámbulo idéntico; el resolver no cambia. Pero son 13 si
 ---
 
 #### G-12 — `function sinComentarios(css: string): string { return css.replace(/\/\*[\s\S]*?\*\//g, ' '); }` — 6 ocurrencias — 3 líneas cada una
-- `apps/console/src/styles.tipografia.test.ts:37-39`
-- `apps/console/src/styles.legibilidad.test.ts:16-18`
-- `apps/console/src/styles.legibilidad-themes.test.ts:16-18`
-- `apps/console/src/features/messages/composer-anclado.test.ts:26-28`
-- `apps/console/src/features/config/config-css-toggles.test.ts:18-20`
-- `apps/console/src/features/config/config-css.test.ts:18-20`
+- `console/src/styles.tipografia.test.ts:37-39`
+- `console/src/styles.legibilidad.test.ts:16-18`
+- `console/src/styles.legibilidad-themes.test.ts:16-18`
+- `console/src/features/messages/composer-anclado.test.ts:26-28`
+- `console/src/features/config/config-css-toggles.test.ts:18-20`
+- `console/src/features/config/config-css.test.ts:18-20`
 
 CITA LADO A (`styles.legibilidad.test.ts:16-18`):
 ```
@@ -553,17 +553,17 @@ function sinComentarios(css: string): string {
 
 Byte-idéntico, 6 copias.
 
-HOGAR ÚNICO SUGERIDO: `apps/console/src/test/leer-css.ts` (mismo hogar que G-1) exportando `sinComentarios`. Dueño Gemini.
+HOGAR ÚNICO SUGERIDO: `console/src/test/leer-css.ts` (mismo hogar que G-1) exportando `sinComentarios`. Dueño Gemini.
 
 RIESGO: **bajo**. Función trivial, no diverge. Pero ya va de la mano de `leerCss`/`resolverCss` en cada fichero: unificar las 3 funciones juntas (`leerCss`, `sinComentarios`, `bloqueMedia` — G-13) cierra los 3 grupos de golpe.
 
 ---
 
 #### G-13 — `function bloqueMedia(css, consulta)` (extracción de cuerpo de `@media` con conteo de llaves) — 4 ocurrencias — 18 líneas cada una
-- `apps/console/src/styles.legibilidad.test.ts:20-36`
-- `apps/console/src/styles.legibilidad-themes.test.ts:20-36`
-- `apps/console/src/features/messages/composer-anclado.test.ts:34-50`
-- `apps/console/src/menu-movil.test.ts:53-69`
+- `console/src/styles.legibilidad.test.ts:20-36`
+- `console/src/styles.legibilidad-themes.test.ts:20-36`
+- `console/src/features/messages/composer-anclado.test.ts:34-50`
+- `console/src/menu-movil.test.ts:53-69`
 
 CITA LADO A (`styles.legibilidad.test.ts:20-36`):
 ```
@@ -609,7 +609,7 @@ function bloqueMedia(css: string, consulta: string): string {
 
 Byte-idéntico. Acompañado de `function declaraciones()` (5 copias byte-idénticas en 5 ficheros: legibilidad.test.ts:38, legibilidad-themes.test.ts:38, composer-anclado.test.ts:53, menu-movil.test.ts:71, y una variante con signature distinta en `config-css-toggles.test.ts:22`/`config-css.test.ts:36`) y `function valor()` (4 copias byte-idénticas en los 4 mismos + 1 variante). El trío `sinComentarios + bloqueMedia + declaraciones + valor` está copiado en bloque.
 
-HOGAR ÚNICO SUGERIDO: `apps/console/src/test/css-parser.ts` exportando `sinComentarios`, `bloqueMedia`, `declaraciones`, `valor`, `reglasDe` (este último ya está exportado desde `styles.legibilidad.test.ts:66` pero solo se consume en ese fichero). El bloque CSS-parser entero unifica G-1 (parcialmente — `leerCss` se queda separado), G-12 y G-13. Dueño Gemini.
+HOGAR ÚNICO SUGERIDO: `console/src/test/css-parser.ts` exportando `sinComentarios`, `bloqueMedia`, `declaraciones`, `valor`, `reglasDe` (este último ya está exportado desde `styles.legibilidad.test.ts:66` pero solo se consume en ese fichero). El bloque CSS-parser entero unifica G-1 (parcialmente — `leerCss` se queda separado), G-12 y G-13. Dueño Gemini.
 
 RIESGO: **medio**. Las 4 copias de `bloqueMedia` no han divergido. Pero `declaraciones` ya tiene 2 firmas distintas: `declaraciones(bloque, selector): string` (legibilidad/menu-movil/legibilidad-themes/composer-anclado) y `declaraciones(css, clase): Record<string, string>` (config-css-toggles/config-css). La divergencia es semántica: la primera devuelve el último bloque declarado, la segunda devuelve un mapa `propiedad→valor`. Si se centraliza, hay que mantener las dos firmas.
 
@@ -619,7 +619,7 @@ RIESGO: **medio**. Las 4 copias de `bloqueMedia` no han divergido. Pero `declara
 
 | grupo | ocurrencias | líneas c/u | zonas implicadas | riesgo |
 |---|---:|---:|---|---|
-| G-1 — `leer`/`leerCss`/`resolverCss` con regex `@import` | 15 | 6 | `apps/console/src/**/*.test.{ts,tsx}` | alto |
+| G-1 — `leer`/`leerCss`/`resolverCss` con regex `@import` | 15 | 6 | `console/src/**/*.test.{ts,tsx}` | alto |
 | G-2 — `afterAll` `pool.end()` + `container.stop()` | 28+ | 4 | `packages/store/test/**`, `tests/store-hardening/**`, `tests/gateway-hardening/**` | medio |
 | G-3 — `function command(overrides: Partial<PublishMessage>)` | 13 | 16 | `packages/store/test/**`, `tests/store-hardening/**` | bajo |
 | G-4 — `beforeEach` SQL `acl_edges/tenants/rooms/memberships` enable | 14 | 7 | `packages/store/test/**` | alto |
@@ -630,15 +630,15 @@ RIESGO: **medio**. Las 4 copias de `bloqueMedia` no han divergido. Pero `declara
 | G-9 — `apps` + `afterEach pop().close()` (services/gateway) | 5 | 5 | `services/gateway/src/*.test.ts` | bajo |
 | G-10 — `function pool/fakePool()` con `vi.fn` | 8 | 3 | `tests/gateway-hardening/helpers.ts` + `services/gateway/src/*.test.ts` | alto |
 | G-11 — Preámbulo `const repository = resolve(...)` | 13 | 6 | `tests/unit/**` | bajo |
-| G-12 — `function sinComentarios(css)` | 6 | 3 | `apps/console/src/**/*.test.{ts,tsx}` | bajo |
-| G-13 — `function bloqueMedia(css, consulta)` (+ `declaraciones`, `valor`) | 4 (+ 5 + 5) | 18 | `apps/console/src/**/*.test.{ts,tsx}` | medio |
+| G-12 — `function sinComentarios(css)` | 6 | 3 | `console/src/**/*.test.{ts,tsx}` | bajo |
+| G-13 — `function bloqueMedia(css, consulta)` (+ `declaraciones`, `valor`) | 4 (+ 5 + 5) | 18 | `console/src/**/*.test.{ts,tsx}` | medio |
 
 **Total confirmado**: 13 grupos · ≈580 línea-ocurrencias duplicadas.
 
 ## Hogares únicos prioritarios (orden de intervención)
 
-1. **`apps/console/src/test/leer-css.ts`** — resuelve G-1 + G-12 (parcialmente G-13). Mayor ratio líneas/sitios.
-2. **`apps/console/src/test/css-parser.ts`** — resuelve G-13 + G-12 + G-1 (parcial). Segunda mayor ratio.
+1. **`console/src/test/leer-css.ts`** — resuelve G-1 + G-12 (parcialmente G-13). Mayor ratio líneas/sitios.
+2. **`console/src/test/css-parser.ts`** — resuelve G-13 + G-12 + G-1 (parcial). Segunda mayor ratio.
 3. **`tests/helpers/postgres.ts` (extensión)** — `closeTestDatabase(database)` resuelve G-2 enteramente; tests de `packages/store/test/**` y `tests/store-hardening/**` lo importan.
 4. **`tests/store-hardening/_fixtures/command.ts`** — resuelve G-3. Hogar único `packages/store/test/**` (Codex) por ser donde más se usa.
 5. **`packages/store/test/_fixtures/enable-everything.ts`** — resuelve G-4. Sector Codex.
@@ -652,11 +652,11 @@ RIESGO: **medio**. Las 4 copias de `bloqueMedia` no han divergido. Pero `declara
 
 - **G-9 + G-10**: el hogar único cae en `services/gateway/src/**` (Codex), pero lo consumen `tests/gateway-hardening/**` (Gemini). Codex debe crear el helper y Gemini lo importa — sin que Gemini edite nada en `services/gateway/src/**`.
 - **G-2 + G-3 + G-4 + G-7 + G-8**: el hogar vive en `tests/helpers/postgres.ts` (Gemini) o `packages/store/test/_fixtures/` (Codex). El reparto actual del protocolo lo deja claro: el `helpers/postgres.ts` ya exporta `startTestDatabase`/`resetTestDatabase`; extenderlo con `closeTestDatabase`/`enableEverything` es sector Gemini. Los nuevos `_fixtures/` dentro de `packages/store/test/` son sector Codex.
-- **G-1 + G-12 + G-13**: hogar en `apps/console/src/test/` (Gemini) — sin conflicto intersectorial.
+- **G-1 + G-12 + G-13**: hogar en `console/src/test/` (Gemini) — sin conflicto intersectorial.
 
 ## Cosas explícitamente descartadas (no son duplicación, o son helpers legítimos)
 
-- **`renderWithApi(element, options)`** (1 declaración en `apps/console/src/test/render.tsx:8` + 403 usos) — ya centralizado.
+- **`renderWithApi(element, options)`** (1 declaración en `console/src/test/render.tsx:8` + 403 usos) — ya centralizado.
 - **`function pool()` con `connect`/`idleClient`** en `services/dispatcher/test/liveness.test.ts:21-32` — caso único, no duplica nada.
 - **`FakeTmux implements TmuxController`** en `packages/adapter-sdk/test/shared-session-turn-merge.test.ts:95` y `shared-session.test.ts:168` — misma intención, pero `shared-session.test.ts` añade 600 líneas de setup extra; un merge sería destructivo, no constructivo.
 - **`class FakeHarness`** — usado en `tests/integration/vertical.test.ts` desde `@cauce/adapter-sdk` (ya exportado).

@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 from typing import Any
@@ -120,7 +122,7 @@ class RolloutPtyTest(unittest.TestCase):
     def test_mapping_assigns_exactly_two_managers_and_recalculates_source_hashes(self) -> None:
         self.assertEqual(set(self.fleet.placements.values()), {"server", "kratos"})
         self.assertEqual(self.fleet.placements["kant"], "server")
-        self.assertEqual(self.fleet.placements["midas"], "kratos")
+        self.assertEqual(self.fleet.placements["salva"], "kratos")
         self.assertEqual(
             self.bundle.digests["pty-agent/cauce-pty-launcher.sh"],
             rollout.sha256((AGENT_ROOT / "cauce-pty-launcher.sh").read_bytes()),
@@ -194,12 +196,12 @@ class RolloutPtyTest(unittest.TestCase):
             with self.subTest(inventories=inventories), self.assertRaises(rollout.RolloutError):
                 rollout.validate_inventories(self.fleet, inventories, migrate_kant=False)
 
-    def test_measured_legacy_heraclito_and_tales_block_until_explicit_retirement(self) -> None:
+    def test_unknown_alias_units_block_fail_closed(self) -> None:
         measured = {
             "server": {"tales": rollout.UnitPresence(enabled=True)},
             "kratos": {"heraclito": rollout.UnitPresence(active=True)},
         }
-        with self.assertRaisesRegex(rollout.RolloutError, "retirado"):
+        with self.assertRaisesRegex(rollout.RolloutError, "desconocido"):
             rollout.validate_inventories(self.fleet, measured, migrate_kant=False)
 
     def test_kant_migration_is_explicit_and_never_accepts_double_presence(self) -> None:
@@ -301,14 +303,21 @@ class RolloutPtyTest(unittest.TestCase):
     def test_retired_alias_deactivation_is_explicit_transactional_and_recoverable(self) -> None:
         temporary, worker, runner = self.worker("kratos")
         self.addCleanup(temporary.cleanup)
-        alias = "heraclito"
+        with self.assertRaisesRegex(rollout.RolloutError, "historico"):
+            worker.deactivate_retired("heraclito", self.bundle)
+        alias = "fantasma"
+        catalogo = json.loads(self.bundle.files["container-aliases.json"])
+        catalogo["historicalAliases"] = {alias: {"expectedEnabled": False}}
+        declarado = types.SimpleNamespace(
+            files={"container-aliases.json": json.dumps(catalogo).encode()}
+        )
         unit = f"cauce-v3-pty@{alias}.service"
         runner.enabled.add(unit)
         runner.active.add(unit)
         selector = worker._selector_path(alias)
         selector.parent.mkdir(parents=True, mode=0o700)
         selector.write_text("[Service]\n", encoding="utf-8")
-        result = worker.deactivate_retired(alias, self.bundle)
+        result = worker.deactivate_retired(alias, declarado)
         self.assertNotIn(unit, runner.enabled)
         self.assertNotIn(unit, runner.active)
         self.assertFalse(selector.exists())
@@ -365,11 +374,11 @@ class RolloutPtyTest(unittest.TestCase):
             [
                 {"status": "updated", "alias": "janus", "transaction": "txn-1"},
                 {"status": "unchanged", "alias": "argos"},
-                {"status": "updated", "alias": "midas", "transaction": "txn-2"},
+                {"status": "updated", "alias": "salva", "transaction": "txn-2"},
             ],
         )
         self.assertEqual(failures, [])
-        self.assertEqual(kratos.calls[0][1]["alias"], "midas")
+        self.assertEqual(kratos.calls[0][1]["alias"], "salva")
         self.assertEqual(server.calls[0][1]["alias"], "janus")
         self.assertEqual(len(server.calls) + len(kratos.calls), 2)
 

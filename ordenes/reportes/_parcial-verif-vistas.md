@@ -31,33 +31,33 @@ Notas a la tabla:
 **AFIRMADO EN:** `PENDIENTES-DEL-DUEÑO.md:81` («`jobs` · `chains` · `audit` · `relays` · `topology` · `fleet/:tenant/:alias` · `adapters` · `role-brief-tab`»)
 **COMANDO:**
 ```
-$ ls apps/console/src/features/{audit,fleet,topology,observability,landing,live}/ 2>&1 | \
+$ ls console/src/features/{audit,fleet,topology,observability,landing,live}/ 2>&1 | \
     grep -E "AuditPanel|ChainPanel|JobsRetiredNotice|FleetAgentDetail|HarnessStrip|ObservabilityPage|hypergraph-layout|RoleBriefTab|TopologyPage|HyperGraph"
 ```
 **SALIDA:**
 ```
-apps/console/src/features/audit/AuditPanel.tsx
-apps/console/src/features/audit/AuditPanel.test.tsx
-apps/console/src/features/audit/audit-summary.ts
-apps/console/src/features/audit/audit-summary.test.ts
-apps/console/src/features/fleet/FleetAgentDetailPage.tsx
-apps/console/src/features/fleet/FleetAgentDetailPage.test.tsx
-apps/console/src/features/landing/HarnessStrip.tsx
-apps/console/src/features/landing/JobsRetiredNotice.tsx
-apps/console/src/features/live/ChainPanel.tsx
-apps/console/src/features/live/ChainPanel.test.tsx
-apps/console/src/features/live/RoleBriefTab.tsx
-apps/console/src/features/live/RoleBriefTab.test.tsx
-apps/console/src/features/observability/ObservabilityPage.tsx
-apps/console/src/features/observability/ObservabilityPage.test.tsx
-apps/console/src/features/topology/AclEdgeList.tsx
-apps/console/src/features/topology/TenantCards.tsx
-apps/console/src/features/topology/hypergraph-layout.test.ts
-apps/console/src/features/topology/hypergraph-layout.ts
-apps/console/src/features/topology/layout-geometry.ts
-apps/console/src/features/topology/layout-labels.ts
-apps/console/src/features/topology/layout-nodes.ts
-apps/console/src/features/topology/hypergraph.css
+console/src/features/audit/AuditPanel.tsx
+console/src/features/audit/AuditPanel.test.tsx
+console/src/features/audit/audit-summary.ts
+console/src/features/audit/audit-summary.test.ts
+console/src/features/fleet/FleetAgentDetailPage.tsx
+console/src/features/fleet/FleetAgentDetailPage.test.tsx
+console/src/features/landing/HarnessStrip.tsx
+console/src/features/landing/JobsRetiredNotice.tsx
+console/src/features/live/ChainPanel.tsx
+console/src/features/live/ChainPanel.test.tsx
+console/src/features/live/RoleBriefTab.tsx
+console/src/features/live/RoleBriefTab.test.tsx
+console/src/features/observability/ObservabilityPage.tsx
+console/src/features/observability/ObservabilityPage.test.tsx
+console/src/features/topology/AclEdgeList.tsx
+console/src/features/topology/TenantCards.tsx
+console/src/features/topology/hypergraph-layout.test.ts
+console/src/features/topology/hypergraph-layout.ts
+console/src/features/topology/layout-geometry.ts
+console/src/features/topology/layout-labels.ts
+console/src/features/topology/layout-nodes.ts
+console/src/features/topology/hypergraph.css
 ```
 **LECTURA:** Los 8 elementos del listado existen hoy como unidades de código distintas y referenciables. `TopologyPage.tsx` (51 src) y `HyperGraph.tsx` (244 src) ya NO existen — borrados hoy 04:13 y 16:13 respectivamente (commits `179d7bf` y `847e896`). Las dos que no son vistas-pantalla son `chains` (tab «Cadena» dentro de `AgentDrawer.tsx` del cajón de /live) y `role-brief-tab` (tab «Rol» dentro de `DirectivaModal.tsx` de /live): son sub-componentes, no rutas.
 
@@ -71,29 +71,29 @@ apps/console/src/features/topology/hypergraph.css
 
 **COMANDO:**
 ```
-$ for f in apps/console/src/features/audit/AuditPanel.tsx \
-          apps/console/src/features/audit/audit-summary.ts \
-          apps/console/src/features/landing/JobsRetiredNotice.tsx \
-          apps/console/src/features/live/ChainPanel.tsx \
-          apps/console/src/features/live/RoleBriefTab.tsx \
-          apps/console/src/features/live/role-brief.ts \
-          apps/console/src/features/fleet/FleetAgentDetailPage.tsx \
-          apps/console/src/features/landing/HarnessStrip.tsx \
-          apps/console/src/features/topology/HyperGraph.tsx; do
+$ for f in console/src/features/audit/AuditPanel.tsx \
+          console/src/features/audit/audit-summary.ts \
+          console/src/features/landing/JobsRetiredNotice.tsx \
+          console/src/features/live/ChainPanel.tsx \
+          console/src/features/live/RoleBriefTab.tsx \
+          console/src/features/live/role-brief.ts \
+          console/src/features/fleet/FleetAgentDetailPage.tsx \
+          console/src/features/landing/HarnessStrip.tsx \
+          console/src/features/topology/HyperGraph.tsx; do
     printf "%5d  %s\n" "$(wc -l < "$f" 2>/dev/null || echo 0)" "$f"
   done
 ```
 **SALIDA:**
 ```
-  168  apps/console/src/features/audit/AuditPanel.tsx
-   85  apps/console/src/features/audit/audit-summary.ts
-   20  apps/console/src/features/landing/JobsRetiredNotice.tsx
-  121  apps/console/src/features/live/ChainPanel.tsx
-  132  apps/console/src/features/live/RoleBriefTab.tsx
-   87  apps/console/src/features/live/role-brief.ts
-   90  apps/console/src/features/fleet/FleetAgentDetailPage.tsx
-   80  apps/console/src/features/landing/HarnessStrip.tsx
-    0  apps/console/src/features/topology/HyperGraph.tsx
+  168  console/src/features/audit/AuditPanel.tsx
+   85  console/src/features/audit/audit-summary.ts
+   20  console/src/features/landing/JobsRetiredNotice.tsx
+  121  console/src/features/live/ChainPanel.tsx
+  132  console/src/features/live/RoleBriefTab.tsx
+   87  console/src/features/live/role-brief.ts
+   90  console/src/features/fleet/FleetAgentDetailPage.tsx
+   80  console/src/features/landing/HarnessStrip.tsx
+    0  console/src/features/topology/HyperGraph.tsx
 ```
 **LECTURA:** La suma de los 9 ficheros nombrados en `plano-objetivo.md:543` da **783 src hoy** (no 1.027). La diferencia exacta es 244 — el tamaño de `HyperGraph.tsx`, borrado en `847e896` (16:13). La cifra «1.027» está desfasada ~76 minutos y arrastra un fichero muerto que ya no existe. El `PENDIENTES` (17:07) se escribió después del borrado: alguien copió la cifra sin re-verificar.
 
@@ -117,21 +117,21 @@ $ for f in apps/console/src/features/audit/AuditPanel.tsx \
 **AFIRMADO EN:** `PENDIENTES-DEL-DUEÑO.md:82` («la fila `topology` incluye `hypergraph-layout`, que `/live` SÍ usa — se excluye o se parte antes»)
 **COMANDO:**
 ```
-$ grep -rn "hypergraph-layout" apps/console/src --include="*.ts" --include="*.tsx"
+$ grep -rn "hypergraph-layout" console/src --include="*.ts" --include="*.tsx"
 ```
 **SALIDA:**
 ```
-apps/console/src/features/topology/layout-nodes.ts:10:import type { LayoutOptions } from './hypergraph-layout';
-apps/console/src/features/topology/hypergraph-layout.test.ts:10:} from './hypergraph-layout';
-apps/console/src/features/live/LiveHypergraph.tsx:19:} from '../topology/hypergraph-layout';
-apps/console/src/features/live/agent-state-derivation.test.ts:4:import { layoutHypergraph } from '../topology/hypergraph-layout';
-apps/console/src/features/live/live-hypergraph/FlowArrow.tsx:1:import type { Point } from '../../topology/hypergraph-layout';
+console/src/features/topology/layout-nodes.ts:10:import type { LayoutOptions } from './hypergraph-layout';
+console/src/features/topology/hypergraph-layout.test.ts:10:} from './hypergraph-layout';
+console/src/features/live/LiveHypergraph.tsx:19:} from '../topology/hypergraph-layout';
+console/src/features/live/agent-state-derivation.test.ts:4:import { layoutHypergraph } from '../topology/hypergraph-layout';
+console/src/features/live/live-hypergraph/FlowArrow.tsx:1:import type { Point } from '../../topology/hypergraph-layout';
 ```
-**LECTURA:** `apps/console/src/features/topology/hypergraph-layout.ts` es importado por **3 ficheros de /live** (`LiveHypergraph.tsx:19`, `FlowArrow.tsx:1`, `agent-state-derivation.test.ts:4`) y por sus 3 helpers locales (`layout-{geometry,labels,nodes}.ts`). Borrar la familia `hypergraph-layout` rompe `/live`. Lo mismo con `AclEdgeList.tsx` y `TenantCards.tsx` — los importa `features/live/LiveFleetLegend.tsx:2-3`.
+**LECTURA:** `console/src/features/topology/hypergraph-layout.ts` es importado por **3 ficheros de /live** (`LiveHypergraph.tsx:19`, `FlowArrow.tsx:1`, `agent-state-derivation.test.ts:4`) y por sus 3 helpers locales (`layout-{geometry,labels,nodes}.ts`). Borrar la familia `hypergraph-layout` rompe `/live`. Lo mismo con `AclEdgeList.tsx` y `TenantCards.tsx` — los importa `features/live/LiveFleetLegend.tsx:2-3`.
 
 **COMANDO (estado del directorio tras la purga de hoy):**
 ```
-$ ls apps/console/src/features/topology/
+$ ls console/src/features/topology/
 ```
 **SALIDA:**
 ```
@@ -140,12 +140,12 @@ hypergraph.css   layout-geometry.ts  layout-labels.ts  layout-nodes.ts
 ```
 **COMANDO (verificación de que HyperGraph.tsx ya no está):**
 ```
-$ ls apps/console/src/features/topology/HyperGraph.tsx 2>&1
+$ ls console/src/features/topology/HyperGraph.tsx 2>&1
 $ git -C /datos/workspaces/zeus/cauce-v3 log -1 --format='%H %ad %s' --date=short 847e896
 ```
 **SALIDA:**
 ```
-ls: cannot access 'apps/console/src/features/topology/HyperGraph.tsx': No such file or directory
+ls: cannot access 'console/src/features/topology/HyperGraph.tsx': No such file or directory
 847e896df46d06d135de33b35bd5abfa55c0621d 2026-08-27 purga P4-P13: sectores completos en protocolo, rojos de store y veredicto legado-candidato a codex, HyperGraph muerto fuera, 2 schemas muertos fuera, 160K de reportes consumidos fuera, enlaces muertos reparados
 ```
 **LECTURA:** La advertencia del `PENDIENTES` es correcta en el fondo, pero **parcialmente obsoleta en la forma**. Lo que dice «se excluye o se parte antes» ya pasó: `plano-objetivo.md:550` (P9) identificó que el ÚNICO residuo real de la vista `topology` era `HyperGraph.tsx` (244 líneas, cero importadores) y que la ruta ya estaba en alias `topology: 'live'` (`App.tsx:110`). Ese fichero cayó en `847e896` (16:13) ejecutado antes de la firma del `PENDIENTES` (17:07). Las 7 entradas restantes del directorio `topology/` son imports vivos de /live — no se pueden retirar como bloque «topology», habría que **mover** `hypergraph-layout.ts` (+ sus 3 helpers + `hypergraph-layout.test.ts`) y `{AclEdgeList, TenantCards}.tsx` al directorio `live/` (y dejar el directorio `topology/` vacío). Hoy eso no se ha hecho; la advertencia del `PENDIENTES` aplica a ese movimiento, no a una poda.
@@ -176,7 +176,7 @@ $ grep -nE "3,5|3\.5 d|0 peticion|0 clic|0 visitas|0 accesos|0 altas|0 rollback|
 ```
 **COMANDO (buscar fuente de telemetría en el repo):**
 ```
-$ grep -rln "audit_events" services/gateway/src apps/console/src 2>/dev/null | head -5
+$ grep -rln "audit_events" services/gateway/src console/src 2>/dev/null | head -5
 $ grep -rln "telemetr\|access.log\|nginx" ordenes/ plan-reestructura/ 2>/dev/null | head -5
 ```
 **SALIDA:**
@@ -197,28 +197,28 @@ $ grep -rln "telemetr\|access.log\|nginx" ordenes/ plan-reestructura/ 2>/dev/nul
 **COMANDO (referencias vivas por vista):**
 ```
 $ grep -rn "JobsRetiredNotice\|ChainPanel\|FleetAgentDetailPage\|RoleBriefTab\|AuditPanel\|HarnessStrip\|hypergraph-layout\|hypergraph\.css" \
-    apps/console/src --include="*.ts" --include="*.tsx" --include="*.css" 2>&1 | grep -v node_modules
+    console/src --include="*.ts" --include="*.tsx" --include="*.css" 2>&1 | grep -v node_modules
 ```
 **SALIDA (recortada a lo no-trivial):**
 ```
-apps/console/src/App.tsx:10:import { JobsRetiredNotice } from './features/landing/JobsRetiredNotice';
-apps/console/src/App.tsx:59:const FleetAgentDetailPage = lazy(async () => ({ default: (await import('./features/fleet/FleetAgentDetailPage')).FleetAgentDetailPage }));
-apps/console/src/App.tsx:93:{ id: 'jobs', label: '', icon: Boxes, component: JobsRetiredNotice },
-apps/console/src/App.tsx:262:<FleetAgentDetailPage tenantId={fleetAgentTarget.tenantId} alias={fleetAgentTarget.alias} />
-apps/console/src/features/landing/LandingPage.tsx:6:import { HarnessStrip } from './HarnessStrip';
-apps/console/src/features/landing/LandingPage.tsx:162:<HarnessStrip adapters={adapters.data?.items ?? []} error={adapters.data ? undefined : adapters.error} />
-apps/console/src/features/observability/ObservabilityPage.tsx:10:import { AuditPanel } from '../audit/AuditPanel';
-apps/console/src/features/observability/ObservabilityPage.tsx:136:<AuditPanel query={auditQuery} onQuery={setAuditQuery} />
-apps/console/src/features/live/AgentDrawer.tsx:10:import { ChainPanel } from './ChainPanel';
-apps/console/src/features/live/AgentDrawer.tsx:380:{traceId ? <ChainPanel traceId={traceId} /> : ( ... )}
-apps/console/src/features/live/DirectivaModal.tsx:7:import { RoleBriefTab, type RoleBriefTabProps } from './RoleBriefTab';
-apps/console/src/features/live/DirectivaModal.tsx:15:export interface DirectivaModalProps extends RoleBriefTabProps {
-apps/console/src/features/live/DirectivaModal.tsx:128:<RoleBriefTab ...
-apps/console/src/features/live/LiveHypergraph.tsx:19:} from '../topology/hypergraph-layout';
-apps/console/src/features/live/LiveFleetLegend.tsx:2:import { AclEdgeList } from '../topology/AclEdgeList';
-apps/console/src/features/live/LiveFleetLegend.tsx:3:import { TenantCards } from '../topology/TenantCards';
-apps/console/src/features/live/live-hypergraph/FlowArrow.tsx:1:import type { Point } from '../../topology/hypergraph-layout';
-apps/console/src/features/live/agent-state-derivation.test.ts:4:import { layoutHypergraph } from '../topology/hypergraph-layout';
+console/src/App.tsx:10:import { JobsRetiredNotice } from './features/landing/JobsRetiredNotice';
+console/src/App.tsx:59:const FleetAgentDetailPage = lazy(async () => ({ default: (await import('./features/fleet/FleetAgentDetailPage')).FleetAgentDetailPage }));
+console/src/App.tsx:93:{ id: 'jobs', label: '', icon: Boxes, component: JobsRetiredNotice },
+console/src/App.tsx:262:<FleetAgentDetailPage tenantId={fleetAgentTarget.tenantId} alias={fleetAgentTarget.alias} />
+console/src/features/landing/LandingPage.tsx:6:import { HarnessStrip } from './HarnessStrip';
+console/src/features/landing/LandingPage.tsx:162:<HarnessStrip adapters={adapters.data?.items ?? []} error={adapters.data ? undefined : adapters.error} />
+console/src/features/observability/ObservabilityPage.tsx:10:import { AuditPanel } from '../audit/AuditPanel';
+console/src/features/observability/ObservabilityPage.tsx:136:<AuditPanel query={auditQuery} onQuery={setAuditQuery} />
+console/src/features/live/AgentDrawer.tsx:10:import { ChainPanel } from './ChainPanel';
+console/src/features/live/AgentDrawer.tsx:380:{traceId ? <ChainPanel traceId={traceId} /> : ( ... )}
+console/src/features/live/DirectivaModal.tsx:7:import { RoleBriefTab, type RoleBriefTabProps } from './RoleBriefTab';
+console/src/features/live/DirectivaModal.tsx:15:export interface DirectivaModalProps extends RoleBriefTabProps {
+console/src/features/live/DirectivaModal.tsx:128:<RoleBriefTab ...
+console/src/features/live/LiveHypergraph.tsx:19:} from '../topology/hypergraph-layout';
+console/src/features/live/LiveFleetLegend.tsx:2:import { AclEdgeList } from '../topology/AclEdgeList';
+console/src/features/live/LiveFleetLegend.tsx:3:import { TenantCards } from '../topology/TenantCards';
+console/src/features/live/live-hypergraph/FlowArrow.tsx:1:import type { Point } from '../../topology/hypergraph-layout';
+console/src/features/live/agent-state-derivation.test.ts:4:import { layoutHypergraph } from '../topology/hypergraph-layout';
 ```
 **LECTURA por vista:**
 

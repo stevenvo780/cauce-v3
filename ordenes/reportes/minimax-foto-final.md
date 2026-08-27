@@ -25,7 +25,7 @@ Métricas medidas con `wc -l` sobre `main` (HEAD = `73e533c` + cambios locales d
 | `services/terminal-relay/src/sessions.ts` | 1235 | Gemini (canales) |
 | `ops/pty-agent/rollout-pty.py` | 1220 | Claude+FASE 3 (contenedores/PTY) |
 | `packages/adapter-sdk/src/sdk/output-parser.ts` | 1189 | Codex (adapter-sdk) |
-| `apps/console/src/api/types.ts` | 1193 | Gemini (consola) |
+| `console/src/api/types.ts` | 1193 | Gemini (consola) |
 | `packages/store/src/repository/messages.ts` | 1161 | Codex (store) |
 | `packages/protocol/src/schemas.ts` | 1115 | Codex (protocol, subagente A) |
 | `packages/store/src/configuration.ts` | 1145 | Codex (store) |
@@ -37,14 +37,14 @@ Métricas medidas con `wc -l` sobre `main` (HEAD = `73e533c` + cambios locales d
 | `services/terminal-relay/src/agent-leg.ts` | 1065 | Gemini (canales) |
 | `ops/container-runtime/cauce-container-runtime.py` | 1664 | **DUEÑO** (sin sector; FASE 3) |
 | `ops/scripts/container-adapter-supervisor.sh` | 976 | Codex (ops/scripts) |
-| `apps/console/src/features/topology/hypergraph-layout.ts` | 962 | Gemini (consola) |
+| `console/src/features/topology/hypergraph-layout.ts` | 962 | Gemini (consola) |
 | `packages/adapter-sdk/src/shared-session/session.ts` | 949 | Codex (adapter-sdk) |
-| `apps/console/src/features/live/agent-state.ts` | 875 | Gemini (consola) |
-| `apps/console/src/features/terminal/xterm-csp.css` | 869 | Gemini (consola) |
-| `apps/console/src/mocks/data.ts` | 856 | Gemini (consola) |
-| `apps/console/src/features/live/LiveFleetPage.tsx` | 850 | Gemini (consola) |
+| `console/src/features/live/agent-state.ts` | 875 | Gemini (consola) |
+| `console/src/features/terminal/xterm-csp.css` | 869 | Gemini (consola) |
+| `console/src/mocks/data.ts` | 856 | Gemini (consola) |
+| `console/src/features/live/LiveFleetPage.tsx` | 850 | Gemini (consola) |
 | `services/telegram-bridge/src/poller.ts` | 847 | Gemini (canales) |
-| `apps/console/src/api/client.ts` | 840 | Gemini (consola) |
+| `console/src/api/client.ts` | 840 | Gemini (consola) |
 | `ops/scripts/generate-telegram-config.py` | 839 | **DUEÑO** (dudoso de censo) |
 | `services/gateway/src/terminal/session-control.ts` | 902 | Codex (gateway) |
 | `services/gateway/src/routes/console.ts` | 920 | Codex (gateway) |
@@ -76,7 +76,7 @@ Resumen por sector (41 fuente >800): Codex 25 (store 8, gateway 6, adapter-sdk 7
 | `ops/pty-agent/tests/test_read_governance.py` | 852 | Claude+FASE 3 |
 | `tests/gateway-hardening/gateway-security.test.ts` | 849 | Codex |
 | `packages/adapter-sdk/test/shared-session-turn-merge.test.ts` | 811 | Codex |
-| `apps/console/src/features/config/ConfigPage.test.tsx` | 1248 | Gemini |
+| `console/src/features/config/ConfigPage.test.tsx` | 1248 | Gemini |
 
 Resumen por sector (20 test >800): Codex 13 · Gemini 5 · Claude+FASE 3 1 · **DUEÑO** 1.
 
@@ -88,7 +88,7 @@ Las cifras de la auditoría de la madrugada (censo `fe5d705`) eran "208 ficheros
 |---|---|---|---|
 | `services/` (todo TS/JS/MJS/Py/Sh/CSS/HTML) | ~73K (incluyendo `services/shadow-router` ~2K, `services/relay-worker` ~2K) | 47.239 | **−25.8K** |
 | `packages/` (todo TS/TSX/JS/CSS/Py, sin `dist`/`bridge`/`fixtures`/`manifests`) | ~103K (incluyendo el `repository.ts` de 11K) | 74.661 | **−28.3K** (sin contar las particiones de store/gateway/adapter-sdk que se quedaron en sitio) |
-| `apps/console/` (todo TS/TSX/JS/CSS, sin `dist`) | ~57,7K (similar) | 57.682 | **−0K** (consola solo se partió, no se descontaminó) |
+| `console/` (todo TS/TSX/JS/CSS, sin `dist`) | ~57,7K (similar) | 57.682 | **−0K** (consola solo se partió, no se descontaminó) |
 | `ops/` (todo TS/Py/Sh/MJS/YAML/JSON/CSS, sin `node_modules`) | ~73K (incluyendo `ops/ops-scripts/` ~19K, `ops/contingentes/` ~17K, `ops/harness/CONTRACT.md` + Dockerfile) | 37.689 | **−35K** |
 | `tests/` (top-level, todo TS/MJS/Py) | ~21K (similar; las purgadas son `tests/unit/{release-*,rollback-*,migrate-*,pin-*}` etc. que se fueron con la cuarentena) | 21.048 | **−0K** medible (los tests purgados están en `ops/tests/`, no aquí) |
 | `_legado/` | ~50K (servicios + ops-scripts + tests + basura + contingentes + rollback-bridge) | **0** (borrado entero en `73e533c`) | **−50K** |
@@ -99,7 +99,7 @@ Para los números exactos de particiones (mudanza byte-pura, sin borrado de lín
 - `packages/store/src/repository.ts`: **11.002 → 42 líneas** (fachada) + 9 módulos (~7,5K); verificada byte a byte en `ordenes/reportes/claude-revision-46-commits.md` §store-1/store-2.
 - `services/gateway/src/app.ts` (antes monolito >2K) → **408 líneas** + `routes/{console,core,health,legado-candidato,shared}.ts` (~2,8K) + `console/*.ts` (~5,2K) + `terminal/*.ts` (~3,5K) + llanos (~3,4K). Total: 15,3K vs el monolito de antes (cifra desconocida con precisión).
 - `services/gateway/src/terminal/plugin.ts` (326) está partido en `{audit,authority,config,governance-probes,hechos-del-registro,plugin,registry,relay-proxy,session-control,tickets,types}.ts` (~3,5K en total).
-- `apps/console/src/features/terminal/pty-session.ts` (1017) → 6 ficheros (`pty-{connection,session,input,output,theme,types,socket-stub}.ts`); `apps/console/src/features/terminal/OperatorWorkspace.tsx` (1383) → 8 ficheros; `apps/console/src/features/terminal/styles.css` (2012 declaraciones) → 4 módulos; `apps/console/src/features/terminal/live.css` (1123 declaraciones) → 6 módulos. Paridad verificada en `ordenes/reportes/claude-revision-46-commits.md` §consola.
+- `console/src/features/terminal/pty-session.ts` (1017) → 6 ficheros (`pty-{connection,session,input,output,theme,types,socket-stub}.ts`); `console/src/features/terminal/OperatorWorkspace.tsx` (1383) → 8 ficheros; `console/src/features/terminal/styles.css` (2012 declaraciones) → 4 módulos; `console/src/features/terminal/live.css` (1123 declaraciones) → 6 módulos. Paridad verificada en `ordenes/reportes/claude-revision-46-commits.md` §consola.
 
 ## (c) Los 3 números del día
 
