@@ -96,10 +96,10 @@ Las cifras de la auditoría de la madrugada (censo `fe5d705`) eran "208 ficheros
 **Las cifras de la columna "antes" mezclan dos cosas que no deberían mezclarse**: la auditoría de la madrugada midió `ops/` específicamente (208 ficheros/familias en `ops/` + zonas sospechosas), mientras las cifras de aquí son sobre `main` entero. Lo que vale comparar es el delta: **3.2M y 185 ficheros borrados en `73e533c`** + las particiones que se quedaron en sitio (store 11K → 9 módulos, gateway monolito → routes/console/terminal).
 
 Para los números exactos de particiones (mudanza byte-pura, sin borrado de líneas):
-- `packages/store/src/repository.ts`: **11.002 → 42 líneas** (fachada) + 9 módulos (~7,5K); verificada byte a byte en `docs/bitacora/reportes/claude-revision-46-commits.md` §store-1/store-2.
+- `packages/store/src/repository.ts`: **11.002 → 42 líneas** (fachada) + 9 módulos (~7,5K); verificada byte a byte en `ordenes/reportes/claude-revision-46-commits.md` §store-1/store-2.
 - `services/gateway/src/app.ts` (antes monolito >2K) → **408 líneas** + `routes/{console,core,health,legado-candidato,shared}.ts` (~2,8K) + `console/*.ts` (~5,2K) + `terminal/*.ts` (~3,5K) + llanos (~3,4K). Total: 15,3K vs el monolito de antes (cifra desconocida con precisión).
 - `services/gateway/src/terminal/plugin.ts` (326) está partido en `{audit,authority,config,governance-probes,hechos-del-registro,plugin,registry,relay-proxy,session-control,tickets,types}.ts` (~3,5K en total).
-- `apps/console/src/features/terminal/pty-session.ts` (1017) → 6 ficheros (`pty-{connection,session,input,output,theme,types,socket-stub}.ts`); `apps/console/src/features/terminal/OperatorWorkspace.tsx` (1383) → 8 ficheros; `apps/console/src/features/terminal/styles.css` (2012 declaraciones) → 4 módulos; `apps/console/src/features/terminal/live.css` (1123 declaraciones) → 6 módulos. Paridad verificada en `docs/bitacora/reportes/claude-revision-46-commits.md` §consola.
+- `apps/console/src/features/terminal/pty-session.ts` (1017) → 6 ficheros (`pty-{connection,session,input,output,theme,types,socket-stub}.ts`); `apps/console/src/features/terminal/OperatorWorkspace.tsx` (1383) → 8 ficheros; `apps/console/src/features/terminal/styles.css` (2012 declaraciones) → 4 módulos; `apps/console/src/features/terminal/live.css` (1123 declaraciones) → 6 módulos. Paridad verificada en `ordenes/reportes/claude-revision-46-commits.md` §consola.
 
 ## (c) Los 3 números del día
 
