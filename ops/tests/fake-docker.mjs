@@ -126,6 +126,19 @@ if (command === "/usr/bin/python3" && commandArgs.includes("stop")) {
   process.exit(state.stopExit ?? 0);
 }
 if (command === "/usr/bin/python3" && commandArgs.includes("check")) process.exit(state.checkExit ?? 0);
+if (state.startGate && state.callCount === 1) {
+  const started = Date.now();
+  let released = false;
+  while (!released && Date.now() - started < 15000) {
+    try {
+      await readFile(state.startGate);
+      released = true;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  if (!released) process.exit(124);
+}
 if ((command === "/usr/bin/env" || commandArgs.includes("/usr/bin/env")) && state.finalGate) {
   const started = Date.now();
   let released = false;

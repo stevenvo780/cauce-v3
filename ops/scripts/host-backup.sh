@@ -98,8 +98,7 @@ OFFSITE_KEY=${OFFSITE_KEY:-/root/.ssh/id_ed25519_cauce_backup_offsite}
 # /mnt/pool/backups/cauce-v3/ on the NAS (see backup-restore.md): client-side
 # paths are relative to THAT root, not the NAS's real filesystem root, so
 # these must stay "/db/" and "/ut-nexus/", NOT the real absolute path -- an
-# absolute-looking path here gets nested inside the confined root instead
-# (verified 2026-07-25: passing the real path doubled it).
+# absolute-looking path here gets nested inside the confined root instead.
 OFFSITE_DB_PATH=${OFFSITE_DB_PATH:-/db/}
 OFFSITE_UT_PATH=${OFFSITE_UT_PATH:-/ut-nexus/}
 

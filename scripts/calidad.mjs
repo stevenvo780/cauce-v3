@@ -66,6 +66,26 @@ for (const [f, tope] of Object.entries(base.lineas)) {
 }
 if (rancias.length) console.error('calidad: AVISO trinquete rancio\n' + rancias.map(x => '  ~ ' + x).join('\n'));
 
+const CITA = /([\w./-]+\.(?:ts|tsx|mjs|py|sh|sql|yaml|json)):(\d+)\b/g;
+const versionados = new Set(todos);
+const citasRotas = [];
+for (const [f, ] of Object.entries(estado)) {
+  let texto; try { texto = readFileSync(f, 'utf8'); } catch { continue; }
+  for (const l of texto.split('\n')) {
+    if (!COMENTARIO.test(l)) continue;
+    for (const m of l.matchAll(CITA)) {
+      const [ , ruta, num ] = m;
+      if (!versionados.has(ruta)) {
+        if ([...versionados].some(v => v.endsWith('/' + ruta))) continue;
+        if (ruta.includes('/')) citasRotas.push(`${f}: cita ${ruta}:${num} — fichero inexistente`);
+      } else if (estado[ruta] && Number(num) > estado[ruta].lineas) {
+        citasRotas.push(`${f}: cita ${ruta}:${num} — el fichero tiene ${estado[ruta].lineas} lineas`);
+      }
+    }
+  }
+}
+if (citasRotas.length) console.error(`calidad: AVISO ${citasRotas.length} citas fichero:linea rotas (G7, pasara a ERROR)\n` + citasRotas.slice(0, 12).map(x => '  ~ ' + x).join('\n'));
+
 if (fallos.length) {
   console.error('calidad: ROJO\n' + fallos.map(x => '  - ' + x).join('\n'));
   console.error('Regla: partir el fichero o limpiar las fechas. El baseline solo baja (integrador: --update tras revisar).');

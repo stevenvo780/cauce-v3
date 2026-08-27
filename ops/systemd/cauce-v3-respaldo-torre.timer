@@ -1,0 +1,10 @@
+[Unit]
+Description=Cauce V3: respaldo diario a torre y Drive
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 UTC
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

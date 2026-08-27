@@ -1,0 +1,8 @@
+[Unit]
+Description=Cauce V3: respaldo de BD y /etc/cauce-v3 hacia la torre (kratos) y Drive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/cauce-v3/ops/scripts/backup-a-torre.sh

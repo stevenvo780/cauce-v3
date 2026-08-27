@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PROJECT="$ROOT/.."
 
-for file in "$ROOT"/scripts/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh; do bash -n "$file"; done
+for file in "$ROOT"/scripts/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh; do bash -n "$file"; done
 for file in "$ROOT"/scripts/*.mjs "$ROOT"/harness/*.mjs "$ROOT"/tests/*.mjs "$PROJECT"/deploy/*.mjs "$PROJECT"/deploy/runtime/*.mjs; do node --check "$file"; done
 PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" <<'PY'
 import json, pathlib, sys, yaml
@@ -198,6 +198,6 @@ if ! docker build --help >/dev/null 2>&1; then
   fi
   printf 'docker build check skipped outside release\n'
 fi
-if command -v shellcheck >/dev/null 2>&1; then shellcheck "$ROOT"/scripts/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh; fi
+if command -v shellcheck >/dev/null 2>&1; then shellcheck "$ROOT"/scripts/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh; fi
 node "$PROJECT/ops/scripts/validate-console-browser-storage.mjs" "$PROJECT/console/src"
 printf 'static validation passed\n'

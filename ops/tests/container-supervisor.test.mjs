@@ -1119,13 +1119,13 @@ try {
       `same-ID restart at ${restartRaceAt} passed the in-container generation guard`);
   }
 
-  // Host flock prevents duplicate docker-exec owners.
+  // Host flock rejects a duplicate supervisor before its first Docker operation can run.
   await clearLog();
   const flockGate = path.join(temporary, `flock-owner-${Math.random().toString(16).slice(2)}.gate`);
-  statePath = await dockerState("kant", { finalGate: flockGate });
+  statePath = await dockerState("kant", { startGate: flockGate });
   const firstOwner = spawn(supervisor, ["start", "kant"], { stdio: "ignore", env: environment(statePath) });
   await waitForLogOrExit(firstOwner,
-    (entries) => entries.some(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant")), 60_000);
+    (entries) => entries.some(({ call, argv }) => call === 1 && argv[0] === "inspect"));
   result = runSupervisor("start", "kant", statePath);
   assert.equal(result.status, 73);
   await writeFile(flockGate, "release\n");
