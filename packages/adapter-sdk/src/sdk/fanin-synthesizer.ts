@@ -232,10 +232,12 @@ export function synthesizeFaninOutput(
     .filter((value): value is string => value !== undefined));
   const uncovered = responses.filter((response) =>
     response.deliveryId === undefined || !covered.has(response.deliveryId));
-  const footer = `[${processedReplies.length} locally synthesized branch `
-    + `${processedReplies.length === 1 ? "reply" : "replies"}; `
-    + `${responses.length} branch ${responses.length === 1 ? "response" : "responses"} `
-    + `in this chain; ${uncovered.length} without local synthesis]`;
+  const footer = process.env.CAUCE_FANIN_FOOTER === "1"
+    ? `[${processedReplies.length} locally synthesized branch `
+      + `${processedReplies.length === 1 ? "reply" : "replies"}; `
+      + `${responses.length} branch ${responses.length === 1 ? "response" : "responses"} `
+      + `in this chain; ${uncovered.length} without local synthesis]`
+    : undefined;
 
   const sections: {
     readonly heading: string;
@@ -266,10 +268,10 @@ export function synthesizeFaninOutput(
 
   const separator = "\n\n";
   const separatorBytes = Buffer.byteLength(separator, "utf8");
-  const footerBytes = Buffer.byteLength(footer, "utf8");
+  const footerBytes = footer === undefined ? 0 : Buffer.byteLength(footer, "utf8");
   const availableBytes = MAX_FINAL_TEXT_BYTES
     - footerBytes
-    - separatorBytes * (sections.length + 1);
+    - separatorBytes * (sections.length + (footer === undefined ? 0 : 1));
   if (availableBytes <= 0) {
     return {
       reply: boundedUtf8(primary.text, MAX_FINAL_TEXT_BYTES),
@@ -282,10 +284,12 @@ export function synthesizeFaninOutput(
   }
   if (sections.length === 0) {
     return {
-      reply: boundedUtf8(
-        `${boundedUtf8(primary.text, availableBytes)}${separator}${footer}`,
-        MAX_FINAL_TEXT_BYTES,
-      ),
+      reply: footer === undefined
+        ? boundedUtf8(primary.text, MAX_FINAL_TEXT_BYTES)
+        : boundedUtf8(
+          `${boundedUtf8(primary.text, availableBytes)}${separator}${footer}`,
+          MAX_FINAL_TEXT_BYTES,
+        ),
       messages: [],
       notify: [],
       status: "done",
@@ -323,7 +327,11 @@ export function synthesizeFaninOutput(
   const primaryBudget = Math.max(0, availableBytes - renderedBytes);
   return {
     reply: boundedUtf8(
-      [boundedUtf8(primary.text, primaryBudget), ...rendered, footer].join(separator),
+      [
+        boundedUtf8(primary.text, primaryBudget),
+        ...rendered,
+        ...(footer === undefined ? [] : [footer]),
+      ].join(separator),
       MAX_FINAL_TEXT_BYTES,
     ),
     messages: [],

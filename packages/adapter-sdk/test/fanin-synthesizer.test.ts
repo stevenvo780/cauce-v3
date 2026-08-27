@@ -1,8 +1,45 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { afterEach, beforeEach } from "node:test";
 import { AdapterError } from "../src/sdk/errors.js";
 import { synthesizeFaninOutput } from "../src/sdk/fanin-synthesizer.js";
 import { MAX_FINAL_TEXT_BYTES } from "../src/sdk/output-parser.js";
+
+const FANIN_FOOTER_ENV = "CAUCE_FANIN_FOOTER";
+let previousFaninFooter: string | undefined;
+
+beforeEach(() => {
+  previousFaninFooter = process.env[FANIN_FOOTER_ENV];
+  delete process.env[FANIN_FOOTER_ENV];
+});
+
+afterEach(() => {
+  if (previousFaninFooter === undefined) delete process.env[FANIN_FOOTER_ENV];
+  else process.env[FANIN_FOOTER_ENV] = previousFaninFooter;
+});
+
+function synthesizedFooterFixture(): string {
+  return synthesizeFaninOutput({
+    type: "agent.fanin",
+    fanin_data_v1: {
+      schema: "cauce.agent_fanin_data.v1",
+      expected: 1,
+      completed: 1,
+      responses: [{
+        tenant_id: "Steven",
+        alias: "seneca",
+        delivery_id: "40000000-0000-4000-8000-000000000001",
+        untrusted_text: "raw branch",
+      }],
+    },
+  }, {
+    processedReplies: [{
+      tenantId: "Steven",
+      alias: "seneca",
+      reply: "Locally synthesized.",
+      childDeliveryId: "40000000-0000-4000-8000-000000000001",
+    }],
+  }).reply ?? "";
+}
 
 test("fan-in synthesis renders ordered attributed child text as inert data", () => {
   const output = synthesizeFaninOutput({
@@ -41,7 +78,29 @@ test("fan-in synthesis renders ordered attributed child text as inert data", () 
   assert.deepEqual(output.artifacts, []);
 });
 
+test("fan-in footer is absent by default and for ambiguous values", () => {
+  assert.equal(synthesizedFooterFixture(), "Locally synthesized.");
+  for (const value of ["", "0", "true", "enabled"]) {
+    process.env[FANIN_FOOTER_ENV] = value;
+    assert.equal(synthesizedFooterFixture(), "Locally synthesized.");
+  }
+});
+
+test("fan-in footer is present when explicitly enabled", () => {
+  process.env[FANIN_FOOTER_ENV] = "1";
+  assert.equal(
+    synthesizedFooterFixture(),
+    [
+      "Locally synthesized.",
+      "",
+      "[1 locally synthesized branch reply; 1 branch response in this chain;"
+      + " 0 without local synthesis]",
+    ].join("\n"),
+  );
+});
+
 test("fan-in synthesis preserves all locally processed replies and raw branch evidence", () => {
+  process.env[FANIN_FOOTER_ENV] = "1";
   const output = synthesizeFaninOutput({
     type: "agent.fanin",
     fanin_data_v1: {
@@ -100,6 +159,7 @@ test("fan-in synthesis preserves all locally processed replies and raw branch ev
 });
 
 test("fan-in drops raw evidence only for the branches its local synthesis provably closed", () => {
+  process.env[FANIN_FOOTER_ENV] = "1";
   const output = synthesizeFaninOutput({
     type: "agent.fanin",
     fanin_data_v1: {
@@ -164,6 +224,7 @@ test("fan-in synthesis bounds multibyte UTF-8 output without splitting a code po
 });
 
 test("fan-in reserves attributed space for processed and raw entries near the byte limit", () => {
+  process.env[FANIN_FOOTER_ENV] = "1";
   const output = synthesizeFaninOutput({
     type: "agent.fanin",
     fanin_data_v1: {

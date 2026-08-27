@@ -958,10 +958,7 @@ test("a stateless continuation receives the original task and its processed repl
     faninReply,
     /^Steven\/socrates: "raw Socrates result must not replace Argos review"$/mu,
   );
-  assert.match(
-    faninReply,
-    /\[1 locally synthesized branch reply; 1 branch response in this chain; 1 without local synthesis\]$/u,
-  );
+  assert.doesNotMatch(faninReply, /locally synthesized branch repl/u);
   assert.equal(context.store.getDelivery(rootDelivery.delivery_id)?.request, undefined);
   assert.equal(context.store.getDelivery(response.delivery_id)?.request, undefined);
 });
@@ -1114,10 +1111,7 @@ test("nested continuations preserve every terminal local review and raw fan-in b
   assert.match(reply, /^Steven\/socrates: "raw Socrates branch"$/mu);
   assert.match(reply, /^Steven\/seneca: "raw Seneca branch"$/mu);
   assert.doesNotMatch(reply, /Socrates implementation result/u);
-  assert.match(
-    reply,
-    /\[2 locally synthesized branch replies; 2 branch responses in this chain; 2 without local synthesis\]$/u,
-  );
+  assert.doesNotMatch(reply, /locally synthesized branch repl/u);
   assert.equal(runner.calls, 4);
   for (const id of [
     rootDelivery.delivery_id,
