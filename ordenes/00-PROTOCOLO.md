@@ -58,3 +58,6 @@ Todos los harness de la flota los soportan — **úsalos** para agilizar lo para
 
 1. `git push origin main` — el remoto (GitHub) se mantiene SIEMPRE al día con main; la credencial ya está configurada en el remote. Prohibido pushear cualquier otra ref.
 2. Reportar en 5 líneas máximo: commits hechos (hashes), gate (pegado), qué quedó fuera y por qué. Sin ensayos.
+
+## Credenciales de la flota: `ops/private/credentials/` — REGLA DURA
+Carpeta ignorada por git (solo su README va en git): copias de trabajo de credenciales que dan autonomía real a los agentes. **PROHIBIDO para toda instancia, agente y subagente: borrar, mover, renombrar, vaciar o reescribir cualquier fichero ahí dentro** — ni con `rm`, ni con `git clean`/`reset` (ya prohibidos), ni con `git add -f`. Es la ÚNICA excepción a la regla "todo vive en git": por diseño NO vive en git, así que borrarla es pérdida total e irrecuperable. Solo el dueño añade, rota o retira ficheros; las instancias pueden LEER lo que sus permisos les dejen. `/etc/cauce-v3` sigue siendo la fuente productiva (fila NADIE).

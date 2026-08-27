@@ -70,3 +70,7 @@ Thumbs.db
 
 # worktrees efímeros de agentes
 .claude/
+
+# credenciales operativas de la flota — ignorar contenido, rastrear solo el README
+ops/private/credentials/**
+!ops/private/credentials/README.md
