@@ -3,38 +3,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * La tira de pestañas del cajón se dibujaba FUERA del cajón y le ponía barra horizontal a la
- * página entera. 
- * cajón abierto en `/live?agente=Steven/zeus&pestana=rol`.**
- *
- * `.agent-drawer-tabs` era `display: flex` a secas: `flex-wrap: nowrap` y `overflow-x: visible`
- * por defecto, dentro de una columna de cajón de **420 px** (`.live-page.has-drawer`). Una tira
- * así no tiene NINGÚN mecanismo para caber; sólo cabía mientras los rótulos sumaran poco.
- *
- * Números medidos, todos en Chrome, sobre la rama que añade «Ficheros»:
- *
- * | pestañas | tira pide | cajón | documento a 1280 | ventana a 360 |
- * |---------:|----------:|------:|-----------------:|--------------:|
- * | 5 (antes de «Ficheros») | 434 px | 420 px | 1280 (aún sin barra) | **450** |
- * | 6 (con «Ficheros»)      | 519 px | 420 px | **1342** con barra   | **535** |
- * | 6, ya envolviendo       | 418 px | 420 px | 1280                 | 360     |
- *
- * Las dos lecturas que importan de esa tabla:
- *
- * 1. **El defecto ya estaba con CINCO pestañas.** La tira se salía 14 px del cajón y a 360 px ya
- *    obligaba al navegador a ensanchar el viewport a 450 —la consola entera al 80%—. «Ficheros»
- *    no lo causó: lo hizo visible. Cualquier séptima pestaña lo repetiría. Por eso el arreglo va
- *    en la TIRA y no en la pestaña nueva, y por eso esta prueba no cuenta seis pestañas.
- * 2. **A 360 px el síntoma no es una barra de desplazamiento, es un ZOOM.** Con
- *    `width=device-width`, cuando el contenido no cabe Chrome ensancha el viewport en vez de
- *    recortar, así que `scrollWidth == innerWidth` sale CIERTO estando mal. Lo que delata el
- *    fallo es que `innerWidth` deja de ser 360. Medir sólo `scrollWidth > clientWidth` a 360 px
- *    da verde siempre.
- *
- * **Por qué se comprueba sobre la hoja y no sobre el DOM:** jsdom no tiene layout. Las 981
- * pruebas de la consola pasaban con las dos últimas pestañas dibujadas fuera del cajón, porque
- * para jsdom todo mide cero. Acá se comprueba que la hoja declara el mecanismo; el efecto se
- * midió en el navegador y está en la tabla de arriba.
+ * Verificación de envoltura flex para la tira de pestañas del cajón de agentes:
+ * asegura que `.agent-drawer-tabs` declare `flex-wrap: wrap` para evitar desbordes horizontales.
  */
 function leerCss(rutaAbs: string): string {
   const contenido = readFileSync(rutaAbs, 'utf8');

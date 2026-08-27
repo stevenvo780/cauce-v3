@@ -130,11 +130,8 @@ export function adapterSummary(adapters: AdapterView[]): { healthy: number; tota
 }
 
 /**
- * Por qué «3 / 6» estaba mal.** Medido en producción: el contador decía «ADAPTERS AVAILABLE
- * 3/6» con 3 adaptadores disponibles y 3 que no habían reportado estado. Una fracción se lee como
- * «3 de 6 funcionan, 3 están rotos», y eso mandaba a buscar una avería que no existía. Un
- * adaptador que no reportó NO es un adaptador caído: es un adaptador del que no se sabe nada, y
- * la diferencia entre las dos cosas es justamente el trabajo del operador.
+ * Desglose de adaptadores disponibles, con fallo o sin reporte,
+ * evitando interpretar estados no reportados como fallos confirmados.
  */
 export interface AdapterBreakdown {
   disponibles: number;
@@ -344,19 +341,8 @@ export function countLiveTuiTargets(targets: TerminalTarget[] | null | undefined
 /* -------------------------------------------------------------------------- */
 
 /**
- * La vista rompía su propia promesa. **
- *
- * La cabecera dice, con estas palabras: «Un alias sólo emite si el servidor publica su modo
- * harness; el resto queda con su motivo escrito, **nunca en verde**». En la lista de flota,
- * argos, hegel, iza, janus y jarvis —`modes:["shell"]`, sin `harness`— se pintaban con el MISMO
- * chip verde «PTY online» que los 8 que sí emiten, y sin motivo. Al lado, el KPI decía «ALIAS QUE
- * EMITEN SU TUI 8/14». Es decir: el operador tenía que adivinar cuáles 6 de los 14 le iban a
- * fallar, y el único camino era hacer clic y ver.
- *
- * El chip ahora contesta la pregunta que el operador se está haciendo —«¿voy a ver su pantalla si
- * hago clic?»— y no una distinta: verde sólo si hay TUI; gris con el motivo del servidor si sólo
- * hay shell. Los estados que ya se pintaban bien (sin autoridad, offline, no instalado,
- * desconocido) no cambian.
+ * Estado y motivo visual del chip de terminal: indica si el destino tiene TUI viva disponible
+ * o si degrada a modo shell/desconectado con su motivo correspondiente.
  */
 export interface FleetTerminalChip {
   status: TerminalAccessStatus | 'no_tui';

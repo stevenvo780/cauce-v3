@@ -275,15 +275,11 @@ describe('grosorDe', () => {
 });
 
 // ================================================================================================
-// Los defectos de la revisión adversarial del 2026-08-22, cada uno con el caso concreto que lo
-// destapó. Todos estaban DESPLEGADOS en producción cuando se escribieron estos tests.
+// Casos de prueba de derivación de estados y atribución de origen
 // ================================================================================================
 
 describe('D1 · atribución de quién pidió el trabajo', () => {
-  // `origin` se copia byte a byte en cada salto (packages/protocol/src/schemas.ts): una cadena de
-  // cinco agentes nacida en Telegram sigue diciendo adapter:'telegram' en el salto cinco — 2.374
-  // de 2.429 entregas de 12 h medidas el 2026-07-27. Aceptar todo lo que no sea 'bus' como "una
-  // persona" convertía cada delegación heredada de un puente en un encargo humano inventado.
+  // `origin` se copia byte a byte en cada salto (packages/protocol/src/schemas.ts).
   const cadenaHeredada = snapshot([
     agent({ tenant_id: 'Steven', alias: 'zeus' }),
     agent({

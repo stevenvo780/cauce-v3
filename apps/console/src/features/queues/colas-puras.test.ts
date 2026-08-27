@@ -160,10 +160,7 @@ describe('/queues en el teléfono', () => {
   });
 
   /**
-   * CONTROL NEGATIVO con el fallo REAL que cometí dos veces: la regla escrita con menos clases de
-   * las que hacen falta para ganarle a `.metrics-grid.three` de styles.css. La hoja «decía» tres
-   * columnas y el navegador pintaba una. Un comprobador que sólo buscara la propiedad —o que se
-   * conformara con dos clases— habría aprobado eso.
+   * Control negativo: comprueba la especificidad CSS necesaria frente a `.metrics-grid.three`.
    */
   it('CONTROL NEGATIVO — marca las tarjetas apiladas, que es el defecto medido', () => {
     const roto = QUEUES_CSS.replace(

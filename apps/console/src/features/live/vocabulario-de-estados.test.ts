@@ -5,25 +5,8 @@ import { resumenPortada } from '../landing/landing';
 import { LIVE_STATES, LIVE_STATE_META } from './agent-state';
 
 /**
- * **LA MISMA SITUACIÓN, LLAMADA DE TRES MANERAS EN LA MISMA PANTALLA.**
- *
- *  Convivían dos vocabularios de estado en
- * el mismo scroll, y el subtítulo de la tabla metía un tercero:
- *
- *   - Arriba: veredicto, chips, muñecos y la leyenda del pie → Caído · Bloqueado · Delegando ·
- *     Salió de vuelo · Recibiendo · Trabajando · Libre.
- *   - Abajo, la tabla «Agentes» → INACTIVO · EN COLA · TRABAJANDO · SATURADO · COLGADO.
- *   - Y el subtítulo de esa tabla → «colgado > saturado > trabajando > en cola > inactivo».
- *
- * El caso más caro: la leyenda dedica un párrafo entero a enseñar la palabra —«Libre no es caído
- * ni es sin reportar»— y la tabla, tres centímetros más abajo, no decía «Libre» ni una sola vez:
- * decía INACTIVO. Con 18 alias, la columna ESTADO sólo emitía dos valores (TRABAJANDO ×2,
- * INACTIVO ×16) e incluía en ese INACTIVO a los 5 que el veredicto llamaba «caídos» y a los 2 que
- * el chip llamaba «Delegando».
- *
- * Este fichero no comprueba estética: comprueba que **cada hecho tenga UN nombre en toda la
- * consola**, y que ese nombre sea el que la leyenda explica. Es barato y es lo que atrapa el
- * fallo, porque el fallo es literalmente una cadena distinta en dos ficheros.
+ * Coherencia del vocabulario de estados de la flota:
+ * asegura que las etiquetas y estados mostrados en veredicto, tarjetas y tablas coincidan.
  */
 
 /** El estado del servidor y el estado derivado que nombran EL MISMO hecho. */

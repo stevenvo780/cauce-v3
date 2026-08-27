@@ -1,27 +1,7 @@
 /**
- * EL TERMINAL NO PUEDE INYECTAR `<style>` EN LA PÁGINA.
- *
- * Por qué. La consola se sirve con `style-src 'self'` (`deploy/nginx-console-tls.conf`, línea
- * 15). El renderer DOM de xterm no trae sus reglas en un `.css`: las compone en tiempo de
- * ejecución y las mete en DOS elementos `<style>` que crea con `createElement` —uno con el tema y
- * la letra (`_injectCss`) y otro con la geometría de la celda (`_updateDimensions`)—. Cada vez que
- * cambia el tema, la fuente o el tamaño, los vuelve a escribir. Con esa cabecera puesta el
- * navegador RECHAZA los dos, y no en silencio: MEDIDO contra producción, abrir la terminal dejaba
- * **22 violaciones** `style-src 'self'` en la consola de Chrome, todas desde `assets/xterm-*.js`.
- *
- * `xterm-csp.css` ya repone lo que esas reglas decían —los 256 colores ANSI, la tinta, la letra
- * monoespaciada, la celda— desde un fichero que la CSP sí permite; eso es lo que arregló la
- * legibilidad. Pero repuesto el contenido, la INYECCIÓN seguía ocurriendo: el navegador seguía
- * bloqueándola y seguía gritándolo 22 veces. Una violación de CSP no es ruido cosmético: es la
- * página peleándose con su propia política, y tapa las violaciones que sí importarían.
- *
- * La cura no puede ser relajar la política. Se le pasa a xterm la opción `documentOverride` con un
- * documento que devuelve un elemento INERTE cuando le piden un `<style>`: así no hay nada que
- * bloquear, la política se queda como está, y las reglas siguen viniendo del fichero empaquetado.
- *
- * Lo que esta prueba NO puede afirmar: jsdom no aplica CSP. Aquí se comprueba el HECHO que la
- * dispara —que el `<style>` exista— no la violación. La cuenta de violaciones se mide en Chrome
- * con la cabecera puesta (`ops/console-legibilidad/servir-con-csp.mjs`).
+ * Validación de prevención de inyección inline de `<style>` en xterm:
+ * verifica que xterm use el override de documento para no crear etiquetas style dinámicas
+ * incompatibles con `style-src 'self'`.
  */
 import { Terminal } from '@xterm/xterm';
 import { afterEach, describe, expect, it } from 'vitest';

@@ -1,23 +1,8 @@
 /**
  * PTY data layer for the terminal panel.
  *
- * It deliberately does NOT live in `src/api/client.ts`: the PTY endpoints are optional and
- * feature-scoped, so their absence must degrade this panel only. The request hygiene is a
- * faithful copy of the shared client (same credentials, same headers, same base URL rules,
- * same content-type parsing, same typed error) so the two never drift in what they send.
- *
- * Doctrine: 404 and 501 on optional endpoints are NOT errors, they are a typed UNKNOWN.
- * Absent data is UNKNOWN, never "allowed".
- *
- * LA COPIA SE HABÍA DESVIADO EN LA ÚNICA CABECERA QUE DECIDE SI UNA ESCRITURA ENTRA.**
- * El gateway exige `X-CSRF-Token` a todo `/v3/` que no sea GET/HEAD/OPTIONS y venga con la cookie
- * de consola (`registerPasswordAuth`, gancho `onRequest`). Este módulo copiaba Accept,
- * X-Cauce-Console y Content-Type, y no copiaba esa. Resultado medido contra producción el
- * 2026-08-23: `POST /v3/console/terminal/sessions` = 403 `se requiere un token CSRF válido`, 3 de
- * 3, en dos alias, y la TUI no abría NUNCA. La misma petición con el token = 201 con el grant.
- * El token es el de la sesión, así que sale del cliente compartido: duplicarlo acá sería volver a
- * abrir la misma vía de deriva. La pantalla de acceso promete, con esas palabras, que «toda
- * escritura viaja además con un token CSRF de un solo origen»; ésta no viajaba.
+ * PTY endpoints are optional and feature-scoped, degrading gracefully to UNKNOWN.
+ * Ensures strict CSRF token propagation (`X-CSRF-Token`) matching the shared client configuration.
  */
 import { ApiError, cauceApi, type CauceApi } from '../../api/client';
 

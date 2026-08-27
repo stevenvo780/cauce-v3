@@ -2,34 +2,10 @@ import type { TopologySnapshot } from '../../api/types';
 import type { LiveAgentView } from './agent-state';
 
 /**
- * **La deriva entre las dos tablas que dicen quién es la flota, medida en las DOS direcciones.**
+ * Medición de deriva bidireccional entre el registro de agentes (`activity.agents`)
+ * y la topología de salas y membresías (`topology.memberships`).
  *
- * «La flota ahora» lee dos planos que nadie reconcilia en el servidor:
- *
- *   - `agents` (vía `GET /v3/console/activity`) → el REGISTRO. Decide quién existe y cómo está.
- *   - `memberships` (vía `GET /v3/console/topology`) → las SALAS. Decide dentro de qué recuadro va.
- *
- * Que un alias esté en uno y no en el otro casi nunca es una avería por sí solo, pero SIEMPRE es
- * un alta o una baja hecha tocando una sola de las dos tablas, y eso es lo que se quiere ver el
- * mismo día y no dentro de un mes.
- *
- * Por qué existe este módulo.** 
- * `LiveFleetPage` con un comentario que afirmaba —literalmente— que era «la diferencia simétrica
- * entre `memberships` y `agents`». No lo era: el bucle recorría SÓLO las membresías y contaba las
- * que no reportaban actividad. La otra mitad —un alias del registro sin una sola membresía
- * habilitada— valía cero siempre, aunque estuviera ahí.
- *
- * Y esa mitad ciega es exactamente el caso `gaia`: se dio de alta en `agents`, no se le puso
- * membresía, y la pantalla que existe para mostrar la flota no decía una palabra al respecto. El
- * defecto que motivó todo el arreglo del mapa quedó, después del arreglo, sin nadie que lo
- * contara. Un contador que promete simetría y mide una sola dirección es peor que no tenerlo,
- * porque un cero se lee como «no hay deriva» y no como «no se miró».
- *
- * **El lado del registro se decide por `unregistered`/`registered`, no por «está en `views`».** El
- * universo de la actividad es `agents ∪ entregas-abiertas ∪ connection_leases`: un alias puede
- * aparecer en `views` sin tener fila en `agents`. Contarlo como «del registro» convertiría a un
- * participante sin dar de alta en un alias registrado, que es justo lo contrario de lo que el
- * chip promete. El servidor manda el flag `unregistered` precisamente para separarlos.
+ * El registro se discrimina por el flag `unregistered`/`registered` provisto por el servidor.
  */
 export interface Deriva {
   /**

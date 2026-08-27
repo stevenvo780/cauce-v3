@@ -7,23 +7,11 @@ import { server } from '../../mocks/server';
 import { LiveFleetPage } from './LiveFleetPage';
 
 /**
- * **LA VISTA QUE NO TENÍA SALIDA.**
- *
- * 
- * máquina del gateway: tras tres HTTP 500 en `/v3/auth/session`, `/live` se quedó **180 s** en
- * «Leyendo la actividad de la flota…» con un panel blanco y nada más. Sin error, sin botón, sin
- * límite. Y la portada, ante el mismo fallo, sí ofrecía «Reintentar»: dos vistas de la misma
- * consola se comportaban distinto ante el mismo servidor.
- *
- * La rama de salida ya estaba escrita en esta página —`if (activity.error && !snapshot) return
- * <ErrorState onRetry={activity.reload} />`— y era **inalcanzable**, porque sin vencimiento en el
- * cliente HTTP la lectura nunca falla: se queda en vuelo para siempre.
- *
- * Esta prueba entra por la puerta de arriba (la página entera, con su cliente real y su servidor
- * simulado colgado) y exige lo único que importaba: que la pantalla termine ofreciendo una salida.
+ * Verificación de manejo de timeout y estado de error en LiveFleetPage:
+ * comprueba que ante lecturas lentas o colgadas se alcance el estado de reintento.
  */
 
-/** Una lectura que no vuelve nunca, como el gateway del día de la medición. */
+/** Simula una lectura de actividad colgada. */
 function actividadColgada(): void {
   server.use(http.get('http://localhost/v3/console/activity', () => new Promise(() => undefined)));
 }

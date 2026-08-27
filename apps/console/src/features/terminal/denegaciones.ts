@@ -1,41 +1,11 @@
 /**
- * **Por qué la consola te deja afuera de la terminal, en castellano.**
- *
- * Steven,  pedir una sesión PTY en producción devuelve
- * `403 {error:'forbidden', reason:'no_grant'}` y el `[role=alert]` de la consola contenía
- * EXACTAMENTE `no_grant`. Sin estado HTTP, sin castellano, sin decir a quién hay que pedirle el
- * permiso. Lo mismo con las otras siete puertas del gateway.
- *
- * Lo grave no es que faltara la traducción: es DÓNDE faltaba. `PTY_CLOSE_MESSAGES`
- * (`pty-session.ts`) ya traducía los nueve códigos de cierre del WebSocket —los errores de
- * DESPUÉS de entrar— con su tabla completa. O sea que el esfuerzo se puso entero en explicar lo
- * que le pasa a una sesión que YA se abrió, y cero en explicar por qué no se abre. Este fichero
- * es el gemelo que faltaba, y vive al lado del otro a propósito.
- *
- * La fuente de verdad de los códigos es el gateway, no esta tabla.** Los ocho salen de
- * `TerminalDenial` y `TerminalConflict` en `services/gateway/src/terminal/types.ts`, y las seis
- * puertas que los emiten están en `services/gateway/src/terminal/plugin.ts` (`deny(403|409, …)`).
- * `denegaciones.test.ts` LEE ese fichero del gateway y falla si aparece un código que acá no
- * tenga castellano: sin esa comprobación, la próxima puerta nueva volvería a mostrarse cruda y
- * nadie se enteraría hasta que un operador se quedara mirando una palabra en inglés.
- *
- * Cada entrada dice tres cosas, y las tres hacen falta:
- *  1. **qué pasó** — el titular, que es lo que se lee de un vistazo;
- *  2. **por qué** — la puerta concreta del gateway que se cerró;
- *  3. **quién lo levanta** — a quién hay que pedírselo. Sin esto, saber el motivo no sirve de
- *     nada: el operador queda igual de parado, sólo que en castellano.
+ * Traducción y formato accesible de denegaciones y conflictos de terminal PTY:
+ * mapea los códigos del gateway (`TerminalDenial`, `TerminalConflict`) a explicaciones operativas.
  */
 
-/** Los cinco `403` del gateway, los cuatro `409`, y el estado del inventario que no es ninguno. */
+/** Códigos de denegación 403/409 del gateway y estados de inventario. */
 export type TerminalDenialCode =
-  /**
-   * La consola no mandó su propio token CSRF. NO es un permiso que le falte al operador: es un
-   * defecto de la consola, y decir «no autorizado» ahí lo manda a pedir un permiso que ya tiene.
-   *  403 en 3 de 3 intentos, en dos alias, y la TUI no
-   * abría nunca. Está acá y no en un segundo traductor porque el vocabulario de las negativas del
-   * PTY tiene que ser UNO: dos módulos que explican el mismo 403 con palabras distintas es el
-   * defecto que este trabajo venía a cerrar.
-   */
+  /** La consola no envió un token CSRF válido. */
   | 'csrf_missing'
   /** La cookie de consola no vale (o caducó). Tampoco es un permiso: es volver a entrar. */
   | 'unauthorized'

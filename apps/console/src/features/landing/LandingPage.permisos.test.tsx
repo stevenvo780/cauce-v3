@@ -8,25 +8,9 @@ import { renderWithApi } from '../../test/render';
 import { server } from '../../mocks/server';
 
 /**
- * **El menú se dibuja UNA vez, y la portada no lo repite.**
- *
- * Historia, porque explica por qué estas pruebas dicen ahora lo contrario de lo que decían:
- *
- *  1. El commit 252cf3c dejó «Ajustes y altas» inerte —con su motivo— para quien no tiene
- *     `config.write`. La portada volvía a prometerla como enlace VIVO, porque su lista de atajos
- *     estaba escrita a mano. El verificador hizo clic y navegó.
- *  2. La ronda siguiente arregló el síntoma por la fuente: la portada pasó a leer `NAV_ENTRIES` y
- *     `useNavAvailability()`, las MISMAS que la barra. Estas pruebas comparaban las dos copias
- *     entre sí para que no volvieran a divergir.
- *  3. El 2026-08-23, midiendo la portada a 1280×900: ese panel es **el menú lateral otra vez**,
- *     cinco centímetros a la derecha del menú lateral, con los mismos siete rótulos y los mismos
- *     siete iconos, ocupando media pantalla de la vista que existe para resumir. Dos copias que no
- *     pueden divergir siguen siendo dos copias.
- *
- * Así que se retira el panel, y la invariante se vuelve MÁS fuerte, no más débil: ya no es «las dos
- * copias coinciden», es «no hay una segunda copia». Estas pruebas fallan si alguien la reintroduce.
- * La defensa original —el atajo inerte con su motivo— no se pierde: se comprueba donde vive de
- * verdad, que es la barra lateral.
+ * Verificación de navegación en la portada:
+ * comprueba que el menú lateral sea la única superficie de navegación primaria
+ * y no se dupliquen paneles de atajos redundantes.
  */
 
 const SIN_CONFIG = http.get('http://localhost/v3/console/access', () =>
