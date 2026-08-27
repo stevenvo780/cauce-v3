@@ -21,7 +21,7 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3`. La
 
 | Sector | Dueño | Revisor |
 |---|---|---|
-| `apps/console/**` | Gemini | Claude |
+| `console/**` | Gemini | Claude |
 | `services/terminal-relay/**`, `services/telegram-bridge/**` | Gemini | Claude |
 | `packages/store/src/**`, `services/gateway/src/**`, maquinaria de release de `ops/scripts/` + sus tests | Codex | Claude |
 | Higiene de disco, `docs/`, residuos, verificaciones mecánicas | OpenCode/MiniMax | Claude |

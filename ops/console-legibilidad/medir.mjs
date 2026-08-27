@@ -2,7 +2,7 @@
 /*
  * MEDIR LA CONSOLA EN UN NAVEGADOR DE VERDAD.
  *
- * Por qué existe: los 646 tests de `apps/console` pasan HOY con la consola ilegible, porque jsdom
+ * Por qué existe: los 646 tests de `console` pasan HOY con la consola ilegible, porque jsdom
  * NO TIENE LAYOUT. Un rótulo que se pisa con el de al lado, una cabecera renderizando una letra
  * por línea, un panel 324 px más ancho que el teléfono y un botón a 1,53:1 de contraste son, para
  * jsdom, exactamente lo mismo que si no estuvieran. Este arnés abre Chrome, espera a que la
@@ -16,7 +16,7 @@
  *     node ops/console-legibilidad/medir.mjs --capturas=/ruta   # guarda PNG por vista
  *     BASE=http://127.0.0.1:4173 node ops/console-legibilidad/medir.mjs   # servidor ya levantado
  *
- * Sin `BASE`, levanta él mismo `vite` en modo mock sobre `apps/console` y lo apaga al terminar.
+ * Sin `BASE`, levanta él mismo `vite` en modo mock sobre `console` y lo apaga al terminar.
  * Necesita Chrome (`/usr/bin/google-chrome`); NO necesita servidor X ni puppeteer.
  *
  * Lo que cuenta como fallo:
@@ -34,7 +34,7 @@ import { launchChrome, Cdp, Page } from './cdp.mjs';
 import { PROBE } from './probe.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
-const CONSOLA = resolve(AQUI, '../../apps/console');
+const CONSOLA = resolve(AQUI, '../../console');
 
 const args = process.argv.slice(2);
 const bandera = (nombre) => args.some((a) => a === `--${nombre}` || a.startsWith(`--${nombre}=`));

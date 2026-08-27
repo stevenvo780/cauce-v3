@@ -2,7 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/**', '**/dist/**', 'node_modules/**', '.serena/**', 'apps/console/**', 'ops/artifacts/**'] },
+  { ignores: ['dist/**', '**/dist/**', 'node_modules/**', '.serena/**', 'console/**', 'ops/artifacts/**'] },
   {
     files: ['**/*.{js,mjs}'],
     ...js.configs.recommended,

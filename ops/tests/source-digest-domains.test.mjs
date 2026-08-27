@@ -6,7 +6,7 @@
 //
 // Narrowing a digest is the dangerous direction: it LOOSENS the gate. These tests pin the exact
 // shape of the narrowing so nobody can widen the hole later without a test turning red:
-//   * the only thing the runtime domain drops relative to the union is apps/console;
+//   * the only thing the runtime domain drops relative to the union is console;
 //   * everything that reaches the runtime image is still covered, including the lockfile, so a
 //     console dependency change still moves the runtime digest;
 //   * the live Testcontainers and verification apparatus stays covered by its declared domain;
@@ -61,22 +61,22 @@ const union = new Set([
 assert.deepEqual([...fullPaths].sort(), [...union].sort(), 'full domain must be the exact union of the declared domains');
 
 // 2. The ONLY narrowing: relative to the two image domains combined -- which is byte-for-byte the
-//    set the pre-split whole-tree digest covered -- the runtime domain drops apps/console and
+//    set the pre-split whole-tree digest covered -- the runtime domain drops console and
 //    nothing else. This is the assertion that keeps the loosening from creeping.
 const imageUnion = new Set([...runtimePaths, ...consolePaths]);
 const missingFromRuntime = [...imageUnion].filter((entry) => !runtimePaths.has(entry));
 assert(missingFromRuntime.length > 0, 'the console domain must actually contain files');
 for (const entry of missingFromRuntime) {
   assert(
-    entry.startsWith('apps/console/'),
-    `runtime domain excludes '${entry}', which is not apps/console; every exclusion must be justified by an absent causal path to the runtime image`,
+    entry.startsWith('console/'),
+    `runtime domain excludes '${entry}', which is not console; every exclusion must be justified by an absent causal path to the runtime image`,
   );
 }
 
-// 3. Nothing under apps/console leaks into the runtime domain, and the console domain owns it all.
+// 3. Nothing under console leaks into the runtime domain, and the console domain owns it all.
 assert(
-  ![...runtimePaths].some((entry) => entry.startsWith('apps/console/')),
-  'runtime domain must not contain apps/console',
+  ![...runtimePaths].some((entry) => entry.startsWith('console/')),
+  'runtime domain must not contain console',
 );
 assert(
   runtimePaths.has('services/gateway/src/test-fixtures/mtls-server-certificate.pem'),
@@ -120,8 +120,8 @@ for (const sentinel of [
   assert(verificationPaths.has(sentinel), `verification domain lost coverage of ${sentinel}`);
 }
 assert(
-  [...consolePaths].some((entry) => entry.startsWith('apps/console/src/')),
-  'console domain must contain apps/console sources',
+  [...consolePaths].some((entry) => entry.startsWith('console/src/')),
+  'console domain must contain console sources',
 );
 
 // 4. Everything that reaches the runtime image is still covered. These sentinels are the families
@@ -210,9 +210,9 @@ try {
   await write('scripts/gate-a.sh', '#!/bin/sh\nexit 0\n');
   await write('scripts/gate-b.sh', '#!/bin/sh\nexit 7\n');
   await write('unselected/gate.sh', '#!/bin/sh\nexit 9\n');
-  await write('apps/console/src/App.tsx', 'export const App = () => null;\n');
-  await write('apps/console/src/theme.css', '.panel { color: red; }\n');
-  await write('apps/console/src/features/_grafo/consultas-grafo.sql', 'SELECT 1;\n');
+  await write('console/src/App.tsx', 'export const App = () => null;\n');
+  await write('console/src/theme.css', '.panel { color: red; }\n');
+  await write('console/src/features/_grafo/consultas-grafo.sql', 'SELECT 1;\n');
   await write('ops/harness/contract-runner.mjs', 'export const contract = 1;\n');
   await write('ops/harness/runner.mjs', 'export const run = 1;\n');
   await write('ops/scripts/fault-compose.sh', '#!/bin/sh\n');
@@ -268,8 +268,8 @@ try {
   for (const [relative, contents] of [
     ['services/gateway/__pycache__/runtime.cpython-313.pyc', 'runtime bytecode v1'],
     ['services/gateway/runtime.pyo', 'optimized runtime bytecode v1'],
-    ['apps/console/.pytest_cache/v/cache/nodeids', 'console pytest state v1'],
-    ['apps/console/src/cached.pyc', 'console bytecode v1'],
+    ['console/.pytest_cache/v/cache/nodeids', 'console pytest state v1'],
+    ['console/src/cached.pyc', 'console bytecode v1'],
     ['ops/harness/__pycache__/faults.pyc', 'harness bytecode v1'],
     ['ops/harness/faults.pyo', 'harness optimized bytecode v1'],
     ['tests/e2e/.pytest_cache/state.json', '{"testcontainers":1}\n'],
@@ -290,19 +290,19 @@ try {
 
   // 9c. The one approved operator scratch path is intentionally outside every release digest.
   //     A directory with the same basename anywhere else remains covered.
-  await write('apps/console/src/features/_grafo/consultas-grafo.sql', 'SELECT 2;\n');
+  await write('console/src/features/_grafo/consultas-grafo.sql', 'SELECT 2;\n');
   for (const domain of ['runtime', 'console', 'testcontainers', 'verification', 'full']) {
     assert.equal(digestOf(domain, sandbox), before[domain], `_grafo scratch changed the ${domain} digest`);
   }
-  await write('apps/console/src/other/_grafo/query.sql', 'SELECT 3;\n');
+  await write('console/src/other/_grafo/query.sql', 'SELECT 3;\n');
   assert.notEqual(digestOf('console', sandbox), before.console, 'the exclusion must not apply to another _grafo path');
   assert.notEqual(digestOf('full', sandbox), before.full, 'the full domain must cover another _grafo path');
-  await rm(path.join(sandbox, 'apps/console/src/other'), { recursive: true });
+  await rm(path.join(sandbox, 'console/src/other'), { recursive: true });
   assert.equal(digestOf('console', sandbox), before.console, 'removing the covered control path must restore the digest');
 
   // 9d. THE FIX. A console-only change must not move the runtime digest, because no console file
   //     reaches the runtime image. It must still move the console and full digests.
-  await write('apps/console/src/theme.css', '.panel { color: blue; }\n');
+  await write('console/src/theme.css', '.panel { color: blue; }\n');
   assert.equal(digestOf('runtime', sandbox), before.runtime, 'a console CSS edit must not invalidate runtime fault evidence');
   assert.equal(digestOf('testcontainers', sandbox), before.testcontainers, 'a console CSS edit must not invalidate Testcontainers harness binding');
   assert.equal(digestOf('verification', sandbox), before.verification, 'a console CSS edit must not invalidate verification apparatus');
@@ -319,7 +319,7 @@ try {
   const afterService = digestOf('runtime', sandbox);
 
   // 9e. A console dependency change is still visible to the runtime digest through the lockfile,
-  //     which is why dropping apps/console from the runtime domain is safe.
+  //     which is why dropping console from the runtime domain is safe.
   await write('pnpm-lock.yaml', 'lockfileVersion: 9\npackages:\n  react: 19\n');
   assert.notEqual(digestOf('runtime', sandbox), afterService, 'a lockfile change must invalidate runtime evidence');
   const afterLock = digestOf('runtime', sandbox);
@@ -444,7 +444,7 @@ try {
   const listing = pathsOf('full', sandbox);
   assert(!listing.has('node_modules/evil/index.js'), 'node_modules must never be hashed');
   assert(!listing.has('.env.production'), 'private env files must never be hashed');
-  assert(!listing.has('apps/console/src/features/_grafo/consultas-grafo.sql'), 'operator scratch leaked into full digest');
+  assert(!listing.has('console/src/features/_grafo/consultas-grafo.sql'), 'operator scratch leaked into full digest');
   assert(listing.has('tests/unit/artifacts/fixture.pem'), 'a source fixture named artifacts must remain hashed');
   assert(![...listing].some((entry) => entry.includes('/__pycache__/')), '__pycache__ must never be hashed');
   assert(![...listing].some((entry) => entry.includes('/.pytest_cache/')), '.pytest_cache must never be hashed');

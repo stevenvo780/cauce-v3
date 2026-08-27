@@ -30,7 +30,7 @@ Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenC
 | [`services/dispatcher`](services/dispatcher/README.md) | Segador de reintentos (~822 líneas; no entrega mensajes) |
 | [`services/terminal-relay`](services/terminal-relay/README.md) | Puente navegador↔pty-agent con TLS mutuo |
 | [`services/telegram-bridge`](services/telegram-bridge/README.md) | Polling/egress Telegram con cursor y lease cercados |
-| [`apps/console`](apps/console/README.md) | SPA React del operador (live, mensajes, colas, config, terminal) |
+| [`console`](console/README.md) | SPA React del operador (live, mensajes, colas, config, terminal) |
 | [`ops/pty-agent`](ops/pty-agent/README.md) | Agente Python dentro del contenedor de cada alias: PTY + lectura/escritura de ficheros de gobierno |
 
 ## Desarrollo

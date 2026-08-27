@@ -11,7 +11,7 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 - `packages/adapter-sdk` — conecta un CLI real a Cauce (sesión tmux + ACK durable)
 - `packages/mcp-fleet-monitor` — MCP de observación de flota (escrito; sin registrar en ningún alias)
 - `services/gateway | dispatcher | terminal-relay | telegram-bridge` — los 4 servicios vivos
-- `apps/console` — SPA React del operador
+- `console` — SPA React del operador
 - `ops/` — systemd, pty-agent (terminal dentro de cada contenedor), scripts operativos
 - `plan-reestructura/` y `ordenes/` — el plan vigente y tu orden de trabajo
 

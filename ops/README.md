@@ -67,12 +67,12 @@ prueba lo que dice. `source-digest.py --domain <dominio>` emite:
 | Dominio | Cubre | Respalda |
 |---------|-------|----------|
 | `runtime` | manifiestos raíz + `packages/` + `services/` + `deploy/` | identidad de fuentes runtime registrada por Testcontainers |
-| `console` | manifiestos raíz + `apps/console/` + `deploy/` | identidad de fuentes de la imagen consola |
+| `console` | manifiestos raíz + `console/` + `deploy/` | identidad de fuentes de la imagen consola |
 | `testcontainers` | E2E, helper PostgreSQL, runner, schema y validador Testcontainers | `harnessDigest` de la evidencia Testcontainers |
 | `verification` | tests, orquestación y fuentes operacionales ejecutadas o inspeccionadas | cierre del gate global |
 | `full` | unión de los cuatro; **default** si nadie declara dominio | fallback estricto para callers sin dominio |
 
-`apps/console` **no** está en `runtime`: no hay camino causal desde la consola hasta la imagen
+`console` **no** está en `runtime`: no hay camino causal desde la consola hasta la imagen
 runtime (el stage `runtime` del Dockerfile nunca copia consola, `production-dependencies` excluye
 `@cauce/console`, `tsconfig.build.json` no compila consola y la consola no importa `@cauce/*`). El
 grafo de dependencias sigue cubierto porque `pnpm-lock.yaml` y `pnpm-workspace.yaml` permanecen en

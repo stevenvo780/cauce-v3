@@ -1,0 +1,259 @@
+/* Interruptores y tablas de configuración */
+.config-area > * { min-width: 0; }
+.config-area .table-wrap { position: relative; min-width: 0; max-width: 100%; }
+
+.config-area td { padding: 11px 12px; }
+
+/*
+ * El `<select>` del rol heredaba `min-height: 41px` de la regla global de campos de texto y dejaba
+ * la fila de memberships en 65 px cuando el resto de las tablas ya estaba en 40. Un control de una
+ * sola línea dentro de una celda no necesita la altura de un campo de formulario.
+ */
+.config-area td select { min-height: 30px; padding: 4px 8px; }
+.config-area th { padding: 10px 12px; }
+.config-area td .badge { white-space: nowrap; }
+
+/* Una columna de fecha no tiene por qué reservar el ancho de `1 jul 2026, 10:00:00`. */
+.fecha-relativa { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* --- El interruptor ------------------------------------------------------------------------ */
+
+.interruptor-caja { display: inline-flex; align-items: center; gap: 8px; }
+
+/*
+ * Un `<input type="checkbox">` de verdad, repintado. No es un `<div>` con `onClick`: así el
+ * tabulador lo alcanza, la barra espaciadora lo activa y el lector de pantalla lo anuncia como
+ * interruptor sin que haya que reimplementar nada de eso a mano.
+ *
+ * El `width`/`min-height`/`margin-top` explícitos son necesarios: la regla global
+ * `input, select { width: 100%; min-height: 41px; margin-top: 7px }` de `styles.css` está pensada
+ * para campos de texto y a una casilla la estira a lo ancho del formulario. Es el mismo motivo por
+ * el que la casilla «Es hub» del alta salía flotando lejos de su rótulo.
+ *
+ * `[type="checkbox"]` en el selector evita que la regla global de inputs altere el interruptor.
+ *
+ * MEDIDO en Chrome sobre el bundle de producción (`getComputedStyle(...).width`): `2px`, no 36. El
+ * carril de la pastilla no se veía por ningún lado y lo único que quedaba en pantalla era el punto
+ * de 14 px del `::after` — o sea, el control central de esta pantalla («los permisos como
+ * interruptores») no se leía como un interruptor ni decía de qué lado estaba.
+ *
+ * La causa: `styles.css` declara `.config-area input[type="checkbox"] { width: auto }`, que tiene
+ * EXACTAMENTE la misma especificidad que `.config-area input.interruptor` (dos clases y un tipo en
+ * las dos), y vite concatena `styles.css` la ÚLTIMA — comprobado sobre el bundle, las dos reglas
+ * están a 30 KB de distancia y gana la de abajo. Con `[type="checkbox"]` en el selector la cuenta
+ * pasa a tres y deja de depender del orden de las hojas.
+ *
+ * Es anterior a este cambio (medido igual sobre `consola/tira-de-pestanas-20260824`) y no lo veía
+ * nadie: `getComputedStyle` en jsdom no resuelve la cascada.
+ */
+.config-area input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.config-area input[type="checkbox"].interruptor {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-3);
+  appearance: none;
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+
+.config-area input[type="checkbox"].interruptor::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  content: "";
+  transition: transform .12s ease, background-color .12s ease;
+}
+
+.config-area input[type="checkbox"].interruptor:checked {
+  border-color: var(--mint);
+  background: var(--mint-dim);
+}
+
+.config-area input[type="checkbox"].interruptor:checked::after { transform: translateX(16px); background: var(--mint); }
+.config-area input[type="checkbox"].interruptor:hover:not(:disabled) { border-color: var(--blue); }
+.config-area input[type="checkbox"].interruptor:disabled { cursor: not-allowed; opacity: .45; }
+
+/* Mientras la escritura vuela: el estado que se ve todavía no lo confirmó nadie, y se nota. */
+.config-area input[type="checkbox"].interruptor[aria-busy="true"] { border-color: var(--amber); }
+.config-area input[type="checkbox"].interruptor[aria-busy="true"]::after { background: var(--amber); animation: interruptor-latido .7s ease-in-out infinite; }
+.config-area input[type="checkbox"].interruptor[aria-invalid="true"] { border-color: var(--red); }
+
+@keyframes interruptor-latido { 50% { opacity: .35; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .config-area input[type="checkbox"].interruptor,
+  .config-area input[type="checkbox"].interruptor::after { transition: none; animation: none; }
+}
+
+.interruptor-estado {
+  min-width: 1.4em;
+  color: var(--muted);
+  font-size: var(--tipo-apunte);
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+/* --- Cabecera con ayuda -------------------------------------------------------------------- */
+
+.cabecera-ayuda { cursor: help; }
+.cabecera-ayuda > span { display: inline-flex; align-items: center; gap: 4px; }
+
+.cabecera-ayuda-marca {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--muted);
+  /* MEDIDO: era `.58rem` = 9,28 px, el texto más chico de toda la página. Una marca de ayuda que
+     no se lee no invita a nada; el círculo crece con ella para que la letra no lo desborde. */
+  font-size: var(--tipo-apunte);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.cabecera-ayuda:hover .cabecera-ayuda-marca,
+.cabecera-ayuda:focus-visible .cabecera-ayuda-marca { border-color: var(--blue); color: var(--blue); }
+
+/* --- El fallo de un interruptor, pegado a su fila ------------------------------------------- */
+
+.interruptor-fallo > td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--red);
+  background: var(--red-dim);
+}
+
+.interruptor-fallo p {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: #ffb7bc;
+  font-size: var(--tipo-rotulo);
+  line-height: 1.5;
+}
+
+.interruptor-fallo svg { flex: none; margin-top: 2px; }
+
+/* --- La única confirmación que queda -------------------------------------------------------- */
+
+.interruptor-confirmacion {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--amber);
+  border-radius: 10px;
+  background: var(--amber-dim);
+}
+
+.interruptor-confirmacion p {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: var(--tipo-rotulo);
+  line-height: 1.55;
+}
+
+.interruptor-confirmacion svg { flex: none; margin-top: 2px; }
+
+/* --- Casillas de los formularios de alta ---------------------------------------------------- */
+
+/*
+ * MEDIDO: en «Alta rápida» la casilla «Habilitado» salía a 130 px de su propio rótulo y a otra
+ * altura, porque heredaba `width: 100%` de la regla de campos de texto. Se leía como un control
+ * suelto sin etiqueta. Acá el rótulo pasa a ser una fila: casilla, después texto.
+ */
+.config-area .config-form label.casilla {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  align-self: end;
+  min-height: 41px;
+  font-weight: 600;
+}
+
+.config-area .config-form label.casilla .label-hint { flex: 1 1 auto; }
+
+/*
+ * MEDIDO en Chrome, modo claro: las pistas de los formularios de alta salían con `--faint`
+ * (#718198 sobre #f3f6fa) = contraste 3.66, por debajo del 4.5 que exige WCAG AA para texto normal.
+ * `--muted` sube a >5 en los dos temas y no le quita jerarquía a la pista.
+ */
+.config-area .label-hint,
+.config-area .config-form ~ .muted,
+.config-area .panel > .muted { color: var(--muted); }
+
+/* El elegir-modo del alta (`.alta-segmento`) vive en `config.css`, con el resto de la escala
+   tipográfica: dejó de ser una tira de pestañas —que era idéntica a la de las áreas y se leía como
+   navegación de la página— y pasó a ser un segmentado dentro del panel. Ver `AltaDeEspacios`. */
+
+/* El JSON crudo deja de estar abierto por defecto: es la verdad literal, no lo primero que mirar. */
+.config-crudo > summary { display: flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
+.config-crudo[open] > summary { margin-bottom: 2px; }
+
+@media (prefers-color-scheme: light) {
+  .config-area input[type="checkbox"].interruptor { background: #e4eaf2; }
+  .config-area input[type="checkbox"].interruptor::after { background: #7d8ca0; }
+  .config-area input[type="checkbox"].interruptor:checked { background: var(--mint-dim); }
+  .config-area input[type="checkbox"].interruptor:checked::after { background: var(--mint); }
+  .interruptor-fallo p { color: #8f2734; }
+}
+
+/* --- La marca de una columna SIN EFECTO ------------------------------------------------------
+ *
+ * La cabecera con ayuda esconde su explicación detrás de un «?» que hay que provocar. Esto es lo
+ * contrario y por eso se pinta al revés: la palabra va A LA VISTA, con el mismo par de color que
+ * la insignia de aviso —`--on-amber` sobre `--amber-dim`, el único par ámbar que `config-css.test.ts`
+ * ya guarda a AA en los dos temas—, porque el defecto que corrige es precisamente que la columna
+ * PARECÍA gobernar algo.
+ *
+ * `text-transform: none` a propósito: el `th` de la consola va en mayúsculas y «SIN EFECTO» a
+ * 12,5 px de caja alta se lee como un rótulo de columna más, que es justo lo que no es.
+ */
+.cabecera-inerte {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid var(--amber);
+  border-radius: 999px;
+  background: var(--amber-dim);
+  color: var(--on-amber);
+  font-size: var(--tipo-apunte);
+  font-weight: 800;
+  letter-spacing: .02em;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+/* El valor sigue legible —es lo que hay declarado en la base— pero deja de competir por la
+   atención con las columnas que sí gobiernan algo. Se apaga con opacidad y no bajando el
+   contraste del texto: bajar el contraste habría vuelto a meter texto por debajo de AA, que es el
+   defecto que este directorio acaba de cerrar. */
+.config-pagina .config-area td[data-inerte='true'] { opacity: .72; }
+
+/*
+ * La cabecera marcada PUEDE partirse en dos renglones, y el `th` de la consola no puede
+ * (`white-space: nowrap`, styles.css). MEDIDO en Chrome a 1920 sobre «Agent registry»: con la
+ * píldora en la misma línea, las tres columnas marcadas sumaban ~200 px al ancho de una tabla que
+ * ya vive dentro de un scroller, y empujaban «Carpeta personal» fuera del panel. Partiendo el
+ * rótulo, la píldora cae debajo y la columna vuelve a su ancho.
+ */
+.config-pagina .config-area th[data-inerte='true'] { color: var(--on-amber); white-space: normal; }
+.config-pagina .config-area th[data-inerte='true'] .cabecera-ayuda > span { flex-wrap: wrap; }

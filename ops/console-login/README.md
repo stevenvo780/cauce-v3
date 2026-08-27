@@ -48,7 +48,7 @@ desde el <private-date> ya **no** sustituye a una sesión. El detalle está en �
 | Lectura de cuentas | `services/gateway/src/console-users.ts` |
 | Proveedor de autenticación + rutas | `services/gateway/src/password-auth.ts` — `POST /v3/auth/login`, `POST /v3/auth/logout`, `GET /v3/auth/session` |
 | Alta / cambio de contraseña / baja | `services/gateway/src/console-user-cli.ts` (`pnpm console:user`) |
-| Puerta del navegador | `apps/console/src/features/auth/` (formulario cuando `login_mode: 'password'`) |
+| Puerta del navegador | `console/src/features/auth/` (formulario cuando `login_mode: 'password'`) |
 
 Las cuatro decisiones que sostienen la seguridad, y por qué:
 
@@ -362,8 +362,8 @@ O sea: cualquiera con la URL podía inyectar entregas a la flota con identidad d
 
 **El arreglo aplicado no toca ni el gateway ni el contenedor de la consola.** El dominio público no
 tiene por qué proxear la superficie de bus en absoluto: la SPA sólo usa `/v3/auth/*`, `/v3/status` y
-`/v3/console/*` (enumerado en `apps/console/src/api/client.ts` y
-`apps/console/src/features/terminal/api.ts`; `/v3/ws` es el bus de los agentes y la propia SPA lo
+`/v3/console/*` (enumerado en `console/src/api/client.ts` y
+`console/src/features/terminal/api.ts`; `/v3/ws` es el bus de los agentes y la propia SPA lo
 dice en `LiveFleetPage.tsx`). En el Caddy del VPS, **lista blanca**, no negra —una lista negra se
 queda vieja con la próxima ruta que alguien agregue al gateway—:
 

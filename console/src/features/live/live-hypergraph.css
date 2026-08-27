@@ -1,0 +1,347 @@
+/*
+ * Hipergrafo vivo de la sala de máquinas.
+ *
+ * Reusa los seis matices y los tonos de estado que ya definen `styles.css` y `live.css`, así que
+ * el modo claro se hereda sin duplicar paleta. Todo lo que se mueve acá significa algo: el punto
+ * que viaja indica el sentido de una delegación real, y el ámbar indica que lleva demasiado.
+ * Nada gira por decoración.
+ */
+
+.lhg {
+  --lhg-0: var(--mint);
+  --lhg-1: var(--blue);
+  --lhg-2: var(--violet);
+  --lhg-3: var(--amber);
+  --lhg-4: var(--lime);
+  --lhg-5: #6fd3e8;
+  position: relative;
+}
+
+@media (prefers-color-scheme: light) {
+  .lhg { --lhg-5: #0f7c92; }
+}
+
+/*
+ * En una pantalla angosta el grafo NO se encoge hasta ser ilegible: se desplaza. Un hipergrafo de
+ * 15 muñecos reducido a 420 px de ancho no es una versión compacta de la información, es la misma
+ * información ilegible, que es peor que una barra de scroll. El `min-width` es el ancho por debajo
+ * del cual los nombres dejan de leerse.
+ */
+.lhg-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/*
+ * `min-width: 0` en toda la cadena hasta el contenedor con scroll.
+ *
+ * Sin esto el `overflow-x: auto` de arriba no sirve para nada: un hijo de grid/flex tiene
+ * `min-width: auto`, o sea que se niega a encogerse por debajo de su contenido, y el `min-width`
+ * del SVG empuja hacia afuera hasta que **la página entera** scrollea en horizontal. Medido: a
+ * 900 px de viewport, `document.scrollWidth > clientWidth`. Que scrollee el grafo es la intención;
+ * que scrollee la página es un defecto.
+ */
+.lhg,
+.live-page > *,
+.live-page .panel,
+.live-page .panel > * { min-width: 0; }
+
+.lhg-svg {
+  display: block;
+  width: 100%;
+  min-width: 860px;
+  height: auto;
+  max-height: 82vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 20% 6%, rgb(122 184 255 / 8%), transparent 46%),
+    radial-gradient(circle at 80% 96%, rgb(99 222 185 / 7%), transparent 44%),
+    var(--surface-2);
+  overflow: visible;
+}
+
+.lhg-empty,
+.lhg-legend,
+.lhg-note {
+  margin: 12px 2px 0;
+  color: var(--muted);
+  font-size: var(--tipo-rotulo);
+  line-height: 1.6;
+}
+
+/* El hueco del mapa cuando la lectura de la topología FALLÓ lleva su propio botón de reintento
+   dentro: sin este hueco el botón queda pegado al párrafo y se lee como parte de la frase. */
+.lhg-empty p { margin: 0 0 10px; }
+.lhg-empty strong { color: var(--text); font-weight: 600; }
+
+.lhg-legend strong { color: var(--text); font-weight: 600; }
+.lhg-note { color: var(--faint); }
+
+/* --- Salas ---------------------------------------------------------------- */
+
+.lhg-room-fill {
+  fill: currentColor;
+  opacity: .07;
+  transition: opacity .3s ease;
+}
+
+/*
+ * El contorno de sala es CONTEXTO, no el mensaje. Antes era una línea discontinua a 45 % que
+ * además se movía, y competía de igual a igual con las flechas de delegación — que son la pregunta
+ * que responde esta vista. Ahora es continua, fina y tenue: sigue delimitando la región, pero
+ * ninguna región le gana en atención a una entrega en vuelo.
+ */
+.lhg-room-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-opacity: .3;
+}
+
+.lhg-room-label {
+  fill: var(--muted);
+  /* El lienzo se dibuja a ~0,8 del tamaño del viewBox, así que estos px NO son los px que se ven:
+     hay que compensar o los nombres quedan en 9 px reales, que es donde deja de leerse. */
+  font-size: var(--tipo-cuerpo);
+  font-weight: 600;
+  letter-spacing: .02em;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.lhg-hue-0 { color: var(--lhg-0); }
+.lhg-hue-1 { color: var(--lhg-1); }
+.lhg-hue-2 { color: var(--lhg-2); }
+.lhg-hue-3 { color: var(--lhg-3); }
+.lhg-hue-4 { color: var(--lhg-4); }
+.lhg-hue-5 { color: var(--lhg-5); }
+
+/* --- Delegaciones vivas --------------------------------------------------- */
+
+/*
+ * Esto es lo ÚNICO que la vista tiene que gritar. Es la respuesta a "quién le está pasando trabajo
+ * a quién ahora mismo"; todo lo demás (regiones, nombres, colas) está para poder leerla.
+ */
+.lhg-flow { color: var(--blue); }
+
+.lhg-flow-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-opacity: .92;
+  filter: drop-shadow(0 0 4px rgb(122 184 255 / 45%));
+  transition: stroke-opacity .3s ease;
+}
+
+.lhg-flow-dot {
+  fill: currentColor;
+  filter: drop-shadow(0 0 6px currentColor);
+}
+
+/* Ámbar = lleva más de 5 minutos en vuelo. Es un aviso, no un adorno. */
+.lhg-flow.is-slow { color: var(--amber); }
+.lhg-flow.is-slow .lhg-flow-line { stroke-dasharray: 6 5; }
+
+.lhg-flow.is-dim .lhg-flow-line { stroke-opacity: .12; }
+.lhg-flow.is-dim .lhg-flow-dot { opacity: .15; }
+
+/* --- Muñecos -------------------------------------------------------------- */
+
+.lhg-bot { cursor: pointer; }
+.lhg-bot:focus { outline: none; }
+.lhg-bot-hit { fill: transparent; }
+
+.lhg-bot-avatar {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.lhg-bot-avatar svg { width: 100%; height: 100%; }
+
+.lhg-bot-name {
+  fill: var(--text);
+  font-size: var(--tipo-cuerpo);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4.5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/*
+ * Un agente que la topología declara pero la actividad no reporta.
+ *
+ * NUNCA se pinta como sano — "no informado" no es lo mismo que "bien". Pero antes se comunicaba
+ * bajando TODO al 38 % de opacidad, y así `atlas`, `iza`, `seneca` y `midas` sencillamente no se
+ * leían: la vista escondía justo a los agentes de los que no se sabe nada. Ahora la marca vive en
+ * el contorno (anillo punteado) y en el relleno del muñeco; el NOMBRE se lee igual que el de
+ * cualquier otro, porque saber a quién no estás viendo es la mitad del dato.
+ */
+.lhg-bot.is-unknown .lhg-bot-avatar { opacity: .62; filter: grayscale(.85); }
+.lhg-bot.is-unknown .lhg-bot-name { fill: var(--muted); }
+
+.lhg-bot-unknown-ring {
+  fill: none;
+  stroke: var(--faint);
+  stroke-width: 1.6;
+  stroke-dasharray: 3 4;
+  opacity: .85;
+}
+
+.lhg-bot.is-active .lhg-bot-name { fill: var(--text); }
+.lhg-bot.is-active .lhg-bot-hit { fill: currentColor; fill-opacity: .07; }
+.lhg-bot.is-dim { opacity: .28; }
+
+.lhg-bot:focus-visible .lhg-bot-hit {
+  fill: none;
+  stroke: var(--blue);
+  stroke-width: 3;
+}
+
+/* Cola pendiente: el número que más rápido delata a un agente que se está quedando atrás. */
+.lhg-bot-queue circle {
+  fill: var(--amber-dim);
+  stroke: var(--amber);
+  stroke-width: 1.5;
+}
+
+.lhg-bot-queue text {
+  fill: var(--amber);
+  font-size: var(--tipo-rotulo);
+  font-weight: 700;
+}
+
+/*
+ * `styles.css` ya frena toda animación bajo `prefers-reduced-motion`. Acá hay que NEUTRALIZAR, no
+ * solo congelar: un punto detenido a mitad de una flecha se lee como "hay algo trabado ahí", y en
+ * esta vista un falso indicio de estado es peor que no animar nada.
+ */
+
+/* --- La PALABRA debajo del alias ------------------------------------------
+ *
+ * Tercer canal, redundante con el relleno y con el anillo, y el único que sobrevive a un monitor
+ * mal calibrado, a un daltonismo y a una captura de pantalla en blanco y negro. Existe por una
+ * razón medida: el estado NORMAL de esta flota son quince muñecos sin trabajo, y sin la palabra
+ * escrita eso se lee como quince muñecos muertos.
+ */
+.lhg-bot-word {
+  fill: var(--muted);
+  font-size: var(--tipo-rotulo);
+  font-weight: 600;
+  letter-spacing: .01em;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.lhg-bot[data-state='down'] .lhg-bot-word,
+.lhg-bot[data-state='blocked'] .lhg-bot-word { fill: var(--red); }
+.lhg-bot[data-state='unknown'] .lhg-bot-word { fill: var(--faint); font-style: italic; }
+.lhg-bot[data-state='thinking'] .lhg-bot-word,
+.lhg-bot[data-state='settled'] .lhg-bot-word { fill: var(--muted); }
+
+/* El anillo del muñeco es el SEGUNDO canal: continuo = conectado, hueco = caído, punteado = sin
+   reportar. Va en el contorno y no en la opacidad, porque bajar la opacidad esconde justo a los
+   agentes de los que no se sabe nada. */
+.lhg-bot[data-state='down'] .lhg-bot-hit {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 1.6;
+  stroke-dasharray: 5 5;
+  opacity: .8;
+}
+
+/* --- Flechas: el grosor lo pone el componente por volumen ------------------ */
+
+/* `stroke-width` viaja en el atributo `style` del nodo (es un dato, no un estado), así que acá
+   sólo queda lo que no depende del volumen. */
+.lhg-flow-line { transition: stroke-opacity .3s ease, stroke-width .3s ease; }
+
+/* --- Capa de permisos ------------------------------------------------------
+ *
+ * Violeta, punteada y quieta, para que NUNCA se confunda con una entrega en vuelo: son dos
+ * preguntas distintas y no pueden compartir vocabulario visual. Sin animación a propósito — un
+ * permiso no está "viajando" a ningún sitio.
+ */
+.lhg-flows-acl { color: var(--violet); }
+
+.lhg-flow-acl-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-dasharray: 7 6;
+  stroke-opacity: .8;
+}
+
+.lhg-flow-acl.is-denied { color: var(--faint); }
+.lhg-flow-acl.is-denied .lhg-flow-acl-line { stroke-opacity: .45; }
+
+.lhg-flow-acl-label {
+  fill: var(--muted);
+  font-size: var(--tipo-apunte);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* --- Nodo persona ----------------------------------------------------------
+ *
+ * Vive en el pasillo de la izquierda, FUERA de toda región, porque una persona no es miembro de
+ * ninguna sala. Sin esto, el trabajo que entra por el puente de Telegram parece un autoenvío: el
+ * puente publica con el alias del propio agente, así que la arista sale `from === to` y
+ * `delegationEdges()` la descarta entera — y con ella, la procedencia humana del encargo.
+ */
+.lhg-human-dot {
+  fill: var(--surface-3);
+  stroke: var(--blue);
+  stroke-width: 1.6;
+  stroke-dasharray: 4 3;
+}
+
+.lhg-human-glyph {
+  fill: var(--blue);
+  font-size: var(--tipo-cuerpo);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.lhg-human-name {
+  fill: var(--muted);
+  font-size: var(--tipo-rotulo);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.lhg-human-line {
+  fill: none;
+  stroke: var(--blue);
+  stroke-width: 1.4;
+  stroke-dasharray: 3 5;
+  stroke-opacity: .55;
+}
+
+/*
+ * Con `prefers-reduced-motion` el punto NO se esconde: se queda fijo a mitad de la curva, que es
+ * lo que el componente ya coloca desde JS (`<animateMotion>` es SMIL y el CSS no lo apaga). Antes
+ * la regla era `display: none`, y así una flecha viva y una muerta se veían idénticas justo para
+ * quien pidió menos movimiento, no menos información.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .lhg-flow-dot { display: inline; }
+}

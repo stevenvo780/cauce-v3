@@ -11,11 +11,11 @@ const esFuente = f => /\.(ts|tsx|mjs|cjs|py|sh|yaml|yml|json|conf)$/.test(f) && 
 const contenido = {};
 for (const f of files) { if (esFuente(f)) try { contenido[f] = readFileSync(f, 'utf8'); } catch {} }
 
-// nodo = directorio de primer nivel, o segundo nivel para services/packages/apps/ops/deploy
+// nodo = directorio de primer nivel, o segundo nivel para services/packages/ops/deploy
 function nodo(f) {
   const p = f.split('/');
   if (p.length === 1) return '(raiz)';
-  if (['services', 'packages', 'apps'].includes(p[0])) return p.slice(0, 2).join('/');
+  if (['services', 'packages'].includes(p[0])) return p.slice(0, 2).join('/');
   if (p[0] === 'ops' || p[0] === 'deploy' || p[0] === 'tests' || p[0] === 'scripts' || p[0] === 'docs') return p.length > 2 ? p.slice(0, 2).join('/') : p[0];
   return p[0];
 }

@@ -24,8 +24,8 @@ interface ApiCall {
   readonly path: string;
 }
 
-const CLIENT_PATH = fileURLToPath(new URL('../../apps/console/src/api/client.ts', import.meta.url));
-const HANDLERS_PATH = fileURLToPath(new URL('../../apps/console/src/mocks/handlers.ts', import.meta.url));
+const CLIENT_PATH = fileURLToPath(new URL('../../console/src/api/client.ts', import.meta.url));
+const HANDLERS_PATH = fileURLToPath(new URL('../../console/src/mocks/handlers.ts', import.meta.url));
 
 /**
  * Routes registered only when the gateway runs with an OIDC BFF auth provider.

@@ -32,7 +32,7 @@ fi
 
 # Build con procedencia (la consola compila desde la raiz: su Dockerfile hace COPY . . + pnpm)
 docker build -f deploy/Dockerfile --label "org.opencontainers.image.revision=$REV" -t "$RUNTIME_TAG" .
-docker build -f apps/console/Dockerfile --label "org.opencontainers.image.revision=$REV" -t "$CONSOLE_TAG" .
+docker build -f console/Dockerfile --label "org.opencontainers.image.revision=$REV" -t "$CONSOLE_TAG" .
 docker push -q "$RUNTIME_TAG" && docker push -q "$CONSOLE_TAG"
 RUNTIME_DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$RUNTIME_TAG")"
 CONSOLE_DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$CONSOLE_TAG")"

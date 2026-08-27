@@ -1,0 +1,59 @@
+/* ---------------------------------------------------------------------------------------------
+ * LA PIEL DEL TERMINAL, EMPAQUETADA, PORQUE LA CSP TIRA LA QUE INYECTA XTERM.
+ * ------------------------------------------------------------------------------------------ */
+
+/*
+ * El fondo del terminal. xterm lo pone en línea sobre `.xterm-viewport`, así que la CSP no lo
+ * tira; se repite acá sobre el nodo de la sesión para que el hueco tenga el mismo tono aunque el
+ * viewport aún no se haya pintado (durante `CONECTANDO` se veía el fondo claro de la página).
+ */
+.pty-host { background-color: var(--pty-fondo, #0a0e16); }
+.pty-host .xterm-viewport { background-color: var(--pty-fondo, #0a0e16); }
+
+/* `_updateDimensions`: sin esto las celdas no se alinean y la TUI se descuadra. */
+.pty-host .xterm-rows span { display: inline-block; height: 100%; vertical-align: top; }
+
+/* `_injectCss`, primer bloque: tinta, familia monoespaciada y cuerpo de letra. */
+.pty-host .xterm-rows {
+  color: var(--pty-tinta, #d8e4f7);
+  font-family: var(--pty-fuente, ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono', monospace);
+  font-size: var(--pty-cuerpo, 13px);
+  font-kerning: none;
+  white-space: pre;
+}
+.pty-host .xterm-rows .xterm-dim { color: color-mix(in srgb, var(--pty-tinta, #d8e4f7) 50%, transparent); }
+.pty-host span:not(.xterm-bold) { font-weight: 400; }
+.pty-host span.xterm-bold { font-weight: 700; }
+.pty-host span.xterm-italic { font-style: italic; }
+
+/* El cursor. Sin esto no se ve dónde está escribiendo el agente. */
+.pty-host .xterm-rows .xterm-cursor.xterm-cursor-block { background-color: var(--pty-cursor, #7ce7c5); color: var(--pty-cursor-tinta, #0a0e16); }
+.pty-host .xterm-rows .xterm-cursor.xterm-cursor-block:not(.xterm-cursor-blink) { background-color: var(--pty-cursor, #7ce7c5) !important; color: var(--pty-cursor-tinta, #0a0e16) !important; }
+.pty-host .xterm-rows .xterm-cursor.xterm-cursor-outline { outline: 1px solid var(--pty-cursor, #7ce7c5); outline-offset: -1px; }
+.pty-host .xterm-rows .xterm-cursor.xterm-cursor-bar { box-shadow: 1px 0 0 var(--pty-cursor, #7ce7c5) inset; }
+.pty-host .xterm-rows .xterm-cursor.xterm-cursor-underline { border-bottom: 1px var(--pty-cursor, #7ce7c5); border-bottom-style: solid; height: calc(100% - 1px); }
+
+/*
+ * El parpadeo del cursor va por `@keyframes`, y el nombre que usa xterm lleva su número de
+ * instancia (`blink_block_3`), que acá no se puede saber. Se declaran con nombre propio y se
+ * enganchan a las mismas clases: el efecto es el mismo y no depende del contador de xterm.
+ */
+@keyframes pty-blink-block { 0% { background-color: var(--pty-cursor, #7ce7c5); color: var(--pty-cursor-tinta, #0a0e16); } 50% { background-color: inherit; color: var(--pty-cursor, #7ce7c5); } }
+@keyframes pty-blink-underline { 50% { border-bottom-style: hidden; } }
+@keyframes pty-blink-bar { 50% { box-shadow: none; } }
+.pty-host .xterm-rows.xterm-focus .xterm-cursor.xterm-cursor-blink.xterm-cursor-block { animation: pty-blink-block 1s step-end infinite; }
+.pty-host .xterm-rows.xterm-focus .xterm-cursor.xterm-cursor-blink.xterm-cursor-underline { animation: pty-blink-underline 1s step-end infinite; }
+.pty-host .xterm-rows.xterm-focus .xterm-cursor.xterm-cursor-blink.xterm-cursor-bar { animation: pty-blink-bar 1s step-end infinite; }
+
+/* La selección: sin esto, marcar texto con el ratón no se ve y no se puede copiar a ojo. */
+.pty-host .xterm-selection { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; }
+.pty-host .xterm-selection div { position: absolute; background-color: var(--pty-seleccion, #2c5468); }
+.pty-host .xterm.focus .xterm-selection div { position: absolute; background-color: var(--pty-seleccion, #2c5468); }
+
+/*
+ * Vídeo inverso (`INVERTED_DEFAULT_COLOR` = 257 en xterm). Lo usan las barras de estado de tmux y
+ * los menús de Claude Code: si falta, el rótulo seleccionado desaparece.
+ */
+.pty-host .xterm-fg-257 { color: var(--pty-fondo, #0a0e16); }
+.pty-host .xterm-fg-257.xterm-dim { color: color-mix(in srgb, var(--pty-fondo, #0a0e16) 50%, transparent); }
+.pty-host .xterm-bg-257 { background-color: var(--pty-tinta, #d8e4f7); }

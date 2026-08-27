@@ -41,7 +41,7 @@ async function configurationSource(): Promise<string> {
  * documenta así, como el «apagado de emergencia»—: sin revisión, sin mutación inversa que alcance
  * el botón de deshacer, sin asiento en `audit_events` y sin quién lo hizo.
  *
- * `apps/console/src/features/config/areas.ts` llevaba el defecto escrito en un comentario, con
+ * `console/src/features/config/areas.ts` llevaba el defecto escrito en un comentario, con
  * las líneas exactas, y la frase «todavía no se pueda arreglar acá». Ya se puede.
  *
  * ── Es el defecto ESPEJO del que persigue todo este trabajo ──────────────────────────────────

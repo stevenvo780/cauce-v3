@@ -1,0 +1,90 @@
+/* Pantalla de sesión. Ocupa el viewport entero: si no hay sesión, no se ve nada de la consola. */
+
+.auth-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.auth-card {
+  display: grid;
+  gap: 14px;
+  justify-items: start;
+  max-width: 480px;
+  padding: 32px 34px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: linear-gradient(160deg, var(--surface-2), var(--surface));
+  box-shadow: var(--shadow);
+}
+
+.auth-card h1 { margin: 0; font-size: 25px; letter-spacing: -.015em; }
+.auth-lede { margin: 0; color: var(--muted); font-size: var(--tipo-cuerpo); line-height: 1.5; }
+.auth-reason { margin: 0; padding: 9px 12px; border-left: 3px solid var(--amber); border-radius: 0 8px 8px 0; background: var(--amber-dim); color: var(--text); font-size: var(--tipo-rotulo); }
+.auth-fineprint { margin: 0; color: var(--faint); font-size: var(--tipo-apunte); line-height: 1.5; }
+.auth-fineprint code { color: var(--muted); }
+
+.auth-mark {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: var(--mint-dim);
+  color: var(--mint);
+}
+.auth-mark-danger { background: var(--red-dim); color: var(--red); }
+
+.auth-primary { padding: 11px 20px; font-size: var(--tipo-cuerpo); }
+
+/* Formulario de correo + contraseña. */
+.auth-form { display: grid; gap: 6px; width: 100%; }
+.auth-form label { color: var(--muted); font-size: var(--tipo-rotulo); font-weight: 600; }
+.auth-form label + input { margin-bottom: 8px; }
+.auth-form input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--tipo-cuerpo);
+}
+.auth-form input:focus-visible { outline: 2px solid var(--mint); outline-offset: 1px; }
+.auth-form input:disabled { opacity: .6; }
+.auth-form .auth-primary { justify-self: start; margin-top: 6px; }
+.auth-failure {
+  margin: 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--red);
+  border-radius: 0 8px 8px 0;
+  background: var(--red-dim);
+  color: var(--text);
+  font-size: var(--tipo-rotulo);
+}
+
+.auth-card-quiet { flex-flow: row; align-items: center; grid-auto-flow: column; color: var(--muted); }
+.auth-card-error { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); }
+
+/* Insignia de identidad en la barra superior. */
+.auth-state { display: inline-flex; align-items: center; gap: 9px; font-size: var(--tipo-rotulo); }
+.auth-state.authenticated strong { display: block; font-size: var(--tipo-rotulo); }
+.auth-state.authenticated small { display: block; color: var(--faint); font-size: var(--tipo-apunte); }
+.auth-unmanaged { padding: 4px 10px; border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--border)); border-radius: 999px; background: var(--amber-dim); color: var(--amber); font-weight: 700; }
+
+/* Aviso permanente de "acá no hay login". Molesta a propósito. */
+.auth-banner {
+  display: flex;
+  align-items: start;
+  gap: 11px;
+  margin: 0 0 16px;
+  padding: 12px 15px;
+  border: 1px solid color-mix(in srgb, var(--amber) 50%, var(--border));
+  border-radius: 12px;
+  background: var(--amber-dim);
+  color: var(--text);
+}
+.auth-banner svg { flex: none; margin-top: 2px; color: var(--amber); }
+.auth-banner p { margin: 0; font-size: var(--tipo-rotulo); line-height: 1.5; }

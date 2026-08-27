@@ -5,7 +5,7 @@ can change its own result.
 Why domains exist
 -----------------
 This script used to emit one whole-tree digest, and every evidence artifact was pinned to it.
-`apps/console` was inside that digest, so any console edit -- a CSS tweak in the terminal panel --
+`console` was inside that digest, so any console edit -- a CSS tweak in the terminal panel --
 invalidated runtime-image evidence even though a console stylesheet has no causal path to runtime
 behaviour. Evidence that is expensive to regenerate and trivially invalidated is evidence people
 hand-edit instead of re-running, so each live producer now declares its causal domain.
@@ -46,29 +46,29 @@ full     Union of every domain. This is the safe default: a caller that forgets 
 
 Justification for the exclusions that LOOSEN anything
 ------------------------------------------------------
-`apps/console/src/features/_grafo/` is operator-local SQL scratch.  It is excluded from every
+`console/src/features/_grafo/` is operator-local SQL scratch.  It is excluded from every
 domain by its exact repository-relative prefix, and nowhere else. `.dockerignore` excludes it from
 ordinary Docker contexts. Excluding the scratch here keeps local operator notes out without
 widening the exclusion to any other path.
 
-`apps/console` is absent from the `runtime` domain. This is safe because there is no causal path
-from apps/console to the runtime image or to runtime behaviour:
-  1. deploy/Dockerfile copies apps/console only into the `build` stage and into the
+`console` is absent from the `runtime` domain. This is safe because there is no causal path
+from console to the runtime image or to runtime behaviour:
+  1. deploy/Dockerfile copies console only into the `build` stage and into the
      `console-base`/`console-dev`/`console` stages. The `runtime` stage copies from
      `production-dependencies` and from the compiled `dist/` of core/services only; no console file
      and no console dependency reaches it.
-  2. `production-dependencies` never copies apps/console/package.json and its `pnpm --filter` list
+  2. `production-dependencies` never copies console/package.json and its `pnpm --filter` list
      excludes @cauce/console, so console dependencies are not in the runtime node_modules either.
   3. tsconfig.json's `include` list is packages/protocol, packages/store, services, tests and
      vitest.config.ts. tsconfig.build.json (which produces every runtime binary) extends it and
      adds no console path, so `pnpm build:core` never compiles console sources.
-  4. apps/console imports nothing from the workspace (no `@cauce/*` import exists under
-     apps/console/), so it cannot alter shared compiled output.
+  4. console imports nothing from the workspace (no `@cauce/*` import exists under
+     console/), so it cannot alter shared compiled output.
   5. The dependency graph is still covered: pnpm-lock.yaml and pnpm-workspace.yaml stay in the
      `runtime` domain, so a console dependency change still moves the runtime digest. A console
      package.json edit that contradicts the lockfile fails `pnpm install --frozen-lockfile` in the
      shared build stage, i.e. it fails loudly at build time rather than shipping silently.
-The one file that reads apps/console from outside is tests/gateway-hardening/console-api-contract.test.ts,
+The one file that reads console from outside is tests/gateway-hardening/console-api-contract.test.ts,
 which runs under `pnpm test` -- verification evidence -- and verification is bound to `full`, not to
 `runtime`. So that coupling is preserved where it actually exists.
 
@@ -143,14 +143,14 @@ VERIFICATION_OPERATIONAL_INPUTS = (
 
 DOMAIN_INPUTS: dict[str, tuple[str, ...]] = {
     # tsconfig.build.json emits every runtime binary; vitest.config.ts is copied into the build
-    # stage next to the runtime sources. Neither takes part in the console build (apps/console
+    # stage next to the runtime sources. Neither takes part in the console build (console
     # builds with `tsc -b` over its own project references plus Vite).
     "runtime": SHARED_MANIFESTS
     + ("tsconfig.build.json", "vitest.config.ts", "packages", "services", "deploy"),
     # `deploy` stays whole here as well: the console image copies deploy/nginx-console-tls.conf, and
     # enumerating single files would let a future console-relevant deploy file escape the digest.
     # Over-coverage is harmless for this domain because console evidence is cheap to regenerate.
-    "console": SHARED_MANIFESTS + ("apps/console", "deploy"),
+    "console": SHARED_MANIFESTS + ("console", "deploy"),
     "testcontainers": SHARED_MANIFESTS
     + (
         "vitest.config.ts",
@@ -193,7 +193,7 @@ EXCLUDED_FILE_SUFFIXES = {".pyc", ".pyo"}
 
 # Do not turn either family into a basename-based exclusion.  A `_grafo` or `artifacts` directory
 # anywhere else can hold real source/fixtures and remains covered.
-EXCLUDED_SOURCE_PREFIXES = (pathlib.PurePosixPath("apps/console/src/features/_grafo"),)
+EXCLUDED_SOURCE_PREFIXES = (pathlib.PurePosixPath("console/src/features/_grafo"),)
 MUTABLE_OUTPUT_PREFIXES = (
     pathlib.PurePosixPath("ops/artifacts"),
 )

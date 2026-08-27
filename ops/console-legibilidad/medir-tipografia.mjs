@@ -9,7 +9,7 @@
  * Por qué hace falta un navegador y no alcanza vitest: **jsdom no calcula layout**. MEDIDO, no
  * supuesto — una caja de 100 px con un hijo de 5000 px informa `scrollWidth: 0` y `clientWidth: 0`,
  * o sea que `scrollWidth > clientWidth` es falso SIEMPRE y una prueba de desborde escrita ahí no
- * puede dar rojo. Queda como aserto ejecutable en `apps/console/src/styles.tipografia.test.ts`.
+ * puede dar rojo. Queda como aserto ejecutable en `console/src/styles.tipografia.test.ts`.
  * Lo que jsdom SÍ resuelve es la cascada (devuelve la declaración ganadora sin resolver), y eso lo
  * aprovecha `styles.tipografia-montada.test.tsx`; el layout, sólo acá.
  *
@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { launchChrome, Cdp, Page } from './cdp.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
-const CONSOLA = resolve(AQUI, '../../apps/console');
+const CONSOLA = resolve(AQUI, '../../console');
 const args = process.argv.slice(2);
 const opcion = (n, d) => { const f = args.find((a) => a.startsWith(`--${n}=`)); return f ? f.slice(n.length + 3) : d; };
 const SUELO = Number(opcion('suelo', '12.5'));

@@ -1,0 +1,413 @@
+.config-pagina {
+  max-width: 1180px;
+  --medida: 74ch;
+}
+
+/* Cabecera de la página de configuración */
+.config-encabezado {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 0 0 18px;
+}
+
+.config-encabezado h1 {
+  margin: 0;
+  font-size: var(--tipo-titulo);
+  line-height: 1.15;
+  letter-spacing: -.02em;
+}
+
+.config-intro {
+  max-width: var(--medida);
+  margin: 7px 0 0;
+  color: var(--text-2);
+  font-size: var(--tipo-cuerpo);
+  line-height: 1.5;
+}
+
+/* --- El permiso, dicho en castellano --------------------------------------------------------
+ *
+ * Lo primero de la página era el chip `RBAC config.write ALLOW Roles: operator`: cuatro jergas
+ * seguidas, en 11,52 px, antes de cualquier control. Lo que el operador necesita saber de eso es
+ * si puede escribir y qué pasa si escribe; el identificador crudo del permiso sigue estando —hace
+ * falta para pedirlo a quien administra— pero un escalón más abajo y al final de la frase. */
+.config-permiso {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  max-width: var(--medida);
+  margin: 0 0 16px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--tipo-rotulo);
+  line-height: 1.5;
+}
+
+.config-permiso[data-estado='allowed'] { border-left-color: var(--mint); }
+.config-permiso[data-estado='denied'] { border-left-color: var(--red); }
+.config-permiso[data-estado='unknown'] { border-left-color: var(--amber); }
+
+.config-permiso-jerga {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: var(--tipo-apunte);
+}
+
+/* --- Las pestañas de la página --------------------------------------------------------------- */
+
+.config-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0 0 12px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2, #0a111d);
+}
+
+.config-tab {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--tipo-rotulo);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.config-tab:hover { color: var(--text); }
+.config-tab[aria-selected='true'] { background: var(--surface-3, #131c2b); color: var(--text); }
+.config-tab:focus-visible { outline: 2px solid var(--accent, #5b9dff); outline-offset: 1px; }
+
+/* --- La frase que orienta, y lo que se pliega ------------------------------------------------
+ *
+ * Eran tres párrafos de prosa gris ANTES del primer control, y el operador que entra veinte veces
+ * al día los relee veinte veces. Ahora cada uno es UNA frase de ~90 caracteres y lo que sobraba
+ * está plegado en un `<details>` cerrado.
+ *
+ * Plegado y no borrado: la frase que dice de dónde saca el enrutado la flota («un alias sin
+ * membership habilitada no recibe entregas, aunque esté en el registro de agentes») es la
+ * diferencia entre entender la pantalla y no entenderla — pero no hace falta releerla cada vez. */
+.config-area-descripcion {
+  max-width: var(--medida);
+  margin: 0 0 8px;
+  color: var(--text-2);
+  font-size: var(--tipo-cuerpo);
+  line-height: 1.5;
+}
+
+.config-detalle { max-width: var(--medida); margin: 0 0 16px; }
+
+.config-detalle > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: var(--tipo-rotulo);
+  cursor: pointer;
+}
+
+/* La flechita. `display: inline-flex` en el `summary` le quita a Chrome el marcador por defecto, y
+   un desplegable sin marcador no se lee como desplegable: parecía una frase gris suelta. Va por
+   CSS y no por atributo `style` — la CSP de producción es `style-src 'self'`. */
+.config-detalle > summary::before { content: '▸'; color: var(--faint); }
+.config-detalle[open] > summary::before { content: '▾'; }
+.config-detalle > summary:hover { color: var(--text); }
+.config-detalle > p { margin: 8px 0 0; color: var(--text-2); font-size: var(--tipo-rotulo); line-height: 1.55; }
+
+/* --- El alta: un control segmentado DENTRO del panel, no una segunda fila de pestañas ---------
+ *
+ * MEDIDO: había DOS tiras de pestañas apiladas, la de la página (y=307) y la del modo de alta
+ * (y=389), separadas por 82 px y con la misma forma exacta —mismo alto, mismo radio, mismo fondo,
+ * mismo 12,5 px—. Dos cosas que se dibujan igual se leen como lo mismo, y no lo son: la de arriba
+ * cambia de ÁREA de la configuración y la de abajo cambia de MODO dentro de un solo formulario.
+ *
+ * Ahora la segunda vive dentro del panel del alta, junto al formulario que gobierna, y está
+ * dibujada como lo que es: un segmentado compacto, sin caja propia, con el activo en relieve. La
+ * prueba de hoja exige que no vuelvan a parecerse. */
+.alta-segmento {
+  display: inline-flex;
+  gap: 0;
+  margin: 0 0 14px;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.alta-segmento-boton {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--tipo-rotulo);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.alta-segmento-boton:hover { color: var(--text); }
+.alta-segmento-boton[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 25%);
+}
+.alta-segmento-boton:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+.alta-modo-nota {
+  max-width: var(--medida);
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: var(--tipo-rotulo);
+  line-height: 1.5;
+}
+
+/* --- La escala aplicada ----------------------------------------------------------------------
+ *
+ * Todo lo de abajo cuelga de `.config-pagina`, así que no alcanza a ninguna otra vista, y por
+ * llevar esa clase de más le gana en especificidad a `styles.css` sin depender del orden en que
+ * vite concatena las hojas (que es: features primero, `styles.css` al final). */
+
+/*
+ * El subtítulo del panel, PEGADO a su título.
+ *
+ * `.panel-header` global es `justify-content: space-between`, que con un panel de 1180 px manda el
+ * subtítulo al extremo derecho: el título queda a la izquierda y su explicación a 700 px de
+ * distancia, y nada dice que la una explique al otro. Con la letra a 11,84 px casi no se notaba
+ * porque casi no se leía. A 13 px sí.
+ */
+.config-pagina .panel-header { flex-wrap: wrap; justify-content: flex-start; }
+.config-pagina .panel-header h2 { font-size: var(--tipo-panel); }
+.config-pagina .panel-header p {
+  max-width: var(--medida);
+  color: var(--text-2);
+  font-size: var(--tipo-rotulo);
+  line-height: 1.5;
+}
+
+/* Prosa y avisos: cuerpo de verdad, con tope de renglón. */
+.config-pagina .notice { max-width: var(--medida); font-size: var(--tipo-rotulo); line-height: 1.55; }
+.config-pagina .empty-state { font-size: var(--tipo-cuerpo); }
+.config-pagina .muted { font-size: var(--tipo-rotulo); }
+/*
+ * **Un párrafo no es un chip.**
+ *
+ * `.muted` global es `display: inline-flex` porque casi siempre es una marca de una línea al lado
+ * de un icono. Cuando lo lleva un `<p>` con un `<strong>` dentro —los tres párrafos de «Roles de
+ * agente»— cada trozo se vuelve un ítem de flex y el párrafo se parte en TRES COLUMNAS que hay
+ * que leer en zigzag. MEDIDO en Chrome a 1600: «Un rol es el texto de identidad…» salía en tres
+ * bloques de 340, 150 y 730 px, y la frase que lo explica todo era ilegible literalmente.
+ *
+ * Viene de antes de este cambio; se arregla acá porque es la misma vista y la corrección es una
+ * línea. Los `.muted` que sí son chips (un `<span>` con su icono) no se tocan.
+ */
+.config-pagina p.muted { display: block; max-width: var(--medida); line-height: 1.55; }
+.config-pagina .mono { font-size: var(--tipo-mono); }
+.config-pagina .unknown { font-size: var(--tipo-rotulo); }
+.config-pagina .chip { font-size: var(--tipo-apunte); }
+.config-pagina .badge { min-height: 24px; font-size: var(--tipo-apunte); }
+.config-pagina .button.small { font-size: var(--tipo-rotulo); }
+.config-pagina .config-preview { font-size: var(--tipo-apunte); line-height: 1.5; }
+.config-pagina .config-records code { font-size: var(--tipo-apunte); }
+.config-pagina .config-raw > summary,
+.config-pagina .config-editor > summary,
+.config-pagina .config-modal-detalle > summary,
+.config-pagina .config-crudo > summary { font-size: var(--tipo-rotulo); }
+.config-pagina .config-modal-cuerpo > p { font-size: var(--tipo-cuerpo); }
+.config-pagina .state-card-texto { font-size: var(--tipo-cuerpo); }
+
+/* Formulario: el rótulo se lee, la pista se lee, y ninguno de los dos compite con el dato. */
+.config-pagina label { font-size: var(--tipo-rotulo); }
+.config-pagina .label-hint { font-size: var(--tipo-apunte); }
+.config-pagina input,
+.config-pagina select,
+.config-pagina textarea { font-size: var(--tipo-cuerpo); }
+
+/*
+ * **El ancho del campo dice de qué tamaño es el dato.**
+ *
+ * MEDIDO: `.config-form` es `repeat(2, minmax(180px, 1fr))` y a 1600 px cada columna quedaba en
+ * ~600 px, o sea 600 px de caja para escribir un alias de ocho letras. Un campo mucho más ancho
+ * que su dato no es generosidad: obliga a recorrer con la vista un vacío para llegar al siguiente
+ * rótulo, y hace que un `id` parezca un campo de texto libre.
+ *
+ * El tope va al FORMULARIO y no a cada campo, así que las dos columnas siguen alineadas entre sí
+ * y el `<textarea>` de JSON —que sí quiere ancho— sigue ocupando las dos.
+ */
+.config-pagina .config-form { max-width: 720px; }
+.config-pagina .config-form input:not([type='checkbox']),
+.config-pagina .config-form select { max-width: 340px; }
+.config-pagina .config-form .config-json textarea { max-width: none; }
+
+/* --- Tablas ----------------------------------------------------------------------------------
+ *
+ * MEDIDO: 29 filas a 10,88 px de cabecera y 11,84 px de celda. Eso no es una tabla densa, es una
+ * parrilla: el dato de una fila no se distingue del de la de al lado sin apoyar el dedo. El
+ * cuerpo sube a 14 y la cabecera a 12,5 —que es lo que una cabecera tiene que ser, un rótulo, no
+ * un dato—; el aire de la fila lo pone `toggles.css`, que es donde ya vivía esa medida. */
+.config-pagina .config-area table { font-size: var(--tipo-cuerpo); }
+.config-pagina .config-area th { font-size: var(--tipo-apunte); letter-spacing: .05em; }
+.config-pagina .config-area td select { font-size: var(--tipo-rotulo); }
+.config-pagina .config-area td select + .unknown { font-size: var(--tipo-apunte); }
+
+/*
+ * Números a la derecha y con cifras de ancho fijo. Una columna de números alineada a la izquierda
+ * obliga a comparar magnitudes contando dígitos: `8` y `120` empiezan en el mismo píxel y el que
+ * parece más grande es el que tiene más caracteres. La marca `data-numero` la pone
+ * `CollectionTable` cuando TODAS las filas traen un número en esa columna — ver `columnaNumerica`.
+ */
+.config-pagina .config-area th[data-numero='true'],
+.config-pagina .config-area td[data-numero='true'] {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* --- Roles ------------------------------------------------------------------------------------ */
+
+.rol-lista { display: grid; gap: 12px; margin: 12px 0 0; padding: 0; list-style: none; }
+
+.rol-card {
+  display: grid;
+  gap: 8px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2, #0a111d);
+}
+
+.rol-card header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rol-card h3 { margin: 0; font-size: 15px; }
+.rol-resumen-nota { max-width: var(--medida); margin: 0; font-size: var(--tipo-rotulo); line-height: 1.5; }
+.rol-portadores { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 0; font-size: var(--tipo-rotulo); }
+.rol-portador { padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-apunte); }
+.rol-medidor { display: grid; gap: 2px; margin: 0; font-size: var(--tipo-rotulo); font-variant-numeric: tabular-nums; }
+.rol-medidor[data-tone='ok'] { color: var(--muted); }
+.rol-medidor[data-tone='cerca'] { color: var(--amber, #d08700); }
+.rol-medidor[data-tone='pasado'] { color: var(--danger, #d64545); font-weight: 600; }
+.rol-texto summary { font-size: var(--tipo-rotulo); color: var(--muted); cursor: pointer; }
+.rol-texto pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: var(--tipo-apunte);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.rol-asignar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.rol-asignar label { display: grid; gap: 4px; font-size: var(--tipo-rotulo); color: var(--muted); }
+.rol-sin-rol { display: grid; gap: 5px; margin: 0 0 10px; padding: 0; list-style: none; font-size: var(--tipo-rotulo); }
+
+/* --- El aviso de columnas sin efecto, arriba de la tabla ------------------------------------- */
+
+.config-inertes {
+  margin: 0 0 12px;
+  border-left: 3px solid var(--amber);
+  font-size: var(--tipo-rotulo);
+  line-height: 1.55;
+}
+
+/* --- Qué lee cada arnés de verdad -------------------------------------------------------------
+ *
+ * Cuatro tarjetas en reja auto-ajustable y NO en cuatro columnas fijas: a 1920 entran las cuatro
+ * en una fila, y por debajo se repliegan solas sin que ninguna ruta —que es el dato que se viene
+ * a buscar— quede partida ni empuje la reja fuera de la pantalla.
+ */
+.arnes-lista {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.arnes-card {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+/* El que no lee ningún fichero se distingue de un vistazo: es la fila que más se malinterpreta. */
+.arnes-card[data-sin-directiva='true'] { border-color: var(--border-strong); }
+
+.arnes-card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.arnes-card h3 { margin: 0; font-size: var(--tipo-rotulo); letter-spacing: -.01em; }
+
+.arnes-id {
+  color: var(--faint);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: var(--tipo-apunte);
+}
+
+/* La ruta es lo que se viene a buscar: va primero, en monoespaciada y con `overflow-wrap` para que
+   una ruta larga se parta DENTRO de la tarjeta en vez de estirar la reja. */
+.arnes-ruta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--tipo-apunte);
+  overflow-wrap: anywhere;
+}
+
+.arnes-ruta code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.arnes-ruta-vacia { color: var(--faint); }
+
+.arnes-detalle { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); line-height: 1.55; }
+.arnes-donde { margin: 0; color: var(--text-2); font-size: var(--tipo-apunte); line-height: 1.55; }
+.arnes-donde strong { color: var(--text); }
+
+.arnes-gobierna {
+  margin: 0;
+  border-left: 3px solid var(--mint);
+  font-size: var(--tipo-rotulo);
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  /* MEDIDO a 360 px: la tira ya era un carrusel (`flex-wrap: nowrap` + `overflow-x: auto`) pero
+     el TEXTO de cada pestaña sí se partía, y «Roles de agente» salía en tres renglones sobre una
+     tira de 90 px de alto. Con `nowrap` cada rótulo se lee entero y lo que se arrastra es la
+     tira, que es lo que ya hacía igual. */
+  .config-tabs { overflow-x: auto; flex-wrap: nowrap; }
+  .config-tab { white-space: nowrap; }
+  /* A 360 px el título y el botón «Actualizar» no caben en una fila: apilados, el botón queda
+     alcanzable sin arrastrar de lado. */
+  .config-encabezado { align-items: start; flex-direction: column; gap: 12px; }
+  /* Un `ch` de tope no sirve de nada en un teléfono —el ancho lo manda la pantalla— y `74ch`
+     sobre 330 px de hueco haría creer que hay tope donde no lo hay. */
+  .config-pagina { --medida: 100%; }
+  .config-pagina .config-form input:not([type='checkbox']),
+  .config-pagina .config-form select { max-width: none; }
+  .alta-segmento { display: flex; width: 100%; }
+  .alta-segmento-boton { flex: 1 1 0; white-space: normal; }
+}
+
+@media (prefers-color-scheme: light) {
+  .config-tabs { background: #f4f7fb; }
+  .config-tab[aria-selected='true'] { background: #e6eef8; }
+  .rol-card { background: #f8fafd; }
+  .config-permiso { background: #ffffff; }
+  .alta-segmento { background: #eef3f9; }
+  .alta-segmento-boton[aria-pressed='true'] { background: #ffffff; box-shadow: 0 1px 2px rgb(38 63 92 / 18%); }
+}

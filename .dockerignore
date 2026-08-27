@@ -14,4 +14,5 @@ ops/backups
 .env*
 
 # SQL scratch owned by the operator. It is intentionally not part of the
+console/src/features/_grafo/
 # console product and must remain untouched by release builds.

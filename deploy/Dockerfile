@@ -17,12 +17,12 @@ COPY services/gateway/package.json ./services/gateway/
 COPY services/dispatcher/package.json services/dispatcher/tsconfig.json ./services/dispatcher/
 COPY services/telegram-bridge/package.json ./services/telegram-bridge/
 COPY services/terminal-relay/package.json ./services/terminal-relay/
-COPY apps/console/package.json apps/console/tsconfig*.json ./apps/console/
+COPY console/package.json console/tsconfig*.json ./apps/console/
 RUN pnpm install --frozen-lockfile
 
 COPY packages ./packages
 COPY services ./services
-COPY apps/console ./apps/console
+COPY console ./apps/console
 COPY vitest.config.ts ./
 ARG VITE_CAUCE_API_BASE=""
 ARG VITE_CAUCE_DEV_AUTH="false"
@@ -130,7 +130,7 @@ COPY --from=build /app/apps/console/dist /usr/share/nginx/html
 USER 101
 
 FROM console-base AS console-dev
-COPY apps/console/nginx.conf /etc/nginx/conf.d/default.conf
+COPY console/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1

@@ -50,7 +50,7 @@ async function levantarVite() {
   const puerto = await puertoLibre();
   const base = `http://127.0.0.1:${puerto}`;
   const hijo = spawn(resolve(RAIZ, 'node_modules/.bin/vite'), ['--host', '127.0.0.1', '--port', String(puerto), '--strictPort'], {
-    cwd: resolve(RAIZ, 'apps/console'),
+    cwd: resolve(RAIZ, 'console'),
     env: { ...process.env, NODE_ENV: 'development', VITE_USE_MOCKS: 'true' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -62,7 +62,7 @@ async function levantarVite() {
     try {
       const r = await fetch(`${base}/`);
       if (r.ok) {
-        console.log(`vite propio en ${base} · árbol ${resolve(RAIZ, 'apps/console')}`);
+        console.log(`vite propio en ${base} · árbol ${resolve(RAIZ, 'console')}`);
         return { hijo, base };
       }
     } catch { /* todavía no */ }

@@ -71,7 +71,7 @@ node "$ROOT/tests/alias-runner.test.mjs"
 node "$ROOT/tests/container-cutover.test.mjs"
 node "$ROOT/tests/container-ops-evidence.test.mjs"
 # Guards the source-digest domain split: proves the runtime domain still covers everything that
-# reaches the runtime image and that apps/console is the only thing it drops. Removing a family from
+# reaches the runtime image and that console is the only thing it drops. Removing a family from
 # a digest LOOSENS the gate, so the narrowing has to be pinned by a test.
 node "$ROOT/tests/source-digest-domains.test.mjs"
 
@@ -83,7 +83,7 @@ dev = (project / 'deploy/compose.dev.yaml').read_text(encoding='utf-8')
 overlay = (project / 'deploy/compose.postgres.yaml').read_text(encoding='utf-8')
 alert_overlay = (project / 'deploy/compose.alertmanager.yaml').read_text(encoding='utf-8')
 alert_config = (project / 'ops/observability/alertmanager.yaml').read_text(encoding='utf-8')
-console = (project / 'apps/console/nginx.conf').read_text(encoding='utf-8')
+console = (project / 'console/nginx.conf').read_text(encoding='utf-8')
 required = {
     'production compose must not build mutable images': 'build:' not in prod,
     'mTLS gateway health must use isolated loopback probe': 'http://127.0.0.1:8081/health/ready' in prod and 'https://gateway:8443/health/ready' not in prod,
@@ -195,5 +195,5 @@ if ! docker build --help >/dev/null 2>&1; then
   printf 'docker build check skipped outside release\n'
 fi
 if command -v shellcheck >/dev/null 2>&1; then shellcheck "$ROOT"/scripts/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh; fi
-node "$PROJECT/ops/scripts/validate-console-browser-storage.mjs" "$PROJECT/apps/console/src"
+node "$PROJECT/ops/scripts/validate-console-browser-storage.mjs" "$PROJECT/console/src"
 printf 'static validation passed\n'

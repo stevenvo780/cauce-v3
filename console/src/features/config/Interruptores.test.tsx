@@ -1,0 +1,349 @@
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { ConfigPage } from './ConfigPage';
+import { server } from '../../mocks/server';
+import { renderWithApi } from '../../test/render';
+
+/**
+ * **El carril de los interruptores, y sobre todo su CONTROL NEGATIVO.**
+ *
+ * La pregunta que estas pruebas contestan no es «¿el interruptor se mueve?» —eso lo hace cualquier
+ * casilla— sino la única que puede costar caro: **¿puede quedar pintado un permiso que la base no
+ * tiene?** Un interruptor optimista sin marcha atrás es peor que el botón que reemplaza: el botón
+ * que falla al menos deja la fila como estaba, mientras que el interruptor que se queda encendido
+ * después de un 409 le afirma al operador que un cruce entre clientes está abierto cuando el
+ * servidor dice que no. Nada desmiente esa mentira hasta que alguien recarga la página, y para
+ * entonces ya decidió sobre ella.
+ *
+ * Las pruebas de más abajo FALLAN si alguien quita la reversión de `use-interruptores.ts` (la línea
+ * que descarta el valor optimista cuando `desenlace.ok` es falso): el interruptor se quedaría en el
+ * valor pedido y el `toBeChecked()` de después del rechazo no se cumpliría.
+ */
+
+interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }
+
+const PERMISOS = /^permisos$/i;
+const ESPACIOS = /espacios y miembros/i;
+
+type Usuario = ReturnType<typeof userEvent.setup>;
+
+async function irA(user: Usuario, pestana: RegExp) {
+  await user.click(await screen.findByRole('tab', { name: pestana }));
+}
+
+/** El snapshot que sirven estas pruebas. Una sola arista, para que la tabla sea legible. */
+function snapshot(revision: number, arista: Record<string, unknown> = {}) {
+  return {
+    revision,
+    observed_at: new Date().toISOString(),
+    tenants: [{ id: 'Steven', display_name: 'Steven', is_hub: true, enabled: true, created_at: '2026-07-01T10:00:00.000Z' }],
+    rooms: [],
+    memberships: [],
+    acl_edges: [{
+      from_tenant: 'Steven', to_tenant: 'Miguel', enabled: true,
+      allow_route: true, allow_read: false, allow_control: false,
+      created_at: '2026-07-01T10:00:00.000Z',
+      ...arista,
+    }],
+    role_policies: [],
+    revisions: [],
+  };
+}
+
+function servirConfig(cuerpo: () => Record<string, unknown>) {
+  server.use(http.get('*/v3/console/config', () => HttpResponse.json(cuerpo())));
+}
+
+function registrarCambios(sink: ChangeRequest[], respuesta?: () => Response) {
+  server.use(http.post('*/v3/console/config/changes', async ({ request }) => {
+    sink.push(await request.json() as ChangeRequest);
+    if (respuesta) return respuesta();
+    return HttpResponse.json(
+      { applied: true, dry_run: false, revision: 2, mutation: {}, summary: 'ok' },
+      { status: 201 },
+    );
+  }));
+}
+
+const RUTA = 'Ruta en la arista Steven → Miguel';
+const LECTURA = 'Lectura en la arista Steven → Miguel';
+const CONTROL = 'Control en la arista Steven → Miguel';
+
+// --- Lo que Steven pidió: interruptores, no botones -------------------------------------------
+
+it('los permisos son INTERRUPTORES y la columna de botones ya no existe', async () => {
+  servirConfig(() => snapshot(1));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  const acl = screen.getByRole('heading', { name: /directed acl/i }).closest('section') as HTMLElement;
+  // Cuatro interruptores por arista: el maestro y los tres permisos.
+  expect(within(acl).getAllByRole('switch')).toHaveLength(4);
+  // Y CERO botones de texto: eran «Deshabilitar», «Quitar allow_route», «Quitar allow_read» y
+  // «Quitar allow_control», apilados en una columna «Acciones» que estiraba la fila a 147 px.
+  expect(within(acl).queryByRole('button', { name: /^deshabilitar/i })).not.toBeInTheDocument();
+  expect(within(acl).queryByRole('button', { name: /quitar allow_/i })).not.toBeInTheDocument();
+  expect(within(acl).queryByRole('button', { name: /conceder allow_/i })).not.toBeInTheDocument();
+  expect(within(acl).queryByRole('columnheader', { name: /acciones/i })).not.toBeInTheDocument();
+
+  // Y el interruptor DICE el estado: no hace falta una píldora al lado repitiéndolo.
+  expect(within(acl).getByRole('switch', { name: RUTA })).toBeChecked();
+  expect(within(acl).getByRole('switch', { name: LECTURA })).not.toBeChecked();
+});
+
+it('las cabeceras dejan de ser nombres de columna de Postgres y explican qué conceden', async () => {
+  servirConfig(() => snapshot(1));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  const acl = screen.getByRole('heading', { name: /directed acl/i }).closest('section') as HTMLElement;
+  expect(within(acl).getAllByRole('columnheader').map((celda) => celda.textContent?.replace(/[?:].*/s, '').trim()))
+    .toEqual(['Arista', 'Habilitado', 'Ruta', 'Lectura', 'Control', 'Alta']);
+  // La explicación viaja en el propio DOM —no sólo en un `title` que el teclado no alcanza—, así
+  // que se puede leer sin ratón.
+  expect(within(acl).getByText(/ESCRIBA sobre el de la derecha/)).toBeInTheDocument();
+});
+
+it('un permiso se aplica AL PULSARLO, sin ninguna confirmación en el medio', async () => {
+  const cambios: ChangeRequest[] = [];
+  servirConfig(() => snapshot(1));
+  registrarCambios(cambios);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  await user.click(await screen.findByRole('switch', { name: LECTURA }));
+
+  // Nada de «¿seguro?»: la mutación viaja con el clic.
+  await waitFor(() => expect(cambios).toHaveLength(1));
+  expect(cambios[0]).toEqual({
+    dry_run: false,
+    expected_revision: 1,
+    mutation: {
+      resource: 'acl_edge', action: 'update', from_tenant: 'Steven', to_tenant: 'Miguel',
+      value: { allow_read: true },
+    },
+  });
+  expect(screen.queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument();
+});
+
+// --- EL CONTROL NEGATIVO ----------------------------------------------------------------------
+
+it('CONTROL NEGATIVO: si el servidor RECHAZA, el interruptor vuelve SOLO a su valor anterior', async () => {
+  servirConfig(() => snapshot(1));
+  server.use(http.post('*/v3/console/config/changes', () => HttpResponse.json(
+    { error: 'conflict', message: 'acl edge has active deliveries' },
+    { status: 409 },
+  )));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  const lectura = await screen.findByRole('switch', { name: LECTURA });
+  expect(lectura).not.toBeChecked();
+  await user.click(lectura);
+
+  // Lo único que no se puede negociar: el estado pintado vuelve a ser el que la base tiene.
+  await waitFor(() => expect(screen.getByRole('switch', { name: LECTURA })).not.toBeChecked());
+
+  // Y el motivo es EL DEL SERVIDOR, no un «no se pudo aplicar» inventado por la consola.
+  const alerta = await screen.findByRole('alert');
+  expect(alerta).toHaveTextContent('acl edge has active deliveries');
+  expect(alerta).toHaveTextContent(/no se aplicó/i);
+  expect(alerta).toHaveTextContent(/volvió solo/i);
+  expect(screen.getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
+});
+
+it('CONTROL NEGATIVO: tras un 4xx NINGÚN interruptor de la tabla queda en estado optimista', async () => {
+  // Barrido: no alcanza con mirar el que se pulsó. Si el mapa optimista se limpiara mal, un
+  // interruptor VECINO podría quedar pintado con un valor que nadie guardó.
+  servirConfig(() => snapshot(1, { enabled: true, allow_route: true, allow_read: false, allow_control: false }));
+  server.use(http.post('*/v3/console/config/changes', () => HttpResponse.json(
+    { error: 'forbidden', message: 'control permission is required' },
+    { status: 403 },
+  )));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  const esperado = new Map([
+    ['Habilitado en la arista Steven → Miguel', true],
+    [RUTA, true],
+    [LECTURA, false],
+    [CONTROL, false],
+  ]);
+
+  for (const nombre of esperado.keys()) {
+    await user.click(screen.getByRole('switch', { name: nombre }));
+    await screen.findByRole('alert');
+    for (const [otro, valor] of esperado) {
+      const interruptor = screen.getByRole('switch', { name: otro });
+      if (valor) expect(interruptor).toBeChecked();
+      else expect(interruptor).not.toBeChecked();
+    }
+  }
+});
+
+it('«Reintentar» vuelve a mandar la MISMA mutación, no una distinta', async () => {
+  const cambios: ChangeRequest[] = [];
+  servirConfig(() => snapshot(1));
+  let fallar = true;
+  registrarCambios(cambios, () => (fallar
+    ? HttpResponse.json({ error: 'internal', message: 'store unavailable' }, { status: 500 })
+    : HttpResponse.json({ applied: true, dry_run: false, revision: 2, summary: 'ok' }, { status: 201 })));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  await user.click(await screen.findByRole('switch', { name: LECTURA }));
+  await screen.findByRole('alert');
+  expect(screen.getByRole('switch', { name: LECTURA })).not.toBeChecked();
+
+  fallar = false;
+  await user.click(screen.getByRole('button', { name: /reintentar/i }));
+  await waitFor(() => expect(cambios).toHaveLength(2));
+  expect(cambios[1]?.mutation).toEqual(cambios[0]?.mutation);
+});
+
+it('mientras la escritura vuela, el interruptor pinta lo pedido y lo declara con aria-busy', async () => {
+  servirConfig(() => snapshot(1));
+  let soltar: (() => void) | undefined;
+  const trabada = new Promise<void>((resolve) => { soltar = resolve; });
+  server.use(http.post('*/v3/console/config/changes', async () => {
+    await trabada;
+    return HttpResponse.json({ applied: true, dry_run: false, revision: 2, summary: 'ok' }, { status: 201 });
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  await user.click(await screen.findByRole('switch', { name: LECTURA }));
+  // El estado nuevo se ve al instante —eso es lo optimista— PERO dice que todavía no está
+  // confirmado: sin el `aria-busy` un valor sin comprobar se ve idéntico a uno guardado.
+  await waitFor(() => expect(screen.getByRole('switch', { name: LECTURA })).toBeChecked());
+  expect(screen.getByRole('switch', { name: LECTURA })).toHaveAttribute('aria-busy', 'true');
+
+  soltar?.();
+  await waitFor(() => expect(screen.getByRole('switch', { name: LECTURA })).not.toHaveAttribute('aria-busy'));
+});
+
+it('si el servidor guarda pero la RELECTURA falla, no se afirma que la tabla esté al día', async () => {
+  let releer = false;
+  server.use(http.get('*/v3/console/config', () => (releer
+    ? HttpResponse.json({ error: 'internal', message: 'snapshot unavailable' }, { status: 500 })
+    : HttpResponse.json(snapshot(1)))));
+  server.use(http.post('*/v3/console/config/changes', () => {
+    releer = true;
+    return HttpResponse.json({ applied: true, dry_run: false, revision: 2, summary: 'ok' }, { status: 201 });
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  await user.click(await screen.findByRole('switch', { name: LECTURA }));
+  expect(await screen.findByText(/la relectura del snapshot NO llegó/i)).toBeInTheDocument();
+});
+
+// --- La única confirmación que queda -----------------------------------------------------------
+
+it('quitar Control SÍ confirma, y cancelar no manda nada ni mueve el interruptor', async () => {
+  const cambios: ChangeRequest[] = [];
+  servirConfig(() => snapshot(1, { allow_control: true }));
+  registrarCambios(cambios);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  await user.click(await screen.findByRole('switch', { name: CONTROL }));
+  expect(cambios).toEqual([]);
+  expect(screen.getByRole('switch', { name: CONTROL })).toBeChecked();
+  expect(screen.getByText(/no vas a poder devolvértelo desde acá/i)).toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: /^cancelar$/i }));
+  expect(cambios).toEqual([]);
+  expect(screen.getByRole('switch', { name: CONTROL })).toBeChecked();
+
+  await user.click(screen.getByRole('switch', { name: CONTROL }));
+  await user.click(screen.getByRole('button', { name: /^quitar control$/i }));
+  await waitFor(() => expect(cambios).toHaveLength(1));
+  expect(cambios[0]?.mutation).toMatchObject({ value: { allow_control: false } });
+});
+
+it('CONCEDER Control no confirma nada: se deshace con otro clic en el mismo interruptor', async () => {
+  const cambios: ChangeRequest[] = [];
+  servirConfig(() => snapshot(1));
+  registrarCambios(cambios);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  await user.click(await screen.findByRole('switch', { name: CONTROL }));
+  await waitFor(() => expect(cambios).toHaveLength(1));
+  expect(cambios[0]?.mutation).toMatchObject({ value: { allow_control: true } });
+});
+
+// --- Espacios y miembros -----------------------------------------------------------------------
+
+it('«Espacios y miembros» pierde los treinta botones «Deshabilitar» y gana interruptores', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, ESPACIOS);
+  await screen.findByRole('heading', { name: 'Tenants' });
+
+  const area = screen.getByRole('tabpanel', { name: /espacios y miembros/i });
+  expect(within(area).queryAllByRole('button', { name: 'Deshabilitar' })).toHaveLength(0);
+  expect(within(area).queryAllByRole('button', { name: 'Habilitar' })).toHaveLength(0);
+  // 5 tenants + 8 rooms + 19 membresías del fixture de mocks.
+  expect(within(area).getAllByRole('switch').length).toBeGreaterThanOrEqual(32);
+
+  // Y las membresías apagadas del fixture se ven apagadas, no con un botón que dice «Habilitar».
+  expect(within(area).getByRole('switch', { name: 'Habilitado en la membresía Miguel/ops.miguel/atlas' }))
+    .not.toBeChecked();
+});
+
+it('«Alta rápida» y el wizard dejan de estar los dos abiertos: son dos modos del MISMO alta', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, ESPACIOS);
+
+  // Al entrar se ve UNO. El otro no está escondido: está a un clic, con el rótulo que dice cuándo
+  // conviene.
+  expect(await screen.findByRole('heading', { name: /alta rápida/i })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /wizard de espacios/i })).not.toBeInTheDocument();
+
+  // Segmentado, no pestaña: ver `AltaDeEspacios`.
+  await user.click(screen.getByRole('button', { name: /espacio completo/i }));
+  expect(await screen.findByRole('heading', { name: /wizard de espacios/i })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /alta rápida/i })).not.toBeInTheDocument();
+});
+
+it('el JSON crudo del alta deja de estar abierto por defecto', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, ESPACIOS);
+
+  const crudo = (await screen.findByLabelText('Mutación del alta')).closest('details');
+  expect(crudo).not.toBeNull();
+  expect(crudo).not.toHaveAttribute('open');
+});
+
+// --- Solo lectura --------------------------------------------------------------------------------
+
+it('sin config.write los interruptores se ven y quedan INERTES, con el motivo escrito', async () => {
+  server.use(http.get('*/v3/console/access', () => HttpResponse.json({
+    subject: 'Miguel:janus', roles: ['agent'], permissions: ['message.publish'],
+  })));
+  servirConfig(() => snapshot(1));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, PERMISOS);
+
+  // El dato se sigue viendo: un control ausente no distingue «no tengo permiso» de «esto no existe».
+  const lectura = await screen.findByRole('switch', { name: LECTURA });
+  expect(lectura).toBeInTheDocument();
+  expect(lectura).toBeDisabled();
+  expect(screen.getByText(/^Solo lectura:/)).toBeInTheDocument();
+});

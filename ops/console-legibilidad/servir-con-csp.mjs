@@ -10,7 +10,7 @@
  *   openssl req -x509 -newkey rsa:2048 -keyout llave.pem -out cert.pem -days 3 -nodes \
  *     -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1"
  *   CONSOLA_URL=https://consola.humanizar.tech \
- *     node ops/console-legibilidad/servir-con-csp.mjs apps/console/dist 5290 ./cert.pem ./llave.pem
+ *     node ops/console-legibilidad/servir-con-csp.mjs console/dist 5290 ./cert.pem ./llave.pem
  */
 import { createServer } from 'node:https';
 import { connect as tlsConnect } from 'node:tls';
