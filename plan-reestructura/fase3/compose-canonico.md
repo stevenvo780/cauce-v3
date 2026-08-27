@@ -47,4 +47,4 @@ Origen: reconciliación renderizada (`docker compose config`) entre `/opt/cauce-
 - Secretos: `/etc/cauce-v3/secrets/` (database_url, console_jwt_key, oidc_*, terminal-ticket.key, terminal-relay.{token,crt,key}, terminal-gateway-client.{crt,key}).
 - Binds de DIRECTORIO (rotación por rename atómico): `secrets/identities→/run/cauce-identities` · `terminal→/run/cauce-terminal` · `telegram-runtime→/run/cauce-telegram` · `/srv/cauce/media→/run/cauce-media`.
 - Higiene: sacar los `.bak` de identidad mTLS de DENTRO de los directorios montados (el propio compose lo prohíbe y hay 5); borrar `/etc/cauce-v3/compose-overrides/active.manifest/` (directorio vacío fósil).
-- D3 (dueño): correr desde el repo o desde /opt — cambia el source de 4 binds (`../ops/observability/*.yaml`, `./postgres-tls-entrypoint.sh`).
+- D3 — **RESUELTA por el dueño 27-08: desde el REPO, una sola fuente** ("tener duplicados repite los problemas de que no se aplican los cambios"). Los 4 binds (`../ops/observability/*.yaml`, `./postgres-tls-entrypoint.sh`) apuntan al checkout del repo; /opt deja de recibir copias.

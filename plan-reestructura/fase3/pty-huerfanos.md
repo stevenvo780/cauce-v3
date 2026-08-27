@@ -1,4 +1,6 @@
-# Kill-list de pty-agents huérfanos (censo 2026-08-27 04:26 UTC — NO ejecutado)
+# Kill-list de pty-agents huérfanos (censo 2026-08-27 04:26 UTC — NO ejecutado; SUPERSEDIDO)
+
+**ESTE CENSO QUEDÓ VIEJO — decisiones del dueño 27-08 noche**: el bucle se calmó (launcher arreglado, 0 conexiones/30min); `heraclito`/`tales` son de Jhon y están OPERATIVOS → **fuera de cualquier kill-list** (bloque B anulado); el bucle "dedalo/salva de otro host" era ficción de contextos contaminados (`salva` es de Isa, operativo; dedalo no existe). El kill-list vigente será `ordenes/reportes/minimax-huerfanos-v2.md` (en producción por MiniMax) — solo procesos demostrablemente muertos/duplicados de la flota real de 11 alias de este host. Lo de abajo queda como diagnóstico del bucle, no como lista ejecutable.
 
 Diagnóstico verificado: 24 procesos `cauce-pty-agent-*.py` en 10 contenedores para 10 clientes `docker exec` → 14 huérfanos. Todos los procesos de un alias comparten certificado → el relay los expulsa mutuamente (`superseded`) en bucle: **502 conexiones/min medidas**, ley exacta churn ≈ (N−1)×106 conex/3min. Tres oleadas de lanzamiento (25-ago 13:54, 26-ago 23:07, 27-ago 00:01) explican los N=4 de argos/atlas.
 
