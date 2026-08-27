@@ -14,9 +14,6 @@ const downPath = new URL(`../migrations/down/${version}`, import.meta.url);
 const version035 = '035_agent_profile_runtime_adoption.sql';
 const up035Path = new URL(`../migrations/${version035}`, import.meta.url);
 const down035Path = new URL(`../migrations/down/${version035}`, import.meta.url);
-const version036 = '036_shadow_router_target_phase.sql';
-const up036Path = new URL(`../migrations/${version036}`, import.meta.url);
-const down036Path = new URL(`../migrations/down/${version036}`, import.meta.url);
 const version037 = '037_console_publish_intent_indexes.sql';
 const up037Path = new URL(`../migrations/${version037}`, import.meta.url);
 const down037Path = new URL(`../migrations/down/${version037}`, import.meta.url);
@@ -29,19 +26,15 @@ let up: string;
 let down: string;
 let up035: string;
 let down035: string;
-let up036: string;
-let down036: string;
 let up037: string;
 let down037: string;
 
 beforeAll(async () => {
-  [up, down, up035, down035, up036, down036, up037, down037] = await Promise.all([
+  [up, down, up035, down035, up037, down037] = await Promise.all([
     readFile(upPath, 'utf8'),
     readFile(downPath, 'utf8'),
     readFile(up035Path, 'utf8'),
     readFile(down035Path, 'utf8'),
-    readFile(up036Path, 'utf8'),
-    readFile(down036Path, 'utf8'),
     readFile(up037Path, 'utf8'),
     readFile(down037Path, 'utf8'),
   ]);
@@ -102,10 +95,6 @@ async function restoreLatestSchema(): Promise<void> {
   await markApplied();
   if (!await profileLayerExists()) await pool.query(up035);
   await mark035Applied();
-  if (!await shadowPhaseExists()) await pool.query(up036);
-  await pool.query(
-    `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version036],
-  );
   if (!await consolePublishIndexesExist()) await pool.query(up037);
   await markConsolePublishIndexesApplied();
 }
@@ -136,28 +125,11 @@ async function removeLatestConsolePublishIndexes(): Promise<void> {
   else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version037]);
 }
 
-async function shadowPhaseExists(): Promise<boolean> {
-  const result = await pool.query<{ exists: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1 FROM information_schema.columns
-        WHERE table_schema='public' AND table_name='shadow_router_inbox'
-          AND column_name='claim_target_started'
-     ) AS exists`,
-  );
-  return result.rows[0]?.exists === true;
-}
-
-async function removeLatestShadowPhase(): Promise<void> {
-  if (await shadowPhaseExists()) await pool.query(down036);
-  else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version036]);
-}
-
 beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query('DELETE FROM terminal_sessions');
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
   await removeLatestConsolePublishIndexes();
-  await removeLatestShadowPhase();
   await removeLatestProfileLayer();
   if (await columnExists()) await pool.query(down);
   else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version]);

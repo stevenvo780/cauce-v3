@@ -16,15 +16,12 @@ const up034Path = new URL('../migrations/034_terminal_relay_instance_fencing.sql
 const down034Path = new URL('../migrations/down/034_terminal_relay_instance_fencing.sql', import.meta.url);
 const up035Path = new URL('../migrations/035_agent_profile_runtime_adoption.sql', import.meta.url);
 const down035Path = new URL('../migrations/down/035_agent_profile_runtime_adoption.sql', import.meta.url);
-const up036Path = new URL('../migrations/036_shadow_router_target_phase.sql', import.meta.url);
-const down036Path = new URL('../migrations/down/036_shadow_router_target_phase.sql', import.meta.url);
 const up037Path = new URL('../migrations/037_console_publish_intent_indexes.sql', import.meta.url);
 const down037Path = new URL('../migrations/down/037_console_publish_intent_indexes.sql', import.meta.url);
 const version032 = '032_terminal_session_claim_fencing.sql';
 const version033 = '033_terminal_browser_owner_fencing.sql';
 const version034 = '034_terminal_relay_instance_fencing.sql';
 const version035 = '035_agent_profile_runtime_adoption.sql';
-const version036 = '036_shadow_router_target_phase.sql';
 const version037 = '037_console_publish_intent_indexes.sql';
 const relayInstanceId = 'a'.repeat(64);
 const relayBootId = '11111111-1111-4111-8111-111111111111';
@@ -39,13 +36,11 @@ let up034: string;
 let down034: string;
 let up035: string;
 let down035: string;
-let up036: string;
-let down036: string;
 let up037: string;
 let down037: string;
 
 beforeAll(async () => {
-  [up, down, up033, down033, up034, down034, up035, down035, up036, down036, up037, down037] = await Promise.all([
+  [up, down, up033, down033, up034, down034, up035, down035, up037, down037] = await Promise.all([
     readFile(upPath, 'utf8'),
     readFile(downPath, 'utf8'),
     readFile(up033Path, 'utf8'),
@@ -54,8 +49,6 @@ beforeAll(async () => {
     readFile(down034Path, 'utf8'),
     readFile(up035Path, 'utf8'),
     readFile(down035Path, 'utf8'),
-    readFile(up036Path, 'utf8'),
-    readFile(down036Path, 'utf8'),
     readFile(up037Path, 'utf8'),
     readFile(down037Path, 'utf8'),
   ]);
@@ -73,7 +66,6 @@ beforeEach(async () => {
   await pool.query(`TRUNCATE TABLE terminal_sessions`);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
   await removeLatestConsolePublishIndexes();
-  await removeLatestShadowPhase();
   await removeLatestProfileLayer();
 });
 
@@ -93,7 +85,6 @@ async function markApplied(version: string): Promise<void> {
     [version033, up033],
     [version034, up034],
     [version035, up035],
-    [version036, up036],
     [version037, up037],
   ]).get(version);
   if (source === undefined) throw new Error(`missing migration source for ${version}`);
@@ -143,8 +134,6 @@ async function restoreLatestSchema(): Promise<void> {
   await markApplied(version034);
   if (!await profileLayerExists()) await pool.query(up035);
   await markApplied(version035);
-  if (!await shadowPhaseExists()) await pool.query(up036);
-  await markApplied(version036);
   if (!await consolePublishIndexesExist()) await pool.query(up037);
   await markApplied(version037);
 }
@@ -159,22 +148,6 @@ async function consolePublishIndexesExist(): Promise<boolean> {
 async function removeLatestConsolePublishIndexes(): Promise<void> {
   if (await consolePublishIndexesExist()) await pool.query(down037);
   else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version037]);
-}
-
-async function shadowPhaseExists(): Promise<boolean> {
-  const result = await pool.query<{ exists: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1 FROM information_schema.columns
-        WHERE table_schema='public' AND table_name='shadow_router_inbox'
-          AND column_name='claim_target_started'
-     ) AS exists`,
-  );
-  return result.rows[0]?.exists === true;
-}
-
-async function removeLatestShadowPhase(): Promise<void> {
-  if (await shadowPhaseExists()) await pool.query(down036);
-  else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version036]);
 }
 
 async function seedSession(claimed = false): Promise<string> {
@@ -389,7 +362,7 @@ describe('migration 032 terminal session claim fencing', () => {
 });
 
 describe('destructive migrations serialize with applyMigrations', () => {
-  it.each([version033, version034, version035, version036, version037])(
+  it.each([version033, version034, version035, version037])(
     '%s waits behind a successful forward apply and cannot leave the latest schema torn down',
     async (downVersion) => {
       // beforeEach deliberately places the database at schema 034 for the historical migration
@@ -407,7 +380,6 @@ describe('destructive migrations serialize with applyMigrations', () => {
         [version033]: down033,
         [version034]: down034,
         [version035]: down035,
-        [version036]: down036,
         [version037]: down037,
       };
       const source = sources[downVersion];
@@ -458,13 +430,12 @@ describe('destructive migrations serialize with applyMigrations', () => {
           `SELECT count(*)::text AS count
              FROM schema_migrations
             WHERE version = ANY($1::text[])`,
-          [[version033, version034, version035, version036, version037]],
+          [[version033, version034, version035, version037]],
         );
-        expect(versions.rows[0]?.count).toBe('5');
+        expect(versions.rows[0]?.count).toBe('4');
         await expect(terminalColumnExists('request_id')).resolves.toBe(true);
         await expect(terminalColumnExists('relay_instance_id')).resolves.toBe(true);
         await expect(profileLayerExists()).resolves.toBe(true);
-        await expect(shadowPhaseExists()).resolves.toBe(true);
         await expect(consolePublishIndexesExist()).resolves.toBe(true);
       } finally {
         if (blockerOpen) await blocker.query('ROLLBACK').catch(() => undefined);

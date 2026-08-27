@@ -66,8 +66,8 @@ describe('direct migration CLI production tombstone', () => {
     expect(result.stderr).not.toContain('DATABASE_URL is required');
   });
 
-  it('preserves the root migrate-dev target for explicit test environments', () => {
-    const result = spawnSync('make', ['--silent', 'migrate-dev'], {
+  it('preserves the migrate:dev script for explicit test environments', () => {
+    const result = spawnSync('pnpm', ['migrate:dev'], {
       cwd: repository,
       encoding: 'utf8',
       env: executableEnvironment('test'),

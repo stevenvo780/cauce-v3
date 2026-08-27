@@ -17,7 +17,6 @@ const laterVersions = [
   '033_terminal_browser_owner_fencing.sql',
   '034_terminal_relay_instance_fencing.sql',
   '035_agent_profile_runtime_adoption.sql',
-  '036_shadow_router_target_phase.sql',
   '037_console_publish_intent_indexes.sql',
 ] as const;
 
@@ -46,8 +45,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetTestDatabase(pool);
-  // Migration 031 can only be rolled back before any later schema. Exercise that real state,
-  // rather than deleting ledger rows while leaving 032-036 objects installed.
+  // Migration 031 can only be rolled back before any later schema. Exercise that real state.
   await pool.query('TRUNCATE TABLE terminal_sessions');
   for (let index = laterVersions.length - 1; index >= 0; index -= 1) {
     const version = laterVersions[index]!;
@@ -68,7 +66,7 @@ afterEach(async () => {
      ) AS exists`,
   );
   // Rebuild through the canonical migrator so the DDL, schema_migrations and atomic source
-  // ledger are restored as one contract. Manual up+INSERT here used to leave 031-036 applied
+  // ledger are restored as one contract. Manual up+INSERT here used to leave later migrations
   // without their source hashes, contaminating a reusable cauce_test database after a green run.
   if (tokenColumn.rows[0]?.exists === true) {
     await pool.query(down);

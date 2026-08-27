@@ -348,6 +348,8 @@ describe('gateway selective durable wake routing', () => {
     const telemetry = new WakePumpTelemetry();
     let enabled = false;
     let emitted = false;
+    let connection: Awaited<ReturnType<typeof connect>> | undefined = undefined;
+    let wakeObservedBeforeAck = false;
     repository.claimWakeOutbox = vi.fn<GatewayRepository['claimWakeOutbox']>(async (worker, recipients) => {
       if (!enabled || emitted) return [];
       emitted = true;
@@ -355,12 +357,18 @@ describe('gateway selective durable wake routing', () => {
       return [wakeEvent(worker, recipient.tenant_id, recipient.alias)];
     });
     repository.ackOutbox = vi.fn<NonNullable<GatewayRepository['ackOutbox']>>(
-      async () => ({ status: 'sent', applied: false })
+      async () => {
+        await waitFor(() => {
+          wakeObservedBeforeAck = connection !== undefined && sawWake(connection);
+          return wakeObservedBeforeAck;
+        });
+        return { status: 'sent', applied: false };
+      }
     );
     const complete = vi.mocked(repository.completeOutbox!);
     const { app, port } = await start(repository, { wakePumpTelemetry: telemetry });
     const error = vi.spyOn(app.log, 'error');
-    const connection = await connect(port, 'Steven', 'kant', 'fenced-ack');
+    connection = await connect(port, 'Steven', 'kant', 'fenced-ack');
 
     enabled = true;
     await waitFor(() => sawWake(connection));
@@ -370,6 +378,7 @@ describe('gateway selective durable wake routing', () => {
       && reason.code === 'fenced'
       && reason.message === 'wake outbox ACK was fenced'));
     expect(sawWake(connection)).toBe(true);
+    expect(wakeObservedBeforeAck).toBe(true);
     expect(complete).not.toHaveBeenCalled();
     const fencedSnapshot = telemetry.snapshot();
     expect(typeof fencedSnapshot.lastProgressAtMs).toBe('number');
