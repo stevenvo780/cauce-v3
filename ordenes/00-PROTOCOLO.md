@@ -15,7 +15,7 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3`. La
 2. **`git add` solo por rutas propias.** PROHIBIDO `git add -A`, `git add .` y `git commit -a`: barren el trabajo a medias de otra instancia. Se añade fichero a fichero (o por directorio propio).
 3. **Commit pequeño e inmediato** tras el gate: nada de acumular horas de cambios sin commitear en el árbol compartido.
 4. **Gate ANTES de cada commit** que toque código: `main` nunca queda en rojo. Commits que solo tocan `.md` no requieren gate completo.
-5. Si `git commit` falla por lock o el árbol cambió bajo tus pies: espera y reintenta; nunca hagas `reset`/`checkout` sobre ficheros que no son tuyos.
+5. Si `git commit` falla por lock o el árbol cambió bajo tus pies: espera y reintenta; nunca hagas `reset`/`checkout` sobre ficheros que no son tuyos. **PROHIBIDO `git clean`, `git reset --hard` y `git stash` en el checkout compartido** — un clean ya destruyó dos veces ficheros recién creados de otra instancia, y un reset ajeno reescribió la historia local.
 6. **Commitea SIEMPRE con pathspec: `git commit <tus rutas> -m "..."`** — así el commit incluye SOLO tus rutas aunque haya cosas ajenas staged en el índice compartido. `git commit -m` a secas se lleva TODO el índice (ya barrió trabajo ajeno tres veces, una de ellas sin gate). `git diff --cached --stat` antes, para saber qué hay.
 7. **Nunca dejes nada staged sin commitear al terminar tu turno** — un stage huérfano es una mina para el siguiente commit de cualquiera.
 
