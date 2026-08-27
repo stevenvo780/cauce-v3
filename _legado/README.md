@@ -36,8 +36,9 @@ como "lo que NO debe haber".
 
 ### 3. `ops-scripts/` — maquinaria de release retirada (origen: purga 27-08 + refinamientos rondas 4/6)
 
-25 ficheros de la "maquinaria de release": 19 movidos en `bf63fbc`/`da1b4af`,
-`validate-terminal-release.py` retirado en `d0ae77b` y cinco residuos finales incorporados después.
+25 ficheros de la "maquinaria de release": 19 movidos en `daf2162`/`bf63fbc`,
+sus tests partidos o movidos en `da1b4af`, `validate-terminal-release.py` retirado en `d0ae77b`
+y cinco residuos finales incorporados después.
 **~19.589 líneas**; **0 despliegues logrados en su historia**; su gate exigía evidencia imposible
 (digest que caduca con cualquier commit). Se reemplaza por `deploy/deploy.sh` simple
 (`plan-reestructura/31-despliegue-simple.md`).
@@ -129,6 +130,8 @@ Detalle: ningún test de `_legado/tests/` se ejecuta desde `make validate`, `pnp
 | Fichero | Ref | Resuelve |
 |---|---|---|
 | `ops/runbooks/backup-restore.md` L27, L177 | `./scripts/restore.sh` | `restore.sh` está en `_legado/ops-scripts/`; el runbook se reescribe en FASE 3 (`plan-reestructura/31`) |
+| `ops/INSTALLATION.md`; `ops/runbooks/systemd.md` | `release-gate.sh` | El gate está en `_legado/ops-scripts/`; la instalación y el runbook se reescriben en FASE 3 (`plan-reestructura/31`) |
+| `ops/runbooks/systemd.md`; `ops/runbooks/alias-cutover.md`; `ops/runbooks/container-adapters.md` | `cutover-rollback.sh` | El cutover está en `_legado/ops-scripts/`; los runbooks se reescriben en FASE 3 (`plan-reestructura/31`) |
 | `deploy/compose.yaml` | declaraba `relay-worker`, `shadow-router`, `shadow-guard` (en profiles nunca encendidos) | Se reescribe en FASE 3 (`plan-reestructura/31`); hoy ya está canónico (`00f8e6e`) |
 | `ops/scripts/stack-health.sh`, `fault-compose.sh`, `smoke-runtime-authentic.sh`, `tests/unit/relay-telegram-observability.test.ts` | mencionan los servicios por nombre de compose (strings), no por import | Siguen funcionando; el ref sigue siendo válido como cadena literal |
 
