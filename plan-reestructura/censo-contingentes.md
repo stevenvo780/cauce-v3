@@ -59,3 +59,6 @@ Resueltos en ronda 6 por minimax: 6 schemas sin consumidor (`dlq-no-replay-resol
 - `ops/tests/{test_alias_lock_exec.py, test_config_por_alias_supervisor.py, test_container_runtime_zombies.py, test_schema_error_sanitization.py, test_verify_hermes_runtime.py}` — huérfanos; sin runner (validate.sh/Makefile/package.json/CI/pytest.ini/pyproject.toml = 0).
 - `deploy/liveness-probe.mjs` — 0 referencias en compose*.yaml, deploy/Dockerfile (no en su lista COPY) ni ops/scripts/*. Docker CLI ni `runtime-package-smoke.mjs` lo invocan.
 - `Makefile` — `make <target>` aparece 0 veces fuera del propio Makefile (excluyendo docs/bitácora); `.github/workflows/ci.yml` llama a `make validate` pero esa también la exporta `npm run validate`.
+
+
+**Correcciones P12/P16 (27-08 tarde):** de los 3 schemas de telegram-replay, solo `dlq-safe-list` sigue vivo — los 2 `telegram-*-request` se borraron (0 consumidores). Alertmanager (D2): SÍ se ejercita a medias (ops/tests/test_provision_alertmanager_config.py corre en validate.sh) — la decisión D2 sigue en el dueño pero con ese dato. `ops/tests/container-supervisor.test.mjs` NO es huérfano: lo invoca `package.json` test:container-supervisor — dueño: Claude+FASE3 (container-runtime).

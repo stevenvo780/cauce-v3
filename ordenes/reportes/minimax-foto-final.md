@@ -1,6 +1,6 @@
 # Foto final del repo vivo — ronda 7 minimax (post-descontaminación)
 
-Métricas medidas con `wc -l` sobre `main` (HEAD = `73e533c` + cambios locales de docs). **61 ficheros fuente >800 líneas** sobreviven en el árbol vivo. La cuarentena ya no existe (`_legado/` borrado en `73e533c`); el índice de lo retirado vive en `docs/bitacora/legado-indice.md`.
+Métricas medidas con `wc -l` sobre `main` (HEAD = `73e533c` + cambios locales de docs). **61 ficheros fuente >800 líneas** sobreviven en el árbol vivo. La cuarentena ya no existe (`_legado/` borrado en `73e533c`); el índice de lo retirado vive en `el historial de git (--diff-filter=AD)`.
 
 ## (a) Tabla de TODOS los ficheros fuente >800 líneas que quedan en el repo vivo
 
@@ -103,7 +103,7 @@ Para los números exactos de particiones (mudanza byte-pura, sin borrado de lín
 
 ## (c) Los 3 números del día
 
-1. **Cuánto se movió a `_legado/`**: **0**. `_legado/` se BORRÓ ENTERO en `73e533c` (decisión del dueño: `git rm` + evidencia). El histórico de lo que llegó a estar en cuarentena está en `docs/bitacora/legado-indice.md` (25 ops-scripts + 6 schemas + 2 servicios + rollback-bridge + 52 contingentes + 33 tests + 4 informes de `basura/`, ~185 ficheros y ~50K líneas, recuperables por `git log --diff-filter=AD` o el bundle del 27-08).
+1. **Cuánto se movió a `_legado/`**: **0**. `_legado/` se BORRÓ ENTERO en `73e533c` (decisión del dueño: `git rm` + evidencia). El histórico de lo que llegó a estar en cuarentena está en `el historial de git (--diff-filter=AD)` (25 ops-scripts + 6 schemas + 2 servicios + rollback-bridge + 52 contingentes + 33 tests + 4 informes de `basura/`, ~185 ficheros y ~50K líneas, recuperables por `git log --diff-filter=AD` o el bundle del 27-08).
 2. **Cuánto se partió**: **`repository.ts` (11.002 → 42 fachada + 9 módulos ~7,5K)** + **gateway monolito → `app.ts` 408 + 4 routes/* + `console/*` + `terminal/*`** + **`pty-session.ts` 1017 → 6 + `OperatorWorkspace.tsx` 1383 → 8 + 4 módulos CSS + 6 live.css** + **`health.ts` 1375 (Codex subagente D lo está partiendo; sigue >800 hoy)** + **8 commits de store (observabilidad, outbox, jobs, cola, agents/fanin, agents/chain-control, config, messages) + 6 commits de gateway (core, console, relay-proxy, session-control, health, legado-candidato, governance-probes, shared)**. Total: 24 commits de carpintería + el borrado.
 3. **Cuánto queda >800**: **61 ficheros / 315.277 líneas** (41 fuente + 20 test; tabla arriba). Los 41 fuente se reparten: Codex 25 · Gemini 11 · Claude+FASE 3 4 · **DUEÑO 3**. Los 20 test: Codex 13 · Gemini 5 · Claude+FASE 3 1 · **DUEÑO 1**.
 

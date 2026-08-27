@@ -93,7 +93,7 @@ acredita ejecución de prompts. El wrapper Testcontainers conserva cada corrida 
 
 La suite QA `compose-authentic`/`runtime-authentic` y la maquinaria de evidencia de release se
 retiraron porque dependían de servicios ya eliminados. No existe en este árbol un reemplazo que
-acredite binarios/imágenes finales; ver `docs/bitacora/legado-indice.md`.
+acredite binarios/imágenes finales; ver `el historial de git (--diff-filter=AD)`.
 
 ## Seguridad y recuperación
 
