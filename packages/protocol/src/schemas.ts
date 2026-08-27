@@ -155,7 +155,8 @@ export const AttachmentContentSchema = z.object({
   file_size: z.number().int().positive().max(MAX_ATTACHMENT_BYTES),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   content_base64: z.string().max(Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4)
-    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u)
+    .regex(/^[A-Za-z0-9+/]*={0,2}$/u)
+    .refine((value) => value.length % 4 === 0, 'attachment content is not valid base64')
 }).strict().superRefine((attachment, context) => {
   const extension = attachment.name.toLowerCase().match(/\.[^.]+$/u)?.[0];
   // Mapeo de tipo MIME a extensiones admitidas y categoría (image | document).

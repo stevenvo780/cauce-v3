@@ -9,7 +9,8 @@ import {
   ConsolePublishIntentPrepareResultSchema, ConsolePublishIntentPrepareSchema,
   ConsolePublishIntentReconciliationSchema,
   consolePublishIntentRequestedHash, consolePublishIntentSemanticHash,
-  MAX_ATTACHMENTS_TOTAL_BYTES, MAX_DELEGATION_FEEDBACK_ITEMS,
+  AttachmentContentSchema, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_TOTAL_BYTES,
+  MAX_DELEGATION_FEEDBACK_ITEMS,
   ProviderAccountConfigMutationSchema, PublishMessageSchema,
   ProfileRuntimeAdoptionEvidenceSchema, ProfileRuntimeContractSchema,
   publishReceiptCausalHash, publishRequestHash, PublishResultSchema, WsOutboundSchema
@@ -315,6 +316,35 @@ describe('attachment transport contract', () => {
       ...publishBase, body: { attachments_v1: Array.from({ length: 5 }, () => attachment) }
     }).success).toBe(false);
     expect(MAX_ATTACHMENTS_TOTAL_BYTES).toBe(10_000_000);
+  });
+
+  it.each(['QQ=', 'Q===', 'QQ=Q'])(
+    'rejects invalid base64 length or padding: %s',
+    (content_base64) => {
+      const result = AttachmentContentSchema.safeParse({
+        ...attachment, file_size: 1, content_base64
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ['content_base64'] }));
+      }
+    }
+  );
+
+  it('validates a maximum-sized base64 attachment without throwing', () => {
+    const payload = Buffer.alloc(MAX_ATTACHMENT_BYTES, 0x41);
+    const largeAttachment = {
+      ...attachment,
+      file_size: payload.length,
+      content_base64: payload.toString('base64')
+    };
+    let result: ReturnType<typeof PublishMessageSchema.safeParse> | undefined;
+    expect(() => {
+      result = PublishMessageSchema.safeParse({
+        ...publishBase, body: { attachments_v1: [largeAttachment] }
+      });
+    }).not.toThrow();
+    expect(result?.success).toBe(true);
   });
 });
 
