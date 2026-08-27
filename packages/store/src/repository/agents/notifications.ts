@@ -5,7 +5,7 @@ import { withTransaction } from '../../db.js';
 import { AgentChainControlRepository } from './chain-control.js';
 import { sha256 } from '../config.js';
 import {
-  handlePattern, maxNotifyBodyBytes, notifyKinds, postgresTextSafe,
+  handlePattern, maxNotifyBodyBytes, notifyKinds,
   type AgentNotifyEntry, type NotifyDenialCode
 } from '../deliveries.js';
 import type { DeliveryRow } from '../observability.js';
@@ -84,48 +84,6 @@ function agentNotifyRequestId(deliveryId: string, attempt: number, notifyIndex: 
 }
 
 export abstract class AgentNotificationsRepository extends AgentChainControlRepository {
-
-  /**
-   * `renewal` separa el latido de la transición de estado, y esa distinción es la que hace
-   * posible la retención por tipo: un ACK que sólo dice "sigo vivo" no tiene valor forense
-   * pasadas unas horas, y es ~90% del volumen de la tabla. Uno que dice "pasé de accepted a
-   * started" o "terminé" sí lo tiene y se conserva mucho más. Se marca acá, en el único lugar
-   * que sabe con certeza cuál es cuál (la rama de renovación de `ackDelivery`), en vez de
-   * inferirlo después con una función de ventana sobre la tabla entera.
-   *
-   * `DO UPDATE ... WHERE` en vez de `DO NOTHING`: el mismo evento puede ser rechazado primero y
-   * aceptado después (un ACK terminal reenviado que la segunda vez cae en el rescate tardío, o
-   * uno que falló por lease y se reintenta con el lease ya renovado). La fila tiene que quedar
-   * diciendo la verdad. La cláusula sólo deja subir de `false` a `true`, nunca al revés, y
-   * cuando el ACK se rechaza otra vez el UPDATE no se ejecuta: idéntico al `DO NOTHING` viejo.
-   */
-  protected override async insertAck(
-    client: DatabaseClient,
-    row: DeliveryRow,
-    ack: Ack,
-    applied: boolean,
-    persistedResult: Record<string, unknown> | undefined,
-    renewal = false
-  ): Promise<void> {
-    await client.query(
-      `INSERT INTO delivery_acks(event_id,delivery_id,status,instance_id,epoch,claim_token,attempt,applied,renewal,payload)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$10,$9::jsonb)
-       ON CONFLICT(event_id) DO UPDATE
-         SET applied=true,renewal=EXCLUDED.renewal,payload=EXCLUDED.payload
-         WHERE delivery_acks.applied=false AND EXCLUDED.applied`,
-      [ack.event_id, row.id, ack.status, ack.instance_id, ack.epoch, ack.claim_token, ack.attempt, applied,
-        JSON.stringify({
-          retryable: ack.retryable,
-          ...(postgresTextSafe(ack.error) === undefined
-            ? {}
-            : { error: postgresTextSafe(ack.error) }),
-          ...(postgresTextSafe(ack.error_code) === undefined
-            ? {}
-            : { error_code: postgresTextSafe(ack.error_code) }),
-          ...(persistedResult === undefined ? {} : { result: persistedResult })
-        }), renewal]
-    );
-  }
 
   /**
    * The single authorization engine for proactive egress. Both surfaces (the
