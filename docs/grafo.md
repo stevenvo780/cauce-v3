@@ -6,7 +6,7 @@ Generado por `pnpm grafo` (determinista — regenerar tras reordenar). Nodo = di
 
 ```mermaid
 graph LR
-  scripts __> apps_console
+  scripts __> console
   scripts __> packages_adapter_sdk
   scripts __> packages_store
   packages_store __> packages_protocol
@@ -24,17 +24,17 @@ graph LR
   scripts __> ops_tests
   ops_tests __> ops_scripts
   scripts __> tests_gateway_hardening
+  console __> packages_store
   scripts __> tests_unit
-  apps_console __> packages_store
   scripts __> deploy_runtime
   tests_unit __> ops_observability
   scripts __> packages_protocol
   scripts __> ops_guardias
   tests_unit __> packages_protocol
+  console __> packages_protocol
   services_telegram_bridge __> packages_store
   services_telegram_bridge __> packages_protocol
   tests_store_hardening __> packages_store
-  apps_console __> packages_protocol
   ops_scripts __> deploy
   scripts __> tests_terminal_pty
   tests_gateway_hardening __> packages_protocol
@@ -42,8 +42,8 @@ graph LR
   tests_store_hardening __> tests_helpers
   tests_store_hardening __> services_gateway
   tests_unit __> packages_adapter_sdk
-  apps_console __> services_gateway
-  apps_console __> packages_adapter_sdk
+  console __> services_gateway
+  console __> packages_adapter_sdk
   scripts __> tests_store_hardening
   services_dispatcher __> packages_store
   tests_e2e __> services_gateway
@@ -73,9 +73,9 @@ graph LR
   tests_e2e __> tests_helpers
   tests_gateway_hardening __> tests_helpers
   tests_unit __> ops_schemas
-  apps_console __> ops_console_legibilidad
+  console __> ops_console_legibilidad
   ops_scripts __> packages_adapter_sdk
-  ops_scripts __> apps_console
+  ops_scripts __> console
   ops_scripts __> ops_observability
   ops_tests __> tests_helpers
   ops_tests __> ops_schemas
@@ -105,7 +105,7 @@ graph LR
 
 | Desde | Hacia | Refs |
 |---|---|---|
-| scripts | apps/console | 135 |
+| scripts | console | 135 |
 | scripts | packages/adapter-sdk | 124 |
 | scripts | packages/store | 82 |
 | packages/store | packages/protocol | 78 |
@@ -123,17 +123,17 @@ graph LR
 | scripts | ops/tests | 23 |
 | ops/tests | ops/scripts | 18 |
 | scripts | tests/gateway-hardening | 17 |
+| console | packages/store | 16 |
 | scripts | tests/unit | 15 |
-| apps/console | packages/store | 14 |
 | scripts | deploy/runtime | 13 |
 | tests/unit | ops/observability | 13 |
 | scripts | packages/protocol | 11 |
 | scripts | ops/guardias | 11 |
 | tests/unit | packages/protocol | 11 |
+| console | packages/protocol | 10 |
 | services/telegram-bridge | packages/store | 10 |
 | services/telegram-bridge | packages/protocol | 10 |
 | tests/store-hardening | packages/store | 10 |
-| apps/console | packages/protocol | 9 |
 | ops/scripts | deploy | 9 |
 | scripts | tests/terminal-pty | 9 |
 | tests/gateway-hardening | packages/protocol | 9 |
@@ -141,8 +141,8 @@ graph LR
 | tests/store-hardening | tests/helpers | 9 |
 | tests/store-hardening | services/gateway | 8 |
 | tests/unit | packages/adapter-sdk | 8 |
-| apps/console | services/gateway | 7 |
-| apps/console | packages/adapter-sdk | 7 |
+| console | services/gateway | 7 |
+| console | packages/adapter-sdk | 7 |
 | scripts | tests/store-hardening | 7 |
 | services/dispatcher | packages/store | 7 |
 | tests/e2e | services/gateway | 7 |
@@ -172,9 +172,9 @@ graph LR
 | tests/e2e | tests/helpers | 3 |
 | tests/gateway-hardening | tests/helpers | 3 |
 | tests/unit | ops/schemas | 3 |
-| apps/console | ops/console-legibilidad | 2 |
+| console | ops/console-legibilidad | 2 |
 | ops/scripts | packages/adapter-sdk | 2 |
-| ops/scripts | apps/console | 2 |
+| ops/scripts | console | 2 |
 | ops/scripts | ops/observability | 2 |
 | ops/tests | tests/helpers | 2 |
 | ops/tests | ops/schemas | 2 |
@@ -205,7 +205,7 @@ graph LR
 | deploy/runtime | services/telegram-bridge | 1 |
 | deploy/runtime | services/terminal-relay | 1 |
 | ops | ops/harness | 1 |
-| ops/console-legibilidad | apps/console | 1 |
+| ops/console-legibilidad | console | 1 |
 | ops/guardias | ops/scripts | 1 |
 | ops/pty-agent | services/gateway | 1 |
 | ops/scripts | ops/pty-agent | 1 |
@@ -232,7 +232,7 @@ graph LR
 | scripts | tests/helpers | 1 |
 | scripts | deploy/postgres | 1 |
 | services/dispatcher | deploy | 1 |
-| services/gateway | apps/console | 1 |
+| services/gateway | console | 1 |
 | services/terminal-relay | tests/terminal-pty | 1 |
 | tests/e2e | packages/adapter-sdk | 1 |
 | tests/e2e | services/dispatcher | 1 |
@@ -252,32 +252,32 @@ graph LR
 | tests/unit | deploy/console | 1 |
 | tests/unit | ops/harness | 1 |
 | tests/unit | tests/e2e | 1 |
-| tests/unit | apps/console | 1 |
+| tests/unit | console | 1 |
 | (raiz) | packages/protocol | 1 |
 | (raiz) | packages/adapter-sdk | 1 |
 
 ## Hubs (los 15 ficheros más referenciados)
 
-- packages/protocol/src/index.ts ← 176
+- packages/protocol/src/index.ts ← 177
 - packages/store/src/index.ts ← 133
-- apps/console/src/api/types.ts ← 119
+- console/src/api/types.ts ← 119
 - packages/adapter-sdk/src/sdk/types.ts ← 72
 - tests/helpers/postgres.ts ← 66
 - packages/store/src/db.ts ← 50
 - services/gateway/src/auth.ts ← 50
-- apps/console/src/components/ui.tsx ← 47
-- apps/console/src/mocks/server.ts ← 43
-- apps/console/src/test/render.tsx ← 41
-- apps/console/src/lib.ts ← 41
+- console/src/components/ui.tsx ← 47
+- console/src/mocks/server.ts ← 43
+- console/src/test/render.tsx ← 41
+- console/src/lib.ts ← 41
 - packages/adapter-sdk/src/sdk/durable-store.ts ← 33
 - services/telegram-bridge/src/types.ts ← 32
-- apps/console/src/api/context.tsx ← 30
-- apps/console/src/api/use-resource.ts ← 28
+- console/src/api/context.tsx ← 30
+- console/src/api/use-resource.ts ← 28
 
 ## Candidatos huérfanos (fuente sin UNA referencia entrante detectada — verificar antes de tocar)
 
-- apps/console/src/features/terminal/terminal.worker.ts
-- apps/console/src/main.tsx
+- console/src/features/terminal/terminal.worker.ts
+- console/src/main.tsx
 - ops/guardias/telegram-bridge.override.yaml
 - ops/manifests/argos.yaml
 - ops/manifests/atlas.yaml
@@ -308,7 +308,7 @@ graph LR
 
 | Nodo | Ficheros |
 |---|---|
-| apps/console | 285 |
+| console | 285 |
 | packages/adapter-sdk | 146 |
 | packages/store | 103 |
 | services/gateway | 95 |
