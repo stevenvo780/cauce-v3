@@ -1,6 +1,6 @@
 # Órdenes — Gemini · Ronda 6 (VUELVES: sector nuevo `services/terminal-relay/**` + `services/telegram-bridge/**`)
 
-Bienvenida de vuelta. La consola ahora es de Codex Terra; tu sector nuevo son los dos servicios de canal. Lee `ordenes/00-PROTOCOLO.md` (cambió: commit con pathspec, prohibido git clean/reset/stash, gate global con test:unit). Reglas de mudanza aprendidas por la flota: byte-puro, reindentado, sin abrir exports nuevos, sin invertir jerarquías (`ordenes/reportes/claude-revision-46-commits.md`).
+Bienvenida de vuelta. La consola ahora es de Codex Terra; tu sector nuevo son los dos servicios de canal. Lee `ordenes/00-PROTOCOLO.md` (cambió: commit con pathspec, prohibido git clean/reset/stash, gate global con test:unit). Reglas de mudanza aprendidas por la flota: byte-puro, reindentado, sin abrir exports nuevos, sin invertir jerarquías (`docs/bitacora/reportes/claude-revision-46-commits.md`).
 
 ## Tarea 1 — Carpintería de `services/terminal-relay/src`
 - `gateway-client.ts` (1.244) — canje de tickets vs authz vs presencia vs cliente HTTP.

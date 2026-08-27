@@ -318,19 +318,19 @@ ZONA ops/**+deploy/*+scripts/* (162 ficheros fuente .py/.sh/.mjs, sin contar tes
 | `docs/terminal-pty.md` | otro | 18.8K | conservar | runbook operativo del canal PTY (piernas del relay, mTLS, tags binarios), citado en 4 reportes de ronda, último commit 2 |
 | `docs/bitacora/ (528K, 51 ficheros trackeados)` | otro | 528K | conservar | 32 ficheros FUERA de bitacora citan rutas dentro de docs/bitacora/ como archivo activo (README.md, CLAUDE.md, AGENTS.md, |
 | `ordenes/reportes/claude-matriz-tests.md` | otro | 1.7K | conservar | ACTIVO: citado como insumo pendiente por ordenes/codex.md ('Ver ordenes/reportes/claude-matriz-tests.md §1') y por orden |
-| `ordenes/reportes/claude-revision-ola2.md` | otro | 97K | conservar | ACTIVO: la sección 'Cierre' de ordenes/codex.md (orden vigente) lista 5 tareas concretas aún abiertas que remiten a este |
-| `ordenes/reportes/claude-revision-46-commits.md` | otro | 57K | dudoso | única cita activa es puntual: docs/arquitectura.md línea 34 lo cita solo para verificar 'SQL intacto en la mudanza (§sto |
+| `docs/bitacora/reportes/claude-revision-ola2.md` | otro | 97K | conservar | ACTIVO: la sección 'Cierre' de ordenes/codex.md (orden vigente) lista 5 tareas concretas aún abiertas que remiten a este |
+| `docs/bitacora/reportes/claude-revision-46-commits.md` | otro | 57K | dudoso | única cita activa es puntual: docs/arquitectura.md línea 34 lo cita solo para verificar 'SQL intacto en la mudanza (§sto |
 | `ordenes/reportes/minimax-foto-final.md` | otro | 10.9K | conservar | ACTIVO: docs/arquitectura.md lo cita como fuente de 'trabajo pendiente de su sector' para los ficheros >800 líneas que q |
 | `ordenes/reportes/gemini-vistas-sin-uso.md` | otro | 4.5K | dudoso | decisión del dueño pendiente desde ronda2 (26-08), repetida como tarea CONDICIONAL sin resolver en ronda4 (docs/bitacora |
 | `ordenes/reportes/minimax-residuos-host.md` | otro | 11.0K | dudoso | inventario de residuos DEL HOST (fuera del repo, no verificable desde este censo por ser solo-lectura) por ~2,3GB recupe |
-| `ordenes/reportes/gemini-ronda-6.md` | otro | 0.6K | conservar | histórico resuelto: reporte de CIERRE de la ronda 6 (partición terminal-relay/telegram-bridge), distinto del fichero de  |
-| `ordenes/reportes/minimax-adr.md` | otro | 4.1K | conservar | histórico resuelto: verificación de ADR de ronda 2 (26-08), sin citas activas en ninguna orden ni doc vigente. Recomenda |
-| `ordenes/reportes/minimax-runbooks.md` | otro | 6.2K | conservar | histórico resuelto: verificación de runbooks vivos de ronda 2, sin citas activas. Recomendado git mv a docs/bitacora/. |
-| `ordenes/reportes/minimax-docs-sueltos.md` | otro | 5.0K | conservar | histórico resuelto: veredicto de ronda 3 sobre los docs sueltos ya APLICADO (docs/directiva-ficheros-del-agente.md y doc |
-| `ordenes/reportes/minimax-enlaces.md` | otro | 10.6K | conservar | histórico resuelto: barrido de enlaces de ronda 3, superado por su propia secuela minimax-enlaces-r5.md (ronda 5). Sin c |
-| `ordenes/reportes/minimax-enlaces-r5.md` | otro | 6.9K | conservar | histórico resuelto: barrido de enlaces post-mudanzas de ronda 4 (ronda 5, 26-08). La Tarea 5 VIGENTE de ordenes/opencode |
-| `ordenes/reportes/minimax-gitignore.md` | otro | 5.1K | conservar | histórico resuelto: auditoría de .gitignore de ronda 5, sin citas activas. Recomendado git mv a docs/bitacora/. |
-| `ordenes/reportes/minimax-todos.md` | otro | 3.3K | conservar | histórico/caduco por naturaleza: censo puntual de TODO/FIXME de ronda 5 ('0 marcadores reales' en esa fecha) — un grep c |
+| `docs/bitacora/reportes/gemini-ronda-6.md` | otro | 0.6K | conservar | histórico resuelto: reporte de CIERRE de la ronda 6 (partición terminal-relay/telegram-bridge), distinto del fichero de  |
+| `docs/bitacora/reportes/minimax-adr.md` | otro | 4.1K | conservar | histórico resuelto: verificación de ADR de ronda 2 (26-08), sin citas activas en ninguna orden ni doc vigente. Recomenda |
+| `docs/bitacora/reportes/minimax-runbooks.md` | otro | 6.2K | conservar | histórico resuelto: verificación de runbooks vivos de ronda 2, sin citas activas. Recomendado git mv a docs/bitacora/. |
+| `docs/bitacora/reportes/minimax-docs-sueltos.md` | otro | 5.0K | conservar | histórico resuelto: veredicto de ronda 3 sobre los docs sueltos ya APLICADO (docs/directiva-ficheros-del-agente.md y doc |
+| `docs/bitacora/reportes/minimax-enlaces.md` | otro | 10.6K | conservar | histórico resuelto: barrido de enlaces de ronda 3, superado por su propia secuela minimax-enlaces-r5.md (ronda 5). Sin c |
+| `docs/bitacora/reportes/minimax-enlaces-r5.md` | otro | 6.9K | conservar | histórico resuelto: barrido de enlaces post-mudanzas de ronda 4 (ronda 5, 26-08). La Tarea 5 VIGENTE de ordenes/opencode |
+| `docs/bitacora/reportes/minimax-gitignore.md` | otro | 5.1K | conservar | histórico resuelto: auditoría de .gitignore de ronda 5, sin citas activas. Recomendado git mv a docs/bitacora/. |
+| `docs/bitacora/reportes/minimax-todos.md` | otro | 3.3K | conservar | histórico/caduco por naturaleza: censo puntual de TODO/FIXME de ronda 5 ('0 marcadores reales' en esa fecha) — un grep c |
 | `plan-reestructura/21-correcciones-mapeadas.md` | otro | 3.8K | conservar | mezcla de ítems cerrados y abiertos, verificado línea a línea: ítem 1 (AbortSignal) CONFIRMADO arreglado en apps/console |
 | `plan-reestructura/00-LEEME.md` | otro | 5.8K | dudoso | CONTRADICCIÓN vigente confirmada: su sección 'URGENTE' punto 2 dice 'Crear rama limpieza/comentarios-20260827, commitear |
 | `plan-reestructura/{31-despliegue-simple,32-flota-pty-y-guardias,33-gobierno-de-flota}.md + fase3/*.md` | otro | 44K | conservar | plan de FASE 3 vigente y citado activamente (README.md, 00-LEEME.md, arquitectura.md); contenido corroborado contra el á |

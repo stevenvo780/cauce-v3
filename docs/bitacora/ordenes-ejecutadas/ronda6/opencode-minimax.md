@@ -11,7 +11,7 @@ Empezar al cerrar la ronda 5. Protocolo de siempre: directo a main, **commit con
 3. Sus sujetos de `ops/scripts/` (`aplicar-separacion-config.sh`, `censo-config-por-alias.py`, `diff-consola-visible.py`, `preflight.sh`) → `_legado/contingentes/ops/scripts/` con la misma re-verificación. La familia DLQ (`dlq_cli.py` + 5 wrappers) **NO** — son herramientas manuales de emergencia del operador; quedan para decisión del dueño.
 
 ## Tarea 3 — Ejecutar tu propio reporte de docs sueltos
-Si `ordenes/reportes/minimax-docs-sueltos.md` marcó algo "a-bitácora" o "desactualizado en X": ejecuta los moves y las correcciones de una línea. Si no existe el reporte, hazlo primero (mecánica de la ronda 3).
+Si `docs/bitacora/reportes/minimax-docs-sueltos.md` marcó algo "a-bitácora" o "desactualizado en X": ejecuta los moves y las correcciones de una línea. Si no existe el reporte, hazlo primero (mecánica de la ronda 3).
 
 ## Tarea 4 — La tabla del dueño, corta y final
 Reescribe la sección "dudosos" de `plan-reestructura/censo-contingentes.md`: elimina los ya resueltos (por ti, por Codex o por el integrador) y deja SOLO lo que de verdad necesita al dueño, agrupado: (a) herramientas de otras máquinas (cauce-portatil, compilar-en-torre), (b) familia DLQ manual, (c) console-legibilidad, (d) quota-collector, (e) alertmanager (decisión D2 de FASE 3), (f) lo que quede. Una línea de contexto por grupo.

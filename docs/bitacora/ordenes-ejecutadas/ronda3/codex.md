@@ -1,6 +1,6 @@
 # Órdenes — Codex ultra · Ronda 3 (arquitectura: adapter-sdk y cierre de gateway)
 
-Empezar al cerrar la ronda 2. Protocolo de siempre + las lecciones de tu propia revisión (`ordenes/reportes/claude-revision-46-commits.md`): al extraer módulos, reindenta, NO conviertas privados en `export`, NO inviertas jerarquías (el caso quotas-como-raíz), y un commit por módulo con mensaje que diga lo que toca.
+Empezar al cerrar la ronda 2. Protocolo de siempre + las lecciones de tu propia revisión (`docs/bitacora/reportes/claude-revision-46-commits.md`): al extraer módulos, reindenta, NO conviertas privados en `export`, NO inviertas jerarquías (el caso quotas-como-raíz), y un commit por módulo con mensaje que diga lo que toca.
 
 ## Tarea 1 — Al mover la maquinaria de release, llévate su séquito completo
 Además de los scripts y tests ya listados (r1 T1): los 7 `ops/schemas/*.schema.json` cuyo único consumidor es esa maquinaria (`build-evidence`, `migration-integrity-evidence`, `release-candidate`, `rollback-baseline`, `release-writer-snapshot`, `test-evidence`, `testcontainers-evidence`, `verification-evidence`) y los targets/tests que queden. Al final: `git grep -l "release-candidate\|deploy-release\|pin-production"` fuera de `_legado/` debe dar solo docs.

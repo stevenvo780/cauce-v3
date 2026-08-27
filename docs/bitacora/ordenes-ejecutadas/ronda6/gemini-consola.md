@@ -1,6 +1,6 @@
 # Órdenes — Gemini · Ronda 6-B (consola: deuda fina de las particiones — antes asignada a Codex Terra, retirado por lento)
 
-La consola vuelve a ser tuya (Codex Terra retirado; su ronda 5 dejó 107/107 verdes). Esta ronda cierra la deuda que dejaron las particiones de consola, medida por el integrador (`ordenes/reportes/claude-revision-46-commits.md`, área "consola").
+La consola vuelve a ser tuya (Codex Terra retirado; su ronda 5 dejó 107/107 verdes). Esta ronda cierra la deuda que dejaron las particiones de consola, medida por el integrador (`docs/bitacora/reportes/claude-revision-46-commits.md`, área "consola").
 
 ## Tarea 1 — Restaurar los comentarios-invariante perdidos
 Las particiones borraron 190 comentarios; la mayoría eran prosa prescindible, pero un subconjunto documentaba INVARIANTES medidos de concurrencia/seguridad (regla 4 del protocolo: esos SÍ van — "restricciones que el código no puede expresar"). Recorre los originales (`git show 1ca3312^:apps/console/src/features/terminal/pty-session.ts`, `git show 91bb5d7^:...OperatorWorkspace.tsx` y los CSS) y restaura SOLO los que cumplan: documentan una invariante, un orden obligatorio, un límite medido o un porqué de seguridad — reescritos en una línea sobria, sin fechas ni narrativa. Estimación honesta: 15–30 comentarios, no 190.
