@@ -15,8 +15,6 @@ COPY packages/adapter-sdk/package.json packages/adapter-sdk/tsconfig.json ./pack
 COPY packages/mcp-fleet-monitor/package.json packages/mcp-fleet-monitor/tsconfig.json ./packages/mcp-fleet-monitor/
 COPY services/gateway/package.json ./services/gateway/
 COPY services/dispatcher/package.json services/dispatcher/tsconfig.json ./services/dispatcher/
-COPY services/relay-worker/package.json ./services/relay-worker/
-COPY services/shadow-router/package.json ./services/shadow-router/
 COPY services/telegram-bridge/package.json ./services/telegram-bridge/
 COPY services/terminal-relay/package.json ./services/terminal-relay/
 COPY apps/console/package.json apps/console/tsconfig*.json ./apps/console/
@@ -45,8 +43,6 @@ COPY packages/store/package.json ./packages/store/
 COPY packages/adapter-sdk/package.json ./packages/adapter-sdk/
 COPY services/gateway/package.json ./services/gateway/
 COPY services/dispatcher/package.json ./services/dispatcher/
-COPY services/relay-worker/package.json ./services/relay-worker/
-COPY services/shadow-router/package.json ./services/shadow-router/
 COPY services/telegram-bridge/package.json ./services/telegram-bridge/
 COPY services/terminal-relay/package.json ./services/terminal-relay/
 RUN pnpm --filter @cauce/protocol \
@@ -54,8 +50,6 @@ RUN pnpm --filter @cauce/protocol \
   --filter @cauce/adapter-sdk \
   --filter @cauce/gateway \
   --filter @cauce/dispatcher \
-  --filter @cauce/relay-worker \
-  --filter @cauce/shadow-router \
   --filter @cauce/telegram-bridge \
   --filter @cauce/terminal-relay \
   install --prod --frozen-lockfile --ignore-scripts
@@ -87,8 +81,6 @@ COPY --from=production-dependencies --chown=node:node /app/packages ./packages
 COPY --from=production-dependencies --chown=node:node /app/services ./services
 COPY --from=build --chown=node:node /app/dist/services/gateway/src ./services/gateway/dist
 COPY --from=build --chown=node:node /app/dist/services/dispatcher/src ./services/dispatcher/dist
-COPY --from=build --chown=node:node /app/dist/services/relay-worker/src ./services/relay-worker/dist
-COPY --from=build --chown=node:node /app/dist/services/shadow-router/src ./services/shadow-router/dist
 COPY --from=build --chown=node:node /app/dist/services/telegram-bridge/src ./services/telegram-bridge/dist
 COPY --from=build --chown=node:node /app/dist/services/terminal-relay/src ./services/terminal-relay/dist
 COPY --from=build --chown=node:node /app/dist/packages/store/src ./packages/store/dist
