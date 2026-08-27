@@ -34,9 +34,19 @@ import './styles.css';
 
 const SUELO = 12.5;
 
+const RAIZ = resolve(process.cwd(), 'src');
+const resolverCss = (ruta: string): string => {
+  const abs = resolve(RAIZ, ruta);
+  const contenido = readFileSync(abs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(abs, '..', importPath);
+    return resolverCss(subAbs);
+  });
+};
+
 /** Los tokens de la escala, leídos del `:root` de la hoja global. */
 const TOKENS: Map<string, string> = (() => {
-  const css = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8')
+  const css = resolverCss('styles.css')
     .replace(/\/\*[\s\S]*?\*\//g, ' ');
   const abre = css.indexOf('{', css.search(/(^|})\s*:root\s*\{/));
   const salida = new Map<string, string>();

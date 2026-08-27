@@ -32,12 +32,22 @@ const HOJAS = [
 /** Clases que pinta un componente COMPARTIDO (components/ui, TerminalTranscript) y no esta vista. */
 const AJENAS = new Set(['sr-only', 'mono', 'eyebrow', 'button', 'small', 'secondary', 'primary', 'unknown']);
 
+const RAIZ = resolve(process.cwd(), 'src');
+const resolverCss = (ruta: string): string => {
+  const abs = resolve(RAIZ, ruta);
+  const contenido = readFileSync(abs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(abs, '..', importPath);
+    return resolverCss(subAbs);
+  });
+};
+
 function clasesDefinidas(): Set<string> {
   const definidas = new Set<string>();
   for (const hoja of HOJAS) {
     let css: string;
     try {
-      css = readFileSync(hoja, 'utf8');
+      css = resolverCss(hoja);
     } catch {
       continue;
     }

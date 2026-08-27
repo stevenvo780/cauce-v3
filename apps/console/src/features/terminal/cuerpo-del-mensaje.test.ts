@@ -15,9 +15,14 @@ describe('el recorte del cuerpo que hace el servidor', () => {
    * comprobación barata que sí lo atrapa.
    */
   it('el número que la consola dice es el que el servidor aplica', () => {
-    const consulta = readFileSync(resolve(process.cwd(), '../../packages/store/src/repository.ts'), 'utf8');
+    let consulta: string;
+    try {
+      consulta = readFileSync(resolve(process.cwd(), '../../packages/store/src/repository/messages.ts'), 'utf8');
+    } catch {
+      consulta = readFileSync(resolve(process.cwd(), '../../packages/store/src/repository.ts'), 'utf8');
+    }
     const recorte = /left\(COALESCE\(m\.body->>'text',m\.body->>'prompt',m\.body::text\),(\d+)\)/.exec(consulta);
-    expect(recorte, 'no se encontró el recorte de listMessages en packages/store/src/repository.ts').not.toBeNull();
+    expect(recorte, 'no se encontró el recorte de listMessages en packages/store/src/repository').not.toBeNull();
     expect(Number(recorte?.[1])).toBe(CARACTERES_DE_PREVISUALIZACION);
   });
 
