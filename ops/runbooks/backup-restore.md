@@ -50,7 +50,7 @@ sólo hashes, clasificación del destino, la declaración explícita de red aisl
 nunca URL, CA, filas ni secretos. Para loopback se admite `network-none`; un servidor remoto exige
 `private-test-network-no-egress` y esa declaración queda diferenciada de las observaciones directas.
 
-Después: migrations, `migration-integrity-gate.sh post`, integridad/conteos, `stack-health.sh prod`,
+Después: migrations, integridad/conteos, `stack-health.sh prod`,
 E2E real y alias gates sin iniciar consumers. Registrar inicio/fin, tamaño, edad del backup (RPO) y
 restore+health (RTO). Ensayo trimestral mínimo; un dump no restaurado no es evidencia.
 

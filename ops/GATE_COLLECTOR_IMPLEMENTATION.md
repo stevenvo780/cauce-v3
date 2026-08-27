@@ -8,9 +8,7 @@ Componentes activos:
 - `canary.sh` / `cutover.sh`: crean y eliminan evidencia temporal, y nunca aceptan un snapshot
   post-cutover suministrado manualmente.
 - `guard-check.sh`: watchdog/reconciler read-only con baseline absoluto, regular y no symlink.
-- `fleet-parity.py`: catálogo/placement/membership/permisos/leases.
 - `physical-fleet-gate.py`: existencia de containers físicos antes de migrar.
-- `fleet-gate-mode.sh`: modo final estricto y única excepción acotada `maintenance-zeus`.
 
 El collector resuelve `pg` desde el package store, exige `CAUCE_DATABASE_URL`, inventario declarado
 y parámetros enteros acotados. Para fases post/canary requiere baseline y evidencia del probe; para

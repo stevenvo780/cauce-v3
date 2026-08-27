@@ -16,8 +16,6 @@ STATIC_INPUTS = (
     "scripts/container_alias_lib.py",
     "scripts/manifest_lib.py",
     "scripts/container-alias-query.py",
-    "scripts/fleet-parity.py",
-    "scripts/fleet-parity.sh",
     "scripts/validate-container-mount.py",
     "scripts/generate-container-units.py",
     "scripts/pin-container-release.py",

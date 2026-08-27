@@ -25,8 +25,6 @@ for (const required of [
   "scripts/alias-runner.sh",
   "scripts/cutover.sh",
   "scripts/create-inactive-override-manifest.py",
-  "scripts/migration-integrity-gate.sh",
-  "scripts/reconcile-stale-console-outbox.sh",
   "scripts/provision-terminal-client.sh",
   "scripts/provision-hermes-runtime.sh",
   "tests/test_alias_lock_exec.py",

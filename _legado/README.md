@@ -36,9 +36,9 @@ como "lo que NO debe haber".
 
 ### 3. `ops-scripts/` — maquinaria de release retirada (origen: purga 27-08 + refinamientos rondas 4/6)
 
-20 ficheros de la "maquinaria de release": 19 movidos en `bf63fbc`/`da1b4af` y
-`validate-terminal-release.py` retirado en `d0ae77b`.
-**~19.049 líneas**; **0 despliegues logrados en su historia**; su gate exigía evidencia imposible
+25 ficheros de la "maquinaria de release": 19 movidos en `bf63fbc`/`da1b4af`,
+`validate-terminal-release.py` retirado en `d0ae77b` y cinco residuos finales incorporados después.
+**~19.589 líneas**; **0 despliegues logrados en su historia**; su gate exigía evidencia imposible
 (digest que caduca con cualquier commit). Se reemplaza por `deploy/deploy.sh` simple
 (`plan-reestructura/31-despliegue-simple.md`).
 
@@ -51,14 +51,16 @@ como "lo que NO debe haber".
 | `ops-scripts/produce-rollback-bridge-evidence.py`, `validate-release-evidence.py`, `validate-rollback-bridge-evidence.py`, `validate-terminal-release.py` | Validadores de evidencia del release; consumidores exclusivos de la maquinaria anterior |
 | `ops-scripts/capture-release-writer-snapshot.sh` | Captura del estado del writer; consumido solo por `release-writer-state.py` y los validadores |
 | `ops-scripts/verification-rounds.mjs` | Las "3 rondas" (frozen/lint/typecheck/build + 3 rondas + fleet/Testcontainers/mock); su caller `pnpm verify:three-rounds` fue retirado del árbol vivo |
+| `ops-scripts/fleet-parity.sh`, `fleet-parity.py`, `source-hygiene.py`, `migration-integrity-gate.sh`, `reconcile-stale-console-outbox.sh` | Residuos cuyo único caller ejecutable era la familia anterior; los wrappers de producción habían quedado además bloqueados por la política read-only de Compose |
 
-`ops-schemas/` conserva los cinco esquemas consumidos exclusivamente por esa familia:
+`ops-schemas/` conserva los seis esquemas consumidos exclusivamente por esa familia:
 `build-evidence`, `release-candidate`, `release-writer-snapshot`, `rollback-baseline` y
-`verification-evidence`. Los esquemas de tests, migraciones y operaciones activas permanecen vivos.
+`verification-evidence`, además de `migration-integrity-evidence`. Los esquemas de tests y
+operaciones activas permanecen vivos.
 
 Detalle: `_legado/README.md` sección "Pendiente de mover aquí" de rondas previas (en
 `ordenes/ronda1/codex.md` y `ordenes/ronda2/codex.md`); `plan-reestructura/12-cuarentena-legado.md`
-L15 (cifra "17.686 líneas"; la cifra actual es 19.049 tras los refinamientos posteriores).
+L15 (cifra "17.686 líneas"; la cifra actual es 19.589 tras los refinamientos posteriores).
 
 Los targets y scripts de paquete que apuntaban a esta familia, y la validación que ejecutaba
 sus tests dedicados, fueron retirados del árbol vivo.
@@ -103,16 +105,14 @@ conserva exactamente para que el plan y los runbooks sigan siendo localizables
 
 ### 6. `tests/` — cobertura de las piezas retiradas (origen: ronda 4 + ronda 5 integrador)
 
-24 tests que cubrían las piezas en cuarentena. Si la pieza se revive, los tests vuelven con ella
+33 tests que cubrían las piezas en cuarentena. Si la pieza se revive, los tests vuelven con ella
 por subruta espejada. **No se ejecutan** (no están en `validate.sh`, `package.json`, `Makefile`).
 
 | Familia | Ficheros | Por qué está aquí |
 |---|---|---|
-| `tests/release-*.test.ts`, `tests/release-*.extracto.mjs`, `tests/release-*.extracto.ts`, `tests/pin-production-release.test.ts`, `tests/deploy-release.test.ts`, `tests/rollback-*.test.ts`, `tests/compose-files-release.extracto.ts`, `tests/migrate-cli-production.test.ts`, `tests/bootstrap-prod-env.test.ts`, `tests/restore-release-integrity.test.ts`, `tests/source-digest-closure.test.ts` (11) | Cobertura de la maquinaria de release retirada (sección 3) y del rollback-bridge (sección 2). 2 ya estaban en `_legado/tests/` antes; los 9 del release llegaron en `bf63fbc` y `da1b4af` |
-| `tests/relay-worker.test.ts`, `tests/shadow-router-target-phase-postgres.test.ts`, `tests/shadow-inbox-fencing.extracto.ts` (3) | Cobertura de los servicios completos (sección 1) |
-| `tests/container-cutover-rollback.extracto.mjs`, `tests/container-release-evidence.extracto.mjs`, `tests/container-release-pin.test.ts`, `tests/fleet-maintenance-mode.test.ts` (4) | Cobertura del flujo container-systemd no-rootless (sección 5: `contingentes/ops/generated/container-systemd/`) |
-| `tests/schema-error-sanitization-release.extracto.py`, `tests/source-digest-release-wiring.extracto.mjs`, `tests/terminal-release-gate.test.ts`, `tests/test_release_writer_rotation.py` (4) | Validadores de evidencia de release y rotación de writer; sin consumidores vivos |
-| `tests/compose-files-release.extracto.ts`, `tests/container-cutover-rollback.extracto.mjs` (extractos) | Piezas migradas a TS/MJS para el digest |
+| Maquinaria de release y rollback (24) | `bootstrap-prod-env`, `compose-files-release`, `container-{cutover-rollback,release-evidence,release-pin}`, `deploy-release`, `fleet-{maintenance-mode,parity}`, `migrate-cli-production`, `pin-production-release`, `release-*`, `restore-release-integrity`, `rollback-*`, `schema-error-sanitization-release`, `source-{digest-closure,digest-release-wiring,hygiene}`, `terminal-release-gate`, `test_release_writer_rotation` | Cobertura de la maquinaria retirada (sección 3) y del rollback-bridge (sección 2) |
+| Servicios retirados (4) | `relay-worker`, `shadow-router-target-phase-postgres`, `shadow-inbox-fencing`, `terminal-relay-operability-shadow` | Cobertura de los servicios completos (sección 1) |
+| Contingentes operativos (5) | `aplicar-separacion-config`, `test_censo_config_por_alias`, `test_dlq_cli`, `test_generate_telegram_config`, `test_telegram_cutover_preflight` | Cobertura conservada con las piezas contingentes correspondientes |
 
 Detalle: ningún test de `_legado/tests/` se ejecuta desde `make validate`, `pnpm test:unit` ni
 `.github/workflows/ci.yml`.
@@ -128,8 +128,6 @@ Detalle: ningún test de `_legado/tests/` se ejecuta desde `make validate`, `pnp
 
 | Fichero | Ref | Resuelve |
 |---|---|---|
-| `ops/scripts/source-digest.py` L150, L158 | `"ops/compose.rollback-bridge.yaml"`, `"ops/rollback-bridge"` en `VERIFICATION_OPERATIONAL_INPUTS` | Codex: excluir entradas o apuntar a `_legado/` |
-| `ops/tests/source-digest-domains.test.mjs` L116, L126, L128 | `'ops/compose.rollback-bridge.yaml'`, `'ops/schemas/rollback-bridge.schema.json'` en sentinels | Codex: mismo arreglo |
 | `ops/runbooks/backup-restore.md` L27, L177 | `./scripts/restore.sh` | `restore.sh` está en `_legado/ops-scripts/`; el runbook se reescribe en FASE 3 (`plan-reestructura/31`) |
 | `deploy/compose.yaml` | declaraba `relay-worker`, `shadow-router`, `shadow-guard` (en profiles nunca encendidos) | Se reescribe en FASE 3 (`plan-reestructura/31`); hoy ya está canónico (`00f8e6e`) |
 | `ops/scripts/stack-health.sh`, `fault-compose.sh`, `smoke-runtime-authentic.sh`, `tests/unit/relay-telegram-observability.test.ts` | mencionan los servicios por nombre de compose (strings), no por import | Siguen funcionando; el ref sigue siendo válido como cadena literal |
