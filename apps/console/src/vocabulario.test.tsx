@@ -15,7 +15,6 @@ import { QueuesPage } from './features/queues/QueuesPage';
 import { ObservabilityPage } from './features/observability/ObservabilityPage';
 import { TerminalPage } from './features/terminal/TerminalPage';
 
-/** Las seis vistas de este carril. Los mocks de `src/mocks` las alimentan con datos realistas. */
 const VISTAS = [
   ['la portada', LandingPage, /cauce en una pantalla/i],
   ['/live', LiveFleetPage, /la flota ahora/i],
@@ -34,7 +33,6 @@ const VISTAS = [
  */
 const MARCADOR_DE_JSX = /<\s*[A-Za-z][A-Za-z0-9]*\s+[A-Za-z]+\s*=[^>]*\/>/;
 
-/** Una fecha ISO-8601 volcada tal cual del servidor. */
 const FECHA_ISO_CRUDA = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 
 /** `snake_case` inglés: la forma exacta de un nombre de columna de la base. */

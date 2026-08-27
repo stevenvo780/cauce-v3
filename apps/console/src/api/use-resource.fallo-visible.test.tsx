@@ -9,7 +9,6 @@ import { useResource } from './use-resource';
  * ni queden silenciados bajo recargas automáticas o StrictMode.
  */
 
-/** Un cargador que se puede resolver o rechazar a mano, y que cuenta cuántas veces lo llamaron. */
 function cargadorGobernado() {
   const pendientes: Array<{ resolver: (v: string) => void; rechazar: (e: Error) => void }> = [];
   const cargador = () => new Promise<string>((resolver, rechazar) => {

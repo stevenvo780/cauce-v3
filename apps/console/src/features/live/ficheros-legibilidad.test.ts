@@ -4,11 +4,6 @@ import { leerCss } from '../../test/leer-css';
 /**
  * QUE EL AVISO MÁS IMPORTANTE DE LA VISTA SE PUEDA LEER TAMBIÉN SOBRE PAPEL BLANCO.
  *
- * Esto no es una precaución teórica: se midió con Chrome sobre la consola en modo mock, a 1500 px
- * y con `prefers-color-scheme: light`. Sin el bloque de modo claro, el recuadro que explica «no
- * hay camino hasta el disco de este agente» salía a **1,36:1** de contraste —rosa pálido sobre
- * rosa pálido, o sea invisible—, y con él sale a **7,44:1**.
- *
  * Y era justo el peor sitio donde podía pasar. Ese recuadro es la ÚNICA explicación de por qué el
  * editor no trae contenido; si no se ve, la pantalla queda como una lista de ficheros que no se
  * abren, sin una sola palabra, que es exactamente la clase de «hueco mudo» que este trabajo venía
@@ -21,7 +16,6 @@ import { leerCss } from '../../test/leer-css';
 
 const HOJA = 'features/live/live.css';
 
-/** Devuelve el contenido de TODOS los `@media (prefers-color-scheme: light)` de la hoja. */
 export function bloquesDeModoClaro(css: string): string {
   const bloques: string[] = [];
   const marca = '@media (prefers-color-scheme: light)';

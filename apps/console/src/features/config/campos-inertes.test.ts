@@ -112,12 +112,6 @@ describe('la guarda: ningún campo con interruptor puede estar marcado como iner
 
 /**
  * **El aviso de la tabla se decide por las columnas QUE HAY, no por la colección.**
- *
- * MEDIDO en Chrome, mirando la pantalla: el gateway de las pruebas publica `harness_definitions`
- * con la forma del endpoint de adaptadores, que NO trae `command`. El aviso salía igual —«algunas
- * columnas van marcadas sin efecto»— encima de una tabla donde no había ni una marcada. Un cartel
- * que anuncia algo que no está es exactamente el defecto que este trabajo persigue, cometido por el
- * arreglo del defecto.
  */
 describe('las columnas inertes que de verdad se están pintando', () => {
   it('devuelve sólo las que la tabla trae, en el orden en que se piden', () => {

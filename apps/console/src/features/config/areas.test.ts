@@ -38,9 +38,6 @@ it('«Roles» e «Historial» salen siempre, aunque no tengan ninguna colección
   expect(areas[0]).toBe(AREA_POR_DEFECTO);
 });
 
-
-/* Regla de concisión para la descripción de área: una sola frase visible y detalle plegado. */
-
 /** El informe, no un booleano: hace falta poder darle de comer un área rota y ver que la nombra. */
 export function prosaDemasiadoLarga(areas: readonly ConfigArea[]): string[] {
   const fallos: string[] = [];
@@ -94,9 +91,6 @@ it('lo que se plegó sigue estando: de dónde saca el enrutado la flota, y que t
   expect(permisos?.detalle).toMatch(/todo empieza denegado/i);
 });
 
-/**
- * Verifica que la descripción de «Agentes y cuentas» sea exacta.
- */
 it('«Agentes y cuentas» ya no promete decir con qué programa corre cada bot', () => {
   const agentes = CONFIG_AREAS.find((area) => area.id === 'agentes');
   expect(agentes?.descripcion).not.toMatch(/con qué programa corre/i);
@@ -106,10 +100,6 @@ it('«Agentes y cuentas» ya no promete decir con qué programa corre cada bot',
   expect(agentes?.detalle).toMatch(/membres/i);
 });
 
-/**
- * Verifica que el área de Avisos y cadena declare los topes de delegación
- * aplicados por `loadChainPolicy` en el backend.
- */
 it('«Avisos y cadena» dice que los topes de delegación se editan ACÁ, ya no que no se pueden tocar', () => {
   const avisos = CONFIG_AREAS.find((area) => area.id === 'avisos');
   expect(avisos?.detalle).toMatch(/topes de delegación|delegación/i);

@@ -55,7 +55,6 @@ it('la barra lateral SIGUE negando /config a quien no lo puede abrir, con el mot
   await waitFor(() => expect(lateral).toHaveAttribute('aria-disabled', 'true'));
   expect(lateral).toHaveAttribute('title', expect.stringContaining('permiso de control'));
 
-  // Y el clic NO navega. Es lo que el verificador midió al revés: hizo clic y llegó a /config.
   await userEvent.click(lateral);
   expect(window.location.pathname).toBe('/');
 });

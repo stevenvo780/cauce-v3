@@ -88,8 +88,6 @@ describe('el filtro de la tabla', () => {
 });
 
 /**
- * ------------------------------------------------------------ LA VISTA EN EL TELÉFONO, EN LA HOJA
- *
  * Los dos defectos medidos a 360x800 son de layout y jsdom no los ve: corre sin motor de
  * disposición, así que ninguna de las pruebas de arriba mira una sola regla. Se comprueban sobre
  * el texto de la hoja —lo barato que sí los atrapa— y cada afirmación lleva su control negativo

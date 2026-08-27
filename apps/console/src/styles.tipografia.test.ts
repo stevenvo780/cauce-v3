@@ -7,7 +7,6 @@ import { sinComentarios } from './test/css-parser';
  * asegura que los tokens estén disponibles en `:root` y que ninguna regla descienda del umbral mínimo.
  */
 
-/** Hojas de estilo bajo verificación de escala tipográfica. */
 const HOJAS = [
   'styles.css',
   'features/live/live.css',
@@ -21,9 +20,6 @@ const HOJAS = [
   'features/config/toggles.css',
 ] as const;
 
-/* ------------------------------------------------------------------ lectura de la hoja ------ */
-
-/** Todas las declaraciones `font-size` de una hoja, con el selector que las lleva. */
 function tamanosDeLetra(css: string): Array<{ selector: string; valor: string }> {
   const salida: Array<{ selector: string; valor: string }> = [];
   for (const regla of sinComentarios(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
@@ -48,7 +44,6 @@ function tokensDeRoot(css: string): Map<string, string> {
   return salida;
 }
 
-/** `14px`, `.74rem`, `var(--tipo-cuerpo)` → píxeles. `undefined` si no se sabe resolver. */
 function enPixeles(valor: string, escala: Map<string, string>, saltos = 0): number | undefined {
   if (saltos > 8) return undefined;
   const bruto = valor.trim().replace(/\s*!important\s*$/, '');
@@ -121,8 +116,7 @@ function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[] {
   return fallos;
 }
 
-/* ═══ La premisa: ¿jsdom calcula layout? ═══════════════════════════════════════════════════════
- *
+/**
  * Esto NO es decoración. Es la razón por la que en este fichero no hay ninguna prueba de desborde,
  * y va escrito como aserto ejecutable para que sea un HECHO COMPROBADO en cada corrida y no una
  * creencia heredada de un comentario. Si algún día jsdom (o el entorno de vitest) empieza a hacer
@@ -150,8 +144,7 @@ describe('la premisa: por qué la prueba de desborde NO vive en jsdom', () => {
   });
 });
 
-/* ═══ La escala vive en `:root` ════════════════════════════════════════════════════════════════
- *
+/**
  * Estaba declarada en `.config-pagina`, o sea que sólo existía dentro de /config. Eso no es un
  * detalle de estilo: `features/config/toggles.css` YA citaba `var(--tipo-rotulo)` y
  * `var(--tipo-apunte)` en cinco reglas, y esas reglas se aplican también a componentes que se usan
@@ -209,8 +202,6 @@ describe('la escala tipográfica es GLOBAL', () => {
   });
 });
 
-/* ═══ Ninguna hoja baja del suelo ══════════════════════════════════════════════════════════════ */
-
 describe('ninguna hoja de la consola declara letra por debajo del suelo', () => {
   const hojas = HOJAS.map(leer);
 
@@ -256,7 +247,6 @@ describe('ninguna hoja de la consola declara letra por debajo del suelo', () => 
   });
 });
 
-/* Elementos con reducción por defecto del navegador (small, .subline). */
 describe('los elementos que el NAVEGADOR encoge por su cuenta tienen suelo propio', () => {
   const global = sinComentarios(leer('styles.css'));
 
@@ -275,8 +265,6 @@ describe('los elementos que el NAVEGADOR encoge por su cuenta tienen suelo propi
       .toBe(true);
   });
 });
-
-/* ═══ La excepción de móvil sigue en pie ═══════════════════════════════════════════════════════ */
 
 describe('la barra de navegación de móvil conserva su excepción medida', () => {
   const global = leer('styles.css');

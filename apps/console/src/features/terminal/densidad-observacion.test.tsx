@@ -106,7 +106,6 @@ describe('la página del terminal con una sesión abierta', () => {
     expect(within(plegado).getByText(TEXTO_DOCTRINA)).toBeInTheDocument();
   });
 
-  /* El título de la página se achica; no se borra. */
   it('conserva el título de la página', async () => {
     const user = userEvent.setup();
     renderWithApi(<TerminalPage />);

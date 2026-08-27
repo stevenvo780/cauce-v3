@@ -7,14 +7,6 @@ import { sinComentarios } from '../../test/css-parser';
 /**
  * Ninguna clase de esta vista puede apuntar a una regla que no existe.
  *
- * Este fichero sale de un fallo que cometí escribiendo el arreglo del fan-out: el detalle nuevo
- * reusaba `.metadata-grid`, que la MISMA rama había retirado de `styles.css` junto con la lista
- * plana de tarjetas. El resultado era un `dl` sin rejilla —los siete campos en columna, en un
- * panel pensado para cuatro por fila— y ni el typecheck, ni el lint, ni las 483 pruebas dicen una
- * palabra: un `className` es una cadena, y una cadena que no casa con ninguna regla no es un
- * error para nadie. Es la versión en CSS del defecto que esta vista existe para no repetir: algo
- * que se pierde sin dejar rastro.
- *
  * La comprobación es la barata y la que habría atrapado el fallo: toda clase que la carpeta
  * `features/messages` escribe tiene que estar definida en alguna de las dos hojas que la vista
  * carga (`styles.css`, global, y `messages.css`, propia).

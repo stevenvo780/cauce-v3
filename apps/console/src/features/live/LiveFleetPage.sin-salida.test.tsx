@@ -11,12 +11,10 @@ import { LiveFleetPage } from './LiveFleetPage';
  * comprueba que ante lecturas lentas o colgadas se alcance el estado de reintento.
  */
 
-/** Simula una lectura de actividad colgada. */
 function actividadColgada(): void {
   server.use(http.get('http://localhost/v3/console/activity', () => new Promise(() => undefined)));
 }
 
-/** La página con un tope de espera corto: el mecanismo es el mismo, la espera no. */
 function pintarLive(topeMs: number) {
   const api = new CauceApi('http://localhost', undefined, undefined, topeMs);
   return render(<ApiProvider api={api}><LiveFleetPage /></ApiProvider>);
@@ -70,7 +68,6 @@ describe('/live cuando el gateway no contesta', () => {
   });
 
   it('mientras el reintento va en camino lo dice, para que el botón no parezca muerto', async () => {
-    // Indica lectura en curso cuando se reintenta mientras otra sigue en vuelo.
     actividadColgada();
     pintarLive(120);
 

@@ -13,7 +13,6 @@ import './styles.css';
 
 const SUELO = 12.5;
 
-/** Los tokens de la escala, leídos del `:root` de la hoja global. */
 const TOKENS: Map<string, string> = (() => {
   const css = sinComentarios(leerCss('styles.css'));
   const abre = css.indexOf('{', css.search(/(^|})\s*:root\s*\{/));
@@ -31,7 +30,6 @@ const TOKENS: Map<string, string> = (() => {
  */
 const PALABRAS_UA = /^(smaller|larger|xx-small|x-small|small|medium|large|x-large|xx-large)$/;
 
-/** Texto PROPIO del elemento: sólo los nodos de texto hijos directos. Eso es una HOJA de texto. */
 function textoPropio(el: Element): string {
   let t = '';
   for (const n of Array.from(el.childNodes)) if (n.nodeType === 3) t += n.nodeValue ?? '';
@@ -100,7 +98,6 @@ const nombre = (el: Element) =>
     ? `.${el.className.trim().split(/\s+/).slice(0, 3).join('.')}`
     : '');
 
-/** Los elementos de texto hoja de un contenedor que quedan por debajo del suelo. */
 export function textoPorDebajoDelSuelo(raiz: Element, suelo = SUELO): string[] {
   const fallos: string[] = [];
   for (const el of Array.from(raiz.querySelectorAll('*'))) {
@@ -119,9 +116,6 @@ export function textoPorDebajoDelSuelo(raiz: Element, suelo = SUELO): string[] {
   return fallos;
 }
 
-/**
- * Las vistas bajo guardia tipográfica.
- */
 const VISTAS: ReadonlyArray<{ ruta: string; titulo: RegExp; minimo: number }> = [
   { ruta: '/', titulo: /Cauce en una pantalla/i, minimo: 200 },
   { ruta: '/live', titulo: /La flota ahora/i, minimo: 1200 },

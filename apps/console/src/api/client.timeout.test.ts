@@ -5,7 +5,6 @@ import { CauceApi, ApiError, TIEMPO_MAXIMO_MS } from './client';
  * asegura que peticiones sin respuesta sean abortadas y convertidas en un `ApiError` de tipo `timeout`.
  */
 
-/** Simula un fetch sin respuesta para probar el abort por timeout. */
 function fetchQueNuncaContesta(): { fetcher: typeof fetch; llamadas: () => number; senales: AbortSignal[] } {
   let llamadas = 0;
   const senales: AbortSignal[] = [];

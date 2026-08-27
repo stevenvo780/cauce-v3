@@ -23,7 +23,6 @@ describe('la tira de pestañas del cajón cabe en el cajón', () => {
     expect(cuerpos(SIN_COMENTARIOS, '.agent-drawer-tabs')).not.toHaveLength(0);
   });
 
-  // Contención de desborde mediante envoltura o desplazamiento.
   it('declara un mecanismo para caber: envuelve o desplaza, pero no se desborda', () => {
     const envuelve = valor(SIN_COMENTARIOS, '.agent-drawer-tabs', 'flex-wrap');
     const desplaza = valor(SIN_COMENTARIOS, '.agent-drawer-tabs', 'overflow-x')
@@ -35,13 +34,11 @@ describe('la tira de pestañas del cajón cabe en el cajón', () => {
       + 'con `nowrap` y `overflow-x: visible` se dibuja fuera del cajón').toBe(true);
   });
 
-  // Evita que los rótulos se partan a mitad de palabra o se encojan indebidamente.
   it('la pestaña no se encoge ni parte el rótulo a mitad de palabra', () => {
     expect(valor(SIN_COMENTARIOS, '.agent-drawer-tab', 'flex')).toBe('none');
     expect(valor(SIN_COMENTARIOS, '.agent-drawer-tab', 'white-space')).toBe('nowrap');
   });
 
-  // Ancho declarado de 420 px para el cajón.
   it('el cajón sigue midiendo 420 px, que es lo que hace falta contener', () => {
     expect(valor(SIN_COMENTARIOS, '.live-page.has-drawer', 'grid-template-columns'))
       .toContain('420px');
