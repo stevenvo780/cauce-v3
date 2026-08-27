@@ -133,6 +133,59 @@ Recomiendo al integrador / Claude aplicar el lote en una sola ronda, no en commi
 - `ops/runbooks/*.md` (17 ficheros) — sector Claude.
 - `ordenes/{00-PROTOCOLO,codex,gemini,opencode-minimax}.md` — sector Claude / dueño.
 
+## Ejecución MiniMax 2026-08-27 (commit `d1e1eca`)
+
+De los 9 ROJO en mi sector (`docs/**`), se aplicaron **4 ficheros in-place** (cambios surgicales y verificables). Los 2 que requieren regeneración externa quedan pendientes por falta de permisos del fichero (root:root, ver Tarea 5):
+
+| doc | acción | commit | nota |
+|---|---|---|---|
+| `docs/arquitectura.md` | ✅ corregido (L25, L32-37, L45-48, L56, L93-101) | `d1e1eca` | 27 inserciones / 26 borrados. Conteos recalibrados con `wc -l` actual |
+| `docs/directiva-ficheros-del-agente.md` | ✅ corregido (L145) | `d1e1eca` | `app.ts:41:1483` → `routes/console.ts:7:284` |
+| `docs/terminal-pty.md` | ✅ corregido (L256) | `d1e1eca` | `./scripts/rollback.sh` → `ops/scripts/pin-container-release.py rollback` |
+| `docs/adr/006-agent-registry-and-deferred-execution.md` | ✅ corregido (L6) | `d1e1eca` | ref a `docs/POOL-SUSCRIPCIONES-Y-ALTA-AGENTES.md` → `plan-reestructura/` |
+| `docs/grafo.md` | ⏸ pendiente (root:root bloquea `pnpm grafo`) | — | resolver en Tarea 5; Claude regenera tras `chown stev:stev` |
+| `docs/mapa-de-ficheros.md` | ⏸ pendiente (regeneración mecánica) | — | megaauditoria §3.3.6 esperaba a Gemini cerrar commit (ya cerrado en `e972b03`); pendiente de regeneración con el script del sector |
+
+## Tabla de traspaso por sector (resto del censo, NO tocado por MiniMax)
+
+El integrador reparte estas filas a cada sector para que las cierre in-place o las ignore conscientemente.
+
+### Codex (servicios + paquetes)
+
+| doc | línea | afirmación rota | corrección propuesta |
+|---|---|---|---|
+| `services/dispatcher/README.md` | 9 | "~850 líneas en 6 ficheros" | cambiar a **~791 líneas en 5 ficheros** (`wc -l services/dispatcher/src/*.ts`) |
+| `services/dispatcher/README.md` | 25 | "**~822 líneas**" (eco de arquitectura.md) | cambiar a **~791 líneas** |
+| `services/gateway/README.md` | 15 | "`src/app.ts` ya está modularizado (408 líneas...)" | ajustar a **397 líneas** (wc -l actual) |
+| `packages/store/README.md` | 5 | "`~7,5K`" en `src/repository.ts + repository/*` | ajustar a `~14K` (medido: 14.341 no-test) |
+| `packages/adapter-sdk/README.md` | 9/11 | cifras 9/11 adapters + 16,3K + 20K tests | revalidar tras `wc -l` actual (16,7K + 19,9K) |
+
+### Gemini (consola)
+
+| doc | línea | afirmación rota | corrección propuesta |
+|---|---|---|---|
+| `console/README.md` | 9 | "**107/107 verdes** desde la ronda 5" | cifra fija; validar con `pnpm test:unit` y actualizar si cambia |
+| (sin más entradas Gemini ROJO en este censo) |
+
+### Claude / dueño (`ops/` + raíz + `ordenes/`)
+
+| doc | línea | afirmación rota | corrección propuesta |
+|---|---|---|---|
+| `README.md` (raíz) | 25 | dispatcher "~822 líneas" | ajustar a **~791** |
+| `README.md` (raíz) | 30 | dispatcher "no entrega mensajes" | OK como está; cifra de líneas a ajustar |
+| `AGENTS.md` | 10 | "migraciones 001–037 con huecos..." | ✅ ya verificado OK en este censo (no acción) |
+| `PENDIENTES-DEL-DUEÑO.md` | 1 | "Tus respuestas del 27-08 están TODAS procesadas..." | ✅ ya verificado OK (no acción) |
+| `ops/README.md` | 30 | "no registrar `telegram` también en `origin-relay`" | ✅ verificado OK |
+| `ops/INSTALLATION.md` | 29 | `ops/scripts/release-gate.sh` (no existe) | referenciar `ops/scripts/migration-gate.mjs` + `make validate` |
+| `ops/runbooks/encender-un-alias.md` | 29 | `ops/cli/cauce probar <alias>` | `ops/cli/cauce` solo conoce `ver/estado/sesiones/on/off`; cambiar a `cauce <alias> estado` o documentar el verbo |
+| `ops/runbooks/*.md` (16 restantes) | — | (sin ROJO en este censo) | sin acción |
+| `ordenes/{00-PROTOCOLO,codex,gemini,opencode-minimax}.md` | — | (sin ROJO en este censo) | sin acción |
+
+### Notas finales (actualizadas)
+
+- Mi cambio `d1e1eca` tocó **27 / 26 líneas** en 4 ficheros. Cifras re-verificadas con `wc -l` el 2026-08-27 (mediciones en este reporte son del momento).
+- **Quedan 6 ROJO en `docs/`** (grafo.md + mapa-de-ficheros.md + indirectas): pendientes hasta que Tarea 5 limpie la propiedad de los ficheros y se pueda regenerar con `pnpm grafo` y/o el script del sector.
+
 ## Notas finales
 
 - Las cifras "que el código contradice directamente" (ROJO) son de TIPO 1 y de TIPO 2: TIPO 1 = `find` falla (fichero renombrado o retirado — p. ej. `legado-candidato.ts`, `dlq-*.py`, `scheduler.ts`); TIPO 2 = el fichero existe pero su contenido es ahora una partición/barrel y la cifra de líneas apunta al lugar equivocado.
