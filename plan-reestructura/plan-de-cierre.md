@@ -34,7 +34,7 @@ El reporte anterior medía **alias de redirección**, no vistas (4 de 8 veredict
 - **Se conservan**: `audit` y `relays` (son pestañas VIVAS de /observability), `fleet/:tenant/:alias` (único deep-link al TUI, lo usa el botón "Abrir TUI" de /messages), y `role-brief-tab` (**es la capa 1 del editor de directivas** — tu feature — y el único camino de rollback del rol).
 - Ahorro real inmediato: ~572 LOC. Deudas para el mega-refactor anotadas (deep-link en /terminal desbloquea borrar 180 LOC más + todos los casos especiales del router; regenerar docs/grafo.md).
 
-## 4. CAMINO A LA VENTANA — **PRIORIDAD MÁXIMA del dueño (27-08): «en cuanto se termine todo el refactor; llevamos 6 días de atraso»** — la mega-ronda de antipatrones es la ÚLTIMA puerta antes de desplegar
+## 4. CAMINO A LA VENTANA — **PRIORIDAD MÁXIMA del dueño**. ACTUALIZADO 28-08: quedan DOS puertas antes de desplegar — (1) la ronda de la mega-auditoría (corriendo) y (2) **la ronda FLOTA-COMO-DATOS** (dictado del dueño 28-08: «ya no solo lo anotes — en la siguiente ronda corrijamos eso, es muy importante antes del despliegue»). Diseño medido en `plan-reestructura/flota-como-datos.md`; luego LA VENTANA.
 
 1. Instancias cierran órdenes activas → revisión integradora + gate global verde.
 2. **Ajuste de rutas pre-despliegue** (Claude): `deploy/runtime/` (~11 refs), re-validando render + builds.
@@ -62,5 +62,5 @@ El reporte anterior medía **alias de redirección**, no vistas (4 de 8 veredict
 
 **(d) console-legibilidad**: 6 sondas CDP que miden contraste/tipografía/CSP de la consola real. ¿Se quedan para el mega-refactor o fuera?
 
-## 7. ANOTADO (dictado del dueño 27-08 noche, NO ejecutar aún): desacoplar la flota del código
-La identidad de los agentes está clavada en ≥7 sitios del código (container-aliases.json, ops/manifests/<alias>.yaml, units generadas, cred-guard, mocks del harness, enums del schema, telegram-runtime, PKI por alias) — por eso la ficción de Pablo hizo metástasis y retirar/añadir un agente cuesta tocar N capas. Objetivo: **la flota como DATOS, no como código** — alta/baja = 1 fila en BD + aprovisionar credenciales; todo lo demás DERIVADO de esa fuente única. Encaja con el aislamiento por tenant y el CLI integral. Va después del primer despliegue, con censo previo de acoplamiento (candidato: ronda MiniMax).
+## 7. FLOTA-COMO-DATOS — ASCENDIDO A BLOQUEANTE DE VENTANA (dictado del dueño 28-08; era 'anotado')
+La identidad de los agentes está clavada en ≥7 sitios del código (container-aliases.json, ops/manifests/<alias>.yaml, units generadas, cred-guard, mocks del harness, enums del schema, telegram-runtime, PKI por alias) — por eso la ficción de Pablo hizo metástasis y retirar/añadir un agente cuesta tocar N capas. Objetivo: **la flota como DATOS, no como código** — alta/baja = 1 fila en BD + aprovisionar credenciales; todo lo demás DERIVADO de esa fuente única. Encaja con el aislamiento por tenant y el CLI integral. Va ANTES del primer despliegue como ronda propia de toda la flota; el diseño con mediciones reales (derivabilidad campo a campo de los 11 agentes, consumidores, checklist de credenciales) vive en `plan-reestructura/flota-como-datos.md`. Criterio de cierre: DEMO real — alta y baja de un agente de prueba tocando SOLO BD+CLI, todo lo demás derivado.
