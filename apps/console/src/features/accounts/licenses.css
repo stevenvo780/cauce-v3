@@ -42,64 +42,7 @@
 .banner > span { flex: 1; min-width: 0; }
 .banner > .button { flex: none; align-self: center; }
 
-/* Lista de cuentas */
-.accounts-list {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  margin-top: 16px;
-}
 
-.account-card {
-  border: 1px solid hsl(0 0% 85%);
-  border-radius: 8px;
-  padding: 16px;
-  background-color: hsl(0 0% 99%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .account-card {
-    border-color: hsl(0 0% 20%);
-    background-color: hsl(0 0% 10%);
-  }
-}
-
-.account-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 16px;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.account-identity {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.account-id {
-  font-weight: 600;
-  font-size: var(--tipo-cuerpo);
-}
-
-.account-label {
-  font-size: var(--tipo-rotulo);
-  color: hsl(0 0% 50%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .account-label {
-    color: hsl(0 0% 55%);
-  }
-}
-
-.account-badges {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 
 .account-body {
   display: flex;
@@ -128,11 +71,7 @@
   }
 }
 
-.account-details {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 12px;
-}
+
 
 .detail-row {
   display: grid;
@@ -370,16 +309,4 @@
   }
 }
 
-.finding-detail {
-  font-size: var(--tipo-apunte);
-  color: hsl(0 0% 60%);
-  margin-top: 1px;
-  margin-left: 16px;
-  font-family: monospace;
-}
 
-@media (prefers-color-scheme: dark) {
-  .finding-detail {
-    color: hsl(0 0% 45%);
-  }
-}
