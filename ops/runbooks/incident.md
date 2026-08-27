@@ -1,34 +1,28 @@
-# Runbook: incidente gateway/DB/delivery
+# Runbook: Gestión y Triage de Incidentes
 
-## Triage no destructivo
+## Cuándo usar
+Diagnosticar, mitigar y resolver incidentes operativos en gateway, base de datos, dispatcher, outbox o entrega de adaptadores sin aplicar acciones destructivas.
 
-1. Consultar `/health/live` y `/health/ready` por separado.
-2. Confirmar `up`, `cauce_dispatcher_metrics_query_success`,
-   `cauce_outbox_query_success`, conexiones/leases, queue/oldest por lane,
-   wake/outbox/relay y sus DLQ.
-3. Consultar logs por `messageId`/`deliveryId` sin payloads ni headers de auth.
-4. Confirmar DB con `pg_isready` y `SELECT 1`; revisar locks y saturación.
-5. Comparar V2: no reiniciarlo ni cambiar su ruta para arreglar V3.
+## Pasos
+1. Ejecutar triage no destructivo de endpoints de salud:
+   ```sh
+   # [no ejecutable en verificación]
+   curl -s http://127.0.0.1:8080/health/live
+   curl -s http://127.0.0.1:8080/health/ready
+   ```
+2. Comprobar conectividad y estado de PostgreSQL (`SELECT 1;` y revisión de locks/conexiones).
+3. Consultar métricas de cola y DLQ en Prometheus o logs estructurados por `messageId`/`deliveryId` sin incluir payloads sensibles.
+4. Aplicar árbol de decisión operativa:
+   - Falla `/health/live`: Reinicio controlado del servicio gateway preservando logs.
+   - `/health/live` OK pero `/health/ready` falla: Reparar dependencia degradada (DB/red).
+   - DLQ en crecimiento: Pausar el productor o lane afectada e inspeccionar con `ops/scripts/dlq_cli.py`.
+   - ACK lento o fuera de orden: Correlacionar intentos y marcar como `out_of_order` sin confirmar entregas inválidas.
 
-## Árbol de decisión
+## Verificar efecto
+1. Confirmar que `/health/ready` responda con código 200.
+2. Verificar que el backlog de outbox drena normalmente y no se generan nuevas entradas en DLQ.
+3. Observar estabilidad durante al menos dos ventanas de retry y lease antes de declarar resuelto el incidente.
 
-- **live falla**: reinicio controlado del gateway V3; preservar logs y core.
-- **live sí, ready no**: reparar dependencia (DB/collector si obligatoria), no
-  agregar réplicas que aumenten la tormenta de retries.
-- **double consumer/poller**: detener el consumer V3 afectado, capturar snapshot
-  y usar el gate; nunca autoarrancar V2 ni aceptar ambas instancias.
-- **DLQ crece**: pausar productor/lane afectada, corregir receptor, re-drive con
-  la misma idempotency key. No editar filas manualmente.
-- **ACK lento/perdido**: correlacionar intento y delivery; un ACK viejo debe ser
-  `out_of_order`, no confirmar el intento actual.
-- **starvation**: limitar bulk antes de elevar workers; preservar control.
-- **unknown job kind**: no re-drive hasta desplegar y versionar un handler; el
-  dispatcher debe haberlo dejado `dead` con DLQ, nunca `done`.
-- **relay failed/stalled**: reparar el egress específico; `sent_at` ausente no
-  acredita entrega al origen.
-
-## Recuperación y cierre
-
-Ejecutar health + harness live, observar dos ventanas de retry/lease y verificar
-que DLQ dejó de crecer. Registrar línea temporal, hashes de artefactos, alcance
-por tenant y acciones. Nunca copiar secretos/sesiones al reporte.
+## Deshacer
+1. Reanudar productores o lanes pausadas una vez mitigada la causa raíz.
+2. Limpiar banderas de mantenimiento o bloqueos temporales en `/etc/cauce-v3/guards/`.
