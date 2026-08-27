@@ -20,7 +20,7 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 0. **Código muerto se BORRA con `git rm` + evidencia en el mensaje del commit — git es el archivo.** No existen carpetas de cuarentena. TODO lo histórico vive en git (`git log`/`git show`; `--diff-filter=AD` para lo borrado) y en el bundle `/datos/workspaces/zeus/cauce-v3-archivo-completo-20260827.bundle`. No existen carpetas de archivo: ni cuarentenas ni bitácoras.
 
 1. Trabaja SOLO en tu sector (tabla del protocolo), DIRECTO en `main` — **prohibido crear ramas** (decisión del dueño: aquí las ramas fueron el cementerio). `git add` solo por rutas propias; nunca `git add -A`, `git add .` ni `commit -a`.
-2. Gate por commit: `pnpm typecheck && pnpm lint` en verde (hoy lo están; deben seguir).
+2. Gate por commit: `pnpm typecheck && pnpm lint && pnpm test:unit` en verde (como usuario normal, no root) (hoy lo están; deben seguir).
 3. `git mv` en commits separados de cualquier edición de contenido. Commits ≤20 ficheros.
 4. Comentarios: solo restricciones que el código no puede expresar. Prohibido narrar historia, fechar, citar incidentes o personas — los comentarios-ensayo de este repo llegaron a MENTIR y envenenaron a los modelos que los leían.
 5. Nada está "hecho" sin pegar la salida del gate. Un despliegue no está hecho sin mostrar el efecto real.

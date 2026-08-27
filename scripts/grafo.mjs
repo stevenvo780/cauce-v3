@@ -38,18 +38,18 @@ for (const f of files) {
   porBase.get(b).push(f);
 }
 
-const IMPORT_RE = /from\s+['"]([^'"]+)['"]|require\(['"]([^'"]+)['"]\)/g;
+const IMPORT_RE = /from\s+['"]([^'"]+)['"]|require\(['"]([^'"]+)['"]\)|import\(['"]([^'"]+)['"]\)/g;
 const ALIAS = { '@cauce/protocol': 'packages/protocol', '@cauce/store': 'packages/store', '@cauce/adapter-sdk': 'packages/adapter-sdk' };
 for (const [f, txt] of Object.entries(contenido)) {
   if (/\.(ts|tsx|mjs|cjs)$/.test(f)) {
     for (const m of txt.matchAll(IMPORT_RE)) {
-      const esp = m[1] ?? m[2];
+      const esp = m[1] ?? m[2] ?? m[3];
       if (!esp) continue;
       if (ALIAS[esp]) { arista(f, ALIAS[esp] + '/src/index.ts'); continue; }
       if (esp.startsWith('.')) {
         const base = dirname(f);
         let ruta = new URL(esp, 'file:///' + base + '/').pathname.slice(1);
-        for (const cand of [ruta, ruta.replace(/\.js$/, '.ts'), ruta + '.ts', ruta + '/index.ts', ruta.replace(/\.js$/, '.mjs')])
+        for (const cand of [ruta, ruta.replace(/\.js$/, '.ts'), ruta.replace(/\.js$/, '.tsx'), ruta + '.ts', ruta + '.tsx', ruta + '/index.ts', ruta + '/index.tsx', ruta.replace(/\.js$/, '.mjs')])
           if (cand in contenido || files.includes(cand)) { arista(f, cand); break; }
       }
     }

@@ -22,8 +22,8 @@ graph LR
   scripts __> services_terminal_relay
   scripts __> ops_tests
   services_gateway __> packages_protocol
-  scripts __> deploy
   ops_tests __> ops_scripts
+  scripts __> deploy
   scripts __> tests_gateway_hardening
   apps_console __> packages_store
   scripts __> tests_unit
@@ -50,9 +50,9 @@ graph LR
   services_dispatcher __> packages_store
   tests_e2e __> services_gateway
   ops_scripts __> ops
+  _raiz_ __> scripts
   scripts __> ops_console_legibilidad
   ops_tests __> ops_harness
-  _raiz_ __> scripts
   _raiz_ __> ops_scripts
   tests_store_hardening __> packages_protocol
   ops_scripts __> services_telegram_bridge
@@ -66,7 +66,6 @@ graph LR
   tests_unit __> scripts
   apps_console __> ops_console_legibilidad
   deploy __> ops_observability
-  deploy __> packages_store
   ops __> deploy
   ops_tests __> tests_e2e
   packages_mcp_fleet_monitor __> packages_store
@@ -74,6 +73,7 @@ graph LR
   tests_e2e __> tests_helpers
   tests_gateway_hardening __> tests_helpers
   tests_unit __> ops_schemas
+  deploy __> packages_store
   ops_console_legibilidad __> deploy
   ops_scripts __> packages_adapter_sdk
   ops_scripts __> apps_console
@@ -122,8 +122,8 @@ graph LR
 | scripts | services/terminal-relay | 25 |
 | scripts | ops/tests | 23 |
 | services/gateway | packages/protocol | 23 |
-| scripts | deploy | 19 |
 | ops/tests | ops/scripts | 18 |
+| scripts | deploy | 18 |
 | scripts | tests/gateway-hardening | 17 |
 | apps/console | packages/store | 16 |
 | scripts | tests/unit | 15 |
@@ -150,9 +150,9 @@ graph LR
 | services/dispatcher | packages/store | 7 |
 | tests/e2e | services/gateway | 7 |
 | ops/scripts | ops | 6 |
+| (raiz) | scripts | 6 |
 | scripts | ops/console-legibilidad | 6 |
 | ops/tests | ops/harness | 5 |
-| (raiz) | scripts | 5 |
 | (raiz) | ops/scripts | 5 |
 | tests/store-hardening | packages/protocol | 5 |
 | ops/scripts | services/telegram-bridge | 4 |
@@ -166,7 +166,6 @@ graph LR
 | tests/unit | scripts | 4 |
 | apps/console | ops/console-legibilidad | 3 |
 | deploy | ops/observability | 3 |
-| deploy | packages/store | 3 |
 | ops | deploy | 3 |
 | ops/tests | tests/e2e | 3 |
 | packages/mcp-fleet-monitor | packages/store | 3 |
@@ -174,6 +173,7 @@ graph LR
 | tests/e2e | tests/helpers | 3 |
 | tests/gateway-hardening | tests/helpers | 3 |
 | tests/unit | ops/schemas | 3 |
+| deploy | packages/store | 2 |
 | ops/console-legibilidad | deploy | 2 |
 | ops/scripts | packages/adapter-sdk | 2 |
 | ops/scripts | apps/console | 2 |
@@ -265,91 +265,21 @@ graph LR
 - apps/console/src/api/types.ts ← 120
 - packages/adapter-sdk/src/sdk/types.ts ← 73
 - tests/helpers/postgres.ts ← 67
+- apps/console/src/components/ui.tsx ← 47
 - apps/console/src/mocks/server.ts ← 43
+- apps/console/src/test/render.tsx ← 41
 - apps/console/src/lib.ts ← 41
 - services/gateway/src/auth.ts ← 41
 - packages/store/src/db.ts ← 39
 - packages/adapter-sdk/src/sdk/durable-store.ts ← 33
 - services/telegram-bridge/src/types.ts ← 32
+- apps/console/src/api/context.tsx ← 30
 - apps/console/src/api/use-resource.ts ← 28
-- packages/adapter-sdk/src/harnesses/index.ts ← 24
-- services/gateway/src/app.ts ← 24
-- services/terminal-relay/src/gateway-client.ts ← 24
 
 ## Candidatos huérfanos (fuente sin UNA referencia entrante detectada — verificar antes de tocar)
 
-- apps/console/src/App.tsx
-- apps/console/src/api/context.tsx
-- apps/console/src/components/Tooltip.tsx
-- apps/console/src/components/ui.tsx
-- apps/console/src/features/accounts/AccountRoutingDetail.tsx
-- apps/console/src/features/accounts/AccountsInventory.tsx
-- apps/console/src/features/accounts/AccountsPage.tsx
-- apps/console/src/features/accounts/AssignmentMatrix.tsx
-- apps/console/src/features/accounts/ConsumptionSection.tsx
-- apps/console/src/features/accounts/MutationBar.tsx
-- apps/console/src/features/accounts/Sparkline.tsx
-- apps/console/src/features/audit/AuditPanel.tsx
-- apps/console/src/features/auth/AuthGate.tsx
-- apps/console/src/features/config/AltaDeEspacios.tsx
-- apps/console/src/features/config/AltaRapida.tsx
-- apps/console/src/features/config/ArnesesPanel.tsx
-- apps/console/src/features/config/CollectionTable.tsx
-- apps/console/src/features/config/ConfigPage.tsx
-- apps/console/src/features/config/Interruptor.tsx
-- apps/console/src/features/config/RolesPanel.tsx
-- apps/console/src/features/config/SpaceWizard.tsx
-- apps/console/src/features/fleet/FleetAgentDetailPage.tsx
-- apps/console/src/features/help/HelpPage.tsx
-- apps/console/src/features/landing/HarnessStrip.tsx
-- apps/console/src/features/landing/JobsRetiredNotice.tsx
-- apps/console/src/features/landing/LandingPage.tsx
-- apps/console/src/features/live/AgentAvatar.tsx
-- apps/console/src/features/live/AgentDrawer.tsx
-- apps/console/src/features/live/AgentTooltipCard.tsx
-- apps/console/src/features/live/ChainPanel.tsx
-- apps/console/src/features/live/DirectivaModal.tsx
-- apps/console/src/features/live/DirectivaTab.tsx
-- apps/console/src/features/live/FicherosTab.tsx
-- apps/console/src/features/live/FleetActivityTable.tsx
-- apps/console/src/features/live/FleetVerdict.tsx
-- apps/console/src/features/live/HistorialRol.tsx
-- apps/console/src/features/live/LiveFleetLegend.tsx
-- apps/console/src/features/live/LiveFleetPage.tsx
-- apps/console/src/features/live/LiveFleetTally.tsx
-- apps/console/src/features/live/LiveFleetToolbar.tsx
-- apps/console/src/features/live/LiveHypergraph.tsx
-- apps/console/src/features/live/PerfilTab.tsx
-- apps/console/src/features/live/RoleBriefTab.tsx
-- apps/console/src/features/live/directiva-modal/AvisosDeSolapamiento.tsx
-- apps/console/src/features/live/directiva-modal/CapaCabecera.tsx
-- apps/console/src/features/live/directiva-modal/CapasPendientes.tsx
-- apps/console/src/features/live/directiva-modal/ContenidoDeCapas.tsx
-- apps/console/src/features/live/live-hypergraph/FlowArrow.tsx
-- apps/console/src/features/messages/AgentRoster.tsx
-- apps/console/src/features/messages/ConversationPane.tsx
-- apps/console/src/features/messages/MessageTimeline.tsx
-- apps/console/src/features/messages/MessagesPage.tsx
-- apps/console/src/features/observability/ObservabilityPage.tsx
-- apps/console/src/features/queues/DeliveryTable.tsx
-- apps/console/src/features/queues/OperationalDlqPanel.tsx
-- apps/console/src/features/queues/QueuesPage.tsx
-- apps/console/src/features/terminal/AckInspector.tsx
-- apps/console/src/features/terminal/AdapterInspector.tsx
-- apps/console/src/features/terminal/FleetSidebar.tsx
-- apps/console/src/features/terminal/GridContainer.tsx
-- apps/console/src/features/terminal/OperatorWorkspace.tsx
-- apps/console/src/features/terminal/PlazasColgadas.tsx
-- apps/console/src/features/terminal/PtySessionBar.tsx
-- apps/console/src/features/terminal/PtySessionDialog.tsx
-- apps/console/src/features/terminal/PtyTerminal.tsx
-- apps/console/src/features/terminal/SessionStage.tsx
-- apps/console/src/features/terminal/TerminalPage.tsx
-- apps/console/src/features/terminal/TerminalTranscript.tsx
 - apps/console/src/features/terminal/terminal.worker.ts
-- apps/console/src/features/topology/AclEdgeList.tsx
 - apps/console/src/features/topology/HyperGraph.tsx
-- apps/console/src/features/topology/TenantCards.tsx
 - apps/console/src/main.tsx
 - ops/guardias/telegram-bridge.override.yaml
 - ops/manifests/argos.yaml
@@ -396,7 +326,7 @@ graph LR
 | services/telegram-bridge | 41 |
 | tests/unit | 40 |
 | services/terminal-relay | 34 |
-| deploy | 27 |
+| deploy | 26 |
 | ops/tests | 26 |
 | ops/pty-agent | 22 |
 | tests/gateway-hardening | 18 |
@@ -408,9 +338,9 @@ graph LR
 | tests/store-hardening | 9 |
 | ops/schemas | 7 |
 | packages/mcp-fleet-monitor | 7 |
+| scripts | 7 |
 | ops/console-legibilidad | 6 |
 | (raiz) | 6 |
-| scripts | 6 |
 | ops/harness | 4 |
 | ops/observability | 4 |
 | tests/integration | 4 |

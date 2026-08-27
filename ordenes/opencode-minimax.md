@@ -8,8 +8,8 @@ Como usuario normal: `pnpm test:integration` y después `pnpm test:e2e`. Resumen
 ## Tarea 2 — Lectura TOTAL → `docs/mapa-de-ficheros.md` (4 subagentes, un grupo de directorios cada uno)
 `git ls-files` filtrado a .ts/.tsx/.mjs/.py/.sh sin tests (~400): LEE cada fichero y escribe UNA línea: `ruta — qué hace de verdad — sector dueño`. ⚠ donde el nombre mienta. Tests: una línea por SUITE. Agrupado por directorio con subtotales.
 
-## Tarea 3 — Verificar los 105 candidatos huérfanos de `docs/grafo.md`
-El grafo (ya existe, sección "Candidatos huérfanos") lista 105 ficheros fuente sin referencia entrante detectada. Para CADA uno (repártelos entre 4 subagentes): re-verifica con `git grep` del basename Y de sus exports principales + revisa si es entry-point legítimo (bin/, main, config, referenciado por Dockerfile/compose/systemd/manifests). Produce `ordenes/reportes/minimax-huerfanos.md`: tabla veredicto huérfano-confirmado / falso-positivo (con la referencia que lo salva). NO borres nada — el integrador ejecuta.
+## Tarea 3 — Verificar los ~35 candidatos huérfanos de `docs/grafo.md`
+Haz `git pull` primero: el grafo fue REGENERADO (su resolutor tenía un bug con .tsx que inflaba la lista a 105; ahora son ~35). AVISO: aun así habrá falsos positivos estructurales (configs cargados por glob, manifests, fixtures, entry-points) — tu trabajo es exactamente separarlos. Para CADA uno de los ~35 (repártelos entre 4 subagentes): re-verifica con `git grep` del basename Y de sus exports principales + revisa si es entry-point legítimo (bin/, main, config, referenciado por Dockerfile/compose/systemd/manifests). Produce `ordenes/reportes/minimax-huerfanos.md`: tabla veredicto huérfano-confirmado / falso-positivo (con la referencia que lo salva). NO borres nada — el integrador ejecuta.
 
 ## Tarea 4 — Basura v3
 `git status --ignored --porcelain` + `du -sh` de cada ignorado presente en disco: borra lo regenerable inequívoco (caches, builds), tabla de lo dudoso en el mismo reporte de huérfanos.

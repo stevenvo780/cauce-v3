@@ -30,8 +30,8 @@ Resueltos en rondas 6/7 (historial en git): 29 confirmados + 80 piezas más del 
 
 ## (3) Vistas de consola — 8 a retirar, decisión de Gemini pendiente desde ronda 2
 
-- [ ] **8 vistas/alias a `_legado`** (ahorro estimado ~4.700 LOC + reducción de superficie del gateway):
-  `jobs` · `chains` · `audit` · `relays` (egress) · `topology` · `fleet/:tenant/:alias` · `adapters` · `role-brief-tab`. Todas con 0 visitas humanas en 3,5 días. ¿Apruebas la poda integral, conservas alguna, o la pospones para después de FASE 3?  → `ordenes/reportes/gemini-vistas-sin-uso.md` (15 entradas evaluadas; 7 conservadas en `/`, `/live`, `/accounts`, `/messages`, `/queues`, `/observability`, `/config`, `/terminal`)
+- [ ] **8 vistas/alias a `_legado`** (ahorro estimado ~1.027 líneas reales de src (la cifra previa de ~4.700 estaba inflada 4,5×) + reducción de superficie del gateway):
+  `jobs` · `chains` · `audit` · `relays` (egress) · `topology` · `fleet/:tenant/:alias` · `adapters` · `role-brief-tab`. Todas con 0 visitas humanas en 3,5 días. ¿Apruebas la poda integral, conservas alguna, o la pospones para después de FASE 3?  → `ordenes/reportes/gemini-vistas-sin-uso — OJO: la fila "topology" incluye hypergraph-layout, que /live SÍ usa; talarla literal rompe /live (excluirla o partir antes).md` (15 entradas evaluadas; 7 conservadas en `/`, `/live`, `/accounts`, `/messages`, `/queues`, `/observability`, `/config`, `/terminal`)
 
 ---
 
