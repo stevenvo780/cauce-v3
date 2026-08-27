@@ -1,10 +1,10 @@
 import { AlertCircle } from 'lucide-react';
 import type { ConfigurationSnapshot, QuotaSnapshot } from '../../api/types';
-import '../licenses/licenses.css';
+import './licenses.css';
 import { Badge } from '../../components/ui';
 import {
   accountAssignments, accountConsumption, extractAgents, extractBindings, extractCeiling,
-} from '../licenses/licenses';
+} from './licenses';
 
 /**
  * **La ficha de ruteo y consumo de UNA cuenta** — lo que sobrevive del panel «Inventario de

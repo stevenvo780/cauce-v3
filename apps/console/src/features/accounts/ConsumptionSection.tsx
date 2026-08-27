@@ -11,10 +11,10 @@ import {
   Badge, EmptyState, LoadingState, Metric, Panel, Time, Unknown,
 } from '../../components/ui';
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
-import '../licenses/licenses.css';
+import './licenses.css';
 import {
   extractAgents, extractBindings, extractProviderAccounts, freshness, orphans,
-} from '../licenses/licenses';
+} from './licenses';
 import { Sparkline } from './Sparkline';
 import {
   SEVERITY_LABEL, SEVERITY_TONE, buildQuotaRows, formatResetIn, formatUnits, isAgeStale,

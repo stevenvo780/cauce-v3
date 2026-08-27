@@ -9,7 +9,7 @@ import {
   ErrorState, FloatingTooltip, LoadingState, PageHeader, Panel, Time, Tooltip,
 } from '../../components/ui';
 import { formatDurationSeconds } from '../../lib';
-import { ActivityExplainers, FleetActivityTable, FleetSignals } from '../activity/ActivityPage';
+import { ActivityExplainers, FleetActivityTable, FleetSignals } from './FleetActivityTable';
 import { AclEdgeList } from '../topology/AclEdgeList';
 import { TenantCards } from '../topology/TenantCards';
 import { AgentDrawer, type DrawerTab } from './AgentDrawer';

@@ -1,6 +1,6 @@
 import { screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { LiveFleetPage } from '../live/LiveFleetPage';
+import { LiveFleetPage } from './LiveFleetPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import type { FleetActivitySnapshot } from '../../api/types';

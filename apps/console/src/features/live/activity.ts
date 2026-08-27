@@ -1,6 +1,6 @@
 import type { FleetActivityAgent, FleetActivityFlag, FleetWorkState } from '../../api/types';
 import { formatDurationSeconds, leaseState } from '../../lib';
-import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
+import { LIVE_STATE_META, type LiveState } from './agent-state';
 
 export { formatDurationSeconds } from '../../lib';
 

@@ -5,8 +5,8 @@ import type { Resource } from '../../api/use-resource';
 import {
   Badge, EmptyState, Metric, Panel, PermissionBadge, Unknown, Time,
 } from '../../components/ui';
-import { AccountRoutingDetail } from '../quotas/AccountRoutingDetail';
-import { accountConsumption, type AccountConsumption } from '../licenses/licenses';
+import { AccountRoutingDetail } from './AccountRoutingDetail';
+import { accountConsumption, type AccountConsumption } from './licenses';
 import { MutationBar } from './MutationBar';
 import {
   CREDENTIAL_REF_HINTS, CREDENTIAL_REF_KINDS, accountDraftError, createAccountMutation,

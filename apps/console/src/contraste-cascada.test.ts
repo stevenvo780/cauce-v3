@@ -6,7 +6,7 @@ const leer = (ruta: string) => readFileSync(resolve(process.cwd(), 'src', ruta),
   .replace(/\/\*[\s\S]*?\*\//g, ' ');
 
 const live = leer('features/live/live.css');
-const licencias = leer('features/licenses/licenses.css');
+const licencias = leer('features/accounts/licenses.css');
 const mensajes = leer('features/messages/messages.css');
 
 function cuerpos(css: string, selector: string): string[] {

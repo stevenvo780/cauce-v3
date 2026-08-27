@@ -1,5 +1,5 @@
 import type { QuotaGroup, QuotaProviderReport, QuotaSeverity, QuotaWindow } from '../../api/types';
-import type { BadgeTone } from '../activity/activity';
+import type { BadgeTone } from '../live/activity';
 
 export const SEVERITY_LABEL: Record<QuotaSeverity, string> = {
   ok: 'OK',

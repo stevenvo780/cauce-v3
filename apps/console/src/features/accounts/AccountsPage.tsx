@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { ErrorState, LoadingState, PageHeader, RefreshButton, ViewTabPanel, ViewTabs } from '../../components/ui';
-import { ConsumptionSection } from '../quotas/ConsumptionSection';
+import { ConsumptionSection } from './ConsumptionSection';
 import { AccountsInventory } from './AccountsInventory';
 import { AssignmentMatrix } from './AssignmentMatrix';
 

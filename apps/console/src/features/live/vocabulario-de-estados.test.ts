@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetWorkState } from '../../api/types';
-import { FLAG_LABEL, WORK_STATE_LABEL } from '../activity/activity';
+import { FLAG_LABEL, WORK_STATE_LABEL } from './activity';
 import { resumenPortada } from '../landing/landing';
 import { LIVE_STATES, LIVE_STATE_META } from './agent-state';
 

@@ -55,7 +55,7 @@ const HOJAS = [
   'features/live/live-hypergraph.css',
   'features/messages/messages.css',
   'features/queues/queues.css',
-  'features/licenses/licenses.css',
+  'features/accounts/licenses.css',
   'features/topology/hypergraph.css',
   'features/auth/auth.css',
   'features/config/config.css',

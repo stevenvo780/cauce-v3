@@ -378,7 +378,7 @@ const HOJAS_DE_LA_CONSOLA = [
   'features/messages/messages.css',
   'features/terminal/terminal-panel.css',
   'features/config/config.css',
-  'features/licenses/licenses.css',
+  'features/accounts/licenses.css',
   'features/auth/auth.css',
   // `styles.css` va la ÚLTIMA a propósito: es el orden en que vite las concatena (COMPROBADO
   // sobre el bundle de producción), y por eso una regla suya gana a igual especificidad.

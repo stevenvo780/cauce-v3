@@ -5,7 +5,7 @@ import {
   FLAG_LABEL, WORK_STATE_LABEL, agentRowKey, formatAckAge, formatDurationSeconds, formatInFlightAge,
   presenceBadge, resumirSenales, rowUrgency, sortByUrgency,
 } from './activity';
-import { LIVE_STATE_META } from '../live/agent-state';
+import { LIVE_STATE_META } from './agent-state';
 
 function agent(overrides: Partial<FleetActivityAgent>): FleetActivityAgent {
   return { tenant_id: 'Steven', alias: 'kant', ...overrides };

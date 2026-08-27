@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { AccountsPage } from '../accounts/AccountsPage';
+import { AccountsPage } from './AccountsPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import type { QuotaSnapshot } from '../../api/types';
