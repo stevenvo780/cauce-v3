@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { leerCss } from '../../test/leer-css';
 
 /**
  * QUE EL AVISO MÁS IMPORTANTE DE LA VISTA SE PUEDA LEER TAMBIÉN SOBRE PAPEL BLANCO.
@@ -20,15 +19,7 @@ import { describe, expect, it } from 'vitest';
  * por mutación: se le da de comer una hoja sin el bloque y se exige que la marque.
  */
 
-const HOJA = resolve(process.cwd(), 'src/features/live/live.css');
-
-function leerCss(rutaAbs: string): string {
-  const contenido = readFileSync(rutaAbs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(rutaAbs, '..', importPath);
-    return leerCss(subAbs);
-  });
-}
+const HOJA = 'features/live/live.css';
 
 /** Devuelve el contenido de TODOS los `@media (prefers-color-scheme: light)` de la hoja. */
 export function bloquesDeModoClaro(css: string): string {

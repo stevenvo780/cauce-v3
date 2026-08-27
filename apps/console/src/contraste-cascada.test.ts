@@ -1,25 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { leerCss } from './test/leer-css';
+import { cuerposDeSelector as cuerpos, sinComentarios } from './test/css-parser';
 
-const leer = (ruta: string): string => {
-  const abs = resolve(process.cwd(), 'src', ruta);
-  const contenido = readFileSync(abs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(abs, '..', importPath);
-    return leer(subAbs);
-  }).replace(/\/\*[\s\S]*?\*\//g, ' ');
-};
-
-const live = leer('features/live/live.css');
-const licencias = leer('features/accounts/licenses.css');
-const mensajes = leer('features/messages/messages.css');
-
-function cuerpos(css: string, selector: string): string[] {
-  const escapado = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return [...css.matchAll(new RegExp(`${escapado}\\s*\\{([^{}]*)\\}`, 'g'))]
-    .map((coincidencia) => coincidencia[1]);
-}
+const live = sinComentarios(leerCss('features/live/live.css'));
+const licencias = sinComentarios(leerCss('features/accounts/licenses.css'));
+const mensajes = sinComentarios(leerCss('features/messages/messages.css'));
 
 describe('la hoja de cada vista no revierte los tokens legibles del tema global', () => {
   it('un contador vacío de la flota atenúa sólo su muestra decorativa, no el texto del botón', () => {

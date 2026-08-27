@@ -1,53 +1,17 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { leerCss } from './test/leer-css';
+import {
+  bloqueMedia,
+  declaraciones,
+  reglasDe,
+  type ReglaCss,
+  sinComentarios,
+  valor,
+} from './test/css-parser';
 
-const RAIZ = resolve(process.cwd(), 'src');
-const leerCss = (ruta: string): string => {
-  const abs = resolve(RAIZ, ruta);
-  const contenido = readFileSync(abs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(abs, '..', importPath);
-    return leerCss(subAbs);
-  });
-};
+export { reglasDe, type ReglaCss };
+
 const GLOBAL = leerCss('styles.css');
-
-function sinComentarios(css: string): string {
-  return css.replace(/\/\*[\s\S]*?\*\//g, ' ');
-}
-
-function bloqueMedia(css: string, consulta: string): string {
-  const limpio = sinComentarios(css);
-  const inicio = limpio.indexOf(consulta);
-  if (inicio < 0) return '';
-  let cursor = limpio.indexOf('{', inicio);
-  if (cursor < 0) return '';
-  const desde = cursor + 1;
-  let profundidad = 0;
-  for (; cursor < limpio.length; cursor += 1) {
-    if (limpio[cursor] === '{') profundidad += 1;
-    else if (limpio[cursor] === '}') {
-      profundidad -= 1;
-      if (profundidad === 0) return limpio.slice(desde, cursor);
-    }
-  }
-  return '';
-}
-
-function declaraciones(bloque: string, selector: string): string {
-  const escapado = selector.replace(/[.[\]()="^$*+?|\\/{}-]/g, (c) => `\\${c}`);
-  const patron = new RegExp(`(^|[},])\\s*${escapado}\\s*\\{([^{}]*)\\}`, 'g');
-  let ultima = '';
-  let encontrado: RegExpExecArray | null;
-  while ((encontrado = patron.exec(bloque))) ultima = encontrado[2];
-  return ultima;
-}
-
-function valor(declaracion: string, propiedad: string): string | undefined {
-  const patron = new RegExp(`(?:^|;)\\s*${propiedad}\\s*:\\s*([^;]+)`);
-  return patron.exec(declaracion)?.[1]?.trim();
-}
 
 const HOJAS_DE_LA_CONSOLA = [
   'features/live/live.css',
@@ -60,47 +24,6 @@ const HOJAS_DE_LA_CONSOLA = [
   'features/auth/auth.css',
   'styles.css',
 ];
-
-interface ReglaCss { hoja: string; selector: string; cuerpo: string; media: string }
-
-export function reglasDe(css: string, hoja = ''): ReglaCss[] {
-  const limpio = sinComentarios(css);
-  const salida: ReglaCss[] = [];
-  const pila: string[] = [];
-  let cabecera = '';
-  let cursor = 0;
-  while (cursor < limpio.length) {
-    const caracter = limpio[cursor];
-    if (caracter === '{') {
-      const titulo = cabecera.trim();
-      cabecera = '';
-      if (titulo.startsWith('@')) {
-        pila.push(titulo);
-        cursor += 1;
-        continue;
-      }
-      let profundidad = 1;
-      let fin = cursor + 1;
-      while (fin < limpio.length && profundidad > 0) {
-        if (limpio[fin] === '{') profundidad += 1;
-        else if (limpio[fin] === '}') profundidad -= 1;
-        fin += 1;
-      }
-      salida.push({
-        hoja,
-        selector: titulo,
-        cuerpo: limpio.slice(cursor + 1, fin - 1),
-        media: pila.filter((p) => p.startsWith('@media')).join(' Y '),
-      });
-      cursor = fin;
-      continue;
-    }
-    if (caracter === '}') pila.pop();
-    else cabecera += caracter;
-    cursor += 1;
-  }
-  return salida;
-}
 
 function minimoDeUnaPista(pista: string): number {
   const t = pista.trim();

@@ -1,21 +1,11 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { leerCss as leer } from './test/leer-css';
+import { sinComentarios } from './test/css-parser';
 
 /**
  * Validación de la escala tipográfica sobre las hojas de estilo:
  * asegura que los tokens estén disponibles en `:root` y que ninguna regla descienda del umbral mínimo.
  */
-
-const RAIZ = resolve(process.cwd(), 'src');
-const leer = (ruta: string): string => {
-  const abs = resolve(RAIZ, ruta);
-  const contenido = readFileSync(abs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(abs, '..', importPath);
-    return leer(subAbs);
-  });
-};
 
 /** Hojas de estilo bajo verificación de escala tipográfica. */
 const HOJAS = [
@@ -32,11 +22,6 @@ const HOJAS = [
 ] as const;
 
 /* ------------------------------------------------------------------ lectura de la hoja ------ */
-
-/** Fuera los comentarios, pero conservando los saltos de línea (para poder citar la línea). */
-function sinComentarios(css: string): string {
-  return css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
-}
 
 /** Todas las declaraciones `font-size` de una hoja, con el selector que las lleva. */
 function tamanosDeLetra(css: string): Array<{ selector: string; valor: string }> {

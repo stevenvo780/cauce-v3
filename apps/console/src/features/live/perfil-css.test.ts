@@ -1,29 +1,13 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { leerCss } from '../../test/leer-css';
+import { cuerposDeSelector as cuerpos, sinComentarios } from '../../test/css-parser';
 
 /**
  * Verificación de reglas CSS y layout para el editor de perfil en el cajón de agentes.
  */
-function leerCss(rutaAbs: string): string {
-  const contenido = readFileSync(rutaAbs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(rutaAbs, '..', importPath);
-    return leerCss(subAbs);
-  });
-}
-const HOJA = leerCss(resolve(process.cwd(), 'src/features/live/live.css'));
+const HOJA = leerCss('features/live/live.css');
 /** Sin comentarios: si no, un `@container` citado en la prosa contaría como declaración. */
-const SIN_COMENTARIOS = HOJA.replace(/\/\*[\s\S]*?\*\//g, ' ');
-
-/** Todos los cuerpos de regla de un selector, en orden de aparición (el último es el que gana). */
-function cuerpos(css: string, selector: string): string[] {
-  const escapado = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const patron = new RegExp(`(?:^|[};])\\s*${escapado}\\s*\\{([^}]*)\\}`, 'g');
-  const salida: string[] = [];
-  for (let m = patron.exec(css); m; m = patron.exec(css)) salida.push(m[1]);
-  return salida;
-}
+const SIN_COMENTARIOS = sinComentarios(HOJA);
 
 describe('el editor de perfil tiene sitio donde caber', () => {
   it('el cajón se ensancha cuando la pestaña abierta es «Perfil»', () => {

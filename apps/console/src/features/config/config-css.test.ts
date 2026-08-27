@@ -1,23 +1,13 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { leerCss } from '../../test/leer-css';
+import { declaracionesDeClase as declaraciones, sinComentarios } from '../../test/css-parser';
 
 const RAIZ = resolve(process.cwd(), 'src');
-const resolverCss = (ruta: string): string => {
-  const abs = resolve(RAIZ, ruta);
-  const contenido = readFileSync(abs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(abs, '..', importPath);
-    return resolverCss(subAbs);
-  });
-};
-const GLOBAL = resolverCss('styles.css');
-const PROPIA = resolverCss(join('features', 'config', 'config.css'));
-const INTERRUPTORES = resolverCss(join('features', 'config', 'toggles.css'));
-
-function sinComentarios(css: string): string {
-  return css.replace(/\/\*[\s\S]*?\*\//g, ' ');
-}
+const GLOBAL = leerCss('styles.css');
+const PROPIA = leerCss(join('features', 'config', 'config.css'));
+const INTERRUPTORES = leerCss(join('features', 'config', 'toggles.css'));
 
 function bloqueClaro(css: string): string {
   const inicio = css.indexOf('@media (prefers-color-scheme: light)');
@@ -31,21 +21,6 @@ function bloqueClaro(css: string): string {
     }
   }
   throw new Error('el bloque de modo claro no cierra');
-}
-
-function declaraciones(css: string, clase: string): Record<string, string> {
-  for (const regla of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const selectores = regla[1].split(',').map((parte) => parte.trim());
-    if (!selectores.some((selector) => selector.split(/\s+/).some((parte) => parte === clase))) continue;
-    const salida: Record<string, string> = {};
-    for (const declaracion of regla[2].split(';')) {
-      const corte = declaracion.indexOf(':');
-      if (corte < 0) continue;
-      salida[declaracion.slice(0, corte).trim()] = declaracion.slice(corte + 1).trim();
-    }
-    return salida;
-  }
-  return {};
 }
 
 function variables(css: string): Map<string, string> {

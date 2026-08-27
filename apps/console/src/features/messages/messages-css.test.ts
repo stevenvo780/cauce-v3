@@ -1,6 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { leerCss } from '../../test/leer-css';
+import { sinComentarios } from '../../test/css-parser';
 
 /**
  * Ninguna clase de esta vista puede apuntar a una regla que no existe.
@@ -32,29 +34,19 @@ const HOJAS = [
 /** Clases que pinta un componente COMPARTIDO (components/ui, TerminalTranscript) y no esta vista. */
 const AJENAS = new Set(['sr-only', 'mono', 'eyebrow', 'button', 'small', 'secondary', 'primary', 'unknown']);
 
-const RAIZ = resolve(process.cwd(), 'src');
-const resolverCss = (ruta: string): string => {
-  const abs = resolve(RAIZ, ruta);
-  const contenido = readFileSync(abs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(abs, '..', importPath);
-    return resolverCss(subAbs);
-  });
-};
-
 function clasesDefinidas(): Set<string> {
   const definidas = new Set<string>();
   for (const hoja of HOJAS) {
     let css: string;
     try {
-      css = resolverCss(hoja);
+      css = leerCss(hoja);
     } catch {
       continue;
     }
     // Se ignoran los bloques de comentario para que un nombre citado en una explicación —como el
     // `.metadata-grid` retirado, que se menciona justamente porque ya NO existe— no cuente.
-    const sinComentarios = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
-    for (const coincidencia of sinComentarios.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) {
+    const limpio = sinComentarios(css);
+    for (const coincidencia of limpio.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) {
       definidas.add(coincidencia[1]);
     }
   }

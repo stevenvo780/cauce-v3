@@ -1,37 +1,21 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { leerCss } from '../../test/leer-css';
+import { cuerposDeSelector as cuerpos, sinComentarios } from '../../test/css-parser';
 
 /**
  * Verificación de envoltura flex para la tira de pestañas del cajón de agentes:
  * asegura que `.agent-drawer-tabs` declare `flex-wrap: wrap` para evitar desbordes horizontales.
  */
-function leerCss(rutaAbs: string): string {
-  const contenido = readFileSync(rutaAbs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(rutaAbs, '..', importPath);
-    return leerCss(subAbs);
-  });
-}
-const HOJA = leerCss(resolve(process.cwd(), 'src/features/live/live.css'));
+const HOJA = leerCss('features/live/live.css');
 /** Sin comentarios: si no, un `flex-wrap: wrap` citado en la prosa contaría como declaración. */
-const SIN_COMENTARIOS = HOJA.replace(/\/\*[\s\S]*?\*\//g, ' ');
-
-/** Todos los cuerpos de regla de un selector, en orden de aparición (el último es el que gana). */
-function cuerpos(css: string, selector: string): string[] {
-  const escapado = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const patron = new RegExp(`(?:^|[};])\\s*${escapado}\\s*\\{([^}]*)\\}`, 'g');
-  const salida: string[] = [];
-  for (let m = patron.exec(css); m; m = patron.exec(css)) salida.push(m[1]);
-  return salida;
-}
+const SIN_COMENTARIOS = sinComentarios(HOJA);
 
 /** Valor efectivo de una propiedad: el de la ÚLTIMA regla que la declara. */
 function valor(css: string, selector: string, propiedad: string): string | undefined {
   const encontrados = cuerpos(css, selector)
     .map((cuerpo) => new RegExp(`(?:^|;)\\s*${propiedad}\\s*:\\s*([^;]+)`).exec(cuerpo)?.[1].trim())
     .filter((v): v is string => Boolean(v));
-  return encontrados.at(-1);
+  return encontrados[0];
 }
 
 describe('la tira de pestañas del cajón cabe en el cajón', () => {

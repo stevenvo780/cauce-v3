@@ -1,9 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { App } from './App';
 import { renderWithApi } from './test/render';
+import { leerCss } from './test/leer-css';
+import { sinComentarios } from './test/css-parser';
 import './styles.css';
 
 /**
@@ -13,20 +13,9 @@ import './styles.css';
 
 const SUELO = 12.5;
 
-const RAIZ = resolve(process.cwd(), 'src');
-const resolverCss = (ruta: string): string => {
-  const abs = resolve(RAIZ, ruta);
-  const contenido = readFileSync(abs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(abs, '..', importPath);
-    return resolverCss(subAbs);
-  });
-};
-
 /** Los tokens de la escala, leídos del `:root` de la hoja global. */
 const TOKENS: Map<string, string> = (() => {
-  const css = resolverCss('styles.css')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const css = sinComentarios(leerCss('styles.css'));
   const abre = css.indexOf('{', css.search(/(^|})\s*:root\s*\{/));
   const salida = new Map<string, string>();
   for (const d of css.slice(abre + 1, css.indexOf('}', abre)).matchAll(/(--[\w-]+)\s*:\s*([^;]+)/g)) {

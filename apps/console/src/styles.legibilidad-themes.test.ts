@@ -1,53 +1,13 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { leerCss } from './test/leer-css';
+import {
+  bloqueMedia,
+  declaraciones,
+  sinComentarios,
+  valor,
+} from './test/css-parser';
 
-const RAIZ = resolve(process.cwd(), 'src');
-const leerCss = (ruta: string): string => {
-  const abs = resolve(RAIZ, ruta);
-  const contenido = readFileSync(abs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(abs, '..', importPath);
-    return leerCss(subAbs);
-  });
-};
 const GLOBAL = leerCss('styles.css');
-
-function sinComentarios(css: string): string {
-  return css.replace(/\/\*[\s\S]*?\*\//g, ' ');
-}
-
-function bloqueMedia(css: string, consulta: string): string {
-  const limpio = sinComentarios(css);
-  const inicio = limpio.indexOf(consulta);
-  if (inicio < 0) return '';
-  let cursor = limpio.indexOf('{', inicio);
-  if (cursor < 0) return '';
-  const desde = cursor + 1;
-  let profundidad = 0;
-  for (; cursor < limpio.length; cursor += 1) {
-    if (limpio[cursor] === '{') profundidad += 1;
-    else if (limpio[cursor] === '}') {
-      profundidad -= 1;
-      if (profundidad === 0) return limpio.slice(desde, cursor);
-    }
-  }
-  return '';
-}
-
-function declaraciones(bloque: string, selector: string): string {
-  const escapado = selector.replace(/[.[\]()="^$*+?|\\/{}-]/g, (c) => `\\${c}`);
-  const patron = new RegExp(`(^|[},])\\s*${escapado}\\s*\\{([^{}]*)\\}`, 'g');
-  let ultima = '';
-  let encontrado: RegExpExecArray | null;
-  while ((encontrado = patron.exec(bloque))) ultima = encontrado[2];
-  return ultima;
-}
-
-function valor(declaracion: string, propiedad: string): string | undefined {
-  const patron = new RegExp(`(?:^|;)\\s*${propiedad}\\s*:\\s*([^;]+)`);
-  return patron.exec(declaracion)?.[1]?.trim();
-}
 
 interface Rgb { r: number; g: number; b: number; a: number }
 

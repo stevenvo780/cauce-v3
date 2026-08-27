@@ -1,65 +1,25 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { VAR_ALTO_COMPOSITOR } from './ConversationPane';
 import { VAR_TOPE_MENSAJERIA } from './MessagesPage';
+import { leerCss } from '../../test/leer-css';
+import {
+  bloqueMedia,
+  declaraciones,
+  valor,
+} from '../../test/css-parser';
 
 /**
  * Pruebas estructurales de CSS para asegurar el anclaje del compositor en pantallas móviles.
  */
 
-const RAIZ = resolve(process.cwd(), 'src');
-const resolverCss = (ruta: string): string => {
-  const abs = resolve(RAIZ, ruta);
-  const contenido = readFileSync(abs, 'utf8');
-  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
-    const subAbs = resolve(abs, '..', importPath);
-    return resolverCss(subAbs);
-  });
-};
-const MENSAJES_CSS = resolverCss('features/messages/messages.css');
-const GLOBAL_CSS = resolverCss('styles.css');
+const MENSAJES_CSS = leerCss('features/messages/messages.css');
+const GLOBAL_CSS = leerCss('styles.css');
 
 /** El corte en el que la consola pasa a barra de navegación inferior fija. */
 const CORTE_ESTRECHO = 760;
 
 function sinComentarios(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, ' ');
-}
-
-/**
- * El cuerpo de un `@media` concreto. Se cuentan llaves porque dentro hay reglas anidadas y un
- * `indexOf('}')` cortaría en la primera regla, dejando fuera justo lo que se quiere comprobar.
- */
-function bloqueMedia(css: string, consulta: string): string {
-  const limpio = sinComentarios(css);
-  const inicio = limpio.indexOf(consulta);
-  if (inicio < 0) return '';
-  let profundidad = 0;
-  let cursor = limpio.indexOf('{', inicio);
-  if (cursor < 0) return '';
-  const desde = cursor + 1;
-  for (; cursor < limpio.length; cursor += 1) {
-    if (limpio[cursor] === '{') profundidad += 1;
-    else if (limpio[cursor] === '}') {
-      profundidad -= 1;
-      if (profundidad === 0) return limpio.slice(desde, cursor);
-    }
-  }
-  return '';
-}
-
-/** Las declaraciones de un selector dentro de un bloque ya acotado. */
-function declaraciones(bloque: string, selector: string): string {
-  const escapado = selector.replace(/[.[\]()="^$*+?|\\/{}]/g, (caracter) => `\\${caracter}`);
-  const patron = new RegExp(`(^|[},])\\s*${escapado}\\s*\\{([^{}]*)\\}`);
-  return patron.exec(bloque)?.[2] ?? '';
-}
-
-function valor(declaracion: string, propiedad: string): string | undefined {
-  const patron = new RegExp(`(?:^|;)\\s*${propiedad}\\s*:\\s*([^;]+)`);
-  const encontrado = patron.exec(declaracion)?.[1];
-  return encontrado?.trim();
 }
 
 /**
