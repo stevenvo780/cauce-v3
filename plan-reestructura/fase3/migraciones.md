@@ -44,3 +44,11 @@ Rollback de la tanda: automático (una transacción). Rollback POST-commit: el b
 ## Nota para bases de prueba
 
 Bases `cauce_test*` externas que ya aplicaron 029/036 en corridas previas: recrearlas (la huella de ficheros cambió y el helper lo detecta). Testcontainers no se ven afectados (nacen limpios).
+
+## ENSAYO DE LA TANDA LIMPIA — 27-08 ~20:45 UTC, contra clon fresco de prod (VEREDICTO: LISTA)
+
+Método: pg_dump de prod (solo lectura) → postgres:16-alpine efímero en loopback → migrator real del repo (`migrate:dev`), dos pasadas + idempotencia; clon y dump destruidos al terminar.
+- **RUN 1 (sin B1)**: aborta con `cannot apply schema 034 while an unpinned terminal session remains usable` y **rollback TOTAL** (23 aplicadas, sin rastro de la 026) — la transacción única funciona.
+- **B1 en el clon**: `UPDATE terminal_sessions SET revoked_at=now()` sobre las 3 fantasma → UPDATE 3.
+- **RUN 2**: `Cauce V3 migrations applied` en **2,96 s** de reloj (SQL incluido en ese total). Estado final verificado: 33 versiones (las 10 exactas: 026–028, 030–035, 037), **agents 14/14 enabled INTACTOS**, agent_profiles=14, `fleet_reconciliation_*` inexistentes, columna `claim_target_started` inexistente, 0 funciones `cauce_shadow_router*`, 4 índices `*_037_idx`, 0 sesiones fantasma.
+- **RUN 3**: segunda pasada = no-op idempotente.
