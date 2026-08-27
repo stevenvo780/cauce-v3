@@ -19,10 +19,13 @@ function sqlLiterals(source: string): string[] {
     .filter((literal) => /\bSELECT\b/i.test(literal));
 }
 
-function sourceFiles(): string[] {
-  return readdirSync(SOURCE_DIR)
-    .filter((name) => name.endsWith('.ts'))
-    .map((name) => join(SOURCE_DIR, name));
+function sourceFiles(dir: string = SOURCE_DIR): string[] {
+  // Recursivo: el SQL vive tambien en src/repository/** desde la modularizacion.
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const ruta = join(dir, entry.name);
+    if (entry.isDirectory()) return sourceFiles(ruta);
+    return entry.name.endsWith('.ts') ? [ruta] : [];
+  });
 }
 
 describe('cláusulas de bloqueo y funciones de ventana', () => {
