@@ -1,0 +1,17 @@
+# OpenCode/MiniMax — ORDEN ACTIVA (docs al día tras la gran ola + cierre de dudosos)
+
+Protocolo de siempre (pathspec, sin clean/reset/stash, gate como usuario normal). La ola de hoy cambió media estructura: tu ronda es dejar TODA la documentación diciendo la verdad otra vez.
+
+## Tarea 1 — `docs/arquitectura.md` al día
+Ya no hay gigantes en store/gateway: `repository.ts` es una fachada de 42 líneas sobre `repository/*.ts`; `app.ts` (408) compone `routes/*`; `terminal/plugin.ts` (326). Actualiza las tablas de flujos (rutas y "qué buscar") verificando CADA ruta nueva con `ls`/`grep` antes de escribirla. Ídem los tamaños honestos del final.
+
+## Tarea 2 — Barrido total de enlaces (tercera pasada)
+Misma mecánica que r5: README raíz, README de componentes, AGENTS/CLAUDE/GEMINI.md, plan-reestructura/**, ordenes/**, _legado/README.md. La ola movió/partió decenas de ficheros.
+
+## Tarea 3 — Índices finales
+`_legado/README.md` (entró la maquinaria de release entera + schemas), `docs/bitacora/README.md` (entradas nuevas), y la tabla de dudosos de `plan-reestructura/censo-contingentes.md` reducida a los grupos que de verdad esperan al dueño.
+
+## Tarea 4 — La foto final para el dueño
+Crea `ordenes/reportes/minimax-foto-final.md`: (a) tabla de TODOS los ficheros fuente >800 líneas que quedan en el repo vivo (ruta, líneas, sector dueño); (b) conteo total de líneas por área vs las cifras de la auditoría de la madrugada (services/packages/apps/ops/tests y _legado aparte); (c) los 3 números del día: cuánto se movió a _legado, cuánto se partió, cuánto queda >800. Es el "antes y después" medible de la descontaminación.
+
+Gate para commits de .md: no aplica el completo; para cualquier otra cosa: el global. Push al cerrar + reporte ≤5 líneas.
