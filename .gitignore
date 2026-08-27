@@ -19,6 +19,7 @@ coverage/
 .adapter-e2e-*/
 ops/artifacts/
 ops/backups/
+ops-evidence/
 !ops/artifacts/.gitkeep
 !ops/backups/.gitkeep
 
