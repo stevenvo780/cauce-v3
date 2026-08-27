@@ -165,4 +165,13 @@ async retryExpiredJobs(limit = 100): Promise<number> {
       return result.rows.length;
     });
   }
+
+  async listJobs(actorTenant: Tenant, actorAlias: string, limit = 200): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    const result = await this.pool.query<Record<string, unknown>>(
+      `SELECT id AS job_id,tenant_id,lane,kind,status,priority,attempts,claimed_by,claimed_at,created_at,updated_at
+       FROM jobs WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT $2`, [actorTenant, limit]
+    );
+    return { items: result.rows };
+  }
 }
