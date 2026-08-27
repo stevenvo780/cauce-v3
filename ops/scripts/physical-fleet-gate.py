@@ -79,7 +79,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--snapshot", type=pathlib.Path,
-        help="sanitized deterministic evidence for tests; production release-gate never supplies it",
+        help="sanitized deterministic evidence for tests; normal operation queries Docker",
     )
     args = parser.parse_args()
     try:

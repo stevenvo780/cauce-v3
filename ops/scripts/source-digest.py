@@ -29,9 +29,8 @@ runtime  Everything the `runtime` image stage of deploy/Dockerfile is built from
          that can change the bytes or behaviour of the five final services. This is the domain that
          backs compose-authentic / runtime-authentic fault-injection evidence and the fleet matrix.
 
-console  Everything the `console` image stage is built from. Its only consumer is the console image
-         entry of the release build evidence, which is regenerated in the same `release-build.sh`
-         invocation as the runtime image, so over-coverage here costs nothing.
+console  Everything the `console` image stage is built from. Console evidence is cheap to
+         regenerate, so over-coverage here costs nothing.
 
 harness  The measurement apparatus for authentic evidence: the runner that drives the faults, the
          fake external world it asserts against, the authentic Compose topology and the fault
@@ -48,25 +47,18 @@ testcontainers  The source-executed PostgreSQL/Testcontainers QA apparatus: its 
 verification  The root and ops test trees plus lint/typecheck/test orchestration and every
          operational source family those gates execute or inspect.  This domain is not used to
          relabel runtime evidence; it exists so `full` genuinely covers the tests, root `scripts/`,
-         release/rollback tooling, schemas, generated-unit inputs and checked operational policy
-         whose success the three-round verification report claims.  Whole-directory inclusion is
-         deliberate: a new script or schema must not silently escape the attestation.
+         schemas, generated-unit inputs and checked operational policy. Whole-directory inclusion
+         is deliberate: a new script or schema must not silently escape the attestation.
 
-full     Union of every domain. Backs the three-round verification evidence, because
-         `pnpm lint | typecheck | build | test` genuinely exercises every domain (see
-         `lint:console`, `typecheck:console`, `build:console`, the console vitest project, and
-         tests/gateway-hardening/console-api-contract.test.ts, which reads apps/console sources).
-         `full` is also the safe default: a caller that forgets to declare a domain gets the
-         strictest digest and fails closed, never open.
+full     Union of every domain. This is the safe default: a caller that forgets to declare a
+         domain gets the strictest digest and fails closed, never open.
 
 Justification for the exclusions that LOOSEN anything
 ------------------------------------------------------
 `apps/console/src/features/_grafo/` is operator-local SQL scratch.  It is excluded from every
-domain by its exact repository-relative prefix, and nowhere else.  It cannot enter a release:
-`.dockerignore` excludes it from ordinary Docker contexts and `release-build.sh` builds from the
-committed `git archive`, rejects that path if it ever becomes committed, and fails on every other
-untracked path.  Excluding the scratch here makes a digest recomputed on the release host describe
-the same committed RC that was built, without moving or hashing local operator notes.
+domain by its exact repository-relative prefix, and nowhere else. `.dockerignore` excludes it from
+ordinary Docker contexts. Excluding the scratch here keeps local operator notes out without
+widening the exclusion to any other path.
 
 `apps/console` is absent from the `runtime` domain. This is safe because there is no causal path
 from apps/console to the runtime image or to runtime behaviour:
@@ -138,16 +130,15 @@ SHARED_MANIFESTS = (
 )
 
 # `pnpm test` executes operational scripts directly from tests/unit, while
-# `verify:three-rounds` additionally runs the fleet, Testcontainers, manifest-generation and
-# `ops:validate` gates.  Their result therefore depends on more than the test files themselves.
+# The verification suite additionally runs operational gates whose result depends on more than
+# the test files themselves.
 # Keep complete source families here instead of enumerating today's scripts: that is what makes a
-# previously issued `full` report become stale when a new deploy/rollback helper or schema changes.
+# previously issued `full` report become stale when a new operational helper or schema changes.
 VERIFICATION_OPERATIONAL_INPUTS = (
     ".gitignore",
     "ops/.gitignore",
     "ops/Makefile",
     "ops/cli",
-    "ops/compose.rollback-bridge.yaml",
     "ops/compose.test.yaml",
     "ops/container-aliases.json",
     "ops/container-runtime",
@@ -155,7 +146,6 @@ VERIFICATION_OPERATIONAL_INPUTS = (
     "ops/guardias",
     "ops/manifests",
     "ops/observability",
-    "ops/rollback-bridge",
     "ops/runbooks",
     "ops/schemas",
     "ops/scripts",
@@ -169,8 +159,7 @@ DOMAIN_INPUTS: dict[str, tuple[str, ...]] = {
     + ("tsconfig.build.json", "vitest.config.ts", "packages", "services", "deploy"),
     # `deploy` stays whole here as well: the console image copies deploy/nginx-console-tls.conf, and
     # enumerating single files would let a future console-relevant deploy file escape the digest.
-    # Over-coverage is harmless for this domain -- console evidence is produced by the same
-    # release-build.sh run as the runtime image, so it is never expensive to regenerate.
+    # Over-coverage is harmless for this domain because console evidence is cheap to regenerate.
     "console": SHARED_MANIFESTS + ("apps/console", "deploy"),
     # The apparatus that decides what an authentic run reports. `ops/harness` is taken whole so a
     # new harness module cannot appear outside the digest; the ops/scripts entries are enumerated

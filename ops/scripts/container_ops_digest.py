@@ -23,23 +23,14 @@ STATIC_INPUTS = (
     "scripts/pin-container-release.py",
     "scripts/container_ops_digest.py",
     "scripts/cutover.sh",
-    "scripts/cutover-rollback.sh",
-    "scripts/rollback.sh",
-    "scripts/pin-production-release.py",
     "scripts/create-inactive-override-manifest.py",
-    "scripts/release-build.sh",
-    "scripts/release-candidate.py",
-    "scripts/validate-release-evidence.py",
-    "scripts/rollback-baseline.py",
     "scripts/migration-gate.mjs",
     "scripts/validate.sh",
-    "scripts/release-gate.sh",
     # Critical adversarial suites and their fakes: a change to the supervisor/lifecycle
     # behaviour that is not matched by its regression tests must move this digest.
     "tests/container-supervisor.test.mjs",
     "tests/test_container_runtime_reaping.py",
     "tests/alias-runner.test.mjs",
-    "tests/container-release-pin.test.mjs",
     "tests/container-cutover.test.mjs",
     "tests/container-ops-evidence.test.mjs",
     "tests/fake-docker.mjs",
@@ -51,10 +42,9 @@ STATIC_INPUTS = (
     "runbooks/alias-cutover.md",
 )
 
-# Everything that can change how a release is configured, proven, deployed, monitored or
-# recovered.  Artifacts/private material are deliberately excluded: evidence is an output of the
-# gate and secrets must never enter a source digest.  Recursive discovery also prevents a newly
-# added release/backup script from silently living outside OPERATIONS.sha256.
+# Everything that can change how container operations are configured, monitored or recovered.
+# Artifacts/private material are deliberately excluded and secrets never enter a source digest.
+# Recursive discovery prevents a newly added operational script from evading OPERATIONS.sha256.
 OPERATIONAL_TREES = (
     "scripts",
     "tests",
@@ -91,13 +81,12 @@ def generated_logical_path(path: pathlib.Path, generated: pathlib.Path, *, rootl
 
 
 def tracked_tree_files(root: pathlib.Path) -> set[pathlib.Path] | None:
-    """Return release-candidate files below *root* when this is a Git checkout.
+    """Return operational source files below *root* when this is a Git checkout.
 
-    Release contexts are produced with ``git archive`` and intentionally do not contain ``.git``.
-    There the physical tree is already the committed tree and recursive discovery is correct. In
-    an operator checkout, include tracked plus non-ignored new source so a newly added operational
-    script cannot evade the digest before its commit. Ignored backups/editor files remain outside
-    the domain, preserving parity with the eventual archive.
+    Archives intentionally do not contain ``.git``; there the physical tree is already the source
+    tree and recursive discovery is correct. In an operator checkout, include tracked plus
+    non-ignored new source so a newly added operational script cannot evade the digest before its
+    commit. Ignored backups/editor files remain outside the domain.
     """
     try:
         probe = subprocess.run(
@@ -146,7 +135,7 @@ def operational_files(root: pathlib.Path, generated: pathlib.Path, *, rootless: 
     files.extend(sorted(generated.glob("cauce-v3-container-*.service")))
     files.extend(sorted((generated / "configs").glob("*.env.example")))
     if not rootless:
-        # The release-facing system digest also binds the complete checked-in
+        # The system digest also binds the complete checked-in
         # rootless deliverable. Rootless keeps its own independently checkable
         # digest/SHA set, while OPERATIONS.sha256 covers both deployment modes.
         checked_rootless = root / "generated" / "container-systemd" / "rootless"

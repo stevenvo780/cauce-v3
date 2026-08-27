@@ -18,11 +18,9 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 target=${1:?usage: compose.sh dev|test|authentic|prod <compose args...>}
 shift
 
-python_bin=$(command -v python3)
 docker_bin=$(command -v docker)
-[[ $python_bin = /* && -x $python_bin ]] || { printf 'trusted python3 is unavailable\n' >&2; exit 127; }
 [[ $docker_bin = /* && -x $docker_bin ]] || { printf 'trusted Docker CLI is unavailable\n' >&2; exit 127; }
-readonly python_bin docker_bin
+readonly docker_bin
 
 case "$target" in
   dev) env_file=${CAUCE_ENV_FILE:-"$ROOT/config/dev.env"} ;;
@@ -32,21 +30,6 @@ case "$target" in
   *) printf 'unsupported compose target: %s\n' "$target" >&2; exit 2 ;;
 esac
 
-authenticate_release_lock() {
-  [[ ${CAUCE_RELEASE_TRANSITION_LOCK_FD:-} =~ ^[0-9]+$ \
-     && ${CAUCE_RELEASE_TRANSITION_LOCK_FD:-0} -ge 3 \
-     && ${CAUCE_RELEASE_TRANSITION_LOCK_TOKEN:-} =~ ^[a-f0-9]{64}$ ]] || {
-    printf '%s requires the authenticated release lock\n' "$1" >&2
-    return 1
-  }
-  "$python_bin" "$ROOT/scripts/pin-production-release.py" field \
-    --env-file "$env_file" --name CAUCE_COMPOSE_OVERRIDE_MANIFEST \
-    --lock-fd "$CAUCE_RELEASE_TRANSITION_LOCK_FD" >/dev/null || {
-    printf '%s lock authentication failed\n' "$1" >&2
-    return 1
-  }
-}
-
 env_args=()
 if [[ -n $env_file ]]; then
   [[ -f $env_file ]] || { printf 'missing private env file: %s (copy the matching .example)\n' "$env_file" >&2; exit 2; }
@@ -54,8 +37,7 @@ if [[ -n $env_file ]]; then
 
   # Only these non-secret control values are needed before Compose starts. Parse
   # them as data instead of sourcing the secret-bearing env. In production the
-  # manifest path+SHA is a durable selector; a differing preview is admitted
-  # only while holding the authenticated release transition lock.
+  # manifest path+SHA is a durable selector; a differing preview is rejected.
   selector_preview=0
   for control in CAUCE_LOCAL_POSTGRES CAUCE_COMPOSE_OVERRIDE_MANIFEST \
     CAUCE_COMPOSE_OVERRIDE_MANIFEST_SHA256 CAUCE_COMPOSE_OVERRIDES_DIR; do
@@ -83,14 +65,14 @@ if [[ -n $env_file ]]; then
     fi
   done
   if [[ $target == prod && $selector_preview == 1 ]]; then
-    authenticate_release_lock 'production Compose selector preview' || exit 2
+    printf 'production Compose selector preview is disabled outside deployment tooling\n' >&2
+    exit 2
   fi
 fi
 
-# A direct production invocation has the same fixed engine and credential
-# authority as deploy-release.sh.  The selected env file remains Compose's data
-# input, but ambient Docker/Compose controls cannot redirect it to another
-# daemon, context, project or credential store.
+# A production read-only invocation uses a fixed engine and credential authority.
+# The selected env file remains Compose's data input, but ambient Docker/Compose
+# controls cannot redirect it to another daemon, context, project or credential store.
 if [[ $target == prod ]]; then
   trusted_home=$(getent passwd "$(id -u)" | cut -d: -f6)
   trusted_user=$(id -un)
@@ -176,13 +158,12 @@ production_compose_is_read_only() {
 # A production Compose invocation is read-only only when its first token is one
 # of this deliberately small top-level allowlist.  Global flags, unknown/new
 # subcommands, `exec`, `run`, `cp`, image-cache operations and every lifecycle
-# command fail closed behind the same authenticated transition capability.  In
-# particular, `--dry-run down` is still a production mutation preview: it can
-# disclose and authorize the exact stop/remove plan and must not bypass the
-# release transaction lock.
+# command fail closed outside deployment tooling. In particular, `--dry-run
+# down` is still a production mutation preview and remains disabled here.
 if [[ $target == prod ]]; then
   production_compose_is_read_only "$@" || {
-    authenticate_release_lock 'production Compose mutation' || exit 2
+    printf 'production Compose mutation is disabled outside deployment tooling\n' >&2
+    exit 2
   }
 fi
 

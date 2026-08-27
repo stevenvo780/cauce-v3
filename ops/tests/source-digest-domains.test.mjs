@@ -113,7 +113,6 @@ for (const sentinel of [
   'ops/tests/source-digest-domains.test.mjs',
   'ops/Makefile',
   'ops/cli/cauce-huerfanas',
-  'ops/compose.rollback-bridge.yaml',
   'ops/compose.test.yaml',
   'ops/container-aliases.json',
   'ops/container-runtime/cauce-container-runtime.py',
@@ -123,7 +122,6 @@ for (const sentinel of [
   'ops/observability/alerts.yaml',
   'ops/runbooks/deploy.md',
   'ops/schemas/build-evidence.schema.json',
-  'ops/schemas/rollback-bridge.schema.json',
   'ops/scripts/source-digest.py',
   'eslint.config.js',
 ]) {
@@ -149,8 +147,6 @@ for (const sentinel of [
   'deploy/runtime-store.package.json',
   'services/gateway/src/app.ts',
   'services/dispatcher/package.json',
-  'services/relay-worker/package.json',
-  'services/shadow-router/package.json',
   'services/telegram-bridge/package.json',
   'services/terminal-relay/package.json',
   'packages/protocol/package.json',
@@ -239,7 +235,7 @@ try {
   await write('ops/scripts/run-testcontainers.sh', '#!/bin/sh\n');
   await write('ops/scripts/validate-testcontainers-evidence.py', 'print("ok")\n');
   await write('ops/scripts/source-hygiene.py', 'print("hygiene")\n');
-  await write('ops/scripts/validate-terminal-release.py', 'print("terminal")\n');
+  await write('ops/scripts/migration-gate.mjs', 'export const migration = true;\n');
   await write('ops/scripts/physical-fleet-gate.py', 'print("fleet")\n');
   await write('ops/scripts/validate-fleet-release-evidence.py', 'print("evidence")\n');
   await write('ops/scripts/source-digest.py', '# fixture\n');
@@ -422,7 +418,7 @@ try {
   let priorFull = digestOf('full', sandbox);
   for (const [relative, contents] of [
     ['ops/scripts/source-hygiene.py', 'print("hygiene disabled")\n'],
-    ['ops/scripts/validate-terminal-release.py', 'print("terminal disabled")\n'],
+    ['ops/scripts/migration-gate.mjs', 'export const migration = false;\n'],
     ['ops/scripts/physical-fleet-gate.py', 'print("fleet disabled")\n'],
     ['ops/scripts/validate-fleet-release-evidence.py', 'print("evidence disabled")\n'],
     ['ops/schemas/build-evidence.schema.json', '{"additionalProperties":true}\n'],

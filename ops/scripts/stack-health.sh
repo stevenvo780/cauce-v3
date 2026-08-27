@@ -6,24 +6,10 @@ target=${1:-dev}
 case "$target" in
   dev) default_env="$ROOT/config/dev.env" ;;
   prod) default_env="$ROOT/config/prod.env" ;;
-  *) printf 'usage: stack-health.sh [dev|prod] [--maintenance-offline-zeus|--bootstrap-legacy]\n' >&2; exit 2 ;;
+  *) printf 'usage: stack-health.sh [dev|prod]\n' >&2; exit 2 ;;
 esac
 if (($#)); then shift; fi
-fleet_mode=final
-if (($#)); then
-  [[ $target == prod && $# == 1 ]] || {
-    printf 'usage: stack-health.sh [dev|prod] [--maintenance-offline-zeus|--bootstrap-legacy]\n' >&2
-    exit 2
-  }
-  case $1 in
-    --maintenance-offline-zeus) fleet_mode=maintenance-zeus ;;
-    --bootstrap-legacy) fleet_mode=bootstrap-legacy ;;
-    *)
-      printf 'usage: stack-health.sh [dev|prod] [--maintenance-offline-zeus|--bootstrap-legacy]\n' >&2
-      exit 2
-      ;;
-  esac
-fi
+(($# == 0)) || { printf 'usage: stack-health.sh [dev|prod]\n' >&2; exit 2; }
 env_file=${CAUCE_ENV_FILE:-$default_env}
 [[ -f "$env_file" ]] || { printf 'missing env file: %s\n' "$env_file" >&2; exit 2; }
 
@@ -39,43 +25,49 @@ env_value() {
 }
 
 if [[ $target == prod ]]; then
-  CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod exec -T gateway \
+  docker_bin=$(PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin command -v docker)
+  [[ $docker_bin = /* && -x $docker_bin ]] || { printf 'trusted Docker CLI is unavailable\n' >&2; exit 127; }
+  production_container() {
+    local service=$1 identifier
+    identifier=$(CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod ps -q "$service")
+    [[ -n $identifier ]] || { printf '%s is configured but not running\n' "$service" >&2; return 1; }
+    printf '%s\n' "$identifier"
+  }
+  production_exec() {
+    local service=$1 identifier
+    shift
+    identifier=$(production_container "$service") || return
+    "$docker_bin" exec "$identifier" "$@"
+  }
+
+  production_exec gateway \
     node deploy/readiness-probe.mjs http://127.0.0.1:8081/health/ready ready
-  CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod exec -T console \
+  production_exec console \
     sh -c 'test -r /run/secrets/console_tls_ca && SSL_CERT_FILE=/run/secrets/console_tls_ca wget -q -O /dev/null https://console:8444/'
-  CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod exec -T dispatcher \
+  production_exec dispatcher \
     node deploy/readiness-probe.mjs http://127.0.0.1:8082/health/ready ready
-  CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod exec -T outbox-metrics \
+  production_exec outbox-metrics \
     node deploy/readiness-probe.mjs http://127.0.0.1:8084/health/ready ready
   configured=$(CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod config --services)
   if grep -qx relay-worker <<<"$configured"; then
-    CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod exec -T relay-worker \
+    production_exec relay-worker \
       node deploy/readiness-probe.mjs http://127.0.0.1:8083/health/ready ready
   fi
   if grep -qx telegram-bridge <<<"$configured"; then
-    CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod exec -T telegram-bridge \
+    production_exec telegram-bridge \
       node deploy/readiness-probe.mjs http://127.0.0.1:8086/health/ready ready
   fi
   if grep -qx terminal-relay <<<"$configured"; then
-    terminal_id=$(CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod ps -q terminal-relay)
-    [[ -n $terminal_id ]] || { printf 'terminal-relay is configured but not running\n' >&2; exit 1; }
-    terminal_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$terminal_id")
+    terminal_id=$(production_container terminal-relay)
+    terminal_health=$("$docker_bin" inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$terminal_id")
     [[ $terminal_health == healthy ]] || { printf 'terminal-relay is not healthy\n' >&2; exit 1; }
   fi
   if grep -qx shadow-router <<<"$configured"; then
-    CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod exec -T shadow-router \
+    production_exec shadow-router \
       node deploy/unix-readiness-probe.mjs \
         /run/cauce-shadow/router/router.sock /health/ready ready
   fi
-  CAUCE_FLEET_SNAPSHOT_FILE= CAUCE_FLEET_TEST_MODE=0 \
-    CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/fleet-gate-mode.sh" "$fleet_mode"
-  if [[ $fleet_mode == final ]]; then
-    printf 'production core, configured relay/Telegram/terminal/shadow services, strict fleet parity and PostgreSQL TLS are ready\n'
-  elif [[ $fleet_mode == bootstrap-legacy ]]; then
-    printf 'production legacy core, registry probe and PostgreSQL TLS are ready; post-migration parity remains mandatory\n'
-  else
-    printf 'production core and bounded Zeus maintenance checks are ready; final strict fleet gate remains mandatory\n'
-  fi
+  printf 'production core and configured relay, Telegram, terminal and shadow services are ready\n'
   exit 0
 fi
 
