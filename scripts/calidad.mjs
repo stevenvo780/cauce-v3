@@ -21,21 +21,23 @@ for (const f of ficheros) {
   let texto; try { texto = readFileSync(f, 'utf8'); } catch { continue; }
   const lineas = texto.split('\n');
   const fechas = lineas.filter(l => COMENTARIO.test(l) && FECHA.test(l)).length;
-  estado[f] = { lineas: lineas.length, fechas };
+  const comentarios = lineas.filter(l => COMENTARIO.test(l)).length;
+  estado[f] = { lineas: lineas.length, fechas, comentarios };
 }
 
 if (process.argv.includes('--update')) {
-  const base = { lineas: {}, fechas: {} };
+  const base = { lineas: {}, fechas: {}, comentarios: {} };
   for (const [f, v] of Object.entries(estado)) {
     if (v.lineas > MAX) base.lineas[f] = v.lineas;
     if (v.fechas > 0) base.fechas[f] = v.fechas;
+    if (v.comentarios > 0) base.comentarios[f] = v.comentarios;
   }
   writeFileSync(BASE_PATH, JSON.stringify(base, null, 1) + '\n');
   console.log(`calidad: baseline actualizado (${Object.keys(base.lineas).length} ficheros >${MAX}, ${Object.keys(base.fechas).length} con fechas en comentarios)`);
   process.exit(0);
 }
 
-let base = { lineas: {}, fechas: {} };
+let base = { lineas: {}, fechas: {}, comentarios: {} };
 try { base = JSON.parse(readFileSync(BASE_PATH, 'utf8')); } catch { /* sin baseline: todo estricto */ }
 
 const fallos = [];
@@ -44,6 +46,9 @@ for (const [f, v] of Object.entries(estado)) {
   if (v.lineas > tope) fallos.push(`${f}: ${v.lineas} lineas (tope ${tope}${base.lineas[f] ? ', trinquete' : ''})`);
   const topeF = base.fechas[f] ?? 0;
   if (v.fechas > topeF) fallos.push(`${f}: ${v.fechas} fechas en comentarios (tope ${topeF})`);
+  // Comentarios: los existentes solo pueden BAJAR; un fichero nuevo tolera hasta 15% de densidad.
+  const topeC = base.comentarios?.[f] ?? Math.ceil(v.lineas * 0.15);
+  if (v.comentarios > topeC) fallos.push(`${f}: ${v.comentarios} lineas de comentario (tope ${topeC}${f in (base.comentarios ?? {}) ? ', trinquete' : ', 15% para nuevos'})`);
 }
 for (const f of Object.keys(base.lineas)) if (!(f in estado)) delete base.lineas[f];
 
@@ -52,4 +57,4 @@ if (fallos.length) {
   console.error('Regla: partir el fichero o limpiar las fechas. El baseline solo baja (integrador: --update tras revisar).');
   process.exit(1);
 }
-console.log(`calidad: VERDE (${ficheros.length} ficheros; baseline: ${Object.keys(base.lineas).length} >800 en trinquete, ${Object.keys(base.fechas).length} con fechas)`);
+console.log(`calidad: VERDE (${ficheros.length} ficheros; trinquete: ${Object.keys(base.lineas).length} >800, ${Object.keys(base.fechas).length} con fechas, ${Object.keys(base.comentarios ?? {}).length} con comentarios acotados)`);
