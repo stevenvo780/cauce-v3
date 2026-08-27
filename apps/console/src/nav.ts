@@ -14,17 +14,7 @@ import {
 } from './navigation';
 
 /**
- * **El menú, en un solo sitio.**
- *
- * Existía por duplicado: la barra lateral lo declaraba en `App.tsx` y la portada volvía a
- * escribirlo a mano en `LandingPage.tsx`. Las dos copias ya habían divergido el mismo día en que
- * nacieron —la portada llamaba «Configuration» a lo que el menú llama «Ajustes y altas», y
- * se olvidaba entera de «Ultimate Terminal»—, y el rótulo del panel decía «Ocho vistas» porque
- * alguien las contó con el dedo. Un rótulo contado a mano miente en cuanto se agrega una entrada,
- * y el recuento de acá se DERIVA de la lista.
- *
- * `que` es lo que la portada añade sobre la barra lateral: la pregunta que responde cada vista.
- * Vive acá, junto al rótulo, para que agregar una entrada obligue a decir para qué sirve.
+ * Definición centralizada de entradas del menú principal de la consola.
  */
 export interface NavEntry {
   id: string;
@@ -50,16 +40,7 @@ export const NAV_ENTRIES: NavEntry[] = [
 ];
 
 /**
- * **La única respuesta a «¿este usuario puede abrir esta vista?».**
- *
- * Vivía dentro de `ConsoleShell`, así que sólo la barra lateral podía preguntarlo, y la portada
- * —que es la PRIMERA pantalla de todo el mundo— ofrecía como enlace vivo exactamente lo que la
- * barra dejaba inerte tres centímetros más a la izquierda. Un menú honesto y una portada que
- * miente son, para quien hace clic, una consola que miente. Está acá, y no en `navigation.ts`,
- * porque es un hook: lee el RBAC y el relay, no es una función pura.
- *
- * Las dos lecturas comparten clave de caché con las páginas que ya las piden (`console-access`,
- * y el sondeo del relay), así que montar esto en dos sitios no agrega peticiones.
+ * Hook para determinar la disponibilidad y permisos de cada ruta de navegación.
  */
 export function useNavAvailability(): (id: string) => NavEntryAvailability {
   const api = useApi();

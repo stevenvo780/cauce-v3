@@ -1,30 +1,9 @@
 /**
- * **El guardia del vocabulario. Una tabla, seis vistas, cuatro cosas que no pueden llegar a la
- * pantalla del operador.**
- *
- * Esta prueba existe por una razón concreta, y conviene dejarla escrita: **los 646 tests de esta
- * consola pasaban con todos estos defectos delante.** 
- *
- *  - `/terminal` imprimía, como TEXTO, `<UNKNOWN VALUE=AVAILABLE />` — un componente JSX escapado
- *    con entidades HTML— cuatro veces. Se comprobó quitando el arreglo y volviendo a correr los 155
- *    tests de `features/terminal`: **pasan los 155**. Nadie compara el texto de ese badge.
- *  - `/terminal` decía «UNKNOWN» 26 veces y `/observability` 8, en una interfaz en castellano.
- *  - `/queues` volcaba un `2026-08-23T02:02:29.830Z` crudo del servidor.
- *
- * Ninguna de esas tres cosas necesita LAYOUT para detectarse: son texto. jsdom no tiene layout —por
- * eso una cabecera que renderiza una letra por línea pasa igual, y eso hay que medirlo en un
- * navegador de verdad—, pero sí tiene `textContent`, y con eso alcanza para las cuatro invariantes
- * de abajo. Lo que no alcanza es esperar a que alguien lo note.
- *
- * Las cuatro, y por qué cada una:
- *  1. **Ningún marcador de JSX sin renderizar.** Si un componente se escapa, sale su nombre como
- *     texto y nadie se entera.
- *  2. **Ningún `UNKNOWN`.** La DOCTRINA no cambia —ausente sigue siendo desconocido y nunca
- *     permitido, eso se decide en la lógica— pero la PALABRA es «sin dato». Ver `lib.ts`.
- *  3. **Ninguna cabecera de tabla con el nombre de una columna de la base.** `snake_case` inglés en
- *     una interfaz en castellano es el esquema filtrándose a la pantalla.
- *  4. **Ninguna fecha ISO cruda.** Había tres formatos de fecha conviviendo; ahora hay uno, y el
- *     instante exacto vive en el `title=`.
+ * Verificación de formato y vocabulario en vistas montadas:
+ * 1. Sin marcadores JSX sin renderizar.
+ * 2. Sin literales UNKNOWN visibles.
+ * 3. Sin identificadores snake_case crudos en cabeceras de tabla.
+ * 4. Sin fechas ISO crudas sin formatear.
  */
 import { screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';

@@ -227,8 +227,7 @@ describe('el mapa', () => {
   });
 
   it('dar de alta en el registro y no darle sala sube «Sin sala» el mismo día', async () => {
-    // El caso `gaia` literal: alta en `agents`, cero membresías. Es un alta a medias, y hasta el
-    // 2026-08-22 la pantalla que existe para verla no decía una palabra.
+    // Caso de agente con registro activo pero cero membresías asignadas.
     const base = mockActivity();
     const primero = (base.agents ?? [])[0];
     conActividad({

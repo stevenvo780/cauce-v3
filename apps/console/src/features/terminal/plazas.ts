@@ -1,22 +1,6 @@
 /**
- * Qué sesiones de terminal siguen OCUPANDO una plaza del operador.
- *
- * Esto existe por un fallo 
- * Ultimate Terminal «nunca ha funcionado»:
- *
- *   1. abrí la TUI de dos alias        → 2 tarjetas, 2 nodos `.pty-host`, 2 sesiones `active`;
- *   2. navegá a Portada y volvé        → 0 tarjetas, 2 nodos `.pty-host` VIVOS, 2 sesiones `active`;
- *   3. abrí un tercer alias            → HTTP 409 `session_limit`.
- *
- * El tope del gateway es por OPERADOR (`maxSessionsPerOperator`, 2 por defecto) y una sesión
- * consumida sigue contando 900 s aunque su pestaña ya no exista. La consola perdía el `grant` al
- * desmontar el workspace, así que la propia pantalla que decía «cerrá alguna de las sesiones que
- * tenés abiertas» no tenía NINGUNA sesión que cerrar. Quince minutos muerto, sin un solo error
- * que lo explicara.
- *
- * El arreglo son dos cosas y hacen falta las dos: soltar las sesiones al desmontar la vista
- * (`OperatorWorkspace`), y —para lo que se cuele igual: otra pestaña, un cierre a lo bruto, un
- * navegador que se fue— PODER VERLAS Y CERRARLAS. Este módulo es el criterio de «cuáles cuentan».
+ * Criterio de conciliación de plazas ocupadas por sesiones PTY del operador.
+ * Permite identificar sesiones activas y liberar sesiones huérfanas frente al tope maxSessionsPerOperator.
  */
 import type { TerminalSessionListItem } from './api';
 

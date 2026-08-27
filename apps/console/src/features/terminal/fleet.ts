@@ -269,13 +269,8 @@ export function countOnlinePtyTargets(targets: TerminalTarget[] | null | undefin
 /* -------------------------------------------------------------------------- */
 
 /**
- * El modo `harness` del agente PTY es el que se engancha a la TUI que el agente YA está
- * corriendo (su `tmux`), en vez de abrir una shell nueva. Es lo que : no una
- * terminal más, sino la pantalla del agente ahora mismo.
- *
- * Que ese modo exista es una decisión del servidor: el agente sólo lo anuncia si tiene un
- * `HARNESS_COMMAND` configurado, y el gateway sólo lo lista si además hay grant. La consola no
- * lo infiere nunca; si no está publicado, lo dice con esas palabras.
+ * El modo `harness` del agente PTY se conecta a la TUI activa del agente (sesión tmux).
+ * Si no está configurado HARNESS_COMMAND o no hay grant, se degrada a modo shell.
  */
 export const LIVE_TUI_MODE = 'harness';
 

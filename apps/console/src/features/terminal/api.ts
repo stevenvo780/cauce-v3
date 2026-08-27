@@ -681,10 +681,7 @@ export interface TerminalSessionListItem {
 }
 
 /**
- * Las sesiones del operador. Es la ÚNICA salida de la trampa que dejó sordo a Ultimate Terminal:
- * el tope del gateway es por operador, las sesiones sobreviven a la vista que las abrió, y sin
- * este listado el operador recibe «cerrá alguna de las sesiones que tenés abiertas» sin tener a
- * la vista ni una sola sesión que cerrar.
+ * Lista las sesiones activas del operador para conciliar el cupo de sesiones concurrentes.
  */
 export async function listTerminalSessions(session?: SesionConToken): Promise<TerminalSessionListItem[]> {
   const payload = await terminalRequest<unknown>('/v3/console/terminal/sessions', {}, session);

@@ -70,11 +70,7 @@ describe('/live cuando el gateway no contesta', () => {
   });
 
   it('mientras el reintento va en camino lo dice, para que el botón no parezca muerto', async () => {
-    /*
-     * Medido en Chrome: al pulsar «Reintentar» con otra lectura ya en vuelo, la nueva se encola y
-     * la pantalla no cambia hasta que la anterior vence — hasta 30 s. Se recupera, pero medio
-     * minuto sin señal es indistinguible de un botón que no hace nada.
-     */
+    // Indica lectura en curso cuando se reintenta mientras otra sigue en vuelo.
     actividadColgada();
     pintarLive(120);
 

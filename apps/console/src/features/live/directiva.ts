@@ -1,30 +1,10 @@
 import type { AgentDirective, AgentDirectiveFile } from '../../api/types';
 
 /**
- * LAS TRES CAPAS DE DIRECTIVA, y el aviso de cuándo se pisan.
- *
- * Fuera del componente por lo mismo que `role-brief.ts`: exportar funciones desde un fichero de
- * componentes rompe el fast refresh de Vite y el lint de esta consola corre con
- * `--max-warnings 0`. Y porque la regla que decide si dos capas se contradicen tiene que poder
- * probarse sola, sin montar un cajón.
- *
- * El diseño (`/workspace/DISENO-TRES-CAPAS-DE-DIRECTIVA.md`, medido sobre producción el
- * 23-ago-2026) reparte así los tres sitios donde hoy vive la directiva de un alias:
- *
- *   Capa 1 · `role_brief` → QUIÉN SOS y QUÉ PODÉS DECIDIR. Es la ÚNICA que debe hablar de
- *            autonomía y de permisos, porque es la única que viaja en cada entrega y sigue siendo
- *            verdad aunque se recree el contenedor.
- *   Capa 2 · `CLAUDE.md` → CÓMO SE TRABAJA AQUÍ. Rutas, comandos, convenciones. No repite
- *            identidad ni autonomía. Un `CLAUDE.md` que empieza con «Sos…» invade la capa 1.
- *   Capa 3 · memoria    → LO QUE ESE AGENTE APRENDIÓ. Ni identidad ni manual.
- *
- * El aviso NO bloquea nada: el punto 3 del diseño dice literalmente «no bloquear: avisar». Lo que
- *  es que la MISMA regla esté escrita en dos sitios y que,
- * cuando diverjan, nadie sepa cuál manda.
- *
- * REGLA DE HONESTIDAD, que es de donde salen la mitad de los defectos de esta consola: acá sólo se
- * emiten avisos sobre capas que SE LEYERON. Con el gateway sin publicar los ficheros, decir «este
- * alias no tiene CLAUDE.md» sería inventar un negativo que nadie midió. Ver `avisosDeCapas`.
+ * Detección de solapamientos entre las tres capas de directiva:
+ * Capa 1 (role_brief): Identidad y límites de autonomía.
+ * Capa 2 (CLAUDE.md / AGENTS.md): Reglas de entorno y operativas.
+ * Capa 3 (memoria): Conocimiento persistido del arnés.
  */
 
 export type TonoAvisoCapa = 'choque' | 'hueco' | 'nota';
@@ -246,22 +226,10 @@ export function primerasLineas(texto: string | null | undefined, cuantas: number
 }
 
 /**
- * ¿La lectura de esta capa OCURRIÓ, y qué encontró?
- *
- * Esto existe porque la consola llegó a afirmar una ausencia que nadie había medido. El gateway
- * degrada bien —`{publicado: true, motivo: 'contenedor no medido todavía', files: null}`— pero
- * la columna sólo enseñaba el aviso cuando `publicado` era FALSO, así que ese motivo no se veía
- * nunca y en su lugar salía «miró el contenedor y no hay ningún CLAUDE.md». 
- * dentro de los contenedores, eso era falso en 11 de los 12 alias que pude mirar.
- *
- * El discriminante correcto no es «¿publica el endpoint?». Es «¿ocurrió la lectura?»:
- *
- *   `null`      → NO se miró. Prohibido afirmar la ausencia; hay que enseñar el motivo.
- *   `[]` / `0`  → se miró y no hay. Ahí sí se puede afirmar.
- *
- * `medido` manda sobre todo lo demás para que un gateway que degrade rellenando listas vacías
- * —en vez de con `null`— tampoco pueda arrastrarnos a la afirmación. Los gateways viejos no
- * mandan ese campo: para ellos vale la regla del `null`, que es la que ya cumplían.
+ * Estado de medición de una capa:
+ * - `no-se-miro`: sin lectura o contenedor no medido
+ * - `miro-y-no-hay`: lectura confirmada con resultado vacío
+ * - `hay-datos`: presencia de ficheros o entradas
  */
 export type MedicionDeCapa = 'cargando' | 'no-se-miro' | 'miro-y-no-hay' | 'hay-datos';
 

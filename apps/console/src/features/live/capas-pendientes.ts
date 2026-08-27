@@ -1,32 +1,14 @@
 import type { ConfigurationSnapshot } from '../../api/types';
 
 /**
- * LO QUE 
- *
- * El encargo eran cuatro cosas: la directiva, el `CLAUDE.md`, las herramientas y los prompts. Las
- * dos primeras tienen sitio en esta pestaña —la primera se edita, la segunda tiene su hueco
- * rotulado esperando al endpoint—. Las otras dos no, y este módulo es la razón por la que se
- * DICEN en pantalla en vez de faltar en silencio.
- *
- * Un hueco rotulado y un hueco a secas no son lo mismo. Sin esto, un operador que abre la pestaña
- * y no ve «herramientas» concluye una de dos cosas, las dos falsas: que se olvidó, o que este
- * agente no tiene herramientas configuradas. Con esto sabe que existe, dónde vive y qué falta para
- * llegar. La regla es la misma que gobierna el resto de la consola: no afirmar lo que no se midió,
- * y no callar lo que sí.
- *
- * Y la razón de fondo para NO haberlo construido a medias: en las dos capas de abajo, el sitio
- * donde vive el dato todavía no está decidido. Una pantalla que escriba en un fichero que nadie
- * lee es peor que no tener pantalla —parece que funcionó—.
+ * Información sobre capas de configuración de agentes pendientes de integración.
  */
 
 export interface CapaPendiente {
   id: string;
   titulo: string;
-  /** Qué preguntó Steven, en sus términos. */
   pedido: string;
-  /** Por qué hoy no se puede, dicho sin tecnicismos y sin excusas. */
   porQueNo: string;
-  /** Qué haría falta para que esto tuviera editor. Concreto, no «hace falta trabajo». */
   queFalta: string;
 }
 
@@ -36,27 +18,22 @@ export const CAPAS_PENDIENTES: CapaPendiente[] = [
     titulo: 'Herramientas · qué puede usar y qué no',
     pedido: 'Ver y cambiar qué herramientas, MCP y skills tiene permitidos cada agente.',
     porQueNo:
-      'Cauce no guarda esto en ningún sitio. El permiso está repartido entre el settings.json de '
-      + 'dentro del contenedor, las allowlist de managed-settings y la configuración de cada arnés '
-      + '—y ninguno de los tres vive en la base ni lo publica el gateway—. No hay una fuente que '
-      + 'mandar sobre las otras, así que no hay nada que un editor pueda escribir con efecto.',
+      'Cauce no guarda esto en un punto único: está repartido entre settings.json en el contenedor, '
+      + 'allowlist de managed-settings y la configuración de cada arnés. Ninguno se almacena en el '
+      + 'store central ni se expone con autoridad en el gateway.',
     queFalta:
-      'Decidir primero cuál de los tres sitios manda. Y hay un escollo medido: en los alias '
-      + 'openclaw, las herramientas y las credenciales están en el MISMO fichero, así que servirlo '
-      + 'entero al navegador sería una fuga; habría que publicar sólo la parte de herramientas.',
+      'Definir la fuente canónica para herramientas y separar de forma segura la exposición de '
+      + 'herramientas respecto a credenciales o secretos en configuraciones compartidas.',
   },
   {
     id: 'prompts',
     titulo: 'Prompts · falta acordar qué son',
     pedido: 'Editar «los prompts» del agente desde la web.',
     porQueNo:
-      'Hoy la palabra puede señalar dos cosas distintas y sólo una es alcanzable. Si son el '
-      + 'preámbulo que el adaptador arma en cada entrega, eso lo genera el código y no es editable '
-      + 'desde ningún sitio. Si son plantillas de rol reutilizables, la tabla ya existe y está '
-      + 'VACÍA: cero plantillas creadas, comprobado el 23 de agosto de 2026.',
+      'El concepto abarca dos implementaciones: preámbulos generados por el adapter en cada entrega '
+      + '(no editables) o plantillas de rol reutilizables (catálogo persistido en el store).',
     queFalta:
-      'Una respuesta de Steven sobre cuál de las dos quiso. Con la segunda, el editor sale casi '
-      + 'gratis: el catálogo de plantillas ya se lee y ya se puede aplicar a un alias.',
+      'Definir si la edición aplica a plantillas de rol reutilizables o directivas dinámicas.',
   },
 ];
 

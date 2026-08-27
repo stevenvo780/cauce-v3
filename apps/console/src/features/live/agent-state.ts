@@ -13,10 +13,9 @@ import {
  * Los siete estados que la consola distingue, cada uno con su muñeco. El orden del
  * union es el de precedencia: `down` gana a todo, `idle` pierde con todo.
  *
- * Regla dura heredada del manual del médico: **un lease vivo NO prueba que el agente responda.**
- * Por eso `blocked` NO se deriva de la presencia sino de señales de trabajo real que no avanza
- * (`work_state: 'stalled'`, `ack_stalled`, `overdue_acks`), y `down` sólo se declara cuando el
- * servidor mismo dice que el lease venció o que nunca hubo conexión.
+ * Un lease vivo no prueba que el agente responda: `blocked` se deriva de señales de estancamiento
+ * (`work_state: 'stalled'`, `ack_stalled`, `overdue_acks`), y `down` se declara cuando el
+ * lease venció o nunca hubo conexión.
  */
 export type LiveState =
   | 'down'

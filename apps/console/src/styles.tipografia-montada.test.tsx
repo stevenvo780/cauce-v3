@@ -131,11 +131,7 @@ export function textoPorDebajoDelSuelo(raiz: Element, suelo = SUELO): string[] {
 }
 
 /**
- * Las vistas bajo guardia.
- *
- * `/terminal` NO está: tiene 177 elementos por debajo del suelo medidos en Chrome —el peor caso de
- * la consola, con 4 elementos a 8,00 px— y su hoja la estaba editando otro agente al mismo tiempo.
- * Cuando ese trabajo cierre se añade acá y el guardia la cubre.
+ * Las vistas bajo guardia tipográfica.
  */
 const VISTAS: ReadonlyArray<{ ruta: string; titulo: RegExp; minimo: number }> = [
   { ruta: '/', titulo: /Cauce en una pantalla/i, minimo: 200 },
@@ -153,19 +149,7 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
       window.history.pushState({}, '', ruta);
       renderWithApi(<App />);
 
-      /*
-       * DOS esperas, y las dos hacen falta.
-       *
-       * La consola no se pinta antes de saber quién sos: hasta que `/v3/auth/session` contesta, en
-       * `main` sólo vive «Verificando la sesión con el gateway…» —tres elementos— y el `<h1>` de la
-       * página YA existe en el armazón. O sea que esperar por el título da verde sobre una pantalla
-       * VACÍA: se barren tres nodos, no se encuentra letra chica y el guardia aprueba. Medido: así
-       * escrita, esta prueba pasaba de 1840 elementos a 3.
-       *
-       * El landmark de navegación es lo primero que aparece DESPUÉS de la sesión, así que es el que
-       * marca «ya hay página». Y el conteo mínimo por vista es el seguro contra lo mismo: si mañana
-       * un mock deja de contestar y la vista se vacía, la prueba lo dice en vez de festejarlo.
-       */
+      // Espera a que la navegación y el contenido principal se hayan montado tras la sesión.
       await screen.findByRole('navigation', { name: /principal/i });
       const main = screen.getByRole('main');
       await waitFor(() => {

@@ -39,13 +39,7 @@ describe('la tira de pestañas del cajón cabe en el cajón', () => {
     expect(cuerpos(SIN_COMENTARIOS, '.agent-drawer-tabs')).not.toHaveLength(0);
   });
 
-  /*
-   * El corazón del arreglo. `display: flex` sin nada más es la tira de 519 px dentro de 420: hay
-   * que declarar CÓMO cabe. Se aceptan las dos formas —envolver o desplazar— porque las dos
-   * contienen el desborde; la que se eligió, mirando las dos renderizadas, fue envolver: con
-   * scroll horizontal quedaban escondidas tres de las seis pestañas (incluida la ACTIVA a 360 px)
-   * detrás de un gesto que con un ratón no existe.
-   */
+  // Contención de desborde mediante envoltura o desplazamiento.
   it('declara un mecanismo para caber: envuelve o desplaza, pero no se desborda', () => {
     const envuelve = valor(SIN_COMENTARIOS, '.agent-drawer-tabs', 'flex-wrap');
     const desplaza = valor(SIN_COMENTARIOS, '.agent-drawer-tabs', 'overflow-x')
@@ -57,26 +51,13 @@ describe('la tira de pestañas del cajón cabe en el cajón', () => {
       + 'con `nowrap` y `overflow-x: visible` se dibuja fuera del cajón').toBe(true);
   });
 
-  /*
-   * La otra mitad. Al envolver, el desborde deja de ir a la página y pasa al rótulo: un flex item
-   * que puede encogerse se encoge, y el navegador parte «Conexión» a mitad de palabra para que
-   * quepa. Ya nos mordió con «Configuración y altas». `flex: none` le quita el permiso de
-   * encogerse y `white-space: nowrap` el de partirse.
-   *
-   * OJO CON EL MÉTODO: esto NO se caza con `scrollWidth > clientWidth`. Con la palabra partida el
-   * navegador ya evitó el desborde, así que esa resta da 0 tanto si el rótulo está entero como si
-   * está roto en dos líneas. Se ve mirando la tira renderizada; acá se guarda la causa.
-   */
+  // Evita que los rótulos se partan a mitad de palabra o se encojan indebidamente.
   it('la pestaña no se encoge ni parte el rótulo a mitad de palabra', () => {
     expect(valor(SIN_COMENTARIOS, '.agent-drawer-tab', 'flex')).toBe('none');
     expect(valor(SIN_COMENTARIOS, '.agent-drawer-tab', 'white-space')).toBe('nowrap');
   });
 
-  /*
-   * El guardián sólo vale si la tira sigue siendo más ancha que el cajón. Si mañana el cajón
-   * creciera hasta caber la tira de un tirón, esta prueba dejaría de proteger nada sin avisar, y
-   * el siguiente que añada una pestaña volvería a empezar. 420 px es el ancho declarado hoy.
-   */
+  // Ancho declarado de 420 px para el cajón.
   it('el cajón sigue midiendo 420 px, que es lo que hace falta contener', () => {
     expect(valor(SIN_COMENTARIOS, '.live-page.has-drawer', 'grid-template-columns'))
       .toContain('420px');

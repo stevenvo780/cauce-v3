@@ -31,10 +31,9 @@ export function LiveFleetLegend({
       <details className="live-fold">
         <summary>Cómo se lee un muñeco, y cómo leer los números</summary>
         <p className="live-legend-lead">
-          Estas son las MISMAS palabras que usan el veredicto de arriba y la columna «Estado» de
+          Estas son las mismas palabras que usan el veredicto de arriba y la columna «Estado» de
           la tabla: si el veredicto dice <strong>caído</strong>, la tabla dice <strong>Caído</strong>{' '}
-          y acá abajo se explica <strong>Caído</strong>. Hasta el 2026-08-23 eran tres palabras
-          distintas para lo mismo.
+          y acá abajo se explica <strong>Caído</strong>.
         </p>
         <p className="live-legend-lead">
           <strong>Libre</strong> no es <strong>caído</strong> ni es <strong>sin reportar</strong>.

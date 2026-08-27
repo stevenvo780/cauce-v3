@@ -271,18 +271,7 @@ describe('ninguna hoja de la consola declara letra por debajo del suelo', () => 
   });
 });
 
-/* ═══ La trampa que ninguna lista de valores puede ver ═════════════════════════════════════════
- *
- * MEDIDO en Chrome: 76 elementos `<small class="subline">` a **10,67 px**, repartidos por /queues,
- * /observability, /accounts y /live. Ninguna hoja declara ese tamaño en ninguna parte: `.subline`
- * pone `display`, `margin` y `color` y NO pone `font-size`, así que manda la hoja de estilo del
- * NAVEGADOR, que a `<small>` le da `smaller`. Un censo de los `font-size` escritos en el CSS —que
- * es lo que hacen los asertos de arriba— no puede encontrar esto ni en principio: el defecto está
- * en lo que NO está escrito.
- *
- * Por eso la hoja global tiene que poner un suelo explícito a los elementos que el navegador
- * encoge por su cuenta. Se guarda acá para que nadie lo quite «porque no hacía nada».
- */
+/* Elementos con reducción por defecto del navegador (small, .subline). */
 describe('los elementos que el NAVEGADOR encoge por su cuenta tienen suelo propio', () => {
   const global = sinComentarios(leer('styles.css'));
 

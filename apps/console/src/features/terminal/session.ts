@@ -191,17 +191,5 @@ export function formatCountdown(seconds: number | undefined): string {
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Por qué NO se abrió el canal                                               */
-/* -------------------------------------------------------------------------- */
+// La traducción de denegaciones PTY se centraliza en denegaciones.ts.
 
-/*
- * La traducción del rechazo del plano PTY NO vive acá. Vivió, entre el 2026-08-23 y la fusión de
- * ese mismo día: `terminalSessionRefusal` ramificaba por estado HTTP y `explicarDenegacionPty`
- * (`denegaciones.ts`) por código del gateway, y las dos redactaban el MISMO 403 con palabras
- * distintas. Dos vocabularios para una negativa es el defecto que el trabajo de ese día vino a
- * cerrar, así que quedó uno: `denegaciones.ts`, que además dice quién puede levantarla y nunca
- * devuelve el código crudo. Lo que este módulo aportaba —que un 403 por CSRF es un fallo de la
- * consola y no una falta de permiso, y que un 401 es la cookie vencida— está allí, como los
- * códigos `csrf_missing` y `unauthorized`.
- */

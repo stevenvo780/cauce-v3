@@ -31,16 +31,7 @@ describe('el vocabulario de estados de la consola', () => {
   });
 
   it('ninguna etiqueta se escribe como una constante de base de datos', () => {
-    /*
-     * `INACTIVO`, `EN COLA`, `COLGADO`: se escribían en mayúsculas sostenidas, como el `enum` del
-     * que salen, y así ni siquiera se parecían a las palabras que la leyenda explicaba.
-     *
-     * ⚠️ Lo que esto NO acredita: que en pantalla no se lean en mayúsculas. `.badge` de
-     * `styles.css` lleva `text-transform: uppercase` para TODAS las insignias de la consola, así
-     * que «Trabado» se pinta «TRABADO» en la fila y «Trabado» en el chip de la cinta. Es la misma
-     * palabra con otra caja, no otra palabra —el defecto medido eran palabras distintas— y
-     * cambiar esa regla global excede a este arreglo. 
-     */
+    // Las etiquetas no deben escribirse como constantes en mayúsculas sostenidas.
     const constantes = [...Object.values(WORK_STATE_LABEL), ...Object.values(FLAG_LABEL)]
       .filter((etiqueta) => etiqueta === etiqueta.toUpperCase() && /[A-ZÁÉÍÓÚÑ]{2,}/.test(etiqueta));
     expect(constantes).toEqual([]);
@@ -65,7 +56,7 @@ describe('el vocabulario de estados de la consola', () => {
     expect(Object.values(FLAG_LABEL).join(' ')).not.toMatch(/detenid/i);
   });
 
-  it('CONTROL NEGATIVO — el guardia marca la vuelta a los rótulos medidos el 23-08', () => {
+  it('CONTROL NEGATIVO — el guardia marca la divergencia de rótulos', () => {
     /*
      * Se le da de comer el mapa EXACTO que producía el defecto. Un comprobador que lo apruebe es
      * peor que no tenerlo: haría creer que el vocabulario está unificado cuando no lo está.
