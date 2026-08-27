@@ -9,7 +9,7 @@ Suites que NUNCA entran en el gate diario, corridas como `stev` sobre HEAD tras 
 | `test:terminal-pty` | **VERDE** 86/86 |
 | `test:services` (gateway+dispatcher+telegram) | **VERDE** (gateway 471/471 y resto) |
 | `test:gateway-hardening` | **2 ROJOS** de 117 (15/17 ficheros verdes; el de fencing real contra PostgreSQL, VERDE) |
-| `test:store-hardening` (testcontainers) | corriendo — se anexa al llegar |
+| `test:store-hardening` (testcontainers) | **581/601 verdes; 20 rojos en 5 ficheros** (ver §3) |
 
 ## Los 2 rojos — ambos sector CODEX
 
@@ -21,3 +21,9 @@ El conocido (revisión ola 2): lee `app.ts` como TEXTO y la cadena `hello.capabi
 
 ## Nota
 `wake-outbox-postgres.test.ts` (fencing contra PostgreSQL real, 20s) está VERDE: las extracciones de deliveries/fencing pasan la prueba de fuego con base real.
+
+## §3 — store-hardening: los 20 rojos (anexo)
+
+**Diagnóstico del primero (5 tests, causa única):** `terminal-relay-instance-fencing-migration-postgres.test.ts` — su SETUP baja la migración 036 para simular el mundo pre-034, y desde que existe la 037 (c7345da, 26-ago) la guarda anti-downgrade lo rechaza («cannot downgrade schema 036 while a later migration is present»). **Rojo PREEXISTENTE a toda la reestructura**, de arnés, no de producto: el setup debe bajar 037 antes que 036 (o construir el estado pre-034 por otra vía). Afecta solo al camino *down*, que FASE 3 no usa (rollback de BD = backup).
+**Sector: Codex** (tests de store). Los otros 4 ficheros rojos: en identificación (re-corrida en curso); se anexan aquí.
+**Higiene confirmada:** cero contenedores testcontainers huérfanos tras la corrida (el fix del Ryuk funciona).
