@@ -363,14 +363,8 @@ export function chatParticipants(
 }
 
 /**
- * Aliases that participate in a chat some selected alias also serves, but are NOT running.
- *
- * A mention aimed at one of them is answered by nobody. This used to `throw` at boot, which turned
- * the documented per-alias rollback ("drop $ALIAS from CAUCE_TELEGRAM_ALIASES and restart") into a
- * crash loop that took the twelve DMs with it — a group-config problem must never stop the DMs.
- * It is now a diagnosis the caller logs; the runtime consequence is already covered, because P3
- * suppresses only against declared participants and an unserved mention falls through to the
- * ambient host and is counted as `updates_mention_unserved`.
+ * Identifies configured participants in shared chats that are not currently running in `selected`,
+ * allowing the caller to log diagnostic warnings without crashing DM polling loops.
  */
 export function fleetParticipationGaps(
   config: TelegramBridgeConfig,

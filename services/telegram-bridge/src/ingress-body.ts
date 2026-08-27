@@ -107,25 +107,8 @@ export function privateContext(untrusted: Record<string, unknown> | undefined): 
 }
 
 /**
- * The prompt the agent actually reads.
- *
- * `body.untrusted_context` used to hold this information and was never rendered: the harness
- * prints only `origin`, `context` and `promptFromBody(body) = body.prompt ?? body.text`
- * (packages/adapter-sdk/src/harnesses/shared.ts, packages/adapter-sdk/src/sdk/engine.ts). So the
- * whole point of the group feature — knowing WHICH of the humans in the room is speaking — never
- * reached the model, while the sanitiser guarded a field nobody could see.
- *
- * Setting `body.prompt` is what makes it real. The block is fenced and labelled as data; the fence
- * itself is safe because `safeInline` has already removed every control, invisible and newline
- * character a value could use to forge it.
- *
- * P8 extiende el mismo bloque al DM. Hasta ahora el privado no llevaba `prompt` y el agente sólo
- * veía el `conversation_id`: hablaba con un número. Un DM SIN identidad utilizable sigue saliendo
- * byte por byte igual que antes, porque ahí no hay nada nuevo que contar.
- *
- * La línea de ALERTA sale sólo cuando el nombre se dibuja como el de alguien de la flota. Va en el
- * texto y no sólo en el JSON porque el JSON es un objeto más en el prompt, y lo que hay que
- * conseguir es que el modelo LEA que ese nombre no prueba nada.
+ * Fenced prompt containing human sender identification and impersonation warnings,
+ * formatted for consumption by CLI harnesses via `body.prompt`.
  */
 export function untrustedPrompt(text: string, untrusted: Record<string, unknown>): string {
   const impersonation = untrusted.impersonation_suspected as { collides_with?: unknown } | undefined;

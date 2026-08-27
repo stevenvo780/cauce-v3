@@ -252,17 +252,8 @@ type EgressPiece =
   | { readonly kind: 'upload'; readonly upload: PlannedUpload };
 
 /**
- * Identidad durable de la pieza.
- *
- * El texto se hashea EXACTAMENTE como antes de que existieran los adjuntos —`sha256(texto)`, sin
- * prefijo— a propósito: `prepareEffect` compara el hash contra la fila ya guardada y un cambio de
- * fórmula haría que toda entrega a medio enviar durante el despliegue chocara con
- * "Telegram effect idempotency conflict" y muriera. La compatibilidad del hash es lo que hace que
- * este cambio se pueda desplegar en caliente.
- *
- * Para un adjunto se hashea el sha256 del CONTENIDO junto con su nombre y su forma de envío: si el
- * agente cambia el archivo, el hash cambia y el efecto no se confunde con el anterior; si no lo
- * cambia, un reintento reconoce la pieza ya enviada y no la sube dos veces.
+ * Identidad durable de la pieza: texto sin prefijo (`sha256(texto)`) para idempotencia histórica,
+ * o descriptor con prefijo `artifact:` para adjuntos.
  */
 function pieceHash(piece: EgressPiece): string {
   const material = piece.kind === 'text'

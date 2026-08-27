@@ -183,12 +183,7 @@ export interface DeepRedactionResult<T> {
 }
 
 /**
- * Recorre el cuerpo entero y redacta TODA cadena.
- *
- * Deliberadamente no es una lista de campos ("redactá `text` y `caption`"): esa lista se queda
- * vieja el día que alguien agrega un campo nuevo —pasó con `prompt`, que nació mucho después que
- * `text`— y el secreto se cuela por el campo que nadie acordó de agregar. Recorrer todo y excluir
- * lo binario falla del lado seguro.
+ * Recorre recursivamente un objeto o estructura para redactar secretos en todas las cadenas.
  */
 export function redactSecretsDeep<T>(value: T): DeepRedactionResult<T> {
   const kinds = new Set<RedactionKind>();
