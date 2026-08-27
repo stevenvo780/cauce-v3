@@ -45,4 +45,5 @@ Todos los harness de la flota los soportan — **úsalos** para agilizar lo para
 
 ## Al terminar cada tarea
 
-Reportar en 5 líneas máximo: commits hechos (hashes), gate (pegado), qué quedó fuera y por qué. Sin ensayos.
+1. `git push origin main` — el remoto (GitHub) se mantiene SIEMPRE al día con main; la credencial ya está configurada en el remote. Prohibido pushear cualquier otra ref.
+2. Reportar en 5 líneas máximo: commits hechos (hashes), gate (pegado), qué quedó fuera y por qué. Sin ensayos.
