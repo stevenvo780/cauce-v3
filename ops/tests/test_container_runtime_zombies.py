@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""
-Regression test: verify that process tree cleanup (can_reap=True) properly reaps zombie processes.
-
-This test simulates the guard behavior with and without the can_reap correction.
-It verifies that the changes to signal_known_tree with can_reap=True do not break safety:
-1. Zombies ARE reaped with can_reap=True (the fix)
-2. pidfd safety is maintained after reaping (security invariant)
-"""
 
 import os
 import subprocess
@@ -16,20 +8,17 @@ from pathlib import Path
 
 
 def count_zombie_processes() -> int:
-    """Count zombie processes in the system (Z state in ps)."""
     try:
         result = subprocess.run(
             ["ps", "aux"],
             capture_output=True, text=True, check=False, timeout=2
         )
-        # Count lines with '<defunct>' (zombie marker in ps aux)
         return sum(1 for line in result.stdout.split('\n') if '<defunct>' in line)
     except Exception:
         return 0
 
 
 def reap_children() -> None:
-    """Reap all zombie child processes (from the guard code)."""
     while True:
         try:
             pid, _ = os.waitpid(-1, os.WNOHANG)
@@ -40,20 +29,14 @@ def reap_children() -> None:
 
 
 def test_zombie_creation_without_reap():
-    """
-    Test: Create a child process and exit without reaping it.
-    Verify it becomes a zombie.
-    """
-    # Create a subprocess that exits immediately (will become zombie)
     proc = subprocess.Popen(
         ["python3", "-c", "import sys; sys.exit(0)"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
-    # Don't call wait() or poll() - leave it as zombie
     child_pid = proc.pid
-    time.sleep(0.2)  # Let process exit
+    time.sleep(0.2)
 
     # Verify it's a zombie: poll() still returns None (not reaped),
     # but the process is dead
@@ -68,7 +51,6 @@ def test_zombie_creation_without_reap():
     try:
         proc.wait(timeout=0.5)
     except subprocess.TimeoutExpired:
-        # Still a zombie, use os.waitpid to force reap
         try:
             os.waitpid(child_pid, 0)
         except ChildProcessError:
@@ -80,11 +62,6 @@ def test_zombie_creation_without_reap():
 
 
 def test_reap_children_function():
-    """
-    Test: Create zombie processes and verify reap_children() removes them.
-    This directly tests the reap_children() function from the guard.
-    """
-    # Create multiple zombie processes by spawning children we don't wait for
     parent_pid = os.getpid()
     zombie_pids = []
 
@@ -96,21 +73,12 @@ def test_reap_children_function():
         )
         zombie_pids.append(proc.pid)
 
-    # Let them all become zombies (exit but not reaped by Popen)
     time.sleep(0.2)
 
-    # Count zombies before reap
     zombies_before = count_zombie_processes()
-
-    # Now reap them using the guard's reap_children function
     reap_children()
-
-    # Count zombies after reap
     zombies_after = count_zombie_processes()
 
-    # The count should be lower or equal (we reaped at least our processes)
-    # Note: system may have other zombies, so we can't assert exact equality
-    # But we can verify the function doesn't crash and does reap
     assert zombies_after <= zombies_before, \
         f"Expected fewer zombies after reap, before={zombies_before}, after={zombies_after}"
 
@@ -118,14 +86,6 @@ def test_reap_children_function():
 
 
 def test_pidfd_persists_after_waitpid():
-    """
-    Test: Verify that pidfd remains valid after waitpid (security: no PID reuse).
-
-    This tests the safety invariant: even after a child is reaped via waitpid(),
-    a pidfd opened to that process cannot be reused for a different process.
-    This is critical for the guard's PID fencing logic.
-    """
-    # Create a child process
     child_proc = subprocess.Popen(
         ["python3", "-c", "import time; time.sleep(0.5); import sys; sys.exit(42)"],
         stdout=subprocess.DEVNULL,
@@ -133,25 +93,19 @@ def test_pidfd_persists_after_waitpid():
     )
     child_pid = child_proc.pid
 
-    # Open a pidfd to the child (only available on Linux 5.3+)
     try:
         pidfd = os.pidfd_open(child_pid)
     except OSError as e:
-        if "not supported" in str(e).lower() or e.errno == 38:  # ENOSYS
+        if "not supported" in str(e).lower() or e.errno == 38:
             print(f"⊘ test_pidfd_persists_after_waitpid: pidfd_open not available, skipping")
             child_proc.wait()
             return
         raise
 
-    # Let child exit and reap it
     child_proc.wait()
 
-    # Now pidfd is still valid (it refers to the specific process that exited)
-    # The kernel won't reuse this PID while the pidfd is open
     try:
-        # Check if pidfd is still open and valid
         fd_info = os.fstat(pidfd)
-        # If fstat succeeds, the fd is valid
         print(f"✓ test_pidfd_persists_after_waitpid: pidfd {pidfd} remains valid after waitpid of child {child_pid}")
     except OSError:
         print(f"⊘ test_pidfd_persists_after_waitpid: pidfd became invalid (this may be system-dependent)")
@@ -160,13 +114,6 @@ def test_pidfd_persists_after_waitpid():
 
 
 def test_can_reap_true_safety():
-    """
-    Test: Verify that using can_reap=True in signal_known_tree is safe.
-
-    The key insight: in the guard's error path, wait_process_tracking's return value
-    is ignored. We only need to verify that reap_children() doesn't crash the process.
-    """
-    # Create a child and let it exit
     proc = subprocess.Popen(
         ["python3", "-c", "import sys; sys.exit(7)"],
         stdout=subprocess.DEVNULL,
@@ -174,12 +121,8 @@ def test_can_reap_true_safety():
     )
 
     child_pid = proc.pid
-
-    # Let the process exit
     time.sleep(0.2)
 
-    # Now reap children (simulating what signal_known_tree.wait_empty does with can_reap=True)
-    # This should not crash or raise an exception
     try:
         reap_children()
         print(f"✓ test_can_reap_true_safety: reap_children() executed safely")
@@ -193,14 +136,11 @@ def test_can_reap_true_safety():
         print(f"  → process.wait() returned {status} after reap_children()")
     except subprocess.TimeoutExpired:
         print(f"  → process.wait() timed out (process already reaped, this is OK)")
-        # This is acceptable in the guard's context
 
 
 def main():
-    """Run all regression tests."""
     print("Running container runtime zombie process regression tests...\n")
 
-    # Only run on systems with /proc
     if not os.path.exists("/proc"):
         print("⊘ Tests require /proc filesystem (Linux only), skipping")
         return 0

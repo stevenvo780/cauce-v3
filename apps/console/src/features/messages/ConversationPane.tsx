@@ -293,21 +293,8 @@ export function ConversationPane({
         </div>
       </dl>
 
-      {/*
-        El techo del servidor se DICE, no se disimula. `listMessages` corta en 100 mensajes
-        globales y no acepta filtro por par (medido en packages/store/src/repository.ts), así que
-        este hilo es un filtro de cliente sobre esa ventana: en una flota cargada puede verse
-        vacío sin que eso pruebe que no hay historia. Un hilo vacío mudo sería una afirmación
-        falsa, y de esas ya hubo demasiadas en esta consola.
-      */}
+      {/* Hilo filtrado sobre la ventana de mensajes del servidor. */}
       <div className="messenger-thread-scroll" ref={cajaRef} onScroll={alDesplazar}>
-        {/*
-          El aviso del techo del servidor va DENTRO de la caja con scroll y la tira de cola se
-          queda fuera. No es un capricho de maquetación: medido en Chrome a 1280x900, con el panel
-          acotado quedaban 42 px de conversación visible, y este párrafo de tres líneas era 30 de
-          los que faltaban. La tira de cola sí se queda fija porque es la mitad de esta pantalla
-          que el recorrido llamó «genuinamente útil»: verla siempre es el punto.
-        */}
         <p className="messenger-window-note" data-truncated={totalVisible >= LIMITE_MENSAJES || undefined}>
           {totalVisible >= LIMITE_MENSAJES
             ? `Ventana llena: el servidor devuelve como máximo ${LIMITE_MENSAJES} mensajes de TODA la flota y este hilo se filtra sobre ellos. Puede haber historia anterior que no entra.`
@@ -340,28 +327,7 @@ export function ConversationPane({
         </div>
       ) : null}
 
-      {/*
-        EL DETALLE DEL MENSAJE, COMPLETO.
-
-        La lista plana anterior mostraba por tarjeta el room, el lane, el actor verificado, el
-        tenant, el trace ENTERO y TODAS las entregas del publish con su tenant destino. El hilo
-        por par se quedó sólo con el cuerpo, el `msg` compacto y el `trace` compacto, y ninguno de
-        esos campos es decorativo: el trace es lo que se pega en `/chains/:traceId`, el actor es la
-        autoridad del servidor sobre quién publicó, y las entregas hermanas son la única forma de
-        ver a quién MÁS fue el mismo mensaje. Todo eso vuelve acá.
-      */}
       {mensajeSeleccionado ? (
-        /*
-          EL DETALLE YA NO SE ABRE SOLO.
-          
-          Dos motivos, los dos medidos. El primero es la queja textual del recorrido: «el panel de
-          detalle se abre solo sobre un mensaje que nadie eligió». El segundo apareció al abrir la
-          página arreglada en Chrome a 1280x900: con el panel acotado y el detalle desplegado de
-          oficio, quedaban 42 px de conversación visible — o sea que arreglar el compositor había
-          creado un defecto nuevo del mismo tipo. Ahora el resumen dice qué mensaje es y ocupa una
-          línea; el cuerpo y los metadatos se abren cuando el operador los pide, o solos en cuanto
-          clica una burbuja.
-        */
         <details
           className="messenger-delivery-detail"
           role="group"
@@ -380,11 +346,6 @@ export function ConversationPane({
               : <>Mensaje {compactId(mensajeSeleccionado.message_id)} · sin entrega para este par</>}
           </p>
 
-          {/*
-            EL CUERPO. Que faltara era el defecto más silencioso de esta pantalla: el detalle
-            mostraba room, lane, actor, tenant, trace y message id —seis campos de metadatos— y no
-            el mensaje, mientras la burbuja de arriba lo mostraba cortado a 240 sin decirlo.
-          */}
           <section className="messenger-cuerpo" aria-label="Cuerpo del mensaje">
             <p className="eyebrow">Cuerpo</p>
             {cuerpoEntero?.estado === 'listo' ? (

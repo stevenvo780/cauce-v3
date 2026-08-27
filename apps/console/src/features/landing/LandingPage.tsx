@@ -10,24 +10,13 @@ import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './land
  * **La portada.** Lo que se ve al entrar a la consola, y lo único que hace falta leer para saber
  * si hay que hacer algo.
  *
- * Nace de dos pedidos del dueño que resultaron ser el mismo: *«adapters se convierte en landing
- * con toda la data de console»* y *«de /live mucha info podría ir simplemente en la landing»*. El
- * resumen de conjunto —flota, colas, cuotas, alertas— existía, pero desperdigado en cinco vistas,
- * y para armarlo había que abrir las cinco y sumar de cabeza.
- *
  * Dos decisiones que NO son de estilo:
  *
  * 1. **La portada resume; `/live` sigue siendo la vista viva.** No se duplica el hipergrafo ni la
- *    tabla de agentes: acá van los totales y el enlace. Dos vistas que dibujan lo mismo es
- *    exactamente el defecto que esta ronda vino a corregir.
+ *    tabla de agentes: acá van los totales y el enlace.
  * 2. **Una fuente que no contestó NO se pinta como "todo bien".** `resumenPortada()` separa "no
  *    hay incidencias" de "no lo pude leer", y la banda de arriba sólo dice *sin incidencias*
- *    cuando llegaron las cuatro lecturas. La alternativa —cero alertas por defecto— es una
- *    portada que tranquiliza cuando el gateway se cayó.
- */
-
-/**
- * Los atajos de la portada se derivan de NAV_ENTRIES y evalúan disponibilidad con useNavAvailability.
+ *    cuando llegaron las cuatro lecturas.
  */
 
 export function LandingPage() {
@@ -149,15 +138,6 @@ export function LandingPage() {
         Cuotas: <Time value={quotas.data?.observed_at} />
       </div>
 
-      {/*
-        Acá vivía el panel «El resto de la consola»: una lista con las siete entradas del menú,
-        su icono, su rótulo y su motivo de inhabilitación… o sea, el MENÚ LATERAL otra vez, cinco
-        centímetros a la derecha del menú lateral, ocupando media pantalla de la portada. Se retira.
-        La lista vivía en `NAV_ENTRIES` (`nav.ts`) y la barra la sigue dibujando desde ahí, con la
-        misma `useNavAvailability()`: no se pierde ni una entrada ni un motivo, se deja de escribir
-        dos veces. La pregunta que responde cada vista sigue en `NAV_ENTRIES.que`, que es de donde
-        la barra la lee para su `title=`.
-      */}
 
       <HarnessStrip adapters={adapters.data?.items ?? []} error={adapters.data ? undefined : adapters.error} />
     </>

@@ -241,28 +241,8 @@ function Celda({
 }
 
 /**
- * Confirmación con la mutación EXACTA a la vista. Queda SÓLO para el cambio de rol: lo que se firma
- * es una escritura versionada en `config_revisions` y el rol no tiene «el contrario» al que volver
- * con otro clic, así que acá el JSON sí se lee antes de que viaje.
- *
- * Los booleanos ya no pasan por acá. Confirmar veinte veces seguidas no protege de nada: enseña a
- * apretar «Confirmar» sin leer, y el día que aparece el que importa ya nadie lo lee.
- *
- * Y es un DIÁLOGO, no un bloque pegado debajo del control que lo abre. Eso último costaba tres
- * cosas medidas en Chrome contra el snapshot real:
- *  - 269 px de alto, de los cuales 170 eran el volcado de JSON. En un viewport de 900 px
- *    «Confirmar» y «Cancelar» caían en y=999..1039, o sea INVISIBLES: había que adivinar que se
- *    baja.
- *  - `aria-modal` ausente, ESC sin efecto y el foco quieto en el control de la fila.
- *  - el fondo seguía siendo pulsable: con la confirmación abierta se podía apretar «Cerrar sesión»
- *    de la cabecera —pasó de verdad durante la revisión— y la sesión se cerraba con el cambio a
- *    medio firmar.
- *
- * Ahora se monta en `document.body` (fuera de `.app-shell`), pone el resto de la página en `inert`
- * mientras vive, atrapa el tabulador, se cierra con ESC o con clic fuera, y devuelve el foco al
- * control que lo abrió. Los dos botones viven en un pie que NO scrollea, así que no pueden quedar
- * debajo del pliegue por largo que sea el JSON. Y el JSON pasa a estar detrás de «Ver la mutación
- * exacta»: sigue entero y a un clic, pero ya no empuja la decisión fuera de la pantalla.
+ * Diálogo modal de confirmación con la mutación exacta para cambios no booleanos (rol).
+ * Se monta como modal con `inert` en el fondo, trampa de foco y soporte para ESC.
  */
 function ConfirmacionDeAccion({ pendiente, busy, onConfirmar, onCancelar }: {
   pendiente: AccionPendiente;

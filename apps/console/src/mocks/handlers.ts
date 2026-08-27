@@ -148,29 +148,6 @@ export const handlers = [
     observed_at: new Date().toISOString(), status: mockStatus(), queues: mockQueues(),
     origin_relays: originRelays
   })),
-  /*
-   * Las capas 2 y 3 de la directiva. El gateway TODAVÍA NO sirve este endpoint: acá se devuelve
-   * un 404 a propósito, que es lo que la consola se va a encontrar en producción hoy. Así el
-   * modo mock enseña lo que Steven va a ver de verdad —«no se pudo mirar»— y no una pantalla
-   * llena de ficheros inventados que en producción no existen.
-   *
-   * Cuando el gateway lo publique, se cambia por el JSON real y la pantalla se llena sola: las
-   * pruebas de `DirectivaTab.test.tsx` ya cubren las dos ramas.
-   */
-  // ------------------------------------------------------------------------------------------
-  // LOS FICHEROS QUE GOBIERNAN A UN AGENTE
-  //
-  // El fixture enseña los DOS estados a propósito, porque los dos son reales y la pantalla tiene
-  // que distinguirlos: `kant` sirve su CLAUDE.md; el resto de los alias contesta 503, que es lo
-  // que hace hoy producción entera —el gateway todavía no tiene camino hasta el disco de un
-  // agente—. Un fixture que sirviera contenido para todos escondería justo el caso que hay que
-  // mirar antes de dar esto por bueno.
-  // ------------------------------------------------------------------------------------------
-  /*
-   * EL PERFIL Y SU VISTA PREVIA. `openclaw` a propósito para el alias `argos`: es el caso que más
-   * se rompe —siete ficheros en vez de uno— y el que no tiene NINGUNA persona escrita hoy en
-   * producción, así que es el que hay que poder mirar mientras se desarrolla.
-   */
   http.get('*/v3/console/tenants/:tenantId/agents/:alias/perfil', ({ params }) => {
     const tenantId = String(params.tenantId);
     const alias = String(params.alias);
@@ -300,21 +277,6 @@ export const handlers = [
     });
     },
   ),
-  /*
-   * LAS TRES CAPAS DE DIRECTIVA — y los TRES estados que la pantalla tiene que distinguir.
-   *
-   * El estado que hoy da PRODUCCIÓN es el tercero, y en los 14 alias: comprobado uno por uno el
-   * 2026-08-24, `GET /v3/console/agents/:tenant/:alias/directive` devuelve 404 porque el gateway
-   * todavía no publica la ruta (el backend existe en `gateway/editor-ficheros-agente-20260823`,
-   * frenado por una auditoría de seguridad). Por eso es el estado por defecto de este fixture.
-   *
-   * Los otros dos se sirven a propósito para poder MIRARLOS antes de que el backend salga, porque
-   * el día que salga van a convivir en la misma flota y confundirlos es el defecto que esta
-   * pantalla existe para no cometer:
-   *   · `kant` = el caso janus: DOS `CLAUDE.md` a la vez, con la autonomía repetida en el manual.
-   *   · `midas` = el caso gaia: el servidor MIRÓ y no hay ningún manual. Eso sí se puede afirmar.
-   *   · el resto = NO SE MIRÓ. Que no es «no tiene», y tiene que verse distinto.
-   */
   http.get('*/v3/console/agents/:tenantId/:alias/directive', ({ params }) => {
     if (params.alias === 'kant') {
       return HttpResponse.json({
@@ -354,14 +316,6 @@ export const handlers = [
       { status: 404 },
     );
   }),
-  /*
-   * El diario del rol. A diferencia de las capas 2 y 3, éste SÍ está desplegado: comprobado el
-   * 2026-08-23 contra producción, responde 200 con las entradas, y 200 con `entries: []` para un
-   * alias que nunca cambió de rol. Las dos respuestas dicen cosas distintas y las dos son ciertas.
-   *
-   * Sólo kant tiene historia acá: el resto devuelve la lista vacía, que es lo que hoy pasa en la
-   * flota de verdad —el disparador se instaló el 23 de agosto y sólo llegó a anotar dos cambios—.
-   */
   http.get('*/v3/console/role-assignments/:tenantId/:alias/history', ({ params }) => HttpResponse.json({
     observed_at: new Date().toISOString(),
     tenant_id: params.tenantId,

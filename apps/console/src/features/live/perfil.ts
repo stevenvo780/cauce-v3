@@ -24,10 +24,8 @@ import type {
  * ── La cuenta de unidades ────────────────────────────────────────────────────────────────────
  *
  * Se mide con `max(puntos de código, unidades UTF-16)`, que es lo mismo que miden el CHECK de
- * Postgres y el compilador. No es puntillismo: el 16-ago un alias se quedó SORDO —dejó de recibir
- * entregas, sin un solo error visible— porque dos capas contaban el mismo 1200 en unidades
- * distintas. Una tercera cuenta en el navegador sería el mismo fallo otra vez, sólo que ahora
- * diciéndole al operador que su texto entra cuando no entra.
+ * Postgres y el compilador, garantizando que el límite mostrado en el navegador coincida exactamente
+ * con la validación del servidor.
  */
 
 /** Los campos de texto suelto, en el orden en que se pintan. */
