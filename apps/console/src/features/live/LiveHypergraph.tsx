@@ -9,7 +9,6 @@ import {
   grosorDe,
   radioDe,
   type DelegationEdge,
-  type EdgeAggregate,
   type HumanOrigin,
   type LiveAgentView,
   type LiveState,
@@ -18,6 +17,7 @@ import {
   aclCaption, layoutHypergraph, type HyperGraphModel, type Point,
 } from '../topology/hypergraph-layout';
 import type { FleetDelegationEdge } from '../../api/types';
+import { FlowArrow } from './live-hypergraph/FlowArrow';
 
 /**
  * El mapa: los muñecos de la flota colocados en su sala, con lo que se están pasando entre manos.
@@ -121,6 +121,11 @@ interface Placed {
   point: Point;
   view: LiveAgentView | null;
   radius: number;
+}
+
+function aliasDe(key: string): string {
+  const corte = key.indexOf('/');
+  return corte === -1 ? key : key.slice(corte + 1);
 }
 
 export function LiveHypergraph({
@@ -475,70 +480,4 @@ export function LiveHypergraph({
       ) : null}
     </div>
   );
-}
-
-function FlowArrow({ edge, index, from, to, fromRadius, toRadius, width, lento, dim, animar }: {
-  edge: EdgeAggregate;
-  index: number;
-  from: Point;
-  to: Point;
-  fromRadius: number;
-  toRadius: number;
-  width: number;
-  lento: boolean;
-  dim: boolean;
-  animar: boolean;
-}) {
-  const geo = curva(from, to, index, fromRadius, toRadius);
-  return (
-    <g className={`lhg-flow${dim ? ' is-dim' : ''}${lento ? ' is-slow' : ''}`}>
-      <title>
-        {`${aliasDe(edge.from)} → ${aliasDe(edge.to)}`}
-        {` · ${edge.inFlight} en vuelo`}
-        {edge.totalFromServer ? ` · ${edge.total} en la ventana` : ''}
-        {edge.oldestSeconds != null ? ` · la más vieja lleva ${Math.round(edge.oldestSeconds)} s` : ''}
-        {lento ? ' · pasó el umbral del servidor' : ''}
-      </title>
-      <path className="lhg-flow-line" d={geo.path} markerEnd="url(#lhg-arrow)" style={{ strokeWidth: width }} />
-      {/* El punto que viaja muestra el SENTIDO, que una flecha quieta comunica peor. Con
-          reduced-motion se queda fijo a mitad de la curva: quieto sigue diciendo "acá hay algo". */}
-      <circle className="lhg-flow-dot" r="4" cx={animar ? undefined : geo.medio.x} cy={animar ? undefined : geo.medio.y}>
-        {animar ? (
-          <animateMotion dur={lento ? '5.5s' : '2.6s'} repeatCount="indefinite" path={geo.path} />
-        ) : null}
-      </circle>
-    </g>
-  );
-}
-
-function aliasDe(key: string): string {
-  const corte = key.indexOf('/');
-  return corte === -1 ? key : key.slice(corte + 1);
-}
-
-/**
- * Curva entre dos muñecos, recortada para nacer y morir en el borde del avatar y no debajo de él.
- *
- * Los dos radios entran como parámetro porque el tamaño del nodo ya no es constante: con un radio
- * fijo, una flecha que sale de un agente grande nacería DENTRO del muñeco.
- */
-function curva(a: Point, b: Point, index: number, radioA: number, radioB: number): { path: string; medio: Point } {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const largo = Math.hypot(dx, dy) || 1;
-  const ux = dx / largo;
-  const uy = dy / largo;
-  const desde = { x: a.x + ux * (radioA + 10), y: a.y + uy * (radioA + 10) };
-  const hasta = { x: b.x - ux * (radioB + 10), y: b.y - uy * (radioB + 10) };
-  const comba = 26 + (index % 3) * 20;
-  const control = {
-    x: (desde.x + hasta.x) / 2 - uy * comba,
-    y: (desde.y + hasta.y) / 2 + ux * comba,
-  };
-  const r = (n: number) => Math.round(n * 100) / 100;
-  return {
-    path: `M ${r(desde.x)} ${r(desde.y)} Q ${r(control.x)} ${r(control.y)} ${r(hasta.x)} ${r(hasta.y)}`,
-    // Punto medio real de una Bézier cuadrática en t=0,5.
-    medio: { x: r((desde.x + 2 * control.x + hasta.x) / 4), y: r((desde.y + 2 * control.y + hasta.y) / 4) },
-  };
 }
