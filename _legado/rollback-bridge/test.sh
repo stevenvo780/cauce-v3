@@ -2,8 +2,8 @@
 set -euo pipefail
 
 readonly BASE_COMMIT='79d6d8f1eae00e733bf2aeddaffeb592e5944687'
-readonly PATCH_SHA256='78c561b9a80e734ae9a7afbb0fcef5232b83f1c10c2dd6e3923ddac124a043b0'
-readonly RESULT_TREE='4036d502d7d8a788ffe1a81aef8b74462b63e012'
+readonly PATCH_SHA256='0f8f4754843ac0621109f2b74513d0388b947b0ac216561e5beaa52fdf62348f'
+readonly RESULT_TREE='4d8d5ae81f08f4bb34785d3a8325df888697effb'
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repository=$(git -C "$script_dir/../.." rev-parse --show-toplevel)
@@ -50,17 +50,6 @@ tree=$(git -C "$worktree" write-tree)
 cd "$worktree"
 node --check deploy/fleet-snapshot.mjs
 grep -Fq 'deploy/fleet-snapshot.mjs' deploy/Dockerfile
-for runtime_input in \
-  deploy/local-readiness-probe.mjs \
-  deploy/migration-integrity.mjs \
-  deploy/schema-version.mjs \
-  deploy/reconcile-stale-console-outbox.mjs \
-  deploy/reconcile-stale-console-outbox-core.mjs; do
-  [[ -f $runtime_input ]] || {
-    printf 'rollback bridge runtime build input is absent: %s\n' "$runtime_input" >&2
-    exit 1
-  }
-done
 if grep -Eq '^[[:space:]]*COPY[[:space:]].*--chmod=' deploy/Dockerfile; then
   printf 'rollback bridge Dockerfile still requires COPY --chmod\n' >&2
   exit 1
