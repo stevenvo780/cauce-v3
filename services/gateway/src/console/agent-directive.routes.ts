@@ -49,11 +49,7 @@ const DIRECTIVE_READ_CONCURRENCY = 3;
  */
 
 /**
- * Las rutas de directiva (CLAUDE.md, AGENTS.md, etc.) de un alias.
- *
- * Se le pasan los hechos ENTEROS, no `harness` y `home` sueltos: atlas corre con
- * `CODEX_HOME=/home/dev/.codex/cuenta-b`, así que quedarse con el home daría
- * `~/.codex/AGENTS.md` — que existe, que pesa lo mismo, y que ese agente NO lee.
+ * Rutas de directiva del alias resueltas a partir de los hechos de entorno.
  */
 /**
  * Validación de seguridad: ¿esta ruta se puede leer?
@@ -116,16 +112,8 @@ function utf8Prefix(text: string, maxBytes: number): string {
 }
 
 /**
- * La respuesta cuando la lectura NO ocurrió, o `undefined` si sí ocurrió.
- *
- * Está fuera del handler para poder probarla sola, y porque los dos caminos degradados tenían
- * el mismo defecto: devolvían `publicado: true` con `files: null` sin decir en ningún campo que
- * no se había mirado nada. Quien pinta lo interpretaba como «se miró y no hay» y afirmaba que el
- * alias arranca sin manual — falso en 11 de los 12 alias medidos dentro de sus contenedores el
- * 24-ago-2026.
- *
- * `publicado` responde «¿existe la ruta?». `medido` responde «¿ocurrió la lectura?». Son
- * preguntas distintas y hacía falta la segunda.
+ * Construye la respuesta degradada cuando los hechos no provienen de una medición directa
+ * del contenedor (`source === 'measured'`), o `undefined` si los hechos están medidos.
  */
 export function construirRespuestaDegradada(
   source: 'measured' | 'registry' | 'database' | undefined,
@@ -144,8 +132,7 @@ export function construirRespuestaDegradada(
     };
   }
   if (source !== 'measured') {
-    // La ruta que da el registro falla en 5 de 14 alias: servir contenido desde ahí abriría el
-    // fichero de OTRO agente sin dar un solo error. Se declara no medida y no se sirve nada.
+    // Si la fuente no es 'measured', no se garantiza la exactitud de las rutas en ejecución.
     return {
       publicado: true,
       medido: false,
@@ -180,8 +167,7 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
       // 2. FACTS: ¿se midieron los hechos del alias?
       const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
       const degradada = construirRespuestaDegradada(medido?.source);
-      // Los dos caminos degradados —sin hechos, y con hechos deducidos del registro— dicen ahora
-      // `medido: false`, para que quien pinta no tenga que adivinarlo por la forma de los datos.
+      // Respuestas degradadas se marcan con medido: false.
       if (!medido || degradada) return degradada;
 
       const { facts } = medido;

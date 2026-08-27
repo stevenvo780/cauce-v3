@@ -45,17 +45,11 @@ describe('techo de vida total de una entrega', () => {
       leaseCapMs: DEFAULT_DELIVERY_LEASE_CAP_MS,
       leaseCapGraceMs: DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS,
     });
-    // La salida para el trabajo legitimamente larguisimo que no declara timeout_ms: subir el
-    // techo por entorno, sin redeploy de codigo.
     expect(configuredDispatcher({
       CAUCE_DELIVERY_LEASE_CAP_MS: String(48 * 60 * 60_000),
     }).leaseCapMs).toBe(48 * 60 * 60_000);
   });
 
-  /**
-   * Un techo por debajo del plazo de ACK mataria TODA entrega antes de su primera renovacion y
-   * el sintoma pareceria un bug del guarda nuevo en vez de una configuracion mal puesta.
-   */
   it('falla al arrancar si el techo es menor que el plazo de ACK', () => {
     expect(() => configuredDispatcher({
       CAUCE_ACK_DEADLINE_MS: '1800000',

@@ -13,7 +13,7 @@ import type { QuotaSnapshot } from '../../api/types';
  * la borra "porque ya estaba en la otra pantalla".
  *
  * Se montan contra `AccountsPage` —el contenedor real, con sus pestañas— y NO contra
- * `ConsumptionSection` a solas: lo que Steven pidió fundir es la VISTA, y una prueba que renderice
+ * `ConsumptionSection` a solas: lo que  y una prueba que renderice
  * la sección suelta seguiría pasando el día que alguien la sacara de la página.
  */
 

@@ -24,7 +24,7 @@ export interface Alerta {
   /**
    * De qué lectura del servidor sale el número.
    *
-   * 🔴 Esto iba DENTRO de `detalle` —«GET /v3/console/activity → totals.overdue_in_flight»— y se
+   * Esto iba DENTRO de `detalle` —«GET /v3/console/activity → totals.overdue_in_flight»— y se
    * pintaba en la primera pantalla del operador, ocho veces. Una ruta de API es depuración: hace
    * falta para poder contrastar un número dudoso y no hace falta para nada más. Va al `title=`.
    */
@@ -219,7 +219,7 @@ export interface GrupoDeAlertas {
 }
 
 /**
- * 🔴 **La portada gastaba la primera pantalla entera en avisos.** Medido el 2026-08-23 a
+ * La portada gastaba la primera pantalla entera en avisos.** 
  * 1280×900: ocho bandas de aviso ocupaban ~580 px y empujaban los CUATRO números —99/63/29/1—
  * fuera del borde inferior. Y de esas ocho, cuatro apuntaban al mismo sitio («La flota ahora») y
  * tres a otro («Cuentas y cuotas»): siete bandas para dos destinos.

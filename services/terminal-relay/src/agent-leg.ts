@@ -40,11 +40,7 @@ export interface AgentHello {
   readonly harness: string;
   /** True sólo cuando el launcher observó al proceso real; ausente/false no acredita rutas. */
   readonly runtime_facts_observed?: boolean;
-  /**
-   * `HOME` del proceso del arnés dentro del contenedor. OPCIONAL: un pty-agent anterior a
-   * 2026-08-25 no lo manda, y exigirlo le rechazaría el saludo —dejándolo sin terminales— por un
-   * campo que sólo hace falta para leer su directiva.
-   */
+  /** `HOME` del proceso del arnés dentro del contenedor. Opcional para retrocompatibilidad. */
   readonly home?: string;
   /** Alias-scoped harness roots measured from the live adapter process, never inferred by relay. */
   readonly codex_home?: string;

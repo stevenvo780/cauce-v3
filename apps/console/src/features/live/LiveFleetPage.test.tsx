@@ -213,7 +213,7 @@ describe('el mapa', () => {
    * `agents`» y recorría SÓLO las membresías, así que `sinSala` valía cero para siempre. Ver
    * `deriva.ts`.
    *
-   * 🔴 La medida de cuánto importaba: el fixture de esta misma suite YA traía el caso —`vulcano`
+   * La medida de cuánto importaba: el fixture de esta misma suite YA traía el caso —`vulcano`
    * está en `agents` y ninguna sala lo declara— y ninguna prueba lo notaba, porque el chip que
    * debía contarlo no miraba esa dirección.
    */

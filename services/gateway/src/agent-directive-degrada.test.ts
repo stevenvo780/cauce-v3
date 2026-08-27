@@ -1,18 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { construirRespuestaDegradada } from './console/agent-directive.routes.js';
 
-/*
- * Por qué existe este fichero.
- *
- * Esta ruta puede contestar 200 sin haber mirado nada: cuando no hay hechos medidos del
- * contenedor, o cuando las rutas se dedujeron del registro —que el 24-ago-2026 estaba
- * equivocado en 5 de los 14 alias—. En los dos casos devolvía `publicado: true` con
- * `files: null`, y la consola tomaba eso por «se miró y no hay», afirmando que 11 de 12
- * alias arrancaban sin manual. Es falso: los ficheros están y tienen contenido.
- *
- * `publicado` no es el campo que responde a «¿ocurrió la lectura?»: sólo dice si la ruta
- * existe. Por eso la respuesta declara `medido` aparte, en vez de dejar que quien pinta lo
- * deduzca de la forma de los datos.
+/**
+ * Verifica que la respuesta degradada de `/directive` reporte `medido: false`
+ * explícitamente cuando no se dispone de hechos medidos del contenedor.
  */
 
 describe('la respuesta degradada de /directive dice que no midió', () => {

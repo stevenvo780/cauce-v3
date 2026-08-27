@@ -21,7 +21,7 @@ it('requests replay from the API and reports the accepted action', async () => {
   const user = userEvent.setup();
   renderWithApi(<QueuesPage />);
   await user.click(await screen.findByRole('button', { name: new RegExp(`replay delivery ${sourceDeliveryId}`, 'i') }));
-  // Desde el 2026-08-23 hay una pregunta antes de reinyectar a la flota.
+  // .
   await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: /^sí,/i }));
 
   expect(await screen.findByText(/Replay encolado/)).toBeInTheDocument();

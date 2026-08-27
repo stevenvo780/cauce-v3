@@ -400,7 +400,7 @@ it('exposes TerminalApiError so callers can branch on status without parsing str
 /*
  * EL 403 QUE MANTENÍA LA TUI CERRADA.
  *
- * Medido contra el gateway desplegado el 2026-08-23, con la credencial de consola y el MISMO
+ * 
  * cuerpo en las dos corridas: sin la cabecera `X-CSRF-Token` el gateway contesta
  * 403 {"error":"forbidden","message":"se requiere un token CSRF válido"}; con ella contesta
  * 201 y entrega el grant. Con un token inventado vuelve a ser 403, así que no es "mandar la
@@ -468,7 +468,7 @@ it('no manda el token en las lecturas: el gateway no lo exige a un GET y pedirlo
 });
 
 /**
- * 🔴 El defecto BLOQUEANTE medido contra producción el 2026-08-23.
+ * El defecto BLOQUEANTE 
  *
  * `POST /v3/console/terminal/sessions` volvía `403 {"error":"forbidden","message":"se requiere un
  * token CSRF válido"}` en los 3 intentos, con dos alias distintos, porque este módulo no mandaba

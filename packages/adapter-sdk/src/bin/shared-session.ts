@@ -8,13 +8,7 @@ import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-sessi
 import type { SharedSessionSpec } from "../shared-session/session.js";
 
 /**
- * La cara de línea de comandos de la sesión compartida. UNA sola implementación, dos llamadores.
- *
- * `cauce <alias>` corre esto DENTRO del contenedor por `docker exec`, y el adaptador llama a las
- * mismas funciones en proceso. No hay dos rutinas parecidas que se puedan desincronizar: el dueño
- * ya pidió expresamente que se dejara de multiplicar CLIs.
- *
- * Salida en JSON por stdout para `status`, texto para el resto: quien lo llama es un script bash.
+ * CLI para inspeccionar y asegurar el estado de la sesión compartida.
  */
 
 interface Options {
@@ -79,17 +73,8 @@ async function main(): Promise<void> {
   const options = parse(process.argv.slice(2));
   const home = process.env.HOME ?? homedir();
   const tmux = new CliTmux();
-  // OJO: este temporizador NO se puede `unref()`.
-  //
-  // En el adaptador da igual —su bucle de eventos lo sostiene el websocket del bus— pero acá el
-  // único trabajo pendiente ES la espera. Con `unref()`, en cuanto `ensureSharedSession` se
-  // dormía a esperar a que la TUI dibujara su caja, Node se quedaba sin nada que lo mantuviera
-  // vivo y TERMINABA SOLO, con código 0 y sin escribir una línea.
-  //
-  // Medido en ws-prizma el 2026-07-30: `ensure` de codex salía 0 en silencio y sin la ventana de
-  // la TUI. `cauce socrates` lo leía como éxito y anunciaba COMPARTIDA sobre una sesión que no lo
-  // era. Un `unref()` de una línea producía exactamente el fallo silencioso que este trabajo
-  // existe para eliminar.
+  // Este temporizador NO se puede `unref()`: aquí no hay otro trabajo pendiente que sostenga
+  // el bucle de eventos, y con `unref()` Node termina con código 0 antes de que la TUI arranque.
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((resolveSleep) => {
       setTimeout(resolveSleep, ms);
@@ -108,10 +93,7 @@ async function main(): Promise<void> {
   if (options.command === "status") {
     const status = await sharedSessionStatus(tmux, sessionSpec);
     process.stdout.write(`${JSON.stringify(status)}\n`);
-    // `process.exit()` descarta lo que quede pendiente en stdout cuando stdout es una tubería, y
-    // acá SIEMPRE lo es: `cauce <alias>` llama a esto por `docker exec`. Medido en ws-prizma: el
-    // JSON se perdía entero y el CLI mostraba «sin detalle» justo cuando el dueño necesitaba
-    // saber qué había fallado. Con `exitCode` el proceso termina solo, ya vaciada la tubería.
+    // Usa exitCode para asegurar que stdout se vacía completamente antes de finalizar.
     process.exitCode = status.present ? 0 : 1;
     return;
   }

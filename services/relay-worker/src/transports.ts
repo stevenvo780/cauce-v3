@@ -231,9 +231,7 @@ export class HttpWebhookOriginTransport implements OriginTransport {
       resolved = await beforeDeadline(this.resolver(endpoint.hostname), deadline);
     } catch (error) {
       if (error instanceof OriginTransportError) throw error;
-      // Resolver/network failure is transient and happens before any remote side effect.  It must
-      // remain retryable; classifying an empty catch fallback as SSRF terminal used to DLQ DNS
-      // outages permanently.
+      // Resolver/network failure is transient and happens before any remote side effect.
       throw new OriginTransportError('webhook DNS resolution failed', true);
     }
     if (resolved.length === 0) {

@@ -1,13 +1,5 @@
 /**
- * Decisión pura de "esta salida de agente se convierte en delegación, o no".
- *
- * Vive fuera de repository.ts a propósito: la regla que corta el paseo aleatorio es la parte
- * que más se va a discutir y a retocar, y acá se puede probar sin Postgres y sin transacción.
- * repository.ts se queda con lo que SÓLO puede hacer la base: reservar el cupo de forma atómica.
- *
- * Los tres topes salen de la distribución real medida en prod (7 días, 2093 delegaciones
- * materializadas); los números y su costo están justificados en
- * migrations/019_delegation_discipline.sql y en NOTAS.md.
+ * Evaluación de límites y disciplina de delegación entre agentes.
  */
 
 import {
@@ -16,13 +8,7 @@ import {
 } from '@cauce/protocol';
 
 /**
- * Todo lo que puede impedir que una salida de agente se convierta en una entrega.
- *
- * La lista canónica vive en `@cauce/protocol` porque estos códigos VIAJAN al adaptador dentro de
- * `ack_result.delegation_rejections`. Derivarla en vez de repetirla es lo que hace imposible
- * agregar un código acá y olvidarse del esquema del frame: eso fue exactamente el defecto —
- * campos nuevos en la respuesta del ACK que el `.strict()` del adaptador rechazaba, y un rechazo
- * de frame no descarta el frame, mata la cola entera de la conexión.
+ * Códigos de rechazo aplicables a intentos de delegación entre agentes.
  */
 export type DelegationRejectionCode = ProtocolDelegationRejectionCode;
 
@@ -63,9 +49,7 @@ export const DISABLED_DELEGATION_CAPS: DelegationCaps = {
 };
 
 /**
- * Satura los valores leídos de la base. Los CHECK de 019 sobre las columnas nuevas son
- * validados, pero una fila escrita a mano (o una base a medio migrar) puede traer cualquier
- * cosa, y un tope no entero o cero convertiría un rechazo durable en una transacción abortada.
+ * Normaliza y acota los límites de delegación leídos de configuración o base de datos.
  */
 export function sanitizedDelegationCaps(value: Partial<Record<keyof DelegationCaps, unknown>>): DelegationCaps {
   const integer = (raw: unknown, fallback: number, min: number, max: number): number =>
@@ -85,14 +69,7 @@ export function sanitizedDelegationCaps(value: Partial<Record<keyof DelegationCa
 }
 
 /**
- * El abanico se acota SÓLO en los turnos internos.
- *
- * Un turno raíz (hop_count=1) es el pedido de una persona, y es el único lugar donde `@all`
- * puede expandirse: el store ya prohíbe `@all` en un turno interno. En prod los 11 turnos con
- * abanico 11-14 son todos `@all` en hop_count=1. Acotar ahí rompería el broadcast a la flota
- * sin tocar ni una de las delegaciones que causaron la avalancha.
- *
- * Devuelve `undefined` cuando no hay tope aplicable.
+ * Devuelve el tope de abanico aplicable al turno según el nivel de saltos (hopCount >= 2).
  */
 export function fanoutCapForTurn(caps: DelegationCaps, hopCount: number): number | undefined {
   if (!caps.enabled) return undefined;
@@ -101,14 +78,7 @@ export function fanoutCapForTurn(caps: DelegationCaps, hopCount: number): number
 }
 
 /**
- * El `to` de una salida rechazada es texto crudo del agente: `agentOutputEntries` lo copia sin
- * validar largo, porque `invalid_output`/`unroutable_alias` existen precisamente para el destino
- * que no es un alias. Ese valor viaja al adaptador dentro del rechazo, así que el productor lo
- * recorta al tope del esquema del frame. Sin esto un `to` de 5 000 caracteres haría que el store
- * emitiera un `ack_result` que su propio esquema rechaza, y ese rechazo tira la conexión entera.
- *
- * El recorte es SÓLO para el frame: el hash durable de la fila de denegación se calcula aparte,
- * sobre el valor completo.
+ * Recorta el identificador de destino de un rechazo al límite máximo admitido por el protocolo.
  */
 export function boundedRejectionTarget(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
@@ -136,11 +106,7 @@ export interface RejectionNotice {
 }
 
 /**
- * Un rechazo que el agente puede LEER y corregir.
- *
- * Antes de esto el rechazo era una fila y un audit 'deny': el agente no se enteraba de nada y
- * lo natural era reintentar, que es exactamente cómo se llega a 148 repeticiones de la misma
- * arista. El texto es deliberadamente imperativo y dice la alternativa concreta.
+ * Genera el aviso estructurado de rechazo con motivo y orientación correctiva.
  */
 export function describeDelegationRejection(
   code: DelegationRejectionCode,

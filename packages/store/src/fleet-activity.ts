@@ -1,21 +1,15 @@
 /**
- * Heurística de "qué está haciendo cada agente" para GET /v3/console/activity.
- *
- * Vive separada de repository.ts y como función TS pura -- exactamente el mismo motivo que
- * agentDeploymentStatus() ya usa dentro de listAgents(): en esta máquina no hay PostgreSQL, así
- * que la única parte de esta feature que se puede testear de verdad es la que decide si el
- * operador ve "todo bien" o "incendio". El SQL sólo agrega columnas; la interpretación de esas
- * columnas -- badge excluyente + flags acumulativos -- se decide acá.
+ * Heurística y consultas de actividad de flota para GET /v3/console/activity.
  */
 
 export interface FleetActivityThresholds {
   /** A partir de cuántas entregas en vuelo un agente se considera saturado. */
   saturation_in_flight: number;
-  /** Segundos sin un ACK aplicado a partir de los cuales "sigue trabajando" deja de creerse. */
+  /** Segundos sin un ACK aplicado a partir de los cuales se considera detenido. */
   stall_after_seconds: number;
-  /** Ventana que cuenta como "ACK reciente" para acks_recent. Informativo, no decide el badge. */
+  /** Ventana de segundos para considerar un ACK como reciente. */
   ack_recent_seconds: number;
-  /** Hasta dónde mira hacia atrás la búsqueda del último ACK aplicado. */
+  /** Ventana de búsqueda hacia atrás del último ACK aplicado. */
   ack_lookback_seconds: number;
   /** Tope de entregas en vuelo detalladas por alias en in_flight_items. */
   items_per_agent: number;
@@ -38,18 +32,15 @@ export const FLEET_ACTIVITY_FLAGS = [
 ] as const;
 export type FleetActivityFlag = (typeof FLEET_ACTIVITY_FLAGS)[number];
 
-/** Entrada mínima que necesita la heurística; es un subconjunto de la fila que devuelve el SQL
- *  de fleetActivity(), para que el test de esta función no dependa de columnas irrelevantes. */
+/** Entrada mínima necesaria para evaluar el estado de actividad de un agente. */
 export interface FleetActivityWorkStateInput {
   registered: boolean;
   in_flight: number;
   queued: number;
   overdue_in_flight: number;
-  /** null significa "ningún ACK aplicado dentro de ack_lookback_seconds", que es la señal MÁS
-   *  grave (agente colgado hace rato), nunca "recién ackeado". Tratarlo como 0 invierte el
-   *  diagnóstico -- por eso el tipo es explícitamente nullable y no un número con default. */
+  /** Segundos transcurridos desde el último ACK aplicado, o null si no se registró en la ventana. */
   seconds_since_last_ack: number | null;
-  /** true = lease vigente, false = lease vencido, null = nunca hubo lease (LEFT JOIN sin fila). */
+  /** true = lease vigente, false = lease vencido, null = sin lease registrado. */
   lease_online: boolean | null;
 }
 
@@ -59,11 +50,7 @@ export interface FleetActivityWorkStateResult {
 }
 
 /**
- * Un solo badge (precedencia excluyente) + un array de flags (acumulativo, no excluyente).
- * El caso del incidente real -- 71 entregas en vuelo y cero progreso -- es simultáneamente
- * "saturado" Y "colgado"; el badge sólo puede mostrar una palabra, pero flags no debe perder
- * ninguna de las dos señales.
- *
+ * Calcula el estado de trabajo primario y los flags de diagnóstico asociados.
  * Precedencia del badge: stalled > saturated > working > queued > idle.
  */
 export function agentWorkState(
@@ -86,8 +73,6 @@ export function agentWorkState(
 
   const flags: FleetActivityFlag[] = [];
   if (saturated) flags.push('saturated');
-  // ack_stalled requiere trabajo en curso: un agente idle hace horas no está "colgado", está
-  // tranquilo. Sin esta guarda, salva (idle, último ACK hace 799s) se marcaría como colgado.
   if (row.in_flight > 0 && ackIsStale) flags.push('ack_stalled');
   if (row.overdue_in_flight > 0) flags.push('overdue_acks');
   if (row.lease_online === false) flags.push('lease_expired');
@@ -99,24 +84,7 @@ export function agentWorkState(
 }
 
 /**
- * SQL de GET /v3/console/activity, exportada como texto (en vez de vivir inline en
- * repository.ts) por dos razones: (1) es la superficie de lectura más ancha de la consola --
- * agrega los cinco tenants en un solo payload -- así que su contrato "nunca selecciona cuerpos"
- * necesita un test que lo pueda verificar sin levantar Postgres, y una constante exportada es lo
- * único que un test puede inspeccionar como texto; (2) documenta en un solo lugar por qué NO
- * hay ninguna función de ventana ni ningún FOR SHARE/FOR UPDATE acá: Postgres rechaza al
- * parsear cualquier combinación de las dos cosas, así que el recorte "las N entregas más viejas
- * por agente" sale de un LATERAL con ORDER BY ... LIMIT.
- *
- * Es de sólo lectura: no hay nada que proteger de una escritura concurrente (un panel quiere
- * una foto, no una foto que congele el despacho mientras la saca).
- *
- * NUNCA selecciona m.body, d.result, d.last_error ni m.origin->>'conversation_id': no es un
- * filtro posterior que alguien pueda saltear, el dato no entra al result set. Sólo se expone el
- * adaptador de origen ('telegram','bus'), que es un identificador acotado y no contenido.
- *
- * Parámetros: $1 tenant del actor autenticado, $2 ack_recent_seconds, $3 ack_lookback_seconds,
- * $4 items_per_agent (tope de entregas detalladas por alias).
+ * Consulta de agregación de actividad de flota para GET /v3/console/activity.
  */
 export const FLEET_ACTIVITY_QUERY = `
 WITH visible_tenants AS (
@@ -212,14 +180,7 @@ SELECT p.tenant_id,
        EXTRACT(EPOCH FROM (now() - ack.last_ack_at))::int      AS seconds_since_last_ack,
        COALESCE(inflight.items, '[]'::jsonb)                   AS in_flight_items,
        (COALESCE(w.in_flight, 0) > $4)                         AS in_flight_items_truncated,
-       -- EN QUÉ SALAS vive el alias. Sale de acá y no de un cruce a mano contra
-       -- GET /v3/console/topology porque ese cruce era la avería: el mapa dibujaba un muñeco por
-       -- cada MEMBRESÍA y le pegaba encima el estado de esta consulta, así que un alias con
-       -- membresía y sin registro salía dibujado («sin reportar») y un alias registrado y sin
-       -- membresía no salía en absoluto. Con las salas colgando del participante, el dibujo se
-       -- puede construir desde ESTE conjunto —el registro de agentes— y la membresía queda
-       -- reducida a lo que es: en qué recuadro va, no si existe.
-       -- Vacío = registrado y sin sala. Es un dato, no una ausencia: se dibuja igual.
+       -- Lista de salas en las que el alias tiene membresía activa.
        COALESCE(salas.rooms, ARRAY[]::text[])                   AS rooms
   FROM participants p
   LEFT JOIN agents ag              ON ag.tenant_id    = p.tenant_id AND ag.alias    = p.alias
@@ -227,9 +188,7 @@ SELECT p.tenant_id,
   LEFT JOIN work w                 ON w.tenant_id     = p.tenant_id AND w.alias     = p.alias
   LEFT JOIN ack_activity ack       ON ack.tenant_id   = p.tenant_id AND ack.alias   = p.alias
   LEFT JOIN LATERAL (
-    -- Las $4 entregas en vuelo MÁS VIEJAS, que son las que interesan cuando algo se colgó.
-    -- Acotado por alias y no globalmente: con 41 en vuelo el payload sigue siendo legible y el
-    -- contador in_flight ya dice la verdad completa.
+    -- Entregas en vuelo más antiguas del alias (acotadas a $4).
     SELECT COALESCE(jsonb_agg(to_jsonb(top) ORDER BY top.claimed_at), '[]'::jsonb) AS items
       FROM (
         SELECT d.id                 AS delivery_id,

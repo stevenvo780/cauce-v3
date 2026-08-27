@@ -12,22 +12,9 @@
   --text: #e9f0fc;
   --muted: #97a6be;
   --faint: #7d8da4;
-  /*
-   * `--text-2` es el texto SECUNDARIO sobre superficie: celdas de tabla, `dd`, rótulos de
-   * formulario y el botón secundario. Existe porque esos cinco sitios traían el mismo azul claro
-   * escrito a mano (#c6d2e6, #c4d0e1, #c5d1e3, #c7d2e4, #b9cae0) y el bloque de modo claro no
-   * redefinía ninguno: sobre papel blanco quedaban entre 1,44:1 y 1,60:1 —invisibles—, y el peor
-   * caso era «Previsualizar el alta», o sea el camino SEGURO de /config y /accounts, al lado de un
-   * «Crear» verde sólido. Un token se redefine una vez por tema; cinco literales no se redefinen
-   * nunca. MEDIDO en Chrome: claro 9,78:1 sobre blanco, oscuro 12,07:1 sobre `--surface`.
-   */
+  /* Texto secundario sobre superficie. */
   --text-2: #c7d2e4;
-  /*
-   * Texto sobre los fondos teñidos (`--*-dim`): las insignias, el cartel MOCK API, las píldoras de
-   * Mensajes. Mismo defecto y misma cura: `.badge-online` era #8ff0d3 sobre `--mint-dim`, que en
-   * claro es #d8f3ea → 1,15:1 en 135 elementos de las ocho vistas. La insignia es el único sitio
-   * donde la consola dice ONLINE / EN COLA / COLGADO: ilegible ahí es ilegible el estado.
-   */
+  /* Texto sobre fondos tenues (--*-dim). */
   --on-mint: #8ff0d3;
   --on-blue: #a8d1ff;
   --on-amber: #f5c86c;
@@ -41,8 +28,7 @@
   --amber-dim: #4a3716;
   --red: #ff8a92;
   --red-dim: #4a2029;
-  /* Dos acentos propios de la vista viva: delegación (violeta) y respuesta cerrada (lima).
-     Van acá y no en live.css porque el modo claro de abajo tiene que poder redefinirlos. */
+  /* Acentos de delegación (violeta) y respuesta (lima). */
   --violet: #b39bff;
   --violet-dim: #2e2452;
   --lime: #c6f36a;
@@ -50,69 +36,15 @@
   --tooltip-bg: #16243a;
   --radius: 16px;
   --shadow: 0 18px 50px rgb(0 0 0 / 24%);
-  /*
-   * Alto de la barra de navegación inferior en pantalla estrecha (dos filas de cuatro entradas).
-   * Es un TOKEN y no un número suelto porque hay otra hoja que tiene que anclarse justo encima:
-   * `.messenger-composer` de `features/messages/messages.css` vive `position: fixed` a esta misma
-   * altura, y cuando el número estaba copiado a mano en los dos sitios, cambiar uno metía el botón
-   * «Enviar» debajo del menú. Lo comprueba `features/messages/composer-anclado.test.ts`, que lee
-   * las dos hojas y exige que digan LO MISMO.
-   */
+  /* Alto de barra de navegación inferior en viewport móvil. */
   --nav-inferior-alto: 130px;
 
-  /*
-   * ══ LA ESCALA TIPOGRÁFICA ══════════════════════════════════════════════════════════════════
-   *
-   * Steven, por segunda vez: «la vista de configuraciones aún hay mucho que mejorar, también es
-   * muy ilegible». MEDIDO en Chrome a 1600×1000 sobre `/config` (histograma de font-size/color de
-   * los elementos hoja con texto, tema claro, que es el que da el navegador por defecto):
-   *
-   *     11,84px  --text-2    97 elementos      ← celdas de tabla y rótulos de formulario
-   *     11,84px  --muted     69
-   *     10,88px  --muted     32                ← cabeceras de columna, pastillas, chips
-   *     10,88px  --text-2    32
-   *     10,88px  --faint     19
-   *      9,28px  --muted      3                ← la marca «?» de la cabecera con ayuda
-   *
-   * **255 de 288 elementos de texto por debajo de 12 px**, y el título a 44,8 px. O sea: lo grande
-   * era el envase y lo chico era lo que hay que leer. Los `font-size` estaban sembrados sueltos en
-   * `.rem` por tres hojas distintas, así que no había ninguna forma de subir «el cuerpo» sin ir
-   * elemento por elemento — y por eso nadie lo hizo en dos rondas de arreglos.
-   *
-   * Acá se declara la escala UNA vez y todo lo demás la cita. Cinco escalones, y la diferencia
-   * entre dos vecinos se ve: 26 → 17 → 14 → 13 → 12,5. El suelo es 12,5 px y NADA baja de ahí; el
-   * cuerpo y los rótulos no bajan de 13.
-   *
-   * ── Por qué vive en `:root` y ya no en `.config-pagina` ─────────────────────────────────────
-   *
-   * Nació dentro de `.config-pagina`, así que existía SÓLO en /config. MEDIDO por mí en Chrome de
-   * verdad a 1920×1080, contando los elementos de texto hoja de `main` por debajo de 12,5 px:
-   * /config 0, y las otras siete entre 37 y 299 — 889 en total, con mínimos de 8,00 px. El arreglo
-   * se había hecho una vez y alcanzaba a una vista de ocho.
-   *
-   * Y había un defecto peor que lo estético: `features/config/toggles.css` YA citaba
-   * `var(--tipo-rotulo)` y `var(--tipo-apunte)` en cinco reglas. Fuera de /config esas variables no
-   * existían, y una `var()` sin declarar no hereda nada — el navegador DESCARTA la declaración
-   * entera y manda la de al lado, sin un solo aviso. O sea que esas cinco reglas eran letra muerta
-   * en cuanto el componente se usaba fuera de su página.
-   *
-   * ⚠️ El `.6875rem` de la barra de navegación de móvil (más abajo, `@media (max-width: 760px)`)
-   * NO sale de acá y NO SE TOCA: está medido contra el ancho real de las ocho entradas a 360 px, y
-   * subirlo vuelve a pisar los rótulos entre sí.
-   */
-  /* El título de la página. Antes `clamp(1.85rem, 4vw, 2.8rem)` = 44,8 px a 1600: seis veces el
-     cuerpo, para tres palabras que el menú lateral ya dice. */
+  /* Escala tipográfica unificada */
   --tipo-titulo: 26px;
-  /* El título de un panel. Es lo que se busca al barrer la página con la vista. */
   --tipo-panel: 17px;
-  /* CUERPO: prosa, celdas de tabla, valores. Lo que de verdad se lee. Antes 11,84 px. */
   --tipo-cuerpo: 14px;
-  /* RÓTULOS: etiquetas de formulario, pestañas, botones pequeños, avisos. Antes 11,84 px. */
   --tipo-rotulo: 13px;
-  /* SECUNDARIO: pistas, cabeceras de columna, pastillas, metadatos. El suelo de toda la consola. */
   --tipo-apunte: 12.5px;
-  /* Monoespaciado: a igual `px` una monoespaciada se ve más grande, así que va un escalón abajo
-     del cuerpo y nunca por debajo del suelo. */
   --tipo-mono: 13px;
 }
 
@@ -206,9 +138,7 @@ h1 { margin: 0; font-size: var(--tipo-titulo); line-height: 1.08; letter-spacing
 .page-description { max-width: 760px; margin: 11px 0 0; color: var(--muted); line-height: 1.65; }
 .page-actions { flex: none; }
 
-/* Separador de las dos mitades de una vista fusionada: un solo <h1> por página, y las mitades
-   se anuncian con un <h2> propio en vez de con otra ruta. El borde superior es lo único que
-   sustituye visualmente al cambio de pantalla que había antes. */
+/* Separador de secciones de la vista. */
 .section-header { margin: 44px 0 22px; padding-top: 26px; border-top: 1px solid var(--border-strong); }
 .section-header h2 { margin: 0; font-size: clamp(1.25rem, 2.4vw, 1.6rem); letter-spacing: -.03em; }
 .section-header p { max-width: 760px; margin: 9px 0 0; color: var(--muted); line-height: 1.6; }
@@ -217,15 +147,7 @@ h1 { margin: 0; font-size: var(--tipo-titulo); line-height: 1.08; letter-spacing
 .button:hover:not(:disabled) { transform: translateY(-1px); border-color: #4c6b91; background: #1b2b43; }
 .button:disabled { cursor: not-allowed; opacity: .55; }
 .button.primary { border-color: #2d7b69; background: linear-gradient(135deg, #1a6b59, #24516e); color: white; box-shadow: 0 8px 22px rgb(36 139 111 / 18%); }
-/*
- * El botón secundario NO está deshabilitado, y tiene que verse así. Con #c6d2e6 sobre
- * `--surface` blanco daba 1,53:1 —MEDIDO `disabled:false` en «Cerrar sesión», «Actualizar»,
- * «Refrescar ahora» y «Sincronizar todo»— y en /config y /accounts caían ahí también
- * «Previsualizar el alta» y «Previsualizar (dry-run)». Eso no es un matiz estético: deja el
- * camino seguro invisible al lado de un «Crear» verde sólido, que es exactamente la trampa que
- * un botón de previsualización existe para evitar. El borde también se sube a `--border-strong`
- * para que la caja se distinga del panel sin depender del color del texto.
- */
+/* Botón secundario con contraste y borde reforzado. */
 .button.secondary { border-color: var(--border-strong); background: var(--surface); color: var(--text-2); }
 .button.small { min-height: 34px; padding: 6px 10px; font-size: var(--tipo-rotulo); }
 
@@ -252,40 +174,20 @@ th { padding: 11px 12px; border-bottom: 1px solid var(--border-strong); color: v
 td { padding: 14px 12px; border-bottom: 1px solid rgb(34 50 76 / 65%); color: var(--text-2); vertical-align: middle; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: rgb(27 43 67 / 35%); }
-/* La fila a la que llegó un enlace profundo (`/queues?delivery=`). El borde lateral es lo que la
-   distingue: el color de fondo solo no sobrevive al `:hover` de la fila de al lado. */
+/* Fila destacada por enlace profundo. */
 tbody tr.fila-enfocada { background: var(--blue-dim); box-shadow: inset 3px 0 0 var(--blue); }
 .identity-cell, .inline-icon { display: flex; align-items: center; gap: 8px; }
 .icon-box { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; background: var(--blue-dim); color: var(--blue); }
 .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: var(--tipo-mono); }
 
-/*
- * 🔴 **El tamaño que no está escrito en ninguna hoja.**
- *
- * MEDIDO en Chrome a 1920×1080: 76 elementos `<small class="subline">` a **10,67 px**, repartidos
- * por /queues, /observability, /accounts y /live. Buscar «10.67» o «.667rem» en el CSS no devuelve
- * nada, y no es que estuviera escondido: NO ESTÁ. `.subline` ponía `display`, `margin` y `color` y
- * no ponía `font-size`, así que mandaba la hoja de estilo del NAVEGADOR, que a `<small>` le da
- * `smaller`. Un censo de los `font-size` escritos —que es como se encontró todo lo demás de este
- * cambio— no puede encontrar esto ni en principio: el defecto está en lo que no se escribió.
- *
- * Por eso hay dos reglas y no una. `small` es la red de seguridad para cualquier `<small>` que
- * nadie vistió (hay varios sueltos, medidos a 9,92 px); `.subline` declara el suyo porque es la
- * clase que de verdad se usa. `small` va como selector de ELEMENTO a propósito: especificidad
- * 0-0-1, o sea que cualquier regla con clase le sigue ganando y no pisa nada de lo que ya había.
- */
+/* Tamaño tipográfico base para elementos de texto secundario. */
 small { font-size: var(--tipo-apunte); }
 .subline { display: block; margin-top: 4px; color: var(--faint); font-size: var(--tipo-apunte); }
 .error-copy { max-width: 270px; color: var(--red); }
 .muted { display: inline-flex; align-items: center; gap: 5px; color: var(--faint); font-size: var(--tipo-rotulo); }
 .unknown { color: var(--amber); font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-rotulo); font-weight: 700; }
 
-/* `.64rem` son 10,24px MEDIDOS: por debajo del mínimo con el que se puede exigir un contraste
-   AA y por debajo de lo que se lee cómodo en una rejilla de permisos de ocho filas. Pasó a .75rem
-   (12px) y desde el 2026-08-24 cita el escalón de APUNTE (12,5px), que es el mismo que ya usaba
-   `.config-pagina .badge`: la insignia es el único sitio donde la consola dice ONLINE / EN COLA /
-   COLGADO, y dibujarla de dos tamaños según la página es la forma barata de que el operador crea
-   que son dos cosas distintas. */
+/* Insignias de estado. */
 .badge { display: inline-flex; align-items: center; width: fit-content; min-height: 23px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
 .badge-online, .badge-done { border-color: #286353; background: var(--mint-dim); color: var(--on-mint); }
 .badge-running, .badge-info { border-color: #315a81; background: var(--blue-dim); color: var(--on-blue); }
@@ -299,8 +201,7 @@ small { font-size: var(--tipo-apunte); }
 .state-card { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 12px; padding: 30px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--muted); }
 .state-card p { margin: 0; }
 .state-card-texto { display: grid; gap: 6px; max-width: 52ch; text-align: center; }
-/* La segunda línea de una espera larga: es una explicación, no un titular, y no puede competir
-   con el rótulo que ya está ahí. Ver `LoadingState` en components/ui.tsx. */
+/* Subtítulo para estados de carga. */
 .state-card-lento { color: var(--faint); font-size: var(--tipo-rotulo); }
 .state-error { flex-wrap: wrap; color: var(--red); }
 .state-error div p { margin-top: 5px; color: var(--muted); }
@@ -338,29 +239,18 @@ input, select, textarea { width: 100%; margin-top: 7px; border: 1px solid var(--
 input, select { min-height: 41px; padding: 8px 10px; }
 textarea { padding: 10px; line-height: 1.5; resize: vertical; }
 input::placeholder { color: #60728e; }
-/*
- * `.publish-form` se retiró el 2026-08-22 con el formulario que la usaba: pedía el room y un
- * «Tenant:alias» escritos a mano, y los dos pasaron a derivarse del agente elegido en el hilo.
- * Ver features/messages/messages.css.
- */
 .trust-callout { display: flex; align-items: center; gap: 8px; margin-top: 16px; color: var(--muted); font-size: var(--tipo-rotulo); }
 .trust-callout svg { color: var(--mint); }
 .notice { margin: 14px 0 0; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-2); color: #bfcee2; font-size: var(--tipo-rotulo); }
 .notice.success { border-color: #286353; background: var(--mint-dim); color: #a0ecd5; }
 .notice.error { border-color: #74313c; background: var(--red-dim); color: #ffb7bc; }
-/* Guardé, pero no pude releer: ni verde (no está comprobado) ni rojo (el cambio SÍ se aplicó). */
+/* Estado de actualización parcial. */
 .notice.parcial { border-color: #7a5a24; background: rgba(208, 135, 0, 0.12); color: #ffd9a0; }
 .permission-line { display: flex; align-items: center; gap: 10px; width: fit-content; margin: -12px 0 18px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--muted); font-size: var(--tipo-rotulo); }
-/*
- * `.message-list`, `.message-card-head` y `.metadata-grid` se retiraron el 2026-08-22 junto con
- * la lista plana de tarjetas de Mensajes: no quedó ningún otro consumidor (comprobado por grep
- * sobre .tsx/.ts/.css antes de borrarlas).
- */
 dl { margin: 0; }
 .adapter-meta div, .terminal-cap-meta div { min-width: 0; }
 dt { color: var(--faint); font-size: var(--tipo-apunte); font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
 dd { margin: 5px 0 0; color: var(--text-2); font-size: var(--tipo-rotulo); overflow-wrap: anywhere; }
-/* `.delivery` (la tarjeta por entrega de la lista plana) salió con ella el 2026-08-22. */
 .timeline { display: grid; grid-template-columns: repeat(4, 1fr); margin: 20px 0 0; padding: 0; list-style: none; }
 .timeline li { position: relative; min-width: 0; padding-top: 17px; border-top: 2px solid var(--border-strong); }
 .timeline li:not(:last-child)::after { position: absolute; z-index: 0; top: -2px; right: 0; left: 10px; height: 2px; background: #315574; content: ""; }
@@ -374,38 +264,18 @@ dd { margin: 5px 0 0; color: var(--text-2); font-size: var(--tipo-rotulo); overf
 .config-json textarea, .config-preview, .config-records code { font-family: "SFMono-Regular", Consolas, monospace; }
 .config-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .config-preview { max-height: 440px; overflow: auto; margin: 16px 0 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: #070b13; color: var(--text-2); font-size: var(--tipo-rotulo); white-space: pre-wrap; }
-/* Una columna, no dos: desde que cada colección es una TABLA de hasta siete columnas, media
-   pantalla la obligaba a hacer scroll horizontal dentro del panel para leer una fila.
- *
- * El contenedor se llama `.config-area` y NO `.config-grid`: cuando la vista pasó a pestañas
- * (2026-08-22) el `<div>` cambió de clase y estas seis reglas se quedaron apuntando a una clase que
- * ya no existe en ningún `.tsx`. Quedaron INERTES sin un solo error, y con ellas se fue el
- * `min-width: 0` — que es justo lo que dejaba de funcionar el `overflow-x: auto` del envoltorio de
- * tabla. MEDIDO en Chrome contra el snapshot real de producción: «Avisos y cadena» producía un
- * documento de 3130px en un viewport de 1280 y la barra lateral se quedaba atrás al arrastrar.
- *
- * Las dos piezas son necesarias y ninguna alcanza sola: `minmax(0, 1fr)` baja el mínimo de la PISTA
- * (un `1fr` pelado es `minmax(auto, 1fr)`, y ese `auto` es el min-content del panel), y
- * `min-width: 0` baja el mínimo automático del ITEM. Con las dos, el `.table-wrap` se queda del
- * ancho de la columna y la tabla scrollea DENTRO de su caja. */
+/* Contenedor de configuración y tablas de datos. */
 .config-area { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .config-area .panel { min-width: 0; margin-bottom: 0; }
 .config-records { display: grid; gap: 7px; max-height: 350px; overflow: auto; margin: 0; padding: 0; list-style: none; }
 .config-records li { padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: #0a111d; }
 .config-records code { color: var(--text-2); font-size: var(--tipo-apunte); overflow-wrap: anywhere; }
 
-/* Tablas de configuración: la vista dejó de ser JSON crudo por fila y pasó a ser una tabla con
-   columnas de verdad, con las operaciones frecuentes a un clic. */
+/* Tablas de configuración. */
 .config-area table { font-size: var(--tipo-cuerpo); }
-/* Tabla densa: una fila de configuración es una LÍNEA de datos, no una tarjeta. Con los 14px de
-   arriba y abajo del `td` general, una membership medía 77px MEDIDOS y diecinueve filas ya no
-   entraban en una pantalla. */
+/* Espaciado denso en filas de tabla de configuración. */
 .config-area td { padding: 9px 12px; }
-/* Una casilla NO es un campo de texto. La regla general `input, select, textarea { width: 100%;
-   min-height: 41px; margin-top: 7px }` la estiraba a 910px MEDIDOS y la empujaba a su propia línea,
-   así que en «Alta rápida» y en el wizard la casilla aparecía como una barra separada de la frase
-   que la nombra y no se sabía a qué pertenecía. (Defecto anterior a esta rama: se comprobó también
-   sobre el CSS desplegado.) */
+/* Controles de tipo checkbox y radio. */
 .config-area input[type="checkbox"], .config-area input[type="radio"] {
   width: auto;
   min-height: 0;
@@ -416,15 +286,9 @@ dd { margin: 5px 0 0; color: var(--text-2); font-size: var(--tipo-rotulo); overf
 }
 .config-area td .config-actions { gap: 5px; }
 .config-area td select { max-width: 150px; padding: 3px 6px; font-size: var(--tipo-rotulo); }
-/* El motivo por el que un control de la tabla quedó apagado va DEBAJO del control, no en un tooltip
-   que hay que descubrir con el ratón. */
+/* Motivo de inhabilitación de control. */
 .config-area td select + .unknown { display: block; max-width: 260px; margin-top: 5px; font-size: var(--tipo-rotulo); font-weight: 600; line-height: 1.4; }
-/* Resumen de un campo de párrafo (`role_brief`): recortado a 120 caracteres y con el texto entero
-   en el `title`. Sin el ancho máximo, una sola celda empuja las otras once columnas de «Agent
-   registry» fuera de la pantalla. */
-/* Dos líneas y punto. A 120 caracteres en 340px el `role_brief` ocupaba cinco líneas y la fila de
-   «Agent registry» llegaba a 214px MEDIDOS: catorce agentes son 2.740px de tabla que no se pueden
-   comparar de un vistazo. El texto entero sigue en el `title` y en «Ver crudo». */
+/* Resumen de texto limitado a dos líneas. */
 .config-resumen {
   display: -webkit-box;
   max-width: 340px;
@@ -433,12 +297,9 @@ dd { margin: 5px 0 0; color: var(--text-2); font-size: var(--tipo-rotulo); overf
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
-/* El audit trail queda dentro de una pantalla: el aviso del rollback se pinta arriba de la tabla y
-   tiene que seguir a la vista aunque el historial tenga cincuenta revisiones. */
+/* Contenedor con scroll vertical para auditoría. */
 .config-audit { max-height: 420px; overflow-y: auto; }
-/* La confirmación es un DIÁLOGO centrado, no un bloque colgado debajo del botón: sus dos botones no
-   pueden quedar debajo del pliegue, y el fondo no puede seguir siendo pulsable mientras se decide.
-   Ver `ConfirmacionDeAccion` en `CollectionTable.tsx`. */
+/* Diálogo de confirmación centrado. */
 .config-modal-fondo {
   position: fixed;
   z-index: 60;
@@ -458,22 +319,18 @@ dd { margin: 5px 0 0; color: var(--text-2); font-size: var(--tipo-rotulo); overf
   background: var(--surface);
   box-shadow: 0 26px 70px rgb(0 0 0 / 45%);
 }
-/* Sólo el cuerpo scrollea. El pie con «Confirmar» y «Cancelar» queda fijo: por largo que sea el
-   JSON, la decisión nunca sale de la pantalla. */
+/* Cuerpo scrollable del modal. */
 .config-modal-cuerpo { min-height: 0; padding: 16px 18px; overflow-y: auto; }
 .config-modal-cuerpo > p { margin: 0; font-size: var(--tipo-rotulo); line-height: 1.55; }
 .config-modal-detalle { margin-top: 12px; }
 .config-modal-detalle > summary { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
 .config-modal-detalle .config-preview { max-height: 260px; margin: 10px 0 0; }
 .config-modal-pie { flex: none; padding: 12px 18px; border-top: 1px solid var(--border); border-radius: 0 0 12px 12px; background: var(--amber-dim); }
-/* Las acciones que quedan en una celda van en HORIZONTAL. Apiladas, una fila de la ACL medía 199px
-   —cuatro botones uno encima de otro— y ocho reglas de permiso no entraban en pantalla y media. La
-   tabla ya scrollea dentro de su caja, así que ensanchar la celda no desborda la página. */
+/* Acciones horizontales dentro de celdas de configuración. */
 .config-area td .config-actions { flex-wrap: nowrap; }
 .config-area td .button.small { white-space: nowrap; }
 
-/* Desplegables: el JSON crudo de cada colección y el editor de mutaciones. Siguen estando —son la
-   verdad literal del servidor y la válvula de escape— pero ya no son lo primero que se ve. */
+/* Desplegables de vista cruda y editor de mutaciones. */
 .config-raw { margin-top: 14px; }
 .config-raw > summary, .config-editor > summary { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
 .config-raw > summary { margin-bottom: 10px; }
@@ -581,20 +438,7 @@ dd { margin: 5px 0 0; color: var(--text-2); font-size: var(--tipo-rotulo); overf
 .terminal-degraded strong { display: block; color: var(--text); font-size: var(--tipo-rotulo); }
 .terminal-degraded p { margin: 3px 0 0; font-size: var(--tipo-apunte); }
 
-/*
- * 🔴 Las tres columnas NO pueden tener un mínimo mayor que el hueco que les queda.
- *
- * Era `272px minmax(460px, 1fr) 286px` = 1018 px de mínimo. En un viewport de 1280 el hueco real
- * es 939 px (1280 − 248 de barra lateral − 76 de padding de `main`), así que el inspector de la
- * derecha terminaba en x=1305: 25 px FUERA de la pantalla, y «ALLOWED» se leía «ALLO…». El
- * `overflow: hidden` de este mismo bloque lo tapaba en vez de avisar.
- *
- * Con `minmax(0, …)` en las tres la reja no puede empujar más allá de su contenedor A NINGÚN
- * ancho, y las dos laterales se estrechan (272→236, 286→264) para que a 1280 le queden ~440 px a
- * la del medio en vez de −64. No se sube el corte de dos columnas: por debajo de 1100 ya estaba,
- * y plegar antes escondería las «Capability gates», que sin sesión abierta NO tienen dónde
- * mudarse — `.terminal-adapter-mobile` sólo existe cuando hay una sesión abierta.
- */
+/* Distribución de columnas en workspace de terminal. */
 .ultimate-terminal-shell { display: grid; grid-template-columns: minmax(0, 236px) minmax(0, 1fr) minmax(0, 264px); min-height: 690px; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface); box-shadow: 0 26px 80px rgb(0 0 0 / 30%); }
 .terminal-fleet-sidebar { display: flex; min-width: 0; flex-direction: column; border-right: 1px solid var(--border); background: linear-gradient(180deg, #0e1726, #0a111c); }
 .terminal-fleet-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 18px 16px 12px; }
@@ -627,21 +471,7 @@ dd { margin: 5px 0 0; color: var(--text-2); font-size: var(--tipo-rotulo); overf
 .agent-lease .badge { min-height: 18px; padding: 1px 6px; font-size: var(--tipo-apunte); }
 .agent-expiry { color: var(--faint); font-size: var(--tipo-apunte); }
 .agent-expiry time { font-size: inherit; }
-/*
- * 🔴 **Las pastillas de capacidad ENVUELVEN, ya no se recortan.**
- *
- * Estaban a `.52rem` = 8,32 px, el segundo tamaño más chico de toda la consola. Al subirlas al
- * suelo de 12,5 px dejaron de caber en los 150 px de la celda, y MEDIDO en Chrome a 1920×1080 el
- * resultado fue peor que la letra chica: `overflow: hidden` + `text-overflow: ellipsis` las cortaba
- * a mitad de palabra — «messages» (71 px de texto en 65 de hueco) y «ack.timeline» (85 en 78) se
- * leían «messag…» y «ack.timel…». Un nombre de capacidad cortado no es un nombre: el operador no
- * puede saber si dice `ack.timeline` o `ack.timeout`.
- *
- * `flex-wrap: wrap` deja que la segunda pastilla baje de renglón y se lea entera, que es para lo
- * que está puesta. La caja crece hacia abajo, que es la dirección donde sobra sitio; recortar por
- * el costado gastaba el mismo espacio y encima mentía. Se quita el `overflow: hidden` del
- * contenedor por lo mismo: ya no hay nada que esconder.
- */
+/* Envoltorio flexible de pastillas de capacidades. */
 .agent-capabilities { display: flex; flex-wrap: wrap; min-width: 0; gap: 3px; }
 .agent-capabilities .chip { padding: 2px 4px; font-size: var(--tipo-apunte); white-space: nowrap; }
 .agent-capabilities .unknown { font-size: var(--tipo-rotulo); }
@@ -702,11 +532,10 @@ dd { margin: 5px 0 0; color: var(--text-2); font-size: var(--tipo-rotulo); overf
 .transcript-delivery { display: flex; width: 100%; align-items: center; gap: 6px; margin-top: 10px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: #09111d; color: var(--faint); font-size: var(--tipo-apunte); text-align: left; cursor: pointer; }
 .transcript-delivery > span:last-child { margin-left: auto; }
 .delivery-state-icon { color: var(--blue); }
-/* Botón, no `span`: hasta el 2026-08-23 la mitad del hilo —todo lo que escribe el agente, que no
-   tiene entrega para este par— no se podía seleccionar y clicarla no cambiaba el detalle. */
+/* Nota interactiva de salida en transcripción */
 .transcript-output-note { display: inline-block; margin-top: 7px; padding: 0; border: 0; border-bottom: 1px dotted var(--border-strong); background: none; color: var(--faint); font-size: var(--tipo-apunte); text-align: left; cursor: pointer; }
 .transcript-output-note:hover { color: var(--muted); }
-/* El corte del servidor, rotulado en la burbuja: `left(body,240)` en `listMessages`. */
+/* Indicador de truncamiento de mensaje */
 .transcript-truncado { display: flex; gap: 5px; align-items: flex-start; margin: -4px 0 8px; color: var(--amber); font-size: var(--tipo-apunte); line-height: 1.5; }
 .transcript-truncado svg { flex: none; margin-top: 2px; }
 .terminal-composer { padding: 12px 14px 14px; border-top: 1px solid var(--border); background: #0b1320; }
@@ -785,71 +614,21 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
 }
 
 @media (max-width: 760px) {
-  /*
-   * 🔴 **El menú de móvil: dos filas de cuatro, y todo se lee.**
-   *
-   * Era una tira `flex` de OCHO entradas con `min-width: 56px` y el rótulo en `white-space:
-   * nowrap` sin recorte. MEDIDO a 360 px: cada `<a>` medía 56 px y su `<span>` entre 70 y 107, así
-   * que los rótulos se salían de su enlace y se PISABAN con el de al lado — se leía literalmente
-   * «La flota ahoCuentas y cuotaMensajesQueues &SDLQles y au». Y como la tira sumaba 493 px de
-   * contenido en 344 de hueco, «Configuración y altas» y «Ultimate Terminal» sólo se alcanzaban
-   * arrastrando, sin una sola señal de que se pudiera arrastrar.
-   *
-   * Cuatro columnas de reja, el rótulo con permiso para partirse en dos renglones y ni un píxel
-   * de scroll: las ocho entradas caben, se leen enteras y se ven todas a la vez. La barra pasa de
-   * 66 a 130 px de alto, y `padding-bottom` del shell la acompaña para que no tape el pie de la
-   * página. `env(safe-area-inset-bottom)` es por la barra de gestos de los teléfonos.
-   */
-  /*
-   * 🔴 **La insignia se parte en dos renglones en pantalla estrecha.**
-   *
-   * `.badge` es `white-space: nowrap`, y en escritorio tiene que serlo: «EN REINTENTO» partido en
-   * dos es una pastilla deforme. Pero a 360 px el rótulo más largo que emite la consola —«Cola sin
-   * quien la consuma»— EXIGE 249 px de una pieza, y un `nowrap` es un mínimo intrínseco que ningún
-   * `max-width` de los padres puede negociar: empuja al contenedor entero.
-   *
-   * MEDIDO, y lo causé yo al subir la insignia de 12 a 12,5 px: `/live` pasó de caber a pedir
-   * 364 px en una ventana de 360, y con el documento desbordado los 794 elementos de la vista
-   * quedaban 4 px corridos. Cuatro píxeles, pero es la barra de scroll horizontal en un teléfono y
-   * la vista entera moviéndose de lado.
-   *
-   * Dejarla envolver acá es la misma decisión que ya se tomó tres reglas más abajo para los rótulos
-   * del menú, y por el mismo motivo: en un teléfono sobra sitio hacia abajo y no hacia el costado.
-   * El `nowrap` de escritorio no se toca.
-   */
+  /* Insignias con ajuste de línea en viewport estrecho. */
   .badge { white-space: normal; }
   .app-shell { display: block; padding-bottom: calc(var(--nav-inferior-alto) + 14px); }
   .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: var(--nav-inferior-alto); padding: 6px; border-top: 1px solid var(--border); border-right: 0; box-sizing: border-box; }
   .brand, .authority-note { display: none; }
   .sidebar nav ul { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 57px; overflow: visible; gap: 2px; }
   .sidebar nav li { min-width: 0; }
-  /* ⚠️ **`.6875rem` (11 px) es LA EXCEPCIÓN al suelo de 12,5 px, y NO SE TOCA.**
-     No sale de la escala tipográfica y no es un descuido de este barrido: está MEDIDA contra el
-     ancho real de las ocho entradas a 360 px, con la reja de cuatro columnas y el rótulo partido en
-     dos renglones que describe el comentario de arriba. Subirla al suelo vuelve a poner los rótulos
-     unos encima de otros —«La flota ahoCuentas y cuotaMensajes…»—, que es exactamente el defecto
-     que este bloque existe para haber arreglado. Lo guarda `styles.tipografia.test.ts`, que la
-     anota como par (selector, valor) exacto para que el perdón no se le extienda al `.9rem` que
-     este mismo selector tiene en el bloque base. */
   .sidebar nav a { min-width: 0; height: 100%; justify-content: center; gap: 3px; padding: 5px 3px; font-size: .6875rem; line-height: 1.15; text-align: center; }
-  /* Los dos renglones se RESERVAN aunque el rótulo ocupe uno solo: si no, la altura de la barra
-     depende de qué palabras entren y el ancla del compositor deja de ser un número. */
   .sidebar nav a span { display: block; min-width: 0; max-width: 100%; min-height: 2.3em; overflow-wrap: break-word; white-space: normal; }
   .sidebar nav a { flex-direction: column; }
   .topbar { padding: 0 16px; }
   .topbar-meta span:not(.mock-flag) { display: none; }
-  /* La barra inferior es `position: fixed` y de 130 px: NO la ve el flujo, asi que el
-     `padding-bottom` del shell no basta -- medido en el navegador a 360x800, el final de
-     cada pagina quedaba DEBAJO de la barra y no se podia revelar con scroll (el documento
-     ya estaba en su tope). Se tapaban 85 px, y lo tapado era justo lo que hay que ver: en
-     /messages las filas de los agentes caidos, en /live el ultimo alias.
-     Comprobado por hit-test (elementFromPoint devolvia un elemento DENTRO del aside), no
-     por aritmetica de rectangulos. Por eso `main` reserva el alto de la barra el tambien. */
   main { padding: 29px 15px calc(var(--nav-inferior-alto) + 16px + env(safe-area-inset-bottom, 0px)); }
   .page-header { align-items: start; flex-direction: column; }
   .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid, .adapter-grid, .landing-atajos { grid-template-columns: 1fr; }
-  /* `.config-area` NO baja a `1fr` pelado: ese `auto` implícito es el min-content del panel y es
-     exactamente lo que desbordaba el documento a 2859px en un viewport de 360. */
   .config-area { grid-template-columns: minmax(0, 1fr); }
   .metric { min-height: 115px; }
   .config-form { grid-template-columns: 1fr; }
@@ -872,8 +651,6 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .terminal-active-grid { grid-template-columns: minmax(0, 1fr); }
   .terminal-console { border-right: 0; }
   .terminal-inspector { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--border); }
-  /* En columna, un `wrap` NO parte renglones: parte COLUMNAS, y los controles se van de lado.
-     El `wrap` de escritorio se apaga acá a propósito. */
   .terminal-session-head { align-items: start; flex-direction: column; flex-wrap: nowrap; }
   .session-controls { width: 100%; justify-content: space-between; }
   .terminal-transcript { max-height: 500px; }
@@ -901,11 +678,7 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
   .terminal-degraded .button { width: 100%; }
 }
 
-/* ---------------------------------------------------------------------------------------------
- * Activity & Quotas (GET /v3/console/activity, GET /v3/console/quotas). Todo definido en
- * variables de tema existentes a propósito: no hace falta ningún override en el bloque
- * prefers-color-scheme: light de más abajo.
- */
+/* Activity & Quotas */
 .auto-refresh-toggle { display: flex; align-items: center; gap: 8px; margin: -10px 0 20px; color: var(--muted); font-size: var(--tipo-rotulo); }
 .auto-refresh-toggle input { width: auto; min-height: 0; margin: 0; }
 
@@ -989,13 +762,6 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
     --border-strong: #b8c7d9;
     --text: #142033;
     --muted: #57677c;
-    /*
-     * `--faint` era #718198: MEDIDO en Chrome daba 3,66:1 en las cabeceras de tabla (10,88 px),
-     * 3,97:1 en los pies de las tarjetas de número y 3,52:1 sobre `--surface-2`. Es el color de
-     * MÁS elementos de toda la consola (más de 500 en las ocho vistas) y estaba por debajo de AA
-     * en todos. #5b697d da 4,60:1 en el peor de sus fondos reales (`--surface-3`) y 5,58:1 sobre
-     * blanco, sin cambiar de tono.
-     */
     --faint: #59677a;
     --text-2: #33455c;
     --on-mint: #087860;
@@ -1007,11 +773,6 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
     --mint-dim: #d8f3ea;
     --blue: #1668b2;
     --blue-dim: #dfedfb;
-    /* #9a6500 se quedaba en 4,45:1 sobre `--amber-dim` (el cartel MOCK API y las insignias de
-       aviso, en las ocho vistas): a cinco centésimas de AA, que es igual de suspenso. El valor de
-       acá se eligió contra el PEOR fondo real, que no es `--bg` sino `--bg` MÁS el degradado
-       decorativo del `body`: en la esquina superior derecha ese tinte azul le come ~0,35 de
-       ratio a todo lo que caiga encima, y ahí es justo donde vive el estado de sesión. */
     --amber: #8c5c00;
     --amber-dim: #fff2cf;
     --red: #b72d3a;
@@ -1034,15 +795,7 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   .terminal-agent[data-active="true"] { border-color: #79b5a6; background: linear-gradient(100deg, #dff3ed, #eaf3fb); }
   .transcript-entry.input { border-color: #8fc5b7; background: linear-gradient(145deg, #e2f5ef, #edf5fb); }
   .transcript-entry p { color: #203149; }
-  /* Estas tarjetas traían el fondo oscuro hardcodeado y en modo claro quedaban gris sobre azul
-     marino, ilegibles. Ahora heredan la superficie del tema como el resto de la página. */
   .explain-grid article, .trust-grid article { background: #f4f7fb; }
-  /*
-   * El tema oscuro está escrito con hex literales por toda la hoja, así que cada superficie que
-   * no aparezca acá se queda azul marino en modo claro y su texto —gris pensado para fondo
-   * oscuro— deja de leerse. No es un matiz: en "Consumo de cuotas" las tarjetas de proveedor
-   * salían gris sobre negro y no se distinguía ni el nombre del proveedor.
-   */
   .chip { background: #eef3f9; }
   .badge-offline { border-color: #ccd4de; background: #eceff4; }
   .button:hover:not(:disabled) { border-color: #9ab8d6; background: #e9f0f8; }
@@ -1053,10 +806,6 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   .config-preview { background: #f4f7fb; }
   .config-modal { background: #ffffff; }
   .config-modal-fondo { background: rgb(30 45 66 / 42%); }
-  /* Los cuatro tonos de `.notice` traían el texto pensado para fondo oscuro y en modo claro nadie
-     los había mirado: MEDIDO en Chrome, el verde de «rollback aplicado» quedaba a contraste 1.16 y
-     el gris del aviso a 1.42 — invisibles. Es exactamente el fallo que este trabajo venía a cerrar:
-     una escritura cuyo desenlace no se lee deja la pantalla tan muda como no decir nada. */
   .notice { color: #33455c; }
   .notice.success { color: #0f6450; }
   .notice.error { color: #8f2230; }
@@ -1075,9 +824,7 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
-/* Entrada de menú visible pero inerte: existe, no está disponible para vos, y dice por qué en el
-   `title`. Se prefiere a esconderla porque un menú más corto no distingue "no está desplegado"
-   de "no tengo permiso". Ver `configNavAvailability` en navigation.ts. */
+/* Entrada de menú inerte por falta de permisos */
 .sidebar nav a.nav-inerte {
   opacity: 0.45;
   cursor: not-allowed;
@@ -1086,7 +833,7 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
   background: transparent;
 }
 
-/* Pestañas de vista — ver `ViewTabs` en components/ui.tsx (fusión de vistas redundantes, 2026-08-22). */
+/* Pestañas de navegación de vista */
 .view-tabs {
   display: flex;
   gap: 4px;
@@ -1126,162 +873,45 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
 
 .view-tab-panel:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 12px; }
 
-/*
- * 🔴 **En tema claro las pestañas que NO están activas eran invisibles. Medido en Chrome el
- * 2026-08-23, a 1280x900, sobre /accounts.**
- *
- * `.view-tabs` pinta su fondo con un azul de noche fijo —`rgb(13 20 34 / 60%)`— que no tiene
- * override para `prefers-color-scheme: light`. Sobre una página clara eso queda en un gris pizarra
- * (105,110,120) y el texto de las pestañas inactivas, que es `--muted` (87,103,124), da **1,13:1**.
- * No es «poco contraste»: es que no se ven. En /accounts eso esconde «Inventario» y
- * «Asignaciones» —dos tercios de la vista, y justamente la mitad que sigue funcionando cuando el
- * recolector de cuotas está caído— y en /observability esconde «Auditoría».
- *
- * La barra pasa a `--surface-2` y la pestaña activa a `--surface` (blanco) con una sombra mínima:
- * el contraste del texto inactivo sube a ~4,9:1 (AA) y la activa se sigue distinguiendo de la
- * barra, que es lo que la pestaña activa tiene que hacer.
- */
+/* Pestañas en tema claro */
 @media (prefers-color-scheme: light) {
   .view-tabs { background: var(--surface-2); }
   .view-tab[aria-selected='true'] { background: var(--surface); box-shadow: 0 1px 2px rgb(20 32 51 / 12%); }
   .view-tab-badge { background: rgb(20 32 51 / 10%); }
 }
 
-/* Detalle de ruteo desplegable de una fila del inventario de cuentas (fusión cuotas+cuentas). */
+/* Detalle de ruteo desplegable de una fila del inventario de cuentas */
 .account-detail-row > td { padding: 0 14px 14px; background: var(--surface-2); }
 .account-detail-row .account-body { display: grid; gap: 14px; padding-top: 12px; }
 
-/* =================================================================================================
- * LEGIBILIDAD — que se pueda LEER y que quepa en la pantalla (2026-08-23)
- *
- * Este bloque cierra cinco defectos que MEDÍ con Chrome sobre la consola servida por vite en modo
- * mock, no leyendo el código: contraste calculado en el DOM, `getBoundingClientRect`, y
- * `scrollWidth` contra `clientWidth`, a 1280 y a 360. Los 445 tests de jsdom pasaban con los cinco
- * puestos, porque jsdom NO TIENE LAYOUT: un rótulo que se pisa con el de al lado y un panel que
- * sobresale 324 px de la pantalla son, para jsdom, exactamente lo mismo que uno que no.
- *
- * Las reglas que tocan selectores de una hoja de `features/` viven acá a propósito: el dueño de
- * `styles.css` es un solo carril y así no hay dos manos sobre el mismo fichero. `styles.css` se
- * importa la última (MEDIDO en `document.styleSheets`), así que con igual especificidad gana.
- * ============================================================================================== */
-
-/*
- * 🔴 **Un control de formulario NO puede decidir el ancho de la página.**
- *
- * `input, select, textarea` traían `width: 100%` pero no `min-width`, así que su mínimo automático
- * seguía siendo el intrínseco: el de un `<select>` es el de su opción más larga. Metido en una reja
- * o en un flex, ese mínimo se convierte en el mínimo de la pista, y la pista arrastra a la página.
- * No es lo que rompía /config (eso era `.config-area`), pero es la misma familia de fallo y ya
- * estaba armada en cuatro formularios más.
- */
+/* --- Reglas de legibilidad y dimensionamiento ---------------------------------------------- */
 input, select, textarea { min-width: 0; }
 
-/*
- * 🔴 **La vista /config se iba 339 px de lado en un móvil.**
- *
- * MEDIDO a 360 px de viewport: el documento entero medía 699 px de ancho, y el panel «Alta rápida»
- * 684 dentro de un `main` de 330. La causa no estaba en el panel ni en `.config-form` —ésa sí
- * colapsa a una columna—, sino en `.config-area`, que es `display: grid` SIN `grid-template-
- * columns`. Una pista implícita `auto` tiene mínimo `auto`, o sea el mínimo de contenido del ítem;
- * cuando ese mínimo es mayor que el contenedor, la pista crece y desborda sin que nada avise.
- * `minmax(0, 1fr)` le devuelve el derecho a encogerse. COMPROBADO: 699 → 360.
- *
- * La declaración de `.config-area` NO se repite acá: vive una sola vez, arriba, junto al resto del
- * layout de la vista. Dos reglas iguales en la misma hoja son la misma avería que este bloque venía
- * a cerrar, un piso más abajo: gana la última y la primera se queda atrás sin que nadie lo note.
- * Lo que sí queda acá es el cinturón general de `.panel`, que no es de `/config`.
- */
 .config-area > .panel, .panel { min-width: 0; }
 
-/*
- * La línea «Flota observada: …» era un flex de tres piezas sin `wrap`: a 360 px pedía 364 de
- * mínimo sobre 330 de hueco y empujaba el documento a 379. Es la única causa del desborde de la
- * portada. Que la marca de tiempo caiga al renglón de abajo no cuesta nada.
- */
 .observation-line, .permission-line, .auto-refresh-toggle, .trust-callout { flex-wrap: wrap; }
 
-/*
- * 🔴 **Las seis fichas de /terminal se leían MEJOR en un móvil que en un escritorio.**
- *
- * A 1280 px la reja era de cinco columnas fijas (`repeat(5, minmax(0, 1fr))`, terminal-panel.css):
- * ~180 px por ficha, de los que la insignia constante (LIVE / SERVER / RBAC / CLIENT / TARGETS /
- * TUI) se llevaba unos 60. Con `text-overflow: ellipsis` el que se recortaba era el VALOR —el
- * único dato de la ficha—: «TERMINAL ACCESS ALLO…», «INTERACTIVE CHANNEL DURABL…». A 360 px, con
- * una ficha por fila, las mismas seis se veían enteras.
- *
- * Ahora la reja se ajusta al hueco (`auto-fit`) con un mínimo que da sitio al valor, la insignia
- * baja a su propio renglón en vez de disputarle el ancho, y el valor puede partirse antes que
- * recortarse. Una elipsis en un dato es una mentira corta: no dice cuánto falta.
- */
 .ultimate-terminal-page .terminal-overview { grid-template-columns: repeat(auto-fit, minmax(272px, 1fr)); }
 .terminal-overview article { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
 .terminal-overview article > .badge { grid-column: 2; justify-self: start; }
 .terminal-overview strong { overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
-/*
- * La lista de adapters del inspector tenía el mismo reparto injusto: `auto minmax(0,1fr) auto`, y
- * la insignia de la derecha se lleva `max-content`. MEDIDO: con la insignia pidiendo 177 px de los
- * 259 de la columna, al NOMBRE del adapter le quedaban 21 px y se leía «Herm…», «Open…». Misma
- * cura que en las fichas: la insignia baja a su renglón y deja de disputarle el ancho al dato.
- * (Que esas insignias digan literalmente «<Unknown value=available />» es un defecto del
- * componente, no de la hoja: queda para el carril de componentes.)
- */
-/*
- * `repeat(auto-fill, minmax(420px, 1fr))` NO se encoge: si el hueco es menor que 420, la pista se
- * queda en 420 y desborda. MEDIDO a 360 px con una sesión abierta: caja de 328 px con 452 de
- * contenido, y como `overflow-y: auto` obliga a `overflow-x: auto`, el panel de la sesión sólo se
- * leía entero arrastrándolo de lado. `min(420px, 100%)` es la misma reja con permiso para caber.
- */
 .terminal-grid-container { grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); }
-/* Y el panel de la sesión traía además `min-width: 420px` fijo, que vuelve a imponer los 420 por
-   detrás de la reja. Los 420 siguen siendo el ancho que una terminal necesita para leerse; lo que
-   no puede es ser mayor que la pantalla que la muestra. */
 .terminal-panel { min-width: min(420px, 100%); }
-/*
- * La cabecera de la sesión es un flex de dos mitades sin `wrap`: el nombre del alias (que lleva
- * `min-width: 0`) cede TODO su ancho a los controles. MEDIDO dentro de un panel de 422 px: la
- * identidad quedaba en 3 px de ancho con 130 de contenido, o sea el alias al que le estás
- * escribiendo era invisible. Que los controles bajen un renglón cuesta 30 px de alto.
- */
-/* En `min-width` a propósito: por debajo de 761 la cabecera ya es una columna, y un `wrap` sobre
-   una columna no parte renglones sino COLUMNAS —MEDIDO: los controles se iban 190 px de lado—.
-   Y va en una consulta y no suelto porque esta hoja se concatena la última: una regla suelta acá
-   pisaría al bloque de 760 aunque aquél esté escrito para ese ancho. */
 @media (min-width: 761px) {
   .terminal-session-head { flex-wrap: wrap; }
   .terminal-session-head .session-identity { flex: 1 1 auto; }
 }
 
-/*
- * La fila del agente SELECCIONADO en /terminal cambia su fondo a un degradado verde (`#15352f`)
- * que sólo se ve con una sesión abierta —por eso no salía en un barrido de rutas—, y sobre él
- * `--faint` cae a 3,93:1: el tenant, el epoch y el vencimiento del lease del agente que estás
- * mirando eran lo MENOS legible de toda la lista. La fila sube un escalón de énfasis, que además
- * es lo que corresponde: la que elegiste merece más contraste, no menos.
- */
 .terminal-agent[data-active="true"] { --faint: var(--muted); }
 
 .terminal-adapter-list article { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
 .terminal-adapter-list article > .badge { grid-column: 2; justify-self: start; margin-top: 3px; }
-/* La insignia de un permiso es UNA palabra («allowed», «denied»): partirla en «ALLOWE/D» es peor
-   que estrecharla. Lo que cede es el nombre del permiso, que sí puede ocupar dos renglones. */
 .terminal-adapter-list .badge { white-space: normal; overflow-wrap: anywhere; }
 .terminal-permission-row .mono { white-space: normal; overflow-wrap: anywhere; }
 .terminal-permission-row .badge { flex: none; }
 .terminal-adapter-list strong { overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
 
-/*
- * Colores de hojas de `features/` que se quedaron sin redefinir en modo claro (o sin redefinir en
- * ninguno de los dos). Cada uno MEDIDO por debajo de AA en Chrome; van a los mismos tokens que el
- * resto para que la próxima vez se arreglen una sola vez.
- */
 .finding-section p, .finding-reason { color: var(--muted); }
-/*
- * El chip de triage con cuenta cero era el defecto 1 otra vez, disfrazado de opacidad: un
- * `<button>` VIVO —cambia el filtro de la tabla al pulsarlo— atenuado al 45%, o sea 3,29:1 sobre
- * `--surface-2`. «Cero ahora» no es «no se puede pulsar»: si la única forma de decir que está
- * vacío es apagarlo hasta que no se lea, el operador cree que no hay nada que hacer ahí.
- * Lo vacío se dice con color, y el punto de color —que sí es decoración— se apaga.
- */
 .live-tally-chip[data-empty='true'] { opacity: 1; color: var(--faint); }
 .live-tally-chip[data-empty='true'] .live-tally-swatch { opacity: .45; }
 .messenger-pill[data-kind="retry"] { color: var(--on-amber); }

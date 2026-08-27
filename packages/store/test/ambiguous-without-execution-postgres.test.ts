@@ -7,18 +7,9 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Un código AMBIGUO sólo protege trabajo YA PAGADO.
+ * Manejo de fallos con códigos ambiguos:
  *
- * La rama ambigua de `ackDelivery` mataba la entrega sin mirar `max_attempts` y sin comprobar que
- * algo hubiera corrido. Medido contra prod el 2026-07-30: 520 entregas murieron en el intento 1
- * con dos intentos intactos, y 408 de ellas nunca llegaron a invocar al harness.
- *
- * La señal es `execution_started_at`, la MISMA que usa `retryStaleDeliveries`: la sella el ACK
- * 'started' que lleva `execution_started: true`, que el SDK emite después de tomar la reserva de
- * sesión y justo antes de invocar al harness. Un 'started' a secas NO la sella — sale mientras la
- * entrega hace cola— y esa diferencia es justamente la que estas pruebas fijan.
- *
- * Las tres direcciones que hacen creíble el arreglo:
+ * La señal `execution_started_at` distingue si el harness llegó a ejecutarse o no:
  *  1. ambiguo SIN arrancar        -> 'retry', y consume un intento (no es gratis).
  *  2. ambiguo DESPUÉS de arrancar -> 'dead' + dead_letter (no se re-ejecuta trabajo pagado).
  *  3. ambiguo sin arrancar en el ÚLTIMO intento -> 'dead' (hay techo, no hay bucle infinito).

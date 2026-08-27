@@ -100,7 +100,7 @@ describe('membresía habilitada sin fila en el registro — el caso quota-collec
 
 describe('alias del registro sin una sola membresía habilitada — el caso gaia', () => {
   /**
-   * 🔴 ÉSTA es la dirección que valía cero siempre. Con el contador anterior —el bucle que sólo
+   * ÉSTA es la dirección que valía cero siempre. Con el contador anterior —el bucle que sólo
    * recorría las membresías— este test daba `0` y el chip no aparecía: `gaia` se dio de alta en
    * `agents`, se quedó sin sala y la pantalla que existe para mostrar la flota no decía nada.
    */

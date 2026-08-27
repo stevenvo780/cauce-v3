@@ -10,7 +10,7 @@ import { LiveFleetPage } from './LiveFleetPage';
 /**
  * **LA FILA Y EL CHIP, DEL MISMO AGENTE, TIENEN QUE DECIR LO MISMO.**
  *
- * 🔴 Medido el 2026-08-23 en producción y reproducido en Chrome sobre la consola con datos: la
+ *  la
  * columna ESTADO de la tabla emitía sólo dos valores para 18 alias —`TRABAJANDO ×2` e
  * `INACTIVO ×16`— y ese `INACTIVO` se tragaba a los 5 que el veredicto llamaba «caídos» y a los 2
  * que el chip llamaba «Delegando».

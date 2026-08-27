@@ -3,14 +3,6 @@ import { redactSecrets, redactSecretsDeep } from '../src/redaction.js';
 import { normalizedBody } from '../src/poller.js';
 import type { TelegramApi, TelegramMessage } from '../src/types.js';
 
-/**
- * Los dos lados pesan distinto.
- *
- * Abajo hay tantas pruebas de "NO se toca" como de "sí se redacta", y es a propósito: un secreto
- * que se cuela es un incidente puntual; un falso positivo mutila el mensaje del dueño TODOS los
- * días. Si alguna de las dos mitades hay que aflojar, es la de arriba.
- */
-
 const api = {
   async getFile() { throw new Error('no'); },
   async downloadFile() { throw new Error('no'); }
@@ -20,11 +12,6 @@ function message(text: string): TelegramMessage {
   return { message_id: 7, chat: { id: 42, type: 'private' }, from: { id: 9 }, text };
 }
 
-/**
- * La redacción está APAGADA por defecto desde el 02-ago (decisión de Steven; ver la cabecera de
- * `redaction.ts`). Todo lo que sigue prueba el comportamiento CON el interruptor encendido, así que
- * hay que encenderlo explícitamente; el bloque del final prueba que apagado no toca nada.
- */
 describe('redacción de secretos en la ingesta', () => {
   beforeEach(() => {
     process.env.CAUCE_TELEGRAM_REDACT_INGRESS = '1';
@@ -35,7 +22,7 @@ describe('redacción de secretos en la ingesta', () => {
 
   /* ---------------- Lo que SÍ se redacta ---------------- */
 
-  it('redacta la URI con credenciales del caso medido (mensaje ced40f3c, 02-ago 13:00)', () => {
+  it('redacta la URI con credenciales', () => {
     const crudo = '# Recommended for most uses\n'
       + 'DATABASE_URL=postgresql://neondb_owner:npg_FICTICIA0AbCdEf@ep-dry-smoke-au2e5vtg-pooler'
       + '.c-10.us-east-2.aws.neon.tech/neondb?sslmode=require';
@@ -179,18 +166,12 @@ describe('redacción de secretos en la ingesta', () => {
   });
 });
 
-/**
- * El comportamiento por defecto, que es el que corre en producción desde el 02-ago.
- *
- * Sin esto la única prueba del interruptor sería leer el código: los 14 casos de arriba encienden
- * la redacción a mano y pasarían igual aunque el default estuviera al revés.
- */
-describe('apagada por defecto: el dueño puede pasar credenciales', () => {
+describe('apagada por defecto', () => {
   beforeEach(() => {
     delete process.env.CAUCE_TELEGRAM_REDACT_INGRESS;
   });
 
-  it('el token de bot que socrates no pudo instalar llega entero', () => {
+  it('el token de bot llega sin alterar', () => {
     const crudo = 'Use this token to access the HTTP API:\n'
       + '7891234560:AAHkL2mQ9vZxR4tYpB6nWc8sDfGhJkLmNoP';
     const resultado = redactSecrets(crudo);

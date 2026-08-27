@@ -56,7 +56,7 @@ describe('deriveTerminalRelayState', () => {
   });
 
   /**
-   * El defecto medido el 2026-08-22: con una cuenta sin `control`, la ruta contesta 403 —el gate
+   * El defecto  con una cuenta sin `control`, la ruta contesta 403 —el gate
    * corre ANTES de mirar el backend PTY— y la consola lo contaba como «no está desplegado».
    */
   describe('un 403 es una falta de permiso, NUNCA una ausencia de relay', () => {
@@ -92,7 +92,7 @@ describe('deriveTerminalRelayState', () => {
   });
 
   /**
-   * 🔴 **El cartel del 2026-08-23: «Canal PTY no disponible en este stack — El relay de terminales
+   * El cartel del 2026-08-23: «Canal PTY no disponible en este stack — El relay de terminales
    * no está desplegado en este stack. (HTTP 400 al consultarlo.)».** Ninguna de las dos frases se
    * sigue de un 400: un 400 prueba que la ruta EXISTE y que rechazó la petición. Culpar al
    * despliegue mandó al operador a mirar contenedores mientras el fallo estaba en la consola.

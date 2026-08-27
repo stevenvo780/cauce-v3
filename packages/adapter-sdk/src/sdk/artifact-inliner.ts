@@ -6,51 +6,8 @@ import { fileURLToPath } from "node:url";
 import type { OutputArtifact, StructuredOutput } from "./types.js";
 
 /**
- * Convierte los adjuntos LOCALES del agente en `data:` antes de que el turno salga al bus.
- *
- * QUÉ ESTABA ROTO, medido sobre el outbox de producción el 2026-08-22: de los 12 artifacts
- * salientes de los últimos 7 días, CERO viajaban como `data:`. Los 12 eran `file://` o rutas
- * absolutas sueltas —`/home/claw/clawd/_tmp_hoja_ruta/hoja_ruta_domiciliario.png`,
- * `file:///workspace/entregables/isa/...`—, y los 12 tenían `status = sent`: el sistema declaraba
- * enviado algo que nunca viajó. Miguel, que no es técnico, lo dijo así: «cuando le pido un archivo
- * o un pantallazo me envía es un dato adjunto pero no lo logro ver». Lo que recibía, literal, era
- * «• hoja_ruta_domiciliario.png: quedó en el espacio de trabajo del agente y no viajó al chat».
- *
- * POR QUÉ SE ARREGLA ACÁ Y NO EN EL PUENTE. `services/telegram-bridge/src/artifacts.ts` NO está
- * roto: se niega a dereferenciar rutas locales a propósito, y ese comentario explica el modelo de
- * amenaza entero. El puente corre en agora-storage, al lado de Postgres; si resolviera contra su
- * propio disco el `file://` que escribió un agente, un `file:///run/secrets/database_url` —que en
- * el puente SÍ existe— subiría la contraseña de producción a un chat.
- *
- * El adapter-SDK corre DENTRO del contenedor del agente, como el usuario del agente. Acá el
- * fichero sí existe, y leerlo no cruza ninguna frontera de confianza: el adaptador sólo puede leer
- * lo que el agente ya podía leer, y de hecho ya podía ponerlo él mismo en un `data:`. Convertirlo
- * acá arregla a TODOS los agentes y TODOS los tenants de una vez, sin que ningún agente tenga que
- * aprender nada nuevo, y sin reabrir la puerta que el puente cerró.
- *
- * ------------------------------------------------------------------------------------------
- * POR QUÉ NO ESTÁ EN `parseArtifacts` (output-parser.ts), que es donde uno lo buscaría primero:
- *
- * 1. El parser es PURO y síncrono, y se llama sobre CANDIDATOS que muchas veces se descartan:
- *    `safeCandidate` prueba varias formas del stdout y se queda con una, `recoverEmbeddedEnvelope`
- *    rescata sobres incrustados en texto, y los dialectos parsean cada evento del harness. Meter
- *    E/S de disco ahí significaría abrir ficheros para sobres que nunca llegan a ser la respuesta,
- *    varias veces por turno.
- * 2. Volverlo `async` contagiaría a `parse(stdout)` de cada `HarnessDefinition` y a toda la cadena
- *    de dialectos, que hoy es síncrona y está probada como función pura.
- * 3. El parser valida FORMA; el disco es ESTADO. Un artifact vale o no vale con independencia de
- *    si el fichero existía en ese milisegundo.
- *
- * Va, en cambio, en el único punto donde el turno se convierte en ACK: `AdapterEngine`, una sola
- * vez, sobre el `output` ya validado que va a viajar. Ahí se ejecuta exactamente una vez por
- * entrega y sobre el sobre que de verdad sale.
- * ------------------------------------------------------------------------------------------
- *
- * INVARIANTE: NADA de este módulo puede tirar, y ningún fallo de lectura puede costar el turno. Un
- * artifact que no se puede leer, o que no se puede leer con seguridad, se deja EXACTAMENTE como
- * estaba —el humano seguirá viendo «quedó en el espacio de trabajo del agente»— y la respuesta del
- * agente, que es el trabajo, sale igual. Ya nos pasó al revés: un adjunto inválido envenenó la cola
- * de un alias.
+ * Convierte los adjuntos locales declarados en `output.artifacts` a URIs en formato `data:` base64
+ * antes de publicar la respuesta al bus, permitiendo su entrega segura al usuario final.
  */
 
 /**
@@ -64,10 +21,7 @@ export const MAX_INLINED_ARTIFACT_BYTES = 10_000_000;
 export const MAX_INLINED_ARTIFACTS_PER_RESPONSE = 4;
 
 /**
- * Tope agregado por respuesta, simétrico con `MAX_ATTACHMENTS_TOTAL_BYTES` de la ingesta. Cuatro
- * adjuntos de 10 MB serían un ACK de ~53 MB de base64 atravesando gateway, Postgres y outbox por
- * un turno; el techo agregado mantiene el sobre en el mismo orden de magnitud que un mensaje
- * entrante con adjuntos, que es el caso que la infraestructura ya soporta medido.
+ * Tope agregado por respuesta, alineado con `MAX_ATTACHMENTS_TOTAL_BYTES` de la ingesta.
  */
 export const MAX_INLINED_TOTAL_BYTES = 10_000_000;
 
@@ -221,8 +175,7 @@ async function inlineArtifact(
   if (base64.length > MAX_BASE64_CHARACTERS) return undefined;
 
   const mediaType = mediaTypeFor(artifact, path);
-  // Un nombre vacío haría que el puente subiera «adjunto.png». El fichero ya tiene nombre; que
-  // Miguel reciba `hoja_ruta_domiciliario.png` es la mitad de lo que pidió.
+  // Usa el nombre declarado o deduce el nombre del archivo a partir de su ruta.
   const name = artifact.name.trim().length > 0 ? artifact.name : basename(path);
   return {
     artifact: {

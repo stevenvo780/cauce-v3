@@ -2,23 +2,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
-/*
- * LA FUGA QUE HACÍA IRREPRODUCIBLES TODAS LAS MEDICIONES DE ESTE REPO.
+/**
+ * Aislamiento de tablas de catálogo en pruebas.
  *
- * `resetTestDatabase()` nunca truncó las tablas de catálogo —`role_policies`, `tenants`, `rooms`,
- * `memberships`, `acl_edges`— y hacía bien: vaciarlas dejaría a cada suite sin escenario. Pero
- * tampoco las RESTAURABA, así que valían lo que hubiera dejado la última suite que corrió.
- *
- * Dos hechos medidos el 2026-08-24 que lo demuestran:
- *   · la migración 003 siembra `operator(route,read,control)`, y en una base compartida llegaba
- *     con los tres en falso porque otra suite los había apagado;
- *   · el rol `agent_notify` **no lo crea ninguna migración** —sólo lo nombran los comentarios de
- *     la 009— y sin embargo existía, porque otra suite lo había insertado.
- *
- * La consecuencia no es un detalle de higiene: el MISMO código daba 6, 18 o 19 fallos según el
- * orden de las suites. Y en este repo todo el criterio de «esto ya fallaba antes» se apoya en
- * comparar contra una línea base. Con el catálogo filtrándose, esa comparación no significa nada
- * — ni la mía, ni la de nadie.
+ * Verifica que `resetTestDatabase()` restaure las tablas de catálogo a su estado semilla
+ * para prevenir fugas de estado entre suites de prueba.
  */
 
 let database: TestDatabase;

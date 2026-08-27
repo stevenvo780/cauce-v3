@@ -467,7 +467,7 @@ export function LiveFleetPage() {
    *
    * Esta vista refresca sola cada 4 s. Con el error debajo del `loading`, el reintento que se
    * dispara en cuanto una lectura vence vuelve a poner `loading: true` y la pantalla regresa al
-   * cartel de carga sin haber enseñado nunca el error: medido en Chrome el 2026-08-23 contra un
+   * cartel de carga sin haber enseñado nunca el error: 
    * gateway mudo, 36 s sin una sola alerta. Mientras no haya un solo dato que mostrar, lo último
    * COMPROBADO es que la lectura falló, y eso es lo que se dice — con su botón.
    */
@@ -708,7 +708,7 @@ export function LiveFleetPage() {
         />
 
         {/*
-          🔴 **La prioridad estaba al revés, y se midió el 2026-08-23.** El glosario de abajo —381 px
+          La prioridad estaba al revés, y se midió el 2026-08-23.** El glosario de abajo —381 px
           de alto— estaba SIEMPRE abierto, y las dos únicas secciones con datos medidos («Señales
           activas» y «Permisos y salas») SIEMPRE plegadas. O sea que la pantalla dedicaba el pie
           entero a explicar cómo leerse a sí misma y escondía lo que hay que leer.

@@ -1,54 +1,5 @@
 /**
- * Saneo de TODO lo que escribe un tercero, y la identidad del humano que habla.
- *
- * Hasta ahora el puente le pasaba al agente el `conversation_id` y nada más: en un DM el agente
- * sabía el número del chat y no sabía con QUIÉN estaba hablando. El dato ya entraba —Telegram
- * manda `message.from` con `username` y `first_name` en cada update— y se descartaba acá.
- *
- * ------------------------------------------------------------------------------------------
- * POR QUÉ ESTE ARCHIVO EXISTE Y NO ES UN `body.display_name = message.from.first_name`
- *
- * El nombre visible lo elige el ATACANTE. Cualquiera se pone «zeus» de nombre en Telegram en diez
- * segundos, le escribe a un bot de la flota y, si ese string entra crudo al prompt, el agente lee
- * una identidad que nadie verificó. Dos defensas, y ninguna alcanza sola:
- *
- *  1. NUNCA va a `origin.metadata`, que el harness imprime como TRUSTED ORIGIN CONTEXT. Va al
- *     bloque UNTRUSTED del prompt, el mismo que ya usa el puente para los grupos.
- *  2. `.toLowerCase()` y NFKC NO alcanzan para detectar la suplantación. «zeuѕ» escrito con la
- *     ЅЕ cirílica U+0455 no es igual a «zeus» en ninguna comparación de bytes, ni antes ni después
- *     de NFKC: son code points distintos con el mismo dibujo. Por eso `confusableSkeleton`.
- *
- * ------------------------------------------------------------------------------------------
- * EL ESQUELETO (UTS#39 §4, "confusable detection"), Y EN QUÉ SE APARTA DEL ESTÁNDAR
- *
- *   NFKD → minúsculas → borrar marcas y formato → tabla de confundibles → NFD → borrar marcas
- *
- *  - NFKD en vez de NFD (el estándar usa NFD) porque la descomposición de COMPATIBILIDAD ya
- *    resuelve gratis tres familias enteras de homóglifos que si no habría que tabular a mano:
- *    ancho completo (ｚｅｕｓ), alfanuméricos matemáticos (𝐳𝐞𝐮𝐬, 𝓏𝑒𝓊𝓈, 𝕫𝕖𝕦𝕤) y ligaduras (ﬁ→fi).
- *  - Se BORRAN las marcas combinantes: «zéus» y «zeus» tienen que dar el mismo esqueleto, si no
- *    un acento suelto evade la detección sin cambiar el dibujo de manera apreciable.
- *  - Se plegan mayúsculas ANTES de la tabla: así la tabla sólo necesita las formas minúsculas
- *    (la Ѕ U+0405 del ejemplo pasa por `toLowerCase()` a ѕ U+0455, que sí está tabulada).
- *
- * LO QUE ESTE ESQUELETO NO HACE, dicho explícitamente para que nadie lo suponga: no cubre
- * leetspeak (`zeu5`, `m1das`). Mapear dígitos a letras es la clase de heurística que dispara
- * falsos positivos sobre nombres reales, y acá el falso positivo es una advertencia inútil pegada
- * al nombre de un humano legítimo en cada mensaje que manda. El esqueleto cubre ESCRITURAS
- * confundibles, que es el vector que no se ve.
- *
- * ------------------------------------------------------------------------------------------
- * LA TABLA
- *
- * Subconjunto acotado y auditable de `confusables.txt` de Unicode (UTS#39, revisión 15.1),
- * transcrito a mano: latino ← cirílico, griego, versalitas del IPA, numerales romanos y las
- * letras latinas de fonética. NO se usa el paquete npm `unicode-confusables`: su tabla quedó en
- * Unicode 8 y trae la dependencia entera para resolver un mapeo de cien entradas.
- *
- * Cada fila es [prototipo latino, code points que colapsan en él] con los escapes `\uXXXX`
- * escritos a mano —nunca el glifo literal— para que el archivo se pueda leer, diffear y copiar
- * sin depender de bytes invisibles, igual que `INVISIBLE_CHARACTERS` acá abajo.
- * ------------------------------------------------------------------------------------------
+ * Saneo de contenido de terceros y detección de nombres confundibles.
  */
 
 import type { TelegramUser } from './types.js';
@@ -62,16 +13,7 @@ const CONTROL_CHARACTERS = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f]+', 'gu')
  * Invisible code points: zero width (U+200B-U+200D, U+FEFF), bidirectional overrides and
  * isolates (U+061C, U+200E/F, U+202A-E, U+2066-9), and the interlinear annotation controls.
  *
- * They survive `CONTROL_CHARACTERS` (which only covers C0/C1) and are exactly what lets a hostile
- * display name render as one string while carrying another — including a right-to-left override
- * that visually reverses a forged delimiter. Removed outright rather than replaced by a space, so
- * they cannot pad a name to look like separate words.
- *
- * P8: el rango U+2060-U+206F va COMPLETO. Antes salteaba el U+2065, que está sin asignar y por eso
- * no lo saca ni `\p{Cf}` ni ningún otro filtro — lo encontró la prueba estructural que compara este
- * criterio contra el de `attachments.ts`, no una muestra elegida a mano. Un code point invisible que
- * sobrevive parte el nombre en dos: «zeu·s» no es «zeus» para el esqueleto, se dibuja igual, y la
- * suplantación pasa sin advertencia. Es el hueco exacto que este módulo existe para tapar.
+ * Removed rather than replaced by a space so they cannot pad a name to look like separate words.
  */
 // Written as explicit \u escapes (not literal glyphs) so the pattern survives copy/paste and
 // diffing without depending on invisible bytes in the source file itself.

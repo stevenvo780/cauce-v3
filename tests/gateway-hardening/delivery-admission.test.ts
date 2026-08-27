@@ -9,18 +9,8 @@ import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import { fakePool, fakeRepository, noDeliveryWakes } from './helpers.js';
 
 /**
- * Control de admisión y reserva para el humano.
- *
- * Origen del defecto: `drain()` llamaba a `repository.claimDeliveries(...)` pasando `undefined`
- * en la posición de `limit`, así que se comía el default 20 del store. Veinte entregas
- * reclamadas en el mismo instante arrancan el mismo plazo de ACK de 30 minutos a la vez; la
- * cola del lote se muere sin haber empezado, se reintenta, y el reintento vuelve a ejecutar
- * trabajo ya hecho. Medido el 2026-07-27: kratos llegó a 71 entregas en vuelo, 1.001 de 1.622
- * errores fueron "ACK timeout", y los agentes codex pagaron 2.240 corridas para 1.312 entregas.
- *
- * Y el corolario que hace falta probar aparte: un límite de admisión a secas EMPEORA la
- * conversación. Si el único hueco lo ocupa una tarea de 40 minutos, el mensaje de la persona
- * espera 40 minutos. Por eso el cupo reservado es aditivo y se prueba explícitamente acá.
+ * Pruebas de control de admisión, límites de entregas en vuelo y reserva de cupo
+ * interactivo para mensajes de operadores/usuarios.
  */
 
 const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];

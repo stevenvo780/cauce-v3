@@ -61,29 +61,7 @@ function hasVisibleText(value: unknown): value is string {
 }
 
 /**
- * Red de seguridad contra el volcado de la salida estructurada al humano.
- *
- * Un harness que devuelve `{"reply":"…","messages":[],"status":"done"}` como TEXTO —envuelto en
- * una valla ```json, o precedido de prosa— se cuela por el parser del adapter-SDK y termina
- * publicado tal cual. Lo que el humano recibe entonces es el volcado crudo del protocolo en vez
- * de la respuesta. Medido el 2026-07-27 sobre 7 días: 86 mensajes así, 7 agentes, dos harness
- * distintos (openclaw 79, claude 7), con la prosa+objeto como forma dominante (77 de 86).
- *
- * El arreglo de fondo va en el parser del SDK, pero esa corrección viaja en el bundle de los
- * adaptadores y depende de que los 14 estén al día. Esto de acá es distinto y complementario: es
- * el ÚLTIMO punto por el que pasa todo lo que sale hacia una persona, sin importar el agente ni
- * el harness. Mientras exista un solo adaptador viejo, esta red sigue haciendo falta.
- *
- * Deliberadamente conservador: sólo desarma el sobre cuando el objeto tiene la forma EXACTA del
- * contrato (un `reply` más algún otro campo del protocolo) y ocupa el final del mensaje. Un texto
- * que simplemente CITA un JSON —alguien explicando un payload— no cumple las dos condiciones y se
- * publica intacto. Ante la duda, no se toca: publicar de más es feo, tragarse una respuesta es peor.
- *
- * Devuelve `undefined` en un solo caso: cuando el objeto SÍ está confirmado como sobre del
- * contrato, su `reply` no tiene texto humano y tampoco hay prosa delante. Ahí ya no hay duda que
- * respetar —consta que es nuestro sobre y consta que no dice nada—, así que publicar el JSON crudo
- * sería exactamente la fuga que esta red existe para tapar. El que llama trata ese `undefined`
- * como "este candidato no sirve" y sigue con el siguiente.
+ * Desenvoltura de sobres estructurados para extraer el texto de respuesta.
  */
 const ENVELOPE_KEYS = ['status', 'messages', 'artifacts', 'retryable'];
 

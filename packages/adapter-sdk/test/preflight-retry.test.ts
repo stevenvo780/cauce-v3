@@ -27,9 +27,8 @@ import {
  * AMBIGUA sigue sin reintentarse. Un test que sólo comprobara los reintentos nuevos dejaría
  * pasar la regresión que de verdad importa: duplicar un trabajo que ya tuvo efectos.
  *
- * Contra el código anterior al 2026-08-06 fallan los casos «pre-vuelo»: ahí todo fallo sin
- * salida estructurada salía como `PROCESS_EXIT_AMBIGUOUS` con `retryable=false`, y todo aborto
- * del transporte como `EXECUTION_CANCELLED_AMBIGUOUS`, también `retryable=false`.
+ * Los fallos de «pre-vuelo» (sin salida estructurada y sin efectos) se clasifican con
+ * `retryable=true` sólo cuando se puede garantizar que el proceso no comenzó su ejecución.
  */
 
 const stateRoot = resolve(".test-state");

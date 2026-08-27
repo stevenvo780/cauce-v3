@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { medicionDeCapa } from './directiva';
 
 /*
- * El defecto que estas pruebas fijan, medido el 2026-08-24 contra producción:
+ * El defecto que estas pruebas fijan, 
  *
  * El gateway degrada honestamente cuando no tiene hechos medidos — devuelve
  * `{publicado: true, motivo: 'contenedor no medido todavía', files: null, memory: null}`.

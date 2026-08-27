@@ -4,18 +4,10 @@ import { normalizeEmail } from './console-users.js';
 import { assertPasswordPolicy, hashPassword } from './password.js';
 
 /**
- * Alta / cambio de contraseña / baja de un usuario humano de la consola.
+ * CLI para alta, cambio de contraseña y baja de usuarios de la consola.
  *
- * NO HAY USUARIOS EN EL CÓDIGO. Este comando es la única forma de que exista una cuenta, y la
- * contraseña entra por `CAUCE_CONSOLE_USER_PASSWORD` o por una pregunta interactiva sin eco.
- * Jamás se imprime, jamás se pasa por argumento (los argumentos se ven en `ps` y quedan en el
- * historial del shell) y lo único que toca la base es el derivado scrypt.
- *
- *   pnpm console:user --email steven@… --name "Steven" --role operator --alias kant
- *   pnpm console:user --email steven@… --deactivate
- *
- * Reejecutarlo sobre un correo que ya existe CAMBIA la contraseña y mueve `password_changed_at`,
- * lo que invalida los JWT emitidos antes: es el camino para rotar una credencial filtrada.
+ *   pnpm console:user --email user@example.com --name "User" --role operator --alias kant
+ *   pnpm console:user --email user@example.com --deactivate
  */
 
 interface Options {
@@ -60,8 +52,7 @@ function parseArguments(argv: readonly string[]): Options {
     email,
     name: (values.get('name') ?? email.split('@')[0]!).trim(),
     role,
-    // Por defecto la identidad de Cauce que la consola ya usa hoy por mTLS: `Steven:kant`. Así
-    // el login humano no cambia qué ve ni a qué llega la consola, sólo QUIÉN aparece firmándolo.
+    // Identidad predeterminada de Cauce para la consola.
     tenant: values.get('tenant') ?? 'Steven',
     alias,
     deactivate

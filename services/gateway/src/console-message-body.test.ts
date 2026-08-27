@@ -5,29 +5,7 @@ import { buildGateway, type GatewayRepository } from './app.js';
 import { DevOnlyAuthProvider } from './auth.js';
 
 /**
- * **EL CUERPO ENTERO DE UN MENSAJE, POR LA SUPERFICIE DE CONSOLA.**
- *
- * `GET /v3/console/messages` publica `left(body,240)`. Medido contra producción el 2026-08-23 con
- * la sesión de la propia consola: 100 items, largo máximo de `body_preview` = 240 exactos. En
- * pantalla se leía «…El dominio real es stevenvallejo», cortado a mitad de palabra, sin puntos
- * suspensivos y sin ninguna forma de ver el resto.
- *
- * 🔴 El gateway YA sabía devolver el mensaje entero: `GET /v3/messages/:messageId` existe desde
- * antes y hace exactamente esto. Lo que faltaba es que la consola pudiera llamarlo, y no puede:
- * `consola.humanizar.tech` corta en el borde con 404 todo `/v3/*` que no sea `/v3/auth/*`,
- * `/v3/status` o `/v3/console/*` (`ops/console-login/patch-caddy-lista-blanca.py`, puesto el
- * 2026-08-06 porque el nginx del contenedor presenta su mTLS en todo lo que proxea). Por eso la
- * lectura se publica bajo `/v3/console/`, con el mismo permiso y el mismo `visibleMessage`, en
- * vez de agujerear la lista blanca.
- *
- * Lo que estas pruebas NO cubren, y hay que decirlo: la consulta del store. `getMessage` ya estaba
- * y no se tocó; su autorización se prueba contra Postgres en `tests/store-hardening`, que necesita
- * testcontainers y no se corrió acá.
- *
- * Y lo que hay que saber para leer un fallo: de los cuatro casos, sólo DOS distinguen «la ruta
- * existe» de «la ruta no existe». Los dos que esperan 404 pasan igual sin la ruta, porque una ruta
- * inexistente también responde 404 — medido quitando el `app.get` y corriendo el fichero: 2 fallan,
- * 2 pasan. Un fichero entero en verde no probaría nada; son esos dos los que lo prueban.
+ * Pruebas para la obtención del cuerpo de mensaje completo en `GET /v3/console/messages/:messageId`.
  */
 
 const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];

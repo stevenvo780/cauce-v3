@@ -60,7 +60,7 @@ function assignmentActions() {
 }
 
 /**
- * Desde el 2026-08-22 la matriz es la pestaña «Asignaciones» de «Cuentas y cuotas». El panel
+ * . El panel
  * inactivo se monta pero va con `hidden`, así que sale del árbol de accesibilidad y `getByRole` NO
  * lo encuentra: la prueba tiene que abrir la pestaña igual que el operador. Eso es a propósito —
  * una prueba que encontrara la matriz sin abrirla estaría verde con la pestaña rota.

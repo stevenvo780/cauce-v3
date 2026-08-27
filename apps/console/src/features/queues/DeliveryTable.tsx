@@ -25,7 +25,7 @@ const ESTADO_ENTREGA: Readonly<Record<DeliveryState, string>> = {
 /**
  * Estados en los que TODAVÍA no puede haber un último error, porque la entrega aún no falló.
  *
- * 🔴 Medido el 2026-08-23: una entrega `pending` mostraba «UNKNOWN» en naranja bajo «Último
+ *  una entrega `pending` mostraba «UNKNOWN» en naranja bajo «Último
  * error». «Todavía no hay error» NO es un desconocido — es la única noticia buena de la fila, y
  * pintarla del color de la alarma es lo que hace que las alarmas de verdad dejen de leerse.
  */
@@ -84,24 +84,7 @@ function removeId(current: ReadonlySet<string>, deliveryId: string): ReadonlySet
 }
 
 /**
- * **La tabla de entregas con su replay y su cancel** — extraída de `QueuesPage` el 2026-08-22.
- *
- * Steven pidió fundir «Queues, retries & DLQ» y que además el material de colas y cartas muertas se
- * vea desde la vista de mensajes. Las dos cosas juntas sólo se pueden cumplir de una manera: que
- * exista UNA implementación de esta tabla y que las dos pantallas la monten. Copiarla a Messages
- * habría creado el sexto par de vistas redundantes justo mientras se cierran los otros tres, y —lo
- * grave— el botón de replay habría quedado duplicado: el arreglo de 2026 que agregó `'failed'` a
- * `replayableStates` valdría en una copia y no en la otra, y nadie lo notaría hasta necesitar
- * rescatar una entrega desde la pantalla equivocada.
- *
- * `rows` llega por props y NO se pide acá: quien monta la tabla ya tiene el snapshot (la vista de
- * colas lo pide entero, la de mensajes lo tiene filtrado por conversación) y un `useResource`
- * interno significaría un segundo `GET /v3/console/queues` en la misma pantalla.
- *
- * `onChanged` es cómo el dueño del snapshot se entera de que hay que releerlo. La tabla NO muta
- * estado local para simular el efecto: pide la transición al servidor y avisa; la verdad vuelve del
- * siguiente fetch. Un replay «aplicado» pintado en el browser sin confirmación del servidor es
- * exactamente la clase de mentira que esta consola existe para no contar.
+ * Tabla de entregas y control de replay/cancel de mensajes en cola.
  */
 export function DeliveryTable({
   rows, canReplay, canCancel, onChanged, snapshotVersion, empty, caption, resaltada,
@@ -129,7 +112,7 @@ export function DeliveryTable({
   const [notice, setNotice] = useState<string>();
   const previousSnapshotVersion = useRef(snapshotVersion);
   /**
-   * 🔴 Ninguna de las dos acciones sale al servidor con un solo clic.
+   * Ninguna de las dos acciones sale al servidor con un solo clic.
    *
    * Es producción viva con clientes reales dentro: un replay reinyecta trabajo en la cola de un
    * agente que está corriendo. Antes de este cambio, «Replay» era un `<button>` que publicaba

@@ -8,15 +8,11 @@ export const DEFAULT_ACK_DEADLINE_MS = 30_000;
 export const DEFAULT_ACK_TIMEOUT_MS = 30_000;
 
 /**
- * Cada cuánto se poda la observabilidad. 5 min y no cada tick (250 ms): el barrido es
- * mantenimiento, no camino caliente, y a 250 ms serían 345.600 DELETE por día para recuperar el
- * mismo espacio que 288.
- *
- * `CAUCE_RETENTION_INTERVAL_MS=0` lo APAGA. Es la única variable de este parche que acepta cero,
- * y es la palanca de emergencia: deja de borrar sin revertir el esquema ni redesplegar código.
+ * Intervalo de poda de observabilidad en milisegundos.
+ * Un valor de 0 desactiva el barrido de retención.
  */
 export const DEFAULT_RETENTION_INTERVAL_MS = 5 * 60_000;
-/** P0-4 — vigía de cadenas mudas. La justificación de cada número está en el store. */
+/** P0-4 — vigía de cadenas mudas. */
 export const DEFAULT_CHAIN_SWEEP_MS = 60_000;
 export const DEFAULT_CHAIN_IDLE_MS = 6 * 60 * 60 * 1_000;
 export const DEFAULT_CHAIN_SETTLED_GRACE_MS = 15 * 60 * 1_000;
@@ -31,10 +27,8 @@ export interface DispatcherConfig {
   interactiveBurst: number;
   jobLeaseMs: number;
   /**
-   * Palanca de emergencia para volver al reaper viejo, que reintentaba a ciegas toda garra
-   * vencida. Apagada por defecto: reintentar una entrega que consta que YA había arrancado
-   * vuelve a pagar una corrida entera de un modelo de suscripción, y ese fue el 71% del
-   * desperdicio medido el 2026-07-27 en los agentes con harness codex.
+   * Permite reintentar entregas que ya habían comenzado su ejecución al expirar el ACK deadline.
+   * Por defecto false para evitar reejecuciones duplicadas.
    */
   retryStartedDeliveries: boolean;
   /** Techo de vida total de un intento. Ver `DEFAULT_DELIVERY_LEASE_CAP_MS` en el store. */
@@ -84,11 +78,7 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
   const leaseCapMs = positiveInteger(
     environment, 'CAUCE_DELIVERY_LEASE_CAP_MS', DEFAULT_DELIVERY_LEASE_CAP_MS,
   );
-  // Un techo por debajo del plazo de ACK mataría TODA entrega antes de su primera renovación:
-  // el arranque le pondría el plazo en now()+30min, el LEAST lo recortaría al techo ya vencido y
-  // el reaper la declararía muerta por techo en el tick siguiente. La flota entera dejaría de
-  // trabajar y el síntoma —"todo muere por techo agotado"— parecería un bug del guarda nuevo.
-  // Falla al arrancar, que es donde se ve.
+  // El lease cap debe ser mayor o igual al plazo de ACK para permitir al menos una renovación.
   if (leaseCapMs < ackDeadlineMs) {
     throw new Error(
       'CAUCE_DELIVERY_LEASE_CAP_MS must be equal to or greater than CAUCE_ACK_DEADLINE_MS',

@@ -10,14 +10,6 @@ import {
 /**
  * Política de reintentos: R1 (código de pre-vuelo), R3 (no quemar intentos contra un alias sin
  * adaptador) y R6 (toda muerte deja rastro auditable).
- *
- * Contra el código anterior al 2026-08-06:
- *  - R3 falla porque una entrega con los intentos agotados moría SIEMPRE, hubiera o no
- *    adaptador conectado del otro lado. 881 entregas murieron así, 829 en una sola noche.
- *  - R6 falla porque la rama de intentos agotados NO escribía `audit_events`: esas 881 muertes
- *    no aparecieron nunca en ningún informe.
- *  - El invariante del esquema falla si alguien mete un código de pre-vuelo en la lista de
- *    ambiguos: ahí el ACK volvería a morir en el intento 1, y en silencio.
  */
 
 let database: TestDatabase;

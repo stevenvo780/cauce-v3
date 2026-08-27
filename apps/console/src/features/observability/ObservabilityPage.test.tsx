@@ -186,7 +186,7 @@ it('cruzar un relay contra su auditoría es UN clic: el trace viaja al filtro', 
   expect(screen.getByRole('searchbox')).toHaveValue('trace-4c8f-eeee');
   expect(await screen.findByText('1 visibles de 2')).toBeInTheDocument();
 
-  // 🔴 CONTROL NEGATIVO: el evento del OTRO trace tiene que quedar fuera. Sin él, un filtro que no
+  // CONTROL NEGATIVO: el evento del OTRO trace tiene que quedar fuera. Sin él, un filtro que no
   // filtrara nada pasaría esta prueba igual, porque el evento correcto también estaría en pantalla.
   const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section')!;
   expect(eventos.textContent ?? '').toContain('delivery.replay');

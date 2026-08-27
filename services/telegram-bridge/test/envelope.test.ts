@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { telegramTextChunks, unwrapStructuredEnvelope } from '../src/egress.js';
 
-/** Casos REALES tomados de producción el 2026-07-27 (86 en 7 días, 7 agentes). */
 describe('red de seguridad contra el volcado de la salida estructurada', () => {
-  it('rescata el reply cuando el objeto viene precedido de prosa (77 de los 86 casos)', () => {
+  it('rescata el reply cuando el objeto viene precedido de prosa', () => {
     const crudo = 'Told Steven (msg 6151, clean). Routing the credential swap to zeus.\n\n'
       + '{"reply":"Arreglado y verificado.","messages":[],"status":"done","retryable":false,"artifacts":[]}';
     expect(unwrapStructuredEnvelope(crudo)).toBe('Arreglado y verificado.');

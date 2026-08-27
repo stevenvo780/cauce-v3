@@ -1,21 +1,7 @@
 import { esCampoConmutable } from './interruptores';
 
 /**
- * **Los campos que `/config` ENSEÑA y que ningún camino de ejecución OBEDECE.**
- *
- * El encargo, textual: «evitando mantener una lógica antigua basada en campos que luego no tienen
- * efecto real». La respuesta honesta no es esconderlos —el servidor los publica y esconder un dato
- * que hay es otra forma de mentir— sino DECIRLO en la propia celda, con el motivo y con la cita de
- * dónde sale el valor que sí manda.
- *
- * Cómo se decidió cada uno: siguiendo el lector, nunca el nombre. Un campo entra acá sólo si el
- * rastreo del `SELECT` que lo consume termina en (a) nadie, o (b) un consumidor que se limita a
- * REPINTARLO —o que lo usa como pista y lo marca él mismo como no fiable—. Los campos cuyo lector
- * decide algo NO están acá, por feos que sean: quitarlos de la pantalla borraría capacidad real.
- *
- * 🔴 **Ningún campo de `CAMPOS_CONMUTABLES` puede aparecer acá.** Un interruptor promete que algo
- * va a pasar; marcarlo inerte sería la pantalla contradiciéndose en la misma celda. Lo guarda
- * `sinConmutablesInertes()`, con su control negativo por mutación en la prueba.
+ * Catálogo de campos mostrados en `/config` que no tienen efecto en la ejecución del sistema.
  */
 
 /** Lo que se lee junto al rótulo de la columna. Corto: comparte celda con la cabecera. */
@@ -55,7 +41,7 @@ export const CAMPOS_INERTES: Record<string, Record<string, string>> = {
       + 'que no es de fiar (agent-documents.routes.ts:136). Medido: daba `/home/dev` para un alias '
       + 'que corre con `HOME=/home/claw`.',
     state_directory:
-      'NO LE ENCONTRÉ LECTOR fuera del propio registro que la repinta '
+      'No tiene lector fuera del propio registro que la repinta '
       + '(packages/store/src/repository.ts:7605) y de esta pantalla. El directorio de estado que el '
       + 'adaptador usa de verdad sale de su fichero local o de `CAUCE_STATE_DIR` '
       + '(packages/adapter-sdk/src/bin/config.ts:256), no de la base.',
@@ -85,7 +71,7 @@ export function motivoInerte(coleccion: string, campo: string): string | undefin
 /**
  * Cuáles de las columnas QUE SE ESTÁN PINTANDO son inertes, en el orden en que se piden.
  *
- * 🔴 Pregunta por COLUMNA y no por colección, y esa diferencia se pagó mirando la pantalla: el
+ * Pregunta por COLUMNA y no por colección, y esa diferencia se pagó mirando la pantalla: el
  * aviso «algunas columnas van marcadas sin efecto» salía encima de «Harness definitions» aunque ahí
  * no hubiera ni una marcada, porque el gateway de las pruebas publica esa colección con la forma
  * del endpoint de adaptadores y sin `command`. Un cartel que anuncia algo que no está es el mismo

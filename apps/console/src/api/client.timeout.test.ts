@@ -3,7 +3,7 @@ import { CauceApi, ApiError, TIEMPO_MAXIMO_MS } from './client';
 /**
  * **UNA PETICIÓN QUE NUNCA CIERRA ES UNA PANTALLA QUE NUNCA SALE DE LA CARGA.**
  *
- * 🔴 Medido el 2026-08-23 contra `https://consola.humanizar.tech/live`, con la máquina del
+ * //consola.humanizar.tech/live`, con la máquina del
  * gateway al 89,9% de steal time: la vista se quedó **180 segundos** en «Leyendo la actividad de
  * la flota…», con el cuerpo de la página en 329 caracteres —sólo el rótulo— y sin error, sin
  * botón de reintentar y sin límite de espera. `client.ts` tenía 355 líneas y CERO apariciones de

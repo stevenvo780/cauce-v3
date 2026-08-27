@@ -164,23 +164,7 @@ interface RequestOptions {
 }
 
 /**
- * **Cuánto espera la consola a una petición antes de darla por perdida.**
- *
- * 🔴 Medido el 2026-08-23 contra producción, con el hipervisor robándole el 90% de la CPU a la
- * máquina del gateway: `/live` se quedó **180 segundos** en «Leyendo la actividad de la flota…»
- * con un panel en blanco y NADA más — sin error, sin botón, sin límite. El cuerpo de la página
- * eran 329 caracteres: sólo el rótulo de carga.
- *
- * La causa no era la lentitud. Era que este fichero no tenía ni un `timeout`, ni un
- * `AbortController`, ni un `AbortSignal`: una petición que nunca cierra deja a la vista en su
- * rama de carga **para siempre, por construcción**. `LiveFleetPage` ya tenía escrita la salida
- * —`if (activity.error && !snapshot) return <ErrorState onRetry={activity.reload} />`— y era
- * inalcanzable, porque sin vencimiento nunca hay `error`.
- *
- * Que la máquina vaya lenta es de la máquina. Que no haya salida era del diseño.
- *
- * El tope es GENEROSO a propósito: con la referencia medida (`/v3/console/messages` tardó 4,9 s
- * estrangulada) treinta segundos no corta ninguna lectura sana, y sí corta la que no va a llegar.
+ * Tiempo máximo de espera para peticiones HTTP antes de abortar por timeout.
  */
 export const TIEMPO_MAXIMO_MS = 30_000;
 
@@ -424,7 +408,7 @@ export class CauceApi {
    * `listMessages` devuelve `left(body,240)`: en el hilo se leía «…El dominio real es
    * stevenvallejo» cortado en seco y no había forma de ver el resto. El detalle lo pide acá.
    *
-   * 🔴 Va por `/v3/console/...` y NO por `/v3/messages/:id`, que existe en el gateway desde antes y
+   * Va por `/v3/console/...` y NO por `/v3/messages/:id`, que existe en el gateway desde antes y
    * devuelve lo mismo. El motivo no es de gusto: `consola.humanizar.tech` publica una LISTA BLANCA
    * en el borde (`ops/console-login/patch-caddy-lista-blanca.py`) que sólo deja pasar `/v3/auth/*`,
    * `/v3/status` y `/v3/console/*`; todo el resto de `/v3/*` es superficie máquina-a-máquina del
@@ -669,21 +653,7 @@ export class CauceApi {
   }
 
   /**
-   * El diario del rol declarado de un alias: qué decía antes, qué dice ahora y cuándo cambió.
-   *
-   * Lo escribe un TRIGGER de la base (`agent_role_brief_history`), así que registra también los
-   * `UPDATE` crudos por psql —que hasta esta consola eran la ÚNICA forma de tocar un rol—. Por eso
-   * vale como registro de lo que pasó, y no sólo de lo que pasó por acá.
-   *
-   * Comprobado contra producción el 2026-08-23: `GET .../Steven/zeus/history` responde 200 con las
-   * entradas, y un alias sin historia responde 200 con `entries: []`. Esas dos respuestas dicen
-   * cosas DISTINTAS y las dos son ciertas: `[]` es «se miró y no cambió nunca». El 404 —que es lo
-   * que devuelve un gateway anterior— no dice eso, dice que no se miró, y por eso baja a
-   * `publicado: false` en vez de a lista vacía. Mismo criterio que `getAgentDirective`.
-   *
-   * OJO con la profundidad: el trigger se instaló el 2026-08-23 02:35. Todo lo anterior a esa
-   * fecha NO está, y la pantalla tiene que decirlo —un diario corto se lee como «este rol casi no
-   * cambió», que es falso—. Ver `HistorialRol`.
+   * Obtiene el historial de revisiones del rol declarado de un alias.
    */
   async getRoleBriefHistory(tenantId: string, alias: string): Promise<RoleBriefHistory> {
     const ruta = `/v3/console/role-assignments/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}/history`;

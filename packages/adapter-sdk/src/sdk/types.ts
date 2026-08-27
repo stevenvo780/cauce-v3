@@ -42,26 +42,13 @@ export interface AdapterCapabilities {
   readonly stable_alias_sessions?: true;
   readonly api_cancellation?: 'abort_signal';
   readonly renewable_delivery_claims_v1?: true;
-  /**
-   * Declara que el adaptador sabe validar `ack_result.delegation_rejections` y
-   * `ack_result.chain_gate`. El gateway NO manda esos campos a quien no lo declare, porque un
-   * adaptador que valida el frame con `.strict()` no descarta el frame que rechaza: falla la cola
-   * entera de la conexión.
-   */
+  /** Declara soporte para `ack_result.delegation_rejections` y `ack_result.chain_gate`. */
   readonly delegation_feedback_v1?: true;
-  /** Acepta `self_role` en el sobre y lo emite como preámbulo de identidad. Ver migración 020. */
+  /** Acepta `self_role` en el sobre y lo emite como preámbulo de identidad. */
   readonly agent_identity_v1?: true;
-  /**
-   * Declara que el adaptador sabe recibir `hello_ack.agent_profile` y ESCRIBIRLO en los ficheros
-   * que su arnés lee. Sin ella el gateway no manda el campo, por el mismo motivo que
-   * `delegation_feedback_v1`: quien valida con `.strict()` no descarta el frame que rechaza, falla
-   * la cola entera de la conexión.
-   */
+  /** Declara que el adaptador recibe `hello_ack.agent_profile` y lo sincroniza en los ficheros del arnés. */
   readonly agent_profile_v1?: true;
-  /**
-   * Accepts the per-delivery `profile_runtime_contract` and emits durable consumption evidence
-   * only after a real harness turn used the exact measured files.
-   */
+  /** Accepts per-delivery runtime profile contract and emits consumption evidence upon completion. */
   readonly agent_profile_adoption_v1?: true;
 }
 
@@ -195,13 +182,8 @@ export interface DeliveryEvent {
   /** Local-only marker; the transport maps it to a normal `started` ACK. */
   readonly claim_renewal?: true;
   /**
-   * Intención durable de cruzar el punto de efectos, no simple admisión. Se emite una vez por
-   * intento, después de obtener la reserva de sesión y ANTES de invocar al harness; producción
-   * espera además el receipt exacto del gateway antes de soltar la ejecución. El ACK
-   * `started` normal no sirve para esto: sale ANTES de todo eso, y el reaper que lo tomaba como
-   * prueba del punto de no retorno mandaba a `dead` entregas que seguían en cola. A diferencia de
-   * `claim_renewal`, este campo SÍ viaja por el cable; es opcional en el protocolo y un gateway
-   * viejo simplemente lo ignora.
+   * Marca de intención de ejecución emitida tras la reserva de sesión y antes de invocar el harness.
+   * Viaja en el frame de ACK `started` para confirmar el inicio efectivo de ejecución.
    */
   readonly execution_started?: true;
   readonly output?: StructuredOutput;
@@ -250,30 +232,15 @@ export interface CommandInvocation {
 }
 
 /**
- * Marca que los puentes propios (`bridge/*.mjs`, `bridge/*.py`) escriben en stderr JUSTO ANTES
- * de la llamada que puede tener efectos. No va por stdout a propósito: stdout es el contrato
- * estructurado del turno y `definition.parse` lo lee entero.
- *
- * La POSICIÓN es todo el arreglo. Si la marca saliera tarde —al primer byte que el harness
- * imprime, por ejemplo— un turno que se cayó a la mitad sin llegar a imprimir quedaría marcado
- * como «nunca arrancó» y se reintentaría trabajo ya pagado. Sale temprano: como mucho se pierde
- * un reintento legítimo, nunca se repite un efecto.
+ * Marca emitida en stderr por los puentes antes de invocar la ejecución del modelo.
+ * Permite atestiguar que el harness comenzó a ejecutar sin contaminar stdout.
  */
 export const HARNESS_START_MARKER = '<<cauce:harness-started>>';
 
 /**
- * Cómo sabe el transporte que el harness EMPEZÓ a ejecutar de verdad.
- *
- * Es por harness porque la respuesta depende de qué escribe cada CLI y cuándo:
- *  - `stdout-first-byte`: el CLI emite eventos según avanza el turno (codex `--json` escribe su
- *    primer evento de hilo antes de cualquier llamada al modelo). Cero bytes en stdout prueba
- *    entonces que el turno no empezó.
- *  - `stderr-marker`: el harness lo invoca un puente NUESTRO, que escribe `HARNESS_START_MARKER`
- *    en stderr inmediatamente antes de la llamada efectiva.
- *  - ausente: no hay manera de atestiguarlo (claude `--print --output-format json` sólo escribe
- *    al final, y un turno completo que muere antes de imprimir es indistinguible de uno que
- *    nunca arrancó). Sin testigo NO se degrada nada: la entrega sigue siendo ambigua, que es el
- *    comportamiento de siempre.
+ * Estrategia para determinar si el proceso del harness inició la ejecución:
+ *  - `stdout-first-byte`: el CLI emite eventos durante el turno; cero bytes en stdout indica que no arrancó.
+ *  - `stderr-marker`: el puente escribe `HARNESS_START_MARKER` en stderr antes de invocar la ejecución.
  */
 export type HarnessStartWitness =
   | { readonly kind: 'stdout-first-byte' }
@@ -320,25 +287,13 @@ export interface HarnessAttachment {
 }
 
 export interface CommandRunner {
-  /**
-   * `true` sólo si este transporte VE los bytes del harness y por lo tanto puede cumplir el
-   * `startWitness` que declara el harness. Lo cumple el runner de procesos y nadie más: el de
-   * sesión compartida cosecha un panel de tmux y el cliente HTTP de OpenClaw recibe una
-   * respuesta entera, así que ninguno de los dos puede decir cuándo salió el primer byte.
-   *
-   * Ausente = no atestigua. Esta capacidad sólo clasifica fallos preflight; no decide el punto
-   * durable de no reintento, que siempre se guarda antes de invocar.
-   */
+  /** Indica si este transporte puede observar el flujo de bytes para verificar `startWitness`. */
   readonly witnessesHarnessStart?: boolean;
   run(request: CommandRunRequest): Promise<CommandRunResult>;
 }
 
 export interface SafeRunnerLog {
-  /**
-   * `orphaned_pipes`: el hijo salió pero un descendiente heredó stdout/stderr y las dejó
-   * abiertas, así que la entrega se cerró cosechando el grupo de procesos. Es la huella
-   * operativa de una entrega que antes quedaba colgada para siempre y en silencio.
-   */
+  /** Evento operacional del runner de procesos. */
   readonly event: 'spawn' | 'exit' | 'terminate' | 'orphaned_pipes';
   readonly harness: HarnessId;
   readonly exitCode?: number | null;
@@ -382,38 +337,15 @@ export interface AdapterLog {
     | 'claim_renewal_end'
     | 'connection_error'
     | 'outbound_frame_invalid'
-    /** Un frame del gateway que el esquema rechazó y el adaptador DESCARTÓ sin cortar la cola. */
+    /** Frame entrante del gateway rechazado por esquema y descartado. */
     | 'inbound_frame_invalid'
-    /**
-     * Un turno del bus que NO pasó por la terminal compartida del dueño, o que la encontró
-     * reiniciada. Se emite al journal ADEMÁS de viajar dentro del "reply": el intento anterior
-     * murió justamente porque esa situación no dejaba rastro en ninguna parte.
-     */
+    /** Turno ejecutado por vía degradada o con sesión compartida no disponible. */
     | 'shared_session_degraded'
-    /**
-     * Qué pasó al escribir el perfil del alias en los ficheros de su arnés, al conectar.
-     *
-     * Se emite SIEMPRE que llega un perfil, incluso cuando no se escribió nada: «no se sembró» es
-     * justo lo que hay que poder ver cuando un alias no tiene su perfil, y un silencio no
-     * distingue «el interruptor está apagado» de «no se pudo escribir». Nunca lleva el CONTENIDO
-     * del fichero: sólo el parte por nombre y estado.
-     */
+    /** Resultado de la sincronización del perfil en los ficheros del arnés al conectar. */
     | 'profile_seed'
-    /**
-     * Qué pasó al intentar devolverle al panel su conversación anterior.
-     *
-     * Sólo se emite cuando NO salió bien. Hace falta porque el fallo es mudo por naturaleza: el
-     * alias arranca, contesta y parece sano — simplemente no se acuerda de nada. Sin esta línea,
-     * la única señal de que se perdió la memoria sería que el agente responde raro, que fue
-     * exactamente cómo se descubrió la pérdida de los 38 MB de kant.
-     */
+    /** Fallo o anomalía al restaurar la conversación en el panel de sesión compartida. */
     | 'shared_session_resume'
-    /**
-     * El puente que este adaptador va a ejecutar NO escribe la marca de arranque, así que su
-     * testigo se apaga y todo fallo sin salida estructurada vuelve a ser ambiguo. Es la señal de
-     * un despliegue a medias (`CAUCE_*_BRIDGE` apuntando fuera del paquete): degrada el ahorro,
-     * nunca la corrección, pero hay que verlo.
-     */
+    /** Testigo de arranque desactivado debido a ausencia de la marca en el puente configurado. */
     | 'harness_start_witness_disabled';
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
@@ -457,10 +389,7 @@ export interface HarnessDefinition {
   readonly baseArgs: readonly string[];
   readonly capabilities: AdapterCapabilities;
   readonly sessionStrategy: SessionStrategy;
-  /**
-   * Qué byte de este harness significa «ya estoy ejecutando». Ausente = no se puede atestiguar,
-   * y entonces todo fallo sin salida estructurada sigue siendo ambiguo. Ver `HarnessStartWitness`.
-   */
+  /** Testigo para atestiguar el inicio de ejecución del proceso. */
   readonly startWitness?: HarnessStartWitness;
   sessionArgs(context: HarnessExecutionContext): readonly string[];
   parse(stdout: string): ParsedHarnessOutput;

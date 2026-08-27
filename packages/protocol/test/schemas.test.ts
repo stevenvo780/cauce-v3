@@ -280,14 +280,7 @@ describe('attachment transport contract', () => {
     expect(PublishMessageSchema.safeParse({ ...publishBase, body: { attachments_v1: [invalid] } }).success).toBe(false);
   });
 
-  /**
-   * Los textos que la flota se manda todos los días.
-   *
-   * `services/telegram-bridge/src/attachments.ts` los produce desde el 2026-08-05 y este enum se
-   * quedó atrás: el puente descargaba el `.md`, lo empaquetaba y el `parse()` de la ingesta lo
-   * rechazaba, trabando el cursor del alias para siempre (`heraclito`, 2026-08-05). Telegram no
-   * manda un mime estable para markdown, así que los tres pares tienen que entrar.
-   */
+  // Valida que se admitan variantes MIME válidas para adjuntos de texto, markdown y csv.
   it.each([
     { mime_type: 'text/markdown', name: 'notas.md' },
     { mime_type: 'text/x-markdown', name: 'notas.md' },

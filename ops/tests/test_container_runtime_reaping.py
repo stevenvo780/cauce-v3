@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
-"""Adversarial regression suite for the container supervisor's child reaping.
+"""Regression test suite for the container supervisor's child reaping behavior.
 
-The supervisor arms PR_SET_CHILD_SUBREAPER before it forks the adapter, so every
-descendant the harness orphans (node/bash/curl/ssh helpers that outlive their spawner)
-is re-parented to the supervisor. Nothing else inside the container will ever wait()
-for them. Measured in production on kratos, supervisor 3408562 (alias socrates, up
-16h) held 2399 <defunct> direct children against a single live leader.
-
-Each scenario runs the REAL script end to end and then re-runs a mutated copy with the
-reap call physically removed, so the suite proves that this exact line -- and not the
-fixture -- is what stops the leak. It also pins the trap: the two "obvious" fixes
-(SIGCHLD=SIG_IGN, or a bare waitpid(-1) in the wait loop) silently rewrite the adapter
-exit code to 0, which is the input the adapter SDK classifies as PROCESS_EXIT_AMBIGUOUS.
+Verifies that orphaned child processes adopted via PR_SET_CHILD_SUBREAPER are reaped
+properly without altering the adapter process exit code.
 
 Run: python3 ops/tests/test_container_runtime_reaping.py
 """

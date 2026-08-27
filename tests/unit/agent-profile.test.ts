@@ -5,15 +5,10 @@ import {
 } from '@cauce/protocol';
 
 /**
- * EL PERFIL POR ALIAS — la guarda de tamaño, medida en LAS DOS UNIDADES.
+ * Validación de límites de perfil de agente en unidades UTF-16 y puntos de código.
  *
- * El 16-ago un alias se quedó SORDO porque dos capas medían el mismo 1200 en unidades distintas:
- * `char_length` de Postgres cuenta PUNTOS DE CÓDIGO y `z.string().max()` cuenta unidades UTF-16.
- * La base guardaba, la pantalla decía «guardado», y el sobre de la entrega se rechazaba entero.
- *
- * Acá el tope obedece a la MÁS ESTRICTA de las dos, que es siempre la UTF-16 (un punto de código
- * fuera del BMP vale 1 punto y 2 unidades, nunca al revés). Los tests de abajo no dan por supuesta
- * esa desigualdad: la MIDEN.
+ * El límite evalúa la unidad más estricta para garantizar consistencia entre
+ * las restricciones en TypeScript (Zod UTF-16) y PostgreSQL.
  */
 
 /** Un emoji fuera del BMP: 1 punto de código, 2 unidades UTF-16. El caso que rompió todo. */

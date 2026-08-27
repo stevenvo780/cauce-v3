@@ -7,10 +7,7 @@ import {
 } from './agent-documents.js';
 
 /**
- * Hechos MEDIDOS el 23-ago-2026 dentro de los contenedores, leyendo `/proc/<pid>/cmdline` y
- * `/proc/<pid>/environ` del proceso del arnés que de verdad corría. La columna `harness_bd` es lo
- * que `GET /v3/console/agents` devolvía ese mismo día: donde no coincide con `harness`, la base
- * miente, y esa discrepancia es el motivo de que este módulo exista.
+ * Muestra de hechos medidos de entorno de ejecución de arneses para pruebas de resolución de documentos.
  */
 // `satisfies` y no una anotación `Record<string, …>`: con `noUncheckedIndexedAccess`, indexar un
 // `Record<string, T>` da `T | undefined`, y `MEDIDO.zeus` —que es una clave literal que está
@@ -100,10 +97,8 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
   });
 
   /**
-   * `GET /v3/status` -> `presence[].capabilities` llevaba el arnés correcto de los 14 alias el
-   * 23-ago-2026, comparado uno a uno contra el binario en ejecución. La columna `harness_id` de
-   * la base fallaba en 5 de esos 14. Este test fija esa tabla: si mañana alguien vuelve a resolver
-   * por la columna, el número 5 lo delata.
+   * Las capabilities de presencia resuelven el arnés efectivo independientemente
+   * de discrepancias en la columna `agents.harness_id`.
    */
   it('las capabilities del latido aciertan donde la columna de la BD falla', () => {
     let columnaMal = 0;

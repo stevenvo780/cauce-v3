@@ -12,32 +12,7 @@ import {
 } from './ficheros';
 
 /**
- * EL EDITOR DE LOS FICHEROS QUE GOBIERNAN A UN AGENTE.
- *
- * Steven lo pidió con estas palabras: «sigo sin ver en la config dónde editar el Claude.md o
- * agent.md para los agentes claude code y codex, y también el archivo para OpenClaw». Hasta hoy
- * lo único editable era la DIRECTIVA —el `role_brief`, que viaja en el sobre de cada mensaje— y
- * eso, como él mismo dijo, «es sólo una parte»: gobierna lo que el agente sabe de sí mismo, no
- * sus herramientas ni su manual.
- *
- * Vive en el MISMO cajón que la pestaña «Directiva», al lado, y no en una vista aparte. Esa es la
- * mitad del arreglo: el `role_brief` y el `CLAUDE.md` son dos capas de la misma cosa y tenerlas en
- * dos sitios distintos de la consola es lo que hizo que durante meses nadie notara que la
- * autonomía estaba escrita por duplicado en los 14 alias.
- *
- * ─────────────────────────────────────────────────────────────────────────────────────────────
- * LO QUE ESTA PANTALLA NO HACE, DICHO AQUÍ Y DICHO TAMBIÉN EN PANTALLA
- * ─────────────────────────────────────────────────────────────────────────────────────────────
- *
- * El camino al disco es una sonda allowlisted del pty-agent: el navegador sólo manda `kind`, el
- * gateway deriva una ruta desde hechos observados y el relay nunca acepta una ruta arbitraria.
- * Si cualquiera de esas piezas no está disponible, pedir el contenido devuelve un fallo explícito
- * y esta vista no lo convierte en un fichero vacío.
- *
- * Eso es deliberado y es la parte que más importa. Lo fácil —y lo que haría esto inútil— sería
- * pintar un editor vacío y un botón de guardar: Steven vería una caja en blanco donde debería
- * estar su `CLAUDE.md`, la tomaría por «este agente no tiene manual» y al guardar escribiría un
- * fichero vacío encima. Un hueco explicado vale más que un botón que no hace nada.
+ * Editor y visualizador de ficheros de configuración que gobiernan a un agente.
  */
 
 export interface FicherosTabProps {

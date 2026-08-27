@@ -33,7 +33,7 @@ const COLUMNAS_FIJAS: Record<string, readonly string[]> = {
 /**
  * El rótulo de cada columna, en castellano.
  *
- * 🔴 **Lo que no está acá se pinta con el nombre de la columna de la base.** Medido el 2026-08-23:
+ * Lo que no está acá se pinta con el nombre de la columna de la base.** 
  * las tablas mostraban cabeceras como `PROTOCOL_VERSION`, `LAST_SEEN_AT`, `CONTAINER_NAME`,
  * `RUNTIME_USER`, `HOME_DIRECTORY`, `PAYER_TENANT_ID`, `SHARED_WITH_POOL` y `EXTERNAL_ACCOUNT_ID`
  * —snake_case en inglés, en una interfaz en castellano— porque `columnasDe` cae al nombre crudo

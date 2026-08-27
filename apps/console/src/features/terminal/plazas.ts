@@ -1,7 +1,7 @@
 /**
  * Qué sesiones de terminal siguen OCUPANDO una plaza del operador.
  *
- * 🔴 Esto existe por un fallo medido contra producción el 2026-08-23, y es la razón por la que
+ * Esto existe por un fallo 
  * Ultimate Terminal «nunca ha funcionado»:
  *
  *   1. abrí la TUI de dos alias        → 2 tarjetas, 2 nodos `.pty-host`, 2 sesiones `active`;

@@ -7,7 +7,7 @@ import { renderWithApi } from '../../test/render';
 import type { QueueItem } from '../../api/types';
 
 /**
- * Aprieta el botón y CONFIRMA. Desde el 2026-08-23 ninguna de las dos acciones sale al servidor
+ * Aprieta el botón y CONFIRMA. 
  * con un solo clic: es producción viva y un replay reinyecta trabajo en la cola de un agente que
  * está corriendo. La confirmación se prueba de frente más abajo («un solo clic NO reinyecta»);
  * este ayudante existe para que las pruebas de la ACCIÓN sigan hablando de la acción.

@@ -1,19 +1,5 @@
 /**
  * Transcripción de audio contra un servicio compatible con la API de OpenAI.
- *
- * La flota ya tenía esto resuelto antes de Cauce V3: `claw-audio` (speaches sobre CUDA, en kratos)
- * corriendo `faster-whisper-large-v3-turbo-ct2`. Lo que se perdió en la migración fue el cable, no
- * el motor. Este módulo es ese cable y nada más: recibe bytes, devuelve texto.
- *
- * Decisiones deliberadas:
- * - **Falla abierta.** Si el servicio no responde, el mensaje igual llega con su metadata y un
- *   error legible. Un audio sin transcribir es peor que uno transcrito, pero mucho mejor que un
- *   mensaje perdido: el usuario tiene que enterarse de que su nota de voz llegó y no se pudo oír.
- * - **No viaja el audio.** A diferencia de imágenes y documentos, el audio NO se manda inline en
- *   base64: un mensaje de voz de 3 MB serían 4 MB de base64 en cada fila de `messages`, y ningún
- *   harness sabe escuchar un .ogg. Lo que el agente necesita es el texto.
- * - **Sin credencial real.** El servicio es interno y no autentica; se manda un token de relleno
- *   porque la API de OpenAI lo exige sintácticamente.
  */
 
 export interface TranscriptionConfig {

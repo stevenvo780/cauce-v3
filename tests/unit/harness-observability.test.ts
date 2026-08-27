@@ -11,12 +11,8 @@ import type {
 } from '../../packages/adapter-sdk/src/sdk/types.js';
 
 /**
- * Observabilidad del harness: qué llega a `last_error` cuando una entrega muere.
- *
- * Las dos fallas que cubre esta suite hicieron indiagnosticable el incidente del 2026-07-27
- * (un mensaje de Telegram que derivó en 2801 entregas en 35 h): el recorte de stderr a 100
- * bytes se comía la causa, y el motivo del aborto se descartaba y dejaba una frase idéntica
- * para cinco causas distintas.
+ * Observabilidad del harness: validación de la información diagnóstica
+ * y preservación de errores en `last_error` tras fallos de ejecución o cancelaciones.
  */
 
 const temporaryDirectories: string[] = [];
@@ -65,9 +61,7 @@ async function failureFor(stderr: string, exitCode = 1): Promise<AdapterError> {
 
 describe('causa real del fallo del harness en last_error', () => {
   /**
-   * El caso literal del incidente. La primera línea sola ya pasa los 100 bytes del recorte
-   * viejo, así que la SEGUNDA —la única que nombra la clave culpable— desaparecía entera y el
-   * operador se quedaba con "expected one of..." y ningún lugar dónde mirar.
+   * Conserva el detalle completo de un mensaje de error multi-línea.
    */
   it('conserva entera una causa de dos líneas', async () => {
     const stderr = [
@@ -83,9 +77,7 @@ describe('causa real del fallo del harness en last_error', () => {
   });
 
   /**
-   * Cuando la causa NO entra en el presupuesto, lo que se conserva son las DOS puntas. El
-   * recorte viejo se quedaba con `lines.slice(0, 3)` recortadas a 100 bytes: en un stack o en
-   * un error con "caused by" al final, eso tiraba justo la parte que identifica el problema.
+   * Preserva el encabezado y el final del stderr cuando excede el presupuesto.
    */
   it('conserva el final del stderr, no sólo el principio', async () => {
     const encabezado = 'FATAL: el proveedor abortó la sesión';
@@ -124,10 +116,7 @@ describe('causa real del fallo del harness en last_error', () => {
   });
 
   /**
-   * Las cuatro formas que la redacción anterior dejaba pasar. No son hipotéticas: salieron de
-   * la revisión adversarial de este mismo parche, que midió que subir el presupuesto a 1200
-   * bytes y empezar a emitir la COLA multiplicaba ~12x lo que podía escaparse a `last_error`
-   * —y `last_error` va a la base, que leen los agentes—.
+   * Formas comunes de credenciales y tokens que deben ser redactados en el mensaje.
    */
   it.each([
     ['prefijo de palabra rompe el \\b', 'ANTHROPIC_API_KEY=sk-ant-aaaaaaaaaaaaaaaaaaaaaaaa'],
@@ -149,9 +138,7 @@ describe('causa real del fallo del harness en last_error', () => {
   });
 
   /**
-   * El contrapeso obligatorio: si la redacción se vuelve tan agresiva que borra la causa, el
-   * parche entero pierde sentido. Éste es textualmente el error que costó horas el 2026-07-28,
-   * y la clave ofensora estaba en la SEGUNDA línea — justo lo que el recorte a 100 bytes comía.
+   * Asegura que los mensajes de error sintáctico o configuración no se redacten erróneamente.
    */
   it('no redacta la causa real: el mensaje de config.toml sobrevive entero', async () => {
     const causa = 'Error loading config.toml: unknown variant `writes`, expected one of '
@@ -174,9 +161,7 @@ describe('causa real del fallo del harness en last_error', () => {
 
 describe('motivo del aborto en last_error', () => {
   /**
-   * "Harness transport was cancelled after dispatch" apareció 28 veces en 24 h, en ráfagas
-   * simultáneas multi-alias, sin decir jamás por qué. El motivo estaba ahí, en `signal.reason`,
-   * y se tiraba.
+   * Propaga el motivo real de la cancelación cuando el runner lo reporta.
    */
   it('propaga el motivo cuando el runner reporta la cancelación', async () => {
     const controller = new AbortController();
@@ -198,8 +183,7 @@ describe('motivo del aborto en last_error', () => {
 
     const error = await rejectionOf(adapter, controller.signal);
 
-    // El código NO cambia a propósito: sacar la entrega de la lista de códigos ambiguos la
-    // habilitaría a reintentar trabajo ya ejecutado, que es la multiplicación del incidente.
+    // El código de error permanece como ambiguo no reintentable.
     expect(error.code).toBe('EXECUTION_CANCELLED_AMBIGUOUS');
     expect(error.retryable).toBe(false);
     expect(error.message).toContain('CLAIM_OWNERSHIP_LOST');
@@ -234,8 +218,7 @@ describe('motivo del aborto en last_error', () => {
   });
 
   /**
-   * Un aborto cuyo motivo no es un `AdapterError` tampoco puede quedar mudo: antes caía en la
-   * frase genérica de `abortReason` y perdía el único dato disponible.
+   * Describe motivos de aborto que no son instancias de AdapterError.
    */
   it('describe también un motivo que no es AdapterError', async () => {
     const controller = new AbortController();

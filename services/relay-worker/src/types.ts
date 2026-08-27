@@ -26,10 +26,7 @@ export interface OriginRelayAck {
 
 export interface OriginRelayRepository {
   /**
-   * Claim pending `origin_relay` leases for a SINGLE adapter. The claim is always
-   * adapter-scoped: the worker never issues an unscoped claim. An unscoped claim
-   * would steal (and DLQ) events belonging to adapters this worker does not serve
-   * — most importantly `telegram`, which is owned by the telegram-bridge (gap G1).
+   * Claim pending `origin_relay` leases for a single adapter.
    */
   claim(workerId: string, limit: number, leaseMs: number, adapter: string): Promise<OriginRelayEvent[]>;
   ack(acknowledgement: OriginRelayAck): Promise<void>;

@@ -205,16 +205,12 @@ durable.
 
 ## Notas de voz entrantes
 
-Una nota de voz llegaba al agente como un cuerpo sin `text` y sin `prompt`: sólo metadata en
-`media[]` con un `file_id` que ningún harness sabe abrir. El agente recibía un mensaje vacío y
-contestaba a ciegas. Steven mandó tres audios el 2026-07-26 y ninguno se ejecutó.
-
-El puente ahora descarga el audio (`voice`, `audio` o `video_note`), lo transcribe contra un
+El puente descarga el audio (`voice`, `audio` o `video_note`), lo transcribe contra un
 servicio compatible con la API de OpenAI y pone el texto donde el harness lo lee.
 
 | Variable | Obligatoria | Efecto |
 |---|---|---|
-| `CAUCE_TELEGRAM_TRANSCRIPTION_URL` | no | Origen del servicio, con la ruta base: `http://host:8000/v1`. **Ausente = transcripción apagada** y el puente se comporta como antes, avisando en cada audio que no pudo escucharlo. |
+| `CAUCE_TELEGRAM_TRANSCRIPTION_URL` | no | Origen del servicio, con la ruta base: `http://host:8000/v1`. **Ausente = transcripción apagada** y el puente se comporta avisando en cada audio que no pudo escucharlo. |
 | `CAUCE_TELEGRAM_TRANSCRIPTION_MODEL` | sí, si hay URL | Identificador del modelo de STT. |
 | `CAUCE_TELEGRAM_TRANSCRIPTION_LANGUAGE` | no | Por defecto `es`. |
 | `CAUCE_TELEGRAM_TRANSCRIPTION_TIMEOUT_SECONDS` | no | Por defecto 120, entre 1 y 900. |
@@ -223,9 +219,6 @@ servicio compatible con la API de OpenAI y pone el texto donde el harness lo lee
 La configuración se valida **al arrancar**, no en el primer audio: una URL mal escrita mata el
 proceso en el arranque en vez de descubrirse cuando alguien manda una nota de voz. El arranque deja
 una línea `telegram_transcription_config` en el log diciendo si quedó activa.
-
-En producción apunta a `claw-audio` (speaches sobre CUDA, en kratos), publicado en el tailnet por
-el contenedor `cauce-audio-forward` en `100.64.0.1:8010`.
 
 ### Qué se manda y qué se guarda
 
@@ -246,7 +239,7 @@ el contenedor `cauce-audio-forward` en `100.64.0.1:8010`.
 
 Si el servicio no responde, responde error o devuelve vacío, el mensaje **igual llega**: el agente
 recibe una explicación en castellano pidiéndole que se lo diga al usuario y le pida el texto. Un
-audio sin transcribir es un problema; un mensaje perdido en silencio, como pasó el 26, es peor.
+audio sin transcribir es un problema; un mensaje perdido en silencio es peor.
 
 ## Semántica de egress
 

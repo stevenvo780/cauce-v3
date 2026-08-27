@@ -233,10 +233,7 @@ export function parseClientMessage(data: RawData, isBinary: boolean): ClientMess
       : undefined;
   }
   if (source.type === 'resize') {
-    // Un resize fuera de rango se ACOTA, nunca se rechaza. Devolver `undefined` aquí hacía que el
-    // llamador cerrase la sesión con protocol_error 4400: una tercera terminal que mandaba rows:1
-    // se llevaba puestas las dos que ya estaban vivas (arreglado en prod el 2026-08-24, portado
-    // aquí para no revertirlo). Lo que no es un número entero sí sigue siendo un mensaje inválido.
+    // Un resize fuera de rango se acota. Lo que no es un número entero es un mensaje inválido.
     const geometry = clampTerminalGeometry(source.cols, source.rows);
     return geometry === undefined ? undefined : { type: 'resize', ...geometry };
   }

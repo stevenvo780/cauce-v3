@@ -2,20 +2,9 @@ import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 
 /**
- * Derivación de contraseñas de la consola.
- *
- * POR QUÉ scrypt Y NO argon2/bcrypt: los dos son paquetes nativos y este repositorio se empaqueta
- * en `node:22-alpine` (musl). Un binario precompilado resuelto contra glibc en la máquina donde
- * se agrega la dependencia no es el que necesita la imagen, y el modo en que eso falla es el peor
- * posible — `pnpm install --frozen-lockfile` pasa y el login revienta en producción. `scrypt` es
- * un KDF estándar (RFC 7914), con costo de memoria, y en Node lo implementa OpenSSL: es la misma
- * clase de primitiva, sin dependencia nueva y sin nada compilado. Lo único que se escribe acá es
- * el ENVOLTORIO (formato PHC + comparación en tiempo constante), nunca la criptografía.
- *
- * Formato guardado, compatible con PHC:
+ * Derivación y verificación de contraseñas de la consola usando scrypt (RFC 7914).
+ * Utiliza formato compatible con PHC string format:
  *   $scrypt$n=32768,r=8,p=1$<sal base64>$<derivado base64>
- * Los parámetros viajan DENTRO del hash a propósito: subirlos mañana no invalida lo ya guardado,
- * cada fila se verifica con los suyos.
  */
 
 const scryptAsync = promisify(scrypt) as (

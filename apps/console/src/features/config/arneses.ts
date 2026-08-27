@@ -1,21 +1,5 @@
 /**
- * **Cómo funciona cada arnés DE VERDAD, y qué parte de eso gobierna esta pantalla.**
- *
- * El encargo pedía reordenar «Ajustes y altas» alrededor de cómo funciona cada arnés. Lo que hay
- * medido, y que gobierna esta tabla:
- *
- *  - **claude y codex leen un fichero de instrucciones** en disco (`CLAUDE.md`, `AGENTS.md`), en un
- *    directorio que depende de variables del proceso (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`).
- *  - **openclaw NO lee un fichero de instrucciones**: su directiva es un campo de
- *    `~/.openclaw/openclaw.json`, el MISMO documento donde viven `auth` y `secrets`.
- *  - **hermes no lee ninguno.** `resolveAgentDocuments()` cae al `default` y devuelve lista vacía
- *    (services/gateway/src/console/agent-documents.ts:218).
- *
- * De ahí sale la consecuencia que esta pantalla tiene que decir en voz alta: **ninguno de esos
- * cuatro sitios se toca desde «Ajustes y altas»**, y la columna `agents.harness_id` no elige entre
- * ellos (ver `campos-inertes.ts`). Lo único que esta pantalla sí gobierna —y gobierna para los
- * cuatro por igual— es el ROL DECLARADO, porque no lo lee el arnés: lo antepone Cauce dentro del
- * sobre.
+ * Mapeo de cómo interactúa cada arnés con sus ficheros de configuración y rol declarado.
  */
 
 export interface ArnesReal {

@@ -1,7 +1,7 @@
 /**
  * **La trampa que dejaba muerta Ultimate Terminal, con su control negativo.**
  *
- * Medido contra producción el 2026-08-23 (navegador real, auditoría del propio gateway):
+ * 
  *   abrir la TUI de dos alias  → 2 tarjetas, 2 `.pty-host`, 2 filas `active` en `terminal_sessions`
  *   navegar a Portada y volver → 0 tarjetas, 2 `.pty-host` VIVOS, 2 filas `active`
  *   abrir un tercer alias      → 409 `session_limit`

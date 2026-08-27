@@ -1,51 +1,14 @@
 /**
- * Arbitraje de la caja de entrada, y sólo eso.
- *
- * Este módulo lee la PANTALLA, que es exactamente lo que la salida (b) hacía y por lo que quedó
- * descartada. La diferencia no es de método sino de qué se decide con lo leído:
- *
- *  - (b) sacaba EL SOBRE de la pantalla. Imposible de garantizar: el wrapping parte el JSON, el
- *    scrollback no existe (claude vive en pantalla alterna, `history_size=0`) y el eco del pedido
- *    contiene otra copia del JSON, así que el raspador no distinguía pregunta de respuesta.
- *  - acá la pantalla sólo responde "¿el dueño tiene algo a medio escribir?". Si la heurística se
- *    equivoca no se corrompe ningún resultado: en el peor caso se espera de más y se degrada con
- *    aviso, o se pisa una línea a medio escribir — molesto, nunca silencioso.
- *
- * El sobre NUNCA sale de acá. Sale del transcript.
+ * Detección del estado de la caja de entrada y actividad en pantalla para paneles tmux de TUI.
  */
 
 /** Marcas que la TUI de claude deja cuando la caja tiene un pegado sin enviar. */
 const PENDING_PASTE_MARKS = ["[Pasted text", "paste again to expand"];
 
-/**
- * Caracteres con los que la TUI dibuja el cursor de entrada.
- *
- * `❯` es el de claude y `›` (U+203A) el de codex. Sin el de codex el barrido de abajo
- * hacia arriba pasaba de largo la caja real y enganchaba el banner `>_ OpenAI Codex (vX)` del
- * propio programa, que empieza por `>` y nunca cambia: la caja quedaba "ocupada" para siempre y
- * TODO turno degradaba a los 90 s. Medido en el panel vivo de socrates el 2026-07-31.
- *
- * `»` (U+00BB) es el MISMO cursor de codex redibujado a partir de codex-cli 0.145.0. Sin él el
- * barrido no encuentra ninguna caja, y un panel con contenido pero sin caja se declara «diálogo a
- * pantalla completa»: el turno degrada con `modal_blocking` inventando un modal que no existe, el
- * adaptador suelta el panel del dueño y contesta por el camino de respaldo. El dueño deja de ver a
- * su agente sin que nada falle, y reiniciar no lo arregla porque el glifo sigue siendo el mismo.
- * Medido con volcado hexadecimal el 2026-08-05 en el panel vivo de kant (`c2 bb 20` = `» `), contra
- * `e2 80 ba 20` (`› `) en los alias que todavía corren 0.144.x.
- */
+/** Caracteres de cursor de prompt soportados en las distintas TUIs (Claude, Codex). */
 const PROMPT_MARKS = ["❯", "›", "»", ">"];
 
-/**
- * Por qué no se puede inyectar ahora mismo. La distinción NO cambia la decisión —en los tres casos
- * se espera y, si no se libera, se degrada— pero sí cambia lo que hay que hacer para arreglarlo,
- * que es lo único que el dueño lee.
- *
- *  - `busy`: hay una línea a medio escribir. Se resuelve sola en segundos, o borrándola.
- *  - `modal`: la TUI está esperando una RESPUESTA a un diálogo (confiar en la carpeta, elegir
- *    modelo, aprobar un permiso). No se resuelve sola: hay que contestarlo. Medido el 2026-07-30
- *    con claude 2.1.220, los tres modales probados dejaban la caja "ocupada" y el aviso decía
- *    «soltá la línea a medio escribir», que es exactamente lo que NO había que hacer.
- */
+/** Clasificación del estado de disponibilidad de la caja de entrada. */
 export type InputBoxKind = "free" | "busy" | "modal";
 
 export interface InputBoxState {
@@ -55,25 +18,10 @@ export interface InputBoxState {
   readonly evidence: string;
 }
 
-/**
- * Cómo se reconoce un diálogo: la línea de prompt es una OPCIÓN NUMERADA.
- *
- * Medido: `❯ 1. Yes, I trust this folder` (confianza de carpeta) y `❯ 2. Opus (1M context) ✔`
- * (`/model`). No es infalible —el dueño podría teclear literalmente "1. algo"— y no hace falta que
- * lo sea: equivocarse acá sólo cambia el TEXTO del aviso, nunca si se inyecta o no.
- */
+/** Reconocimiento de opciones numeradas en diálogos modales de la TUI. */
 const MODAL_OPTION = /^\d+\.\s/u;
 
-/**
- * ¿Hay texto del dueño esperando en la caja?
- *
- * La colisión que esto evita está medida: con una línea a medio escribir, inyectar dejó
- * `❯ estoy escribiendo algo a mediasMENSAJE DEL BUS que llega en medio`. Hay UNA sola caja de
- * entrada y el bus no puede escribir en ella sin permiso.
- *
- * Un panel que no se pudo capturar cuenta como ocupado. Fallar cerrado acá es correcto: preferimos
- * degradar con aviso a pisar lo que el dueño estaba escribiendo.
- */
+/** Determina si la caja de entrada está libre, ocupada con texto o bloqueada por un diálogo modal. */
 export function inputBoxState(pane: string | undefined): InputBoxState {
   if (pane === undefined) {
     return { occupied: true, kind: "busy", evidence: "no se pudo capturar el panel" };
@@ -88,9 +36,6 @@ export function inputBoxState(pane: string | undefined): InputBoxState {
 
   const promptLine = lastPromptLine(lines);
   if (promptLine === undefined) {
-    // Un panel EN BLANCO es una TUI que todavía no dibujó nada, no un diálogo: llamarlo modal
-    // mandaría al dueño a contestar algo que no existe. Un panel con contenido pero SIN caja sí es
-    // un diálogo a pantalla completa — medido con `/config`, que la tapa entera.
     if (pane.trim().length === 0) {
       return { occupied: true, kind: "busy", evidence: "el panel está en blanco" };
     }
@@ -115,36 +60,10 @@ export function inputBoxState(pane: string | undefined): InputBoxState {
   };
 }
 
-/**
- * Cómo dibujan las dos TUI que están GENERANDO. Es la única marca estable que tienen en común.
- *
- * claude escribe `✻ Herding… (esc to interrupt · ctrl+t to hide todos)` y codex `Esc to interrupt`;
- * lo que no cambia entre versiones ni entre binarios es que ofrecen cortar el turno, porque es la
- * única tecla que sirve mientras generan.
- */
+/** Patrón indicador de generación activa en la TUI. */
 const IN_FLIGHT_MARK = /\besc(?:ape)?\s+to\s+interrupt\b/iu;
 
-/**
- * ¿La terminal está GENERANDO ahora mismo?
- *
- * No se usa para decidir si se pega —pegar igual es lo correcto, porque un turno encolado se acaba
- * ejecutando dentro de la conversación compartida, que es justo lo que este diseño existe para
- * conservar— sino para poder DECIR por qué la correlación por ascendencia no va a enganchar.
- *
- * La distinción importa: la caja de entrada está VACÍA mientras la TUI genera, así que
- * `inputBoxState` la ve libre y el arbitraje la da por disponible. Eso es correcto para lo que ese
- * arbitraje decide (no pisar lo que el dueño está escribiendo) y ciego para lo otro: pegar en una
- * caja libre de un panel ocupado hace que claude ENCOLE el pegado y lo funda en el turno en curso,
- * sin abrir turno propio. Ver `turn_merged` en `types.ts` y la entrega `6c7cb0c4`.
- *
- * Se mira sólo la FRANJA de la caja de entrada —las últimas líneas con contenido— que es donde las
- * dos TUI dibujan su estado: claude justo encima de la caja, codex justo debajo. Más arriba está la
- * conversación, y ahí la frase puede aparecer como texto cualquiera —un agente hablando de este
- * mismo mecanismo, por ejemplo—; acotar la ventana evita que eso quede marcado para siempre.
- *
- * Equivocarse acá no rompe nada, y por eso la ventana puede ser generosa: esto NO decide si se
- * inyecta ni si se cosecha, sólo redacta el aviso. La decisión la toma el sobre.
- */
+/** Determina si la TUI se encuentra actualmente generando una respuesta. */
 export function turnInFlight(pane: string | undefined): boolean {
   if (pane === undefined) return false;
   const lines = pane.split(/\r?\n/u).map(stripSgr);
@@ -159,9 +78,6 @@ const IN_FLIGHT_WINDOW = 6;
 
 /**
  * El contenido de la última línea de prompt, ya sin el cursor ni los bordes del recuadro.
- *
- * Se recorre de abajo hacia arriba porque la caja de entrada es lo último que dibuja la TUI; por
- * encima está la conversación, donde un `>` cualquiera del texto no significa nada.
  */
 function lastPromptLine(lines: readonly string[]): string | undefined {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -172,11 +88,7 @@ function lastPromptLine(lines: readonly string[]): string | undefined {
     for (const mark of PROMPT_MARKS) {
       if (!line.startsWith(mark)) continue;
       const content = line.slice(mark.length).trim();
-      // El texto FANTASMA de codex (la sugerencia de ejemplo que dibuja cuando la caja está
-      // vacía) viene atenuado; lo que el dueño teclea de verdad, nunca. Verificado el 2026-07-31
-      // contra el panel vivo de socrates: `› Find and fix a bug in @filename` con SGR
-      // ['1','0','2','0'] — el 2 es el dim. Si la línea no trae estilos (captura sin `-e`) esto
-      // no se activa nunca y el comportamiento queda idéntico al anterior.
+      // Descarta texto de sugerencia atenuado (placeholder) cuando la caja está vacía.
       if (content !== "" && isEntirelyDim(raw, mark)) return "";
       return content;
     }
@@ -191,11 +103,7 @@ function stripSgr(value: string): string {
 }
 
 /**
- * ¿Todo lo que sigue a la marca del cursor está atenuado?
- *
- * Se mira SÓLO la línea del cursor y SÓLO cuando la captura trae estilos, así que no puede
- * tragarse texto real: en claude el texto sin enviar se dibuja normal. La alternativa que se
- * descartó —tratar como vacío todo lo dim del panel— sí se lo comía, y está medida.
+ * Verifica si el texto posterior al cursor contiene únicamente estilos atenuados (dim/placeholder).
  */
 function isEntirelyDim(raw: string, mark: string): boolean {
   const at = raw.indexOf(mark);

@@ -31,7 +31,7 @@ it('resume la consola entera: flota, colas y cuotas, con los números PRIMERO', 
   // Las métricas de conjunto, con su número real del snapshot (mockStatus.online = 99).
   expect(await screen.findByText('99')).toBeInTheDocument();
 
-  // 🔴 Y van ANTES de la banda de avisos en el orden del documento. Medido el 2026-08-23 a
+  // Y van ANTES de la banda de avisos en el orden del documento. 
   // 1280×900, las ocho bandas de aviso ocupaban ~580 px y empujaban los cuatro números fuera del
   // borde inferior: el resumen de conjunto no se veía al entrar al resumen de conjunto.
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });

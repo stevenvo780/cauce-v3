@@ -2,45 +2,7 @@ import { createHash } from 'node:crypto';
 import { basename, extname } from 'node:path';
 
 /**
- * Los adjuntos que el agente devuelve en `output.artifacts`, del lado del EGRESO.
- *
- * Qué estaba roto: el puente no tenía forma de mandar un archivo. `dist/telegram.js` sólo conocía
- * `sendMessage`, y `egress.js` nombraba `artifacts` una sola vez, en la lista de claves que
- * DESCARTA del sobre. Todo lo que un agente adjuntara desaparecía sin dejar rastro ni error.
- *
- * Lo que costó, medido:
- *   - Isa pidió un guion CINCO veces entre el 28 y el 29-jul. Los agentes lo produjeron y lo
- *     devolvieron como `artifacts[].uri = file:///workspace/clases/video/Guion-….docx`. El puente
- *     lo tiró; zeus terminó mandándoselo a mano.
- *   - Jhon, el 28-jul: "mandame las capturas", "pero quiero imagen jpg", "que pueda ver no en
- *     letras". Recibió rutas `file:///home/claw/…` que no puede abrir desde un teléfono.
- *   - De los 30 artifacts más recientes del outbox, 5 son enlaces `https://` (deploys de Vercel,
- *     ramas de GitHub) que tampoco llegaban: para el humano, sencillamente no existían.
- *
- * ------------------------------------------------------------------------------------------
- * LAS TRES CLASES DE URI, Y POR QUÉ SE TRATAN DISTINTO
- *
- * 1. `data:` con base64 → SE SUBEN LOS BYTES. Es el único canal por el que los bytes de un agente
- *    llegan de verdad hasta acá: `parseArtifacts` del adapter-SDK reconstruye cada artifact con
- *    exactamente cuatro claves (`name`, `uri`, `media_type`, `sha256`), así que cualquier campo
- *    extra que un harness inventara —`content_base64`, por ejemplo— se pierde antes del ACK. El
- *    `uri` es el único string que viaja literal de punta a punta.
- *
- * 2. `http(s)://` → SE LISTAN COMO ENLACE, no se descargan. El puente vive en agora-storage, al
- *    lado de Postgres, del gateway y del registry en 127.0.0.1:5000. Descargar una URL que escribió
- *    un agente convertiría este servicio en un SSRF contra la red de producción. Un enlace en el
- *    chat resuelve el caso real (los deploys de Vercel) sin abrir esa puerta.
- *
- * 3. `file://`, ruta absoluta suelta, `git:`… → SE LISTAN COMO NO ENVIADOS. Esos bytes están en el
- *    contenedor del agente, en kratos; el puente corre en otra máquina. Y NUNCA se resuelven contra
- *    el disco local a propósito: si lo hiciéramos, un `file:///run/secrets/database_url` —que en el
- *    puente SÍ existe— haría que el propio puente subiera la contraseña de la base de producción a
- *    un chat. La ruta no se dereferencia; se explica.
- * ------------------------------------------------------------------------------------------
- *
- * INVARIANTE: nada de este módulo puede tirar. Un artifact mal formado se descarta y se cuenta; la
- * respuesta del agente —que es el trabajo— sale igual. Es la misma regla que ya rige `notify` y
- * `artifacts` en el parser del SDK.
+ * Planificación y preparación de adjuntos de egreso (`output.artifacts`).
  */
 
 /** Simétrico con el techo de ingesta (`MAX_TELEGRAM_ATTACHMENT_BYTES`). */
@@ -276,8 +238,7 @@ export function planArtifacts(payload: Record<string, unknown>): ArtifactPlan {
       lines.push(`• ${label(artifact, 'enlace')}: ${link}`);
       continue;
     }
-    // Ruta del contenedor del agente: existe, pero no acá. Se nombra sin repetir la ruta cruda,
-    // que es justamente lo que Jhon recibió cinco veces y no le sirvió para nada.
+    // Ruta del contenedor del agente no accesible localmente.
     lines.push(`• ${label(artifact, 'archivo')}: quedó en el espacio de trabajo del agente y no viajó al chat`);
   }
 

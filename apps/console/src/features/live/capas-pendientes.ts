@@ -1,7 +1,7 @@
 import type { ConfigurationSnapshot } from '../../api/types';
 
 /**
- * LO QUE STEVEN PIDIÓ Y TODAVÍA NO SE PUEDE TOCAR DESDE AQUÍ.
+ * LO QUE 
  *
  * El encargo eran cuatro cosas: la directiva, el `CLAUDE.md`, las herramientas y los prompts. Las
  * dos primeras tienen sitio en esta pestaña —la primera se edita, la segunda tiene su hueco

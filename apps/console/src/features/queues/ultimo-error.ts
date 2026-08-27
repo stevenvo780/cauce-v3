@@ -3,7 +3,7 @@ import type { DeliveryState } from '../../api/types';
 /**
  * **«UNKNOWN» ÁMBAR EN LA COLUMNA DE ERRORES DE ENTREGAS QUE SALIERON BIEN.**
  *
- * Medido en la consola de producción el 2026-08-23: 38 filas en la tabla de `/queues`, de las
+ *  38 filas en la tabla de `/queues`, de las
  * cuales 31 gritaban un `UNKNOWN` en ámbar bajo «Último error». Las 31 estaban en `done`. El ojo
  * del operador iba a ese color —treinta y una veces— y las 7 dead letters, que son lo único que
  * hay que mirar, quedaban sueltas entre ellas sin nada que las distinguiera.

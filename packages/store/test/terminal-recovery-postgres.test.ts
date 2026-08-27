@@ -8,16 +8,7 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Las dos mitades del mismo agujero: una tarea muerta que no se puede recuperar, y la ausencia
- * de cancelación.
- *
- * Lo que estos tests fijan, medido en producción el 2026-07-28:
- *  - 197 de 197 entregas en 'failed' no tenían fila en `dead_letters` y por lo tanto eran
- *    irreplayables para siempre. De qué lado caía cada entrega lo decidía `ack.retryable`, un
- *    booleano que elige el agente que se acaba de romper.
- *  - 221 filas en 'dead' con `last_error` = 'cancelado por zeus ...': un UPDATE a mano en psql,
- *    que saltea `dead_letters` (irreplayable), `insertOriginRelay` (el humano no se entera) y
- *    `materializeAgentResponse` (el padre de la delegación espera para siempre).
+ * Recuperación y trazabilidad de entregas terminales y operaciones de cancelación.
  */
 
 let database: TestDatabase;

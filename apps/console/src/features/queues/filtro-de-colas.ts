@@ -21,7 +21,7 @@ import { safeDeliveryState } from '../../lib';
 export type GrupoDeEstado = 'todas' | 'revision' | 'retry' | 'pendientes';
 
 /**
- * 🔴 `revision` incluye `failed` además de `dead`, y no es un detalle.
+ * `revision` incluye `failed` además de `dead`, y no es un detalle.
  *
  * `failed` TAMBIÉN deja fila en `dead_letters` y `replayDelivery` la acepta: el propio contador
  * `dead` del servidor la suma (`queueSnapshot`, packages/store). Un grupo «requieren revisión» que

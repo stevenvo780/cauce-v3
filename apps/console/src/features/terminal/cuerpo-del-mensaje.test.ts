@@ -5,7 +5,7 @@ import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada, textoDelCuer
 
 describe('el recorte del cuerpo que hace el servidor', () => {
   /**
-   * 🔴 **LA COMPROBACIÓN CRUZADA CONTRA EL SQL.**
+   * LA COMPROBACIÓN CRUZADA CONTRA EL SQL.**
    *
    * El 240 no es una elección de la consola: es el `left(...,240)` de la consulta de
    * `CauceRepository.listMessages`. Son dos números en dos repositorios de código distintos y nada

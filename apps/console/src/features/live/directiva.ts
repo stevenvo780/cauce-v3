@@ -19,7 +19,7 @@ import type { AgentDirective, AgentDirectiveFile } from '../../api/types';
  *   Capa 3 · memoria    → LO QUE ESE AGENTE APRENDIÓ. Ni identidad ni manual.
  *
  * El aviso NO bloquea nada: el punto 3 del diseño dice literalmente «no bloquear: avisar». Lo que
- * Steven teme no es que haya texto de más, es que la MISMA regla esté escrita en dos sitios y que,
+ *  es que la MISMA regla esté escrita en dos sitios y que,
  * cuando diverjan, nadie sepa cuál manda.
  *
  * REGLA DE HONESTIDAD, que es de donde salen la mitad de los defectos de esta consola: acá sólo se
@@ -251,7 +251,7 @@ export function primerasLineas(texto: string | null | undefined, cuantas: number
  * Esto existe porque la consola llegó a afirmar una ausencia que nadie había medido. El gateway
  * degrada bien —`{publicado: true, motivo: 'contenedor no medido todavía', files: null}`— pero
  * la columna sólo enseñaba el aviso cuando `publicado` era FALSO, así que ese motivo no se veía
- * nunca y en su lugar salía «miró el contenedor y no hay ningún CLAUDE.md». Medido el 24-ago-2026
+ * nunca y en su lugar salía «miró el contenedor y no hay ningún CLAUDE.md». 
  * dentro de los contenedores, eso era falso en 11 de los 12 alias que pude mirar.
  *
  * El discriminante correcto no es «¿publica el endpoint?». Es «¿ocurrió la lectura?»:

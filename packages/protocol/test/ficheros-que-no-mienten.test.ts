@@ -6,17 +6,7 @@ import {
   ErrorDeTopeDelArnes, TOPES_OPENCLAW, ficherosDelArnes, type FicheroGenerado,
 } from "../src/ficheros-del-arnes.js";
 
-/**
- * SEIS DEFECTOS QUE LA SUITE DE 20 CASOS DEJABA PASAR EN VERDE.
- *
- * Los encontró una revisión adversarial el 2026-08-25, no yo, y ése es el punto: cada uno tenía
- * comentarios largos explicando la decisión correcta y ninguna prueba que la midiera. Un módulo
- * cuyos comentarios prometen más de lo que sus pruebas exigen es un módulo que va a divergir de su
- * documentación en silencio.
- *
- * Cada prueba de aquí abajo estaba en ROJO antes del arreglo correspondiente. Lo comprobé
- * revirtiendo el arreglo una por una, no razonándolo.
- */
+// Tests de verificación de consistencia en generación y actualización de ficheros de arnés.
 
 const HECHOS: HechosDelAlias = {
   permisos: { ruta: true, lectura: true, control: false, notificacion: true },
@@ -44,20 +34,14 @@ function de(ficheros: readonly FicheroGenerado[], nombre: string): FicheroGenera
   return f;
 }
 
-// ── 1. EL BLOQUE RANCIO ─────────────────────────────────────────────────────────────────────
+// ── 1. Retiro de bloques desactualizados ─────────────────────────────────────
 
 test("borrar un campo en la base BORRA el bloque del fichero, no lo deja rancio", () => {
-  /*
-   * Es el contrato entero de esta tabla: «la base es la fuente de verdad y el fichero se GENERA
-   * desde ella». Si vaciar un campo desde la consola deja el texto viejo escrito Y el generador
-   * contesta `escribir: false`, el sistema AFIRMA que está al día mientras el agente sigue
-   * leyendo lo que alguien ya quitó. Sin error, sin aviso y sin forma de enterarse.
-   */
   const conPerfil = ficherosDelArnes("openclaw", contexto(perfil({ purpose: "reparo Cauce" })));
   const soul = de(conPerfil, "SOUL.md");
   assert.ok(soul.texto.includes("reparo Cauce"));
 
-  // Ahora el operador vacía `purpose` en la consola y se vuelve a generar sobre lo que hay.
+  // Se vacía purpose y se vuelve a generar sobre el contenido existente.
   const enDisco = new Map([["SOUL.md", soul.texto]]);
   const vaciado = ficherosDelArnes("openclaw", contexto(perfil({})), enDisco);
   const despues = de(vaciado, "SOUL.md");
@@ -77,24 +61,16 @@ test("al retirar el bloque, lo que escribió una persona se conserva byte a byte
 });
 
 test("CONTROL NEGATIVO: sobre un fichero que NUNCA tuvo bloque no se escribe nada", () => {
-  // Sin esto, «retirar» podría implementarse reescribiendo siempre y el fichero de un alias sin
-  // perfil recibiría una escritura por turno, en los quince contenedores, para no cambiar nada.
   const manual = "# Notas\n\nsólo texto humano\n";
   const generado = ficherosDelArnes("openclaw", contexto(perfil({})), new Map([["SOUL.md", manual]]));
   assert.equal(de(generado, "SOUL.md").escribir, false);
   assert.equal(de(generado, "SOUL.md").texto, manual);
 });
 
-// ── 2. MEMORY.md NO ENTRA EN EL TOPE ────────────────────────────────────────────────────────
+// ── 2. MEMORY.md en el cálculo de topes ──────────────────────────────────────
 
 test("la memoria del agente NO cuenta para el tope: no puede bloquear la siembra de los siete", () => {
-  /*
-   * `MEMORY.md` es del agente, no tiene tope y CRECE — es lo que va aprendiendo. Contándolo, un
-   * alias con memoria larga se queda sin poder recibir NI SU IDENTIDAD, y el error nombra a
-   * `MEMORY.md`, o sea que invita al operador a podar la memoria de un compañero para desatascar
-   * un despliegue. Ese borrado es irreversible desde dentro del contenedor.
-   */
-  const memoriaEnorme = "recuerdo. ".repeat(20_000); // ~200.000 unidades, muy por encima del total
+  const memoriaEnorme = "recuerdo. ".repeat(20_000); // ~200.000 unidades
   const enDisco = new Map([["MEMORY.md", memoriaEnorme]]);
   const generado = ficherosDelArnes("openclaw", contexto(perfil({ purpose: "reparo Cauce" })), enDisco);
 
@@ -104,23 +80,15 @@ test("la memoria del agente NO cuenta para el tope: no puede bloquear la siembra
 });
 
 test("CONTROL NEGATIVO: lo que SÍ escribimos sigue sujeto al tope", () => {
-  // Si el arreglo de arriba se hubiera hecho quitando la comprobación en vez de saltando los
-  // ficheros del agente, esto seguiría verde y el tope no protegería nada.
   assert.throws(
     () => ficherosDelArnes("openclaw", contexto(perfil({ purpose: "x".repeat(TOPES_OPENCLAW.porFichero + 1) }))),
     (error: unknown) => error instanceof ErrorDeTopeDelArnes && error.fichero === "SOUL.md",
   );
 });
 
-// ── 3. LA GUARDA DE DUEÑO ───────────────────────────────────────────────────────────────────
+// ── 3. Guarda de pertenencia de bloque ───────────────────────────────────────
 
-test("no se pisa el bloque de OTRO alias: kratos y atlas comparten el mismo inodo", () => {
-  /*
-   * Medido el 24-ago-2026: `kratos` y `atlas` comparten `$HOME` y su `AGENTS.md` es el MISMO
-   * inodo, 12.942 bytes en los dos. Sin guarda, los dos escriben en cada turno y el fichero
-   * oscila entre dos identidades con `escribir: true` siempre: ninguno tiene nunca su perfil.
-   * `sembrarContextoFijo` —el hermano de este módulo, para el bloque A— ya se negaba por esto.
-   */
+test("no se pisa el bloque de OTRO alias: aliases con home compartido", () => {
   const deKratos = ficherosDelArnes(
     "codex", contexto(perfil({ purpose: "soy kratos" }, "kratos")),
   );
@@ -137,8 +105,6 @@ test("no se pisa el bloque de OTRO alias: kratos y atlas comparten el mismo inod
 });
 
 test("CONTROL NEGATIVO: el MISMO alias sí actualiza su propio bloque", () => {
-  // Una guarda que no dejara escribir a nadie también pasaría la prueba de arriba, y entonces el
-  // perfil no llegaría jamás a ningún fichero.
   const primero = ficherosDelArnes("codex", contexto(perfil({ purpose: "antes" }, "kratos")));
   const enDisco = new Map([["AGENTS.md", de(primero, "AGENTS.md").texto]]);
   const segundo = ficherosDelArnes("codex", contexto(perfil({ purpose: "después" }, "kratos")), enDisco);
@@ -171,7 +137,6 @@ test("un perfil vacío de OTRO alias no retira el bloque administrado del dueño
 });
 
 test("CONTROL NEGATIVO: dos alias del MISMO nombre en inquilinos distintos no se confunden", () => {
-  // El dueño es `inquilino/alias`, no `alias`: dos clientes pueden tener un `argos` cada uno.
   const dePablo = ficherosDelArnes("codex", contexto({
     ...perfil({ purpose: "el argos de Pablo" }, "argos"), tenant_id: "Pablo",
   }));
@@ -180,18 +145,9 @@ test("CONTROL NEGATIVO: dos alias del MISMO nombre en inquilinos distintos no se
   assert.equal(de(deSteven, "AGENTS.md").escribir, false);
 });
 
-// ── 4. NADA DE FICHEROS CON SÓLO MECÁNICA ───────────────────────────────────────────────────
+// ── 4. Generación sin campos autorados ───────────────────────────────────────
 
 test("un perfil SIN NADA autorado no escribe ningún fichero, tampoco en openclaw", () => {
-  /*
-   * Medido sobre `argos`, que el 24-ago no tenía NINGUNO de los siete ficheros: `claude` y `codex`
-   * no escribían nada —`componerBloqueDePerfil` corta con `hayAutorado`— y `openclaw` escribía
-   * `AGENTS.md` (417 caracteres) y `TOOLS.md` (228) con sólo mecánica dentro: permisos, contenedor,
-   * alias alcanzables y cuotas. Tres arneses, dos criterios para el mismo perfil vacío.
-   *
-   * Es el «ruido con forma de contrato» que el propio comentario del compilador dice que se niega
-   * a emitir. La prueba del perfil vacío que había sólo miraba `SOUL.md`, así que no lo veía.
-   */
   const generado = ficherosDelArnes("openclaw", contexto(perfil({})));
   for (const fichero of generado.filter((f) => f.politica === "bloque-gestionado")) {
     assert.equal(fichero.escribir, false, `${fichero.nombre} se iba a escribir sin nada autorado`);
@@ -200,15 +156,6 @@ test("un perfil SIN NADA autorado no escribe ningún fichero, tampoco en opencla
 });
 
 test("los ficheros del agente SÍ se crean vacíos cuando faltan, y eso no es lo mismo", () => {
-  /*
-   * `MEMORY.md` y `HEARTBEAT.md` van por la política `solo-si-falta`, que es una decisión distinta
-   * y deliberada: crear un fichero VACÍO no le enseña nada al agente —no hay encabezado hueco que
-   * leer— y `openclaw` los espera. Para `argos`, que el 24-ago no tenía ninguno de los siete, eso
-   * es la diferencia entre arrancar con los ficheros que su arnés busca y arrancar sin ellos.
-   *
-   * Va aparte de la prueba de arriba porque son dos reglas, y meterlas en un mismo bucle haría que
-   * relajar una relajara la otra sin que nadie lo notara.
-   */
   const generado = ficherosDelArnes("openclaw", contexto(perfil({})));
   for (const nombre of ["MEMORY.md", "HEARTBEAT.md"]) {
     const fichero = de(generado, nombre);
@@ -228,10 +175,6 @@ test("CONTROL NEGATIVO: si el fichero del agente YA existe, no se toca ni se ree
 });
 
 test("CONTROL NEGATIVO: con UNA responsabilidad, AGENTS.md sólo lleva reglas autoradas", () => {
-  /*
-   * Permisos, destinos y montaje se resuelven en vivo. Congelarlos junto al perfil autorado haría
-   * que una revocación posterior dejara el disco afirmando lo contrario.
-   */
   const generado = ficherosDelArnes("openclaw", contexto(perfil({ responsibilities: ["reparar Cauce"] })));
   const agents = de(generado, "AGENTS.md");
   assert.equal(agents.escribir, true);
@@ -251,18 +194,9 @@ test("CONTROL NEGATIVO: sin herramientas declaradas TOOLS.md no se escribe, con 
   assert.ok(!tools.texto.includes("saldantia"), "congeló las cuotas dinámicas");
 });
 
-// ── 5. EL TOPE SE MIDE SOBRE EL TEXTO FINAL ─────────────────────────────────────────────────
+// ── 5. Medición de topes sobre texto consolidado ─────────────────────────────
 
 test("el tope se mide sobre el fichero ENTERO, no sólo sobre nuestro bloque", () => {
-  /*
-   * Es la propiedad que el comentario de `comprobarTopes` declara con todas las letras —«un bloque
-   * de 10.000 dentro de un fichero que una persona ya llenó con 55.000 pasa de largo si se mide
-   * sólo lo nuestro, y el que no arranca es el agente»— y que NO tenía prueba: mutando el medidor
-   * para contar sólo el bloque, los 20 casos seguían en verde.
-   *
-   * No la tenía porque un perfil válido (tope 24.000) nunca llega solo a 60.000: la guarda SÓLO
-   * puede dispararse en el caso del fichero ya lleno por una persona, que es justo el que faltaba.
-   */
   const humano = "y".repeat(TOPES_OPENCLAW.porFichero - 500);
   const enDisco = new Map([["SOUL.md", humano]]);
   assert.throws(
@@ -274,8 +208,6 @@ test("el tope se mide sobre el fichero ENTERO, no sólo sobre nuestro bloque", (
 });
 
 test("CONTROL NEGATIVO: el mismo bloque en un fichero vacío NO se pasa de tope", () => {
-  // Sin esto, la prueba de arriba pasaría con una guarda que rechazara cualquier bloque grande, y
-  // no estaríamos midiendo «el texto final» sino «el bloque».
   const generado = ficherosDelArnes("openclaw", contexto(perfil({ purpose: "x".repeat(1_000) })));
   assert.equal(de(generado, "SOUL.md").escribir, true);
 });

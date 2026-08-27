@@ -12,9 +12,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-// 🔴 La piel del terminal, EMPAQUETADA. Sin este import la CSS que xterm inyecta en tiempo de
-// ejecución la tira la CSP (`style-src 'self'`) y la TUI se ve negro sobre negro y en serif. El
-// porqué entero está en la cabecera del fichero.
+// Estilos empaquetados para compatibilidad con CSP
 import './xterm-csp.css';
 
 export type PtyChannelState = 'connecting' | 'attaching' | 'open' | 'closed' | 'error';
@@ -96,17 +94,7 @@ export function websocketUrl(path: string): string {
 }
 
 /**
- * **El terminal es OSCURO siempre, y a propósito.**
- *
- * Esto NO es una preferencia estética: es lo único correcto. Lo que se pinta acá no lo compone la
- * consola, lo compone la TUI del agente —tmux, Claude Code, codex— con la paleta ANSI de 16
- * colores pensada para fondo oscuro. Con el tema claro puesto (que es lo que hereda un navegador
- * recién abierto, sin tocar nada), el fondo pasaba a `#f6f8fb` y esos mismos ANSI quedaban en
- * amarillos y cianes ilegibles sobre blanco. Se vio MIRANDO la captura: el texto del panel de
- * salva sobre fondo casi blanco, con los colores del agente desaparecidos.
- *
- * Un espejo no reinterpreta lo que refleja. El resto de la consola sigue su tema; la superficie
- * del terminal, no.
+ * Paleta de colores para emulación de terminal con soporte ANSI sobre fondo oscuro.
  */
 export const TEMA_TERMINAL = {
   background: '#0a0e16',
@@ -123,7 +111,7 @@ export const TEMA_TERMINAL = {
  * `JetBrains Mono` iba primera y no viaja en el bundle, así que en cualquier navegador sin ella
  * instalada la cadena caía en la `monospace` genérica del navegador.
  *
- * 🔴 Se declara UNA vez y se usa DOS: como opción de xterm (de ahí sale la medición de la celda) y
+ * Se declara UNA vez y se usa DOS: como opción de xterm (de ahí sale la medición de la celda) y
  * como variable `--pty-fuente` en el atributo `style` del nodo (de ahí sale lo que se PINTA, ver
  * `xterm-csp.css`). Si las dos no dijeran lo mismo, la geometría se calcularía con una letra y se
  * dibujaría con otra: columnas que no cuadran con lo que se lee.
@@ -146,7 +134,7 @@ const CUERPO_BASE = 13;
 /**
  * El suelo del cuerpo de letra, y por qué es 10 y no 7.
  *
- * 🔴 Bajar la letra para no perder columnas sólo paga MIENTRAS SE PUEDA LEER. Con el suelo en 7 px,
+ * Bajar la letra para no perder columnas sólo paga MIENTRAS SE PUEDA LEER. Con el suelo en 7 px,
  * medido en Chrome a 360x800 contra producción: el terminal quedaba a 7 px y entraban 65 columnas
  * —o sea que la TUI se cortaba IGUAL (hacen falta 80), y encima ya no se leía—. Se perdía por los
  * dos lados: ni se veía entero ni se veía. Con el suelo en 10 px entran ~43 columnas, se corta lo
@@ -322,7 +310,7 @@ function pintarPiel(entry: PtyEntry): void {
 /**
  * **Un documento que le niega a xterm el `<style>`, y nada más que eso.**
  *
- * 🔴 `pintarPiel` y `xterm-csp.css` arreglaron el CONTENIDO —lo que esas reglas decían viaja ahora
+ * `pintarPiel` y `xterm-csp.css` arreglaron el CONTENIDO —lo que esas reglas decían viaja ahora
  * en un fichero que la CSP permite— pero no la INYECCIÓN. El renderer DOM de xterm crea dos
  * `<style>` (`_injectCss` para tema y letra, `_updateDimensions` para la celda) y los reescribe
  * con cada cambio de tema, de fuente o de cuerpo. Con `style-src 'self'` puesta el navegador los
@@ -480,7 +468,7 @@ function ajustarGeometria(entry: PtyEntry): void {
 /**
  * Le dice al agente el tamaño de la ventana, **sólo cuando cambió de verdad**.
  *
- * 🔴 La guarda de igualdad no es una optimización. El extremo de allá contesta cada trama con
+ * La guarda de igualdad no es una optimización. El extremo de allá contesta cada trama con
  * `ioctl(TIOCSWINSZ)` (`ops/pty-agent/cauce_pty_agent.py`), y `TIOCSWINSZ` **manda `SIGWINCH`** al
  * grupo en primer plano aunque las medidas sean idénticas: no hay comprobación de igualdad ni en
  * el agente ni en el kernel. Y quien dispara esto es un `ResizeObserver`, que late con cada
@@ -917,7 +905,7 @@ export function readPtySession(sessionId: string): PtySessionView {
 /**
  * Moves the live terminal node into the panel React just rendered.
  *
- * 🔴 **Y observa el HUECO, no el terminal.** El `ResizeObserver` vigilaba `entry.container`, que
+ * Y observa el HUECO, no el terminal.** El `ResizeObserver` vigilaba `entry.container`, que
  * es el nodo del propio terminal — y el alto de ese nodo lo decide xterm a partir de sus filas,
  * no el layout. O sea que se estaba observando la consecuencia en vez de la causa: el nodo nunca
  * encogía solo, el observador no disparaba nunca, y el terminal se quedaba con las filas de la

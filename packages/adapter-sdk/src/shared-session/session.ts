@@ -27,12 +27,7 @@ import {
 } from "./types.js";
 
 /**
- * Cómo se levanta y cómo se mira la sesión compartida de un alias. UNA sola implementación.
- *
- * El dueño ya se quejó de tener sistemas compitiendo ("unifica tanto CLI"), así que `cauce <alias>`
- * y el adaptador no tienen dos rutinas parecidas: las dos llaman a lo de acá. El CLI lo alcanza
- * ejecutando `dist/src/bin/shared-session.js` dentro del contenedor, que es el mismo código que el
- * adaptador llama en proceso.
+ * Gestión e inspección de sesiones tmux compartidas para los distintos harnesses.
  */
 
 export interface SharedSessionSpec {
@@ -43,27 +38,10 @@ export interface SharedSessionSpec {
   /** Binario del harness. Se separa para poder apuntarlo a un doble en las pruebas. */
   readonly command?: string;
   /**
-   * Variables que la TUI tiene que ver SÍ O SÍ, vaya quien vaya a crear la sesión.
-   *
-   * Se aplican en el ARGV del panel (`env K=V … exec …`) y no por el entorno del proceso que llama
-   * a tmux. La diferencia es total y está medida: el servidor tmux se queda con el entorno del
-   * PRIMER cliente que lo crea y DESCARTA el de los siguientes. Prueba en `ws-prizma` el
-   * 2026-07-30, socket aislado: el cliente A creó el servidor con `MARCA=servidor-A`, el cliente B
-   * creó otra sesión con `MARCA=cliente-B`, y los paneles de AMBAS sesiones vieron `servidor-A`.
-   *
-   * Consecuencia real: cualquier variable que ponga el supervisor es INERTE si el dueño abrió su
-   * terminal primero. Ya hay una víctima comprobada: `supervisor.sh` exporta
-   * `TERM=xterm-256color` con el comentario «sin él la TUI se dibuja rota para el dueño», y el
-   * servidor tmux de socrates no tiene `TERM` en absoluto. Como los dos creadores —el adaptador y
-   * `cauce <alias>`— pasan por aquí, el argv es el único punto que tmux no puede descartar.
+   * Variables de entorno aplicadas en el comando de arranque del panel (`env K=V ...`).
    */
   readonly environment?: Readonly<Record<string, string>>;
-  /**
-   * Cómo se REANUDA la conversación anterior al crear el panel. Ausente = arrancar siempre pelado.
-   *
-   * Ausente es lo que hacía el código hasta el 2026-08-06, y lo que le costó a kant 38 MB de
-   * conversación. Ver `ResumeSpec`.
-   */
+  /** Especificación de reanudación de conversación previa si existe. Ver `ResumeSpec`. */
   readonly resume?: ResumeSpec;
 }
 
@@ -76,13 +54,7 @@ export interface EnsureOptions {
   /** Ancho/alto con que nace la sesión sin clientes enganchados. */
   readonly width?: number;
   readonly height?: number;
-  /**
-   * Dónde se cuenta lo que pasó con la reanudación.
-   *
-   * No es decorativo: si el `resume` falla, el panel del dueño vuelve en blanco y desde fuera eso
-   * es indistinguible de un panel que nunca tuvo contexto. Sin esta línea, la única señal de que
-   * la conversación se perdió sería que el agente contesta raro.
-   */
+  /** Función de registro para eventos de reanudación o incidencias. */
   readonly log?: (detail: string) => void;
 }
 
@@ -99,21 +71,9 @@ export interface EnsureResult {
   readonly detail: string;
   /** El preflight fue interrumpido; no es una degradación ni autoriza a ejecutar el fallback. */
   readonly cancelled?: boolean;
-  /**
-   * Qué falló exactamente, para que el aviso que lee el dueño no mienta.
-   *
-   * "no hay sesión" y "la sesión está pero la TUI no responde" se arreglan de formas distintas, y
-   * deducirlo de si hubo que crearla daba la etiqueta equivocada en el caso más frecuente: sesión
-   * viva con la TUI muerta dentro.
-   */
+  /** Causa del fallo durante el proceso de ensure. */
   readonly failure?: EnsureFailure;
-  /**
-   * True cuando esta llamada creó el panel REANUDANDO la conversación anterior.
-   *
-   * Sólo tiene sentido junto a `created: true`. Lo necesita quien avisa al dueño: "hubo que crear
-   * la sesión" significa cosas opuestas según si la conversación volvió entera o empezó de cero, y
-   * decir lo segundo cuando pasó lo primero es la clase de mentira que ya se pagó dos veces.
-   */
+  /** Indica si la sesión fue creada reanudando una conversación previa. */
   readonly resumed?: boolean;
 }
 
@@ -168,17 +128,7 @@ export function transcriptDirectoryIn(configDirectory: string, workspace: string
 }
 
 /**
- * Levanta la sesión si no está, y no toca nada si ya está.
- *
- * La TUI se lanza con `bash -lc` a propósito: tiene que arrancar con el MISMO entorno que cuando
- * el dueño la abre a mano (perfil, `$CODEX_HOME`, `PATH` del contenedor). El adaptador corre bajo
- * `env -i` con una lista corta de variables, y heredar eso a pelo daría una TUI distinta de la que
- * el dueño conoce.
- *
- * Y cuando hay que crearla, nace REANUDANDO la conversación anterior si la había. Rehacer el panel
- * no puede costarle al alias su memoria: el 2026-08-06 le costó a kant 38 MB. Las dos redes que
- * protegen eso están comentadas donde ocurren; la regla que las ordena es que un panel sin contexto
- * es malo y uno que no arranca es peor, porque un alias mudo es el fallo más caro de la flota.
+ * Garantiza que la sesión compartida esté creada y lista para recibir comandos.
  */
 export async function ensureSharedSession(
   tmux: TmuxController,
@@ -193,12 +143,7 @@ export async function ensureSharedSession(
     return inspectExistingSession(tmux, spec, options, session, existingId);
   }
 
-  // PRIMERA red: no se intenta reanudar lo que no existe.
-  //
-  // `codex resume --last` y `claude --continue` fallan de formas distintas cuando no hay nada que
-  // reanudar —codex 0.145.0 abre una conversación nueva y sigue vivo; claude 2.1.223 escribe «No
-  // conversation found to continue» y sale 1, matando el panel—, así que no se puede confiar en
-  // que el harness aguante. Preguntar antes cuesta leer la cabecera de un fichero.
+  // Verifica si existe conversación previa antes de intentar reanudar.
   if (await hasResumableConversation(spec, options)) {
     if (signalAborted(options.signal)) return cancelledEnsure(false);
     const attempt = await startTui(tmux, spec, options, spec.resume?.args);
@@ -214,12 +159,7 @@ export async function ensureSharedSession(
       };
     }
     if (attempt.result.cancelled === true) return attempt.result;
-    // SEGUNDA red: si el panel no quedó EN PIE, se rehace en blanco.
-    //
-    // La condición es que el panel esté MUERTO, no que haya tardado: una conversación grande puede
-    // tardar en dibujarse —la de kant pesaba 38 MB— y matar un panel que estaba reanudando bien
-    // sería cometer con las manos el mismo borrado que esto viene a evitar. Un panel vivo aunque
-    // lento se deja en paz y se reporta como siempre.
+    // Si la reanudación falló y el panel murió, se recrea en blanco.
     if (!attempt.paneGone) return attempt.result;
     options.log?.(
       `la reanudación de ${spec.alias} no dejó la TUI en pie (${attempt.result.detail});`
@@ -514,12 +454,7 @@ function mentionsExecutable(command: string, executable: string): boolean {
 }
 
 /**
- * ¿Hay conversación previa Y forma de pedirla?
- *
- * Falla cerrado hacia el comportamiento de siempre: si el detector revienta —directorio ilegible,
- * permisos, un rollout corrupto— se arranca en blanco, que es exactamente lo que hacía el código
- * antes de esto. Lo que NO puede pasar es que una excepción de un detector se lleve por delante el
- * arranque del panel entero y deje al alias mudo.
+ * Comprueba si existe una conversación previa reanudable.
  */
 async function hasResumableConversation(
   spec: SharedSessionSpec,
@@ -709,12 +644,7 @@ async function startTui(
       },
     };
   }
-  // Sin PID no hay panel, y sin panel no hay TUI: nunca "listo".
-  //
-  // Esto era un éxito silencioso medido, no una hipótesis. Cuando la ventana de la TUI moría al
-  // nacer, `waitForTui` llegaba a ver el panel un instante, devolvía `true`, y `ensure` contestaba
-  // `ready:true` sobre una sesión sin TUI dentro. El adaptador y `cauce <alias>` daban por buena
-  // una sesión compartida inexistente: exactamente el fallo que este trabajo existe para eliminar.
+  // Sin PID o si no llegó a estar lista, se reporta como no lista.
   if (waited !== "ready") {
     return {
       ready: false, created: created.created, paneGone: false,
@@ -741,10 +671,6 @@ async function startTui(
 
 /**
  * El prefijo `env K=V …` que fija el entorno del panel, ya escapado para `bash -lc`.
- *
- * Devuelve un error en vez de descartar en silencio una variable con nombre inválido: una TUI que
- * arranca con menos entorno del que se le pidió es exactamente la clase de degradación muda que
- * este mecanismo existe para eliminar.
  */
 export function paneEnvironmentPrefix(
   environment: Readonly<Record<string, string>> | undefined,
@@ -768,11 +694,6 @@ function shellQuote(value: string): string {
 
 /**
  * Los argumentos de reanudación, ya listos para pegarlos detrás del binario.
- *
- * Van SIN comillas y con una lista blanca estrecha, no por miedo al shell sino porque un argumento
- * raro acá sólo puede venir de un error de programación: los únicos valores legítimos son
- * `resume --last` y `--continue`. Falla cerrado —se arranca en blanco— en vez de mandarle al shell
- * algo que nadie escribió a propósito.
  */
 export function resumeArgumentSuffix(
   args: readonly string[] | undefined,
@@ -830,20 +751,12 @@ async function createSession(
   }
   const env = environment.prefix;
   const creationNonce = randomBytes(32).toString("hex");
-  // La reanudación es un subcomando del HARNESS, así que va pegada al binario y NO al prefijo
-  // `env K=V`: `env` se comería `--continue` como si fuera suyo.
   const resume = resumeArgumentSuffix(resumeArguments);
   if (!resume.ok) {
     return { ok: false, created: false, failure: "session_absent", detail: resume.detail };
   }
 
-  // Una ventana, un proceso: el binario del harness tal cual, igual que si lo abriera el dueño.
-  //
-  // codex tenía además una ventana `servidor` con `app-server --listen unix://` y arrancaba la TUI
-  // con `--remote`. Se retiró entera: el turno ya no entra por ese protocolo sino por la caja de
-  // entrada, así que el servidor, el socket, la espera a que aceptara y la ventana extra eran
-  // cuatro piezas que sólo podían fallar. Y fallaron: el 2026-07-31 `turn/start` se quedó colgado
-  // sin que el log del servidor registrara nada.
+  // Lanza el binario del harness en la ventana principal.
   const result = await tmux.run([
     "new-session", "-d", "-P", "-F", "#{session_id}", "-s", session, "-n", TUI_WINDOW,
     "-c", spec.workspace, "-x", width, "-y", height,
@@ -854,9 +767,6 @@ async function createSession(
     if (signalAborted(options.signal)) {
       return { ok: false, created: false, cancelled: true, detail: "preflight cancelado" };
     }
-    // Dos `ensure` pueden observar ausencia a la vez. `new-session -s` serializa la creación: el
-    // perdedor recibe duplicate session. No se interpreta el stderr (cambia por versión); se
-    // resuelve el nombre de nuevo y se acredita lo que ganó.
     const winnerId = await exactSessionTarget(tmux, session);
     if (signalAborted(options.signal)) {
       return {
@@ -910,9 +820,6 @@ async function createSession(
     };
   }
 
-  // El nonce se fija en la MISMA cola de comandos que `new-session`. Después se captura la
-  // generación completa; cualquier rename/respawn entre ambos pasos hace fallar cerrado y nunca
-  // produce un testigo con el que el cleanup pueda matar otra conversación.
   const creationMarker = await sessionOption(tmux, sessionId, CREATION_NONCE_OPTION);
   const createdPane = await inspectSolePaneHarness(tmux, sessionId, TUI_WINDOW);
   const ownership: CreatedSessionOwnership | undefined = creationMarker.ok
@@ -932,13 +839,8 @@ async function createSession(
     };
   }
 
-  // El nombre no basta: una sesion sobrevive a cambios de configuracion y antes podia hacer que
-  // Salva siguiera atendiendo con claude aunque el inventario ya exigiera codex. La identidad se
-  // graba en la sesion que acabamos de crear, antes de declararla lista.
   const sessionTarget = await exactSessionTarget(tmux, session);
   if (sessionTarget !== sessionId) {
-    // Si nuestro `$N` ya murió, `startTui` tiene que observarlo para poder rehacer en blanco. Si
-    // otro `$M` tomó el nombre, jamás se marca ni se mata ese reemplazo.
     if (sessionTarget === undefined) {
       return {
         ok: true,
@@ -959,9 +861,6 @@ async function createSession(
   const harnessMarked = aliasMarked
     && await setSessionOption(tmux, sessionId, SESSION_HARNESS_OPTION, spec.harness);
   if (!harnessMarked) {
-    // Si el panel ya murio (caso `claude --continue` sin conversacion), se deja que `startTui`
-    // observe la desaparicion y aplique su fallback seguro. Si sigue vivo, no se mata: queda
-    // reportado como no acreditado para que una falla de metadatos nunca borre una conversacion.
     if (!await sessionIdStillNamed(tmux, session, sessionId)) {
       return {
         ok: true,
@@ -1001,22 +900,7 @@ function tmuxError(stderr: string): string {
 }
 
 /**
- * Espera a que la caja de entrada exista y esté vacía.
- *
- * No es un `sleep` fijo porque el arranque medido de claude va de 15 a 30 s y varía con la carga
- * del contenedor: un pegado que llega antes de que el lector de entrada esté listo se PIERDE sin
- * error —comprobado— y el turno se quedaría esperando una respuesta que nunca se pidió.
- *
- * Vale igual para codex desde que `inputBoxState` reconoce su cursor `›` y trata como VACÍO el
- * texto fantasma atenuado que dibuja cuando la caja está libre. Antes de eso, la caja de codex
- * parecía ocupada para siempre y todo turno degradaba a los 90 s.
- *
- * Distingue TRES desenlaces, y el del medio es nuevo: un panel MUERTO no se puede esperar. Antes
- * sólo se miraba la caja, y un panel que salía al instante —lo que hace `claude --continue` cuando
- * no hay nada que continuar— dejaba a `capturePane` devolviendo `undefined`, que `inputBoxState`
- * llama «ocupado». El resultado era esperar el plazo ENTERO (90 s por defecto) delante de una
- * sesión que ya no existía, y sólo después declararla ausente. Con la reanudación eso además
- * retrasaría 90 s el arranque en blanco de un alias que se quedó sin panel.
+ * Espera a que la TUI esté completamente inicializada y la caja de entrada disponible.
  */
 async function waitForTui(
   tmux: TmuxController,

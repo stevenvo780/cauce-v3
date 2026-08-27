@@ -9,7 +9,7 @@ import { LiveFleetPage } from './LiveFleetPage';
 /**
  * **LA VISTA QUE NO TENÍA SALIDA.**
  *
- * 🔴 Medido el 2026-08-23 en producción, con el hipervisor robándole el 90% de la CPU a la
+ * 
  * máquina del gateway: tras tres HTTP 500 en `/v3/auth/session`, `/live` se quedó **180 s** en
  * «Leyendo la actividad de la flota…» con un panel blanco y nada más. Sin error, sin botón, sin
  * límite. Y la portada, ante el mismo fallo, sí ofrecía «Reintentar»: dos vistas de la misma

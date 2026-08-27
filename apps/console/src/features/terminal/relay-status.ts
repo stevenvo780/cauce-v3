@@ -17,39 +17,7 @@ import type { TerminalCapability } from '../../api/types';
 export type TerminalRelayStatus = 'checking' | 'available' | 'unavailable';
 
 /**
- * 🔴 **Por qué no se puede usar la terminal. Añadido el 2026-08-22, y por una mentira medida.**
- *
- * Con una cuenta SIN permiso `control`, `GET /v3/console/terminal/capability` responde **403**:
- * la ruta exige `requireOperatorPermission(actor, 'control')` ANTES de mirar si el backend PTY
- * está configurado (`services/gateway/src/app.ts`). Es el MISMO gate que `/v3/console/config`.
- * Esta función leía cualquier error como ausencia y a Miguel le decía, palabra por palabra, «El
- * relay de terminales no está desplegado en este stack. (HTTP 403 al consultarlo.)» con el relay
- * desplegado y sano al otro lado. A `/config`, con el mismo 403, la consola ya le decía la verdad.
- *
- * Se distinguen sólo las dos causas que la respuesta permite distinguir:
- * - `sin-permiso`: 403. Es del RBAC, no de la topología.
- * - `no-desplegado`: 404/501 —ya normalizados a `available:false` por `getTerminalCapability`— y
- *   un `available:false` declarado por el servidor.
- *
- * - `sin-comprobar`: un upstream 502/503/504, un fallo de transporte o cualquier otra respuesta
- *   que no acredita topología. No poder alcanzar algo no demuestra que no esté desplegado.
- */
-/**
- * 🔴 **`sin-comprobar` añadido el 2026-08-23, y por la MISMA clase de mentira.**
- *
- * Medido en producción: la vista mostraba «Canal PTY no disponible en este stack — El relay de
- * terminales no está desplegado en este stack. (HTTP 400 al consultarlo.)». Ninguna de las dos
- * frases se seguía de un 400: un 400 sólo prueba que la ruta EXISTE y que rechazó la petición.
- * Culpar al despliegue manda al operador a mirar contenedores mientras el fallo está en la
- * consola —que fue exactamente lo que pasó— así que cualquier respuesta que no signifique
- * ausencia se dice como lo que es: no se pudo comprobar.
- *
- * Qué sí significa cada cosa, y nada más que eso:
- * - `no-desplegado`: 404/501 —ya normalizados a `available:false` por `getTerminalCapability`— o
- *   un `available:false` declarado por el servidor.
- * - `sin-permiso`: 403. Es del RBAC, no de la topología; el gate corre ANTES de mirar el backend.
- * - `sin-comprobar`: TODO lo demás, incluidos 502/503/504 y errores sin status. No se pudo
- *   completar la medición y no hay evidencia para afirmar ausencia.
+ * Causa identificada de no disponibilidad del relay de terminales.
  */
 export type TerminalRelayCause = 'no-desplegado' | 'sin-permiso' | 'sin-comprobar';
 

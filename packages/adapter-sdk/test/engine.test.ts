@@ -523,7 +523,7 @@ test("two human messages of the same conversation stay serialized", async () => 
     ...delivery("human-lane-second"),
     body: { prompt: "segunda pregunta" },
   });
-  // INTEGRACIÓN 2026-07-29: la segunda entrega ya no pasa por 'started' mientras hace fila —
+  // la segunda entrega ya no pasa por 'started' mientras hace fila —
   // se estaciona en 'accepted' y late ahí. `waitForQueued` es el reemplazo exacto de la vieja
   // `waitForStarted` para este caso: mismo punto del ciclo, señal correcta.
   await waitForQueued(context.store, "human-lane-second");
@@ -828,7 +828,7 @@ test("un 'done' sin reply ni delegacion falla, pero deja texto que la persona pu
   assert.equal(terminal?.phase, "failed");
   // Antes el codigo era MISSING_FINAL_REPLY y el evento viajaba SIN `output`. Eso dejaba
   // `deliveries.result` en NULL y `agentResponseText` sin nada que leer: el remitente recibia
-  // silencio. Medido el 2026-08-02: las cuatro preguntas de Miguel a janus del 27-jul quedaron
+  // silencio.  las cuatro preguntas de Miguel a janus del 27-jul quedaron
   // asi, `failed` con `result` NULL y sin respuesta posterior.
   assert.equal(terminal?.error?.code, "HARNESS_REPORTED_FAILURE");
   assert.equal(terminal?.error?.retryable, false);
@@ -2077,7 +2077,7 @@ test("out-of-order event receipts correlate by full event identity", async () =>
 });
 
 /**
- * CAMBIO DE CONTRATO DELIBERADO (2026-07-29). Antes esto separaba por `delivery.tenant_id`, que
+ * Antes esto separaba por `delivery.tenant_id`, que
  * es el tenant del EMISOR: la misma persona, en el mismo chat, hablándole al mismo agente, caía
  * en sesiones distintas según qué agente publicara la entrega. Esa separación no era una
  * frontera — el test de abajo ("trusted bridge tenant…") exige lo contrario para la misma
@@ -2192,7 +2192,7 @@ test("bridge tenant no longer splits one conversation in two", async () => {
 });
 
 /**
- * CAMBIO DE CONTRATO DELIBERADO (2026-07-27). Antes esto exigía que una `agent.response`
+ * Antes esto exigía que una `agent.response`
  * cross-tenant cayera en la MISMA sesión nativa que el pedido del humano. Esa igualdad era
  * exactamente el bloqueo: el candado de sesión es FIFO estricta, así que la respuesta de la
  * delegación se quedaba con la sesión de la conversación durante toda su corrida y el dueño
@@ -2292,8 +2292,8 @@ test("stale claim token neither executes nor acknowledges the current event", as
 });
 
 /**
- * CAMBIO DE CONTRATO DELIBERADO (2026-07-29). Este test exigía lo contrario desde 44521b6:
- * "attempts 1 and 2 must have different session IDs". Medido sobre prod el 2026-07-29, eso le
+ * Este test exigía lo contrario desde 44521b6:
+ * "attempts 1 and 2 must have different session IDs". 
  * pasaba a 1499 de 5312 entregas (28,2 %): el reintento le contestaba a la persona desde una
  * sesión sin memoria — el síntoma "se duplican las instancias" — y peor, esa sesión acumulaba un
  * intercambio real que la sesión principal nunca vería.
@@ -2478,7 +2478,7 @@ test("un cuerpo realmente vacio sigue siendo rechazado", async () => {
 });
 
 /**
- * DEFECTO B, medido el 2026-07-30 sobre una malla 5x4 en producción: el `agent.fanin` llegaba con
+ * DEFECTO B,  el `agent.fanin` llegaba con
  * las cuatro respuestas adentro y el coordinador escribía igual FALTA para tres de las cuatro.
  * La causa no era desatención: cada `agent.response` abre un turno propio que traía el pedido
  * original y UNA rama, sin ninguna noticia de las hermanas. Con esto el turno trae el estado del

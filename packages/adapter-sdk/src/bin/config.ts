@@ -134,11 +134,6 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
   rejectInlineSecrets(entry);
   onlyKeys(entry, new Set([
     "tenant",
-    // Sin esta clave, la rama `entry.room` de abajo era codigo muerto: `onlyKeys` rechazaba
-    // cualquier configuracion que nombrara `room`, asi que el modo `--config` no tenia forma
-    // de expresar la sala propia del agente y caia SIEMPRE al tenant. Es exactamente la
-    // identidad equivocada que 547eda3 vino a arreglar, sobreviviendo en el otro camino del
-    // mismo cargador.
     "room",
     "instance_id",
     "state_directory",

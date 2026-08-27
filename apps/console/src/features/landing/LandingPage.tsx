@@ -84,7 +84,7 @@ export function LandingPage() {
       />
 
       {/*
-        🔴 **Los números van PRIMERO.** Medido el 2026-08-23 a 1280×900: las bandas de aviso —ocho,
+        Los números van PRIMERO.**  las bandas de aviso —ocho,
         ~580 px— ocupaban la primera pantalla entera y los cuatro números quedaban CORTADOS por el
         borde inferior. Un resumen de conjunto cuyo resumen no se ve al entrar no es un resumen.
         Los avisos no se pierden ni se esconden: bajan una fila y se agrupan por destino.
@@ -167,7 +167,7 @@ export function LandingPage() {
       </div>
 
       {/*
-        🔴 Acá vivía el panel «El resto de la consola»: una lista con las siete entradas del menú,
+        Acá vivía el panel «El resto de la consola»: una lista con las siete entradas del menú,
         su icono, su rótulo y su motivo de inhabilitación… o sea, el MENÚ LATERAL otra vez, cinco
         centímetros a la derecha del menú lateral, ocupando media pantalla de la portada. Se retira.
         La lista vivía en `NAV_ENTRIES` (`nav.ts`) y la barra la sigue dibujando desde ahí, con la

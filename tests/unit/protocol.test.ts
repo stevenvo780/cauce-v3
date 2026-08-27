@@ -142,12 +142,8 @@ describe('versioned protocol schemas', () => {
 });
 
 /**
- * La señal con la que el bus distingue "esto lo mandó una persona" de "esto es un salto de una
- * cadena de agentes". No existía como concepto explícito y por eso el sistema no podía
- * distinguirlos: medido el 2026-07-27, 2.374 de 2.429 entregas de 12 h decían
- * `origin.adapter='telegram'` porque el origin se propaga sin tocarse en cada salto, y 2.374 de
- * 2.429 viajaban en `lane='interactive'` por la misma razón. Ninguno de los dos discriminaba
- * nada. `body.type`, en cambio, se reescribe en cada salto.
+ * Clasificación de mensajes agente-a-agente frente a tráfico de personas o externo
+ * mediante la discriminación explícita de `body.type`.
  */
 describe('agent-to-agent message classification', () => {
   it.each(['agent.message', 'agent.response', 'agent.fanin'])(
@@ -167,8 +163,7 @@ describe('agent-to-agent message classification', () => {
   });
 
   it('never classifies a malformed body as agent-to-agent', () => {
-    // El fallback tiene que ser "humano": tratar como humano algo que no lo era cuesta un turno
-    // de cola; tratar como agente el mensaje de una persona costó 114 minutos de espera.
+    // El fallback por defecto ante cuerpos inválidos es tráfico externo/humano.
     expect(isAgentToAgentBody(undefined)).toBe(false);
     expect(isAgentToAgentBody(null)).toBe(false);
     expect(isAgentToAgentBody('agent.message')).toBe(false);
@@ -180,15 +175,8 @@ describe('agent-to-agent message classification', () => {
   });
 
   /**
-   * LÍMITE CONOCIDO, escrito como test para que nadie vuelva a documentar lo contrario: la
-   * señal es falsificable HACIA ARRIBA. El guard sólo prohíbe declarar un tipo reservado; no
-   * exige que un agente marque los suyos, así que un agente autenticado con permiso 'route'
-   * puede publicar `{text}` sin `type` y quedar clasificado como humano.
-   *
-   * No se cierra derivando la clase del actor porque el actor no discrimina: el telegram-bridge
-   * publica con `actor_alias` igual al alias del propio agente, y `/v3/messages` y
-   * `/v3/console/messages` comparten handler y schema. Cerrarlo con los datos de hoy rompería
-   * en la dirección peligrosa, mandando humanos al carril de agentes.
+   * Límite documentado: un agente autenticado con permiso 'route' que publique sin un `type`
+   * reservado clasifica como tráfico externo/humano.
    *
    * Ver services/gateway/CONFIGURATION.md, sección "Límite conocido de la clasificación".
    */
@@ -205,9 +193,7 @@ describe('agent-to-agent message classification', () => {
 });
 
 /**
- * El campo con el que un adaptador dice "el harness ARRANCÓ", que es distinto de "la entrega fue
- * admitida". Tiene que ser OPCIONAL: los esquemas son `.strict()` y el adaptador valida cada
- * frame, así que un campo obligatorio nuevo rompería en lock-step a toda la flota vieja.
+ * Valida el marcador opcional `execution_started` en el esquema de ACK.
  */
 describe('optional execution-started ACK marker', () => {
   const base = {

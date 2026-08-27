@@ -1,5 +1,5 @@
 /**
- * La TUI en vivo: lo que Steven pidió y nunca se cumplió — "esta vista debería ser un stream de
+ * La TUI en vivo: lo que 
  * las TUI directamente".
  *
  * Cada caso positivo va con su CONTROL NEGATIVO en la misma corrida: el fixture cambia UNA sola
@@ -204,7 +204,7 @@ it('la shell sigue exigiendo motivo escrito a mano aunque la TUI se abra sola', 
 });
 
 /**
- * 🔴 **El 403 se lo tragaba la interfaz. Medido el 2026-08-23 contra producción.**
+ * El 403 se lo tragaba la interfaz. **
  *
  * Con kant: dos `403 {"error":"forbidden","message":"se requiere un token CSRF válido"}` seguidos
  * y el panel siguió diciendo «PTY ONLINE / ok» y «TUI EN VIVO». Cero cambio visible y cero aviso

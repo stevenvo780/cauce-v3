@@ -1,26 +1,5 @@
 /**
- * Traduce el markdown que escriben los agentes al HTML que Telegram sabe renderizar.
- *
- * El puente enviaba sin `parse_mode`, así que Telegram mostraba todo LITERAL: los `##` de los
- * encabezados, los `**` de las negritas y las vallas de código aparecían como caracteres sueltos
- * en medio del texto. Un informe técnico bien escrito —con encabezados, viñetas y una tabla—
- * llegaba al teléfono como un bloque ilegible. Medido el 2026-07-27 sobre los informes de la
- * flota: prácticamente todos usan al menos encabezados y negritas.
- *
- * Por qué HTML y no MarkdownV2: en MarkdownV2 hay quince caracteres que hay que escapar en todo
- * el texto, y uno solo sin escapar hace que Telegram rechace el mensaje entero con un 400. En HTML
- * alcanza con escapar tres (`&`, `<`, `>`) ANTES de inyectar las etiquetas que generamos nosotros;
- * como el texto del usuario nunca puede introducir una etiqueta, el resultado siempre está bien
- * formado.
- *
- * Aun así el envío es a prueba de fallos: quien llama debe reintentar en texto plano si Telegram
- * rechaza el HTML. Un mensaje feo es un problema; un mensaje que no llega es mucho peor, y esa es
- * la misma regla que rige el resto de este servicio.
- *
- * Telegram NO soporta encabezados, tablas ni listas anidadas: soporta un puñado de etiquetas
- * (`b`, `i`, `u`, `s`, `code`, `pre`, `a`, `blockquote`). Por eso esto no es "markdown a HTML"
- * genérico sino una traducción deliberada a lo que existe: encabezado → negrita, viñeta → •,
- * tabla → filas alineadas dentro de un bloque monoespaciado.
+ * Conversión de Markdown a subconjunto HTML compatible con Telegram.
  */
 
 const ESCAPES: ReadonlyArray<readonly [RegExp, string]> = [

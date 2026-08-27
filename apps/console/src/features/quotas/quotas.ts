@@ -151,7 +151,7 @@ export function formatUnits(used: number | null | undefined, limit: number | nul
  * ============================================================================================ */
 
 /**
- * 🔴 **«AGOTADO» y «100% libre», en la misma línea.** Medido el 2026-08-23 en `/accounts`: la
+ * «AGOTADO» y «100% libre», en la misma línea.**  la
  * tarjeta de `codex` pintaba la severidad PEOR de sus grupos (AGOTADO) al lado del
  * `effective_remaining_percent` que manda el servidor (100%), mientras sus propias filas decían
  * «Codex Pro 0% libre» y «codex_bengalfox 100% libre». Un operador que lee la cabecera y se va

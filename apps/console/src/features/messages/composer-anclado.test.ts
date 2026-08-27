@@ -5,19 +5,7 @@ import { VAR_ALTO_COMPOSITOR } from './ConversationPane';
 import { VAR_TOPE_MENSAJERIA } from './MessagesPage';
 
 /**
- * EL COMPOSITOR ANCLADO EN PANTALLA ESTRECHA, COMPROBADO SOBRE LA HOJA.
- *
- * Steven, textual: «es horrible… toca scrollear un montón para ver dónde está el envío de
- * mensaje». El arreglo vive entero en `messages.css` y no lo puede comprobar jsdom: vitest corre
- * sin layout, así que ninguna de las 620 pruebas de esta consola mira una sola regla y un
- * `position` que no ancla a nada pasaría verde por unanimidad.
- *
- * Este fichero comprueba la hoja como texto —lo barato que sí atrapa el fallo— y cada afirmación
- * lleva su CONTROL NEGATIVO POR MUTACIÓN: se le da de comer la hoja rota a propósito y se exige
- * que el comprobador la marque. Un guardia que aprueba cualquier cosa es peor que no tenerlo.
- *
- * Lo que NO prueba, y hay que decirlo: que en un navegador real el compositor quede efectivamente
- * a la vista. Eso se mide con un navegador a 360 px, no acá.
+ * Pruebas estructurales de CSS para asegurar el anclaje del compositor en pantallas móviles.
  */
 
 const RAIZ = resolve(process.cwd(), 'src');

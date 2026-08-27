@@ -8,7 +8,7 @@ import { compactId, safeAuditDecision } from '../../lib';
 import { readableAuditSummary } from './audit-summary';
 
 /**
- * **La auditoría** — desde el 2026-08-22 es la segunda pestaña de «Señales y auditoría», no una
+ * **La auditoría** — no una
  * ruta propia.
  *
  * Era `/audit`, y estaba al lado de `/observability` en el menú. Que fueran dos entradas lo tenía

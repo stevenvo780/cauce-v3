@@ -18,29 +18,13 @@ export interface TerminalConfig {
   readonly wsPath: string;
   /** HKDF master secret; per-alias keys are derived from it, it never leaves this process. */
   readonly ticketKey: Buffer;
-  /**
-   * Opaque bearer terminal-relay presents on /v3/terminal/relay/*.
-   *
-   * El MISMO secreto viaja en el sentido contrario: el gateway lo presenta al relay para leer un
-   * fichero de gobierno (`POST /v3/terminal/relay/read`). Es un secreto compartido entre dos
-   * procesos, no la credencial de uno de ellos, así que no hace falta un segundo token.
-   */
+  /** Token de autenticación compartido entre gateway y terminal-relay. */
   readonly relayToken: string;
   /** Authenticated relay mTLS leaf digests allowed to publish presence or own a session. */
   readonly relayInstanceIds: ReadonlySet<string>;
-  /**
-   * Origen HTTPS del lado navegador del terminal-relay, para pedirle lecturas de gobierno.
-   *
-   * Opcional a propósito: sin esto el plano de terminal arranca exactamente igual que hoy y la
-   * ruta de Directiva se registra igual, contestando que no se pudo leer. Un despliegue a medias
-   * tiene que degradar con una razón, no impedir el boot del gateway entero.
-   */
+  /** Origen HTTPS del terminal-relay para solicitudes de lectura de gobierno. */
   readonly relayUrl?: string;
-  /**
-   * Material de cliente con el que el gateway se presenta al relay. El listener del relay exige
-   * certificado (`requestCert`/`rejectUnauthorized`), así que en producción esto hace falta de
-   * verdad; si falta, cada lectura falla explicando el handshake en vez de mentir.
-   */
+  /** Material de cliente mTLS para autenticación contra el listener del relay. */
   readonly relayClientCertFile?: string;
   readonly relayClientKeyFile?: string;
   /** CA que firma el certificado de servidor del relay, si no está en el almacén del sistema. */

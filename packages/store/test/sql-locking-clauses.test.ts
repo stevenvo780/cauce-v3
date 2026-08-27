@@ -4,16 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Guardia de contrato SQL, sin base de datos.
+ * Guardia estática de sintaxis SQL:
  *
- * PostgreSQL rechaza `FOR SHARE`/`FOR UPDATE` en la misma consulta que una función de ventana:
- * "FOR SHARE is not allowed with window functions". El rechazo es de PARSEO, así que la consulta
- * no falla con ciertos datos: falla siempre, y sólo se descubre cuando el camino se ejecuta de
- * verdad en producción. El 2026-07-26 una consulta así en `materializeAgentResponse` abortó la
- * transacción del tick del reaper 99.241 veces en 24 h y dejó 46 entregas atascadas en `started`;
- * ningún test la vio porque los tests del store que la habrían ejercido necesitan Postgres real.
- *
- * Esta guardia es barata y corre en cualquier lado: lee el SQL del propio código fuente.
+ * Valida que no se combinen cláusulas de bloqueo (`FOR SHARE` / `FOR UPDATE`)
+ * con funciones de ventana, lo cual es inválido en PostgreSQL.
  */
 
 const SOURCE_DIR = fileURLToPath(new URL('../src', import.meta.url));

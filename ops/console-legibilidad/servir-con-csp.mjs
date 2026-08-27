@@ -1,31 +1,16 @@
 #!/usr/bin/env node
 /*
- * SERVIR UN `dist` DE LA CONSOLA CON LA CABECERA CSP DE PRODUCCIÓN.
+ * Servidor local HTTPS para probar el `dist` de la consola con la política CSP de producción.
  *
- * 🔴 Por qué existe. El 2026-08-23 la TUI se desplegó ilegible —negro sobre negro, 1,18:1— y la
- * medición previa había dado VERDE. El motivo es que se midió sin la cabecera
- * `Content-Security-Policy`. Con ella puesta (`style-src 'self'`), el navegador RECHAZA el
- * `<style>` que xterm crea en tiempo de ejecución y con él se van el color, la letra monoespaciada
- * y los 256 colores ANSI. Sin ella, todo se ve bien. O sea: una medición sin CSP no puede dar rojo,
- * y una prueba que no puede dar rojo no prueba nada.
+ * Sirve el bundle compilado aplicando la cabecera `Content-Security-Policy` equivalente a la de
+ * `deploy/nginx-console-tls.conf`, y reenvía las peticiones `/v3/*` (HTTP y WebSocket) a la URL
+ * especificada en `CONSOLA_URL`.
  *
- * Este servidor sirve un `dist` ya construido con la MISMA cabecera que `deploy/nginx-console-tls.conf`
- * (verificable con `curl -I https://consola.humanizar.tech`), y reenvía `/v3/*` —HTTP y WebSocket—
- * al gateway de producción, para poder mirar un bundle NUEVO contra datos REALES sin desplegarlo.
- *
- * Va por TLS con un certificado propio y no por HTTP, y eso no es un detalle: la sesión de la
- * consola vive en una cookie con prefijo `__Host-`, que el navegador sólo acepta con `Secure`.
- * Servido por HTTP el login parece fallar sin decir por qué.
- *
- *   Uso:
- *     openssl req -x509 -newkey rsa:2048 -keyout llave.pem -out cert.pem -days 3 -nodes \
- *       -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1"
- *     CONSOLA_URL=https://consola.humanizar.tech \
- *       node ops/console-legibilidad/servir-con-csp.mjs apps/console/dist 5290 ./cert.pem ./llave.pem
- *     google-chrome --headless=new --remote-debugging-port=9370 --ignore-certificate-errors ...
- *
- * El certificado es de andar por casa y sólo escucha en 127.0.0.1: es un banco de pruebas, no un
- * servidor. Nunca debe exponerse.
+ * Uso:
+ *   openssl req -x509 -newkey rsa:2048 -keyout llave.pem -out cert.pem -days 3 -nodes \
+ *     -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1"
+ *   CONSOLA_URL=https://consola.humanizar.tech \
+ *     node ops/console-legibilidad/servir-con-csp.mjs apps/console/dist 5290 ./cert.pem ./llave.pem
  */
 import { createServer } from 'node:https';
 import { connect as tlsConnect } from 'node:tls';

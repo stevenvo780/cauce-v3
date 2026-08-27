@@ -309,9 +309,6 @@ describe('client frames', () => {
     })), false)).toBeUndefined();
   });
 
-  // 2026-08-24: una tercera terminal mandaba rows:1, el parser devolvía undefined y el llamador
-  // cerraba la sesión con protocol_error 4400 — matando las DOS terminales que ya estaban vivas.
-  // Se arregló en producción acotando; esta prueba existe para que no vuelva a revertirse.
   it('acota el resize fuera de rango en vez de rechazarlo y matar la sesión', () => {
     expect(parseClientMessage(Buffer.from('{"type":"resize","cols":100,"rows":1}'), false))
       .toEqual({ type: 'resize', cols: 100, rows: MIN_ROWS });

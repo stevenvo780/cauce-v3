@@ -3,8 +3,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * 🔴 **La tira de pestañas del cajón se dibujaba FUERA del cajón y le ponía barra horizontal a la
- * página entera. Medido en Chrome headless el 2026-08-24, 1280x900 y 360x800, tema claro, con el
+ * La tira de pestañas del cajón se dibujaba FUERA del cajón y le ponía barra horizontal a la
+ * página entera. 
  * cajón abierto en `/live?agente=Steven/zeus&pestana=rol`.**
  *
  * `.agent-drawer-tabs` era `display: flex` a secas: `flex-wrap: nowrap` y `overflow-x: visible`

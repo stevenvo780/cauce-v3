@@ -827,7 +827,7 @@ export function mockChain(traceId: string) {
 /**
  * El diario del rol declarado de kant, para el modo mock.
  *
- * Reproduce lo que devuelve producción de verdad —medido el 2026-08-23 contra
+ * Reproduce lo que devuelve producción de verdad —
  * `GET /v3/console/role-assignments/Steven/zeus/history`—, incluidos sus dos huecos, que son la
  * mitad de lo que la pantalla tiene que saber pintar: `actor_tenant` y `actor_alias` llegan NULL
  * (el disparador sólo los rellena si el camino de escritura los declara, y ninguno lo hace), y la

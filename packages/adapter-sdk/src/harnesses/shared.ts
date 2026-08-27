@@ -82,8 +82,7 @@ export interface HarnessRequestContext {
   readonly message_type: string;
   readonly routing_targets: readonly HarnessRoutingTarget[];
   /**
-   * Rol declarado del alias, de `agents.role_brief` (migración 020). Ausente = sin rol declarado:
-   * el preámbulo se emite igual pero SIN la línea `Tu rol:`. Nunca se inventa uno.
+   * Rol declarado del alias (`agents.role_brief`). Ausente = sin rol declarado.
    */
   readonly self_role?: string;
   /**
@@ -142,26 +141,7 @@ export const DELEGATION_MECHANICS_HEADER =
   "Delegation mechanics. These apply only if the DEBER PRIMARIO above already admits delegating:";
 
 /**
- * Quién es el agente, antes de decirle qué le toca y mucho antes de decirle cómo contestar.
- *
- * Es la ÚNICA superficie de instrucciones que los 15 alias reciben sí o sí, y por eso vive acá y no
- * en un archivo. Medido el 2026-07-29 sobre las superficies que la flota carga de verdad:
- * `kratos`, `atlas` e `iza` comparten $HOME en `ws-humanizar` (mismo inode, roles distintos
- * imposibles); cinco alias leen el mismo `AGENTS.md`; `zeus` y `argos` comparten `CLAUDE.md` byte a
- * byte; el bridge de hermes sólo lee stdin, así que `iza` no tiene archivo alguno. El resultado era
- * que 9 de 15 tenían escrito que su rol es ORQUESTAR y ninguno recibía "esto es tuyo, resolvelo".
- *
- * Va PRIMERO a propósito: la identidad enmarca el contrato, no es una nota al pie después de veinte
- * invariantes de protocolo.
- *
- * Sin `context` no emite nada: las llamadas sin contexto (arranques locales, pruebas, cualquier ruta
- * que no venga de una entrega) no tienen alias que declarar y no deben recibir un preámbulo
- * inventado. Sin `self_role` emite todo menos la línea del rol — ver `HarnessRequestContext`.
- *
- * NO contiene el mandato. Antes de la fusión este bloque cerraba con "el trabajo de esta entrega es
- * TUYO…" y el bloque de primacía lo repetía en inglés seis líneas más abajo. Dos formulaciones del
- * mismo deber, con bordes distintos, invitan a obedecer la más floja: el mandato quedó una sola vez,
- * en `primaryDuty()`.
+ * Preámbulo de identidad inyectado al inicio del prompt con alias, tenant, sala y rol del agente.
  */
 function identityPreamble(context: HarnessRequestContext | undefined): readonly string[] {
   if (!context) return [];
@@ -181,16 +161,7 @@ function identityPreamble(context: HarnessRequestContext | undefined): readonly 
 }
 
 /**
- * El contexto tal como se serializa en el bloque de metadatos, SIN `self_role`.
- *
- * El rol ya viaja completo y en prosa como la línea `Tu rol:` del bloque de identidad, arriba.
- * Dejarlo también acá lo mandaba dos veces en cada entrega —880 bytes de más para el brief más
- * largo— y, peor, lo presentaba dentro de un bloque cuya propia cabecera dice "trusted metadata
- * about this delivery": el rol es un hecho del ALIAS, no de la entrega, y no tiene nada que hacer
- * en el sobre de ruteo. `routing_targets` sí se queda entero: eso sí es de la entrega.
- *
- * No cambia lo que el store manda ni lo que el esquema valida: `self_role` sigue llegando en el
- * sobre y sigue alimentando el preámbulo. Lo único que cambia es que no se imprime dos veces.
+ * Metadatos de la entrega serializados para el arnés, omitiendo campos ya provistos en el preámbulo.
  */
 function deliveryMetadata(
   context: HarnessRequestContext | undefined,
@@ -203,28 +174,7 @@ function deliveryMetadata(
 }
 
 /**
- * El deber primario: el trabajo de una entrega es de quien la recibió.
- *
- * Va DESPUÉS de la identidad y ANTES de todo lo demás. El prompt anterior tenía el sesgo exactamente
- * invertido: de sus 18 invariantes, 13 hablaban de delegar, `routing_targets` con los 14 alias
- * alcanzables viaja en el contexto de TODA entrega, y no había una sola línea que dijera "hacelo vos
- * primero". Un modelo que lee eso concluye, razonablemente, que repartir es la conducta esperada; la
- * conducta medida lo confirma (argos: 1069 delegaciones contra 114 respuestas, 54 % de entregas
- * muertas).
- *
- * Nada se borra: las mecánicas siguen completas más abajo. Lo que cambia es el orden de lectura y
- * quién manda cuando las dos aplican.
- *
- * EN CASTELLANO, y es una decisión, no un descuido. El prompt tiene dos registros y el idioma los
- * separa: (1) lo normativo dirigido al agente como actor de esta flota —identidad y deber— va en el
- * idioma en que llega TODO el trabajo, en que está escrito cada `role_brief` y en que el dueño tiene
- * que poder auditar que el mandato dice lo que él decidió; (2) el contrato de cable —forma del JSON,
- * nombres de campos, valores literales como "done" o "@all"— va en inglés, porque nombra
- * identificadores en inglés y los tests lo afirman textual. El argumento de "ASCII por el puente
- * Python" no aplica: el bridge de hermes hace `payload.decode("utf-8", errors="strict")` sobre bytes
- * que el runner escribió con `stdin.end(request.stdin, "utf8")`, y rechaza el exceso de tamaño en vez
- * de recortarlo a mitad de un carácter multibyte. Además `self_role` ya viaja en castellano con
- * tildes desde la base, así que el prompt nunca fue ASCII puro en producción.
+ * Instrucciones del deber primario del agente para priorizar la ejecución local antes de delegar.
  */
 function primaryDuty(): readonly string[] {
   return [
@@ -239,16 +189,7 @@ function primaryDuty(): readonly string[] {
 }
 
 /**
- * Mecánicas de delegación. Idénticas a las de siempre salvo por tres cosas:
- *
- *  - encabezan con `DELEGATION_MECHANICS_HEADER`, que las subordina al DEBER PRIMARIO;
- *  - `routing_targets` se presenta como inventario de RESPALDO y no como invitación (sigue entero:
- *    se necesita para delegar bien cuando corresponde);
- *  - prohíben explícitamente encargar tareas que no pueden terminar. Cauce es por eventos y ningún
- *    agente hace polling, así que "monitoreá", "quedate atento" o "avisame cuando conteste" son
- *    órdenes imposibles: medidas ~85 entregas con ese encargo en 7 días, 28 de ellas muertas por
- *    vencimiento de ACK. El caso espejo —que a VOS te encarguen esperar— lo cierra el bloque de
- *    identidad, así que acá queda sólo el lado de la delegación y no se repite.
+ * Mecánicas y reglas de delegación subordinadas al deber primario.
  */
 function delegationMechanics(): readonly string[] {
   return [
@@ -269,29 +210,7 @@ function delegationMechanics(): readonly string[] {
 }
 
 /**
- * Reglas del retorno de una delegación. Sólo se emiten cuando la entrega ES una
- * `agent.response`, y ahí está la mitad del ahorro de este cambio: dos de ellas viajaban en el
- * bloque fijo de TODA entrega, aunque la enorme mayoría de los turnos no son continuaciones.
- *
- * La tercera regla cierra el hueco medido el 2026-07-30. La prohibición de "abrir otra ronda de
- * delegación" existía SÓLO dentro del bloque de `agent.fanin` —que además nunca se renderiza, ver
- * `protocolPrompt`— y para `agent.response` lo único escrito era "no le rebotes la respuesta a
- * sender_alias": prohibía exactamente lo único que nunca pasó. Lo que sí pasó, 4 de 4 veces con
- * argos de semilla y 1 de 1 con jarvis sin la cláusula del pedido, fue RE-DELEGAR A TERCEROS desde
- * la respuesta: 22 entregas donde tocaban 10, 10 materializaciones donde tocaban 4, con los
- * destinos siempre dentro de los 4 pedidos.
- *
- * El mecanismo no era codicia sino VISTA PARCIAL: cada `agent.response` abre un turno que ve una
- * sola rama, así que el coordinador re-pinguea a los que cree que le faltan. Por eso la regla no
- * dice "nunca delegues desde una respuesta" —eso rompería una cadena de trabajo legítima de varios
- * pasos, que es un caso real— sino que nombra la duplicación concreta (reenviar LA MISMA tarea a
- * una rama que ya está abierta o ya volvió) y le da al agente el dato que le faltaba: las otras
- * ramas contestan solas y `branch_progress` dice cuáles. El permiso para delegar trabajo
- * genuinamente nuevo queda intacto y subordinado al DEBER PRIMARIO.
- *
- * La misma línea cierra el defecto de síntesis: "fold every branch in already_returned into this
- * reply instead of reporting it as missing" es la instrucción que faltaba cuando el agregado ya
- * estaba delante y el agente escribía FALTA igual.
+ * Reglas específicas para el procesamiento y continuación de respuestas entre agentes (`agent.response`).
  */
 function agentResponseRules(context: HarnessRequestContext | undefined): readonly string[] {
   if (context?.message_type !== "agent.response") return [];
@@ -303,42 +222,7 @@ function agentResponseRules(context: HarnessRequestContext | undefined): readonl
 }
 
 /**
- * The structured result deliberately declares no tool-call affordance. Anything this
- * prompt advertises, the adapter must be able to execute on the spot; the adapter runs
- * beside its harness and reaches the store only through the gateway socket, so it can
- * answer no question that needs a database read. Advertising one anyway is worse than
- * silence: the agent believes it holds a capability, spends a turn calling it and gets
- * "unknown tool" back.
- *
- * Read-only fleet and delegation-chain introspection is served instead by the
- * `@cauce/mcp-fleet-monitor` MCP server (`cadena`, `estado_flota`, `entregas`,
- * `dead_letters`, `salud`), which holds a pool and resolves visibility per node against
- * the caller's own tenant. Add capabilities there, not here.
- *
- * Orden del prompt, de arriba abajo: quién sos -> qué te toca -> sobre y contrato del resultado ->
- * cómo se delega -> contexto de confianza -> pedido. El agente lee primero su identidad, después
- * que el trabajo es suyo, y sólo al final cómo se reparte.
- *
- * NO hay bloque de `agent.fanin`, y su ausencia es el arreglo, no un olvido. `AdapterEngine`
- * bifurca ANTES del harness para ese tipo (`engine.ts`: "El fan-in no invoca harness: lo sintetiza
- * el SDK") y el test «every harness runtime bypasses providers and native sessions for agent
- * fan-in» lo afirma para los seis runtimes. Las cuatro líneas que había acá para `agent.fanin`
- * nunca se renderizaron ni una vez en producción: eran código muerto que además sostenía la
- * creencia falsa de que el agente sintetiza el fan-in, y por esa creencia la prohibición de abrir
- * otra ronda de delegación estaba escrita en el único tipo de entrega que jamás llega a un modelo,
- * en vez de en `agent.response`, que es donde la cascada ocurrió. Lo que esas líneas pedían sigue
- * garantizado por construcción: `synthesizeFaninOutput` es puro y emite `messages: []`, y
- * `validateDeliveryOutput` rechaza cualquier salida de `agent.fanin` que traiga delegaciones.
- */
-/**
- * Un turno que el dueno corto desde su panel NO es un fallo del agente: es una interrupcion, y el
- * trabajo puede rehacerse tal cual. Antes todo `PROCESS_EXIT_AMBIGUOUS` salia con retryable=false,
- * asi que una entrega interrumpida moria en el intento 1 de 3. Medido el 2026-08-01: el "Apruebo"
- * de Steven murio exactamente asi, y hubo que repetirlo a mano.
- *
- * Se distingue por el texto del harness, que es lo unico que llega hasta aqui. Un cierre por
- * crash, OOM o binario ausente NO coincide y sigue siendo no reintentable, que es lo correcto:
- * reintentar un crash lo repite.
+ * Identifica si la terminación del proceso fue provocada por una interrupción explícita del usuario/operador.
  */
 export function esInterrupcionDelDuenio(detalle: string | undefined): boolean {
   if (detalle === undefined || detalle === "") return false;
@@ -346,75 +230,30 @@ export function esInterrupcionDelDuenio(detalle: string | undefined): boolean {
 }
 
 /**
- * Diagnósticos que un CLI imprime EN VEZ DE TRABAJAR.
- *
- * Cada patrón sale de un fallo medido en `deliveries.last_error` de producción y todos cumplen
- * el mismo criterio de admisión: son cosas que el binario sólo puede decir DURANTE SU PROPIO
- * ARRANQUE —la configuración que lee una vez, la sesión que resuelve antes del turno, su propia
- * línea de órdenes—, y que son estructuralmente imposibles una vez que el turno empezó.
- *
- * Es una lista BLANCA y ese es el punto: lo que no coincide sigue siendo ambiguo. Un `panic`, un
- * OOM, un stack de Node a mitad de turno no coinciden con ninguno de estos y por lo tanto siguen
- * sin reintentarse, que es lo correcto. Y nunca decide sola: quien la llama exige además que el
- * proceso no haya escrito NI UN BYTE por stdout (ver `nuncaEmpezoElTurno`).
- *
- * DELIBERADAMENTE FUERA, aunque son 26 entregas medidas y casi seguro sin efectos:
- * `quota exhausted` y `no usable credentials found`. Un proveedor se puede agotar A MITAD de
- * turno, después de que el agente ya escribió archivos o mandó correos, y el texto sería el
- * mismo. No pasan el criterio de admisión. Ante la duda real, no reintentar.
- *
- * Y NO hay ningún patrón temporal. «Murió en menos de 30 s» describe estos fallos pero no los
- * prueba: una máquina cargada tarda más y un turno real puede morir antes.
+ * Diagnósticos de error emitidos por el CLI durante la fase de inicialización o arranque.
  */
 export function esDiagnosticoDeArranque(detalle: string | undefined): boolean {
   if (detalle === undefined || detalle === "") return false;
   return [
-    // Configuración que no parsea. Se lee UNA vez, al arrancar: después del turno es imposible.
-    // `Error loading config.toml: unknown variant \`writes\`` — 173 entregas de argos.
+    // Error en configuración inicial
     /error loading config\.toml/i,
     /unknown variant `/i,
-    // Resolución de sesión, siempre anterior al turno.
-    // `thread/resume failed: failed to resolve rollout` / `no rollout found` — 81, kant.
+    // Error en resolución o reanudación de sesión
     /thread\/resume[^\n]*fail/i,
     /no rollout found/i,
-    // `Error: Session ID <uuid> is already in use.` — 21, zeus/vulcano.
     /session id[^\n]*already in use/i,
     /no conversation found with session id/i,
-    // El binario no está o no acepta su propia línea de órdenes: no llegó a existir un turno.
+    // Binario ausente o argumentos inválidos
     /\bcommand not found\b/i,
     /spawn[^\n]*\bENOENT\b/i,
     /\b(?:unexpected argument|unrecognized (?:option|argument))\b/i,
-    // Nuestros propios puentes, cuando se caen descubriendo módulos (argos, 2026-08-04).
+    // Fallo de inicialización de puente stdin
     /stdin bridge failed[^\n]*(?:modules|import|cannot find)/i,
   ].some((patron) => patron.test(detalle));
 }
 
 /**
- * ¿Consta que el turno NUNCA empezó?
- *
- * Devuelve `true` sólo con prueba positiva, y la prueba tiene tres partes que se exigen JUNTAS:
- *
- *  1. **Ni un byte por stdout.** stdout es el canal donde vive la salida del turno: el JSONL de
- *     codex, el sobre de los puentes, el JSON de claude. Cero bytes significa que no hay ni un
- *     fragmento de turno. Si hay algo —aunque `parse` no lo entienda— la entrega es ambigua.
- *  2. **Salió por su propio pie.** `exitCode` propio, sin señal, sin timeout y sin cancelación.
- *     Un proceso que matamos nosotros a mitad de camino es ambiguo por definición: pudo estar
- *     trabajando.
- *  3. **Una señal positiva de arranque fallido**, de una de estas dos clases:
- *     a. el TESTIGO del transporte dice que el byte declarado nunca llegó
- *        (`harnessStarted === false`), o
- *     b. el propio CLI imprimió un DIAGNÓSTICO DE ARRANQUE (`esDiagnosticoDeArranque`).
- *
- * El testigo es de UN SOLO SENTIDO, y por eso las dos clases se suman en vez de exigirse juntas:
- * `false` PRUEBA que no empezó, pero `true` no prueba que hubo efectos —los puentes propios
- * escriben su marca antes de la llamada, a propósito, así que un `true` sólo dice «se llegó
- * hasta la puerta»—. Por eso un diagnóstico de arranque vale aunque el testigo diga `true`: es
- * el caso de argos, donde el puente ya había marcado y el codex de abajo se rindió leyendo su
- * `config.toml`. Y `undefined` (sesión compartida, API de OpenClaw) no habilita (a), pero
- * tampoco bloquea (b).
- *
- * Fuera de esto, ambiguo. La garantía *at-most-once* no se toca: lo único que cambia es que el
- * caso fácil —el que se puede demostrar— deja de tratarse como el caso difícil.
+ * Determina con certeza si el proceso del arnés falló antes de iniciar la ejecución del turno.
  */
 export function nuncaEmpezoElTurno(result: CommandRunResult, detalle: string | undefined): boolean {
   if (result.stdout.length > 0) return false;
@@ -424,13 +263,7 @@ export function nuncaEmpezoElTurno(result: CommandRunResult, detalle: string | u
 }
 
 /**
- * La misma pregunta cuando el proceso NO salió por su propio pie porque lo cortamos nosotros.
- *
- * Sirve para el camino de cancelación (R2), donde exigir «salió solo» sería contradictorio: lo
- * cortó el apagado del adaptador. Acá la prueba tiene que ser más estricta, no menos, y por eso
- * sólo vale el TESTIGO del transporte: un diagnóstico de arranque en el stderr de un proceso que
- * matamos no prueba nada —pudo imprimirlo un descendiente cualquiera mientras el turno corría—.
- * Sin testigo (`undefined`) la respuesta es «no sé», y no se reintenta.
+ * Verifica si el testigo del transporte confirma que la ejecución del arnés no llegó a iniciarse.
  */
 export function elTestigoDiceQueNoEmpezo(result: CommandRunResult): boolean {
   return result.stdout.length === 0 && result.harnessStarted === false;
@@ -556,27 +389,11 @@ export interface HarnessAdapterOptions {
   /** Exact Kant/OpenCode-only opt-in for the canonical native-session pointer. */
   readonly canonicalOpenCodeSession?: boolean;
   /**
-   * El sistema rotativo de cuentas: se llama ANTES de cada ejecución y devuelve las variables de
-   * entorno que apuntan al harness a la suscripción elegida por el selector
-   * (GET /v3/accounts/selection -> `resolveAccountCredentialEnv`).
-   *
-   * Ausente, o devolviendo `{}`, el harness se lanza sin ninguna variable añadida: el CLI resuelve
-   * la credencial que ya está logueada en su contenedor, que es el comportamiento de siempre. Ese
-   * es el camino de los 6 alias cuyo `~/.claude` es el mount compartido
-   * `/datos/agents/shared/.claude` y que por lo tanto NO pueden rotar; ver
-   * `sdk/account-credentials.ts` para el porqué y el camino de migración.
-   *
-   * Se resuelve por ejecución y no por proceso a propósito: una cuenta se puede agotar entre dos
-   * entregas del mismo adaptador, y ese es justamente el momento en que hay que caer a la
-   * siguiente.
+   * Resuelve las variables de entorno de credenciales rotativas antes de cada ejecución.
    */
   readonly resolveCredentialEnv?: () => Promise<Readonly<Record<string, string>>>;
   /**
-   * Identidad de la sesión compartida, presente sólo cuando el alias la tiene encendida.
-   *
-   * Habilita lo que el no-negociable «nada de fallback silencioso» exige: cuando el runner declara
-   * que el turno NO pasó por la terminal del dueño, el adaptador escribe el incidente en el log
-   * durable y mete el aviso DENTRO del "reply" que vuelve por Telegram.
+   * Configuración de sesión compartida cuando está habilitada para el alias.
    */
   readonly sharedSession?: {
     readonly alias: string;
@@ -586,32 +403,12 @@ export interface HarnessAdapterOptions {
 }
 
 /**
- * Los dos carriles de sesión de un mismo alias.
- *
- * `human` es la conversación de la persona; `agent` es el tráfico agente-a-agente que desciende
- * de ella. Existen separados porque el candado de sesión es FIFO ESTRICTA y no se puede
- * interrumpir la tarea en curso: mientras compartían carril, una delegación que volvía como
- * `agent.response` tomaba el candado de la conversación del dueño y lo retenía toda la corrida
- * —40 minutos en el caso que reportó el revisor—, y el mensaje siguiente de la persona esperaba
- * detrás. Medido el 2026-07-27: midas, 114 minutos de MEDIANA para atender a su dueño.
- *
- * Una cola con prioridad NO alcanzaba para esto y por eso no se eligió: el que bloquea ya está
- * EJECUTANDO, no encolado, y reordenar la cola no lo saca del medio. Lo único que devuelve la
- * disponibilidad sin cancelar nada es que los dos puedan correr a la vez, y eso exige que sean
- * dos sesiones distintas del harness.
+ * Carriles de sesión para separar la atención a personas de la interacción entre agentes.
  */
 export type SessionLane = "human" | "agent";
 
 /**
- * Sufijo del carril de agentes. Cambia la clave de sesión, o sea que el harness abre otra
- * sesión nativa: es exactamente lo que da la concurrencia, y también el costo — ver
- * `AdapterEngine.handleDelivery`.
- *
- * El juego de caracteres NO es libre: la clave termina como nombre de entrada en sessions.json
- * y `validateSessionsFile` sólo acepta `[A-Za-z0-9._:-]`. Un sufijo con `#` hace que el archivo
- * entero falle la validación segura y toda ejecución con sesión muera con
- * INVALID_SESSIONS_FILE. El punto está permitido y no puede chocar con ninguna clave existente:
- * las humanas son `auth-v2:<base64url>` (sin puntos) o el fallback `alias-default`.
+ * Sufijo para diferenciar la clave de sesión del carril de agentes.
  */
 const AGENT_LANE_SUFFIX = ".agent-lane";
 
@@ -976,20 +773,7 @@ export class HarnessAdapter {
         false,
       );
     }
-    // El motivo del aborto se propaga en el MENSAJE, no en el código, y eso es deliberado.
-    // `EXECUTION_CANCELLED_AMBIGUOUS` es de los códigos que `isAmbiguousAckErrorCode` protege,
-    // y esa protección es la que impide que `AdapterEngine` reetiquete como FENCED-reintentable
-    // una entrega que ya se ejecutó. Devolver acá el código crudo del motivo (STALE_EPOCH,
-    // CLAIM_OWNERSHIP_LOST) sacaría a la entrega de esa lista y la mandaría a reintentar
-    // trabajo YA PAGADO: exactamente la multiplicación de entregas del incidente. La
-    // ambigüedad del estado es real; lo que faltaba era decir POR QUÉ se cortó.
     if (result.cancelled || request.signal.aborted) {
-      // R2. Un apagado del adaptador que corta un turno que NO había empezado es un fallo de
-      // infraestructura, no un veredicto sobre el trabajo: `engine.stop()` ya lo marca
-      // `retryable`, y era el reetiquetado a `..._AMBIGUOUS` de esta línea el que tiraba ese
-      // `retryable` a la basura (el esquema prohíbe reintentar un código ambiguo) y mataba la
-      // entrega en el intento 1. Sigue haciendo falta la PRUEBA de que no empezó: un apagado a
-      // mitad de turno sigue siendo ambiguo y sigue sin reintentarse.
       if (abortadoPorApagado(request.signal) && elTestigoDiceQueNoEmpezo(result)) {
         throw new ProcessExecutionError(
           "EXECUTION_CANCELLED_PREFLIGHT",
@@ -1012,10 +796,6 @@ export class HarnessAdapter {
       if (result.exitCode !== 0) {
         // Extract real cause from stderr, sanitized to avoid leaking secrets
         const causeDetail = sanitizeProcessOutput(sinMarcaDeArranque(result.stderr));
-        // R1. El caso que se llevaba el trabajo por delante: el harness reventó ANTES de
-        // empezar —config que no parsea, sesión que no existe, credencial ausente— y el
-        // sistema lo trataba igual que a un turno que pudo haber terminado. Efectos: cero.
-        // Reintentar no repite nada, y no reintentar pierde el encargo para siempre.
         if (nuncaEmpezoElTurno(result, causeDetail)) {
           const detalle = causeDetail
             ? `: ${causeDetail}`
@@ -1039,9 +819,6 @@ export class HarnessAdapter {
       throw error;
     }
     if (result.exitCode !== 0 && parsed.output.status !== "failed") {
-      // Extract real cause from stderr. No hay rama de pre-vuelo acá y no es un olvido: si
-      // `parse` tuvo éxito, el harness escribió salida estructurada, o sea que el turno
-      // existió. `nuncaEmpezoElTurno` exige stdout vacío y devolvería `false` igual.
       const causeDetail = sanitizeProcessOutput(sinMarcaDeArranque(result.stderr));
       const message = causeDetail
         ? `Harness exited with code ${result.exitCode}: ${causeDetail}`
@@ -1064,9 +841,6 @@ export class HarnessAdapter {
     });
 
     if (effectiveSessionKey !== undefined) {
-      // La misma etiqueta en las dos estrategias. Va acá y no sólo al crear la entrada porque
-      // así también se rellena hacia atrás: una sesión abierta antes de que este campo
-      // existiera queda etiquetada en su siguiente turno, sin migración ni script aparte.
       const origin = request.sessionOrigin === undefined
         ? {}
         : { origin: request.sessionOrigin };
@@ -1111,15 +885,7 @@ export class HarnessAdapter {
   }
 
   /**
-   * El aviso de caída, pegado al resultado ya validado.
-   *
-   * Va DESPUÉS de `validateDeliveryOutput` a propósito: el contrato del bus se exige entero sobre
-   * lo que produjo el harness, sin ninguna concesión, y sólo entonces el adaptador añade su nota.
-   * Así el aviso no puede convertir en válido un sobre que no lo era.
-   *
-   * Y lo escribe el adaptador, nunca el modelo: ya se demostró que un agente puede falsificar
-   * cualquier señal que venga de su stdout —un descendiente que hereda el pipe envuelve la
-   * salida—, así que un aviso autodeclarado no probaría nada.
+   * Registra y anota el aviso de degradación en el resultado estructurado de la sesión compartida.
    */
   private async announceSharedSession(
     output: StructuredOutput,
@@ -1252,18 +1018,7 @@ function abortReason(signal: AbortSignal): Error {
 }
 
 /**
- * Por qué se abortó ESTA ejecución, en texto, para que llegue a `last_error`.
- *
- * Quien aborta siempre pone un motivo (`controller.abort(new AdapterError(...))` en
- * `AdapterEngine`: STALE_EPOCH, SHUTDOWN, CANCELLED, CLAIM_RENEWAL_UNCONFIRMED,
- * CLAIM_OWNERSHIP_LOST, CLAIM_RENEWAL_PERSISTENCE_FAILED). Ese motivo se tiraba y quedaba
- * una frase igual para los cinco casos, así que "Harness transport was cancelled after
- * dispatch" —28 veces en 24 h el 2026-07-27, en ráfagas simultáneas multi-alias— no permitía
- * distinguir un apagado ordenado de una pérdida de garra en el gateway. Son incidentes
- * distintos con dueños distintos.
- *
- * Un `AbortSignal` abortado sin motivo explícito trae igual un `DOMException` "AbortError",
- * que sigue siendo más señal que la cadena vacía.
+ * Describe el motivo por el cual la ejecución fue abortada, para su inclusión en logs y diagnóstico.
  */
 function describeAbortReason(signal: AbortSignal): string {
   if (!signal.aborted) return "";
@@ -1276,8 +1031,6 @@ function describeAbortReason(signal: AbortSignal): string {
       : typeof reason === "string"
         ? reason
         : "";
-  // El motivo lo redacta el propio SDK, pero pasa por el mismo filtro que stderr porque
-  // `last_error` viaja al gateway y de ahí a la consola: nada llega ahí sin sanear.
   return sanitizeProcessOutput(raw, ABORT_REASON_DETAIL_BUDGET);
 }
 
@@ -1294,16 +1047,7 @@ export function executionError(error: unknown): AdapterError {
 }
 
 /**
- * Cuánto stderr se conserva como causa de un fallo del harness.
- *
- * El techo real está en el protocolo, no acá: `BaseAckSchema.error` corta en 2000 caracteres
- * y `clampAckDetail` (sdk/client.ts) ya recorta sin romper la conexión. 1200 deja lugar para
- * el prefijo del mensaje y sigue holgado bajo ese tope.
- *
- * El valor anterior era 100. No alcanzaba ni para una causa de dos líneas: el 2026-07-27 un
- * adaptador murió con `Error loading config.toml: unknown variant \`writes\`, expected one
- * of...` y el recorte se comió justo la línea siguiente, la única que nombraba la clave
- * culpable. El diagnóstico costó horas por 100 bytes.
+ * Presupuesto de bytes de stderr a conservar para el detalle de error del arnés.
  */
 const STDERR_DETAIL_BUDGET = 1_200;
 

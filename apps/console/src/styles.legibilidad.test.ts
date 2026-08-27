@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 /**
  * QUE SE PUEDA LEER Y QUE QUEPA EN LA PANTALLA, COMPROBADO SOBRE LAS HOJAS.
  *
- * Steven, textual: «esta interfaz está demasiado abarrotada sin aportar mucha info en sí». Detrás
+ *  Detrás
  * de esa frase había cinco defectos MEDIDOS con Chrome sobre la consola servida en modo mock —no
  * leídos en el código— y los cinco pasaban las 646 pruebas de esta consola sin despeinarse:
  *
@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
  *   · /config midiendo 699 px de ancho dentro de un teléfono de 360;
  *   · el inspector de /terminal 25 px FUERA de la pantalla, con «ALLOWED» leído «ALLO…».
  *
- * 🔴 **jsdom no tiene layout.** No hay `getBoundingClientRect` que valga, ni color calculado, ni
+ * jsdom no tiene layout.** No hay `getBoundingClientRect` que valga, ni color calculado, ni
  * `scrollWidth`. Por eso ninguna prueba de DOM podía ver nada de esto, y por eso este fichero
  * comprueba las HOJAS como texto: es lo barato que sí atrapa la regresión. Cada afirmación lleva
  * su CONTROL NEGATIVO POR MUTACIÓN —se le da de comer la hoja rota y se exige que la marque—
@@ -186,7 +186,7 @@ interface Tema { nombre: string; tokens: Record<string, string>; tintes: Rgb[] }
  */
 function temas(css: string): [Tema, Tema] {
   /*
-   * 🔴 El tema oscuro se lee del NIVEL SUPERIOR, no de la hoja entera. `declaraciones()` se queda
+   * El tema oscuro se lee del NIVEL SUPERIOR, no de la hoja entera. `declaraciones()` se queda
    * con la última coincidencia, y la última regla `body` del fichero está DENTRO del bloque de
    * modo claro: leyendo la hoja entera, el tema oscuro se medía contra el degradado del tema
    * claro. Es el mismo error de método que este fichero existe para atrapar —un dato fresco

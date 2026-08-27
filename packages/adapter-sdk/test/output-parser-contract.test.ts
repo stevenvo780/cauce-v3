@@ -100,7 +100,7 @@ function isContractError(code: string): (error: unknown) => boolean {
  * Antes esto era `assert.throws(isContractError("MISSING_FINAL_REPLY"))`. El test afirmaba el
  * contrato que ERA el bug: el throw sale de `validateDeliveryOutput` sin `output`, la entrega
  * queda con `result` NULL, y `agentResponseText` (packages/store/src/repository.ts:1089) no
- * tiene de donde sacar texto. Medido el 2026-08-02 en produccion: las cuatro preguntas de Miguel
+ * tiene de donde sacar texto.  las cuatro preguntas de Miguel
  * a janus del 27-jul (16:13, 16:16, 18:24, 18:27) estan `status=failed` con `result` NULL y
  * sin ninguna respuesta posterior. Miguel no recibio nada.
  *

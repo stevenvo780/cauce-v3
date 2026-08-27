@@ -7,26 +7,7 @@ import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 
 /**
- * EL PERFIL POR ALIAS: leer y escribir la fuente de verdad de lo que va al fichero del arnés.
- *
- * La tabla es `agent_profiles` (migración 026) y la forma y los topes son los de
- * `packages/protocol/src/agent-profile.ts`. Este módulo no decide nada sobre el contenido: valida
- * con `normalizeAgentProfile` —la MISMA guarda que usa cualquier otra capa— y persiste.
- *
- * POR QUÉ ES UNA CLASE Y NO UNA FUNCIÓN SUELTA: es la misma forma que `ConfigurationRepository`,
- * porque es la misma clase de objeto —una superficie coherente de lectura y escritura sobre una
- * tabla de configuración— y porque la pantalla que lo va a usar ya sostiene un repositorio así.
- *
- * POR QUÉ TIENE REVISIÓN PROPIA: el perfil es un recurso independiente. Usar la revisión global
- * de configuración hace que una cuota o un destino cambiados por otro operador vuelvan obsoleto
- * este borrador, y aun así no evita que dos editores del MISMO perfil se pisen. La migración 028
- * mantiene `revision` y `applied_revision`; este repositorio hace CAS contra la primera y sólo
- * avanza la segunda después de un ACK completo del runtime.
- *
- * POR QUÉ NO LEE PERMISOS NI CUOTAS: no son de esta tabla. Los permisos viven en `memberships` +
- * `role_policies`, las cuotas en `provider_accounts`, y la configuración del arnés en `agents` +
- * `harness_definitions`. El compilador los recibe como HECHOS y los une; duplicarlos acá sería
- * fabricar una segunda fuente de verdad que se desincroniza en silencio.
+ * Repositorio de lectura, persistencia y contexto de perfiles de agentes (agent_profiles).
  */
 
 /** Las columnas, en el orden de la tabla. Una sola copia para el SELECT y para el RETURNING. */
@@ -48,18 +29,14 @@ interface ProfileRow {
 }
 
 /**
- * La fila y su presencia son dos hechos distintos.
- *
- * Un perfil persistido puede estar completamente vacío (todos los textos en NULL y todas las
- * listas vacías). Por eso la presencia nunca se deduce del contenido: sale del mismo SELECT que
- * leyó la fila y viaja junto con el perfil normalizado.
+ * Representa el perfil almacenado de un agente junto con metadatos de presencia y versión.
  */
 export interface StoredAgentProfile {
   readonly perfil: AgentProfile;
   readonly exists: boolean;
-  /** NULL sólo cuando no existe la fila. */
+  /** NULL si la fila no existe. */
   readonly revision: number | null;
-  /** Última revisión cuyo runtime quedó acreditado; NULL = nunca acreditado. */
+  /** Última revisión acreditada por runtime; null si nunca fue acreditada. */
   readonly applied_revision: number | null;
 }
 
@@ -85,7 +62,7 @@ export interface AgentProfileAuditActor {
   readonly alias: string;
 }
 
-/** Fallo de dominio estable para que el gateway no traduzca concurrencia a un 500. */
+/** Fallo de dominio para mutaciones concurrentes o inválidas de perfiles. */
 export class AgentProfileMutationError extends Error {
   constructor(
     readonly code: AgentProfileMutationErrorCode,
@@ -116,15 +93,7 @@ function stored(row: ProfileRow): PersistedAgentProfile {
 }
 
 /**
- * Una fila de Postgres se convierte en `AgentProfile` SIN volver a validar.
- *
- * Deliberado: lo que está en la base ya pasó los CHECK de la migración 026, y re-validarlo al
- * leerlo convertiría un tope bajado en el futuro en una lectura que EXPLOTA sobre datos que la
- * base considera legítimos. Un perfil guardado se lee siempre; lo que se valida es lo que ENTRA.
- *
- * `?? []` sobre los arrays no es defensa vacía: las columnas son NOT NULL DEFAULT '{}', pero `pg`
- * devuelve `null` para un array ausente en un RETURNING parcial, y un `null` que llegue como lista
- * rompería el compilador en un `for...of`.
+ * Convierte una fila de la base de datos al tipo `AgentProfile`.
  */
 function toProfile(row: ProfileRow): AgentProfile {
   return {
@@ -144,12 +113,7 @@ export class AgentProfileRepository {
   constructor(private readonly pool: DatabasePool) {}
 
   /**
-   * El perfil de un alias. Un alias SIN fila devuelve un perfil vacío, no un error.
-   *
-   * Es lo que hace que el compilador pueda correr sobre los quince alias desde el primer día: la
-   * ausencia de perfil es un estado legítimo —«todavía no se escribió»— y no una avería. El
-   * compilador omite las secciones vacías, así que un perfil en blanco produce un bloque sin
-   * secciones y nunca un fichero con encabezados huecos.
+   * Obtiene el perfil de un alias; devuelve un perfil vacío si no existe fila.
    */
   async read(tenantId: string, alias: string): Promise<AgentProfile> {
     return (await this.readWithPresence(tenantId, alias)).perfil;
@@ -184,15 +148,7 @@ export class AgentProfileRepository {
   }
 
   /**
-   * Escribe el perfil entero. Es un REEMPLAZO, no un parche.
-   *
-   * Reemplazo y no parche porque el presupuesto TOTAL sólo se puede comprobar sobre el perfil
-   * completo: un parche que sube `tools` sin ver `purpose` no puede saber si la suma entra, y la
-   * base lo rechazaría con un error sobre un campo que el que escribe ni mandó.
-   *
-   * La validación ocurre ANTES de abrir la transacción, a propósito: un perfil inadmisible no
-   * merece un `BEGIN`, y así el error que ve la pantalla es el de `AgentProfileError` —que nombra
-   * el CAMPO— y no un `23514` de Postgres que sólo nombra el constraint.
+   * Normaliza y escribe el perfil completo de un agente.
    */
   async write(input: Record<string, unknown>): Promise<AgentProfile> {
     const profile = normalizeAgentProfile(input);
@@ -200,14 +156,7 @@ export class AgentProfileRepository {
   }
 
   /**
-   * Reemplazo optimista usado por la consola.
-   *
-   * `expectedRevision=null` significa «la fila debe estar ausente». Un número significa «debe
-   * seguir exactamente en esta revisión». El alias se bloquea y tiene que existir Y estar
-   * habilitado; el estado desconocido cae en denegación, nunca en permiso implícito.
-   *
-   * Persistir aquí sólo cambia lo DESEADO. El llamador todavía debe escribir el runtime y llamar
-   * a `markApplied`; hasta entonces `applied_revision` conserva la versión anterior o NULL.
+   * Reemplazo optimista de perfil validando la revisión esperada.
    */
   async replace(
     input: AgentProfile | Record<string, unknown>,
@@ -383,15 +332,7 @@ export class AgentProfileRepository {
   }
 
   /**
-   * Borra el perfil. Devuelve si había algo que borrar.
-   *
-   * Devuelve `false` en vez de fallar cuando no había fila: borrar lo que ya no está es el
-   * resultado que se pedía. Lo que NO hace es mentir `true`, porque la pantalla que lo llame
-   * necesita poder distinguir «lo borré» de «no había nada», y un `true` incondicional le
-   * enseñaría que borró algo que nunca existió.
-   *
-   * Borrar la fuente canónica borra también su proyección `agents.role_brief` mediante la
-   * migración 028. Una imagen anterior ve «sin rol» en vez de seguir usando una identidad vieja.
+   * Elimina el perfil almacenado de un agente; devuelve true si existía la fila.
    */
   async remove(tenantId: string, alias: string): Promise<boolean> {
     const result = await this.pool.query(
@@ -401,15 +342,7 @@ export class AgentProfileRepository {
   }
 
   /**
-   * El perfil autorado MÁS los hechos derivados: lo único que el compilador necesita.
-   *
-   * Es una sola llamada y no cinco a propósito: quien genera un fichero no tiene por qué saber que
-   * los permisos viven en `role_policies` y las cuotas detrás del techo de ruteo. Esa es
-   * exactamente la dispersión que este trabajo vino a cerrar.
-   *
-   * Un alias sin nada configurado devuelve hechos VACÍOS y no un fallo: no tener permisos, ni
-   * cuentas, ni destinos es un estado legítimo —es el de un alias recién dado de alta— y el
-   * compilador ya sabe omitir lo que está vacío.
+   * Obtiene el contexto consolidado de un alias: perfil autorado y hechos derivados.
    */
   async readContext(tenantId: string, alias: string): Promise<ContextoDeAlias> {
     return (await this.readContextWithPresence(tenantId, alias)).contexto;
@@ -442,12 +375,6 @@ export class AgentProfileRepository {
     const fila = arnes.rows[0];
     const agentEnabled = fila?.enabled === true;
     const permiso = permisos.rows[0];
-    /*
-     * `notificacion` es la conjunción de DOS puertas, y las dos son necesarias: el rol tiene que
-     * permitirlo Y tiene que existir al menos un destino aprobado. Un rol con `allow_notify` y
-     * cero destinos NO puede notificar —`notify` es default-deny por lista— y decirle al agente
-     * que sí puede le costaría el turno en un intento que la base rechaza.
-     */
     const destinosDeAviso = await this.pool.query<{ total: string }>(
       `SELECT count(*)::text AS total FROM egress_destinations
         WHERE tenant_id=$1 AND alias=$2 AND enabled`, [tenantId, alias]
@@ -476,14 +403,6 @@ export class AgentProfileRepository {
       limite: limiteLegible(row.remaining_percent, row.window_key)
     }));
 
-    /*
-     * Los destinos se ofrecen SÓLO si el alias puede rutear. La consulta de ACL responde «quién es
-     * alcanzable», no «quién puede alcanzarlo»: el permiso del que pregunta se comprueba aparte, en
-     * el camino de envío (`assertPermission(...,'route')`). Sin este corte, un alias sin permiso de
-     * ruta recibiría en su fichero la lista entera de la flota, y un agente al que se le enseñan
-     * doce destinos que no puede usar los intenta y gasta el turno en una entrega que la base
-     * rechaza. Es el mismo criterio por el que los permisos denegados se nombran en vez de callarse.
-     */
     const hechos: HechosDelAlias = {
       permisos: permisosEfectivos,
       cuotas: cuotasDelAlias,
@@ -501,24 +420,7 @@ export class AgentProfileRepository {
 }
 
 /**
- * ── LOS HECHOS DERIVADOS ────────────────────────────────────────────────────────────────────
- *
- * Las tres caras del fichero que NO se escriben a mano. Se leen FRESCAS en cada generación, que es
- * lo único que evita el fallo que esta separación vino a impedir: si se copiaran a `agent_profiles`
- * como texto, revocar un permiso en `role_policies` dejaría el fichero del contenedor diciendo que
- * el alias lo sigue teniendo, y nadie se enteraría hasta que lo intentara.
- */
-
-/**
- * Permisos EFECTIVOS: la UNIÓN de lo que conceden todas las salas del alias.
- *
- * `bool_or` y no `LIMIT 1`, siguiendo el precedente de `principalAccess` en repository.ts: un alias
- * tiene una fila de `memberships` POR SALA, y `LIMIT 1` contestaría con la primera que devolviera
- * el planificador — o sea, con un permiso distinto según el día. La pregunta que responde un perfil
- * es «qué puede hacer este alias», y eso es la unión.
- *
- * Se exige `membership.enabled`, `tenant.enabled` y `room.enabled`: una membresía apagada, o en una
- * sala apagada, no concede nada. Es el mismo criterio que el camino de envío.
+ * Consulta de permisos efectivos de un alias consolidando todas sus membresías en salas habilitadas.
  */
 const PERMISOS_SQL = `
   SELECT COALESCE(bool_or(policy.allow_route),false)   AS ruta,
@@ -533,19 +435,7 @@ const PERMISOS_SQL = `
      AND tenant.enabled AND room.enabled`;
 
 /**
- * Las cuentas a las que el alias puede ser ruteado, con su límite observado si lo hay.
- *
- * El camino es `agent_account_bindings` -> `alias_routing_ceiling` -> `provider_accounts`, y no un
- * atajo: el techo es la única vía por la que un binding puede existir, y saltárselo aquí daría un
- * inventario que el selector de cuentas no reconocería.
- *
- * NO SE SELECCIONA `credential_ref` NI `credential_ref_kind`, y no es un olvido de columnas: esto
- * termina escrito en un fichero DENTRO del contenedor y enseñado a un modelo. Un localizador de
- * credencial que entre acá acaba en el contexto de un LLM y en los transcripts. El alias no
- * necesita saber dónde está la llave: el adaptador la resuelve por su cuenta.
- *
- * El límite sale de `quota_window_state`, la ventana con MENOS margen: es la que de verdad lo va a
- * frenar, y decirle la más holgada sería tranquilizarlo con el número equivocado.
+ * Consulta de cuentas y límites asociados a un alias a través de bindings y techos de enrutamiento.
  */
 const CUOTAS_SQL = `
   SELECT account.provider, binding.account_id, account.label,
@@ -568,10 +458,7 @@ const CUOTAS_SQL = `
    ORDER BY binding.priority ASC, binding.account_id ASC`;
 
 /**
- * Los alias alcanzables por ACL. Es la consulta de `routingTargets` SIN la parte de presencia: un
- * fichero se escribe una vez y quién está conectado cambia cada minuto, así que meter `online` acá
- * produciría un fichero desactualizado desde el segundo siguiente. Quién está en línea sigue
- * viajando en el sobre, que es donde ese dato es cierto.
+ * Consulta de alias destinatarios alcanzables por permisos y topología de red.
  */
 const DESTINOS_SQL = `
   SELECT membership.alias

@@ -11,7 +11,7 @@ import './hypergraph.css';
  * Cáscara. Su contenido vive ahora en `TenantCards` y `AclEdgeList`, que comparte con «La flota
  * ahora».
  *
- * 🔴 **Esta vista ya NO es alcanzable, y este comentario decía lo contrario.** Hasta el 2026-08-22
+ * Esta vista ya NO es alcanzable, y este comentario decía lo contrario.** 
  * prometía por escrito que «sigue siendo alcanzable… para quien tenga la URL guardada», mientras
  * `ROUTE_ALIASES` mandaba `/topology` a `/live` y `matchRoute` consulta ese mapa ANTES de mirar
  * `routes`: el alias ganaba siempre y la entrada oculta que la declaraba no se podía resolver

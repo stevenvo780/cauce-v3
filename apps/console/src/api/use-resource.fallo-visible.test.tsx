@@ -6,7 +6,7 @@ import { useResource } from './use-resource';
 /**
  * **UN FALLO QUE SE PRODUCE Y NO LLEGA A DECIRSE.**
  *
- * 🔴 Este fichero existe porque mis propias pruebas dieron VERDE mientras la consola seguía rota
+ * Este fichero existe porque mis propias pruebas dieron VERDE mientras la consola seguía rota
  * en producción. El vencimiento del cliente HTTP funcionaba —`net::ERR_ABORTED` en el registro de
  * red de Chrome, a los 30 s clavados, medido sobre el build de producción— y la pantalla se
  * quedaba en el cartel de carga igual, 40 s de reloj sin una sola alerta. El error se producía y

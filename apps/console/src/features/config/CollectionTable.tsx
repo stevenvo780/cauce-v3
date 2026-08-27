@@ -30,18 +30,7 @@ export interface AvisoDeColeccion {
 }
 
 /**
- * Una colección del snapshot como TABLA, con los booleanos como INTERRUPTORES.
- *
- * Lo que había antes de este cambio, medido en Chrome sobre la pantalla real:
- *  - `Directed ACL`: 24 botones de texto para 6 filas —«Deshabilitar», «Quitar allow_route»,
- *    «Quitar allow_read», «Quitar allow_control»— apilados en una columna «Acciones», con la fila
- *    a 147 px de alto;
- *  - el mismo dato dicho DOS veces por permiso: la píldora decía «SÍ» y el botón de al lado decía
- *    «Deshabilitar»;
- *  - «Espacios y miembros»: 30 botones con el texto exacto «Deshabilitar» y 3.769 px de alto.
- *
- * Ahora cada booleano escribible es un interruptor en su propia columna: dice el estado y lo cambia
- * en el mismo sitio. La columna «Acciones» desapareció porque no le quedaba nada que hacer.
+ * Tabla interactiva para visualizar y modificar colecciones de configuración mediante interruptores.
  */
 export function CollectionTable({
   coleccion, politicasDeRol, soloLectura, busy, control, pendiente, aviso,

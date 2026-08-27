@@ -6,40 +6,9 @@ import {
 } from '@cauce/protocol';
 
 /**
- * LA VISTA PREVIA DEL PERFIL: qué va a quedar escrito, fichero por fichero, ANTES de escribirlo.
- *
- * ============================================================================================
- * QUÉ PROBLEMA RESUELVE
- * ============================================================================================
- * La consola ya deja editar ocho campos del alias. De los ocho, el 2026-08-24 sólo `role_brief`
- * tenía un lector real en la ejecución: los otros siete se guardaban en la base y no llegaban a
- * ningún sitio. El operador escribía, la pantalla decía «guardado», y el agente seguía sin
- * enterarse — sin un solo error por ningún lado.
- *
- * Esta ruta cierra la mitad que faltaba del lazo: dado un alias, devuelve EL TEXTO EXACTO que va a
- * quedar en cada fichero que su arnés lee. Para `claude` es `CLAUDE.md`; para `codex`,
- * `AGENTS.md`; para `openclaw`, los SIETE Markdown de su espacio de trabajo, cada uno con la cara
- * del perfil que le toca.
- *
- * ============================================================================================
- * POR QUÉ SALE DE LA MISMA FUNCIÓN QUE LA SIEMBRA
- * ============================================================================================
- * `ficherosDelArnes()` es la que usa el adaptador dentro del contenedor para escribir. Acá se
- * llama a ESA, no a una copia. Si el servidor compusiera el texto por su cuenta, las dos
- * implementaciones divergirían a la primera corrección y el operador aprobaría un bloque distinto
- * del que acaba en el disco, sin que nada diera error. Es todo el motivo por el que el reparto
- * vive en `@cauce/protocol` y no en `@cauce/adapter-sdk`.
- *
- * ============================================================================================
- * QUÉ ESTÁ MEDIDO Y QUÉ NO
- * ============================================================================================
- * Cuando está montada `prepareRuntime`, el gateway lee los bytes vivos por el relay, compone la
- * vista sobre ellos y acredita ruta, SHA, tamaño, generación y contenedor. Si esa sonda no está
- * disponible, conserva el fallback de fichero vacío pero lo declara como `fichero-vacio` y jamás
- * convierte esa ausencia de evidencia en `applied`.
- *
- * `base` distingue ambos casos. Decir «así queda el fichero» sobre una medición que no se hizo es
- * la clase de mentira que cuesta un despliegue.
+ * Vista previa y gestión del perfil del agente: genera y proyecta el contenido exacto
+ * de los ficheros de gobierno (`CLAUDE.md`, `AGENTS.md`, espacios de trabajo de OpenClaw)
+ * correspondientes a cada arnés a partir de `ficherosDelArnes()`.
  */
 
 /** De dónde salen el perfil y los hechos. Inyectable para poder probar la ruta sin base. */

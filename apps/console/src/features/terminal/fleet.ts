@@ -130,7 +130,7 @@ export function adapterSummary(adapters: AdapterView[]): { healthy: number; tota
 }
 
 /**
- * 🔴 **Por qué «3 / 6» estaba mal.** Medido en producción: el contador decía «ADAPTERS AVAILABLE
+ * Por qué «3 / 6» estaba mal.** Medido en producción: el contador decía «ADAPTERS AVAILABLE
  * 3/6» con 3 adaptadores disponibles y 3 que no habían reportado estado. Una fracción se lee como
  * «3 de 6 funcionan, 3 están rotos», y eso mandaba a buscar una avería que no existía. Un
  * adaptador que no reportó NO es un adaptador caído: es un adaptador del que no se sabe nada, y
@@ -273,7 +273,7 @@ export function countOnlinePtyTargets(targets: TerminalTarget[] | null | undefin
 
 /**
  * El modo `harness` del agente PTY es el que se engancha a la TUI que el agente YA está
- * corriendo (su `tmux`), en vez de abrir una shell nueva. Es lo que Steven pidió ver: no una
+ * corriendo (su `tmux`), en vez de abrir una shell nueva. Es lo que : no una
  * terminal más, sino la pantalla del agente ahora mismo.
  *
  * Que ese modo exista es una decisión del servidor: el agente sólo lo anuncia si tiene un
@@ -344,7 +344,7 @@ export function countLiveTuiTargets(targets: TerminalTarget[] | null | undefined
 /* -------------------------------------------------------------------------- */
 
 /**
- * 🔴 **La vista rompía su propia promesa. Medido el 2026-08-23 contra producción.**
+ * La vista rompía su propia promesa. **
  *
  * La cabecera dice, con estas palabras: «Un alias sólo emite si el servidor publica su modo
  * harness; el resto queda con su motivo escrito, **nunca en verde**». En la lista de flota,

@@ -115,9 +115,7 @@ export class DispatcherMetrics {
   }
 
   /**
-   * Vigía de cadenas mudas. `notified` es la métrica que Steven mira: cuántas tareas suyas
-   * se cerraron con un aviso en vez de morir calladas. `fanin_recovered` es la buena: la
-   * cadena se destrabó y va a llegar la síntesis real.
+   * Registra los resultados del barrido periódico del vigía de cadenas mudas.
    */
   recordChainSweep(result: ChainSilenceSweepResult): void {
     this.addChainSweep('scanned', result.scanned);

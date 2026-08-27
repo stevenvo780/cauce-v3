@@ -1,26 +1,7 @@
 import { ROLE_BRIEF_MAX, contarRoleBrief } from '../live/role-brief';
 
 /**
- * El catálogo de roles de agente, derivado de lo que la flota ya lleva puesto.
- *
- * Lo que se pidió: «poder crear roles como orquestador, constructor, operador y cambiarlos entre
- * agentes fácilmente». Lo que hay hoy en el servidor: una columna `agents.role_brief` de texto
- * libre por alias, y **ningún sitio donde guardar el nombre de un rol**. No existe tabla de
- * plantillas, ni recurso de configuración, ni clave en el snapshot — lo comprobé buscando el efecto
- * (un `role_template` / `role_templates` en protocolo, store y snapshot: cero coincidencias).
- *
- * Así que este catálogo se deriva: **un rol es un texto, y su identidad son los alias que lo
- * llevan**. Dos bots con el mismo brief son dos bots con el mismo rol; asignar un rol es copiar ese
- * texto a otro alias por la misma mutación versionada que usa el editor. Eso ya resuelve la mitad
- * cara del pedido —cambiar el rol de un agente sin reescribirlo a mano— sin inventar una fuente de
- * verdad nueva.
- *
- * Lo que NO se hace, y es a propósito: guardar el nombre del rol en el navegador, o esconder un
- * marcador «# orquestador» dentro del propio `role_brief`. Lo primero crearía una fuente de verdad
- * más sobre la flota —van catorce— que además sólo existiría en un ordenador. Lo segundo gastaría
- * cupo del tope de 1200 y cambiaría el texto que el adaptador antepone al contrato del bot. El
- * nombre con letras necesita una tabla; queda declarado como pendiente y este panel cambia de
- * fuente el día que exista, sin rehacerse.
+ * Catálogo y agrupación de roles de agente derivados del rol declarado en la configuración.
  */
 
 export interface AliasConRol {

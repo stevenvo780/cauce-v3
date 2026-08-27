@@ -1,33 +1,12 @@
 #!/usr/bin/env bash
 # cauce-panel-guard — que la sesión compartida no se quede muerta sin que nadie se entere.
 #
-# POR QUÉ EXISTE
-# El ADAPTADOR tiene guardia desde hace tiempo (`cauce-attach-guard`, cada 2 min). El PANEL no tenía
-# ninguna. El panel nace UNA sola vez: `cauce-v3-tmux@<alias>.service` es `Type=oneshot` con
-# `RemainAfterExit=yes`, así que tras su primer arranque bueno queda `active (exited)` para siempre y
-# no vuelve a crear nada nunca más. El otro creador es un humano escribiendo `cauce <alias> on`.
+# Verifica y repone el panel de tmux para las sesiones compartidas cuyo adaptador está activo.
 #
-# Consecuencia medida: si el panel se muere solo, NADA lo repone y NADA lo dice. El alias sigue
-# contestando el bus, `cauce` lo pinta `aparte` en amarillo sólo si alguien mira, y en la siguiente
-# entrega el adaptador abre una conversación NUEVA. El dueño pierde el hilo entero sin haber hecho
-# nada y sin que nadie se lo avise en el momento.
-#
-# Caso real, vulcano (tenant Pablo), 2026-08-02: el panel (pid 73881) nació a las 16:01 UTC con el
-# adaptador, seguía vivo a las 16:22:12 y a las 16:54:23 ya había muerto. No hubo `off`, ni reinicio
-# del adaptador, ni entrega en vuelo. Quedó `aparte` —el único de los quince— hasta que un humano
-# fue a mirar. La entrega siguiente arrancó de cero.
-#
-# LO QUE ESTE GUARDIA NO HACE, A PROPÓSITO
-# No repone el panel de un alias cuyo adaptador está parado. `cauce <alias> off` mata el panel
-# ADREDE: un panel superviviente le deja al siguiente `on` la generación tomada y arranca
-# `78/CONFIG`. Resucitarlo ahí rompería todos los despliegues, uno por uno. Por eso sólo se toca a
-# los alias cuyo adaptador está vivo DE VERDAD (unit activa **y** proceso en el contenedor):
-# `systemctl is-active` por sí sola ya mintió —dijo `inactive` con el adaptador vivo 3 h 27 min—,
-# así que se cruza con un barrido de /proc, igual que hace `cauce`.
-#
-# Tampoco resucita el caso "la sesión existe pero la TUI de adentro está muerta" (`tui_absent`):
-# repararlo exige matar la sesión del dueño, y eso no lo decide un timer. Se registra en el log para
-# que deje de ser mudo, que es el punto de todo esto.
+# Comportamiento:
+# - Solo interviene si el adaptador está activo (unit de systemd y proceso en contenedor).
+# - No repone paneles de alias detenidos para no interferir con ciclos de apagado/reinicio.
+# - Registra anomalías como `tui_absent` en el log sin forzar el cierre de la sesión de usuario.
 set -uo pipefail
 
 CONFIG=$HOME/.config/cauce-v3/container-aliases

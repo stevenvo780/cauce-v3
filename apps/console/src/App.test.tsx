@@ -59,7 +59,7 @@ it.each([
   // Las tres rutas se retiraron fusionando vistas: un marcador viejo tiene que llegar a la heredera,
   // no caer en el fallback a "La flota ahora" —que es una página que nadie pidió—.
   //
-  // 🔴 CONTROL: `/licenses` apuntaba a `/quotas`, que a su vez ya no existe. Si alguien deja el
+  // CONTROL: `/licenses` apuntaba a `/quotas`, que a su vez ya no existe. Si alguien deja el
   // alias encadenado, ESTA prueba lo agarra: `matchRoute` resuelve el mapa una sola vez, así que
   // `/licenses` terminaría en "La flota ahora" con la barra diciendo /licenses.
   window.history.pushState({}, '', ruta);
@@ -134,15 +134,7 @@ it('conserva el href real que permite abrir una ruta en otra pestaña', async ()
   expect(window.location.pathname).toBe('/accounts');
 });
 
-it('el menú es la portada más SIETE entradas: el menú final del 2026-08-22', async () => {
-  // No es una cifra decorativa: es el resultado de las cinco reformas del día, juntas.
-  //
-  // Se RETIRARON, con medición y no con opinión: «Jobs» (cero filas en la tabla desde que existe la
-  // base) y «Adapters» (seis tipos de arnés que casi nunca cambian → plegados en la portada).
-  // Se FUNDIERON: «Audit» es la pestaña «Auditoría» de «Señales y auditoría», y «Cuotas y
-  // licencias» es la pestaña «Consumo» de «Cuentas y cuotas».
-  // Se RENOMBRÓ: «Messages» → «Mensajes».
-  // De trece entradas el 2026-08-06 a la portada más siete.
+it('el menú contiene la portada más siete entradas consolidadas', async () => {
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
@@ -161,7 +153,7 @@ it('el menú es la portada más SIETE entradas: el menú final del 2026-08-22', 
   ]);
   expect(entradas).not.toContain('Fleet');
   expect(entradas).not.toContain('Tenants & ACL');
-  // 🔴 CONTROL NEGATIVO de las cinco reformas juntas: si alguien devuelve cualquiera de las cinco
+  // CONTROL NEGATIVO de las cinco reformas juntas: si alguien devuelve cualquiera de las cinco
   // entradas que se fueron, vuelve a haber dos sitios para el mismo dato y esto falla. Está acá y
   // no repartido por cinco ficheros porque el peligro de integrar cinco ramas es justamente que una
   // reponga en silencio lo que otra retiró.
@@ -207,12 +199,6 @@ it('/fleet/:cliente sin alias conserva la dirección incompleta como 404', async
   expect(window.location.pathname).toBe('/fleet/Steven');
 });
 
-/**
- * 2026-08-22. Miguel (Miguel:janus) entraba a la consola, veía "Configuration" en el menú, hacía
- * clic y recibía un 403 `control permission is required for configuration`. Medido contra
- * producción con su sesión real. El permiso no se toca: lo que estaba mal era que el menú
- * prometiera una vista que ese usuario nunca va a poder abrir.
- */
 it('deja «Ajustes y altas» inerte, y con el motivo escrito, para quien no tiene config.write', async () => {
   server.use(
     http.get('http://localhost/v3/console/access', () =>
@@ -254,15 +240,6 @@ it('deja «Ajustes y altas» navegable para quien SI tiene config.write', async 
   expect(window.location.pathname).toBe('/config');
 });
 
-/**
- * 2026-08-22 — las dos retiradas de esta ronda, y por qué se tratan DISTINTO.
- *
- * `/adapters` tiene heredera (su contenido se plegó en la portada) → alias silencioso y la barra
- * de direcciones se reescribe. `/jobs` no tiene ninguna: la tabla `jobs` medida en producción tenía
- * cero filas desde que existe la base, así que la vista no se mudó, desapareció. Mandarla a la
- * portada en silencio dejaría a quien abrió el marcador creyendo que la consola se equivocó de
- * página, así que se le dice, y se le dan las dos puertas que sí responden su pregunta.
- */
 it('/adapters redirige a la portada, donde su contenido está plegado', async () => {
   window.history.pushState({}, '', '/adapters');
   renderWithApi(<App />);

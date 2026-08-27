@@ -73,22 +73,8 @@ class WebSocketConsumerConnection implements ConsumerConnection {
     private readonly diagnostics: OutboundDiagnostics = SILENT_DIAGNOSTICS,
   ) {
     /**
-     * UN frame que el esquema rechaza se DESCARTA; no se lleva puesta la conexión.
-     *
-     * Antes esto era `queue.fail(...)`, y `fail` no es "descartar este frame": rechaza al
-     * iterador y a todos los que estaban esperando, o sea que mata la cola ENTERA de la
-     * conexión y con ella todas las entregas en vuelo. Un gateway más nuevo que agregara un
-     * campo opcional a `ack_result` bastaba para eso: se midieron 7 frames de esa forma en 7
-     * días, y los topes que los disparan quedan encendidos por default desde la migración 019.
-     *
-     * Descartar es estrictamente mejor que fallar en las dos formas en que esto puede pasar:
-     * un `delivery` ilegible no se trabaja, vence su plazo y el store lo reintenta como
-     * cualquier entrega no ACKeada; un `ack_result` ilegible deja el evento pendiente en el
-     * outbox durable y el adaptador lo reenvía. En los dos casos el mecanismo de reintento que
-     * ya existe se ocupa, y lo que NO pasa es perder el trabajo de las otras entregas.
-     *
-     * El descarte nunca es silencioso: sale por `inbound_frame_invalid` con los campos que el
-     * esquema señaló, que es lo que permite ver la deriva de protocolo sin una caída.
+     * Descarta frames que no cumplan el esquema de entrada registrando el diagnóstico correspondiente,
+     * sin interrumpir la conexión ni las demás entregas en curso.
      */
     socket.on('message', (data, isBinary) => {
       if (isBinary) {

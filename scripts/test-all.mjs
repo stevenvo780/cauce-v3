@@ -1,15 +1,7 @@
 #!/usr/bin/env node
 /**
- * Runs the whole test matrix to completion instead of stopping at the first failure.
- *
- * `pnpm test` used to be `test:unit && test:services && ... && test:e2e`. The `&&`
- * chain aborts on the first non-zero exit, so the state of every suite behind the
- * failure was simply unknown. That is how the e2e suite stayed broken for four days
- * behind an unrelated failure in `test:services`: nobody could see it, and deleting
- * the visible failure would have deleted the only pointer to the real one.
- *
- * Every suite now runs, the summary reports all of them, and the exit code is
- * non-zero when any suite failed.
+ * Runs the whole test matrix to completion, reporting summary status and returning
+ * a non-zero exit code if any suite fails.
  */
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';

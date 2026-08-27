@@ -7,7 +7,7 @@ import { LIVE_STATES, LIVE_STATE_META } from './agent-state';
 /**
  * **LA MISMA SITUACIÓN, LLAMADA DE TRES MANERAS EN LA MISMA PANTALLA.**
  *
- * 🔴 Medido el 2026-08-23 en `/live` con 18 alias reales. Convivían dos vocabularios de estado en
+ *  Convivían dos vocabularios de estado en
  * el mismo scroll, y el subtítulo de la tabla metía un tercero:
  *
  *   - Arriba: veredicto, chips, muñecos y la leyenda del pie → Caído · Bloqueado · Delegando ·
@@ -56,7 +56,7 @@ describe('el vocabulario de estados de la consola', () => {
      * `styles.css` lleva `text-transform: uppercase` para TODAS las insignias de la consola, así
      * que «Trabado» se pinta «TRABADO» en la fila y «Trabado» en el chip de la cinta. Es la misma
      * palabra con otra caja, no otra palabra —el defecto medido eran palabras distintas— y
-     * cambiar esa regla global excede a este arreglo. Medido en Chrome el 2026-08-23.
+     * cambiar esa regla global excede a este arreglo. 
      */
     const constantes = [...Object.values(WORK_STATE_LABEL), ...Object.values(FLAG_LABEL)]
       .filter((etiqueta) => etiqueta === etiqueta.toUpperCase() && /[A-ZÁÉÍÓÚÑ]{2,}/.test(etiqueta));

@@ -1,32 +1,8 @@
 #!/usr/bin/env python3
-"""El modo `harness` MIRA. Nunca teclea. Y eso se mide en el pty, no en un contador.
+"""Pruebas para verificar que el modo `harness` sea estrictamente de solo lectura en el pty.
 
-POR QUE EL CANDADO SE MUEVE AL AGENTE
--------------------------------------
-Hasta ahora lo unico que impedia teclear en la TUI ajena era el `-r` del `tmux attach` que el
-lanzador arma. Eso tiene dos agujeros:
-
-1. `HARNESS_COMMAND` se puede escribir a mano en `~/.config/cauce-v3/pty/<alias>.env`. Un fichero
-   sin `-r` convierte la consola en un teclado sobre la sesion del humano que esta trabajando ahi,
-   y nada en todo el camino lo impide ni lo dice.
-2. La TUI nativa de OpenClaw —la unica que pueden emitir los alias openclaw, porque en sus
-   imagenes no hay `tmux` y el proceso es un demonio, no una pantalla— **no tiene `-r`**. No hay
-   ningun argumento que la vuelva de solo lectura.
-
-Y el dano no es hipotetico. Con la sesion compartida encendida hay UNA sola caja de entrada por
-alias (`sessionKey: shared:<alias>` en engine.ts), asi que un segundo escritor no abre una
-conversacion nueva: pisa el turno en curso. Medido el 2026-07-31 en kratos, cuatro degradaciones
-`input_busy` seguidas por exactamente eso.
-
-Por eso el candado deja de ser un argumento del argv y pasa a ser una propiedad del agente: un
-modo de VISOR no escribe en su pty, venga la trama que venga. El `-r` del tmux se queda igual
-(defensa en profundidad), pero ya no es lo unico que sostiene la promesa.
-
-COMO SE MIDE
-------------
-Con un pty de verdad (`os.openpty`) y leyendo el lado esclavo: lo que importa es si los bytes
-LLEGAN al proceso, no si una variable interna quedo vacia. Cada caso va con su control negativo
-en el mismo pty y con la misma trama, cambiando solo el modo.
+Valida que ninguna pulsación de teclas o entrada de stdin llegue al proceso del pty
+cuando la sesión está en modo `harness`, contrastándolo con el modo `shell`.
 """
 from __future__ import annotations
 

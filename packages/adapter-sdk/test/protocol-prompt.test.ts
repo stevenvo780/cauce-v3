@@ -233,10 +233,8 @@ test("every invariant that was not under discussion is preserved verbatim", () =
 });
 
 /**
- * DEFECTO A, medido el 2026-07-30: la prohibición de abrir otra ronda de delegación vivía SÓLO en
- * el bloque de `agent.fanin`, y para `agent.response` lo único escrito prohibía rebotarle al
- * remitente — lo único que nunca pasó. Lo que sí pasó, 4 de 4 veces, fue re-delegar A TERCEROS
- * desde la respuesta: 22 entregas donde tocaban 10.
+ * Regla de disciplina de delegación para `agent.response`: prohíbe re-delegar
+ * a ramas ya abiertas en `already_returned` o `still_pending`.
  */
 test("una agent.response trae la regla que prohibe re-pinguear las ramas ya abiertas", () => {
   const response = protocolPrompt("request", undefined, context({ message_type: "agent.response" }));

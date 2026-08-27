@@ -8,24 +8,10 @@ import type { ConsoleUser, ConsoleUserRole, ConsoleUserStore } from './console-u
 import { DECOY_PASSWORD_HASH_PROMISE, MAX_PASSWORD_LENGTH, verifyPassword } from './password.js';
 
 /**
- * Login humano de la consola: correo + contraseña contra `console_users`, sesión en un JWT
- * firmado que viaja SÓLO en una cookie `HttpOnly; Secure; SameSite=Strict` con prefijo
- * `__Host-`. El navegador no puede leer el token: un XSS en la consola no se lleva la sesión.
- *
- * SE SUMA AL mTLS, NO LO REEMPLAZA. `fallback` recibe todo lo que llegue SIN la cookie de
- * sesión, así que los agentes siguen entrando por su certificado de cliente exactamente igual y
- * el mismo proceso atiende las dos puertas. Esa era la pregunta abierta de
- * `ops/console-login/README.md` §3.2 ("si no conviven, la consola necesita su propio listener"):
- * conviven, porque la credencial de cada puerta es distinguible en el propio request.
- *
- * QUÉ NO HACE, a propósito: ni refresh rotativo, ni MFA, ni recuperación por correo, ni
- * proveedor externo. Login, logout, sesión.
- *
- * Lo que el token NO decide: el rol y los permisos NO se leen del JWT, se releen de la fila de
- * `console_users` en cada request. Desactivar una cuenta o cambiarle la contraseña corta las
- * sesiones abiertas sin tabla de revocación — un token viejo sigue estando firmado, pero ya no
- * encuentra respaldo. Y encima de eso, `/v3/console/access` intersecta estos permisos con los
- * que la base le concede al tenant/alias: el JWT nunca puede escalar por encima de `memberships`.
+ * Proveedor de autenticación por contraseña para usuarios de la consola.
+ * Emite una cookie de sesión HttpOnly con un JWT firmado y delega en el
+ * proveedor fallback (como mTLS) las solicitudes que no presentan dicha cookie.
+ * El rol y los permisos se revalidan contra el almacén de usuarios en cada petición.
  */
 
 const JWT_HEADER = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' }), 'utf8').toString('base64url');
@@ -219,23 +205,9 @@ export interface PasswordAuthProviderOptions {
   now?: () => number;
   throttle?: LoginThrottle;
   /**
-   * Canal del principal de MÁQUINA que además es la boca del NAVEGADOR.
-   *
-   * El proxy de la consola (nginx) le habla al gateway con SU propio certificado de cliente, y ese
-   * certificado está provisionado en el registro mTLS como `Steven:kant`, `channel: console`,
-   * rol `operator`. Sin esta puerta, un request del navegador SIN cookie de sesión cae al
-   * `fallback` mTLS, presenta el certificado del proxy y el gateway lo atiende como operador: se
-   * medió el 2026-08-06 y `/v3/console/*` devolvía las entregas, los mensajes, la auditoría y las
-   * salas de los CINCO tenants a cualquiera que llegara al proxy. El login quedaba de cortina: la
-   * SPA escondía la interfaz, pero la API seguía abierta y lo único que la tapaba era el basic
-   * auth de Caddy.
-   *
-   * La regla: el certificado del proxy es una credencial de TRANSPORTE ("soy la consola"), no una
-   * autorización para LEER LA FLOTA EN EL NAVEGADOR. Es el canal el que dice QUIÉN puede tener un
-   * navegador del otro lado; es la RUTA la que dice si hace falta una persona. Ver
-   * `isConsoleSurface`: sólo la superficie de consola exige sesión, y ahí ni el certificado del
-   * proxy alcanza. El resto de `/v3/` es máquina a máquina y le basta el mTLS, venga por el canal
-   * que venga — ése es el "no rompas el mTLS".
+   * Canal del principal de máquina asociado a la consola web.
+   * Requiere sesión humana explícita para acceder a las rutas de superficie de consola,
+   * impidiendo que el certificado de transporte del proxy autorice accesos web anónimos.
    */
   machineChannelRequiringSession?: string;
 }
@@ -244,28 +216,8 @@ export interface PasswordAuthProviderOptions {
 const SESSION_REQUIRED_MESSAGE = 'se requiere la cookie de sesión de la consola';
 
 /**
- * Superficie de CONSOLA: las rutas que le devuelven datos de la flota a un NAVEGADOR. Son las
- * únicas que exigen una sesión humana; todo lo demás bajo `/v3/` es superficie de BUS (máquina a
- * máquina) y se autoriza con el mTLS del que llama.
- *
- * POR QUÉ POR RUTA Y NO POR CANAL. El 2026-08-06 la puerta se puso sobre el canal: cualquier
- * principal del canal `console` quedaba rechazado en CUALQUIER endpoint. Como `console-client` es
- * el único principal mTLS con permiso `control` y el único que usan el guardia médico y las
- * herramientas de operación para publicar, `POST /v3/messages` empezó a devolver 401 y la flota se
- * quedó sin plano de control: ningún cambio de configuración era posible, ni por un humano ni por
- * un agente. Un canal dice de dónde PUEDE venir un navegador; no dice qué está pidiendo. Lo que
- * hay que proteger es la superficie que un navegador puede leer, y eso es una lista de rutas.
- *
- * Un mismo principal entra por las dos puertas según qué pida: `console-client` publica en
- * `/v3/messages` con su certificado, y en `/v3/console/activity` necesita que además haya una
- * persona con sesión iniciada.
- *
- * `/v3/status` está adentro porque devuelve presencia y contadores de la flota y la SPA lo pinta en
- * la portada; era parte del mismo agujero. Las rutas del relay de terminal (`/v3/terminal/relay/*`)
- * no aparecen porque se autorizan con su token y ni pasan por este proveedor.
- *
- * El prefijo es EXACTAMENTE el mismo que mira `createConsoleSecurityHook`: si un día se agrega una
- * ruta de consola, queda cubierta por las dos puertas sin tocar ninguna lista.
+ * Determina si una URL pertenece a la superficie de consola que requiere sesión de usuario.
+ * Protege las rutas administrativas y de estado frente a accesos directos de navegador sin sesión.
  */
 export function isConsoleSurface(url: string): boolean {
   const path = url.split('?', 1)[0] ?? '';
@@ -349,15 +301,11 @@ export class PasswordAuthProvider implements AuthProvider {
       channel: 'console',
       roles: authority.roles,
       permissions: authority.permissions,
-      // La pieza que arregla la auditoría: de acá sale el operador, no de una cabecera que hoy
-      // pone el proxy con el valor `steven` fijo para todo el mundo.
+      // Identificador del operador autenticado derivado de la cuenta de consola.
       operator_id: user.email,
       /*
-       * Una sesión web NO es un transporte de retorno. La consola relee el mensaje y sus
-       * entregas desde PostgreSQL; no existe (ni debe existir) un bridge `adapter=console` que
-       * reciba una respuesta. Fabricar ese origin hacía que cada respuesta terminal dejara un
-       * `origin_relay` durable que ningún worker podía reclamar. La identidad humana ya queda
-       * trazada por operator_id y session_id, sin convertirla en una ruta de entrega.
+       * Una sesión web no es un transporte de retorno. La identidad humana queda
+       * trazada por operator_id y session_id sin registrarse como ruta de entrega durable.
        */
     });
   }

@@ -1,16 +1,5 @@
 /**
- * **Dónde empieza un hilo de conversación.**
- *
- * Medido en producción el 2026-08-23: al abrir la conversación de zeus, el hilo arrancaba en la
- * burbuja de las 2:00:01 —la MÁS VIEJA— y el último mensaje (16:16:09) quedaba a 10.976 px dentro
- * del contenedor, con `scrollY = 0` y una ventana de 900: unas doce pantallas de arrastre. Una
- * búsqueda en el DOM de cualquier botón o enlace con `ultimo|reciente|abajo|final|bajar` daba
- * CERO resultados. O sea: la consola abría por el principio y no ofrecía ninguna forma de llegar
- * al final. Es lo contrario de lo que hace cualquier mensajería, y era lo primero que un operador
- * necesita: lo último que dijo el agente.
- *
- * Las dos decisiones viven acá, puras, porque jsdom no tiene layout y en el componente no se
- * pueden probar: ahí sólo se comprueba que el efecto llame a esto (`MessagesPage.test.tsx`).
+ * Utilidades para el control de desplazamiento automático y anclaje al final del hilo de mensajes.
  */
 
 /**

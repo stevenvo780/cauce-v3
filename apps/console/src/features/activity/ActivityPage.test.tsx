@@ -136,7 +136,7 @@ it('makes the stalled (incident) agent stand out even harder, and stacks its fla
   // Lo que sí desaparece es el TERCER «Caído»: el chip `lease_expired` del recuadro de señales.
   expect(within(midasRow).getAllByText('Caído')).toHaveLength(2);
 
-  // 🔴 Pero NO se apilan las cinco. «Sin ACK» y «ACK vencido» son la definición de estar trabado,
+  // Pero NO se apilan las cinco. «Sin ACK» y «ACK vencido» son la definición de estar trabado,
   // y «Caído» ya lo dice la columna de al lado: repetirlas no informa cinco veces, informa menos.
   // Lo medido en producción eran CINCO insignias en una celda para decir «está trabado».
   const insignias = celdaEstado.querySelectorAll('.badge');

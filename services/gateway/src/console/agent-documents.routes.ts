@@ -7,26 +7,11 @@ import {
 } from './agent-documents.js';
 
 /**
- * `GET /v3/console/tenants/:tenantId/agents/:alias/documents` — el inventario de ficheros que
- * gobiernan a un alias inequívoco dentro de un tenant.
+ * `GET /v3/console/tenants/:tenantId/agents/:alias/documents` — inventario de ficheros de gobierno
+ * asociados al alias dentro del tenant especificado.
  *
- * SÓLO LECTURA, y ni siquiera del contenido: devuelve QUÉ fichero es cada cosa y DÓNDE vive. Hoy
- * la consola no enseña ninguna de estas rutas (medido el 23-ago contra el bundle desplegado
- * `index-Dnt3aJEt.js`: cero apariciones de «claude.md», «herramientas», «mcp» o «skill»), así que
- * el primer escalón útil es que Steven pueda ver el mapa antes de que exista el editor.
- *
- * La honestidad es el punto de esta ruta. Cada fila viaja con `facts_source`:
- *
- *  - `measured`: el pty-agent leyó el entorno del proceso del arnés DENTRO del contenedor. Sólo
- *    entonces la ruta es de fiar y `editable` puede ser `true`.
- *  - `registry`: viene de la presencia del pty-agent (arnés y usuario configurados en su bundle).
- *    Mejor que la base, pero sigue siendo configuración.
- *  - `database`: `agents.harness_id` / `agents.home_directory`. NO es de fiar y se marca así.
- *
- * Que la base no es de fiar está medido, no supuesto: el 23-ago, `agents.harness_id` no coincidía
- * con el binario en ejecución en 5 de 14 alias (argos, heraclito, kant, kratos, salva) y
- * `agents.home_directory` daba `/home/dev` para iza, que corre con `HOME=/home/claw`. Por eso
- * ninguna fila con `facts_source` distinto de `measured` sale nunca como editable.
+ * Cada entrada incluye `facts_source` ('measured', 'registry', 'database') indicando el origen
+ * de la información de entorno. Los documentos solo se marcan como editables cuando su origen es 'measured'.
  */
 
 export type FactsSource = 'measured' | 'registry' | 'database';

@@ -3,7 +3,7 @@
  *
  * `GET /v3/console/messages` no devuelve el mensaje: devuelve `left(body,240)`. Está escrito en
  * `packages/store/src/repository.ts`, en la consulta de `listMessages`, y la consola no lo decía
- * en ninguna parte. Medido contra producción el 2026-08-23 con la sesión de la propia página:
+ * en ninguna parte. 
  * 100 items, largo máximo de `body_preview` = 240 caracteres exactos, mínimo 4. En pantalla se
  * leía «…Yo pare lo que habia arranca» y «…El dominio real es stevenvallejo», cortados a mitad de
  * palabra, sin puntos suspensivos, sin «ver más» —cero coincidencias de `ver mas|expandir|mostrar

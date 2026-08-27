@@ -29,21 +29,7 @@ function DeliveryProgress({ delivery, onSelect }: { delivery: DeliveryView; onSe
 }
 
 /**
- * El historial de una conversación, en burbujas.
- *
- * 🔴 **Por qué la selección va por `message_id` y no por `delivery_id`.** Hasta el 2026-08-23 la
- * burbuja se marcaba con `data-selected={delivery?.delivery_id === selectedDeliveryId || undefined}`.
- * Medido en producción abriendo el hilo de zeus SIN dar un solo clic: 51 burbujas y DIEZ con
- * `data-selected="true"`, con su anillo azul puesto (posiciones 2, 4, 6, 8, 14, 15, 16, 18, 30 y
- * 47). El motivo es de una línea: los mensajes de salida NO tienen entrega para este par, así que
- * `delivery?.delivery_id` es `undefined`; cuando además nadie ha seleccionado nada,
- * `selectedDeliveryId` también es `undefined`, y `undefined === undefined` es `true`. La consola
- * marcaba como «elegidas por el operador» exactamente las burbujas de las que menos sabía.
- *
- * Ahora se compara el id del MENSAJE y sólo cuando hay uno: sin selección no hay ninguna burbuja
- * marcada, que es lo que un operador que no tocó nada tiene derecho a ver. El identificador de
- * mensaje es además el único que TODAS las burbujas tienen —la mitad del hilo no tiene entrega—,
- * y por eso clicar una burbuja de salida ahora sí hace algo: antes no había nada que clicar.
+ * Componente de renderizado de transcripción e historial de conversación de terminal.
  */
 export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
   items: TranscriptItem[];

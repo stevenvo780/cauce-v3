@@ -1,7 +1,7 @@
 /**
  * EL TERMINAL NO PUEDE INYECTAR `<style>` EN LA PÁGINA.
  *
- * 🔴 Por qué. La consola se sirve con `style-src 'self'` (`deploy/nginx-console-tls.conf`, línea
+ * Por qué. La consola se sirve con `style-src 'self'` (`deploy/nginx-console-tls.conf`, línea
  * 15). El renderer DOM de xterm no trae sus reglas en un `.css`: las compone en tiempo de
  * ejecución y las mete en DOS elementos `<style>` que crea con `createElement` —uno con el tema y
  * la letra (`_injectCss`) y otro con la geometría de la celda (`_updateDimensions`)—. Cada vez que

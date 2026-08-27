@@ -35,7 +35,7 @@ const STATE_LABELS: Readonly<Record<PtySessionView['state'], string>> = {
  * The component owns no terminal state: it lends a wrapper and the session manager reparents
  * the live node into it. Unmounting hides the terminal, it does not kill the session.
  *
- * 🔴 **El orden de las capas importa y antes estaba mal.** Los avisos del relay (`pty-notices`) y
+ * El orden de las capas importa y antes estaba mal.** Los avisos del relay (`pty-notices`) y
  * el error de renderer iban ENTRE la barra de estado y el terminal, así que cada aviso que llegaba
  * empujaba el terminal hacia abajo unos píxeles y el texto que estabas leyendo se movía. Ahora el
  * terminal ocupa el hueco (`flex: 1`) y todo lo accesorio va debajo, con alto acotado: lo que se
@@ -84,7 +84,7 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
         ) : null}
       </div>
       {/*
-        🔴 EL ESPEJO ESTRECHO NO PUEDE CALLARSE. El agente PTY se engancha a la tmux del alias con
+        EL ESPEJO ESTRECHO NO PUEDE CALLARSE. El agente PTY se engancha a la tmux del alias con
         `attach-session -r -f ignore-size`: la ventana remota conserva SU ancho pase lo que pase
         (y menos mal — redimensionar la tmux de un agente que está trabajando sería tocarle el
         escritorio). Si acá caben menos columnas que allá, lo que sobra por la derecha no se ve.

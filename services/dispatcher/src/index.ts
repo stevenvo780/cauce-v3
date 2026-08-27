@@ -34,12 +34,8 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
   const chainSweepMs = options.chainSweepMs ?? 60_000;
   let running = false;
   const retentionIntervalMs = options.retentionIntervalMs ?? 0;
-  // Arranca en -infinito para que el PRIMER tick barra: si arrancara en `Date.now()` un
-  // dispatcher que se reinicia cada pocos minutos —lo normal durante un despliegue— nunca
-  // llegaría a podar nada.
+  // Inicializa en -infinito para ejecutar el primer barrido en el tick inicial.
   let nextPruneAtMs = Number.NEGATIVE_INFINITY;
-  // Mismo criterio para el vigía: el primer tick tras un despliegue ya barre, porque una raíz
-  // que lleva horas muda no tiene por qué esperar otro minuto más.
   let lastChainSweep = Number.NEGATIVE_INFINITY;
 
   const tick = async (): Promise<void> => {
@@ -54,9 +50,7 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
           : { leaseCapGraceMs: options.leaseCapGraceMs })
       });
       await repository.retryExpiredJobs();
-      // Reloj propio: ~1 barrido/min contra los ~10 ticks/s del reaper. Y con su propio
-      // try/catch, porque el vigía existe para que el dueño no se quede sin noticias: no
-      // puede ser él quien tumbe el tick que reparte el trabajo.
+      // Barrido periódico de cadenas mudas con aislamiento de errores.
       if (chainSweepMs > 0 && Date.now() - lastChainSweep >= chainSweepMs) {
         lastChainSweep = Date.now();
         try {
@@ -94,10 +88,7 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
           options.onError?.(error);
         }
       }
-      // Va al final y con su propio try: la retención es mantenimiento, y un DELETE que falla
-      // (por ejemplo porque la migración 014 todavía no aterrizó en esta base y no existe
-      // `delivery_acks.renewal`) no puede dejar de reintentar garras vencidas, que es el
-      // trabajo por el que existe el dispatcher. Se reporta por `onError`, no se traga.
+      // Poda periódica de observabilidad con aislamiento de errores.
       if (retentionIntervalMs > 0 && Date.now() >= nextPruneAtMs) {
         nextPruneAtMs = Date.now() + retentionIntervalMs;
         try {

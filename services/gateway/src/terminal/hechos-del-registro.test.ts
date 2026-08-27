@@ -21,19 +21,7 @@ const RELAY_REBOOT = {
 } as const;
 
 /**
- * 🔴 **LA FUENTE DE HECHOS MEDIDOS ESTABA VACÍA EN PRODUCCIÓN, Y ESO CERRABA TODA LA VÍA.**
- *
- * `MeasuredFactsSource` existía, `TerminalRelayFactsProbe` la consumía y de ella colgaba la
- * lectura y edición de los ficheros de gobierno de cada agente. En producción se inyectaba
- * `{ factsFor: async () => undefined }`: un doble que dice «nadie ha medido nada» SIEMPRE.
- *
- * El motivo estaba escrito en el propio plugin —«el pty-agent conoce su `home` y su `harness` por
- * el bundle con el que arranca, pero no los publica»—. El `harness` sí viajaba en la presencia;
- * el `home` no. Una línea de Python.
- *
- * Estas pruebas cubren sobre todo lo que esta pieza se NIEGA a contestar, porque ahí está el
- * daño: un hecho a medias hace que la consola pase de decir honestamente «no se miró» a servir un
- * fichero equivocado con cara de medido.
+ * Pruebas unitarias para la extracción de hechos medidos a partir de la presencia del agente.
  */
 
 function presencia(extra: Record<string, unknown> = {}) {
@@ -232,10 +220,8 @@ describe('lo que se NIEGA a contestar', () => {
 
   it('un agente VIEJO, que no publica `home`, no da hechos — no se deduce', async () => {
     /*
-     * Deducir el `home` del registro de la base sería exactamente el fallo que esta vía evita: el
-     * 23-ago-2026 `agents.harness_id` era incorrecto en 5 de los 14 alias, así que resolver
-     * `~/.claude/CLAUDE.md` con esos datos no da «no se pudo leer», da el fichero de OTRO arnés
-     * servido como si fuera el bueno.
+     * Deducir `home` o `harness` de valores por defecto o columnas estáticas arriesga
+     * servir rutas incorrectas. Si el agente no publica `home`, no se devuelven hechos.
      */
     const registry = new AgentRegistry();
     registry.observe(RELAY, [presencia({ home: undefined })]);

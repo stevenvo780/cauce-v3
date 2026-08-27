@@ -5,35 +5,7 @@ import { NAV_ENTRIES } from './nav';
 import { renderWithApi } from './test/render';
 
 /**
- * **Las invariantes del router, como TABLA y no como casos sueltos.**
- *
- * Por qué existe este fichero, y por qué es una tabla.
- *
- * El 2026-08-22 cinco grupos reformaron la consola a la vez: dos retiraron vistas, dos las
- * fundieron y uno renombró una. Los cinco tocaron el MISMO array `routes` y el MISMO
- * `ROUTE_ALIASES`, y cada uno los dejó consistentes con su propia rama. El peligro de juntarlos no
- * es el conflicto ruidoso —ese lo canta git— sino el SILENCIOSO, y este router tiene dos de los
- * peores que hay:
- *
- *   1. **Un id de ruta que no está en `routes` antes caía al `fallback` sin decir nada.** Ahora
- *      tiene un estado 404 explícito, pero la tabla sigue impidiendo que una ruta declarada o un
- *      enlace del menú llegue allí por una integración incompleta.
- *   2. **Un alias ENCADENADO (a → b → c) hace exactamente lo mismo.** `matchRoute` resuelve
- *      `ROUTE_ALIASES` **una sola vez**: si `licenses → quotas` y `quotas → accounts`, entonces
- *      `/licenses` resuelve a `quotas`, que ya no es una ruta, y termina en el 404. Un alias
- *      encadenado no es un alias: es un marcador roto con otra cara.
- *
- * Escrito como casos sueltos, esto envejece: se agrega una entrada al menú y nadie escribe su
- * caso. Escrito como tabla, agregar una entrada sin página o un alias que apunte a otro alias
- * rompe la suite el mismo día, sin que nadie tenga que acordarse.
- *
- * La tabla se recorre en DOS niveles, y hacen falta los dos:
- *
- *   - **estructural**, sobre `ROUTE_TABLE` y `ROUTE_ALIAS_TABLE`: barato, exhaustivo y capaz de
- *     decir *por qué* falla. Detecta la cadena de alias y el id sin componente.
- *   - **montando la App de verdad**: porque «el id está en la lista» no prueba que la vista se
- *     pinte. Un componente que no monta, un import circular o un alias tapado por otro se ven
- *     acá y no en la comprobación estructural.
+ * Pruebas sobre la tabla y estructura de rutas y alias del enrutador de la consola.
  */
 
 /** Qué tiene que verse cuando una ruta resuelve BIEN. Es el contrato, no una copia del código. */

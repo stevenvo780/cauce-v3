@@ -2,7 +2,7 @@
  * BANCO DE PRUEBAS DE LA TERMINAL: lo que hace falta para que `/terminal` llegue a PINTAR un PTY
  * sin un backend detrás.
  *
- * 🔴 Por qué existe. Los defectos caros de esta vista son de GEOMETRÍA —cuántas filas y columnas
+ * Por qué existe. Los defectos caros de esta vista son de GEOMETRÍA —cuántas filas y columnas
  * acaba teniendo la PTY, si el hueco crece con la ventana, cuánto ancho de pantalla se
  * desperdicia—, y ninguno de ellos es visible en jsdom, que no tiene layout. Medirlos exige un
  * Chrome de verdad con la vista REAL. Pero `npm run dev:mock` llegaba hasta la puerta y no la
@@ -50,7 +50,7 @@ export const terminalDemoHandlers = [
       harness: 'claude-code',
       shares_container_with: [],
       /*
-       * 🔴 Acá decía `'live-tui'`, y el cliente busca `'harness'` (`LIVE_TUI_MODE`, en `fleet.ts`).
+       * Acá decía `'live-tui'`, y el cliente busca `'harness'` (`LIVE_TUI_MODE`, en `fleet.ts`).
        * O sea que el banco de pruebas publicaba un modo que la consola no reconoce: el botón «TUI»
        * salía DESHABILITADO, el contador decía «EMITEN SU TUI 0 / 1» y el único modo que se podía
        * abrir era una shell nueva. Justo el modo que esta vista existe para dar —mirar en solo

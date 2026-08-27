@@ -1,37 +1,5 @@
 /**
- * Redacción de secretos en la INGESTA, antes de que nada se persista.
- *
- * Este control nació de un incidente real en el que un mensaje contenía un archivo de entorno
- * completo y llegó a persistirse. La evidencia original se conserva fuera del código; este
- * comentario no incluye identificadores, endpoints ni fragmentos de credenciales.
- *
- * Se redacta acá, en el puente, y no más adelante, porque éste es el ÚLTIMO punto donde el texto
- * todavía no se escribió en ningún sitio. `StoreTelegramIngress.publish` ya persiste.
- *
- * ------------------------------------------------------------------------------------------
- * LA REGLA QUE MANDA: un falso positivo es PEOR que el problema.
- *
- * Mutilar el mensaje de un humano —dejarle un `[secreto-redactado]` en medio de una frase suya—
- * rompe el producto para todos los mensajes, todos los días, para tapar un caso que pasó una vez.
- * Por eso cada patrón de acá exige forma de credencial, no "parece sospechoso":
- *
- *   - la URI necesita `esquema://usuario:algo@` COMPLETO; una URL normal no matchea nunca;
- *   - `Authorization:` sólo se redacta si lo que sigue tiene 16+ caracteres Y contiene un dígito o
- *     un símbolo de los de base64. Sin eso, "Authorization: responsabilidades" (17 letras) se comía
- *     una palabra española legítima;
- *   - el token de bot exige `dígitos:` y 30+ caracteres con letras Y dígitos mezclados;
- *   - los prefijados (`sk-ant-`, `ghp_`, `AKIA`, `npg_`, `eyJ…`) son literalmente imposibles de
- *     escribir por accidente.
- *
- * Lo que NO se toca a propósito: `password=…`, `PGPASSWORD=…`, `token=…` sueltos y cualquier
- * `CLAVE=valor` genérico. "mi password es un desastre" es una frase normal, y una asignación
- * genérica no distingue una credencial de una opinión. Se prefiere dejar pasar un caso raro antes
- * que romper una conversación.
- *
- * Tampoco se redacta el EGRESO (lo que el agente le contesta al humano): ahí el destinatario es el
- * dueño del dato y taparle su propia credencial mientras la está depurando sería el falso positivo
- * más caro de todos. Este módulo cubre el camino humano → base.
- * ------------------------------------------------------------------------------------------
+ * Redacción de secretos en la ingesta antes de persistir.
  */
 
 export type RedactionKind =
@@ -143,9 +111,7 @@ const RULES: readonly Rule[] = [
     replace: () => MARK
   },
   /**
-   * Credenciales con prefijo propietario. Tasa de falso positivo esencialmente nula: nadie escribe
-   * `ghp_` seguido de 36 caracteres aleatorios sin querer. `npg_` es el de Neon, el prefijo exacto
-   * de la contraseña que se filtró el 02-ago.
+   * Credenciales con prefijo propietario.
    */
   {
     kind: 'api_key',
@@ -169,18 +135,7 @@ const RULES: readonly Rule[] = [
 const MAX_SCANNED_CHARACTERS = 256 * 1024;
 
 /**
- * Interruptor de la redacción en la ingesta. POR DEFECTO NO REDACTA.
- *
- * Una decisión operativa documentada con evidencia privada mantiene esta redacción desactivada
- * por defecto: al activarla durante una instalación, una credencial necesaria llegó sustituida por
- * el marcador de redacción y el agente no pudo completar el trabajo.
- *
- * El riesgo de persistir el texto y la política de retención quedaron aceptados fuera del código.
- * No se transcriben aquí identidades, horarios, handles, cuerpos de mensaje ni datos de acceso.
- *
- * Se deja el módulo ENTERO vivo y encendible con `CAUCE_TELEGRAM_REDACT_INGRESS=1`, porque el
- * riesgo que documenta la cabecera de este archivo sigue siendo real para un tenant cliente que no
- * tenga esa limpieza. Borrar el código habría hecho falta escribirlo de nuevo para volver atrás.
+ * Interruptor de la redacción en la ingesta. Por defecto no redacta.
  */
 function redactionEnabled(): boolean {
   return process.env.CAUCE_TELEGRAM_REDACT_INGRESS === '1';

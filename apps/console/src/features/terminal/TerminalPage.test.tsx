@@ -245,15 +245,6 @@ it('labels every alias with an explicit PTY state instead of a spinner or a bare
   expect(await screen.findAllByText('1 / 3')).toHaveLength(2);
 });
 
-/**
- * 🔴 **La vista rompía su propia promesa. Medido el 2026-08-23 contra producción.**
- *
- * `/v3/console/terminal/targets` publicaba `modes:["shell"]` y `reason:"ok"` para argos, hegel,
- * iza, janus y jarvis. Los cinco se pintaban con el MISMO chip verde «PTY online» que los ocho
- * que sí traen `harness`, y sin motivo, mientras la cabecera prometía que «el resto queda con su
- * motivo escrito, nunca en verde» y el KPI decía «8/14». El operador no tenía forma de saber
- * cuáles seis de los catorce le iban a fallar antes de hacer clic.
- */
 it('un alias con PTY pero SIN modo harness no se pinta en verde: lleva su motivo, como gaia', async () => {
   enableCapability();
   serveTargets([
@@ -288,7 +279,7 @@ it('disables PTY for a denied destination and shows the server motive, not an em
 
   const ptyButton = await screen.findByRole('button', { name: /^PTY$/i });
   await waitFor(() => expect(ptyButton).toBeDisabled());
-  // 🔴 El motivo del servidor trae el código DENTRO de la prosa. Se traduce, y se conserva lo
+  // El motivo del servidor trae el código DENTRO de la prosa. Se traduce, y se conserva lo
   // que el servidor sí dijo en castellano. Ver `denegaciones.ts`.
   expect(ptyButton).toHaveAttribute('title', expect.stringContaining('Falta decir qué persona está entrando'));
   expect(screen.getByText(/falta identidad por persona/i)).toBeInTheDocument();
@@ -520,13 +511,6 @@ it('surfaces a 409 conflict from the gateway without opening any socket', async 
   expect(StubWebSocket.instances).toHaveLength(0);
 });
 
-/**
- * 🔴 **La peor de las tres mentiras del 2026-08-22.** Con una cuenta sin permiso `control`,
- * `GET /v3/console/terminal/capability` responde 403 —el gate corre antes de mirar el backend— y
- * la pantalla decía «El relay de terminales no está desplegado en este stack. (HTTP 403 al
- * consultarlo.)» con el relay desplegado y sano. Se mide el aviso que el operador lee, no la
- * función pura: el título del cartel contaba la misma mentira que el cuerpo.
- */
 it('con un 403 dice que falta el permiso y NUNCA que el relay no está desplegado', async () => {
   server.use(
     http.get('http://localhost/v3/console/access', () => HttpResponse.json({
@@ -573,15 +557,6 @@ it.each([502, 503, 504])(
   20_000,
 );
 
-/**
- * 🔴 **Jerga cruda en la cara del operador, y un contador que sugería una avería.**
- *
- * Medido el 2026-08-23 en producción: seis badges del panel de adaptadores imprimían, literal,
- * `<UNKNOWN VALUE=AVAILABLE />` y `<UNKNOWN VALUE=UNKNOWN />` —un `&lt;Unknown value={...} /&gt;`
- * escapado que el navegador pintaba como texto—. «UNKNOWN VALUE=AVAILABLE» no contesta si el
- * adaptador está o no. Encima el KPI decía «ADAPTERS AVAILABLE 3/6», que se lee como «3 rotos»
- * cuando eran 3 disponibles y 3 sin reportar.
- */
 describe('los adaptadores se dicen en palabras, no en pseudo-etiquetas', () => {
   it('pinta el estado de cada adaptador y NUNCA un tag sin renderizar', async () => {
     renderWithApi(<TerminalPage />);

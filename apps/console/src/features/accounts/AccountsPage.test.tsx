@@ -244,7 +244,7 @@ it('explica la causa real cuando el servidor bloquea despublicar una cuenta pres
 });
 
 /**
- * 🔴 El punto que decidió la fusión (b), y la objeción que estaba escrita en `App.tsx`: «Cuotas y
+ * El punto que decidió la fusión (b), y la objeción que estaba escrita en `App.tsx`: «Cuotas y
  * licencias» es de LECTURA y depende del recolector externo; «Cuentas de IA» ESCRIBE el registro y
  * tiene que funcionar aunque el recolector esté caído. La conclusión que se sacaba de ahí —que por
  * eso tenían que ser dos vistas— era falsa: se resuelve degradando por RECURSO.

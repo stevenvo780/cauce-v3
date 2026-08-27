@@ -58,7 +58,7 @@ const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
    * «Ficheros» va JUNTO a «Directiva» y no en una vista aparte, por lo mismo que «Directiva» vive
    * en este cajón: el `role_brief` y el `CLAUDE.md` son dos capas de lo que gobierna al MISMO
    * bot. Tenerlas en dos sitios distintos de la consola es lo que hizo que nadie notara durante
-   * meses que la autonomía estaba escrita por duplicado en los 14 alias. Steven pidió un solo
+   * meses que la autonomía estaba escrita por duplicado en los 14 alias. 
    * sitio; esto es ese sitio.
    */
   { id: 'ficheros', label: 'Ficheros' },

@@ -35,31 +35,8 @@ export function isAmbiguousAckErrorCode(code: unknown): code is AmbiguousAckErro
 }
 
 /**
- * PRE-VUELO: el harness murió SIN haber empezado el turno, y consta.
- *
- * Son el reverso exacto de los ambiguos. Un código ambiguo dice «no sabemos si hubo efectos» y
- * por eso es terminal; uno de pre-vuelo dice «sabemos que NO los hubo», y por eso vuelve al
- * circuito de reintento en vez de morir en el intento 1. La garantía *at-most-once* no se
- * relaja: lo que cambia es que ahora hay una manera de DEMOSTRAR el caso fácil, y sólo se usa
- * cuando la prueba existe.
- *
- * La prueba nunca es el tiempo. Para un proceso ya invocado son dos señales positivas, y las dos
- * exigen además que no escribiera ni un byte por stdout, que es el canal donde vive la salida del
- * turno (`packages/adapter-sdk/src/harnesses/shared.ts`):
- *   1. el TESTIGO de arranque del transporte: el harness declara qué byte suyo significa «ya
- *      estoy ejecutando» y el runner atestigua que nunca llegó (`CommandRunResult.harnessStarted`);
- *   2. el DIAGNÓSTICO DE ARRANQUE que el propio CLI imprime en vez de trabajar —config que no
- *      parsea, sesión que no existe, binario ausente, argumento que no entiende—, de una lista
- *      blanca de mensajes que son imposibles una vez que el turno empezó.
- *
- * Hay además dos fallos anteriores a toda invocación: no poder fsyncar la intención durable y
- * recuperar un registro `preinvoke-v1` que todavía no la contiene. En ambos casos el propio orden
- * persistido prueba que el harness no pudo ser llamado.
- *
- * NUNCA pueden solaparse con `AMBIGUOUS_ACK_ERROR_CODES`: `BaseAckSchema` descarta
- * `retryable:true` junto a un código ambiguo, así que un código en las dos listas volvería a
- * morir en el primer intento y encima en silencio. `assertPreflightCodesAreNotAmbiguous` lo
- * comprueba al cargar el módulo para que ese error no pueda llegar a producción.
+ * Códigos de error de pre-vuelo: indican que el harness falló antes de iniciar la ejecución del turno.
+ * Permiten reintentar la entrega manteniendo la semántica at-most-once.
  */
 export const PREFLIGHT_ACK_ERROR_CODES = [
   'PROCESS_EXIT_PREFLIGHT',
@@ -83,43 +60,15 @@ function assertPreflightCodesAreNotAmbiguous(): void {
 }
 assertPreflightCodesAreNotAmbiguous();
 
-/**
- * Tope del rol declarado por alias (`agents.role_brief`), medido en PUNTOS DE CÓDIGO.
- *
- * Vive acá y no en el store porque es el número que tienen que compartir CUATRO capas, y
- * `@cauce/protocol` es la única que las tres de código pueden importar sin ciclos: el CHECK
- * `agents_role_brief_len` de la migración 020, `normalizeRoleBrief()` en `@cauce/store`,
- * `self_role` de `DeliveryEnvelopeSchema` (acá abajo) y el recorte de `selfRoleFromDelivery()` en
- * `@cauce/adapter-sdk`. La cuarta —la columna de Postgres— no puede importar nada, así que espeja
- * el número con un comentario que apunta acá; es la ÚNICA que no se puede cambiar sin migración,
- * y por eso es la que manda la unidad.
- *
- * La unidad es el punto de código porque eso es lo que mide `char_length` de Postgres. Cualquier
- * capa que cuente unidades UTF-16 (`String.length`, `z.string().max()`) deja una franja donde el
- * brief se guarda bien pero el sobre de la entrega se rechaza entero, y el alias deja de recibir
- * sin que aparezca ningún error: SORDO y en silencio.
- */
+/** Tope del rol declarado por alias (`agents.role_brief`), medido en puntos de código UTF-32. */
 export const ROLE_BRIEF_MAX_CODE_POINTS = 1200;
 
-/**
- * Largo de un texto en puntos de código, que es la unidad de `ROLE_BRIEF_MAX_CODE_POINTS`.
- *
- * `String.length` cuenta unidades UTF-16 y NO sirve acá: un emoji fuera del BMP vale 2 para `.length`
- * y 1 para `char_length` de Postgres. El spread itera por puntos de código, que es exactamente lo
- * que mide la columna.
- */
+/** Largo de un texto en puntos de código. */
 export function countCodePoints(text: string): number {
   return [...text].length;
 }
 
-/**
- * Recorta a `ROLE_BRIEF_MAX_CODE_POINTS` sin partir jamás un par suplente.
- *
- * `text.slice(0, 1200)` indexa unidades UTF-16: sobre `'a'.repeat(1199) + '🎉'` corta el emoji por
- * la MITAD y deja un surrogate alto suelto, que al serializarse a UTF-8 viaja como U+FFFD. El
- * agente recibiría su propio rol terminado en un carácter roto. Se recorta sobre el array de
- * puntos de código, donde el emoji es un elemento indivisible.
- */
+/** Recorta un texto a ROLE_BRIEF_MAX_CODE_POINTS puntos de código sin dividir pares suplentes. */
 export function clampToRoleBriefLimit(text: string): string {
   const codePoints = [...text];
   return codePoints.length <= ROLE_BRIEF_MAX_CODE_POINTS
@@ -176,18 +125,7 @@ export const RoutingTargetSchema = RecipientSchema.extend({
 export const MAX_ATTACHMENT_BYTES = 10_000_000;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 export const MAX_ATTACHMENTS_TOTAL_BYTES = 10_000_000;
-/**
- * Los tipos que el bus acepta como adjunto.
- *
- * `services/telegram-bridge/src/attachments.ts` produce `.md` y `.csv` desde el 2026-08-05 y este
- * enum se quedó atrás: el puente descargaba el archivo, lo empaquetaba y RECIÉN AHÍ `publish` lo
- * rechazaba con un ZodError, que subía por fuera de los `catch` que avanzan el cursor y dejaba al
- * alias reintentando el mismo update para siempre. Medido en `heraclito` el 2026-08-05: un `.md`
- * de Steven y 4 mensajes suyos parados detrás durante horas, con el lease latiendo sano.
- *
- * Telegram no manda un mime estable para markdown: según el cliente llega `text/markdown`,
- * `text/x-markdown` o directamente `text/plain`. Los tres tienen que entrar o no entra ninguno.
- */
+/** Tipos MIME admitidos para adjuntos en mensajes de la plataforma. */
 export const ATTACHMENT_MIME_TYPES = [
   'image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain',
   'text/markdown', 'text/x-markdown', 'text/csv',
@@ -220,10 +158,7 @@ export const AttachmentContentSchema = z.object({
     .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u)
 }).strict().superRefine((attachment, context) => {
   const extension = attachment.name.toLowerCase().match(/\.[^.]+$/u)?.[0];
-  // El valor es (extensiones admitidas, kind): `text/plain` es legítimamente el mime que Telegram
-  // manda para `.txt`, `.md` y `.csv`, así que una sola extensión por mime no alcanza. Los pares
-  // son EXACTAMENTE los del allowlist de la ingesta: tener dos criterios distintos para el mismo
-  // valor es justo como un adjunto entra por una capa y lo rechaza la de al lado.
+  // Mapeo de tipo MIME a extensiones admitidas y categoría (image | document).
   const expected = new Map<string, readonly [readonly string[], 'image' | 'document']>([
     ['image/jpeg', [['.jpg'], 'image']], ['image/png', [['.png'], 'image']],
     ['image/webp', [['.webp'], 'image']], ['application/pdf', [['.pdf'], 'document']],
@@ -253,34 +188,13 @@ export const AttachmentsV1Schema = z.array(AttachmentContentSchema)
     }
   });
 
-/**
- * Techo absoluto de `body.timeout_ms`: 7 días. Es el MISMO número que
- * `MAX_AGENT_EXECUTION_TIMEOUT_MS` de packages/adapter-sdk, y tiene que seguir siéndolo: el SDK
- * ya rechazaba con `INVALID_TIMEOUT` cualquier valor fuera de rango, pero lo hacía DESPUÉS de
- * reclamar la entrega y en un error NO reintentable, o sea que un dedazo del publicador se
- * pagaba como una entrega muerta en vez de como un 400 en la puerta.
- */
+/** Límite superior de timeout para un mensaje individual (7 días). */
 export const MAX_MESSAGE_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
 
-/**
- * Presupuesto de reloj de pared que el publicador le da a ESTE mensaje, en milisegundos.
- *
- * Existía de facto —el SDK lee `body.timeout_ms` desde siempre— pero no estaba en ningún
- * esquema, así que nadie lo validaba, nadie lo documentaba y en la práctica ningún mensaje lo
- * traía: todos caían en el default de 24 h del harness. Declararlo acá lo vuelve parte del
- * contrato y, sobre todo, lo vuelve legible para el STORE, que es quien tiene que decidir
- * cuánto tiempo puede una entrega seguir renovando su garra (ver `deliveryLeaseCapMs`).
- */
+/** Presupuesto de ejecución otorgado a un mensaje individual en milisegundos. */
 export const MessageTimeoutMsSchema = z.number().int().positive().max(MAX_MESSAGE_TIMEOUT_MS);
 
-/**
- * Lee `body.timeout_ms` con la MISMA regla que el esquema, sin lanzar.
- *
- * Devuelve `undefined` tanto para "no lo trae" como para "trae basura". Es deliberado: esta
- * función la usan el store y el reaper sobre filas que YA están en la base, incluidas las que
- * se insertaron antes de que el esquema existiera. Ahí "no sé" tiene que caer del lado del
- * default configurado, no del lado de romper el barrido de garras vencidas por una fila vieja.
- */
+/** Lee y valida body.timeout_ms de forma segura; devuelve undefined si es inválido o ausente. */
 export function messageTimeoutMs(body: unknown): number | undefined {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
   const parsed = MessageTimeoutMsSchema.safeParse((body as Record<string, unknown>).timeout_ms);
@@ -322,24 +236,12 @@ export const PublishMessageSchema = z.object({
   channel: z.string().min(1).max(128).optional(),
   authenticated_context: AuthenticatedContextSchema.optional(),
   lane: LaneSchema.default('interactive'),
-  // The full range is NOT the ceiling. Who may reach the human band (>= HUMAN_PRIORITY_FLOOR) is
-  // decided where the producer's authenticated role is known — see priority.ts.
   priority: z.number().int().min(-100).max(100).default(0)
 }).strict();
 
 /**
- * Los tres `body.type` que el store escribe cuando un agente le habla a otro:
- * `materializeAgentOutputs` (delegación), `materializeAgentResponse` (retorno al padre) y
- * `materializeAgentFanin` (síntesis). Son los únicos tipos que pueden aparecer en una fila de
- * `deliveries` nacida de otro agente, y por eso son la marca durable que separa tráfico
- * agente-a-agente de tráfico humano.
- *
- * Por qué esta marca y no `origin.adapter`: el `origin` se copia byte a byte en cada salto,
- * así que una cadena de cinco agentes nacida en Telegram sigue diciendo `adapter:'telegram'`
- * en el salto cinco — medido el 2026-07-27, 2.374 de 2.429 entregas de 12 h decían 'telegram'.
- * `body.type` se reescribe en CADA salto: dice qué es ESTA entrega, no de dónde desciende.
- * Y como cada fila lo tiene desde que se insertó, el histórico se clasifica solo: no hay
- * backfill, ni migración, ni categoría "mensaje viejo sin marca".
+ * Tipos de `body.type` asignados a mensajes originados entre agentes:
+ * `agent.message`, `agent.response` y `agent.fanin`.
  */
 export const AGENT_TO_AGENT_MESSAGE_TYPES = [
   'agent.message',
@@ -347,10 +249,7 @@ export const AGENT_TO_AGENT_MESSAGE_TYPES = [
   'agent.fanin'
 ] as const;
 
-/**
- * Sonda operativa reservada. El gateway sólo admite este tipo desde la identidad mTLS exacta
- * `Steven:gate-probe`; el SDK la termina sin abrir sesión ni invocar un harness/modelo.
- */
+/** Sonda operativa reservada para validación de la pasarela. */
 export const SYSTEM_GATE_PROBE_MESSAGE_TYPE = 'system.gate.probe' as const;
 /** Principals técnicos cerrados: nunca son destinos ni aparecen en routing_targets. */
 export const SYSTEM_PRINCIPAL_ALIASES = ['gate-probe', 'quota-collector'] as const;
@@ -371,11 +270,7 @@ export const NON_HUMAN_DELIVERY_MESSAGE_TYPES = [
   SYSTEM_GATE_PROBE_MESSAGE_TYPE,
 ] as const;
 
-/**
- * `agent.notify` es egress proactivo hacia un handle externo: va a `adapter_outbox` y nunca a
- * `deliveries`, así que no participa del reparto de cupo. Sigue reservado igual porque la
- * protección anti-suplantación de abajo tiene que cubrirlo.
- */
+/** Tipos de mensaje internos reservados que no pueden publicarse directamente por clientes. */
 export const RESERVED_INTERNAL_MESSAGE_TYPES = [
   ...AGENT_TO_AGENT_MESSAGE_TYPES,
   'agent.notify'
@@ -384,35 +279,7 @@ export const RESERVED_INTERNAL_MESSAGE_TYPES = [
 const ReservedInternalMessageTypes = new Set<string>(RESERVED_INTERNAL_MESSAGE_TYPES);
 const AgentToAgentMessageTypes = new Set<string>(AGENT_TO_AGENT_MESSAGE_TYPES);
 
-/**
- * Falla hacia "humano" a propósito. Un `body.type` desconocido (un adapter que todavía no
- * existe, un cuerpo sin `type`, lo que mande la consola) se clasifica como humano: en el peor
- * caso le damos prioridad a algo que no la necesitaba, que es infinitamente preferible a dejar
- * a una persona esperando 114 minutos detrás de la cola de agentes.
- *
- * LÍMITE CONOCIDO, y hay que decirlo porque la versión anterior de este comentario afirmaba lo
- * contrario: la señal **es falsificable hacia arriba**. `AuthenticatedPublishBodySchema` sólo
- * prohíbe que un publish declare uno de los tipos reservados; no exige que un agente marque los
- * suyos. Un agente autenticado con permiso 'route' puede hacer POST /v3/messages con
- * `{"text":"..."}` sin `type` y esta función lo va a leer como humano, colándose en el cupo
- * reservado del destinatario.
- *
- * No se puede arreglar hoy derivando la clase del actor autenticado, que sería lo correcto:
- * (a) el telegram-bridge publica con `actor_alias` igual al alias del PROPIO agente
- *     (services/telegram-bridge/src/poller.ts pasa `alias: this.config.alias`), así que el actor
- *     de un mensaje humano y el de un mensaje de agente son literalmente el mismo string;
- * (b) `/v3/messages`, `/v3/publish` y `/v3/console/messages` comparten un único `publishHandler`
- *     y un único schema, así que tampoco la superficie discrimina;
- * (c) los roles del registro de identidades no sirven: en la flota real los agentes están
- *     configurados como `operator` (ver ops/runbooks/authentication.md, identidad de `kant`).
- * Clasificar por actor con esos datos rompería en la dirección PELIGROSA — mandar humanos al
- * carril de agentes — que es exactamente el defecto que este parche existe para arreglar.
- *
- * El radio de daño del abuso está acotado a propósito: quien falsifica gana como mucho
- * `CAUCE_HUMAN_RESERVED_DELIVERIES` lugares en la admisión de su destinatario, no puede
- * cancelar ni interrumpir nada, sigue alternando con el humano real por el contador de ráfaga,
- * y paga la corrida con su propia cuota. Ver services/gateway/CONFIGURATION.md.
- */
+/** Identifica si el cuerpo del mensaje corresponde a comunicación entre agentes. */
 export function isAgentToAgentBody(body: unknown): boolean {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return false;
   const type = (body as Record<string, unknown>).type;
@@ -1170,16 +1037,11 @@ export const WsOutboundSchema = z.discriminatedUnion('type', [
     /*
      * EL PERFIL DEL ALIAS, UNA VEZ POR CONEXIÓN Y NO POR ENTREGA.
      *
-     * Es la mitad que faltaba del encargo: lo FIJO tiene que vivir en el fichero del arnés, y para
-     * escribirlo ahí el adaptador necesita conocerlo. Viaja en el saludo —una vez, al conectar— y
-     * no en el sobre, porque mandarlo en cada entrega sería exactamente el problema que este
-     * trabajo vino a cerrar: 11.546 caracteres de andamiaje para un pedido de 62.
+     * La configuración fija reside en el fichero del arnés. Viaja en el saludo inicial
+     * y no en cada sobre de entrega para minimizar la sobrecarga de transporte.
      *
-     * OPCIONAL EN EL ESQUEMA Y ADEMÁS GATEADO detrás de la capability `agent_profile_v1`, por el
-     * mismo motivo que los dos campos de disciplina de delegación: un adaptador viejo valida con
-     * `.strict()` y, al fallar, MATA LA COLA ENTERA de la conexión — no descarta el frame. El
-     * esquema lo hace válido para quien lo entiende; la capability evita mandárselo a quien no lo
-     * pidió. Hacen falta las dos cosas.
+     * Opcional en el esquema y gateado tras la capability `agent_profile_v1`
+     * para asegurar compatibilidad hacia atrás con adaptadores anteriores.
      */
     agent_profile: z.object({
       perfil: AgentProfileWireSchema,

@@ -1166,9 +1166,6 @@ describe('terminal relay circuit', () => {
     expect(harness.leg.presence()[0]).toMatchObject({ generation: '9f21a70b4c5d6e7f8091a2b3c4d5e6f7' });
   });
 
-  // El eslabón que faltaba el 2026-08-25: el pty-agent empezó a publicar `home` y el relay lo
-  // TIRABA al componer la presencia, así que el gateway seguía sin saber dónde mirar y el modal
-  // decía «contenedor sin identificar». La lectura funcionaba; lo que no llegaba era la ruta.
   it('propaga el home del agente hasta la presencia que publica al gateway', async () => {
     const harness = await startHarness();
     const agent = await FakePtyAgent.connect(harness.agentPort, {

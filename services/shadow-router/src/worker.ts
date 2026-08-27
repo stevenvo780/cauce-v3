@@ -59,10 +59,7 @@ export class ShadowRouterWorker {
     this.repository = options.repository;
     this.router = options.router;
     this.workerId = options.workerId ?? `shadow-router:${randomUUID()}`;
-    // Claims start a lease clock immediately, while routing is deliberately ordered.  Claiming a
-    // batch of 20 and then spending up to 15 s on each target made the later 18 leases expire
-    // before they were even attempted.  One-at-a-time still drains continuously without idle
-    // sleeps and preserves source order.
+    // Leased routing requires batchSize 1 to preserve ordering and avoid lease expiration.
     this.batchSize = options.batchSize ?? 1;
     if (this.batchSize !== 1) throw new Error('shadow router batchSize must be 1 for ordered leased routing');
     this.leaseMs = options.leaseMs ?? 30_000;

@@ -290,16 +290,8 @@ describe('atomic configuration CRUD and rollback', () => {
   });
 
   /**
-   * El listado de revisiones tiene que venir por NÚMERO, no por texto.
-   *
-   * `SELECT id::text ... ORDER BY id DESC` deja una columna de salida llamada `id`, y un nombre
-   * suelto en `ORDER BY` se resuelve primero contra la salida: ordenaba lexicográficamente. Con
-   * 121 revisiones medidas en producción el 2026-08-23 la lista salía 99, 98, …, 90, 9, 89, …, y
-   * el `LIMIT 100` recortaba ahí: faltaban las ids 1, 10, 11 y el bloque 100–117 ENTERO.
-   *
-   * No es cosmético: la consola sólo puede deshacer una revisión que liste, así que 18 cambios
-   * consecutivos quedaban fuera del alcance del botón de deshacer sin que nada avisara. Esta
-   * prueba fija el orden Y la cobertura: la revisión más nueva primero y sin huecos en la cola.
+   * El listado de revisiones debe ordenarse numéricamente en orden descendente,
+   * garantizando que el límite capture las revisiones más recientes sin huecos.
    */
   it('lista las revisiones por número y no por texto, para que se puedan deshacer las recientes', async () => {
     await pool.query(`
@@ -311,7 +303,7 @@ describe('atomic configuration CRUD and rollback', () => {
     const ids = revisions.map((revision) => Number(revision.id));
 
     expect(ids).toHaveLength(100);
-    // Descendente NUMÉRICO. Con el fallo, ids[0] era 99 y aparecía un 9 entre el 90 y el 89.
+    // Descendente NUMÉRICO.
     expect(ids).toEqual([...ids].sort((a, b) => b - a));
     expect(ids[0]).toBe(121);
     // Las 100 más recientes son exactamente 22..121: ningún hueco en el medio.

@@ -1,28 +1,7 @@
 /**
- * Qué fichero es "la directiva", "las herramientas" y "los prompts" de un alias — y cuáles no se
- * tocan nunca.
- *
- * Todo lo de aquí sale de una medición del 23-ago-2026 sobre los 14 alias vivos, hecha dentro de
- * sus contenedores (`docs/directiva-ficheros-del-agente.md` tiene la tabla y cómo se midió). Tres
- * hechos de esa medición gobiernan el diseño y conviene no perderlos de vista:
- *
- * 1. **`agents.harness_id` de la base MIENTE en 5 de 14 alias.** Medido por el binario que de
- *    verdad corre (`/proc/<pid>/cmdline`): kant, kratos, heraclito y salva ejecutan `claude.js`
- *    con `codex`/`openclaw` escrito en la base, y argos ejecuta `openclaw.js` con `hermes` escrito.
- *    Un editor que resuelva la ruta desde la columna le enseñaría a Steven un fichero que ese
- *    agente NO lee, y al guardar escribiría en el sitio equivocado sin dar un solo error. Por eso
- *    `resolveAgentDocuments` NO acepta el harness de la base: exige `RuntimeFacts`, que sólo puede
- *    producir algo que corra DENTRO del contenedor (hoy, el pty-agent).
- *
- * 2. **El home no basta.** atlas corre con `CODEX_HOME=/home/dev/.codex/cuenta-b`, así que su
- *    directiva es `/home/dev/.codex/cuenta-b/AGENTS.md` y no `~/.codex/AGENTS.md` — que también
- *    existe, con el mismo tamaño, y es el que un resolutor ingenuo abriría.
- *
- * 3. **Los ficheros de configuración mezclan la directiva con credenciales.** `openclaw.json`
- *    lleva `auth` y `secrets` en el MISMO documento que `tools`, `skills`, `mcp` y `commands`;
- *    `~/.claude.json` lleva `mcpServers` junto al OAuth y a 34 historiales de proyecto. Servir
- *    esos ficheros enteros a un navegador es una fuga, no una funcionalidad. Están en la lista
- *    negra y se proyectan campo a campo o no se sirven.
+ * Mapeo y resolución de documentos de gobierno de agentes (directivas, herramientas, prompts, memoria).
+ * Resuelve las rutas efectivas a partir de los hechos de entorno en tiempo de ejecución (RuntimeFacts)
+ * y previene el acceso o filtrado de archivos con credenciales o configuraciones sensibles.
  */
 
 import { createHash } from 'node:crypto';
@@ -32,29 +11,28 @@ import type {
   GovernanceDocumentContent, GovernanceReadError, GovernanceWritePrecondition, MemoryDirectoryListing
 } from './agent-documents.routes.js';
 
-/** Arnés REAL, deducido del binario que corre. Nunca de `agents.harness_id`. */
+/** Arnés en ejecución deducido del entorno medido. */
 export type HarnessKind = 'claude' | 'codex' | 'openclaw' | 'hermes' | 'unknown';
 
 export type DocumentKind =
   | 'directive' | 'tools' | 'prompts' | 'mcp' | 'identity' | 'human'
   | 'memory' | 'heartbeat' | 'configuration';
 
-/** Evita volver a mezclar manual, inventario sensible y memoria en una sola lista semántica. */
+/** Categoría funcional del documento de gobierno. */
 export type DocumentCategory = 'manual' | 'profile' | 'configuration' | 'memory';
 
 export type DocumentFormat = 'markdown' | 'json' | 'toml' | 'json-fragment';
 
 /**
- * Lo que hay que MEDIR dentro del contenedor para poder resolver una ruta. Nada de esto se puede
- * inferir desde la base ni desde el host: para `kant`, que es host-native y corre como `stev`,
- * ni siquiera se puede leer `/proc/<pid>/environ` desde otra cuenta.
+ * Hechos del entorno de ejecución observados dentro del contenedor del agente,
+ * necesarios para resolver rutas canónicas de gobierno.
  */
 export interface RuntimeFacts {
   /** Deducido del binario en ejecución: `bin/claude.js` -> 'claude', etc. */
   readonly harness: HarnessKind;
   /** `HOME` del proceso del arnés. */
   readonly home: string;
-  /** `CLAUDE_CONFIG_DIR` si está puesto. Mueve TAMBIÉN el `.claude.json`, no sólo el CLAUDE.md. */
+  /** `CLAUDE_CONFIG_DIR` si está puesto. */
   readonly claudeConfigDir?: string;
   /** `CODEX_HOME` si está puesto. */
   readonly codexHome?: string;
@@ -81,16 +59,16 @@ export interface RuntimeFacts {
 export interface AgentDocument {
   readonly kind: DocumentKind;
   readonly category: DocumentCategory;
-  /** Rótulo en castellano, el que ve Steven. */
+  /** Rótulo descriptivo del documento para la interfaz de consola. */
   readonly label: string;
-  /** Ruta absoluta DENTRO del contenedor del agente. */
+  /** Ruta absoluta dentro del contenedor del agente. */
   readonly path: string;
   readonly format: DocumentFormat;
   /** `true` sólo si esta vía puede escribirlo con seguridad. */
   readonly editable: boolean;
-  /** Por qué no se puede editar. Se enseña tal cual; un campo muerto sin explicación es peor. */
+  /** Motivo por el cual no se puede editar el documento. */
   readonly reason?: string;
-  /** Advertencia que hay que enseñar ANTES de dejar guardar. */
+  /** Advertencia a mostrar antes de confirmar la escritura. */
   readonly warning?: string;
 }
 
@@ -329,10 +307,8 @@ export function effectiveManualPaths(facts: RuntimeFacts): readonly EffectiveMan
 }
 
 /**
- * `settings.json` de Claude lleva `hooks`, y un hook es una orden de shell que el arnés ejecuta
- * solo. Editarlo desde una web es ejecución remota dentro del contenedor, aunque no lo parezca.
- * No lo prohibimos —es justo lo que Steven pidió poder ver y tocar— pero el aviso viaja con el
- * documento para que la pantalla lo enseñe antes de guardar, no después.
+ * `settings.json` de Claude puede contener `hooks`: órdenes que el arnés ejecuta automáticamente.
+ * Se emite una advertencia al operador antes de guardar cambios en este documento.
  */
 const AVISO_HOOKS =
   'Este fichero puede contener `hooks`: órdenes que el arnés ejecuta solo. ' +
@@ -602,9 +578,7 @@ export function verifyWritableProfilePath(
 }
 
 /**
- * Tope de tamaño. El `CLAUDE.md` más grande medido en la flota es el de zeus (10.733 B) y el
- * `AGENTS.md` de hermes en ctrl-infra llega a 75 KB, así que 256 KB deja margen de sobra sin
- * convertir el editor en una vía para volcar un fichero dentro de un contenedor.
+ * Límite máximo de tamaño permitido para lectura y escritura de documentos de gobierno (256 KB).
  */
 export const MAX_DOCUMENT_BYTES = 256 * 1024;
 
@@ -614,20 +588,8 @@ export function harnessFromCommand(cmdline: string): HarnessKind {
 }
 
 /**
- * El arnés a partir de las capacidades que el adaptador ya publica en su latido
- * (`GET /v3/status` -> `presence[].capabilities` -> `harness.claude` | `harness.codex` |
- * `harness.openclaw`).
- *
- * Esto NO es un tercer sitio donde adivinar: el 23-ago-2026 se comparó alias por alias contra el
- * binario en ejecución dentro de cada contenedor y coincidió en **14 de 14**, mientras
- * `agents.harness_id` fallaba en 5. O sea: la respuesta correcta YA viaja por el cable y ya está
- * desplegada; lo que falta es que alguien la use en vez de la columna. La página «La flota ahora»
- * enseña la columna, y por eso pinta «iza (hermes @ ws-humanizar)» cuando iza corre `openclaw.js`
- * en `claw-iza`.
- *
- * Sigue sin ser una medición completa: da el arnés, no el `HOME` ni el `CODEX_HOME`, y el arnés
- * sale del bundle del adaptador, no de leerle el `cmdline` al proceso. Por eso su fuente es
- * `presence` y no `measured`, y por eso no basta para marcar nada editable.
+ * Determina el tipo de arnés a partir de las capacidades reportadas en la presencia del adaptador
+ * (`GET /v3/status` -> `presence[].capabilities`).
  */
 export function harnessFromCapabilities(capabilities: readonly string[]): HarnessKind {
   for (const capability of capabilities) {

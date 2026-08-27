@@ -43,7 +43,7 @@ export interface NavEntry {
  * «Señales y auditoría». Cada retirada dejó su alias en `ROUTE_ALIASES` (`App.tsx`), o su aviso
  * cuando no hay heredera.
  *
- * 🔴 **El `id` de cada entrada tiene que estar en `PAGES` y NO puede ser una clave de
+ * El `id` de cada entrada tiene que estar en `PAGES` y NO puede ser una clave de
  * `ROUTE_ALIASES`.** Un id sin página se monta como `undefined` y un id tapado por un alias no se
  * alcanza nunca: las dos cosas fallan sin un error, y por eso las guarda la tabla de
  * `App.invariantes.test.tsx` y no la buena voluntad de quien edite esta lista.

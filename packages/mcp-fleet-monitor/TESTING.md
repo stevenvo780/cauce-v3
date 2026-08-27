@@ -125,7 +125,7 @@ entregas()
 Filter by status:
 
 ```
-entregas(estado="acked", limit=10)
+entregas(estado="done", limit=10)
 ```
 
 **Expected response:**
@@ -137,7 +137,7 @@ entregas(estado="acked", limit=10)
       "id": "del-uuid-123",
       "message_id": "msg-uuid-456",
       "recipient_alias": "atlas",
-      "status": "acked",
+      "status": "done",
       "attempt": 1,
       "max_attempts": 3,
       "created_at": "2026-07-25T14:00:00.000Z",

@@ -4,9 +4,8 @@
 # Reemplaza a: ia, ia-ver, ia-tui, ia-tui-session, cauce-attach, cauce-estado.
 # La regla: `cauce <alias>` hace LO CORRECTO sin que tengas que elegir entre variantes.
 #
-# ESTE FICHERO ES LA FUENTE. Se instala en kratos como ~/.local/bin/cauce.
-# Vivió catorce meses sólo en el home de stev y por eso nadie podía revisarlo ni revertirlo;
-# ahora se edita acá y se instala con `ops/scripts/install-cauce-cli.sh`.
+# ESTE FICHERO ES LA FUENTE. Se instala en kratos como ~/.local/bin/cauce
+# mediante `ops/scripts/install-cauce-cli.sh`.
 #
 # MODO COMPARTIDA: `cauce <alias>` abre la TUI REAL del harness (claude o codex) dentro de una
 # sesión tmux que el adaptador también usa para los turnos del bus. No es un cliente de línea que
@@ -171,10 +170,8 @@ openclaw_sesiones() {  # $1=alias $2=contenedor $3=usuario $4=stateDirectory
   docker exec --user "$3" "$2" python3 -c '
 import json, os, subprocess, sys
 alias = sys.argv[1]
-# El stateDirectory REAL viene de container-alias-query.py, no se deduce del HOME: los alias
-# openclaw lo tienen en <home>/.openclaw/cauce-v3/<alias>, no en <home>/.local/state/... Con la
-# ruta deducida el CLI leia un fichero inexistente y mostraba una sesion huerfana que el bus nunca
-# toca, con el cartel verde de COMPARTIDA. Medido el 2026-07-31: solo argos coincidia, por azar.
+# El stateDirectory viene de container-alias-query.py: los alias
+# openclaw lo tienen en <home>/.openclaw/cauce-v3/<alias>.
 state = sys.argv[2]
 home = os.path.expanduser("~")
 

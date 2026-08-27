@@ -2,25 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { WsOutboundSchema } from '@cauce/protocol';
 
 /**
- * EL PERFIL VIAJA EN EL SALUDO, UNA VEZ POR CONEXIÓN, Y SÓLO A QUIEN LO PIDIÓ.
- *
- * ── Por qué en el saludo y no en el sobre ────────────────────────────────────────────────────
- *
- * Es la mitad que faltaba del encargo. Lo FIJO tiene que vivir en el fichero del arnés, y el único
- * que puede escribir dentro del contenedor es el adaptador, así que el adaptador tiene que conocer
- * el perfil. Mandarlo en cada entrega sería reintroducir por otra vía el coste que este trabajo
- * vino a quitar: 11.546 caracteres de andamiaje para un pedido de 62, medido el 2026-08-24.
- *
- * ── Por qué gateado detrás de una capability ─────────────────────────────────────────────────
- *
- * 🔴 Un adaptador viejo valida el frame con `.strict()` y, al fallar, NO DESCARTA EL FRAME: falla
- * la cola entera de la conexión. Un campo nuevo en `hello_ack` sin gatear deja MUDOS a todos los
- * alias que corran una versión anterior, en el primer saludo, y el síntoma es «el agente no
- * contesta» — sin un error que apunte a esto.
- *
- * Hacen falta LAS DOS COSAS y ésa es la lección que ya está escrita en el esquema para los campos
- * de disciplina de delegación: el esquema lo hace válido para quien lo entiende, la capability
- * evita mandárselo a quien no lo pidió.
+ * Verifica la inclusión del perfil de agente en la trama `hello_ack`, validando compatibilidad
+ * de esquema y el control mediante la capability `agent_profile_v1`.
  */
 
 describe('el esquema del saludo acepta el perfil sin romper a quien no lo espera', () => {

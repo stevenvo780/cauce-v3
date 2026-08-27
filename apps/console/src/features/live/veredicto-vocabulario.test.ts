@@ -13,7 +13,7 @@ import {
 /**
  * **LA MISMA PALABRA CON DOS NÚMEROS DISTINTOS, A 140 PÍXELES DE DISTANCIA.**
  *
- * 🔴 Medido el 2026-08-23 en producción con 18 alias. El veredicto decía:
+ *  El veredicto decía:
  *
  *     13 conectados · 4 trabajando · 9 libres
  *

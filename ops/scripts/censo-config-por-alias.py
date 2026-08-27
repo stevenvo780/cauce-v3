@@ -2,23 +2,12 @@
 """
 Censo de configuración por alias: qué alias comparten FÍSICAMENTE un fichero de configuración.
 
-POR QUÉ POR INODO Y NO POR RUTA
-===============================
+CRITERIO DE INODO
+=================
 
-Medido contra producción el 2026-08-24, y ya escrito en la cabecera de
-`packages/store/migrations/020_agent_role_brief.sql`:
-
-  * `kratos` y `atlas` corren en el contenedor `ws-humanizar`, con el usuario `dev` y el HOME
-    `/home/dev`. Su `~/.codex/AGENTS.md` es **el mismo inodo**: 12.942 bytes idénticos porque son
-    el mismo fichero, no dos copias.
-  * `zeus` y `argos` comparten `CLAUDE.md` byte a byte por lo mismo.
-
-La ruta NO distingue esos dos mundos. `/home/dev/.codex/AGENTS.md` es la misma cadena tanto si es
-un fichero compartido como si cada alias tiene el suyo — que es justamente el estado al que se
-quiere llegar. Un censo por ruta no puede decir si el trabajo ya está hecho. El inodo sí.
-
-Mientras haya un grupo con dos alias, escribir la identidad en el fichero le daría a `atlas` la
-identidad de `kratos`. Ese es el motivo por el que el rol acabó en la base de datos.
+La identificación de ficheros compartidos se realiza mediante (dispositivo, inodo)
+en lugar de por ruta para determinar si múltiples alias apuntan a los mismos datos
+en disco.
 
 LO QUE ESTE GUION NO HACE
 =========================

@@ -3,19 +3,12 @@ import { join } from "node:path";
 import type { SharedSessionDegradation } from "./types.js";
 
 /**
- * El registro durable de cada caída de la sesión compartida.
- *
- * Es la tercera superficie del aviso, y la que sobrevive: el mensaje del panel se va, la respuesta
- * de Telegram se pierde en el hilo, pero esto queda. `cauce <alias>` lo lee y lo muestra en su
- * cabecera antes de enganchar, así que el dueño ve al entrar lo que se rompió mientras no estaba.
- *
- * Vive en el directorio de estado del alias, que es el mount persistente que el supervisor ya
- * valida y prepara con el UID del runtime.
+ * Registro persistente de eventos de degradación de la sesión compartida.
  */
 
 export const DEGRADATION_LOG_NAME = "shared-session.log";
 
-/** Cuántas entradas devuelve la lectura. Un incidente reciente vale más que uno de la semana pasada. */
+/** Cantidad por defecto de entradas devueltas en la lectura. */
 const DEFAULT_TAIL = 5;
 
 /** Techo de lectura para que un log crecido no se cargue entero en memoria. */

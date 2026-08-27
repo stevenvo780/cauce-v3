@@ -202,7 +202,7 @@ describe('la negativa que ve el operador', () => {
       expect(aviso.textContent).toContain(copia.titulo);
       expect(aviso.textContent).toContain('Lo levanta:');
       expect(aviso.textContent).toContain(`HTTP ${estado}`);
-      // 🔴 El control negativo: la palabra cruda NO puede estar en ningún sitio de la pantalla.
+      // El control negativo: la palabra cruda NO puede estar en ningún sitio de la pantalla.
       expect(document.body.textContent).not.toContain(codigo);
     },
   );

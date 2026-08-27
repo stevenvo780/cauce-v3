@@ -221,20 +221,8 @@ interface AttachmentScreenMeta {
 }
 
 /**
- * Un adjunto que el esquema no acepta NO puede costar el mensaje entero.
- *
- * `ingress.publish` corre `PublishMessageSchema.parse()`, y ese parse valida `body.attachments_v1`
- * contra `AttachmentsV1Schema`. Cuando falla lanza un ZodError DESDE `process()`, o sea por fuera
- * de los dos únicos `catch` que avanzan el cursor: el error sube hasta el `catch` de `run()`, que
- * reintenta EL MISMO update para siempre. El lease se renueva al principio de `runOnce()`, así que
- * el alias late sano y no alerta nunca. Es exactamente lo que le pasó a `heraclito` el 2026-08-05:
- * un `.md` cuyo mime la ingesta ya producía y el enum del protocolo todavía no aceptaba, y 4
- * mensajes de Steven parados detrás durante horas.
- *
- * Acá se valida ANTES de publicar y con el MISMO esquema que va a validar después: tener dos
- * criterios distintos es justo como un valor entra por una capa y lo rechaza la de al lado. El
- * adjunto malo se descarta, el texto del humano SOBREVIVE, el motivo viaja por la misma cañería
- * que ya usa `prepared.errors` (prompt + `attachment_errors`), y el cursor avanza.
+ * Valida adjuntos contra el esquema de publicación antes de enviar.
+ * Los adjuntos no válidos se descartan para no bloquear el procesamiento del mensaje.
  */
 function screenAttachments(
   prepared: PreparedAttachments,
@@ -364,15 +352,10 @@ async function normalizedBody(
     ...(voice.kind === undefined ? {} : { voice_v1: voice })
   };
   /**
-   * Última parada antes de persistir.
+   * Redacta secretos en el cuerpo del mensaje antes de persistir en `messages.body`.
    *
-   * `StoreTelegramIngress.publish` escribe este objeto tal cual en `messages.body`, y de ahí no se
-   * borra nunca: el 02-ago quedó ahí un `DATABASE_URL` con usuario y contraseña que sobrevive a
-   * cualquier rotación. Se redacta el cuerpo ENTERO —no una lista de campos— porque el secreto se
-   * cuela por el campo que nadie acordó de incluir: `prompt` nació mucho después que `text`.
-   *
-   * La marca `redacted_v1` es para el operador en la consola; el humano y el agente ven el
-   * `[secreto-redactado]` en el propio texto, que se explica solo.
+   * Se redacta el cuerpo entero de forma recursiva para proteger cadenas de conexión,
+   * tokens y contraseñas. La marca `redacted_v1` se añade para auditoría en consola.
    */
   const redacted = redactSecretsDeep(body);
   if (redacted.count === 0) return body;
@@ -489,13 +472,7 @@ export class TelegramPoller {
     this.participants = options.participants;
     this.onSuppressed = options.onSuppressed ?? logSuppressedUpdate;
     this.transcription = options.transcription;
-    // El `tenant_id` NO va acá. Los tenants de esta flota se llaman como las personas que son
-    // dueñas de ellos —Steven, Miguel, Pablo— así que incluirlo hacía que el dueño, escribiéndole
-    // a su propio agente con su propio nombre de Telegram, saliera marcado como suplantador en
-    // TODOS sus mensajes. Una marca que se dispara siempre no informa nada y enseña a ignorarla,
-    // que es exactamente lo contrario de para lo que existe. Lo que sí tiene sentido suplantar es
-    // una identidad de AGENTE (su alias o el usuario de su bot): ahí un nombre parecido es un
-    // intento de hacerse pasar por un miembro de la flota ante otro.
+    // Nombres reservados de la flota para detección de suplantación en grupos.
     this.reservedNames = new Set([
       ...this.fleet.byUsername.keys(),
       ...this.fleet.byUsername.values(),
@@ -527,18 +504,7 @@ export class TelegramPoller {
   }
 
   /**
-   * Deja rastro de los updates de grupo que `accepted()` descarta ANTES de llegar al resolutor.
-   *
-   * Ese descarte era el único camino de la ingesta que no dejaba absolutamente nada: ni línea de
-   * log ni fila; sólo un contador sin etiquetas. El 2026-08-05 costó una noche de diagnóstico con
-   * heraclito, que estaba bien configurado —bot administrador, chat en `allowed_chat_ids`,
-   * privacidad apagada, cero updates pendientes en Telegram— y aun así no contestaba en el grupo:
-   * el mensaje entraba, se descartaba acá y desaparecía sin dejar huella. Se revisó dos veces la
-   * configuración del bot antes de sospechar del código, porque el log decía que no había llegado
-   * nada.
-   *
-   * Sólo ids y enums, igual que `SuppressedUpdate`: nunca texto del mensaje ni nombre visible. Los
-   * privados siguen fuera —ahí el descarte es el filtro de desconocidos y sería ruido constante.
+   * Deja rastro de los updates de grupo que `accepted()` descarta antes de llegar al resolutor.
    */
   private reportSilentDrop(update: TelegramUpdate): void {
     const message = update.message;
@@ -858,15 +824,7 @@ export class TelegramPoller {
         this.observer?.pollCycleFailed(this.config.alias);
         this.onMetric('poll_error');
         failures += 1;
-        /**
-         * El único lugar donde queda constancia de que el bucle está fallando.
-         *
-         * Este `catch` reintenta con retroceso exponencial y nunca avanza el cursor, así que un
-         * error que llegue hasta acá se repite para siempre. Sin esta línea el fallo era INVISIBLE:
-         * el lease se renovaba, el alias figuraba en línea y los mensajes se apilaban detrás del
-         * mismo update sin una sola entrada en el log. Así estuvo `heraclito` el 2026-08-05, y lo
-         * que costó encontrarlo fue justamente que el error no se veía por ningún lado.
-         */
+        // Registro de error en el ciclo de polling.
         logJsonLine({
           event: 'telegram_poll_error',
           bot_id: this.botId,

@@ -8,50 +8,7 @@ export { formatDurationSeconds } from '../../lib';
 export type BadgeTone = 'online' | 'done' | 'running' | 'warning' | 'danger' | 'offline' | 'unknown' | 'info';
 
 /**
- * **UN SOLO VOCABULARIO PARA TODA LA PANTALLA.**
- *
- * 🔴 Medido el 2026-08-23 en `/live` con 18 alias: la MISMA situación se llamaba de tres maneras
- * en el mismo scroll. Arriba —veredicto, chips, muñecos y la leyenda del pie— siete palabras en
- * castellano (`LIVE_STATE_META`, en `../live/agent-state.ts`). Abajo, esta tabla, cinco palabras
- * en mayúsculas que sólo coincidían con aquéllas en una. Choques concretos que se veían a la vez:
- *
- *   - `idle` era «Libre» en el chip y en la leyenda —que además dedica un párrafo a enseñar la
- *     palabra: «Libre no es caído ni es sin reportar»— y `INACTIVO` en la tabla, donde «Libre»
- *     no aparecía nunca.
- *   - `stalled` era «Bloqueado» en el chip, `COLGADO` en la tabla, «detenido» en el aviso de la
- *     portada y `stalled` crudo en el detalle de ese aviso: cuatro nombres para una condición.
- *   - `queued` era `EN COLA` acá y «Recibiendo» arriba.
- *
- * El operador no puede saber si son estados distintos o el mismo. Estas etiquetas se eligen para
- * COINCIDIR, palabra por palabra, con las que explica la leyenda:
- *
- *     servidor      esta tabla      chip, mapa y leyenda
- *     ────────      ──────────      ────────────────────
- *     idle          Libre           Libre
- *     queued        Recibiendo      Recibiendo
- *     working       Trabajando      Trabajando
- *     saturated     Trabajando      Trabajando + la señal «Saturado»
- *     stalled       Trabado         Trabado
- *
- * `saturated` dice «Trabajando» y no «Saturado» porque entre los siete estados del muñeco no hay
- * ninguno que se llame así: la saturación es una SEÑAL (`FLAG_LABEL.saturated`), y el servidor la
- * manda por separado en `flags`. Poniendo «Saturado» en la columna de estado, la misma fila decía
- * «Saturado» dos veces —una en el estado y otra en la señal— y encima inventaba un octavo estado
- * que la leyenda no explica. No se pierde nada: la señal sigue en su chip, la fila sigue
- * pintándose de ámbar (`rowUrgency`) y el orden de triage sigue poniéndola por encima de las que
- * sólo trabajan (`STATE_RANK`).
- *
- * No se pierde ninguna distinción: `work_state` (cinco valores del servidor) y `LiveState`
- * (siete, derivados) siguen siendo particiones distintas y se calculan igual que antes. Lo que se
- * unifica es la PALABRA con la que se nombra un mismo hecho.
- *
- * `queued` NO se llama «Esperando turno» a propósito, por tentador que sea: esa frase ya está
- * tomada en esta misma pantalla por la cifra de ENTREGAS `pending` + `retry` del veredicto, cuyo
- * tooltip dice literalmente «es la única definición de "en cola" que queda en la consola».
- * Reutilizarla acá pondría la misma frase con dos números distintos a un palmo de distancia, que
- * es exactamente el defecto de al lado.
- *
- * Dejan de ir en MAYÚSCULAS: la mayúscula sostenida se lee más despacio y acá hay quince filas.
+ * Etiquetas legibles para los estados de trabajo de la flota.
  */
 export const WORK_STATE_LABEL: Record<FleetWorkState, string> = {
   idle: 'Libre',
@@ -70,15 +27,7 @@ export const WORK_STATE_TONE: Record<FleetWorkState, BadgeTone> = {
 };
 
 /**
- * Las señales, con las MISMAS palabras que el resto de la pantalla.
- *
- * `lease_expired` pasa a decirse «Caído» porque es exactamente lo que el veredicto de arriba
- * llama caído (`motivoDe`, en `agent-state.ts`) y lo que la leyenda explica como caído: «Lease
- * vencido» era una tercera palabra para el mismo hecho. `ack_stalled` deja de decir «ACK
- * detenido» porque «detenido» estaba tomado por el aviso de la portada para OTRA cosa —un agente
- * trabado—, y dos cosas distintas con la misma palabra en dos pantallas es un homónimo, no un
- * vocabulario. `unregistered` pasa a «Fuera del registro», que es como ya se llama el chip de
- * deriva de la cinta de triage.
+ * Etiquetas para señales de actividad y anomalías de la flota.
  */
 export const FLAG_LABEL: Record<FleetActivityFlag, string> = {
   saturated: 'Saturado',
@@ -101,24 +50,7 @@ export const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
 };
 
 /**
- * **El estado que se pinta en la fila es el MISMO que el del muñeco, no otro.**
- *
- * 🔴 Renombrar `WORK_STATE_LABEL` no bastaba, y medirlo en Chrome lo demostró: `iza` salía
- * «Caído» en el chip y «LIBRE» en su fila, porque el servidor manda `work_state: 'idle'` (no
- * tiene trabajo) para un alias cuyo lease venció. Antes decía `INACTIVO`; con el rótulo nuevo
- * pasaba a decir «Libre», que para un agente caído es peor, no mejor. Lo mismo con `atlas`
- * («Recibiendo» en la fila, «Caído» en el chip) y con los que delegan («Libre» en la fila,
- * «Delegando» en el chip).
- *
- * `work_state` (cinco baldes del servidor, sobre el TRABAJO) y `LiveState` (siete, derivados,
- * que además miran la presencia y las delegaciones) son particiones distintas: ninguna traducción
- * de rótulos podía hacerlas coincidir. La fila consume ahora el estado ya derivado por la página
- * —el mismo objeto que pinta el muñeco y cuenta el chip—, así que decir cosas distintas dejó de
- * ser posible por construcción.
- *
- * No se pierde nada del `work_state`: la saturación y el estancamiento siguen llegando como
- * SEÑALES en `flags`, la fila sigue mostrando en vuelo, en cola, antigüedad y edad del ACK —los
- * números de los que sale— y el orden de triage los sigue usando de desempate.
+ * Mapeo de estados vivos consolidados para los agentes de la flota.
  */
 export type EstadosVivos = ReadonlyMap<string, LiveState>;
 
@@ -247,12 +179,7 @@ export function agentRowKey(agent: FleetActivityAgent): string {
 }
 
 /**
- * La MISMA clave que usa la sala de máquinas (`tenant/alias`).
- *
- * `agentRowKey` usa dos puntos y es la clave de React de la fila; ésta es la que viaja entre la
- * tabla y el hipergrafo. Se derivan las dos del mismo par a propósito, pero no se mezclan: si la
- * tabla emitiera su clave con dos puntos, el grafo nunca encontraría el nodo y el resaltado
- * fallaría en silencio, que es la clase de fallo que nadie ve hasta que importa.
+ * Clave de identificación del agente (`tenant/alias`) utilizada en el hipergrafo y actividad.
  */
 export function agentKeyOf(agent: FleetActivityAgent): string {
   return `${agent.tenant_id}/${agent.alias}`;
@@ -270,7 +197,7 @@ export function inFlightItemTone(status: string | null | undefined): BadgeTone {
 }
 
 /* ============================================================================================ *
- * Resumen de señales por fila: UNA etiqueta por hecho, no cinco por el mismo.
+ * Resumen de señales por fila: deduplicación de señales visibles en tabla.
  * ============================================================================================ */
 
 export interface SenalPintada {
@@ -286,10 +213,7 @@ export interface ResumenDeSenales {
   senales: SenalPintada[];
   /** Cuántas quedaron fuera del recuadro por el tope. 0 cuando entran todas. */
   ocultas: number;
-  /**
-   * TODAS las señales medidas, en castellano y sin deduplicar. Va al `title=` del titular: se
-   * resume lo que se PINTA, nunca lo que se sabe.
-   */
+  /** Detalle completo de señales medidas para el tooltip. */
   detalle: string;
 }
 
@@ -311,23 +235,7 @@ export function presenciaDeLaFila(agent: FleetActivityAgent): PresenciaDeLaFila 
 export const TOPE_DE_SENALES = 2;
 
 /**
- * Qué señal deja de pintarse porque otra cosa ya visible la implica.
- *
- * 🔴 Medido el 2026-08-23: `jarvis` mostraba «SATURADO» DOS VECES en la misma celda —una desde
- * `work_state` y otra desde `flags`, que son dos campos del servidor para el mismo hecho— y
- * `midas` apilaba CINCO insignias (COLGADO, ACK DETENIDO, SATURADO, ACK VENCIDO, LEASE VENCIDO)
- * para decir «está trabado». Cinco palabras no informan cinco veces más: informan menos, porque
- * ninguna se lee.
- *
- * Las implicaciones son las del propio servidor, no un criterio estético:
- *  - `stalled` ES «pasó el umbral sin ACK aplicado», así que repetir `ack_stalled` y
- *    `overdue_acks` al lado no agrega un hecho: agrega la misma frase en tres idiomas.
- *  - `saturated` como estado y `saturated` como señal son literalmente el mismo campo.
- *  - Un alias `never_connected` no puede además tener un lease que «venció»: nunca tuvo uno.
- *  - Una cola sin consumidor es lo que le pasa a un alias caído que tiene entregas esperando; con
- *    «Caído» ya dicho, es la consecuencia, no una segunda avería.
- *
- * Lo implicado NO se pierde: sigue entero en `detalle`, que es el `title=` de la celda.
+ * Determina qué señales se omiten por estar ya implícitas en el estado principal o presencia.
  */
 function implicadas(
   state: FleetWorkState | undefined,
@@ -335,17 +243,12 @@ function implicadas(
   presencia: PresenciaDeLaFila,
 ): Set<FleetActivityFlag> {
   const fuera = new Set<FleetActivityFlag>();
-  // La columna «Presencia» de la MISMA fila ya dice «Caído» o «Nunca conectó». Repetirlo tres
-  // centímetros a la izquierda no es una segunda señal: es la misma palabra dos veces en la
-  // misma fila, que es justo lo que este resumen existe para evitar.
   if (presencia === 'caido') fuera.add('lease_expired');
   if (presencia === 'nunca') { fuera.add('never_connected'); fuera.add('lease_expired'); }
   if (state === 'stalled') { fuera.add('ack_stalled'); fuera.add('overdue_acks'); }
   if (state === 'saturated') fuera.add('saturated');
   if (flags.includes('never_connected')) fuera.add('lease_expired');
   if (flags.includes('lease_expired') || flags.includes('never_connected')) fuera.add('queued_without_consumer');
-  // Sin el estado `stalled`, «sin ACK» y «ACK vencido» siguen siendo la misma familia: se pinta el
-  // más concreto de los dos y el otro queda en el detalle.
   if (state !== 'stalled' && flags.includes('overdue_acks') && flags.includes('ack_stalled')) fuera.add('ack_stalled');
   return fuera;
 }
@@ -366,19 +269,10 @@ export function resumirSenales(
   const estado: SenalPintada = titular
     ?? (estadoValido
       ? { clave: estadoValido, label: WORK_STATE_LABEL[estadoValido], tone: WORK_STATE_TONE[estadoValido] }
-      // El servidor no mandó `work_state`. Se dice, no se rellena con «inactivo».
       : { clave: 'sin-estado', label: 'Sin dato de estado', tone: 'unknown' });
 
   const fuera = implicadas(estadoValido, activas, presencia);
-  /*
-   * `saturated` sólo se pliega si el TITULAR lo está diciendo.
-   *
-   * El titular ya no sale siempre de `work_state`: la fila pinta el estado derivado
-   * (`estadoDeFila`), que para un alias saturado dice «Trabajando» —la saturación no es uno de los
-   * siete estados del muñeco, es una señal—. Plegar el chip mirando sólo `work_state` habría
-   * borrado el único sitio donde la fila decía «Saturado», que es justo lo contrario de lo que
-   * este resumen existe para hacer: quita lo repetido, nunca lo único.
-   */
+  // Conserva la señal 'saturated' si el titular no la explicita.
   if (estado.label !== FLAG_LABEL.saturated) fuera.delete('saturated');
 
   const visibles = activas

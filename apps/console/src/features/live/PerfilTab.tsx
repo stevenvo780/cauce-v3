@@ -12,25 +12,7 @@ import {
 } from './perfil';
 
 /**
- * EL PERFIL DEL ALIAS: se escribe acá y termina dentro del fichero que su arnés LEE.
- *
- * ── Qué venía fallando ───────────────────────────────────────────────────────────────────────
- *
- * La consola dejaba editar ocho campos del alias y sólo UNO —`role_brief`— tenía un lector real en
- * la ejecución. Los otros siete se guardaban en la base y no llegaban a ningún sitio: el operador
- * escribía, la pantalla decía «guardado», y el agente seguía sin enterarse. Sin un error por
- * ningún lado, que es lo que lo hizo durar meses.
- *
- * Esta pestaña cierra el lazo entero y lo enseña: a la izquierda los siete campos autorados, a la
- * derecha EL TEXTO EXACTO que va a quedar en cada fichero —`CLAUDE.md` para Claude Code,
- * `AGENTS.md` para codex, los siete Markdown del espacio de trabajo para openclaw—, compuesto por
- * la MISMA función que usa el adaptador para escribirlo dentro del contenedor.
- *
- * ── La regla de la pantalla ──────────────────────────────────────────────────────────────────
- *
- * Acá no se afirma nada que no se haya comprobado. La vista previa dice de qué está compuesta
- * (`base`), los ficheros del agente dicen que no se tocan y una relectura de DB nunca se presenta
- * como ACK del arnés. Cuando algo no se pudo comprobar, se dice con esas palabras.
+ * Editor y previsualización de perfil y campos de directiva del agente.
  */
 
 type TonoAviso = 'error' | 'parcial' | 'success';

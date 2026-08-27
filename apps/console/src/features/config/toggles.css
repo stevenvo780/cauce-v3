@@ -72,7 +72,7 @@
  * para campos de texto y a una casilla la estira a lo ancho del formulario. Es el mismo motivo por
  * el que la casilla «Es hub» del alta salía flotando lejos de su rótulo.
  *
- * 🔴 **`[type="checkbox"]` en el selector NO es decorativo: sin él el interruptor medía 2 px.**
+ * `[type="checkbox"]` en el selector NO es decorativo: sin él el interruptor medía 2 px.**
  *
  * MEDIDO en Chrome sobre el bundle de producción (`getComputedStyle(...).width`): `2px`, no 36. El
  * carril de la pastilla no se veía por ningún lado y lo único que quedaba en pantalla era el punto

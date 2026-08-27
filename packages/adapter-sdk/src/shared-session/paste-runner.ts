@@ -51,75 +51,50 @@ import type {
 
 export interface PasteSessionOptions<E> {
   readonly alias: string;
-  /** Qué TUI corre en el panel. Determina el binario, no el mecanismo: el mecanismo es uno solo. */
+  /** Qué TUI corre en el panel. Determina el binario de la sesión compartida. */
   readonly harness: SharedSessionHarness;
   /** Directorio de trabajo de la TUI. */
   readonly workspace: string;
-  /**
-   * De dónde sale el sobre. Lo ÚNICO específico de cada harness.
-   *
-   * Se recibe ya construido —y por tanto ya apuntando a un directorio concreto— para que el sitio
-   * donde la TUI escribe y el sitio donde el adaptador lee salgan del mismo valor y no se puedan
-   * separar. Ver `claudeTranscript` y `codexTranscript`.
-   */
+  /** Lector de transcript del harness para obtener los sobres estructurados. */
   readonly transcript: TranscriptReader<E>;
-  /** Lo que se le fija al panel al crearlo. Ver `SharedSessionSpec.environment`. */
+  /** Variables de entorno fijadas al crear el panel. */
   readonly environment?: Readonly<Record<string, string>>;
   readonly tmux: TmuxController;
-  /**
-   * El camino de siempre (`claude --print …`, `codex exec --json …`).
-   *
-   * Se conserva porque una entrega no se puede perder por una terminal cerrada, pero SÓLO se usa
-   * anunciándolo: es el punto exacto donde murió el intento anterior, que caía acá en silencio.
-   */
+  /** Runner de respaldo utilizado cuando la sesión compartida se degrada. */
   readonly fallback: CommandRunner;
   readonly sleep: (ms: number) => Promise<void>;
-  /** Cuánto se espera a que el dueño suelte la caja de entrada antes de degradar. */
+  /** Cuánto se espera a que la caja de entrada quede libre antes de degradar. */
   readonly acquireTimeoutMs?: number;
   /**
-   * Recorte OPCIONAL del turno ya inyectado, por debajo del presupuesto de la entrega.
-   *
-   * Sin esto el turno usa `request.timeoutMs`, que es lo que negoció el motor. No tiene default a
-   * propósito: un default acá es un techo invisible que contradice al presupuesto declarado, y eso
-   * es exactamente lo que mató las entregas de kratos el 2026-08-04 (ver `harvest`).
-   * Pasado el plazo el estado es AMBIGUO, nunca un reintento.
+   * Recorte opcional del turno inyectado por debajo de `request.timeoutMs`.
+   * Si vence el plazo, el estado de ejecución se reporta como ambiguo sin reintento automático.
    */
   readonly turnTimeoutMs?: number;
   /** Espera terminal máxima tras interrumpir un turno cancelado antes de poner el pane en cuarentena. */
   readonly cancelDrainTimeoutMs?: number;
   /** Marca durable de cuarentena; producción la ubica dentro del state directory del alias. */
   readonly quarantineFile?: string;
-  /**
-   * Presupuesto acotado para cada operación de cuarentena.
-   *
-   * Un filesystem o un servidor tmux colgado no puede retener la cola para siempre. El default
-   * sigue siendo holgado para fsync/tmux reales; el override permite probar esos bloqueos sin
-   * convertir las regresiones en esperas de varios segundos.
-   */
+  /** Presupuesto acotado para cada operación de cuarentena. */
   readonly quarantineOperationTimeoutMs?: number;
   /** Persistencia inyectable para acreditar fallos y bloqueos de disco en pruebas. */
   readonly quarantinePersistence?: QuarantinePersistence;
-  /** Cuánto se espera entre el pegado y el Enter. Ver `SETTLE_MS`. */
+  /** Tiempo de espera entre el pegado y el envío de Enter. */
   readonly settleMs?: number;
-  /** Cuánto se le da a la TUI para registrar el turno pegado. Ver `harvest`. */
+  /** Tiempo de espera para que la TUI registre el turno pegado. */
   readonly injectTimeoutMs?: number;
-  /** Recorte de la espera por correlacionar el pegado. Ver `DEFAULT_CORRELATION_TIMEOUT_MS`. */
+  /** Tiempo límite para correlacionar el pegado. */
   readonly correlationTimeoutMs?: number;
-  /** Cuánto silencio hace falta para dar por perdido un pegado sin correlacionar. Ver `DEFAULT_QUIET_MS`. */
+  /** Tiempo de inactividad para considerar perdido un pegado sin correlacionar. */
   readonly quietTimeoutMs?: number;
-  /** Techo absoluto de la espera por un turno fundido. Ver `DEFAULT_MERGED_GRACE_MS`. */
+  /** Techo absoluto de la espera por un turno fundido. */
   readonly mergedGraceMs?: number;
   readonly pollMs?: number;
   readonly readyTimeoutMs?: number;
   readonly command?: string;
-  /**
-   * Cómo se reanuda la conversación del dueño si hay que rehacerle el panel. Ver `ResumeSpec`.
-   *
-   * Ausente = el panel resucita EN BLANCO, que es lo que hacía este runner hasta el 2026-08-06.
-   */
+  /** Cómo se reanuda la conversación si es necesario recrear el panel. Ver `ResumeSpec`. */
   readonly resume?: ResumeSpec;
   readonly onDegradation?: (degradation: SharedSessionDegradation) => void;
-  /** Dónde se cuenta que una reanudación no salió. Ver `EnsureOptions.log`. */
+  /** Notificación de incidencias durante la inicialización o reanudación. */
   readonly onNotice?: (detail: string) => void;
 }
 
@@ -162,14 +137,7 @@ export interface QuarantinePersistence {
 }
 
 /**
- * Cuánto dura un turno ya inyectado en la TUI.
- *
- * Es una función exportada y no dos líneas dentro de `harvest` para que la regla se pueda fijar
- * con una prueba: lo que se rompió el 2026-08-04 no fue el cálculo, fue que un default escondido
- * ganaba sobre el presupuesto declarado y nadie tenía dónde verlo.
- *
- * La regla, entera: manda `request.timeoutMs`. Sólo se recorta si alguien pasó `turnTimeoutMs` a
- * propósito, y sólo hacia abajo — un recorte nunca puede AMPLIAR el presupuesto de la entrega.
+ * Calcula el presupuesto del turno inyectado a partir de `requestTimeoutMs` y `turnTimeoutMs` opcional.
  */
 export function turnBudgetMs(requestTimeoutMs: number, turnTimeoutMs?: number): number {
   return turnTimeoutMs === undefined
@@ -177,122 +145,33 @@ export function turnBudgetMs(requestTimeoutMs: number, turnTimeoutMs?: number): 
     : Math.min(requestTimeoutMs, turnTimeoutMs);
 }
 
-/**
- * Cuánto se deja asentar el pegado antes de mandar el Enter.
- *
- * No es un `sleep` supersticioso: las dos TUI leen el pegado entre corchetes como un bloque y lo
- * insertan en su caja de forma asíncrona; codex además tiene un detector de ráfaga
- * (`tui/src/bottom_pane/paste_burst.rs`, visible en el binario 0.144.6) que agrupa lo que llega
- * junto. Un Enter que entre dentro de esa misma ráfaga puede acabar siendo un salto de línea del
- * texto en vez del envío. Un cuarto de segundo no se nota en un turno y quita esa carrera.
- *
- * Y si aun así no se enviara, `harvest` lo detecta y lo DICE, en vez de esperar el presupuesto
- * entero delante de una caja con el pedido escrito sin mandar.
- */
+/** Tiempo de espera entre el pegado en la caja de entrada y el envío de Enter. */
 const SETTLE_MS = 250;
 
-/**
- * Cuánto se espera a que la TUI registre el turno pegado antes de darlo por no entregado.
- *
- * Medido en el rollout de codex el 2026-07-31: entre el envío y la primera línea del turno en
- * disco pasan milisegundos (`task_started` a las 16:45:18.174, respuesta completa a las
- * 16:45:20.107). Treinta segundos es un margen de tres órdenes de magnitud.
- */
+/** Tiempo de espera para que la TUI registre el turno pegado en el transcript. */
 const DEFAULT_INJECT_TIMEOUT_MS = 30_000;
 
-/**
- * Cada cuántos sondeos se comprueba que la sesión tmux sigue viva.
- *
- * Comprobarlo en todos costaba un proceso `tmux` cada 750 ms —unos 4800 por hora de turno— para
- * detectar un suceso rarísimo. Cada 8 sondeos da un aviso en menos de 10 s, que es de sobra.
- */
+/** Intervalo de sondeos entre comprobaciones de vitalidad del pane en tmux. */
 const LIVENESS_EVERY = 8;
 
-/**
- * Cuánto se espera a CORRELACIONAR el pegado antes de soltar la sesión.
- *
- * Distinto del presupuesto del turno: un turno legítimo puede durar horas, pero su entrada aparece
- * en el registro a los pocos segundos de pegarla. Si pasa esto sin que aparezca, el pegado se perdió
- * —se entreveró con lo que estaba tecleando una persona en la misma caja de entrada, o cayó mientras
- * la TUI generaba— y esperar el presupuesto entero no lo va a arreglar.
- *
- * Lo que arregla, medido el 2026-08-04: al quitar el tope escondido de 60 min, el presupuesto de
- * claude pasó a ser el de la entrega (24 h). Como este harness NO declara `startedTurn` a propósito
- * (ver `claudeTranscript`), nunca degradaba tras pegar, así que un pegado perdido retenía el lock de
- * la sesión 24 h: 16 entregas encoladas, cuatro horas sin una sola respuesta, y el reinicio del
- * adaptador no lo soltaba porque la siguiente entrega volvía a trabarse igual.
- *
- * Se sale por `timedOut` (AMBIGUO), no por `degrade`: si el pegado SÍ había entrado y sólo no se
- * supo correlacionar, degradar lo volvería a ejecutar por el camino de respaldo y el turno correría
- * dos veces. Ambiguo suelta el lock, deja constancia y no reintenta solo.
- */
+/** Tiempo límite de espera para correlacionar el prompt pegado en el transcript antes de marcar ambiguo. */
 const DEFAULT_CORRELATION_TIMEOUT_MS = 5 * 60_000;
 
-/**
- * Cuánto SILENCIO hace falta, además del plazo de correlación, para dar un pegado por perdido.
- *
- * El plazo de arriba, solo, no distingue las dos cosas que puede significar "no correlacioné": que
- * el pegado se perdiera —y entonces soltar rápido es lo correcto— o que la terminal esté ocupada
- * ejecutándolo fundido con otro turno, y entonces matarlo TIRA TRABAJO TERMINADO. Hasta el
- * 2026-08-06 las trataba igual, y la segunda es la que ocurre: entrega `6c7cb0c4`, muerta a los
- * 301 s con su entregable escrito y su sobre emitido 96 s antes.
- *
- * Lo que las separa es si el registro sigue creciendo. Un pegado perdido no escribe nada: a los
- * 5 min no hay actividad ninguna y se suelta igual de rápido que antes. Un pegado fundido escribe
- * todo el tiempo, porque el turno está corriendo de verdad; ahí se espera, y el sobre —que llega
- * antes— cierra la entrega solo.
- *
- * Es una espera ACOTADA por dos lados: el presupuesto de la entrega sigue mandando, y en cuanto la
- * terminal se calla cinco minutos se suelta. No puede volver al lock retenido 24 h.
- */
+/** Tiempo de inactividad en el transcript necesario para dar por perdido un pegado no correlacionado. */
 const DEFAULT_QUIET_MS = 5 * 60_000;
 
-/**
- * Techo ABSOLUTO de la espera por un turno fundido, por encima del silencio.
- *
- * El silencio, solo, tiene un supuesto que puede fallar: que si el registro crece es porque está
- * corriendo LO NUESTRO. Puede no serlo — el pegado se perdió de verdad y el dueño sigue trabajando
- * en su panel — y entonces la espera duraría lo que dure su jornada. Este techo lo acota.
- *
- * El equilibrio no es simétrico y por eso el techo es generoso: soltar de más ENCOLA entregas, que
- * se atienden después y como mucho reintentan; soltar de menos DESCARTA trabajo terminado, que es
- * lo que costó la entrega `6c7cb0c4`. Ante la duda se espera, pero con un final escrito.
- */
+/** Techo máximo de espera ante actividad continua en el transcript sin correlación explícita. */
 const DEFAULT_MERGED_GRACE_MS = 30 * 60_000;
 
 /**
- * Salida (d): conducir la TUI real por tmux y cosechar el sobre del registro que ella escribe.
- *
- * Las tres propiedades que el dueño pidió, a la vez:
- *  - TUI de verdad, con su panel, sus `/comandos` y su historial: es el binario real corriendo en
- *    un panel tmux, no un cliente de línea que la imita.
- *  - el turno del bus se ve EN VIVO en ese panel, porque entra por la misma caja de entrada.
- *  - contexto compartido en las dos direcciones y en UNA sola rama, porque el turno cuelga de la
- *    cabeza de la propia TUI.
- *
- * Lo que se paga: el acoplamiento es por teclas, que no es una API estable, y hay UNA sola caja de
- * entrada, así que hace falta arbitrarla.
- *
- * Este runner sustituye al transporte, no al contrato: devuelve un `CommandRunResult` con la misma
- * forma que produce el harness en su modo de siempre, y lo valida después el mismo `parse` +
- * `validateDeliveryOutput`. El sobre se sigue exigiendo entero.
- *
- * Vale para los dos harness porque el mecanismo es el mismo. Lo único que cambia —dónde queda
- * escrito el turno y cómo se le sigue la pista— entra por `options.transcript`.
+ * Ejecutor de sesión compartida que inyecta prompts en la TUI interactiva vía tmux
+ * y recupera los resultados desde el transcript estructurado.
  */
 export class PasteSessionRunner<E> implements SharedSessionRunner {
   private pending: SharedSessionDegradation | undefined;
   /** PID del panel en el turno anterior, para detectar que la TUI se reinició sola. */
   private lastPanePid: string | undefined;
-  /**
-   * Identidad de la conversación en la que cayó el turno anterior.
-   *
-   * Es la ÚNICA señal que delata un vaciado. Medido el 2026-07-30 con claude 2.1.220: `/clear`
-   * cierra el `.jsonl` y abre otro con `sessionId` nuevo, sin escribir ninguna marca en el viejo
-   * —simplemente deja de crecer— y SIN reiniciar el proceso: `pane_pid` idéntico antes y después.
-   * O sea que el heurístico de PID no lo ve nunca, y la cosecha sigue funcionando perfecta: el bus
-   * entregaba una respuesta impecable producida por un contexto vacío, con cero señal.
-   */
+  /** Identificador de la sesión de conversación anterior para detectar reinicios o vaciados de contexto. */
   private lastSessionId: string | undefined;
   /** Compactaciones ya avisadas, para no repetir el aviso en cada sondeo del mismo turno. */
   private readonly reportedBoundaries = new Set<string>();
@@ -650,13 +529,7 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
       };
     }
     if (ensure.created) {
-      // Resurrección: había que crearla, así que el dueño NO tenía ese panel abierto. `ensure` ya
-      // lo sabía y el runner lo tiraba: medido el 2026-07-30, borrada la sesión, la entrega salió
-      // con `exitCode 0` y sin un solo aviso.
-      //
-      // Se sigue avisando aunque la conversación haya vuelto entera, porque el panel es NUEVO y el
-      // dueño no lo estaba mirando; lo que cambia es qué se le dice. Decir "empieza de cero" cuando
-      // el contexto volvió es tan falso como callarse que se perdió.
+      // Notifica la creación o reanudación de la sesión compartida.
       await this.note({
         reason: "session_created",
         detail: ensure.resumed === true
@@ -1016,13 +889,7 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
     });
   }
 
-  /**
-   * Detecta que la TUI no es la misma que atendió el turno anterior.
-   *
-   * Sin esto, un reinicio de la TUI —medido: `claude` se auto-actualiza y se relanza— deja al bus
-   * hablando con una conversación vacía mientras todo parece normal. Se avisa y NO se degrada: el
-   * turno sí pasa por la terminal, lo que se perdió es la memoria.
-   */
+  /** Detecta cambios en el PID del proceso de la TUI entre turnos. */
   private async notePaneIdentity(pid: string | undefined): Promise<void> {
     if (pid === undefined) return;
     if (this.lastPanePid !== undefined && this.lastPanePid !== pid) {
@@ -1040,11 +907,7 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
   }
 
   /**
-   * Espera a que el dueño suelte la caja de entrada.
-   *
-   * Esperar es lo correcto y no un parche: una línea a medio escribir se resuelve sola en
-   * segundos, y degradar de inmediato regalaría el contexto compartido por una pausa de tecleo.
-   * Lo que no se hace nunca es escribir encima.
+   * Espera a que la caja de entrada esté libre antes de interactuar.
    */
   private async acquireInputBox(
     target: string,
@@ -1079,9 +942,6 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
       evidence = state.evidence;
       modal = state.kind === "modal";
       if (Date.now() >= deadline) {
-        // El diagnóstico correcto importa porque las dos salidas son OPUESTAS: ante `input_busy`
-        // el dueño tiene que BORRAR lo que escribió, ante un diálogo tiene que CONTESTARLO. El
-        // aviso anterior mandaba a hacer lo primero en los dos casos.
         return modal
           ? { ok: false, reason: "modal_blocking", detail: evidence }
           : { ok: false, reason: "input_busy", detail: evidence };
@@ -1106,16 +966,7 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
   }
 
   /**
-   * Saca el sobre del registro, nunca de la pantalla.
-   *
-   * Dos fases: primero identificar dónde quedó registrado el prompt que acabamos de pegar
-   * (igualdad exacta), y después esperar el desenlace de ESE turno. La segunda condición es la que
-   * garantiza que no estamos cosechando la respuesta a algo que el dueño escribió en paralelo.
-   *
-   * Y una tercera cosa, que es lo que separa una espera honesta de una espera muda: mientras el
-   * turno no aparezca, se mira si arrancó ALGUNO. Después de paste+Enter, ni siquiera la ausencia
-   * de `startedTurn` prueba que no hubo efectos; cualquier techo sin límite correlacionado termina
-   * en cuarentena durable, nunca en el transporte alternativo.
+   * Saca el sobre del registro estructurado del harness.
    */
   private async harvest(
     request: CommandRunRequest,
@@ -1128,24 +979,6 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
   ): Promise<CommittedRunResult> {
     const port = this.options.transcript;
     let activeIdentity = identity;
-    /**
-     * El presupuesto del turno es el que negoció el motor, NO una constante de este archivo.
-     *
-     * Hasta el 2026-08-04 acá había un `Math.min(request.timeoutMs, 3_600_000)`. `turnTimeoutMs`
-     * no lo pasaba nadie —ni `bin/shared.ts` ni ningún otro sitio—, así que ese `min` ganaba
-     * SIEMPRE y todo turno moría a los 60:00 exactos, contradiciendo en silencio el presupuesto
-     * que `executionBudgetFor` había calculado a partir de la entrega (24 h por defecto en
-     * `CAUCE_DEFAULT_TIMEOUT_MS`, acotado por la lease del ACK y por el techo de 12 h del store).
-     *
-     * Qué costó: el 2026-08-04 dos entregas de Miguel a `kratos` ejecutaron 60:00 clavados
-     * (23:57:28→00:57:28 y 00:57:30→01:57:28) y murieron. Como el alias sirve una entrega por vez,
-     * al morir arrancaba la siguiente, tardaba lo mismo y moría igual: cinco pedidos de un cliente
-     * en cola, ninguna respuesta, y ni un solo error visible.
-     *
-     * No es "sin techo": `request.timeoutMs` YA viene acotado y el bucle sigue vigilando la vida de
-     * la sesión tmux. Una cancelación posterior a Enter se DRENA hasta que la TUI termine, porque
-     * soltarla antes rompería la serialización. `turnTimeoutMs` queda como recorte EXPLÍCITO.
-     */
     const budget = turnBudgetMs(request.timeoutMs, this.options.turnTimeoutMs);
     const deadline = Date.now() + budget;
     const injectTimeoutMs = this.options.injectTimeoutMs ?? DEFAULT_INJECT_TIMEOUT_MS;
@@ -1239,10 +1072,7 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
           );
           if (noted.aborted) continue;
         }
-        // EL SOBRE, sin turno propio del que descender: el pegado se fundió con el turno en curso.
-        // Se cosecha igual, porque el trabajo está hecho y tirarlo es lo que costó la entrega
-        // `6c7cb0c4`. Sólo se mira lo escrito DESPUÉS del pegado, así que no puede ser un sobre
-        // viejo. Ver `findEnvelope`.
+        // Si el pegado se fusionó con un turno en curso, recupera el sobre escrito con posterioridad al pegado.
         if (injected === undefined && scan.envelope !== undefined) {
           const harvested = await beforeAbort(
             () => this.harvested(scan.envelope!, undefined, generating),
@@ -1615,12 +1445,7 @@ export class PasteSessionRunner<E> implements SharedSessionRunner {
   }
 
   /**
-   * Sólo mira los ficheros que crecieron o que aparecieron después del pegado.
-   *
-   * Un registro acumula meses de conversaciones —6.511 ficheros y 2,5 GB en `ws-prizma` el
-   * 2026-07-31— y releerlas todas en cada sondeo costaría más que el turno. La foto previa acota
-   * el trabajo a lo que pudo haber cambiado; recorrer el árbol entero y preguntar los tamaños
-   * cuesta 15 ms medidos sobre esos 6.511 ficheros.
+   * Examina los archivos de transcript que crecieron o aparecieron tras el pegado.
    */
   private async locateInjectedTurn(
     baseline: ReadonlyMap<string, number>,

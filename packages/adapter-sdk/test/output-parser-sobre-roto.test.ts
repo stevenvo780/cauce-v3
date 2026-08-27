@@ -211,7 +211,7 @@ test('dos sobres pegados NO se adivinan: se cae al reply del primero, sin delega
 });
 
 // --- Familia 5: el PISO. Sin nada rescatable, el turno sigue vivo -------------------------------
-// CONTRATO CAMBIADO A PROPOSITO el 2026-08-15. Antes esto era `throw`, y un throw deja
+// Antes esto era `throw`, y un throw deja
 // `deliveries.result` en NULL: quien pregunto no recibe NADA —ni respuesta, ni aviso, ni motivo—.
 // Asi estan los 4 turnos de argos de hoy y los 5 del 31-jul. Ahora degrada a "failed" CON TEXTO,
 // que es el mismo movimiento que `validateDeliveryOutput` ya hizo dos veces (el MISSING_FINAL_REPLY

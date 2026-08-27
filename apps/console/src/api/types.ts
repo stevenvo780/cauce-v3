@@ -1011,21 +1011,7 @@ export interface AgentDirective {
 }
 
 // ------------------------------------------------------------------------------------------
-// EL DIARIO DEL ROL DECLARADO — de dónde viene y qué NO trae.
-//
-// `agent_role_brief_history` la escribe un TRIGGER de la base, no el gateway. Eso importa para
-// leerla bien: atrapa TODO camino de escritura, incluidos los `UPDATE` crudos por psql que fueron
-// durante meses la única forma de tocar un rol. Es la razón por la que este diario vale como
-// registro, y no sólo lo que pasó por la consola.
-//
-// Medido contra producción el 2026-08-23 con `GET /v3/console/role-assignments/Steven/zeus/history`:
-// las entradas traen `id`, `tenant_id`, `alias`, `operation`, `previous_brief`, `new_brief`,
-// `previous_template_slug`, `new_template_slug`, `actor_tenant`, `actor_alias` y `changed_at`.
-//
-// LO QUE NO TRAE, Y HAY QUE DECIRLO EN PANTALLA: `actor_tenant` y `actor_alias` llegan NULL. Sólo
-// se rellenan si el camino de escritura declara `SET LOCAL cauce.actor_*`, y la mutación de
-// configuración —que es justamente la que usa este editor— no lo declara. O sea: el diario dice
-// QUÉ cambió y CUÁNDO, y no dice QUIÉN. Pintar un autor inventado ahí sería peor que el hueco.
+// Historial de cambios del rol declarado
 // ------------------------------------------------------------------------------------------
 
 /** Una entrada del diario: un cambio concreto del rol declarado de un alias. */

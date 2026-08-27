@@ -62,12 +62,7 @@ export interface AgentDirective {
    * true = sí publica, pero los ficheros pueden estar vacíos si no se pudieron leer.
    */
   publicado: boolean;
-  /**
-   * ¿Ocurrió la lectura DE VERDAD? `publicado` sólo dice que la ruta existe; se puede contestar
-   * 200 sin haber mirado el contenedor (sin hechos de entorno, o con rutas deducidas del
-   * registro, que falla en 5 de 14 alias). Sin este campo, quien pinta confunde «no se miró» con
-   * «no hay», y afirma que un alias arranca sin manual cuando el fichero está y tiene contenido.
-   */
+  /** Indica si la lectura se ejecutó contra el contenedor con hechos de entorno medidos. */
   medido?: boolean;
   /** Por qué no se pudo leer, cuando `publicado` es false. */
   motivo?: string;

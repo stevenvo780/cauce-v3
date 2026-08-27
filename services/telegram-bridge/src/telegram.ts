@@ -272,8 +272,6 @@ export class TelegramHttpClient implements TelegramApi {
       chat_id: chatId,
       text,
       disable_web_page_preview: true,
-      // Sin parse_mode Telegram muestra el marcado crudo (`##`, `**`, las vallas de código) en
-      // medio del texto, que es como llegaban los informes de la flota hasta el 2026-07-27.
       ...(options?.parse_mode === 'html' ? { parse_mode: 'HTML' } : {}),
       ...(threadId !== undefined && validTelegramMessageId(threadId)
         ? { message_thread_id: Number(threadId) } : {}),
@@ -285,14 +283,7 @@ export class TelegramHttpClient implements TelegramApi {
   }
 
   /**
-   * Sube los BYTES de un adjunto.
-   *
-   * `sendPhoto` deja la imagen visible dentro del chat —lo que Jhon pidió tres veces el 28-jul:
-   * "que pueda ver no en letras"— y `sendDocument` conserva el archivo tal cual, con su nombre,
-   * que es lo que hacía falta para el guion `.docx` de Isa.
-   *
-   * El `caption` va SIN `parse_mode`: es un nombre de archivo, no marcado, y un `<` suelto en un
-   * nombre no puede costar la subida entera por un 400 de parseo.
+   * Sube un adjunto usando sendPhoto o sendDocument.
    */
   private async upload(
     method: 'sendPhoto' | 'sendDocument',

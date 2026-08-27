@@ -272,20 +272,7 @@ describe('lane fairness burst', () => {
   }
 
   /**
-   * INTEGRACIÓN 2026-07-29 — este test cambió de forma porque cambió el mecanismo, no el
-   * objetivo. Nació contra la equidad POR CARRIL (`interactive_streak` contaba reclamos del
-   * carril 'interactive' y cada `interactiveBurst` le cedía un turno a 'batch'). La línea que se
-   * integra reemplazó esa partición por la clasificación HUMANO / NO-HUMANO, porque el
-   * carril se heredaba literal en cada salto y una cadena de agentes entera viajaba en
-   * 'interactive' junto con los mensajes de las personas (2.374 de 2.429 entregas medidas).
-   *
-   * Con eso, "tráfico de máquinas esperando en el carril interactivo" ya no se escribe con un
-   * `telegram.message` de prioridad 0 —el tipo de body no puede conferir autoridad— sino con una
-   * prioridad por debajo de la banda humana, como el `agent.message` en 'batch' de este caso.
-   *
-   * Lo que se sigue probando es lo mismo que antes: **el trabajo no humano no se muere de
-   * hambre**. Sólo que ahora quien le cede el turno es la ráfaga HUMANA (`humanBurst`), no la de
-   * carril. Si alguien borrara el `yieldTurn` de `claimDeliveries`, estos tests se pondrían rojos.
+   * Garantiza que el trabajo entre agentes obtenga su turno una vez agotada la ráfaga de prioridad humana.
    */
   it('gives agent-to-agent work its turn once the human burst is spent', async () => {
     const instanceId = 'burst-control';

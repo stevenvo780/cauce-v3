@@ -50,12 +50,7 @@ type CuerpoEntero =
   | { estado: 'fallo'; motivo: string };
 
 /**
- * El hilo con UN agente: cabecera con su estado y su cola, historial, y el campo para escribirle.
- *
- * El historial y el envío no se reimplementan: `transcriptForSession` y `TerminalTranscript`
- * son los mismos que usa Ultimate Terminal, y el room de origen lo deriva `operatorRouteForAgent`
- * a partir de la topología del actor. El formulario viejo pedía el room y un «Tenant:alias» a
- * mano; eso no era información que el operador tuviera que aportar, era una forma de equivocarse.
+ * Panel de conversación con un agente: historial, estado de entrega y compositor de mensajes.
  */
 export function ConversationPane({
   agent, page, loading, error, route, canPublish, publisherSubject, salud, onReload,
@@ -65,27 +60,10 @@ export function ConversationPane({
   const [roomElegido, setRoomElegido] = useState<string>();
   const [enviando, setEnviando] = useState(false);
   const [aviso, setAviso] = useState<{ tone: 'success' | 'error'; text: string }>();
-  /**
-   * 🔴 Se elige por MESSAGE_ID, no por delivery.
-   *
-   * Antes esto era `deliveryElegida` y el ítem se buscaba con
-   * `hilo.find(i => i.delivery?.delivery_id === deliveryElegida) ?? hilo.at(-1)`. Con nada
-   * seleccionado, `deliveryElegida` es `undefined` y `i.delivery?.delivery_id` también lo es en
-   * todo mensaje de salida: el `find` devolvía el PRIMER mensaje sin entrega del hilo, o sea el
-   * más viejo, y el `?? hilo.at(-1)` —«abrí en el último»— no llegaba a ejecutarse nunca. Medido
-   * en producción: el detalle se abría solo sobre un mensaje de las 2:02:52, catorce horas viejo,
-   * que nadie había elegido. Y por el mismo motivo, clicar una burbuja SIN entrega no cambiaba
-   * nada: no había delivery_id que guardar.
-   */
   const [mensajeElegido, setMensajeElegido] = useState<string>();
   const [cuerpos, setCuerpos] = useState<Record<string, CuerpoEntero>>({});
-  /** El detalle nace CERRADO y lo abre el operador —o su propio clic en una burbuja—. */
+  /** El detalle nace cerrado y lo abre el operador o al hacer clic en una burbuja. */
   const [detalleAbierto, setDetalleAbierto] = useState(false);
-  /**
-   * El lane vuelve a ser del operador. El formulario anterior lo dejaba elegir `batch` y esta
-   * pantalla lo había fijado en `interactive`: publicar una tarea larga por el carril interactivo
-   * la pone a competir con los turnos en vivo, y desde la consola no había forma de evitarlo.
-   */
   const [lane, setLane] = useState<JobLane>('interactive');
 
   const sesion: OperatorSession = useMemo(() => ({
@@ -374,7 +352,7 @@ export function ConversationPane({
       */}
       {mensajeSeleccionado ? (
         /*
-          🔴 EL DETALLE YA NO SE ABRE SOLO.
+          EL DETALLE YA NO SE ABRE SOLO.
           
           Dos motivos, los dos medidos. El primero es la queja textual del recorrido: «el panel de
           detalle se abre solo sobre un mensaje que nadie eligió». El segundo apareció al abrir la

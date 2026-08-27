@@ -156,7 +156,7 @@ List deliveries filtered by alias and/or status.
 
 **Parameters:**
 - `alias` (optional): Filter by recipient alias
-- `estado` (optional): Filter by status (claimed, acked, dead)
+- `estado` (optional): Filter by status (e.g., done, failed, dead)
 - `limit` (optional, default 100): Max results
 
 **Example:**

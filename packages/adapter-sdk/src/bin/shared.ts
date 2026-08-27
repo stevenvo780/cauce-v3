@@ -41,16 +41,8 @@ function commandOverride(
 }
 
 /**
- * Un testigo `stderr-marker` sólo vale si el puente que se va a EJECUTAR escribe esa marca.
- *
- * `CAUCE_HERMES_BRIDGE` y `CAUCE_OPENCLAW_BRIDGE` pueden apuntar a un archivo fuera del paquete,
- * y ahí el código nuevo podría convivir con un puente viejo. Sería el peor fallo posible en esta
- * dirección: el transporte diría «no arrancó» en TODOS los turnos, incluidos los que trabajaron,
- * y el bus los reintentaría. Como no hay forma de distinguir «puente viejo» de «no arrancó», se
- * comprueba antes: si el archivo no contiene la marca, este adaptador se queda SIN testigo y
- * vuelve al comportamiento conservador de siempre.
- *
- * Lee el archivo una vez, al arrancar. Si no se puede leer, tampoco se atestigua.
+ * Verifica que el script del puente contenga la marca de inicio antes de habilitar `stderr-marker`.
+ * Si el puente no contiene la marca o no se puede leer, desactiva el testigo de inicio.
  */
 function definitionWithVerifiedBridge(
   definition: HarnessDefinition,
@@ -112,14 +104,7 @@ export function runtimeHarnessDefinition(
 }
 
 /**
- * Structured operational log, one JSON object per line on stderr, which is where the
- * unit journal already collects the adapter's `onError` retry lines.
- *
- * This exists wired rather than optional on purpose. An adapter whose harness has a bad
- * credential still holds its lease and still answers `auth status`, so the only signal
- * that separates a working alias from a dead one is the cadence of its `started` ACKs —
- * the `claim_renewal_start` entries below. Leaving the logger defaulted to a no-op in
- * production is what made that cadence invisible.
+ * Structured operational log emitting one JSON object per line to stderr.
  */
 function operationalLogger(alias: string): AdapterLogger {
   return (entry: AdapterLog): void => {
@@ -138,12 +123,7 @@ function operationalLogger(alias: string): AdapterLogger {
 }
 
 /**
- * Envuelve el runner de siempre con el de sesión compartida cuando el alias la tiene encendida.
- *
- * El runner compartido NO reemplaza al clásico: lo lleva dentro como camino de respaldo. Es lo que
- * permite que una entrega no se pierda porque el dueño cerró su terminal, sin que eso vuelva a ser
- * un fallback silencioso: cada vez que usa el respaldo lo declara, y ese aviso termina en el
- * "reply" que llega por Telegram, en el panel y en el log durable.
+ * Envuelve el runner base con el runner de sesión compartida cuando está configurada.
  */
 function sharedSessionRunner(
   shared: SharedSessionConfig,
@@ -164,17 +144,11 @@ function sharedSessionRunner(
       error_message: degradation.detail,
     });
   };
-  // El mecanismo es uno solo; lo único que cambia por harness es de dónde se cosecha el sobre. Y
-  // el directorio del que se cosecha sale del MISMO valor que el entorno del panel, así que la TUI
-  // no puede escribir en un sitio mientras el adaptador lee en otro.
   const comun = {
     alias: shared.alias,
     harness: shared.harness,
     workspace: shared.workspace,
     environment: shared.paneEnvironment,
-    // Si al adaptador le toca rehacer el panel, que vuelva con la conversación del dueño. Sale del
-    // MISMO `configDirectory` del que se cosecha, así que no puede preguntar por un registro
-    // distinto del que la TUI escribe.
     resume: sharedSessionResume(shared.harness, shared.configDirectory, shared.workspace),
     tmux,
     fallback,
@@ -292,16 +266,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
 }
 
 /**
- * Un adaptador que muere tiene que decir POR QUE.
- *
- * La version anterior escribia solo `ADAPTER_FATAL: adapter stopped`. Con eso, una variable de
- * entorno faltante, un certificado vencido y un relay inalcanzable son la MISMA linea, y quien
- * lee el journal no puede distinguirlas. Asi es como la suite e2e paso cuatro dias muerta por un
- * `Required configuration 'CAUCE_ROOM' is missing` que nadie llego a leer nunca: el arranque
- * conocia la causa exacta y la tiraba a la basura.
- *
- * La causa pasa por el mismo redactor que el stderr de los harnesses, porque este texto termina
- * en journals y en `last_error`, que leen los agentes.
+ * Emite la causa de fallo fatal a stderr (sanitizada) y finaliza el proceso con código 1.
  */
 export function reportFatal(error: unknown): never {
   const code = error instanceof Error && "code" in error ? String(error.code) : "ADAPTER_FATAL";

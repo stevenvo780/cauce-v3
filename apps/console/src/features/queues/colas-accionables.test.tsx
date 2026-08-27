@@ -9,26 +9,7 @@ import { DeliveryTable } from './DeliveryTable';
 import { QueuesPage } from './QueuesPage';
 
 /**
- * **LO QUE `/queues` DECÍA BIEN Y LO QUE NO DEJABA HACER.**
- *
- * Recorrido de la consola de producción, 2026-08-23, con la sesión de Steven.
- *
- * Lo bueno, y hay que decirlo porque el arreglo no puede romperlo: las tres tarjetas de arriba
- * contestan de un vistazo la pregunta con la que un operador entra —«Pendientes 0 / En retry 0 /
- * Dead letters 7 · requieren revisión»—. Eso está bien y se conserva.
- *
- * Lo malo, todo medido:
- * - 38 filas, CERO controles de filtro, y las 7 dead letters sueltas entre 31 entregas terminadas
- *   bien. Las tarjetas decían dónde mirar y no llevaban ahí: no eran pulsables.
- * - 31 de esas 38 filas gritaban un UNKNOWN ámbar en «Último error» para entregas en `done`. El
- *   ojo iba al color equivocado treinta y una veces.
- * - «Replay» publicaba al servidor con UN clic, sin decir qué hace ni preguntar nada, sobre una
- *   flota con clientes reales dentro.
- *
- * Comprobado por reversión contra el código anterior: 9 de estos 10 casos fallan. El que pasa en
- * las dos versiones es «una entrega MUERTA sin motivo sigue marcada como UNKNOWN», y pasa a
- * propósito: no prueba el arreglo, prueba que el arreglo no se pasó de rosca. Apagar el ámbar
- * donde sobraba no podía apagarlo donde hace falta.
+ * Pruebas de integración para la gestión, filtrado y acciones sobre colas de entregas.
  */
 
 /** 38 filas con la misma proporción que producción: 7 en revisión, 31 terminadas bien. */

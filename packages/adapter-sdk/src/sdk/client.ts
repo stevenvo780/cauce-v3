@@ -66,11 +66,7 @@ interface SendDeadline {
 }
 
 /*
- * El manifiesto usa claves legibles por código y el hello transporta strings. La tabla está
- * tipada contra TODAS las claves de `AdapterCapabilities`: agregar una capability sin decidir su
- * representación deja el typecheck rojo, en vez de producir otra declaración que el gateway nunca
- * llega a ver. Las cadenas históricas no cambian; las nuevas son aditivas y un gateway anterior
- * puede ignorarlas sin romper el saludo.
+ * Mapeo de claves de `AdapterCapabilities` a cadenas de capability del frame hello.
  */
 const CAPABILITY_ENCODERS = {
   protocol_version: (value) => [`protocol.${value.protocol_version}`],
@@ -251,18 +247,8 @@ export class AdapterClient {
           await this.engine.activateEpoch(frame.epoch);
           welcomed = true;
           /*
-           * EL PERFIL SE ESCRIBE AL CONECTAR, y sólo entonces.
-           *
-           * Aquí se cierra el lazo entero: el operador edita en la consola -> la mutación guarda en
-           * `agent_profiles` -> el gateway manda el perfil en este saludo -> esto lo escribe en el
-           * fichero que el arnés lee. Hasta ahora el generador existía y no lo llamaba nadie.
-           *
-           * Va DESPUÉS de `activateEpoch` y ANTES del primer `drain`, que es la única ventana en
-           * la que el fichero se puede escribir sin competir con un turno en curso.
-           *
-           * Es síncrono y termina ANTES de heartbeat, outbox y recuperación. Un fallo deja esta
-           * conexión fuera de servicio y entra al backoff retryable: recibir trabajo con un perfil
-           * viejo sería afirmar una identidad que el runtime no pudo aplicar.
+           * Sincroniza el perfil recibido en `hello_ack` antes de iniciar heartbeat, outbox y recuperación.
+           * Ocurre tras `activateEpoch` para asegurar que el runtime aplica la identidad antes de procesar entregas.
            */
           this.sembrarPerfil(frame);
           this.backoff.reset();
@@ -286,14 +272,8 @@ export class AdapterClient {
   }
 
   /**
-   * Escribe el perfil que vino en el saludo en los ficheros del arnés o falla la conexión.
-   *
-   * Está activo por defecto para los arneses soportados. `CAUCE_SEMBRAR_PERFIL=0` es una retirada
-   * explícita; cualquier otro valor conserva la convergencia al reconectar.
-   *
-   * El resultado va al registro SIEMPRE, incluso cuando no se escribió nada: «no se sembró» es
-   * justo lo que hay que poder ver cuando un alias no tiene su perfil, y un silencio no distingue
-   * «apagado» de «no se pudo».
+   * Escribe el perfil recibido en el saludo en los ficheros del arnés o falla la conexión.
+   * `CAUCE_SEMBRAR_PERFIL=0` desactiva la sincronización.
    */
   private sembrarPerfil(frame: Extract<ServerFrame, { type: 'hello_ack' }>): void {
     const perfil = frame.agent_profile;
@@ -353,9 +333,7 @@ export class AdapterClient {
             || frame.receipt === 'duplicate')
           ? (frame.receipt === 'applied' ? 'applied' as const : 'duplicate' as const)
           : undefined;
-        // `applied:false` sin receipt era el atajo que perdía el resultado: puede ser un gateway
-        // viejo que cortó por epoch sin consultar la DB. Sólo una prueba terminal concluyente
-        // permite quitar done/failed; todo lo demás queda durable para el reconnect con backoff.
+        // Solo un recibo terminal concluyente permite descartar estados done/failed pendientes.
         if (terminalPending && terminalReceipt === undefined) return;
         const acknowledged = await this.store.acknowledgeResult(correlation, {
           ...(frame.delegation_rejections === undefined
@@ -390,12 +368,7 @@ export class AdapterClient {
           if (frame.applied === true || frame.receipt === 'duplicate') {
             this.engine.confirmClaim(frame.delivery_id, frame.attempt, frame.claim_token);
           } else if (pending.phase === 'accepted' && frame.receipt !== 'ownership_lost') {
-            // Latido de cola que el gateway no aplicó. Un gateway anterior a esta versión no
-            // conoce la renovación en fase 'accepted' y contesta 'superseded' (o sin `receipt`),
-            // que NO es pérdida de propiedad: tratarlo como tal mataría la entrega con
-            // CLAIM_OWNERSHIP_LOST, que es no-retryable, sin que nadie haya perdido nada. Se lo
-            // trata como ausencia de señal: el watchdog fail-closed sigue corriendo y, si el
-            // gateway efectivamente no renueva, vence solo con un error RETRYABLE.
+            // Renovación en fase accepted no confirmada; no se trata como pérdida de propiedad.
             this.engine.logDroppedQueueRenewal(frame.delivery_id, frame.attempt);
           } else {
             this.engine.loseClaim(frame.delivery_id, frame.attempt, frame.claim_token);
@@ -435,8 +408,6 @@ export class AdapterClient {
       instance_id: this.config.instanceId,
       epoch: event.epoch,
       retryable: event.error?.retryable ?? event.output?.retryable ?? false,
-      // Campo opcional del protocolo: un gateway viejo lo ignora y el reaper se queda con el
-      // reintento de siempre, que es caro pero no pierde trabajo.
       ...(event.execution_started === true ? { execution_started: true } : {}),
       ...(detail === undefined ? {} : { error: detail }),
       ...(event.error === undefined ? {} : { error_code: event.error.code }),
@@ -653,15 +624,8 @@ export function siembraHabilitada(entorno: NodeJS.ProcessEnv): boolean {
 }
 
 /**
- * `BaseAckSchema.error` is capped at 2000 characters and every client frame is
- * schema-checked before it reaches the socket. An over-long harness failure
- * message therefore used to throw a ZodError inside `send()`, tearing down the
- * connection; because the offending event stays at the head of the outbox, the
- * next `flushOutbox()` replayed it and killed the new connection too, so the
- * adapter reconnect-looped forever and could never report or receive anything.
- *
- * Truncating here is lossless for the operator: the untruncated text is always
- * carried in `result.output`, which the schema leaves unbounded.
+ * Truncates `BaseAckSchema.error` to 2000 characters to fit frame schema limits.
+ * The full message remains preserved in `result.output`.
  */
 const MAX_ACK_ERROR_DETAIL = 2_000;
 const ACK_DETAIL_TRUNCATION_SUFFIX = '… [truncated]';

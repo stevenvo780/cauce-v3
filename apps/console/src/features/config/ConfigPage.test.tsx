@@ -1012,7 +1012,7 @@ it('FAMILIA 6: un gateway que no publica el registro de agentes no inventa un ca
 });
 
 /**
- * 🔴 **`/config` abierto por marcador sin permiso `control`.**
+ * `/config` abierto por marcador sin permiso `control`.**
  *
  * La barra lateral ya decía la verdad —entrada inerte con `CONFIG_SIN_CONTROL_REASON`— pero quien
  * llega por URL directa se salta el menú entero, y la página le contestaba «No se pudo leer Cauce

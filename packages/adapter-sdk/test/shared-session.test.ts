@@ -203,10 +203,8 @@ class FakeTmux implements TmuxController {
   /**
    * Trozo del argv del panel que hace que el proceso salga al instante.
    *
-   * Modela lo medido el 2026-08-06 con claude 2.1.223: `claude --continue` sin conversación previa
-   * escribe «No conversation found to continue» y sale con código 1. tmux crea la sesión y acto
-   * seguido se la lleva, porque su último panel murió. Sin esto, el doble daría por vivo un panel
-   * que en la realidad no existe, que es justo el fallo que estas pruebas tienen que ver.
+   * Modela el caso donde `claude --continue` sin conversación previa
+   * escribe «No conversation found to continue» y sale con código 1.
    */
   fatalPaneArguments: string | undefined;
   readonly buffers = new Map<string, string>();
@@ -1171,10 +1169,7 @@ test("una TUI reiniciada avisa aunque el turno si pase por la terminal", async (
 // ---------------------------------------------------------------------------
 
 /**
- * Una línea de rollout con la forma EXACTA que escribe codex 0.144.6.
- *
- * Copiada del rollout vivo de socrates del 2026-07-31, no de la documentación: es el fichero en el
- * que quedó registrado el `PEGADO` que se probó a mano en su panel.
+ * Una línea de rollout con el formato generado por codex.
  */
 function rolloutLine(type: string, payload: Record<string, unknown>): string {
   return JSON.stringify({ timestamp: new Date().toISOString(), type, payload });
@@ -1317,11 +1312,7 @@ test("codex ignora un rollout headless ajeno y rescata sólo el sobre con su non
 });
 
 test("codex recorta el salto final al enviar y aun así se reconoce el turno", async () => {
-  // Medido en ws-prizma el 2026-07-31: se pegó un fichero de 88 bytes acabado en `\n` y el
-  // `response_item` guardó 87. `protocolPrompt` termina SIEMPRE en `\n`, así que con igualdad
-  // byte a byte el runner no reconocería jamás su propio turno; vería el `task_started` —el turno
-  // corrió de verdad— y esperaría el presupuesto entero. El dueño: agente mudo 30 minutos con la
-  // respuesta ya escrita en su panel.
+  // Cuando el harness recorta el newline final al registrar el prompt, el runner debe reconocer igualmente el turno.
   const { state, codexHome, rollout } = await codexWorkspace("codex-recorte");
   const tmux = new FakeTmux();
   tmux.paneContent = "› ";
@@ -4040,14 +4031,8 @@ test("una sesion viva sin panel de TUI se reporta como tui_absent, no como ausen
 });
 
 test("la ventana de la TUI que no existe NO se confunde con otra ventana de la sesión", async () => {
-  // Regresión de un fallo medido en ws-prizma el 2026-07-30. Con la sesión `cauce-socrates`
-  // teniendo sólo la ventana `servidor`, `tmux display-message -p -t cauce-socrates:agente` NO
-  // falla: cae a la ventana actual y devuelve su PID con exit 0. Ni el prefijo `=` lo evita.
-  //
-  // Consecuencia real: `ensure` decía `ready:true`, `cauce socrates` anunciaba COMPARTIDA y el
-  // adaptador daba por compartida una conversación con una ventana que no existía — la clase de
-  // éxito silencioso que este trabajo existe para eliminar. La única defensa es enumerar con
-  // `list-windows` y comparar por igualdad exacta.
+  // Si la ventana no existe en la sesión tmux, se debe detectar y degradar limpiamente
+  // enumerando con `list-windows` y comparando por igualdad exacta.
   const { state, home, workspace } = await freshState("ventana-fantasma");
   const tmux = new FakeTmux();
   tmux.sessionExists = true;
@@ -4092,9 +4077,7 @@ test("la caja de entrada se reconoce ocupada en los casos medidos", () => {
 });
 
 test("tmux no hereda la identidad de ciclo de vida del adaptador", () => {
-  // Si la hereda, el servidor de tmux se demoniza con ella puesta, el supervisor lo ve como
-  // proceso no rastreado y el alias no se puede reiniciar NUNCA MAS (exit 78, unidad `failed`,
-  // adaptador viejo vivo). Medido en atlas y dedalo el 2026-08-06.
+  // Evita que el servidor tmux herede variables de entorno de ciclo de vida del adaptador.
   const limpio = withoutLifecycleIdentity({
     CAUCE_ALIAS: "atlas",
     CAUCE_STATE_DIR: "/home/dev/.local/state/cauce-v3/atlas",
@@ -4233,8 +4216,7 @@ test("el vallado Markdown se quita solo cuando envuelve todo el texto", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Regresión de los agujeros que midieron los tres diagnósticos del 2026-07-30.
-// Cada prueba de acá reproduce un fallo OBSERVADO, no uno imaginado.
+// Casos de prueba de compactación de conversación y límites de contexto.
 // ---------------------------------------------------------------------------
 
 /** Una compactación real, con la forma exacta que escribe claude 2.1.220. */
@@ -5063,14 +5045,7 @@ test("un reemplazo con el mismo nombre falla cerrado y nunca se adopta ni se mat
 });
 
 // ---------------------------------------------------------------------------
-// Rehacer el panel no puede costarle al alias su conversación.
-//
-// La madrugada del 2026-08-06 un `cauce kant on` rehizo el panel de kant y se llevó 38 MB de
-// conversación acumulada desde el 2 de agosto. El rollout seguía intacto en disco y nadie volvió a
-// abrirlo: el contexto vivía sólo en el proceso, y el panel arrancaba SIEMPRE pelado.
-//
-// Estas pruebas fijan las dos redes. Sin ellas, el arreglo se pierde en el próximo refactor y el
-// fallo vuelve exactamente igual de mudo.
+// Rehacer el panel debe reanudar la conversación existente desde disco.
 // ---------------------------------------------------------------------------
 
 /** Un `ResumeSpec` de mentira, con la respuesta que el test quiera y un contador de llamadas. */
@@ -5299,14 +5274,7 @@ test("los dos creadores del panel reanudan igual", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// El presupuesto de un turno sale de la entrega, no de una constante escondida.
-//
-// El 2026-08-04 `harvest` hacía `Math.min(request.timeoutMs, 3_600_000)` con un
-// `turnTimeoutMs` que NADIE pasaba: todo turno moría a los 60:00 exactos, aunque la entrega
-// declarara 24 h. Dos entregas de Miguel a kratos murieron así, y como el alias sirve una por
-// vez, la cola detrás se fue muriendo igual. Ningún error: sólo silencio.
-//
-// Estas pruebas fijan la regla. Sin ellas, el default vuelve en el próximo refactor.
+// El presupuesto de un turno proviene de la entrega configurada, no de límites implícitos.
 // ---------------------------------------------------------------------------
 
 test("sin recorte explicito, el turno usa el presupuesto de la entrega", () => {
@@ -5328,15 +5296,7 @@ test("un recorte explicito acota, y solo hacia abajo", () => {
 });
 
 // ---------------------------------------------------------------------------
-// El 2026-08-04, ya sin el techo de 60 min, apareció el fallo simétrico: claude NO declara
-// `startedTurn` a propósito, así que nunca degradaba tras pegar. Si el pegado se perdía —se
-// entreveró con lo que tecleaba una persona en la MISMA caja de entrada— `harvest` se quedaba
-// esperando el presupuesto de la entrega: 24 h reteniendo el lock de la sesión. Resultado medido:
-// 16 entregas encoladas, 4 h sin una sola respuesta, y reiniciar el adaptador no lo soltaba porque
-// la siguiente entrega volvía a trabarse igual.
-//
-// La red de seguridad corta por CORRELACIÓN, no por presupuesto: un turno legítimo puede durar
-// horas, pero su entrada aparece en el registro en segundos.
+// El corte por correlación libera la sesión si un pegado no aparece en el registro.
 // ---------------------------------------------------------------------------
 
 test("un pegado que nunca aparece en el registro suelta la sesion en vez de retenerla", async () => {
@@ -5454,12 +5414,7 @@ test("el timeout general con turno correlacionado bloquea la generación hasta u
 });
 
 // ---------------------------------------------------------------------------
-// kratos, 2026-08-04: el turno del bus SI se pego y SI termino bien, pero claude compacto a mitad
-// y el `compact_boundary` quedo con `parentUuid: null` y un `logicalParentUuid` que apuntaba HACIA
-// ADELANTE, a una entrada que a su vez colgaba del propio boundary: un ciclo cerrado. Ninguna ruta
-// llegaba ya a la entrada inyectada, `findFinalAssistant` devolvia undefined en cada sondeo y
-// `harvest` giraba reteniendo el lock de la sesion. Resultado medido: 8 h sin contestar con la
-// respuesta ya escrita en el registro desde hacia 6 h, y 8 entregas encoladas detras.
+// Una compactación con referencias no lineales no debe impedir cosechar la respuesta final.
 // ---------------------------------------------------------------------------
 
 test("una compactacion con la cadena rota no deja la respuesta sin cosechar", () => {

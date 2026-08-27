@@ -3,9 +3,9 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * 🔴 **El editor de perfil no cabía en el cajón, y jsdom no lo puede ver.**
+ * El editor de perfil no cabía en el cajón, y jsdom no lo puede ver.**
  *
- * Medido en Chrome headless el 2026-08-25 sobre `/live?agente=Steven/argos&pestana=perfil`, tema
+ * 
  * claro, alias con arnés `openclaw` (siete ficheros, que es el caso que más ocupa):
  *
  * | cajón | columna útil | bloque del fichero | alto del editor | columnas |

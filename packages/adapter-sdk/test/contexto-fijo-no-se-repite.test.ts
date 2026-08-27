@@ -13,14 +13,9 @@ import {
   type HarnessRequestContext,
 } from "../src/harnesses/shared.js";
 
-/*
- * LO QUE ESTE FICHERO CERTIFICA, con las palabras del encargo:
- * «Verificar explícitamente que la información fija no vuelva a inyectarse innecesariamente
- * entre mensajes.»
- *
- * Y lo que certifica en el otro sentido, que importa igual: que cuando el fichero del arnés NO
- * lleva ese texto —o lleva otro— el sobre lo manda ENTERO. El recorte tiene que ser imposible
- * de conseguir por accidente.
+/**
+ * Verifica que la información fija no vuelva a inyectarse innecesariamente entre mensajes
+ * cuando el fichero del arnés ya la contiene, y que se mantenga completa en caso contrario.
  */
 
 function contexto(overrides: Partial<HarnessRequestContext> = {}): HarnessRequestContext {

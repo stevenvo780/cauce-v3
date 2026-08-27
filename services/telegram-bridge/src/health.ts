@@ -20,9 +20,6 @@ const METRICS: readonly BridgeMetric[] = [
   'group_config_degraded',
   'egress_sent', 'egress_retry', 'egress_dead', 'egress_ambiguous', 'egress_fenced',
   'egress_loop_error',
-  // `egress_format_downgraded` existía en el tipo desde el 27-jul pero faltaba en esta lista, así
-  // que su contador nunca se publicó: la única señal de que la conversión a HTML está produciendo
-  // algo que Telegram rechaza era invisible en /metrics.
   'egress_format_downgraded',
   'egress_attachment_uploaded', 'egress_attachment_listed', 'egress_attachment_upload_failed',
   'ingress_secret_redacted'

@@ -4,7 +4,7 @@ import type { QueueItem } from '../../api/types';
  * **El enlace profundo `/queues?delivery=<uuid>` — de dónde salió y qué tenía de falso.**
  *
  * El cajón de «La flota ahora» pinta, por cada entrega en vuelo, un enlace «Ver en Queues» que
- * apunta a `/queues?delivery=<uuid>` (commit `d3411de`). Medido el 2026-08-22 haciendo clic:
+ * apunta a `/queues?delivery=<uuid>` (commit `d3411de`). 
  * `QueuesPage` no leía `location.search` —el ÚNICO código de la consola que lo tocaba era
  * `LiveFleetPage`, con sus propios `agente`, `pestana` y `trace`—, así que el aterrizaje pintaba la
  * lista genérica de 200 filas, el id pedido aparecía CERO veces en `<main>` y ninguna fila quedaba
@@ -14,7 +14,7 @@ import type { QueueItem } from '../../api/types';
  * tabla: qué pide la URL, qué filas corresponden y —lo que importa— cuándo el snapshot NO trae la
  * entrega pedida.
  *
- * 🔴 **Lo que la consola NO puede saber cuando la entrega no está.** `GET /v3/console/queues`
+ * Lo que la consola NO puede saber cuando la entrega no está.** `GET /v3/console/queues`
  * devuelve las entregas visibles ordenadas por `created_at DESC` con un `LIMIT` del servidor
  * (200 hoy) y no acepta consulta por entrega: no existe `GET /v3/console/queues/:id`. Por lo tanto
  * «no figura en este snapshot» NO distingue «ya no existe» de «es más antigua que las que caben».

@@ -4,12 +4,10 @@ import { AgentProfileRepository, type DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 /**
- * EL PERFIL POR ALIAS, CONTRA POSTGRES DE VERDAD (migración 026).
+ * Validación de perfiles de agente en PostgreSQL:
  *
- * Lo que se comprueba acá no se puede comprobar en TypeScript: que la BASE rechaza lo mismo que
- * rechaza `normalizeAgentProfile`, y en la MISMA unidad. El 16-ago un alias se quedó sordo porque
- * las dos capas medían el mismo número en unidades distintas y nadie tenía una prueba que las
- * enfrentara. Ésta las enfrenta: los mismos textos, contra las dos guardas.
+ * Garantiza consistencia en unidades de medición de longitud de cadenas
+ * entre la base de datos y la normalización en TypeScript (`normalizeAgentProfile`).
  */
 
 let database: TestDatabase;
@@ -93,9 +91,7 @@ describe('cauce_utf16_units: la base cuenta lo MISMO que String.length de Node',
   });
 
   /**
-   * CONTROL NEGATIVO de la unidad: `char_length` NO coincide con `String.length` fuera del BMP.
-   * Si este test se pone verde en las dos columnas, la función está midiendo puntos de código y la
-   * grieta del 16-ago volvió a abrirse.
+   * CONTROL NEGATIVO de la unidad: `char_length` no coincide con `cauce_utf16_units` fuera del BMP.
    */
   it('control negativo: char_length y cauce_utf16_units DIFIEREN fuera del BMP', async () => {
     const texto = ASTRAL.repeat(10);

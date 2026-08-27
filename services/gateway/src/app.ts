@@ -1104,11 +1104,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     } catch (error) { replyError(reply, error); }
   });
 
-  // Ingesta de muestras de cuota del recolector fuera de banda (get_ai_quotas, corre en kratos y
-  // en los contenedores de agente). Va A PROPÓSITO fuera de /v3/console/: createConsoleSecurityHook
-  // devuelve 403 a todo método inseguro bajo ese prefijo que no traiga un Origin same-origin, y un
-  // demonio con certificado de cliente jamás manda Origin. Por eso vive acá, junto a /v3/messages
-  // y /v3/egress/notifications, que son la misma clase de superficie máquina-a-máquina.
+  // Ingesta de muestras de cuota del recolector fuera de banda. Va fuera de /v3/console/
+  // para permitir llamadas autenticadas de servicios de máquina sin cabecera Origin de navegador.
   //
   // Permiso: mismo par que POST /v3/console/jobs -- requireOperatorPermission sobre el Principal
   // (rol derivado del certificado) MÁS assertPermission contra role_policies (la fuente de verdad
@@ -1230,23 +1227,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   app.post('/v3/console/messages', publishHandler);
 
   /**
-   * El mensaje ENTERO, con su cuerpo sin recortar.
-   *
-   * `GET /v3/console/messages` devuelve `left(body,240)`: en la consola se leía «…El dominio real
-   * es stevenvallejo» cortado a mitad de palabra y no había ninguna forma de ver el resto — cero
-   * coincidencias de «ver más» en el bundle desplegado, y un panel de detalle con seis campos de
-   * metadatos y ni una línea del cuerpo.
-   *
-   * 🔴 **Por qué esta ruta existe si `GET /v3/messages/:messageId` ya hacía exactamente esto.**
-   * Porque `consola.humanizar.tech` publica una LISTA BLANCA en el borde
-   * (`ops/console-login/patch-caddy-lista-blanca.py`): sólo pasan `/v3/auth/*`, `/v3/status` y
-   * `/v3/console/*`, y todo el resto de `/v3/*` —que es superficie máquina-a-máquina del bus— se
-   * corta con 404 antes de llegar acá. Esa lista blanca no es un accidente que convenga rodear:
-   * se puso el 2026-08-06 porque el nginx del contenedor presenta su certificado mTLS en TODO lo
-   * que proxea, y sin ella `GET /v3/accounts/selection` respondía 200 con rutas de credenciales
-   * desde internet y sin sesión. O sea que la SPA no puede llamar a `/v3/messages/:id`: se
-   * publica la MISMA lectura por la superficie de consola, con el mismo permiso y el mismo
-   * `visibleMessage`, y la lista blanca sigue fallando cerrado para el resto del bus.
+   * Obtiene el mensaje completo por la superficie de consola autorizada,
+   * preservando el cuerpo íntegro del mensaje según las reglas de visibilidad del actor.
    */
   app.get<{ Params: { messageId: string } }>('/v3/console/messages/:messageId', async (request, reply) => {
     try {
@@ -1403,19 +1385,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   // another tenant), so no sameTenantRows facade runs here: the store already applied the
   // visibility rule and redacted the payer's account identity.
   /*
-   * EL PERFIL Y LOS DOCUMENTOS DEL ALIAS.
-   *
-   * `registerAgentDocumentRoutes` estaba escrita, probada y exportada desde
-   * `console/agent-documents.routes.ts` — y NO LA LLAMABA NADIE. Cero sitios en todo el repo fuera
-   * de su propia definición y de sus pruebas. Por eso la ruta legacy de documentos daba 404 en
-   * producción y la consola enseñaba «capa 2 y 3 no disponibles»: no era que el dato faltara, es
-   * que la ruta no estaba montada. Una prueba de la función no acredita que el servidor la sirva;
-   * eso lo acredita el registro, y el registro no existía. El contrato activo usa ahora el tenant
-   * explícito en `/v3/console/tenants/:tenantId/agents/:alias/documents`.
-   *
-   * Van en el ámbito de `/v3/console` y NO dentro del plugin de terminal —donde sí está la de
-   * directiva— a propósito: el perfil es base de datos y composición pura, no necesita el PTY para
-   * nada, y colgarlo del plugin lo dejaría caído en cualquier despliegue que apague el terminal.
+   * Registro del repositorio de perfiles y documentos de agentes.
+   * Se registran en el ámbito de `/v3/console` de forma independiente del plugin de terminal.
    */
   // A ESTE nivel y no dentro del bloque: lo usan las rutas de consola Y el saludo del socket, que
   // manda el perfil una vez por conexión. Dos instancias sobre el mismo pool serían dos cachés y
@@ -1939,28 +1910,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   }
 
   /**
-   * Entrega a un adaptador SÓLO lo que le entra.
-   *
-   * Antes esto llamaba a claimDeliveries con `undefined` en la posición de `limit`, o sea que
-   * se comía el default 20 del store: veinte entregas reclamadas en el mismo instante,
-   * arrancando el mismo plazo de ACK de 30 minutos a la vez. La cola del lote se moría sin
-   * haber empezado, se reintentaba, y el reintento volvía a ejecutar trabajo ya hecho.
-   *
-   * Dos cuidados que son la parte peligrosa del cambio:
-   *
-   *  1. Si el cupo se libera y nadie vuelve a drenar, el agente se queda sin trabajo PARA
-   *     SIEMPRE, con la cola llena. Antes daba lo mismo (se pedían 20 y no había límite que
-   *     liberar); ahora no. Por eso todo ACK que saca una garra de `session.claims` vuelve a
-   *     llamar a drain, no sólo el 'retry' como antes.
-   *  2. Un wake que llega mientras estamos drenando se descartaba silenciosamente por el
-   *     `if (session.draining) return`. Con cupo eso puede significar perder el único aviso de
-   *     que había trabajo. Ahora se anota en `drainAgain` y se vuelve a drenar al terminar.
-   *  3. Hay una forma de liberar cupo que NO produce ni ACK ni wake: que a una garra se le
-   *     venza el plazo. Pasa con las garras rehidratadas de un adaptador que murió, y con las
-   *     que el reaper manda a `dead` (ese camino no encola wake). Sin nada que dispare, el
-   *     agente quedaría con cupo libre y la cola llena. Por eso al terminar se arma un timer al
-   *     primer vencimiento conocido: la liveness queda acotada por el plazo de ACK, no por la
-   *     suerte.
+   * Drena entregas pendientes hacia la sesión respetando los límites de admisión configurados.
+   * Gestiona el redrenaje ante nuevos wakes, liberaciones de cuota por ACK y expiración de plazos.
    */
   function drain(session: Session): Promise<boolean> {
     if (session.abort.signal.aborted || session.socket.readyState !== WebSocket.OPEN) {
@@ -2216,15 +2167,12 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
             }
             if (await rejectInactiveHello()) return;
             /*
-             * EL PERFIL VIAJA EN EL SALUDO, UNA VEZ, y sólo a quien lo pidió.
+             * EL PERFIL VIAJA EN EL SALUDO, UNA VEZ.
              *
-             * Es la mitad que faltaba: lo FIJO tiene que vivir en el fichero del arnés, y el
-             * adaptador —que es el único que puede escribir dentro del contenedor— necesita
-             * conocerlo para escribirlo. Mandarlo en cada entrega sería el problema que este
-             * trabajo vino a cerrar.
+             * La configuración fija reside en el fichero del arnés. Viaja en el saludo inicial
+             * para permitir que el adaptador mantenga su contexto sin sobrecargar cada entrega.
              *
-             * Gateado detrás de `agent_profile_v1` porque un adaptador viejo valida el frame con
-             * `.strict()` y, al fallar, MATA LA COLA ENTERA de la conexión: no descarta el frame.
+             * Gateado tras la capability `agent_profile_v1` para compatibilidad hacia atrás.
              *
              * Un fallo leyendo el perfil NO tumba el saludo. El alias queda conectado y recibiendo
              * entregas con el sobre completo, que es el comportamiento de siempre; lo que se pierde

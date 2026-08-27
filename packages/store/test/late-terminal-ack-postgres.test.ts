@@ -7,20 +7,10 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * El ACK terminal que llega tarde, con la respuesta adentro.
+ * Tratamiento de ACKs terminales tardíos:
  *
- * Medido sobre producción el 2026-07-29, ventana de 7 días: 495 ACKs 'done' descartados con
- * `applied=false` sobre entregas que terminaron `dead`, y 387 de ellos traían un `reply` NO
- * VACÍO — respuestas reales que el humano nunca vio (argos 250, kratos 23, iza 21, zeus 20,
- * atlas 15). Sólo 2 de los 387 conservaban `claim_token`+`attempt`; en 487 casos el reaper ya
- * había rotado la garra y el bus ya había mandado a ejecutar lo mismo otra vez.
- *
- * La causa era una abstracción equivocada: un único predicado (`exactClaim`) decidía a la vez si
- * el ACK podía modificar la fila y si el RESULTADO valía algo. El plazo es la caducidad de la
- * EXCLUSIVIDAD, no la del resultado.
- *
- * Cada `describe` de acá abajo es uno de los tres casos del análisis: (a) la entrega sigue viva
- * con un intento mayor, (b) ya murió por timeout, (c) ya la contestó otra corrida.
+ * Distingue la caducidad de exclusividad de lease de la validez del resultado transportado,
+ * permitiendo recuperar respuestas válidas en casos donde la entrega expiró por timeout.
  */
 
 let database: TestDatabase;

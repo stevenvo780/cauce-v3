@@ -130,11 +130,8 @@ export interface LeaseResult {
 }
 
 /**
- * Control de admisión de `claimDeliveries`. Existe porque el gateway llamaba sin `limit` y se
- * comía el default de 20: veinte entregas reclamadas en el mismo instante arrancan el plazo de
- * ACK de 30 min TODAS JUNTAS, y las últimas del lote se mueren sin haber empezado. Medido el
- * 2026-07-27: kratos llegó a 71 entregas en vuelo y 1.001 de los 1.622 errores de la semana
- * fueron "ACK timeout".
+ * Control de admisión para `claimDeliveries`.
+ * Acota el volumen de entregas en vuelo según capacidad general y reservas humanas.
  */
 export interface DeliveryAdmission {
   /**
@@ -159,10 +156,7 @@ export interface DeliveryAdmission {
   readonly humanBurst?: number;
 }
 
-/**
- * Una garra viva de un alias, tal como la ve la base. Es lo que el gateway usa para reconstruir
- * su presupuesto de admisión cuando un adaptador reconecta. Ver `liveDeliveryClaims`.
- */
+/** Garra viva de un alias para reconstruir presupuesto de admisión en reconexión. */
 export interface LiveDeliveryClaim {
   readonly delivery_id: string;
   readonly attempt: number;
@@ -172,61 +166,13 @@ export interface LiveDeliveryClaim {
   readonly human_originated: boolean;
 }
 
-/**
- * Techo de vida TOTAL de un intento de entrega, en milisegundos, cuando el mensaje no declara
- * su propio `body.timeout_ms`.
- *
- * EL PROBLEMA. Cada ACK 'started' aplicado empuja `ack_deadline_at` a `now()+plazo`, sin
- * límite. Un harness colgado que sigue latiendo se renueva para siempre y es INVISIBLE al
- * reaper, porque el reaper sólo mira `ack_deadline_at <= now()`. Medido el 2026-07-27: una
- * entrega de janus se sostuvo 17,36 h emitiendo ~60 ACKs/hora durante 16 h seguidas y aportó
- * ella sola el 32,7% de todos los `delivery_acks` de 24 h.
- *
- * POR QUÉ 12 h Y NO OTRA COSA. Es el punto delicado del parche, porque matar un turno legítimo
- * es peor que dejar viva una entrega colgada. Los tres números que acotan la elección:
- *   - el plazo de ACK en producción es de 30 min (`CAUCE_ACK_DEADLINE_MS=1800000`);
- *   - el timeout por defecto del harness en el SDK es de 24 h;
- *   - el máximo que el SDK acepta por mensaje es de 7 días.
- * 12 h es la mitad del presupuesto que el propio harness se da y 24 veces el plazo de ACK.
- *
- * QUÉ TRABAJO LEGÍTIMO MUERE CON ESTE DEFAULT, dicho explícitamente: una entrega que (a) NO
- * declara `body.timeout_ms` y (b) mantiene el harness corriendo de verdad más de 12 h de reloj
- * de pared en UN solo intento. Ese turno hoy termina en `dead` con motivo propio, con su fila
- * en `dead_letters` y con el aviso al padre y al origen — o sea, replayable a mano, no perdido.
- * Es aceptable porque cualquier trabajo que de verdad necesite más lo pide: declarar
- * `body.timeout_ms` (ver `deliveryLeaseCapMs`) sube el techo de esa entrega EXACTAMENTE a lo
- * pedido, hasta los 7 días del SDK. Y si mañana resulta que hay una familia entera de turnos
- * larguísimos sin declarar, `CAUCE_DELIVERY_LEASE_CAP_MS` los devuelve a la vida sin redeploy.
- *
- * Hacia dónde se equivoca: hacia arriba. 12 h no habría matado ninguna corrida observada salvo
- * la colgada de janus, que habría muerto a las 12 h en vez de a las 17,36 h — 5,36 h y unos 320
- * ACKs de renovación menos, además de cerrar el caso realmente infinito, que es el que no tiene
- * techo de ninguna clase hoy.
- */
+/** Techo de vida total de un intento de entrega cuando el mensaje no declara `body.timeout_ms`. */
 export const DEFAULT_DELIVERY_LEASE_CAP_MS = 12 * 60 * 60_000;
 
-/**
- * Margen que se le suma a un `body.timeout_ms` declarado para obtener el techo de la entrega.
- *
- * El `timeout_ms` es el presupuesto del HARNESS; el techo tiene que cubrir además lo que pasa
- * alrededor: la espera del candado de sesión antes de arrancar (que ya se midió en 40 min en
- * este mismo sistema) y el viaje del ACK final. 30 min = exactamente un plazo de ACK de
- * producción, que es la unidad natural de "una renovación más".
- */
+/** Margen adicional sobre `body.timeout_ms` para cubrir esperas de sesión y entrega de ACK. */
 export const DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS = 30 * 60_000;
 
-/**
- * Cuánto se aparca una entrega cuyo destino no tiene ningún adaptador conectado.
- *
- * Gastar los tres intentos contra un alias que no existe no es reintentar: es ruido. Medido el
- * 2026-07-27: 829 entregas murieron en una sola noche con `ACK timeout: max attempts exhausted`
- * contra alias que esa noche no estaban levantados; ninguna de las tres corridas tuvo jamás un
- * consumidor del otro lado.
- *
- * El horizonte NO es un criterio sobre efectos —eso lo decide `execution_started_at`— sino de
- * retención: pasadas 24 h el contexto conversacional ya venció y sostener la entrega en cola no
- * le sirve a nadie. Ahí sí muere, y ahora con rastro en `audit_events`.
- */
+/** Tiempo máximo de estacionamiento para entregas dirigidas a alias sin adaptadores conectados. */
 export const DEFAULT_NO_CONSUMER_PARK_MAX_AGE_MS = 24 * 60 * 60_000;
 
 /** Techo de vida de una entrega. Ver `DEFAULT_DELIVERY_LEASE_CAP_MS`. */
@@ -470,20 +416,10 @@ interface DeliveryRow {
 export type DelegationRejection = DelegationRejectionNotice;
 export type DelegationMaterialization = DelegationMaterializationNotice;
 
-/**
- * Columnas de `deliveries` que agrega la migración 017_late_terminal_ack. Van aparte de
- * `DeliveryRow` a propósito:
- * sólo `ackDelivery` las proyecta, y el reaper —que comparte el tipo `DeliveryRow`— no las trae.
- * Declararlas obligatorias en `DeliveryRow` haría que el tipo mintiera en la otra consulta.
- */
+/** Columnas adicionales de deliveries proyectadas para rescate tardío. */
 interface LateResultRow {
   late_result_at: Date | null;
-  /**
-   * INTEGRACIÓN 2026-07-29. Lo escribe `cancelDelivery` y sólo lo lee `lateTerminalSalvage`.
-   * Ver la justificación larga en `migrations/017_late_terminal_ack.sql`: una entrega que un
-   * operador canceló ya le avisó al padre y al humano, así que rescatarla con un ACK tardío
-   * mandaría una SEGUNDA respuesta por la misma delegación y descuadraría el fan-in.
-   */
+  /** Momento de cancelación manual por operador; previene rescate tardío si está presente. */
   cancelled_at: Date | null;
 }
 
@@ -1041,28 +977,7 @@ const maxAgentResponseTextBytes = 4 * 1_024;
 const progressRelayCappedText =
   'La cadena sigue en curso; dejo de enviar avances y aviso cuando termine.';
 
-/**
- * P0-4 — vigía de cadenas mudas. Umbrales por defecto, elegidos con la base de producción
- * del 2026-07-29 (la justificación completa y las consultas están en NOTAS.md del parche):
- *
- *  - `chainSilenceIdleMs` (6 h) SÓLO se aplica a raíces que todavía tienen trabajo abierto.
- *    Sobre las 127 raíces cuyo fan-in sí cerró, el hueco máximo entre dos eventos de la
- *    cadena fue p50 235 s, p90 40 min, p95 2,9 h y p99 4,25 h. 6 h deja 1,4× de margen
- *    sobre el p99 medido, así que una cadena sana que simplemente va lenta no se cierra.
- *  - `chainSilenceSettledGraceMs` (15 min) cubre el caso realmente frecuente: la cadena ya
- *    está quieta — todas las entregas terminales, ninguna continuación abierta — y por lo
- *    tanto NINGÚN ACK ni tick del reaper volverá a evaluarla jamás. Ahí no hay nada que
- *    esperar: está probado que no puede moverse. Las 39 raíces trabadas medidas caen todas
- *    en este caso. La gracia sólo cubre la carrera con un ACK en vuelo, y esa carrera ya
- *    está cerrada por partida doble: una entrega en pleno ACK está no-terminal (lo que
- *    manda la raíz al camino de 6 h) y el candado consultivo del fan-in serializa.
- *  - `chainSilenceMaxAgeMs` (48 h) es la ventana de rastreo. Una tarea de hace más de dos
- *    días ya no es accionable y avisar de ella sólo inunda: al desplegar hay 23 raíces
- *    mudas históricas y sólo 7 dentro de la ventana. El resto envejece fuera del barrido.
- *  - `chainSilenceSweepLimit` (5) es el techo duro de raíces tocadas por barrido. Con el
- *    barrido cada 60 s el peor caso son 5 mensajes por minuto, y el arranque en frío son 7
- *    avisos, no 1.861.
- */
+/** Umbrales y límites de tiempo configurados para el barrido de cadenas de delegación inactivas. */
 const chainSilenceIdleMs = 6 * 60 * 60 * 1_000;
 const chainSilenceSettledGraceMs = 15 * 60 * 1_000;
 const chainSilenceMaxAgeMs = 48 * 60 * 60 * 1_000;
@@ -1615,9 +1530,8 @@ function agentResponseText(
  *
  * What DOES fold together is the same cause reworded by a counter: attempt numbers, delivery
  * uuids, hex digests and clock values are masked so that "ACK timeout on attempt 3" and
- * "ACK timeout on attempt 4" are one bucket instead of two. Without that masking the coalescer
- * would have collapsed nothing at all during the 27-jul incident, where every notice carried a
- * different delivery id.
+ * "ACK timeout on attempt 4" are one bucket instead of two. Without that masking, each notice
+ * with a distinct delivery ID would prevent coalescing.
  */
 export function failureSignature(
   outcome: DeliveryState,
@@ -3862,47 +3776,11 @@ export class CauceRepository {
       // consecutivos del carril 'interactive'; ahora cuenta reclamos consecutivos de tráfico
       // humano. El carril dejó de servir como partición porque se hereda literal en cada salto
       // (row.lane en los tres materializeAgent*), así que una cadena de agentes entera viajaba
-      // en 'interactive' junto con los mensajes de las personas: 2.374 de 2.429 entregas.
       let humanStreak = fairness.rows[0]?.interactive_streak ?? 0;
       const claimedRows: DeliveryRow[] = [];
 
-      /**
-       * Techo de concurrencia DURABLE por agente. No entregar más de lo que se puede ejecutar.
-       *
-       * Sin esto el cupo vivía sólo en la RAM del socket del gateway y el harness ejecuta UNA
-       * entrega por sessionKey (el mutex de packages/adapter-sdk/src/harnesses/shared.ts). Las
-       * sobrantes no esperan gratis: reclamar arranca `ack_deadline_at`, y ese reloj corre
-       * mientras la entrega hace cola detrás del mutex. `retryStaleDeliveries` las vence, les
-       * suma `attempt` y a los `max_attempts` las manda a `dead`. Medido en producción: argos
-       * con 92 en vuelo ejecutando 2, espera mediana de 3 h y 73% muerto sin ejecutar nunca.
-       *
-       * Va acá, DESPUÉS del `FOR UPDATE` sobre `delivery_lane_fairness`, y eso es lo que lo
-       * hace correcto y no una estimación: esa fila está cuñada por (tenant_id, alias) — no por
-       * instancia ni por época — así que cualquier par de `claimDeliveries` concurrentes del
-       * MISMO alias ya está serializado en este punto. El conteo no puede quedar viejo entre
-       * que se lee y que se reclama, y dos reclamos simultáneos no pueden superar el techo.
-       *
-       * El runtime manda `requireDeclaredCapacity=true`: allí, ausencia de fila en `agents` es
-       * rechazo. Los llamadores directos legacy conservan compatibilidad, pero quedan durablemente
-       * acotados al `limit` de su llamada en vez de recibir capacidad infinita. NULL en una fila
-       * existente conserva el escape hatch explícito del techo por agente; una capacidad general
-       * que mande el gateway sigue vigente.
-       *
-       * INTEGRACIÓN 2026-07-29 — DÓNDE SE APLICA EL TECHO, que es la decisión de fusión.
-       * El techo acota el cupo GENERAL, no el total. La reserva humana queda por encima, igual
-       * que ya lo estaba respecto de `CAUCE_MAX_INFLIGHT_DELIVERIES` en el gateway ("es
-       * aditivo, así que el peor caso en vuelo por agente pasa a ser 4"). Dos motivos:
-       *  1. El motivo por el que existe el techo no aplica a la reserva humana. El techo existe
-       *     porque el mutex del harness serializa por sessionKey; desde los carriles de sesión
-       *     el tráfico humano y el agente-a-agente tienen sessionKey DISTINTA, así que una
-       *     entrega humana admitida por la reserva no hace cola detrás de la tarea larga: se
-       *     ejecuta en paralelo. Contarla contra el mismo techo la haría esperar por una razón
-       *     que no existe.
-       *  2. Si el techo (default 2) se aplicara al total, con dos delegaciones en vuelo la
-       *     reserva humana quedaría permanentemente inalcanzable y el arreglo de prioridad —
-       *     que existe porque el dueño esperaba 114 min de mediana — quedaría muerto en la
-       *     práctica. El peor caso combinado sigue acotado: capacidad general + reserva humana.
-       */
+      // Capacidad de concurrencia duradera por agente: limita las entregas activas evaluando
+      // las filas en vuelo y respetando de forma aditiva la reserva de prioridad humana.
       /*
        * Hold the durable capacity row through the claim commit. Configuration mutations take
        * `FOR UPDATE` on this same row, so a concurrent reduction either commits before we read
@@ -4160,29 +4038,8 @@ export class CauceRepository {
   }
 
   /**
-   * `leaseCap` acota la vida TOTAL del intento. Se aplica acá y no sólo en el reaper porque
-   * acá es donde se escribe el plazo: si la renovación pudiera empujar `ack_deadline_at` más
-   * allá del techo, entre tick y tick del dispatcher el adaptador seguiría recibiendo
-   * `applied:true` y seguiría escribiendo dos filas (una en `delivery_acks`, otra en
-   * `audit_events`) por cada latido, que es el 90% del volumen que este parche viene a cortar.
-   * Con el `LEAST` de abajo el plazo se congela en el techo y el reaper lo recoge en el tick
-   * siguiente, con su motivo propio.
-   *
-   * ------------------------------------------------------------------------------------------
-   * DOS JUICIOS, NO UNO. Hasta este parche un único predicado (`exactClaim`) decidía a la vez
-   * si el ACK podía MODIFICAR la fila y si el RESULTADO valía algo. Son preguntas distintas: el
-   * plazo es la caducidad de la EXCLUSIVIDAD, no la del RESULTADO. Un 'done' que llegaba un
-   * milisegundo tarde se guardaba en `delivery_acks` con `applied=false` y nadie lo leía jamás.
-   * Medido sobre producción el 2026-07-29, ventana de 7 días: 495 ACKs 'done' descartados sobre
-   * entregas que terminaron `dead`, **387 de ellos con un `reply` NO VACÍO** — respuestas reales
-   * que el humano nunca vio (argos 250, kratos 23, iza 21, zeus 20, atlas 15). Sólo 2 de los 387
-   * conservaban `claim_token`+`attempt`: en 487 casos el reaper ya había rotado la garra y el
-   * bus ya había mandado a ejecutar lo mismo otra vez.
-   *
-   * La asimetría era grotesca contra el defecto que ya se había arreglado del otro lado: las
-   * renovaciones se aceptaban indefinidamente y el resultado no se aceptaba un milisegundo
-   * tarde. `lateTerminalSalvage` separa los dos juicios; su contrato está documentado ahí.
-   * ------------------------------------------------------------------------------------------
+   * Procesa el ACK de una entrega validando fences de exclusividad, límites de arrendamiento
+   * y delegando a `lateTerminalSalvage` si el resultado es terminal pero la exclusividad venció.
    */
   async ackDelivery(
     deliveryId: string,
@@ -4328,47 +4185,8 @@ export class CauceRepository {
       // efectos y no admite retry automático. COALESCE conserva el primer compromiso del intento.
       const executionStarted = ack.status === 'started' && ack.execution_started === true;
       const leaseCapMs = deliveryLeaseCapMs(row.body, leaseCap);
-      /**
-       * Latido de una entrega que está EN COLA, no ejecutando.
-       *
-       * El adaptador serializa por candado de sesión y esa espera dura lo que dure la entrega que
-       * tiene adelante (p75 medido en producción: 52,9 min; p90: 2h13m). Hasta 2026-07-29 el
-       * adaptador mandaba 'started' antes de tomar el candado, así que la fila entraba en 'started'
-       * sin haber ejecutado nada y cada renovación le corría `ack_deadline_at` 30 minutos más: una
-       * entrega que sólo hacía fila era indistinguible de una trabajando y el reaper no la recogía
-       * jamás. Ahora la cola late en 'accepted' y esto es lo que lo hace efectivo: sin esta rama,
-       * `rank(accepted)=1 <= last_ack_rank=1` cae en 'superseded' y el latido no renueva nada.
-       *
-       * Lo que la rama hace y lo que deliberadamente NO hace:
-       * - Corre el plazo de la garra, igual que la renovación de 'started'. Un adaptador que muere
-       *   mientras su entrega hace fila deja de latir y el reaper la recoge a los 30 min, que es
-       *   exactamente lo que debe pasar.
-       * - NO mueve `status` (sigue 'accepted'), NO toca `last_ack_rank` (sigue 1) y NO sella
-       *   `execution_started_at`. Esa marca queda para el primer 'started' aplicado: acredita que
-       *   el adaptador entró al tramo preinvoke protegido, no que el hijo ya emitió bytes. La
-       *   barrera exacta del SDK añade el receipt durable antes de permitir la invocación.
-       *
-       * Nada de esto pide esquema nuevo: 'accepted' ya está en el CHECK de `delivery_acks.status`
-       * y en `deliveries.status`, y `last_ack_rank` no se mueve. El reaper tampoco cambia: ya
-       * barre `status IN ('leased','accepted','started')` contra `ack_deadline_at`.
-       *
-       * INTEGRACIÓN 2026-07-29: el latido de cola queda sujeto al MISMO techo de vida que la
-       * renovación de 'started' (`LEAST` contra `COALESCE(execution_started_at,claimed_at) +
-       * leaseCapMs`). Sin el `LEAST`, una entrega que hace fila para siempre seguiría corriendo
-       * su `ack_deadline_at` 30 min por latido mientras el reaper —que calcula el techo por su
-       * cuenta en el WHERE— la mata igual: las dos vistas de la misma garra volverían a
-       * separarse, que es justo lo que el techo vino a cerrar. Acá `execution_started_at` es
-       * NULL por construcción (todavía no arrancó), así que el ancla efectiva es `claimed_at`:
-       * el tiempo en cola SÍ cuenta contra el techo, y por eso el techo por defecto (12 h) es
-       * ~5,4× el p90 de espera de candado medido (2h13m).
-       *
-       * El ACK se marca como RENOVACIÓN (`renewal=true`, último argumento de `insertAck`). Es lo
-       * mismo que hace la renovación de 'started' y no es cosmético: la retención diferenciada
-       * de `delivery_acks` (migración 014_observability_retention) poda renovaciones a las 6 h y
-       * conserva las transiciones de estado. Un latido de cola es una prueba de vida, no una
-       * transición; sin la marca, una entrega que espera el candado 12 h dejaría ~24 filas
-       * "de transición" imborrables por cada entrega encolada.
-       */
+      // Latido de una entrega en cola ('accepted'): extiende el plazo respetando el leaseCap
+      // sin alterar el estado ni registrar inicio de ejecución.
       if (ack.status === 'accepted' && row.status === 'accepted') {
         await client.query(
           `UPDATE deliveries
@@ -4471,37 +4289,8 @@ export class CauceRepository {
       let terminalAt = rank === 3 ? 'now()' : 'NULL';
       let terminalError = postgresTextSafe(ack.error);
       let terminalErrorCode = postgresTextSafe(ack.error_code);
-      /**
-       * Un código ambiguo existe para proteger trabajo YA PAGADO: dice "no sé si terminó, no lo
-       * vuelvas a correr". Eso vale sólo si algo corrió. Hasta acá la rama no lo comprobaba y
-       * tampoco miraba `max_attempts`, así que mataba en el intento 1 —con dos intentos
-       * intactos— entregas que jamás llegaron a invocar al harness.
-       *
-       * La señal es la MISMA que ya usa `retryStaleDeliveries` para el mismo dilema, y por eso
-       * no se inventa un criterio nuevo: `execution_started_at`, que el store sella cuando el
-       * SDK ACKea `execution_started` DESPUÉS de obtener la reserva de sesión y justo antes de
-       * invocar al harness. No es el ACK 'started' a secas —ese sale mientras la entrega hace
-       * cola por el candado, sin ejecutar nada—, distinción que ya costó un incidente.
-       *
-       * Sin la marca, la entrega murió reclamando, haciendo cola o preparando el proceso: no hay
-       * ejecución ambigua que preservar, y reintentar no puede volver a pagar lo que nunca se
-       * pagó. Con la marca se mantiene EXACTAMENTE el comportamiento anterior: `dead` + fila en
-       * `dead_letters` para replay manual.
-       *
-       * Deliberadamente NO se toca `retryable=false` en los constructores del harness
-       * (`harnesses/shared.ts`): ese `false` sigue siendo correcto para la entrega que sí
-       * ejecutó, y volverlo `true` reintroduciría la re-ejecución de trabajo pagado que el
-       * código de arriba documenta. Lo que se corrige es tratar "nunca arrancó" como si hubiera
-       * arrancado. Es el mismo razonamiento que `AdapterEngine.awaitSessionTurn` aplica al
-       * camino de cola cuando degrada un ambiguo a `SESSION_QUEUE_ABORTED` reintentable.
-       *
-       * Medido contra prod el 2026-07-30 (esquema 013, la marca ya poblada: 1.116 filas): de 652
-       * muertes ambiguas con intentos disponibles, 445 no tenían la marca y habrían reintentado;
-       * 207 la tenían y siguen yendo a `dead`.
-       *
-       * Un adaptador viejo que no emite la marca degrada hacia el reintento, no hacia la muerte
-       * silenciosa: es el sentido barato y no destructivo, el mismo que eligió el reaper.
-       */
+      // Si el fallo es ambiguo pero nunca comenzó la ejecución (execution_started_at es null),
+      // se permite reintento si quedan intentos disponibles; de lo contrario pasa a dead.
       const ambiguousFailure = ack.status === 'failed'
         && isAmbiguousAckErrorCode(ack.error_code);
       const ambiguousExecution = ambiguousFailure && row.execution_started;
@@ -4579,15 +4368,10 @@ export class CauceRepository {
             JSON.stringify({ recipient_alias: alias, reason: 'delivery_available' }), backoffSeconds]
         );
       }
-      // Todo ERROR final deja rastro replayable, no sólo 'dead'.
+      // Todo error final deja rastro replayable en dead_letters, no sólo 'dead'.
       //
-      // Antes esta rama era `if (nextStatus === 'dead')` y ese `if` era, medido, el agujero por
-      // el que se caía el trabajo: el 28-jul-2026 la base de producción tenía 197 entregas en
-      // 'failed' y CERO filas de `dead_letters` para ellas. Como `replayDelivery` exige el JOIN
-      // con `dead_letters`, esas 197 eran irrecuperables PARA SIEMPRE, y lo peor es de quién
-      // dependía: `ack.retryable` lo elige el agente que acaba de fallar. Un harness que
-      // contesta `retryable:false` —lo que hace cualquier salida malformada— condenaba su propia
-      // entrega sin que ningún humano lo decidiera.
+      // Mantener registro en dead_letters permite que `replayDelivery` funcione tanto
+      // para entregas en estado 'failed' como 'dead'.
       //
       // La corrección NO es fusionar 'failed' con 'dead'. Los dos estados los consumen hoy, con
       // significados distintos, `terminal()`, el conteo de fan-in (`status IN ('done','failed',
@@ -4723,76 +4507,8 @@ export class CauceRepository {
   }
 
   /**
-   * ============================================================================================
-   * EL ACK TERMINAL QUE LLEGA TARDE, CON LA RESPUESTA ADENTRO.
-   * ============================================================================================
-   *
-   * El plazo (`ack_deadline_at`) es la caducidad de la EXCLUSIVIDAD: dice hasta cuándo esta
-   * garra es la única que puede tocar la fila. NO es la caducidad del RESULTADO: el trabajo ya
-   * se hizo, ya se pagó la cuota del modelo y la respuesta existe. Este método es el segundo
-   * juicio, el del resultado, y corre sólo cuando el primero (`exactClaim`) ya dijo que no.
-   *
-   * Devuelve `undefined` cuando no corresponde rescatar: el llamador sigue con el
-   * `ownership_lost` de siempre, byte por byte igual que antes de este parche.
-   *
-   * CUÁNDO ES SEGURO. Seis condiciones; las tres primeras acotan QUÉ se acepta y las tres
-   * últimas QUIÉN y SOBRE QUÉ.
-   *
-   *  S1. El ACK es terminal ('done'/'failed') y trae un `reply` con texto visible. Sin texto no
-   *      hay nada que rescatar: el aviso de fallo que el sistema ya mandó dice lo mismo y mejor.
-   *  S2. No pide delegar (`output.messages` vacío). Un ACK tardío NO abre ramas nuevas: la
-   *      ventana de delegación ya pasó, la corrida nueva podría estar delegando lo mismo en este
-   *      instante, y materializar acá es exactamente el "sobre-delegar / duplicar instancias"
-   *      que este trabajo viene a matar. Lo mismo con `notify[]`: no se emite. Se cuentan los
-   *      dos en la auditoría para poder medir cuánto se está descartando.
-   *  S3. La garra que firma existió DE VERDAD sobre esta entrega — ver `lateClaimProvenance`.
-   *  S4. La instancia que habla está viva y registrada AHORA (`connection_leases`). Es la misma
-   *      condición que exige el camino normal; un ACK tardío no relaja la identidad, sólo el
-   *      plazo.
-   *  S5. **Ninguna OTRA corrida asentó ya un resultado para esta entrega.** Ésta es la
-   *      condición central y se evalúa bajo el `FOR UPDATE OF d` que ya tomó `ackDelivery`:
-   *        - `status IN ('done','failed')` ⇒ hay un ACK terminal APLICADO que ya materializó su
-   *          respuesta al padre y su relay al origen. No se toca. (caso (c) de abajo)
-   *        - `late_result_at IS NOT NULL` ⇒ ya se rescató un tardío. Un rescate por entrega.
-   *  S6. Un 'failed' tardío además exige que la entrega YA esté `dead`. Nunca mata una corrida
-   *      viva ni un reintento en curso para escribirle encima un fracaso viejo: un fracaso
-   *      tardío sólo puede MEJORAR el diagnóstico de algo que ya estaba muerto.
-   *  S7. (INTEGRACIÓN 2026-07-29) La entrega NO fue cancelada por un operador
-   *      (`cancelled_at IS NULL`). S5 mira si otra CORRIDA asentó un resultado; S7 mira si lo
-   *      asentó una PERSONA. Un `dead` del reaper es la ausencia de un desenlace y por eso es
-   *      rescatable; un `dead` de `cancelDelivery` es un desenlace elegido, y encima ya salieron
-   *      sus dos avisos (la `agent.response` con `DELIVERY_CANCELLED` al padre y el relay al
-   *      humano). Rescatar encima duplicaría la respuesta del padre y el conteo de fan-in.
-   *
-   * LOS TRES CASOS QUE HAY QUE MIRAR, Y QUÉ HACE ESTE CÓDIGO EN CADA UNO:
-   *
-   *  (a) La entrega sigue NO TERMINAL y con `attempt` mayor: el reaper la reintentó y hay otra
-   *      corrida en vuelo. S5 la deja pasar (nadie asentó nada todavía) y la entrega queda
-   *      `done` con el resultado del que llegó. La corrida nueva pierde la garra en su próxima
-   *      renovación y el SDK aborta el harness (`CLAIM_OWNERSHIP_LOST`) — que es precisamente el
-   *      objetivo: deja de quemar cuota repitiendo un trabajo que ya está hecho. No corrompe
-   *      nada porque el resultado que se guarda lo produjo una corrida REAL de ESTA entrega, y
-   *      porque el `FOR UPDATE` hace que "primero en comprometer, gana" sea una regla y no una
-   *      carrera. Si la corrida nueva termina igual y ACKea, cae en (c). Lo que se pierde es su
-   *      trabajo — que ya estaba duplicado.
-   *  (b) La entrega ya es `dead` por timeout y llega el 'done'. **Éste es el caso que recupera
-   *      las 387.** S5 la deja pasar: `dead` no es un resultado, es la ausencia de uno. Se
-   *      revive a `done`, se deshacen los efectos de la muerte (ver `undoDeathNotice`) y la
-   *      respuesta llega. No corrompe nada porque nadie contestó por ella: el único aviso que
-   *      salió fue "esto quedó a medias", y se lo corrige explícitamente.
-   *  (c) La entrega ya es `done` (o `failed`) y llega otro 'done' de una corrida vieja. S5 lo
-   *      bloquea. Se devuelve `ownership_lost` y un event_id nuevo NO amplía `delivery_acks`: el
-   *      ACK aplicado de la corrida ganadora ya conserva el resultado canónico, mientras guardar
-   *      cada frame posterior permitiría poblar sin límite el historial de una fila terminal.
-   *      Pisar un resultado ya entregado al padre y al humano sería la única forma real de
-   *      corromper: dos respuestas distintas para una pregunta, y la segunda sin ningún criterio
-   *      que la haga mejor que la primera.
-   *
-   * LA CARRERA (dos corridas devolviendo 'done' a la vez) la resuelve el `SELECT ... FOR UPDATE
-   * OF d` que `ackDelivery` ya toma sobre la fila: la segunda transacción se bloquea, y al
-   * despertar RE-LEE la fila (READ COMMITTED) y ve el `status='done'` de la primera, así que cae
-   * en (c). No hay ventana entre la lectura de S5 y la escritura porque las dos ocurren dentro
-   * del mismo lock de fila.
+   * Rescata un resultado terminal ('done' o 'failed' con texto) que llega tras expirar la exclusividad,
+   * siempre que la entrega no tenga un resultado previo ni haya sido cancelada manualmente.
    */
   private async lateTerminalSalvage(
     client: DatabaseClient,
@@ -4813,13 +4529,7 @@ export class CauceRepository {
     // S5
     if (row.status === 'done' || row.status === 'failed') return undefined;
     if (row.late_result_at !== null) return undefined;
-    // S7 (INTEGRACIÓN 2026-07-29) — una cancelación del operador NO es la ausencia de un
-    // resultado, es una decisión. `cancelDelivery` ya materializó la `agent.response` con
-    // `DELIVERY_CANCELLED` hacia el padre y ya mandó el relay al humano; rescatar encima le
-    // daría al padre DOS respuestas por una sola delegación y `responsesRecorded` contaría dos,
-    // que es exactamente la forma de dejar un fan-in trabado para siempre. El resto de los
-    // `dead` —los del reaper, por plazo o por techo— siguen siendo rescatables, que es el caso
-    // que motiva todo esto (387 respuestas medidas).
+    // Entregas canceladas por un operador no se rescatan para no duplicar respuestas hacia el padre.
     if (row.cancelled_at !== null) return undefined;
     // S6
     if (ack.status === 'failed' && row.status !== 'dead') return undefined;
@@ -5987,16 +5697,8 @@ export class CauceRepository {
     const relationship = parent.rows[0];
     if (!relationship) return 'not_child';
 
-    // The response must be materialized in the correct room of the recipient agent,
-    // NOT in the room of the message sender (which may be cross-tenant).
-    // Verify the recipient has exactly one enabled membership to avoid cross-tenant routing errors.
-    // La cardinalidad se cuenta con rowCount, NUNCA con una función de ventana: PostgreSQL rechaza
-    // `COUNT(*) OVER ()` junto a `FOR SHARE` con "FOR SHARE is not allowed with window functions",
-    // y como el rechazo es de PARSEO la consulta fallaba SIEMPRE que este camino se ejecutaba. Eso
-    // abortaba la transacción del tick y detenía el reaper entero: 99.241 fallos en 24 h y 46
-    // entregas atascadas en `started` el 2026-07-26, con la flota sin timeouts ni dead-letters.
-    // El conteo que hace falta es exactamente el número de filas, y el alcance del lock FOR SHARE
-    // se conserva intacto.
+    // Verifica que el agente destinatario tenga exactamente una membresía habilitada en su sala.
+    // Se cuenta con rowCount para compatibilidad con FOR SHARE.
     const sourceMembership = await client.query<{ room_id: string }>(
       `SELECT membership.room_id
        FROM memberships membership
@@ -6009,9 +5711,6 @@ export class CauceRepository {
        FOR SHARE OF membership,policy,tenant,room`,
       [row.recipient_tenant, row.recipient_alias]
     );
-    // El respaldo es `rows.length` y no 0: si `rowCount` viniera nulo, contar 0 membresías
-    // denegaría una materialización perfectamente válida, mientras que las filas ya devueltas
-    // son la respuesta exacta a la misma pregunta.
     const membershipCount = sourceMembership.rowCount ?? sourceMembership.rows.length;
     if (membershipCount !== 1) {
       // Zero memberships means recipient is disabled/deleted; >1 means ambiguous identity.
@@ -7592,59 +7291,8 @@ export class CauceRepository {
   }
 
   /**
-   * Recolecta las garras vencidas. Distingue dos casos que antes se trataban igual y por eso
-   * el bus pagaba el trabajo dos veces:
-   *
-   *  (a) La entrega NO cruzó el compromiso durable: `execution_started_at IS NULL`.
-   *      Reintentar es correcto: no hay evidencia de que se haya gastado nada.
-   *  (b) La entrega comprometió ejecución: el adaptador ACKeó `execution_started` y la base
-   *      guardó el instante antes de liberar el harness. El agente pudo trabajar y terminar;
-   *      reintentar acá puede volver a pagar una corrida entera de
-   *      un modelo de suscripción. Medido el 2026-07-27: en los agentes con harness codex, 2.240
-   *      corridas para 1.312 entregas — 71% de desperdicio — y eso agotó la cuota SEMANAL de una
-   *      cuenta ChatGPT Pro en 5 horas.
-   *
-   * La señal NO es el ACK 'started' a secas, y la diferencia no es teórica: la versión anterior
-   * de este método usaba `EXISTS(... status='started' AND applied)` con el argumento de que "un
-   * started prueba ejecución". Es falso. `AdapterEngine.handleDelivery` emite 'started' ANTES de
-   * llamar al harness, y entre medio la entrega puede quedarse esperando el candado de sesión —
-   * renovando cada 60 s— sin haber ejecutado nada. Con dos entregas de la misma conversación,
-   * la segunda emitía 'started', esperaba a la primera 40 minutos y, si vencía el plazo, era
-   * declarada "ya ejecutada" y mandada a dead: trabajo del usuario perdido sin haber corrido
-   * jamás. Por eso hizo falta una marca nueva, que el SDK emite DESPUÉS de obtener la reserva y
-   * justo antes de invocar al harness.
-   *
-   * El tratamiento de (b) es marcarla `dead` con un motivo propio y dejarla en `dead_letters`.
-   * Se eligió `dead` en vez de inventar un estado nuevo porque toda la maquinaria de revisión
-   * manual ya existe y apunta ahí: `replayDelivery` exige un final de error (`status IN
-   * ('dead','failed')`) + fila en `dead_letters`, la consola ya lista los dead letters, y
-   * `queueSnapshot` ya los cuenta.
-   * Un estado nuevo habría pedido migración, ampliar el CHECK de `deliveries.status` y tocar
-   * cada consumidor de ese enum, para terminar reimplementando el mismo botón de replay.
-   *
-   * Sigue avisando: materializa la respuesta al padre y el relay al origen igual que el camino
-   * `dead` de siempre, así el humano ve "esto quedó a medias" en vez de silencio, que es el
-   * otro reclamo del dueño del sistema.
-   *
-   * Un adaptador viejo que no emite la marca nunca cae en (b): se reintenta como siempre. Es la
-   * degradación correcta —cara, no destructiva— y hace que el despliegue no tenga que ser en
-   * lock-step con la flota.
-   *
-   * `policy.retryStartedDeliveries` restaura el comportamiento viejo (reintentar a ciegas) si
-   * alguna vez hiciera falta, sin redeploy de código.
-   *
-   *  (c) TERCER caso, nuevo: la entrega superó su TECHO DE VIDA. No es una garra vencida — al
-   *      contrario, la garra puede estar perfectamente viva, renovada hace segundos. Es la
-   *      entrega inmortal: un harness colgado que sigue latiendo empuja `ack_deadline_at` 30 min
-   *      hacia adelante en cada ACK y por eso el barrido de arriba, que sólo mira plazos
-   *      vencidos, NO LA VE NUNCA. Medido: 17,36 h de una sola entrega de janus, 60 ACKs/hora
-   *      durante 16 h, el 32,7% de todos los `delivery_acks` del día.
-   *      Se distingue en el motivo (`Lease cap exhausted: ...`) y no se mezcla con "ACK
-   *      timeout": son diagnósticos opuestos —una dejó de responder, la otra no deja de
-   *      responder— y el operador tiene que poder separarlos en `dead_letters` de un vistazo.
-   *      Termina en `dead` y no en `retry` incluso si no consta que haya ejecutado: reintentar
-   *      un intento que estuvo horas renovando es realimentar el mismo bucle. La fila queda en
-   *      `dead_letters`, replayable a mano, y el padre y el origen reciben el aviso de siempre.
+   * Recolecta entregas vencidas o que alcanzaron el techo de vida (leaseCap).
+   * Reintenta si no iniciaron ejecución o las transiciona a dead/dead_letters si ya habían iniciado o agotaron intentos.
    */
   async retryStaleDeliveries(
     staleMs: number,
@@ -7656,26 +7304,7 @@ export class CauceRepository {
     const noConsumerParkMaxAgeMs = positiveMs(
       policy.noConsumerParkMaxAgeMs, DEFAULT_NO_CONSUMER_PARK_MAX_AGE_MS, 'no-consumer park age'
     );
-    // Se validan acá, fuera de la transacción, para que una configuración inválida falle en el
-    // primer tick con un error nítido en vez de dejar el reaper girando sin techo.
-    //
-    // 🔴 `staleMs` NO se validaba, y es el único de los tres que llega de fuera: los otros dos son
-    // política del proceso. `timeout-retry-backoff.test.ts` exigía la guarda desde hacía tiempo y
-    // estaba en ROJO —cuatro casos: -1, 1.5, NaN, Infinity—, fallando con
-    // `TypeError: pool.connect is not a function` en vez del `conflict` que declara. O sea que un
-    // `staleMs` inválido no se rechazaba: entraba en la transacción y se metía tal cual en el
-    // `INTERVAL` del SQL. Un `NaN` ahí no da error de tipos, da una comparación que nunca es
-    // cierta: el reaper gira sin reintentar NADA y las entregas se quedan colgadas sin que ningún
-    // log diga por qué.
-    //
-    // Va la PRIMERA de las tres porque es la que viene de fuera: fallar antes de tocar el pool es
-    // lo que la prueba dice en su propio nombre («before touching PostgreSQL»).
-    //
-    // Y admite el CERO, que no es lo mismo que positivo. `retryStaleDeliveries(0)` significa «todo
-    // lo que lleve un instante sin avanzar está vencido» y es como se barre la cola a mano y como
-    // lo piden las pruebas del reaper. Mi primer intento reusó `positiveMs`, que exige `> 0`, y
-    // puso en rojo siete pruebas que estaban en verde: el cero es una instrucción legítima, no un
-    // valor sin declarar.
+    // Se valida staleMs como entero no negativo antes de abrir la transacción.
     if (!Number.isSafeInteger(staleMs) || staleMs < 0) {
       throw new StoreError('conflict', 'stale timeout must be a non-negative integer of milliseconds');
     }
@@ -7684,11 +7313,7 @@ export class CauceRepository {
       policy.leaseCapGraceMs, DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, 'lease cap grace'
     );
     return withTransaction(this.pool, async (client) => {
-      // `execution_started` es una columna de la propia fila, no una subconsulta y muchísimo
-      // menos una función de ventana: este SELECT lleva `FOR UPDATE OF d` y PostgreSQL rechaza
-      // al PARSEAR cualquier consulta que combine FOR UPDATE/FOR SHARE con una función de
-      // ventana. Ya pasó una vez y dejó a la flota con los agentes vivos y las entregas muertas,
-      // porque el reaper fallaba entero en cada tick.
+      // Proyección escalar sin window functions para compatibilidad con FOR UPDATE OF d.
       // El techo se evalúa DOS veces (en la proyección y en el WHERE) con la misma expresión
       // literal a propósito: son escalares sobre la fila que el SELECT ya trae bajo lock, no
       // subconsultas y mucho menos funciones de ventana, así que conviven con `FOR UPDATE OF d`.
@@ -7744,9 +7369,7 @@ export class CauceRepository {
         // ejecución y esté o no prendido `retryStartedDeliveries`.
         const leaseCapExhausted = row.lease_cap_exceeded === true;
         // R3. Gastar los tres intentos contra un alias sin adaptador conectado no es reintentar:
-        // es ruido, y termina matando el encargo por una ausencia que no tiene nada que ver con
-        // el trabajo. Se aparca y se le devuelve el intento, porque no hubo intento: nadie lo
-        // ejecutó. Las tres guardas son necesarias:
+        // no hubo ejecución. Se aparca y se le devuelve el intento. Las tres guardas son necesarias:
         //  - `!heldForReview`: si consta que arrancó, manda la retención; no se toca.
         //  - `!leaseCapExhausted`: el techo manda sobre todo lo demás.
         //  - `sinConsumidor`: con un adaptador vivo del otro lado el fallo SÍ es del destino y
@@ -8016,49 +7639,8 @@ export class CauceRepository {
   }
 
   /**
-   * P0-4 — el vigía de cadenas mudas. Garantía: toda tarea originada por un humano termina
-   * SIEMPRE con una respuesta al humano, con el resultado o con el motivo del fallo.
-   *
-   * POR QUÉ HACE FALTA UN BARRIDO Y NO ALCANZA CON ARREGLAR EL ACK
-   * -------------------------------------------------------------
-   * El fan-in y el relay al origen sólo se evalúan como EFECTO LATERAL de un ACK o de un tick
-   * del reaper sobre una entrega de la cadena. Cuando el último evento de una cadena es
-   * justamente el que deja el fan-in bloqueado — una pata que volvió a delegar recibe
-   * `deferred` y nunca escribe su auditoría `agent_output.response`, así que
-   * `responsesRecorded` queda corto para siempre — no queda ninguna entrega viva que pueda
-   * volver a disparar la evaluación. No hay vencimiento, no hay barrido, no hay nada: el
-   * silencio es permanente por construcción. Medido el 2026-07-29 en producción: 39 raíces
-   * con abanico sin fan-in agendado y 23 raíces con origen humano (15 de Steven) que
-   * terminaron sin una sola respuesta final. Este método es esa evaluación periódica.
-   *
-   * QUÉ HACE, EN ORDEN DE PREFERENCIA
-   * ---------------------------------
-   *  1. Si el fan-in nunca se agendó y AHORA sí puede agendarse, lo agenda. El humano recibe
-   *     la síntesis real del coordinador, que es infinitamente mejor que un aviso de fallo.
-   *     En la foto de producción esto destraba 25 de las 39 raíces sin mandar ningún aviso.
-   *  2. Si no puede, cierra la raíz con UN aviso agregado al origen: conteos por desenlace y
-   *     causa dominante, en una línea. Nunca un mensaje por muerte.
-   *
-   * ANTI-SPAM (el requisito duro: 1.861 muertes no pueden ser 1.861 mensajes)
-   * ------------------------------------------------------------------------
-   *  - Agregación POR RAÍZ: el barrido no mira muertes, mira raíces. Una raíz con 820 ramas
-   *     muertas produce exactamente un aviso con «820».
-   *  - Idempotencia POR RAÍZ y para siempre: `agent_chain_closures.root_message_id` es clave
-   *     primaria y `adapter_outbox(tenant_id,adapter,idempotency_key)` es única. Dos
-   *     dispatchers, un reintento o un barrido cada 60 s no pueden duplicar el aviso.
-   *  - Techo por barrido (`limit`) y ventana de rastreo (`maxAgeMs`): el peor caso son
-   *     `limit` mensajes por barrido y las raíces viejas envejecen fuera del alcance en vez
-   *     de emitir una avalancha histórica el día del despliegue.
-   *  - Cerrar una raíz NO cancela nada. Si la cadena revive y produce su relay real, ese
-   *     relay sale igual con su propia clave de idempotencia. Equivocarse por avisar de más
-   *     cuesta una línea; equivocarse por callar cuesta el trabajo del dueño.
-   *
-   * RUTA CALIENTE
-   * -------------
-   * No toca `ack()` ni `retryStaleDeliveries()`. El dispatcher lo llama con su propio reloj
-   * (por defecto una vez por minuto, contra ~10 ticks/s del reaper), la consulta de
-   * candidatos está acotada por `LIMIT` y se apoya en los índices de la migración 016_chain_silence_sweep — tres
-   * de los cuales aceleran además consultas que la ruta caliente ya hacía con seq scan.
+   * Barrido periódico de cadenas inactivas o mudas para asegurar que toda tarea
+   * complete su fan-in o emita una respuesta consolidada de cierre hacia el origen.
    */
   async sweepSilentChains(options: ChainSilenceSweepOptions = {}): Promise<ChainSilenceSweepResult> {
     const idleMs = Math.max(1_000, Math.trunc(options.idleMs ?? chainSilenceIdleMs));
@@ -8328,44 +7910,8 @@ export class CauceRepository {
   }
 
   /**
-   * La rama INCONTABLE: terminal, pero sin la fila que el fan-in cuenta.
-   *
-   * `materializeAgentFanin` no cuenta mensajes ni entregas: cuenta filas de `audit_events` con
-   * `action='agent_output.response'` keyeadas por `metadata->>'child_delivery_id'`, y esa fila
-   * la escribe SÓLO un ACK terminal aplicado (o el reaper, que pasa por el mismo camino). Si
-   * una entrega llega a estado terminal por fuera de ese camino —el 2026-08-04 alguien terminó
-   * ramas con un UPDATE directo en la base para destrabar otra cosa— esa rama queda contada en
-   * `completed` pero NUNCA en `responsesRecorded`, y el gate del fan-in
-   * (`completed === expected && responsesRecorded === expected`) pasa a ser insatisfacible PARA
-   * SIEMPRE. Jarvis quedó esperando 17 ramas de las que ninguna podía volver.
-   *
-   * Peor: la red de seguridad reusa el MISMO predicado, así que tampoco rescataba; caía al
-   * aviso de cierre, que se relaya al adaptador de ORIGEN (el humano) y nunca al coordinador.
-   *
-   * Esto rellena la fila que falta, con la verdad de lo que pasó: `deny` con razón
-   * `terminal_without_response`. No relaja el gate general —una cadena viva sigue exigiendo
-   * respuestas de verdad— porque corre EXCLUSIVAMENTE en el camino del barredor de silencio,
-   * sobre una raíz que el propio barredor ya declaró muda y con cero trabajo abierto: ahí el
-   * peor resultado posible (el coordinador esperando para siempre) ya ocurrió, y lo único que
-   * queda por decidir es si el coordinador llega a sintetizar lo que sí volvió.
-   *
-   * QUÉ RAMA SE RELLENA Y CUÁL NO — las tres condiciones de abajo NO son cosméticas: cada una
-   * evita convertir un desenlace que hoy es correcto en un fan-in vacío.
-   *
-   *  1. HOJA (sin materializaciones propias). Una rama que volvió a delegar NO está incontable
-   *     por este fallo: su fila la escribe el ACK de la continuación que le devuelve su hijo,
-   *     keyeada por su propio `child_delivery_id`. Ése es el agujero de `deferred`, que este
-   *     barredor ya cubre avisándole al humano; rellenarlo acá le pondría al coordinador una
-   *     rama en blanco por cada delegación anidada muerta.
-   *  2. `done`, o bien la cadena tiene al menos UNA respuesta real. Una raíz donde todas las
-   *     ramas murieron sin devolver nada no tiene nada que sintetizar: el aviso agregado con la
-   *     causa dominante es MEJOR respuesta para el humano que un fan-in de N ramas vacías, y es
-   *     la garantía P0-4 que ya está fijada en los tests. Una rama `done` sí completó su
-   *     trabajo, y una muerta en una cadena que sí trajo resultados es exactamente el hueco de
-   *     plomería del 2026-08-04.
-   *  3. Sin fila previa: `NOT EXISTS` sobre la misma clave que cuenta el fan-in la hace
-   *     idempotente, y el candado consultivo del llamador la serializa contra cualquier ACK en
-   *     vuelo de la misma raíz.
+   * Registra eventos de auditoría para ramas en estado terminal que carecen de respuesta grabada,
+   * permitiendo desbloquear el conteo de fan-in en cadenas inactivas.
    */
   private async recordTerminalBranchesWithoutResponse(
     client: DatabaseClient,
@@ -9599,19 +9145,7 @@ export class CauceRepository {
       return value;
     }, { pending: 0, retrying: 0, dead: 0 });
 
-    /*
-     * EL TOTAL, aparte de lo contado en la ventana.
-     *
-     * Los contadores de arriba salen de las `limit` filas más recientes. Eso está bien para la
-     * lista, y está MAL como cifra: medido en producción el 2026-08-24, la consola enseñaba
-     * «Entregas muertas: 1» en la portada y «DLQ: 413» en Señales, para la misma pregunta. La
-     * primera contaba la ventana; la segunda, la base entera. Ninguna mentía y el operador no
-     * podía saber cuál creer.
-     *
-     * El total lleva EL MISMO predicado de visibilidad que la lista, no un `COUNT(*)` pelado: la
-     * cifra de un cliente no puede incluir las entregas muertas de otro. La cifra global de toda
-     * la flota existe y tiene su sitio, que es `/v3/status`; no es ésta.
-     */
+    // Conteo total agregado con los mismos filtros de visibilidad que el listado.
     const totales = await this.pool.query<{ pending: string; retrying: string; dead: string; total: string }>(
       `SELECT count(*) FILTER (WHERE d.status IN ('pending','leased','accepted','started')) AS pending,
               count(*) FILTER (WHERE d.status = 'retry') AS retrying,
@@ -9951,23 +9485,13 @@ export class CauceRepository {
   }
 
   /**
-   * CANCELACIÓN de una entrega en vuelo. Operación de primera clase del operador, hermana de
+   * CANCELACIÓN de una entrega en vuelo. Operación del operador, hermana de
    * `replayDelivery` y con exactamente su misma autorización.
    *
-   * POR QUÉ EXISTE. Hasta hoy no había ninguna: `packages/adapter-sdk/src/sdk/types.ts` dice
-   * textual "V3 has no remote cancel frame". Lo que había era un `UPDATE` a mano en psql, y está
-   * medido cuánto se usó: el 28-jul-2026 producción tenía 221 filas en 'dead' con
-   * `last_error` = 'cancelado por zeus ...'. Ese camino saltea las TRES cosas que hace este
-   * método, y cada omisión tiene una consecuencia concreta:
-   *
-   *   1. Sin fila en `dead_letters` la entrega queda irreplayable para siempre (el JOIN de
-   *      `replayDelivery`). Cancelar por error era una decisión irreversible.
-   *   2. Sin `insertOriginRelay` el humano que mandó el mensaje por Telegram nunca se entera:
-   *      pidió algo y no recibe ni respuesta ni error. Silencio.
-   *   3. Sin `materializeAgentResponse` el PADRE de la delegación queda esperando esa rama para
-   *      siempre. Y no es sólo ese padre: `materializeAgentFanin` cuenta ramas completas contra
-   *      ramas esperadas, así que una rama cancelada a mano traba el contador del fan-in de toda
-   *      la cadena, que es el síntoma que el dueño describe como "no logran prácticamente nada".
+   * Proporciona una operación consistente y trazable de cancelación de entregas:
+   *   1. Registra la entrega en `dead_letters` para trazabilidad y replay.
+   *   2. Notifica el resultado a través de `insertOriginRelay`.
+   *   3. Materializa la respuesta en el árbol de delegación para actualizar al padre y la agregación de fan-in.
    *
    * NO INVENTA UN ESTADO NUEVO. Termina en 'dead', por el mismo motivo por el que lo hace el
    * reaper (ver su comentario): toda la maquinaria de revisión manual ya apunta ahí, y un
@@ -10257,10 +9781,8 @@ export class CauceRepository {
   /**
    * La LISTA VISIBLE de preguntas pendientes a una persona.
    *
-   * Es la contrapartida obligatoria del gate: sacar la espera humana del bus sólo sirve si lo
-   * que queda es algo que alguien puede VER y contestar. Antes esto vivía como entregas que
-   * ningún agente podía completar y terminaban en `dead_letters` (23+ desde el 24-jul en un
-   * solo gate de facturación), donde nadie las mira.
+   * Es la contrapartida del gate: desacoplar la espera humana del bus para exponer
+   * un listado consultable y gestionable por operadores o agentes autorizados.
    *
    * Devuelve los abiertos primero y luego los resueltos recientes, para que la lista sirva
    * también como acuse de "esto ya se contestó".

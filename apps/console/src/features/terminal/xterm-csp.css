@@ -1,7 +1,7 @@
 /* ---------------------------------------------------------------------------------------------
  * LA PIEL DEL TERMINAL, EMPAQUETADA, PORQUE LA CSP TIRA LA QUE INYECTA XTERM.
  *
- * 🔴 Esto NO es decoración: sin este fichero la TUI se ve NEGRO SOBRE NEGRO y en letra con serifas.
+ * Esto NO es decoración: sin este fichero la TUI se ve NEGRO SOBRE NEGRO y en letra con serifas.
  *
  * Qué pasa. El renderer DOM de xterm no trae sus colores en un `.css`: los COMPONE en tiempo de
  * ejecución y los mete en un `<style>` que crea con `createElement` y cuelga del `.xterm-screen`

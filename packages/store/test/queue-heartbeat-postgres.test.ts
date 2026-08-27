@@ -139,20 +139,8 @@ describe('queue heartbeat on an accepted delivery', () => {
       );
     }
 
-    // INTEGRACIÓN 2026-07-29 — dos correcciones al montaje, ninguna al objetivo del test.
-    //
-    // (1) SÓLO se le vence el plazo a la silenciosa. Vencérselo a las dos y recién después
-    //     latir no prueba nada en esta línea: `exactClaim` exige `claim_live`
-    //     (`ack_deadline_at > now()`, ya en b57e862), así que un latido POSTERIOR al vencimiento
-    //     se lleva `ownership_lost` y no renueva. Y es correcto que sea así — una garra vencida
-    //     es de nadie. En producción el latido llega cada 60 s contra un plazo de 30 min, o sea
-    //     siempre ANTES; el montaje ahora refleja eso: la que late conserva el plazo de su
-    //     reclamo y lo estira, la que murió con su adaptador lo tiene vencido.
-    // (2) El barrido va con un plazo REAL y no con 0. El WHERE del reaper es
-    //     `($1=0 OR COALESCE(ack_deadline_at,…) <= now())`: con `$1=0` la primera rama es
-    //     verdadera para TODA entrega en vuelo y el barrido se lleva las dos, incluida la que
-    //     late. Con un plazo real decide el `ack_deadline_at` de cada fila, que es exactamente
-    //     lo que este test viene a probar.
+    // (1) Sólo se vence el plazo de la entrega silenciosa para evaluar la expiración diferencial.
+    // (2) El barrido se ejecuta con plazo real para evaluar `ack_deadline_at` por fila.
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()-interval '1 second' WHERE id=$1`, [silent]
     );

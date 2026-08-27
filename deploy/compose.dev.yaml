@@ -110,11 +110,6 @@ services:
 
   terminal-relay:
     <<: *dev-runtime
-    # Opt-in igual que en producción. Este bloque se escribió antes que el servicio y asumía un
-    # "modo claro" de dev que el relay NO tiene: las dos piernas exigen TLS con certificado de
-    # cliente sin excepción, y `CAUCE_TERMINAL_GATEWAY_URL` se rechaza si no es HTTPS. Levantar
-    # el stack de dev sin material TLS dejaba al relay en un bucle de reinicio, así que ahora hay
-    # que pedirlo a propósito y darle certificados (pueden ser autofirmados de usar y tirar).
     profiles: [terminal]
     command: ["node", "services/terminal-relay/dist/main.js"]
     environment:

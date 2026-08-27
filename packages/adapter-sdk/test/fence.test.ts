@@ -19,7 +19,7 @@ test('una respuesta de texto que empieza con un bloque de codigo NO se reinterpr
   assert.match(String(salida.reply), /ls -la/u);
 });
 
-// CONTRATO CAMBIADO A PROPOSITO el 2026-08-05. Antes un objeto truncado era fallo duro aunque el
+// Antes un objeto truncado era fallo duro aunque el
 // `reply` estuviera completo, y eso costaba el turno ENTERO: a Steven le llegó dos veces seguidas
 // "contained a malformed JSON object" de jarvis, perdiendo minutos de trabajo y una respuesta que
 // el agente ya había escrito. Ahora, si el reply se puede rescatar, se entrega y se descartan los

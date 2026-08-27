@@ -8,7 +8,7 @@ import type {
 } from '../../api/types';
 
 /**
- * Los siete estados que Steven pidió ver de un vistazo, cada uno con su muñeco. El orden del
+ * Los siete estados que  cada uno con su muñeco. El orden del
  * union es el de precedencia: `down` gana a todo, `idle` pierde con todo.
  *
  * Regla dura heredada del manual del médico: **un lease vivo NO prueba que el agente responda.**
@@ -532,7 +532,7 @@ export function ownerBucket(state: LiveState): OwnerBucket {
 /**
  * **La palabra del veredicto NO puede ser el rótulo de un chip.**
  *
- * 🔴 Medido el 2026-08-23 en producción con 18 alias: el veredicto decía «13 conectados · 4
+ *  el veredicto decía «13 conectados · 4
  * trabajando · 9 libres» y el chip a 140 px por debajo decía «Trabajando 2». Las dos cifras eran
  * correctas y contaban cosas distintas —el 4 agrupa `thinking` + `delegating` + `receiving` +
  * `settled`; el 2 es sólo `thinking`— pero con la MISMA palabra, y las otras dos cifras del
@@ -758,7 +758,7 @@ export type OrigenEncargo =
  *
  * `origin` se copia byte a byte en cada salto de la cadena (ver el comentario largo de
  * `AGENT_TO_AGENT_MESSAGE_TYPES` en packages/protocol/src/schemas.ts): una cadena de cinco agentes
- * nacida en Telegram sigue diciendo `adapter:'telegram'` en el salto cinco — medido el 2026-07-27,
+ * nacida en Telegram sigue diciendo `adapter:'telegram'` en el salto cinco — 
  * 2.374 de 2.429 entregas de 12 h decían 'telegram'. Leer ese campo a secas, como se hacía acá,
  * producía a la vez la arista `zeus → kant` (correcta) y la frase «se lo pidió una persona, por
  * telegram» (falsa) para el MISMO ítem. Y como la frase falsa iba primero, tapaba a la verdadera.

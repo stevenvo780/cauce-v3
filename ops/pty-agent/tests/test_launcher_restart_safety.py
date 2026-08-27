@@ -1,28 +1,8 @@
 #!/usr/bin/env python3
-"""El lanzador no puede matar sus 15 unidades por un artefacto que no viajo.
+"""Pruebas de tolerancia a fallos transitorios en el reinicio de unidades de systemd del lanzador PTY.
 
-POR QUE EXISTE ESTA PRUEBA
---------------------------
-La unit `cauce-v3-pty@.service` lleva `RestartPreventExitStatus=2 78`. Un `die` sin codigo sale
-con 2. Por lo tanto **cualquier** comprobacion previa que salga con `die` a secas convierte un
-fallo de despliegue en 15 unidades PARADAS PARA SIEMPRE, que ya no reintentan ni cuando el
-fichero vuelve: hay que entrar a mano y `systemctl reset-failed` alias por alias.
-
-Medido el 2026-08-24 sobre el lanzador desplegado: copiado a un directorio sin
-`cauce_pty_agent.py` al lado, `./cauce-pty-launcher.sh zeus` sale **2**. La mina ya estaba
-puesta antes de que nadie tocara nada; la rama `fix/openclaw-tui-stream-20260824` le agrega una
-segunda igual (`READER_SOURCE`), que es como se descubrio.
-
-LA REGLA QUE SE FIJA AQUI
--------------------------
-Un artefacto que el RELEASE tiene que traer (el agente, y cualquier fichero que se le sume) es
-un fallo **transitorio**: se arregla volviendo a desplegar, sin tocar systemd. Sale 75
-(EX_TEMPFAIL), que es el codigo que este repo ya usa para lo mismo y que NO esta en la lista de
-la unit. Un fallo de CONFIGURACION —un alias que no es un alias, un `.env` corrupto— si es
-permanente: reintentar no lo arregla y el bucle solo taparia la causa.
-
-Cada caso positivo va con su CONTROL NEGATIVO, porque una prueba que solo mira "no es 2" se
-satisface volviendo TODO transitorio, y eso seria el defecto contrario.
+Valida que la ausencia de artefactos de release resulte en códigos de salida transitorios (reintentables)
+mientras que los errores de configuración permanezcan clasificados como no reintentables.
 """
 from __future__ import annotations
 

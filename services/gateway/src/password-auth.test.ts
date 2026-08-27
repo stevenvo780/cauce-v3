@@ -458,10 +458,8 @@ describe('login por contraseña de la consola', () => {
   });
 
   it('el certificado del PROXY de la consola no reemplaza a una sesión: sin cookie, 401', async () => {
-    // Medido en producción el 2026-08-06 con CAUCE_AUTH_PROVIDER=password ya encendido:
-    // `/v3/console/*` devolvía ~850 KB —entregas, mensajes, auditoría y salas de los cinco
-    // tenants— a cualquiera que llegara al proxy, porque el request sin cookie caía al mTLS y el
-    // certificado de nginx está provisionado como operador. El login era una cortina de la SPA.
+    // Las rutas de consola exigen sesión de usuario autenticada con cookie,
+    // rechazando accesos anónimos aunque provengan del proxy TLS.
     const fallback = new StubConsoleProxyProvider();
     const test = await fixture({ fallback });
     try {
@@ -492,11 +490,7 @@ describe('login por contraseña de la consola', () => {
   });
 
   it('el mismo certificado del proxy SÍ entra al bus: la puerta es la ruta, no el canal', async () => {
-    // REGRESIÓN del 2026-08-06 10:47. La puerta se puso sobre el CANAL, así que `console-client`
-    // —el único principal mTLS con permiso `control`, y el que usan el guardia médico y las
-    // herramientas de operación para publicar— empezó a recibir 401 en CUALQUIER endpoint,
-    // incluido `POST /v3/messages`. Medido: el guardia de las 11:08 no pudo entregarle a zeus y
-    // la flota se quedó sin plano de control. Publicar no es leer la consola en un navegador.
+    // La autenticación por sesión aplica a las rutas de consola, no a las operaciones del bus.
     const fallback = new StubConsoleProxyProvider();
     const test = await fixture({ fallback });
     try {

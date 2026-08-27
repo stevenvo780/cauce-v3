@@ -75,29 +75,7 @@ function PayerScoped({ account, children }: { account: ProviderAccount; children
 }
 
 /**
- * **El inventario de cuentas**, primera pestaña de «Cuentas y cuotas».
- *
- * Steven, 2026-08-22: *«cuotas y licencias y cuentas de IA deberían ser la misma vista»*. Lo medido
- * antes de tocar nada: `/quotas` y `/accounts` pedían **el mismo** `GET /v3/console/config`, con la
- * **misma** clave de caché, y las dos pintaban un panel titulado **literalmente** «Inventario de
- * cuentas». Dos rutas, dos entradas de menú, dos veces la misma lista de suscripciones.
- *
- * La objeción que estaba escrita en `App.tsx` —«la primera es de lectura y depende del recolector
- * externo; la segunda escribe el registro y tiene que funcionar aunque el recolector esté caído»—
- * era correcta y sigue en pie. Lo que era falso es la conclusión de que por eso tenían que ser dos
- * **vistas**: se resuelve degradando por **recurso**, no por pantalla. Esta pestaña sólo depende de
- * `config`; si `GET /v3/console/quotas` falla, las columnas Plan y Consumo dicen `?` y el alta, la
- * edición y los interruptores siguen funcionando. Hay una prueba con control negativo que lo fija.
- *
- * **La tabla es la unión de las dos**, sin perder una columna:
- * cuenta · proveedor · etiqueta · paga · pool · estado · id externo · tipo de locator · actualizada
- * · acciones (venían de `/accounts`) **+ plan · consumo** (venían de `/quotas`). Las cuatro
- * secciones restantes de la ficha de `/quotas` —motivo de consumo por cuenta, «Asignada a» y techo
- * de ruteo— se despliegan por fila en `AccountRoutingDetail`.
- *
- * `config` y `access` llegan **por props**: `useResource` no comparte caché entre componentes, así
- * que pedirlos acá volvería a traer `/v3/console/config` una segunda vez en la misma pantalla — que
- * es justo el defecto que la fusión cierra.
+ * Inventario y gestión de cuentas de proveedores de IA y estado de consumo.
  */
 export function AccountsInventory({ config, access, quotas }: {
   config: Resource<ConfigurationSnapshot>;

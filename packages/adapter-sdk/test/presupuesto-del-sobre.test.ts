@@ -3,63 +3,13 @@ import test from "node:test";
 import { protocolPrompt, type HarnessRequestContext } from "../src/harnesses/shared.js";
 import type { RelayOrigin } from "../src/sdk/types.js";
 
-/*
- * EL PRESUPUESTO DEL SOBRE, y por qué esto es una prueba y no una nota.
+/**
+ * Presupuesto de tamaño del sobre y andamiaje de prompt.
  *
- * Medido el 2026-08-24 contra el build DESPLEGADO en producción
- * (`/opt/cauce-v3-adapter/zeus/releases/bus-v3-20260814-umbral`), llamando a `protocolPrompt()`
- * de verdad con un contexto real —13 destinos alcanzables y un rol de 1.097 caracteres—:
- *
- *     sobre COMPLETO         : 11.546 caracteres
- *       andamiaje fijo       :  9.210   ← se repite ENTERO en cada turno de cada alias
- *       rol del alias        :  1.106   ← idem
- *       metadata JSON        :  1.168   ← esto sí cambia de una entrega a otra
- *       pedido real          :     62
- *     ratio andamiaje/pedido : 185 : 1
- *
- * El encargo es que lo FIJO deje de viajar en cada mensaje y pase a vivir en el fichero del
- * arnés, y que entre turnos sólo viaje lo dinámico. Sin una cifra que pueda dar ROJO, esa
- * reducción no se puede acreditar: cualquiera diría «ya está más corto» y nadie podría
- * desmentirlo. Estas pruebas son ese tope.
- *
- * Los topes de abajo NO son objetivos: son el estado de HOY, clavado. Sirven para dos cosas
- * opuestas y las dos importan:
- *   1. Que nadie AÑADA andamiaje sin darse cuenta — la prueba se pone roja.
- *   2. Que cuando la fase de adelgazamiento entre, haya que BAJAR estos números a mano, con lo
- *      cual el commit que los baja es la prueba de que el trabajo se hizo.
- *
- * Si estás bajando estos números: bajalos a lo que midas, no a lo que esperes.
+ * Valida límites máximos de caracteres en el andamiaje del sobre generado por
+ * `protocolPrompt()`, evitando regresiones de tamaño en el transporte de mensajes.
  */
-
-/*
- * OJO: hay DOS cifras y no son la misma. El build DESPLEGADO en producción
- * (`bus-v3-20260814-umbral`, 17-ago) mide 9.210 caracteres de andamiaje; el código de ESTA rama
- * mide 7.694. Es decir, entre agosto y hoy ya se recortaron ~1.500 caracteres que producción
- * todavía paga en cada turno de cada alias. El tope de abajo vigila el código de esta rama —que
- * es el que se puede romper desde aquí—, no el de producción.
- */
-/*
- * SUBIDO EL 2026-08-25 AL FUSIONAR `main`, y así es como se supone que funciona esto.
- *
- * Los topes eran 7.800 / 10.300 sobre un andamiaje medido de 7.694. La fusión con `main` los pasó:
- * 7.867 y 10.309. La prueba hizo exactamente su trabajo — cazó un crecimiento del sobre que nadie
- * habría notado— y el mensaje pide lo que hay que hacer: subir el tope EN EL MISMO COMMIT y
- * explicar por qué ese texto tiene que ir en cada turno.
- *
- * QUÉ CRECIÓ Y POR QUÉ SE ACEPTA: `e49b718` («un mensaje al remitente ya no se lleva puesto el
- * turno entero») alargó la invariante de `reply` con la frase que le dice al agente qué pasa
- * cuando apunta a `sender_alias`: que se descarta, se le informa dentro de su propia respuesta y
- * ya NO le cuesta el turno. Son 173 caracteres que corrigen una conducta que costaba turnos
- * enteros, y tienen que ir en el sobre porque describen lo que el bus hace con ESTA entrega — no
- * son identidad del alias, que es lo que va al fichero del arnés.
- *
- * Los números nuevos son los MEDIDOS, no redondeados hacia arriba «por si acaso»: 7.867 -> tope
- * 7.900 (33 de margen) y 10.309 -> tope 10.400. Un margen holgado convertiría esta prueba en
- * decoración, que es justo lo contrario de para lo que está.
- */
-/** El andamiaje fijo medido HOY en esta rama: 7.867. El tope deja 33 de margen, no 1.700. */
 const TOPE_ANDAMIAJE_FIJO = 7_900;
-/** Sobre completo de hoy con un rol al tope y 13 destinos: 10.309 medidos. */
 const TOPE_SOBRE_COMPLETO = 10_400;
 
 function contextoReal(overrides: Partial<HarnessRequestContext> = {}): HarnessRequestContext {
@@ -134,10 +84,8 @@ test("CONTROL NEGATIVO: el medidor reacciona, no devuelve siempre lo mismo", () 
   assert.ok(largo.length > corto.length + 1_000, "el medidor no distingue un pedido largo de uno corto");
 });
 
-/*
- * La proporción es el dato que Steven puede leer de un vistazo, y la razón por la que este
- * trabajo existe. Se afirma aparte porque el día que el andamiaje baje, esta prueba tiene que
- * bajar con él: es la que traduce «se arregló» a un número.
+/**
+ * Verifica que la proporción andamiaje/pedido se mantenga acotada.
  */
 test("la proporción andamiaje/pedido queda escrita, para poder verla bajar", () => {
   const pedido = "Revisa el estado del gateway y decime si hay entregas muertas.";
@@ -145,6 +93,6 @@ test("la proporción andamiaje/pedido queda escrita, para poder verla bajar", ()
   const ratio = Math.round((sobre.length - pedido.length) / pedido.length);
   assert.ok(
     ratio <= 170,
-    `Por cada carácter de trabajo real viajan ${ratio} de andamiaje. El 24-ago-2026: 161 en esta rama, 185 en el build desplegado.`,
+    `Por cada carácter de trabajo real viajan ${ratio} de andamiaje.`,
   );
 });

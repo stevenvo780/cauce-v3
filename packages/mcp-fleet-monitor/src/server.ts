@@ -82,9 +82,7 @@ const TOOLS = [
         },
         estado: {
           type: 'string',
-          // Exactly the deliveries.status CHECK constraint in migration 001. The
-          // advertised list used to be claimed/acked/dead, none of which except `dead`
-          // is a real status, so filtering by the documented values matched nothing.
+          // Matches the deliveries.status CHECK constraint in migration 001.
           enum: DELIVERY_STATUSES,
           description: 'Optional: filter by delivery status',
         },
@@ -228,10 +226,8 @@ async function main() {
       throw new Error('Database connection test failed');
     }
 
-    // Every tool filters on this value against `connection_leases.tenant_id` and
-    // `deliveries.recipient_tenant`, so a tenant that does not exist is not an empty
-    // fleet: it is a misconfiguration that would answer every question with "nothing
-    // here" and never say why. Room ids like `grp.steven` are the usual mistake.
+    // Every tool filters on CAUCE_TENANT_ID against `connection_leases.tenant_id` and
+    // `deliveries.recipient_tenant`. Validate that the configured tenant exists in the database.
     const known = await pool.query<{ id: string }>('SELECT id FROM tenants ORDER BY id');
     if (!known.rows.some((row) => row.id === ensuredTenantId)) {
       throw new Error(

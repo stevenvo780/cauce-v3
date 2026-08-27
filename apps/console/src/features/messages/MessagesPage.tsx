@@ -48,20 +48,7 @@ function agenteDeLaRuta(path: string): { tenantId: string; alias: string } | und
 }
 
 /**
- * Mensajería con la flota.
- *
- * Lo que había antes era un formulario en el que había que escribir a mano el room y un
- * «Tenant:alias», más una lista plana de tarjetas ordenada por mensaje: para saber si un agente
- * había contestado había que leer las tarjetas de arriba abajo, y el destinatario era un campo
- * de texto libre que sólo fallaba al enviar. Steven lo resumió en una línea —«el de mensajes es
- * horrible, debería ser una suerte de wpp con mejoras para este sistema»— y las mejoras que pide
- * son exactamente las que un WhatsApp no puede dar: cómo va la cola de cada agente y un salto
- * directo a su terminal.
- *
- * Nada de esto duplica Ultimate Terminal. La lógica de flota, ruta de publicación y transcripción
- * es la MISMA (`features/terminal`), reutilizada; lo que cambia es la pantalla y lo único
- * verdaderamente nuevo es la columna de cola, que sale de fundir `/activity` con `/queues`
- * (ver `queue-health.ts`).
+ * Vista de mensajería interactiva con agentes de la flota y monitoreo de colas.
  */
 export function MessagesPage() {
   const api = useApi();

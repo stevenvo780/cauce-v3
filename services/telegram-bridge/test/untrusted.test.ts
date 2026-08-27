@@ -22,7 +22,7 @@ describe('confusableSkeleton: dos strings que se dibujan igual dan el mismo esqu
   it('pliega el cirílico que imita al latino', () => {
     // zeu + CYRILLIC SMALL LETTER DZE (U+0455), que se dibuja igual que una "s".
     expect(confusableSkeleton('zeu\u0455')).toBe('zeus');
-    // CYRILLIC CAPITAL DZE (U+0405), el caso del informe: primero pliega a minúscula, después mapea.
+    // CYRILLIC CAPITAL DZE (U+0405): primero pliega a minúscula, después mapea.
     expect(confusableSkeleton('\u0405teven')).toBe('steven');
     // k-a-n-t escrito entero en cirílico: KA, A, PE, TE.
     expect(confusableSkeleton('\u043a\u0430\u043f\u0442')).toBe('kant');
@@ -88,9 +88,7 @@ describe('untrustedAuthor: la identidad que sí llega al prompt', () => {
     expect(impersonation).toEqual({ collides_with: 'zeus', field: 'display_name', normalized: 'zeus' });
   });
 
-  it('el invisible SIN ASIGNAR U+2065 tampoco parte el nombre para esquivar la comparación', () => {
-    // Lo encontró la prueba estructural del final de este archivo, no una muestra elegida a mano:
-    // U+2065 no está asignado, así que no lo saca `\p{Cf}` ni ningún filtro genérico.
+  it('el invisible sin asignar U+2065 tampoco parte el nombre para esquivar la comparación', () => {
     const { author, impersonation } = untrustedAuthor({ id: 1, first_name: 'zeu\u2065s' }, RESERVED);
     expect(author?.display_name).toBe('zeus');
     expect(impersonation?.collides_with).toBe('zeus');
@@ -134,21 +132,13 @@ describe('untrustedAuthor: la identidad que sí llega al prompt', () => {
   });
 });
 
-describe('safeInline sigue siendo el mismo criterio después de la mudanza', () => {
+describe('safeInline', () => {
   it('saca controles, invisibles y colapsa espacios', () => {
     expect(safeInline('  hola\u200b\u0007  mundo  ', 64)).toBe('hola mundo');
     expect(safeInline(undefined, 64)).toBeUndefined();
     expect(safeInline(42, 64)).toBeUndefined();
   });
 
-  /**
-   * Estructural, no por muestra.
-   *
-   * Elegir tres caracteres hostiles y probar esos tres demuestra que esos tres están cubiertos y
-   * nada más. Acá se recorre el BMP entero y se exige que NINGÚN code point que `attachments.ts`
-   * rechaza para un nombre de archivo sobreviva al saneo de un nombre de persona. Si mañana uno de
-   * los dos criterios se amplía y el otro no, esta prueba lo dice el mismo día.
-   */
   it('no deja pasar ningun code point de los que attachments.ts rechaza', () => {
     const sobrevivientes: string[] = [];
     for (let code = 0; code <= 0xffff; code += 1) {

@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 /*
- * 🔴 `matchMedia` NO existe en jsdom, y xterm lo llama al abrir el renderer. Sin este relleno,
+ * `matchMedia` NO existe en jsdom, y xterm lo llama al abrir el renderer. Sin este relleno,
  * `terminal.open()` lanzaba `this._parentWindow.matchMedia is not a function`, la sesión quedaba
  * con `renderError`, y —lo que importa— el VIEWPORT no llegaba a existir: `scrollLines()` no movía
  * nada y `viewportY` era siempre igual a `baseY`. O sea que cualquier prueba sobre el scroll del

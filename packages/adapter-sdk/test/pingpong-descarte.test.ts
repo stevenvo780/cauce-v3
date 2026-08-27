@@ -3,18 +3,10 @@ import test from "node:test";
 import { validateDeliveryOutput, validateStructuredOutput } from "../src/sdk/output-parser.js";
 
 /**
- * Un `messages` dirigido al remitente NO puede costar el turno entero.
+ * Un mensaje en `messages` dirigido al remitente no debe invalidar el turno completo.
  *
- * Medido el 2026-08-04/05: 5 turnos perdidos en 48 h, en 5 alias de 4 tenants (argos y jarvis de
- * Steven, hegel de Jhon, janus de Miguel, midas de Pablo); 7 en total sobre 6 alias contando
- * vulcano. En el caso de midas el turno llevaba una lista de 11 prospectos YA HECHA y no llegó a
- * nadie: `AGENT_MESSAGE_PING_PONG` era un `throw` no reintentable y se llevaba puesto el `reply`.
- *
- * La causa no era del agente: el `AGENTS.md` de 5 contenedores exige que todo envío afirmado esté
- * en `messages`, sin excepción para el remitente. El agente que obedecía perdía el turno.
- *
- * Mismo principio y mismo patrón que `notify` malformado (parseNotify) y que las delegaciones de
- * un turno "failed": el campo accesorio se descarta con aviso, el trabajo sobrevive.
+ * El envío accidental hacia el remitente se descarta con aviso técnico en el parser,
+ * permitiendo que el resto del resultado (`reply`, otras delegaciones) sobreviva.
  */
 
 const ROUTING_TARGETS = [

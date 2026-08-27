@@ -157,11 +157,11 @@ async function main() {
     console.log();
 
     // Test 4: Call entregas with filter
-    console.log('=== Calling entregas(estado="acked", limit=5) ===');
+    console.log('=== Calling entregas(estado="done", limit=5) ===');
     try {
       const result = await client.send('tools/call', {
         name: 'entregas',
-        arguments: { estado: 'acked', limit: 5 },
+        arguments: { estado: 'done', limit: 5 },
       });
       if (result.content && result.content.length > 0) {
         const data = JSON.parse(result.content[0].text);

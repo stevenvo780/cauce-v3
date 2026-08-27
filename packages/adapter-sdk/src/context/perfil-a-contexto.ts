@@ -22,7 +22,7 @@ import { resumirContextoFijo } from "../harnesses/contexto-fijo.js";
  *
  * ── De dónde sale cada cara ──────────────────────────────────────────────────────────────────
  *
- * Cuatro son AUTORADAS y viven en `agent_profiles` (migración 026): identidad y propósito; rol,
+ * Cuatro son AUTORADAS y viven en `agent_profiles`: identidad y propósito; rol,
  * responsabilidades y restricciones; herramientas declaradas; instrucciones fijas del alias.
  *
  * Tres son HECHOS y NO se guardan: permisos (`memberships` + `role_policies`), cuotas
@@ -139,31 +139,11 @@ export function proyeccionOpenclaw(alias: string, bloque: string): string {
 // ── EL BLOQUE B: el perfil, fuera del bloque sellado ─────────────────────────────────────────
 
 /**
- * DOS BLOQUES EN EL MISMO FICHERO, Y POR QUÉ NO PUEDE SER UNO.
- *
- * El sello del contexto fijo resume `textoFijoDelSobre()`, que incluye la línea
- * `Tu rol: <role_brief>` con el brief de siempre — tope 1.200 puntos de código, porque ese texto
- * viaja en el sobre de cada entrega. El perfil rico admite 24.000 unidades.
- *
- * Si el perfil entero entrara en el bloque sellado, el sha del fichero NO coincidiría nunca con el
- * que calcula el adaptador —que compone el suyo con el `role_brief` corto que viene en el sobre— y
- * el recorte no se activaría JAMÁS: se seguiría mandando el sobre entero en cada entrega, el
- * trabajo no ahorraría un solo carácter, y no aparecería ni un error. Es la clase de fallo que en
- * esta flota cuesta días adjudicar, porque no se ve: sólo se paga.
- *
- * Por eso:
- *   BLOQUE A (sellado)    — el contrato, entre `MARCA_INICIO`/`MARCA_FIN`. Es lo único que el
- *                           sello resume y lo único que el sobre deja de mandar.
- *   BLOQUE B (sin sellar) — el perfil, entre estas marcas. El arnés carga el fichero ENTERO, así
- *                           que el agente lo lee igual; y como no viaja en el sobre, es contexto
- *                           que gana SIN COSTE POR TURNO.
- *
- * El perfil sigue siendo la única fuente de verdad: el `role_brief` corto del bloque A se DERIVA
- * de él con `rolBreveDelPerfil()`, no se escribe aparte.
- *
- * Las marcas son distintas de las de A y ninguna contiene a la otra —hay una prueba que lo fija—,
- * porque las dos búsquedas son por subcadena y un solapamiento haría que escribir un bloque se
- * llevara por delante el otro.
+ * El fichero del arnés contiene dos bloques con marcas distintas y no solapadas:
+ *   BLOQUE A (sellado) — contrato entre `MARCA_INICIO`/`MARCA_FIN`, resumido por el sello.
+ *   BLOQUE B (sin sellar) — perfil rico entre `MARCA_PERFIL_INICIO`/`MARCA_PERFIL_FIN`.
+ * Separarlos permite que el sobre omita el bloque A cuando el sello coincide,
+ * sin sacrificar el perfil completo que el arnés lee del fichero entero.
  */
 export {
   bloqueDePerfil, conBloqueDePerfil, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, VERSION_PERFIL,
@@ -190,11 +170,7 @@ export function rolBreveDelPerfil(perfil: AgentProfile): string | null {
 }
 
 /**
- * El bloque B a partir de lo que devuelve `AgentProfileRepository.readContext()`, de una pieza.
- *
- * Es la superficie que usa quien genera: pide el contexto al store y lo compila, sin tener que
- * saber que los permisos salen de `role_policies` y las cuotas de detrás del techo de ruteo. Esa
- * dispersión —cinco tablas y un YAML -- es justamente lo que este trabajo vino a cerrar.
+ * Compila el bloque de perfil a partir del contexto del alias devuelto por el store.
  */
 export function compilarContexto(contexto: ContextoDeAlias): string {
   return componerBloqueDePerfil(contexto.perfil, contexto.hechos);

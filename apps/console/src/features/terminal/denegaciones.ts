@@ -1,7 +1,7 @@
 /**
  * **Por qué la consola te deja afuera de la terminal, en castellano.**
  *
- * Steven, medido el 2026-08-23: pedir una sesión PTY en producción devuelve
+ * Steven,  pedir una sesión PTY en producción devuelve
  * `403 {error:'forbidden', reason:'no_grant'}` y el `[role=alert]` de la consola contenía
  * EXACTAMENTE `no_grant`. Sin estado HTTP, sin castellano, sin decir a quién hay que pedirle el
  * permiso. Lo mismo con las otras siete puertas del gateway.
@@ -12,7 +12,7 @@
  * que le pasa a una sesión que YA se abrió, y cero en explicar por qué no se abre. Este fichero
  * es el gemelo que faltaba, y vive al lado del otro a propósito.
  *
- * 🔴 **La fuente de verdad de los códigos es el gateway, no esta tabla.** Los ocho salen de
+ * La fuente de verdad de los códigos es el gateway, no esta tabla.** Los ocho salen de
  * `TerminalDenial` y `TerminalConflict` en `services/gateway/src/terminal/types.ts`, y las seis
  * puertas que los emiten están en `services/gateway/src/terminal/plugin.ts` (`deny(403|409, …)`).
  * `denegaciones.test.ts` LEE ese fichero del gateway y falla si aparece un código que acá no
@@ -31,7 +31,7 @@ export type TerminalDenialCode =
   /**
    * La consola no mandó su propio token CSRF. NO es un permiso que le falte al operador: es un
    * defecto de la consola, y decir «no autorizado» ahí lo manda a pedir un permiso que ya tiene.
-   * Medido contra producción el 2026-08-23: 403 en 3 de 3 intentos, en dos alias, y la TUI no
+   *  403 en 3 de 3 intentos, en dos alias, y la TUI no
    * abría nunca. Está acá y no en un segundo traductor porque el vocabulario de las negativas del
    * PTY tiene que ser UNO: dos módulos que explican el mismo 403 con palabras distintas es el
    * defecto que este trabajo venía a cerrar.

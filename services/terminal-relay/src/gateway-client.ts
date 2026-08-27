@@ -86,7 +86,7 @@ export interface AgentPresence {
   readonly runtime_uid: number;
   readonly harness: string;
   readonly runtime_facts_observed?: boolean;
-  /** `HOME` del arnés. Opcional: un pty-agent anterior a 2026-08-25 no lo publica. */
+  /** `HOME` del arnés. Opcional para retrocompatibilidad. */
   readonly home?: string;
   readonly codex_home?: string;
   readonly claude_config_dir?: string;
@@ -499,11 +499,8 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
 /**
  * Lectura de un fichero de gobierno dentro del contenedor de un alias.
  *
- * El relay no decide NADA sobre qué se puede leer: la ruta la resuelve el gateway desde hechos
- * medidos y el pty-agent la vuelve a validar contra su propia lista antes de abrir el fichero.
- * Lo que sí es responsabilidad del relay, y está aquí, es que una lectura no pueda hacerle daño
- * al resto: que no se le pregunte a un agente que no sabe contestar, que no se cuelgue para
- * siempre, que no se acumule un volcado en memoria, y que la respuesta sea del alias que se pidió.
+ * El relay transporta la lectura de forma acotada en memoria y tiempo,
+ * validando que la respuesta corresponda al alias y ruta solicitados.
  */
 
 /** Tope de lo que se acumula en memoria. Coincide con `MAX_DOCUMENT_BYTES` del pty-agent. */

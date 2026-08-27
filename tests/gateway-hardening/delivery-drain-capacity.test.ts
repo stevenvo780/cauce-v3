@@ -183,9 +183,7 @@ describe('drain keeps moving when capacity is what gates the claim', () => {
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
-  // INTEGRACIÓN 2026-08-26. El gateway pasa siempre un lote explícito y, por separado, las
-  // capacidades durables. PostgreSQL descuenta de ellas todos los claims vivos del alias entre
-  // sockets, rutas HTTP, reconexiones e instancias de gateway.
+  // El gateway pasa siempre un lote explícito y capacidades durables.
   it('asks the store for an explicit batch size instead of leaving it undefined', async () => {
     // Cupo holgado a propósito: así el que ata es el lote y se ve que el techo explícito manda.
     const repository = fakeRepository();

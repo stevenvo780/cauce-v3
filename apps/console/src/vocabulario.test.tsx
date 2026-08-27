@@ -2,8 +2,8 @@
  * **El guardia del vocabulario. Una tabla, seis vistas, cuatro cosas que no pueden llegar a la
  * pantalla del operador.**
  *
- * 🔴 Esta prueba existe por una razón concreta, y conviene dejarla escrita: **los 646 tests de esta
- * consola pasaban con todos estos defectos delante.** Medido el 2026-08-23:
+ * Esta prueba existe por una razón concreta, y conviene dejarla escrita: **los 646 tests de esta
+ * consola pasaban con todos estos defectos delante.** 
  *
  *  - `/terminal` imprimía, como TEXTO, `<UNKNOWN VALUE=AVAILABLE />` — un componente JSX escapado
  *    con entidades HTML— cuatro veces. Se comprobó quitando el arreglo y volviendo a correr los 155

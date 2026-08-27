@@ -7,7 +7,7 @@ A Model Context Protocol (MCP) server for read-only monitoring of the Cauce agen
 Exposes 5 tools for fleet introspection:
 
 - **`estado_flota`**: Get the current state of all aliases (lease status, last activity, epoch)
-- **`entregas`**: List deliveries filtered by alias and/or status (claimed, acked, dead)
+- **`entregas`**: List deliveries filtered by alias and/or status (e.g., done, failed, dead)
 - **`cadena`**: Follow the delegation chain (agent A → B → C) for a given trace ID
 - **`dead_letters`**: Get dead/stuck messages grouped by rejection cause
 - **`salud`**: One-line fleet health summary suitable for pasting in chat
@@ -199,7 +199,7 @@ Ensure the environment variable is exported before starting the server.
 Check that the PostgreSQL connection is valid and the database exists.
 
 ### "CAUCE_TENANT_ID not set"
-Specify the tenant ID (e.g., "Steven") to scope queries. It must be a tenant, not a room id such as "grp.steven"; the server now refuses to start on an unknown tenant.
+Specify the tenant ID (e.g., "Steven") to scope queries. It must be a known tenant ID, not a room ID.
 
 ### No data returned
 Verify that the tenant ID matches the data in your database, and that the leases/deliveries tables contain records for that tenant.

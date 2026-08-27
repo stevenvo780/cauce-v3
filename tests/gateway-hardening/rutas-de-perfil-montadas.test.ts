@@ -8,33 +8,8 @@ import type {
 import { FixedAuthProvider, fakePool, fakeRepository, grants, noDeliveryWakes, roles, testPrincipal } from './helpers.js';
 
 /**
- * 🔴 **`registerAgentDocumentRoutes` estaba escrita, exportada y PROBADA — y no la llamaba nadie.**
- *
- * Medido el 2026-08-25 con `grep -rn registerAgentDocumentRoutes --include=*.ts services/ apps/`:
- * cero sitios fuera de su propia definición y de sus pruebas. Por eso
- * `GET /v3/console/agents/:alias/documents` daba 404 en producción y la consola enseñaba
- * «las directivas no están en capa 2 y 3». No era que el dato faltara: era que la ruta no estaba
- * montada.
- *
- * Y las dos rutas de CONTENIDO —`.../documents/:kind/content`, GET y PUT— que
- * `apps/console/src/api/client.ts` llamaba desde hacía semanas ni siquiera existían en el
- * servidor: `agent-documents.routes.ts` sólo declaraba el inventario.
- *
- * ── Por qué esta prueba y no la que ya había ─────────────────────────────────────────────────
- *
- * `console-api-contract.test.ts` recorre `client.ts` con una expresión regular buscando la ruta
- * INCRUSTADA en la llamada. Cuando el método arma la ruta en una variable primero
- *
- *     const ruta = `/v3/console/agents/${...}/documents`;
- *     await this.request(ruta);
- *
- * el extractor no la ve, y la ruta queda fuera de la comprobación sin que nada avise. Es
- * exactamente el patrón de `getAgentDocuments` y de `getAgentPerfil`. Así que esa prueba —que es
- * la que tenía que haber cazado el 404— era ciega justo para estos casos.
- *
- * Ésta no depende de ningún extractor: nombra las rutas a mano y las inyecta en el gateway REAL
- * que devuelve `buildGateway`. Lo único que comprueba es que la respuesta NO sea 404, que es la
- * diferencia entre «la función existe» y «el servidor la sirve».
+ * Verifica que las rutas de perfiles y documentos de agentes estén montadas
+ * y registradas en el gateway, respondiendo desde sus propios manejadores.
  */
 
 const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
@@ -241,16 +216,9 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
         ...(ruta.method === 'PUT' ? { payload: { content: 'hola' } } : {})
       });
       /*
-       * Lo que se exige NO es un 200 —con un `fakePool` la lectura puede fallar por cualquier
-       * motivo, y sin pty-agent el contenido contesta 409 a propósito— y tampoco es «no 404» a
-       * secas: `GET /documents` contesta 404 con todo el derecho cuando el alias no está en el
-       * registro, que es justo lo que devuelve el repositorio falso.
-       *
-       * Lo que se exige es que el 404, si lo hay, sea del MANEJADOR y no del ENRUTADOR. Fastify
-       * contesta a una ruta que no existe con `{"message":"Route GET:/... not found"}`; el
-       * manejador contesta con `{"error":"not_found", ...}`. Distinguirlos es exactamente la
-       * diferencia entre «no encontré ese alias» y «esa función no está montada», que es la
-       * confusión que dejó la consola diciendo que catorce alias no tenían directiva.
+       * Se exige que el 404, si lo hay, provenga del manejador y no del enrutador Fastify.
+       * Fastify contesta a una ruta inexistente con `{"message":"Route ... not found"}`;
+       * el manejador devuelve `{"error":"not_found", ...}`.
        */
       const cuerpo: unknown = res.json();
       const message = cuerpo !== null && typeof cuerpo === 'object' && 'message' in cuerpo
@@ -289,10 +257,8 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
 
   it('el contenido de un documento contesta «no medido» y NO 404, que dicen cosas distintas', async () => {
     /*
-     * Es la distinción por la que existe todo esto. Un 404 le dice a la consola «este gateway no
-     * tiene la función» y un 409 le dice «la función está, pero nadie ha medido el contenedor de
-     * este alias». Con el 404, la consola concluía lo primero cuando pasaba lo segundo — y eso es
-     * literalmente lo que el operador leyó como «no están en capa 2 y 3».
+     * Comprueba que la falta de hechos medidos devuelva 409 (no medido)
+     * en lugar de un 404 de ruta no encontrada.
      */
     const app = await gatewayDeOperador();
     const res = await app.inject({ method: 'GET', url: '/v3/console/agents/zeus/documents/directive/content' });

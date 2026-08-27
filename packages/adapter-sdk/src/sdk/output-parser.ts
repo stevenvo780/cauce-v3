@@ -40,14 +40,7 @@ export const NOTIFY_KINDS: readonly NotifyKind[] = [
   "alert",
 ];
 const MAX_OPENCLAW_UNWRAP_DEPTH = 8;
-// Los dos avisos que openclaw 2026.6.6 emite como un payload de texto MAS, no como respuesta.
-// Verificado leyendo el binario instalado en el contenedor `claw`
-// (/usr/lib/node_modules/openclaw/dist/helpers-CYQZyDV5.js:119-127), donde el propio openclaw los
-// clasifica con `isCronToolWarning` (startsWith "⚠️ 🛠️ ") e `isCronMessagePresentationWarning`
-// (el texto es "⚠️ ✉️ message failed" o empieza por "⚠️ ✉️ message failed:"), y los marca en el
-// payload con `isError:true` + `nonTerminalToolErrorWarning`. O sea: el origen del string NO es
-// nuestro —no aparece en ningun fichero de packages/— y openclaw ya sabe que no es una respuesta.
-// El selector de variacion va opcional porque el emisor no garantiza emitirlo.
+// Patrones para detectar advertencias de herramienta de OpenClaw emitidas en lugar de respuestas reales.
 const OPENCLAW_TOOL_WARNING = /^⚠️? \u{1F6E0}️? /u;
 const OPENCLAW_MESSAGE_WARNING = /^⚠️? ✉️? message failed(?::|$)/iu;
 const CANONICAL_MESSAGE_TARGET = /^(?:@all|[a-z][a-z0-9_-]{0,63})$/u;
@@ -71,9 +64,7 @@ function parseJson(text: string, context: string): unknown {
   }
 }
 
-// `artifacts` salio de aqui el 2026-08-02: es el campo que menos veces lleva la respuesta y el que
-// mas veces el modelo omite cuando no produjo ninguno. Exigirlo costaba el turno ENTERO -- reply
-// incluido -- por un `[]` que falta. Ahora se normaliza a lista vacia en parseArtifacts.
+// Claves obligatorias en el sobre de salida estructurada.
 const REQUIRED_OUTPUT_KEYS = ["reply", "messages", "status", "retryable"] as const;
 /** Cota del rastreo de sobres embebidos; con dos ya alcanza para declarar ambigüedad. */
 const MAX_EMBEDDED_ENVELOPE_CANDIDATES = 64;
@@ -124,14 +115,7 @@ function parseMessages(value: unknown): readonly RelayMessage[] {
  * normalizes to an empty list, which produces exactly zero rows downstream.
  */
 function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; descartes: readonly string[] } {
-  // Nada de lo que venga en `notify` puede tumbar el turno. Antes cada regla era un throw, y un
-  // throw aqui se lleva puesto el `reply` ENTERO: el agente hacia el trabajo, escribia su
-  // respuesta, y el duenio recibia un error de esquema. Medido el 2026-08-02 con kratos, dos veces:
-  // escribio {"to":"Miguel"} -- el nombre de la persona, no un handle -- y se perdio un diagnostico
-  // completo de por que Graf no entregaba al OMS.
-  //
-  // `notify` es accesorio: si viene mal, se descarta y se le dice al agente que se descarto y por
-  // que, para que lo corrija en el proximo turno. La respuesta siempre sobrevive.
+  // Directivas de notificación malformadas se descartan registrando el aviso, sin abortar el turno.
   const descartes: string[] = [];
   if (!Array.isArray(value)) {
     return { directives: [], descartes: ["'notify' no era una lista; se descarto entera"] };
@@ -148,7 +132,7 @@ function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; 
       continue;
     }
     if (!CANONICAL_NOTIFY_HANDLE.test(entry.to)) {
-      descartes.push(`notify[${index}] descartada: "${entry.to}" no es un handle de destino. Un handle es minusculas, digitos, punto, guion o guion bajo (por ejemplo steven_dm); NO es el nombre de la persona ni un alias de agente`);
+      descartes.push(`notify[${index}] descartada: "${entry.to}" no es un handle de destino. Un handle es minusculas, digitos, punto, guion o guion bajo (por ejemplo handle_usuario); NO es el nombre de la persona ni un alias de agente`);
       continue;
     }
     if (typeof entry.kind !== "string" || !NOTIFY_KINDS.includes(entry.kind as NotifyKind)) {
@@ -176,8 +160,7 @@ function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; 
 
 
 function parseArtifacts(value: unknown): readonly OutputArtifact[] {
-  // Ausente == ninguno. Es lo que el modelo quiere decir cuando lo omite, y exigirlo costaba el
-  // turno entero por un campo que casi siempre es [].
+  // Si está ausente o es nulo, normaliza a lista vacía.
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
     throw new MalformedOutputError("'artifacts' must be an array");
@@ -251,29 +234,7 @@ function recortarABytes(texto: string, limite: number): string {
 }
 
 /**
- * Un `messages` dirigido al REMITENTE ya no cuesta el turno entero.
- *
- * Esto era `throw AGENT_MESSAGE_PING_PONG`, no reintentable, y el throw se llevaba puesto el
- * `reply` ENTERO: el agente hacia el trabajo, lo escribia, y no llegaba a nadie. Medido sobre
- * 48 h (2026-08-04/05): 5 turnos perdidos asi en 5 alias de 4 tenants —argos y jarvis (Steven),
- * hegel (Jhon), janus (Miguel), midas (Pablo)—; 7 en total sobre 6 alias contando vulcano. El de
- * midas llevaba una lista de 11 prospectos YA HECHA.
- *
- * Y la culpa no era del agente: el `AGENTS.md` de 5 contenedores exige que todo envio que el
- * agente afirme haber hecho este en `messages`, sin excepcion para el remitente. El agente que
- * obedecia al pie de la letra perdia el turno.
- *
- * Mismo principio, mismo patron y mismo precio que `parseNotify` y que las delegaciones de un
- * turno "failed": ningun campo accesorio mal formado puede costar el trabajo. El `reply` ES el
- * trabajo; `messages` es un accesorio, y encima este tiene un canal correcto y evidente al que
- * caer —el `reply` vuelve solo a quien escribio—, asi que descartarlo no pierde ni el destino.
- *
- * El descarte NUNCA es mudo: deja el motivo, el alias y la regla dentro del `reply`, que es
- * durable en `deliveries.result.output.reply`. Descartar en silencio es lo que nos costo dias de
- * diagnostico en otros bugs.
- *
- * El resto del contrato de destinos no se ablanda: self, desconocido, ambiguo y fuera de linea
- * siguen siendo error duro en `validateDelegationTargets`, porque ninguno tiene a donde caer.
+ * Descarta mensajes en `messages` dirigidos al remitente y los añade al aviso o reply para evitar rebotes cíclicos.
  */
 function descartarReboteAlRemitente(
   output: StructuredOutput,
@@ -285,10 +246,6 @@ function descartarReboteAlRemitente(
 
   const aviso = `[Cauce] Se descarto ${rebotes.length} mensaje(s) de "messages" dirigido(s) a "${senderAlias}", que es quien te escribio: al remitente se le contesta SOLO por "reply", que vuelve solo a el. "messages" es unicamente para delegar a un TERCER agente.`;
   const propio = output.reply === null || output.reply.trim() === "" ? "" : output.reply;
-  // El cuerpo rebotado iba al MISMO destinatario que el `reply`, asi que plegarlo ahi no lo
-  // desvia: lo entrega por el canal correcto. Solo se pliega cuando el turno no dejo respuesta
-  // propia —el caso en que, si no, el entregable se perderia entero—; si ya hay `reply`, el
-  // trabajo ya esta dicho y repetirlo duplicaria el texto que lee la persona.
   const cuerpo = propio === ""
     ? recortarABytes(rebotes.map((message) => message.body).join("\n\n"), MAX_FINAL_TEXT_BYTES)
     : propio;
@@ -319,15 +276,7 @@ export function validateDeliveryOutput(
   // `notify` is intentionally NOT covered by this rule: telling a human that a
   // long task failed is the single most valuable proactive message there is.
   if (output.status === "failed" && output.messages.length > 0) {
-    // Esto era un `throw`, y el throw se llevaba puesto el `reply` ENTERO. El agente escribia su
-    // diagnostico, el turno terminaba en "failed", y al remitente le llegaba unicamente
-    // "<alias> could not complete the delegated request: ...". Medido el 2026-08-01: 98 entregas
-    // perdieron su respuesta asi (kant 23, dedalo 15, kratos 12). Un caso concreto: zeus explico
-    // en 1.900 caracteres que el fallo era un sshd ausente y no una ruta, socrates nunca lo vio y
-    // siguio media hora buscando donde no era.
-    //
-    // Descartar los mensajes no pierde nada que hoy exista: un turno "failed" no se materializa
-    // igual, y el gateway lo compuerta aguas abajo. Lo que se gana es que la respuesta sobreviva.
+    // Descarta mensajes delegados en turnos fallidos conservando el texto de la respuesta.
     const descartadas = output.messages.length;
     const aviso = `[Cauce] Se descartaron ${descartadas} delegacion(es): un turno que termina en "failed" no materializa mensajes. Si siguen haciendo falta, repetilas en un turno que cierre en "done", o usa "notify" para avisarle a una persona.`;
     output = {
@@ -356,48 +305,20 @@ export function validateDeliveryOutput(
 
   if (output.status !== "done") return output;
 
-  // Un aviso de herramienta NO es una respuesta, aunque el turno diga "done". Medido el
-  // 2026-08-02 sobre produccion: 30 entregas `done` cuyo `reply` ENTERO era una sola linea
-  // de aviso de openclaw, con CERO delegaciones en las 30. Eso es lo que recibieron Pablo
-  // (seneca/grp.pablo, 3 el 26-jul) y Jhon (hegel/grp.jhon, 1 el 28-jul) al preguntar por su
-  // proyecto: creyeron que el agente les contestaba y era el volcado de una herramienta rota.
-  // El grueso lo comio Steven en grp.steven (jarvis 19, janus 3, midas 2, hegel 1, seneca 1).
-  //
-  // Se degrada a "failed" y no se tira `throw`: un throw deja la entrega SIN `result` —medido:
-  // las cuatro de janus del 27-jul tienen `result` NULL— y entonces la persona no recibe nada.
-  // Con "failed" + texto, `agentResponseText` de packages/store usa el `reply` y el humano lee
-  // una frase que entiende, mientras las metricas siguen contando el turno como lo que fue.
+  // Si la respuesta consiste únicamente en una advertencia de herramienta rota, se degrada a failed.
   if (output.messages.length === 0) {
     const volcado = openclawToolWarningOnly(output.reply);
     if (volcado !== undefined) {
       return {
         ...output,
         status: "failed",
-        // El turno ya corrio y ya tuvo efectos; reintentarlo los duplica. Mismo criterio que
-        // `failedTurnOutput` y que EXECUTION_TIMEOUT_AMBIGUOUS.
         retryable: false,
         reply: `No pude completar la respuesta: se me rompio una herramienta y el turno cerro sin que yo llegara a escribir nada. Volve a preguntarme y lo reintento.\n\n[Cauce] Detalle tecnico del harness: ${volcado}`,
       };
     }
   }
 
-  // A notification is a side effect, never the result of the delivery: an agent
-  // cannot replace its answer to the caller with a DM to a human.
-  //
-  // Esto era un `throw MISSING_FINAL_REPLY`, y el throw se llevaba puesto el turno ENTERO.
-  // Medido el 2026-08-02 en produccion: cuatro entregas a janus el 27-jul (16:13, 16:16, 18:24,
-  // 18:27) murieron asi. Eran las cuatro preguntas seguidas de Miguel desde grp.miguel sobre
-  // accesos y estado de Demeter/Graf ("hola, como estas. Cuantame en que vamos...",
-  // "explicame uno a uno de los links...", "sabes que perfiles tenemos en Demeter..."). Las
-  // cuatro quedaron `status=failed` con `result` NULL: Miguel no recibio NADA, ni respuesta ni
-  // aviso, y no hubo contestacion posterior.
-  //
-  // El guard sigue siendo correcto en su diagnostico —un "done" sin reply y sin delegaciones
-  // de verdad no produjo nada— asi que NO se convierte en "done": eso ensuciaria las metricas y
-  // dejaria al alias pareciendo sano mientras no contesta. Lo que cambia es el precio: en vez de
-  // un error sin cuerpo, un turno "failed" QUE LLEVA TEXTO. Asi la persona del otro lado lee una
-  // frase honesta en vez de esperar media hora un mensaje que nunca llega, y el `notify` y los
-  // `artifacts` que el turno si haya producido sobreviven en el output en lugar de perderse.
+  // Si el turno terminó en 'done' sin reply ni delegaciones, se convierte en failed con mensaje explicativo.
   if (output.reply === null && output.messages.length === 0) {
     return {
       ...output,
@@ -411,25 +332,12 @@ export function validateDeliveryOutput(
 }
 
 /**
- * Openclaw emite sus avisos de herramienta rota como un payload de texto mas, y ese payload cae
- * AL FINAL del turno. Devuelve el aviso cuando el `reply` completo es SOLO eso, y `undefined`
- * en cualquier otro caso.
- *
- * La regla es deliberadamente estrecha —una sola linea, y que el aviso ABRA el texto— porque
- * mencionar el aviso dentro de una respuesta real es legitimo y frecuente. Medido el 2026-08-02
- * sobre produccion: hay 256 entregas `done` cuyo reply contiene el simbolo de aviso; 131 no
- * empiezan por el, 125 si, y de esas 125 solo 30 son de una sola linea. Esas 30 son exactamente
- * las que matchean estos dos patrones, y son las unicas que se tocan. Las otras 226 son
- * respuestas de verdad y quedan intactas: el caso que no se puede romper es argos explicandole
- * a seneca, en 2.685 caracteres, que "tu entrega volvio como `⚠️ ✉️ Message failed`, sin
- * cuerpo" —eso es analisis del fallo, no el fallo— y jarvis con 15.480 caracteres de informe
- * que citan el aviso a mitad de texto.
+ * Detecta si el texto consiste exclusivamente en un aviso de error o advertencia de herramienta de OpenClaw.
  */
 function openclawToolWarningOnly(reply: string | null): string | undefined {
   if (reply === null) return undefined;
   const texto = reply.trim();
-  // Multilinea == hay contenido ademas del aviso. En las 30 entregas medidas el volcado era
-  // SIEMPRE una sola linea (de 20 a 487 caracteres).
+  // Un texto multilínea indica que hay contenido adicional además del aviso.
   if (texto.length === 0 || /[\n\r]/u.test(texto)) return undefined;
   if (OPENCLAW_TOOL_WARNING.test(texto)) return texto;
   if (OPENCLAW_MESSAGE_WARNING.test(texto)) return texto;
@@ -529,26 +437,7 @@ function validateDelegationTargets(
 }
 
 /**
- * BUG: un turno que el harness declaró FALLIDO se registraba como 'done'.
- *
- * Los dialectos nativos traen su propia señal de fracaso, y ninguna se estaba mirando: se tomaba
- * el texto final del turno y se lo daba por bueno. Un `error_max_turns` de Claude o un
- * `turn.failed` de Codex salen con código 0 y con texto en el campo de resultado, así que
- * `shared.ts` —que sólo mira `exitCode` y `status`— tampoco los podía atrapar. Resultado: el
- * sistema cree que salió bien trabajo que fracasó, y nadie lo reintenta ni lo revisa.
- *
- * Campos verificados contra los binarios instalados el 2026-07-29:
- *  - claude 2.1.220: `{type:"result", subtype:"success"|"error_max_turns"|"error_during_execution"
- *    |"error_max_budget_usd"|"error_max_structured_output_retries"|"error", is_error:bool, result, …}`
- *  - codex 0.145.0 (`exec --json`): eventos `turn.failed`, `error`, e `item.completed` con
- *    `item.type:"error"`, junto a `thread.started`/`turn.completed`/`item.completed`.
- *  - openclaw / hermes: los puentes envuelven el objeto nativo (`{result:…}`), y el fracaso
- *    nativo viaja en `ok:false`, `error` o un `status` de la familia de fallo.
- *
- * `retryable:false` a propósito: el turno YA se ejecutó y ya tuvo efectos, así que reintentarlo
- * duplica trabajo. Es el mismo criterio que `EXECUTION_TIMEOUT_AMBIGUOUS` y
- * `PROCESS_EXIT_AMBIGUOUS`. La entrega queda `failed` con el texto del harness en el ack, que es
- * lo que hace visible el fracaso en vez de esconderlo.
+ * Estados de error nativos reportados por los diferentes dialectos de arnés.
  */
 const NATIVE_FAILURE_STATUS: ReadonlySet<string> = new Set([
   "error",
@@ -656,13 +545,7 @@ function boundedDetail(text: string): string {
 }
 
 /**
- * Convierte una señal nativa de fracaso en un resultado `failed` de verdad. Si el harness llegó a
- * emitir un sobre que YA dice `failed`, se respeta tal cual (conserva su `reply` y su
- * `retryable`); en cualquier otro caso se sintetiza el fracaso conservando el texto del harness.
- *
- * `messages: []` no es un descarte silencioso: un turno fallido nunca materializa delegaciones
- * —`validateDeliveryOutput` lo prohíbe explícitamente—, y la entrega termina en `failed`, visible
- * en el ack y en las dead-letters.
+ * Convierte una señal nativa de fracaso en un resultado `failed` de verdad.
  */
 function failedTurnOutput(candidate: unknown, context: string, detail: string): StructuredOutput {
   const parsed = safeCandidate(candidate, context);
@@ -711,10 +594,6 @@ function fallbackTextOutput(text: string, context: string): StructuredOutput {
 
 /**
  * Recorta los objetos JSON de primer nivel embebidos en un texto.
- *
- * Una sola pasada con conciencia de cadenas y escapes, así que unas llaves adentro de un string
- * (`"usá {\"a\":1}"`) no abren ni cierran nada. No se miran objetos anidados: el sobre del
- * contrato siempre es un objeto de primer nivel del texto.
  */
 function embeddedObjects(text: string): readonly string[] {
   const found: string[] = [];
@@ -756,28 +635,7 @@ function isEnvelopeShape(value: unknown): boolean {
 }
 
 /**
- * BUG: el sobre del contrato se perdía en silencio y con él TODAS las delegaciones.
- *
- * Un modelo devuelve el sobre precedido de una frase ("Listo, delegué a kant.\n{…}") o dentro de
- * una valla con texto alrededor. `JSON.parse` falla sobre el texto entero, el texto no empieza con
- * `{`, y el fallback lo convertía en un `reply` de texto plano con `messages: []`. El agente creía
- * haber delegado, la entrega se cerraba en `done` y el destinatario NUNCA recibía el trabajo.
- * Medido en prod el 2026-07-29: 160 respuestas con el sobre publicado como texto desde el 23-jul,
- * 39 de ellas con un `messages` NO VACÍO — 39 delegaciones destruidas en seis días.
- *
- * Qué debe pasar: nunca descartar el sobre en silencio. Y entre las dos opciones,
- *  - degradar con aviso NO sirve: `messages` es el único mecanismo durable para mandarle trabajo a
- *    otro agente, así que un aviso dentro del `reply` le llega a una persona y el agente destino
- *    sigue sin recibir nada. La delegación se pierde igual, sólo que con nota al pie.
- *  - fallar la entrega sí es aceptable como PISO, pero `MALFORMED_OUTPUT` es no reintentable: el
- *    trabajo también se pierde, sólo que ruidosamente.
- * Por eso: se RECUPERA el sobre cuando se lo puede identificar sin ambigüedad, y sólo si no se
- * puede se falla fuerte. El texto que no trae sobre alguno sigue cayendo al fallback de siempre.
- *
- * Deliberadamente estricto para no delegar de más: un candidato sólo cuenta si trae las CINCO
- * claves obligatorias del contrato; dos o más candidatos son ambigüedad y se rechaza sin adivinar.
- * Y el sobre recuperado pasa igual por `validateStructuredOutput` y después por
- * `validateDeliveryOutput`, que rechaza destinos desconocidos, ausentes o fuera de línea.
+ * Recupera un sobre de salida estructurada embebido en texto plano.
  */
 function recoverEmbeddedEnvelope(
   text: string,
@@ -818,24 +676,7 @@ function recoverOrFallback(text: string, context: string): StructuredOutput {
 }
 
 /**
- * Native CLIs sometimes return a plain final answer despite a JSON-output flag.
- * Accept that as a safe reply, but never downgrade an attempted JSON object into
- * plain text: malformed or schema-invalid objects remain hard failures.
- */
-/**
- * Desenvuelve la valla de código con la que un modelo suele rodear su JSON.
- *
- * Un LLM al que le pedís un objeto JSON te lo devuelve envuelto en ```json … ``` con muchísima
- * frecuencia: es lo que hace un modelo bien educado cuando cree que le hablás a un humano. El
- * parser no lo contemplaba, así que `JSON.parse` fallaba, el texto no empezaba con `{` y la salida
- * entera caía al fallback de texto plano: el usuario recibía por Telegram el volcado crudo
- * `{"reply":"…","messages":[],"status":"done"}` en vez de la respuesta. Medido el 2026-07-27: 7
- * mensajes así en 12 h, y es la misma causa de los 32 "contained a malformed JSON object" de la
- * semana, donde la valla además escondía un objeto realmente truncado.
- *
- * Se desenvuelve SÓLO si adentro hay algo con forma de objeto o arreglo. Una respuesta legítima
- * que empieza con un bloque de código —alguien que contesta con un fragmento de programa— no tiene
- * `{` ni `[` como primer carácter útil, así que sigue tratándose como texto y no se la reinterpreta.
+ * Desenvuelve bloques de código markdown (```json ... ```) si contienen un objeto JSON.
  */
 const CODE_FENCE = /^```[A-Za-z0-9_-]*\r?\n([\s\S]*?)\r?\n?```$/u;
 const EMBEDDED_CODE_FENCE = /```[A-Za-z0-9_-]*[\t ]*\r?\n/gu;
@@ -847,11 +688,7 @@ function unwrapCodeFence(candidate: string): string {
   return inner.startsWith("{") || inner.startsWith("[") ? inner : candidate;
 }
 
-/**
- * Encuentra un objeto que empezo dentro de una valla aunque la valla o el objeto no hayan
- * alcanzado a cerrar. Fuera de una valla no se busca una llave arbitraria dentro de la prosa: un
- * ejemplo de JSON en una respuesta normal no debe reinterpretarse como el sobre del contrato.
- */
+/** Localiza un candidato a objeto JSON que inicia tras una valla de código. */
 function fencedObjectCandidate(text: string): string | undefined {
   EMBEDDED_CODE_FENCE.lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -993,23 +830,7 @@ function repairedEnvelope(candidate: string): StructuredOutput | undefined {
 }
 
 /**
- * Rescata el `reply` de un sobre JSON que se truncó, para no perder el turno entero.
- *
- * LA RESPUESTA ES EL TRABAJO. Un turno puede haber corrido veinte minutos, leído medio repositorio
- * y decidido algo caro; que el sobre se corte DESPUÉS del `reply` —en `messages`, en `artifacts`, o
- * a mitad de un campo accesorio— no puede costar todo eso. Antes sí lo costaba: cualquier objeto
- * que empezara con `{` y no parseara moría en `contained a malformed JSON object`, y el usuario veía
- * un error en vez de la respuesta que el agente YA había escrito. A Steven le pasó dos veces
- * seguidas con jarvis el 2026-08-05.
- *
- * Sólo se rescata el `reply`, y a propósito: los campos accesorios de un sobre truncado NO son
- * confiables —un `messages` a medias podría despachar trabajo a quien no corresponde, y un `status`
- * cortado podría dar por buena una entrega fallida—. Así que se devuelve la respuesta y se descarta
- * el resto, que es exactamente "descartar la parte mala y dejar vivo el turno".
- *
- * Se lee carácter a carácter en vez de con una expresión regular porque hay que respetar el
- * escapado de JSON: un `\"` dentro del texto no cierra la cadena, y una regex ingenua cortaría la
- * respuesta a la mitad justo cuando contiene comillas — que es lo habitual en estos sobres.
+ * Rescata el campo `reply` de un sobre JSON truncado para preservar la respuesta generada.
  */
 interface RecoveredReplyString {
   readonly end?: number;
@@ -1324,23 +1145,7 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
         .filter(isObject)
         .map((payload) => payload.text)
         .filter((text): text is string => typeof text === "string" && text.trim().length > 0);
-      // `.at(-1)` a secas era el bug: openclaw APENDA su aviso de herramienta rota como un payload
-      // de texto mas, y ese payload queda EL ULTIMO. Asi el aviso le ganaba a la respuesta real y
-      // se entregaba como si fuera la contestacion del agente, con status "done".
-      //
-      // Que la respuesta real convive con el aviso lo dice el propio openclaw 2026.6.6: en
-      // dist/embedded-agent-L9tQiaO-.js:1796 marca el payload como
-      // `nonTerminalToolErrorWarning: hasUserFacingAssistantReply && ...`, es decir SOLO lo marca
-      // cuando ya hay una respuesta visible para el usuario. Y su propia via de entrega se
-      // recupera igual que aca (helpers-CYQZyDV5.js:152, `hasRecoveredToolWarning`): si los
-      // payloads de error son todos avisos de herramienta, prefiere `finalAssistantVisibleText`.
-      //
-      // Por eso: se descartan los avisos de cola y gana el ultimo texto que SI es una respuesta.
-      // Si no queda ninguno, no se devuelve el aviso: se cae al `finalAssistantVisibleText` de
-      // mas abajo, que es donde openclaw deja el texto real en ese caso. Y si tampoco lo hay,
-      // recien ahi vale el aviso —lo agarra `openclawToolWarningOnly` en validateDeliveryOutput
-      // y el turno termina en "failed" con una frase que la persona entiende, en vez de un
-      // volcado disfrazado de respuesta.
+      // Descarta advertencias de herramienta de cola si existen respuestas reales previas.
       const reales = texts.filter((text) => openclawToolWarningOnly(text) === undefined);
       const payloadText = reales.at(-1);
       if (payloadText !== undefined) {
@@ -1358,11 +1163,7 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
       return sessionResult(parseCandidate(visibleText, "OpenClaw result"), sessionId);
     }
 
-    // No hubo respuesta por ningun lado y lo unico que dijo el turno fue el aviso. Se devuelve el
-    // aviso IGUAL —no se deja caer al desenvuelto de mas abajo, que sobre un objeto sin `reply`
-    // tira MalformedOutputError y mata el turno sin dejar `result`, que es justo el modo de fallo
-    // que este parche existe para quitar. `validateDeliveryOutput` lo reconoce y lo convierte en
-    // un "failed" con texto legible para la persona.
+    // Si sólo se emitió la advertencia, se retorna para su degradación en validateDeliveryOutput.
     if (avisoDeCola !== undefined) {
       return sessionResult(parseCandidate(avisoDeCola, "OpenClaw result"), sessionId);
     }

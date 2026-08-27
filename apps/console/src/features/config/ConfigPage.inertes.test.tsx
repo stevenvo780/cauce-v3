@@ -125,7 +125,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
   /**
    * CONTROL NEGATIVO de la pestaña entera: en «Permisos» no hay una sola columna marcada.
    *
-   * 🔴 El `toBeGreaterThanOrEqual` NO es decoración. La primera versión de este aserto recorría
+   * El `toBeGreaterThanOrEqual` NO es decoración. La primera versión de este aserto recorría
    * `getAllByRole('columnheader')` sobre un snapshot con `acl_edges: []` y `role_policies` de una
    * fila: sin filas no hay columnas, así que el bucle daba cero vueltas y APROBABA. Se comprobó
    * metiendo una entrada falsa en el catálogo —`acl_edges.created_at`— y viendo que esta prueba

@@ -24,7 +24,7 @@ import { describe, expect, it } from 'vitest';
  * que siga declarada en `:root` —o sea, disponible en las ocho vistas— y que ninguna hoja del
  * reparto vuelva a escribir un `font-size` por debajo del suelo.
  *
- * 🔴 **LO QUE ESTE FICHERO NO PUEDE AFIRMAR: que no haya desbordes.** jsdom no calcula layout, y no
+ * LO QUE ESTE FICHERO NO PUEDE AFIRMAR: que no haya desbordes.** jsdom no calcula layout, y no
  * es una creencia heredada: está MEDIDO abajo, en «la premisa», con una caja de 100 px que contiene
  * un hijo de 5000 px. jsdom devuelve `scrollWidth: 0` y `clientWidth: 0`, o sea `0 > 0` = falso
  * SIEMPRE. Una prueba de desborde escrita acá no podría dar rojo ni con la hoja rota a propósito, y
@@ -117,7 +117,7 @@ function enPixeles(valor: string, escala: Map<string, string>, saltos = 0): numb
   return undefined;
 }
 
-/** El suelo. Es la cifra del encargo y la que ya rige en `/config`. */
+/** El suelo. Es el valor configurado y la que ya rige en `/config`. */
 const SUELO = 12.5;
 
 /**

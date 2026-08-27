@@ -1,18 +1,6 @@
 #!/usr/bin/env python3
 """
-Censo de configuración por alias: agrupar por INODO, nunca por ruta.
-
-POR QUÉ ESTA PRUEBA EXISTE, y por qué en `unittest.TestCase` y no en funciones sueltas:
-
-  * El motivo del censo está medido: `kratos` y `atlas` comparten el contenedor `ws-humanizar`,
-    el usuario `dev` y el HOME `/home/dev`. Su `~/.codex/AGENTS.md` no es "un fichero parecido":
-    es EL MISMO INODO (12.942 bytes en los dos). `zeus` y `argos` comparten `CLAUDE.md` igual.
-    Comparar por ruta no detecta nada de eso — las rutas también son iguales, y lo serían igual
-    si fueran dos ficheros distintos. Lo que decide es el inodo.
-  * En `ops/tests/` hay cuatro ficheros `test_*.py` escritos con funciones sueltas al estilo
-    pytest. `python3 -m unittest discover` los CARGA y ejecuta 0 pruebas de ellos, en silencio y
-    con OK final. Medido hoy: la corrida dice "Ran 57 tests ... OK" y esos 57 salen de sólo 2 de
-    los 6 ficheros. Esta prueba usa `unittest.TestCase` para que la corrida oficial la CUENTE.
+Censo de configuración por alias: pruebas unitarias para la agrupación por inodo.
 """
 
 from __future__ import annotations

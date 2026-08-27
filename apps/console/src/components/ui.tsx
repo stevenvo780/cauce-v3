@@ -136,16 +136,7 @@ export function Time({ value, relativo = false }: { value: unknown; relativo?: b
 export const PACIENCIA_MS = 12_000;
 
 /**
- * **Una espera que dice cuánto lleva esperando y qué va a pasar si no llega.**
- *
- * 🔴 Lo que había era un `<p>` y un spinner, y con el gateway lento eso es una pantalla que no
- * dice nada durante minutos: medido el 2026-08-23, `/live` estuvo 180 s así. El operador no
- * puede distinguir «va lento» de «se colgó», y las dos se ven exactamente igual.
- *
- * Ahora, pasada `PACIENCIA_MS`, la tarjeta añade la segunda línea: qué está pasando y que la
- * espera tiene final. El corte de verdad lo pone el cliente HTTP (`TIEMPO_MAXIMO_MS`), y esta
- * frase promete exactamente eso y ni un segundo más — el número sale de la misma constante, no
- * de una copia a mano que un día deje de ser cierta.
+ * Tarjeta de estado de carga con aviso de tiempo prolongado y timeout configurable.
  */
 export function LoadingState({ label = 'Cargando datos del servidor…', paciencia = PACIENCIA_MS }: {
   label?: string;
@@ -179,15 +170,7 @@ export function LoadingState({ label = 'Cargando datos del servidor…', pacienc
 export function ErrorState({ error, onRetry, reintentando = false }: {
   error: Error;
   onRetry: () => void;
-  /**
-   * Hay una lectura en curso ahora mismo.
-   *
-   * Medido en Chrome el 2026-08-23 contra un gateway mudo: al pulsar «Reintentar» la vista ya
-   * tenía otra lectura en vuelo, así que la nueva se encola y **no pasa nada visible hasta 30 s
-   * después** — comprobado que al final SÍ se recupera, pero medio minuto mirando un botón que
-   * parece muerto es indistinguible de un botón que no hace nada. El botón no se deshabilita
-   * (con el refresco automático estaría inerte casi siempre): se dice lo que está pasando.
-   */
+  /** Indica si hay una solicitud de lectura en curso. */
   reintentando?: boolean;
 }) {
   return (
@@ -235,20 +218,7 @@ export function PermissionBadge({ access, permission }: { access?: ConsoleAccess
 }
 
 /**
- * **Pestañas de vista** — el mecanismo con el que la consola dejó de tener dos entradas de menú
- * para el mismo hecho.
- *
- * El 2026-08-22 se fundieron tres pares de vistas redundantes (`/audit` dentro de
- * `/observability`; `/quotas` y `/licenses` dentro de `/accounts`). Fundir NO puede significar
- * apilar dos páginas una debajo de la otra: eso deja una pantalla de cuatro metros que se lee peor
- * que las dos separadas. Cada fusión reparte su contenido en pestañas, y lo que es común a todas
- * —las métricas del mismo instante, la cabecera, el botón de refresco— queda FUERA de las
- * pestañas, visible siempre.
- *
- * Se implementa con `role="tablist"`/`role="tab"` y `aria-selected` en vez de con enlaces: la
- * pestaña no cambia de ruta, y una `<a>` que no navega es una mentira para quien usa lector de
- * pantalla. `aria-controls` apunta al panel, que lleva `role="tabpanel"` y `tabIndex={0}` para que
- * el contenido sea alcanzable con teclado cuando desborda.
+ * Componente accesible de pestañas para alternar vistas dentro de una página.
  */
 export function ViewTabs<T extends string>({ tabs, active, onSelect, label }: {
   tabs: ReadonlyArray<{ id: T; label: string; badge?: ReactNode }>;

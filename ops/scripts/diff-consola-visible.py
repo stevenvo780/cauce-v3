@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
-"""Dice QUE VE el operador de distinto entre dos builds de la consola, y EN QUE RUTA.
-
-Por que existe: el 2026-08-22 se desplego la consola dos veces y el dueno siguio diciendo que no
-veia nada nuevo. La verificacion que se habia hecho era "el bundle cambio y contiene la cadena X",
-y esa comprobacion PASA aunque el cambio caiga en una pagina que el dueno no tenia abierta. Aqui
-todo lo nuevo vivia en /config; el estaba mirando /live. El despliegue estaba sano y la
-verificacion tambien: lo que faltaba era decir en que ruta caia el cambio.
+"""Muestra las diferencias visibles entre dos builds de la consola y la distribución por ruta.
 
 Uso:
     ops/scripts/diff-consola-visible.py VIEJO.js NUEVO.js [VIEJO.css NUEVO.css] [--todo]
 
-Los ficheros se sacan del dist de cada imagen:
+Los ficheros se extraen del dist de cada imagen:
     cid=$(docker create IMAGEN); docker cp $cid:/usr/share/nginx/html/assets DESTINO; docker rm $cid
 
-Salida: textos visibles y selectores que entran y salen, y el reparto por prefijo de selector, que
-es lo que permite decir "esto solo se ve en /config".
+Salida: textos visibles y selectores que entran y salen, y el reparto por prefijo de selector.
 """
 import re
 import sys
@@ -25,17 +18,7 @@ CODIGO = re.compile(r"\bvar\b|\bfunction\b|\breturn\b|\bconst\b|\btypeof\b|\bnul
 
 
 def textos_visibles(js: str) -> set[str]:
-    """Tramos de PROSA del bundle: lo que un humano podria leer en pantalla.
-
-    No se emparejan comillas. Se probo y no sirve: en un bundle minificado hay plantillas con
-    backticks y literales de expresion regular, y cualquier automata de comillas se traga regiones
-    enteras. Medido el 2026-08-22: la version por comillas extraia 1193 "cadenas", casi todas
-    mazacotes de codigo, y NO veia el rotulo que se acababa de desplegar.
-
-    Aqui se buscan tramos legibles sin mirar la sintaxis. Mete ruido, y da igual: el ruido que es
-    IGUAL en los dos ficheros desaparece solo al restar los conjuntos. Lo que sobrevive es el
-    cambio.
-    """
+    """Extrae tramos legibles de prosa del bundle JS."""
     fuera = set()
     for bruto in PROSA.findall(js):
         t = bruto.strip(" .,:;-")
@@ -57,13 +40,7 @@ CASTELLANO = re.compile(r"[áéíóúñÁÉÍÓÚÑ«»¿¡]")
 
 
 def bloque(titulo: str, items: set[str], todo: bool, clasificar: bool = True) -> None:
-    """Imprime el diff separando la senal del ruido del minificador.
-
-    Al renombrar variables, el minificador mueve tramos de prosa que no cambiaron de verdad. Se
-    midio en el caso del 2026-08-22: 271 textos "nuevos" de los que solo 38 eran copy real. Los
-    que llevan tilde, entre-comillas-latinas o signos de apertura son copy del producto casi
-    seguro; el resto va aparte y solo se lista con --todo.
-    """
+    """Imprime el diff separando el copy con caracteres especiales del resto."""
     if not clasificar:
         print(f'\n== {titulo}: {len(items)} ==')
         for t in sorted(items):

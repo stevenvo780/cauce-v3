@@ -8,7 +8,7 @@ import { parseClaudeOutput, parseFinalText, parseOpenClawOutput } from "../src/s
  * Los dos casos de abajo son transcripciones reales de producción (tabla `messages`, 2026-07-29):
  * el modelo antepone una frase al sobre, `JSON.parse` falla sobre el texto entero, el texto no
  * empieza con `{` y todo cae al fallback: `messages` desaparece y el JSON crudo se publica en el
- * chat. 160 respuestas así desde el 23-jul; 39 con `messages` NO vacío.
+ * chat. 160 respuestas así .
  */
 
 const DELEGATION = "argos: verificá el diagnóstico contra el journal de kant antes de cerrar.";

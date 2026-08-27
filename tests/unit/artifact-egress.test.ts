@@ -17,10 +17,8 @@ import {
 } from '../../services/telegram-bridge/src/artifacts.js';
 
 /**
- * Las dos mitades del egreso de adjuntos, juntas: el adaptador convierte la ruta local en `data:`
- * DENTRO del contenedor del agente, y el puente —que se niega a tocar el disco a propósito— lo
- * sube. Ninguna de las dos mitades prueba nada sola: el efecto que Miguel pidió es que el PNG
- * salga del contenedor y llegue al chat, y eso sólo se ve cruzando los dos módulos.
+ * Prueba de integración unitaria del flujo de adjuntos: el adaptador convierte
+ * la ruta local a URI de datos en el contenedor y el puente de Telegram procesa el egreso.
  */
 
 const PNG_BASE64 =

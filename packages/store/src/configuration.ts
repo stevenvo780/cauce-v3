@@ -230,17 +230,7 @@ export class ConfigurationRepository {
            ORDER BY tenant_id,agent_alias,priority,account_id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
-          // `ORDER BY config_revisions.id` CALIFICADO, y no `ORDER BY id` a secas.
-          //
-          // `id::text` deja una columna de salida que TAMBIÉN se llama `id`, y en `ORDER BY` un
-          // nombre suelto se resuelve primero contra la salida: ordenaba el TEXTO. Medido contra
-          // producción el 2026-08-23 con 121 revisiones: la lista salía 99, 98, …, 90, 9, 89, …,
-          // 13, 121, 120, 12, 119, 118 — orden lexicográfico — y el `LIMIT 100` recortaba por ahí,
-          // así que se perdían 21 revisiones, entre ellas el bloque 100–117 entero.
-          //
-          // Importa porque el botón de deshacer sólo puede revertir una revisión que la consola
-          // LISTE: 18 cambios seguidos quedaban fuera de alcance sin que nada avisara. Una
-          // referencia calificada nunca ve el alias de salida, así que ordena por el bigint.
+          // Ordena explícitamente por la columna numérica config_revisions.id para evitar ordenamiento lexicográfico sobre id::text.
           `SELECT id::text,actor_tenant,actor_alias,operation,summary,rolled_back_revision_id::text,created_at
            FROM config_revisions WHERE $1::text IS NULL OR actor_tenant=$1
            ORDER BY config_revisions.id DESC LIMIT 100`, [scope]

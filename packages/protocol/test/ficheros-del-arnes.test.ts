@@ -9,25 +9,9 @@ import {
   type FicheroGenerado,
 } from "../src/ficheros-del-arnes.js";
 
-/**
- * EL GENERADOR DE FICHEROS POR ARNÉS: un perfil -> el contenido de cada fichero que el arnés lee.
- *
- * Lo que estas pruebas fijan, y por qué cada una costó algo en producción:
- *
- *  - EL REPARTO. openclaw no lee un fichero: lee SIETE, y cada uno responde una pregunta distinta.
- *    Meter las responsabilidades en SOUL.md no es un detalle estético: el agente lee los siete como
- *    igual de autoritativos, y un SOUL que habla de tareas le enseña que su identidad son sus
- *    tareas.
- *  - QUE MEMORY Y HEARTBEAT NO SE TOQUEN. Son del agente, no nuestros. Pisarlos es borrarle la
- *    memoria a un compañero, y no hay marcha atrás desde dentro del contenedor.
- *  - EL DETERMINISMO. Cada byte que cambia sin motivo es una reescritura en cada contenedor de la
- *    flota. Se mide comparando dos generaciones, no leyendo el código.
- *  - LOS TOPES. openclaw declara 60.000 por fichero y 150.000 en total. Truncar en silencio deja
- *    una persona a medias —un SOUL entero y un IDENTITY cortado a la mitad de una frase—, que es
- *    peor que no escribir nada.
- */
+// Tests para el generador de ficheros por arnés.
 
-/** Un emoji fuera del BMP: 1 punto de código, 2 unidades UTF-16. El caso que dejó un alias sordo. */
+/** Un emoji fuera del BMP: 1 punto de código, 2 unidades UTF-16. */
 const ASTRAL = "\u{1F389}";
 
 function perfil(overrides: Partial<AgentProfile> = {}): AgentProfile {
@@ -356,8 +340,6 @@ test("un perfil sin nada escrito no produce encabezados huecos", () => {
   };
   const ficheros = ficherosDelArnes("openclaw", { perfil: vacio, hechos: hechos() });
   const soul = textoDe(ficheros, "SOUL.md");
-  // Un encabezado sin nada debajo le enseña al agente que el sistema no sabe la respuesta. Es la
-  // lección del SOUL.md de fábrica de 1806 bytes que llevan cinco alias sin que nadie lo escribiera.
   assert.ok(!soul.includes(MARCA_PERFIL_INICIO), "SOUL vacío no debe llevar bloque");
   assert.equal(soul.trim(), "");
 });

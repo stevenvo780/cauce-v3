@@ -8,7 +8,7 @@ import { LiveFleetPage } from './LiveFleetPage';
 
 /**
  * El editor de ficheros se prueba DESDE la página viva y no aislado, por lo mismo que el editor
- * del rol declarado: la mitad del encargo es DÓNDE vive. Steven pidió un solo sitio, así que una
+ * del rol declarado: la mitad del encargo es DÓNDE vive.  así que una
  * prueba del componente suelto pasaría igual con la pestaña desenganchada del cajón —que es
  * exactamente el estado del que viene todo esto: `agent-documents.ts` llevaba un día escrito con
  * su superficie HTTP en cero y ninguna prueba lo delataba—.

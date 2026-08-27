@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * 🔴 **Las pestañas inactivas eran invisibles en tema claro. Medido en Chrome el 2026-08-23,
+ * Las pestañas inactivas eran invisibles en tema claro. 
  * 1280x900, sobre /accounts y /observability.**
  *
  * `.view-tabs` declara su fondo con un azul de noche fijo (`rgb(13 20 34 / 60%)`) y no tenía

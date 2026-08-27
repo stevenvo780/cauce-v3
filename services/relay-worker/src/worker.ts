@@ -56,8 +56,7 @@ export class OriginRelayWorker {
     this.transports = options.transports;
     this.workerId = options.workerId ?? `origin-relay:${randomUUID()}`;
     this.leaseMs = options.leaseMs ?? 30_000;
-    // Kept as a compatibility input while old deployments still export
-    // CAUCE_RELAY_BATCH_SIZE=20. The safe runtime value is intentionally fixed at one.
+    // Runtime batch size is fixed at one to ensure sequential processing.
     this.batchSize = 1;
     this.maxAttempts = options.maxAttempts ?? 5;
     this.baseRetryMs = options.baseRetryMs ?? 500;
@@ -67,9 +66,7 @@ export class OriginRelayWorker {
     this.onCycleStart = options.onCycleStart ?? (() => undefined);
     this.onCycleSuccess = options.onCycleSuccess ?? (() => undefined);
     this.onCycleError = options.onCycleError ?? (() => undefined);
-    // A lease starts when it is claimed, not when its turn in an in-memory batch begins. Claiming
-    // more than one event and sending sequentially therefore burns the later leases while the
-    // first remote request is in flight. One fresh claim per adapter/cycle removes that queue.
+    // Leases are claimed per adapter and processed one at a time.
     if (this.leaseMs < 1_000 || (options.batchSize !== undefined && options.batchSize < 1) ||
         this.maxAttempts < 1 || this.baseRetryMs < 1 ||
         this.pollMs < 1 || this.errorBackoffMs < 1) {

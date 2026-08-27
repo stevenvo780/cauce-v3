@@ -1,14 +1,8 @@
 /**
- * Coalescencia de avisos de fracaso (migración 014).
+ * Coalescencia de avisos de fracaso en delegaciones:
  *
- * El incidente del 27-jul-2026: un solo mensaje de Telegram produjo 2801 entregas en 35 h y el
- * 84% de la cola de `argos` (223 de 265) eran avisos "X could not complete the delegated
- * request", no trabajo. Cada fracaso de un hijo se materializaba como una entrega NUEVA hacia el
- * padre; el fracaso era su propio combustible.
- *
- * Lo que estos tests fijan no es "se emiten menos mensajes" — eso lo lograría también borrarlos —
- * sino las cuatro cosas juntas: se pliegan, el padre igual se entera, el aviso dice cuántos
- * fueron, y el detalle de cada fracaso sigue estando.
+ * Agrupa notificaciones de fallo redundantes hacia el nodo padre preservando
+ * el recuento agregado y el detalle causal de cada fallo.
  */
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';

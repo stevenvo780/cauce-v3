@@ -9,7 +9,7 @@
 /*
  * Las seis tarjetas del resumen.
  *
- * 🔴 Estaban forzadas a `repeat(5, 1fr)`: a 1280 px cada una queda en ~130 px y los rótulos se
+ * Estaban forzadas a `repeat(5, 1fr)`: a 1280 px cada una queda en ~130 px y los rótulos se
  * truncaban en mitad de la palabra («TU PERMISO DE TERMINAL / CONCE…»). Un rótulo cortado a la
  * mitad no es un rótulo. Con `auto-fit` y un mínimo, se reparten en las columnas que quepan y
  * cada tarjeta conserva el ancho que su texto necesita.
@@ -25,7 +25,7 @@
 .ultimate-terminal-page .terminal-overview strong { overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
 
 /*
- * 🔴 **El inspector de la derecha quedaba RECORTADO a 1280 px, y el corte era invisible.**
+ * El inspector de la derecha quedaba RECORTADO a 1280 px, y el corte era invisible.**
  *
  * `.ultimate-terminal-shell` es una rejilla de `272px minmax(460px, 1fr) 286px`, o sea que pide
  * 1.018 px como mínimo, y a 1280 el contenedor mide 941 (barra lateral 248 + relleno). Con
@@ -311,7 +311,7 @@
 /* ------------------------------------------------------------------------------------------- *
  * La cabecera de la sesión, medida a 1280 px el 2026-08-23.
  *
- * 🔴 El `.eyebrow` con «Steven · epoch 14» medía 11 px de ANCHO por 190 px de alto: una letra por
+ * El `.eyebrow` con «Steven · epoch 14» medía 11 px de ANCHO por 190 px de alto: una letra por
  * línea, corriendo en vertical por encima de «ROOM DE ORIGEN». `.session-identity` ya tenía
  * `min-width: 0` en styles.css, pero el `<div>` de dentro no, y a 1280 el panel del centro se
  * queda en 428 px: los controles (selector de room + cuatro botones de modo) se llevan casi todo y
@@ -499,7 +499,7 @@
  * LA PÁGINA DEL TERMINAL SE CIÑE A LA VENTANA. NO ES UN TEXTO.
  * ---------------------------------------------------------------------------------------------
  *
- * 🔴 `styles.css` le pone a `main` la anchura de LECTURA de la consola: `width: min(1500px, 100%)`
+ * `styles.css` le pone a `main` la anchura de LECTURA de la consola: `width: min(1500px, 100%)`
  * centrado. Está bien para una tabla o un formulario y está mal para un espejo de una TUI, que es
  * una rejilla de caracteres: cada píxel que no se le da es una columna que no se ve. MEDIDO en
  * Chrome a 1920x1080, con una sesión abierta y la vista real: `main` medía 1.500 px de los 1.920
@@ -515,7 +515,7 @@ main:has(> .ultimate-terminal-page) { width: 100%; }
 /*
  * Y EL ALTO, SIN NÚMERO MÁGICO.
  *
- * 🔴 Aquí había `height: clamp(430px, calc(100dvh - 190px), 1180px)`. Ese 190 pretendía ser todo
+ * Aquí había `height: clamp(430px, calc(100dvh - 190px), 1180px)`. Ese 190 pretendía ser todo
  * lo que hay ENCIMA de la caja —barra superior, relleno de `main`, cabecera de página, la tira de
  * seis contadores, el aviso de plazas—. MEDIDO: son **228 px**, no 190. La caja se pasaba de la
  * ventana por 38 px, el documento medía 1.188 en una pantalla de 1.080 y el borde de abajo del
@@ -581,7 +581,7 @@ main:has(> .ultimate-terminal-page[data-tui="abierta"]) {
 .terminal-panel-body .terminal-active-grid,
 .terminal-panel-body .terminal-console { min-height: 0; overflow: hidden; }
 /*
- * 🔴 **Y `flex: 1` en la consola, que es donde se perdía el ancho ganado.**
+ * Y `flex: 1` en la consola, que es donde se perdía el ancho ganado.**
  *
  * `.terminal-active-grid` lleva `display: flex` en un `style` en línea (OperatorWorkspace), así
  * que `.terminal-console` NO es una celda de rejilla sino un hijo de flex, y `styles.css` no le

@@ -9,14 +9,8 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Reparto de cupo y reaper que no vuelve a pagar el trabajo dos veces.
- *
- * Incidente que motiva todo esto (medido el 2026-07-27 con SQL sobre producción): en 7 días el
- * bus pagó 6.106 corridas de harness para 4.050 entregas reales. En los agentes con harness
- * codex, 2.240 corridas para 1.312 entregas: 71% de desperdicio, y eso agotó la cuota SEMANAL
- * de una cuenta ChatGPT Pro en 5 horas. El error dominante fueron 1.001 "ACK timeout" de 1.622.
- * Del otro lado, midas (asistente de una persona) esperaba 114 minutos de mediana antes de que
- * su entrega fuera siquiera reclamada.
+ * Reparto de cupo y políticas de admisión/reintento para optimizar concurrencia
+ * y evitar ejecuciones redundantes de harnesses.
  */
 
 let database: TestDatabase;

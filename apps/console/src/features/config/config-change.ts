@@ -85,7 +85,7 @@ export function describeConfigError(
  * **Un 403 al LEER la configuración es una falta de permiso, no una caída del control plane.**
  *
  * `GET /v3/console/config` exige `requireOperatorPermission(actor,'control')`. La barra lateral ya
- * lo sabía desde el 2026-08-22 y dejaba la entrada inerte con el motivo escrito
+ * lo sabía 
  * (`configNavAvailability`), pero quien llegaba a `/config` por un marcador o pegando la URL se
  * saltaba el menú entero y aterrizaba en el `ErrorState` genérico: «No se pudo leer Cauce V3 /
  * Forbidden / Reintentar». Tres mentiras en una línea —Cauce se lee perfectamente, «Forbidden» no

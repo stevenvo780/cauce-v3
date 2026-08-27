@@ -8,21 +8,7 @@ import { primerasLineas } from './directiva';
 import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
 
 /**
- * LA PESTAÑA «DIRECTIVA» DEL CAJÓN: UN RESUMEN DE DOS RENGLONES Y UNA PUERTA.
- *
- * Hasta esta ronda, esta pestaña metía las cuatro secciones enteras dentro del cajón. MEDIDO en
- * Chrome contra producción, sobre `zeus`: 686 px (capa 1) + 387 (capa 2) + 368 (capa 3) + 679
- * (capa 4) = **2.120 px** de contenido dentro de una columna de **420 px** de la que se ven
- * **1.000**. Steven lo dijo antes de que nadie lo midiera: «tienen demasiados datos».
- *
- * Así que las capas se van a un diálogo ancho (`DirectivaModal`) y acá queda lo único que se
- * responde de un vistazo: **quién dice que es** este bot y **cuánto le queda de tope**. Las dos
- * cosas caben en la parte visible del cajón sin desplazarse, que es la diferencia entre un dato y
- * un dato que hay que ir a buscar.
- *
- * Lo que NO queda acá, y es a propósito: ni el editor, ni el manual, ni la memoria, ni los avisos
- * de solapamiento. Un resumen que además edita es un editor pequeño, y un editor de 420 px es
- * justamente lo que había.
+ * Pestaña de resumen de directiva y rol declarado de un agente en el cajón lateral.
  */
 
 export interface DirectivaTabProps {

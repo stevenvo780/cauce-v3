@@ -1,45 +1,17 @@
 #!/usr/bin/env node
 /*
- * MEDIR LA GEOMETRÍA DE LA TERMINAL EN UN CHROME DE VERDAD.
+ * Medición de geometría y maquetación de la terminal en Chrome headless.
  *
- * 🔴 Por qué existe, y por qué no puede ser una prueba de vitest. Los tres defectos que este
- * arnés vigila son de MAQUETACIÓN, y jsdom no tiene maquetación: `getBoundingClientRect()`
- * devuelve ceros, `proposeDimensions()` de xterm no devuelve nada y `fit()` no mueve un píxel. Una
- * prueba de vitest sobre esto daría verde dijera lo que dijera el código —y eso ya pasó: la suite
- * entera de la consola estaba en verde mientras la PTY nacía de 20 filas fijas—.
+ * Evalúa:
+ *   1. Que la página se ajuste a la ventana sin desbordamiento.
+ *   2. Proporción de ancho de pantalla disponible para el terminal.
+ *   3. Propagación del cambio de tamaño (resize events y filas/columnas PTY).
+ *   4. Proporción de alto de pantalla y número mínimo de filas disponibles.
  *
- * Lo que mide, con la vista REAL y con una sesión PTY REALMENTE abierta (el banco de mocks de
- * `apps/console/src/mocks/terminal-demo.ts` es lo que permite llegar hasta ahí sin backend):
- *
- *   1. Que la página CABE en la ventana. Medido antes del arreglo a 1920x1080: el documento medía
- *      1.188 px de alto en una pantalla de 1.080, o sea que el borde de abajo del terminal quedaba
- *      debajo del pliegue. La causa era `height: clamp(430px, calc(100dvh - 190px), 1180px)`: ese
- *      190 pretendía ser todo lo que hay encima de la caja y son 228.
- *   2. Cuánto ancho de pantalla llega al terminal. Medido antes: `main` se quedaba en los 1.500 px
- *      de anchura de LECTURA de la consola, el hueco del terminal medía 804 px de una pantalla de
- *      1.920 —el 41,9 %— y la PTY salía de 99 columnas.
- *   3. Que el tamaño SE PROPAGA: que cambiar la ventana cambia las columnas y filas que se le
- *      declaran al agente por el socket. Es lo único que acredita que el `ResizeObserver`, el
- *      `fit()` y la trama `resize` están enganchados de punta a punta.
- *   4. Cuánto ALTO de pantalla llega al terminal, y cuántas FILAS quedan. Medido antes del arreglo
- *      del 2026-08-24, con esta misma rama: a 1920x1080 el hueco del terminal medía 599 px de
- *      1.080 —el 55,5 %— y a 1280x720, 169 px: **9 filas**, que no alcanzan para leer una TUI. El
- *      alto se iba en cromo que no cambia mientras mirás una terminal (el título de la página, los
- *      seis contadores, el pie de doctrina, la identidad del alias repetida bajo su propia
- *      pestaña). El reparto vertical completo se imprime debajo de cada medida para que el
- *      siguiente que lo mire no tenga que volver a instrumentar la página.
- *
- *   Uso:
- *     node ops/console-legibilidad/medir-terminal.mjs              # informe, siempre sale 0
- *     node ops/console-legibilidad/medir-terminal.mjs --exigir     # sale 1 si algo está mal
- *     BASE=http://127.0.0.1:4188 node ops/console-legibilidad/medir-terminal.mjs
- *
- * Sin `BASE` levanta él mismo `vite` en modo mock y lo apaga al terminar. Necesita Chrome
- * (`/usr/bin/google-chrome`); no necesita servidor X, ni puppeteer, ni backend.
- *
- * Lo que este arnés NO mide: la CSP. El servidor de desarrollo no manda la cabecera, así que las
- * violaciones de `style-src` se cuentan aparte, sobre un `dist` servido con
- * `ops/console-legibilidad/servir-con-csp.mjs`.
+ * Uso:
+ *   node ops/console-legibilidad/medir-terminal.mjs              # informe
+ *   node ops/console-legibilidad/medir-terminal.mjs --exigir     # falla con código 1 si incumple
+ *   BASE=http://127.0.0.1:4188 node ops/console-legibilidad/medir-terminal.mjs
  */
 import { spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
@@ -50,37 +22,17 @@ const AQUI = dirname(fileURLToPath(import.meta.url));
 const RAIZ = resolve(AQUI, '..', '..');
 const EXIGIR = process.argv.includes('--exigir');
 
-/* Umbrales. Salen de lo MEDIDO después del arreglo, con holgura para el ruido de un píxel. */
-const MINIMO_ANCHO_UTIL = 0.5; // el hueco del terminal, sobre el ancho de la ventana
-/*
- * El alto útil es el encargo, con número: «a 1920x1080 el terminal usa al menos el 60 % del alto
- * de la ventana». No se pide a 1280x720 porque ahí la barra superior de la consola (58 px fijos)
- * pesa el doble en proporción; lo que se exige en la ventana chica son FILAS, que es lo que de
- * verdad decide si una TUI se puede leer.
- */
-const MINIMO_ALTO_UTIL = 0.6;
-/*
- * 18 filas. Una TUI de agente pinta su cabecera, su caja de entrada y su pie: por debajo de ~18
- * filas no queda conversación a la vista y la ventana sirve para saber que el agente existe, no
- * para leer lo que está haciendo. Medido antes del arreglo: 9.
- */
-const MINIMO_FILAS = 18;
+/* Umbrales de maquetación y legibilidad. */
+const MINIMO_ANCHO_UTIL = 0.5; // proporción mínima de ancho
+const MINIMO_ALTO_UTIL = 0.6;  // proporción mínima de alto útil en 1920x1080
+const MINIMO_FILAS = 18;       // mínimo de filas requeridas para legibilidad
 const ANCHA = { w: 1920, h: 1080 };
 const ESTRECHA = { w: 1280, h: 720 };
 
 const dormir = (ms) => new Promise((seguir) => setTimeout(seguir, ms));
 
 /**
- * Un puerto LIBRE, pedido al núcleo, y `--strictPort` para que vite no se corra solo a otro.
- *
- * 🔴 **Esto no es higiene: es la diferencia entre medir tu árbol y medir el de otro.** El puerto
- * estaba escrito a mano (4188) y el arranque se daba por bueno en cuanto ALGO contestaba ahí. El
- * 2026-08-24 había un `vite` de otro worktree —`/workspace/wt-terminal`, de otro agente, levantado
- * hacía una hora— ocupando ese puerto: el arnés lo adoptó sin decir palabra y devolvió, dos veces
- * seguidas y hasta el píxel, las medidas de una rama ajena. Un cambio real en esta rama salía
- * «sin efecto», que es la forma más cara de equivocarse: te hace desandar un arreglo que estaba
- * bien. Con puerto efímero no hay a quién adoptar, y si aun así el puerto se ocupara,
- * `--strictPort` hace que vite muera en vez de mudarse.
+ * Obtiene un puerto libre efímero para arrancar Vite con `--strictPort`.
  */
 async function puertoLibre() {
   const { createServer } = await import('node:net');
@@ -121,17 +73,7 @@ async function levantarVite() {
 }
 
 /**
- * Abre la vista, engancha una sesión PTY y deja la página lista para medir.
- *
- * Se pide primero el modo **TUI en solo lectura**, que es para lo que esta vista existe («mirar la
- * pantalla que el agente ya tiene pintada») y el que usa Steven; su barra de sesión lleva una
- * pastilla más que la de una shell nueva, así que medir sólo la shell mide una barra más estrecha
- * que la real. Abre de un clic y sin diálogo, a propósito: no se está creando una shell.
- *
- * Si el destino no publica el modo harness, el botón «TUI» está deshabilitado y se cae al camino de
- * la shell, con su diálogo de motivo. Los dos caminos acaban en un `.pty-mount`, que es lo que se
- * mide. (Hasta el 2026-08-24 SIEMPRE se caía al segundo: el banco publicaba el modo con otro
- * nombre y el botón «TUI» nunca llegaba a estar habilitado. Ver `mocks/terminal-demo.ts`.)
+ * Abre la vista, conecta una sesión PTY y deja la página lista para medir.
  */
 async function abrirSesion(page, base) {
   await page.goto(`${base}/terminal`, 3000);

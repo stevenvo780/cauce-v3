@@ -74,17 +74,7 @@ const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 const MAX_AGENT_EXECUTION_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
 /**
  * Techo absoluto de la espera en el candado de sesión, medido desde que la entrega se acepta.
- *
- * No es un número de gusto. Sobre las 4.280 entregas de producción que sí toman candado (las que
- * traen `origin.conversation_id`), 2.416 quedaron encoladas detrás de otra del mismo candado. De
- * esas: 584 esperaron más de 1 h, 339 más de 2 h, 130 más de 6 h, 129 más de 12 h y 129 más de 24 h.
- * Entre las 6 h y las 12 h hay exactamente UNA entrega. Es decir: pasadas las 6 h la cola ya no
- * contiene trabajo que vaya a ser servido, contiene 129 zombis que nadie va a atender (la espera
- * máxima medida fue de 3,26 días). Cortar en 6 h mata a los 129 y le cuesta una sola espera legítima
- * de la muestra completa.
- *
- * Se acota además por el `timeout_ms` que pidió el emisor: nadie que pidió 10 minutos de trabajo
- * quiere que su entrega siga viva 6 horas después sin haber arrancado.
+ * Se acota además por el `timeout_ms` configurado en la entrega.
  */
 const DEFAULT_QUEUE_WAIT_TIMEOUT_MS = 6 * 60 * 60_000;
 
@@ -225,48 +215,11 @@ export class AdapterEngine {
       return task;
     }
     /**
-     * ACÁ se resuelve el reclamo del dueño del sistema: "estar SIEMPRE disponibles para
-     * responder", sin cancelar ni acortar la tarea en curso.
-     *
-     * El bloqueo real no estaba en el gateway sino en este candado. `reserveSession` es FIFO
-     * estricta por clave de sesión, y una entrega agente-a-agente HEREDA el `origin` de la
-     * persona que originó la cadena (mismo adapter, mismo conversation_id), así que
-     * `sessionFromDelivery` le daba la MISMA clave: la delegación que volvía tomaba el candado
-     * de la conversación del dueño y lo retenía toda su corrida. El mensaje del dueño entraba
-     * rápido al gateway y se quedaba esperando ahí. 114 minutos de mediana en midas.
-     *
-     * Alternativas evaluadas:
-     *  - Cola con prioridad en el candado: NO sirve. El que bloquea ya está ejecutando, no
-     *    encolado; reordenar la cola no lo saca del medio y el dueño sigue esperando los 40
-     *    minutos. Sólo ayudaría con dos o más ESPERANDO, que no es el caso que duele.
-     *  - Interrumpir la tarea larga: prohibido por el requisito ("si tardan, tardan, normal").
-     *  - Dos carriles de sesión: es lo único que da disponibilidad sin tocar la tarea en curso.
-     *
-     * COSTO, y es real: el carril de agentes abre otra sesión nativa del harness, así que el
-     * agente pierde el hilo conversacional entre lo que hizo para su dueño y lo que hace cuando
-     * vuelve una delegación. Se paga porque el SDK ya estaba preparado para eso: para una
-     * `agent.response`, `promptForDelivery` reconstruye el pedido original y lo manda explícito
-     * en el prompt (`cauce.agent_response_continuation.v1`), justamente porque nunca se dio por
-     * sentado que el harness se acordara. Y la respuesta le sigue llegando a la persona por el
-     * relay al origen. Lo que se pierde es contexto implícito; lo que se gana es que el dueño
-     * tenga a su asistente disponible siempre.
-     *
-     * Segundo costo: dos procesos de harness a la vez para un mismo alias. Ya pasaba entre
-     * conversaciones distintas, y ahora el control de admisión del gateway lo acota a
-     * `maxInflight + humanReserved` (4 por defecto) contra las 71 en vuelo del incidente.
+     * Determina el carril de sesión (human vs agent) y la clave correspondiente.
+     * Tráfico entre agentes usa carril dedicado para no bloquear la atención directa al usuario.
      */
     const fanin = delivery.body.type === "agent.fanin";
-    /*
-     * SESION COMPARTIDA: un solo carril y una sola clave, la del alias.
-     *
-     * Los dos carriles existen para que el dueno no espere detras de una delegacion larga, y con
-     * sesiones nativas separadas eso funciona. Con la sesion compartida encendida se da vuelta:
-     * hay UNA sola caja de entrada en la TUI, asi que dos claves son dos candados sobre un unico
-     * teclado y los turnos se pisan. Medido el 2026-07-31 en kratos: cuatro degradaciones
-     * input_busy seguidas, y el texto que bloqueaba la caja lo habia tecleado el propio dueno.
-     * Colapsar al alias hace que "una sesion por agente" sea un INVARIANTE y no un resultado
-     * observado: el candado ya existia, sólo estaba parametrizado por canal.
-     */
+    // Sesión compartida: utiliza un único carril asociado al alias para sincronizar la TUI.
     const compartida = process.env.CAUCE_SHARED_SESSION === "1";
     const lane: SessionLane = compartida
       ? "human"
@@ -520,13 +473,7 @@ export class AdapterEngine {
     const controller = new AbortController();
     this.controllers.set(delivery.delivery_id, controller);
 
-    // Hacer cola NO es ejecutar. El candado de sesión serializa las entregas del mismo hilo y la
-    // espera puede durar horas (p75 medido en producción: 52,9 min; máximo: 3,26 días). Hasta
-    // 2026-07-29 el ACK 'started' salía acá, antes de tomar el candado: la entrega se declaraba en
-    // ejecución mientras hacía fila, el store le sellaba `execution_started_at` y cada renovación
-    // empujaba `ack_deadline_at` a now()+30 min, así que el reaper no la recogía nunca. 44.545 ACK
-    // 'started' para 5.270 entregas —8,45 por entrega— eran en buena parte eso: latidos de cola
-    // disfrazados de ejecución.
+    // Espera a adquirir el candado de sesión antes de transicionar a estado 'started'.
     if (reservation !== undefined) {
       const acquired = await this.awaitSessionTurn(
         accepted.record,
@@ -564,11 +511,7 @@ export class AdapterEngine {
     let executionFailure: unknown;
     let attachments: MaterializedAttachments | undefined;
     /**
-     * `execution_started` es la intención durable preinvoke y se fsynca ANTES de invocar. El punto
-     * de no reintento es el receipt exacto que el gateway aplica o reconoce como duplicado y que el
-     * adaptador vuelve a fsyncar. Sin ese receipt, recovery sabe que el harness seguía detrás del
-     * gate y puede reintentar; con receipt, un crash anterior al spawn se conserva para revisión
-     * manual. Esa ventana conservadora es preferible a ejecutar dos veces un turno con efectos.
+     * Registro de intención durable preinvoke antes de la invocación del harness.
      */
     try {
       const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
@@ -591,9 +534,6 @@ export class AdapterEngine {
         ? this.store.processedRepliesForFanin(delivery)
         : [];
       if (messageType === "agent.fanin") {
-        // El fan-in no invoca harness: lo sintetiza el SDK, es determinístico y gratis.
-        // Por eso tampoco emite `execution_started`: reintentarlo no cuesta cuota, y marcarlo
-        // como "ya ejecutado" sólo lo mandaría a revisión manual sin motivo.
         output = validateDeliveryOutput(synthesizeFaninOutput(
           delivery.body,
           processedReplies.length === 0 ? {} : { processedReplies },
@@ -609,19 +549,7 @@ export class AdapterEngine {
           const base = promptForDelivery(delivery, this.store);
           return attachments === undefined ? base : `${base}\n\n${attachments.prompt}`;
         })();
-        // Esperar el turno de sesión ACÁ, y no adentro de `harness.execute`, es lo que permite
-        // decir "arrancó de verdad". Hasta esta línea la entrega puede llevar minutos admitida,
-        // ACKeando 'started' y renovando cada 60 s, sin haber gastado un centavo. Ese ACK
-        // 'started' era el que el reaper tomaba como prueba de ejecución para NO reintentar, y
-        // por eso mandaba a dead trabajo que nunca había corrido.
-        //
-        // `wait` es idempotente: `harness.execute` vuelve a esperar la misma promesa, que para
-        // entonces ya está resuelta.
-        // INTEGRACIÓN 2026-07-29: `awaitSessionTurn` ya esperó el candado ANTES de la
-        // transición a 'started', así que para cuando se llega acá la reserva está adquirida y
-        // este `wait` resuelve de inmediato (`reservation.wait` devuelve la misma promesa ya
-        // resuelta). Se conserva porque es la garantía local de que no se invoca el harness sin
-        // el candado, independiente de por qué camino se llegó.
+        // Garantiza la adquisición de la reserva de sesión antes de invocar el arnés.
         if (reservation !== undefined) await reservation.wait(controller.signal);
         // Se emite como renovación de garra a propósito: reusa la confirmación de propiedad que
         // ya existe, así que además funciona como último chequeo de "esto sigue siendo mío"
@@ -731,28 +659,9 @@ export class AdapterEngine {
   }
 
   /**
-   * Espera el turno del candado de sesión SIN declarar ejecución.
-   *
-   * Mientras hace cola la entrega late en fase 'accepted', no 'started'. Los dos latidos usan la
-   * misma maquinaria (misma cadencia, mismo watchdog fail-closed) y renuevan igual la garra, pero
-   * dicen cosas distintas y el store los trata distinto: 'accepted' sobre una fila 'accepted' sólo
-   * corre `ack_deadline_at`; 'started' sella `execution_started_at` y mueve la fila a 'started'.
-   * Esa es toda la diferencia entre "está en cola" y "está trabajando", y es la que faltaba.
-   *
-   * Por qué latir y no callar: si la entrega encolada no manda nada, su garra vence a los 30 min
-   * (CAUCE_ACK_DEADLINE_MS) y el reaper la reintenta. Medido sobre producción eso alcanza al 41%
-   * de las entregas encoladas (997 de 2.416 esperaron más de 30 min), y el reintento no es gratis:
-   * `handleDelivery` encadena el intento n+1 detrás de la tarea del intento n, que sigue en la
-   * cola, así que la entrega termina EJECUTÁNDOSE DOS VECES —una con la garra perdida y otra con
-   * la nueva— con todos sus efectos laterales duplicados. Con max_attempts=3 y una espera p90 de
-   * 2h13m, además, la entrega se agota en dead-letters antes de haber corrido una sola vez.
-   *
-   * Y por qué el latido no la vuelve inmortal: la espera tiene techo absoluto
-   * (`queueWaitTimeoutMs`), y al vencer se falla RETRYABLE y no ambiguo. La entrega vuelve a la
-   * cola limpia, sin `execution_started_at` sellado y sin quedar "held for manual replay", porque
-   * es verdad que nunca ejecutó.
-   *
-   * Devuelve `false` cuando ya cerró la entrega con un error y el llamador debe cortar.
+   * Espera el turno del candado de sesión manteniendo la renovación de la entrega en fase 'accepted'.
+   * Si la espera supera `queueWaitTimeoutMs`, falla con error retryable sin declarar inicio de ejecución.
+   * Devuelve `false` cuando la entrega fue cerrada por error o cancelación.
    */
   private async awaitSessionTurn(
     record: InboxRecord,
@@ -895,10 +804,7 @@ export class AdapterEngine {
    */
   private async emitClaimRenewal(
     record: InboxRecord,
-    // INTEGRACIÓN 2026-07-29: los dos ejes son ortogonales y por eso son dos parámetros.
-    // `phase` dice DÓNDE está la entrega (haciendo cola por el candado de sesión = 'accepted',
-    // o en preinvoke/ejecución = 'started'); `options.executionStarted` distingue la intención
-    // preinvoke exacta que exige receipt remoto. Un latido de cola nunca lleva esa marca.
+    // `phase` indica la fase de la entrega ('accepted' o 'started'); `executionStarted` marca intención preinvoke.
     phase: "accepted" | "started" = "started",
     options: { readonly executionStarted?: boolean } = {},
   ): Promise<void> {
@@ -1025,14 +931,7 @@ export class AdapterEngine {
 }
 
 /**
- * Un mensaje de Telegram con solo una foto, un audio o un documento no trae `text` ni
- * `prompt`. Antes eso reventaba con INVALID_DELIVERY no reintentable, así que la persona
- * mandaba una imagen y **no recibía absolutamente nada**: ni respuesta ni error. Verificado
- * el 2026-07-25, con un usuario mandándole seis fotos seguidas a salva justo después de que
- * el agente le dijera que le mandara archivos.
- *
- * Describir el adjunto no es procesarlo. El agente sigue sin poder ver la imagen, pero ahora
- * sabe que llegó y puede decirlo, que es infinitamente mejor que el silencio.
+ * Genera una descripción textual para entregas que contienen únicamente adjuntos multimedia.
  */
 function describeMedia(body: Record<string, unknown>): string | undefined {
   const verified = body.attachments_v1;
@@ -1222,51 +1121,12 @@ function promptForDelivery(delivery: Delivery, store: DurableStore): string {
 }
 
 /**
- * Identidad de la CONVERSACIÓN, no del transporte ni del intento.
- *
- * `auth-v2` mezclaba tres cosas distintas en una sola clave y por eso el mismo humano, en el
- * mismo chat, con el mismo agente, caía en sesiones nativas distintas — el síntoma que el dueño
- * describe como "se duplican las instancias": escribe por Telegram y le contesta alguien que no
- * recuerda la conversación.
- *
- *  1. `attempt`. Medido sobre prod el 2026-07-29: 1499 de 5312 entregas (28,2 %) llegaron con
- *     attempt > 1, y cada una estrenó una sesión SIN memoria para responderle a la persona. El
- *     costo era peor que la duplicación: la sesión del reintento acumula un intercambio real con
- *     el humano que la sesión "principal" (attempt 1) nunca ve, así que las dos divergen para
- *     siempre. Se saca.
- *
- *     `attempt` entró en 44521b6 para frenar el crecimiento del transcript en los reintentos
- *     (socrates: ~300K → 1,8MB en 4 intentos). Ese caso -- el intento anterior murió a mitad de
- *     ejecución -- YA lo frena `DurableStore.accept`, que desde e5c909e devuelve `blocked` a todo
- *     reintento cuyo intento previo no haya terminado en `failed` con `retryable: true`. Cortar
- *     la identidad de la conversación era una defensa cara y colocada en el lugar equivocado; el
- *     techo de transcript va en el harness, no en la clave.
- *
- *  2. `bridge_tenant`. Es el tenant del PUENTE por el que entró el mensaje, no el de nadie que
- *     importe para la separación: nunca fue una frontera de seguridad. Peor, cuando falta cae a
- *     `delivery.tenant_id`, que es el tenant del EMISOR (el agente que delega), así que la misma
- *     conversación cambiaba de clave según quién publicara. En prod hay 6 conversaciones de
- *     Telegram donde las filas viejas traen `bridge_tenant` vacío y las nuevas lo traen puesto:
- *     mismo chat, mismo bot, mismo alias, dos sesiones. Se reemplaza por el tenant del
- *     RECEPTOR, que sale de la configuración local del adaptador y nadie del otro lado del bus
- *     puede falsificar.
- *
- *  3. Sin `origin` no había clave, y por lo tanto no había continuidad: 810 de 5312 entregas
- *     (consola, publicaciones de adaptador, herramientas de ops) corrieron cada una en una
- *     sesión nueva. Ahora esas caen en una conversación derivada del actor autenticado
- *     (`operator:<tenant>:<alias>`), que sobrevive al re-login porque no depende del `sid`.
- *
- * Lo que la clave SIGUE separando, a propósito: alias receptor, tenant receptor, adaptador,
- * canal, `conversation_id` y el alcance de sesión que publica el puente (`session_id`, que en
- * Telegram codifica bot+chat+usuario o bot+chat+hilo según `session_scope`). El carril
- * humano/agente lo agrega `HarnessAdapter.laneSessionKey`, no esta función.
+ * Identidad estable de la conversación basada en origen, canal, tenant receptor y ámbito.
  */
 const CONVERSATION_SESSION_NAMESPACE = "cauce-conversation-session-v3";
 
 /**
- * Identificadores de sesión que el store fabrica POR ENTREGA cuando el mensaje raíz no traía
- * ninguno (`repository.ts`: `delivery:<id>:attempt:<n>`, `fanin:<id>`). Meterlos en la clave
- * daría una sesión nativa por entrega, que es exactamente el problema que este cambio arregla.
+ * Identificadores de sesión efímeros que se descartan para no fragmentar sesiones nativas.
  */
 const EPHEMERAL_SESSION_ID = /^(?:delivery|fanin):/u;
 
@@ -1299,41 +1159,7 @@ function conversationScope(delivery: Delivery): ConversationScope | undefined {
   }
 
   /**
-   * Sin ruta de retorno (consola, publicación de adaptador, herramientas de ops). La conversación
-   * es el ACTOR autenticado, que el gateway deriva del certificado o del token y el cliente no
-   * puede declarar. Deliberadamente NO se usa `session_id` acá: con OIDC es el `sid` del login y
-   * con eso la consola estrenaba sesión en cada re-login.
-   *
-   * No se sintetiza un `origin` real en el gateway a propósito: `origin` es la ruta de retorno y
-   * `repository.materializeOriginRelay` encola una fila de `adapter_outbox` por cada entrega que
-   * lo tenga. Un `origin` con `adapter: "console"` dejaría filas que ningún puente arrienda
-   * (`leaseOutbox` sólo atiende `telegram`), acumulando cola atascada. El alcance de sesión se
-   * deriva acá, donde no toca ninguna ruta de retorno.
-   *
-   * EXCEPCIÓN, y es el arreglo de la síntesis que no miraba el agregado: para el tráfico
-   * agente-a-agente el actor NO identifica una conversación, identifica una RAMA. Un abanico de
-   * cuatro vuelve como cuatro `agent.response` de cuatro alias distintos; con el alias adentro de
-   * la clave eran cuatro conversaciones, o sea cuatro sesiones nativas aisladas y cuatro candados
-   * FIFO independientes. Cada turno veía una sola rama —y escribía FALTA para las otras tres
-   * aunque el fan-in ya trajera las cuatro— y encima podían correr a la vez. Medido el
-   * 2026-07-30 sobre la malla: zeus y kratos, 1 rama por turno en los cuatro turnos; jarvis y
-   * socrates, que sí acumulan 1→2→3→4, son justamente los dos que tienen UNA sola sesión para
-   * todo el tráfico de agentes (openclaw con `fallbackSessionKey: "alias-default"`, y codex con
-   * la TUI compartida). Esta línea le da a los demás la misma forma.
-   *
-   * Se colapsa hasta el TENANT del par y no más allá, por dos razones y en los dos sentidos:
-   *  - hacia abajo, colapsar hasta una sola sesión de agentes mezclaría en un mismo transcript
-   *    nativo el trabajo de dos tenants distintos, que es exactamente la frontera que el resto
-   *    del sistema defiende;
-   *  - hacia arriba, NO se usa `correlation.root_message_id` —que daría una sesión por cadena,
-   *    que sería lo ideal— porque el espacio de claves quedaría sin cota: `validateSessionsFile`
-   *    rechaza `sessions.json` a partir de 4096 entradas y no hay ninguna poda, así que una
-   *    sesión por cadena termina inutilizando al alias entero con INVALID_SESSIONS_FILE. Con el
-   *    tenant hay a lo sumo una clave por tenant vecino.
-   *
-   * Lo que este colapso NO cubre —un abanico repartido entre varios tenants sigue partido en una
-   * sesión por tenant— lo cubre `branch_progress` en el prompt de continuación, que es explícito
-   * y no depende de la memoria del arnés.
+   * Alcance de sesión derivado del actor autenticado o tenant del par para tráfico de agentes.
    */
   return {
     adapter: channel,
@@ -1453,23 +1279,8 @@ function executionBudgetFor(
 }
 
 /**
- * El rol declarado del alias, tal como lo mandó el store (`agents.role_brief`, migración 020).
- *
- * Devuelve un objeto vacío —y no `{ self_role: undefined }`— cuando el sobre no lo trae, para que
- * el contexto no gane una clave con valor indefinido que después aparezca como `"self_role":null`
- * en el JSON del TRUSTED DELIVERY CONTEXT. Un rol nulo explícito le diría al agente que su rol es
- * "ninguno", que no es lo mismo que "este store todavía no lo manda".
- *
- * El recorte espeja el CHECK de la migración y el tope del esquema a través de
- * `clampToRoleBriefLimit` (@cauce/protocol), que es la MISMA constante que usan el store y el
- * sobre: el sobre ya viene validado, pero el SDK no asume que el único emisor sea un store de
- * esta versión.
- *
- * El recorte se delega en vez de hacerse acá con `trimmed.slice(0, 1200)` porque `slice` indexa
- * unidades UTF-16: sobre un brief de 1199 letras + un emoji cortaba el par suplente por la mitad
- * y dejaba un surrogate alto suelto, que al serializar el TRUSTED DELIVERY CONTEXT a UTF-8 viaja
- * como U+FFFD. El agente leería su propio rol terminado en un carácter roto. `clampToRoleBriefLimit`
- * recorta por puntos de código, donde el emoji es indivisible.
+ * Extrae y acota el rol declarado del alias (`agents.role_brief`) de la entrega.
+ * Devuelve un objeto vacío si no está definido.
  */
 function selfRoleFromDelivery(delivery: Delivery): { self_role?: string } {
   const forwardCompatible = delivery as Delivery & { readonly self_role?: unknown };

@@ -21,11 +21,8 @@ export interface Principal {
   readonly roles: readonly PrincipalRole[];
   readonly permissions: readonly PrincipalPermission[];
   /**
-   * Persona detrás del request, cuando el proveedor pudo establecerla (hoy: login por
-   * contraseña de la consola). Es autoridad AUTENTICADA por el servidor, no una cabecera:
-   * `x-cauce-operator` la declara el proxy con el valor `steven` fijo para todo el mundo y por
-   * eso la auditoría no distinguía a nadie. Cuando este campo viene, gana sobre la cabecera.
-   * Los principals de mTLS lo dejan sin definir y el camino de la cabecera sigue igual.
+   * Persona detrás del request, cuando el proveedor de autenticación pudo establecerla.
+   * Es autoridad autenticada por el servidor que tiene precedencia sobre cabeceras delegadas.
    */
   readonly operator_id?: string;
 }

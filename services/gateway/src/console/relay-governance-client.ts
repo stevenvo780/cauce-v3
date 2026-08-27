@@ -8,28 +8,14 @@ import type {
 } from './agent-documents.routes.js';
 
 /**
- * `GovernanceRelayClient` de verdad: habla con `POST /v3/terminal/relay/read` del terminal-relay.
- *
- * Copia el patrón de `HttpsTerminalGatewayClient` (el cliente que el relay usa contra el gateway)
- * porque es el mismo problema en el sentido contrario: dos procesos en dos máquinas, unidos por un
- * token compartido, con TLS mutuo por debajo. Aquí el que presenta el token es el gateway.
- *
- * NUNCA lanza por un fallo de red. Un relay caído tiene que verse en el modal como «no se pudo
- * leer», con el motivo, y no como una pantalla en blanco ni como un 500 del gateway.
+ * Cliente HTTP para comunicación con el endpoint de lectura y escritura de gobierno del terminal-relay.
+ * Transmite solicitudes autenticadas mediante token compartido y TLS mutuo.
  */
 
-/**
- * Tope de lo que se acumula de la respuesta. El relay sirve hasta 256 KB de contenido, y el JSON
- * que lo envuelve lo infla (`\n` y los acentos van escapados), así que el doble es el margen que
- * hace falta para no cortar una lectura legítima.
- */
+/** Límite de bytes acumulados de la respuesta HTTP. */
 const MAX_RESPONSE_BYTES = 512 * 1024;
 
-/**
- * Por encima de lo que el relay tarda en rendirse. El relay corta su propia lectura a los 5 s: si
- * el gateway cortara antes, se perdería la respuesta HONESTA (`timeout` con su motivo) y se
- * cambiaría por un fallo de transporte que no dice nada de qué pasó dentro del contenedor.
- */
+/** Tiempo de espera predeterminado para solicitudes hacia el terminal-relay. */
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 const READ_CODES: readonly GovernanceReadError['error'][] = [
@@ -58,12 +44,7 @@ export interface HttpGovernanceRelayClientOptions {
   readonly timeoutMs?: number;
   /** CA del certificado de servidor del relay, si lo firma una CA privada. */
   readonly ca?: Buffer;
-  /**
-   * Identidad de cliente. NO es opcional en la práctica: el listener del relay se levanta con
-   * `requestCert`/`rejectUnauthorized`, así que sin certificado firmado por la CA de la consola el
-   * handshake muere antes de que el token llegue a leerse. Se deja opcional en el tipo para que un
-   * despliegue mal configurado dé un fallo de lectura explicado, y no un fallo al arrancar.
-   */
+  /** Certificado y clave de cliente para autenticación mTLS contra el relay. */
   readonly clientCert?: Buffer;
   readonly clientKey?: Buffer;
 }

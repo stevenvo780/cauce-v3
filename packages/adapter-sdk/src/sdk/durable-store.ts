@@ -82,16 +82,7 @@ interface DeliveryTransactionFile {
 }
 
 /**
- * De qué conversación salió una sesión, tal como el sobre de la entrega la describía.
- *
- * Es DESCRIPTIVO y nada del despacho lo mira: la clave de sesión la sigue derivando
- * `sessionFromDelivery` por hash, y este campo es la misma información en claro. Existe porque
- * el hash es irreversible y sin esto un lector externo (`cauce <alias>`) no puede decir cuál de
- * las 14 conversaciones de un alias openclaw es el DM de Telegram del dueño: las listaba todas
- * como "sin origen" y abría una cualquiera afirmando que era la del bus.
- *
- * Se guardan tres campos y no el sobre entero a propósito: es lo mínimo para nombrar la
- * conversación, y `sessions.json` tiene tope de tamaño (`MAX_SESSIONS_FILE_BYTES`).
+ * Metadatos descriptivos de la conversación de origen asociados a una sesión nativa.
  */
 export interface SessionOrigin {
   readonly adapter: string;
@@ -102,11 +93,7 @@ export interface SessionOrigin {
 export interface SessionRecord {
   readonly native_id: string;
   readonly initialized: boolean;
-  /**
-   * Ausente en toda entrada escrita antes de 2026-07-31, y ausente cuando el sobre no traía
-   * conversación. El lector DEBE tolerar su ausencia y decir "sin origen": inventarlo sería
-   * exactamente la afirmación no verificada que este campo vino a eliminar.
-   */
+  /** Origen de la conversación, opcional si la entrega no declaró conversación de origen. */
   readonly origin?: SessionOrigin;
 }
 
@@ -1365,29 +1352,15 @@ export class DurableStore {
   }
 
   /**
-   * Estado de las ramas HERMANAS del abanico que esta `agent.response` viene a cerrar.
+   * Estado de las ramas hermanas del abanico que esta `agent.response` viene a cerrar.
    *
-   * Es la respuesta local a una pregunta que el agente no podía contestar y que le costó el
-   * defecto medido: "¿a quién más le pedí esto y quién ya me contestó?". Cada `agent.response`
-   * abre un turno propio; con la clave de sesión partida por remitente, ese turno veía UNA rama y
-   * escribía FALTA para las otras tres aunque el agregado existiera. Y por el mismo hueco
-   * re-pingueaba a los que creía ausentes: 22 entregas donde tocaban 10.
+   * Consolida el estado desde el inbox durable local:
+   *  - `branches`: entregas materializadas por el store (por output_index y child_delivery_id);
+   *  - `rejected`: salidas rechazadas por el store;
+   *  - `returned`: respuestas generadas al cerrar ramas hermanas;
+   *  - `pending`: ramas pendientes restantes.
    *
-   * Todo sale del inbox durable local, incluido el receipt autenticado que el gateway devolvió:
-   *  - `branches` son las entregas que el store materializó, identificadas por output_index y
-   *    child_delivery_id; no los deseos crudos del modelo;
-   *  - `rejected` son los outputs que el store negó y por tanto nunca pueden quedar pendientes;
-   *  - `returned` son las respuestas que ESTE adaptador escribió al cerrar las ramas hermanas
-   *    —texto propio, nunca `untrusted_text` de un tercero—, más nuevas primero, que es el mismo
-   *    criterio con el que `processedRepliesForFanin` elige la síntesis que encabeza el fan-in;
-   *  - `pending` es la resta, sin la rama que está llegando ahora.
-   *
-   * Devuelve `undefined` para un abanico de una sola rama: ahí no hay nada que consolidar ni nadie
-   * a quien duplicar, y el prompt de continuación queda byte a byte como estaba.
-   *
-   * Los registros anteriores al receipt exacto degradan a un multiconjunto por output_index y
-   * alias. Incluso ahí una respuesta sólo cierra UNA ocurrencia y child_delivery_id deduplica sus
-   * reentregas; nunca se vuelve al Set<alias> que cerraba dos ramas con una sola respuesta.
+   * Devuelve `undefined` para abanicos de una sola rama.
    */
   branchProgressForResponse(delivery: Delivery): DelegationBranchProgress | undefined {
     const source = this.continuationSource(delivery);

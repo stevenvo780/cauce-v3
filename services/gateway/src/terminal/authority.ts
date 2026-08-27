@@ -292,10 +292,7 @@ function headerValue(value: string | string[] | undefined): string | undefined {
  *    sea del servidor. Cuando existe, GANA y la cabecera ni se mira — no hace falta que el
  *    correo esté en `CAUCE_TERMINAL_OPERATORS`, porque tener sesión ya es la inscripción.
  * 2. La cabecera `CAUCE_TERMINAL_OPERATOR_HEADER`, sólo desde el canal `console` y sólo con un
- *    valor inscripto en `CAUCE_TERMINAL_OPERATORS`. Este es el camino de HOY, y su límite está
- *    medido: Caddy y nginx inyectan `X-Cauce-Operator: steven` fijo, así que la auditoría dice
- *    `steven` entre quien entre. Es una pista, nunca una credencial, y por eso sobrevive sólo
- *    mientras no haya una identidad de verdad en el request.
+ *    valor inscripto en `CAUCE_TERMINAL_OPERATORS`.
  * 3. Sin ninguna de las dos, la sesión queda sin atribuir y `attributionAllows` la encierra en
  *    su propio tenant.
  */

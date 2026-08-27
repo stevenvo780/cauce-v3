@@ -54,13 +54,7 @@ export interface NavEntryAvailability {
 }
 
 /**
- * La entrada "Ultimate Terminal" del menú nunca debe mostrarse como si el canal PTY existiera
- * cuando el relay es opt-in y no está desplegado en este stack (ver commit `0a1d0e3`). Se elige
- * deshabilitar en vez de esconder: un operador frente a un menú más corto no puede distinguir
- * "no está desplegado acá" de "no tengo este permiso", mientras que una entrada visible pero
- * inerte que declara el motivo es la respuesta honesta que pide la tarea. La página en sí sigue
- * siendo alcanzable por URL directa y sigue funcionando en modo feed durable sin PTY; lo único
- * que se apaga es la promesa implícita de "esto tiene una terminal interactiva funcionando".
+ * Determina la disponibilidad en navegación para la entrada de terminal según el estado del relay.
  */
 export function terminalNavAvailability(relay: TerminalRelayState): NavEntryAvailability {
   if (relay.status !== 'unavailable') return { hidden: false, disabled: false };
@@ -74,16 +68,7 @@ export const CONFIG_WRITE_NO_ACREDITADO_REASON =
   'No se pudo acreditar config.write; la vista permanece disponible en solo lectura y no permite cambios ni restauraciones.';
 
 /**
- * La entrada "Configuration" apuntaba a una vista que devuelve 403 para todo el que no tenga
- * `config.write` — o sea, para todos los tenants cliente. Miguel (Miguel:janus) entraba, veía el
- * menú completo, hacía clic y recibía un error: exactamente la queja de "hay muchas vistas y
- * algunas no existen". El permiso NO se toca; lo que se arregla es la promesa del menú.
- *
- * Misma decisión que en `terminalNavAvailability` y por la misma razón: se DESHABILITA en vez de
- * esconder. Un menú más corto no distingue "acá no está desplegado" de "no tengo permiso"; una
- * entrada visible pero inerte que dice el motivo sí. Con el permiso `unknown` -no se pudo leer el
- * RBAC- la entrada queda HABILITADA porque leer y navegar no mutan nada; la propia página conserva
- * los datos visibles pero bloquea toda escritura hasta poder acreditar `config.write`.
+ * Determina la disponibilidad en navegación para la entrada de configuración según permisos de control.
  */
 export function configNavAvailability(state: 'allowed' | 'denied' | 'unknown'): NavEntryAvailability {
   if (state !== 'denied') return { hidden: false, disabled: false };

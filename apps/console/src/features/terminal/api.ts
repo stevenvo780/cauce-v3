@@ -9,7 +9,7 @@
  * Doctrine: 404 and 501 on optional endpoints are NOT errors, they are a typed UNKNOWN.
  * Absent data is UNKNOWN, never "allowed".
  *
- * 🔴 **LA COPIA SE HABÍA DESVIADO EN LA ÚNICA CABECERA QUE DECIDE SI UNA ESCRITURA ENTRA.**
+ * LA COPIA SE HABÍA DESVIADO EN LA ÚNICA CABECERA QUE DECIDE SI UNA ESCRITURA ENTRA.**
  * El gateway exige `X-CSRF-Token` a todo `/v3/` que no sea GET/HEAD/OPTIONS y venga con la cookie
  * de consola (`registerPasswordAuth`, gancho `onRequest`). Este módulo copiaba Accept,
  * X-Cauce-Console y Content-Type, y no copiaba esa. Resultado medido contra producción el

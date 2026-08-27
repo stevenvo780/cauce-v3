@@ -1,26 +1,5 @@
 #!/usr/bin/env python3
-"""🔴 El agente conocia su HOME desde que arranca y NO lo publicaba, y eso cerraba una via entera.
-
-`MeasuredFactsSource` del gateway existia, `TerminalRelayFactsProbe` la consumia y de ella colgaba
-toda la lectura y edicion de los ficheros de gobierno de cada agente desde la consola. En
-produccion se inyectaba un doble que contesta «nadie ha medido nada» SIEMPRE, y el motivo estaba
-escrito en el propio plugin del gateway:
-
-    «el pty-agent conoce su `home` y su `harness` por el bundle con el que arranca, pero no los
-     publica ni en el hello ni en la presencia, asi que no hay ninguna fuente en produccion»
-
-El `harness` si viajaba. El `home` no. Una linea.
-
-POR QUE TIENE QUE SALIR DE AQUI Y NO DEL REGISTRO DE LA BASE: porque el registro se equivoca.
-Medido el 23-ago-2026, `agents.harness_id` era incorrecto en 5 de los 14 alias. Resolver
-`~/.claude/CLAUDE.md` con un arnes equivocado no da «no se pudo leer»: da el fichero de OTRO arnes,
-servido como si fuera el bueno. El agente que corre dentro del contenedor es la unica pieza que
-sabe con que `$HOME` y con que binario arranco.
-
-Esta prueba mira la trama de presencia REAL que arma el agente, no una copia suya: si alguien
-renombra la clave o la quita, esto se pone en rojo aqui y no tres capas mas arriba, donde el
-sintoma seria «la consola dice que no se midio» sin ninguna pista de por que.
-"""
+"""Pruebas para verificar que la trama de presencia del agente PTY incluye `home` y `harness`."""
 from __future__ import annotations
 
 import json

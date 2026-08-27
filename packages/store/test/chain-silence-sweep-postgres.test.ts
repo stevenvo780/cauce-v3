@@ -7,20 +7,10 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * P0-4 — ninguna tarea del dueño puede morir en silencio.
+ * Barrido de silencio en cadenas de delegación:
  *
- * Lo que se prueba acá es la garantía, no la implementación: una tarea que arrancó un humano
- * SIEMPRE termina con una respuesta al humano, y con UNA sola aunque se hayan muerto cien
- * ramas. Los tres agujeros medidos en producción el 2026-07-29 tienen su caso:
- *   1. la pata que vuelve a delegar recibe `deferred` y nunca escribe su auditoría, así que
- *      el fan-in queda corto PARA SIEMPRE y ninguna entrega viva vuelve a evaluar la raíz;
- *   2. la muerte profunda se convierte en `agent.response` hacia un padre que ya está muerto,
- *      y ahí termina la cadena;
- *   3. 1.861 muertes no pueden ser 1.861 mensajes.
- *
- * Los plazos NO se ablandan en los tests: cada caso envejece la cadena y después llama al
- * barrido con los umbrales de producción, que es la única forma de que estos tests digan algo
- * sobre los umbrales de producción.
+ * Garantiza que una tarea iniciada por un humano reciba respuesta incluso si
+ * ocurren fallos en ramas delegadas intermedias o si se requiere agregación de fan-in.
  */
 
 let database: TestDatabase;
@@ -452,14 +442,7 @@ describe('destrabar es mejor que avisar', () => {
 });
 
 /**
- * El fallo del 2026-08-04. Una rama llega a estado terminal SIN pasar por el ACK —alguien la
- * terminó con un UPDATE directo en la base para destrabar otra cosa— y por eso no tiene su fila
- * de `audit_events` con `action='agent_output.response'`. El fan-in no cuenta mensajes ni
- * entregas: cuenta ESAS filas por `child_delivery_id`. La rama queda contada en `completed` pero
- * jamás en `responsesRecorded`, así que el gate se vuelve insatisfacible PARA SIEMPRE y el
- * coordinador espera para siempre (jarvis, 17 ramas). El vigía tampoco rescataba: reusa el mismo
- * predicado, así que caía al aviso de cierre, que se relaya al ORIGEN (el humano) y nunca al
- * coordinador.
+ * Recuperación de ramas que alcanzaron estado terminal sin pasar por el flujo de ACK estándar.
  */
 describe('la rama incontable: terminal por fuera del ACK', () => {
   /** El UPDATE directo: estado terminal sin ACK, sin auditoría, sin nada. */

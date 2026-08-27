@@ -422,14 +422,7 @@ function nonNegativeCount(value: string | number, label: string): number {
 }
 
 /**
- * A read model that cannot run its query has to say so out loud.
- *
- * Every one of these handlers used to swallow the failure and return an empty payload
- * with `available:false`, which is indistinguishable from a genuinely idle fleet. That
- * is how `estado_flota` and `salud` sat broken against a table name that does not exist
- * (`leases`; the real one is `connection_leases`) while still answering every call
- * successfully. The server's CallTool handler turns this into an MCP `isError` response,
- * so the operator sees the cause instead of a confident empty answer.
+ * Wraps database query errors with context for MCP tool error reporting.
  */
 function queryFailure(tool: string, error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error);

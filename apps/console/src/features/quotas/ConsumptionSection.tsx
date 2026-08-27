@@ -23,35 +23,7 @@ import {
 } from './quotas';
 
 /**
- * **Cuotas y licencias** — una sola vista, dos mitades del mismo hecho.
- *
- * Hasta el 2026-08-06 esto eran dos rutas: "Consumo de cuotas" (`/quotas`) y "Licencias y consumo"
- * (`/licenses`). Repetían el panel de recolectores, el porcentaje libre por cuenta y los grupos de
- * cuota sin cuenta atada; sus dos entradas de menú se llamaban casi igual y ninguna de las dos
- * respondía sola la pregunta que un operador hace de verdad —"¿a esta cuenta le queda saldo, y
- * quién la está usando?"—, porque el saldo estaba en una y el dueño en la otra.
- *
- * Lo que se fusionó y con qué criterio:
- *
- * - **Recolectores**: se conservó la tabla de `/quotas` (superconjunto: identidad del recolector,
- *   `captured_at` vs `received_at`, versión de esquema) y se le trasplantó el juicio de frescura de
- *   `/licenses`, que es más estricto: una muestra con `stale:false` pero más vieja que
- *   `stale_after_seconds` se marca DESACTUALIZADO igual. `stale` nulo *sin* edad sigue siendo
- *   UNKNOWN: no saber no es estar fresco.
- * - **Consumo por cuenta**: se conservó la tabla de `/quotas` (unidades, modelo, `reset_at`,
- *   histórico de 24 h) y se quitaron las barras de porcentaje de `/licenses`, que mostraban menos
- *   del mismo dato — y que además eran el segundo dibujo de la página; acá hay UNA sola
- *   representación gráfica, el sparkline.
- * - **Grupos sin cuenta atada**: una sola tabla, la de `/quotas` (trae `window_count`), movida
- *   dentro de "Hallazgos", que es donde ya vivían las otras dos direcciones de huérfano.
- * - **Inventario de cuentas**: es exclusivo de `/config` y no estaba en `/quotas`. Se conserva
- *   entero: identidad, ID externo redactado, pagador, plan, asignaciones por prioridad y techo de
- *   ruteo.
- *
- * La honestidad que traía `/licenses` —"si la sonda está caduca, todos los porcentajes son `?`"— no
- * se perdió al quitar sus barras: se declara arriba, una vez, en un cartel que dice de qué muestra
- * son los números de abajo. Y `accountConsumption` sigue alimentando el plan y el motivo por cuenta,
- * que es donde un `ok:false` deja de leerse como "esta cuenta no tiene ventanas".
+ * Sección de consumo y saldo de cuotas por proveedor y cuenta.
  */
 export function ConsumptionSection({ quotas, config }: {
   quotas: Resource<QuotaSnapshot>;
@@ -70,7 +42,7 @@ export function ConsumptionSection({ quotas, config }: {
     () => orphans(accounts, snapshot, bindings, agents),
     [accounts, snapshot, bindings, agents],
   );
-  // `ok: false` es información, no ausencia: el CLI de ese proveedor dejó de responder.
+  // `ok: false` indica que el CLI del proveedor no respondió.
   const failedProbes = useMemo(
     () => (snapshot?.providers ?? []).filter((provider) => provider.ok === false),
     [snapshot],
@@ -101,11 +73,6 @@ export function ConsumptionSection({ quotas, config }: {
     return acc === null ? provider.effective_remaining_percent : Math.min(acc, provider.effective_remaining_percent);
   }, null);
 
-  /*
-   * "Ningún recolector reportó" sólo puede afirmarse cuando la respuesta LLEGÓ y vino vacía. Si la
-   * petición falló no sabemos nada del recolector, y decir que no reportó sería nombrar por encima
-   * de la evidencia.
-   */
   const isCollectorAbsent = !quotasDown && collectors.length === 0;
   const staleCollectors = collectors.filter((collector) => freshness(collector, thresholds).state !== 'fresh');
   const totalAccounts = accounts.length;
@@ -113,11 +80,6 @@ export function ConsumptionSection({ quotas, config }: {
   const accountsWithQuota = accounts.filter(
     (account) => !orphanedItems.accountsWithoutQuotas.some((orphan) => orphan.id === account.id),
   ).length;
-  /*
-   * "Registrada pero no reportada" es una conclusión sobre DOS fuentes. Si el consumo no se pudo
-   * leer, la conclusión no se puede sacar: todas las cuentas parecerían huérfanas por un fallo de
-   * red. Sin muestra no hay hallazgo, y se dice arriba por qué.
-   */
   const accountsWithoutQuotas = quotasDown ? [] : orphanedItems.accountsWithoutQuotas;
   const hasFindings = accountsWithoutQuotas.length > 0
     || unbound.length > 0
@@ -169,12 +131,6 @@ export function ConsumptionSection({ quotas, config }: {
       )}
 
       {staleCollectors.length > 0 && (
-        /*
-         * Ésta es la regla de honestidad que traía "Licencias y consumo" (`accountConsumption`
-         * enmascaraba a `?` todo porcentaje cuando algún recolector estaba caduco). Acá se declara
-         * una sola vez y arriba de todo, en vez de repetirla en cada barra: los números de abajo son
-         * los de esa muestra, con su edad al lado, y ninguno es de ahora.
-         */
         <div className="banner banner-warning">
           <AlertCircle size={18} aria-hidden="true" />
           <span>
@@ -242,11 +198,6 @@ export function ConsumptionSection({ quotas, config }: {
           </div>
         )}
         {failedProbes.length > 0 && (
-          /*
-           * Un recolector puede estar fresco y aun así traer proveedores con la sonda muerta.
-           * Sin esta lista, un `ok: false` se leería como "esta cuenta no tiene ventanas", que
-           * es la mentira exacta que hay que evitar: un dato viejo o ausente disfrazado de normal.
-           */
           <div className="banner banner-error" style={{ marginTop: 12 }}>
             <AlertCircle size={18} aria-hidden="true" />
             <span>
@@ -291,12 +242,6 @@ export function ConsumptionSection({ quotas, config }: {
       </Panel>
 
       {hasFindings && (
-        /*
-         * Las tres direcciones de huérfano viven juntas porque son la misma pregunta —qué par
-         * (inventario, muestra) no cierra—, aunque cada una se responda con una fuente distinta.
-         * Antes "grupos sin cuenta atada" era un panel propio en una vista y una lista pobre en la
-         * otra: acá es una sola tabla, la que trae window_count.
-         */
         <Panel title="Hallazgos" subtitle="Datos inconsistentes o incompletos que deberían revisarse: el inventario y la muestra del recolector no cierran.">
           {accountsWithoutQuotas.length > 0 && (
             <div className="finding-section">
@@ -462,7 +407,6 @@ function ProviderCard({ provider, expanded, onToggle, staleAfterSeconds }: {
         </div>
         <div className="quota-provider-head-right">
           <Badge tone={SEVERITY_TONE[severity]}>{SEVERITY_LABEL[severity]}</Badge>
-          {/* 🔴 Ver `peorPorcentajeDelProveedor`: acá convivían «AGOTADO» y «100% libre». */}
           {peor === undefined ? (
             <span className="unknown" title="Ninguna ventana de este proveedor informa porcentaje: no hay un número honesto que poner acá.">
               sin porcentaje informado
@@ -548,9 +492,6 @@ function QuotaRow({ rowKey, row, expanded, onToggle }: {
             <div><Badge tone="danger"><PauseCircle size={12} aria-hidden="true" /> PAUSADA</Badge></div>
           ) : null}
         </td>
-        {/* 🔴 «semana / semana», «sesión / sesión»: la sublínea repetía literalmente la etiqueta de
-            arriba cuando la familia tiene una sola ventana y las dos se llaman igual. Sólo se
-            escribe la sublínea cuando AÑADE algo. */}
         <td>
           {family.label}
           {family.collapsible ? <span className="chip window-count-chip">{family.windows.length} ventanas</span> : null}

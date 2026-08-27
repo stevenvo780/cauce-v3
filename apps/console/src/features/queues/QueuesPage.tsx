@@ -13,36 +13,7 @@ import {
 import './queues.css';
 
 /**
- * **Queues, retries & DLQ** — el único sitio donde una entrega se mira de a una y se rescata.
- *
- * Steven preguntó el 2026-08-22 si «Queues, retries & DLQ» no era super redundante. Lo medido: NO
- * son tres vistas, son tres columnas de la misma tabla y esta ruta ya era una sola. Lo que sí
- * estaba repetido —y era lo que se veía como redundancia— es que `pending`, `retry` y `dead` se
- * dibujaban otra vez en «Observabilidad», y que el detalle por entrega estaba a punto de copiarse a
- * la vista de mensajes.
- *
- * Cómo quedó repartido, para que cada número viva en un solo sitio:
- *
- * - **Acá**: el detalle por entrega —lane, intentos, backoff, último error— y las dos únicas
- *   acciones que existen sobre una entrega, replay y cancel. Es el hogar del dato.
- * - **En «Señales y auditoría»**: los tres recuentos, pero NO como una tabla propia sino como el
- *   desglose de la métrica «Queued», y con un enlace acá. Ese panel existe por una razón que esta
- *   página no puede dar: sus cifras salen del MISMO `observed_at` que online, DLQ y outbox, o sea
- *   que se pueden comparar entre sí. Quitarlas de ahí no habría eliminado una duplicación, habría
- *   roto la única comparación instantánea de la consola.
- * - **En «Messages»**: la misma tabla, con las mismas acciones, filtrada por conversación — pero la
- *   MISMA implementación, `DeliveryTable`, no una copia. Ver el comentario de ese fichero.
- *
- * 🔴 **`?delivery=<uuid>` es un destino de verdad desde el 2026-08-22.** El cajón de «La flota
- * ahora» lo enlazaba desde `d3411de` y esta página no leía `location.search`: se aterrizaba en la
- * lista genérica, sin el id por ningún lado y sin una fila marcada. Ver `foco-de-entrega.ts`, que
- * es también donde está escrito lo que la consola NO puede saber cuando la entrega no figura.
- *
- * 🔴 **Las tarjetas LLEVAN a las filas desde el 2026-08-23.** Recorriendo la consola de producción:
- * las tres tarjetas contestan bien la pregunta con la que un operador entra —«Dead letters 7,
- * requieren revisión»— y después no había forma de llegar a esas 7. Cero controles de filtro
- * medidos, 38 filas, y las 7 sueltas entre 31 entregas terminadas bien. Decir dónde mirar y no
- * llevar ahí es media respuesta.
+ * Vista de control y rescate de entregas en colas, reintentos y dead letter queue.
  */
 export function QueuesPage() {
   const api = useApi();

@@ -107,13 +107,8 @@ export interface TerminalControlPlaneOptions {
     ): Promise<AuthorizedAgentTarget | undefined>;
   };
   /**
-   * De dónde salen los hechos MEDIDOS de cada alias (arnés, HOME, CODEX_HOME) para resolver la
+   * De dónde salen los hechos medidos de cada alias (arnés, HOME, CODEX_HOME) para resolver la
    * ruta de su manual del sitio.
-   *
-   * Hoy nadie los mide: el pty-agent conoce su `home` y su `harness` por el bundle con el que
-   * arranca, pero no los publica ni en el hello ni en la presencia, así que no hay ninguna fuente
-   * en producción. El default es honesto —«no medido»— y la ruta lo dice con esas palabras en vez
-   * de deducir la ruta del registro, que el 23-ago-2026 se equivocaba de arnés en 5 de 14 alias.
    */
   readonly measuredFacts?: MeasuredFactsSource;
   /** Inyectable para los tests; en producción sale de `config.relayUrl`. */

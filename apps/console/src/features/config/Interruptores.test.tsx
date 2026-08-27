@@ -146,7 +146,7 @@ it('CONTROL NEGATIVO: si el servidor RECHAZA, el interruptor vuelve SOLO a su va
   expect(lectura).not.toBeChecked();
   await user.click(lectura);
 
-  // 🔴 Lo único que no se puede negociar: el estado pintado vuelve a ser el que la base tiene.
+  // Lo único que no se puede negociar: el estado pintado vuelve a ser el que la base tiene.
   await waitFor(() => expect(screen.getByRole('switch', { name: LECTURA })).not.toBeChecked());
 
   // Y el motivo es EL DEL SERVIDOR, no un «no se pudo aplicar» inventado por la consola.

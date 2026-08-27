@@ -1,9 +1,7 @@
 import type { DatabasePool } from '@cauce/store';
 
 /**
- * Lectura de `console_users`. La tabla la crea la migración 023 y este módulo NUNCA hace DDL:
- * `ready()` falla el arranque si la tabla no está, que es la única forma de que un despliegue
- * con la base sin migrar no llegue a la pantalla de login pareciendo sano.
+ * Almacén y acceso a la tabla `console_users`.
  */
 
 export type ConsoleUserRole = 'operator' | 'reader';
@@ -28,7 +26,7 @@ export interface ConsoleUserStore {
   recordLogin(id: string, at: Date): Promise<void>;
 }
 
-/** Normalización única y compartida: la misma que impone el índice de la migración 023. */
+/** Normalización única y compartida de correos electrónicos. */
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -73,9 +71,8 @@ export class PostgresConsoleUserStore implements ConsoleUserStore {
   }
 
   /**
-   * Trae también las cuentas desactivadas a propósito: quien decide es el proveedor, y devolver
-   * `undefined` acá haría que "cuenta apagada" y "correo inexistente" tomaran caminos distintos
-   * —uno con verificación de contraseña y otro sin ella— que se distinguen midiendo el tiempo.
+   * Busca usuario por correo normalizado, incluyendo cuentas inactivas para permitir
+   * que el proveedor gestione el flujo de error de forma uniforme.
    */
   async findByEmail(email: string): Promise<ConsoleUser | undefined> {
     const result = await this.pool.query<ConsoleUserRow>(

@@ -557,14 +557,7 @@ describe('Telegram durable polling', () => {
   });
 
   it('descarta el adjunto que el esquema rechaza y publica igual el mensaje del humano', async () => {
-    // Un `.txt` VACÍO pasa los controles del puente (mime y extensión admitidos, UTF-8 válido) y lo
-    // rechaza `AttachmentContentSchema`, que exige `file_size` positivo. Antes del tamiz ese
-    // desacuerdo lo pagaba el mensaje entero: `PublishMessageSchema.parse()` tiraba un ZodError
-    // desde `process()`, por fuera de los dos `catch` que avanzan el cursor, y `run()` reintentaba
-    // el MISMO update para siempre con el lease latiendo sano. Le pasó a `heraclito` el 2026-08-05.
-    //
-    // Por eso el doble de acá adentro es `StoreTelegramIngress`, la ingesta de verdad: con un
-    // ingress que no valida, este test pasaría igual sin el arreglo.
+    // Un archivo con tamaño inválido es descartado por el tamiz de adjuntos sin bloquear la publicación.
     const repository = new MemoryCursorRepository();
     const published: PublishMessage[] = [];
     const ingress = new StoreTelegramIngress({
@@ -812,12 +805,7 @@ describe('Telegram group routing (poller integration)', () => {
     }]);
   });
 
-  // 2026-08-05: heraclito no contestaba en un grupo y el log no decía NADA. La configuración era
-  // correcta (bot administrador, chat permitido, privacidad apagada, cero updates pendientes en
-  // Telegram) porque el descarte ocurría antes del resolutor, en el allowlist de usuario, y ese
-  // camino no dejaba rastro. Un mensaje anónimo lo firma GroupAnonymousBot, así que fallaba el
-  // allowlist y desaparecía. Ahora deja línea, y con el motivo REAL (anónimo, no "usuario
-  // denegado", que habría mandado el diagnóstico a revisar el allowlist otra vez).
+  // Un mensaje anónimo en grupo se registra con motivo anonymous_sender.
   it('un mensaje anonimo de grupo deja rastro con motivo anonymous_sender, no desaparece en silencio', async () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DeduplicatingIngress();
@@ -1830,10 +1818,7 @@ describe('Telegram DM identity (poller integration)', () => {
     expect(prompt).toContain('proves nothing');
   });
 
-  // 2026-08-05: los tenants de esta flota se llaman como sus dueños, así que con el tenant en el
-  // set de nombres reservados Steven salía marcado como suplantador de "Steven" en CADA mensaje
-  // que le escribía a su propio agente. Una advertencia que se dispara siempre no informa: enseña
-  // a ignorarla, que es lo contrario de para lo que está.
+  // El nombre coincidente con el tenant no dispara advertencia de suplantación.
   it('el dueño escribiendo con su propio nombre no queda marcado como suplantador de su tenant', async () => {
     const call = await publish(dmUpdate(304, { id: 101, first_name: TENANT }));
 

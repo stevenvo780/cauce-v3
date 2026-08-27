@@ -21,7 +21,9 @@ async function waitForDatabase(pool: DatabasePool): Promise<void> {
       const code = error && typeof error === 'object' && 'code' in error
         ? String(error.code)
         : '';
-      if (!['ECONNREFUSED', 'ECONNRESET', '57P03', '08006'].includes(code)) throw error;
+      const msg = error instanceof Error ? error.message : '';
+      if (!['ECONNREFUSED', 'ECONNRESET', '57P03', '08006'].includes(code)
+          && !msg.includes('Connection terminated unexpectedly')) throw error;
       await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, attempt * 50)));
     }
   }
@@ -72,15 +74,8 @@ function contenedorDesacoplado(): StartedTestContainer {
 
 export async function startTestDatabase(): Promise<TestDatabase> {
   /*
-   * Camino sin Docker. Los contenedores de agente de esta flota NO tienen demonio de Docker
-   * dentro (medido el 24-ago-2026: `docker ps` falla en `ws-zeus`), así que toda prueba que
-   * dependa de `testcontainers` es IMPOSIBLE de correr desde donde se escribe el código. El
-   * resultado práctico era que se escribían pruebas de base y nadie las veía pasar nunca.
-   *
-   * Con `CAUCE_TEST_DATABASE_URL` la misma suite corre contra una base desechable ya levantada
-   * (por ejemplo, una en el VPS alcanzada por un túnel SSH). El contrato de retorno es idéntico;
-   * `container` queda con un `stop()` que no hace nada, porque esta suite no la creó y no le
-   * toca apagarla.
+   * Soporte para base de datos externa vía CAUCE_TEST_DATABASE_URL para entornos
+   * donde el daemon de Docker no está disponible para testcontainers.
    */
   const externa = process.env.CAUCE_TEST_DATABASE_URL;
   if (externa) {
@@ -144,19 +139,8 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 }
 
 /**
- * Las tablas de CATÁLOGO: el escenario que dejan las migraciones y del que parte toda suite.
- *
- * `resetTestDatabase()` nunca las truncó —y hacía bien, porque vaciarlas dejaría a cada suite sin
- * inquilinos ni salas—. Pero tampoco las RESTAURABA, así que valían lo que hubiera dejado la
- * última suite que corrió. Medido: la migración 003 siembra `operator(route,read,control)` y en
- * una base compartida llegaba con los tres en falso; y el rol `agent_notify` **no lo crea ninguna
- * migración** —sólo lo nombran los comentarios de la 009—, así que existía únicamente porque otra
- * suite lo había insertado.
- *
- * La consecuencia no es teórica: el mismo código daba 6, 18 o 19 fallos según el orden de las
- * suites. Con los resultados dependiendo de quién corrió antes, ninguna comparación con una línea
- * base significa nada — y en este repo TODO el criterio de «esto ya fallaba» se apoya en esa
- * comparación.
+ * Las tablas de catálogo: restauradas desde el esquema semilla en cada `resetTestDatabase()`
+ * para garantizar aislamiento e idempotencia entre suites de prueba.
  */
 const TABLAS_DE_CATALOGO = [
   'role_policies',

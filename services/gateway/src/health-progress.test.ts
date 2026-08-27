@@ -12,7 +12,7 @@ import {
 } from './health.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 
-/** Pool que contesta `SELECT 1` sin chistar: es justo la señal que hoy miente. */
+/** Pool que responde a consultas básicas para pruebas de sonda. */
 const answeringPool = {
   query: async () => ({ rows: [{ ssl: true }], rowCount: 1 }),
 } as unknown as DatabasePool;
@@ -555,9 +555,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     });
     expect((await app.inject({ method: 'GET', url: '/health/ready' })).statusCode).toBe(200);
 
-    // El listener de datos —:8443, el que reciben los agentes— se cae. La app de salud vive en
-    // OTRO servidor Fastify de loopback: su socket y su Postgres siguen impecables. Antes de este
-    // cambio eso bastaba para responder 200 y que Docker marcara el contenedor `healthy`.
+    // Simula caída del listener de datos.
     await new Promise<void>((resolve) => dataListener!.close(() => resolve()));
     expect(await answeringPool.query('SELECT 1')).toBeTruthy();
 
@@ -571,7 +569,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const app = await buildLoopbackHealthProbe({
       pool: answeringPool,
       dataApp: await listeningDataApp(),
-      // `deliveries` bloqueada, pool agotado, relación ausente: nada de eso lo ve un `SELECT 1`.
       ackProbe: async () => { throw new Error('canceling statement due to lock timeout'); },
     });
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
@@ -813,8 +810,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
   });
 
   it('is actually wired in main.ts, not just available', async () => {
-    // La sonda honesta sólo sirve si el arranque real la usa. Sin esta comprobación, borrar una
-    // línea de `main.ts` devuelve la mentira entera sin romper una sola prueba de comportamiento.
+    // Verifica que la sonda de salud esté correctamente integrada en main.ts.
     const main = await readFile(new URL('./main.ts', import.meta.url), 'utf8');
     expect(main).toMatch(/buildLoopbackHealthProbe\(\{[\s\S]*?dataApp: app[\s\S]*?\}\)/u);
     expect(main).toMatch(/wakePumpTelemetry[\s\S]*?health\.listen\(\{ host: '0\.0\.0\.0'/u);

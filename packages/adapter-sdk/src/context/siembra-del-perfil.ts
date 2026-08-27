@@ -10,48 +10,18 @@ import {
 } from "@cauce/protocol";
 
 /**
- * EL QUE DE VERDAD TOCA EL DISCO: escribe el perfil del alias en los ficheros que su arnés lee.
+ * Escribe el perfil del alias en los ficheros que su arnés lee (CLAUDE.md, AGENTS.md, etc.).
  *
- * ============================================================================================
- * POR QUÉ ESTO CIERRA EL LAZO
- * ============================================================================================
- * `ficherosDelArnes()` componía el texto correcto y NO TENÍA UN SOLO LLAMADOR en producción: era
- * una isla exportada. El operador editaba el perfil en la consola, veía la vista previa, le daba a
- * guardar, la base lo guardaba... y ningún byte llegaba nunca a ningún contenedor.
- *
- * Esto es la última pieza. Lo llama el adaptador al conectar, con el perfil que le llega en el
- * `hello_ack`, y a partir de ahí el fichero del arnés dice lo que dice la base.
- *
- * ============================================================================================
- * POR QUÉ ESCRIBE EL ADAPTADOR Y NO EL GATEWAY
- * ============================================================================================
- * Mismo argumento que para el sello del bloque A: el adaptador YA corre dentro del contenedor del
- * alias, con su usuario y su `$HOME`. Puede abrir el fichero. Que lo escribiera el gateway
- * exigiría la cadena gateway → relay → pty-agent, que el 2026-08-24 no existe en producción —los
- * tres eslabones dan 404 o no tienen la capacidad— y un canal de escritura hasta el disco de cada
- * contenedor, que es superficie nueva y peligrosa.
- *
- * ============================================================================================
- * UNA VEZ POR CONEXIÓN, NO POR ENTREGA
- * ============================================================================================
- * Se llama desde el saludo. Un alias que se reconecta reescribe si hace falta, y si no hace falta
- * `ficherosDelArnes` devuelve `escribir: false` y no se abre el fichero para nada. Escribirlo por
- * entrega sería reintroducir por otra vía el coste que este trabajo vino a quitar.
- *
- * ============================================================================================
- * NUNCA LANZA
- * ============================================================================================
- * Un fallo escribiendo deja el fichero como estaba, que es el comportamiento de siempre. Lo que NO
- * puede pasar es que un alias se quede sin conectar porque no se pudo componer un fichero: eso
- * cambiaría un problema de presentación por un agente sordo. Devuelve el parte de lo ocurrido para
- * que quien llame lo registre.
+ * - Lo ejecuta el adaptador (no el gateway) porque corre dentro del contenedor con acceso a `$HOME`.
+ * - Se invoca una vez por conexión (en el saludo), no por entrega.
+ * - Nunca lanza: un fallo deja el fichero anterior intacto y devuelve un parte diagnóstico.
  */
 
 /** Qué pasó con cada fichero. Va al registro; el turno sigue igual pase lo que pase. */
 export type ResultadoDeFichero =
   | { readonly nombre: string; readonly estado: "escrito" }
   | { readonly nombre: string; readonly estado: "ya-estaba" }
-  /** El bloque que hay es de OTRO alias: `kratos` y `atlas` comparten `$HOME`. No se pisa. */
+  /** El bloque que hay es de otro alias; no se sobrescribe. */
   | { readonly nombre: string; readonly estado: "ocupado-por-otro-alias" }
   | { readonly nombre: string; readonly estado: "no-se-pudo-escribir"; readonly motivo: string };
 
@@ -388,16 +358,9 @@ export const discoReal: DiscoDelArnes = {
 };
 
 /**
- * Dónde vive el espacio de trabajo cuyos ficheros lee el arnés.
- *
- * MEDIDO contenedor por contenedor el 2026-08-24, no deducido:
- *   claude   → `$CLAUDE_CONFIG_DIR` si está, si no `$HOME/.claude`
- *   codex    → `$CODEX_HOME` si está, si no `$HOME/.codex`
- *   openclaw → el espacio de trabajo del agente, la familia de siete Markdown
- *
- * `CLAUDE_CONFIG_DIR` GANA sobre `$HOME` y no es un detalle: es el mecanismo con el que dos alias
- * del mismo contenedor tienen ficheros distintos. Una prueba mía se puso roja por leer mi
- * `CLAUDE.md` de verdad justamente por no respetarlo.
+ * Resuelve el directorio del arnés: `$CLAUDE_CONFIG_DIR`/`$HOME/.claude` para claude,
+ * `$CODEX_HOME`/`$HOME/.codex` para codex, workspace del agente para openclaw.
+ * `CLAUDE_CONFIG_DIR` tiene prioridad sobre `$HOME` para aislar alias que comparten contenedor.
  */
 export function directorioDelArnes(
   harness: string, entorno: NodeJS.ProcessEnv = process.env,
@@ -435,11 +398,7 @@ export interface OpcionesDeSiembra {
 }
 
 /**
- * Escribe el perfil en los ficheros del arnés. Nunca lanza.
- *
- * El interruptor está APAGADO por defecto y es deliberado: esto escribe dentro del contenedor de
- * quince agentes que están trabajando. Encenderlo es una decisión con fecha y con alguien mirando,
- * no un efecto secundario de desplegar una versión.
+ * Escribe el perfil en los ficheros del arnés. Nunca lanza excepciones.
  */
 export function sembrarPerfilDelArnes(
   harness: string,

@@ -5,38 +5,7 @@ import type { FactsSource } from '../console/agent-documents.routes.js';
 import type { AgentRegistry } from './registry.js';
 
 /**
- * LOS HECHOS MEDIDOS, SACADOS DE LA PRESENCIA QUE EL PROPIO AGENTE PUBLICA.
- *
- * ============================================================================================
- * POR QUÉ ESTO ESTABA VACÍO
- * ============================================================================================
- * `MeasuredFactsSource` existía, `TerminalRelayFactsProbe` la consumía y toda la vía de documentos
- * colgaba de ella. Y en producción se inyectaba `{ factsFor: async () => undefined }`: un doble
- * que dice «nadie ha medido nada» SIEMPRE. Por eso `GET /documents` contestaba con rutas deducidas
- * del registro y `editable: false`, y el contenido no se podía ni pedir.
- *
- * El motivo real estaba escrito en el propio plugin: *«el pty-agent conoce su `home` y su
- * `harness` por el bundle con el que arranca, pero no los publica ni en el hello ni en la
- * presencia, así que no hay ninguna fuente en producción»*. El `harness` sí viajaba; el `home` no.
- * Ahora viaja, y este módulo es lo que faltaba en medio.
- *
- * ============================================================================================
- * POR QUÉ DEL AGENTE Y NO DEL REGISTRO DE LA BASE
- * ============================================================================================
- * Porque el registro se equivoca. Medido el 23-ago-2026: `agents.harness_id` era incorrecto en
- * 5 de los 14 alias. Resolver `~/.claude/CLAUDE.md` con un `harness` equivocado no da «no se pudo
- * leer»: da el fichero de OTRO arnés, servido como si fuera el bueno. El agente que corre dentro
- * del contenedor es la única pieza que sabe con qué `$HOME` y con qué binario arrancó.
- *
- * Es la misma regla que gobierna todo este trabajo: quien tiene el dato delante es quien lo dice.
- *
- * ============================================================================================
- * QUÉ SE NIEGA A CONTESTAR, Y ES LA MITAD DEL VALOR
- * ============================================================================================
- * Devuelve `undefined` —o sea «no medido», que es lo que la pantalla ya sabe pintar— en cuanto
- * falta cualquier pieza o la medición está vieja. Un hecho a medias es peor que ninguno: con él,
- * la consola pasaría de decir honestamente «no se miró» a servir un fichero equivocado con cara
- * de medido.
+ * Adaptador para extraer hechos medidos de entorno a partir de la presencia reportada por los agentes.
  */
 
 /** Los arneses cuyos ficheros de gobierno esta vía sabe resolver. */
@@ -55,10 +24,8 @@ function rutaCanonica(valor: unknown): valor is string {
 
 /**
  * Hechos medidos a partir de lo que el pty-agent publica en su presencia.
- *
- * `stale` cuenta como no medido. Un agente que dejó de reportar puede haberse reiniciado con otro
- * `$HOME` —es exactamente lo que pasa al recrear un contenedor—, y servir la ruta de antes sería
- * afirmar sobre un proceso que ya no existe.
+ * Devuelve `undefined` si el registro no está disponible, está desactualizado (stale)
+ * o carece de las rutas canónicas requeridas.
  */
 export function hechosDelRegistro(registry: AgentRegistry): MeasuredFactsSource {
   return {
@@ -73,9 +40,7 @@ export function hechosDelRegistro(registry: AgentRegistry): MeasuredFactsSource 
         project_root: projectRoot, project_doc_max_bytes: projectDocMaxBytes,
         project_doc_fallback_filenames: projectDocFallbackFilenames,
       } = observacion.presence;
-      // Las dos condiciones por separado y no en una: un agente viejo no manda `home` y un agente
-      // nuevo puede correr un arnés que esta vía no sabe resolver. Son dos ausencias distintas y
-      // ninguna de las dos autoriza a inventar la otra.
+      // Valida presencia de hechos de entorno, arnés reconocido y rutas canónicas.
       if (runtimeFactsObserved !== true) return undefined;
       if (!arnesConocido(harness)) return undefined;
       if (!rutaCanonica(home)) return undefined;
@@ -93,12 +58,7 @@ export function hechosDelRegistro(registry: AgentRegistry): MeasuredFactsSource 
         return undefined;
       }
 
-      /*
-       * El cable de presencia usa snake_case y RuntimeFacts usa camelCase. No propagar estos tres
-       * campos era peor que perderlos: `resolveAgentDocuments()` caía silenciosamente a
-       * `~/.codex`/`~/.claude` y devolvía un fichero real, pero de otra cuenta del mismo HOME.
-       * Se mapean de forma explícita; un spread conservaría las claves con el nombre equivocado.
-       */
+      // Mapeo explícito de campos de presencia a RuntimeFacts.
       const facts: RuntimeFacts = {
         harness,
         home,

@@ -26,7 +26,7 @@ import './styles.css';
  * cascada sí está, incluida la del navegador. Lo que falta es la aritmética (`rem`→px, `var()`→
  * token, herencia), y ésa la pone este fichero.
  *
- * 🔴 **Lo que jsdom NO hace: layout.** No hay `scrollWidth`, no hay `getBoundingClientRect`. Por eso
+ * Lo que jsdom NO hace: layout.** No hay `scrollWidth`, no hay `getBoundingClientRect`. Por eso
  * acá NO hay ninguna prueba de desborde: sería `0 > 0` y daría verde siempre. Está medido como
  * aserto ejecutable en `styles.tipografia.test.ts` › «la premisa». El desborde se mide en Chrome de
  * verdad con `ops/console-legibilidad/medir-tipografia.mjs`.

@@ -120,14 +120,7 @@ function PermissionState({ access, permission }: { access?: ConsoleAccess; permi
 }
 
 /**
- * **La negativa, dicha entera.**
- *
- * Antes acá se pintaba `{error}` a secas, y ese `error` era el `reason` crudo del gateway: el
- * `[role=alert]` de producción contenía EXACTAMENTE «no_grant». Ahora se pintan las tres cosas que
- * hacen falta para poder hacer algo al respecto: qué pasó, por qué, y a quién pedírselo.
- *
- * El código crudo NO desaparece —sigue en `data-codigo`, que es lo que se pega en un informe— pero
- * deja de ser lo único que el operador ve.
+ * Componente para mostrar denegaciones de acceso PTY con explicación y código.
  */
 function NegativaPty({ negativa }: { negativa: DenegacionExplicada }) {
   return (
@@ -265,7 +258,7 @@ function PtySessionBar({ agent, grant, secondsLeft, readOnly, ticketConsumed, cl
       */}
       <span className="pty-bar-feed"><MessageSquareText size={13} aria-hidden="true" /> POLLING EN PAUSA</span>
       {/*
-        🔴 SE LLAMABA IGUAL QUE EL BOTÓN QUE TE ECHA DE LA CONSOLA. Arriba a la derecha, en la barra
+        SE LLAMABA IGUAL QUE EL BOTÓN QUE TE ECHA DE LA CONSOLA. Arriba a la derecha, en la barra
         de la aplicación, hay un «Cerrar sesión» que cierra la SESIÓN DE STEVEN. Éste cerraba el
         canal PTY y decía exactamente lo mismo; en el móvil quedaba además a ancho completo y bien
         visible. Dos botones con el mismo rótulo y consecuencias distintas es una trampa, no un
@@ -446,7 +439,7 @@ function SessionStage({ session, sessionToken, agents, access, topologyAccess, c
     selectedDeliveryId != null && delivery.delivery_id === selectedDeliveryId
   )) ?? deliveries.at(-1);
   /*
-   * `TerminalTranscript` marca por MENSAJE desde el 2026-08-23 (ver el comentario de ese fichero:
+   * `TerminalTranscript` marca por MENSAJE :
    * comparar dos `undefined` ponía el anillo azul en todas las burbujas de salida). Este panel
    * sigue razonando por entrega —su inspector de ACK sólo existe para una entrega—, así que acá se
    * traduce: qué mensaje contiene la entrega elegida. Sin entregas en el hilo no hay mensaje
@@ -481,15 +474,7 @@ function SessionStage({ session, sessionToken, agents, access, topologyAccess, c
   // El canal abierto puede ser la TUI (observación) o una shell (escribe). Manda lo que otorgó
   // el servidor en el grant, no lo que la pestaña creía haber pedido.
   const channelIsLiveTui = (grant?.target.mode ?? liveSession.channelMode) === LIVE_TUI_MODE;
-  /**
-   * La vista por defecto de una pestaña es la TUI viva del agente, no el feed.
-   *
-   * Steven lo pidió así: abrir la vista, elegir un agente y VER lo que está haciendo ahora —
-   * sin elegir modo y sin escribir un motivo. Se intenta UNA sola vez por panel: un 403 o un
-   * 409 del gateway no puede convertirse en un bucle de pedidos contra el plano de control.
-   * Si el alias no publica `harness`, no se pide nada y la pestaña se queda en el feed con el
-   * motivo medido a la vista.
-   */
+  /** Apertura automática de TUI viva al seleccionar el panel si está disponible. */
   useEffect(() => {
     if (!liveTui.enabled) return;
     if (autoOpenedRef.current === liveSession.id) return;
@@ -727,7 +712,7 @@ function SessionStage({ session, sessionToken, agents, access, topologyAccess, c
         )}
 
         {/*
-          🔴 El rechazo del gateway se veía SÓLO dentro del diálogo de motivo, y la TUI se pide
+          El rechazo del gateway se veía SÓLO dentro del diálogo de motivo, y la TUI se pide
           sola al abrir la pestaña, sin diálogo. O sea que el camino por el que Steven entra —clic
           en un alias— recibía el 403 y no pintaba absolutamente nada: dos 403 y el panel seguía
           diciendo «PTY online» y «TUI en vivo» mientras el motivo moría en un `useState` que nadie
@@ -842,13 +827,7 @@ function SessionStage({ session, sessionToken, agents, access, topologyAccess, c
 }
 
 /**
- * **Las sesiones que te están gastando las plazas y no ves.**
- *
- * El gateway topea las sesiones de terminal POR OPERADOR y una sesión consumida sigue contando
- * 900 s aunque su pestaña ya no exista. Cuando eso pasaba, la consola mostraba «cerrá alguna de
- * las sesiones que tenés abiertas» y no había, en toda la pantalla, una sola sesión que cerrar:
- * Ultimate Terminal quedaba muerta un cuarto de hora sin un error que lo dijera. Esta tira es la
- * salida: las nombra, dice cuánto les falta para soltarse solas, y las cierra de un clic.
+ * Componente para listar y liberar sesiones de terminal huérfanas o fuera de foco.
  */
 function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisando, cerrando, error, onRevisar, onCerrar }: {
   /** Las que ocupan plaza y esta pestaña NO gobierna: las colgadas de verdad. */
@@ -989,7 +968,7 @@ function GridContainer({
   }
 
   /*
-   * 🔴 UNA SESIÓN A LA VISTA, NO TODAS APILADAS.
+   * UNA SESIÓN A LA VISTA, NO TODAS APILADAS.
    *
    * La rejilla pintaba TODOS los paneles abiertos, cada uno con `height: 600px`, uno debajo de
    * otro. Medido a 1280x900 con cuatro sesiones: la página medía 3.058 px para una ventana de
@@ -1091,9 +1070,9 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   const terminalIntentsRef = useRef(new Map<string, WorkspaceTerminalIntent>());
 
   /*
-   * 🔴 LA SESIÓN NO PUEDE SOBREVIVIR A LA VISTA QUE LA ABRIÓ.
+   * LA SESIÓN NO PUEDE SOBREVIVIR A LA VISTA QUE LA ABRIÓ.
    *
-   * Medido contra producción el 2026-08-23, con la auditoría del propio gateway: abrir la TUI de
+   *  abrir la TUI de
    * dos alias y navegar a Portada dejaba `.terminal-session-head` = 0 y `.pty-host` = 2 nodos
    * VIVOS colgando del `<body>`, con sus dos sockets abiertos y sus dos filas `active` en
    * `terminal_sessions`. El tercer alias devolvía 409 `session_limit`. Al desmontar, este

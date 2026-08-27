@@ -6,7 +6,7 @@ import { NAV_ENTRIES } from './nav';
 /**
  * **LA NAVEGACIÓN PRIMARIA, ILEGIBLE EN EL TELÉFONO.**
  *
- * 🔴 Medido el 2026-08-23 en Chrome a 360×800 sobre la consola desplegada, en la portada y en
+ * 
  * `/live`. Los ocho rótulos de la barra inferior se PISABAN unos con otros y se leían como texto
  * corrupto:
  *

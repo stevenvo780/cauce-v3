@@ -40,7 +40,7 @@ function agentKeyOf(tenantId: string, alias: string): string {
 }
 
 /**
- * **Mitad de escritura del ruteo**, dentro de "Cuentas de IA". Hasta el 2026-08-06 era la ruta
+ * **Mitad de escritura del ruteo**, dentro de "Cuentas de IA". 
  * `/assignments` ("Matriz agente × cuenta"), y era la tercera vista de la consola que dibujaba el
  * mismo inventario de cuentas: sus COLUMNAS son exactamente las FILAS de la tabla de arriba, salían
  * del mismo `GET /v3/console/config` y se escribían por el mismo `POST /v3/console/config/changes`.

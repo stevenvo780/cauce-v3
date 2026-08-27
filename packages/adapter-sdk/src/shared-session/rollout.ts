@@ -11,32 +11,7 @@ import type {
 } from "./types.js";
 
 /**
- * De dónde sale el sobre en el harness codex: del rollout que escribe la propia TUI.
- *
- * Es el equivalente exacto del `.jsonl` de claude, y por las mismas razones: autoritativo,
- * completo y sin wrapping. Lo que cambia es la forma, y a favor — el rollout trae `turn_id`
- * TIPADO en cada línea del turno, así que la correlación no depende de reconstruir una cadena de
- * padres como en claude.
- *
- * Fixture sintético que reproduce la forma validada con evidencia privada:
- *
- * ```
- * {"timestamp":…,"type":"event_msg","payload":{"type":"task_started","turn_id":"<turn-id>"}}
- * {"timestamp":…,"type":"response_item","payload":{"type":"message","role":"user",
- *   "content":[{"type":"input_text","text":"<fixture-message>"}],
- *   "internal_chat_message_metadata_passthrough":{"turn_id":"<turn-id>"}}}
- * {"timestamp":…,"type":"event_msg","payload":{"type":"agent_message",
- *   "message":"<fixture-response>","phase":"final_answer"}}
- * {"timestamp":…,"type":"event_msg","payload":{"type":"task_complete","turn_id":"<turn-id>",
- *   "last_agent_message":"<fixture-response>"}}
- * ```
- *
- * Invariantes cubiertas por fixtures:
- *  - cada `response_item` de rol `user` trae `turn_id`;
- *  - un turno completado por la TUI trae `task_complete` y `last_agent_message`, mientras que
- *    uno abortado cierra con `turn_aborted`;
- *  - el `event_msg` `user_message` no trae `turn_id`, así que la correlación usa el
- *    `response_item`, que sí.
+ * Lector y analizador de transcripts tipo rollout generados por Codex.
  */
 
 /** Una línea del rollout, ya decodificada. */
@@ -46,26 +21,12 @@ export interface RolloutLine {
   readonly payload?: unknown;
 }
 
-/**
- * Dónde guarda codex los rollouts. No dependen del workspace, a diferencia de claude: es un solo
- * árbol por `CODEX_HOME`, repartido en `sessions/AAAA/MM/DD/`.
- */
+/** Directorio raíz donde Codex almacena los rollouts de sesiones. */
 export function rolloutDirectory(codexHome: string): string {
   return join(codexHome.replace(/\/+$/u, ""), "sessions");
 }
 
-/**
- * El id de conversación se extrae del nombre canónico del rollout:
- * `rollout-<timestamp>-<uuid>.jsonl`.
- *
- * El UUID coincide con el `session_id` de la primera entrada `session_meta`. Este contrato se
- * valida con fixtures sintéticos; la evidencia privada no se transcribe en el código. Extraerlo
- * del nombre evita leer la cabecera de un fichero potencialmente grande cuando sólo hace falta el
- * identificador de sesión.
- *
- * Ese valor es el que el adaptador guarda como sesión observada y el que se usa para reanudar la
- * conversación con `codex exec resume`.
- */
+/** Extrae el ID de sesión del nombre del archivo de rollout. */
 export function rolloutSessionId(file: string): string | undefined {
   const found = /-([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\.jsonl$/u.exec(file);
   return found?.[1];
@@ -83,16 +44,7 @@ export async function rolloutFiles(directory: string): Promise<readonly string[]
   }
 }
 
-/**
- * Lee el rollout DESDE `offset`, nunca entero.
- *
- * A diferencia de claude, acá no hace falta el fichero completo: el `turn_id` identifica el turno
- * por sí solo, así que todo lo que se necesita está en lo escrito después de pegar. Y hace falta
- * que así sea: los rollouts pueden ser grandes, y releerlos completos en cada sondeo
- * costaría más que el turno.
- *
- * La última línea sin salto se descarta: es la que la TUI está volcando en este preciso momento.
- */
+/** Lee entradas JSON del rollout a partir del offset indicado. */
 export async function readRolloutSince(
   file: string,
   offset: number,
@@ -179,31 +131,14 @@ function asText(value: unknown): string | undefined {
 }
 
 /**
- * El texto tal como la caja de entrada de codex lo ENVÍA, que no es tal como se pegó.
- *
- * La forma se validó con un fixture sintético acabado en salto de línea: el `response_item`
- * conservó el texto sin el blanco final. codex recorta ese blanco al enviar; claude NO lo hace, y por eso
- * su igualdad exacta funciona hoy y esta no funcionaría.
- *
- * Importa hasta el punto de invalidar el trabajo entero: `protocolPrompt` termina en `""` unido
- * con saltos, o sea que TODO prompt del bus llega con un `\n` final. Sin este recorte,
- * `findInjected` no reconocería jamás su propio turno, `startedTurn` sí vería el `task_started`
- * —porque el turno de verdad corrió— y el runner esperaría el presupuesto entero: el dueño vería
- * su agente mudo durante los 30 minutos del plazo de ACK, con la respuesta ya escrita en el panel.
- *
- * Se recorta sólo el FINAL, y en los dos lados de la comparación. El principio no se toca: el
- * prompt de protocolo empieza con texto, y recortarlo por delante sí podría confundir dos turnos.
+ * Normaliza el texto recortando espacios o saltos de línea finales para comparaciones exactas.
  */
 function submitted(text: string | undefined): string | undefined {
   return text?.replace(/\s+$/u, "");
 }
 
 /**
- * La entrada de usuario que creó ESTE turno del bus, y el `turn_id` con el que seguirlo.
- *
- * Igualdad exacta contra lo que se pegó, igual que en claude. En el mismo turno hay otros
- * `response_item` de rol `user` —codex mete ahí el AGENTS.md del workspace, con su propio
- * `turn_id`— así que identificar el nuestro por posición sería adivinar; por texto, no.
+ * La entrada de usuario que creó este turno del bus, y el `turn_id` con el que seguirlo.
  */
 function findInjectedRolloutTurn(
   file: string,
@@ -223,15 +158,7 @@ function findInjectedRolloutTurn(
 }
 
 /**
- * El desenlace del turno, que codex escribe como un campo tipado y no como texto en pantalla.
- *
- * `task_complete` trae el cierre Y la respuesta final en `last_agent_message`, los dos con el
- * `turn_id`. Es lo que impide que el turno que el dueño lance en paralelo corte nuestra cosecha:
- * su cierre lleva otro id y aquí no cuenta.
- *
- * `turn_aborted` es la otra salida real: el dueño cortó el turno desde su panel. Sin mirarlo, el
- * runner esperaría el presupuesto entero —hasta una hora— por una respuesta que ya nadie va a
- * escribir, y el dueño vería un agente mudo durante los 30 minutos del plazo de ACK.
+ * Identifica el desenlace del turno en el rollout a partir de su turn_id.
  */
 function findRolloutOutcome(
   entries: readonly RolloutLine[],
@@ -258,15 +185,7 @@ function findRolloutOutcome(
 }
 
 /**
- * El SOBRE de un turno que cerró después de que pegáramos, sin exigir que sea el NUESTRO.
- *
- * El rescate equivalente al de claude, y hace falta por lo mismo: si la inyección sintética se funde con un turno
- * en curso, el `turn_id` con el que seguiríamos el nuestro no existe, y `findRolloutOutcome` no
- * puede devolver nada nunca. Lo que sí existe es el `task_complete` del turno fundido, y su
- * `last_agent_message` trae el sobre entero.
- *
- * Se exige `task_complete` —el cierre real del turno— y que el mensaje SEA un sobre. El runner le
- * pasa sólo lo escrito después de la inyección, así que un cierre anterior no puede colarse.
+ * Busca un sobre estructurado correlacionado en los eventos task_complete del rollout.
  */
 function findRolloutEnvelope(
   entries: readonly RolloutLine[],
@@ -298,10 +217,6 @@ function finalAnswerOf(entries: readonly RolloutLine[], key: string): string | u
 
 /**
  * Las compactaciones ocurridas en lo nuevo.
- *
- * codex las anuncia con un `event_msg` `context_compacted` SIN ningún campo —ni cifras ni id— así
- * que el identificador estable para no repetir el aviso es la marca de tiempo de la propia línea,
- * que sí trae siempre.
  */
 function rolloutCompactions(appended: readonly RolloutLine[]): readonly CompactionNotice[] {
   const events: CompactionNotice[] = [];
@@ -317,10 +232,7 @@ function rolloutCompactions(appended: readonly RolloutLine[]): readonly Compacti
 }
 
 /**
- * El registro de codex, visto por el runner de la inyección sintética.
- *
- * `stdout` devuelve exactamente las dos líneas que emite `codex exec --json`, que es lo que espera
- * `parseCodexOutput`. El transporte cambia; el contrato de salida no se toca.
+ * Crea un `TranscriptReader` para procesar rollouts de Codex.
  */
 export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine> {
   const directory = rolloutDirectory(codexHome);

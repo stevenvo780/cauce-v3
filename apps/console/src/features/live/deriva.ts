@@ -13,7 +13,7 @@ import type { LiveAgentView } from './agent-state';
  * un alta o una baja hecha tocando una sola de las dos tablas, y eso es lo que se quiere ver el
  * mismo día y no dentro de un mes.
  *
- * 🔴 **Por qué existe este módulo.** Hasta el 2026-08-22 esto se calculaba dentro de
+ * Por qué existe este módulo.** 
  * `LiveFleetPage` con un comentario que afirmaba —literalmente— que era «la diferencia simétrica
  * entre `memberships` y `agents`». No lo era: el bucle recorría SÓLO las membresías y contaba las
  * que no reportaban actividad. La otra mitad —un alias del registro sin una sola membresía

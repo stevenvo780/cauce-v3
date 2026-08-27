@@ -10,31 +10,7 @@ import { CAPAS_PENDIENTES, ubicacionDeclarada, type UbicacionDeclarada } from '.
 import { avisosDeCapas, medicionDeCapa, totalDeMemoria, type AvisoDeCapas } from './directiva';
 
 /**
- * LAS TRES CAPAS DE DIRECTIVA, EN UN DIÁLOGO ANCHO Y NO DENTRO DEL CAJÓN.
- *
- * Steven lo pidió con estas palabras: «todo ese menú debería ser un modal, tienen demasiados
- * datos». Estaba midiendo lo mismo que Chrome: dentro del cajón de `zeus`, en producción, las
- * cuatro secciones sumaban **2.120 px** de contenido (686 + 387 + 368 + 679) apilados en una
- * columna de **420 px**, de los que se ven **1.000**. No es que quedara apretado: es que dos de
- * las tres capas quedaban SIEMPRE por debajo del pliegue, y comparar la capa 1 con la 2 —que es
- * la única razón por la que estas tres cosas están juntas— exigía recordar lo de arriba mientras
- * se bajaba.
- *
- * Tres decisiones, cada una con lo que recorta:
- *
- *  1. **Tres columnas** en vez de tres bloques apilados. Comparar es poner al lado, no
- *     desplazarse. Es lo mismo que ya justificaba juntar las capas (`DirectivaTab`), llevado a su
- *     conclusión: la duplicación no se descubre leyendo un fichero, se descubre viéndolo al lado
- *     del otro. Sin ancho, juntarlas no servía de nada.
- *  2. **La prosa se pliega.** Los cuatro párrafos de `.directiva-porque` explican POR QUÉ existe
- *     cada capa. Se leen una vez; después son 4 párrafos de 2-4 líneas que empujan el contenido
- *     hacia abajo cada vez que se abre. Van detrás de «¿por qué esta capa?», cerrados.
- *  3. **La capa 4 baja al pie.** No es una capa: es una nota de alcance sobre lo que todavía no
- *     tiene editor. Medía 679 px —casi lo mismo que la capa 1, que es la única que se puede
- *     tocar de verdad— y encabezaba con el mismo rótulo «Capa N» que las que sí son capas.
- *
- * La columna 1 conserva la proyección y su diario, ambos de sólo lectura. Editar o recuperar una
- * revisión sale de este diálogo hacia Perfil, que es el único dueño del PUT canónico y su ACK.
+ * Modal para visualizar las capas de directiva y rol de un agente.
  */
 
 export interface DirectivaModalProps extends RoleBriefTabProps {
@@ -264,7 +240,7 @@ export function DirectivaModal({
 /**
  * Las dos partes del encargo que TODAVÍA no se pueden tocar, dichas en vez de omitidas.
  *
- * Steven pidió cuatro cosas y esto resuelve dos. Callar las otras dos dejaría al operador
+ *  Callar las otras dos dejaría al operador
  * eligiendo entre dos conclusiones falsas —que se olvidaron, o que este agente no tiene
  * herramientas configuradas—. Con el hueco rotulado sabe que existen, dónde viven y qué falta.
  *

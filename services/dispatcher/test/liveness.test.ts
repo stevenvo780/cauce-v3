@@ -12,11 +12,7 @@ import { DispatcherMetrics } from '../src/metrics.js';
 const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const probePath = join(repositoryRoot, 'deploy/liveness-probe.mjs');
 
-/**
- * Pool que falla siempre. A propósito: lo que hay que demostrar es que el TICK avanza mientras
- * el bucle gira, sin importar si la iteración tuvo éxito. Un tick que falla sigue siendo prueba
- * de que el `setInterval` está vivo; el `SELECT 1` de hoy no distingue ni una cosa ni la otra.
- */
+/** Pool simulado que lanza error para verificar el avance del bucle bajo fallos. */
 const failingPool = {
   query: async () => { throw new Error('stub pool'); },
   connect: async () => { throw new Error('stub pool'); },

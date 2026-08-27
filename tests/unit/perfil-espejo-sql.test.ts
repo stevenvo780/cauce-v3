@@ -6,23 +6,8 @@ import {
 } from '@cauce/protocol';
 
 /**
- * EL ESPEJO ENTRE LOS TOPES DE TYPESCRIPT Y LOS CHECK DE LA MIGRACIÓN 026.
- *
- * `AGENT_PROFILE_LIMITS` y los CHECK de `026_agent_profile.sql` son DOS COPIAS del mismo número, y
- * las copias se desincronizan. Cuando lo hacen, el fallo no se ve como un error: la pantalla acepta
- * un perfil que la base rechaza con un `23514` que sólo nombra un constraint, o —peor— la base
- * acepta lo que el código creía imposible y el fichero del contenedor deja de caber en la ventana
- * del modelo. Es la misma grieta que el 16-ago dejó a un alias SORDO durante horas.
- *
- * Estas pruebas NO necesitan Postgres, y ése es el punto: las de verdad
- * (`agent-profile-migration-postgres.test.ts`) exigen un contenedor que en estos entornos no hay
- * —no hay demonio Docker—, así que sin este guardia la única comprobación del espejo es la que
- * nunca se corre. Acá se lee el .sql como TEXTO y se comprueba que cada campo del contrato está
- * nombrado, con su número, en el sitio que le toca.
- *
- * Lo que este guardia NO acredita, y hay que decirlo: que el SQL sea válido, que la migración
- * aplique, o que `cauce_utf16_units` cuente bien. Eso sólo lo prueba Postgres. Acá se comprueba
- * la CORRESPONDENCIA, que es exactamente lo que se rompe al añadir un campo y olvidar una línea.
+ * Validación estática de sincronización entre límites de `AGENT_PROFILE_LIMITS`
+ * en `@cauce/protocol` y las restricciones CHECK en la migración `026_agent_profile.sql`.
  */
 
 const migracion = readFileSync(

@@ -21,10 +21,7 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
 assertPostgresTls(databaseUrl);
 const ackDeadlineMs = configuredAckDeadlineMs();
-// Mismo bloque de entorno que el dispatcher: ver `configuredDeliveryLeaseCap`.
 const deliveryLeaseCap = configuredDeliveryLeaseCap();
-// Se lee al arrancar a propósito: una configuración de admisión inválida tiene que impedir el
-// boot, no descubrirse recién cuando un agente se conecta y no recibe nada.
 const admission = configuredDeliveryAdmission();
 
 function assertPostgresTls(connectionString: string): void {
@@ -52,10 +49,7 @@ async function optionalTextFile(path: string | undefined): Promise<string | unde
 }
 
 /**
- * Clave de firma del JWT de consola. Acepta las tres formas en que sale de `openssl`
- * (`openssl rand 32`, `-hex 32`, `-base64 48`) para que nadie tenga que adivinar el formato:
- * el modo en que ese error aparece es un gateway que arranca y rechaza todos los logins.
- * Techo por abajo, nunca por arriba: 32 bytes es el mínimo, más es bienvenido.
+ * Lee la clave de firma del JWT de consola (soporta raw bytes, hex o base64).
  */
 async function readSigningKey(path: string): Promise<Buffer> {
   const raw = await readFile(path);
@@ -73,9 +67,7 @@ async function readSigningKey(path: string): Promise<Buffer> {
 }
 
 /**
- * Proveedor que atiende lo que NO trae cookie de consola cuando el login por contraseña está
- * encendido. Por defecto `mtls`, que es como entran los agentes: el login humano se SUMA.
- * `none` lo deja sin respaldo — sólo para un despliegue donde nada más habla con el gateway.
+ * Configura el proveedor de autenticación fallback para peticiones sin cookie de sesión.
  */
 async function configuredPasswordFallback(): Promise<AuthProvider | undefined> {
   const selected = process.env.CAUCE_CONSOLE_PASSWORD_FALLBACK ?? 'mtls';

@@ -167,11 +167,8 @@ async function main() {
 }
 
 main().catch((error) => {
-  // El motivo va SIEMPRE a stderr. Antes este catch descartaba el error y sólo dejaba
-  // "openclaw stdin bridge failed": el turno del agente moría con `exited with code 1 without
-  // structured output` y la causa —módulo que no carga, sesión inexistente, openclaw roto— no
-  // quedaba en ningún lado, así que no había nada que diagnosticar. Pasó con argos el 2026-08-04.
-  // stderr NO contamina el contrato: la respuesta estructurada viaja por stdout.
+  // Vuelca el error completo a stderr para diagnóstico; la respuesta estructurada viaja por stdout
+  // y stderr no contamina el contrato.
   const detail = error instanceof Error
     ? `${error.message}\n${error.stack ?? ""}`
     : String(error);

@@ -51,7 +51,7 @@ describe('el filtro de la tabla', () => {
   ];
 
   /**
-   * 🔴 El caso que hay que guardar: `failed` cuenta como «requiere revisión». También deja fila en
+   * El caso que hay que guardar: `failed` cuenta como «requiere revisión». También deja fila en
    * `dead_letters` y `replayDelivery` la acepta. Un grupo que sólo mirara `dead` volvería a
    * esconder las mismas entregas que el arreglo de `replayableStates` sacó a la luz.
    */

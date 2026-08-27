@@ -246,7 +246,7 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
 /*
  * ------------------------------------------------ ESCRITORIO: EL COMPOSITOR AL PIE DEL PANEL
  *
- * Steven dijo «toca scrollear un montón para ver dónde está el envío» y eso se arregló en el
+ *  y eso se arregló en el
  * teléfono (commit c2a75d0). En escritorio seguía igual y estaba medido: a 1280x900, el
  * `textarea` en y=1546 y el botón «Enviar» en y=1633 — 646 px por debajo del pliegue, con
  * `position: static` y sin `sticky` ni `fixed` por ningún lado. `getComputedStyle` lo confirmaba
@@ -300,7 +300,7 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
  *    o sea seguía fuera de pantalla al abrir el hilo. El motivo es de manual y no se ve en jsdom:
  *    una caja pegajosa no puede salir de su bloque contenedor, y `.messenger-thread` empieza a
  *    778 px del borde (cabecera de página ≈ 370 + roster ≈ 350). O sea: el `sticky` sólo empezaba
- *    a servir DESPUÉS de scrollear, que es exactamente lo que Steven pidió no tener que hacer.
+ *    a servir DESPUÉS de scrollear, que es exactamente lo que 
  *    `fixed` se ancla a la ventana y no depende de dónde empiece el hilo.
  * 2. El anclaje es a 66 px, no a 0: en este mismo corte `.sidebar` (styles.css) se convierte en
  *    una barra de navegación FIJA de 66 px pegada abajo. Con `bottom: 0` el botón «Enviar» queda

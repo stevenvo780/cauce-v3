@@ -3,21 +3,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
-/*
- * TRES CIFRAS PARA LO MISMO, medidas en la consola de producción el 2026-08-24:
+/**
+ * Distinción entre métricas muestreadas por ventana y totales globales de la base.
  *
- *   Portada  → «Entregas muertas: 1»
- *   Colas    → «Dead letters: 1»  (y debajo, en chico: «2 acá · snapshot recortado»)
- *   Señales  → «DLQ: 413 dead letters abiertas»
- *   La tabla → 2.780 filas en `dead_letters`, 2.465 entregas en estado `dead`
- *
- * Ninguna miente: cuentan universos distintos. `queueSnapshot()` cuenta dentro de una ventana
- * (`LIMIT 200`) y `/v3/status` cuenta las abiertas de toda la base. Pero la consola las rotula
- * casi igual, así que el operador ve dos números para la misma pregunta y no sabe cuál creer.
- *
- * El arreglo no es «poner el mismo número en las dos»: la cifra de colas TIENE que respetar lo
- * que el actor puede ver, y la global no. El arreglo es que la respuesta diga cuál es cuál, para
- * que quien pinta no pueda confundirlas.
+ * Verifica que `queueSnapshot()` reporte claramente el universo de conteo para evitar
+ * ambigüedad entre métricas acotadas por ventana/permisos y métricas globales del sistema.
  */
 
 let database: TestDatabase;

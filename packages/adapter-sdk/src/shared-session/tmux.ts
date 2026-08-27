@@ -28,28 +28,7 @@ export interface TmuxController {
 }
 
 /**
- * Variables con las que el supervisor RECONOCE a los procesos de su propio ciclo de vida.
- *
- * `alias_generation_pids` (cauce-container-runtime.py) barre `/proc` y considera «de esta
- * generación» a todo proceso cuyo entorno traiga `CAUCE_ALIAS`, `CAUCE_CONTAINER_GENERATION` y
- * `CAUCE_STATE_DIR`. Si encuentra uno que no puede atribuir ni al controlador ni al árbol del
- * adaptador, falla cerrado: no manda ninguna señal y sale 78.
- *
- * El servidor de tmux se demoniza —se va del grupo de procesos y del árbol de descendientes del
- * adaptador— pero HEREDA su entorno. Con estas variables puestas queda como «proceso no rastreado»
- * para siempre, y a partir de ahí `systemctl restart` del alias NO funciona nunca más: el stop se
- * niega, el start se niega, la unidad queda `failed` y el adaptador viejo sigue vivo atendiendo. Se
- * ve como un alias sano —el lease late, contesta— con la unidad en `failed` y el bundle viejo.
- * Medido el 2026-08-06 en atlas y dedalo: los dos fallaron con exit 78 y los untracked eran
- * exactamente el `tmux new-session` de la sesión compartida y la TUI colgando de él.
- *
- * Se borran las CINCO de `IDENTITY_ENV_KEYS`, no las tres del barrido: el runtime también compara
- * el entorno completo contra `expected_environment()` para reconocer al adaptador y al
- * controlador, y dejar la mitad de la identidad puesta en un proceso ajeno al ciclo de vida es
- * volver a sembrar el mismo error donde el próximo cambio de criterio lo encuentre.
- *
- * La sesión del dueño no es parte del ciclo de vida del adaptador, así que estas variables no
- * pintan nada ahí. Lo que la TUI sí necesita se le pasa explícito por `paneEnvironmentPrefix`.
+ * Variables de entorno de ciclo de vida del contenedor que se omiten al invocar el servidor tmux.
  */
 const LIFECYCLE_ENV_KEYS = [
   "CAUCE_ALIAS", "CAUCE_STATE_DIR", "CAUCE_CONTROL_DIR", "CAUCE_CONTAINER_ID",
@@ -1126,9 +1105,7 @@ export async function capturePane(
   target: string,
   options?: { readonly styled?: boolean; readonly control?: TmuxRunControl },
 ): Promise<string | undefined> {
-  // `-e` conserva los SGR. Hace falta para distinguir el texto FANTASMA de codex (que se dibuja
-  // atenuado, SGR 2) del texto que el dueno tecleo de verdad, que nunca lo esta. Medido el
-  // 2026-07-31 en el panel vivo de socrates: la linea del cursor trae ['1','0','2','0'].
+  // `-e` conserva los códigos SGR para distinguir atributos de estilo en el panel.
   const args = options?.styled === true
     ? ["capture-pane", "-e", "-p", "-t", target]
     : ["capture-pane", "-p", "-t", target];
@@ -1137,16 +1114,9 @@ export async function capturePane(
 }
 
 /**
- * Identidad del proceso que corre en el panel.
- *
- * Es la señal que detecta la trampa medida: `claude` se auto-actualiza y se reinicia solo (visto
- * `Auto-updating…` con la TUI reportando 2.1.179 y el binario en 2.1.220). El nombre de la sesión
- * sobrevive a eso; el PID no. Comparar el PID entre turnos es lo que separa "la misma
- * conversación" de "una TUI nueva que no recuerda nada".
+ * Identifica el PID del proceso principal del pane en tmux.
  */
 export async function panePid(tmux: TmuxController, target: string): Promise<string | undefined> {
-  // El target es `sesión:ventana`. Se comprueba que la ventana EXISTA antes de preguntar el PID,
-  // porque preguntar primero devuelve el de otra ventana sin ningún error. Ver `windowExists`.
   const separator = target.lastIndexOf(":");
   if (separator > 0) {
     const session = target.slice(0, separator);
@@ -1160,27 +1130,7 @@ export async function panePid(tmux: TmuxController, target: string): Promise<str
 }
 
 /**
- * ¿Existe EXACTAMENTE esa ventana en esa sesión?
- *
- * Hace falta porque `display-message` MIENTE. Medido en `ws-prizma` el 2026-07-30, con la sesión
- * `cauce-socrates` teniendo sólo la ventana `servidor`:
- *
- * ```
- * tmux display-message -p -t cauce-socrates:agente  '#{window_name} #{pane_pid}'
- *   -> servidor 14667      (exit 0)
- * tmux display-message -p -t cauce-socrates:=agente '#{window_name} #{pane_pid}'
- *   -> servidor 14667      (exit 0)   <- ni el prefijo '=' lo evita
- * tmux capture-pane -p -t cauce-socrates:agente
- *   -> can't find window: agente      (falla, como corresponde)
- * ```
- *
- * Al no encontrar la ventana, `display-message` cae a la ventana ACTUAL y devuelve 0. Sin esta
- * comprobación `panePid` entregaba el PID del app-server como si fuera el de la TUI, y toda la
- * cadena daba por viva una TUI inexistente: `ensure` decía `ready`, `cauce <alias>` decía
- * COMPARTIDA y el adaptador creía estar compartiendo contexto con una ventana que no existe.
- *
- * `list-windows` sí enumera lo que hay, y la comparación es por igualdad exacta: tmux acepta
- * prefijos y patrones, y "agente" no puede significar otra ventana que "agente".
+ * Comprueba la existencia exacta de una ventana en una sesión tmux.
  */
 export async function windowExists(
   tmux: TmuxController,
@@ -1194,12 +1144,7 @@ export async function windowExists(
 }
 
 /**
- * Mete el texto en la caja de entrada como UNA sola entrada, sin enviarlo.
- *
- * `load-buffer -` toma el texto por stdin y `paste-buffer -p` lo entrega entre corchetes
- * (bracketed paste). Ese modo es lo que impide que los ~30 saltos de línea del prompt de
- * protocolo se conviertan en ~30 envíos: medido con un prompt real de 12 líneas / 668 bytes, la
- * TUI lo tomó como `[Pasted text #1 +12 lines]` y NO se envió solo.
+ * Inserta el texto en la caja de entrada usando bracketed paste (`paste-buffer -p`).
  */
 export interface PastePromptResult {
   /** `ambiguous` sólo aparece si el transporte perdió el resultado de la mutación atómica. */
@@ -1491,23 +1436,7 @@ export async function killPaneGeneration(
 }
 
 /**
- * El aviso que el dueño ve EN SU PANEL cuando la sesión compartida no sirvió el turno.
- *
- * Son dos superficies porque una sola no alcanza: `display-message` es inmediato pero se va solo, y
- * el ROJO de la barra de estado persiste mientras el cliente siga enganchado. Ninguna de las dos
- * escribe en la caja de entrada — eso corrompería lo que el dueño esté tecleando, que es justamente
- * el defecto que este mecanismo tiene que evitar.
- *
- * Lo que NO se hace nunca es renombrar la ventana. La versión anterior la renombraba a
- * `⚠ CAUCE-DEGRADADO` y eso se auto-enclavaba: `tuiTarget()` busca la ventana por su NOMBRE
- * (`cauce-<alias>:agente`), así que en cuanto salía el primer aviso la ventana dejaba de existir
- * para el propio adaptador y TODAS las entregas siguientes degradaban `tui_absent` en 0,2 s, para
- * siempre, con la TUI viva delante. `clearDegradation` tampoco podía curarlo, porque apuntaba al
- * mismo nombre que ya no existía. Verificado de punta a punta el 2026-07-30. El color dice lo
- * mismo sin tocar la identidad de la ventana.
- *
- * Nunca falla hacia afuera: avisar es importante, pero no puede tumbar un turno que ya se
- * respondió.
+ * Anuncia una degradación en la sesión tmux aplicando estilos visuales de advertencia.
  */
 export async function announceDegradation(
   tmux: TmuxController,

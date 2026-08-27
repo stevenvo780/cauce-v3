@@ -136,7 +136,7 @@ describe('las pastillas de estado en modo claro', () => {
   });
 
   /*
-   * Desde el 2026-08-24 `.badge` no lleva un `.rem` suelto: cita el escalón de APUNTE de la escala,
+   * .badge` no lleva un `.rem` suelto: cita el escalón de APUNTE de la escala,
    * que es el mismo que ya usaba `.config-pagina .badge`. Por eso el tamaño se RESUELVE contra el
    * `:root` en vez de parsearse como número — leerlo con `parseFloat('var(--tipo-apunte)')` daba
    * `NaN`, y un `NaN` no es «no se pudo medir»: `NaN >= 12` es falso, así que el guardia habría
@@ -307,7 +307,7 @@ describe('las reglas `.config-*` de las hojas', () => {
  *     10,88px --faint   19 · 12,5px  --muted  8 · 9,28px  --muted  3
  *     → 255 de 288 elementos por debajo de 12 px. Y el `h1` a 44,8 px.
  *
- * 🔴 **Ninguna prueba de React Testing Library puede ver esto.** jsdom no hace layout ni resuelve
+ * Ninguna prueba de React Testing Library puede ver esto.** jsdom no hace layout ni resuelve
  * la cascada: las 985 pruebas de esta consola pasaban con la página entera a 11,8 px. Lo que sí lo
  * atrapa es leer la HOJA, que es lo que hace este bloque — el mismo método con el que se cazaron
  * la pastilla invisible y la clase huérfana de más arriba.
@@ -357,7 +357,7 @@ export function enPixeles(valor: string, escala: Map<string, string>): number | 
   return undefined;
 }
 
-/** El suelo: nada de esta vista baja de acá. Es la cifra que Steven puso en el encargo. */
+/** El suelo: nada de esta vista baja de acá. Es la cifra que  */
 const SUELO = 12.5;
 /** Cuerpo y rótulos no bajan de acá. */
 const SUELO_CUERPO = 13;
@@ -403,7 +403,7 @@ export function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[]
 
 describe('la escala tipográfica de /config', () => {
   /*
-   * 🔴 La escala se MUDÓ a `:root` de `styles.css` el 2026-08-24, y por eso se lee de ahí.
+   * La escala se MUDÓ a `:root` de `styles.css` el 2026-08-24, y por eso se lee de ahí.
    *
    * Estaba en el bloque base de `.config-pagina`, o sea que existía sólo dentro de /config. MEDIDO
    * en Chrome a 1920×1080: /config tenía 0 elementos por debajo de 12,5 px y las otras siete vistas
