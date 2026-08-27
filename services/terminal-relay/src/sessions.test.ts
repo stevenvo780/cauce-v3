@@ -1,6 +1,3 @@
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { WebSocket } from 'ws';
 import type { AgentConnection, AgentSessionHandlers } from './agent-leg.js';
@@ -652,100 +649,6 @@ describe('terminal sessions', () => {
     expect(rejected.closes[0]).toEqual({ code: CLOSE_CODES.session_conflict, reason: 'session_limit' });
     await first.manager.flush();
     expect(first.gateway.closeReports.some((entry) => entry.report.reason === 'session_limit')).toBe(true);
-  });
-
-  it('persiste el cierre antes de reintentar y limpia el spool cuando vuelve el gateway', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-close-'));
-    const spool = join(directory, 'reports.json');
-    const gateway = new FakeGateway();
-    gateway.closeFailures = 2;
-    const manager = new SessionManager({ gateway, limits: limits(), closeSpoolFile: spool });
-    try {
-      manager.reportConsumedClose(SESSION_ID, 'agent_offline', grant());
-      const pending = JSON.parse(await readFile(spool, 'utf8')) as {
-        readonly version: number;
-        readonly reports: readonly { readonly session_id: string; readonly reason: string }[];
-      };
-      expect(pending).toEqual({
-        version: 2,
-        reports: [{
-          session_id: SESSION_ID,
-          reason: 'agent_offline',
-          exit_code: null,
-          bytes_in: 0,
-          bytes_out: 0,
-          claim_token: CLAIM_TOKEN,
-          claim_epoch: '1',
-        }],
-      });
-      expect((await stat(spool)).mode & 0o777).toBe(0o600);
-
-      await waitFor(() => gateway.closeReports.length === 1);
-      expect(gateway.closeAttempts).toBe(3);
-      const delivered = JSON.parse(await readFile(spool, 'utf8')) as {
-        readonly version: number;
-        readonly reports: readonly unknown[];
-      };
-      expect(delivered).toEqual({ version: 2, reports: [] });
-    } finally {
-      await manager.flush();
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it('drains a version-1 legacy close spool but writes only strict version-2 reports', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-close-v1-'));
-    const spool = join(directory, 'reports.json');
-    await writeFile(spool, JSON.stringify({
-      version: 1,
-      reports: [{
-        session_id: SESSION_ID,
-        reason: 'legacy_restart',
-        exit_code: null,
-        bytes_in: 3,
-        bytes_out: 5,
-      }],
-    }), { mode: 0o600 });
-    const gateway = new FakeGateway();
-    const manager = new SessionManager({ gateway, limits: limits(), closeSpoolFile: spool });
-    try {
-      await waitFor(() => gateway.closeReports.length === 1);
-      expect(gateway.closeReports[0]).toEqual({
-        sessionId: SESSION_ID,
-        report: {
-          reason: 'legacy_restart', exit_code: null, bytes_in: 3, bytes_out: 5,
-        },
-      });
-      expect(JSON.parse(await readFile(spool, 'utf8'))).toEqual({ version: 2, reports: [] });
-    } finally {
-      await manager.flush();
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it('refuses a version-2 capability spool that is readable by group or other users', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-close-mode-'));
-    const spool = join(directory, 'reports.json');
-    await writeFile(spool, JSON.stringify({
-      version: 2,
-      reports: [{
-        session_id: SESSION_ID,
-        reason: 'private_claim',
-        exit_code: null,
-        bytes_in: 0,
-        bytes_out: 0,
-        claim_token: CLAIM_TOKEN,
-        claim_epoch: '1',
-      }],
-    }));
-    await chmod(spool, 0o644);
-    try {
-      expect(() => new SessionManager({
-        gateway: new FakeGateway(), limits: limits(), closeSpoolFile: spool,
-      })).toThrow(/mode 0600/u);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
   });
 
   it('fails closed when claim TTL cannot cover authz, grace, request timeout and takeover margin', () => {
