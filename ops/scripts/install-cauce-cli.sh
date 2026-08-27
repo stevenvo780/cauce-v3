@@ -5,13 +5,10 @@
 # revertirlo y cualquiera podía pisarlo. Ahora la fuente está en el repo y esto es lo único que
 # escribe en el home.
 #
-# Son tres piezas y viven en sitios distintos a propósito:
+# Son dos piezas:
 #   cauce           en la TORRE. Habla con docker y con los tmux de los contenedores.
 #   cauce-panel     en la TORRE. Vuelca el panel de un alias; es la única prueba de que un turno
 #                   pasó por el arnés. Devuelve rc=3 en openclaw, que no tiene panel tmux.
-#   cauce-portatil  en el PORTÁTIL, como `cauce`. Envuelve el de la torre por ssh y añade
-#                   `cauce probar <alias>`, que necesita el certificado de consola de
-#                   agora-storage — y kratos NO tiene llave hacia allá.
 set -euo pipefail
 
 CLI_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/cli
@@ -31,8 +28,5 @@ instalar() {  # $1=fuente en el repo  $2=nombre destino
 }
 
 mkdir -p "$BIN"
-case "${CAUCE_CLI_DESTINO:-torre}" in
-  torre)    instalar cauce cauce; instalar cauce-panel cauce-panel ;;
-  portatil) instalar cauce-portatil cauce ;;
-  *) printf 'CAUCE_CLI_DESTINO debe ser "torre" o "portatil"\n' >&2; exit 2 ;;
-esac
+instalar cauce cauce
+instalar cauce-panel cauce-panel

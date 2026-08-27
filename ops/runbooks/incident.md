@@ -15,7 +15,7 @@ Diagnosticar, mitigar y resolver incidentes operativos en gateway, base de datos
 4. Aplicar árbol de decisión operativa:
    - Falla `/health/live`: Reinicio controlado del servicio gateway preservando logs.
    - `/health/live` OK pero `/health/ready` falla: Reparar dependencia degradada (DB/red).
-   - DLQ en crecimiento: Pausar el productor o lane afectada e inspeccionar con `ops/scripts/dlq_cli.py`.
+   - DLQ en crecimiento: Pausar el productor o lane afectada e inspeccionar por la pestaña Observabilidad de la consola (`cauce_list_dlq_030`).
    - ACK lento o fuera de orden: Correlacionar intentos y marcar como `out_of_order` sin confirmar entregas inválidas.
 
 ## Verificar efecto
