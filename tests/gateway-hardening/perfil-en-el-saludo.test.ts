@@ -88,7 +88,7 @@ describe('el gateway no manda el perfil a quien no lo declaró', () => {
      * otra vez el problema del `.strict()`.
      */
     const fuente = await import('node:fs/promises').then((fs) => fs.readFile(
-      new URL('../../services/gateway/src/app.ts', import.meta.url), 'utf8'
+      new URL('../../services/gateway/src/routes/core.ts', import.meta.url), 'utf8'
     ));
     expect(fuente).toContain("hello.capabilities.includes('agent_profile_v1')");
   });

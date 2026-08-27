@@ -1,5 +1,5 @@
 import { MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs } from '@cauce/protocol';
-import { StoreError } from '../quotas.js';
+import { StoreError } from '../errors.js';
 
 /** Techo de vida total de un intento de entrega cuando el mensaje no declara `body.timeout_ms`. */
 export const DEFAULT_DELIVERY_LEASE_CAP_MS = 12 * 60 * 60_000;

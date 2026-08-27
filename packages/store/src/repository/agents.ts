@@ -4,8 +4,8 @@ import type { DatabaseClient } from '../db.js';
 import { withTransaction } from '../db.js';
 import { canonicallyEqual } from './config.js';
 import { DeliveriesRepository, type RoutingTarget } from './deliveries.js';
+import { StoreError } from './errors.js';
 import { agentDeploymentStatus, type DeliveryRow } from './observability.js';
-import { StoreError } from './quotas.js';
 
 export type ProfileRuntimeAdoptionAck = ProfileRuntimeAdoptionEvidence & {
   readonly adopted_at: string;

@@ -2,11 +2,11 @@ import type { DeliveryState, Origin, Tenant } from '@cauce/protocol';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { withAbortableTransaction, withTransaction } from '../db.js';
+import { StoreError } from './errors.js';
 import { JobsRepository } from './jobs.js';
 import {
   UUID_PATTERN, originRelayTenant, type DeliveryRow, type LateRelayDisposition
 } from './observability.js';
-import { StoreError } from './quotas.js';
 
 export interface OutboxEvent {
   id: string;
@@ -149,7 +149,7 @@ function normalizedWakeRecipients(recipients: readonly WakeOutboxRecipient[]): W
  * flota lee castellano. El aviso al agente padre, en cambio, va en inglés como el resto de los
  * textos máquina-a-máquina de este archivo.
  */
-export const LATE_RESULT_HUMAN_NOTICE =
+const LATE_RESULT_HUMAN_NOTICE =
   '[respuesta tardía] Esta tarea se había dado por caída y ya te avisamos del fallo. '
   + 'El agente sí la terminó: su ACK final llegó después del plazo y el bus lo aceptó. '
   + 'El aviso de fallo anterior queda sin efecto. Respuesta:';
@@ -160,7 +160,7 @@ export function objectRecord(value: unknown): Record<string, unknown> | undefine
     : undefined;
 }
 
-export function relaySafeResult(
+function relaySafeResult(
   result: Record<string, unknown> | undefined
 ): Record<string, unknown> | undefined {
   const output = objectRecord(result?.output);
@@ -197,13 +197,7 @@ export function textualReply(result: Record<string, unknown> | undefined): strin
 }
 
 export abstract class OutboxRepository extends JobsRepository {
-  protected abstract override assertPermission(
-    tenantId: Tenant,
-    alias: string,
-    permission: 'route' | 'read' | 'control' | 'notify'
-  ): Promise<void>;
-
-protected override async insertOriginRelay(
+  protected override async insertOriginRelay(
     client: DatabaseClient,
     row: DeliveryRow,
     outcome: string,
@@ -305,7 +299,7 @@ protected override async insertOriginRelay(
     return 'corrected';
   }
 
-async claimOutbox(
+  async claimOutbox(
     kind: 'wake' | 'origin_relay',
     worker: string,
     limit = 50,
@@ -315,7 +309,7 @@ async claimOutbox(
     return this.claimOutboxMatching(kind, worker, limit, leaseMs, adapter);
   }
 
-/**
+  /**
    * Reclama wakes sólo para identidades que el gateway observó conectadas.
    *
    * El filtro vive dentro del mismo CTE que toma el lock y aumenta `attempts`: aplicarlo después
@@ -441,7 +435,7 @@ async claimOutbox(
       : withAbortableTransaction(this.pool, signal, work);
   }
 
-/** Revalidates and renews one exact wake immediately before the gateway emits its frame. */
+  /** Revalidates and renews one exact wake immediately before the gateway emits its frame. */
   async renewWakeOutbox(
     fence: WakeOutboxClaimFence,
     leaseMs = 30_000,
@@ -489,7 +483,7 @@ async claimOutbox(
       : withAbortableTransaction(this.pool, signal, work);
   }
 
-private async claimOutboxMatching(
+  private async claimOutboxMatching(
     kind: 'wake' | 'origin_relay',
     worker: string,
     limit: number,
@@ -697,7 +691,7 @@ private async claimOutboxMatching(
     });
   }
 
-async ackOutbox(
+  async ackOutbox(
     ack: OutboxAck,
     signal?: AbortSignal,
   ): Promise<{ status: 'sent' | 'failed' | 'dead'; applied: boolean }> {
@@ -775,7 +769,7 @@ async ackOutbox(
       : withAbortableTransaction(this.pool, signal, work);
   }
 
-async completeOutbox(id: string, worker?: string, claimToken?: string): Promise<boolean> {
+  async completeOutbox(id: string, worker?: string, claimToken?: string): Promise<boolean> {
     if (!worker || !claimToken) return false;
     const result = await this.pool.query(
       `UPDATE adapter_outbox SET status='sent',sent_at=now(),claim_expires_at=NULL
@@ -785,7 +779,7 @@ async completeOutbox(id: string, worker?: string, claimToken?: string): Promise<
     return result.rowCount === 1;
   }
 
-async retryOutbox(
+  async retryOutbox(
     id: string,
     worker?: string,
     claimToken?: string,
@@ -827,7 +821,7 @@ async retryOutbox(
     });
   }
 
-async retryExpiredOutbox(limit = 100): Promise<{ retried: number; dead: number }> {
+  async retryExpiredOutbox(limit = 100): Promise<{ retried: number; dead: number }> {
     return withTransaction(this.pool, async (client) => {
       const expired = await client.query<{
         id: string; tenant_id: Tenant; adapter: string; kind: string;
@@ -868,7 +862,7 @@ async retryExpiredOutbox(limit = 100): Promise<{ retried: number; dead: number }
     });
   }
 
-async listOutbox(kind?: 'wake' | 'origin_relay'): Promise<Array<Record<string, unknown>>> {
+  async listOutbox(kind?: 'wake' | 'origin_relay'): Promise<Array<Record<string, unknown>>> {
     const result = await this.pool.query<Record<string, unknown>>(
       `SELECT id,tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,
               origin,payload,status,attempts,max_attempts,available_at,claimed_by,claimed_at,
@@ -878,7 +872,7 @@ async listOutbox(kind?: 'wake' | 'origin_relay'): Promise<Array<Record<string, u
     return result.rows;
   }
 
-async status(actorTenant?: Tenant, actorAlias?: string, outboxStuckAfterMs = 60_000): Promise<Record<string, number>> {
+  async status(actorTenant?: Tenant, actorAlias?: string, outboxStuckAfterMs = 60_000): Promise<Record<string, number>> {
     if (!Number.isFinite(outboxStuckAfterMs) || outboxStuckAfterMs < 0) {
       throw new StoreError('conflict', 'outbox stuck threshold must be non-negative');
     }

@@ -5,10 +5,10 @@ import {
 } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { withAbortableTransaction, withTransaction } from '../db.js';
+import { StoreError } from './errors.js';
 import { MessagesRepository, terminal } from './messages.js';
 import { objectRecord, textualReply, validConnectionToken, visibleText } from './outbox.js';
 import { deliveryLeaseCapMs, type AgentResponseDisposition, type ChainPolicy, type DeliveryLeaseCap, type DeliveryRow, type LateRelayDisposition } from './observability.js';
-import { StoreError } from './quotas.js';
 
 export interface LeaseResult {
   acquired: boolean;
@@ -289,14 +289,14 @@ function sanitizedAckResult(result: Record<string, unknown> | undefined): Record
   };
 }
 export abstract class DeliveriesRepository extends MessagesRepository {
-protected abstract profileRuntimeExpectation(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<ProfileRuntimeContract | undefined>;
-protected abstract recordProfileRuntimeAdoption(client: DatabaseClient, tenantId: Tenant, alias: string, row: DeliveryRow, ack: Ack, evidence: ProfileRuntimeAdoptionEvidence | undefined): Promise<boolean>;
-protected abstract selfRoleFromProfile(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<string | undefined>;
-protected abstract routingTargets(client: DatabaseClient, sourceTenant: Tenant, sourceAlias: string): Promise<RoutingTarget[]>;
-protected abstract delegationFeedbackForAck(client: DatabaseClient, deliveryId: string, attempt: number): Promise<Pick<AckResult, 'delegation_rejections' | 'delegation_materializations'>>;
-protected abstract materializeAgentOutputs(client: DatabaseClient, row: DeliveryRow, ack: Ack, outputs: AgentOutputEntry[], policy: ChainPolicy): Promise<AgentOutputOutcome>;
-protected abstract insertAck(client: DatabaseClient, row: DeliveryRow, ack: Ack, applied: boolean, persistedResult: Record<string, unknown> | undefined, renewal?: boolean): Promise<void>;
-protected abstract materializeAgentNotifications(client: DatabaseClient, row: DeliveryRow, ack: Ack, entries: AgentNotifyEntry[], ambiguousExecution: boolean): Promise<{ allowed: number; denied: number; errors: number }>;
+  protected abstract profileRuntimeExpectation(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<ProfileRuntimeContract | undefined>;
+  protected abstract recordProfileRuntimeAdoption(client: DatabaseClient, tenantId: Tenant, alias: string, row: DeliveryRow, ack: Ack, evidence: ProfileRuntimeAdoptionEvidence | undefined): Promise<boolean>;
+  protected abstract selfRoleFromProfile(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<string | undefined>;
+  protected abstract routingTargets(client: DatabaseClient, sourceTenant: Tenant, sourceAlias: string): Promise<RoutingTarget[]>;
+  protected abstract delegationFeedbackForAck(client: DatabaseClient, deliveryId: string, attempt: number): Promise<Pick<AckResult, 'delegation_rejections' | 'delegation_materializations'>>;
+  protected abstract materializeAgentOutputs(client: DatabaseClient, row: DeliveryRow, ack: Ack, outputs: AgentOutputEntry[], policy: ChainPolicy): Promise<AgentOutputOutcome>;
+  protected abstract insertAck(client: DatabaseClient, row: DeliveryRow, ack: Ack, applied: boolean, persistedResult: Record<string, unknown> | undefined, renewal?: boolean): Promise<void>;
+  protected abstract materializeAgentNotifications(client: DatabaseClient, row: DeliveryRow, ack: Ack, entries: AgentNotifyEntry[], ambiguousExecution: boolean): Promise<{ allowed: number; denied: number; errors: number }>;
 
 
   async acquireLease(

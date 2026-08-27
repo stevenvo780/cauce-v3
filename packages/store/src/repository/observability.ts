@@ -7,6 +7,8 @@ import {
 } from '../fleet-activity.js';
 import { safeAuditSummary } from '../audit-summary.js';
 import { DISABLED_DELEGATION_CAPS, type DelegationCaps } from '../delegation-guard.js';
+import { BaseRepository } from './base.js';
+import { StoreError } from './errors.js';
 import {
   DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
   DEFAULT_NO_CONSUMER_PARK_MAX_AGE_MS, DEFAULT_RETENTION_ACK_MS,
@@ -15,7 +17,6 @@ import {
   leaseCapInstantSql, leaseCapMsSql, positiveMs, timeoutRetryBackoffSeconds,
   type ObservabilityRetentionPolicy, type ObservabilityRetentionResult, type StaleDeliveryPolicy
 } from './observability/policy.js';
-import { QuotasRepository, StoreError } from './quotas.js';
 
 export {
   DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
@@ -294,11 +295,11 @@ export function truncateUtf8(value: string, maxBytes: number): { value: string; 
  * Se le quitan los controles y se lo acota igual que en `agentResponseText`: es un dato, no
  * una instrucción y no un formato.
  */
-export function sanitizedDiagnostic(value: string): string {
+function sanitizedDiagnostic(value: string): string {
   return value.replace(/[\p{Cf}\p{Cc}]/gu, ' ').replace(/\s+/gu, ' ').trim();
 }
 
-export function originBridgeAlias(origin: Origin): string {
+function originBridgeAlias(origin: Origin): string {
   const alias = origin.metadata.bridge_alias;
   return typeof alias === 'string' && aliasPattern.test(alias) ? alias : origin.adapter;
 }
@@ -310,13 +311,7 @@ export function originRelayTenant(row: Pick<DeliveryRow, 'tenant_id' | 'origin'>
     : row.tenant_id;
 }
 
-export abstract class ObservabilityRepository extends QuotasRepository {
-  protected abstract override assertPermission(
-    tenantId: Tenant,
-    alias: string,
-    permission: 'route' | 'read' | 'control' | 'notify'
-  ): Promise<void>;
-
+export abstract class ObservabilityRepository extends BaseRepository {
   protected abstract loadChainPolicy(client: DatabaseClient): Promise<ChainPolicy>;
 
   protected abstract materializeAgentResponse(
@@ -350,7 +345,7 @@ export abstract class ObservabilityRepository extends QuotasRepository {
     late?: { previousStatus: DeliveryState; attempt: number }
   ): Promise<LateRelayDisposition>;
 
-/**
+  /**
    * Recolecta entregas vencidas o que alcanzaron el techo de vida (leaseCap).
    * Reintenta si no iniciaron ejecución o las transiciona a dead/dead_letters si ya habían iniciado o agotaron intentos.
    */
@@ -618,7 +613,7 @@ export abstract class ObservabilityRepository extends QuotasRepository {
     });
   }
 
-/**
+  /**
    * Poda las dos tablas de observabilidad. Ver `packages/store/migrations/014_*.sql` para el
    * porqué de cada ventana; acá va el porqué de la FORMA del barrido.
    *
@@ -698,7 +693,7 @@ export abstract class ObservabilityRepository extends QuotasRepository {
     };
   }
 
-/**
+  /**
    * Barrido periódico de cadenas inactivas o mudas para asegurar que toda tarea
    * complete su fan-in o emita una respuesta consolidada de cierre hacia el origen.
    */
@@ -819,7 +814,7 @@ export abstract class ObservabilityRepository extends QuotasRepository {
     return result;
   }
 
-/** Un candidato del vigía, bajo candado y en su propia transacción. */
+  /** Un candidato del vigía, bajo candado y en su propia transacción. */
   private async closeSilentChain(
     client: DatabaseClient,
     candidate: ChainSilenceCandidate
@@ -969,7 +964,7 @@ export abstract class ObservabilityRepository extends QuotasRepository {
     return 'notified';
   }
 
-/**
+  /**
    * Registra eventos de auditoría para ramas en estado terminal que carecen de respuesta grabada,
    * permitiendo desbloquear el conteo de fan-in en cadenas inactivas.
    */
@@ -1034,7 +1029,7 @@ export abstract class ObservabilityRepository extends QuotasRepository {
     return filled.rowCount ?? 0;
   }
 
-/**
+  /**
    * Detalle que sólo se calcula para una raíz que efectivamente se va a avisar (raro), nunca
    * en la consulta de candidatos: la causa dominante y el recuento de ramas que sí
    * devolvieron. La búsqueda por `metadata->>'child_delivery_id'` no tiene índice y es la
@@ -1081,7 +1076,7 @@ export abstract class ObservabilityRepository extends QuotasRepository {
     };
   }
 
-private async recordChainSweepAudit(
+  private async recordChainSweepAudit(
     client: DatabaseClient,
     candidate: ChainSilenceCandidate,
     action: 'fanin_recovered' | 'closed',
@@ -1122,7 +1117,7 @@ private async recordChainSweepAudit(
     );
   }
 
-async listAudit(
+  async listAudit(
     actorTenant: Tenant,
     actorAlias: string,
     options: { limit?: number; before?: string | null } = {},
@@ -1189,7 +1184,7 @@ async listAudit(
     };
   }
 
-/**
+  /**
    * Actividad en vuelo de toda la flota visible para el actor, agregada por alias. Es la mitad
    * "qué está trabajando cada agente ahora" del panel pedido; la otra mitad (consumo de cuota)
    * vive en quotaSnapshot() con su propio observed_at porque las dos frescuras son
@@ -1293,7 +1288,7 @@ async listAudit(
     };
   }
 
-/**
+  /**
    * Inventario DLQ operativo sin payloads ni ids externos. La base aplica control multi-tenant y
    * liga el cursor opaco a la identidad del operador; cambiar actor o reutilizar un cursor de otro
    * scope falla cerrado. No es una firma: un actor autorizado sólo puede alterar navegación dentro
@@ -1322,7 +1317,7 @@ async listAudit(
     return value;
   }
 
-/** Exact, operator-audited closure of one classified incident without replay or side effects. */
+  /** Exact, operator-audited closure of one classified incident without replay or side effects. */
   async resolveOperationalDlqWithoutReplay(
     actorTenant: Tenant,
     actorAlias: string,

@@ -1,18 +1,8 @@
 import type { QuotaSampleRequest, Tenant } from '@cauce/protocol';
 import { SUPPORTED_QUOTA_SCHEMA_VERSIONS } from '@cauce/protocol';
-import type { DatabasePool } from '../db.js';
 import { withTransaction } from '../db.js';
-
-export type StoreErrorCode =
-  'forbidden' | 'no_route' | 'conflict' | 'fenced' | 'not_found' | 'invalid_actor'
-  | 'invalid_input' | 'rate_limited';
-
-export class StoreError extends Error {
-  constructor(public readonly code: StoreErrorCode, message: string) {
-    super(message);
-    this.name = 'StoreError';
-  }
-}
+import { DeliveryControlRepository } from './deliveries/control.js';
+import { StoreError } from './errors.js';
 
 // ============================================================================================
 // Cuotas de suscripciones de IA (GET /v3/console/quotas, POST /v3/quotas/samples). Ver
@@ -220,16 +210,8 @@ interface MutableQuotaSnapshotGroup {
   windows: QuotaSnapshotWindow[];
 }
 
-export abstract class QuotasRepository {
-  constructor(protected readonly pool: DatabasePool) {}
-
-  protected abstract assertPermission(
-    actorTenant: Tenant,
-    actorAlias: string,
-    permission: 'read' | 'control'
-  ): Promise<void>;
-
-/**
+export abstract class QuotasRepository extends DeliveryControlRepository {
+  /**
    * Último estado de cuota por (host, proveedor, grupo/cuenta, ventana) más su sparkline de 24h.
    * Self-contained como topology(): valida el permiso acá mismo.
    *
@@ -468,7 +450,7 @@ export abstract class QuotasRepository {
     };
   }
 
-/**
+  /**
    * Ingesta de una corrida del recolector de cuotas (POST /v3/quotas/samples). NO autochequea
    * permiso -- lo hace la ruta antes de llamar acá, mismo patrón que enqueueJob(). actorTenant/
    * actorAlias son la identidad mTLS AUTENTICADA (nunca el cuerpo) y se graban como

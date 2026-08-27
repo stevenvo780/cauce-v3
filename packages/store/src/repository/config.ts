@@ -8,8 +8,8 @@ import type { DatabaseClient } from '../db.js';
 import {
   ConfigurationError, ConfigurationRepository, type ConfigurationChangeResult
 } from '../configuration.js';
+import { StoreError } from './errors.js';
 import { OutboxRepository, objectRecord } from './outbox.js';
-import { StoreError } from './quotas.js';
 
 export type AgentTargetPermission = 'read' | 'control';
 
@@ -55,19 +55,19 @@ export const MAX_OPEN_CONSOLE_PUBLISH_INTENTS = 32;
 // Human-console abuse bounds. Every accepted nonce appends both prepare and head state, so the
 // daily ceiling is deliberately much lower than a generic API quota; exact nonce retries append
 // nothing and remain exempt.
-export const MAX_NEW_CONSOLE_PUBLISH_INTENTS_PER_TEN_MINUTES = 60;
+const MAX_NEW_CONSOLE_PUBLISH_INTENTS_PER_TEN_MINUTES = 60;
 
-export const MAX_NEW_CONSOLE_PUBLISH_INTENTS_PER_DAY = 200;
+const MAX_NEW_CONSOLE_PUBLISH_INTENTS_PER_DAY = 200;
 
 export const CONSOLE_PUBLISH_PREPARE_ACTION = 'console.publish.prepare';
 
 export const CONSOLE_PUBLISH_CONFIRM_ACTION = 'console.publish.confirm';
 
-export const CONSOLE_PUBLISH_EXPIRE_ACTION = 'console.publish.expire';
+const CONSOLE_PUBLISH_EXPIRE_ACTION = 'console.publish.expire';
 
-export const CONSOLE_PUBLISH_HEAD_ACTION = 'console.publish.head';
+const CONSOLE_PUBLISH_HEAD_ACTION = 'console.publish.head';
 
-export type PublishRouteCommand = Pick<
+type PublishRouteCommand = Pick<
   PublishMessage,
   'tenant_id' | 'room_id' | 'actor_alias' | 'recipients'
 >;
@@ -86,7 +86,7 @@ export interface ConsolePublishConfirmMetadata extends ConsolePublishPrepareMeta
   readonly causal_hash: string;
 }
 
-export interface ConsolePublishJournalPrepare extends ConsolePublishPrepareMetadata {
+interface ConsolePublishJournalPrepare extends ConsolePublishPrepareMetadata {
   readonly stale: boolean;
   readonly prepare_audit_id: string;
 }
@@ -97,7 +97,7 @@ export interface ConsolePublishIntentKeyState {
   readonly expired: boolean;
 }
 
-export interface ConsolePublishHeadIntent {
+interface ConsolePublishHeadIntent {
   readonly idempotency_key: string;
   readonly semantic_hash: string;
   readonly requested_hash: string;
@@ -105,7 +105,7 @@ export interface ConsolePublishHeadIntent {
   readonly prepare_audit_id: string;
 }
 
-export interface ConsolePublishHeadMetadata {
+interface ConsolePublishHeadMetadata {
   readonly version: 1;
   readonly operator_scope_hash: string;
   readonly conversation_hash: string;
@@ -117,16 +117,16 @@ export interface ConsolePublishHeadState extends ConsolePublishHeadMetadata {
   readonly states: readonly ConsolePublishIntentKeyState[];
 }
 
-export function isSha256(value: unknown): value is string {
+function isSha256(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value);
 }
 
-export function hasExactKeys(metadata: Record<string, unknown>, expected: readonly string[]): boolean {
+function hasExactKeys(metadata: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(metadata);
   return keys.length === expected.length && expected.every((key) => Object.hasOwn(metadata, key));
 }
 
-export function consolePrepareMetadata(value: unknown): ConsolePublishPrepareMetadata | undefined {
+function consolePrepareMetadata(value: unknown): ConsolePublishPrepareMetadata | undefined {
   const metadata = objectRecord(value);
   if (metadata === undefined
       || !hasExactKeys(metadata, [
@@ -153,7 +153,7 @@ export function consolePrepareMetadata(value: unknown): ConsolePublishPrepareMet
   };
 }
 
-export function consoleConfirmMetadata(value: unknown): ConsolePublishConfirmMetadata | undefined {
+function consoleConfirmMetadata(value: unknown): ConsolePublishConfirmMetadata | undefined {
   const metadata = objectRecord(value);
   if (metadata === undefined
       || !hasExactKeys(metadata, [
@@ -170,7 +170,7 @@ export function positiveAuditId(value: unknown): value is string {
   return typeof value === 'string' && /^[1-9][0-9]*$/u.test(value);
 }
 
-export function consoleHeadMetadata(value: unknown): ConsolePublishHeadMetadata | undefined {
+function consoleHeadMetadata(value: unknown): ConsolePublishHeadMetadata | undefined {
   const metadata = objectRecord(value);
   if (metadata === undefined
       || !hasExactKeys(metadata, [
@@ -256,7 +256,7 @@ export async function lockConsolePublishIntents(
   ]);
 }
 
-export function sameConsoleIntentBinding(
+function sameConsoleIntentBinding(
   prepared: ConsolePublishPrepareMetadata,
   closure: ConsolePublishPrepareMetadata,
 ): boolean {
@@ -647,7 +647,7 @@ export class PublishIntentRateLimitedError extends StoreError {
 }
 
 export abstract class ConfigRepository extends OutboxRepository {
-protected async assertRuntimeRoute(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<void> {
+  protected async assertRuntimeRoute(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<void> {
     const memberships = await client.query<{ allow_route: boolean }>(
       `SELECT policy.allow_route FROM memberships membership
        JOIN role_policies policy ON policy.role=membership.role
@@ -666,7 +666,7 @@ protected async assertRuntimeRoute(client: DatabaseClient, tenantId: Tenant, ali
     }
   }
 
-async assertPrincipal(tenantId: Tenant, alias: string): Promise<void> {
+  async assertPrincipal(tenantId: Tenant, alias: string): Promise<void> {
     const result = await this.pool.query(
       `SELECT 1 FROM memberships m JOIN tenants t ON t.id=m.tenant_id
        JOIN rooms r ON r.id=m.room_id AND r.tenant_id=m.tenant_id
@@ -676,7 +676,7 @@ async assertPrincipal(tenantId: Tenant, alias: string): Promise<void> {
     if (result.rowCount !== 1) throw new StoreError('invalid_actor', 'authenticated principal is not enabled');
   }
 
-override async assertPermission(
+  override async assertPermission(
     tenantId: Tenant, alias: string, permission: 'route' | 'read' | 'control' | 'notify'
   ): Promise<void> {
     const column = permission === 'route'
@@ -695,7 +695,7 @@ override async assertPermission(
     if (result.rowCount !== 1) throw new StoreError('forbidden', `principal lacks ${permission} permission`);
   }
 
-/**
+  /**
    * Autoriza un actor contra UN destino canónico `(tenant, alias)` y devuelve esa misma fila.
    *
    * No acepta sólo `alias`: el mismo nombre puede existir en varios tenants y elegir el primero
@@ -747,7 +747,7 @@ override async assertPermission(
     return result.rows[0];
   }
 
-async principalAccess(tenantId: Tenant, alias: string): Promise<{
+  async principalAccess(tenantId: Tenant, alias: string): Promise<{
     roles: string[]; permissions: Array<'route' | 'read' | 'control' | 'notify'>;
   }> {
     const result = await this.pool.query<{
@@ -776,7 +776,7 @@ async principalAccess(tenantId: Tenant, alias: string): Promise<{
     };
   }
 
-async getConfiguration(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
+  async getConfiguration(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
     try {
       return await new ConfigurationRepository(this.pool).get(actorTenant, actorAlias);
     } catch (error) {
@@ -784,7 +784,7 @@ async getConfiguration(actorTenant: Tenant, actorAlias: string): Promise<Record<
     }
   }
 
-async applyConfigurationChange(
+  async applyConfigurationChange(
     actorTenant: Tenant,
     actorAlias: string,
     mutation: ConfigMutation,
@@ -800,7 +800,7 @@ async applyConfigurationChange(
     }
   }
 
-async rollbackConfiguration(
+  async rollbackConfiguration(
     actorTenant: Tenant,
     actorAlias: string,
     revisionId: number,
@@ -816,14 +816,14 @@ async rollbackConfiguration(
     }
   }
 
-private rethrowConfigurationError(error: unknown): never {
+  private rethrowConfigurationError(error: unknown): never {
     if (error instanceof ConfigurationError) {
       throw new StoreError(error.code, error.message);
     }
     throw error;
   }
 
-async topology(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
+  async topology(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
     const [tenants, edges] = await Promise.all([
       this.pool.query<Record<string, unknown>>(

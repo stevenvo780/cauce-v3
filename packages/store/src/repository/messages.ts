@@ -23,7 +23,7 @@ import {
   validConsoleOperatorScope, type ConsolePublishConfirmMetadata, type ConsolePublishHeadState,
   type ConsolePublishIntentKeyState, type ConsolePublishPrepareMetadata
 } from './config.js';
-import { StoreError } from './quotas.js';
+import { StoreError } from './errors.js';
 
 export class PublishIntentReconciliationRequired extends StoreError {
   constructor(readonly reconciliation: ConsolePublishIntentReconciliation) {
@@ -294,7 +294,7 @@ function conversationKind(chatType: unknown): 'dm' | 'group' | 'unknown' {
 }
 
 export abstract class MessagesRepository extends ConfigRepository {
-/**
+  /**
    * Durably reserve the server-generated key for one authenticated console publish meaning.
    * The append-only audit rows are state: neither prepare nor confirm belongs to the disposable
    * observability allowlist.
@@ -656,7 +656,7 @@ export abstract class MessagesRepository extends ConfigRepository {
     });
   }
 
-/** Confirm a committed intent exactly once; an identical retry returns the same receipt. */
+  /** Confirm a committed intent exactly once; an identical retry returns the same receipt. */
   async confirmConsolePublishIntent(
     tenantId: Tenant,
     actorAlias: string,
@@ -784,7 +784,7 @@ export abstract class MessagesRepository extends ConfigRepository {
     });
   }
 
-/**
+  /**
    * Independently proves that a publish receipt names the effect committed for this exact
    * idempotency tuple.  The gateway calls this after `publish`: a digest carried by the receipt
    * cannot authenticate IDs that came from that same receipt, while the locked idempotency,
@@ -827,7 +827,7 @@ export abstract class MessagesRepository extends ConfigRepository {
     });
   }
 
-async publish(input: PublishMessage, options: PublishOptions = {}): Promise<PublishResult> {
+  async publish(input: PublishMessage, options: PublishOptions = {}): Promise<PublishResult> {
     if (options.requirePreparedConsoleIntent === true) {
       if (options.consoleIntentOperatorScope === undefined
           || !validConsoleOperatorScope(options.consoleIntentOperatorScope)) {
@@ -1102,7 +1102,7 @@ async publish(input: PublishMessage, options: PublishOptions = {}): Promise<Publ
     });
   }
 
-async getMessage(messageId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
+  async getMessage(messageId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
     const result = await this.pool.query<Record<string, unknown>>(
       `SELECT m.id,m.version,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
               m.body,m.origin,m.lane,m.priority,m.created_at,
@@ -1136,7 +1136,7 @@ async getMessage(messageId: string, actorTenant: Tenant, actorAlias: string): Pr
     return row;
   }
 
-async listMessages(actorTenant: Tenant, actorAlias: string, limit = 100): Promise<Record<string, unknown>> {
+  async listMessages(actorTenant: Tenant, actorAlias: string, limit = 100): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
     const result = await this.pool.query<Record<string, unknown>>(
       `SELECT m.id AS message_id,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,

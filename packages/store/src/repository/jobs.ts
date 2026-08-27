@@ -1,7 +1,7 @@
 import type { Tenant } from '@cauce/protocol';
 import { withTransaction } from '../db.js';
+import { StoreError } from './errors.js';
 import { ObservabilityRepository } from './observability.js';
-import { StoreError } from './quotas.js';
 
 export interface JobClaim extends Record<string, unknown> {
   id: string;
@@ -15,7 +15,7 @@ export interface JobClaim extends Record<string, unknown> {
 }
 
 export abstract class JobsRepository extends ObservabilityRepository {
-async enqueueJob(tenantId: Tenant, lane: 'interactive' | 'batch', priority: number, kind: string, payload: Record<string, unknown>): Promise<string> {
+  async enqueueJob(tenantId: Tenant, lane: 'interactive' | 'batch', priority: number, kind: string, payload: Record<string, unknown>): Promise<string> {
     const result = await this.pool.query<{ id: string }>(
       `INSERT INTO jobs(tenant_id,lane,priority,kind,payload) VALUES($1,$2,$3,$4,$5::jsonb) RETURNING id`,
       [tenantId, lane, priority, kind, JSON.stringify(payload)]
@@ -23,7 +23,7 @@ async enqueueJob(tenantId: Tenant, lane: 'interactive' | 'batch', priority: numb
     return result.rows[0]!.id;
   }
 
-async claimJobs(lane: 'interactive' | 'batch', worker: string, limit = 1, leaseMs = 30_000): Promise<JobClaim[]> {
+  async claimJobs(lane: 'interactive' | 'batch', worker: string, limit = 1, leaseMs = 30_000): Promise<JobClaim[]> {
     if (limit < 1 || leaseMs <= 0) throw new StoreError('conflict', 'job lease and limit must be positive');
     return withTransaction(this.pool, async (client) => {
       const result = await client.query<JobClaim>(
@@ -38,7 +38,7 @@ async claimJobs(lane: 'interactive' | 'batch', worker: string, limit = 1, leaseM
     });
   }
 
-async claimFairJobs(
+  async claimFairJobs(
     worker: string,
     limit = 1,
     leaseMs = 30_000,
@@ -89,7 +89,7 @@ async claimFairJobs(
     });
   }
 
-async completeJob(id: string, worker: string, claimToken?: string): Promise<boolean> {
+  async completeJob(id: string, worker: string, claimToken?: string): Promise<boolean> {
     if (!claimToken) return false;
     const result = await this.pool.query(
       `UPDATE jobs SET status='done',lease_until=NULL,updated_at=now()
@@ -99,7 +99,7 @@ async completeJob(id: string, worker: string, claimToken?: string): Promise<bool
     return result.rowCount === 1;
   }
 
-async failJob(id: string, worker: string, error: string, claimToken?: string): Promise<'retry' | 'dead' | 'fenced'> {
+  async failJob(id: string, worker: string, error: string, claimToken?: string): Promise<'retry' | 'dead' | 'fenced'> {
     if (!claimToken) return 'fenced';
     return withTransaction(this.pool, async (client) => {
       const result = await client.query<{
@@ -134,7 +134,7 @@ async failJob(id: string, worker: string, error: string, claimToken?: string): P
     });
   }
 
-async retryExpiredJobs(limit = 100): Promise<number> {
+  async retryExpiredJobs(limit = 100): Promise<number> {
     return withTransaction(this.pool, async (client) => {
       const result = await client.query<{ id: string; attempts: number; max_attempts: number; tenant_id: Tenant; payload: Record<string, unknown> }>(
         `SELECT id,attempts,max_attempts,tenant_id,payload FROM jobs

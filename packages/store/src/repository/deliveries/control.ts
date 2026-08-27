@@ -3,10 +3,10 @@ import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
 import { AgentNotificationsRepository } from '../agents/notifications.js';
 import { postgresTextSafe } from '../deliveries.js';
+import { StoreError } from '../errors.js';
 import { terminal } from '../messages.js';
 import type { DeliveryRow } from '../observability.js';
 import { visibleText } from '../outbox.js';
-import { StoreError } from '../quotas.js';
 
 
 /** Prefijo estable del motivo de una cancelación: es lo que permite contarlas sin heurística. */

@@ -363,6 +363,7 @@ describe('gateway selective durable wake routing', () => {
     const connection = await connect(port, 'Steven', 'kant', 'fenced-ack');
 
     enabled = true;
+    await waitFor(() => sawWake(connection));
     await waitFor(() => vi.mocked(repository.ackOutbox).mock.calls.length === 1);
     await waitFor(() => error.mock.calls.some(([reason]) => fencedLogged(reason)));
     expect(sawWake(connection)).toBe(true);

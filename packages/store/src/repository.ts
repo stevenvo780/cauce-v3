@@ -1,4 +1,4 @@
-import { DeliveryControlRepository } from './repository/deliveries/control.js';
+import { QuotasRepository } from './repository/quotas.js';
 export {
   PublishIntentExpiredError, PublishIntentReconciliationRequired,
   type PublishOptions, type PublishResult
@@ -13,10 +13,11 @@ export {
   type LeaseResult, type LiveDeliveryClaim, type NotifyDenialCode
 } from './repository/deliveries.js';
 export {
-  DEFAULT_QUOTA_THRESHOLDS, StoreError, windowSeverity, worstQuotaSeverity,
+  DEFAULT_QUOTA_THRESHOLDS, windowSeverity, worstQuotaSeverity,
   type QuotaSampleIngestResult, type QuotaSamplePausedAccount, type QuotaSampleResumedAccount,
-  type QuotaSampleUnboundGroup, type QuotaSeverity, type QuotaThresholds, type StoreErrorCode
+  type QuotaSampleUnboundGroup, type QuotaSeverity, type QuotaThresholds
 } from './repository/quotas.js';
+export { StoreError, type StoreErrorCode } from './repository/errors.js';
 export {
   DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
   DEFAULT_NO_CONSUMER_PARK_MAX_AGE_MS, DEFAULT_RETENTION_ACK_MS,
@@ -38,5 +39,5 @@ export {
   PublishIntentRateLimitedError, type AgentTargetPermission, type AuthorizedAgentTarget
 } from './repository/config.js';
 
-export class CauceRepository extends DeliveryControlRepository {
+export class CauceRepository extends QuotasRepository {
 }

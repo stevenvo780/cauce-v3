@@ -8,9 +8,9 @@ import {
   handlePattern, maxNotifyBodyBytes, notifyKinds,
   type AgentNotifyEntry, type NotifyDenialCode
 } from '../deliveries.js';
+import { StoreError } from '../errors.js';
 import type { DeliveryRow } from '../observability.js';
 import { visibleText } from '../outbox.js';
-import { StoreError } from '../quotas.js';
 
 
 /** Carries a dry-run verdict out of a transaction that must be rolled back. */

@@ -17,12 +17,12 @@ import {
   type AckResult, type AgentOutputEntry, type AgentOutputOutcome,
   type DelegationMaterialization, type DelegationRejection, type OpenChainGate
 } from '../deliveries.js';
+import { StoreError } from '../errors.js';
 import {
   aliasPattern, disabledChainPolicy, originRelayTenant, tenantPattern, truncateUtf8,
   type ChainPolicy, type DeliveryRow
 } from '../observability.js';
 import { objectRecord, visibleText } from '../outbox.js';
-import { StoreError } from '../quotas.js';
 
 
 

@@ -4,13 +4,13 @@ import type { DatabaseClient } from '../../db.js';
 import { AgentsRepository } from '../agents.js';
 import { reservedInternalMessageTypes } from '../config.js';
 import { postgresTextSafe } from '../deliveries.js';
+import { StoreError } from '../errors.js';
 import { terminal } from '../messages.js';
 import {
   originRelayTenant, truncateUtf8,
   type AgentFaninDisposition, type AgentResponseDisposition, type ChainPolicy, type DeliveryRow
 } from '../observability.js';
 import { objectRecord, textualReply, visibleText } from '../outbox.js';
-import { StoreError } from '../quotas.js';
 
 const agentFaninMaxResponseBytes = 4 * 1024;
 const agentFaninMaxAggregateBytes = 64 * 1024;
