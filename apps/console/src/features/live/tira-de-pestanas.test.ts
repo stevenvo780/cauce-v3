@@ -36,7 +36,14 @@ import { describe, expect, it } from 'vitest';
  * para jsdom todo mide cero. Acá se comprueba que la hoja declara el mecanismo; el efecto se
  * midió en el navegador y está en la tabla de arriba.
  */
-const HOJA = readFileSync(resolve(process.cwd(), 'src/features/live/live.css'), 'utf8');
+function leerCss(rutaAbs: string): string {
+  const contenido = readFileSync(rutaAbs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(rutaAbs, '..', importPath);
+    return leerCss(subAbs);
+  });
+}
+const HOJA = leerCss(resolve(process.cwd(), 'src/features/live/live.css'));
 /** Sin comentarios: si no, un `flex-wrap: wrap` citado en la prosa contaría como declaración. */
 const SIN_COMENTARIOS = HOJA.replace(/\/\*[\s\S]*?\*\//g, ' ');
 

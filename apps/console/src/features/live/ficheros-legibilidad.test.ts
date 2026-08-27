@@ -22,6 +22,14 @@ import { describe, expect, it } from 'vitest';
 
 const HOJA = resolve(process.cwd(), 'src/features/live/live.css');
 
+function leerCss(rutaAbs: string): string {
+  const contenido = readFileSync(rutaAbs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(rutaAbs, '..', importPath);
+    return leerCss(subAbs);
+  });
+}
+
 /** Devuelve el contenido de TODOS los `@media (prefers-color-scheme: light)` de la hoja. */
 export function bloquesDeModoClaro(css: string): string {
   const bloques: string[] = [];
@@ -53,7 +61,7 @@ const CON_COLOR_FIJO = ['.ficheros-caveat', '.ficheros-aviso', '.ficheros-fallo'
 
 describe('los avisos del editor de ficheros se leen en los dos temas', () => {
   it('cada recuadro con color fijo tiene su redefinición en modo claro', () => {
-    const claro = bloquesDeModoClaro(readFileSync(HOJA, 'utf8'));
+    const claro = bloquesDeModoClaro(leerCss(HOJA));
     for (const clase of CON_COLOR_FIJO) {
       expect(claro, `${clase} no se redefine en modo claro`).toContain(clase);
     }

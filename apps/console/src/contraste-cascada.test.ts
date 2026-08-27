@@ -2,8 +2,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const leer = (ruta: string) => readFileSync(resolve(process.cwd(), 'src', ruta), 'utf8')
-  .replace(/\/\*[\s\S]*?\*\//g, ' ');
+const leer = (ruta: string): string => {
+  const abs = resolve(process.cwd(), 'src', ruta);
+  const contenido = readFileSync(abs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(abs, '..', importPath);
+    return leer(subAbs);
+  }).replace(/\/\*[\s\S]*?\*\//g, ' ');
+};
 
 const live = leer('features/live/live.css');
 const licencias = leer('features/accounts/licenses.css');
