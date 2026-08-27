@@ -47,7 +47,7 @@ for unit in "$tmp_units"/cauce-v3-alias-*.service "$tmp_units/SHA256SUMS"; do
 done
 (cd "$ROOT/generated/systemd" && sha256sum -c SHA256SUMS >/dev/null)
 
-PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-container-units.py" --rootless --output "$tmp_container_units" >/dev/null
+PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-container-units.py" --rootless --home /home/dev --output "$tmp_container_units" >/dev/null
 container_units=("$tmp_container_units"/cauce-v3-container-*.service)
 container_configs=("$tmp_container_units"/configs/*.env.example)
 [[ ${#container_units[@]} -eq "$fleet_size" && ${#container_configs[@]} -eq "$fleet_size" ]] || {
