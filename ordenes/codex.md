@@ -1,51 +1,22 @@
-# Codex — ORDEN ACTIVA (la gran final de tu sector: CERO ficheros >800, en oleadas paralelas)
+# Codex — ORDEN ACTIVA (sesión larga; paraleliza en oleadas de 4; sector: store + gateway + adapter/protocol + ops/scripts)
 
-Excelente cierre anterior (matriz en verde, health 295, authentic retirada, jerarquía reparada). Queda LO GRANDE: tu Tanda 2 nunca se ejecutó y tu sector concentra ~16 ficheros >800. Protocolo de siempre; **oleadas de 4 subagentes** (ficheros disjuntos, tú integras) hasta vaciar la lista. Estándar byte-puro + las lecciones acumuladas (reindentar, no abrir exports, no invertir jerarquías, no borrar invariantes).
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden → verifica con comandos. OJO: el árbol CAMBIÓ esta noche — `apps/console` ahora es `console/` en la raíz, `deploy/` está agrupado por consumidor (`runtime/`, `console/`, `postgres/`), y las migraciones 029/036 no existen. Reglas de siempre: main directo, commit con pathspec, sin clean/reset/stash, gate global por commit COMO USUARIO NORMAL con `umask 022`, push por tarea + reporte ≤5 líneas.
 
-## La lista — ACTUALIZADA 27-08 tarde (¡ya partiste 8 de 16! durable-store→90, paste-runner→8, tmux→59, engine→786, output-parser→27, shared→29, deliveries→27, fanin→289 — verificado). Quedan estos 8 (re-mide con wc -l):
-**store**: `repository/observability.ts` · `repository/agents/chain-control.ts` · `repository/outbox.ts` · `repository/messages.ts` · `configuration.ts`
-**gateway**: `routes/core.ts` · `terminal/relay-proxy.ts` · `console/agent-documents.ts`
+## Tarea 1 — El rojo determinista de `ops/tests/container-supervisor.test.mjs` (diagnóstico ya masticado)
+Falla SIEMPRE en el mismo punto: el subtest de flock (línea ~1127) — `waitForLogOrExit` (timeout fijo 15s, línea ~293) agota esperando que el PRIMER supervisor lanzado llegue a su barrera de docker-exec falso; el proceso NO sale (no es "exited before barrier"), se CUELGA antes del exec. Datos: llegó en su forma actual en `c7345da` (26-08); `validate.sh` abortaba antes (digest rojo, ya arreglado), así que **plausiblemente jamás pasó en esta máquina**; falla igual aislado (16 min de run). Investiga arnés vs producto: ¿el supervisor real (`ops/scripts/container-adapter-supervisor.sh`) se bloquea en el flock/gate del fixture, o el fixture arma mal la barrera? Arregla la causa raíz (si es producto, es un cuelgue REAL de arranque); prueba con el test completo en verde y pega la duración.
 
-## Regla dos-en-uno: al partir cada fichero, aplica SU fila del censo de comentarios
-`ordenes/reportes/claude-censo-comentarios-basura.md`: en el mismo commit de partición, borra lo narrativo/mutilado/ceremonial de ESE fichero (con su cifra), conserva invariantes compactados, y **ni un byte de los sql-strings**. Los `// S1`…`// S6` de deliveries.ts: definir o borrar. Así la lista y la limpieza caen juntas.
+## Tarea 2 — Dientes de tu sector (mapa: `ordenes/reportes/minimax-dientes.md`)
+- **Los 14 skips ambientales** de `packages/adapter-sdk/test/shared-session.test.ts` (+2 de harnesses): son el corazón del adapter y el gate NUNCA los corre (saltan si no hay tmux). Decide y ejecuta: garantizar tmux en el entorno del gate y quitar el skip, o convertir el skip en FALLO ruidoso cuando falte tmux. Que el gate los corra de verdad.
+- Los matcher-débil restantes de packages/services (de los 8 del reporte; consola ya está).
+- De "los 20 PEORES": los de tu sector.
 
-## Cierre
-0-pre. **Rojo de e2e**: 1 rojo quirúrgico en pnpm test:e2e — ver ordenes/reportes/minimax-matriz-cd.md §2; investiga arnés vs producto. 
-0. **Rojos de store-hardening (matriz, tuyos)**: `packages/store/test/terminal-relay-instance-fencing-migration-postgres.test.ts` — 5 tests rojos porque su setup baja la 036 con la 037 presente (arnés desactualizado desde c7345da; bajar 037 primero o construir el estado pre-034 por otra vía). CUADRO COMPLETO en el reporte §3: causa A = helper de downgrade que ignore que existe la 037 (baja en orden inverso desde 037); causa B = flakiness de arranque de contenedor en adversarial-postgres bajo host cargado (espera-de-ready robusta). Arregla ARNÉS, no migraciones (NO-TOCAR) ni producto.
-0-bis. **`routes/legado-candidato.ts`: veredicto ejecutable** — publish-intents NO es legado (ya lo sabes): sácalo de ahí a `routes/console-publish.ts` SIEMPRE montado; chain-gates (0 filas, 0 llamadores) se queda solo en ese fichero, que pasa a llamarse `routes/chain-gates-legado.ts` — la decisión final de chain-gates es del dueño (PENDIENTES).
-1. Intake de `ordenes/reportes/claude-revision-ola3.md` cuando llegue (lo tuyo).
-2. Verificación final: `wc -l` de los tres paquetes — CERO ficheros >800 sin justificación de una línea. Pega la lista.
-3. Gate GLOBAL por commit + push al cerrar cada oleada + reporte ≤5 líneas.
+## Tarea 3 — Duplicados de tu sector (mapa: `ordenes/reportes/minimax-duplicados.md` + `_parcial-dup-backend.md` + `_parcial-dup-ops.md`)
+Del top-8: **#1** `ops/cli/cauce` es copia divergida de 565 líneas de `ops/guardias/cauce-kratos.sh` (y `ops/guardias/cauce-envoltorio-local.sh` era casi bit-a-bit el ya borrado cauce-portatil — evalúa si sobra entero); **#3** `stringField` ×6 (la 6ª acepta string vacío — unifica con la semántica ESTRICTA); **#4** la forma del ACK de outbox ×3 (unifica en protocol); **#5** `EgressDestinationRow` vs `DestinationRow`; **#6** la whitelist de `container_ops_digest.py` duplicada dentro de su test (el test no prueba nada — haz que lea la real); **#7** el mapa tenant→alias ×3 en `ops/harness/` (OJO: harness se COPYa a la imagen — Dockerfile:106,113); **#8** `fakePool()` ×9 con dos shapes. Después los 18 grupos de backend (~497 línea-ocurrencias). Hogar único por grupo, gate por commit.
 
-## ANEXO — funciones muertas de tu sector (censo simbólico, evidencia en ordenes/reportes/claude-funciones-muertas.md)
-Borra cada una (con su test si aplica), re-verificando el grep antes (ediciones en vivo):
-- `CorrelationSchema` en packages/protocol/src/schemas.ts:84
-- `HttpAckSchema` en packages/protocol/src/schemas.ts:838
-- `ClaimedAckSchema` en packages/protocol/src/schemas.ts:762
-- `PreflightAckErrorCodeSchema` en packages/protocol/src/schemas.ts:48
-- `PreflightAckErrorCode` en packages/protocol/src/schemas.ts:49
-- `isPreflightAckErrorCode` en packages/protocol/src/schemas.ts:51
-- `AuthenticatedContext` en packages/protocol/src/schemas.ts:1094
-- `AttachmentContent` en packages/protocol/src/schemas.ts:1096
-- `ProfileRuntimeDocument` en packages/protocol/src/schemas.ts:1100
-- `ConfigChangeRequest` en packages/protocol/src/schemas.ts:1110
-- `QuotaWindowSample` en packages/protocol/src/schemas.ts:1113
-- `DELEGATION_DISCIPLINE_REJECTION_CODES` en packages/store/src/delegation-guard.ts:16
-- `AgentProfileRepository.readMany` en packages/store/src/agent-profile.ts:138
-- `OutboxSettlementRepository.retryExpiredOutbox` en packages/store/src/repository/outbox/settlement.ts:140
-- `HelloAck` en packages/adapter-sdk/src/sdk/types.ts:116
-- `HelloFrame` en packages/adapter-sdk/src/sdk/types.ts:117
-- `marcaDeTiempo` en packages/adapter-sdk/src/context/siembra-del-perfil.ts:534
-- `killSession` en packages/adapter-sdk/src/shared-session/tmux/operations.ts:130
-- `clearPaneInput` en packages/adapter-sdk/src/shared-session/tmux/operations.ts:468
-- `TERMINAL_MODES` en services/gateway/src/terminal/types.ts:9
-- `AgentProfileRepository.remove` en packages/store/src/agent-profile.ts:337
-- `AgentProfileRepository.write` en packages/store/src/agent-profile.ts:153
-- `resolveAccountCredentialEnv` en packages/adapter-sdk/src/sdk/account-credentials.ts:53
-- `SelectedAccount` en packages/adapter-sdk/src/sdk/account-credentials.ts:9
-- `CredentialRefusal` en packages/adapter-sdk/src/sdk/account-credentials.ts:16
+## Tarea 4 — P14 por número en tu sector
+`ordenes/reportes/minimax-lineas-p14.md` + `_parcial-p14-store.md` + `_parcial-p14-services.md`: borra por número verificando ancla (primera palabra); las particiones de hoy desplazaron líneas. Ni un byte de sql-strings.
 
-## ANEXO 2 — las migraciones 029 y 036 YA NO EXISTEN (cirugía del integrador, mandato del dueño 27-08)
-Borradas del repo con sus `down/`, su suite `fleet-reconciliation-postgres.test.ts` y el probe `schema-shadow-target-phase` (health.ts y health-progress.test.ts ya ajustados — gateway 468/468 verde). **NO las resucites** ni "arregles" su ausencia: el runner tolera huecos (ya convivía con 022 y 025). Lo ÚNICO que queda en tu sector:
-1. Los 6 tests de migración de store citan el escalón 036 en sus cadenas de down (`agent-profile-migration`, `agent-profile-runtime-adoption-migration`, `connection-session-fencing-migration`, `terminal-session-claim-fencing-migration`, `terminal-browser-owner-fencing-migration`, `terminal-relay-instance-fencing-migration`): quita ese escalón — la cadena baja 037→035 directo. Esto probablemente RESUELVE de raíz tu tarea 0 del arnés (el downgrade que bajaba la 036 con la 037 presente).
-2. Bases `cauce_test*` externas reutilizadas: recréalas (la huella de ficheros de migración cambió; el helper lo detecta y pide DROP SCHEMA cauce_semilla CASCADE).
+## Recordatorios permanentes
+- Migraciones 029/036 NO existen — no las resucites; el runner tolera huecos.
+- Bases `cauce_test*` externas viejas: recréalas (huella de migraciones cambió). `cauce-test-zeus` (puerto 15433) sigue vivo con conexiones: coordina antes de tocarlo.
+- `ops/private/credentials/` PROHIBIDO tocar (regla nueva del protocolo).
