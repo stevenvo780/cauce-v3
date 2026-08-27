@@ -21,6 +21,7 @@ import {
 } from './ingress-body.js';
 import type { TelegramLoopObserver } from './progress.js';
 import { TelegramApiError } from './telegram.js';
+import { sleep } from './abort-sleep.js';
 import type { TranscriptionConfig } from './transcription.js';
 import type {
   BridgeMetric, PollLease, SessionScope, TelegramAliasConfig,
@@ -86,16 +87,6 @@ function logSuppressedUpdate(record: SuppressedUpdate): void {
   logJsonLine({ ...record });
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref();
-    signal.addEventListener('abort', () => {
-      clearTimeout(timer);
-      resolve();
-    }, { once: true });
-  });
-}
 
 export class TelegramPoller {
   private readonly config: TelegramAliasConfig;

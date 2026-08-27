@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
-import { WebSocket, type RawData } from 'ws';
+import { WebSocket } from 'ws';
 import {
   DeliveryEnvelopeSchema, type Ack, type PublishMessage,
 } from '@cauce/protocol';
@@ -13,6 +13,7 @@ import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase,
 } from '../helpers/postgres.js';
+import { text } from './helpers.js';
 
 type Gateway = Awaited<ReturnType<typeof buildGateway>>;
 
@@ -44,12 +45,6 @@ afterAll(async () => {
   await pool?.end();
   await database?.container.stop();
 });
-
-function text(data: RawData): string {
-  if (Buffer.isBuffer(data)) return data.toString('utf8');
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  return Buffer.from(data).toString('utf8');
-}
 
 async function connect(port: number): Promise<{
   socket: WebSocket;

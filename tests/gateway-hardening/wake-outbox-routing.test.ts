@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WebSocket, type RawData } from 'ws';
+import { WebSocket } from 'ws';
 import type { Tenant } from '@cauce/protocol';
 import { StoreError } from '@cauce/store';
 import {
@@ -9,7 +9,7 @@ import {
   type GatewayRepository, type OutboxLeaseAck, type OutboxLeaseEvent
 } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
-import { fakePool, fakeRepository, noDeliveryWakes } from './helpers.js';
+import { closeGatewaysAndSockets, fakePool, fakeRepository, noDeliveryWakes, text } from './helpers.js';
 
 const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
 const sockets: WebSocket[] = [];
@@ -19,15 +19,8 @@ let eventSequence = 0;
 afterEach(async () => {
   for (const release of pendingReleases) release();
   pendingReleases.clear();
-  for (const socket of sockets.splice(0)) socket.close();
-  await Promise.all(apps.splice(0).map(async (app) => app.close()));
+  await closeGatewaysAndSockets(apps, sockets);
 });
-
-function text(data: RawData): string {
-  if (Buffer.isBuffer(data)) return data.toString('utf8');
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  return Buffer.from(data).toString('utf8');
-}
 
 function frameReader(
   socket: WebSocket,

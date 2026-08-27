@@ -242,3 +242,18 @@ export function roles(...values: PrincipalRole[]): readonly PrincipalRole[] {
 export function grants(...values: PrincipalPermission[]): readonly PrincipalPermission[] {
   return values;
 }
+
+export function text(data: import('ws').RawData): string {
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  return Buffer.from(data).toString('utf8');
+}
+
+export async function closeGatewaysAndSockets(
+  apps: Array<{ close(): Promise<unknown> }>,
+  sockets: Array<{ close(): void }>,
+): Promise<void> {
+  for (const socket of sockets.splice(0)) socket.close();
+  await Promise.all(apps.splice(0).map(async (app) => app.close()));
+}
+

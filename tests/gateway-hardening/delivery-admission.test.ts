@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WebSocket, type RawData } from 'ws';
+import { WebSocket } from 'ws';
 import { HUMAN_PRIORITY_FLOOR } from '@cauce/protocol';
 import { StoreError } from '@cauce/store';
 import { buildGateway, type DeliveryClaimRecord, type GatewayRepository } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
-import { fakePool, fakeRepository, noDeliveryWakes } from './helpers.js';
+import { closeGatewaysAndSockets, fakePool, fakeRepository, noDeliveryWakes, text } from './helpers.js';
 
 /**
  * Pruebas de control de admisión, límites de entregas en vuelo y reserva de cupo
@@ -18,15 +18,8 @@ const HTTP_CONNECTION_TOKEN = '90000000-0000-4000-8000-000000000009';
 const sockets: WebSocket[] = [];
 
 afterEach(async () => {
-  for (const socket of sockets.splice(0)) socket.close();
-  await Promise.all(apps.splice(0).map(async (app) => app.close()));
+  await closeGatewaysAndSockets(apps, sockets);
 });
-
-function text(data: RawData): string {
-  if (Buffer.isBuffer(data)) return data.toString('utf8');
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  return Buffer.from(data).toString('utf8');
-}
 
 function frameReader(socket: WebSocket): {
   next: () => Promise<Record<string, unknown>>;

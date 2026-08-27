@@ -277,3 +277,16 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
     }
   }
 }
+
+export async function closeTestDatabase(database?: TestDatabase, pool?: DatabasePool): Promise<void> {
+  if (pool) {
+    await pool.end().catch(() => undefined);
+  }
+  if (database?.pool && database.pool !== pool) {
+    await database.pool.end().catch(() => undefined);
+  }
+  if (database?.container) {
+    await database.container.stop().catch(() => undefined);
+  }
+}
+

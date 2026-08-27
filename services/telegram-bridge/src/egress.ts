@@ -10,6 +10,7 @@ import type {
 import { TelegramApiError, validTelegramMessageId } from './telegram.js';
 import { markdownToPlainText, markdownToTelegramHtml } from './markdown.js';
 import type { TelegramLoopObserver } from './progress.js';
+import { sleep } from './abort-sleep.js';
 
 export class EgressCrash extends Error {
   constructor(readonly point: 'before_begin' | 'before_send' | 'during_send' | 'after_send' | 'after_complete') {
@@ -262,16 +263,6 @@ function pieceHash(piece: EgressPiece): string {
   return createHash('sha256').update(material).digest('hex');
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref();
-    signal.addEventListener('abort', () => {
-      clearTimeout(timer);
-      resolve();
-    }, { once: true });
-  });
-}
 
 export class TelegramEgressWorker {
   private readonly repository: TelegramEgressRepository;

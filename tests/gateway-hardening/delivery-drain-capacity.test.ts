@@ -1,13 +1,13 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WebSocket, type RawData } from 'ws';
+import { WebSocket } from 'ws';
 import { buildGateway, type DeliveryClaimRecord } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import {
   DEFAULT_HUMAN_RESERVED_DELIVERIES, DEFAULT_MAX_INFLIGHT_DELIVERIES
 } from '../../services/gateway/src/config.js';
-import { fakePool, fakeRepository, ids, noDeliveryWakes } from './helpers.js';
+import { closeGatewaysAndSockets, fakePool, fakeRepository, ids, noDeliveryWakes, text } from './helpers.js';
 
 // El riesgo que introduce el techo de concurrencia, aislado.
 //
@@ -21,15 +21,8 @@ const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
 const sockets: WebSocket[] = [];
 
 afterEach(async () => {
-  for (const socket of sockets.splice(0)) socket.close();
-  await Promise.all(apps.splice(0).map(async (app) => app.close()));
+  await closeGatewaysAndSockets(apps, sockets);
 });
-
-function text(data: RawData): string {
-  if (Buffer.isBuffer(data)) return data.toString('utf8');
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  return Buffer.from(data).toString('utf8');
-}
 
 function frameReader(socket: WebSocket): () => Promise<Record<string, unknown>> {
   const queued: Record<string, unknown>[] = [];

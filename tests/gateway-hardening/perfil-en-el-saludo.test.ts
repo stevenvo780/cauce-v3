@@ -1,12 +1,12 @@
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WebSocket, type RawData } from 'ws';
+import { WebSocket } from 'ws';
 import { capabilities, capabilityStrings } from '@cauce/adapter-sdk';
 import { WsOutboundSchema, type WsOutbound } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
-import { fakeRepository, noDeliveryWakes } from './helpers.js';
+import { closeGatewaysAndSockets, fakeRepository, noDeliveryWakes, text } from './helpers.js';
 
 /**
  * Verifica la inclusión del perfil de agente en la trama `hello_ack`, validando compatibilidad
@@ -90,15 +90,8 @@ const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
 const sockets: WebSocket[] = [];
 
 afterEach(async () => {
-  for (const socket of sockets.splice(0)) socket.close();
-  await Promise.all(apps.splice(0).map(async (app) => app.close()));
+  await closeGatewaysAndSockets(apps, sockets);
 });
-
-function text(data: RawData): string {
-  if (Buffer.isBuffer(data)) return data.toString('utf8');
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  return Buffer.from(data).toString('utf8');
-}
 
 function profilePool(): DatabasePool {
   const result = (rows: unknown[]): { rows: unknown[]; rowCount: number } => ({ rows, rowCount: rows.length });

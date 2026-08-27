@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { WebSocket, type RawData } from 'ws';
+import { WebSocket } from 'ws';
 import type { PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, createPool, type DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/index.js';
@@ -11,6 +11,7 @@ import {
   startTestDatabase,
   type TestDatabase,
 } from '../helpers/postgres.js';
+import { closeGatewaysAndSockets, text } from './helpers.js';
 
 type Gateway = Awaited<ReturnType<typeof buildGateway>>;
 
@@ -38,15 +39,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  for (const socket of sockets.splice(0)) socket.close();
-  await Promise.all(apps.splice(0).map(async (app) => app.close()));
+  await closeGatewaysAndSockets(apps, sockets);
 });
-
-function text(data: RawData): string {
-  if (Buffer.isBuffer(data)) return data.toString('utf8');
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  return Buffer.from(data).toString('utf8');
-}
 
 async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
