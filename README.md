@@ -27,7 +27,7 @@ Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenC
 | [`packages/adapter-sdk`](packages/adapter-sdk/README.md) | Conecta un CLI real a Cauce: WS durable, ACKs, sesión tmux |
 | [`packages/mcp-fleet-monitor`](packages/mcp-fleet-monitor/README.md) | MCP de observación de flota (sin registrar en ningún alias hoy) |
 | [`services/gateway`](services/gateway/README.md) | HTTP/WS, frontera de identidad, fachadas `/v3/console/*`, plugin de terminal |
-| [`services/dispatcher`](services/dispatcher/README.md) | Segador de reintentos (843 líneas; no entrega mensajes) |
+| [`services/dispatcher`](services/dispatcher/README.md) | Segador de reintentos (~822 líneas; no entrega mensajes) |
 | [`services/terminal-relay`](services/terminal-relay/README.md) | Puente navegador↔pty-agent con TLS mutuo |
 | [`services/telegram-bridge`](services/telegram-bridge/README.md) | Polling/egress Telegram con cursor y lease cercados |
 | [`apps/console`](apps/console/README.md) | SPA React del operador (live, mensajes, colas, config, terminal) |
@@ -38,14 +38,14 @@ Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenC
 ```sh
 pnpm install --frozen-lockfile
 pnpm typecheck && pnpm lint      # gate mínimo de todo commit
-pnpm test:unit                   # gate completo cuando ordenes/ronda1/codex.md tarea 2 esté cerrada
+pnpm test:unit                   # gate completo (test:unit global desde 27-08; consola 107/107)
 ```
 
 Reglas de trabajo, sectores por instancia y prohibiciones: `ordenes/00-PROTOCOLO.md` (la orden ACTIVA de cada instancia: `ordenes/<instancia>.md`; las ejecutadas se archivan en `docs/bitacora/ordenes-ejecutadas/`). Contexto para agentes de IA: `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`.
 
 ## Despliegue
 
-**Hoy no hay procedimiento de despliegue utilizable** (la maquinaria anterior exigía evidencia imposible y está en cuarentena). El despliegue simple —build con label de commit, pin por digest, migraciones, smoke test del efecto real— se implementa en FASE 3 con el dueño presente: `plan-reestructura/31-despliegue-simple.md`. Hasta entonces, nadie toca producción.
+**Hoy no hay procedimiento de despliegue utilizable** (la maquinaria anterior exigía evidencia imposible y fue borrada del árbol en `73e533c`; índice en `docs/bitacora/legado-indice.md`). El despliegue simple —build con label de commit, pin por digest, migraciones, smoke test del efecto real— se implementa en FASE 3 con el dueño presente: `plan-reestructura/31-despliegue-simple.md`. Hasta entonces, nadie toca producción.
 
 ## Referencias
 

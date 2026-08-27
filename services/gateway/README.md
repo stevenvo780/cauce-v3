@@ -12,4 +12,4 @@
 
 **Correr en dev:** `pnpm dev:gateway`. **Probar:** suites en `tests/gateway-hardening/` y unit del paquete.
 
-**Aviso:** `src/app.ts` y `src/terminal/plugin.ts` están en partición por módulos (ordenes/ronda1/codex.md, tareas 3–4). Las rutas de publish-intents y chain-gates son candidatas a `_legado` (0 uso medido en producción).
+**Aviso:** `src/app.ts` ya está modularizado (408 líneas que componen `routes/*`); la partición de `terminal/plugin.ts` vive en `services/gateway/src/terminal/{session-control,relay-proxy,authority,registry,governance-probes,audit,tickets,types,config}.ts`. Las rutas de publish-intents y chain-gates son candidatas a `_legado` (0 uso medido en producción — viven en `routes/legado-candidato.ts`, detrás de `enableLegacyCandidateRoutes`).

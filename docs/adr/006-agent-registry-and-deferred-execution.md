@@ -91,7 +91,7 @@ egress_destination. No hay ruta de escritura nueva.
 
 ### Lecturas
 
-`GET /v3/console/agents` y `GET /v3/console/agents/:alias` (`repository.ts`: `listAgents`/`getAgent`)
+`GET /v3/console/agents` y `GET /v3/console/agents/:alias` (`repository/agents.ts`: `listAgents`/`getAgent` desde la extracción de la fachada de 11K → 42 líneas)
 filtran por el mismo criterio que `topology()`/`listMessages()`/`queueSnapshot()` — tenant propio más
 cualquier tenant con `acl_edge.allow_read` desde el actor — para no introducir un segundo modelo de
 visibilidad. `deployment_status` (`disabled`/`unknown`/`online`/`offline`) se deriva sólo de

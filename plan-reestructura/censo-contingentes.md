@@ -1,6 +1,8 @@
 # Censo de participación real (2026-08-27)
 
-208 ficheros/familias censados en `ops/` y zonas sospechosas por 11 agentes + refutación adversarial de cada "muerto". Resultado: **29 muertos confirmados dos veces** (ejecución en `ordenes/ronda4/opencode-minimax.md`), **45 dudosos** (tabla abajo, decide el dueño), el resto vivos.
+208 ficheros/familias censados en `ops/` y zonas sospechosas por 11 agentes + refutación adversarial de cada "muerto". Resultado original: **29 muertos confirmados dos veces** (ejecución en `ordenes/ronda4/opencode-minimax.md`), **45 dudosos** (tabla abajo, decide el dueño), el resto vivos.
+
+**Actualización post-rondas 6/7:** los 29 confirmados y ~80 piezas más del censo se borraron del árbol en `73e533c` (3.2M menos, índice en `docs/bitacora/legado-indice.md`). La doctrina vigente es `git rm` + evidencia en commit; no existen carpetas de cuarentena. La tabla de "dudosos" de abajo es el residuo real: lo que sobrevive en `main` y todavía pide una decisión del dueño.
 
 ## Hallazgos notables (más allá de la lista)
 
@@ -16,18 +18,18 @@
 - `ops/scripts/quota-collector.py`: el refutador lo dio por muerto (unidad no instalada aquí), pero la base productiva escribe muestras de cuota frescas — **NO se mueve** hasta aclarar quién colecta (¿kratos?, ¿otro camino?). Pasa a dudosos.
 - Los 4 restantes de `ops/scripts` (guard-check, retire-session-host, selftest-postgres, smoke-authentic-restarts): se mueven SOLO tras re-verificación in situ (instrucción en ronda 4), por colindar con la zona activa de Codex.
 
-## Lo que aún queda al dueño — agrupado por decisión (post-ronda 6)
+## Lo que aún queda al dueño — agrupado por decisión (post-ronda 7)
 
-Resueltos en ronda 6 por minimax: 6 schemas sin consumidor (`dlq-no-replay-resolution`, `dlq-reconciliation`, `fleet-snapshot`, `gate-snapshot`, `physical-fleet-snapshot`, `telegram-manual-replay`), 5 tests huérfanos y sus 4 scripts sujetos (`aplicar-separacion-config.sh`, `censo-config-por-alias.py`, `diff-consola-visible.py`, `preflight.sh`), `ops/harness/{Dockerfile,.dockerignore}` y `ops/harness/CONTRACT.md` (`docs/bitacora/`). `healthcheck.mjs` reaparece en stack-health.sh (Makefile + systemd unit) y se conserva en su sitio. Resueltos por Codex (su ronda 3): 7 schemas y 12 scripts de la maquinaria de release. Resueltos en rondas 4-5: `ops/generated/systemd/system` y familia, `package-smoke.mjs` queda para cuando se libere el adapter-sdk.
+Resueltos en ronda 6 por minimax: 6 schemas sin consumidor (`dlq-no-replay-resolution`, `dlq-reconciliation`, `fleet-snapshot`, `gate-snapshot`, `physical-fleet-snapshot`, `telegram-manual-replay`), 5 tests huérfanos y sus 4 scripts sujetos (`aplicar-separacion-config.sh`, `censo-config-por-alias.py`, `diff-consola-visible.py`, `preflight.sh`), `ops/harness/{Dockerfile,.dockerignore}` y `ops/harness/CONTRACT.md` (`docs/bitacora/`). `healthcheck.mjs` reaparece en stack-health.sh (Makefile + systemd unit) y se conserva en su sitio. Resueltos por Codex (su ronda 3): 7 schemas y 12 scripts de la maquinaria de release. Resueltos en rondas 4-5: `ops/generated/systemd/system` y familia, `package-smoke.mjs` queda para cuando se libere el adapter-sdk. Resueltos en `73e533c` (ronda 7, dueño): los 29 confirmados + la cuarentena entera (services/shadow-router, services/relay-worker, rollback-bridge, 25 ops-scripts, 6 schemas, 52 contingentes, 33 tests, basura) — 3.2M borrados con `git rm`; índice en `docs/bitacora/legado-indice.md`.
 
 ### (a) Herramientas de otras máquinas — herramientas pensadas para máquinas distintas a esta
 
-- `ops/cli/cauce-portatil` — único consumidor: `ops/scripts/install-cauce-cli.sh` rama `portatil` (instalar `cauce` en el portátil del operador); no aplica a zeus.
+- `ops/cli/cauce-portatil` — único consumidor vivo: `ops/scripts/install-cauce-cli.sh` rama `portatil` (instalar `cauce` en el portátil del operador); no aplica a zeus.
 - `ops/cli/compilar-en-torre` — cero referencias en el árbol git (ni docs, ni package.json, ni Makefile, ni CI); herramienta de la torre de compilación.
 
 ### (b) Familia DLQ manual — herramientas de emergencia del operador, sin runner
 
-- `ops/scripts/dlq_cli.py` + `ops/scripts/dlq-list.py`, `dlq-reconcile.py`, `resolve-dlq-without-replay.py`, `telegram-manual-replay.py`, `telegram-replay-inspect.py`. Su test (`_legado/tests/test_dlq_cli.py`) ya está en cuarentena por ronda 6. Ningún runner automático los invoca; el dueño decide si se quedan como herramientas vivas o se documentan en bitácora.
+- `ops/scripts/dlq_cli.py` + `ops/scripts/dlq-list.py`, `dlq-reconcile.py`, `resolve-dlq-without-replay.py`, `telegram-manual-replay.py`, `telegram-replay-inspect.py` + sus 3 schemas vivos en `ops/schemas/telegram-{manual-replay-request,replay-inspect-request,replay-inspect}.schema.json`. Los schemas `dlq-{no-replay-resolution,reconciliation}.schema.json` que cita 030_dlq_causal_reconciliation.sql siguen vivos en `ops/schemas/` (los borrados en ronda 6 eran los de la maquinaria de release). Ningún runner automático los invoca; el dueño decide si se quedan como herramientas vivas o se documentan en bitácora.
 
 ### (c) Console-legibilidad — tooling de medición de la consola, sin integración
 
@@ -49,11 +51,11 @@ Resueltos en ronda 6 por minimax: 6 schemas sin consumidor (`dlq-no-replay-resol
 
 - `ops/private/CREDENTIAL-INVENTORY.local` — fichero `*.local` ignorado por .gitignore; no trackeado; nadie lo referencia. Borrable seguro cuando el dueño autorice.
 - `ops/openclaw-gateway/argos.env.example` — plantilla de doc, el supervisor lee `~/.config/cauce-v3/openclaw-gateway/<alias>.env` en caliente.
-- `ops/scripts/{generate-telegram-config.py,telegram-cutover-preflight.py}` + `ops/tests/{test_generate_telegram_config.py,test_telegram_cutover_preflight.py}` (estos dos últimos ya en `_legado/tests/` por ronda 6) — referenciados por `ops/runbooks/telegram-cutover.md`, sin invocación automática.
+- `ops/scripts/{generate-telegram-config.py,telegram-cutover-preflight.py}` — referenciados por `ops/runbooks/telegram-cutover.md`, sin invocación automática (los 2 tests asociados ya se borraron con la cuarentena en `73e533c`).
 - `ops/scripts/separar-config-alias.mjs`, `ops/tests/separar-config-alias.test.mjs` — el test es huérfano; el script se menciona en un comentario de `container-supervisor.test.mjs` (vivo).
 - `ops/scripts/update-alias-config.py`, `ops/tests/update-alias-config.test.mjs` — test huérfano; script vivo solo desde el propio test.
 - `ops/scripts/fault-compose.test.sh` — grep=0 de ejecución; solo aparece listado (no ejecutado) en el manifiesto hardcodeado de `source-digest.py:184`.
-- `ops/tests/gate-collector.test.mjs`, `provision-hermes-runtime.test.mjs`, `update-alias-config.test.mjs` — huérfanos; los toca el genérico `node --check "$ROOT"/tests/*.mjs` de `validate.sh` (chequeo de sintaxis, no ejecución).
-- `ops/tests/{test_alias_lock_exec.py, test_config_por_alias_supervisor.py, test_container_runtime_zombies.py, test_release_writer_rotation.py, test_schema_error_sanitization.py, test_verify_hermes_runtime.py}` — huérfanos; sin runner (validate.sh/Makefile/package.json/CI/pytest.ini/pyproject.toml = 0).
+- `ops/tests/gate-collector.test.mjs`, `provision-hermes-runtime.test.mjs` — huérfanos; los toca el genérico `node --check "$ROOT"/tests/*.mjs` de `validate.sh` (chequeo de sintaxis, no ejecución).
+- `ops/tests/{test_alias_lock_exec.py, test_config_por_alias_supervisor.py, test_container_runtime_zombies.py, test_schema_error_sanitization.py, test_verify_hermes_runtime.py}` — huérfanos; sin runner (validate.sh/Makefile/package.json/CI/pytest.ini/pyproject.toml = 0).
 - `deploy/liveness-probe.mjs` — 0 referencias en compose*.yaml, deploy/Dockerfile (no en su lista COPY) ni ops/scripts/*. Docker CLI ni `runtime-package-smoke.mjs` lo invocan.
-- `Makefile` — `make <target>` aparece 0 veces fuera del propio Makefile (excluyendo _legado/docs/bitácora); `.github/workflows/ci.yml` llama a `make validate` pero esa también la exporta `npm run validate`.
+- `Makefile` — `make <target>` aparece 0 veces fuera del propio Makefile (excluyendo docs/bitácora); `.github/workflows/ci.yml` llama a `make validate` pero esa también la exporta `npm run validate`.

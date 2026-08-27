@@ -1,8 +1,10 @@
 # Bitácora (histórico congelado)
 
-Material histórico: handoffs, informes de sesión, planes fechados, runbooks retirados. **No es estado actual del sistema** — no confiar en nada de aquí como verdad vigente. El estado vigente vive en el README raíz, `docs/arquitectura.md`, `plan-reestructura/` y `ordenes/`.
+Material histórico: handoffs, informes de sesión, planes fechados, runbooks retirados, **y** las órdenes de cada ronda ya ejecutadas. **No es estado actual del sistema** — no confiar en nada de aquí como verdad vigente. El estado vigente vive en el README raíz, `docs/arquitectura.md`, `plan-reestructura/` y `ordenes/{00-PROTOCOLO,codex,gemini,opencode-minimax}.md`.
 
 Las fechas entre paréntesis son del nombre del fichero cuando lo lleva, o `—` si no. La columna "qué es" es una sola línea por fichero.
+
+**Doctrina sobre código muerto (desde `73e533c`):** se borra con `git rm` + evidencia en el commit; no existen carpetas de cuarentena. El índice de lo retirado vive en `legado-indice.md` y se recupera con `git log --diff-filter=AD` o el bundle del 27-08.
 
 ## Índice
 
@@ -32,3 +34,11 @@ Las fechas entre paréntesis son del nombre del fichero cuando lo lleva, o `—`
 | `tmux-sesion-real.md` | — | Terminal real + Telegram, una sola conversación: el comando `cauce <alias>` abre el binario del harness. |
 | `superpowers/plans/2026-07-24-provider-smoke-contract-repair.md` | 2026-07-24 | Plan superpowers: reparar el contrato del workflow `provider-smoke` para aceptar IDs canónicos de modelo. |
 | `superpowers/specs/2026-07-24-provider-smoke-contract-design.md` | 2026-07-24 | Diseño (approved) del fix anterior: normalizar `providers` antes del quota resolver, preservar 10 rutas canónicas. |
+| `legado-indice.md` | 2026-08-27 | Índice de lo retirado del árbol (borrado en `73e533c`, 3.2M). `_legado/` ya no existe; este doc conserva la lista de 25 ops-scripts + 6 schemas + 2 servicios + rollback-bridge + 52 contingentes + 33 tests con la subruta espejada y la receta de recuperación por `git log --diff-filter=AD` o el bundle del 27-08. |
+| `ordenes-ejecutadas/ronda1/` | 2026-08-26 | Primera tanda: bootstrap del protocolo, censo de la cuarentena, partición inicial del store. 3 ficheros (`codex.md`/`gemini.md`/`opencode-minimax.md`). |
+| `ordenes-ejecutadas/ronda2/` | 2026-08-26 | Segunda tanda: CI mínima, runbooks, vistas sin uso de consola, limpieza del repo. 3 ficheros. |
+| `ordenes-ejecutadas/ronda3/` | 2026-08-26 | Tercera tanda: 4 subagentes de codex (regex, fanin, parche opaco, health) + carpintería de consola. 3 ficheros. |
+| `ordenes-ejecutadas/ronda4/` | 2026-08-27 | Cuarta tanda: descontaminación — 29 muertos confirmados por doble ejecución (Codex). 3 ficheros. |
+| `ordenes-ejecutadas/ronda5/` | 2026-08-27 | Quinta tanda: consola 107/107, particiones de pty-session/OperatorWorkspace/live.css, hash de migraciones. 2 ficheros (`codex-terra.md`/`opencode-minimax.md`). |
+| `ordenes-ejecutadas/ronda6/` | 2026-08-27 | Sexta tanda: cierre de inequívocos — 6 schemas, 5 tests huérfanos, 4 scripts, ops/harness huérfano, reescritura del censo de dudosos. 3 ficheros (`gemini.md`/`gemini-consola.md`/`opencode-minimax.md`). |
+| `ordenes-ejecutadas/ronda7/` | 2026-08-27 | Séptima tanda (esta): docs al día + foto final; `_legado/` ya borrado por `73e533c`. 1 fichero (`opencode-minimax.md`). |
