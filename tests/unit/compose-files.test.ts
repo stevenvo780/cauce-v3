@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const resolver = join(repository, 'ops/scripts/compose-files.sh');
 const compose = join(repository, 'ops/scripts/compose.sh');
+const validator = join(repository, 'ops/scripts/validate.sh');
 const scratch: string[] = [];
 
 function digest(content: string) {
@@ -212,14 +213,14 @@ describe('authoritative Compose file set', () => {
       },
     });
     expect(poisoned.status).toBe(2);
-    expect(poisoned.stderr).toContain('requires the authenticated release lock');
+    expect(poisoned.stderr).toContain('production Compose selector preview is disabled outside deployment tooling');
 
     await chmod(envFile, 0o600);
     const unlockedMutation = spawnSync(composeUnderTest, ['prod', '--dry-run', 'down'], {
       encoding: 'utf8', env: environment,
     });
     expect(unlockedMutation.status).toBe(2);
-    expect(unlockedMutation.stderr).toContain('production Compose mutation requires the authenticated release lock');
+    expect(unlockedMutation.stderr).toContain('production Compose mutation is disabled outside deployment tooling');
     expect(unlockedMutation.stdout).toBe('');
 
     for (const argumentsList of [
@@ -231,10 +232,17 @@ describe('authoritative Compose file set', () => {
         encoding: 'utf8', env: environment,
       });
       expect(rejected.status).toBe(2);
-      expect(rejected.stderr).toContain('production Compose mutation requires the authenticated release lock');
+      expect(rejected.stderr).toContain('production Compose mutation is disabled outside deployment tooling');
       expect(rejected.stdout).toBe('');
     }
     expect(spawnSync('test', ['-e', join(directory, 'rendered.yaml')]).status).not.toBe(0);
 
+  });
+
+  test('validation supplies its own private media bind instead of inheriting operator state', async () => {
+    const source = await readFile(validator, 'utf8');
+    expect(source).toContain('validation_media_dir="$tmp_release_state/media"');
+    expect(source).toContain('chmod 0700 "$validation_media_dir"');
+    expect(source).toContain('export CAUCE_MEDIA_RUNTIME_DIR="$validation_media_dir"');
   });
 });
