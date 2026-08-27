@@ -75,11 +75,17 @@ ejecutará el `git rm` + commit limpio para cerrar P9.
 
 ## §5 — Detalle por grupo
 
-Los 4 ficheros detallados están en:
-- `/tmp/groupA-huerfanos.md` (24 entradas)
-- `/tmp/groupB-huerfanos.md` (26 entradas)
-- `/tmp/groupC-huerfanos.md` (21 entradas)
-- `/tmp/groupD-huerfanos.md` (32 entradas)
+Los 4 ficheros detallados por subagente (temporales en `/tmp/` durante
+esta corrida, **NO comiteados**) contienen las 103 filas con su
+referencia concreta. Resumen de veredictos por grupo:
+
+| Grupo | Paths | FALSO-POSITIVO | ENTRY-POINT-LEGÍTIMO | DUDA-DEL-DUEÑO |
+|---|---|---|---|---|
+| A — console top + accounts + audit + config + fleet + help + landing | 24 | 23 | 1 (`main.tsx`) | 0 |
+| B — console live + messages | 26 | 26 | 0 | 0 |
+| C — console terminal + topology + observability + queues + auth | 21 | 20 | 1 (`topology/HyperGraph.tsx`) | 0 |
+| D — ops + adapter-sdk + pnpm | 32 | 0 | 27 | 5 |
+| **TOTAL** | **103** | **69** | **29** | **5** |
 
 NO se borró NADA en disco. NINGÚN sector de producto fue tocado. La
 verificación se hizo exclusivamente con `git grep` desde
