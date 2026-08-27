@@ -166,8 +166,8 @@ describe('la escala tipográfica es GLOBAL', () => {
 
   it('los seis escalones están declarados en el `:root` de la hoja global', () => {
     for (const nombre of [...ESCALA, '--tipo-mono']) {
-      expect(tokens.get(nombre), `${nombre} no está en el :root de styles.css`).toBeDefined();
-      expect(enPixeles(tokens.get(nombre)!, tokens), `${nombre} no resuelve a píxeles`).toBeDefined();
+      expect(typeof tokens.get(nombre), `${nombre} no está en el :root de styles.css`).toBe('string');
+      expect(enPixeles(tokens.get(nombre)!, tokens), `${nombre} no resuelve a píxeles`).toBeGreaterThan(0);
     }
   });
 

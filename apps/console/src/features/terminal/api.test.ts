@@ -395,6 +395,7 @@ it('exposes TerminalApiError so callers can branch on status without parsing str
   server.use(http.get('*/v3/console/terminal/targets', () => new HttpResponse(null, { status: 503 })));
   const error = await listTerminalTargets().catch((cause: unknown) => cause);
   expect(error).toBeInstanceOf(TerminalApiError);
+  expect((error as TerminalApiError).status).toBe(503);
 });
 
 /*

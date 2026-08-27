@@ -146,22 +146,23 @@ describe('BusyBox console healthcheck runtime', () => {
     const installCa = `printf '%s' "$CAUCE_TEST_CONSOLE_CA" > ${caPath} && chmod 0444 ${caPath} && `;
     const targetUrl = `https://${targetHost}:${port}/`;
     try {
-      await expect(execFileAsync('docker', [
+      const result = await execFileAsync('docker', [
         ...commonArguments,
         `${installCa}${healthcheckCommand} ${targetUrl}`,
-      ], { timeout: 30_000 })).resolves.toBeDefined();
+      ], { timeout: 30_000 });
+      expect(typeof result.stdout).toBe('string');
       await expect(execFileAsync('docker', [
         ...commonArguments,
         `${healthcheckCommand} ${targetUrl}`,
-      ], { timeout: 30_000 })).rejects.toBeDefined();
+      ], { timeout: 30_000 })).rejects.toThrow();
       await expect(execFileAsync('docker', [
         ...commonArguments,
         `${tlsWgetCommand} ${targetUrl}`,
-      ], { timeout: 30_000 })).rejects.toBeDefined();
+      ], { timeout: 30_000 })).rejects.toThrow();
       await expect(execFileAsync('docker', [
         ...commonArguments,
         `${installCa}wget -q -O /dev/null ${targetUrl}`,
-      ], { timeout: 30_000 })).rejects.toBeDefined();
+      ], { timeout: 30_000 })).rejects.toThrow();
     } finally {
       await close(server);
     }

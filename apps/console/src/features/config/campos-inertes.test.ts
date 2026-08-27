@@ -24,8 +24,15 @@ describe('el catálogo de campos inertes', () => {
   });
 
   it('marca las tres columnas de emplazamiento de `agents` sin lector runtime', () => {
-    for (const campo of ['harness_id', 'home_directory', 'state_directory']) {
-      expect(motivoInerte('agents', campo), `falta el motivo de agents.${campo}`).toBeDefined();
+    const esperados: Record<string, RegExp> = {
+      harness_id: /agent-documents\.ts/,
+      home_directory: /RuntimeFacts/,
+      state_directory: /CAUCE_STATE_DIR/,
+    };
+    for (const [campo, patron] of Object.entries(esperados)) {
+      const motivo = motivoInerte('agents', campo);
+      expect(motivo, `falta el motivo de agents.${campo}`).toBeDefined();
+      expect(motivo).toMatch(patron);
     }
   });
 
