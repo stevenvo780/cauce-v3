@@ -15,4 +15,3 @@ ops/backups
 
 # SQL scratch owned by the operator. It is intentionally not part of the
 # console product and must remain untouched by release builds.
-apps/console/src/features/_grafo/
