@@ -9,6 +9,27 @@ Código medido como **nunca usado en producción** (auditoría 2026-08-27). Se m
 | `rollback-bridge/` + `ops-scripts/{produce,validate}-rollback-bridge-evidence.py` | Reconstruía un commit viejo contra el esquema actual vía un patch de 13.691 líneas; el registro de imágenes resuelve lo mismo con tags |
 | `tests/` | Los tests dedicados de las piezas de arriba |
 
+## contingentes (censo 2026-08-27)
+
+52 ficheros del censo de ronda 4 (29 ejecutados + 3 re-verificados de `ops/scripts/`, 4 de Tarea 3, 16 del seguimiento). Evidencia por fichero en plan-reestructura/censo-contingentes.md.
+
+| Subruta | Ficheros movidos |
+|---|---|
+| `ops/ai-live/` | cauce-ai-live, .service, .timer, cdp.py |
+| `ops/cli/` | cauce-panel-guard, cauce-tmux-panel |
+| `ops/config/` | cauce-ops.env.example, e2e.env.example |
+| `ops/console-login/` | patch-caddy-lista-blanca.py |
+| `ops/container-runtime/` | salva-container-keepalive.sh |
+| `ops/generated/container-systemd/` | 15 .service + 2 SHA + 15 configs (todo MENOS `rootless/`, que es el vivo) |
+| `ops/observability/` | agent-health-metrics.prom, alerts-agent-health.yaml, otel-collector.upstream.example.yaml |
+| `ops/schemas/` | rollback-bridge.schema.json |
+| `ops/scripts/` | retire-session-host.sh, selftest-postgres.sh, smoke-authentic-restarts.sh |
+| `ops/security/` | README-seccomp.md, seccomp-userns.json |
+| `packages/adapter-sdk/docs/` | ADDING-HARNESS.md |
+| `scripts/` | verify.sh |
+
+`ops/scripts/guard-check.sh` NO se mueve: `/opt/cauce-v3/ops/systemd/{cauce-v3-reconciler,cauce-v3-watchdog}@.service` lo invocan como `ExecStart`.
+
 ## Pendiente de mover aquí (asignado a Codex, ver `ordenes/codex.md`)
 
 La maquinaria de release de `ops/scripts/` (deploy-release.sh, pin-production-release.py, release-writer-state.py, release-candidate.py, release-gate.sh, release-build.sh, rollback.sh, rollback-baseline.py, verification-rounds.mjs, capture-release-writer-snapshot.sh — 17.686 líneas) con sus ~13 tests de `tests/unit/`, los targets `release-*` de `ops/Makefile`, y la parte de `ops/scripts/validate.sh` que la ejercita. Cero despliegues logrados en su historia; se reemplaza por `deploy/deploy.sh` simple (plan-reestructura/31).
