@@ -40,7 +40,7 @@
     "qa:runtime-authentic": "./ops/scripts/smoke-runtime-authentic.sh",
     "qa:runtime-packaging": "./deploy/smoke-runtime-packaging.sh",
     "ops:validate": "./ops/scripts/validate.sh",
-    "ops:manifests": "python3 ops/scripts/validate-manifests.py && python3 ops/scripts/generate-units.py && python3 ops/scripts/generate-container-units.py --rootless --output ops/generated/container-systemd/rootless && python3 ops/scripts/generate-container-units.py",
+    "ops:manifests": "python3 ops/scripts/validate-manifests.py && python3 ops/scripts/generate-units.py && python3 ops/scripts/generate-container-units.py --rootless --output ops/generated/container-systemd/rootless",
     "test:container-supervisor": "node ops/tests/container-supervisor.test.mjs",
     "test:container-cutover": "node ops/tests/container-cutover.test.mjs",
     "dev:gateway": "pnpm prepare:runtime && tsx services/gateway/src/main.ts",

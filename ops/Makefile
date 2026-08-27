@@ -54,7 +54,7 @@ validate: ## YAML/JSON/schema/scripts/manifiestos; Compose se exige con CAUCE_RE
 manifests: ## Valida 15 manifests y genera units host-native y para containers
 	python3 scripts/validate-manifests.py
 	python3 scripts/generate-units.py
-	python3 scripts/generate-container-units.py
+	python3 scripts/generate-container-units.py --rootless --output generated/container-systemd/rootless
 
 manifest: ## Genera manifiesto SHA256 de artefactos QA
 	./scripts/manifest.sh "$(ARTIFACT_DIR)"

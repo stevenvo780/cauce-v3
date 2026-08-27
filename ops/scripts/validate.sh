@@ -47,7 +47,7 @@ for unit in "$tmp_units"/cauce-v3-alias-*.service "$tmp_units/SHA256SUMS"; do
 done
 (cd "$ROOT/generated/systemd" && sha256sum -c SHA256SUMS >/dev/null)
 
-PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-container-units.py" --output "$tmp_container_units" >/dev/null
+PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-container-units.py" --rootless --output "$tmp_container_units" >/dev/null
 container_units=("$tmp_container_units"/cauce-v3-container-*.service)
 container_configs=("$tmp_container_units"/configs/*.env.example)
 [[ ${#container_units[@]} -eq "$fleet_size" && ${#container_configs[@]} -eq "$fleet_size" ]] || {
@@ -57,13 +57,13 @@ container_configs=("$tmp_container_units"/configs/*.env.example)
 (cd "$tmp_container_units" && sha256sum -c SHA256SUMS >/dev/null)
 for generated in "${container_units[@]}" "${container_configs[@]}" "$tmp_container_units/OPERATIONS.sha256" "$tmp_container_units/SHA256SUMS"; do
   relative=${generated#"$tmp_container_units"/}
-  cmp -s "$generated" "$ROOT/generated/container-systemd/$relative" || {
+  cmp -s "$generated" "$ROOT/generated/container-systemd/rootless/$relative" || {
     printf 'checked-in container systemd output is stale: %s\n' "$relative" >&2
     exit 1
   }
 done
-(cd "$ROOT/generated/container-systemd" && sha256sum -c SHA256SUMS >/dev/null)
-PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/container_ops_digest.py" --check
+(cd "$ROOT/generated/container-systemd/rootless" && sha256sum -c SHA256SUMS >/dev/null)
+PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/container_ops_digest.py" --rootless --check
 node "$ROOT/tests/container-supervisor.test.mjs"
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_container_runtime_reaping.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_provision_alertmanager_config.py"
