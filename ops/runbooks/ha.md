@@ -16,10 +16,9 @@ Cauce usa PostgreSQL durable, `SKIP LOCKED`, leases/epoch y gateways stateless. 
 ## Ensayo obligatorio
 
 - Restore del último backup en DB V3 aislada; registrar RPO/RTO y SHA.
-- `test-compose-authentic` con `failed=0`, `skipped=0`,
-  `criticalSkipped=0`, hashes, mismo image/source digest y mecanismos explícitos
-  `gateway-process-kill`/`postgres-container-kill` (QA rota hasta
-  `plan-reestructura/31`).
+- Un reemplazo explícito de la suite de imágenes finales retirada, con cero fallos/skips críticos,
+  hashes, mismo image/source digest y mecanismos reales de corte de gateway y PostgreSQL. Hasta que
+  exista, no promover HA basándose solo en Testcontainers.
 - Cortar un gateway con consumers: epoch nuevo, cero doble ACK y delivery después de reconnect.
 - Failover writer administrado: readiness cae, no confirma trabajo y recupera sin pérdida.
 - Detener dispatcher durante handler: lease expira y retry/DLQ refleja resultado.

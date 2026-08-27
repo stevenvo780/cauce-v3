@@ -133,9 +133,14 @@ Detalle: ningún test de `_legado/tests/` se ejecuta desde `make validate`, `pnp
 
 | Pieza | Líneas | Estado |
 |---|---|---|
-| 45 dudosos del censo (`plan-reestructura/censo-contingentes.md` L23–67) | n/d | Sin marcar; ronda 5 salta (Tarea 5 condicional). Algunos quedaron resueltos por las olas 2/3 (publish-intents no era legado, authentic se retira en la ronda actual); el censo se reescribió en `7a0f0d3` para reflejarlo |
+| 45 dudosos del censo (`plan-reestructura/censo-contingentes.md` L23–67) | n/d | Sin marcar; ronda 5 salta (Tarea 5 condicional). Algunos quedaron resueltos por las olas 2/3 (publish-intents no era legado, authentic ya quedó retirada); el censo se reescribió en `7a0f0d3` para reflejarlo |
 | Restos de la suite operativa CONFIG_POR_ALIAS (`ops/scripts/{separar-config-alias,update-alias-config}.sh` y ss wrappers no usados) | ~200 | Ronda 6 (`0f77d25`) movió los 4 scripts sin invocador real (los sujetos de los 5 tests movidos). Quedan 2 piezas aún en el árbol vivo, sin tests, sin llamador; decisión del dueño |
-| Suite QA "authentic" de Codex (ronda actual) | ~600 | `ops/compose.authentic.yaml` + `ops/scripts/smoke-{compose,runtime}-authentic.sh` + `qa:compose-authentic` y `qa:runtime-authentic` en `package.json` + aserción estática en `ops/scripts/validate.sh`. Codex la retira por exigir `relay-worker`/`shadow-router` en una imagen que ya no los construye — teatro roto por diseño |
+
+Resuelto en la ronda actual: la suite QA `authentic` salió íntegra del árbol operativo porque
+exigía `relay-worker`/`shadow-router` en una imagen que ya no los construye. Se retiraron Compose,
+runners, helpers, schema, dominio de digest, targets y wiring de validación asociados.
+El stage Docker huérfano `authentic-harness` queda fuera de alcance hasta FASE 3 (`deploy/**` es
+sector NADIE); no conserva ningún caller vivo.
 
 ## Referencias vivas rotas a sabiendas (se resuelven en FASE 3)
 
@@ -145,7 +150,7 @@ Detalle: ningún test de `_legado/tests/` se ejecuta desde `make validate`, `pnp
 | `ops/INSTALLATION.md`; `ops/runbooks/systemd.md` | `release-gate.sh` | El gate está en `_legado/ops-scripts/`; la instalación y el runbook se reescriben en FASE 3 (`plan-reestructura/31`) |
 | `ops/runbooks/systemd.md`; `ops/runbooks/alias-cutover.md`; `ops/runbooks/container-adapters.md` | `cutover-rollback.sh` | El cutover está en `_legado/ops-scripts/`; los runbooks se reescriben en FASE 3 (`plan-reestructura/31`) |
 | `deploy/compose.yaml` | declaraba `relay-worker`, `shadow-router`, `shadow-guard` (en profiles nunca encendidos) | Se reescribe en FASE 3 (`plan-reestructura/31`); hoy ya está canónico (`00f8e6e`) |
-| `ops/scripts/stack-health.sh`, `fault-compose.sh`, `smoke-runtime-authentic.sh`, `tests/unit/relay-telegram-observability.test.ts` | mencionan los servicios por nombre de compose (strings), no por import | Siguen funcionando; el ref sigue siendo válido como cadena literal |
+| `ops/scripts/stack-health.sh`, `fault-compose.sh`, `tests/unit/relay-telegram-observability.test.ts` | mencionan los servicios por nombre de compose (strings), no por import | Siguen funcionando; el ref sigue siendo válido como cadena literal |
 
 ## Cómo recuperar cualquier cosa
 

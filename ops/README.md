@@ -6,9 +6,6 @@ Este árbol opera exclusivamente V3. La única migración autoritativa sigue en 
 
 - `deploy/compose.dev.yaml`: desarrollo HTTP/WS, auth dev, PostgreSQL local aislado, dos adapters fake y profiles Telegram/shadow.
 - `ops/compose.test.yaml`: QA descartable con PostgreSQL real y protocol doubles.
-- `ops/compose.authentic.yaml`: los cinco binarios finales de una única imagen,
-  PostgreSQL real, gateway mTLS, Telegram HTTP fake sobre TLS verificable, webhook
-  HTTPS verificado y target V2 por Unix socket real.
 - `deploy/compose.yaml`: producción TLS, imágenes por digest, secretos por PATH, bind privado y PostgreSQL administrado externo por defecto.
 - `deploy/compose.postgres.yaml`: overlay opcional para PostgreSQL local con TLS real; no publica `5432`.
 
@@ -50,7 +47,7 @@ make manifests
 
 Los env privados `/etc/cauce-v3/aliases/<alias>.env` resuelven los placeholders. `alias-runner.sh` exige WSS, archivos legibles, wrapper absoluto y `flock` exclusivo. Ver `runbooks/alias-cutover.md`; generar unidades no inicia consumers.
 
-Para ejecutar el adapter dentro del container existente se usa una familia separada: config no secreta root-owned en `/etc/cauce-v3/container-aliases/<alias>.env`, PKI root-owned por alias y `container-adapter-supervisor.sh`. Cada config fija directamente `BUNDLE_RELEASE` + `BUNDLE_SHA256`; no hay symlink global `current`, así que canary y rollback son independientes por alias mediante `pin-container-release.py` con CAS. El supervisor valida ID/generación, image/label, mount JSON exacto y digest activo antes de lanzar una sesión/PGID dedicada; limpia el entorno con `env -i` e inyecta solo valores no secretos y paths `*_FILE`. `OPERATIONS.sha256` cubre scripts/helper/mapping/units/examples; los dominios `runtime`/`console` de `source-digest.py` siguen excluyendo `ops` (el harness authentic tiene su propio dominio, ver más abajo). Ver `runbooks/container-adapters.md`.
+Para ejecutar el adapter dentro del container existente se usa una familia separada: config no secreta root-owned en `/etc/cauce-v3/container-aliases/<alias>.env`, PKI root-owned por alias y `container-adapter-supervisor.sh`. Cada config fija directamente `BUNDLE_RELEASE` + `BUNDLE_SHA256`; no hay symlink global `current`, así que canary y rollback son independientes por alias mediante `pin-container-release.py` con CAS. El supervisor valida ID/generación, image/label, mount JSON exacto y digest activo antes de lanzar una sesión/PGID dedicada; limpia el entorno con `env -i` e inyecta solo valores no secretos y paths `*_FILE`. `OPERATIONS.sha256` cubre scripts/helper/mapping/units/examples; los dominios `runtime`/`console` de `source-digest.py` siguen excluyendo `ops`, mientras `verification` cubre el árbol operacional vivo. Ver `runbooks/container-adapters.md`.
 
 ## QA y evidencia
 
@@ -59,10 +56,6 @@ make validate
 make test-real       # HTTP/WS/PostgreSQL auténticos; harnesses son protocol doubles
 make test-doubles    # contrato mock + adapters con ejecutables fake
 make smoke-cli       # 5 CLIs auténticas: solo --version/--help, no prompt
-make test-compose-authentic # release-class: final binaries + restart/fencing/effects
-make test-runtime-authentic # fallback docker-run; nunca habilita release
-pnpm verify:three-rounds     # frozen/lint/typecheck/build + 3 rondas + fleet/Testcontainers/mock
-pnpm evidence:release-candidate
 ```
 
 ### Dominios de `source-digest.py`
@@ -73,59 +66,34 @@ prueba lo que dice. `source-digest.py --domain <dominio>` emite:
 
 | Dominio | Cubre | Respalda |
 |---------|-------|----------|
-| `runtime` | manifiestos raíz + `packages/` + `services/` + `deploy/` | build de la imagen runtime, `compose-authentic`, `runtime-authentic`, fleet-release, host-smoke |
-| `console` | manifiestos raíz + `apps/console/` + `deploy/` | solo la entrada `console` de `build.json` |
-| `harness` | `ops/harness/`, `ops/compose.authentic.yaml`, drivers de fallo y los dos smoke | `harnessDigest` de la evidencia authentic |
-| `full` | unión de los tres; **default** si nadie declara dominio | `verify:three-rounds` y `release-candidate` |
+| `runtime` | manifiestos raíz + `packages/` + `services/` + `deploy/` | identidad de fuentes runtime registrada por Testcontainers |
+| `console` | manifiestos raíz + `apps/console/` + `deploy/` | identidad de fuentes de la imagen consola |
+| `testcontainers` | E2E, helper PostgreSQL, runner, schema y validador Testcontainers | `harnessDigest` de la evidencia Testcontainers |
+| `verification` | tests, orquestación y fuentes operacionales ejecutadas o inspeccionadas | cierre del gate global |
+| `full` | unión de los cuatro; **default** si nadie declara dominio | fallback estricto para callers sin dominio |
 
 `apps/console` **no** está en `runtime`: no hay camino causal desde la consola hasta la imagen
 runtime (el stage `runtime` del Dockerfile nunca copia consola, `production-dependencies` excluye
 `@cauce/console`, `tsconfig.build.json` no compila consola y la consola no importa `@cauce/*`). El
 grafo de dependencias sigue cubierto porque `pnpm-lock.yaml` y `pnpm-workspace.yaml` permanecen en
-`runtime`. Consecuencia práctica: **un cambio de consola ya no invalida la evidencia de inyección de
-fallos**; solo obliga a rehacer las imágenes con `make release-build`, que es barato. El validador lo
-dice explícitamente en el mensaje de error para que nadie edite el artefacto a mano.
+`runtime`. Consecuencia práctica: un cambio exclusivo de consola no relabela la identidad runtime
+de la evidencia Testcontainers.
 
-En sentido inverso, `harnessDigest` cierra el agujero opuesto: antes todo `ops/` quedaba fuera de
-todo digest, así que el runner y los drivers de fallo podían debilitarse sin mover nada que el gate
-mirara. `ops/tests/source-digest-domains.test.mjs` fija la forma del recorte (que lo único que
-`runtime` deja afuera sea `apps/console`) y corre dentro de `make validate`, `make release-gate` y
-`pnpm verify:three-rounds`.
+El `harnessDigest` de Testcontainers usa el dominio `testcontainers`; `verification` toma además el
+árbol `ops/harness/` completo. `ops/tests/source-digest-domains.test.mjs` fija la forma del recorte y
+corre dentro de `make validate`.
 
 Un fallo de `gateway-process-kill` o `postgres-container-kill` **no** es señal de fraude: son
 sensibles a CPU y flakean en hosts cargados (comprobado con corrida de control). El remedio legítimo
 es volver a correr la suite; el gate nombra el mecanismo y lo aclara en el mensaje.
 
-Las clases no se mezclan: `protocol-double` nunca incrementa contadores
-`real`/`authentic`, y `smoke-cli` no acredita ejecución de prompts. Unitarios y
-Testcontainers se archivan fuera de `artifacts/compose-authentic`; el wrapper de
-Testcontainers conserva cada corrida bajo `artifacts/testcontainers/<timestamp>`
-sin sobrescribir evidencia runtime. Cada reporte runtime exige `criticalSkipped`,
-`mechanism`, `evidenceClass`, `imageDigest`, `sourceDigest` y timestamps explícitos,
-y JSON/JUnit quedan cubiertos por `SHA256SUMS`.
+Las clases no se mezclan: `protocol-double` nunca acredita transporte productivo y `smoke-cli` no
+acredita ejecución de prompts. El wrapper Testcontainers conserva cada corrida bajo
+`artifacts/testcontainers/<timestamp>` y cubre JSON/JUnit con `SHA256SUMS`.
 
-`artifacts/release-candidate/` contiene `sourceDigest`, `report.json`, `junit.xml` y
-`SHA256SUMS`. El reporte separa deliberadamente `gates.codeRuntime` de
-`gates.releaseHost`: un runtime-authentic local puede cerrar el primero, pero nunca
-convierte la ausencia de Compose v2, build autorizado, publicación por digest,
-credenciales privadas o evidencia distribuida de hosts en un release aprobado.
-
-`make release-gate` falla si falta Docker Compose v2, `docker build`, build
-evidence actual, hashes, las 15 unidades systemd exactas o evidencia
-`compose-authentic` del mismo image/source digest. Exige cero skips críticos y
-los mecanismos `gateway-process-kill` y `postgres-container-kill`. El fallback
-`runtime-authentic` sirve para desarrollo sin Compose, pero nunca para release.
-`release-build` exige tres referencias canónicas child-manifest, todas `linux/amd64`:
-`CAUCE_NODE_BASE_IMAGE=docker.io/library/node@sha256:56a687b4d23e7a6cb49114924f5e257fcfbd33ad1f28f5c67aea9365996f2819`,
-`CAUCE_PYTHON_BASE_IMAGE=docker.io/library/python@sha256:53739acebd52a300f19f52d93f2a6165f63300689bdf6f8af2bff0d63780e5e6`
-y `CAUCE_NGINX_BASE_IMAGE=docker.io/nginxinc/nginx-unprivileged@sha256:28d91bdce70ad09025ea901458fdd149259d8e05982ade79d4ef2c0d9470eb48`.
-El productor rechaza índices multiarch, roles intercambiados, IDs repetidos y plataformas distintas;
-liga RepoDigest, manifest digest, media type, plataforma e image ID en `build.json` schema v6 y en
-los labels finales. Python se copia desde su base inmutable; el Dockerfile no resuelve paquetes con
-`apk add`. Con `CAUCE_RELEASE_PULL=1` recupera explícitamente las tres bases. Con
-`CAUCE_RELEASE_PULL=0` no ejecuta ningún pull de bases y sólo admite una construcción diagnóstica si
-los tres child manifests ya están cacheados; runtime/consola publicados sí se recuperan siempre por
-RepoDigest para acreditar el artefacto final.
+La suite QA `compose-authentic`/`runtime-authentic` y la maquinaria de evidencia de release se
+retiraron porque dependían de servicios ya eliminados. No existe en este árbol un reemplazo que
+acredite binarios/imágenes finales; ver `docs/bitacora/legado-indice.md`.
 
 ## Seguridad y recuperación
 
