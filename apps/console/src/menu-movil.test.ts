@@ -32,7 +32,15 @@ import { NAV_ENTRIES } from './nav';
  * que faltaba en esta rama.
  */
 
-const GLOBAL = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8');
+const resolverCss = (ruta: string): string => {
+  const abs = resolve(process.cwd(), 'src', ruta);
+  const contenido = readFileSync(abs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(abs, '..', importPath);
+    return resolverCss(subAbs);
+  });
+};
+const GLOBAL = resolverCss('styles.css');
 
 /** El corte en el que la consola pasa a barra de navegación inferior fija. */
 const CORTE_ESTRECHO = 760;

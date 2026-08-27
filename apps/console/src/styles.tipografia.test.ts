@@ -37,7 +37,14 @@ import { describe, expect, it } from 'vitest';
  */
 
 const RAIZ = resolve(process.cwd(), 'src');
-const leer = (ruta: string) => readFileSync(resolve(RAIZ, ruta), 'utf8');
+const leer = (ruta: string): string => {
+  const abs = resolve(RAIZ, ruta);
+  const contenido = readFileSync(abs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(abs, '..', importPath);
+    return leer(subAbs);
+  });
+};
 
 /**
  * Las hojas bajo guardia. Es el REPARTO de este cambio, no la lista completa de la consola.

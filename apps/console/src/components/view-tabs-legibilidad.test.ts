@@ -18,7 +18,15 @@ import { describe, expect, it } from 'vitest';
  * Se comprueba sobre la hoja porque acá no hay servidor X: jsdom no resuelve `@media` ni calcula
  * contraste. Después del arreglo, medido en el navegador: inactivas **5,13:1**, activa 16,35:1.
  */
-const HOJA = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8');
+const resolverCss = (ruta: string): string => {
+  const abs = resolve(process.cwd(), 'src', ruta);
+  const contenido = readFileSync(abs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(abs, '..', importPath);
+    return resolverCss(subAbs);
+  });
+};
+const HOJA = resolverCss('styles.css');
 
 /** Cuerpos de todos los `@media (prefers-color-scheme: light)`, contando llaves. */
 function bloquesClaros(css: string): string[] {

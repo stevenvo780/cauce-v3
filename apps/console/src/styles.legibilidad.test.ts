@@ -28,7 +28,15 @@ import { describe, expect, it } from 'vitest';
  */
 
 const RAIZ = resolve(process.cwd(), 'src');
-const GLOBAL = readFileSync(resolve(RAIZ, 'styles.css'), 'utf8');
+const leerCss = (ruta: string): string => {
+  const abs = resolve(RAIZ, ruta);
+  const contenido = readFileSync(abs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(abs, '..', importPath);
+    return leerCss(subAbs);
+  });
+};
+const GLOBAL = leerCss('styles.css');
 
 /* ------------------------------------------------------------------ lectura de la hoja ------ */
 
@@ -512,7 +520,7 @@ export function rejasQueNoCaben(hojas: { hoja: string; css: string }[], viewport
 }
 
 function hojasReales(): { hoja: string; css: string }[] {
-  return HOJAS_DE_LA_CONSOLA.map((hoja) => ({ hoja, css: readFileSync(resolve(RAIZ, hoja), 'utf8') }));
+  return HOJAS_DE_LA_CONSOLA.map((hoja) => ({ hoja, css: leerCss(hoja) }));
 }
 
 describe('ninguna reja exige más ancho del que su vista tiene', () => {

@@ -9,8 +9,16 @@ import { VAR_TOPE_MENSAJERIA } from './MessagesPage';
  */
 
 const RAIZ = resolve(process.cwd(), 'src');
-const MENSAJES_CSS = readFileSync(resolve(RAIZ, 'features/messages/messages.css'), 'utf8');
-const GLOBAL_CSS = readFileSync(resolve(RAIZ, 'styles.css'), 'utf8');
+const resolverCss = (ruta: string): string => {
+  const abs = resolve(RAIZ, ruta);
+  const contenido = readFileSync(abs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(abs, '..', importPath);
+    return resolverCss(subAbs);
+  });
+};
+const MENSAJES_CSS = resolverCss('features/messages/messages.css');
+const GLOBAL_CSS = resolverCss('styles.css');
 
 /** El corte en el que la consola pasa a barra de navegación inferior fija. */
 const CORTE_ESTRECHO = 760;

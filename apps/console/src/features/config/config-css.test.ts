@@ -25,9 +25,17 @@ import { describe, expect, it } from 'vitest';
  */
 
 const RAIZ = resolve(process.cwd(), 'src');
-const GLOBAL = readFileSync(join(RAIZ, 'styles.css'), 'utf8');
-const PROPIA = readFileSync(join(RAIZ, 'features', 'config', 'config.css'), 'utf8');
-const INTERRUPTORES = readFileSync(join(RAIZ, 'features', 'config', 'toggles.css'), 'utf8');
+const resolverCss = (ruta: string): string => {
+  const abs = resolve(RAIZ, ruta);
+  const contenido = readFileSync(abs, 'utf8');
+  return contenido.replace(/@import\s+['"]([^'"]+)['"];/g, (_, importPath: string) => {
+    const subAbs = resolve(abs, '..', importPath);
+    return resolverCss(subAbs);
+  });
+};
+const GLOBAL = resolverCss('styles.css');
+const PROPIA = resolverCss(join('features', 'config', 'config.css'));
+const INTERRUPTORES = resolverCss(join('features', 'config', 'toggles.css'));
 
 function sinComentarios(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, ' ');
