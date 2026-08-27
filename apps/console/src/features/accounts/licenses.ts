@@ -467,16 +467,3 @@ export function extractCeiling(config: ConfigurationSnapshot | null | undefined)
     created_by_tenant: (raw.created_by_tenant ?? null) as string | null,
   }));
 }
-
-export function extractCollectors(quotas: QuotaSnapshot | null | undefined): Collector[] {
-  if (!quotas?.collectors) return [];
-  return (quotas.collectors as QuotaCollector[]).map((c): Collector => ({
-    host: c.host ?? null,
-    captured_at: c.captured_at ?? null,
-    received_at: c.received_at ?? null,
-    age_seconds: c.age_seconds ?? null,
-    stale: c.stale ?? null,
-    provider_count: c.provider_count ?? null,
-    window_count: c.window_count ?? null,
-  }));
-}

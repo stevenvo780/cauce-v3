@@ -4,7 +4,7 @@ import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import {
   CAMPOS_DE_LISTA, camposQueNoEntran, camposVigentes, contarUnidades, hayCambios,
   esPerfilAplicado, lineasALista, listaALineas, perfilParaGuardar,
-  perfilYaExiste, unidadesDelPerfil,
+  unidadesDelPerfil,
 } from './perfil';
 
 /**
@@ -240,18 +240,6 @@ describe('la escritura aplicada del perfil', () => {
         documents: [{ ...ack.runtime_adoption.documents[0], path: '/tmp/otro.md' }],
       },
     }, esperado)).toBe(false);
-  });
-});
-
-describe('cuándo un perfil ya existe', () => {
-  it('un perfil con cualquier cara declarada existe', () => {
-    expect(perfilYaExiste(perfilDe({ human_brief: 'Steven' }))).toBe(true);
-    expect(perfilYaExiste(perfilDe({ tools: ['ssh'] }))).toBe(true);
-  });
-
-  it('CONTROL NEGATIVO: todo en NULL y listas vacías NO es un perfil', () => {
-    expect(perfilYaExiste(perfilDe({}))).toBe(false);
-    expect(perfilYaExiste(undefined)).toBe(false);
   });
 });
 

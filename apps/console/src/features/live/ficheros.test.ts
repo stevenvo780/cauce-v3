@@ -1,7 +1,7 @@
 import type { AgentDocumentItem, AgentDocumentsMap } from '../../api/types';
 import {
   avisoAntesDeGuardar, avisoDeFuente, explicarFallo, hayCambios, mensajeDeGuardado,
-  modoDeDocumento, sePuedeEditar,
+  modoDeDocumento,
 } from './ficheros';
 
 function doc(extra: Partial<AgentDocumentItem> = {}): AgentDocumentItem {
@@ -18,7 +18,6 @@ function doc(extra: Partial<AgentDocumentItem> = {}): AgentDocumentItem {
 describe('qué se puede hacer con cada fichero', () => {
   it('un fichero entero editable se edita entero', () => {
     expect(modoDeDocumento(doc())).toBe('entero');
-    expect(sePuedeEditar(doc())).toBe(true);
   });
 
   /**
@@ -30,13 +29,11 @@ describe('qué se puede hacer con cada fichero', () => {
   it('un fichero con campos proyectados es un tercer estado, ni entero ni cerrado', () => {
     const proyectado = doc({ editable: false, projected_fields: ['agents'] });
     expect(modoDeDocumento(proyectado)).toBe('proyectado');
-    expect(sePuedeEditar(proyectado)).toBe(true);
   });
 
   it('sin editable y sin campos proyectados es sólo lectura', () => {
     const cerrado = doc({ editable: false, reason: 'vive con el OAuth' });
     expect(modoDeDocumento(cerrado)).toBe('solo-lectura');
-    expect(sePuedeEditar(cerrado)).toBe(false);
   });
 
   /** Una lista vacía de campos NO es una proyección. Fallar cerrada también aquí. */

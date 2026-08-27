@@ -267,19 +267,3 @@ export function esPerfilAplicado(
   }
   return adoptados.size === 0;
 }
-
-/**
- * ¿Este perfil ya existe como fila, o sería un alta?
- *
- * La diferencia importa para el DESHACER: un alta se deshace borrando y una edición reponiendo lo
- * de antes. Si un alta se deshiciera con un `update` al perfil vacío quedaría una fila con todo en
- * NULL, que NO es lo mismo que no tener perfil — el compilador distingue «no declarado» de
- * «declarado vacío», y una fila fantasma le haría emitir un bloque donde no debería haber ninguno.
- */
-export function perfilYaExiste(perfil: AgentPerfil | undefined): boolean {
-  if (perfil === undefined) return false;
-  const p = perfil.perfil;
-  return p.purpose !== null || p.role_summary !== null || p.human_brief !== null
-    || p.responsibilities.length > 0 || p.restrictions.length > 0
-    || p.tools.length > 0 || p.operating_rules.length > 0;
-}

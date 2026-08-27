@@ -158,4 +158,3 @@ async function deadLetterUnknownJob(
 export * from './handlers.js';
 export * from './config.js';
 export * from './metrics.js';
-export * from './scheduler.js';

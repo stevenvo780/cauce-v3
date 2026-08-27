@@ -8,7 +8,6 @@ import {
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
-import { FairLaneScheduler } from '../../services/dispatcher/src/scheduler.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 interface Published {
@@ -692,24 +691,6 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     });
     expect(audit?.ambiguous_execution).toBeUndefined();
     expect(audit?.ambiguous_without_execution).toBeUndefined();
-  });
-
-  it('claims PostgreSQL jobs with bounded interactive/batch lane fairness', async () => {
-    for (let index = 0; index < 6; index += 1) await repository.enqueueJob('Steven', 'interactive', index, 'test', { index });
-    for (let index = 0; index < 2; index += 1) await repository.enqueueJob('Steven', 'batch', index, 'test', { index });
-    const scheduler = new FairLaneScheduler(2);
-    let interactive = 6;
-    let batch = 2;
-    const claimed: string[] = [];
-    while (interactive + batch > 0) {
-      const lane = scheduler.next(interactive > 0, batch > 0)!;
-      const jobs = await repository.claimJobs(lane, 'fairness-test', 1);
-      expect(jobs).toHaveLength(1);
-      claimed.push(lane);
-      if (lane === 'interactive') interactive -= 1;
-      else batch -= 1;
-    }
-    expect(claimed.slice(0, 6)).toEqual(['interactive', 'interactive', 'batch', 'interactive', 'interactive', 'batch']);
   });
 
   it('fences job completion and dead-letters exhausted jobs', async () => {

@@ -68,8 +68,6 @@ export const STATE_ACCENT: Record<LiveState, string> = {
 /** Cuánto dura en pantalla un estado transitorio antes de caer al estado estable. */
 export const BURST_MS = 4500;
 
-export interface AgentKey { tenantId: string; alias: string }
-
 export function agentKey(agent: { tenant_id: string; alias: string }): string {
   return `${agent.tenant_id}/${agent.alias}`;
 }

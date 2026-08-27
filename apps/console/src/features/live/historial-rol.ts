@@ -14,16 +14,6 @@ import { contarRoleBrief } from './role-brief';
  * autoriza una escritura directa: una restauración sólo prepara un borrador de `role_summary`.
  */
 
-/**
- * Cuándo se instaló el trigger que escribe este diario.
- *
- * Está acá y no en un comentario porque la pantalla LO DICE: sin esa fecha, un diario con dos
- * entradas se lee como «este rol casi no cambió», que es falso —se lee así justamente en los
- * alias que más se tocaron antes de esa fecha—. Un registro que empieza en una fecha y no la
- * declara induce la conclusión contraria a la verdad.
- */
-export const DIARIO_DESDE = '2026-08-23T02:35:00.000Z';
-
 export const AVISO_DE_PROFUNDIDAD =
   'El diario arranca el 23 de agosto de 2026, que es cuando se instaló el disparador que lo '
   + 'escribe. Lo anterior a esa fecha NO está registrado en ningún sitio: que aparezcan pocos '

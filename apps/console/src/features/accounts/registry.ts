@@ -40,7 +40,6 @@ const DOT_SEGMENT = /(^|\/)\.\.?(\/|$)/;
 const ACCOUNT_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 const PROVIDER_ID = /^[a-z][a-z0-9_.-]{0,63}$/;
 const TENANT_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
-const ALIAS_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 
 /** Estado de un campo que el servidor puede anular por pertenecer al pagador. */
 export type FieldVisibility = 'visible' | 'redacted' | 'absent';
@@ -418,12 +417,6 @@ export function bindingMutation(
     account_id: accountId,
   };
   return action === 'delete' ? identity : { ...identity, value };
-}
-
-export function aliasError(alias: string): string | undefined {
-  return ALIAS_ID.test(alias.trim())
-    ? undefined
-    : 'El alias debe empezar con minúscula y usar sólo minúsculas, números, guion o guion bajo.';
 }
 
 /**

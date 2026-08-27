@@ -3,9 +3,6 @@
  */
 export const UNKNOWN = 'sin dato';
 
-/** Alias legible. Mismo valor: quien escriba código nuevo no tiene por qué heredar el nombre viejo. */
-export const SIN_DATO = UNKNOWN;
-
 /** «Este dato aún no toca», que NO es lo mismo que «no lo sé». */
 export const TODAVIA_NO = 'todavía no';
 

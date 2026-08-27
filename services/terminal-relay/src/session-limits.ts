@@ -177,14 +177,6 @@ export function isTerminalEmulatorResponse(data: string): boolean {
   return true;
 }
 
-export function isValidCols(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= MIN_COLS && value <= MAX_COLS;
-}
-
-export function isValidRows(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= MIN_ROWS && value <= MAX_ROWS;
-}
-
 /** `ws` hands us a Buffer, a fragment list or an ArrayBuffer depending on how the frame arrived. */
 export function rawText(data: RawData): string {
   if (Buffer.isBuffer(data)) return data.toString('utf8');

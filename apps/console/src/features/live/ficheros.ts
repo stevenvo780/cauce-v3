@@ -39,10 +39,6 @@ export function modoDeDocumento(item: AgentDocumentItem): ModoDocumento {
   return 'solo-lectura';
 }
 
-export function sePuedeEditar(item: AgentDocumentItem): boolean {
-  return modoDeDocumento(item) !== 'solo-lectura';
-}
-
 export interface Explicacion {
   titulo: string;
   detalle: string;

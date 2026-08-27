@@ -3,7 +3,6 @@ import {
   accountAssignments,
   extractAgents,
   extractBindings,
-  extractCollectors,
   extractCeiling,
   extractProviderAccounts,
   formatResetIn,
@@ -384,35 +383,5 @@ describe('extractors', () => {
     expect(extractAgents(config)).toEqual([]);
     expect(extractBindings(config)).toEqual([]);
     expect(extractCeiling(config)).toEqual([]);
-  });
-
-  it('extrae collectors correctamente', () => {
-    const quotas: QuotaSnapshot = {
-      observed_at: null,
-      thresholds: null,
-      collectors: [
-        {
-          host: 'kratos',
-          collector_tenant: null,
-          collector_alias: null,
-          captured_at: '2026-01-01T00:00:00Z',
-          received_at: '2026-01-01T00:00:10Z',
-          age_seconds: 50,
-          stale: false,
-          schema_version: 1,
-          app_version: '1.0',
-          provider_count: 1,
-          window_count: 1,
-        },
-      ],
-      providers: [],
-      unbound_groups: [],
-      paused_accounts: [],
-    };
-
-    const result = extractCollectors(quotas);
-    expect(result).toHaveLength(1);
-    expect(result[0].host).toBe('kratos');
-    expect(result[0].age_seconds).toBe(50);
   });
 });
