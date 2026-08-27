@@ -14,8 +14,6 @@ const runtimePackages = [
   ['adapter-sdk', '../packages/adapter-sdk/package.json'],
   ['gateway', '../services/gateway/package.json'],
   ['dispatcher', '../services/dispatcher/package.json'],
-  ['relay-worker', '../services/relay-worker/package.json'],
-  ['shadow-router', '../services/shadow-router/package.json'],
   ['telegram-bridge', '../services/telegram-bridge/package.json'],
   ['terminal-relay', '../services/terminal-relay/package.json'],
 ];
@@ -27,8 +25,6 @@ const runtimeModules = [
   ['adapter CLI runtime', '../packages/adapter-sdk/dist/src/bin/shared.js'],
   ['gateway', '../services/gateway/dist/app.js'],
   ['dispatcher', '../services/dispatcher/dist/index.js'],
-  ['relay-worker', '../services/relay-worker/dist/index.js'],
-  ['shadow-router', '../services/shadow-router/dist/index.js'],
   ['telegram-bridge', '../services/telegram-bridge/dist/index.js'],
   ['outbox metrics', './outbox-metrics.mjs', 'startOutboxMetrics'],
 ];

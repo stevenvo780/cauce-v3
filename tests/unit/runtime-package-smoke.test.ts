@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,9 +26,13 @@ describe('runtime bridge packaging smoke', () => {
     await mkdir(bridgeDirectory, { recursive: true });
     hermesBridge = join(bridgeDirectory, 'hermes-stdin-bridge.py');
     openClawBridge = join(bridgeDirectory, 'openclaw-stdin-bridge.mjs');
+    const [hermesSource, openClawSource] = await Promise.all([
+      readFile(join(sourceBridgeDirectory, 'hermes-stdin-bridge.py')),
+      readFile(join(sourceBridgeDirectory, 'openclaw-stdin-bridge.mjs')),
+    ]);
     await Promise.all([
-      copyFile(join(sourceBridgeDirectory, 'hermes-stdin-bridge.py'), hermesBridge),
-      copyFile(join(sourceBridgeDirectory, 'openclaw-stdin-bridge.mjs'), openClawBridge),
+      writeFile(hermesBridge, hermesSource),
+      writeFile(openClawBridge, openClawSource),
     ]);
     await Promise.all([chmod(hermesBridge, 0o555), chmod(openClawBridge, 0o555)]);
   });
