@@ -1,4 +1,19 @@
 import '@testing-library/jest-dom/vitest';
+import { transferableAbortController } from 'node:util';
+
+const nativeAbortController = transferableAbortController();
+Object.defineProperties(globalThis, {
+  AbortController: {
+    configurable: true,
+    writable: true,
+    value: nativeAbortController.constructor,
+  },
+  AbortSignal: {
+    configurable: true,
+    writable: true,
+    value: nativeAbortController.signal.constructor,
+  },
+});
 /*
  * `matchMedia` NO existe en jsdom, y xterm lo llama al abrir el renderer. Sin este relleno,
  * `terminal.open()` lanzaba `this._parentWindow.matchMedia is not a function`, la sesión quedaba

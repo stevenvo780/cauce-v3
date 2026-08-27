@@ -15,7 +15,7 @@ Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenC
 
 - La mensajería IA↔IA **funciona en producción** (contenedores `cauce-v3-prod-*` en esta máquina).
 - Producción corre imágenes del 23–25 de agosto y **la base está en la migración 024 de 037**. Todo lo commiteado después (editor de ficheros de gobierno completo, separación PTY/TUI) está **escrito pero sin desplegar** — no existe hoy un camino verde de despliegue; se construye en `plan-reestructura/31`.
-- El repo está en reestructura activa por 4 instancias de IA con sectores disjuntos: ver `ordenes/00-PROTOCOLO.md` (obligatorio antes de tocar nada) y `plan-reestructura/`.
+- El repo está en reestructura activa por 4 instancias de IA con sectores disjuntos: ver `ordenes/00-PROTOCOLO.md` (las órdenes van por carpetas de ronda: `ordenes/rondaN/<instancia>.md`) (obligatorio antes de tocar nada) y `plan-reestructura/`.
 - `_legado/` es cuarentena de código medido como nunca-usado. No se compila ni se importa.
 
 ## Componentes vivos
@@ -38,10 +38,10 @@ Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenC
 ```sh
 pnpm install --frozen-lockfile
 pnpm typecheck && pnpm lint      # gate mínimo de todo commit
-pnpm test:unit                   # gate completo cuando ordenes/codex.md tarea 2 esté cerrada
+pnpm test:unit                   # gate completo cuando ordenes/ronda1/codex.md tarea 2 esté cerrada
 ```
 
-Reglas de trabajo, sectores por instancia y prohibiciones: `ordenes/00-PROTOCOLO.md`. Contexto para agentes de IA: `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`.
+Reglas de trabajo, sectores por instancia y prohibiciones: `ordenes/00-PROTOCOLO.md` (las órdenes van por carpetas de ronda: `ordenes/rondaN/<instancia>.md`). Contexto para agentes de IA: `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`.
 
 ## Despliegue
 

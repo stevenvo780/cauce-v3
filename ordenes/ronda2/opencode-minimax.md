@@ -3,7 +3,7 @@
 Protocolo vigente: `ordenes/00-PROTOCOLO.md` (directo a main, `git add` solo tus rutas, `git diff --cached` antes de commitear, push al cerrar). Prohibido tocar `.ts/.tsx/.py` de producto, `deploy/`, migraciones, `ops/scripts` (Codex está ahí).
 
 ## Tarea 1 — CI mínima en GitHub Actions
-El repo ya está sincronizado con GitHub (solo `main`). Crea `.github/workflows/ci.yml`: en cada push a main → checkout, Node 22, pnpm 11.8, `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`. Deja `pnpm test:unit` COMENTADO con una línea: "activar cuando ordenes/codex.md tarea 2 cierre (hoy hay 533 fallos preexistentes de entorno)". Es la primera CI en la historia del repo: verifica el YAML con cuidado (sintaxis, versiones de actions oficiales, cache de pnpm).
+El repo ya está sincronizado con GitHub (solo `main`). Crea `.github/workflows/ci.yml`: en cada push a main → checkout, Node 22, pnpm 11.8, `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`. Deja `pnpm test:unit` COMENTADO con una línea: "activar cuando ordenes/ronda1/codex.md tarea 2 cierre (hoy hay 533 fallos preexistentes de entorno)". Es la primera CI en la historia del repo: verifica el YAML con cuidado (sintaxis, versiones de actions oficiales, cache de pnpm).
 
 ## Tarea 2 — Índice humano de `docs/bitacora/`
 La bitácora tiene ~40 ficheros. Reescribe `docs/bitacora/README.md`: tabla con una fila por fichero — nombre, fecha (del nombre o de git), y UNA línea de qué es ("handoff de zeus a codex sobre la directiva", "plan de reforma de consola", …). Mantén la advertencia de que nada de ahí describe el presente.

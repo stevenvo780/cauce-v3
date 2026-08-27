@@ -12,4 +12,4 @@
 
 **Correr en dev:** `pnpm dev:gateway`. **Probar:** suites en `tests/gateway-hardening/` y unit del paquete.
 
-**Aviso:** `src/app.ts` y `src/terminal/plugin.ts` están en partición por módulos (ordenes/codex.md, tareas 3–4). Las rutas de publish-intents y chain-gates son candidatas a `_legado` (0 uso medido en producción).
+**Aviso:** `src/app.ts` y `src/terminal/plugin.ts` están en partición por módulos (ordenes/ronda1/codex.md, tareas 3–4). Las rutas de publish-intents y chain-gates son candidatas a `_legado` (0 uso medido en producción).
