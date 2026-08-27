@@ -1,6 +1,6 @@
 # Runbook: preflight, canary, cutover y rollback por alias
 
-> La dual-stack V2/V3 ya no es operativa; esto aplica solo como referencia de rollback (`_legado/rollback-bridge`).
+> La dual-stack V2/V3 ya no es operativa; esto aplica solo como referencia de rollback ((retirado; ver docs/bitacora/legado-indice.md)).
 
 ## Alcance y collector
 

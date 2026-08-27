@@ -25,7 +25,7 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3`. La
 | `services/terminal-relay/**`, `services/telegram-bridge/**` | Gemini | Claude |
 | `packages/store/src/**`, `services/gateway/src/**`, maquinaria de release de `ops/scripts/` + sus tests | Codex | Claude |
 | Higiene de disco, `docs/`, residuos, verificaciones mecánicas | OpenCode/MiniMax | Claude |
-| `_legado/`, `plan-reestructura/`, `ordenes/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, FASE 3 (deploy, flota, BD) | Claude + dueño | dueño |
+| `plan-reestructura/`, `ordenes/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, FASE 3 (deploy, flota, BD) | Claude + dueño | dueño |
 | `packages/store/migrations/**`, `deploy/**`, `/etc/cauce-v3`, `/opt`, contenedores, systemd, base de datos | NADIE hasta FASE 3 | — |
 
 ## Reglas de todo commit (sin excepción)

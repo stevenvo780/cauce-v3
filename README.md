@@ -16,7 +16,7 @@ Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenC
 - La mensajería IA↔IA **funciona en producción** (contenedores `cauce-v3-prod-*` en esta máquina).
 - Producción corre imágenes del 23–25 de agosto y **la base está en la migración 024 de 037**. Todo lo commiteado después (editor de ficheros de gobierno completo, separación PTY/TUI) está **escrito pero sin desplegar** — no existe hoy un camino verde de despliegue; se construye en `plan-reestructura/31`.
 - El repo está en reestructura activa por 4 instancias de IA con sectores disjuntos: ver `ordenes/00-PROTOCOLO.md` (la orden ACTIVA de cada instancia: `ordenes/<instancia>.md`; las ejecutadas se archivan en `docs/bitacora/ordenes-ejecutadas/`) (obligatorio antes de tocar nada) y `plan-reestructura/`.
-- `_legado/` es cuarentena de código medido como nunca-usado. No se compila ni se importa.
+- El código muerto se borra del árbol (`git rm` con evidencia): git es el archivo. Índice de lo retirado: `docs/bitacora/legado-indice.md`.
 
 ## Componentes vivos
 

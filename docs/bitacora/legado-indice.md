@@ -1,5 +1,7 @@
-# _legado — cuarentena
+# Índice de lo retirado del árbol (borrado el 27-08-2026 — git es el archivo)
 
+
+Todo lo aquí listado se BORRÓ del árbol de trabajo. Recuperación: `git log --all --diff-filter=AD -- "_legado/*"` para hallar los commits, `git show <commit>:<ruta>` para el contenido, o el bundle `/datos/workspaces/zeus/cauce-v3-archivo-completo-20260827.bundle`.
 Código medido como **nunca usado en producción** o **reemplazado por otra cosa**. Se mueve aquí para
 sacarlo de la vista y del build; **no se borra todavía** — la tala definitiva la decide el dueño.
 Nada de este directorio se compila, lintea ni testea (los generadores pueden leerlo para producir

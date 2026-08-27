@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Despliegue simple de Cauce V3 (FASE 3). Sustituye a la maquinaria retirada a _legado/.
+# Despliegue simple de Cauce V3 (FASE 3). Sustituye a la maquinaria retirada del árbol (histórico en git).
 # Contrato: build -> pin por digest -> migrar -> up -> smoke -> registrar. Todo o rollback.
 # SOLO se ejecuta con el dueño presente: exige CAUCE_FASE3_CON_DUENO=si.
 set -euo pipefail

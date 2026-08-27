@@ -1,6 +1,0 @@
-[Unit]
-Description=Refresca la cuota real por cuenta de la flota y el fichero que leen los agentes
-
-[Service]
-Type=oneshot
-ExecStart=/home/stev/.local/bin/cauce-ai-live --context

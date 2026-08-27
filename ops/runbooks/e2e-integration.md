@@ -32,5 +32,5 @@ artefacto `runtime-authentic`; no lo renombra ni lo promueve. `release-gate`
 acepta únicamente `compose-authentic`, SHA válido, igualdad image/source digest,
 cero skips críticos y ambos mecanismos de kill. Nunca apuntar fault/cutover a V2
 real, producción compartida o sesiones reales. (`relay-worker` y `shadow-router`
-están en `_legado/` desde la cuarentena; la clase `test-compose-authentic` queda
+están retirados (ver docs/bitacora/legado-indice.md) desde la cuarentena; la clase `test-compose-authentic` queda
 rota hasta `plan-reestructura/31`.)

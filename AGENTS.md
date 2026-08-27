@@ -13,11 +13,12 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 - `services/gateway | dispatcher | terminal-relay | telegram-bridge` — los 4 servicios vivos
 - `apps/console` — SPA React del operador
 - `ops/` — systemd, pty-agent (terminal dentro de cada contenedor), scripts operativos
-- `_legado/` — cuarentena de código sin uso: NO compilar, NO importar, NO usarlo como contexto
 - `plan-reestructura/` y `ordenes/` — el plan vigente y tu orden de trabajo
 - `docs/bitacora/` — histórico congelado, no confiable como estado actual
 
 ## Reglas (las completas: `ordenes/00-PROTOCOLO.md`)
+
+0. **Código muerto se BORRA con `git rm` + evidencia en el mensaje del commit — git es el archivo.** No existen carpetas de cuarentena. Histórico de lo retirado: `docs/bitacora/legado-indice.md` y el bundle del 27-08.
 
 1. Trabaja SOLO en tu sector (tabla del protocolo), DIRECTO en `main` — **prohibido crear ramas** (decisión del dueño: aquí las ramas fueron el cementerio). `git add` solo por rutas propias; nunca `git add -A`, `git add .` ni `commit -a`.
 2. Gate por commit: `pnpm typecheck && pnpm lint` en verde (hoy lo están; deben seguir).
@@ -29,7 +30,7 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 
 ## NO TOCAR (sin excepción)
 
-`packages/store/migrations/**` · cualquier `*.patch` · `deploy/**` · `/etc/cauce-v3` · `/opt` · la base de datos productiva · contenedores y unidades systemd · `_legado/**` (salvo Codex por su orden) · secretos y credenciales.
+`packages/store/migrations/**` · cualquier `*.patch` · `deploy/**` · `/etc/cauce-v3` · `/opt` · la base de datos productiva · contenedores y unidades systemd · secretos y credenciales.
 
 ## Historia mínima que necesitas saber
 
