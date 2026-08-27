@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { TLSSocket } from 'node:tls';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
@@ -7,32 +7,33 @@ import {
 } from '@cauce/store';
 import { AliasSchema, TenantSchema, type Tenant } from '@cauce/protocol';
 import {
-  AuthError, AuthorizationError, requireOperatorPermission, validatePrincipal,
+  AuthError, AuthorizationError, validatePrincipal,
   type AuthProvider, type Principal
 } from '../auth.js';
 import {
   type GovernanceRelayClient, type MeasuredFactsSource
 } from '../console/agent-documents.js';
+import { terminalAuditMetadata, type TerminalAuditContext, type TerminalAuditEntry } from './audit.js';
 import {
-  recordTerminalAudit, terminalAuditMetadata, type TerminalAuditContext, type TerminalAuditEntry,
-} from './audit.js';
-import {
-  GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort, fleetIdentity,
-  fleetIdentityLabel, fleetPlacement, loadFleetPlacements, resolveOperator, routingAuthority,
-  type ResolvedOperator, type RoutingAuthority
+  GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort, fleetIdentityLabel,
+  fleetPlacement, loadFleetPlacements,
 } from './authority.js';
 import type { TerminalConfig } from './config.js';
 import { createGovernanceProbes } from './governance-probes.js';
 import {
   AgentRegistry, RelayBootConflictError, parseAgentPresence,
-  type AgentResolution, type RelayProcessIdentity,
+  type RelayProcessIdentity,
 } from './registry.js';
 import {
-  deriveAliasKey, issueResumeToken, issueTicket, ticketDigest, ticketSha256,
+  registerTerminalSessionControl, TerminalClockSkewError, type DeleteSessionBody,
+  type OwnerRotationBody, type SessionRequestBody,
+} from './session-control.js';
+import {
+  deriveAliasKey, issueResumeToken, ticketDigest, ticketSha256,
   verifyResumeTokenSignature, verifyTicketSignature,
   TicketError, type TicketPayload
 } from './tickets.js';
-import { isTerminalMode, type TerminalMode, type TerminalSessionRow, type TerminalTarget } from './types.js';
+import { isTerminalMode, type TerminalSessionRow } from './types.js';
 
 /**
  * PTY control plane. The gateway DECIDES and AUDITS; it never carries a byte of PTY.
@@ -60,7 +61,6 @@ const COLS_MIN = 20;
 const COLS_MAX = 500;
 const ROWS_MIN = 5;
 const ROWS_MAX = 200;
-const MAX_TERMINAL_CLOCK_SKEW_MS = 5_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLAIM_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const POSITIVE_BIGINT_PATTERN = /^[1-9][0-9]{0,18}$/;
@@ -79,13 +79,6 @@ const RESUME_KEYS = ['claim_token', 'relay_boot_id', 'relay_instance_id', 'resum
 const RESUME_WITH_EPOCH_KEYS = [...RESUME_KEYS, 'claim_epoch'].sort();
 const CLOSE_KEYS = ['bytes_in', 'bytes_out', 'exit_code', 'reason', 'relay_boot_id', 'relay_instance_id'] as const;
 const CLOSE_WITH_CLAIM_KEYS = [...CLOSE_KEYS, 'claim_epoch', 'claim_token'].sort();
-
-class TerminalClockSkewError extends Error {
-  constructor() {
-    super('terminal issuance clock is not synchronized with PostgreSQL');
-    this.name = 'TerminalClockSkewError';
-  }
-}
 
 export interface TerminalControlPlaneOptions {
   readonly pool: DatabasePool;
@@ -112,29 +105,6 @@ export interface TerminalControlPlaneOptions {
   readonly governanceRelay?: GovernanceRelayClient;
   /** Test seam only. Production hashes the verified TLS peer leaf directly from the socket. */
   readonly relayPeerInstanceId?: (request: FastifyRequest) => string | undefined;
-}
-
-interface SessionRequestBody {
-  tenant_id: string;
-  alias: string;
-  mode: TerminalMode;
-  reason: string;
-  cols: number;
-  rows: number;
-  request_id: string;
-  owner_token: string;
-}
-
-interface OwnerRotationBody {
-  request_id: string;
-  expected_owner_generation: string;
-  owner_token: string;
-}
-
-interface DeleteSessionBody {
-  request_id: string;
-  owner_generation: string;
-  owner_token: string;
 }
 
 function replyError(reply: FastifyReply, error: unknown): void {
@@ -196,11 +166,6 @@ function relayProcessIdentity(
     return undefined;
   }
   return { relay_instance_id: relayInstanceId, relay_boot_id: relayBootId };
-}
-
-function terminalRelayWebsocketPath(relayInstanceId: string): string {
-  if (!/^[0-9a-f]{64}$/.test(relayInstanceId)) throw new Error('database terminal relay instance id is invalid');
-  return `/v3/console/terminal/relays/${relayInstanceId}/ws`;
 }
 
 function canonicalUuidV4(value: unknown, name: string): string {
@@ -314,97 +279,14 @@ function relayAuthorized(request: FastifyRequest, expected: string): boolean {
   return timingSafeEqual(ticketSha256(authorization.slice(7)), ticketSha256(expected));
 }
 
-function sessionState(row: TerminalSessionRow, occupiesSlot: boolean): 'issued' | 'active' | 'closed' {
-  // `occupiesSlot` is calculated by PostgreSQL with the exact admission predicate and DB clock.
-  // A browser clock must never decide that a server-side slot does or does not exist.
-  if (!occupiesSlot) return 'closed';
-  return row.consumed_at === null ? 'issued' : 'active';
-}
-
 function counterValue(value: string | number): number {
   return typeof value === 'number' ? value : Number(value);
-}
-
-function subjectFor(actor: Pick<Principal, 'tenant_id' | 'alias'>): string {
-  return `${actor.tenant_id}:${actor.alias}`;
-}
-
-function terminalAdmissionRequestSha256(input: {
-  body: SessionRequestBody;
-  actor: Pick<Principal, 'tenant_id' | 'alias'>;
-  operator: Pick<ResolvedOperator, 'operator_id' | 'attributed'>;
-  consoleSubject: string;
-  container: string;
-  presenceGeneration: string;
-  imageId: string;
-  runtimeUser: string;
-  runtimeUid: number;
-  relayInstanceId: string;
-}): Buffer {
-  // Fixed construction, not caller JSON: identity and placement are server-derived and the owner
-  // token is deliberately absent. That token has its own digest and may only change through the
-  // explicit ownership endpoint.
-  const material = {
-    suite: 'cauce-v3-terminal-browser-admission',
-    version: 1,
-    request_id: input.body.request_id,
-    actor: { tenant_id: input.actor.tenant_id, alias: input.actor.alias },
-    operator: {
-      operator_id: input.operator.operator_id,
-      attributed: input.operator.attributed,
-      console_subject: input.consoleSubject,
-    },
-    target: {
-      tenant_id: input.body.tenant_id,
-      alias: input.body.alias,
-      container: input.container,
-      presence_generation: input.presenceGeneration,
-      image_id: input.imageId,
-      runtime_user: input.runtimeUser,
-      runtime_uid: input.runtimeUid,
-      mode: input.body.mode,
-      relay_instance_id: input.relayInstanceId,
-    },
-    reason: input.body.reason,
-    cols: input.body.cols,
-    rows: input.body.rows,
-  };
-  return createHash('sha256').update(JSON.stringify(material)).digest();
-}
-
-function ticketTtlSeconds(row: Pick<TerminalSessionRow, 'issued_at' | 'expires_at'>): number {
-  const milliseconds = row.expires_at.getTime() - row.issued_at.getTime();
-  const seconds = milliseconds / 1_000;
-  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 120) {
-    throw new Error('database terminal ticket TTL is invalid');
-  }
-  return seconds;
 }
 
 function browserOwnerGeneration(value: string): string {
   const generation = relayClaimEpoch(value);
   if (generation === undefined) throw new Error('database browser owner generation is invalid');
   return generation;
-}
-
-/**
- * The legacy pseudo-operator is shared by every basic-auth console session. It is not an
- * identity, so its quota/list/revoke namespace must additionally include the authenticated
- * certificate subject. Named operators remain intentionally shared across their own sessions.
- */
-function operatorLockIdentity(operator: ResolvedOperator, consoleSubject: string): string {
-  return operator.attributed
-    ? operator.operator_id
-    : JSON.stringify([operator.operator_id, consoleSubject]);
-}
-
-function operatorScopePredicate(
-  operatorParameter: number,
-  attributedParameter: number,
-  subjectParameter: number,
-): string {
-  return `operator_id=$${operatorParameter}
-          AND ($${attributedParameter}::boolean OR console_subject=$${subjectParameter})`;
 }
 
 /** Audit writes which guard a state transition use the same PostgreSQL transaction. */
@@ -424,26 +306,6 @@ async function recordTransactionalTerminalAudit(
       JSON.stringify(entry.metadata),
     ],
   );
-}
-
-/**
- * Authority and reachability are independent. An authorized destination can still be offline,
- * not installed or unknown, so its reason must describe the measured PTY state rather than the
- * authority decision that allowed the row to be disclosed.
- */
-function terminalTargetStateReason(resolution: AgentResolution, container: string): string {
-  switch (resolution.status) {
-    case 'online':
-      return 'El agente PTY está conectado al terminal-relay.';
-    case 'offline':
-      return 'El agente PTY figura fuera de línea: no está conectado al terminal-relay.';
-    case 'ambiguous':
-      return 'El agente PTY figura fuera de línea porque más de un terminal-relay lo anuncia y no hay una ruta única segura.';
-    case 'not_installed':
-      return `El agente PTY figura como no instalado: el terminal-relay nunca registró este destino en ${container}.`;
-    case 'unknown':
-      return 'El estado del agente PTY es desconocido: el terminal-relay todavía no publicó un snapshot verificable.';
-  }
 }
 
 export async function registerTerminalControlPlane(
@@ -656,694 +518,25 @@ export async function registerTerminalControlPlane(
     };
   }
 
-  /* ------------------------------------------------------------------ */
-  /* Browser routes: /v3/console/terminal                                */
-  /* ------------------------------------------------------------------ */
-
-  app.get('/v3/console/terminal/targets', async (request, reply) => {
-    try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      const operator = resolveOperator(request, actor, config);
-      const now = Date.now();
-      const placements = await loadFleetPlacements(pool);
-      // One routing decision per (tenant, alias) even though cohorts overlap heavily.
-      const decisions = new Map<string, Promise<RoutingAuthority>>();
-      const authorityFor = (tenantId: string, alias: string): Promise<RoutingAuthority> => {
-        const cacheKey = `${tenantId}\0${alias}`;
-        let pending = decisions.get(cacheKey);
-        if (!pending) {
-          pending = routingAuthority(pool, actor.tenant_id, actor.alias, tenantId, alias);
-          decisions.set(cacheKey, pending);
-        }
-        return pending;
-      };
-      const visibilityDecisions = new Map<string, Promise<boolean>>();
-      const visibleFor = (tenantId: string, alias: string): Promise<boolean> => {
-        const cacheKey = `${tenantId}\0${alias}`;
-        let pending = visibilityDecisions.get(cacheKey);
-        if (!pending) {
-          pending = repository.authorizeAgentTarget(
-            actor.tenant_id, actor.alias, tenantId, alias, 'control',
-          ).then((target) => target !== undefined);
-          visibilityDecisions.set(cacheKey, pending);
-        }
-        return pending;
-      };
-      const items: TerminalTarget[] = [];
-      for (const placement of placements) {
-        // La tabla `agents` contiene toda la flota física, no sólo la visible para este actor.
-        // Enumerarla antes de autorizar filtraba nombres, tenants y cohortes de clientes sin una
-        // arista allow_control. La misma identidad canónica que gobierna el resto de la consola
-        // decide primero si la fila puede existir en esta respuesta.
-        if (!(await visibleFor(placement.tenant_id, placement.alias))) continue;
-        const cohort = containerCohort(placements, placement.tenant_id, placement.alias);
-        // A shared container is one authority surface. Never reveal the names of hidden colocated
-        // tenants merely because the requested placement itself is visible.
-        const cohortVisible = (await Promise.all(
-          cohort.map((member) => visibleFor(member.tenant_id, member.alias))
-        )).every(Boolean);
-        const resolution = registry.resolve(placement.tenant_id, placement.alias, now);
-        const observation = resolution.status === 'online' || resolution.status === 'offline'
-          ? resolution.observation
-          : undefined;
-        const state = registry.state(placement.tenant_id, placement.alias, now);
-        let authorized = cohortVisible
-          && attributionAllows(operator.attributed, actor.tenant_id, placement.tenant_id);
-        for (const member of cohort) {
-          if (!authorized) break;
-          if (!attributionAllows(operator.attributed, actor.tenant_id, member.tenant_id)) {
-            authorized = false;
-            break;
-          }
-          authorized = (await authorityFor(member.tenant_id, member.alias)).allowed;
-        }
-        const reported = observation?.presence.modes ?? ['shell'];
-        const modes: string[] = [];
-        if (authorized) {
-          for (const mode of reported) {
-            if (!isTerminalMode(mode)) continue;
-            if (await grants.allowsCohort(operator.operator_id, cohort, mode, now)) modes.push(mode);
-          }
-        }
-        const usable = authorized && modes.length > 0;
-        items.push({
-          tenant_id: placement.tenant_id,
-          alias: placement.alias,
-          // Denial must not confirm what the target looks like, only that authority is missing.
-          container: usable ? placement.container : null,
-          runtime_user: usable ? (observation?.presence.runtime_user ?? placement.runtime_user) : null,
-          harness: usable ? (observation?.presence.harness ?? null) : null,
-          image: usable ? (observation?.presence.image_id ?? null) : null,
-          shares_container_with: cohortVisible
-            ? cohort
-              .filter((member) => member.tenant_id !== placement.tenant_id || member.alias !== placement.alias)
-              .map(fleetIdentity)
-            : [],
-          modes: usable ? modes : [],
-          pty_state: state,
-          last_seen: observation?.observed_at ?? null,
-          authorized: usable,
-          reason: usable
-            ? terminalTargetStateReason(resolution, placement.container)
-            : `sin autoridad sobre ${placement.tenant_id}:${placement.alias}`
-        });
-      }
-      return {
-        observed_at: new Date(now).toISOString(),
-        websocket_path: config.wsPath,
-        items
-      };
-    } catch (error) { replyError(reply, error); }
+  registerTerminalSessionControl(app, {
+    pool,
+    config,
+    registry,
+    grants,
+    repository,
+    UUID_PATTERN,
+    principal,
+    openPredicate,
+    currentCohort,
+    cohortLabels,
+    sessionExpiry,
+    parseSessionRequest,
+    parseOwnerRotation,
+    parseDeleteSession,
+    browserOwnerGeneration,
+    replyError,
+    recordTransactionalTerminalAudit,
   });
-
-  app.post('/v3/console/terminal/sessions', async (request, reply) => {
-    const traceId = `trace-${randomUUID()}`;
-    try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      const operator = resolveOperator(request, actor, config);
-      const body = parseSessionRequest(request.body);
-      const consoleSubject = subjectFor(actor);
-      const redactedAudit: TerminalAuditContext = {
-        operator_id: operator.operator_id,
-        attributed: operator.attributed,
-        target_tenant: body.tenant_id,
-        target_alias: body.alias,
-        container: null,
-        cohort: [],
-        mode: body.mode,
-      };
-      const denyRedacted = async (
-        status: 403 | 404,
-        reason: string,
-      ): Promise<void> => {
-        await recordTerminalAudit(pool, {
-          tenant_id: actor.tenant_id,
-          actor_alias: actor.alias,
-          action: 'terminal.session.request',
-          decision: 'deny',
-          trace_id: traceId,
-          metadata: terminalAuditMetadata(redactedAudit, {
-            reason,
-            operator_reason: body.reason,
-          }),
-        });
-        await reply.code(status).send(status === 404
-          ? { error: 'not_found' }
-          : { error: 'forbidden', reason });
-      };
-
-      // Canonical actor permission and target visibility run before the fleet table is expanded.
-      // Missing and hidden targets therefore have one response and an audit row with no placement
-      // or cohort metadata supplied by the server.
-      try {
-        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
-      } catch {
-        await denyRedacted(403, 'control_permission_required');
-        return;
-      }
-      const canonicalTarget = await repository.authorizeAgentTarget(
-        actor.tenant_id, actor.alias, body.tenant_id, body.alias, 'control',
-      );
-      if (canonicalTarget === undefined) {
-        await denyRedacted(404, 'target_unavailable');
-        return;
-      }
-      const placements = await loadFleetPlacements(pool);
-      const placement = fleetPlacement(placements, canonicalTarget.tenant_id, canonicalTarget.alias);
-      if (placement === undefined) {
-        await denyRedacted(404, 'target_unavailable');
-        return;
-      }
-      const cohort = containerCohort(placements, placement.tenant_id, placement.alias);
-      const cohortVisible = (await Promise.all(cohort.map(async (member) =>
-        (await repository.authorizeAgentTarget(
-          actor.tenant_id, actor.alias, member.tenant_id, member.alias, 'control',
-        )) !== undefined
-      ))).every(Boolean);
-      if (!cohortVisible) {
-        await denyRedacted(404, 'target_unavailable');
-        return;
-      }
-      const audit: TerminalAuditContext = {
-        ...redactedAudit,
-        target_tenant: placement.tenant_id,
-        target_alias: placement.alias,
-        container: placement.container,
-        cohort: cohortLabels(cohort),
-      };
-      const deny = async (
-        status: 403 | 409,
-        reason: string,
-        extra: Record<string, unknown> = {},
-      ): Promise<void> => {
-        await recordTerminalAudit(pool, {
-          tenant_id: actor.tenant_id,
-          actor_alias: actor.alias,
-          action: 'terminal.session.request',
-          decision: 'deny',
-          trace_id: traceId,
-          metadata: terminalAuditMetadata(audit, {
-            reason,
-            operator_reason: body.reason,
-            ...extra,
-          }),
-        });
-        await reply.code(status).send(
-          status === 403 ? { error: 'forbidden', reason } : { error: 'conflict', reason },
-        );
-      };
-
-      if (!attributionAllows(operator.attributed, actor.tenant_id, placement.tenant_id)) {
-        await deny(403, 'attribution_required');
-        return;
-      }
-      for (const member of cohort) {
-        if (!attributionAllows(operator.attributed, actor.tenant_id, member.tenant_id)) {
-          await deny(403, 'attribution_required');
-          return;
-        }
-      }
-      // Gate 4: routing authority over EVERY alias sharing the container.
-      const authority = await cohortRoutingAuthority(pool, actor.tenant_id, actor.alias, cohort);
-      if (!authority.allowed) {
-        await deny(403, 'no_routing_authority', { authority_reason: authority.reason });
-        return;
-      }
-      // Gate 5: grants file, re-read from disk, over the whole cohort.
-      if (!(await grants.allowsCohort(operator.operator_id, cohort, body.mode))) {
-        await deny(403, 'no_grant');
-        return;
-      }
-      // Gate 6: a live pty-agent inside the target container.
-      const resolution = registry.resolve(placement.tenant_id, body.alias);
-      if (resolution.status !== 'online' || !resolution.observation.presence.modes.includes(body.mode)) {
-        await deny(409, 'agent_offline', {
-          pty_state: registry.state(placement.tenant_id, body.alias),
-          ...(resolution.status === 'ambiguous' ? { routing_state: 'relay_ambiguous' } : {}),
-        });
-        return;
-      }
-      const observation = resolution.observation;
-      const requestSha256 = terminalAdmissionRequestSha256({
-        body,
-        actor,
-        operator,
-        consoleSubject,
-        container: observation.presence.container_id,
-        presenceGeneration: observation.presence.generation,
-        imageId: observation.presence.image_id,
-        runtimeUser: observation.presence.runtime_user,
-        runtimeUid: observation.presence.runtime_uid,
-        relayInstanceId: observation.relay_instance_id,
-      });
-      const browserOwnerSha256 = ticketSha256(body.owner_token);
-      const sessionId = randomUUID();
-      const admissionClient = await pool.connect();
-      let transactionOpen = false;
-      let conflict: 'session_limit' | 'container_busy' | 'request_conflict' | undefined;
-      let receipt: { row: TerminalSessionRow; ticket: string; recovered: boolean } | undefined;
-      try {
-        await admissionClient.query('BEGIN');
-        transactionOpen = true;
-        await admissionClient.query(
-          `SELECT pg_advisory_xact_lock(hashtextextended('terminal:operator:' || $1, 0))`,
-          [operatorLockIdentity(operator, consoleSubject)],
-        );
-        await admissionClient.query(
-          `SELECT pg_advisory_xact_lock(hashtextextended('terminal:container:' || $1, 0))`,
-          [observation.presence.container_id],
-        );
-        await admissionClient.query(
-          `SELECT pg_advisory_xact_lock(hashtextextended('terminal:request:' || $1, 0))`,
-          [body.request_id],
-        );
-
-        // A retry after a lost HTTP 201 is identified by request_id, never by coincidentally equal
-        // UI fields. Both semantic and owner digests must match. A new logical tab necessarily has
-        // another request id, so it can neither adopt nor later revoke this row.
-        const recoverable = await admissionClient.query<TerminalSessionRow & { request_unexpired: boolean }>(
-          `SELECT terminal_sessions.*,expires_at>now() AS request_unexpired
-             FROM terminal_sessions WHERE request_id=$1 FOR UPDATE`,
-          [body.request_id],
-        );
-        const previous = recoverable.rows[0];
-        if (previous !== undefined) conflict = 'request_conflict';
-        const exactPrevious = previous !== undefined
-            && previous.operator_id === operator.operator_id
-            && (operator.attributed || previous.console_subject === consoleSubject)
-            && previous.console_subject === consoleSubject
-            && previous.tenant_id === placement.tenant_id
-            && previous.alias === body.alias
-            && previous.container === observation.presence.container_id
-            && previous.relay_instance_id === observation.relay_instance_id
-            && previous.mode === body.mode
-            && previous.reason === body.reason
-            && previous.cols === body.cols
-            && previous.rows === body.rows
-            && previous.request_sha256.equals(requestSha256)
-            && previous.browser_owner_sha256.equals(browserOwnerSha256)
-            && previous.consumed_at === null
-            && previous.revoked_at === null
-            && previous.closed_at === null
-            && previous.request_unexpired;
-        if (exactPrevious
-            && previous.generation === observation.presence.generation
-            && previous.image_id === observation.presence.image_id
-            && previous.runtime_user === observation.presence.runtime_user
-            && previous.container === observation.presence.container_id) {
-          const rebuilt = issueTicket({
-            v: 1,
-            sid: previous.id,
-            op: previous.operator_id,
-            sub: previous.console_subject,
-            tgt: {
-              tenant: previous.tenant_id,
-              alias: previous.alias,
-              container: previous.container,
-              generation: previous.generation,
-              image: previous.image_id,
-              uid: observation.presence.runtime_uid,
-              user: previous.runtime_user,
-            },
-            mode: previous.mode,
-            iat: Math.floor(previous.issued_at.getTime() / 1_000),
-            exp: Math.floor(previous.expires_at.getTime() / 1_000),
-          }, deriveAliasKey(config.ticketKey, previous.tenant_id, previous.alias));
-          if (ticketSha256(rebuilt).equals(previous.ticket_sha256)) {
-            await recordTransactionalTerminalAudit(admissionClient, {
-              tenant_id: actor.tenant_id,
-              actor_alias: actor.alias,
-              action: 'terminal.session.request',
-              decision: 'allow',
-              ...(previous.trace_id === null ? {} : { trace_id: previous.trace_id }),
-              metadata: terminalAuditMetadata(audit, {
-                session_id: previous.id,
-                operator_reason: previous.reason,
-                ticket_sha256: ticketDigest(rebuilt),
-                receipt_recovered: true,
-                source_room_ids: authority.source_room_ids,
-              }),
-            });
-            receipt = { row: previous, ticket: rebuilt, recovered: true };
-          }
-        }
-
-        if (receipt === undefined && previous === undefined) {
-        const localBeforeClockQuery = Date.now();
-        const clock = await admissionClient.query<{ database_now: Date }>(
-          'SELECT clock_timestamp() AS database_now',
-        );
-        const localAfterClockQuery = Date.now();
-        const issuedAt = clock.rows[0]?.database_now;
-        if (!(issuedAt instanceof Date) || !Number.isFinite(issuedAt.getTime())) {
-          throw new Error('database returned an invalid terminal admission timestamp');
-        }
-        if (issuedAt.getTime() < localBeforeClockQuery - MAX_TERMINAL_CLOCK_SKEW_MS
-            || issuedAt.getTime() > localAfterClockQuery + MAX_TERMINAL_CLOCK_SKEW_MS) {
-          throw new TerminalClockSkewError();
-        }
-        const expiresAt = new Date(issuedAt.getTime() + config.ticketTtlSeconds * 1_000);
-        const payload: TicketPayload = {
-          v: 1,
-          sid: sessionId,
-          op: operator.operator_id,
-          sub: consoleSubject,
-          tgt: {
-            tenant: placement.tenant_id,
-            alias: body.alias,
-            container: observation.presence.container_id,
-            generation: observation.presence.generation,
-            image: observation.presence.image_id,
-            uid: observation.presence.runtime_uid,
-            user: observation.presence.runtime_user
-          },
-          mode: body.mode,
-          iat: Math.floor(issuedAt.getTime() / 1_000),
-          exp: Math.floor(expiresAt.getTime() / 1_000)
-        };
-        const ticket = issueTicket(
-          payload,
-          deriveAliasKey(config.ticketKey, placement.tenant_id, body.alias),
-        );
-        const admitted = await admissionClient.query<{
-          reason: 'ok' | 'session_limit' | 'container_busy'; id: string | null;
-        }>(
-          `WITH decision AS MATERIALIZED (
-           SELECT CASE
-             WHEN (SELECT count(*) FROM terminal_sessions
-                    WHERE ${operatorScopePredicate(1, 6, 7)}
-                      AND ${openPredicate(3)}) >= $4 THEN 'session_limit'
-             WHEN EXISTS (SELECT 1 FROM terminal_sessions
-                    WHERE container=$2 AND ${openPredicate(3)}) THEN 'container_busy'
-             ELSE 'ok'
-           END AS reason
-         ), inserted AS (
-           INSERT INTO terminal_sessions(
-             id, operator_id, attributed, console_subject, tenant_id, alias, container, generation,
-             image_id, runtime_user, mode, ticket_sha256, reason, cols, rows, trace_id,
-             issued_at, expires_at, request_id, request_sha256, browser_owner_sha256,
-             browser_owner_generation, relay_instance_id, relay_boot_id
-           )
-           SELECT $5,$1,$6,$7,$8,$9,$2,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,1,$24,NULL
-             FROM decision WHERE reason='ok'
-           RETURNING id
-         )
-         SELECT decision.reason, inserted.id
-           FROM decision LEFT JOIN inserted ON true`,
-          [
-            operator.operator_id, observation.presence.container_id, config.sessionTtlSeconds,
-            config.maxSessionsPerOperator, sessionId, operator.attributed,
-            consoleSubject, placement.tenant_id, body.alias,
-            observation.presence.generation, observation.presence.image_id,
-            observation.presence.runtime_user, body.mode, ticketSha256(ticket), body.reason,
-            body.cols, body.rows, traceId, issuedAt.toISOString(), expiresAt.toISOString(),
-            body.request_id, requestSha256, browserOwnerSha256,
-            observation.relay_instance_id,
-          ]
-        );
-        const admission = admitted.rows[0];
-        if (admission?.reason === 'ok' && admission.id === sessionId) {
-          const inserted = await admissionClient.query<TerminalSessionRow>(
-            'SELECT * FROM terminal_sessions WHERE id=$1 FOR UPDATE',
-            [sessionId],
-          );
-          const row = inserted.rows[0];
-          if (row === undefined) throw new Error('terminal admission lost its inserted receipt');
-          await recordTransactionalTerminalAudit(admissionClient, {
-            tenant_id: actor.tenant_id,
-            actor_alias: actor.alias,
-            action: 'terminal.session.request',
-            decision: 'allow',
-            trace_id: traceId,
-            metadata: terminalAuditMetadata(audit, {
-              session_id: sessionId,
-              image_id: observation.presence.image_id,
-              generation: observation.presence.generation,
-              runtime_user: observation.presence.runtime_user,
-              operator_reason: body.reason,
-              cols: body.cols,
-              rows: body.rows,
-              ticket_sha256: ticketDigest(ticket),
-              receipt_recovered: false,
-              source_room_ids: authority.source_room_ids,
-            }),
-          });
-          receipt = { row, ticket, recovered: false };
-        } else {
-          conflict = admission?.reason === 'session_limit' ? 'session_limit' : 'container_busy';
-        }
-        }
-        await admissionClient.query('COMMIT');
-        transactionOpen = false;
-      } catch (error) {
-        if (transactionOpen) await admissionClient.query('ROLLBACK').catch(() => undefined);
-        throw error;
-      } finally {
-        admissionClient.release();
-      }
-      if (receipt === undefined) {
-        await deny(409, conflict ?? 'container_busy');
-        return;
-      }
-      return await reply.code(201).send({
-        session_id: receipt.row.id,
-        ticket: receipt.ticket,
-        websocket_path: terminalRelayWebsocketPath(receipt.row.relay_instance_id),
-        expires_at: receipt.row.expires_at.toISOString(),
-        ttl_seconds: ticketTtlSeconds(receipt.row),
-        receipt_recovered: receipt.recovered,
-        request_id: receipt.row.request_id,
-        owner_generation: browserOwnerGeneration(receipt.row.browser_owner_generation),
-        target: {
-          tenant_id: placement.tenant_id,
-          alias: body.alias,
-          container: observation.presence.container_id,
-          runtime_user: observation.presence.runtime_user,
-          mode: body.mode,
-          shares_container_with: cohort
-            .filter((member) => member.tenant_id !== body.tenant_id || member.alias !== body.alias)
-            .map(fleetIdentity)
-        }
-      });
-    } catch (error) { replyError(reply, error); }
-  });
-
-  app.get('/v3/console/terminal/sessions', async (request, reply) => {
-    try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      const operator = resolveOperator(request, actor, config);
-      const consoleSubject = subjectFor(actor);
-      const result = await pool.query<TerminalSessionRow & { occupies_slot: boolean }>(
-        // The endpoint is the operator's escape hatch for slots that remain open after a tab
-        // disappears. History can be arbitrarily large; sorting only by issued_at allowed 100
-        // newer closed rows to push a still-open session out of the bounded response. Open rows
-        // therefore come first, using the exact same predicate as admission.
-        `SELECT terminal_sessions.*, (${openPredicate(2)}) AS occupies_slot
-           FROM terminal_sessions
-          WHERE ${operatorScopePredicate(1, 3, 4)}
-          ORDER BY occupies_slot DESC, issued_at DESC
-          LIMIT 100`,
-        [operator.operator_id, config.sessionTtlSeconds, operator.attributed, consoleSubject]
-      );
-      return {
-        items: result.rows.map((row) => ({
-          session_id: row.id,
-          tenant_id: row.tenant_id,
-          alias: row.alias,
-          mode: row.mode,
-          opened_at: row.issued_at.toISOString(),
-          expires_at: (sessionExpiry(row) ?? row.expires_at).toISOString(),
-          state: sessionState(row, row.occupies_slot === true),
-          request_id: row.request_id,
-          owner_generation: browserOwnerGeneration(row.browser_owner_generation),
-        }))
-      };
-    } catch (error) { replyError(reply, error); }
-  });
-
-  app.post<{ Params: { sid: string } }>('/v3/console/terminal/sessions/:sid/owner', async (request, reply) => {
-    try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      const operator = resolveOperator(request, actor, config);
-      const consoleSubject = subjectFor(actor);
-      if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
-      const body = parseOwnerRotation(request.body);
-      const ownerClient = await pool.connect();
-      let ownerTransactionOpen = false;
-      let row: TerminalSessionRow | undefined;
-      try {
-        await ownerClient.query('BEGIN');
-        ownerTransactionOpen = true;
-        const rotated = await ownerClient.query<TerminalSessionRow>(
-          `UPDATE terminal_sessions
-              SET browser_owner_sha256=$4,
-                  browser_owner_generation=browser_owner_generation+1
-            WHERE id=$1 AND request_id=$2 AND browser_owner_generation=$3::bigint
-              AND ${operatorScopePredicate(5, 6, 7)}
-              AND browser_owner_generation<9223372036854775807
-              AND revoked_at IS NULL AND closed_at IS NULL
-            RETURNING *`,
-          [
-            request.params.sid,
-            body.request_id,
-            body.expected_owner_generation,
-            ticketSha256(body.owner_token),
-            operator.operator_id,
-            operator.attributed,
-            consoleSubject,
-          ],
-        );
-        row = rotated.rows[0];
-        if (row === undefined) {
-          await ownerClient.query('ROLLBACK');
-          ownerTransactionOpen = false;
-        } else {
-          await recordTransactionalTerminalAudit(ownerClient, {
-            tenant_id: actor.tenant_id,
-            actor_alias: actor.alias,
-            action: 'terminal.session.owner_rotated',
-            decision: 'info',
-            ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-            metadata: terminalAuditMetadata({
-              operator_id: row.operator_id,
-              attributed: row.attributed,
-              target_tenant: row.tenant_id,
-              target_alias: row.alias,
-              container: row.container,
-              cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias, ownerClient)),
-              mode: row.mode,
-            }, {
-              session_id: row.id,
-              request_id: row.request_id,
-              owner_generation: row.browser_owner_generation,
-              reason: 'operator_owner_takeover',
-            }),
-          });
-          await ownerClient.query('COMMIT');
-          ownerTransactionOpen = false;
-        }
-      } catch (error) {
-        if (ownerTransactionOpen) await ownerClient.query('ROLLBACK').catch(() => undefined);
-        throw error;
-      } finally {
-        ownerClient.release();
-      }
-      if (row === undefined) {
-        await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
-        return;
-      }
-      return {
-        session_id: row.id,
-        request_id: row.request_id,
-        owner_generation: browserOwnerGeneration(row.browser_owner_generation),
-      };
-    } catch (error) { replyError(reply, error); }
-  });
-
-  app.delete<{ Params: { sid: string } }>('/v3/console/terminal/sessions/:sid', async (request, reply) => {
-    try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      const operator = resolveOperator(request, actor, config);
-      const consoleSubject = subjectFor(actor);
-      if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
-      const body = parseDeleteSession(request.body);
-      // Revocation is a flag, not a socket kill: terminal-relay revalidates every few seconds
-      // and closes the WebSocket with 4403 once /authz stops answering ok.
-      const releaseClient = await pool.connect();
-      let releaseTransactionOpen = false;
-      let row: TerminalSessionRow | undefined;
-      let settled = false;
-      try {
-        await releaseClient.query('BEGIN');
-        releaseTransactionOpen = true;
-        const revoked = await releaseClient.query<TerminalSessionRow>(
-          `UPDATE terminal_sessions SET revoked_at=now()
-            WHERE id=$1 AND ${operatorScopePredicate(2, 3, 4)}
-              AND request_id=$5
-              AND browser_owner_generation=$6::bigint
-              AND browser_owner_sha256=$7
-              AND revoked_at IS NULL AND closed_at IS NULL RETURNING *`,
-          [
-            request.params.sid,
-            operator.operator_id,
-            operator.attributed,
-            consoleSubject,
-            body.request_id,
-            body.owner_generation,
-            ticketSha256(body.owner_token),
-          ]
-        );
-        row = revoked.rows[0];
-        if (row === undefined) {
-          // A lost 204 is safe to retry with the exact same owner. A stale owner, another subject
-          // or a different request all receive the same conflict and can mutate nothing.
-          const existing = await releaseClient.query<{ settled: boolean }>(
-            `SELECT EXISTS(
-               SELECT 1 FROM terminal_sessions
-                WHERE id=$1 AND ${operatorScopePredicate(2, 3, 4)}
-                  AND request_id=$5 AND browser_owner_generation=$6::bigint
-                  AND browser_owner_sha256=$7 AND (revoked_at IS NOT NULL OR closed_at IS NOT NULL)
-             ) AS settled`,
-            [
-              request.params.sid,
-              operator.operator_id,
-              operator.attributed,
-              consoleSubject,
-              body.request_id,
-              body.owner_generation,
-              ticketSha256(body.owner_token),
-            ],
-          );
-          settled = existing.rows[0]?.settled === true;
-        } else {
-          await recordTransactionalTerminalAudit(releaseClient, {
-            tenant_id: actor.tenant_id,
-            actor_alias: actor.alias,
-            action: 'terminal.session.revoked',
-            decision: 'info',
-            ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-            metadata: terminalAuditMetadata({
-              operator_id: row.operator_id,
-              attributed: row.attributed,
-              target_tenant: row.tenant_id,
-              target_alias: row.alias,
-              container: row.container,
-              cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias, releaseClient)),
-              mode: row.mode
-            }, {
-              session_id: row.id,
-              request_id: row.request_id,
-              owner_generation: row.browser_owner_generation,
-              reason: 'operator_revoked',
-            })
-          });
-        }
-        if (row === undefined && !settled) {
-          await releaseClient.query('ROLLBACK');
-          releaseTransactionOpen = false;
-        } else {
-          await releaseClient.query('COMMIT');
-          releaseTransactionOpen = false;
-        }
-      } catch (error) {
-        if (releaseTransactionOpen) await releaseClient.query('ROLLBACK').catch(() => undefined);
-        throw error;
-      } finally {
-        releaseClient.release();
-      }
-      if (row === undefined && !settled) {
-        await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
-        return;
-      }
-      return await reply.code(204).send();
-    } catch (error) { replyError(reply, error); }
-  });
-
   /* ------------------------------------------------------------------ */
   /* Browser route: la DIRECTIVA de un alias                             */
   /* ------------------------------------------------------------------ */
