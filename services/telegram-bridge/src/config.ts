@@ -283,11 +283,8 @@ function assertSingleAmbientHost(aliases: readonly TelegramAliasConfig[]): void 
  * member that serves this scope was named, stay quiet") is unreachable for an alias whose username
  * is unknown.
  *
- * The requirement is scoped to aliases that declare `chats`, and only those. An earlier version
- * demanded `bot_username` from all twelve as soon as ONE declared `chats`, which turned a
- * single-group rollout into a file the bridge refuses to load — taking the twelve DMs down with
- * it. Since P3 is now narrowed to the declared participants of the scope, the narrow rule is
- * exactly as strong and cannot be tripped by an alias that has nothing to do with the group.
+ * The requirement is scoped to aliases that declare `chats`, ensuring an alias with no shared
+ * chats does not require a bot username.
  */
 function assertFleetUsernames(aliases: readonly TelegramAliasConfig[]): void {
   const usernames = new Set<string>();

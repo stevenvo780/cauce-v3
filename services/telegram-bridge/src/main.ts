@@ -69,12 +69,7 @@ const egressStaleMs = positiveInteger('CAUCE_TELEGRAM_EGRESS_STALE_MS', 180_000)
 let health: ReturnType<typeof startTelegramHealthServer> | undefined;
 
 /**
- * A group-configuration problem is reported and worked around; it never stops the process.
- *
- * The twelve DMs are the live product. An earlier version threw on both of the conditions below,
- * which meant the documented per-alias rollback (drop one alias from CAUCE_TELEGRAM_ALIASES and
- * restart) and a username rename in BotFather each turned into a crash loop that took every DM
- * down with it. Both are now degradations with a durable, structured trace.
+ * A group-configuration problem is reported and degraded with a structured trace rather than halting the process.
  */
 function degraded(reason: string, detail: Record<string, unknown>): void {
   metrics.increment('group_config_degraded');

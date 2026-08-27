@@ -76,10 +76,8 @@ function media(message: TelegramMessage): Record<string, unknown>[] {
  * The harness prints `origin` inside a block labelled TRUSTED ORIGIN CONTEXT, so none of these
  * values may go there.
  *
- * `scope: 'private'` es el DM: NO lleva el sobre de grupo (`thread_id`, `addressed_by`), sólo la
- * identidad del humano. Es una variante aparte y no un `threadId: '0'` para que el compilador
- * impida el error obvio —marcar un DM como grupo y empezar a publicar campos de grupo en las
- * doce conversaciones privadas vivas— en vez de dejarlo para que lo descubra un operador.
+ * `scope: 'private'` representa un DM: no incluye metadatos de grupo (`thread_id`, `addressed_by`),
+ * únicamente la identidad del remitente.
  */
 export type BodyContext =
   | {
@@ -285,11 +283,8 @@ export async function normalizedBody(
 /**
  * Authenticated session key.
  *
- * `user` reproduces the legacy input string bit for bit, so the 12 live DMs keep their native
- * harness session across this deploy. The `v2:` prefix on the new scopes makes a collision with a
- * legacy key impossible. There is no durable state to rewrite: `messages.auth_session_id` is an
- * append-only log and is never used as a lookup key, so a scope change simply opens a new native
- * session and reverting the config revives the old one.
+ * `user` reproduces the legacy input string bit for bit for backwards compatibility.
+ * The `v2:` prefix on the new scopes prevents collisions with legacy keys.
  */
 export function session(
   scope: SessionScope,

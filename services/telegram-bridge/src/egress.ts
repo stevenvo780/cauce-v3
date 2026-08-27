@@ -339,17 +339,7 @@ export class TelegramEgressWorker {
   }
 
   /**
-   * Envía el texto con formato, y si Telegram lo rechaza vuelve a intentar en plano.
-   *
-   * Los agentes escriben markdown —encabezados, negritas, tablas, bloques de código— y el puente
-   * lo mandaba sin `parse_mode`, así que Telegram lo mostraba literal: el informe llegaba al
-   * teléfono con `##` y `**` sueltos por todos lados. Convertirlo a HTML lo hace legible.
-   *
-   * El reintento en plano es la parte que importa: si la conversión produjera HTML que Telegram
-   * no acepta, el mensaje se perdería por un problema de FORMATO, que es exactamente el peor
-   * final posible. Un 400 de parseo no es reintentable en el sentido del outbox (reenviar lo
-   * mismo daría el mismo 400), pero sí lo es enviando otra cosa: el mismo contenido sin etiquetas.
-   * Así el humano siempre recibe su respuesta, en el peor caso sin adornos.
+   * Envía el texto formateado como HTML y degrada a texto plano si Telegram rechaza el parseo.
    */
   private async sendFormatted(
     api: TelegramApi,
@@ -380,21 +370,7 @@ export class TelegramEgressWorker {
   }
 
   /**
-   * Sube un adjunto, y si no se puede, DICE por qué en el chat.
-   *
-   * La cadena es foto → documento → línea de texto, y existe para sostener el invariante duro de
-   * este servicio: cada pieza planificada produce SIEMPRE un mensaje de Telegram. Si una subida
-   * fallida no produjera ninguno, su fila de `telegram_egress_effects` no llegaría nunca a `sent`,
-   * el ACK exige que TODAS lo estén (`repository.ack`), y la entrega entera —la respuesta del
-   * agente incluida— terminaría en `dead` por culpa de un archivo. Un adjunto es un campo
-   * accesorio: no puede costar el turno.
-   *
-   * El degradado a documento cubre el caso más común de rechazo de `sendPhoto`: Telegram limita
-   * las dimensiones y la relación de aspecto de una foto, no sólo su peso. Como documento, la
-   * misma imagen entra.
-   *
-   * Sólo se degrada ante un rechazo CONOCIDO (`outcomeKnown && !retryable`). Un fallo de red o un
-   * resultado ambiguo sigue el camino normal, o se subiría dos veces algo que la persona ya tiene.
+   * Sube un adjunto con degradación secuencial (foto -> documento -> aviso de texto) ante rechazos de formato.
    */
   private async sendAttachment(
     api: TelegramApi,
