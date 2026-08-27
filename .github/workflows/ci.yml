@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  gate:
+  typecheck-lint:
     name: typecheck + lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -42,6 +42,28 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      # - name: Unit tests
-      #   run: pnpm test:unit
-      #   activar cuando ordenes/codex.md tarea 2 cierre (hoy hay 533 fallos preexistentes de entorno)
+  unit-tests:
+    name: unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests
+        run: pnpm test:unit
