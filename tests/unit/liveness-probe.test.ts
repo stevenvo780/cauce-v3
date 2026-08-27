@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,8 +8,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));
 const probePath = join(repositoryRoot, 'deploy/liveness-probe.mjs');
+const TEST_STALL_WINDOW_MS = 5 * 60_000;
 
 interface ProbeResult { code: number | null; stderr: string }
+interface ProbeState { path: string; since: number; value: number }
 
 let stateDirectory: string;
 let server: Server | undefined;
@@ -48,6 +50,17 @@ function runProbe(url: string, field: string, stallMs: number): Promise<ProbeRes
   });
 }
 
+async function readProbeState(): Promise<ProbeState> {
+  const entries = await readdir(stateDirectory);
+  if (entries.length !== 1 || entries[0] === undefined) throw new Error('expected one probe state file');
+  const path = join(stateDirectory, entries[0]);
+  const decoded = JSON.parse(await readFile(path, 'utf8')) as { since?: unknown; value?: unknown };
+  if (typeof decoded.since !== 'number' || typeof decoded.value !== 'number') {
+    throw new Error('invalid probe state');
+  }
+  return { path, since: decoded.since, value: decoded.value };
+}
+
 beforeEach(async () => {
   stateDirectory = await mkdtemp(join(tmpdir(), 'cauce-liveness-test-'));
   document = { status: 'ready', ticks: 0 };
@@ -65,17 +78,20 @@ describe('liveness probe: verdict is progress, not response', () => {
     const url = await startHealthServer();
     // El bucle "gira": el contador sube y la sonda pasa.
     document = { status: 'ready', ticks: 10 };
-    expect((await runProbe(url, 'ticks', 150)).code).toBe(0);
+    expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
     document = { status: 'ready', ticks: 11 };
-    expect((await runProbe(url, 'ticks', 150)).code).toBe(0);
+    expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
 
     // El bucle MUERE. El proceso sigue contestando 200 y `status: ready` — igual que hoy
     // contestan los nueve contenedores. La sonda de readiness diría "healthy" para siempre.
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    expect((await runProbe(url, 'ticks', 150)).code).toBe(0); // todavía dentro de la ventana
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
+    const fresh = await readProbeState();
+    await writeFile(fresh.path, JSON.stringify({
+      value: fresh.value,
+      since: Date.now() - TEST_STALL_WINDOW_MS - 1_000,
+    }));
 
-    const stalled = await runProbe(url, 'ticks', 150);
+    const stalled = await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS);
     expect(stalled.code).toBe(1);
     expect(stalled.stderr).toContain('progress stalled');
     expect(stalled.stderr).toContain('frozen at 11');
@@ -93,20 +109,25 @@ describe('liveness probe: verdict is progress, not response', () => {
   it('does not flap: a frozen counter inside the window still passes', async () => {
     const url = await startHealthServer();
     document = { status: 'ready', ticks: 42 };
-    expect((await runProbe(url, 'ticks', 10_000)).code).toBe(0);
-    expect((await runProbe(url, 'ticks', 10_000)).code).toBe(0);
-    expect((await runProbe(url, 'ticks', 10_000)).code).toBe(0);
+    expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
+    expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
+    expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
   });
 
   it('treats a counter that went backwards as a restart and restarts the window', async () => {
     const url = await startHealthServer();
     document = { status: 'ready', ticks: 900 };
-    expect((await runProbe(url, 'ticks', 100)).code).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
+    const beforeRestart = await readProbeState();
+    const staleSince = Date.now() - TEST_STALL_WINDOW_MS - 1_000;
+    await writeFile(beforeRestart.path, JSON.stringify({ value: beforeRestart.value, since: staleSince }));
+    expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(1);
     // El contenedor reinició: el contador vuelve a cero. Un bucle recién arrancado no está parado.
     document = { status: 'ready', ticks: 0 };
-    expect((await runProbe(url, 'ticks', 100)).code).toBe(0);
-    expect((await runProbe(url, 'ticks', 100)).code).toBe(0);
+    expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
+    const restarted = await readProbeState();
+    expect(restarted.value).toBe(0);
+    expect(restarted.since).toBeGreaterThan(staleSince);
   });
 
   it('reads nested progress fields without inheriting from the prototype', async () => {
