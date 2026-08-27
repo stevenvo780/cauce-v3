@@ -13,7 +13,7 @@ import {
   ConsolePublishIntentReconciliationSchema,
   ConfigChangeRequestSchema, ConfigMutationSchema, ConfigRollbackRequestSchema,
   CreateJobSchema, DeliveryIdSchema, HeartbeatSchema, HelloSchema,
-  NotifyRequestSchema, PROTOCOL_VERSION,
+  NotifyRequestSchema,
   QueryDeliveriesSchema, QuotaSampleRequestSchema, TenantSchema,
   SYSTEM_GATE_PROBE_MESSAGE_TYPE, SystemGateProbeBodySchema,
   type ClaimedAck, type ConfigMutation,
@@ -34,7 +34,7 @@ import {
   type QuotaSampleIngestResult, type WakeOutboxClaimFence
 } from '@cauce/store';
 import {
-  AuthorizationError, MtlsAuthProvider, requireOperatorPermission, requirePermission,
+  AuthorizationError, requireOperatorPermission, requirePermission,
   validatePrincipal,
   type AuthProvider
 } from './auth.js';
@@ -50,7 +50,6 @@ import {
   DEFAULT_ACK_DEADLINE_MS, DEFAULT_HUMAN_RESERVED_DELIVERIES, DEFAULT_MAX_INFLIGHT_DELIVERIES,
   validateAckDeadlineMs, validateDeliveryAdmission, type DeliveryAdmissionConfig
 } from './config.js';
-import { registerHealthRoutes } from './health.js';
 import { OidcBffAuthProvider, registerOidcBff } from './oidc-bff.js';
 import { PasswordAuthProvider, registerPasswordAuth } from './password-auth.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
@@ -59,6 +58,7 @@ import {
   trustedPublishSemantics, validatedPublishReceipt,
   type TrustedPublishCommand, type TrustedPublishIntentCommand,
 } from './routes/shared.js';
+import { registerGatewayHealthRoutes } from './routes/health.js';
 import {
   safeAuditPage, safeCancelReceipt, safeDlqPage, safeDlqResolution, safeReplayReceipt, sameTenantRows,
   visibleMessage, visibleMessageList, visibleOriginRelays, visibleQueue
@@ -816,27 +816,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   }));
   if (options.authProvider instanceof OidcBffAuthProvider) registerOidcBff(app, options.authProvider);
   if (options.authProvider instanceof PasswordAuthProvider) registerPasswordAuth(app, options.authProvider);
-  const exposeHealthRoutes = options.exposeHealthRoutes ?? !(options.authProvider instanceof MtlsAuthProvider);
-  if (exposeHealthRoutes) {
-    registerHealthRoutes(app, {
-      pool: options.pool,
-      requirePostgresTls: process.env.NODE_ENV === 'production'
-    });
-  }
-
-  app.get('/v3/status', async (request, reply) => {
-    try {
-      const actor = await principal(request, options.authProvider);
-      requirePermission(actor, 'read');
-      await repository.assertPrincipal(actor.tenant_id, actor.alias);
-      return {
-        version: PROTOCOL_VERSION,
-        auth_provider: options.authProvider.name,
-        ...(await repository.status(actor.tenant_id, actor.alias)),
-        presence: await repository.listPresence(actor.tenant_id, actor.alias)
-      };
-    } catch (error) { replyError(reply, error); }
-  });
+  registerGatewayHealthRoutes(app, options, repository);
 
   app.get('/v3/console/access', async (request, reply) => {
     try {
