@@ -15,6 +15,7 @@ Una sola tarea grande. **Lanza 4 subagentes SIMULTÁNEOS desde el arranque** (fi
 1. Hallazgos de la ola 2 (`ordenes/reportes/claude-revision-ola2.md`) — los tuyos, concretos:
    - **publish-intents NO es legado**: es la pata obligatoria del único envío de la consola (apagar su flag condena `POST /v3/console/messages` a 409 perpetuo). Quita el rótulo legado-candidato de 71ba355 y deja la ruta SIEMPRE montada (sin flag).
    - **Test rojo real en la matriz**: `perfil-en-el-saludo` lee `app.ts` como TEXTO y su cadena vive ahora en `routes/core.ts` — actualízalo.
+   - **[PRIORIDAD] Rojo de la matriz pesada**: `wake-outbox-routing` › "ackOutbox applied=false ... never success" — posible regresión de tu 28c6c00 (guardas del parche opaco sobre semántica de ACK). Ver `ordenes/reportes/claude-matriz-tests.md` §1: producto mal → arregla producto; contrato evolucionado → test con justificación escrita.
    - **Restaura los 8 bloques de documentación de vallado** que e110f80 borró de deliveries (semántica de fencing/ACK tardío — invariantes, regla 4 los permite), reescritos sobrios en su sitio nuevo.
    - **Retira la suite QA "authentic"** (`ops/compose.authentic.yaml` + `smoke-{compose,runtime}-authentic.sh` + sus scripts `qa:*` de package.json + su aserción estática en validate.sh): exige relay-worker/shadow-router dentro de una imagen que ya no los construye — teatro roto por diseño.
    - La guardia SQL ya es recursiva (la arreglé yo, ae9f9e3): mantenla verde en tus próximas mudanzas.
