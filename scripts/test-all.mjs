@@ -19,9 +19,8 @@ const SUITES = [
 ];
 
 /**
- * Suites with their own gate: each needs something the developer matrix cannot
- * assume — a built release bundle plus its evidence validator, or a live
- * container host with Docker privileges.
+ * Operational suites keep their own gate because the developer matrix cannot
+ * assume their build artifacts or host-level tooling.
  */
 const SEPARATELY_GATED = new Set([
   'test:fleet-release',

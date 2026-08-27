@@ -34,10 +34,11 @@ como "lo que NO debe haber".
 | `rollback-bridge/rollback-bridge-schema029.patch` (13.321 líneas) | El patch reconstruido; único del estilo "squash viejo contra esquema actual"; prohibido editar (`plan-reestructura/00-LEEME.md`) | `plan-reestructura/00-LEEME.md` L34 |
 | `compose.rollback-bridge.yaml` | Compose del productor + validador; declaraba `relay-worker` y `shadow-router` | Se reescribe en `plan-reestructura/31` |
 
-### 3. `ops-scripts/` — maquinaria de release retirada (origen: purga 27-08 + refinamiento ronda 4)
+### 3. `ops-scripts/` — maquinaria de release retirada (origen: purga 27-08 + refinamientos rondas 4/6)
 
-19 ficheros de la "maquinaria de release" movidos en `bf63fbc` + un refino posterior en `da1b4af`.
-**~18.808 líneas**; **0 despliegues logrados en su historia**; su gate exigía evidencia imposible
+20 ficheros de la "maquinaria de release": 19 movidos en `bf63fbc`/`da1b4af` y
+`validate-terminal-release.py` retirado en `d0ae77b`.
+**~19.049 líneas**; **0 despliegues logrados en su historia**; su gate exigía evidencia imposible
 (digest que caduca con cualquier commit). Se reemplaza por `deploy/deploy.sh` simple
 (`plan-reestructura/31-despliegue-simple.md`).
 
@@ -47,14 +48,16 @@ como "lo que NO debe haber".
 | `ops-scripts/release-candidate.py` (la pieza central) | Generador + validador del "release-candidate"; rc=1 permanente por evidencia caduca |
 | `ops-scripts/release-build.sh`, `release-gate.sh`, `release-writer-state.py`, `release-console.sh` | Familia del release-candidate: build, gate, rotación de writer |
 | `ops-scripts/pin-production-release.py`, `rollback-baseline.py`, `rollback.sh`, `restore.sh`, `cutover-rollback.sh`, `migrate.sh`, `bootstrap-prod-env.py`, `fleet-gate-mode.sh` | Soporte del flujo release→production→rollback→restore; todo gira alrededor del artefacto "release-candidate" |
-| `ops-scripts/produce-rollback-bridge-evidence.py`, `validate-release-evidence.py`, `validate-rollback-bridge-evidence.py` | Validadores de evidencia del release; consumidores exclusivos de la maquinaria anterior |
+| `ops-scripts/produce-rollback-bridge-evidence.py`, `validate-release-evidence.py`, `validate-rollback-bridge-evidence.py`, `validate-terminal-release.py` | Validadores de evidencia del release; consumidores exclusivos de la maquinaria anterior |
 | `ops-scripts/capture-release-writer-snapshot.sh` | Captura del estado del writer; consumido solo por `release-writer-state.py` y los validadores |
-| `ops-scripts/verification-rounds.mjs` | Las "3 rondas" (frozen/lint/typecheck/build + 3 rondas + fleet/Testcontainers/mock); referencia `pnpm verify:three-rounds` (sigue en `package.json` apuntando a este path → rc=1) |
+| `ops-scripts/verification-rounds.mjs` | Las "3 rondas" (frozen/lint/typecheck/build + 3 rondas + fleet/Testcontainers/mock); su caller `pnpm verify:three-rounds` fue retirado del árbol vivo |
 
 Detalle: `_legado/README.md` sección "Pendiente de mover aquí" de rondas previas (en
 `ordenes/ronda1/codex.md` y `ordenes/ronda2/codex.md`); `plan-reestructura/12-cuarentena-legado.md`
-L15 (cifra "17.686 líneas"; la cifra actual es 18.808 — incluye los 1.122 que se añadieron en
-`bf63fbc`).
+L15 (cifra "17.686 líneas"; la cifra actual es 19.049 tras los refinamientos posteriores).
+
+Los targets y scripts de paquete que apuntaban a esta familia, y la validación que ejecutaba
+sus tests dedicados, fueron retirados del árbol vivo.
 
 ### 4. `basura/` — auditorías históricas del 2026-Q3 (origen: reorganización de docs/bitacora)
 
@@ -117,18 +120,14 @@ Detalle: ningún test de `_legado/tests/` se ejecuta desde `make validate`, `pnp
 | 45 dudosos del censo (`plan-reestructura/censo-contingentes.md` L23–67) | n/d | Sin marcar; ronda 5 salta (Tarea 5 condicional) |
 | Suite operativa CONFIG_POR_ALIAS (`ops/scripts/{aplicar-separacion-config,censo-config-por-alias,separar-config-alias,update-alias-config}.sh/.py/.mjs` + sus 5 tests) | ~600 | Apagada por defecto; sigue activa en código |
 
-## Referencias vivas rotas a sabiendas (se resuelven en FASE 3 o por Codex)
+## Referencias vivas rotas a sabiendas (se resuelven en FASE 3)
 
 | Fichero | Ref | Resuelve |
 |---|---|---|
-| `package.json` raíz | `"evidence:release-candidate": "python3 ops/scripts/release-candidate.py"` | `release-candidate.py` está en `_legado/ops-scripts/`; `pnpm evidence:release-candidate` rc=1. Codex lo retira |
-| `package.json` raíz | `"verify:three-rounds": "node ops/scripts/verification-rounds.mjs"` | `verification-rounds.mjs` está en `_legado/ops-scripts/`; misma situación. Codex lo retira |
-| `ops/Makefile` | targets `release-build`, `release-gate`, `release-bootstrap-*`, `release-console*` que invocan `./scripts/{release-build,release-gate,pin-production-release,deploy-release}.{sh,py}` | Las rutas `./scripts/` (relativas a `ops/`) ya no resuelven. FASE 3 (`plan-reestructura/31`) |
 | `ops/scripts/source-digest.py` L150, L158 | `"ops/compose.rollback-bridge.yaml"`, `"ops/rollback-bridge"` en `VERIFICATION_OPERATIONAL_INPUTS` | Codex: excluir entradas o apuntar a `_legado/` |
 | `ops/tests/source-digest-domains.test.mjs` L116, L126, L128 | `'ops/compose.rollback-bridge.yaml'`, `'ops/schemas/rollback-bridge.schema.json'` en sentinels | Codex: mismo arreglo |
 | `ops/runbooks/backup-restore.md` L27, L177 | `./scripts/restore.sh` | `restore.sh` está en `_legado/ops-scripts/`; el runbook se reescribe en FASE 3 (`plan-reestructura/31`) |
 | `deploy/compose.yaml` | declaraba `relay-worker`, `shadow-router`, `shadow-guard` (en profiles nunca encendidos) | Se reescribe en FASE 3 (`plan-reestructura/31`); hoy ya está canónico (`00f8e6e`) |
-| `ops/scripts/deploy-release.sh` | ref al productor de rollback-bridge movido | Toda la maquinaria de release viene aquí de todas formas (ya hecho en `bf63fbc`) |
 | `ops/scripts/stack-health.sh`, `fault-compose.sh`, `smoke-runtime-authentic.sh`, `tests/unit/relay-telegram-observability.test.ts` | mencionan los servicios por nombre de compose (strings), no por import | Siguen funcionando; el ref sigue siendo válido como cadena literal |
 
 ## Cómo recuperar cualquier cosa

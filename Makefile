@@ -1,6 +1,6 @@
 PNPM ?= pnpm
 
-.PHONY: install build lint typecheck test test-unit test-services test-integration test-fleet-release verify verify-three-rounds migrate migrate-dev dev-gateway dev-dispatcher dev-relay-worker dev-shadow-router dev-telegram-bridge
+.PHONY: install build lint typecheck test test-unit test-services test-integration test-fleet-release verify migrate-dev dev-gateway dev-dispatcher dev-telegram-bridge
 install:
 	$(PNPM) install --frozen-lockfile
 build:
@@ -20,19 +20,11 @@ test-integration:
 test-fleet-release:
 	$(PNPM) test:fleet-release
 verify: lint typecheck test build
-verify-three-rounds:
-	$(PNPM) verify:three-rounds
-migrate:
-	@./ops/scripts/migrate.sh
 migrate-dev:
 	$(PNPM) migrate:dev
 dev-gateway:
 	$(PNPM) dev:gateway
 dev-dispatcher:
 	$(PNPM) dev:dispatcher
-dev-relay-worker:
-	$(PNPM) dev:relay-worker
-dev-shadow-router:
-	$(PNPM) dev:shadow-router
 dev-telegram-bridge:
 	$(PNPM) dev:telegram-bridge

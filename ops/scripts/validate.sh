@@ -68,7 +68,6 @@ node "$ROOT/tests/container-supervisor.test.mjs"
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_container_runtime_reaping.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_provision_alertmanager_config.py"
 node "$ROOT/tests/alias-runner.test.mjs"
-node "$ROOT/tests/container-release-pin.test.mjs"
 node "$ROOT/tests/container-cutover.test.mjs"
 node "$ROOT/tests/container-ops-evidence.test.mjs"
 # Guards the source-digest domain split: proves the runtime domain still covers everything that
@@ -164,33 +163,6 @@ pathlib.Path(sys.argv[2]).write_text(
 PY
   chmod 0600 "$validation_writer_snapshot"
   validation_writer_sha="sha256:$(sha256sum "$validation_writer_snapshot" | cut -d' ' -f1)"
-  # This is an offline Compose parsing fixture, not a production state
-  # transition.  Production marker publication is intentionally available only
-  # through release-writer-state.py under the authenticated release lock.
-  python3 - "$validation_writer_snapshot" "$validation_writer_sha" <<'PY'
-import datetime as dt
-import json
-import pathlib
-import sys
-
-snapshot = pathlib.Path(sys.argv[1])
-body = {
-    "kind": "cauce-v3-release-state",
-    "mode": "candidate",
-    "releaseId": "validation",
-    "schemaVersion": 1,
-    "snapshotPath": str(snapshot),
-    "snapshotSha256": sys.argv[2],
-    "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-    "writersExpected": 0,
-    "writersObserved": 0,
-}
-marker = pathlib.Path(f"{snapshot}.state.json")
-marker.write_text(json.dumps(body, sort_keys=True, separators=(",", ":")) + "\n", encoding="ascii")
-marker.chmod(0o444)
-PY
-  "$ROOT/scripts/release-writer-state.py" --ops-root "$ROOT" validate \
-    --snapshot "$validation_writer_snapshot" --expected-sha256 "$validation_writer_sha" >/dev/null
   export CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE="$validation_writer_snapshot"
   export CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256="$validation_writer_sha"
   export CAUCE_OTEL_IMAGE="registry.invalid/otel@sha256:$zeros" CAUCE_PROMETHEUS_IMAGE="registry.invalid/prometheus@sha256:$zeros" CAUCE_POSTGRES_IMAGE="registry.invalid/postgres@sha256:$zeros"
