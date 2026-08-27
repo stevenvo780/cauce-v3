@@ -48,4 +48,15 @@ Las fechas entre paréntesis son del nombre del fichero cuando lo lleva, o `—`
 | `ordenes-ejecutadas/ronda5/` | 2026-08-27 | Quinta tanda: consola 107/107, particiones de pty-session/OperatorWorkspace/live.css, hash de migraciones. 2 ficheros (`codex-terra.md`/`opencode-minimax.md`). |
 | `ordenes-ejecutadas/ronda6/` | 2026-08-27 | Sexta tanda: cierre de inequívocos — 6 schemas, 5 tests huérfanos, 4 scripts, ops/harness huérfano, reescritura del censo de dudosos. 3 ficheros (`gemini.md`/`gemini-consola.md`/`opencode-minimax.md`). |
 | `ordenes-ejecutadas/ronda7/` | 2026-08-27 | Séptima tanda: docs al día + foto final; `_legado/` ya borrado por `73e533c`. 1 fichero (`opencode-minimax.md`). |
-| `ordenes-ejecutadas/ronda8/` | 2026-08-27 | Octava tanda (esta): CI con `pnpm test:unit` + archivo de planes ejecutados (FASE 1 cerrada) + barrido de enlaces. 1 fichero (`opencode-minimax.md`). |
+| `ordenes-ejecutadas/ronda8/` | 2026-08-27 | Octava tanda: CI con `pnpm test:unit` + archivo de planes ejecutados (FASE 1 cerrada) + barrido de enlaces. 1 fichero (`opencode-minimax.md`). |
+| `ordenes-ejecutadas/ronda9/` | 2026-08-27 | Novena tanda (esta): archivo de reportes consumidos + consolidado de PENDIENTES-DEL-DUEÑO. 1 fichero (`opencode-minimax.md`). |
+| `reportes/claude-revision-46-commits.md` | 2026-08-27 | Revisión del integrador de los 46 commits de descontaminación del 27-08; veredicto LIMPIO con defectos de segundo orden enrutados. |
+| `reportes/claude-revision-ola2.md` | 2026-08-27 | Revisión de la 2.ª ola (fencing, gateway, cuarentena, tests de consola); veredicto LIMPIO con hallazgos enrutados. |
+| `reportes/gemini-ronda-6.md` | 2026-08-27 | Reporte de Gemini en su ronda 6: partición de `terminal-relay` y `telegram-bridge` (10+16 ficheros, 186+259 tests verdes). |
+| `reportes/minimax-adr.md` | 2026-08-27 | Verificación de los 6 ADR contra `main@7590d44`: 6/6 vigentes, ninguno menciona componentes de `_legado/`. |
+| `reportes/minimax-docs-sueltos.md` | 2026-08-27 | Veredicto sobre los 4 docs sueltos pre-purga; 1 movido a bitácora (`315a84c`), 3 corregidos. |
+| `reportes/minimax-enlaces.md` | 2026-08-27 | Verificación de enlaces y rutas — ronda 3: inconsistencias corregidas. |
+| `reportes/minimax-enlaces-r5.md` | 2026-08-27 | Verificación de enlaces y rutas — ronda 5 (post-mudanzas ronda 4); refs actualizadas. |
+| `reportes/minimax-gitignore.md` | 2026-08-27 | Auditoría de `.gitignore` ronda 5: 0 huecos; propuesta aplicada en `fdeb125`. |
+| `reportes/minimax-runbooks.md` | 2026-08-27 | Verificación de runbooks ronda 2: 9 vigentes, 4 desactualizados (corregidos en `fb80b81`/`74f5c84`). |
+| `reportes/minimax-todos.md` | 2026-08-27 | Censo de TODO/FIXME/HACK/XXX ronda 5: 0 marcadores reales en el árbol vivo. |
