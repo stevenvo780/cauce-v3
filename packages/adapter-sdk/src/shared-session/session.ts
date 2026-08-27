@@ -22,81 +22,31 @@ import {
   LEGACY_DEGRADED_WINDOW,
   TUI_WINDOW,
   sessionName,
-  type ResumeSpec,
-  type SharedSessionHarness,
 } from "./types.js";
+import type {
+  EnsureFailure,
+  EnsureOptions,
+  EnsureResult,
+  SharedSessionSpec,
+  SharedSessionStatus,
+} from "./session/contracts.js";
+import {
+  SESSION_ALIAS_OPTION,
+  SESSION_HARNESS_OPTION,
+  paneCommandMatches,
+  signalAborted,
+  verifyExistingSessionIdentity,
+} from "./session/identity.js";
 
-/**
- * Gestión e inspección de sesiones tmux compartidas para los distintos harnesses.
- */
-
-export interface SharedSessionSpec {
-  readonly alias: string;
-  readonly harness: SharedSessionHarness;
-  /** Directorio de trabajo de la TUI. Es también lo que determina el directorio de transcripts. */
-  readonly workspace: string;
-  /** Binario del harness. Se separa para poder apuntarlo a un doble en las pruebas. */
-  readonly command?: string;
-  /**
-   * Variables de entorno aplicadas en el comando de arranque del panel (`env K=V ...`).
-   */
-  readonly environment?: Readonly<Record<string, string>>;
-  /** Especificación de reanudación de conversación previa si existe. Ver `ResumeSpec`. */
-  readonly resume?: ResumeSpec;
-}
-
-export interface EnsureOptions {
-  readonly sleep: (ms: number) => Promise<void>;
-  /** Cancela el preflight antes de que una entrega toque la caja de entrada. */
-  readonly signal?: AbortSignal;
-  /** Cuánto se espera a que la TUI esté lista tras crearla. */
-  readonly readyTimeoutMs?: number;
-  /** Ancho/alto con que nace la sesión sin clientes enganchados. */
-  readonly width?: number;
-  readonly height?: number;
-  /** Función de registro para eventos de reanudación o incidencias. */
-  readonly log?: (detail: string) => void;
-}
-
-export interface EnsureResult {
-  readonly ready: boolean;
-  /** True si esta llamada tuvo que crear la sesión (no existía). */
-  readonly created: boolean;
-  /** PID del proceso del panel de la TUI, cuando se pudo leer. */
-  readonly pid?: string;
-  /** Id exacto `$N` acreditado. Todo uso posterior de la TUI se dirige a él, nunca al nombre. */
-  readonly sessionId?: string;
-  /** Generación exacta acreditada (session/pane/PID) y comando observado para esa misma foto. */
-  readonly pane?: PaneHarnessIdentity;
-  readonly detail: string;
-  /** El preflight fue interrumpido; no es una degradación ni autoriza a ejecutar el fallback. */
-  readonly cancelled?: boolean;
-  /** Causa del fallo durante el proceso de ensure. */
-  readonly failure?: EnsureFailure;
-  /** Indica si la sesión fue creada reanudando una conversación previa. */
-  readonly resumed?: boolean;
-}
-
-export type EnsureFailure =
-  | "session_absent"
-  | "tui_absent"
-  /** El nombre exacto de la sesion y el alias grabado en ella no coinciden. */
-  | "session_alias_mismatch"
-  /** La sesion pertenece a otro harness; reutilizarla mezclaria dos conversaciones. */
-  | "session_harness_mismatch"
-  /** Una sesion legacy no dio evidencia suficiente para poder marcar alias+harness. */
-  | "session_identity_unverified";
+export type {
+  EnsureFailure,
+  EnsureOptions,
+  EnsureResult,
+  SharedSessionSpec,
+} from "./session/contracts.js";
 
 const DEFAULT_READY_TIMEOUT_MS = 90_000;
 const READY_POLL_MS = 1_000;
-const SESSION_ALIAS_OPTION = "@cauce_alias";
-const SESSION_HARNESS_OPTION = "@cauce_harness";
-
-// Se lee mediante función para que TypeScript no trate `AbortSignal.aborted` como una constante
-// refinada a `false` a través de awaits: el valor cambia precisamente desde otro task.
-function signalAborted(signal: AbortSignal | undefined): boolean {
-  return signal?.aborted === true;
-}
 
 export function tuiTarget(sessionId: string): string {
   return `${sessionId}:${TUI_WINDOW}`;
@@ -143,7 +93,6 @@ export async function ensureSharedSession(
     return inspectExistingSession(tmux, spec, options, session, existingId);
   }
 
-  // Verifica si existe conversación previa antes de intentar reanudar.
   if (await hasResumableConversation(spec, options)) {
     if (signalAborted(options.signal)) return cancelledEnsure(false);
     const attempt = await startTui(tmux, spec, options, spec.resume?.args);
@@ -159,7 +108,6 @@ export async function ensureSharedSession(
       };
     }
     if (attempt.result.cancelled === true) return attempt.result;
-    // Si la reanudación falló y el panel murió, se recrea en blanco.
     if (!attempt.paneGone) return attempt.result;
     options.log?.(
       `la reanudación de ${spec.alias} no dejó la TUI en pie (${attempt.result.detail});`
@@ -284,173 +232,6 @@ async function inspectExistingSession(
     pane,
     detail: `sesión ${session} ya abierta`,
   };
-}
-
-type IdentityResult =
-  | { readonly ok: true; readonly pane?: PaneHarnessIdentity }
-  | { readonly ok: false; readonly failure: EnsureFailure; readonly detail: string }
-  | { readonly ok: false; readonly cancelled: true };
-
-/**
- * Acredita que una sesion EXISTENTE corresponde al alias y al harness pedidos.
- *
- * Las opciones privadas son el testigo canonico. Para la flota que ya estaba viva antes de que
- * existieran, el nombre de sesion acredita el alias (se consulto con target exacto `=...`) y el
- * comando original del panel acredita el harness. Solo entonces se escriben ambos marcadores.
- * Nada de este camino mata, renombra ni reinicia una sesion incompatible.
- */
-async function verifyExistingSessionIdentity(
-  tmux: TmuxController,
-  spec: SharedSessionSpec,
-  session: string,
-  sessionId: string,
-  signal?: AbortSignal,
-): Promise<IdentityResult> {
-  if (signalAborted(signal)) return { ok: false, cancelled: true };
-  const stillNamed = await sessionIdStillNamed(tmux, session, sessionId);
-  if (signalAborted(signal)) return { ok: false, cancelled: true };
-  if (!stillNamed) {
-    return {
-      ok: false,
-      failure: "session_identity_unverified",
-      detail: `la sesion ${session} ya no corresponde al id acreditado; se conserva el reemplazo`,
-    };
-  }
-  if (signalAborted(signal)) return { ok: false, cancelled: true };
-  const aliasMarker = await sessionOption(tmux, sessionId, SESSION_ALIAS_OPTION);
-  if (signalAborted(signal)) return { ok: false, cancelled: true };
-  const harnessMarker = await sessionOption(tmux, sessionId, SESSION_HARNESS_OPTION);
-  if (signalAborted(signal)) return { ok: false, cancelled: true };
-  if (!aliasMarker.ok || !harnessMarker.ok) {
-    return {
-      ok: false,
-      failure: "session_identity_unverified",
-      detail: `no se pudieron leer los marcadores de identidad de ${session}`,
-    };
-  }
-  if (aliasMarker.value !== undefined && aliasMarker.value !== spec.alias) {
-    return {
-      ok: false,
-      failure: "session_alias_mismatch",
-      detail: `la sesion ${session} declara otro alias; se conserva intacta`,
-    };
-  }
-  if (harnessMarker.value !== undefined && harnessMarker.value !== spec.harness) {
-    return {
-      ok: false,
-      failure: "session_harness_mismatch",
-      detail: `la sesion ${session} pertenece a otro harness; se conserva intacta`,
-    };
-  }
-
-  const observed = await existingHarnessPane(tmux, sessionId);
-  if (signalAborted(signal)) return { ok: false, cancelled: true };
-  if (observed.state === "ambiguous" || observed.state === "unreadable") {
-    return {
-      ok: false,
-      failure: "session_identity_unverified",
-      detail: `la sesion ${session} no tiene un único pane acreditable; se conserva intacta`,
-    };
-  }
-  const pane = observed.state === "present" ? observed.pane : undefined;
-  if (pane !== undefined && pane.sessionName !== session) {
-    return {
-      ok: false,
-      failure: "session_identity_unverified",
-      detail: `el pane observado ya no pertenece a ${session}; se conserva intacto`,
-    };
-  }
-  // Los marcadores declaran qué DEBERÍA vivir en la sesión; el comando original acredita qué
-  // proceso vive realmente en ESTA generación. Se exige siempre, también a sesiones marcadas.
-  if (pane !== undefined && !paneCommandMatches(spec, pane.paneStartCommand)) {
-    return {
-      ok: false,
-      failure: "session_identity_unverified",
-      detail: `el proceso actual de ${session} no corresponde al harness declarado; se conserva intacto`,
-    };
-  }
-  if (harnessMarker.value === undefined && pane === undefined) {
-    return {
-      ok: false,
-      failure: "session_identity_unverified",
-      detail: `la sesion legacy ${session} no permite acreditar su harness; se conserva intacta`,
-    };
-  }
-
-  if (aliasMarker.value === undefined
-    && !await setSessionOption(tmux, sessionId, SESSION_ALIAS_OPTION, spec.alias)) {
-    return {
-      ok: false,
-      failure: "session_identity_unverified",
-      detail: `no se pudo marcar el alias de ${session}; se conserva intacta`,
-    };
-  }
-  if (signalAborted(signal)) return { ok: false, cancelled: true };
-  if (harnessMarker.value === undefined
-    && !await setSessionOption(tmux, sessionId, SESSION_HARNESS_OPTION, spec.harness)) {
-    return {
-      ok: false,
-      failure: "session_identity_unverified",
-      detail: `no se pudo marcar el harness de ${session}; se conserva intacta`,
-    };
-  }
-  if (signalAborted(signal)) return { ok: false, cancelled: true };
-  const finallyStillNamed = await sessionIdStillNamed(tmux, session, sessionId);
-  if (signalAborted(signal)) return { ok: false, cancelled: true };
-  if (!finallyStillNamed) {
-    return {
-      ok: false,
-      failure: "session_identity_unverified",
-      detail: `la sesion ${session} fue reemplazada mientras se acreditaba; no se toca el reemplazo`,
-    };
-  }
-  if (pane !== undefined && !await paneIdentityStillCurrent(tmux, pane)) {
-    return {
-      ok: false,
-      failure: "session_identity_unverified",
-      detail: `el pane de ${session} cambió de generación mientras se acreditaba; no se reutiliza`,
-    };
-  }
-  return pane === undefined ? { ok: true } : { ok: true, pane };
-}
-
-async function existingHarnessPane(
-  tmux: TmuxController,
-  sessionId: string,
-): Promise<Awaited<ReturnType<typeof inspectSolePaneHarness>>> {
-  const canonical = await inspectSolePaneHarness(tmux, sessionId, TUI_WINDOW);
-  return canonical.state === "absent"
-    ? inspectSolePaneHarness(tmux, sessionId, LEGACY_DEGRADED_WINDOW)
-    : canonical;
-}
-
-/**
- * Inferencia estrecha para sesiones anteriores a los marcadores.
- *
- * Se acepta el binario canonico del harness o el `command` explicitamente configurado para ese
- * mismo harness. La presencia ejecutable del harness opuesto vuelve la evidencia ambigua y falla
- * cerrado. El comando observado nunca se incluye en errores: puede contener argumentos privados.
- */
-function paneCommandMatches(spec: SharedSessionSpec, command: string): boolean {
-  const expected = executableName(spec.command ?? spec.harness);
-  const opposite = spec.harness === "claude" ? "codex" : "claude";
-  if (mentionsExecutable(command, opposite)) return false;
-  return mentionsExecutable(command, spec.harness)
-    || (expected !== spec.harness && mentionsExecutable(command, expected));
-}
-
-function executableName(command: string): string {
-  const withoutSlash = command.slice(command.lastIndexOf("/") + 1);
-  return /^[A-Za-z0-9._+-]+$/u.test(withoutSlash) ? withoutSlash : "";
-}
-
-function mentionsExecutable(command: string, executable: string): boolean {
-  if (executable === "") return false;
-  const escaped = executable.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const before = "(?:^|[\\s;&|()'\"`])";
-  const path = "(?:[^\\s;&|()'\"`]+/)?";
-  const after = "(?=$|[\\s;&|()'\"`])";
-  return new RegExp(`${before}${path}${escaped}${after}`, "u").test(command);
 }
 
 /**
@@ -923,13 +704,7 @@ async function waitForTui(
   }
 }
 
-export interface SharedSessionStatus {
-  readonly alias: string;
-  readonly harness: SharedSessionHarness;
-  readonly session: string;
-  readonly present: boolean;
-  readonly pid?: string;
-}
+export type { SharedSessionStatus } from "./session/contracts.js";
 
 export async function sharedSessionStatus(
   tmux: TmuxController,
