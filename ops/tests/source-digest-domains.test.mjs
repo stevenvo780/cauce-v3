@@ -121,7 +121,7 @@ for (const sentinel of [
   'ops/manifests/kant.yaml',
   'ops/observability/alerts.yaml',
   'ops/runbooks/alerting.md',
-  'ops/schemas/build-evidence.schema.json',
+  'ops/schemas/test-evidence.schema.json',
   'ops/scripts/source-digest.py',
   'eslint.config.js',
 ]) {
@@ -240,7 +240,7 @@ try {
   await write('ops/scripts/validate-fleet-release-evidence.py', 'print("evidence")\n');
   await write('ops/scripts/source-digest.py', '# fixture\n');
   await write('ops/scripts/validate.sh', '#!/bin/sh\nexit 0\n');
-  await write('ops/schemas/build-evidence.schema.json', '{}\n');
+  await write('ops/schemas/test-evidence.schema.json', '{}\n');
   await write('ops/schemas/testcontainers-evidence.schema.json', '{}\n');
   await write('ops/tests/gate.test.mjs', 'export const gate = 1;\n');
   await write('tests/e2e/real-qa.test.ts', 'export const qa = 1;\n');
@@ -421,7 +421,7 @@ try {
     ['ops/scripts/migration-gate.mjs', 'export const migration = false;\n'],
     ['ops/scripts/physical-fleet-gate.py', 'print("fleet disabled")\n'],
     ['ops/scripts/validate-fleet-release-evidence.py', 'print("evidence disabled")\n'],
-    ['ops/schemas/build-evidence.schema.json', '{"additionalProperties":true}\n'],
+    ['ops/schemas/test-evidence.schema.json', '{"additionalProperties":true}\n'],
     ['ops/scripts/future-operational-gate.py', 'print("new gate")\n'],
     ['ops/schemas/future-operational-evidence.schema.json', '{"type":"object"}\n'],
   ]) {

@@ -52,6 +52,10 @@ como "lo que NO debe haber".
 | `ops-scripts/capture-release-writer-snapshot.sh` | Captura del estado del writer; consumido solo por `release-writer-state.py` y los validadores |
 | `ops-scripts/verification-rounds.mjs` | Las "3 rondas" (frozen/lint/typecheck/build + 3 rondas + fleet/Testcontainers/mock); su caller `pnpm verify:three-rounds` fue retirado del árbol vivo |
 
+`ops-schemas/` conserva los cinco esquemas consumidos exclusivamente por esa familia:
+`build-evidence`, `release-candidate`, `release-writer-snapshot`, `rollback-baseline` y
+`verification-evidence`. Los esquemas de tests, migraciones y operaciones activas permanecen vivos.
+
 Detalle: `_legado/README.md` sección "Pendiente de mover aquí" de rondas previas (en
 `ordenes/ronda1/codex.md` y `ordenes/ronda2/codex.md`); `plan-reestructura/12-cuarentena-legado.md`
 L15 (cifra "17.686 líneas"; la cifra actual es 19.049 tras los refinamientos posteriores).

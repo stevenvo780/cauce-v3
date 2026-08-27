@@ -50,7 +50,7 @@ describe('source digest verification closure', () => {
       'ops/scripts/source-digest.py',
       'ops/scripts/validate.sh',
       'ops/schemas/testcontainers-evidence.schema.json',
-      'ops/schemas/verification-evidence.schema.json',
+      'ops/schemas/test-evidence.schema.json',
     ]) {
       expect(paths, source).toContain(source);
     }
