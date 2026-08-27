@@ -30,7 +30,6 @@ STATIC_INPUTS = (
     "scripts/release-build.sh",
     "scripts/release-candidate.py",
     "scripts/validate-release-evidence.py",
-    "scripts/validate-rollback-bridge-evidence.py",
     "scripts/rollback-baseline.py",
     "scripts/migration-gate.mjs",
     "scripts/validate.sh",
@@ -71,7 +70,6 @@ OPERATIONAL_TREES = (
     "harness",
     "guardias",
     "openclaw-gateway",
-    "rollback-bridge",
     "cli",
     "generated/systemd",
 )
@@ -81,7 +79,6 @@ OPERATIONAL_ROOT_FILES = (
     "INSTALLATION.md",
     "GATE_CONTRACT.md",
     "compose.authentic.yaml",
-    "compose.rollback-bridge.yaml",
     "compose.test.yaml",
     "container-aliases.json",
     "hermes-runtime.json",
