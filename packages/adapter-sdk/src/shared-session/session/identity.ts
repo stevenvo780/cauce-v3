@@ -7,8 +7,37 @@ import {
   type PaneHarnessIdentity,
   type TmuxController,
 } from "../tmux.js";
-import { LEGACY_DEGRADED_WINDOW, TUI_WINDOW } from "../types.js";
-import type { EnsureFailure, SharedSessionSpec } from "./contracts.js";
+import {
+  LEGACY_DEGRADED_WINDOW,
+  TUI_WINDOW,
+  type ResumeSpec,
+  type SharedSessionHarness,
+} from "../types.js";
+
+export interface SharedSessionSpec {
+  readonly alias: string;
+  readonly harness: SharedSessionHarness;
+  /** Directorio de trabajo de la TUI. Es también lo que determina el directorio de transcripts. */
+  readonly workspace: string;
+  /** Binario del harness. Se separa para poder apuntarlo a un doble en las pruebas. */
+  readonly command?: string;
+  /**
+   * Variables de entorno aplicadas en el comando de arranque del panel (`env K=V ...`).
+   */
+  readonly environment?: Readonly<Record<string, string>>;
+  /** Especificación de reanudación de conversación previa si existe. Ver `ResumeSpec`. */
+  readonly resume?: ResumeSpec;
+}
+
+export type EnsureFailure =
+  | "session_absent"
+  | "tui_absent"
+  /** El nombre exacto de la sesion y el alias grabado en ella no coinciden. */
+  | "session_alias_mismatch"
+  /** La sesion pertenece a otro harness; reutilizarla mezclaria dos conversaciones. */
+  | "session_harness_mismatch"
+  /** Una sesion legacy no dio evidencia suficiente para poder marcar alias+harness. */
+  | "session_identity_unverified";
 
 export const SESSION_ALIAS_OPTION = "@cauce_alias";
 export const SESSION_HARNESS_OPTION = "@cauce_harness";

@@ -22,28 +22,53 @@ import {
   LEGACY_DEGRADED_WINDOW,
   TUI_WINDOW,
   sessionName,
+  type SharedSessionHarness,
 } from "./types.js";
-import type {
-  EnsureFailure,
-  EnsureOptions,
-  EnsureResult,
-  SharedSessionSpec,
-  SharedSessionStatus,
-} from "./session/contracts.js";
 import {
   SESSION_ALIAS_OPTION,
   SESSION_HARNESS_OPTION,
   paneCommandMatches,
   signalAborted,
+  type EnsureFailure,
+  type SharedSessionSpec,
   verifyExistingSessionIdentity,
 } from "./session/identity.js";
 
-export type {
-  EnsureFailure,
-  EnsureOptions,
-  EnsureResult,
-  SharedSessionSpec,
-} from "./session/contracts.js";
+export type { SharedSessionSpec } from "./session/identity.js";
+
+export interface EnsureOptions {
+  readonly sleep: (ms: number) => Promise<void>;
+  /** Cancela el preflight antes de que una entrega toque la caja de entrada. */
+  readonly signal?: AbortSignal;
+  /** Cuánto se espera a que la TUI esté lista tras crearla. */
+  readonly readyTimeoutMs?: number;
+  /** Ancho/alto con que nace la sesión sin clientes enganchados. */
+  readonly width?: number;
+  readonly height?: number;
+  /** Función de registro para eventos de reanudación o incidencias. */
+  readonly log?: (detail: string) => void;
+}
+
+export interface EnsureResult {
+  readonly ready: boolean;
+  /** True si esta llamada tuvo que crear la sesión (no existía). */
+  readonly created: boolean;
+  /** PID del proceso del panel de la TUI, cuando se pudo leer. */
+  readonly pid?: string;
+  /** Id exacto `$N` acreditado. Todo uso posterior de la TUI se dirige a él, nunca al nombre. */
+  readonly sessionId?: string;
+  /** Generación exacta acreditada (session/pane/PID) y comando observado para esa misma foto. */
+  readonly pane?: PaneHarnessIdentity;
+  readonly detail: string;
+  /** El preflight fue interrumpido; no es una degradación ni autoriza a ejecutar el fallback. */
+  readonly cancelled?: boolean;
+  /** Causa del fallo durante el proceso de ensure. */
+  readonly failure?: EnsureFailure;
+  /** Indica si la sesión fue creada reanudando una conversación previa. */
+  readonly resumed?: boolean;
+}
+
+export type { EnsureFailure } from "./session/identity.js";
 
 const DEFAULT_READY_TIMEOUT_MS = 90_000;
 const READY_POLL_MS = 1_000;
@@ -704,7 +729,13 @@ async function waitForTui(
   }
 }
 
-export type { SharedSessionStatus } from "./session/contracts.js";
+export interface SharedSessionStatus {
+  readonly alias: string;
+  readonly harness: SharedSessionHarness;
+  readonly session: string;
+  readonly present: boolean;
+  readonly pid?: string;
+}
 
 export async function sharedSessionStatus(
   tmux: TmuxController,

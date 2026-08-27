@@ -10,17 +10,15 @@ import {
 } from './audit.js';
 import {
   attributionAllows, cohortRoutingAuthority, containerCohort, fleetIdentity, fleetPlacement,
-  loadFleetPlacements, resolveOperator, routingAuthority, type GrantStore, type ResolvedOperator,
-  type RoutingAuthority,
+  loadFleetPlacements, resolveOperator, type GrantStore, type ResolvedOperator,
 } from './authority.js';
 import type { TerminalConfig } from './config.js';
-import type { AgentRegistry, AgentResolution } from './registry.js';
+import type { AgentRegistry } from './registry.js';
+import { registerTerminalTargetRoute } from './session-control/targets.js';
 import {
   deriveAliasKey, issueTicket, ticketDigest, ticketSha256, type TicketPayload,
 } from './tickets.js';
-import {
-  isTerminalMode, type TerminalMode, type TerminalSessionRow, type TerminalTarget,
-} from './types.js';
+import { type TerminalMode, type TerminalSessionRow } from './types.js';
 
 const MAX_TERMINAL_CLOCK_SKEW_MS = 5_000;
 
@@ -142,26 +140,6 @@ function operatorScopePredicate(
           AND ($${attributedParameter}::boolean OR console_subject=$${subjectParameter})`;
 }
 
-/**
- * Authority and reachability are independent. An authorized destination can still be offline,
- * not installed or unknown, so its reason must describe the measured PTY state rather than the
- * authority decision that allowed the row to be disclosed.
- */
-function terminalTargetStateReason(resolution: AgentResolution, container: string): string {
-  switch (resolution.status) {
-    case 'online':
-      return 'El agente PTY está conectado al terminal-relay.';
-    case 'offline':
-      return 'El agente PTY figura fuera de línea: no está conectado al terminal-relay.';
-    case 'ambiguous':
-      return 'El agente PTY figura fuera de línea porque más de un terminal-relay lo anuncia y no hay una ruta única segura.';
-    case 'not_installed':
-      return `El agente PTY figura como no instalado: el terminal-relay nunca registró este destino en ${container}.`;
-    case 'unknown':
-      return 'El estado del agente PTY es desconocido: el terminal-relay todavía no publicó un snapshot verificable.';
-  }
-}
-
 interface TerminalSessionRepository {
   assertPermission(tenantId: Tenant, alias: string, permission: 'control'): Promise<void>;
   authorizeAgentTarget(
@@ -216,102 +194,7 @@ export function registerTerminalSessionControl(
   /* Browser routes: /v3/console/terminal                                */
   /* ------------------------------------------------------------------ */
 
-  app.get('/v3/console/terminal/targets', async (request, reply) => {
-    try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      const operator = resolveOperator(request, actor, config);
-      const now = Date.now();
-      const placements = await loadFleetPlacements(pool);
-      // One routing decision per (tenant, alias) even though cohorts overlap heavily.
-      const decisions = new Map<string, Promise<RoutingAuthority>>();
-      const authorityFor = (tenantId: string, alias: string): Promise<RoutingAuthority> => {
-        const cacheKey = `${tenantId}\0${alias}`;
-        let pending = decisions.get(cacheKey);
-        if (!pending) {
-          pending = routingAuthority(pool, actor.tenant_id, actor.alias, tenantId, alias);
-          decisions.set(cacheKey, pending);
-        }
-        return pending;
-      };
-      const visibilityDecisions = new Map<string, Promise<boolean>>();
-      const visibleFor = (tenantId: string, alias: string): Promise<boolean> => {
-        const cacheKey = `${tenantId}\0${alias}`;
-        let pending = visibilityDecisions.get(cacheKey);
-        if (!pending) {
-          pending = repository.authorizeAgentTarget(
-            actor.tenant_id, actor.alias, tenantId, alias, 'control',
-          ).then((target) => target !== undefined);
-          visibilityDecisions.set(cacheKey, pending);
-        }
-        return pending;
-      };
-      const items: TerminalTarget[] = [];
-      for (const placement of placements) {
-        // La tabla `agents` contiene toda la flota física, no sólo la visible para este actor.
-        // Enumerarla antes de autorizar filtraba nombres, tenants y cohortes de clientes sin una
-        // arista allow_control. La misma identidad canónica que gobierna el resto de la consola
-        // decide primero si la fila puede existir en esta respuesta.
-        if (!(await visibleFor(placement.tenant_id, placement.alias))) continue;
-        const cohort = containerCohort(placements, placement.tenant_id, placement.alias);
-        // A shared container is one authority surface. Never reveal the names of hidden colocated
-        // tenants merely because the requested placement itself is visible.
-        const cohortVisible = (await Promise.all(
-          cohort.map((member) => visibleFor(member.tenant_id, member.alias))
-        )).every(Boolean);
-        const resolution = registry.resolve(placement.tenant_id, placement.alias, now);
-        const observation = resolution.status === 'online' || resolution.status === 'offline'
-          ? resolution.observation
-          : undefined;
-        const state = registry.state(placement.tenant_id, placement.alias, now);
-        let authorized = cohortVisible
-          && attributionAllows(operator.attributed, actor.tenant_id, placement.tenant_id);
-        for (const member of cohort) {
-          if (!authorized) break;
-          if (!attributionAllows(operator.attributed, actor.tenant_id, member.tenant_id)) {
-            authorized = false;
-            break;
-          }
-          authorized = (await authorityFor(member.tenant_id, member.alias)).allowed;
-        }
-        const reported = observation?.presence.modes ?? ['shell'];
-        const modes: string[] = [];
-        if (authorized) {
-          for (const mode of reported) {
-            if (!isTerminalMode(mode)) continue;
-            if (await grants.allowsCohort(operator.operator_id, cohort, mode, now)) modes.push(mode);
-          }
-        }
-        const usable = authorized && modes.length > 0;
-        items.push({
-          tenant_id: placement.tenant_id,
-          alias: placement.alias,
-          // Denial must not confirm what the target looks like, only that authority is missing.
-          container: usable ? placement.container : null,
-          runtime_user: usable ? (observation?.presence.runtime_user ?? placement.runtime_user) : null,
-          harness: usable ? (observation?.presence.harness ?? null) : null,
-          image: usable ? (observation?.presence.image_id ?? null) : null,
-          shares_container_with: cohortVisible
-            ? cohort
-              .filter((member) => member.tenant_id !== placement.tenant_id || member.alias !== placement.alias)
-              .map(fleetIdentity)
-            : [],
-          modes: usable ? modes : [],
-          pty_state: state,
-          last_seen: observation?.observed_at ?? null,
-          authorized: usable,
-          reason: usable
-            ? terminalTargetStateReason(resolution, placement.container)
-            : `sin autoridad sobre ${placement.tenant_id}:${placement.alias}`
-        });
-      }
-      return {
-        observed_at: new Date(now).toISOString(),
-        websocket_path: config.wsPath,
-        items
-      };
-    } catch (error) { replyError(reply, error); }
-  });
+  registerTerminalTargetRoute(app, options);
 
   app.post('/v3/console/terminal/sessions', async (request, reply) => {
     const traceId = `trace-${randomUUID()}`;
@@ -547,46 +430,46 @@ export function registerTerminalSessionControl(
         }
 
         if (receipt === undefined && previous === undefined) {
-        const localBeforeClockQuery = Date.now();
-        const clock = await admissionClient.query<{ database_now: Date }>(
-          'SELECT clock_timestamp() AS database_now',
-        );
-        const localAfterClockQuery = Date.now();
-        const issuedAt = clock.rows[0]?.database_now;
-        if (!(issuedAt instanceof Date) || !Number.isFinite(issuedAt.getTime())) {
-          throw new Error('database returned an invalid terminal admission timestamp');
-        }
-        if (issuedAt.getTime() < localBeforeClockQuery - MAX_TERMINAL_CLOCK_SKEW_MS
-            || issuedAt.getTime() > localAfterClockQuery + MAX_TERMINAL_CLOCK_SKEW_MS) {
-          throw new TerminalClockSkewError();
-        }
-        const expiresAt = new Date(issuedAt.getTime() + config.ticketTtlSeconds * 1_000);
-        const payload: TicketPayload = {
-          v: 1,
-          sid: sessionId,
-          op: operator.operator_id,
-          sub: consoleSubject,
-          tgt: {
-            tenant: placement.tenant_id,
-            alias: body.alias,
-            container: observation.presence.container_id,
-            generation: observation.presence.generation,
-            image: observation.presence.image_id,
-            uid: observation.presence.runtime_uid,
-            user: observation.presence.runtime_user
-          },
-          mode: body.mode,
-          iat: Math.floor(issuedAt.getTime() / 1_000),
-          exp: Math.floor(expiresAt.getTime() / 1_000)
-        };
-        const ticket = issueTicket(
-          payload,
-          deriveAliasKey(config.ticketKey, placement.tenant_id, body.alias),
-        );
-        const admitted = await admissionClient.query<{
-          reason: 'ok' | 'session_limit' | 'container_busy'; id: string | null;
-        }>(
-          `WITH decision AS MATERIALIZED (
+          const localBeforeClockQuery = Date.now();
+          const clock = await admissionClient.query<{ database_now: Date }>(
+            'SELECT clock_timestamp() AS database_now',
+          );
+          const localAfterClockQuery = Date.now();
+          const issuedAt = clock.rows[0]?.database_now;
+          if (!(issuedAt instanceof Date) || !Number.isFinite(issuedAt.getTime())) {
+            throw new Error('database returned an invalid terminal admission timestamp');
+          }
+          if (issuedAt.getTime() < localBeforeClockQuery - MAX_TERMINAL_CLOCK_SKEW_MS
+              || issuedAt.getTime() > localAfterClockQuery + MAX_TERMINAL_CLOCK_SKEW_MS) {
+            throw new TerminalClockSkewError();
+          }
+          const expiresAt = new Date(issuedAt.getTime() + config.ticketTtlSeconds * 1_000);
+          const payload: TicketPayload = {
+            v: 1,
+            sid: sessionId,
+            op: operator.operator_id,
+            sub: consoleSubject,
+            tgt: {
+              tenant: placement.tenant_id,
+              alias: body.alias,
+              container: observation.presence.container_id,
+              generation: observation.presence.generation,
+              image: observation.presence.image_id,
+              uid: observation.presence.runtime_uid,
+              user: observation.presence.runtime_user
+            },
+            mode: body.mode,
+            iat: Math.floor(issuedAt.getTime() / 1_000),
+            exp: Math.floor(expiresAt.getTime() / 1_000)
+          };
+          const ticket = issueTicket(
+            payload,
+            deriveAliasKey(config.ticketKey, placement.tenant_id, body.alias),
+          );
+          const admitted = await admissionClient.query<{
+            reason: 'ok' | 'session_limit' | 'container_busy'; id: string | null;
+          }>(
+            `WITH decision AS MATERIALIZED (
            SELECT CASE
              WHEN (SELECT count(*) FROM terminal_sessions
                     WHERE ${operatorScopePredicate(1, 6, 7)}
@@ -608,48 +491,48 @@ export function registerTerminalSessionControl(
          )
          SELECT decision.reason, inserted.id
            FROM decision LEFT JOIN inserted ON true`,
-          [
-            operator.operator_id, observation.presence.container_id, config.sessionTtlSeconds,
-            config.maxSessionsPerOperator, sessionId, operator.attributed,
-            consoleSubject, placement.tenant_id, body.alias,
-            observation.presence.generation, observation.presence.image_id,
-            observation.presence.runtime_user, body.mode, ticketSha256(ticket), body.reason,
-            body.cols, body.rows, traceId, issuedAt.toISOString(), expiresAt.toISOString(),
-            body.request_id, requestSha256, browserOwnerSha256,
-            observation.relay_instance_id,
-          ]
-        );
-        const admission = admitted.rows[0];
-        if (admission?.reason === 'ok' && admission.id === sessionId) {
-          const inserted = await admissionClient.query<TerminalSessionRow>(
-            'SELECT * FROM terminal_sessions WHERE id=$1 FOR UPDATE',
-            [sessionId],
+            [
+              operator.operator_id, observation.presence.container_id, config.sessionTtlSeconds,
+              config.maxSessionsPerOperator, sessionId, operator.attributed,
+              consoleSubject, placement.tenant_id, body.alias,
+              observation.presence.generation, observation.presence.image_id,
+              observation.presence.runtime_user, body.mode, ticketSha256(ticket), body.reason,
+              body.cols, body.rows, traceId, issuedAt.toISOString(), expiresAt.toISOString(),
+              body.request_id, requestSha256, browserOwnerSha256,
+              observation.relay_instance_id,
+            ]
           );
-          const row = inserted.rows[0];
-          if (row === undefined) throw new Error('terminal admission lost its inserted receipt');
-          await recordTransactionalTerminalAudit(admissionClient, {
-            tenant_id: actor.tenant_id,
-            actor_alias: actor.alias,
-            action: 'terminal.session.request',
-            decision: 'allow',
-            trace_id: traceId,
-            metadata: terminalAuditMetadata(audit, {
-              session_id: sessionId,
-              image_id: observation.presence.image_id,
-              generation: observation.presence.generation,
-              runtime_user: observation.presence.runtime_user,
-              operator_reason: body.reason,
-              cols: body.cols,
-              rows: body.rows,
-              ticket_sha256: ticketDigest(ticket),
-              receipt_recovered: false,
-              source_room_ids: authority.source_room_ids,
-            }),
-          });
-          receipt = { row, ticket, recovered: false };
-        } else {
-          conflict = admission?.reason === 'session_limit' ? 'session_limit' : 'container_busy';
-        }
+          const admission = admitted.rows[0];
+          if (admission?.reason === 'ok' && admission.id === sessionId) {
+            const inserted = await admissionClient.query<TerminalSessionRow>(
+              'SELECT * FROM terminal_sessions WHERE id=$1 FOR UPDATE',
+              [sessionId],
+            );
+            const row = inserted.rows[0];
+            if (row === undefined) throw new Error('terminal admission lost its inserted receipt');
+            await recordTransactionalTerminalAudit(admissionClient, {
+              tenant_id: actor.tenant_id,
+              actor_alias: actor.alias,
+              action: 'terminal.session.request',
+              decision: 'allow',
+              trace_id: traceId,
+              metadata: terminalAuditMetadata(audit, {
+                session_id: sessionId,
+                image_id: observation.presence.image_id,
+                generation: observation.presence.generation,
+                runtime_user: observation.presence.runtime_user,
+                operator_reason: body.reason,
+                cols: body.cols,
+                rows: body.rows,
+                ticket_sha256: ticketDigest(ticket),
+                receipt_recovered: false,
+                source_room_ids: authority.source_room_ids,
+              }),
+            });
+            receipt = { row, ticket, recovered: false };
+          } else {
+            conflict = admission?.reason === 'session_limit' ? 'session_limit' : 'container_busy';
+          }
         }
         await admissionClient.query('COMMIT');
         transactionOpen = false;
