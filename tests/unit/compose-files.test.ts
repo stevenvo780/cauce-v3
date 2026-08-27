@@ -47,6 +47,12 @@ afterEach(async () => {
 });
 
 describe('authoritative Compose file set', () => {
+  test('rejects the retired authentic topology', () => {
+    const result = runResolver('authentic', {});
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('unsupported target: authentic');
+  });
+
   test('uses no overrides only when the configured directory contains no YAML', async () => {
     const directory = await fixture();
     let result = runResolver('prod', {

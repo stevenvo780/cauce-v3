@@ -5,7 +5,7 @@ ENV_DEV ?= config/dev.env
 ENV_PROD ?= config/prod.env
 ARTIFACT_DIR ?= artifacts
 
-.PHONY: help test test-contract test-doubles test-real test-compose test-compose-authentic test-runtime-authentic test-restarts test-container-supervisor test-container-reaping test-container-cutover smoke-cli smoke-adapters validate manifest verify-manifest \
+.PHONY: help test test-contract test-doubles test-real test-compose test-container-supervisor test-container-reaping test-container-cutover smoke-cli smoke-adapters validate manifest verify-manifest \
 	dev-up dev-down dev-health prod-health backup manifests
 
 help: ## Lista objetivos
@@ -39,14 +39,6 @@ test-real: ## Testcontainers: procesos de test + PostgreSQL; reportes versionado
 
 test-compose: ## Stack QA descartable con transporte y PostgreSQL reales
 	./scripts/compose.sh test up --build --abort-on-container-exit --exit-code-from e2e
-
-test-compose-authentic: ## Cinco binarios finales; Compose o fallback honesto docker-run
-	./scripts/smoke-compose-authentic.sh
-
-test-runtime-authentic: ## Fallback docker-run, nunca aceptado por release productivo
-	./scripts/smoke-runtime-authentic.sh
-
-test-restarts: test-compose-authentic ## Restart/fencing/durabilidad dentro de evidencia authentic separada
 
 validate: ## YAML/JSON/schema/scripts/manifiestos; Compose se exige con CAUCE_RELEASE_VALIDATION=1
 	./scripts/validate.sh

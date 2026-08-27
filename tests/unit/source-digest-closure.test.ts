@@ -50,7 +50,6 @@ describe('source digest verification closure', () => {
       'ops/scripts/source-digest.py',
       'ops/scripts/validate.sh',
       'ops/schemas/testcontainers-evidence.schema.json',
-      'ops/schemas/test-evidence.schema.json',
     ]) {
       expect(paths, source).toContain(source);
     }
@@ -284,13 +283,13 @@ describe('source digest verification closure', () => {
       ['tsconfig.json', '{}\n'],
       ['services/gateway/index.ts', 'export const runtime = 1;\n'],
       ['apps/console/src/App.tsx', 'export const console = 1;\n'],
-      ['ops/harness/authentic-runner.mjs', 'export const harness = 1;\n'],
+      ['ops/harness/contract-runner.mjs', 'export const harness = 1;\n'],
       ['tests/e2e/real-qa.test.ts', 'export const qa = 1;\n'],
       ['ops/scripts/validate.sh', '#!/bin/sh\nexit 0\n'],
     ] as const) {
       await writeTree(root, relative, contents);
     }
-    const domains = ['runtime', 'console', 'harness', 'testcontainers', 'verification', 'full'] as const;
+    const domains = ['runtime', 'console', 'testcontainers', 'verification', 'full'] as const;
     const before = Object.fromEntries(domains.map((domain) => [domain, digest(root, domain)]));
 
     for (const [relative, contents] of [

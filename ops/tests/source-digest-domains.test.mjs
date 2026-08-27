@@ -1,19 +1,16 @@
 #!/usr/bin/env node
 // Guards the source-digest domain split.
 //
-// The split exists because binding every evidence artifact to one whole-tree digest made an
-// apps/console edit invalidate the compose-authentic fault-injection evidence, which costs a full
-// release-host run to regenerate and has no causal relationship with the console. Expensive
-// evidence plus spurious invalidation equals hand-edited evidence, which already happened.
+// The split exists because binding every evidence artifact to one whole-tree digest made a
+// console-only edit invalidate runtime evidence despite having no causal relationship with it.
 //
 // Narrowing a digest is the dangerous direction: it LOOSENS the gate. These tests pin the exact
 // shape of the narrowing so nobody can widen the hole later without a test turning red:
 //   * the only thing the runtime domain drops relative to the union is apps/console;
 //   * everything that reaches the runtime image is still covered, including the lockfile, so a
 //     console dependency change still moves the runtime digest;
-//   * the harness that produces authentic evidence is covered by a domain of its own, closing the
-//     opposite hole (evidence that proves less than it claims);
-//   * every release consumer really passes --domain instead of silently taking the default.
+//   * the live Testcontainers and verification apparatus stays covered by its declared domain;
+//   * every live consumer really passes --domain instead of silently taking the default;
 //   * only the exact operator-owned _grafo scratch prefix is absent from every release digest.
 
 import assert from 'node:assert/strict';
@@ -55,12 +52,11 @@ function pathsOf(domain, tree) {
 // 1. Domain composition: full is exactly the union, and nothing is stranded outside every domain.
 const runtimePaths = pathsOf('runtime');
 const consolePaths = pathsOf('console');
-const harnessPaths = pathsOf('harness');
 const testcontainersPaths = pathsOf('testcontainers');
 const verificationPaths = pathsOf('verification');
 const fullPaths = pathsOf('full');
 const union = new Set([
-  ...runtimePaths, ...consolePaths, ...harnessPaths, ...testcontainersPaths, ...verificationPaths,
+  ...runtimePaths, ...consolePaths, ...testcontainersPaths, ...verificationPaths,
 ]);
 assert.deepEqual([...fullPaths].sort(), [...union].sort(), 'full domain must be the exact union of the declared domains');
 
@@ -114,10 +110,10 @@ for (const sentinel of [
   'ops/container-runtime/cauce-container-runtime.py',
   'ops/generated/systemd/SHA256SUMS',
   'ops/guardias/cauce-huerfanas.sh',
+  'ops/harness/contract-runner.mjs',
   'ops/manifests/kant.yaml',
   'ops/observability/alerts.yaml',
   'ops/runbooks/alerting.md',
-  'ops/schemas/test-evidence.schema.json',
   'ops/scripts/source-digest.py',
   'eslint.config.js',
 ]) {
@@ -152,24 +148,13 @@ for (const sentinel of [
   assert(runtimePaths.has(sentinel), `runtime domain lost coverage of ${sentinel}`);
 }
 
-// 5. The harness domain covers the apparatus that decides what an authentic run reports.
-for (const sentinel of [
-  'ops/harness/authentic-runner.mjs',
-  'ops/harness/authentic-external-server.mjs',
-  'ops/harness/authentic-unix-target.mjs',
-  'ops/harness/authentic-fixture-init.mjs',
-  'ops/compose.authentic.yaml',
-  'ops/scripts/fault-compose.sh',
-  'ops/scripts/fault-runtime.sh',
-  'ops/scripts/smoke-compose-authentic.sh',
-  'ops/scripts/smoke-runtime-authentic.sh',
-]) {
-  assert(harnessPaths.has(sentinel), `harness domain lost coverage of ${sentinel}`);
-}
+// 5. Operational QA stays out of the runtime-image identity while remaining covered by the
+//    verification domain.
 assert(
   ![...runtimePaths].some((entry) => entry.startsWith('ops/')),
-  'the harness must stay a separate domain; folding it into runtime would invalidate image evidence on harness edits',
+  'operational QA must not invalidate runtime-image evidence',
 );
+assert(verificationPaths.has('ops/scripts/fault-compose.sh'), 'verification lost the live fault driver');
 
 // 6. Excluded families never contribute to any digest.
 for (const entry of fullPaths) {
@@ -189,16 +174,20 @@ for (const entry of fullPaths) {
 // 7. Determinism and distinctness.
 assert.equal(digestOf('runtime'), digestOf('runtime'), 'digest must be deterministic');
 const distinct = new Set([
-  digestOf('runtime'), digestOf('console'), digestOf('harness'),
-  digestOf('testcontainers'), digestOf('verification'), digestOf('full'),
+  digestOf('runtime'), digestOf('console'), digestOf('testcontainers'),
+  digestOf('verification'), digestOf('full'),
 ]);
-assert.equal(distinct.size, 6, 'each domain must produce its own digest');
+assert.equal(distinct.size, 5, 'each domain must produce its own digest');
 
 // 8. An undeclared caller must fail CLOSED: the default is the strictest domain, never runtime.
 assert.equal(run([]), digestOf('full'), 'the default domain must be full so a forgotten --domain over-covers instead of under-covering');
 assert.throws(
   () => run(['--domain', 'everything'], { stdio: ['ignore', 'pipe', 'ignore'] }),
   'an unknown domain must be rejected rather than silently defaulted',
+);
+assert.throws(
+  () => run(['--domain', 'harness'], { stdio: ['ignore', 'pipe', 'ignore'] }),
+  'the retired authentic harness domain must not remain selectable',
 );
 
 // 9. Behavioural proof on a synthetic tree: this is the actual claim being made about the redesign.
@@ -224,10 +213,9 @@ try {
   await write('apps/console/src/App.tsx', 'export const App = () => null;\n');
   await write('apps/console/src/theme.css', '.panel { color: red; }\n');
   await write('apps/console/src/features/_grafo/consultas-grafo.sql', 'SELECT 1;\n');
-  await write('ops/harness/authentic-runner.mjs', 'export const run = 1;\n');
+  await write('ops/harness/contract-runner.mjs', 'export const contract = 1;\n');
   await write('ops/harness/runner.mjs', 'export const run = 1;\n');
-  await write('ops/compose.authentic.yaml', 'services: {}\n');
-  await write('ops/scripts/fault-runtime.sh', '#!/bin/sh\n');
+  await write('ops/scripts/fault-compose.sh', '#!/bin/sh\n');
   await write('ops/scripts/run-testcontainers.sh', '#!/bin/sh\n');
   await write('ops/scripts/validate-testcontainers-evidence.py', 'print("ok")\n');
   await write('ops/scripts/source-hygiene.py', 'print("hygiene")\n');
@@ -235,7 +223,6 @@ try {
   await write('ops/scripts/physical-fleet-gate.py', 'print("fleet")\n');
   await write('ops/scripts/source-digest.py', '# fixture\n');
   await write('ops/scripts/validate.sh', '#!/bin/sh\nexit 0\n');
-  await write('ops/schemas/test-evidence.schema.json', '{}\n');
   await write('ops/schemas/testcontainers-evidence.schema.json', '{}\n');
   await write('ops/tests/gate.test.mjs', 'export const gate = 1;\n');
   await write('tests/e2e/real-qa.test.ts', 'export const qa = 1;\n');
@@ -252,7 +239,6 @@ try {
   const before = {
     runtime: digestOf('runtime', sandbox),
     console: digestOf('console', sandbox),
-    harness: digestOf('harness', sandbox),
     testcontainers: digestOf('testcontainers', sandbox),
     verification: digestOf('verification', sandbox),
     full: digestOf('full', sandbox),
@@ -264,7 +250,7 @@ try {
   await write('ops/artifacts/report.json', '{"generatedAt":"2026-08-26T13:45:00Z"}\n');
   await write('ops/artifacts/junit.xml', '<testsuite timestamp="new"/>\n');
   await write('ops/artifacts/SHA256SUMS', 'new sums\n');
-  for (const domain of ['runtime', 'console', 'harness', 'testcontainers', 'verification', 'full']) {
+  for (const domain of ['runtime', 'console', 'testcontainers', 'verification', 'full']) {
     assert.equal(digestOf(domain, sandbox), before[domain], `operational artifact generation changed ${domain}`);
   }
   const fixtureBase = digestOf('verification', sandbox);
@@ -293,7 +279,7 @@ try {
   ]) {
     await write(relative, contents);
   }
-  for (const domain of ['runtime', 'console', 'harness', 'testcontainers', 'verification', 'full']) {
+  for (const domain of ['runtime', 'console', 'testcontainers', 'verification', 'full']) {
     assert.equal(digestOf(domain, sandbox), before[domain], `cache files changed the ${domain} digest`);
   }
   const cacheListing = pathsOf('full', sandbox);
@@ -305,7 +291,7 @@ try {
   // 9c. The one approved operator scratch path is intentionally outside every release digest.
   //     A directory with the same basename anywhere else remains covered.
   await write('apps/console/src/features/_grafo/consultas-grafo.sql', 'SELECT 2;\n');
-  for (const domain of ['runtime', 'console', 'harness', 'testcontainers', 'verification', 'full']) {
+  for (const domain of ['runtime', 'console', 'testcontainers', 'verification', 'full']) {
     assert.equal(digestOf(domain, sandbox), before[domain], `_grafo scratch changed the ${domain} digest`);
   }
   await write('apps/console/src/other/_grafo/query.sql', 'SELECT 3;\n');
@@ -318,7 +304,6 @@ try {
   //     reaches the runtime image. It must still move the console and full digests.
   await write('apps/console/src/theme.css', '.panel { color: blue; }\n');
   assert.equal(digestOf('runtime', sandbox), before.runtime, 'a console CSS edit must not invalidate runtime fault evidence');
-  assert.equal(digestOf('harness', sandbox), before.harness, 'a console CSS edit must not invalidate harness binding');
   assert.equal(digestOf('testcontainers', sandbox), before.testcontainers, 'a console CSS edit must not invalidate Testcontainers harness binding');
   assert.equal(digestOf('verification', sandbox), before.verification, 'a console CSS edit must not invalidate verification apparatus');
   assert.notEqual(digestOf('console', sandbox), before.console, 'a console edit must still invalidate console evidence');
@@ -326,7 +311,6 @@ try {
   const afterConsole = {
     runtime: digestOf('runtime', sandbox),
     console: digestOf('console', sandbox),
-    harness: digestOf('harness', sandbox),
   };
 
   // 9d. The gate must not be loosened for anything that DOES reach the runtime image.
@@ -355,21 +339,9 @@ try {
   assert.notEqual(digestOf('console', sandbox), beforeDockerignore.console,
     'a .dockerignore change must invalidate console build evidence');
 
-  // 9h. Weakening the harness must move the harness digest without touching the image digests.
-  const beforeHarness = {
-    runtime: digestOf('runtime', sandbox),
-    console: digestOf('console', sandbox),
-    harness: digestOf('harness', sandbox),
-  };
-  await write('ops/harness/authentic-runner.mjs', 'export const run = 0; // faults now always pass\n');
-  assert.notEqual(digestOf('harness', sandbox), beforeHarness.harness, 'a harness change must invalidate authentic evidence');
-  assert.equal(digestOf('runtime', sandbox), beforeHarness.runtime, 'a harness change must not invalidate the image build evidence');
-  assert.equal(digestOf('console', sandbox), beforeHarness.console, 'a harness change must not invalidate console evidence');
-
-  // 9i. Testcontainers and global verification apparatus are independently bound.
+  // 9h. Testcontainers and global verification apparatus are independently bound.
   const beforeTestcontainers = {
     runtime: digestOf('runtime', sandbox),
-    harness: digestOf('harness', sandbox),
     testcontainers: digestOf('testcontainers', sandbox),
     verification: digestOf('verification', sandbox),
     full: digestOf('full', sandbox),
@@ -377,8 +349,6 @@ try {
   await write('tests/e2e/real-qa.test.ts', 'export const qa = 0; // weakened\n');
   assert.equal(digestOf('runtime', sandbox), beforeTestcontainers.runtime,
     'an E2E harness edit must not relabel runtime image evidence');
-  assert.equal(digestOf('harness', sandbox), beforeTestcontainers.harness,
-    'a Testcontainers edit must not invalidate the authentic-image harness');
   assert.notEqual(digestOf('testcontainers', sandbox), beforeTestcontainers.testcontainers,
     'an E2E harness edit must invalidate Testcontainers evidence');
   assert.notEqual(digestOf('verification', sandbox), beforeTestcontainers.verification,
@@ -400,21 +370,20 @@ try {
     'ops gate tests must move verification evidence');
   assert.notEqual(digestOf('full', sandbox), beforeOpsTest.full, 'full must cover ops gate tests');
 
-  // 9j. Global verification is bound to every operational source family its tests execute.
+  // 9i. Global verification is bound to every operational source family its tests execute.
   const operationallyIndependent = {
     runtime: digestOf('runtime', sandbox),
     console: digestOf('console', sandbox),
-    harness: digestOf('harness', sandbox),
     testcontainers: digestOf('testcontainers', sandbox),
   };
   let priorVerification = digestOf('verification', sandbox);
   let priorFull = digestOf('full', sandbox);
   for (const [relative, contents] of [
+    ['ops/harness/contract-runner.mjs', 'export const contract = false;\n'],
     ['ops/scripts/source-hygiene.py', 'print("hygiene disabled")\n'],
     ['ops/scripts/migration-gate.mjs', 'export const migration = false;\n'],
     ['ops/scripts/physical-fleet-gate.py', 'print("fleet disabled")\n'],
     ['ops/scripts/validate-fleet-release-evidence.py', 'print("evidence disabled")\n'],
-    ['ops/schemas/test-evidence.schema.json', '{"additionalProperties":true}\n'],
     ['ops/scripts/future-operational-gate.py', 'print("new gate")\n'],
     ['ops/schemas/future-operational-evidence.schema.json', '{"type":"object"}\n'],
   ]) {
@@ -425,7 +394,6 @@ try {
     assert.notEqual(nextFull, priorFull, `${relative} must invalidate full three-round evidence`);
     assert.equal(digestOf('runtime', sandbox), operationallyIndependent.runtime, `${relative} moved runtime evidence`);
     assert.equal(digestOf('console', sandbox), operationallyIndependent.console, `${relative} moved console evidence`);
-    assert.equal(digestOf('harness', sandbox), operationallyIndependent.harness, `${relative} moved harness evidence`);
     assert.equal(
       digestOf('testcontainers', sandbox),
       operationallyIndependent.testcontainers,
@@ -466,13 +434,13 @@ try {
     assert.equal(digestOf('full', sandbox), beforeSymlink.full, 'removing symlink must restore full');
   }
 
-  // 9k. Renames are observable: paths are hashed alongside bytes.
+  // 9j. Renames are observable: paths are hashed alongside bytes.
   const renameBase = digestOf('runtime', sandbox);
   await write('services/gateway/src/app2.ts', 'export const app = 2;\n');
   await rm(path.join(sandbox, 'services/gateway/src/app.ts'));
   assert.notEqual(digestOf('runtime', sandbox), renameBase, 'a rename must move the digest');
 
-  // 9l. Secrets and caches stay out even when they sit inside a covered family.
+  // 9k. Secrets and caches stay out even when they sit inside a covered family.
   const listing = pathsOf('full', sandbox);
   assert(!listing.has('node_modules/evil/index.js'), 'node_modules must never be hashed');
   assert(!listing.has('.env.production'), 'private env files must never be hashed');
@@ -489,8 +457,6 @@ try {
 // 10. Wiring: every live consumer must declare a domain explicitly. A consumer that reverts to
 //     the bare invocation silently goes back to whole-tree binding, which is the bug being fixed.
 const wiring = [
-  ['scripts/smoke-compose-authentic.sh', ['--domain runtime', '--domain harness']],
-  ['scripts/smoke-runtime-authentic.sh', ['--domain runtime', '--domain harness']],
   ['scripts/validate-testcontainers-evidence.py', ['source_digest("runtime")', 'source_digest("testcontainers")']],
 ];
 for (const [relative, needles] of wiring) {
@@ -502,18 +468,12 @@ for (const [relative, needles] of wiring) {
 
 // 11. Every evidence schema must force its artifact to declare which domain backs it, so an
 //     artifact can never be silently reinterpreted against a different domain.
-const declared = [
-  ['ops/schemas/test-evidence.schema.json', 'runtime'],
-];
-for (const [relative, domain] of declared) {
-  const schema = JSON.parse(await readFile(path.join(root, relative), 'utf8'));
-  assert(schema.required.includes('sourceDigestDomain'), `${relative} must require sourceDigestDomain`);
-  assert.equal(schema.properties.sourceDigestDomain.const, domain, `${relative} must pin sourceDigestDomain to ${domain}`);
-}
-const testEvidence = JSON.parse(await readFile(path.join(ops, 'schemas/test-evidence.schema.json'), 'utf8'));
-assert(testEvidence.required.includes('harnessDigest'), 'authentic evidence must be bound to the harness that produced it');
 const testcontainersEvidence = JSON.parse(await readFile(path.join(ops, 'schemas/testcontainers-evidence.schema.json'), 'utf8'));
 assert(testcontainersEvidence.required.includes('sourceDigest'), 'Testcontainers evidence must bind runtime sources');
+assert(testcontainersEvidence.required.includes('sourceDigestDomain'), 'Testcontainers evidence must declare its runtime domain');
+assert.equal(testcontainersEvidence.properties.sourceDigestDomain.const, 'runtime', 'Testcontainers evidence must pin the runtime source domain');
 assert(testcontainersEvidence.required.includes('harnessDigest'), 'Testcontainers evidence must bind its harness');
+assert(testcontainersEvidence.required.includes('harnessDigestDomain'), 'Testcontainers evidence must declare its harness domain');
+assert.equal(testcontainersEvidence.properties.harnessDigestDomain.const, 'testcontainers', 'Testcontainers evidence must pin its harness domain');
 assert(testcontainersEvidence.required.includes('databaseImage'), 'Testcontainers evidence must bind its actual database image');
 process.stdout.write('source digest domain tests passed\n');

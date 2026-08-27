@@ -64,7 +64,6 @@ OPERATIONAL_ROOT_FILES = (
     "README.md",
     "INSTALLATION.md",
     "GATE_CONTRACT.md",
-    "compose.authentic.yaml",
     "compose.test.yaml",
     "container-aliases.json",
     "hermes-runtime.json",

@@ -91,11 +91,10 @@ list_overrides() {
   ((${#active[@]} == 0)) || printf '%s\n' "${active[@]}"
 }
 
-target=${1:?usage: compose-files.sh dev|test|authentic|prod|overrides}
+target=${1:?usage: compose-files.sh dev|test|prod|overrides}
 case "$target" in
   dev) printf '%s\n' "$REPO/deploy/compose.dev.yaml" ;;
   test) printf '%s\n' "$OPS/compose.test.yaml" ;;
-  authentic) printf '%s\n' "$OPS/compose.authentic.yaml" ;;
   overrides) list_overrides ;;
   prod)
     printf '%s\n' "$REPO/deploy/compose.yaml"

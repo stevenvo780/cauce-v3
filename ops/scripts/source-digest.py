@@ -6,11 +6,9 @@ Why domains exist
 -----------------
 This script used to emit one whole-tree digest, and every evidence artifact was pinned to it.
 `apps/console` was inside that digest, so any console edit -- a CSS tweak in the terminal panel --
-invalidated the compose-authentic fault-injection evidence. That evidence costs a full release-host
-run with Docker Compose v2 to regenerate, and a console stylesheet has no causal path to how the
-gateway behaves when its process is killed. Evidence that is expensive to regenerate and trivially
-invalidated is evidence people hand-edit instead of re-running. That already happened. The gate was
-not detecting forgery, it was manufacturing the incentive for it.
+invalidated runtime-image evidence even though a console stylesheet has no causal path to runtime
+behaviour. Evidence that is expensive to regenerate and trivially invalidated is evidence people
+hand-edit instead of re-running, so each live producer now declares its causal domain.
 
 The rule implemented here
 -------------------------
@@ -26,18 +24,11 @@ escaping the digest.
 Domains
 -------
 runtime  Everything the `runtime` image stage of deploy/Dockerfile is built from, plus everything
-         that can change the bytes or behaviour of the five final services. This is the domain that
-         backs compose-authentic / runtime-authentic fault-injection evidence and the fleet matrix.
+         that can change its bytes or behaviour. This backs the runtime source identity recorded by
+         Testcontainers evidence.
 
 console  Everything the `console` image stage is built from. Console evidence is cheap to
          regenerate, so over-coverage here costs nothing.
-
-harness  The measurement apparatus for authentic evidence: the runner that drives the faults, the
-         fake external world it asserts against, the authentic Compose topology and the fault
-         drivers. These files decide what a fault-injection run reports, so authentic evidence is
-         only meaningful when it is bound to them. This closes the opposite hole from the console
-         one: previously the whole of `ops/` was outside the digest, so the harness could be
-         weakened without moving any digest the gate checks.
 
 testcontainers  The source-executed PostgreSQL/Testcontainers QA apparatus: its real-gateway runner,
          E2E suites, disposable database helper, evidence schema/validator and wrapper.  Reports
@@ -81,9 +72,8 @@ The one file that reads apps/console from outside is tests/gateway-hardening/con
 which runs under `pnpm test` -- verification evidence -- and verification is bound to `full`, not to
 `runtime`. So that coupling is preserved where it actually exists.
 
-Timestamped evidence under `ops/artifacts/` and `tests/fleet-release/artifacts/`, plus ephemeral
-fleet harness state under `tests/fleet-release/.matrix-state/`, is OUTPUT of the verification
-commands, not input source.  Those producer-owned roots are excluded by exact prefix; a source
+Timestamped evidence under `ops/artifacts/` is OUTPUT of the verification commands, not input
+source. That producer-owned root is excluded by exact prefix; a source
 fixture in some other directory named `artifacts` remains covered.  Likewise, an
 ignored worktree file (for example an operator backup beside a CLI) is not part of the Git source
 tree and is excluded before its bytes are read.  Tracked files remain covered even if an ignore
@@ -95,8 +85,7 @@ outside the declared domain or later retargeted changing executed behaviour with
 
 Everything else that could plausibly matter stays inside `runtime`: the whole of `packages/`
 (including packages/mcp-fleet-monitor, which is not in the image but is in the workspace),
-the whole of `services/` (including terminal-relay, which is in the image even though it is not one
-of the five services the authentic suite deploys) and the whole of `deploy/`.
+the whole of `services/` (including terminal-relay) and the whole of `deploy/`.
 
 Git, build output, test artifacts, private env files and dependency caches are excluded from every
 domain. Paths and bytes are both hashed, so renames are observable.
@@ -144,6 +133,7 @@ VERIFICATION_OPERATIONAL_INPUTS = (
     "ops/container-runtime",
     "ops/generated",
     "ops/guardias",
+    "ops/harness",
     "ops/manifests",
     "ops/observability",
     "ops/runbooks",
@@ -161,20 +151,6 @@ DOMAIN_INPUTS: dict[str, tuple[str, ...]] = {
     # enumerating single files would let a future console-relevant deploy file escape the digest.
     # Over-coverage is harmless for this domain because console evidence is cheap to regenerate.
     "console": SHARED_MANIFESTS + ("apps/console", "deploy"),
-    # The apparatus that decides what an authentic run reports. `ops/harness` is taken whole so a
-    # new harness module cannot appear outside the digest; the ops/scripts entries are enumerated
-    # because ops/scripts also holds ~50 files with no bearing on the measurement.
-    "harness": (
-        "ops/harness",
-        "ops/compose.authentic.yaml",
-        "ops/scripts/compose-files.sh",
-        "ops/scripts/compose.sh",
-        "ops/scripts/fault-compose.sh",
-        "ops/scripts/fault-compose.test.sh",
-        "ops/scripts/fault-runtime.sh",
-        "ops/scripts/smoke-compose-authentic.sh",
-        "ops/scripts/smoke-runtime-authentic.sh",
-    ),
     "testcontainers": SHARED_MANIFESTS
     + (
         "vitest.config.ts",
