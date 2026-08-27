@@ -20,6 +20,7 @@
     "lint:console": "pnpm --filter @cauce/console lint",
     "lint": "pnpm lint:core && pnpm lint:adapter && pnpm lint:mcp && pnpm lint:console && pnpm lint:calidad",
     "lint:calidad": "node scripts/calidad.mjs",
+    "grafo": "node scripts/grafo.mjs",
     "typecheck:core": "tsc --noEmit -p tsconfig.json",
     "typecheck:adapter": "pnpm --filter @cauce/adapter-sdk typecheck",
     "typecheck:mcp": "pnpm --filter @cauce/mcp-fleet-monitor typecheck",
