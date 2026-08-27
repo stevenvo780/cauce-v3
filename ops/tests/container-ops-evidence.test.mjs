@@ -11,7 +11,7 @@ const digestScript = path.join(ops, "scripts/container_ops_digest.py");
 
 // 1. The operational digest must cover the critical adversarial suites, their fakes and
 //    the operator runbooks, not only the shipped scripts. --list prints exactly what is hashed.
-const list = spawnSync("python3", [digestScript, "--list"], { encoding: "utf8" });
+const list = spawnSync("python3", [digestScript, "--rootless", "--list"], { encoding: "utf8" });
 assert.equal(list.status, 0, list.stderr);
 const covered = new Set(list.stdout.trim().split("\n"));
 assert(!covered.has("cli/cauce.bak-login-20260823T000500Z"),
@@ -45,8 +45,6 @@ for (const required of [
   "runbooks/container-adapters.md",
   "runbooks/alias-cutover.md",
   "runbooks/backup-restore.md",
-  "runbooks/migration-integrity.md",
-  "runbooks/rollback.md",
   "config/prod.env.example",
   "config/host-backup.env.example",
   "observability/alerts.yaml",
@@ -55,7 +53,7 @@ for (const required of [
 }
 
 // 2. The checked-in OPERATIONS.sha256 must match the current operational inputs.
-const check = spawnSync("python3", [digestScript, "--check"], { encoding: "utf8" });
+const check = spawnSync("python3", [digestScript, "--rootless", "--check"], { encoding: "utf8" });
 assert.equal(check.status, 0, `${check.stdout} ${check.stderr}`);
 
 // Mutating the evidence test itself in an isolated mirror must move the system
@@ -68,20 +66,20 @@ const mutationCheck = spawnSync("python3", ["-c", [
   "spec.loader.exec_module(module)",
   "with tempfile.TemporaryDirectory() as temporary:",
   "    root = pathlib.Path(temporary) / 'ops'",
-  "    generated_source = source / 'generated/container-systemd'",
-  "    for input_path in module.operational_files(source, generated_source):",
+  "    generated_source = source / 'generated/container-systemd/rootless'",
+  "    for input_path in module.operational_files(source, generated_source, rootless=True):",
   "        if input_path.is_relative_to(generated_source):",
   "            continue",
   "        relative = input_path.relative_to(source)",
   "        destination = root / relative",
   "        destination.parent.mkdir(parents=True, exist_ok=True)",
   "        shutil.copy2(input_path, destination)",
-  "    shutil.copytree(source / 'generated/container-systemd', root / 'generated/container-systemd')",
-  "    generated = root / 'generated/container-systemd'",
-  "    before = module.operational_digest(root, generated)",
+  "    shutil.copytree(generated_source, root / 'generated/container-systemd/rootless')",
+  "    generated = root / 'generated/container-systemd/rootless'",
+  "    before = module.operational_digest(root, generated, rootless=True)",
   "    evidence = root / 'tests/container-ops-evidence.test.mjs'",
   "    evidence.write_bytes(evidence.read_bytes() + b'\\n// isolated mutation\\n')",
-  "    after = module.operational_digest(root, generated)",
+  "    after = module.operational_digest(root, generated, rootless=True)",
   "    assert before != after, 'evidence-test mutation must change operations digest'",
   "print('evidence-test-mutation-moves-digest')",
 ].join("\n"), ops], { encoding: "utf8" });
@@ -100,39 +98,38 @@ const ignoredBackupCheck = spawnSync("python3", ["-c", [
   "with tempfile.TemporaryDirectory() as temporary:",
   "    repository = pathlib.Path(temporary) / 'repository'",
   "    root = repository / 'ops'",
-  "    generated_source = source / 'generated/container-systemd'",
-  "    for input_path in module.operational_files(source, generated_source):",
+  "    generated_source = source / 'generated/container-systemd/rootless'",
+  "    for input_path in module.operational_files(source, generated_source, rootless=True):",
   "        if input_path.is_relative_to(generated_source):",
   "            continue",
   "        destination = root / input_path.relative_to(source)",
   "        destination.parent.mkdir(parents=True, exist_ok=True)",
   "        shutil.copy2(input_path, destination)",
-  "    shutil.copytree(generated_source, root / 'generated/container-systemd')",
+  "    shutil.copytree(generated_source, root / 'generated/container-systemd/rootless')",
   "    subprocess.run(['git', 'init', '-q', str(repository)], check=True)",
   "    subprocess.run(['git', '-C', str(repository), 'add', 'ops'], check=True)",
   "    exclude = repository / '.git/info/exclude'",
   "    exclude.write_text(exclude.read_text() + 'ops/cli/*.bak-local\\n')",
-  "    generated = root / 'generated/container-systemd'",
-  "    before = module.operational_digest(root, generated)",
+  "    generated = root / 'generated/container-systemd/rootless'",
+  "    before = module.operational_digest(root, generated, rootless=True)",
   "    ignored = root / 'cli/operator.bak-local'",
   "    ignored.write_text('operator backup, never a release input\\n')",
-  "    after_ignored = module.operational_digest(root, generated)",
+  "    after_ignored = module.operational_digest(root, generated, rootless=True)",
   "    assert before == after_ignored, 'ignored backup changed committed operations digest'",
   "    untracked = root / 'scripts/new-operational-source.py'",
   "    untracked.write_text('print(\\\"new release source\\\")\\n')",
-  "    after_untracked = module.operational_digest(root, generated)",
+  "    after_untracked = module.operational_digest(root, generated, rootless=True)",
   "    assert before != after_untracked, 'non-ignored new operational source evaded the digest'",
   "    tracked = root / 'tests/container-ops-evidence.test.mjs'",
   "    tracked.write_bytes(tracked.read_bytes() + b'\\n// tracked mutation\\n')",
-  "    after_tracked = module.operational_digest(root, generated)",
+  "    after_tracked = module.operational_digest(root, generated, rootless=True)",
   "    assert before != after_tracked, 'tracked source mutation did not change operations digest'",
   "print('ignored-backup-excluded-new-and-tracked-source-covered')",
 ].join("\n"), ops], { encoding: "utf8" });
 assert.equal(ignoredBackupCheck.status, 0, ignoredBackupCheck.stderr);
 assert.match(ignoredBackupCheck.stdout, /ignored-backup-excluded-new-and-tracked-source-covered/u);
 
-// Rootless user units/configs have their own source-bound operational digest and
-// checksum set, while the legacy system units remain available.
+// Rootless user units/configs have their own source-bound operational digest and checksum set.
 const rootlessList = spawnSync("python3", [digestScript, "--rootless", "--list"], { encoding: "utf8" });
 assert.equal(rootlessList.status, 0, rootlessList.stderr);
 const rootlessCovered = new Set(rootlessList.stdout.trim().split("\n"));

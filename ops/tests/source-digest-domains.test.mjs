@@ -120,7 +120,7 @@ for (const sentinel of [
   'ops/guardias/cauce-huerfanas.sh',
   'ops/manifests/kant.yaml',
   'ops/observability/alerts.yaml',
-  'ops/runbooks/deploy.md',
+  'ops/runbooks/alerting.md',
   'ops/schemas/build-evidence.schema.json',
   'ops/scripts/source-digest.py',
   'eslint.config.js',
