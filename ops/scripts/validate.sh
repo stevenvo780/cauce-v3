@@ -24,6 +24,9 @@ for path in sorted((root / 'scripts').glob('*.py')):
 for path in sorted((root / 'container-runtime').glob('*.py')):
     compile(path.read_text(encoding='utf-8'), str(path), 'exec')
     print(f'python syntax ok: {path}')
+for path in sorted((root / 'guardias').glob('*.py')):
+    compile(path.read_text(encoding='utf-8'), str(path), 'exec')
+    print(f'python syntax ok: {path}')
 PY
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/validate-manifests.py"
 fleet_size=$(python3 - "$ROOT/container-aliases.json" <<'PY'
@@ -70,6 +73,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_provision_alertmanager_confi
 node "$ROOT/tests/alias-runner.test.mjs"
 node "$ROOT/tests/container-cutover.test.mjs"
 node "$ROOT/tests/container-ops-evidence.test.mjs"
+node "$ROOT/tests/sector-table.test.mjs"
 # Guards the source-digest domain split: proves the runtime domain still covers everything that
 # reaches the runtime image and that console is the only thing it drops. Removing a family from
 # a digest LOOSENS the gate, so the narrowing has to be pinned by a test.

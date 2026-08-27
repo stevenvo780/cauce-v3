@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cauce — envoltorio local: corre el `cauce` de verdad, que vive en kratos, sin tener que hacer
-# el ssh a mano. Lo escribio la sesion de relevo del 2026-07-31.
+# el ssh a mano.
 #
 # Por que existe: el CLI real es kratos:~/.local/bin/cauce y necesita estar en la torre (habla con
 # docker y con las sesiones tmux de los contenedores). Desde el portatil hacia falta acordarse del
@@ -30,7 +30,8 @@ if [ "${1:-}" = probar ]; then
   shift
   [ $# -ge 1 ] || { echo "uso: cauce probar <alias>" >&2; exit 2; }
   A=$1
-  TEN=$(ssh -o BatchMode=yes "$HOST" "bash -lc $(printf '%q' "python3 \$HOME/.local/share/cauce-v3/ops/scripts/container-alias-query.py $A")" 2>/dev/null | cut -f1)
+  [[ $A =~ ^[A-Za-z0-9_-]+$ ]] || { echo "alias invalido: $A" >&2; exit 2; }
+  TEN=$(ssh -o BatchMode=yes "$HOST" "bash -lc $(printf '%q' "python3 \$HOME/.local/share/cauce-v3/ops/scripts/container-alias-query.py $(printf '%q' "$A")")" 2>/dev/null | cut -f1)
   [ -n "$TEN" ] || { echo "alias desconocido: $A" >&2; exit 2; }
   MARCA="PROBAR-$(tr -dc a-f0-9 </dev/urandom | head -c 8)"
   echo "  publicando entrega real a $A (tenant $TEN) con marca $MARCA"
@@ -56,11 +57,12 @@ except Exception: pass' 2>/dev/null)
   # reporta "el turno no paso por el arnes" sobre un turno que paso perfectamente.
   echo -n "  esperando"
   EST=; REPLY_TXT=; VISTO=; PANEL=; RC_PANEL=0
+  [[ $ID =~ ^[0-9a-f-]{36}$ ]] || { echo "id de entrega invalido: $ID" >&2; exit 3; }
   for i in $(seq 1 60); do
     R=$(ssh -o BatchMode=yes agora-storage "docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -At -F'|' -c \"select status, coalesce(regexp_replace(result#>>'{output,reply}','\\s+',' ','g'),'-') from deliveries where id='$ID';\"" 2>/dev/null)
     EST=${R%%|*}; REPLY_TXT=${R#*|}
     if [ -z "$VISTO" ] && [ "$RC_PANEL" != 3 ]; then
-      PANEL=$(ssh -o BatchMode=yes "$HOST" "bash -lc $(printf '%q' "\$HOME/.local/bin/cauce-panel $A")" 2>/dev/null)
+      PANEL=$(ssh -o BatchMode=yes "$HOST" "bash -lc $(printf '%q' "\$HOME/.local/bin/cauce-panel $(printf '%q' "$A")")" 2>/dev/null)
       RC_PANEL=$?
       printf '%s' "$PANEL" | grep -qF "$MARCA" && VISTO=1
     fi
@@ -69,7 +71,7 @@ except Exception: pass' 2>/dev/null)
   done
   # Una ultima mirada: si el turno fue mas rapido que el sondeo, la marca puede seguir en pantalla.
   if [ -z "$VISTO" ] && [ "$RC_PANEL" != 3 ]; then
-    PANEL=$(ssh -o BatchMode=yes "$HOST" "bash -lc $(printf '%q' "\$HOME/.local/bin/cauce-panel $A")" 2>/dev/null)
+    PANEL=$(ssh -o BatchMode=yes "$HOST" "bash -lc $(printf '%q' "\$HOME/.local/bin/cauce-panel $(printf '%q' "$A")")" 2>/dev/null)
     RC_PANEL=$?
     printf '%s' "$PANEL" | grep -qF "$MARCA" && VISTO=1
   fi

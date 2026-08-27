@@ -76,7 +76,7 @@ helper_en_contenedor() {  # $1=alias
 # variable que ese harness entiende. Es la MISMA clave (`CREDENTIAL_HOME`) y la misma traducción que
 # hace el supervisor en `container-adapter-supervisor.sh:571`; no hay una segunda fuente.
 #
-# Por qué existe (medido 2026-08-13 sobre atlas): el panel de la TUI y el adaptador son los DOS
+# Por qué existe (medido sobre atlas): el panel de la TUI y el adaptador son los DOS
 # creadores posibles de la sesión tmux, y el que gana la carrera le impone su entorno al servidor
 # para siempre. El adaptador nacía con `CODEX_HOME=/home/dev/.codex/cuenta-b` (de su .env) y el panel
 # que crea este CLI nacía sin la variable, así que `harnessConfigDirectory()` le devolvía el default
@@ -96,7 +96,7 @@ credencial_env_de() {  # $1=alias $2=harness  -> "VAR=valor", o nada
   esac
 }
 
-# 2026-08-19 (zeus): el modo de permisos del panel de claude. Mismo motivo que la credencial de
+# El modo de permisos del panel de claude. Mismo motivo que la credencial de
 # arriba —el `docker exec` no hereda el entorno del supervisor—, con un agravante: el panel tiene
 # DOS creadores posibles (este CLI y el adaptador) y el que gana la carrera le impone su linea de
 # arranque a la sesion. En un `cauce <alias> on` gana SIEMPRE el CLI, asi que sin esto el panel
@@ -118,7 +118,7 @@ sesion() {  # $1=accion $2=alias $3=contenedor $4=usuario $5=harness
   if es_host_native "$2"; then
     [ -f "$helper" ] || return 3
     # `ensure` de un alias host-native va por SU PANEL, no por el helper del SDK. Dos motivos, los
-    # dos medidos el 2026-08-06 sobre kant: (1) el helper toma el CODEX_HOME del shell que ejecuta
+    # dos medidos sobre kant: (1) el helper toma el CODEX_HOME del shell que ejecuta
     # `cauce`, asi que un `cauce kant on` escrito en fish le impuso a kant el home de la flota y
     # arranco donde su conversacion no existia; (2) el helper arranca el harness EN BLANCO, asi que
     # aunque el home fuera el bueno el contexto se perdia igual. El panel fija el home correcto y
@@ -249,7 +249,7 @@ alias = sys.argv[1]
 # El stateDirectory REAL viene de container-alias-query.py, no se deduce del HOME: los alias
 # openclaw lo tienen en <home>/.openclaw/cauce-v3/<alias>, no en <home>/.local/state/... Con la
 # ruta deducida el CLI leia un fichero inexistente y mostraba una sesion huerfana que el bus nunca
-# toca, con el cartel verde de COMPARTIDA. Medido el 2026-07-31: solo argos coincidia, por azar.
+# toca, con el cartel verde de COMPARTIDA. Medido: solo argos coincidia, por azar.
 state = sys.argv[2]
 home = os.path.expanduser("~")
 
@@ -652,7 +652,7 @@ cmd_off() {
   fi
 }
 
-# --- MULTI-HOST (2026-08-05, zeus) -------------------------------------------------------------
+# --- MULTI-HOST -------------------------------------------------------------------------------
 # La flota dejo de vivir en un solo host: 11 alias se mudaron al VPS y este CLI hablaba SIEMPRE
 # con el docker y el systemd locales. Sin esto, `cauce argos estado` en la torre contesta sobre un
 # contenedor apagado: no falla, MIENTE, que es peor.
@@ -683,7 +683,7 @@ remoto_cauce() {  # $1=alias, resto=argumentos tal cual
 # Lo unico configurable por alias es donde vive el CODEX_HOME, y va en su .env del host — nunca en
 # el repo, porque el repo no tiene por que saber de cuentas.
 #
-# 2026-08-13: la clave se llama `CREDENTIAL_HOME`, NO `CODEX_HOME`. Esto leia `CODEX_HOME`, un
+# La clave se llama `CREDENTIAL_HOME`, NO `CODEX_HOME`. Esto leia `CODEX_HOME`, un
 # nombre que el allowlist de `container-adapter-supervisor.sh` (~lineas 112-135) ni siquiera acepta:
 # escribirlo en un .env deja al alias sin arrancar. O sea que este `sed` no podia acertar nunca y
 # `codex_home_de atlas` devolvia el fallback `/home/dev/.codex` mientras su adaptador corria con
@@ -718,7 +718,7 @@ existe_en_alias() {  # $1=alias $2=contenedor $3=usuario $4=ruta
   else docker exec --user "$3" "$2" test -f "$4" 2>/dev/null; fi
 }
 
-# 2026-08-22 (zeus): el binario del arnes NO viene garantizado en la imagen. `claw:latest` trae
+# El binario del arnes NO viene garantizado en la imagen. `claw:latest` trae
 # `claude` y `openclaw`; `codex` se instala SOLO en los alias que lo usan. Medido ese dia:
 #     agv2-miguel-finca-oc (gaia)  codex AUSENTE   claude /usr/bin/claude   openclaw /usr/bin/openclaw
 #     agv2-jhon-hegel-oc   (hegel) codex AUSENTE   claude /usr/bin/claude   openclaw /usr/bin/openclaw
@@ -813,7 +813,7 @@ objetivos_declarados() {  # $1=harness $2=alias $3=ctr $4=usu $5=cfgdir-claude $
   esac
 }
 
-# 2026-08-22 (zeus). ESTO ESTABA CONDENADO A FALLAR SIEMPRE, por diseno.
+# ESTO ESTABA CONDENADO A FALLAR SIEMPRE, por diseno.
 #
 # Lo que hacia: lanzar `claude setup-token` dentro del contenedor y nada mas. Pero `setup-token`
 # IMPRIME un token `sk-ant-oat01-...` por pantalla y NO ESCRIBE NINGUN FICHERO — esta pensado para
@@ -821,7 +821,7 @@ objetivos_declarados() {  # $1=harness $2=alias $3=ctr $4=usu $5=cfgdir-claude $
 # `.credentials.json`, lo encontraba igual que antes, y remataba con "la credencial NO cambio — el
 # login no prendio". O sea: el CLI corria un comando que no podia satisfacer su propia comprobacion,
 # dejaba el secreto en pantalla y informaba de que no habia servido. Steven quemo asi un token de un
-# ANO de validez el 2026-08-22: se genero, se imprimio y se perdio, porque nadie lo instalo.
+# ANO de validez: se genero, se imprimio y se perdio, porque nadie lo instalo.
 #
 # POR QUE SE INSTALA EN VEZ DE SOLO AVISAR. Porque el hermano que SI funciona ya esta montado asi.
 # Medido con `cauce hegel login --ver` (solo lectura): hegel tiene
@@ -831,7 +831,7 @@ objetivos_declarados() {  # $1=harness $2=alias $3=ctr $4=usu $5=cfgdir-claude $
 # nunca por argumento. Avisar y no instalar dejaria a Steven pegando JSON a mano por `docker exec`,
 # que es justo la clase de error que este CLI existe para quitar de en medio.
 #
-# LA FORMA DEL FICHERO ESTA MEDIDA, NO RECORDADA. Probado el 2026-08-22 dentro de
+# LA FORMA DEL FICHERO ESTA MEDIDA, NO RECORDADA. Probado dentro de
 # agv2-miguel-finca-oc con un MARCADOR que no es un token, y contra un directorio vacio como control
 # negativo (`claude auth status --text`, que lee el estado local):
 #     dir vacio, sin fichero                            -> "Not logged in."        rc=1   <- control
@@ -991,7 +991,7 @@ cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
   printf "  ${c_dim}%s${c_reset}\n" "$(printf '─%.0s' $(seq 1 62))"
 
   if ! contenedor_alcanzable "$a" "$ctr"; then
-    # 2026-08-22 (zeus): antes esto decia SIEMPRE "corre esto donde vivan los contenedores", incluso
+    # Antes esto decia SIEMPRE "corre esto donde vivan los contenedores", incluso
     # ejecutandose EN la maquina donde viven. A Steven le mando a otro host con `cauce gaia login`
     # cuando la verdad era que el contenedor no existia en ninguno. Un mensaje que manda a un sitio
     # equivocado cuesta mas que no decir nada.
@@ -1053,7 +1053,7 @@ cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
 
   # El aviso va ANTES de la pregunta, no despues de parar: quien confirma tiene que saber que a
   # partir de ese "si" el alias queda APAGADO, y cuanto puede durar. Paso dos veces la noche del
-  # 2026-08-12: el codigo de un solo uso de --device-auth dura hasta 15 minutos, el humano se
+  # El codigo de un solo uso de --device-auth dura hasta 15 minutos, el humano se
   # demoro, y el alias se comio ese cuarto de hora caido — entregas encoladas y el guardia
   # reportandolo caido con gravedad 95. Nadie tiene que adivinar esto leyendo el codigo.
   local tiene_codex=0 o2

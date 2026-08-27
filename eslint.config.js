@@ -9,7 +9,11 @@ export default tseslint.config(
     languageOptions: {
       globals: {
         console: 'readonly', process: 'readonly', URL: 'readonly', Buffer: 'readonly',
-        setTimeout: 'readonly', clearTimeout: 'readonly'
+        setTimeout: 'readonly', clearTimeout: 'readonly', setInterval: 'readonly',
+        clearInterval: 'readonly', fetch: 'readonly', URLSearchParams: 'readonly',
+        AbortController: 'readonly', AbortSignal: 'readonly', TextDecoder: 'readonly', TextEncoder: 'readonly',
+        crypto: 'readonly', structuredClone: 'readonly', WebSocket: 'readonly',
+        performance: 'readonly', queueMicrotask: 'readonly', setImmediate: 'readonly'
       }
     }
   },

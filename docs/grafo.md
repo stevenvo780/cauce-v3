@@ -18,8 +18,8 @@ graph LR
   scripts __> services_telegram_bridge
   tests_unit __> ops_scripts
   tests_gateway_hardening __> services_gateway
-  scripts __> ops_pty_agent
   packages_adapter_sdk __> packages_protocol
+  scripts __> ops_pty_agent
   scripts __> services_terminal_relay
   scripts __> ops_tests
   ops_tests __> ops_scripts
@@ -29,13 +29,13 @@ graph LR
   scripts __> deploy_runtime
   tests_unit __> ops_observability
   scripts __> packages_protocol
-  scripts __> ops_guardias
   tests_unit __> packages_protocol
   console __> packages_protocol
   services_telegram_bridge __> packages_store
   services_telegram_bridge __> packages_protocol
   tests_store_hardening __> packages_store
   ops_scripts __> deploy
+  scripts __> ops_guardias
   scripts __> tests_terminal_pty
   tests_gateway_hardening __> packages_protocol
   tests_gateway_hardening __> packages_store
@@ -49,7 +49,6 @@ graph LR
   tests_e2e __> services_gateway
   ops_scripts __> ops
   _raiz_ __> scripts
-  scripts __> ops_console_legibilidad
   scripts __> services_dispatcher
   tests_unit __> deploy
   ops_tests __> ops_harness
@@ -73,7 +72,6 @@ graph LR
   tests_e2e __> tests_helpers
   tests_gateway_hardening __> tests_helpers
   tests_unit __> ops_schemas
-  console __> ops_console_legibilidad
   ops_scripts __> packages_adapter_sdk
   ops_scripts __> console
   ops_scripts __> ops_observability
@@ -105,20 +103,20 @@ graph LR
 
 | Desde | Hacia | Refs |
 |---|---|---|
-| scripts | console | 135 |
+| scripts | console | 134 |
 | scripts | packages/adapter-sdk | 124 |
 | scripts | packages/store | 82 |
 | packages/store | packages/protocol | 78 |
 | scripts | services/gateway | 77 |
-| scripts | ops/scripts | 58 |
+| scripts | ops/scripts | 57 |
 | services/gateway | packages/store | 48 |
 | packages/store | tests/helpers | 41 |
 | services/gateway | packages/protocol | 34 |
 | scripts | services/telegram-bridge | 33 |
 | tests/unit | ops/scripts | 31 |
 | tests/gateway-hardening | services/gateway | 29 |
-| scripts | ops/pty-agent | 26 |
 | packages/adapter-sdk | packages/protocol | 25 |
+| scripts | ops/pty-agent | 25 |
 | scripts | services/terminal-relay | 25 |
 | scripts | ops/tests | 23 |
 | ops/tests | ops/scripts | 18 |
@@ -128,13 +126,13 @@ graph LR
 | scripts | deploy/runtime | 13 |
 | tests/unit | ops/observability | 13 |
 | scripts | packages/protocol | 11 |
-| scripts | ops/guardias | 11 |
 | tests/unit | packages/protocol | 11 |
 | console | packages/protocol | 10 |
 | services/telegram-bridge | packages/store | 10 |
 | services/telegram-bridge | packages/protocol | 10 |
 | tests/store-hardening | packages/store | 10 |
 | ops/scripts | deploy | 9 |
+| scripts | ops/guardias | 9 |
 | scripts | tests/terminal-pty | 9 |
 | tests/gateway-hardening | packages/protocol | 9 |
 | tests/gateway-hardening | packages/store | 9 |
@@ -148,7 +146,6 @@ graph LR
 | tests/e2e | services/gateway | 7 |
 | ops/scripts | ops | 6 |
 | (raiz) | scripts | 6 |
-| scripts | ops/console-legibilidad | 6 |
 | scripts | services/dispatcher | 6 |
 | tests/unit | deploy | 6 |
 | ops/tests | ops/harness | 5 |
@@ -172,7 +169,6 @@ graph LR
 | tests/e2e | tests/helpers | 3 |
 | tests/gateway-hardening | tests/helpers | 3 |
 | tests/unit | ops/schemas | 3 |
-| console | ops/console-legibilidad | 2 |
 | ops/scripts | packages/adapter-sdk | 2 |
 | ops/scripts | console | 2 |
 | ops/scripts | ops/observability | 2 |
@@ -205,8 +201,6 @@ graph LR
 | deploy/runtime | services/telegram-bridge | 1 |
 | deploy/runtime | services/terminal-relay | 1 |
 | ops | ops/harness | 1 |
-| ops/console-legibilidad | console | 1 |
-| ops/guardias | ops/scripts | 1 |
 | ops/pty-agent | services/gateway | 1 |
 | ops/scripts | ops/pty-agent | 1 |
 | ops/scripts | tests/gateway-hardening | 1 |
@@ -232,7 +226,6 @@ graph LR
 | scripts | tests/helpers | 1 |
 | scripts | deploy/postgres | 1 |
 | services/dispatcher | deploy | 1 |
-| services/gateway | console | 1 |
 | services/terminal-relay | tests/terminal-pty | 1 |
 | tests/e2e | packages/adapter-sdk | 1 |
 | tests/e2e | services/dispatcher | 1 |
@@ -260,19 +253,19 @@ graph LR
 
 - packages/protocol/src/index.ts ← 177
 - packages/store/src/index.ts ← 133
-- console/src/api/types.ts ← 119
+- console/src/api/types.ts ← 117
 - packages/adapter-sdk/src/sdk/types.ts ← 72
 - tests/helpers/postgres.ts ← 66
 - packages/store/src/db.ts ← 50
 - services/gateway/src/auth.ts ← 50
-- console/src/components/ui.tsx ← 47
-- console/src/mocks/server.ts ← 43
-- console/src/test/render.tsx ← 41
-- console/src/lib.ts ← 41
+- console/src/components/ui.tsx ← 46
+- console/src/mocks/server.ts ← 42
+- console/src/test/render.tsx ← 40
+- console/src/lib.ts ← 40
 - packages/adapter-sdk/src/sdk/durable-store.ts ← 33
 - services/telegram-bridge/src/types.ts ← 32
-- console/src/api/context.tsx ← 30
-- console/src/api/use-resource.ts ← 28
+- console/src/api/context.tsx ← 29
+- services/gateway/src/app.ts ← 28
 
 ## Candidatos huérfanos (fuente sin UNA referencia entrante detectada — verificar antes de tocar)
 
@@ -308,7 +301,7 @@ graph LR
 
 | Nodo | Ficheros |
 |---|---|
-| console | 285 |
+| console | 281 |
 | packages/adapter-sdk | 146 |
 | packages/store | 103 |
 | services/gateway | 95 |
@@ -322,16 +315,15 @@ graph LR
 | deploy/runtime | 16 |
 | packages/protocol | 13 |
 | ops/manifests | 11 |
-| ops/guardias | 10 |
 | services/dispatcher | 10 |
 | tests/terminal-pty | 10 |
+| ops/guardias | 9 |
 | tests/store-hardening | 9 |
 | deploy | 8 |
 | packages/mcp-fleet-monitor | 7 |
 | scripts | 7 |
-| ops/console-legibilidad | 6 |
 | (raiz) | 6 |
-| ops/harness | 4 |
+| ops/harness | 5 |
 | ops/observability | 4 |
 | tests/integration | 4 |
 | ops | 3 |

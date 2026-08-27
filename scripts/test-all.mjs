@@ -46,6 +46,22 @@ async function assertMatrixIsComplete() {
   }
   const absent = SUITES.filter((name) => !declared.includes(name));
   if (absent.length > 0) throw new Error(`the matrix names missing scripts: ${absent.join(', ')}`);
+
+  // Paquete con script `test` que ningun test:* invoca = suites que nadie ejecuta jamas.
+  const { execSync } = await import('node:child_process');
+  const paquetes = execSync('git ls-files "*/package.json"', { encoding: 'utf8' }).split('\n')
+    .filter((f) => f && !f.includes('node_modules'));
+  const invocaciones = Object.entries(manifest.scripts ?? {})
+    .filter(([name]) => name.startsWith('test:')).map(([, cmd]) => cmd).join(' ');
+  const sinRunner = [];
+  for (const ruta of paquetes) {
+    const pkg = JSON.parse(await readFile(resolve(root, ruta), 'utf8'));
+    if (!pkg.scripts?.test || !pkg.name) continue;
+    if (!invocaciones.includes(pkg.name) && !invocaciones.includes(dirname(ruta))) sinRunner.push(pkg.name);
+  }
+  if (sinRunner.length > 0) {
+    throw new Error(`workspace packages declare a test script that no root test:* ever invokes: ${sinRunner.join(', ')}`);
+  }
 }
 
 function runSuite(name) {

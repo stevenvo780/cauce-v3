@@ -6,6 +6,11 @@
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
+if (typeof process.getuid === 'function' && process.getuid() === 0) {
+  console.error('calidad: PROHIBIDO correr el gate como root (deja residuos root:root que bloquean a las instancias). Usa: su stev -c "umask 022 && ..."');
+  process.exit(1);
+}
+
 const BASE_PATH = 'scripts/calidad-base.json';
 const MAX = 800;
 const EXTS = /\.(ts|tsx|mjs|py|sh)$/;
@@ -13,8 +18,12 @@ const EXCLUIR = /^(packages\/store\/migrations\/|docs\/|node_modules\/)|\.sql$|\
 const COMENTARIO = /^\s*(\/\/|#|\*|\/\*)/;
 const FECHA = /\b20\d{2}-\d{2}-\d{2}\b/;
 
-const ficheros = execSync('git ls-files', { encoding: 'utf8' }).split('\n')
-  .filter(f => EXTS.test(f) && !EXCLUIR.test(f));
+const todos = execSync('git ls-files', { encoding: 'utf8' }).split('\n').filter(Boolean);
+const conShebang = f => {
+  if (/\.[a-z]+$/.test(f) || f.includes('.')) return false;
+  try { return /^#!.*\b(bash|sh|python3?)\b/.test(readFileSync(f, 'utf8').slice(0, 80)); } catch { return false; }
+};
+const ficheros = todos.filter(f => !EXCLUIR.test(f) && (EXTS.test(f) || conShebang(f)));
 
 const estado = {};
 for (const f of ficheros) {
@@ -51,6 +60,11 @@ for (const [f, v] of Object.entries(estado)) {
   if (v.comentarios > topeC) fallos.push(`${f}: ${v.comentarios} lineas de comentario (tope ${topeC}${f in (base.comentarios ?? {}) ? ', trinquete' : ', 15% para nuevos'})`);
 }
 for (const f of Object.keys(base.lineas)) if (!(f in estado)) delete base.lineas[f];
+const rancias = [];
+for (const [f, tope] of Object.entries(base.lineas)) {
+  if (f in estado && estado[f].lineas < tope * 0.9) rancias.push(`${f}: baseline ${tope} pero mide ${estado[f].lineas} (poda con --update)`);
+}
+if (rancias.length) console.error('calidad: AVISO trinquete rancio\n' + rancias.map(x => '  ~ ' + x).join('\n'));
 
 if (fallos.length) {
   console.error('calidad: ROJO\n' + fallos.map(x => '  - ' + x).join('\n'));

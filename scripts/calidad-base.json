@@ -3,11 +3,9 @@
   "ops/container-runtime/cauce-container-runtime.py": 1665,
   "ops/pty-agent/cauce-pty-launcher.sh": 823,
   "ops/pty-agent/cauce_pty_agent.py": 2668,
-  "ops/pty-agent/rollout-pty.py": 1221,
   "ops/pty-agent/tests/test_read_governance.py": 853,
   "ops/scripts/container-adapter-supervisor.sh": 977,
   "ops/scripts/generate-telegram-config.py": 840,
-  "ops/scripts/update-alias-config.py": 1245,
   "ops/tests/container-supervisor.test.mjs": 1762,
   "packages/adapter-sdk/test/client.test.ts": 1340,
   "packages/adapter-sdk/test/durable-store.test.ts": 1101,
@@ -19,11 +17,12 @@
   "packages/store/test/console-publish-intent-postgres.test.ts": 982,
   "packages/store/test/dlq-causal-reconciliation-postgres.test.ts": 1407,
   "packages/store/test/egress-notification-postgres.test.ts": 823,
-  "services/gateway/src/health-progress.test.ts": 1157,
+  "services/gateway/src/health-progress.test.ts": 1014,
   "services/gateway/src/terminal.plugin.test.ts": 2021,
   "tests/gateway-hardening/delivery-admission.test.ts": 924,
   "tests/gateway-hardening/gateway-security.test.ts": 850,
-  "tests/store-hardening/adversarial-postgres.test.ts": 858
+  "tests/store-hardening/adversarial-postgres.test.ts": 858,
+  "ops/cli/cauce": 1139
  },
  "fechas": {
   "console/src/features/accounts/AccountsPage.test.tsx": 1,
@@ -812,6 +811,10 @@
   "console/src/features/live/hypergraph/hypergraph-layout.ts": 85,
   "console/src/features/live/hypergraph/layout-geometry.ts": 46,
   "console/src/features/live/hypergraph/layout-labels.ts": 20,
-  "console/src/features/live/hypergraph/layout-nodes.ts": 59
+  "console/src/features/live/hypergraph/layout-nodes.ts": 59,
+  "ops/cli/cauce": 287,
+  "ops/cli/cauce-huerfanas": 17,
+  "ops/cli/cauce-panel": 15,
+  "ops/cli/cauce-reponer": 33
  }
 }

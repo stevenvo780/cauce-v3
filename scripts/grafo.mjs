@@ -9,7 +9,7 @@ import { dirname } from 'node:path';
 const files = execSync('git ls-files', { encoding: 'utf8' }).split('\n').filter(Boolean);
 const esFuente = f => /\.(ts|tsx|mjs|cjs|py|sh|yaml|yml|json|conf)$/.test(f) && !f.includes('node_modules');
 const contenido = {};
-for (const f of files) { if (esFuente(f)) try { contenido[f] = readFileSync(f, 'utf8'); } catch {} }
+for (const f of files) { if (esFuente(f)) try { contenido[f] = readFileSync(f, 'utf8'); } catch { /* ilegible: fuera del grafo */ } }
 
 // nodo = directorio de primer nivel, o segundo nivel para services/packages/ops/deploy
 function nodo(f) {
@@ -55,7 +55,7 @@ for (const [f, txt] of Object.entries(contenido)) {
     }
   }
   // referencias por ruta textual (compose, Dockerfile, sh, py, json, systemd): cualquier ruta tracked mencionada
-  for (const m of txt.matchAll(/[\w.\/-]*\/(?:[\w.-]+\.(?:mjs|sh|py|yaml|yml|json|conf|ts))/g)) {
+  for (const m of txt.matchAll(/[\w./-]*\/(?:[\w.-]+\.(?:mjs|sh|py|yaml|yml|json|conf|ts))/g)) {
     let r = m[0].replace(/^\.\//, '').replace(/^\/app\//, '').replace(/^\.\.\//, '');
     if (r !== f && files.includes(r)) arista(f, r);
   }
@@ -71,7 +71,7 @@ const hubs = [...entrantes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
 const top = [...aristas.entries()].sort((a, b) => b[1] - a[1]);
 
 let md = `# Grafo de dependencias del repo\n\nGenerado por \`pnpm grafo\` (determinista — regenerar tras reordenar). Nodo = directorio; arista A→B = ficheros de A que referencian ficheros de B (peso = nº de referencias).\n\n## El grafo (aristas con peso ≥2)\n\n\`\`\`mermaid\ngraph LR\n`;
-for (const [k, v] of top) if (v >= 2) md += `  ${k.replace(/[\/.()-]/g, '_').replace(' --> ', ' --> ')}\n`.replace(/(\w+) --> (\w+)/, `$1 -->|${v}| $2`);
+for (const [k, v] of top) if (v >= 2) md += `  ${k.replace(/[/.()-]/g, '_').replace(' --> ', ' --> ')}\n`.replace(/(\w+) --> (\w+)/, `$1 -->|${v}| $2`);
 md += '```\n\n## Aristas completas\n\n| Desde | Hacia | Refs |\n|---|---|---|\n';
 for (const [k, v] of top) { const [a, b] = k.split(' --> '); md += `| ${a} | ${b} | ${v} |\n`; }
 md += '\n## Hubs (los 15 ficheros más referenciados)\n\n';
