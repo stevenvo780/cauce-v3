@@ -35,7 +35,6 @@ import type {
 
 export type {
   PtyChannelState,
-  PtyEntry,
   PtyNotice,
   PtySessionOptions,
   PtySessionView,
