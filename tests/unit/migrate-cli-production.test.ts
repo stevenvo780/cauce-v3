@@ -7,8 +7,8 @@ const repository = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const migrateCli = join(repository, 'packages/store/src/migrate-cli.ts');
 const tsx = join(repository, 'node_modules/.bin/tsx');
 const directDiagnostic =
-  'direct migration is disabled: use ops/scripts/deploy-release.sh deploy for the ' +
-  'stop/drain/migrate/restore transaction';
+  'direct migration is disabled: use deploy/deploy.sh for the owner-attended ' +
+  'build/pin/migrate/up/smoke workflow';
 
 function executableEnvironment(nodeEnv?: 'production' | 'test'): NodeJS.ProcessEnv {
   return {

@@ -2,8 +2,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyMigrations, createPool } from './db.js';
 
-// Production schema changes are a stage of deploy-release.sh's authenticated stop/drain/CAS/
-// migrate/restore transaction.  Keep the reusable CLI available for explicitly declared dev and
+// Production schema changes are a stage of deploy/deploy.sh's owner-attended build/pin/migrate/
+// up/smoke workflow. Keep the reusable CLI available for explicitly declared dev and
 // disposable test DBs, but reject every ambiguous direct entrypoint (including an unset NODE_ENV)
 // before reading DATABASE_URL or opening a socket.
 // deploy/migrate.mjs is the image's canonical one-shot wrapper and performs the mandatory TLS
@@ -15,8 +15,8 @@ const invokedEntrypoint = process.argv[1] === undefined ? '' : resolve(process.a
 const directDevelopment = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
 if (invokedEntrypoint !== canonicalProductionEntrypoint && !directDevelopment) {
   throw new Error(
-    'direct migration is disabled: use ops/scripts/deploy-release.sh deploy for the ' +
-      'stop/drain/migrate/restore transaction; disposable dev/test databases require an exact ' +
+    'direct migration is disabled: use deploy/deploy.sh for the owner-attended ' +
+      'build/pin/migrate/up/smoke workflow; disposable dev/test databases require an exact ' +
       'NODE_ENV=development or NODE_ENV=test with pnpm migrate:dev',
   );
 }
