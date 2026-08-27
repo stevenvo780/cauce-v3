@@ -1,0 +1,257 @@
+import {
+  AtomicRecoveryError,
+  clone,
+  recoverAtomicArtifacts,
+} from "./atomic-state.js";
+import {
+  CANONICAL_OPEN_CODE_SESSION_FILE,
+  type CanonicalOpenCodeSessionPointer,
+  type SessionRecord,
+} from "./contracts.js";
+import { DurableStoreDeliveries } from "./deliveries.js";
+import {
+  activeCanonicalOpenCodeSession,
+  canonicalOpenClawTerminalKey,
+  isCanonicalOpenCodeScopeKey,
+  isCanonicalOpenCodeSessionId,
+  readSessionsSecure,
+  unavailableCanonicalOpenCodeSession,
+  validateSessionsFile,
+} from "./session-file.js";
+
+export class DurableStoreSessions extends DurableStoreDeliveries {
+  getSession(key: string): SessionRecord | undefined {
+    const record = this.sessions.sessions[key];
+    return record === undefined ? undefined : clone(record);
+  }
+
+  async setSession(key: string, record: SessionRecord): Promise<void> {
+    await this.serialized(async () => {
+      const next = validateSessionsFile({
+        version: 1,
+        sessions: { ...this.sessions.sessions, [key]: record },
+      });
+      await this.atomicWrite("sessions.json", next);
+      this.sessions = next;
+    });
+  }
+
+  /**
+   * Confirma una sesión nativa OpenClaw y publica en el MISMO rename el selector que consume la
+   * TUI de terminal.
+   *
+   * La entrada fuente conserva `origin` para que las herramientas operativas puedan distinguir
+   * conversaciones. El pointer fijo, en cambio, contiene sólo el identificador nativo opaco y el
+   * bit de inicialización: copiar el `conversation_id` ahí duplicaba un identificador de usuario
+   * sin que el consumidor lo necesitara. Una sola escritura evita que un reinicio deje publicada
+   * una sesión que todavía figura como no inicializada, o viceversa.
+   */
+  async setCanonicalOpenClawTerminalSession(
+    alias: string,
+    sourceKey: string,
+    record: SessionRecord,
+  ): Promise<void> {
+    const pointerKey = canonicalOpenClawTerminalKey(alias);
+    if (pointerKey === undefined || !sourceKey.startsWith(`openclaw:${alias}:`)) {
+      throw new Error("Invalid canonical OpenClaw terminal session scope");
+    }
+    if (record.initialized !== true) {
+      throw new Error("Canonical OpenClaw terminal session must be initialized");
+    }
+    await this.serialized(async () => {
+      const pointer: SessionRecord = {
+        native_id: record.native_id,
+        initialized: true,
+      };
+      const next = validateSessionsFile({
+        version: 1,
+        sessions: {
+          ...this.sessions.sessions,
+          [sourceKey]: record,
+          [pointerKey]: pointer,
+        },
+      });
+      await this.atomicWrite("sessions.json", next);
+      this.sessions = next;
+    });
+  }
+
+  /**
+   * Repara el pointer OpenClaw bajo la lease estable del alias, antes de conectar al relay.
+   *
+   * Un pointer ya publicado es la única selección canónica y sobrevive reinicios. Para stores
+   * anteriores a este contrato sólo se adopta automáticamente una sesión humana cuando existe
+   * exactamente una; con cero o varias se deja ausente para no convertir `mtime` ni el orden del
+   * JSON en una elección de conversación inventada. El siguiente turno humano válido lo publica.
+   */
+  async reconcileCanonicalOpenClawTerminalSession(alias: string): Promise<boolean> {
+    const pointerKey = canonicalOpenClawTerminalKey(alias);
+    if (pointerKey === undefined) {
+      throw new Error("Invalid canonical OpenClaw terminal session scope");
+    }
+    return this.serialized(async () => {
+      await recoverAtomicArtifacts(
+        this.directory,
+        ["sessions.json"],
+        this.directoryFsync,
+      );
+      this.sessions = await readSessionsSecure(this.path("sessions.json"));
+
+      const current = this.sessions.sessions[pointerKey];
+      if (current?.initialized === true) {
+        // Los primeros writers copiaban también `origin`. Se corrige in-place sin cambiar la
+        // sesión seleccionada ni revelar el valor en errores o logs.
+        if (current.origin !== undefined) {
+          const next = validateSessionsFile({
+            version: 1,
+            sessions: {
+              ...this.sessions.sessions,
+              [pointerKey]: { native_id: current.native_id, initialized: true },
+            },
+          });
+          await this.atomicWrite("sessions.json", next);
+          this.sessions = next;
+        }
+        return true;
+      }
+
+      const prefix = `openclaw:${alias}:`;
+      const candidates = Object.entries(this.sessions.sessions).filter(([key, candidate]) => (
+        key.startsWith(prefix)
+        && key !== pointerKey
+        && !key.endsWith(".agent-lane")
+        && candidate.initialized === true
+      ));
+      const sessions = { ...this.sessions.sessions };
+      delete sessions[pointerKey];
+      if (candidates.length === 1) {
+        const candidate = candidates[0]![1];
+        sessions[pointerKey] = { native_id: candidate.native_id, initialized: true };
+      }
+      const next = validateSessionsFile({ version: 1, sessions });
+      if (JSON.stringify(next) !== JSON.stringify(this.sessions)) {
+        await this.atomicWrite("sessions.json", next);
+        this.sessions = next;
+      }
+      return candidates.length === 1;
+    });
+  }
+
+  /**
+   * Rebuild the non-sensitive Kant/OpenCode pointer from durable mappings.
+   * This is deliberately opt-in so no other alias or harness publishes it.
+   */
+  async reconcileCanonicalOpenCodeSession(): Promise<CanonicalOpenCodeSessionPointer> {
+    return this.serialized(async () => {
+      try {
+        // Runtime calls this only from AdapterClient.onLeaseAcquired, replacing
+        // the pre-lease snapshot and removing the load/reconcile TOCTOU.
+        await recoverAtomicArtifacts(
+          this.directory,
+          ["sessions.json", CANONICAL_OPEN_CODE_SESSION_FILE],
+          this.directoryFsync,
+        );
+        this.sessions = await readSessionsSecure(this.path("sessions.json"));
+      } catch (error) {
+        this.canonicalOpenCodeScopeKey = undefined;
+        this.canonicalOpenCodeReconciled = false;
+        if (error instanceof AtomicRecoveryError
+          && error.target === CANONICAL_OPEN_CODE_SESSION_FILE) throw error;
+        await this.atomicWrite(
+          CANONICAL_OPEN_CODE_SESSION_FILE,
+          unavailableCanonicalOpenCodeSession("invalid"),
+        );
+        throw error;
+      }
+      const mappings = this.canonicalOpenCodeMappings();
+      this.canonicalOpenCodeScopeKey = undefined;
+      let pointer: CanonicalOpenCodeSessionPointer;
+      if (mappings.length === 0) {
+        pointer = unavailableCanonicalOpenCodeSession("missing");
+      } else if (mappings.length > 1) {
+        pointer = unavailableCanonicalOpenCodeSession("ambiguous");
+      } else {
+        const mapping = mappings[0]!;
+        if (!isCanonicalOpenCodeScopeKey(mapping.scopeKey)
+          || !isCanonicalOpenCodeSessionId(mapping.sessionId)) {
+          pointer = unavailableCanonicalOpenCodeSession("invalid");
+        } else {
+          this.canonicalOpenCodeScopeKey = mapping.scopeKey;
+          pointer = activeCanonicalOpenCodeSession(mapping.scopeKey, mapping.sessionId);
+        }
+      }
+      await this.atomicWrite(CANONICAL_OPEN_CODE_SESSION_FILE, pointer);
+      this.canonicalOpenCodeReconciled = true;
+      return clone(pointer);
+    });
+  }
+
+  /** Persist the mapping first, then atomically publish/refresh the sticky pointer. */
+  async setCanonicalOpenCodeSession(scopeKey: string, sessionId: string): Promise<boolean> {
+    if (!isCanonicalOpenCodeScopeKey(scopeKey) || !isCanonicalOpenCodeSessionId(sessionId)) return false;
+    return this.serialized(async () => {
+      if (!this.canonicalOpenCodeReconciled) {
+        throw new Error("Canonical OpenCode session must be reconciled before publication");
+      }
+      const key = `opencode:kant:${scopeKey}`;
+      this.sessions = {
+        version: 1,
+        sessions: {
+          ...this.sessions.sessions,
+          [key]: { native_id: sessionId, initialized: true },
+        },
+      };
+      // This fsync+rename completes before the pointer can name the session.
+      await this.atomicWrite("sessions.json", this.sessions);
+
+      if (this.canonicalOpenCodeScopeKey === undefined) {
+        const mappings = this.canonicalOpenCodeMappings();
+        if (mappings.length !== 1) {
+          const reason = mappings.length > 1 ? "ambiguous" : "invalid";
+          await this.atomicWrite(
+            CANONICAL_OPEN_CODE_SESSION_FILE,
+            unavailableCanonicalOpenCodeSession(reason),
+          );
+          return false;
+        }
+        const mapping = mappings[0]!;
+        if (mapping.scopeKey !== scopeKey
+          || !isCanonicalOpenCodeScopeKey(mapping.scopeKey)
+          || !isCanonicalOpenCodeSessionId(mapping.sessionId)) {
+          await this.atomicWrite(
+            CANONICAL_OPEN_CODE_SESSION_FILE,
+            unavailableCanonicalOpenCodeSession("invalid"),
+          );
+          return false;
+        }
+        this.canonicalOpenCodeScopeKey = scopeKey;
+      }
+
+      if (this.canonicalOpenCodeScopeKey !== scopeKey) return false;
+      await this.atomicWrite(
+        CANONICAL_OPEN_CODE_SESSION_FILE,
+        activeCanonicalOpenCodeSession(scopeKey, sessionId),
+      );
+      return true;
+    });
+  }
+
+  private canonicalOpenCodeMappings(): Array<{ scopeKey: string; sessionId: string }> {
+    const prefix = "opencode:kant:";
+    const mappings: Array<{ scopeKey: string; sessionId: string }> = [];
+    for (const [key, record] of Object.entries(this.sessions.sessions)) {
+      const candidate = record as unknown;
+      if (!key.startsWith(prefix)
+        || typeof candidate !== "object"
+        || candidate === null
+        || Array.isArray(candidate)) continue;
+      const fields = candidate as Record<string, unknown>;
+      if (fields.initialized !== true) continue;
+      mappings.push({
+        scopeKey: key.slice(prefix.length),
+        sessionId: typeof fields.native_id === "string" ? fields.native_id : "",
+      });
+    }
+    return mappings;
+  }
+}
