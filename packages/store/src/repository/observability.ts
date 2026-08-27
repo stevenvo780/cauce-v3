@@ -1354,4 +1354,67 @@ async listAudit(
     if (!value) throw new StoreError('conflict', 'DLQ no-replay resolution returned no receipt');
     return value;
   }
+
+  async queueSnapshot(actorTenant: Tenant, actorAlias: string, limit = 200): Promise<Record<string, unknown>> {
+    await this.assertPermission(actorTenant, actorAlias, 'read');
+    const result = await this.pool.query<Record<string, unknown>>(
+      `SELECT d.id AS delivery_id,d.message_id,d.recipient_tenant AS tenant_id,d.recipient_alias,
+              m.tenant_id AS message_tenant_id,m.actor_alias,m.lane,d.status AS state,
+              d.attempt AS attempts,d.max_attempts,d.available_at,d.last_error
+       FROM deliveries d JOIN messages m ON m.id=d.message_id
+       WHERE EXISTS (SELECT 1 FROM memberships source_member
+                     WHERE source_member.tenant_id=$1 AND source_member.room_id=m.room_id
+                       AND source_member.alias=$2 AND source_member.enabled AND m.tenant_id=$1)
+          OR (d.recipient_tenant=$1 AND d.recipient_alias=$2
+              AND (m.tenant_id=$1 OR EXISTS (
+                SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1 AND edge.to_tenant=m.tenant_id
+                  AND edge.enabled AND edge.allow_read
+              )))
+       ORDER BY d.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
+    );
+    // 'failed' cuenta como dead letter porque desde este parche LO ES: `ackDelivery` le escribe
+    // su fila y `replayDelivery` la acepta. Dejarla fuera del contador mantendría al operador
+    // creyendo que no hay nada que revisar mientras el botón de replay ya está disponible: el
+    // mismo desfase que hizo invisibles las 197 entregas de producción.
+    const counts = result.rows.reduce<{ pending: number; retrying: number; dead: number }>((value, row) => {
+      if (row.state === 'retry') value.retrying += 1;
+      if (row.state === 'dead' || row.state === 'failed') value.dead += 1;
+      if (['pending', 'leased', 'accepted', 'started'].includes(String(row.state))) value.pending += 1;
+      return value;
+    }, { pending: 0, retrying: 0, dead: 0 });
+
+    // Conteo total agregado con los mismos filtros de visibilidad que el listado.
+    const totales = await this.pool.query<{ pending: string; retrying: string; dead: string; total: string }>(
+      `SELECT count(*) FILTER (WHERE d.status IN ('pending','leased','accepted','started')) AS pending,
+              count(*) FILTER (WHERE d.status = 'retry') AS retrying,
+              count(*) FILTER (WHERE d.status IN ('dead','failed')) AS dead,
+              count(*) AS total
+       FROM deliveries d JOIN messages m ON m.id=d.message_id
+       WHERE EXISTS (SELECT 1 FROM memberships source_member
+                     WHERE source_member.tenant_id=$1 AND source_member.room_id=m.room_id
+                       AND source_member.alias=$2 AND source_member.enabled AND m.tenant_id=$1)
+          OR (d.recipient_tenant=$1 AND d.recipient_alias=$2
+              AND (m.tenant_id=$1 OR EXISTS (
+                SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1 AND edge.to_tenant=m.tenant_id
+                  AND edge.enabled AND edge.allow_read
+              )))`, [actorTenant, actorAlias]
+    );
+    const fila = totales.rows[0];
+    const totals = {
+      pending: Number(fila?.pending ?? 0),
+      retrying: Number(fila?.retrying ?? 0),
+      dead: Number(fila?.dead ?? 0),
+    };
+    // «Recortada» se decide comparando con el total, no con `items.length === limit`: si hubiera
+    // exactamente `limit` entregas, esa comprobación diría que falta algo cuando no falta nada.
+    const muestra_recortada = Number(fila?.total ?? 0) > result.rows.length;
+
+    return {
+      observed_at: new Date().toISOString(),
+      ...counts,
+      totals,
+      muestra_recortada,
+      items: result.rows,
+    };
+  }
 }
