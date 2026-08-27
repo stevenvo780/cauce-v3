@@ -773,6 +773,23 @@ PYTHON
     "$alias_name" "$bundle_path" "$runtime_uid" "$runtime_gid" >&2
 }
 
+# El flock del host muere con el cliente `docker exec`, pero el agente Python DENTRO del
+# contenedor sobrevive. Dos agentes del mismo alias comparten certificado y el relay los
+# expulsa mutuamente sin fin. Antes de arrancar, mata cualquier agente previo del alias
+# dentro del contenedor (guarda por nombre exacto de script para no señalar a nadie mas).
+reap_orphan_agents() {
+  local victims
+  victims=$(docker exec "$container_id" sh -c \
+    "ps -eo pid,args | awk -v s=\"cauce-pty-agent-$alias_name.py\" 'index(\$0, s) && \$2 != \"awk\" {print \$1}'" 2>/dev/null) || true
+  [[ -n ${victims:-} ]] || return 0
+  printf 'cauce-pty-launcher: reaping orphan agents alias=%s pids=%s\n' "$alias_name" "$(tr '\n' ' ' <<<"$victims")" >&2
+  while IFS= read -r pid; do
+    [[ $pid =~ ^[0-9]+$ ]] || continue
+    docker exec "$container_id" sh -c \
+      "ps -o args= -p $pid 2>/dev/null | grep -qF 'cauce-pty-agent-$alias_name.py' && kill $pid" 2>/dev/null || true
+  done <<<"$victims"
+}
+
 start_agent() {
   local lock_file previous_generation
   if [[ ! -e $LOCK_ROOT ]]; then
@@ -795,6 +812,7 @@ start_agent() {
   # only safe move is to abort and let systemd start a fresh launch.
   read_generation
   [[ $container_generation == "$previous_generation" ]] || die 'container generation changed during publication' 75
+  reap_orphan_agents
   printf 'cauce-pty-launcher: exec agent alias=%s container=%s generation=%s uid=%s\n' \
     "$alias_name" "${container_id:0:12}" "$container_generation" "$runtime_uid" >&2
   exec docker exec -i --user "$runtime_uid:$runtime_gid" "$container_id" \
