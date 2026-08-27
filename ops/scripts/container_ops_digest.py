@@ -49,8 +49,6 @@ STATIC_INPUTS = (
     # Operator runbooks that document the exact invariants above.
     "runbooks/container-adapters.md",
     "runbooks/alias-cutover.md",
-    "runbooks/deploy.md",
-    "runbooks/rollback.md",
 )
 
 # Everything that can change how a release is configured, proven, deployed, monitored or
