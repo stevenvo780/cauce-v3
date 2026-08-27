@@ -142,4 +142,4 @@ Reglas que la vía tiene que cumplir, y por qué:
   como editable si no están medidos**.
 - Los dos ficheros de test, 23 casos, con los controles negativos del §4.
 
-**Sí está enganchado**: `services/gateway/src/app.ts:41` lo importa y `:1483` lo registra dentro del bootstrap de consola.
+**Sí está enganchado**: `services/gateway/src/routes/console.ts:7` lo importa (`registerAgentDocumentRoutes`) y se monta dentro del phase 4 de `createConsoleRoutes` (`routes/console.ts:284`).

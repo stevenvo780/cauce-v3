@@ -253,7 +253,7 @@ Rollback, por digest pinneado, sin tocar schema ni datos (ver
 ```sh
 CAUCE_PREVIOUS_RUNTIME_IMAGE=repo/cauce-runtime@sha256:<digest-anterior> \
 CAUCE_ROLLBACK_CONFIRM=runtime-only:repo/cauce-runtime@sha256:<digest-anterior> \
-CAUCE_ENV_FILE=/etc/cauce-v3/prod.env ./scripts/rollback.sh runtime
+CAUCE_ENV_FILE=/etc/cauce-v3/prod.env python3 ops/scripts/pin-container-release.py rollback runtime
 ```
 
 Para el canal PTY el rollback barato no es ese: es vaciar `grants.json`

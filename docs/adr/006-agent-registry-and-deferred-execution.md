@@ -3,9 +3,10 @@
 **Estado:** parcialmente implementado. La parte de datos/configuración (esta entrega) está aceptada;
 la parte de ejecución remota en kratos es **diseño únicamente, no implementado**.
 
-Este ADR fija la forma acordada en `docs/POOL-SUSCRIPCIONES-Y-ALTA-AGENTES.md` §1.2. Ese documento
-es el plan operativo (inventario de alias, fases de alta de iza/atlas); este ADR es la decisión de
-arquitectura y lo que efectivamente quedó en el código.
+Este ADR fija la forma acordada en `plan-reestructura/` (el plan operativo de la fase en vuelo:
+inventario de alias, fases de alta de iza/atlas). El doc histórico `POOL-SUSCRIPCIONES-Y-ALTA-AGENTES`
+ya no está en el árbol (`find docs/ -name 'POOL-*'` → 0 resultados); este ADR es ahora la decisión
+de arquitectura y lo que efectivamente quedó en el código.
 
 ## Decisión central: la cuenta no pertenece a quien la usa, pertenece a quien la paga
 
