@@ -14,11 +14,10 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 - `apps/console` — SPA React del operador
 - `ops/` — systemd, pty-agent (terminal dentro de cada contenedor), scripts operativos
 - `plan-reestructura/` y `ordenes/` — el plan vigente y tu orden de trabajo
-- `docs/bitacora/` — histórico congelado, no confiable como estado actual
 
 ## Reglas (las completas: `ordenes/00-PROTOCOLO.md`)
 
-0. **Código muerto se BORRA con `git rm` + evidencia en el mensaje del commit — git es el archivo.** No existen carpetas de cuarentena. Histórico de lo retirado: `docs/bitacora/legado-indice.md` y el bundle del 27-08.
+0. **Código muerto se BORRA con `git rm` + evidencia en el mensaje del commit — git es el archivo.** No existen carpetas de cuarentena. TODO lo histórico vive en git (`git log`/`git show`; `--diff-filter=AD` para lo borrado) y en el bundle `/datos/workspaces/zeus/cauce-v3-archivo-completo-20260827.bundle`. No existen carpetas de archivo: ni cuarentenas ni bitácoras.
 
 1. Trabaja SOLO en tu sector (tabla del protocolo), DIRECTO en `main` — **prohibido crear ramas** (decisión del dueño: aquí las ramas fueron el cementerio). `git add` solo por rutas propias; nunca `git add -A`, `git add .` ni `commit -a`.
 2. Gate por commit: `pnpm typecheck && pnpm lint` en verde (hoy lo están; deben seguir).

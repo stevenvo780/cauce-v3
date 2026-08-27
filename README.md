@@ -15,8 +15,8 @@ Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenC
 
 - La mensajería IA↔IA **funciona en producción** (contenedores `cauce-v3-prod-*` en esta máquina).
 - Producción corre imágenes del 23–25 de agosto y **la base está en la migración 024 de 037**. Todo lo commiteado después (editor de ficheros de gobierno completo, separación PTY/TUI) está **escrito pero sin desplegar** — no existe hoy un camino verde de despliegue; se construye en `plan-reestructura/31`.
-- El repo está en reestructura activa por 4 instancias de IA con sectores disjuntos: ver `ordenes/00-PROTOCOLO.md` (la orden ACTIVA de cada instancia: `ordenes/<instancia>.md`; las ejecutadas se archivan en `docs/bitacora/ordenes-ejecutadas/`) (obligatorio antes de tocar nada) y `plan-reestructura/`.
-- El código muerto se borra del árbol (`git rm` con evidencia): git es el archivo. Índice de lo retirado: `docs/bitacora/legado-indice.md`.
+- El repo está en reestructura activa por 4 instancias de IA con sectores disjuntos: ver `ordenes/00-PROTOCOLO.md` (la orden ACTIVA de cada instancia: `ordenes/<instancia>.md`) (obligatorio antes de tocar nada) y `plan-reestructura/`.
+- El código muerto se borra del árbol (`git rm` con evidencia): git es el archivo. Lo histórico y lo retirado viven en git y en el bundle del 27-08 — sin carpetas de archivo.
 
 ## Componentes vivos
 
@@ -41,15 +41,14 @@ pnpm typecheck && pnpm lint      # gate mínimo de todo commit
 pnpm test:unit                   # gate completo (test:unit global desde 27-08; consola 107/107)
 ```
 
-Reglas de trabajo, sectores por instancia y prohibiciones: `ordenes/00-PROTOCOLO.md` (la orden ACTIVA de cada instancia: `ordenes/<instancia>.md`; las ejecutadas se archivan en `docs/bitacora/ordenes-ejecutadas/`). Contexto para agentes de IA: `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`.
+Reglas de trabajo, sectores por instancia y prohibiciones: `ordenes/00-PROTOCOLO.md` (la orden ACTIVA de cada instancia: `ordenes/<instancia>.md`). Contexto para agentes de IA: `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`.
 
 ## Despliegue
 
-**Hoy no hay procedimiento de despliegue utilizable** (la maquinaria anterior exigía evidencia imposible y fue borrada del árbol en `73e533c`; índice en `docs/bitacora/legado-indice.md`). El despliegue simple —build con label de commit, pin por digest, migraciones, smoke test del efecto real— se implementa en FASE 3 con el dueño presente: `plan-reestructura/31-despliegue-simple.md`. Hasta entonces, nadie toca producción.
+**Hoy no hay procedimiento de despliegue utilizable** (la maquinaria anterior exigía evidencia imposible y fue borrada del árbol en `73e533c`; índice en `el historial de git`). El despliegue simple —build con label de commit, pin por digest, migraciones, smoke test del efecto real— se implementa en FASE 3 con el dueño presente: `plan-reestructura/31-despliegue-simple.md`. Hasta entonces, nadie toca producción.
 
 ## Referencias
 
 - Plan vigente: `plan-reestructura/` · Órdenes por instancia: `ordenes/`
 - Decisiones de diseño: `docs/adr/` · Modelo de amenazas: `docs/threat-model.md`
-- Histórico (no confiable como estado actual): `docs/bitacora/`
 - Archivo de la purga de ramas del 27-08: `/datos/workspaces/zeus/cauce-v3-archivo-completo-20260827.bundle`

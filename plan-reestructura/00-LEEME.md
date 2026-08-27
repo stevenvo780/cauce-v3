@@ -5,7 +5,7 @@ Informe completo: https://claude.ai/code/artifact/fe3022ea-7c0b-4a47-8093-9389f7
 
 ## Estado a 27-08
 
-- **FASE 1 — Orden y legibilidad**: COMPLETADA. Ficheros 11–15 ejecutados y archivados en `docs/bitacora/plan-ejecutado/`.
+- **FASE 1 — Orden y legibilidad**: COMPLETADA. Ficheros 11–15 ejecutados y archivados en `el historial de git/`.
 - **FASE 2 — Correcciones mapeadas**: en cierre. Codex cierra store/gateway y la matriz pesada de tests; Gemini sanea `tests/` y sus dos >800 de consola.
 - **FASE 3 — Despliegue y pruebas reales**: lista y esperando la ventana del dueño. Dossier FASE 3 en `plan-reestructura/fase3/`; `deploy/deploy.sh` y smoke calibrado a presentar al dueño antes de tocar producción.
 
@@ -56,7 +56,7 @@ Sectores disjuntos + `main` único. El protocolo es la fuente; este cuadro resum
 | `plan-reestructura/`, `ordenes/`, README/CLAUDE.md/AGENTS.md, integración de merges, FASE 3 (deploy, flota, BD) | Claude + dueño | 12 (legado — supervisión), 15 (docs), 31, 32, 33 |
 | `packages/store/migrations/**`, `deploy/**`, `/etc/cauce-v3`, `/opt`, contenedores, systemd, BD | NADIE hasta FASE 3 | 31, 32, 33 solo con dueño presente |
 
-Detalle de cada tarea restante: `21-correcciones-mapeadas.md`, `31-despliegue-simple.md`, `32-flota-pty-y-guardias.md`, `33-gobierno-de-flota.md`. Las tareas 11–15 están ejecutadas y archivadas en `docs/bitacora/plan-ejecutado/`.
+Detalle de cada tarea restante: `21-correcciones-mapeadas.md`, `31-despliegue-simple.md`, `32-flota-pty-y-guardias.md`, `33-gobierno-de-flota.md`. Las tareas 11–15 están ejecutadas y archivadas en `el historial de git/`.
 
 ## URGENTE (independiente del plan; decisión del dueño, no de los agentes)
 

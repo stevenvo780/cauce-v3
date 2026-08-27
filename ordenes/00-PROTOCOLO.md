@@ -1,6 +1,6 @@
 # Protocolo de trabajo — 4 instancias, cero colisiones
 
-Vigente desde 2026-08-27. Lo lee TODA instancia antes de tocar nada. El plan de fondo está en `plan-reestructura/` y el informe de la auditoría en `docs/bitacora/` (referencia).
+Vigente desde 2026-08-27. Lo lee TODA instancia antes de tocar nada. El plan de fondo está en `plan-reestructura/`.
 
 ## Una sola verdad: `main`, sin ramas
 

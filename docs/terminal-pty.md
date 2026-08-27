@@ -248,7 +248,7 @@ Criterio: 13 filas en la consulta 1 con `last_heartbeat_at` dentro de los
 recibir tráfico. `argos` se cuenta aparte: sigue muerto por su propio bug.
 
 Rollback, por digest pinneado, sin tocar schema ni datos (ver
-`docs/bitacora/rollback.md`, histórico del último rollback aplicado):
+`el historial de git rollback.md`, histórico del último rollback aplicado):
 
 ```sh
 CAUCE_PREVIOUS_RUNTIME_IMAGE=repo/cauce-runtime@sha256:<digest-anterior> \

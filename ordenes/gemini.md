@@ -11,6 +11,6 @@ Protocolo de siempre; subagentes a fondo.
 Lo tuyo probable: calidad de la suite PTY (si algún test resulta tautológico → darle dientes) y runbooks (si algún comando citado falló verificación → corregir el texto).
 
 ## Tarea 3 — Deuda menor acumulada de tus sectores en reportes previos
-Barre `docs/bitacora/reportes/claude-revision-46-commits.md` y `claude-revision-ola2.md` (hallazgos "menor" de consola/canales aún sin dueño ejecutado: grupos @media gemelos partidos, PtyEntry, etc.) y ciérralos con evidencia por commit.
+Barre `ordenes/reportes/claude-revision-46-commits.md` y `claude-revision-ola2.md` (hallazgos "menor" de consola/canales aún sin dueño ejecutado: grupos @media gemelos partidos, PtyEntry, etc.) y ciérralos con evidencia por commit.
 
 Gate global + push al cerrar + reporte ≤5 líneas.

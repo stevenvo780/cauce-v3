@@ -2,7 +2,7 @@
 
 208 ficheros/familias censados en `ops/` y zonas sospechosas por 11 agentes + refutación adversarial de cada "muerto". Resultado original: **29 muertos confirmados dos veces** (ejecución en `ordenes/ronda4/opencode-minimax.md`), **45 dudosos** (tabla abajo, decide el dueño), el resto vivos.
 
-**Actualización post-rondas 6/7:** los 29 confirmados y ~80 piezas más del censo se borraron del árbol en `73e533c` (3.2M menos, índice en `docs/bitacora/legado-indice.md`). La doctrina vigente es `git rm` + evidencia en commit; no existen carpetas de cuarentena. La tabla de "dudosos" de abajo es el residuo real: lo que sobrevive en `main` y todavía pide una decisión del dueño.
+**Actualización post-rondas 6/7:** los 29 confirmados y ~80 piezas más del censo se borraron del árbol en `73e533c` (3.2M menos, historial en git (--diff-filter=AD)). La doctrina vigente es `git rm` + evidencia en commit; no existen carpetas de cuarentena. La tabla de "dudosos" de abajo es el residuo real: lo que sobrevive en `main` y todavía pide una decisión del dueño.
 
 ## Hallazgos notables (más allá de la lista)
 
@@ -20,7 +20,7 @@
 
 ## Lo que aún queda al dueño — agrupado por decisión (post-ronda 7)
 
-Resueltos en ronda 6 por minimax: 6 schemas sin consumidor (`dlq-no-replay-resolution`, `dlq-reconciliation`, `fleet-snapshot`, `gate-snapshot`, `physical-fleet-snapshot`, `telegram-manual-replay`), 5 tests huérfanos y sus 4 scripts sujetos (`aplicar-separacion-config.sh`, `censo-config-por-alias.py`, `diff-consola-visible.py`, `preflight.sh`), `ops/harness/{Dockerfile,.dockerignore}` y `ops/harness/CONTRACT.md` (`docs/bitacora/`). `healthcheck.mjs` reaparece en stack-health.sh (Makefile + systemd unit) y se conserva en su sitio. Resueltos por Codex (su ronda 3): 7 schemas y 12 scripts de la maquinaria de release. Resueltos en rondas 4-5: `ops/generated/systemd/system` y familia, `package-smoke.mjs` queda para cuando se libere el adapter-sdk. Resueltos en `73e533c` (ronda 7, dueño): los 29 confirmados + la cuarentena entera (services/shadow-router, services/relay-worker, rollback-bridge, 25 ops-scripts, 6 schemas, 52 contingentes, 33 tests, basura) — 3.2M borrados con `git rm`; índice en `docs/bitacora/legado-indice.md`.
+Resueltos en ronda 6 por minimax: 6 schemas sin consumidor (`dlq-no-replay-resolution`, `dlq-reconciliation`, `fleet-snapshot`, `gate-snapshot`, `physical-fleet-snapshot`, `telegram-manual-replay`), 5 tests huérfanos y sus 4 scripts sujetos (`aplicar-separacion-config.sh`, `censo-config-por-alias.py`, `diff-consola-visible.py`, `preflight.sh`), `ops/harness/{Dockerfile,.dockerignore}` y `ops/harness/CONTRACT.md` (borrado; historial en git). `healthcheck.mjs` reaparece en stack-health.sh (Makefile + systemd unit) y se conserva en su sitio. Resueltos por Codex (su ronda 3): 7 schemas y 12 scripts de la maquinaria de release. Resueltos en rondas 4-5: `ops/generated/systemd/system` y familia, `package-smoke.mjs` queda para cuando se libere el adapter-sdk. Resueltos en `73e533c` (ronda 7, dueño): los 29 confirmados + la cuarentena entera (services/shadow-router, services/relay-worker, rollback-bridge, 25 ops-scripts, 6 schemas, 52 contingentes, 33 tests, basura) — 3.2M borrados con `git rm`; historial en git (--diff-filter=AD).
 
 ### (a) Herramientas de otras máquinas — herramientas pensadas para máquinas distintas a esta
 

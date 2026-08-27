@@ -26,4 +26,4 @@ La suite `compose-authentic`/`runtime-authentic` se retiró junto con sus runner
 `relay-worker` y `shadow-router`, servicios que ya no existen en el runtime. Testcontainers sigue
 siendo QA real de código fuente, pero no sustituye evidencia de imágenes finales. Hasta que exista
 un reemplazo, este árbol no ofrece un gate de restart/fencing de clase release; ver
-`docs/bitacora/legado-indice.md`.
+`el historial de git y el bundle 27-08`.

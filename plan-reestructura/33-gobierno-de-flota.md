@@ -19,7 +19,7 @@ La espiral de 120B tokens no la causó un modelo malo: la causaron **órdenes vi
    - Regla de integración: todo trabajo termina mergeado a main o cerrado explícitamente. Un worktree no es un destino.
 2. **Frenos mecánicos** en `.claude/settings` del workspace: deny para `git push --force`, edición de `*.patch`, `packages/store/migrations/**` fuera de rama de FASE 3; hook post-edición que corre typecheck del paquete tocado.
 3. **CI mínima** (`.github/workflows/ci.yml` o runner local): typecheck + lint + test:unit en cada push de rama. Es la primera CI del repo en su historia. Protección de main: solo merge con CI verde.
-4. **Memoria del proyecto dentro del repo**: los 88 .md sueltos de `/datos/workspaces/zeus/` fueron la única memoria y se perdía entre sesiones. Regla: todo handoff/decisión vigente vive en el repo (`docs/` o `plan-reestructura/`); lo demás se archiva en `docs/bitacora/`. Un fichero de estado ÚNICO y corto (`ESTADO.md`, ≤40 líneas, sobreescrito, no acumulativo).
+4. **Memoria del proyecto dentro del repo**: los 88 .md sueltos de `/datos/workspaces/zeus/` fueron la única memoria y se perdía entre sesiones. Regla: todo handoff/decisión vigente vive en el repo (`docs/` o `plan-reestructura/`); lo demás NO se archiva: git es el archivo. Un fichero de estado ÚNICO y corto (`ESTADO.md`, ≤40 líneas, sobreescrito, no acumulativo).
 5. **Presupuesto por tarea**: antes de lanzar un workflow/fan-out, escribir en una línea: objetivo verificable + tope de tokens + criterio de parada. Si al tope no hay efecto demostrado, se para y se replantea con el dueño — no se relanza más grande.
 
 ## Gate de aceptación
