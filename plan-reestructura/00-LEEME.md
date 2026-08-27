@@ -3,6 +3,12 @@
 Fecha: 2026-08-27. Basado en la auditoría multi-agente de esta fecha (58 agentes, verificación adversarial).
 Informe completo: https://claude.ai/code/artifact/fe3022ea-7c0b-4a47-8093-9389f7726d08
 
+## Estado a 27-08
+
+- **FASE 1 — Orden y legibilidad**: COMPLETADA. Ficheros 11–15 ejecutados y archivados en `docs/bitacora/plan-ejecutado/`.
+- **FASE 2 — Correcciones mapeadas**: en cierre. Codex cierra store/gateway y la matriz pesada de tests; Gemini sanea `tests/` y sus dos >800 de consola.
+- **FASE 3 — Despliegue y pruebas reales**: lista y esperando la ventana del dueño. Dossier FASE 3 en `plan-reestructura/fase3/`; `deploy/deploy.sh` y smoke calibrado a presentar al dueño antes de tocar producción.
+
 ## Veredicto en 5 líneas
 
 1. El bus de mensajería IA↔IA **funciona** (15.605 mensajes reales, fencing correcto). No se reescribe.
@@ -37,19 +43,20 @@ Informe completo: https://claude.ai/code/artifact/fe3022ea-7c0b-4a47-8093-9389f7
 - La base de datos productiva: ni una escritura fuera de FASE 3.
 - Contenedores y unidades systemd: no reiniciar/parar nada fuera de lo listado en URGENTE.
 
-## Reparto sugerido por naturaleza de tarea
+## Reparto por sector (vigente — ver `ordenes/00-PROTOCOLO.md`)
 
-| Tarea | Ejecutor sugerido | Revisor cruzado |
+Sectores disjuntos + `main` único. El protocolo es la fuente; este cuadro resume qué toca cada tarea restante.
+
+| Sector | Tareas que le caen | Notas |
 |---|---|---|
-| 11 Higiene raíz y worktrees | Gemini o MiniMax (mecánico masivo) | Codex |
-| 12 Cuarentena de legado | Claude (Sonnet) | GPT 5.6 Ultra |
-| 13 Carpintería backend | GPT 5.6 Ultra o Claude (Opus) | Codex |
-| 14 Carpintería consola | Codex | Gemini |
-| 15 Documentación real | Claude | dueño (lectura humana) |
-| 21 Correcciones mapeadas | Codex / Claude Sonnet | GPT 5.6 Ultra |
-| 31 Despliegue simple | Claude (Opus) + dueño presente | GPT 5.6 Ultra |
-| 32 Flota PTY y guardias | Claude + dueño presente | Codex |
-| 33 Gobierno de flota | dueño + Claude | — |
+| `apps/console/**` | Gemini | 14 (carpintería), parte de 21 |
+| `services/terminal-relay/**`, `services/telegram-bridge/**` | Gemini | parte de 21, 32 |
+| `packages/store/src/**`, `services/gateway/src/**`, maquinaria de release de `ops/scripts/` + sus tests | Codex | 13 (carpintería backend), 21, suite QA retirable |
+| Higiene de disco, `docs/`, residuos, verificaciones mecánicas | OpenCode/MiniMax | 11 (higiene raíz), archivo de planes ejecutados, barridos |
+| `plan-reestructura/`, `ordenes/`, README/CLAUDE.md/AGENTS.md, integración de merges, FASE 3 (deploy, flota, BD) | Claude + dueño | 12 (legado — supervisión), 15 (docs), 31, 32, 33 |
+| `packages/store/migrations/**`, `deploy/**`, `/etc/cauce-v3`, `/opt`, contenedores, systemd, BD | NADIE hasta FASE 3 | 31, 32, 33 solo con dueño presente |
+
+Detalle de cada tarea restante: `21-correcciones-mapeadas.md`, `31-despliegue-simple.md`, `32-flota-pty-y-guardias.md`, `33-gobierno-de-flota.md`. Las tareas 11–15 están ejecutadas y archivadas en `docs/bitacora/plan-ejecutado/`.
 
 ## URGENTE (independiente del plan; decisión del dueño, no de los agentes)
 
