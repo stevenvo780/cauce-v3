@@ -43,9 +43,9 @@ Las marcadas con "(ronda 3)" ya se documentaron en `ordenes/reportes/minimax-enl
 | `_legado/README.md` L14 | `deploy/deploy.sh` | Plan FASE 3, no creado aún (ronda 3) |
 | `docs/terminal-pty.md` L251 | `ops/runbooks/rollback.md` | Sigue faltando; el único rollback.md vive en `docs/bitacora/` (ronda 3) |
 | `docs/consola-roles-con-nombre.md` L3 | "PENDIENTE, no implementado" | Sigue mintiendo sobre el presente; decisión del integrador (ronda 3) |
-| `plan-reestructura/13-carpinteria-backend.md` | `repository/{deliveries,agents}.ts` | Plan parcial; esas extracciones NO se han hecho aún (estados actuales en `repository.ts`) |
+| `docs/bitacora/plan-ejecutado/13-carpinteria-backend.md` | `repository/{deliveries,agents}.ts` | Plan parcial; esas extracciones NO se han hecho aún (estados actuales en `repository.ts`) |
 | `plan-reestructura/00-LEEME.md` | `ops/rollback-bridge/rollback-bridge-schema029.patch`, `limpieza/comentarios-20260827` | Refs a "lo que no debe haber", intencionales (ronda 3) |
-| `plan-reestructura/12-cuarentena-legado.md` | `services/shadow-router`, `services/relay-worker`, `ops/rollback-bridge/` | Piezas que se movieron A `_legado/`; refs al "antes", intencionales (ronda 3) |
+| `docs/bitacora/plan-ejecutado/12-cuarentena-legado.md` | `services/shadow-router`, `services/relay-worker`, `ops/rollback-bridge/` | Piezas que se movieron A `_legado/`; refs al "antes", intencionales (ronda 3) |
 | `ordenes/ronda1/codex.md` L7 | `deploy.py`, `existing-gate.sh`, `untracked-emergency-gate.py` | Informe histórico de auditoría; ninguno existe hoy (ronda 3) |
 | `ordenes/ronda1/opencode-minimax.md` L9–22 | `ops/cli/cauce-panel-guard`, `ops/scripts/retire-session-host.sh` etc. | Esa misma orden PIDE moverlos; las refs son el "antes" de la mudanza, intencionales |
 | `ordenes/reportes/claude-revision-46-commits.md` | refs a `ops/schemas/rollback-bridge.schema.json` en sites ahora en `_legado/` | Reporte del integrador fechado al HEAD post-ronda-4; las refs describen la rotura detectada, intencionales |

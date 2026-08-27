@@ -228,7 +228,7 @@ Adicional: esta es la ÚNICA guardia estática del monorepo que barre packages/s
 
 ### [mayor] (store-resto) La jerarquía invertida no se corrigió: se duplicó (8 -> 16 miembros abstractos) y la cadena pasó de 7 a 13 clases, mientras el plan escrito exige una fachada que DELEGUE
 
-plan-reestructura/13-carpinteria-backend.md:12 dice literalmente: «Partir `CauceRepository` en módulos por dominio, la clase queda como fachada fina que delega». Lo que hay en HEAD es packages/store/src/repository.ts:41-42:
+docs/bitacora/plan-ejecutado/13-carpinteria-backend.md:12 dice literalmente: «Partir `CauceRepository` en módulos por dominio, la clase queda como fachada fina que delega». Lo que hay en HEAD es packages/store/src/repository.ts:41-42:
 
     export class CauceRepository extends DeliveryControlRepository {
     }
@@ -309,7 +309,7 @@ Lo reporto aquí porque responde a la pregunta de las lecciones: la de los comen
 
 ### [menor] (store-resto) El criterio de aceptación del plan «confirmar con git log --follow que cada función movida es idéntica» no se cumple para la mitad de los módulos nuevos
 
-plan-reestructura/13-carpinteria-backend.md:42 fija como gate: «Diff revisable: el revisor debe poder confirmar con `git log --follow` que cada función movida es idéntica». Medido en HEAD, número de commits que devuelve `git log --follow --oneline` por fichero:
+docs/bitacora/plan-ejecutado/13-carpinteria-backend.md:42 fija como gate: «Diff revisable: el revisor debe poder confirmar con `git log --follow` que cada función movida es idéntica». Medido en HEAD, número de commits que devuelve `git log --follow --oneline` por fichero:
 - packages/store/src/repository/agents.ts -> 1
 - packages/store/src/repository/agents/fanin.ts -> 1
 - packages/store/src/repository/observability/policy.ts -> 1
@@ -342,7 +342,7 @@ Nota: es el único test de este tipo. `grep -rn 'services/gateway/src' tests/` n
 
 ### [mayor] (gateway) /v3/console/publish-intents NO es legado: es la primera pata obligatoria del único envío de la consola, y apagar el flag deja POST /v3/console/messages montada pero condenada a 409 para siempre
 
-71ba355 movió cinco rutas a routes/legado-candidato.ts tras `enableLegacyCandidateRoutes`, «para que la tala futura sea un git rm» (plan-reestructura/13-carpinteria-backend.md:25). Con chain-gates no discuto: no tienen llamador de consola. Con publish-intents el rótulo es falso y verificable:
+71ba355 movió cinco rutas a routes/legado-candidato.ts tras `enableLegacyCandidateRoutes`, «para que la tala futura sea un git rm» (docs/bitacora/plan-ejecutado/13-carpinteria-backend.md:25). Con chain-gates no discuto: no tienen llamador de consola. Con publish-intents el rótulo es falso y verificable:
 
 CAMINO VIVO: apps/console/src/features/messages/ConversationPane.tsx:14,210 y apps/console/src/features/terminal/SessionStage.tsx:31 llaman `publishDurably` → apps/console/src/features/messages/durable-publish.ts:83 `api.preparePublishIntent(...)` → apps/console/src/api/client.ts:454 `POST /v3/console/publish-intents`; luego durable-publish.ts:130 `api.publishMessage` → client.ts:432 `POST /v3/console/messages`; luego durable-publish.ts:168 `api.confirmPublishIntent` → client.ts:479 `POST /v3/console/publish-intents/confirm`. No hay otra vía de envío en la consola.
 
@@ -362,7 +362,7 @@ Con el flag en false no existe ninguna ruta capaz de crear esa fila, así que /v
 
 EL TEST NUEVO CERTIFICA JUSTO ESO COMO SI FUERA BUENO. services/gateway/src/routes/legado-candidato.test.ts:78-85 se titula «removes only the five candidate routes from their live neighbors when disabled» y comprueba `NEIGHBOR_ROUTES.every(hasRoute)` incluyendo `{ method: 'POST', url: '/v3/console/messages' }` (línea 22). Comprueba PRESENCIA de ruta, no que la vecina siga sirviendo. Pasa en verde mientras describe una configuración que rompe el compositor.
 
-LA EVIDENCIA CITADA NO AGUANTA. plan-reestructura/12-cuarentena-legado.md:17 justifica el rótulo con «La migración 037 lo dice: "This state machine has never been deployed"; 0 audit_events console.publish.*». Ese texto (packages/store/migrations/037_console_publish_intent_indexes.sql) es un GATE DE MIGRACIÓN —«refuse to guess a head for experimental rows», con un DO $$ que aborta si ya hay filas console.publish.%— es decir, una condición para APLICAR el esquema, no una medición de uso posterior. services/gateway/README.md:15 repite hoy «0 uso medido en producción». No pude consultar la base viva (sólo lectura fuera del repo), pero el código de las dos puntas dice que si publish-intents tuviera 0 uso, la consola no habría podido enviar un solo mensaje.
+LA EVIDENCIA CITADA NO AGUANTA. docs/bitacora/plan-ejecutado/12-cuarentena-legado.md:17 justifica el rótulo con «La migración 037 lo dice: "This state machine has never been deployed"; 0 audit_events console.publish.*». Ese texto (packages/store/migrations/037_console_publish_intent_indexes.sql) es un GATE DE MIGRACIÓN —«refuse to guess a head for experimental rows», con un DO $$ que aborta si ya hay filas console.publish.%— es decir, una condición para APLICAR el esquema, no una medición de uso posterior. services/gateway/README.md:15 repite hoy «0 uso medido en producción». No pude consultar la base viva (sólo lectura fuera del repo), pero el código de las dos puntas dice que si publish-intents tuviera 0 uso, la consola no habría podido enviar un solo mensaje.
 
 Acción mínima: o las tres rutas del envío entran juntas al módulo con flag, o publish-intents sale del módulo. Tal como está, el `git rm` que el plan prepara mata el compositor de la consola.
 

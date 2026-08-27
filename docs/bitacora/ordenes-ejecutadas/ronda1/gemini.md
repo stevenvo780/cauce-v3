@@ -1,6 +1,6 @@
 # Órdenes — Gemini (sector: `apps/console/**`)
 
-Lee `ordenes/00-PROTOCOLO.md` primero. Trabaja DIRECTO en `main` del checkout principal: commits pequeños con gate, `git add` solo de tus rutas, prohibido crear ramas. Detalle de fondo: `plan-reestructura/14-carpinteria-consola.md`. Usa subagentes para lo paralelizable (sección "Subagentes" del protocolo: ficheros disjuntos, tope 4, solo tú commiteas).
+Lee `ordenes/00-PROTOCOLO.md` primero. Trabaja DIRECTO en `main` del checkout principal: commits pequeños con gate, `git add` solo de tus rutas, prohibido crear ramas. Detalle de fondo: `docs/bitacora/plan-ejecutado/14-carpinteria-consola.md`. Usa subagentes para lo paralelizable (sección "Subagentes" del protocolo: ficheros disjuntos, tope 4, solo tú commiteas).
 
 ## Tarea 1 — Verificar tu propia limpieza (PRIMERO)
 Tu limpieza de comentarios ya está en main (commit `2a22107`, 300 ficheros, −8.830 líneas), pero su mensaje admite que también tocó lógica ("error handling", "session termination", vitest config). Audítate:

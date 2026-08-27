@@ -21,7 +21,7 @@ Sacar de la vista de los agentes (y del build) los subsistemas que la auditoría
 
 ## Tareas
 1. Crear `_legado/` en la raíz con `README.md` índice (tabla de arriba).
-2. `git mv` de cada pieza a `_legado/<nombre>/` en un commit por pieza. Donde la pieza está entrelazada (publish-intents y chain-gates viven dentro de `services/gateway/src/app.ts` y `packages/store`), NO extraer con cirugía en esta fase: solo marcar con un comentario de una línea `// LEGADO-CANDIDATO: ver plan-reestructura/12` y listarlo en el README de `_legado/`. La extracción real es de 13.
+2. `git mv` de cada pieza a `_legado/<nombre>/` en un commit por pieza. Donde la pieza está entrelazada (publish-intents y chain-gates viven dentro de `services/gateway/src/app.ts` y `packages/store`), NO extraer con cirugía en esta fase: solo marcar con un comentario de una línea `// LEGADO-CANDIDATO: ver docs/bitacora/plan-ejecutado/12` y listarlo en el README de `_legado/`. La extracción real es de 13.
 3. Ajustar lo mínimo para que el build siga: quitar de `package.json` los scripts que apuntan a lo movido (test:services de shadow-router/relay-worker, verify:three-rounds, evidence:release-candidate, qa:*), y de `pnpm-workspace.yaml`/`tsconfig` si aplica.
 4. Los tests de las piezas movidas van con ellas a `_legado/`.
 5. Actualizar el README raíz: borrar las menciones a shadow/relay-worker/rollback como componentes vivos.
