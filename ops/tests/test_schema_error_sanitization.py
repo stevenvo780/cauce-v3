@@ -23,8 +23,6 @@ from manifest_lib import safe_schema_diagnostic  # noqa: E402
 SCRIPTS = (
     "manifest_lib.py",
     "validate-fleet-release-evidence.py",
-    "validate-release-evidence.py",
-    "release-candidate.py",
 )
 
 
@@ -77,7 +75,7 @@ class SchemaErrorSanitizationTests(unittest.TestCase):
         self.assertNotIn(digest_key, "\n".join(diagnostics))
         self.assertNotIn(uuid_key, "\n".join(diagnostics))
 
-    def test_all_four_release_scripts_route_jsonschema_errors_through_safe_formatter(self) -> None:
+    def test_live_schema_consumers_route_jsonschema_errors_through_safe_formatter(self) -> None:
         for name in SCRIPTS:
             source = (OPS / "scripts" / name).read_text(encoding="utf-8")
             tree = ast.parse(source, filename=name)

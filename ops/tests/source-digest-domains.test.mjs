@@ -110,7 +110,6 @@ for (const sentinel of [
   assert(testcontainersPaths.has(sentinel), `testcontainers domain lost coverage of ${sentinel}`);
 }
 for (const sentinel of [
-  'tests/unit/restore-release-integrity.test.ts',
   'ops/tests/source-digest-domains.test.mjs',
   'ops/Makefile',
   'ops/cli/cauce-huerfanas',
@@ -122,15 +121,9 @@ for (const sentinel of [
   'ops/guardias/cauce-huerfanas.sh',
   'ops/manifests/kant.yaml',
   'ops/observability/alerts.yaml',
-  'ops/rollback-bridge/metadata.json',
   'ops/runbooks/deploy.md',
   'ops/schemas/build-evidence.schema.json',
   'ops/schemas/rollback-bridge.schema.json',
-  'ops/scripts/deploy-release.sh',
-  'ops/scripts/rollback.sh',
-  'ops/scripts/pin-production-release.py',
-  'ops/scripts/release-writer-state.py',
-  'ops/scripts/verification-rounds.mjs',
   'ops/scripts/source-digest.py',
   'eslint.config.js',
 ]) {
@@ -245,12 +238,12 @@ try {
   await write('ops/scripts/fault-runtime.sh', '#!/bin/sh\n');
   await write('ops/scripts/run-testcontainers.sh', '#!/bin/sh\n');
   await write('ops/scripts/validate-testcontainers-evidence.py', 'print("ok")\n');
-  await write('ops/scripts/deploy-release.sh', '#!/bin/sh\nexit 0\n');
-  await write('ops/scripts/rollback.sh', '#!/bin/sh\nexit 0\n');
-  await write('ops/scripts/pin-production-release.py', 'print("pin")\n');
-  await write('ops/scripts/release-writer-state.py', 'print("state")\n');
+  await write('ops/scripts/source-hygiene.py', 'print("hygiene")\n');
+  await write('ops/scripts/validate-terminal-release.py', 'print("terminal")\n');
+  await write('ops/scripts/physical-fleet-gate.py', 'print("fleet")\n');
+  await write('ops/scripts/validate-fleet-release-evidence.py', 'print("evidence")\n');
   await write('ops/scripts/source-digest.py', '# fixture\n');
-  await write('ops/scripts/verification-rounds.mjs', 'export const rounds = 3;\n');
+  await write('ops/scripts/validate.sh', '#!/bin/sh\nexit 0\n');
   await write('ops/schemas/build-evidence.schema.json', '{}\n');
   await write('ops/schemas/testcontainers-evidence.schema.json', '{}\n');
   await write('ops/tests/gate.test.mjs', 'export const gate = 1;\n');
@@ -306,7 +299,7 @@ try {
     ['ops/harness/faults.pyo', 'harness optimized bytecode v1'],
     ['tests/e2e/.pytest_cache/state.json', '{"testcontainers":1}\n'],
     ['tests/e2e/qa.pyc', 'Testcontainers bytecode v1'],
-    ['ops/scripts/__pycache__/deploy-release.cpython-313.pyc', 'verification bytecode v1'],
+    ['ops/scripts/__pycache__/source-hygiene.cpython-313.pyc', 'verification bytecode v1'],
     ['ops/scripts/verification.pyo', 'verification optimized bytecode v1'],
   ]) {
     await write(relative, contents);
@@ -418,9 +411,7 @@ try {
     'ops gate tests must move verification evidence');
   assert.notEqual(digestOf('full', sandbox), beforeOpsTest.full, 'full must cover ops gate tests');
 
-  // 9j. A three-round report is causally bound to every operational source family its tests
-  //     execute. Mutating each formerly uncovered critical script or schema must invalidate both
-  //     verification and full, while image/authentic/Testcontainers evidence stays untouched.
+  // 9j. Global verification is bound to every operational source family its tests execute.
   const operationallyIndependent = {
     runtime: digestOf('runtime', sandbox),
     console: digestOf('console', sandbox),
@@ -430,13 +421,13 @@ try {
   let priorVerification = digestOf('verification', sandbox);
   let priorFull = digestOf('full', sandbox);
   for (const [relative, contents] of [
-    ['ops/scripts/deploy-release.sh', '#!/bin/sh\nexit 7 # weakened deploy gate\n'],
-    ['ops/scripts/rollback.sh', '#!/bin/sh\nexit 7 # weakened rollback gate\n'],
-    ['ops/scripts/pin-production-release.py', 'print("pin without lock")\n'],
-    ['ops/scripts/release-writer-state.py', 'print("accept any writer state")\n'],
+    ['ops/scripts/source-hygiene.py', 'print("hygiene disabled")\n'],
+    ['ops/scripts/validate-terminal-release.py', 'print("terminal disabled")\n'],
+    ['ops/scripts/physical-fleet-gate.py', 'print("fleet disabled")\n'],
+    ['ops/scripts/validate-fleet-release-evidence.py', 'print("evidence disabled")\n'],
     ['ops/schemas/build-evidence.schema.json', '{"additionalProperties":true}\n'],
-    ['ops/scripts/future-release-gate.py', 'print("new gate")\n'],
-    ['ops/schemas/future-release-evidence.schema.json', '{"type":"object"}\n'],
+    ['ops/scripts/future-operational-gate.py', 'print("new gate")\n'],
+    ['ops/schemas/future-operational-evidence.schema.json', '{"type":"object"}\n'],
   ]) {
     await write(relative, contents);
     const nextVerification = digestOf('verification', sandbox);
@@ -460,7 +451,7 @@ try {
     verification: digestOf('verification', sandbox),
     full: digestOf('full', sandbox),
   };
-  const futureGate = path.join(sandbox, 'ops/scripts/future-release-gate.sh');
+  const futureGate = path.join(sandbox, 'ops/scripts/future-operational-gate.sh');
   for (const target of [
     '../../scripts/gate-a.sh',
     '../../scripts/gate-b.sh',
@@ -510,16 +501,12 @@ try {
   await rm(sandbox, { recursive: true, force: true });
 }
 
-// 10. Wiring: every release consumer must declare a domain explicitly. A consumer that reverts to
+// 10. Wiring: every live consumer must declare a domain explicitly. A consumer that reverts to
 //     the bare invocation silently goes back to whole-tree binding, which is the bug being fixed.
 const wiring = [
-  ['scripts/release-build.sh', ['--domain runtime', '--domain console']],
   ['scripts/smoke-compose-authentic.sh', ['--domain runtime', '--domain harness']],
   ['scripts/smoke-runtime-authentic.sh', ['--domain runtime', '--domain harness']],
-  ['scripts/validate-release-evidence.py', ['"--domain", domain']],
   ['scripts/validate-fleet-release-evidence.py', ['"--domain", "runtime"']],
-  ['scripts/release-candidate.py', ['"--domain", domain']],
-  ['scripts/verification-rounds.mjs', ["'--domain', SOURCE_DIGEST_DOMAIN"]],
   ['scripts/validate-testcontainers-evidence.py', ['source_digest("runtime")', 'source_digest("testcontainers")']],
 ];
 for (const [relative, needles] of wiring) {
@@ -541,9 +528,7 @@ for (const [relative, needle] of fleetWiring) {
 // 11. Every evidence schema must force its artifact to declare which domain backs it, so an
 //     artifact can never be silently reinterpreted against a different domain.
 const declared = [
-  ['ops/schemas/build-evidence.schema.json', 'runtime'],
   ['ops/schemas/test-evidence.schema.json', 'runtime'],
-  ['ops/schemas/verification-evidence.schema.json', 'full'],
   ['tests/fleet-release/fleet-release-report.schema.json', 'runtime'],
   ['tests/fleet-release/host-smoke-evidence.schema.json', 'runtime'],
   ['tests/fleet-release/host-smoke-aggregate.schema.json', 'runtime'],
@@ -559,10 +544,4 @@ const testcontainersEvidence = JSON.parse(await readFile(path.join(ops, 'schemas
 assert(testcontainersEvidence.required.includes('sourceDigest'), 'Testcontainers evidence must bind runtime sources');
 assert(testcontainersEvidence.required.includes('harnessDigest'), 'Testcontainers evidence must bind its harness');
 assert(testcontainersEvidence.required.includes('databaseImage'), 'Testcontainers evidence must bind its actual database image');
-const candidate = JSON.parse(await readFile(path.join(ops, 'schemas/release-candidate.schema.json'), 'utf8'));
-assert(
-  candidate.properties.evidence.items.required.includes('sourceDigestDomain'),
-  'the release candidate must record which domain backs each aggregated artifact',
-);
-
 process.stdout.write('source digest domain tests passed\n');

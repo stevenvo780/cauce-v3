@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 
 const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cutover = path.join(ops, "scripts/cutover.sh");
-const rollback = path.join(ops, "scripts/cutover-rollback.sh");
 const migrationGate = path.join(ops, "scripts/migration-gate.mjs");
 const temporary = await mkdtemp(path.join(os.tmpdir(), "cauce-container-cutover-"));
 const bin = path.join(temporary, "bin");
@@ -44,8 +43,6 @@ function snapshot({ v3 = 0, phase = "drain", leaseOwners = v3 } = {}) {
 async function writeSnapshots() {
   await writeFile(path.join(snapshots, "drain.json"), `${JSON.stringify(snapshot())}\n`);
   await writeFile(path.join(snapshots, "post-cutover.json"), `${JSON.stringify(snapshot({ v3: 1, phase: "post-cutover" }))}\n`);
-  await writeFile(path.join(snapshots, "rollback-drain.json"), `${JSON.stringify(snapshot({ v3: 1 }))}\n`);
-  await writeFile(path.join(snapshots, "rollback-ready.json"), `${JSON.stringify(snapshot())}\n`);
 }
 
 async function state(active = [], enabled = [], extra = {}) {
@@ -74,11 +71,9 @@ function environment(extra = {}) {
   };
 }
 
-function run(script, family, snapshotPath, extra = {}) {
-  const confirmation = script === cutover
-    ? { CAUCE_CUTOVER_CONFIRM: `cutover:${family}:kant:CHG-1` }
-    : { CAUCE_ROLLBACK_CONFIRM: `stop-v3:${family}:kant:CHG-1` };
-  return spawnSync(script, [family, "kant", snapshotPath], { encoding: "utf8", env: environment({ ...confirmation, ...extra }) });
+function run(family, snapshotPath, extra = {}) {
+  const confirmation = { CAUCE_CUTOVER_CONFIRM: `cutover:${family}:kant:CHG-1` };
+  return spawnSync(cutover, [family, "kant", snapshotPath], { encoding: "utf8", env: environment({ ...confirmation, ...extra }) });
 }
 
 try {
@@ -103,16 +98,15 @@ try {
   await Promise.all([path.join(bin, "systemctl"), fakeSupervisor, collector, probe].map((file) => chmod(file, 0o755)));
   await writeSnapshots();
   const drain = path.join(snapshots, "drain.json");
-  const live = path.join(snapshots, "rollback-drain.json");
 
   // Explicit family is mandatory; an active or enabled alternate family blocks cutover.
   let result = spawnSync(cutover, ["kant", drain], { encoding: "utf8", env: environment() });
   assert.notEqual(result.status, 0);
   await state(["cauce-v3-alias-kant.service"]);
-  result = run(cutover, "container", drain);
+  result = run("container", drain);
   assert.equal(result.status, 73);
   await state([], ["cauce-v3-alias-kant.service"]);
-  result = run(cutover, "container", drain);
+  result = run("container", drain);
   assert.equal(result.status, 73);
 
   // Without an explicit lock root, an unprivileged cutover falls back to a
@@ -131,7 +125,7 @@ try {
 
   // User scope must reach every systemctl invocation as the real --user prefix.
   await state();
-  result = run(cutover, "container", drain, { CAUCE_SYSTEMD_SCOPE: "user" });
+  result = run("container", drain, { CAUCE_SYSTEMD_SCOPE: "user" });
   assert.equal(result.status, 0, result.stderr);
   const userSystemctlCalls = (await readFile(systemctlLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
   assert(userSystemctlCalls.length > 0);
@@ -143,7 +137,7 @@ try {
   // A negative container supervisor check aborts cutover and rolls the just-started
   // unit back down before the post-cutover gate or enable step can succeed.
   await state();
-  result = run(cutover, "container", drain, { FAKE_SUPERVISOR_CHECK_EXIT: "78" });
+  result = run("container", drain, { FAKE_SUPERVISOR_CHECK_EXIT: "78" });
   assert.equal(result.status, 78, result.stderr);
   let supervisorCalls = (await readFile(supervisorLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
   assert.deepEqual(supervisorCalls, [{ action: "check", alias: "kant" }]);
@@ -154,7 +148,7 @@ try {
 
   // Container cutover starts only its family, runs positive supervisor check and migration gate.
   await state();
-  result = run(cutover, "container", drain);
+  result = run("container", drain);
   assert.equal(result.status, 0, result.stderr);
   supervisorCalls = (await readFile(supervisorLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
   assert.deepEqual(supervisorCalls, [{ action: "check", alias: "kant" }]);
@@ -165,30 +159,11 @@ try {
 
   // An authentic probe failure is a hard gate: the just-started runtime is stopped and never enabled.
   await state();
-  result = run(cutover, "container", drain, { FAKE_GATE_PROBE_EXIT: "79" });
+  result = run("container", drain, { FAKE_GATE_PROBE_EXIT: "79" });
   assert.equal(result.status, 79, result.stderr);
   current = JSON.parse(await readFile(systemctlState, "utf8"));
   assert.deepEqual(current.active, [], "failed round-trip probe must roll the selected unit back down");
   assert.deepEqual(current.enabled, [], "failed round-trip probe must not leave the selected unit enabled");
-
-  // Rollback disables/stops, proves negative process state, then and only then accepts rollback-ready.
-  await state(["cauce-v3-container-kant.service"], ["cauce-v3-container-kant.service"]);
-  result = run(rollback, "container", live);
-  assert.equal(result.status, 0, result.stderr);
-  current = JSON.parse(await readFile(systemctlState, "utf8"));
-  assert.deepEqual(current.active, []);
-  assert.deepEqual(current.enabled, []);
-  const negativeCalls = (await readFile(supervisorLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-  assert.deepEqual(negativeCalls, [{ action: "stopped", alias: "kant" }]);
-
-  // Auto-resurrection or alternate-family overlap blocks rollback readiness.
-  await state(["cauce-v3-alias-kant.service"], ["cauce-v3-container-kant.service"]);
-  result = run(rollback, "container", live);
-  assert.equal(result.status, 73);
-  await state(["cauce-v3-container-kant.service"], ["cauce-v3-container-kant.service"], { disableKeepsEnabled: true });
-  result = run(rollback, "container", live);
-  assert.notEqual(result.status, 0);
-  assert.equal((await readFile(supervisorLog, "utf8")).trim(), "", "negative check must not run while unit can resurrect");
 
   // Migration gate independently enforces exactly one V3 consumer/poller/lease owner.
   const badLease = path.join(snapshots, "bad-lease.json");
@@ -200,13 +175,6 @@ try {
   result = spawnSync("node", [migrationGate, "post-cutover", duplicate, "kant"], { encoding: "utf8" });
   assert.notEqual(result.status, 0);
 
-  // Rollback is refused when the alternate family is merely enabled (even if inactive):
-  // both V3 families must be inactive AND disabled before rollback-ready.
-  await state([], ["cauce-v3-alias-kant.service"]);
-  result = run(rollback, "container", live);
-  assert.equal(result.status, 73, `rollback must refuse an enabled alternate family: ${result.stderr}`);
-  assert.equal((await readFile(supervisorLog, "utf8")).trim(), "", "no negative check runs while the alternate stays enabled");
-
   // Two cutovers cannot run concurrently for the same alias: the shared host flock serializes them.
   await state();
   const aliasLock = path.join(lockDir, "cauce-v3-cutover-kant.lock");
@@ -216,7 +184,7 @@ try {
       if (spawnSync("flock", ["-n", aliasLock, "-c", "true"]).status !== 0) break;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    const blocked = run(cutover, "container", drain);
+    const blocked = run("container", drain);
     assert.equal(blocked.status, 73, `a concurrent cutover must be refused by the alias flock: ${blocked.stderr}`);
     const stillDown = JSON.parse(await readFile(systemctlState, "utf8"));
     assert.deepEqual(stillDown.active, [], "the refused concurrent cutover must not start any unit");
@@ -224,7 +192,7 @@ try {
     holder.kill("SIGKILL");
   }
 
-  process.stdout.write("container cutover and rollback tests passed\n");
+  process.stdout.write("container cutover tests passed\n");
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

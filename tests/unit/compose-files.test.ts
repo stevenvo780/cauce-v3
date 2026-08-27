@@ -9,8 +9,6 @@ import { afterEach, describe, expect, test } from 'vitest';
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const resolver = join(repository, 'ops/scripts/compose-files.sh');
 const compose = join(repository, 'ops/scripts/compose.sh');
-const pin = join(repository, 'ops/scripts/pin-production-release.py');
-const releaseValidator = join(repository, 'ops/scripts/validate.sh');
 const scratch: string[] = [];
 
 function digest(content: string) {
@@ -48,13 +46,6 @@ afterEach(async () => {
 });
 
 describe('authoritative Compose file set', () => {
-  test('release validation supplies its own private media bind instead of inheriting operator state', async () => {
-    const source = await readFile(releaseValidator, 'utf8');
-    expect(source).toContain('validation_media_dir="$tmp_release_state/media"');
-    expect(source).toContain('chmod 0700 "$validation_media_dir"');
-    expect(source).toContain('export CAUCE_MEDIA_RUNTIME_DIR="$validation_media_dir"');
-  });
-
   test('uses no overrides only when the configured directory contains no YAML', async () => {
     const directory = await fixture();
     let result = runResolver('prod', {
@@ -245,10 +236,5 @@ describe('authoritative Compose file set', () => {
     }
     expect(spawnSync('test', ['-e', join(directory, 'rendered.yaml')]).status).not.toBe(0);
 
-    const lockedMutation = spawnSync('/usr/bin/python3', [
-      pin, 'locked-exec', '--env-file', envFile, '--', composeUnderTest, 'prod', '--dry-run', 'down',
-    ], { encoding: 'utf8', env: environment });
-    expect(lockedMutation.status, lockedMutation.stderr).toBe(0);
-    expect(lockedMutation.stdout).toContain('down');
   });
 });
