@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectOutboxMetrics } from '../../deploy/outbox-metrics-core.mjs';
+import { collectOutboxMetrics } from '../../deploy/runtime/outbox-metrics-core.mjs';
 
 function pool(rows: readonly unknown[][]) {
   let index = 0;

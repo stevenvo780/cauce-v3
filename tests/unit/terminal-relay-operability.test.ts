@@ -5,8 +5,8 @@ import type { AddressInfo } from 'node:net';
 
 const composeUrl = new URL('../../deploy/compose.yaml', import.meta.url);
 const dockerfileUrl = new URL('../../deploy/Dockerfile', import.meta.url);
-const nginxUrl = new URL('../../deploy/nginx-console-tls.conf', import.meta.url);
-const localProbeUrl = new URL('../../deploy/local-readiness-probe.mjs', import.meta.url);
+const nginxUrl = new URL('../../deploy/console/nginx-console-tls.conf', import.meta.url);
+const localProbeUrl = new URL('../../deploy/runtime/local-readiness-probe.mjs', import.meta.url);
 
 async function runProbe(
   url: string,
@@ -41,7 +41,7 @@ describe('production terminal relay operability contract', () => {
     );
     expect(compose).not.toContain("for(const p of [8445,8446])");
     expect(compose.match(/CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: "150"/gu)).toHaveLength(2);
-    expect(dockerfile).toContain('deploy/readiness-probe.mjs deploy/local-readiness-probe.mjs');
+    expect(dockerfile).toContain('deploy/runtime/readiness-probe.mjs deploy/runtime/local-readiness-probe.mjs');
   });
 
   it('ships one manifest-pinned relay route and no wildcard/client-selected upstream', async () => {

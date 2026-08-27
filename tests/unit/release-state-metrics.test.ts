@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   activeConnectionLeaseCount,
   collectReleaseStateMetrics,
-} from '../../deploy/release-state-metrics.mjs';
+} from '../../deploy/runtime/release-state-metrics.mjs';
 
 const directories: string[] = [];
 

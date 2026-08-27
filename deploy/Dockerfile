@@ -89,9 +89,9 @@ COPY --from=build --chown=node:node /app/packages/protocol/dist ./packages/proto
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/src ./packages/adapter-sdk/dist/src
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge
 RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge
-COPY --chown=node:node deploy/runtime-store.package.json ./packages/store/package.json
-COPY --chown=node:node deploy/readiness-probe.mjs deploy/local-readiness-probe.mjs deploy/unix-readiness-probe.mjs deploy/postgres-tls.mjs deploy/migrate.mjs deploy/migration-integrity.mjs deploy/schema-version.mjs deploy/fleet-snapshot.mjs deploy/outbox-metrics.mjs deploy/outbox-metrics-core.mjs deploy/release-state-metrics.mjs deploy/reconcile-stale-console-outbox.mjs deploy/reconcile-stale-console-outbox-core.mjs deploy/runtime-package-smoke.mjs ./deploy/
-COPY --chown=node:node deploy/runtime-entrypoint.sh ./deploy/runtime-entrypoint.sh
+COPY --chown=node:node deploy/runtime/runtime-store.package.json ./packages/store/package.json
+COPY --chown=node:node deploy/runtime/readiness-probe.mjs deploy/runtime/local-readiness-probe.mjs deploy/runtime/unix-readiness-probe.mjs deploy/runtime/postgres-tls.mjs deploy/runtime/migrate.mjs deploy/runtime/migration-integrity.mjs deploy/runtime/schema-version.mjs deploy/runtime/fleet-snapshot.mjs deploy/runtime/outbox-metrics.mjs deploy/runtime/outbox-metrics-core.mjs deploy/runtime/release-state-metrics.mjs deploy/runtime/reconcile-stale-console-outbox.mjs deploy/runtime/reconcile-stale-console-outbox-core.mjs deploy/runtime/runtime-package-smoke.mjs ./deploy/
+COPY --chown=node:node deploy/runtime/runtime-entrypoint.sh ./deploy/runtime-entrypoint.sh
 RUN chmod 0555 ./deploy/runtime-entrypoint.sh
 USER node
 RUN node deploy/runtime-package-smoke.mjs
@@ -137,7 +137,7 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
 
 FROM console-base AS console
 USER root
-COPY deploy/nginx-console-tls.conf /etc/nginx/conf.d/default.conf
+COPY deploy/console/nginx-console-tls.conf /etc/nginx/conf.d/default.conf
 RUN chmod 0644 /etc/nginx/conf.d/default.conf
 USER 101
 USER root

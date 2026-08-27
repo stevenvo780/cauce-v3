@@ -23,7 +23,7 @@ describe('Dockerfile runtime policy', () => {
     expect(dockerfile).toContain('RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge');
     expect(dockerfile).toContain(
       'FROM console-base AS console\nUSER root\n'
-      + 'COPY deploy/nginx-console-tls.conf /etc/nginx/conf.d/default.conf\n'
+      + 'COPY deploy/console/nginx-console-tls.conf /etc/nginx/conf.d/default.conf\n'
       + 'RUN chmod 0644 /etc/nginx/conf.d/default.conf\nUSER 101\n',
     );
   });

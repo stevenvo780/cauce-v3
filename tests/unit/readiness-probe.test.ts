@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));
-const probePath = join(repositoryRoot, 'deploy/readiness-probe.mjs');
+const probePath = join(repositoryRoot, 'deploy/runtime/readiness-probe.mjs');
 
 interface ProbeResult {
   code: number | null;

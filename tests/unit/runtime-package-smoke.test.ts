@@ -7,7 +7,7 @@ interface RuntimePackageSmokeModule {
   validateRuntimeBridges: (options: { hermesBridge: string; openClawBridge: string }) => Promise<void>;
 }
 
-const smokeModuleUrl = new URL('../../deploy/runtime-package-smoke.mjs', import.meta.url).href;
+const smokeModuleUrl = new URL('../../deploy/runtime/runtime-package-smoke.mjs', import.meta.url).href;
 const { validateRuntimeBridges } = await import(/* @vite-ignore */ smokeModuleUrl) as unknown as RuntimePackageSmokeModule;
 
 const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));

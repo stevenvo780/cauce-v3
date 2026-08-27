@@ -3,7 +3,7 @@ import {
   applyLegacyConsoleOutboxReconciliation,
   inspectLegacyConsoleOutbox,
   legacyConsoleOutboxReason,
-} from '../../../deploy/reconcile-stale-console-outbox-core.mjs';
+} from '../../../deploy/runtime/reconcile-stale-console-outbox-core.mjs';
 import {
   resetTestDatabase,
   startTestDatabase,

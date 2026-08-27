@@ -135,8 +135,8 @@ for (const sentinel of [
   'tsconfig.json',
   'tsconfig.build.json',
   'deploy/Dockerfile',
-  'deploy/runtime-entrypoint.sh',
-  'deploy/runtime-store.package.json',
+  'deploy/runtime/runtime-entrypoint.sh',
+  'deploy/runtime/runtime-store.package.json',
   'services/gateway/src/app.ts',
   'services/dispatcher/package.json',
   'services/telegram-bridge/package.json',
@@ -206,7 +206,7 @@ try {
   await write('vitest.config.ts', 'export default {};\n');
   await write('packages/store/src/index.ts', 'export const store = 1;\n');
   await write('services/gateway/src/app.ts', 'export const app = 1;\n');
-  await write('deploy/runtime-entrypoint.sh', '#!/bin/sh\nexec "$@"\n');
+  await write('deploy/runtime/runtime-entrypoint.sh', '#!/bin/sh\nexec "$@"\n');
   await write('scripts/gate-a.sh', '#!/bin/sh\nexit 0\n');
   await write('scripts/gate-b.sh', '#!/bin/sh\nexit 7\n');
   await write('unselected/gate.sh', '#!/bin/sh\nexit 9\n');
@@ -325,7 +325,7 @@ try {
   const afterLock = digestOf('runtime', sandbox);
 
   // 9f. deploy/ still counts as runtime.
-  await write('deploy/runtime-entrypoint.sh', '#!/bin/sh\nexec env "$@"\n');
+  await write('deploy/runtime/runtime-entrypoint.sh', '#!/bin/sh\nexec env "$@"\n');
   assert.notEqual(digestOf('runtime', sandbox), afterLock, 'a deploy change must invalidate runtime evidence');
 
   // 9g. Build-context policy affects both final images and must move both domains.

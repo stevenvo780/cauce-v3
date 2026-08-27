@@ -37,7 +37,7 @@ services:
         mode: 0444
     volumes:
       - cauce_pgdata:/var/lib/postgresql/data
-      - ./postgres-tls-entrypoint.sh:/opt/cauce/postgres-tls-entrypoint.sh:ro
+      - ./postgres/postgres-tls-entrypoint.sh:/opt/cauce/postgres-tls-entrypoint.sh:ro
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=32m

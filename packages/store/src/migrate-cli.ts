@@ -9,7 +9,7 @@ import { applyMigrations, createPool } from './db.js';
 // deploy/migrate.mjs is the image's canonical one-shot wrapper and performs the mandatory TLS
 // probe before importing this module.
 const canonicalProductionEntrypoint = fileURLToPath(
-  new URL('../../../deploy/migrate.mjs', import.meta.url),
+  new URL('../../../deploy/runtime/migrate.mjs', import.meta.url),
 );
 const invokedEntrypoint = process.argv[1] === undefined ? '' : resolve(process.argv[1]);
 const directDevelopment = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
