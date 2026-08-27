@@ -125,8 +125,7 @@ homónima de `ops/scripts/validate.sh`.
 Sólo estos dos registros se releen en caliente, así que sólo ellos necesitan el bind de directorio.
 El resto de los secretos del gateway se leen **una vez al arrancar** (`database_url` en el entrypoint;
 `gateway_tls_cert|key|ca`, `gateway_client_ca` al construir el listener; `gateway_oidc_session_key` y
-`gateway_oidc_client_secret` al construir el provider; `relay_provider_module` en el import del relay
-worker), y `postgres_ca` sólo se relee al abrir conexiones nuevas. Todos ellos ya exigen recrear el
+`gateway_oidc_client_secret` al construir el provider), y `postgres_ca` sólo se relee al abrir conexiones nuevas. Todos ellos ya exigen recrear el
 contenedor para rotar, con lo cual el pinning de inodo no cambia nada y siguen como secrets de archivo
 único —que además es la superficie mínima—. El bridge de Telegram ya montaba su directorio
 (`/run/cauce-telegram`), así que no estaba afectado. Si en el futuro un secreto pasa a releerse por

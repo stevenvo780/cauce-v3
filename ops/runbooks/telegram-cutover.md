@@ -12,7 +12,7 @@ verificar. Todo es por alias e incremental.
   detiene, arranca ni escribe la cola/estado interno de V2 salvo el paso explícito de
   apagar el poller V2 del alias (c) y su reactivación en rollback (g), que ejecuta el
   owner de V2 con su propio procedimiento.
-- No toca `apps/console`, `packages/**`, `ops/container-*`, `services/relay-worker`.
+- No toca `apps/console`, `packages/**`, `ops/container-*`.
 - **Nunca** imprime, copia ni delega el token del bot. El token se mueve con tu
   mecanismo de secretos, encapsulado, sin pasar por la terminal ni logs.
 

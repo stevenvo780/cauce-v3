@@ -24,11 +24,13 @@ No describir ninguna de estas tres clases como equivalente a otra. Un smoke aut�
 ## Restart auténtico y release
 
 `make -C ops test-compose-authentic` usa `ops/compose.authentic.yaml` con los
-binarios finales gateway/dispatcher/relay-worker/telegram-bridge/shadow-router.
+binarios finales gateway/dispatcher/telegram-bridge.
 Prueba mTLS, fencing, delivery y efectos durables a través de kills reales,
 Telegram fake, webhook HTTPS y un socket V2 descartable. Si Compose no está
 instalado fuera de release, el mismo comando cae a `docker run` y clasifica el
 artefacto `runtime-authentic`; no lo renombra ni lo promueve. `release-gate`
 acepta únicamente `compose-authentic`, SHA válido, igualdad image/source digest,
 cero skips críticos y ambos mecanismos de kill. Nunca apuntar fault/cutover a V2
-real, producción compartida o sesiones reales.
+real, producción compartida o sesiones reales. (`relay-worker` y `shadow-router`
+están en `_legado/` desde la cuarentena; la clase `test-compose-authentic` queda
+rota hasta `plan-reestructura/31`.)

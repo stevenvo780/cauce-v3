@@ -1,5 +1,7 @@
 # Runbook: preflight, canary, cutover y rollback por alias
 
+> La dual-stack V2/V3 ya no es operativa; esto aplica solo como referencia de rollback (`_legado/rollback-bridge`).
+
 ## Alcance y collector
 
 Los scripts solo gestionan la unidad V3. Nunca detienen, arrancan ni escriben V2. Un collector externo, read-only y específico del entorno se configura en `CAUCE_GATE_CAPTURE_PATH`; recibe `ALIAS OUTPUT.json PHASE` y escribe el schema exacto `schemas/gate-snapshot.schema.json`. No debe imprimir payloads, tokens, sesiones ni headers.

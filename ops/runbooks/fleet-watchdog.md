@@ -12,7 +12,7 @@ The fleet watchdog is a read-only periodic health check for the Cauce V3 system.
 - **Offline aliases:** No `connection_leases` entry OR `lease_until <= now()`
 - **Stale heartbeat:** `last_heartbeat_at` older than 30 minutes
 
-**Expected aliases (14):** argos, atlas, dedalo, hegel, iza, janus, jarvis, kant, kratos, midas, salva, seneca, socrates, vulcano
+**Expected aliases (15):** argos, atlas, dedalo, hegel, iza, janus, jarvis, kant, kratos, midas, salva, seneca, socrates, vulcano, zeus
 
 ### 2. Dead/Failed Deliveries (Warning)
 - **New dead:** `status='dead' AND terminal_at >= last_run_at`
