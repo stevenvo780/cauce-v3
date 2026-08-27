@@ -28,7 +28,7 @@ Tres ideas que lo explican casi todo:
 |---|---|---|
 | 1 | `packages/protocol/src/` | `PublishMessage`, la escalera de ACK, por qué el payload público NO lleva identidad |
 | 2 | `services/gateway/src/app.ts` | `app.post('/v3/messages'` (publica y re-verifica el recibo) y `app.get('/v3/ws'` (el socket de los adapters) |
-| 3 | `packages/store/src/repository.ts` | `publish`, el claim de deliveries con fencing, los ACK. Ojo: 11K líneas — Codex lo está partiendo en módulos por dominio |
+| 3 | `packages/store/src/repository.ts` (fachada) + `repository/{messages,outbox,jobs,config,observability,quotas}.ts` | `publish`, el claim de deliveries con fencing, los ACK. ~5,8K líneas en la fachada; 6 módulos extraídos (`messages`/`outbox`/`jobs`/`config`/`observability`/`quotas`); siguen dentro: deliveries, agents, fencing |
 | 4 | `packages/adapter-sdk/src/sdk/engine.ts` | el bucle del consumidor durable |
 | 5 | `packages/adapter-sdk/src/` → `paste-runner.ts`, `tmux.ts` | cómo se le pega el texto al CLI de verdad |
 | 6 | `services/dispatcher/src/index.ts` + `handlers.ts` | el segador entero son ~850 líneas; `handlers.ts` dice explícitamente que ejecutar agentes NO es su trabajo |
@@ -37,7 +37,7 @@ Tres ideas que lo explican casi todo:
 
 | # | Archivo | Qué buscar |
 |---|---|---|
-| 1 | `apps/console/src/features/terminal/pty-session.ts` | el cliente WS (xterm.js, reconexión, frames de control) |
+| 1 | `apps/console/src/features/terminal/pty-connection.ts` (orquestador: `pty-session.ts`) | el cliente WS (xterm.js, reconexión, frames de control): `new WebSocket`, `openSocket`, `startViewerHeartbeat`, `stopHandshake/Reconnect` viven en `pty-connection.ts`; `pty-session.ts` los compone con `pty-input.ts`/`pty-output.ts`/`pty-theme.ts`/`pty-types.ts` |
 | 2 | `apps/console/nginx.conf` | el proxy `/v3/console/terminal/ws` → relay :8446 con mTLS |
 | 3 | `services/terminal-relay/src/browser-leg.ts` | la pierna del navegador (canjea el ticket contra el gateway) |
 | 4 | `services/terminal-relay/src/agent-leg.ts` | la pierna del agente: TLS mutuo :8445, identidad por fingerprint, y el `superseded` que expulsa conexiones duplicadas |

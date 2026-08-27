@@ -325,7 +325,7 @@ certificado, y la flota siguió entregando durante todo el cambio.
 🔴 **Si algún día `CAUCE_AUTH_PROVIDER` deja de ser `password`**, o el `fallback` deja de ser
 `mtls`, o el certificado del proxy cambia de canal, esta medición deja de valer y la consola queda
 **abierta a internet**, porque no hay segunda puerta. Volver a correr las sondas de esta tabla
-—están en `ops/console-login/` como referencia— antes de dar por bueno cualquier cambio en el
+—estaban en `ops/console-login/` y el script del parche ahora vive en `_legado/contingentes/ops/console-login/patch-caddy-lista-blanca.py` (censo 2026-08-27; sin uso en este host)— antes de dar por bueno cualquier cambio en el
 proveedor de autenticación.
 
 El aviso permanente de "esta consola no tiene login de usuario" que mostraba la SPA **ya no
@@ -443,5 +443,4 @@ Secuencia sin recrear nada:
 Riesgo abierto que hay que medir en el paso 4, no suponer: **no está probado** que `/v3/auth/*` y
 el relay de terminal funcionen con un principal de transporte con `permissions:[]`.
 
-El script del parche de Caddy quedó en `ops/console-login/patch-caddy-lista-blanca.py` (el mismo
-que se corrió en el VPS como `/root/patch_caddy.py`).
+El script del parche de Caddy quedó en `_legado/contingentes/ops/console-login/patch-caddy-lista-blanca.py` (censo 2026-08-27; mismo contenido que se corrió en el VPS como `/root/patch_caddy.py`); ya no se conserva copia activa en `ops/console-login/`.
