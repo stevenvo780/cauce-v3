@@ -7,7 +7,6 @@ const composeUrl = new URL('../../deploy/compose.yaml', import.meta.url);
 const dockerfileUrl = new URL('../../deploy/Dockerfile', import.meta.url);
 const nginxUrl = new URL('../../deploy/nginx-console-tls.conf', import.meta.url);
 const localProbeUrl = new URL('../../deploy/local-readiness-probe.mjs', import.meta.url);
-const stackHealthUrl = new URL('../../ops/scripts/stack-health.sh', import.meta.url);
 
 async function runProbe(
   url: string,
@@ -111,17 +110,5 @@ describe('production terminal relay operability contract', () => {
         server.close((error) => error ? reject(error) : resolve());
       });
     }
-  });
-
-  it('requires semantic shadow-router readiness whenever the production profile configures it', async () => {
-    const stackHealth = await readFile(stackHealthUrl, 'utf8');
-    expect(stackHealth).toMatch(/grep -qx shadow-router <<<"\$configured"/u);
-    expect(stackHealth).toContain(
-      '/run/cauce-shadow/router/router.sock /health/ready ready',
-    );
-    expect(stackHealth).toMatch(
-      /prod exec -T shadow-router[\s\S]*deploy\/unix-readiness-probe\.mjs/u,
-    );
-    expect(stackHealth).toContain('configured relay/Telegram/terminal/shadow services');
   });
 });

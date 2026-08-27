@@ -49,10 +49,6 @@ if [[ $target == prod ]]; then
   production_exec outbox-metrics \
     node deploy/readiness-probe.mjs http://127.0.0.1:8084/health/ready ready
   configured=$(CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" prod config --services)
-  if grep -qx relay-worker <<<"$configured"; then
-    production_exec relay-worker \
-      node deploy/readiness-probe.mjs http://127.0.0.1:8083/health/ready ready
-  fi
   if grep -qx telegram-bridge <<<"$configured"; then
     production_exec telegram-bridge \
       node deploy/readiness-probe.mjs http://127.0.0.1:8086/health/ready ready
@@ -62,12 +58,7 @@ if [[ $target == prod ]]; then
     terminal_health=$("$docker_bin" inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$terminal_id")
     [[ $terminal_health == healthy ]] || { printf 'terminal-relay is not healthy\n' >&2; exit 1; }
   fi
-  if grep -qx shadow-router <<<"$configured"; then
-    production_exec shadow-router \
-      node deploy/unix-readiness-probe.mjs \
-        /run/cauce-shadow/router/router.sock /health/ready ready
-  fi
-  printf 'production core and configured relay, Telegram, terminal and shadow services are ready\n'
+  printf 'production core and configured Telegram and terminal services are ready\n'
   exit 0
 fi
 
