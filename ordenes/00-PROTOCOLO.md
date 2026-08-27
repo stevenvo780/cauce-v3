@@ -21,7 +21,7 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3`. La
 
 | Sector | Dueño | Revisor |
 |---|---|---|
-| `apps/console/**` | Gemini | Codex |
+| `apps/console/**` | Codex Terra (relevo de Gemini, agotado 27-08) | Claude |
 | `packages/store/src/**`, `services/gateway/src/**`, maquinaria de release de `ops/scripts/` + sus tests | Codex | Claude |
 | Higiene de disco, `docs/`, residuos, verificaciones mecánicas | OpenCode/MiniMax | Claude |
 | `_legado/`, `plan-reestructura/`, `ordenes/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, FASE 3 (deploy, flota, BD) | Claude + dueño | dueño |
@@ -29,7 +29,7 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3`. La
 
 ## Reglas de todo commit (sin excepción)
 
-1. Gate antes de commit: `pnpm typecheck && pnpm lint` en verde (cuando Codex cierre su tarea 2, también `pnpm test:unit`).
+1. Gate antes de commit: `pnpm typecheck && pnpm lint` en verde (cuando Codex cierre su tarea 2, también `pnpm test:unit`). Los tests se corren como usuario normal, NUNCA como root (runtime-package-smoke valida ownership de ficheros y da falsos rojos bajo root).
 2. `git mv` en commits separados de ediciones de contenido. Commits ≤20 ficheros salvo mv mecánico.
 3. Prohibido: comentarios narrativos, fechas o "incidentes" en el código; planes nuevos >100 líneas; declarar "hecho" sin pegar la salida del gate.
 4. Mensajes de commit: qué y por qué en ≤5 líneas, sin épica.

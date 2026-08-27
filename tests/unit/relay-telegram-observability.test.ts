@@ -6,9 +6,10 @@ describe('relay and Telegram observability wiring', () => {
   const alerts = readFileSync('ops/observability/alerts.yaml', 'utf8');
 
   it('discovers optional profiles instead of creating down targets when the profile is absent', () => {
-    expect(prometheus).toMatch(/job_name: cauce-origin-relay[\s\S]*?dns_sd_configs:[\s\S]*?names: \[relay-worker\]/u);
+    // relay-worker se retiró a _legado (compose canónico FASE 3): su job no debe existir.
+    expect(prometheus).not.toMatch(/job_name: cauce-origin-relay/u);
+    expect(prometheus).not.toMatch(/relay-worker/u);
     expect(prometheus).toMatch(/job_name: cauce-telegram[\s\S]*?dns_sd_configs:[\s\S]*?names: \[telegram-bridge\]/u);
-    expect(prometheus).not.toMatch(/job_name: cauce-origin-relay[\s\S]*?static_configs:[\s\S]*?relay-worker/u);
   });
 
   it('alerts on discovered targets, stale loops and fenced durable ACKs', () => {
