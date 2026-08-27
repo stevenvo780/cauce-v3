@@ -1,28 +1,75 @@
 # Mapa de ficheros — qué hace cada uno en este repo
 
-Generado el 2026-08-27 con 4 subagentes en paralelo (MiniMax Tarea 2).
-Total descrito: **663 ficheros fuente**. Tests independientes en la sección final.
+Generado el 2026-08-27 con 4 subagentes en paralelo (MiniMax Tarea 2); refrescado el 2026-08-27 (MiniMax Tarea 1 ronda 4).
+Total ficheros en repo (`git ls-files`): **1278**. Tests independientes en la sección final.
 
 **⚠** al final de la línea = el nombre del fichero miente sobre su contenido (señalado por el subagente tras leer el código).
-Total de marcadores ⚠ en todo el documento: **8**.
+Total de marcadores ⚠ en todo el documento: **3** (reducidos desde 8 al retirar la familia DLQ manual; ver delta abajo).
 
 **Sector dueño** sigue el reparto del protocolo (`ordenes/00-PROTOCOLO.md` §`Convivir en main`): Codex para store/gateway/adapter-sdk/protocol/mcp, Gemini para console/canales, Claude+FASE 3 para PTY/contenedores/manifests, MiniMax para docs/higiene.
 
-Cobertura por grupo:
-- A. packages/ (135) — protocol, store, adapter-sdk, mcp-fleet-monitor — Codex
-- B. services/ (134) — gateway, dispatcher, terminal-relay, telegram-bridge — Codex + Gemini
-- C. console/ + scripts/ + vitest.config.ts (286) — Gemini + Codex
-- D. ops/ + deploy/ (108) — Codex + Claude+FASE 3 + DUEÑO
+Cobertura por grupo (verificada con `git ls-files` 2026-08-27):
+- A. packages/ (326) — protocol, store, adapter-sdk, mcp-fleet-monitor — Codex
+- B. services/ (191) — gateway, dispatcher, terminal-relay, telegram-bridge — Codex + Gemini
+- C. console/ + scripts/ + vitest.config.ts (319 + 7) — Gemini + Codex
+- D. ops/ + deploy/ (239 + 31) — Codex + Claude+FASE 3 + DUEÑO
+- E. tests/ (89) + tests bajo `*/test/` y `*/tests/` — repartidos por sector
 
 Hallazgos del ensamblado:
 - **1** entrada del subagente apuntaba a un path que no existe en `git ls-files` — descartada (probable alucinación: `console/src/features/terminal/SessionStage.test.tsx`).
 - **1** entrada duplicada dentro de la misma sección — descartada.
+- **6** entradas de la ronda anterior referencian paths que YA NO EXISTEN (familia DLQ manual retirada por codex + rutas renombradas) — corregidas en este refresco (ver §`DELTA 2026-08-27`).
 - Co-localización: muchos tests viven junto a su código bajo `src/` (p. ej. `services/gateway/src/*.test.ts`, `console/src/**/*.test.tsx`) y están listados en su grupo (A–D). Los tests independientes bajo directorios `test/` van en la sección E.
 
 Notas metodológicas:
 - Los subagentes LEYERON cada fichero (no infirieron del nombre). Las descripciones son verificables abriendo el fichero.
-- Cuando el nombre del fichero sugería algo distinto de lo que hace, marcaron ⚠ (8 casos: 2 en `console`, 5 wrappers delgados en `ops/scripts/dlq-*` y `telegram-manual-replay/replay-inspect`, 1 shim en `ops/guardias/cauce-huerfanas.sh`). Los 5 wrappers coinciden con la "Familia DLQ manual" marcada como dudosa en `PENDIENTES-DEL-DUEÑO.md` §(2)(b).
-- Las cifras entre paréntesis son las subtotales por directorio, recalculadas tras descartar duplicados/hallucinations.## A. packages/ (protocol, store, adapter-sdk, mcp-fleet-monitor)
+- Las cifras entre paréntesis son las subtotales por directorio, recalculadas tras descartar duplicados/hallucinations.
+
+## DELTA 2026-08-27 (refresco MiniMax ronda 4)
+
+Cambios desde la versión del 2026-08-27 inicial (mini-exhaustivo, no exhaustivo — el documento conserva todas las descripciones que seguían siendo ciertas):
+
+**Retiradas (ficheros citados que ya NO existen en `git ls-files`):**
+- `apps/console/**` — el árbol viejo desapareció; renombrado a `console/` raíz en commit `0c965d1`. Las descripciones siguen siendo válidas bajo `console/`.
+- `services/gateway/src/routes/legado-candidato.ts` + `.test.ts` — renombrado a `chain-gates-legado.ts` + `.test.ts` (97 líneas, registra `registerLegacyCandidateChainGateRoutes` gated por `enableLegacyCandidateRoutes`).
+- `services/dispatcher/src/scheduler.ts` — refactorizado; la alternancia interactive/batch vive ahora en `packages/store/src/repository/jobs.ts` (`job_lane_fairness`).
+- `ops/scripts/dlq-list.py`, `dlq-reconcile.py`, `dlq_cli.py`, `resolve-dlq-without-replay.py`, `telegram-manual-replay.py`, `telegram-replay-inspect.py` — toda la familia DLQ manual retirada por codex (ver `ordenes/codex.md`). Esto explica la caída de 8 a 3 en los marcadores ⚠.
+- Migraciones `029_*` y `036_*` — borradas con toda su maquinaria física (manifests, units, historicalAliases). El mapa no las citaba, pero `docs/arquitectura.md` sí las mencionaba.
+
+**Adiciones (paths nuevos en `git ls-files` aún no descritos — descripciones tomadas de `head -30` por el subagente de refresco):**
+
+*A. packages/*:
+- `packages/store/src/repository/_hash-to-uuidv7.ts` — `hashToUuidV7` (mapping determinista de sha256→UUID v7 ordenable).
+- `packages/store/src/repository/egress-destinations.ts` — derivación de destinos de egress proactivo desde el profile del agente (allowlist + cross-tenant guard).
+- `packages/store/src/repository/agents/chain-control/materialization.ts` — materialización durable de la cadena de delegación (separada de `chain-control.ts`).
+- `packages/store/src/repository/agents/chain-control/policy.ts` — `chainPolicy` (hop budget, fanout cap, edge cap, root budget, gate humano, `@all` expansion).
+- `packages/store/src/repository/messages/{contracts,publishing,receipts}.ts` — partición de `repository/messages.ts` en tres: contratos, flujo publish durable, recibos.
+- `packages/store/src/repository/observability/{chain-sweep,contracts,helpers,maintenance}.ts` — partición de `observability.ts` (sweep de cadenas mudas, tipos, helpers, mantenimiento).
+- `packages/store/src/repository/outbox/{claims,contracts,operator,origin-relay,settlement}.ts` — partición de `outbox.ts` (claims con fence, contratos, operator, origin-relay, settlement).
+- `packages/store/src/repository/config/publish-policy.ts` — `publishPolicy` (human band vs agent ceiling; cross-check con `publish-priority-policy` del gateway).
+- `packages/adapter-sdk/src/shared-session/session/identity.ts` — identidad de sesión separada del módulo `session.ts` (huella de pane + nonce).
+- `packages/protocol/src/outbox-contracts.ts` — contratos Zod del outbox (cross-checks con `publish-receipt`).
+
+*B. services/*:
+- `services/gateway/src/console/agent-documents/{catalog,path-policy,relay-probe}.ts` — partición de `agent-documents.ts` (catálogo de docs gobernados, política de paths, probe del relay).
+- `services/gateway/src/terminal/relay-proxy/{authorization,close,consume,context,presence,resume}.ts` — partición del proxy relay (antes monolitico en `relay-proxy.ts` de 23 líneas — el barrel reexporta).
+- `services/gateway/src/terminal/session-control/targets.ts` — `targetSpecs` para el control de sesión (issuance/rotation/revocation).
+- `services/gateway/src/routes/chain-gates-legado.ts` + `.test.ts` — antes `legado-candidato.{ts,test.ts}`.
+- `services/gateway/src/routes/console-publish.ts` — ruta dedicada a publish de consola (extraída de `routes/console.ts`).
+- `services/gateway/src/routes/console/{contracts,early,helpers,phase4}.ts` — partición de `routes/console.ts` (contratos, early-access, helpers, phase 4).
+- `services/gateway/src/routes/core/{contracts,helpers,http,outbox,publish}.ts` — partición de `routes/core.ts` (628 líneas → 5 módulos = 878 líneas).
+
+*C. scripts/*:
+- `scripts/guardia-no-root.mjs` — guardia que aborta si se ejecuta como root (los tests unitarios deben correr como usuario normal).
+
+**Cifras de líneas con desviación >20% respecto a las citadas:**
+- `services/gateway/src/routes/core.ts`: el mapa decía 1 sola entrada; en realidad es 628 líneas + 5 ficheros hermanos (878 líneas).
+- `packages/store/src/repository.ts`: el mapa lo lista pero el módulo se ha ampliado enormemente con `repository/{agents,config,deliveries,messages,observability,outbox}/*`.
+- `packages/store/src/repository/observability/ (1x)`: ahora son 5 ficheros; el mapa solo cita `policy.ts`.
+- `services/terminal-relay/src/agent-leg.ts`: citado como 1065 líneas en `docs/arquitectura.md` (fuera de mi sector; corregir al integrador), pero son 206 reales.
+- `dispatcher/src/scheduler.ts`: 0 líneas (no existe); el mapa aún lo cita.
+
+## A. packages/ (protocol, store, adapter-sdk, mcp-fleet-monitor)
 
 ### packages/protocol/ (7x)
 - packages/protocol/src/agent-profile.ts — tipos `AgentProfile`, `HechosDelAlias`, `ContextoDeAlias`, validación/normalización de perfiles de agente y composición del bloque Markdown (`componerBloqueDePerfil`) — Codex (protocol)
@@ -184,7 +231,7 @@ Notas metodológicas:
 - services/dispatcher/src/index.ts — bucle principal del dispatcher: retry de deliveries vencidas, expiración de jobs, sweep de cadenas mudas, claim con fair-share, poda de observabilidad y ACK durable — Codex (gateway)
 - services/dispatcher/src/main.ts — entry-point HTTP del dispatcher: `/health/live`, `/health/ready`, `/metrics` y validación de TLS al postgres — Codex (gateway)
 - services/dispatcher/src/metrics.ts — contadores y gauges Prometheus del dispatcher (ticks, jobs por lane/outcome, colas Postgres, outbox de wakes, leases) — Codex (gateway)
-- services/dispatcher/src/scheduler.ts — `FairLaneScheduler`: round-robin pesado que limita interactiveBurst claims antes de tocar la lane batch — Codex (gateway)
+- services/dispatcher/src/scheduler.ts — **RETIRO (2026-08-27 ronda 4):** la alternancia interactive/batch vive ahora en `packages/store/src/repository/jobs.ts` (`job_lane_fairness`); este fichero ya no existe en `git ls-files`.
 
 ### services/gateway/src/ (36)
 - services/gateway/src/agent-directive-degrada.test.ts — tests de la respuesta degradada `/directive` cuando no hay hechos medidos del contenedor (medido=false, files=null, motivo explicativo) — Codex (gateway)
@@ -252,8 +299,10 @@ Notas metodológicas:
 - services/gateway/src/routes/console.ts — `createConsoleRoutes` + cuatro phases (access/topology, messages, profiles+documents+agents+chains+dlq, config+terminal capability) — Codex (gateway)
 - services/gateway/src/routes/core.ts — `createCoreRoutePhases`: publish routes, WebSocket `/v3/ws` con sesión mutable, drainer por sesión, outbox pump, ACK de wakes — Codex (gateway)
 - services/gateway/src/routes/health.ts — `registerGatewayHealthRoutes`: `/v3/status` autenticado + opcional `/health/*` cuando NO es mTLS — Codex (gateway)
-- services/gateway/src/routes/legado-candidato.test.ts — tests del flag `enableLegacyCandidateRoutes` que monta publish-intent/chain-gates sólo cuando se quiere — Codex (gateway)
-- services/gateway/src/routes/legado-candidato.ts — rutas legacy candidatas: `/v3/console/publish-intents`, `/confirm`, `/chain-gates` (list/answer/cancel) — Codex (gateway)
+- services/gateway/src/routes/legado-candidato.test.ts — **RETIRO (2026-08-27 ronda 4):** renombrado a `chain-gates-legado.test.ts`. Ver entrada nueva abajo.
+- services/gateway/src/routes/legado-candidato.ts — **RETIRO (2026-08-27 ronda 4):** renombrado a `chain-gates-legado.ts` (97 líneas, registra `registerLegacyCandidateChainGateRoutes` gated por `enableLegacyCandidateRoutes`).
+- services/gateway/src/routes/chain-gates-legado.ts (NUEVO 2026-08-27) — antes `legado-candidato.ts`: rutas legacy candidatas `/v3/console/publish-intents`, `/confirm`, `/chain-gates` (list/answer/cancel) gated por `enableLegacyCandidateRoutes` — Codex (gateway)
+- services/gateway/src/routes/chain-gates-legado.test.ts (NUEVO 2026-08-27) — antes `legado-candidato.test.ts`: tests del flag `enableLegacyCandidateRoutes` — Codex (gateway)
 - services/gateway/src/routes/shared.ts — utilidades compartidas: `principal`, `routedPriority` (human band vs agent ceiling), `validatedPublishReceipt` (igualdad exacta de hash causal), `principal`, `replyError` — Codex (gateway)
 
 ### services/gateway/src/terminal/ (12)
@@ -668,9 +717,9 @@ Notas metodológicas:
 - ops/scripts/container_ops_digest.py — calcula el digest sha256 de los inputs y árboles operacionales del supervisor (incluye tests/runbooks críticos) — Codex
 - ops/scripts/create-inactive-override-manifest.py — publica un manifest inactivo atómico de overrides YAML con SHA-256, modo 0600 y sin symlinks — Codex
 - ops/scripts/cutover.sh — cutover host-native|container bajo flock, requiere CAUCE_CUTOVER_CONFIRM literal y drain snapshot — Codex
-- ops/scripts/dlq-list.py — thin wrapper de 5 líneas que delega a dlq_cli.list_main ⚠ — Codex
-- ops/scripts/dlq-reconcile.py — thin wrapper de 5 líneas que delega a dlq_cli.reconcile_main ⚠ — Codex
-- ops/scripts/dlq_cli.py — operadores de DLQ (list, reconcile, replay, resolve-without-replay) sobre private-postgres-command con contratos exactos — Codex
+- ~~ops/scripts/dlq-list.py~~ — **RETIRO (2026-08-27 ronda 4):** retirada la familia DLQ manual completa (codex la marcó como dudosa en `PENDIENTES-DEL-DUEÑO.md` §(2)(b) y procedió). Ya no existe en `git ls-files`.
+- ~~ops/scripts/dlq-reconcile.py~~ — **RETIRO:** igual que arriba.
+- ~~ops/scripts/dlq_cli.py~~ — **RETIRO:** igual que arriba.
 - ops/scripts/fault-compose.sh — mata y rearranca un servicio (gateway/postgres/telegram-bridge/relay-worker) con CAUCE_FAULT_CONFIRM=ephemeral-only — Codex
 - ops/scripts/fault-compose.test.sh — suite bash que ejercita fault-compose.sh con un fake-docker (politica/stack/target) — Codex
 - ops/scripts/fleet-watchdog.py — watchdog read-only: heartbeats, leases, dead-letters, deliveries pendientes y unidades systemd (sin escribir) — Codex
@@ -694,7 +743,7 @@ Notas metodológicas:
 - ops/scripts/provision-hermes-runtime.sh — provisiona/verifica el runtime Hermes fijado bajo /opt, root-owned e inmutable — Codex
 - ops/scripts/provision-terminal-client.sh — emite un client cert mTLS (gateway-relay-client o terminal-relay-client) con 0400/0444 sin sobreescribir — Codex
 - ops/scripts/quota-collector.py — muestrea ai-usage, mapea a cuentas del panel vía bindings y publica POST /v3/quotas/samples por mTLS — Codex
-- ops/scripts/resolve-dlq-without-replay.py — thin wrapper de 5 líneas que delega a dlq_cli.private_request_main('resolve-without-replay') ⚠ — Codex
+- ~~ops/scripts/resolve-dlq-without-replay.py~~ — **RETIRO (2026-08-27 ronda 4):** retirada la familia DLQ manual. Ya no existe.
 - ops/scripts/run-testcontainers.sh — ejecuta pnpm test:e2e con Testcontainers, valida el set de artefactos y archiva por run-id — Codex
 - ops/scripts/separar-config-alias.mjs — planner (no toca disco) de la separación de ~/.codex y ~/.claude por alias en directorios dedicados — Codex
 - ops/scripts/smoke-adapter-doubles.sh — build+test del adapter-sdk con los dobles de test (sin invocar el CLI real) — Codex
@@ -703,8 +752,8 @@ Notas metodológicas:
 - ops/scripts/stack-health.sh — health del stack dev|prod vía readiness-probe y docker exec (gateway, console, dispatcher, postgres, telegram-bridge) — Codex
 - ops/scripts/systemd-stack.sh — traductor mínimo: dev|test|authentic start|reload|stop → compose.sh up/down -d --wait — Codex
 - ops/scripts/telegram-cutover-preflight.py — preflight read-only del cutover del telegram-bridge: schema, mount, token 0600, marker, allowlists — Codex
-- ops/scripts/telegram-manual-replay.py — thin wrapper de 5 líneas que delega a dlq_cli.private_request_main('telegram-manual-replay') ⚠ — Codex
-- ops/scripts/telegram-replay-inspect.py — thin wrapper de 5 líneas que delega a dlq_cli.private_replay_inspect_main ⚠ — Codex
+- ~~ops/scripts/telegram-manual-replay.py~~ — **RETIRO (2026-08-27 ronda 4):** retirada la familia DLQ manual. Ya no existe.
+- ~~ops/scripts/telegram-replay-inspect.py~~ — **RETIRO:** igual que arriba.
 - ops/scripts/update-alias-config.py — actualiza un <alias>.env atómicamente con flock+CAS+fsync+rename+backup 0600 (sin imprimir valores) — Codex
 - ops/scripts/ut-nexus-backup-verify.py — PRAGMA integrity_check + foreign_key_check + conteos sobre un .sqlite de ut-nexus — Codex
 - ops/scripts/ut-nexus-backup.py — backup online de la SQLite de ut-nexus vía Connection.backup() (consistente con WAL, sin parar el contenedor) — Codex
