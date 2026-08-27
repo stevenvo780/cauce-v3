@@ -44,3 +44,8 @@ Borra cada una (con su test si aplica), re-verificando el grep antes (ediciones 
 - `resolveAccountCredentialEnv` en packages/adapter-sdk/src/sdk/account-credentials.ts:53
 - `SelectedAccount` en packages/adapter-sdk/src/sdk/account-credentials.ts:9
 - `CredentialRefusal` en packages/adapter-sdk/src/sdk/account-credentials.ts:16
+
+## ANEXO 2 — las migraciones 029 y 036 YA NO EXISTEN (cirugía del integrador, mandato del dueño 27-08)
+Borradas del repo con sus `down/`, su suite `fleet-reconciliation-postgres.test.ts` y el probe `schema-shadow-target-phase` (health.ts y health-progress.test.ts ya ajustados — gateway 468/468 verde). **NO las resucites** ni "arregles" su ausencia: el runner tolera huecos (ya convivía con 022 y 025). Lo ÚNICO que queda en tu sector:
+1. Los 6 tests de migración de store citan el escalón 036 en sus cadenas de down (`agent-profile-migration`, `agent-profile-runtime-adoption-migration`, `connection-session-fencing-migration`, `terminal-session-claim-fencing-migration`, `terminal-browser-owner-fencing-migration`, `terminal-relay-instance-fencing-migration`): quita ese escalón — la cadena baja 037→035 directo. Esto probablemente RESUELVE de raíz tu tarea 0 del arnés (el downgrade que bajaba la 036 con la 037 presente).
+2. Bases `cauce_test*` externas reutilizadas: recréalas (la huella de ficheros de migración cambió; el helper lo detecta y pide DROP SCHEMA cauce_semilla CASCADE).
