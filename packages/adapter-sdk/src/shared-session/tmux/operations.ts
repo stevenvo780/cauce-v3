@@ -5,7 +5,6 @@ import {
   SAFE_TMUX_NAME_PATTERN,
   SESSION_ID_PATTERN,
   WINDOW_ID_PATTERN,
-  exactSessionTarget,
   hasSessionId,
   paneIdentity,
   samePaneIdentity,
@@ -124,11 +123,6 @@ export async function inspectSolePaneHarness(
   return current !== undefined && samePaneIdentity(current, pane)
     ? { state: "present", pane }
     : { state: "unreadable" };
-}
-
-/** Sin testigo de creación sólo puede acreditarse ausencia; nunca se mata por nombre. */
-export async function killSession(tmux: TmuxController, session: string): Promise<boolean> {
-  return await exactSessionTarget(tmux, session) === undefined;
 }
 
 /**
@@ -460,20 +454,6 @@ export async function interruptPane(
     tmux,
     identity,
     `send-keys -t ${identity.paneId} Escape`,
-    control,
-  );
-}
-
-/** Último recurso: descarta una caja pegada que tmux no pudo enviar. */
-export async function clearPaneInput(
-  tmux: TmuxController,
-  identity: PaneIdentity,
-  control?: TmuxRunControl,
-): Promise<TmuxMutationState> {
-  return mutateExactPane(
-    tmux,
-    identity,
-    `send-keys -t ${identity.paneId} C-u`,
     control,
   );
 }

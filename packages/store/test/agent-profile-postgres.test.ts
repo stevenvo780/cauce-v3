@@ -219,8 +219,8 @@ describe('AgentProfileRepository', () => {
     expect(perfil.responsibilities).toEqual([]);
   });
 
-  it('escribe y relee un perfil completo, campo por campo', async () => {
-    const escrito = await repository.write({
+  it('reemplaza y relee un perfil completo, campo por campo', async () => {
+    const escrito = await repository.replace({
       tenant_id: 'Steven', alias: 'zeus',
       purpose: 'Orquestar la flota y reparar Cauce.',
       role_summary: 'Médico de la flota.',
@@ -228,20 +228,10 @@ describe('AgentProfileRepository', () => {
       restrictions: ['Nunca tocar credenciales.'],
       tools: ['cauce', 'ssh'],
       operating_rules: ['Comprobar el efecto, nunca el nombre.']
-    });
-    expect(escrito.purpose).toBe('Orquestar la flota y reparar Cauce.');
+    }, null, ACTOR);
+    expect(escrito.perfil.purpose).toBe('Orquestar la flota y reparar Cauce.');
     const leido = await repository.read('Steven', 'zeus');
-    expect(leido).toEqual(escrito);
-  });
-
-  it('escribir dos veces actualiza en vez de duplicar', async () => {
-    await repository.write({ tenant_id: 'Steven', alias: 'zeus', purpose: 'Uno.' });
-    await repository.write({ tenant_id: 'Steven', alias: 'zeus', purpose: 'Dos.' });
-    const filas = await pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM agent_profiles WHERE alias='zeus'`
-    );
-    expect(Number(filas.rows[0]?.count)).toBe(1);
-    expect((await repository.read('Steven', 'zeus')).purpose).toBe('Dos.');
+    expect(leido).toEqual(escrito.perfil);
   });
 
   it('dos editores del mismo perfil no se pisan y la revisión es propia', async () => {
@@ -373,9 +363,9 @@ describe('AgentProfileRepository', () => {
   });
 
   it('rechaza en TypeScript, antes de tocar la base, lo mismo que rechaza el CHECK', async () => {
-    await expect(repository.write({
+    await expect(repository.replace({
       tenant_id: 'Steven', alias: 'zeus', purpose: ASTRAL.repeat(AGENT_PROFILE_LIMITS.purpose)
-    })).rejects.toMatchObject({ name: 'AgentProfileError', field: 'purpose' });
+    }, null, ACTOR)).rejects.toMatchObject({ name: 'AgentProfileError', field: 'purpose' });
     const filas = await pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM agent_profiles WHERE alias='zeus'`
     );
@@ -387,7 +377,10 @@ describe('AgentProfileRepository', () => {
       `UPDATE agents SET role_brief='El rol de siempre.' WHERE tenant_id='Steven' AND alias='zeus'`
     );
     const rico = `${'x'.repeat(1_199)}${ASTRAL}${'detalle'.repeat(20)}`;
-    await repository.write({ tenant_id: 'Steven', alias: 'zeus', role_summary: rico });
+    const existente = await repository.readWithPresence('Steven', 'zeus');
+    await repository.replace(
+      { tenant_id: 'Steven', alias: 'zeus', role_summary: rico }, existente.revision, ACTOR,
+    );
     const brief = await pool.query<{ role_brief: string }>(
       `SELECT role_brief FROM agents WHERE tenant_id='Steven' AND alias='zeus'`
     );
@@ -400,8 +393,9 @@ describe('AgentProfileRepository', () => {
     await pool.query(
       `UPDATE agents SET role_brief='Sigo acá.' WHERE tenant_id='Steven' AND alias='zeus'`
     );
-    await repository.write({ tenant_id: 'Steven', alias: 'zeus', purpose: 'Orquestar.' });
-    expect(await repository.remove('Steven', 'zeus')).toBe(true);
+    await pool.query(
+      `DELETE FROM agent_profiles WHERE tenant_id='Steven' AND alias='zeus'`
+    );
     expect((await repository.read('Steven', 'zeus')).purpose).toBeNull();
     const brief = await pool.query<{ role_brief: string | null }>(
       `SELECT role_brief FROM agents WHERE tenant_id='Steven' AND alias='zeus'`
@@ -421,10 +415,6 @@ describe('AgentProfileRepository', () => {
     });
   });
 
-  /** CONTROL NEGATIVO de `remove`: borrar lo que no existe informa `false`, no miente `true`. */
-  it('control negativo: borrar un perfil que no existe devuelve false', async () => {
-    expect(await repository.remove('Steven', 'zeus')).toBe(false);
-  });
 });
 
 /**
@@ -602,7 +592,9 @@ describe('hechos derivados del alias', () => {
 
   it('devuelve el perfil autorado junto a los hechos, en un solo objeto', async () => {
     await darSala('zeus', 'agent');
-    await repository.write({ tenant_id: 'Steven', alias: 'zeus', purpose: 'Orquestar.' });
+    await repository.replace(
+      { tenant_id: 'Steven', alias: 'zeus', purpose: 'Orquestar.' }, null, ACTOR,
+    );
     const contexto = await repository.readContext('Steven', 'zeus');
     expect(contexto.perfil.purpose).toBe('Orquestar.');
     expect(contexto.hechos.permisos.ruta).toBe(true);

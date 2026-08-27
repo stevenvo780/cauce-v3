@@ -137,47 +137,6 @@ export abstract class OutboxSettlementRepository extends OutboxClaimsRepository 
     });
   }
 
-  async retryExpiredOutbox(limit = 100): Promise<{ retried: number; dead: number }> {
-    return withTransaction(this.pool, async (client) => {
-      const expired = await client.query<{
-        id: string; tenant_id: Tenant; adapter: string; kind: string;
-        payload: Record<string, unknown>; attempts: number; max_attempts: number;
-      }>(
-        `SELECT id,tenant_id,adapter,kind,payload,attempts,max_attempts
-          FROM adapter_outbox WHERE status='processing'
-            AND COALESCE(claim_expires_at,claimed_at,created_at)<=now()
-          ORDER BY COALESCE(claim_expires_at,claimed_at,created_at)
-          FOR UPDATE SKIP LOCKED LIMIT $1`, [limit]
-      );
-      let retried = 0;
-      let dead = 0;
-      for (const event of expired.rows) {
-        if (event.attempts >= event.max_attempts) {
-          const reason = 'outbox lease expired: max attempts exhausted';
-          await client.query(
-            `UPDATE adapter_outbox SET status='dead',dead_at=now(),claim_expires_at=NULL,
-               last_error=$2 WHERE id=$1`, [event.id, reason]
-          );
-          await client.query(
-            `INSERT INTO outbox_dead_letters(outbox_id,tenant_id,adapter,kind,reason,payload,attempts)
-             VALUES($1,$2,$3,$4,$5,$6::jsonb,$7) ON CONFLICT(outbox_id) DO NOTHING`,
-            [event.id, event.tenant_id, event.adapter, event.kind, reason,
-              JSON.stringify(event.payload), event.attempts]
-          );
-          dead += 1;
-        } else {
-          await client.query(
-            `UPDATE adapter_outbox SET status='failed',available_at=now(),claimed_by=NULL,
-               claim_token=NULL,claim_expires_at=NULL,last_error='outbox lease expired'
-             WHERE id=$1`, [event.id]
-          );
-          retried += 1;
-        }
-      }
-      return { retried, dead };
-    });
-  }
-
   async listOutbox(kind?: 'wake' | 'origin_relay'): Promise<Array<Record<string, unknown>>> {
     const result = await this.pool.query<Record<string, unknown>>(
       `SELECT id,tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,

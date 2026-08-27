@@ -5,7 +5,6 @@ import type {
   DelegationRejectionNotice,
   DeliveryEnvelope,
   DeliveryState,
-  Hello,
   Origin,
   ProfileRuntimeAdoptionEvidence,
   WsInbound,
@@ -113,8 +112,6 @@ export interface CancelDelivery {
   readonly reason?: string;
 }
 
-export type HelloAck = Extract<WsOutbound, { type: 'hello_ack' }>;
-export type HelloFrame = Hello;
 export type HeartbeatFrame = Extract<WsInbound, { type: 'heartbeat' }>;
 
 /** Correlated receipt for one exact durable ACK event. */

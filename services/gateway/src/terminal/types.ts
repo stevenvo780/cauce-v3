@@ -6,8 +6,6 @@
 
 export type TerminalMode = 'shell' | 'harness';
 
-export const TERMINAL_MODES: readonly TerminalMode[] = ['shell', 'harness'];
-
 export function isTerminalMode(value: unknown): value is TerminalMode {
   return value === 'shell' || value === 'harness';
 }

@@ -7,7 +7,6 @@ export * from "./sdk/fanin-synthesizer.js";
 export * from "./sdk/artifact-inliner.js";
 export * from "./sdk/process-runner.js";
 export * from "./sdk/secure-files.js";
-export * from "./sdk/account-credentials.js";
 export * from "./sdk/openclaw-api-runner.js";
 export * from "./sdk/engine.js";
 export * from "./sdk/client.js";

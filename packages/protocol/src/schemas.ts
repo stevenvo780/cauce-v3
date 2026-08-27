@@ -45,12 +45,6 @@ export const PREFLIGHT_ACK_ERROR_CODES = [
   'EXECUTION_INTENT_PERSISTENCE_FAILED',
   'INTERRUPTED_PREFLIGHT'
 ] as const;
-export const PreflightAckErrorCodeSchema = z.enum(PREFLIGHT_ACK_ERROR_CODES);
-export type PreflightAckErrorCode = z.infer<typeof PreflightAckErrorCodeSchema>;
-
-export function isPreflightAckErrorCode(code: unknown): code is PreflightAckErrorCode {
-  return PreflightAckErrorCodeSchema.safeParse(code).success;
-}
 
 function assertPreflightCodesAreNotAmbiguous(): void {
   const overlap = PREFLIGHT_ACK_ERROR_CODES.filter((code) => isAmbiguousAckErrorCode(code));
@@ -80,13 +74,6 @@ export const DeliveryStateSchema = z.enum([
   'pending', 'leased', 'accepted', 'started', 'done', 'failed', 'retry', 'dead'
 ]);
 export const LaneSchema = z.enum(['interactive', 'batch']);
-
-export const CorrelationSchema = z.object({
-  request_id: RequestIdSchema,
-  message_id: MessageIdSchema,
-  delivery_id: DeliveryIdSchema.optional(),
-  trace_id: TraceIdSchema
-}).strict();
 
 export const RelayHopSchema = z.object({
   tenant_id: TenantSchema,
@@ -835,10 +822,6 @@ export const WsAckSchema = AckSchema.safeExtend({
   delivery_id: DeliveryIdSchema
 }).strict();
 
-export const HttpAckSchema = AckSchema.safeExtend({
-  delivery_id: DeliveryIdSchema
-}).strict();
-
 export const DeliveryEnvelopeSchema = z.object({
   type: z.literal('delivery'),
   version: z.literal(PROTOCOL_VERSION),
@@ -1091,13 +1074,10 @@ export type Ack = z.infer<typeof AckSchema>;
 export type ClaimedAck = Ack;
 export type Hello = z.infer<typeof HelloSchema>;
 export type Origin = z.infer<typeof OriginSchema>;
-export type AuthenticatedContext = z.infer<typeof AuthenticatedContextSchema>;
 export type RoutingTarget = z.infer<typeof RoutingTargetSchema>;
-export type AttachmentContent = z.infer<typeof AttachmentContentSchema>;
 export type Lane = z.infer<typeof LaneSchema>;
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 export type DeliveryEnvelope = z.infer<typeof DeliveryEnvelopeSchema>;
-export type ProfileRuntimeDocument = z.infer<typeof ProfileRuntimeDocumentSchema>;
 export type ProfileRuntimeContract = z.infer<typeof ProfileRuntimeContractSchema>;
 export type ProfileRuntimeAdoptionEvidence = z.infer<typeof ProfileRuntimeAdoptionEvidenceSchema>;
 export type DelegationRejectionCode = (typeof DELEGATION_REJECTION_CODES)[number];
@@ -1107,9 +1087,7 @@ export type ChainGateNotice = z.infer<typeof ChainGateSchema>;
 export type ConfigMutation = z.infer<typeof ConfigMutationSchema>;
 export type NotifyKind = z.infer<typeof NotifyKindSchema>;
 export type NotifyRequest = z.infer<typeof NotifyRequestSchema>;
-export type ConfigChangeRequest = z.infer<typeof ConfigChangeRequestSchema>;
 export type WsInbound = z.infer<typeof WsInboundSchema>;
 export type WsOutbound = z.infer<typeof WsOutboundSchema>;
-export type QuotaWindowSample = z.infer<typeof QuotaWindowSampleSchema>;
 export type QuotaProviderReport = z.infer<typeof QuotaProviderReportSchema>;
 export type QuotaSampleRequest = z.infer<typeof QuotaSampleRequestSchema>;

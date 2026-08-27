@@ -134,27 +134,6 @@ export class AgentProfileRepository {
       : stored(row);
   }
 
-  /** Los perfiles de varios alias de un tenant, para generar la flota entera de una pasada. */
-  async readMany(tenantId: string, aliases: readonly string[]): Promise<Map<string, AgentProfile>> {
-    const profiles = new Map<string, AgentProfile>();
-    for (const alias of aliases) profiles.set(alias, emptyAgentProfile(tenantId, alias));
-    if (aliases.length === 0) return profiles;
-    const result = await this.pool.query<ProfileRow>(
-      `SELECT ${profileColumns} FROM agent_profiles WHERE tenant_id=$1 AND alias = ANY($2::text[])`,
-      [tenantId, [...aliases]]
-    );
-    for (const row of result.rows) profiles.set(row.alias, toProfile(row));
-    return profiles;
-  }
-
-  /**
-   * Normaliza y escribe el perfil completo de un agente.
-   */
-  async write(input: Record<string, unknown>): Promise<AgentProfile> {
-    const profile = normalizeAgentProfile(input);
-    return withTransaction(this.pool, (client) => this.writeWithClient(client, profile));
-  }
-
   /**
    * Reemplazo optimista de perfil validando la revisión esperada.
    */
@@ -299,46 +278,6 @@ export class AgentProfileRepository {
        VALUES($1,$2,$3,'allow',$4::jsonb)`,
       [actor.tenant_id, actor.alias, action, JSON.stringify(metadata)],
     );
-  }
-
-  private async writeWithClient(
-    client: DatabaseClient, profile: AgentProfile
-  ): Promise<AgentProfile> {
-    const result = await client.query<ProfileRow>(
-      `INSERT INTO agent_profiles
-         (tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules)
-       VALUES ($1,$2,$3,$4,$5,$6::text[],$7::text[],$8::text[],$9::text[])
-       ON CONFLICT (tenant_id,alias) DO UPDATE SET
-         purpose=EXCLUDED.purpose,
-         role_summary=EXCLUDED.role_summary,
-         human_brief=EXCLUDED.human_brief,
-         responsibilities=EXCLUDED.responsibilities,
-         restrictions=EXCLUDED.restrictions,
-         tools=EXCLUDED.tools,
-         operating_rules=EXCLUDED.operating_rules,
-         updated_at=now()
-       RETURNING ${profileColumns}`,
-      [
-        profile.tenant_id, profile.alias, profile.purpose, profile.role_summary, profile.human_brief,
-        [...profile.responsibilities], [...profile.restrictions],
-        [...profile.tools], [...profile.operating_rules]
-      ]
-    );
-    const row = result.rows[0];
-    if (row === undefined) {
-      throw new Error(`agent profile write returned no row for ${profile.tenant_id}/${profile.alias}`);
-    }
-    return toProfile(row);
-  }
-
-  /**
-   * Elimina el perfil almacenado de un agente; devuelve true si existía la fila.
-   */
-  async remove(tenantId: string, alias: string): Promise<boolean> {
-    const result = await this.pool.query(
-      'DELETE FROM agent_profiles WHERE tenant_id=$1 AND alias=$2', [tenantId, alias]
-    );
-    return (result.rowCount ?? 0) > 0;
   }
 
   /**

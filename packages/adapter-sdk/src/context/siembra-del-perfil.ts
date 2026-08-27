@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   closeSync, constants, fstatSync, ftruncateSync, fsyncSync, linkSync, lstatSync, mkdirSync,
-  openSync, readFileSync, statSync, unlinkSync, writeSync,
+  openSync, readFileSync, unlinkSync, writeSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import {
@@ -528,13 +528,4 @@ export function resumenDeLaSiembra(resultado: ResultadoDeLaSiembra): string {
   }
   const partes = [...cuenta].map(([estado, n]) => `${estado}=${n}`).join(" ");
   return `siembra del perfil: ${partes}`;
-}
-
-/** El mtime de un fichero, o `-1`. Expuesto para que el llamador pueda cachear sin releer. */
-export function marcaDeTiempo(ruta: string): number {
-  try {
-    return statSync(ruta).mtimeMs;
-  } catch {
-    return -1;
-  }
 }

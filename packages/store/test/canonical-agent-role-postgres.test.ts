@@ -19,6 +19,7 @@ import {
 
 let database: TestDatabase;
 let pool: DatabasePool;
+const ACTOR = { tenant_id: 'Steven', alias: 'kant' } as const;
 
 const downPath = new URL('../migrations/down/028_canonical_agent_role.sql', import.meta.url);
 
@@ -178,9 +179,10 @@ describe('reconciliación y compatibilidad de la migración 028', () => {
   it('el down conserva el perfil rico y deja una proyección usable por una imagen anterior', async () => {
     await insertAgent('Steven', 'rollback_safe');
     const rich = `${'a'.repeat(1_199)}🎉${'detalle'.repeat(30)}`;
-    await new AgentProfileRepository(pool).write({
-      tenant_id: 'Steven', alias: 'rollback_safe', role_summary: rich,
-    });
+    await pool.query(
+      `INSERT INTO agent_profiles(tenant_id,alias,role_summary) VALUES ('Steven','rollback_safe',$1)`,
+      [rich],
+    );
 
     await ensureDown();
 
@@ -201,16 +203,16 @@ describe('reconciliación y compatibilidad de la migración 028', () => {
 
 describe('una fuente canónica en todos los caminos de escritura', () => {
   it('sincroniza perfil, legacy y plantillas sin perder tenant+alias', async () => {
-    await insertAgent('Steven', 'duplicado');
-    await insertAgent('Miguel', 'duplicado');
+    await insertAgent('Steven', 'duplicado', null, true);
+    await insertAgent('Miguel', 'duplicado', null, true);
     const profiles = new AgentProfileRepository(pool);
 
-    await profiles.write({
+    await profiles.replace({
       tenant_id: 'Steven', alias: 'duplicado', role_summary: 'rol de Steven',
-    });
-    await profiles.write({
+    }, null, ACTOR);
+    await profiles.replace({
       tenant_id: 'Miguel', alias: 'duplicado', role_summary: 'rol de Miguel',
-    });
+    }, null, { tenant_id: 'Miguel', alias: 'kant' });
 
     await pool.query(
       `UPDATE agents SET role_brief='legacy traducido'
@@ -235,7 +237,7 @@ describe('una fuente canónica en todos los caminos de escritura', () => {
       `INSERT INTO agent_role_templates(slug,display_name,brief)
        VALUES ('test_builder','Constructor','construir con pruebas')`,
     );
-    await insertAgent('Steven', 'builder');
+    await insertAgent('Steven', 'builder', null, true);
     await pool.query(
       `UPDATE agents
           SET role_template_slug='test_builder',role_brief='construir con pruebas'
@@ -261,9 +263,11 @@ describe('una fuente canónica en todos los caminos de escritura', () => {
       role_template_slug: 'test_builder',
     }]);
 
-    await new AgentProfileRepository(pool).write({
+    const profiles = new AgentProfileRepository(pool);
+    const existente = await profiles.readWithPresence('Steven', 'builder');
+    await profiles.replace({
       tenant_id: 'Steven', alias: 'builder', role_summary: 'rol personalizado',
-    });
+    }, existente.revision, ACTOR);
     const custom = await pool.query<{ role_brief: string; role_template_slug: string | null }>(
       `SELECT role_brief,role_template_slug FROM agents
         WHERE tenant_id='Steven' AND alias='builder'`,
@@ -304,7 +308,9 @@ describe('delivery context real', () => {
     await insertAgent('Steven', 'argos', null, true);
     const rich = `${'r'.repeat(1_199)}🎉${'detalle'.repeat(20)}`;
     const profiles = new AgentProfileRepository(pool);
-    await profiles.write({ tenant_id: 'Steven', alias: 'argos', role_summary: rich });
+    await profiles.replace(
+      { tenant_id: 'Steven', alias: 'argos', role_summary: rich }, null, ACTOR,
+    );
 
     // Daño deliberado de la proyección, con los triggers apagados sólo durante esta sentencia. El
     // claim correcto tiene que seguir saliendo del perfil y no de esta caché.

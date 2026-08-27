@@ -12,15 +12,6 @@ import {
  */
 export type DelegationRejectionCode = ProtocolDelegationRejectionCode;
 
-/** Códigos que 019 agrega al dominio durable de `agent_output_materializations.rejection_code`. */
-export const DELEGATION_DISCIPLINE_REJECTION_CODES = [
-  'fanout_exceeded',
-  'edge_repeat_exceeded',
-  'root_budget_exhausted',
-  'chain_gated',
-  'human_gate_opened'
-] as const;
-
 /** Directiva reservada: pedirle algo a una persona NO es delegar en un agente. */
 export const HUMAN_GATE_TARGET = '@human';
 
