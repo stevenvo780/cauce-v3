@@ -7,6 +7,7 @@ import {
   type ConsolePublishIntentConfirm, type ConsolePublishIntentConfirmResult,
   type ConsolePublishIntentPrepareResult,
   type DeliveryEnvelope, type NotifyRequest,
+  type OutboxAckWithConnection,
   type ProfileRuntimeAdoptionEvidence, type ProfileRuntimeContract,
   type QuotaSampleRequest, type Tenant,
 } from '@cauce/protocol';
@@ -58,15 +59,7 @@ export type OutboxLeaseEvent = OutboxEvent & {
   attempt?: number;
 };
 
-export interface OutboxLeaseAck {
-  event_id: string;
-  attempt: number;
-  claim_token: string;
-  status: 'sent' | 'retry' | 'dead';
-  error?: string;
-  retry_after_ms?: number;
-  connection: ConnectionSessionFence;
-}
+export type OutboxLeaseAck = OutboxAckWithConnection<ConnectionSessionFence>;
 
 export interface OutboxLeaseAckResult {
   status: 'sent' | 'failed' | 'dead';

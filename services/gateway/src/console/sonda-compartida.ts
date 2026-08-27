@@ -51,12 +51,10 @@ const SONDA_SIN_CANAL: AgentFactsProbe = {
 export class SondaCompartida {
   private sonda: AgentFactsProbe = SONDA_SIN_CANAL;
 
-  /** Registra la sonda del plano de control de terminal. */
   instalar(sonda: AgentFactsProbe): void {
     this.sonda = sonda;
   }
 
-  /** Obtiene la sonda actualmente configurada. */
   actual(): AgentFactsProbe {
     return this.sonda;
   }

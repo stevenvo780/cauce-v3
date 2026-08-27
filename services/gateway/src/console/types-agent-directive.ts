@@ -1,9 +1,3 @@
-/**
- * Tipos re-exportados del frontend para mantener consistencia.
- * La fuente de verdad es console/src/api/types.ts.
- * Estos tipos se usan en el gateway cuando devuelve GET /v3/console/agents/:tenant/:alias/directive.
- */
-
 export interface AgentDirectiveFile {
   path?: string | null;
   /** 'user' = ~/.claude/CLAUDE.md; 'workspace' = ~/CLAUDE.md o /workspace/CLAUDE.md. */

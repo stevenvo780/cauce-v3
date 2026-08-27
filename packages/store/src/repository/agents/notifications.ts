@@ -1,7 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { Ack, NotifyRequest, Origin, Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
+import { hashToUuidV7 } from '../_hash-to-uuidv7.js';
+import type { EgressDestinationRow } from '../egress-destinations.js';
 import { AgentChainControlRepository } from './chain-control.js';
 import { sha256 } from '../config.js';
 import {
@@ -49,38 +51,13 @@ interface NotificationContext {
   sourceRootMessageId?: string;
 }
 
-interface EgressDestinationRow {
-  adapter: string;
-  channel: string;
-  conversation_id: string;
-  conversation_kind: string;
-  allow_kinds: string[];
-  require_prior_contact: boolean;
-  contact_ttl_days: number;
-  min_interval_seconds: number;
-  max_per_hour: number;
-  max_per_day: number;
-  max_per_root: number;
-  quiet_hours_start: number | null;
-  quiet_hours_end: number | null;
-  quiet_hours_tz: string;
-  enabled: boolean;
-}
-
 /**
  * messages_request_actor_idx is UNIQUE(tenant_id, actor_alias, request_id), so a
  * derived request_id keeps a re-ACK of the same attempt from ever producing a
  * second notification message even if the first idempotency layer were bypassed.
  */
 function agentNotifyRequestId(deliveryId: string, attempt: number, notifyIndex: number): string {
-  const bytes = Buffer.from(
-    createHash('sha256').update(`agent-notify:${deliveryId}:${attempt}:${notifyIndex}`).digest('hex').slice(0, 32),
-    'hex'
-  );
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return hashToUuidV7(`agent-notify:${deliveryId}:${attempt}:${notifyIndex}`);
 }
 
 export abstract class AgentNotificationsRepository extends AgentChainControlRepository {
@@ -184,7 +161,7 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
     // 3. The allowlist. Zero rows means default-deny, which is the state the
     //    migration leaves the system in.
     const destinations = await client.query<EgressDestinationRow>(
-      `SELECT adapter,channel,conversation_id,conversation_kind,allow_kinds,require_prior_contact,
+      `SELECT adapter,channel,conversation_id,conversation_kind,display_label,allow_kinds,require_prior_contact,
               contact_ttl_days,min_interval_seconds,max_per_hour,max_per_day,max_per_root,
               quiet_hours_start,quiet_hours_end,quiet_hours_tz,enabled
        FROM egress_destinations WHERE tenant_id=$1 AND alias=$2 AND handle=$3 FOR SHARE`,

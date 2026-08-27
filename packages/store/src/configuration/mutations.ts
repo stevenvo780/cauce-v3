@@ -1,35 +1,13 @@
 import type { ConfigMutation, Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
+import { egressDestinationColumns, type EgressDestinationRow } from '../repository/egress-destinations.js';
 import { ConfigurationError } from './contracts.js';
 import { has, valueRequired } from './shared.js';
 
 const activeDeliveryStates = "('pending','retry','leased','accepted','started')";
 
-interface DestinationRow {
-  adapter: string;
-  channel: string;
-  conversation_id: string;
-  conversation_kind: 'dm' | 'group';
-  display_label: string | null;
-  allow_kinds: string[];
-  require_prior_contact: boolean;
-  contact_ttl_days: number;
-  min_interval_seconds: number;
-  max_per_hour: number;
-  max_per_day: number;
-  max_per_root: number;
-  quiet_hours_start: number | null;
-  quiet_hours_end: number | null;
-  quiet_hours_tz: string;
-  enabled: boolean;
-}
-
-const destinationColumns = `adapter,channel,conversation_id,conversation_kind,display_label,allow_kinds,
-  require_prior_contact,contact_ttl_days,min_interval_seconds,max_per_hour,max_per_day,max_per_root,
-  quiet_hours_start,quiet_hours_end,quiet_hours_tz,enabled`;
-
 /** The exact prior state, so a rollback restores every limit rather than a default. */
-function destinationValue(row: DestinationRow): Record<string, unknown> {
+function destinationValue(row: EgressDestinationRow): Record<string, unknown> {
   return {
     adapter: row.adapter, channel: row.channel, conversation_id: row.conversation_id,
     conversation_kind: row.conversation_kind, display_label: row.display_label,
@@ -392,8 +370,8 @@ export abstract class ConfigurationMutations {
     client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'egress_destination' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const key = `${mutation.tenant_id}/${mutation.alias}/${mutation.handle}`;
-    const selected = await client.query<DestinationRow>(
-      `SELECT ${destinationColumns} FROM egress_destinations
+    const selected = await client.query<EgressDestinationRow>(
+      `SELECT ${egressDestinationColumns} FROM egress_destinations
        WHERE tenant_id=$1 AND alias=$2 AND handle=$3 FOR UPDATE`,
       [mutation.tenant_id, mutation.alias, mutation.handle]
     );
@@ -447,7 +425,7 @@ export abstract class ConfigurationMutations {
       };
     }
     const value = valueRequired(mutation);
-    const next = (field: keyof DestinationRow): unknown => has(value, field) ? value[field] : old[field];
+    const next = (field: keyof EgressDestinationRow): unknown => has(value, field) ? value[field] : old[field];
     await client.query(
       `UPDATE egress_destinations SET adapter=$4,channel=$5,conversation_id=$6,conversation_kind=$7,
          display_label=$8,allow_kinds=$9,require_prior_contact=$10,contact_ttl_days=$11,

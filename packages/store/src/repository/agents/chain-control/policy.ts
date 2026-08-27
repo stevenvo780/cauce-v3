@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   DelegationMaterializationSchema,
   DelegationRejectionSchema,
@@ -26,6 +25,7 @@ import {
   type ChainPolicy
 } from '../../observability.js';
 import { objectRecord } from '../../outbox.js';
+import { hashToUuidV7 } from '../../_hash-to-uuidv7.js';
 
 const agentOutputHopBudget = 16;
 export const maxAgentOutputExpandedBytes = 512 * 1024;
@@ -85,14 +85,7 @@ export interface AgentOutputLineage {
 }
 
 export function agentOutputRequestId(deliveryId: string, attempt: number, outputIndex: number): string {
-  const bytes = Buffer.from(
-    createHash('sha256').update(`agent-output:${deliveryId}:${attempt}:${outputIndex}`).digest('hex').slice(0, 32),
-    'hex'
-  );
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return hashToUuidV7(`agent-output:${deliveryId}:${attempt}:${outputIndex}`);
 }
 
 export abstract class AgentChainPolicyRepository extends AgentFaninRepository {

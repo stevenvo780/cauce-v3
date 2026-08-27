@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { CauceRepository, StoreError, type DatabasePool } from '../src/index.js';
+import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
@@ -132,6 +132,6 @@ describe('participant-aware audit keyset pagination', () => {
     { before: '9223372036854775808' },
   ])('rejects malformed pagination defensively: %j', async (options) => {
     await expect(repository.listAudit('Steven', 'kant', options))
-      .rejects.toBeInstanceOf(StoreError);
+      .rejects.toMatchObject({ name: 'StoreError', code: 'invalid_input' });
   });
 });

@@ -35,11 +35,6 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
    * CANCELACIÓN de una entrega en vuelo. Operación del operador, hermana de
    * `replayDelivery` y con exactamente su misma autorización.
    *
-   * Proporciona una operación consistente y trazable de cancelación de entregas:
-   *   1. Registra la entrega en `dead_letters` para trazabilidad y replay.
-   *   2. Notifica el resultado a través de `insertOriginRelay`.
-   *   3. Materializa la respuesta en el árbol de delegación para actualizar al padre y la agregación de fan-in.
-   *
    * NO INVENTA UN ESTADO NUEVO. Termina en 'dead', por el mismo motivo por el que lo hace el
    * reaper (ver su comentario): toda la maquinaria de revisión manual ya apunta ahí, y un
    * 'cancelled' obligaría a ampliar el CHECK de `deliveries.status`, `DeliveryStateSchema`, las

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { describe, expect, it, vi } from 'vitest';
 import type { QuotaSampleRequest } from '@cauce/protocol';
-import { CauceRepository, StoreError, type DatabasePool } from './index.js';
+import { CauceRepository, type DatabasePool } from './index.js';
 
 /**
  * `recordQuotaSample` tiene que rechazar un schema_version que esta versión del gateway no
@@ -42,11 +42,11 @@ describe('CauceRepository.recordQuotaSample -- guarda de schema_version', () => 
     expect(pool.query).not.toHaveBeenCalled();
   });
 
-  it('el error es una instancia real de StoreError (para que statusFor lo mapee a 422)', async () => {
+  it('el schema_version 3 recibe invalid_input para que statusFor lo mapee a 422', async () => {
     const repository = new CauceRepository(trapPool());
     await expect(
       repository.recordQuotaSample('Steven', 'quota-collector', sample({ schema_version: 3 }))
-    ).rejects.toBeInstanceOf(StoreError);
+    ).rejects.toMatchObject({ name: 'StoreError', code: 'invalid_input' });
   });
 
   it('un schema_version soportado (2) pasa la guarda de versión y sigue de largo hacia la base', async () => {

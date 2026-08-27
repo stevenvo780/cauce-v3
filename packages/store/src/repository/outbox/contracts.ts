@@ -1,4 +1,4 @@
-import type { Origin, Tenant } from '@cauce/protocol';
+import type { Origin, OutboxAck as ProtocolOutboxAck, Tenant } from '@cauce/protocol';
 import { UUID_PATTERN } from '../observability.js';
 
 export interface OutboxEvent {
@@ -64,16 +64,9 @@ export interface ConnectionSessionFence {
 
 export type OutboxRetryResult = 'retry' | 'dead' | 'fenced';
 
-export interface OutboxAck {
-  event_id: string;
-  attempt: number;
-  claim_token: string;
-  status: 'sent' | 'retry' | 'dead';
-  error?: string;
-  retry_after_ms?: number;
-  /** Required by the gateway for wake ACKs; omitted only by legacy/direct non-gateway callers. */
-  connection?: ConnectionSessionFence;
-}
+export type OutboxAck = ProtocolOutboxAck & {
+  readonly connection?: ConnectionSessionFence;
+};
 
 export interface WakeOutboxClaimFence {
   readonly event_id: string;

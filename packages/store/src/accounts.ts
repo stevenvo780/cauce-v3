@@ -1,8 +1,3 @@
-/**
- * Selector de cuenta por proveedor para alias de agentes.
- * Evalúa bindings, techos de enrutamiento, pausas manuales y estado de cuotas.
- */
-
 import type { Tenant } from '@cauce/protocol';
 import type { DatabasePool, DatabaseClient } from './db.js';
 import { withTransaction } from './db.js';
@@ -63,7 +58,6 @@ export interface AccountSelection {
   }[];
 }
 
-/** Fila cruda del join techo + binding + cuenta + estado de cuota agregado. */
 interface CandidateRow {
   account_id: string;
   provider: string;
@@ -82,9 +76,6 @@ interface CandidateRow {
   exhausted_reset_at: Date | null;
 }
 
-/**
- * Consulta de candidatos para un proveedor y alias ordenados por prioridad y account_id.
- */
 const CANDIDATES_SQL = `
   SELECT b.account_id,
          p.provider,
@@ -117,9 +108,6 @@ const CANDIDATES_SQL = `
    WHERE b.tenant_id = $1 AND b.agent_alias = $2 AND p.provider = $3
    ORDER BY b.priority ASC, b.account_id ASC`;
 
-/**
- * Actualiza la pausa automática de una cuenta agotada respetando pausas manuales preexistentes.
- */
 const AUTO_PAUSE_SQL = `
   UPDATE provider_accounts
      SET paused_until  = GREATEST(COALESCE(paused_until, $2::timestamptz), $3::timestamptz),
@@ -137,9 +125,6 @@ export interface SelectAccountOptions {
   readonly now?: Date;
 }
 
-/**
- * Selecciona la cuenta óptima disponible para un alias y proveedor, pausando automáticamente las cuentas agotadas con reset definido.
- */
 export async function selectAccountForAlias(
   pool: DatabasePool,
   options: SelectAccountOptions

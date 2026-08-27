@@ -152,7 +152,6 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
   app.get<{ Params: { tenant: string; alias: string } }>(
     '/v3/console/agents/:tenant/:alias/directive',
     async (request, reply) => {
-      // 1. AUTORIZACIÓN: ¿el actor ve este alias?
       const tenant = TenantSchema.safeParse(request.params.tenant);
       const alias = AliasSchema.safeParse(request.params.alias);
       if (!tenant.success || !alias.success) {
@@ -164,7 +163,6 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
         return reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
       }
 
-      // 2. FACTS: ¿se midieron los hechos del alias?
       const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
       const degradada = construirRespuestaDegradada(medido?.source);
       // Respuestas degradadas se marcan con medido: false.
@@ -183,7 +181,6 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
       }
       const timestamp = new Date().toISOString();
 
-      // 3. RESOLVER RUTAS: ¿cuál es el juego cerrado de ficheros para este alias?
       const manuals = effectiveManualPaths(facts);
       const allowedDirectivePaths = manuals.map((manual) => manual.path);
       const memoryRoot = memoryRootForHarness(facts);

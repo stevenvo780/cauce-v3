@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DeliveryState, Tenant } from '@cauce/protocol';
 import type { DeliveryRow } from '../../observability.js';
 import { textualReply, visibleText } from '../../outbox.js';
+import { hashToUuidV7 } from '../../_hash-to-uuidv7.js';
 
 export const agentFaninMaxResponseBytes = 4 * 1024;
 export const agentFaninMaxAggregateBytes = 64 * 1024;
@@ -51,25 +52,11 @@ export function agentResponseRequestId(
   attempt: number,
   kind: 'agent-response' | 'agent-response-late' = 'agent-response'
 ): string {
-  const bytes = Buffer.from(
-    createHash('sha256').update(`${kind}:${deliveryId}:${attempt}`).digest('hex').slice(0, 32),
-    'hex'
-  );
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return hashToUuidV7(`${kind}:${deliveryId}:${attempt}`);
 }
 
 export function agentFaninRequestId(rootMessageId: string): string {
-  const bytes = Buffer.from(
-    createHash('sha256').update(`agent-fanin:${rootMessageId}`).digest('hex').slice(0, 32),
-    'hex'
-  );
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return hashToUuidV7(`agent-fanin:${rootMessageId}`);
 }
 
 export function agentResponseText(

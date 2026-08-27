@@ -4,3 +4,4 @@ export * from './publish-receipt.js';
 export * from './agent-profile.js';
 export * from './marcas-de-bloque.js';
 export * from './ficheros-del-arnes.js';
+export * from './outbox-contracts.js';

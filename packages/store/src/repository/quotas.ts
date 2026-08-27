@@ -485,21 +485,6 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         // recolector. Se recupera el id existente para que la respuesta siga siendo útil, y no se
         // escribe nada.
         //
-        // `collector_tenant` es parte de la clave y por lo tanto DEBE estar en las dos consultas.
-        // Decía `ON CONFLICT (host,captured_at)`, que no corresponde a ningún índice único: la
-        // migración 013 lo declara como `UNIQUE (collector_tenant, host, captured_at)` a
-        // propósito ("dos tenants que declaren el mismo host compartirían fila"). Postgres no
-        // resuelve eso con una advertencia sino con el error 42P10 "there is no unique or
-        // exclusion constraint matching the ON CONFLICT specification", así que TODO POST a
-        // /v3/quotas/samples abortaba la transacción entera y devolvía error. Eso es exactamente
-        // por qué en producción `quota_window_state` tenía 0 filas y no había ni una muestra en
-        // 72 h con el recolector corriendo: no era que nadie publicaba, era que la ingesta
-        // rechazaba todo. Sin muestras no hay detección de agotamiento, y sin eso la rotación de
-        // cuentas no tiene de dónde sacar que una suscripción se quedó sin saldo.
-        //
-        // El SELECT de recuperación llevaba el mismo defecto y era además una fuga: sin filtrar
-        // por collector_tenant, el recolector de un tenant recibía el `collection_id` de la
-        // corrida de otro que casualmente declaró el mismo host.
         const existingCollection = await client.query<{ id: string }>(
           `SELECT id FROM quota_collections WHERE collector_tenant=$1 AND host=$2 AND captured_at=$3`,
           [actorTenant, sample.host, sample.captured_at]
