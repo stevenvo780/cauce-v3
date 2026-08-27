@@ -8,6 +8,10 @@ readonly RESULT_TREE='4d8d5ae81f08f4bb34785d3a8325df888697effb'
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repository=$(git -C "$script_dir/../.." rev-parse --show-toplevel)
 patch="$script_dir/rollback-bridge-schema029.patch"
+[[ -x $script_dir/build.sh ]] || {
+  printf 'rollback bridge build entrypoint is not executable\n' >&2
+  exit 1
+}
 git -C "$repository" cat-file -e "${BASE_COMMIT}^{commit}"
 printf '%s  %s\n' "$PATCH_SHA256" "$patch" | sha256sum --check --status
 node --test "$script_dir/publish.test.mjs"
