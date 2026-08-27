@@ -1,31 +1,34 @@
-# Runbook: HA y failover (gate, no promesa)
+# Runbook: Alta Disponibilidad y Failover
 
-## Estado honesto
+## Cuándo usar
+Ensayar, validar y mitigar procedimientos de alta disponibilidad (HA) y failover para PostgreSQL multi-AZ, gateways redundantes, dispatchers y puentes de canal. Caveat operativo: la validación de imágenes finales queda aplazada a FASE 3; no promover HA basándose exclusivamente en Testcontainers.
 
-Cauce usa PostgreSQL durable, `SKIP LOCKED`, leases/epoch y gateways stateless. Compose, dos instancias o una DB con réplica no prueban HA. No promover sin restore/failover ensayado, auth/TLS real, relay idempotente y evidencia de fencing.
+## Pasos
+1. Validar topología base de alta disponibilidad:
+   - PostgreSQL administrado multi-AZ con TLS `sslmode=verify-full` y `pg_stat_ssl.ssl=true`.
+   - Dos instancias de gateway detrás de un balanceador HTTPS con chequeo `/health/ready`.
+   - Dos dispatchers con idéntico registro de jobs y bloqueos `SKIP LOCKED`.
+   - Un único lease owner por `(tenant, alias)` en base de datos.
+2. Ejecutar prueba de corte de gateway con tráfico activo:
+   ```sh
+   # [no ejecutable en verificación]
+   docker stop cauce-v3-prod-gateway-1
+   ```
+3. Ejecutar corte controlado de base de datos o dispatcher durante procesamiento de mensajes.
 
-## Topología candidata
+## Verificar efecto
+1. Verificar que los clientes reconecten automáticamente con un nuevo epoch sin doble ACK.
+2. Comprobar que los mensajes en procesamiento no confirmados expiran su lease y son reintentados o dirigidos a DLQ de forma idempotente.
+3. Confirmar que el outbox no registra falsos positivos (`sent` sin `sent_at`) ante fallos de conectividad.
+4. Monitorear métricas de salud en Prometheus:
+   - `up`
+   - `cauce_dispatcher_metrics_query_success`
+   - `cauce_outbox_query_success`
 
-1. PostgreSQL administrado multi-AZ con writer estable, PITR y `sslmode=verify-full`; readiness debe observar `pg_stat_ssl.ssl=true`.
-2. Dos gateways por digest detrás de balanceador HTTPS con health `/health/ready`. WS reconecta y drena DB; no migra sockets vivos.
-3. Dos dispatchers con registry idéntico. Claims compiten por locks/leases; kind desconocido va a DLQ.
-4. Un consumer/poller por `(tenant,alias)` en toda la flota, vigilado por snapshot externo más epoch/lease en DB. Nunca autoarrancar V2 como fallback.
-5. Un único relay owner por adapter. Telegram y origin-relay son mutuamente exclusivos si comparten adapter.
-6. Prometheus/OTel fuera del dominio de falla, con métricas exactas delivery/job, wake/outbox, relay, lease, ACK y DLQ. Serie ausente es UNKNOWN/fallo.
-
-## Ensayo obligatorio
-
-- Restore del último backup en DB V3 aislada; registrar RPO/RTO y SHA.
-- Un reemplazo explícito de la suite de imágenes finales retirada, con cero fallos/skips críticos,
-  hashes, mismo image/source digest y mecanismos reales de corte de gateway y PostgreSQL. Hasta que
-  exista, no promover HA basándose solo en Testcontainers.
-- Cortar un gateway con consumers: epoch nuevo, cero doble ACK y delivery después de reconnect.
-- Failover writer administrado: readiness cae, no confirma trabajo y recupera sin pérdida.
-- Detener dispatcher durante handler: lease expira y retry/DLQ refleja resultado.
-- Interrumpir relay/Telegram: outbox queda failed/pending, jamás sent sin `sent_at`; reintento es idempotente.
-- Ejecutar watchdog/reconciler para los 15 aliases durante soak y verificar cero overlap V2/V3.
-- Restaurar tráfico solo después de dos ventanas de lease/retry estables.
-
-## Criterios de aborto
-
-Dos owners/pollers, ACK viejo aplicado, TLS ausente, outbox/relay falsamente sent, shadow con side effects, serie UNKNOWN, pérdida de correlación o RPO/RTO fuera de SLO. Quitar routing canary, detener solo consumers V3 afectados, conservar procesos/DB para diagnóstico y seguir `alias-cutover.md`/`rollback.md`; nunca down migration ni cambio automático de V2.
+## Deshacer
+1. Restaurar el gateway, dispatcher o nodo de base de datos interrumpido:
+   ```sh
+   # [no ejecutable en verificación]
+   docker start cauce-v3-prod-gateway-1
+   ```
+2. Reanudar el balanceo de tráfico únicamente tras observar estabilidad durante al menos dos ventanas completas de lease/retry.
