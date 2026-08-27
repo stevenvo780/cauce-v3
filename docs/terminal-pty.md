@@ -248,7 +248,7 @@ Criterio: 13 filas en la consulta 1 con `last_heartbeat_at` dentro de los
 recibir tráfico. `argos` se cuenta aparte: sigue muerto por su propio bug.
 
 Rollback, por digest pinneado, sin tocar schema ni datos (ver
-`ops/runbooks/rollback.md`):
+`docs/bitacora/rollback.md`, histórico del último rollback aplicado):
 
 ```sh
 CAUCE_PREVIOUS_RUNTIME_IMAGE=repo/cauce-runtime@sha256:<digest-anterior> \
@@ -269,7 +269,7 @@ Recién ahora se abre la puerta, y se abre para un alias:
 
 Verificación de extremo a extremo, en la consola publicada
 (https://consola.elenxos.com, detrás de Caddy con basic auth, que no se toca):
-la barra de flota muestra el estado de PTY de los 14 alias, `jarvis` habilitado,
+la barra de flota muestra el estado de PTY de los 15 alias, `jarvis` habilitado,
 el diálogo exige motivo de 8 caracteres o más y nombra a los agentes que
 comparten el contenedor destino (por ejemplo `ctrl-infra` es compartido por
 `argos` y `kant`; el mapa vive en `ops/container-aliases.json`). Dentro de la

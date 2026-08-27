@@ -142,5 +142,4 @@ Reglas que la vía tiene que cumplir, y por qué:
   como editable si no están medidos**.
 - Los dos ficheros de test, 23 casos, con los controles negativos del §4.
 
-**No está desplegado y no está enganchado a `main.ts`**: `registerAgentDocumentRoutes(app, deps)`
-es una línea que falta, deliberadamente, para no chocar con las otras ramas de consola en vuelo.
+**Sí está enganchado**: `services/gateway/src/app.ts:41` lo importa y `:1483` lo registra dentro del bootstrap de consola.
