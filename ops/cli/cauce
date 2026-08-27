@@ -170,8 +170,9 @@ openclaw_sesiones() {  # $1=alias $2=contenedor $3=usuario $4=stateDirectory
   docker exec --user "$3" "$2" python3 -c '
 import json, os, subprocess, sys
 alias = sys.argv[1]
-# El stateDirectory viene de container-alias-query.py: los alias
-# openclaw lo tienen en <home>/.openclaw/cauce-v3/<alias>.
+# El stateDirectory viene de container-alias-query.py y NO se deduce del HOME: los alias
+# openclaw lo tienen en <home>/.openclaw/cauce-v3/<alias>, NO en <home>/.local/state/... —
+# con la ruta deducida el CLI lee un fichero inexistente y pinta una sesion huerfana como COMPARTIDA.
 state = sys.argv[2]
 home = os.path.expanduser("~")
 
