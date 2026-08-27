@@ -19,7 +19,7 @@ fi
 [[ ${1:-} == compose ]] || exit 64
 shift
 if [[ ${1:-} == version ]]; then exit 0; fi
-while [[ ${1:-} == -f ]]; do shift 2; done
+while [[ ${1:-} == -f || ${1:-} == --env-file ]]; do shift 2; done
 case "${1:-}" in
   ps) printf '%064d\n' 1 ;;
   kill) ;;
@@ -61,15 +61,13 @@ run_case() {
 targets=(gateway postgres telegram-bridge relay-worker)
 for target in "${targets[@]}"; do
   run_case "test/$target is ephemeral" 0 "service=$target stack=test" test "$target" ephemeral-only ''
-  run_case "authentic/$target is ephemeral" 0 "service=$target stack=authentic" authentic "$target" ephemeral-only ''
-  run_case "authentic/$target needs confirmation" 2 'set CAUCE_FAULT_CONFIRM=ephemeral-only' authentic "$target" '' ''
   run_case "dev/$target needs env" 1 'CAUCE_ENV_FILE is required for dev/prod fault injection' dev "$target" ephemeral-only ''
   run_case "dev/$target with env remains allowed" 0 "service=$target stack=dev" dev "$target" ephemeral-only "$tmp/dev.env"
   run_case "prod/$target needs env" 1 'CAUCE_ENV_FILE is required for dev/prod fault injection' prod "$target" ephemeral-only ''
   run_case "prod/$target rejects ephemeral confirmation" 2 'ephemeral-only cannot target prod' prod "$target" ephemeral-only "$tmp/dev.env"
 done
 
-run_case 'unsupported service is rejected' 2 'unsupported fault target' authentic dispatcher ephemeral-only ''
+run_case 'unsupported service is rejected' 2 'unsupported fault target' test dispatcher ephemeral-only ''
 run_case 'unsupported stack is rejected' 2 'unsupported compose target: staging' staging gateway ephemeral-only ''
 
 (( failures == 0 )) || exit 1

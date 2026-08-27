@@ -12,7 +12,7 @@ case "$target" in gateway|postgres|telegram-bridge|relay-worker) ;; *) printf 'u
 
 compose=("$ROOT/scripts/compose.sh" "$stack")
 case "$stack" in
-  test|authentic) ;;
+  test) ;;
   dev|prod)
     : "${CAUCE_ENV_FILE:?CAUCE_ENV_FILE is required for dev/prod fault injection}"
     if [[ "$stack" == prod ]]; then

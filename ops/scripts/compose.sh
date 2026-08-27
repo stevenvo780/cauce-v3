@@ -8,15 +8,17 @@ set -euo pipefail
 while IFS= read -r inherited_function; do
   builtin unset -f -- "$inherited_function"
 done < <(builtin compgen -A function)
-system_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-readonly system_path
-PATH=$system_path
-export PATH
 unset BASH_ENV ENV PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONINSPECT NODE_OPTIONS
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-target=${1:?usage: compose.sh dev|test|authentic|prod <compose args...>}
+target=${1:?usage: compose.sh dev|test|prod <compose args...>}
 shift
+
+if [[ $target == prod ]]; then
+  system_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PATH=$system_path
+  export PATH
+fi
 
 docker_bin=$(command -v docker)
 [[ $docker_bin = /* && -x $docker_bin ]] || { printf 'trusted Docker CLI is unavailable\n' >&2; exit 127; }
@@ -25,7 +27,6 @@ readonly docker_bin
 case "$target" in
   dev) env_file=${CAUCE_ENV_FILE:-"$ROOT/config/dev.env"} ;;
   test) env_file= ;;
-  authentic) env_file= ;;
   prod) env_file=${CAUCE_ENV_FILE:-"$ROOT/config/prod.env"} ;;
   *) printf 'unsupported compose target: %s\n' "$target" >&2; exit 2 ;;
 esac
