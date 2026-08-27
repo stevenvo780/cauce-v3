@@ -28,8 +28,8 @@
 --      fallos según el orden (la otra, la falta de restauración del catálogo, va aparte).
 --
 -- `allow_notify` ya existe como columna desde la 009; esto añade la FILA que falta con el contrato
--- exacto medido. Una fila preexistente NO se acepta sólo por llamarse igual: 029 asigna este rol a
--- tres alias, por lo que cualquiera de sus cuatro permisos divergente cambiaría autoridad sin que
+-- exacto medido. Una fila preexistente NO se acepta sólo por llamarse igual: hay memberships vivas
+-- con este rol, por lo que cualquiera de sus cuatro permisos divergente cambiaría autoridad sin que
 -- la paridad lo viera. El lock de fila mantiene la comprobación estable hasta el commit de la
 -- transacción de migraciones.
 

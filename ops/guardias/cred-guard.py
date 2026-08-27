@@ -24,7 +24,6 @@ OBJETIVOS = [
     ("claw-miguel",   "/home/claw/.claude/.credentials.json", "claude/janus"),
     ("claw-iza",      "/home/claw/.claude/.credentials.json", "claude/claw-iza"),
     ("ws-zeus",       "/home/dev/.claude/.credentials.json",  "claude/zeus+compartida"),
-    ("ws-pablo",      "/home/dev/.claude/.credentials.json",  "claude/vulcano"),
     ("ws-isa",        "/home/dev/.claude/.credentials.json",  "claude/salva"),
     ("ws-prizma",     "/home/dev/.claude/.credentials.json",  "claude/socrates"),
     ("ws-humanizar",  "/home/dev/.claude/.credentials.json",  "claude/kratos+atlas"),
@@ -33,7 +32,6 @@ OBJETIVOS = [
     ("ws-prizma",     "/home/dev/.codex/auth.json",           "codex/socrates"),
     ("ws-isa",        "/home/dev/.codex/auth.json",           "codex/salva"),
     ("ws-humanizar",  "/home/dev/.codex/auth.json",           "codex/atlas"),
-    ("ws-pablo-dev",  "/home/dev/.codex/auth.json",           "codex/dedalo"),
 ]
 
 LECTOR = r'''

@@ -19,8 +19,8 @@
       "additionalProperties": false,
       "required": ["tenant", "room", "alias", "harness", "profile", "origin", "relay", "secretPathEnv", "process", "stateDirectory"],
       "properties": {
-        "tenant": { "enum": ["Steven", "Miguel", "Isa", "Jhon", "Pablo"] },
-        "room": { "enum": ["grp.steven", "grp.miguel", "grp.isa", "grp.jhon", "grp.pablo"] },
+        "tenant": { "enum": ["Steven", "Miguel", "Isa", "Jhon"] },
+        "room": { "enum": ["grp.steven", "grp.miguel", "grp.isa", "grp.jhon"] },
         "alias": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
         "harness": { "enum": ["openclaw", "opencode", "claude", "hermes", "codex"] },
         "profile": {

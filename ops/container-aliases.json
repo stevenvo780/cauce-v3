@@ -7,35 +7,7 @@
       "membershipRole": "operator"
     }
   },
-  "historicalAliases": {
-    "gaia": {
-      "tenant": "Miguel",
-      "expectedEnabled": false,
-      "placementPolicy": "preserve-database",
-      "retiredByMigration": "029_reconcile_declared_fleet.sql",
-      "lastDeclaredRuntime": null
-    },
-    "heraclito": {
-      "tenant": "Jhon",
-      "expectedEnabled": false,
-      "placementPolicy": "preserve-database",
-      "retiredByMigration": "029_reconcile_declared_fleet.sql",
-      "lastDeclaredRuntime": {
-        "container": "agv2-jhon-heraclito-oc",
-        "user": "claw",
-        "home": "/home/claw",
-        "stateDirectory": "/home/claw/.openclaw/cauce-v3/heraclito",
-        "harness": "openclaw"
-      }
-    },
-    "tales": {
-      "tenant": "Jhon",
-      "expectedEnabled": false,
-      "placementPolicy": "preserve-database",
-      "retiredByMigration": "029_reconcile_declared_fleet.sql",
-      "lastDeclaredRuntime": null
-    }
-  },
+  "historicalAliases": {},
   "aliases": {
     "argos": {
       "tenant": "Steven",
@@ -56,18 +28,6 @@
       "user": "dev",
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/atlas",
-      "harness": "codex",
-      "membershipRole": "agent"
-    },
-    "dedalo": {
-      "tenant": "Pablo",
-      "room": "grp.pablo",
-      "container": "ws-pablo",
-      "dockerHost": "kratos",
-      "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "stateDirectory": "/workspace/.cauce-v3/dedalo",
       "harness": "codex",
       "membershipRole": "agent"
     },
@@ -141,19 +101,6 @@
       "harness": "codex",
       "membershipRole": "agent"
     },
-    "midas": {
-      "tenant": "Pablo",
-      "room": "grp.pablo",
-      "container": "agv2-pablo-infra-oc",
-      "dockerHost": "kratos",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/midas",
-      "harness": "openclaw",
-      "membershipRole": "agent"
-    },
     "salva": {
       "tenant": "Isa",
       "room": "grp.isa",
@@ -166,19 +113,6 @@
       "harness": "codex",
       "membershipRole": "agent"
     },
-    "seneca": {
-      "tenant": "Pablo",
-      "room": "grp.pablo",
-      "container": "agv2-pablo-developer-oc",
-      "dockerHost": "kratos",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/seneca",
-      "harness": "openclaw",
-      "membershipRole": "agent"
-    },
     "socrates": {
       "tenant": "Steven",
       "room": "grp.steven",
@@ -189,18 +123,6 @@
       "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
       "harness": "codex",
       "membershipRole": "agent_notify"
-    },
-    "vulcano": {
-      "tenant": "Pablo",
-      "room": "grp.pablo",
-      "container": "ws-pablo",
-      "dockerHost": "kratos",
-      "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "stateDirectory": "/workspace/.cauce-v3/vulcano",
-      "harness": "claude",
-      "membershipRole": "agent"
     },
     "zeus": {
       "tenant": "Steven",

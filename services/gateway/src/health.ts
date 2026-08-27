@@ -12,7 +12,6 @@ import {
   probeTerminalRelayInstancePath,
 } from './health/schema-terminal.js';
 import { probeProfileRuntimePath } from './health/schema-profile-runtime.js';
-import { probeShadowTargetPhasePath } from './health/schema-shadow-target-phase.js';
 import {
   probeConsolePublishIntentPath,
 } from './health/schema-console-publish-intent.js';
@@ -21,7 +20,6 @@ export {
   probeConsolePublishIntentPath,
   probeDeliveryAdmissionPath,
   probeProfileRuntimePath,
-  probeShadowTargetPhasePath,
   probeTerminalBrowserOwnerPath,
   probeTerminalClaimPath,
   probeTerminalRelayInstancePath,
@@ -55,8 +53,6 @@ export interface HealthOptions {
   terminalRelayInstanceProbe?: () => Promise<void>;
   /** Test override; production probes schema-035 runtime profile expectations and adoption. */
   profileRuntimeProbe?: () => Promise<void>;
-  /** Test override; production probes schema-036 shadow dispatch phase accounting. */
-  shadowTargetPhaseProbe?: () => Promise<void>;
   /** Test override; production probes schema-037's durable console publish journal indexes. */
   consolePublishIntentProbe?: () => Promise<void>;
   /** How long a core wake cycle may go without a clean completion before readiness fails. */
@@ -211,13 +207,6 @@ async function readiness(options: HealthOptions, reply: FastifyReply): Promise<u
     } catch {
       return reply.code(503).send({
         status: 'not_ready', reason: 'profile_runtime_path_unavailable',
-      });
-    }
-    try {
-      await (options.shadowTargetPhaseProbe?.() ?? probeShadowTargetPhasePath(options.pool));
-    } catch {
-      return reply.code(503).send({
-        status: 'not_ready', reason: 'shadow_target_phase_path_unavailable',
       });
     }
     try {

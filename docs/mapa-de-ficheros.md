@@ -242,11 +242,10 @@ Notas metodológicas:
 - services/gateway/src/console/sonda-compartida.ts — `SondaCompartida` + `sondaDiferida`: hueco mutable donde el plano de terminal inyecta el probe real después del arranque — Codex (gateway)
 - services/gateway/src/console/types-agent-directive.ts — tipos espejo del frontend para `AgentDirective`, `AgentDirectiveFile`, `AgentMemoryIndex` (available/unavailable) — Codex (gateway)
 
-### services/gateway/src/health/ (5)
+### services/gateway/src/health/ (4)
 - services/gateway/src/health/schema-console-publish-intent.ts — `probeConsolePublishIntentPath`: valida indices de migración 037 contra PostgreSQL con `pg_get_indexdef` — Codex (gateway)
 - services/gateway/src/health/schema-delivery.ts — `probeDeliveryAdmissionPath` (015) y `probeWakePath` (031) read-only con `pg_catalog` — Codex (gateway)
 - services/gateway/src/health/schema-profile-runtime.ts — `probeProfileRuntimePath` (035): columnas exactas, constraints, funciones, triggers y permisos — Codex (gateway)
-- services/gateway/src/health/schema-shadow-target-phase.ts — `probeShadowTargetPhasePath` (036): topología exacta de claim phase con hashes SHA-256 de funciones — Codex (gateway)
 - services/gateway/src/health/schema-terminal.ts — `probeTerminalClaimPath`/`probeTerminalBrowserOwnerPath`/`probeTerminalRelayInstancePath` (032/033/034) — Codex (gateway)
 
 ### services/gateway/src/routes/ (6)

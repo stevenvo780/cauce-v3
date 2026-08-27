@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { startTestDatabase } from '../../../tests/helpers/postgres.js';
 import {
   buildLoopbackHealthProbe, probeAckPath, probeConsolePublishIntentPath,
-  probeDeliveryAdmissionPath, probeProfileRuntimePath, probeShadowTargetPhasePath,
+  probeDeliveryAdmissionPath, probeProfileRuntimePath,
   probeTerminalBrowserOwnerPath, probeTerminalClaimPath, probeTerminalRelayInstancePath,
   probeWakePath, renderWakePumpMetrics,
 } from './health.js';
@@ -401,76 +401,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
     expect(calls.some((sql) => sql.includes('AS documents_contract'))).toBe(false);
   });
 
-  it('probes the exact schema-036 shadow phase topology and behavior read-only', async () => {
-    const query = vi.fn(async (sql: string, parameters?: readonly unknown[]) => {
-      if (sql.includes('AS phase_permissions')) {
-        expect(parameters).toEqual([
-          expect.stringMatching(/^[a-f0-9]{64}$/u),
-          expect.stringMatching(/^[a-f0-9]{64}$/u),
-          expect.stringMatching(/^[a-f0-9]{64}$/u),
-          expect.stringMatching(/^[a-f0-9]{64}$/u),
-        ]);
-        return {
-          rows: [{
-            migration_applied: true,
-            columns_exact: true,
-            constraint_exact: true,
-            functions_exact: true,
-            triggers_exact: true,
-            phase_permissions: true,
-          }],
-          rowCount: 1,
-        };
-      }
-      if (sql.includes('AS phase_contract')) {
-        return { rows: [{ phase_contract: true }], rowCount: 1 };
-      }
-      return { rows: [], rowCount: 0 };
-    });
-    const client = { query, on: vi.fn(), off: vi.fn(), release: vi.fn() };
-    const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
-
-    await probeShadowTargetPhasePath(pool);
-
-    const calls = query.mock.calls.map(([sql]) => String(sql));
-    expect(calls).toEqual([
-      'BEGIN',
-      'SET TRANSACTION READ ONLY',
-      "SET LOCAL lock_timeout='1000ms'",
-      "SET LOCAL statement_timeout='2000ms'",
-      expect.stringMatching(/claim_target_started[\s\S]*shadow_router_inbox_claim_phase_shape[\s\S]*cauce_shadow_router_mapping_terminal_reconcile[\s\S]*036_shadow_router_target_phase[\s\S]*phase_permissions/u),
-      expect.stringMatching(/WITH requested[\s\S]*claim_target_started[\s\S]*shadow_router_mappings/u),
-      'COMMIT',
-    ]);
-    expect(calls[5]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
-    expect(client.release).toHaveBeenCalledWith(false);
-  });
-
-  it('rejects a named but changed schema-036 transition function before its behavior probe', async () => {
-    const query = vi.fn(async (sql: string) => {
-      if (sql.includes('AS phase_permissions')) {
-        return {
-          rows: [{
-            migration_applied: true,
-            columns_exact: true,
-            constraint_exact: true,
-            functions_exact: false,
-            triggers_exact: true,
-            phase_permissions: true,
-          }],
-          rowCount: 1,
-        };
-      }
-      return { rows: [], rowCount: 0 };
-    });
-    const client = { query, on: vi.fn(), off: vi.fn(), release: vi.fn() };
-    const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
-
-    await expect(probeShadowTargetPhasePath(pool)).rejects.toThrow(/schema-036 shadow target/u);
-    expect(query.mock.calls.map(([sql]) => String(sql)).at(-1)).toBe('ROLLBACK');
-    expect(query.mock.calls.some(([sql]) => String(sql).includes('AS phase_contract'))).toBe(false);
-  });
-
   it('probes schema-037 ledger, exact index topology and journal authority read-only', async () => {
     const query = vi.fn(async (sql: string, parameters?: readonly unknown[]) => {
       if (sql.includes('AS migration_ledger_exact')) {
@@ -610,7 +540,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
       terminalBrowserOwnerProbe: async () => undefined,
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
-      shadowTargetPhaseProbe: async () => undefined,
       consolePublishIntentProbe: async () => undefined,
     });
 
@@ -742,7 +671,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     await app.close();
   });
 
-  it('reports not_ready for a broken schema-036 shadow phase after schema-035 passes', async () => {
+  it('reports not_ready for a broken schema-037 journal after schema-035 passes', async () => {
     const telemetry = new WakePumpTelemetry();
     telemetry.beginCycle();
     telemetry.finishCycle();
@@ -757,33 +686,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
       terminalBrowserOwnerProbe: async () => undefined,
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
-      shadowTargetPhaseProbe: async () => { throw new Error('phase trigger changed'); },
-    });
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({
-      status: 'not_ready', reason: 'shadow_target_phase_path_unavailable',
-    });
-    await app.close();
-  });
-
-  it('reports not_ready for a broken schema-037 journal after schema-036 passes', async () => {
-    const telemetry = new WakePumpTelemetry();
-    telemetry.beginCycle();
-    telemetry.finishCycle();
-    const app = await buildLoopbackHealthProbe({
-      pool: answeringPool,
-      dataApp: await listeningDataApp(),
-      ackProbe: async () => undefined,
-      wakePumpTelemetry: telemetry,
-      deliveryAdmissionProbe: async () => undefined,
-      wakeProbe: async () => undefined,
-      terminalClaimProbe: async () => undefined,
-      terminalBrowserOwnerProbe: async () => undefined,
-      terminalRelayInstanceProbe: async () => undefined,
-      profileRuntimeProbe: async () => undefined,
-      shadowTargetPhaseProbe: async () => undefined,
       consolePublishIntentProbe: async () => { throw new Error('head predicate changed'); },
     });
 
@@ -871,7 +773,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
       terminalBrowserOwnerProbe: async () => undefined,
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
-      shadowTargetPhaseProbe: async () => undefined,
       consolePublishIntentProbe: async () => undefined,
       wakePumpMaxStaleMs: 1_000,
     });
@@ -891,7 +792,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     await app.close();
   });
 
-  it('proves exact 015/031/032/033/034/035/036 contracts on PostgreSQL 16 and rejects false structural greens', async () => {
+  it('proves exact 015/031/032/033/034/035 contracts on PostgreSQL 16 and rejects false structural greens', async () => {
     const database = await startTestDatabase();
     const role = `wake_probe_${randomUUID().replaceAll('-', '')}`;
     const password = randomUUID();
@@ -953,8 +854,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
         .rejects.toThrow(/schema-034 relay instance/u);
       await expect(probeProfileRuntimePath(restrictedPool))
         .rejects.toThrow(/schema-035 profile runtime/u);
-      await expect(probeShadowTargetPhasePath(restrictedPool))
-        .rejects.toThrow(/schema-036 shadow target/u);
 
       await database.pool.query(`GRANT UPDATE ON connection_leases,adapter_outbox TO ${role}`);
       await database.pool.query(`GRANT INSERT ON outbox_dead_letters TO ${role}`);
@@ -1006,32 +905,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
       await database.pool.query(`GRANT SELECT,UPDATE ON agent_profiles TO ${role}`);
       await database.pool.query(`GRANT SELECT ON deliveries TO ${role}`);
       await expect(probeProfileRuntimePath(restrictedPool)).resolves.toBeUndefined();
-      await database.pool.query(
-        `GRANT SELECT,INSERT,UPDATE ON shadow_router_inbox,shadow_router_mappings TO ${role}`,
-      );
-      await expect(probeShadowTargetPhasePath(restrictedPool)).resolves.toBeUndefined();
-
-      await database.pool.query(
-        `ALTER TABLE shadow_router_inbox DISABLE TRIGGER shadow_router_inbox_claim_phase_transition`,
-      );
-      await expect(probeShadowTargetPhasePath(database.pool))
-        .rejects.toThrow(/schema-036 shadow target/u);
-      await database.pool.query(
-        `ALTER TABLE shadow_router_inbox ENABLE TRIGGER shadow_router_inbox_claim_phase_transition`,
-      );
-      await expect(probeShadowTargetPhasePath(database.pool)).resolves.toBeUndefined();
-
-      await database.pool.query(
-        `ALTER TABLE shadow_router_mappings
-           DISABLE TRIGGER shadow_router_mapping_terminal_reconcile`,
-      );
-      await expect(probeShadowTargetPhasePath(database.pool))
-        .rejects.toThrow(/schema-036 shadow target/u);
-      await database.pool.query(
-        `ALTER TABLE shadow_router_mappings
-           ENABLE TRIGGER shadow_router_mapping_terminal_reconcile`,
-      );
-      await expect(probeShadowTargetPhasePath(database.pool)).resolves.toBeUndefined();
 
       await database.pool.query(
         `ALTER TABLE agent_profile_runtime_adoptions
@@ -1120,22 +993,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
       );
       await expect(probeTerminalClaimPath(database.pool))
         .rejects.toThrow(/schema-032 claim contract/u);
-
-      // A same-named CHECK with one additional invalid phase must not satisfy schema-036.
-      await database.pool.query(
-        `ALTER TABLE shadow_router_inbox DROP CONSTRAINT shadow_router_inbox_claim_phase_shape,
-           ADD CONSTRAINT shadow_router_inbox_claim_phase_shape CHECK (
-             (
-               status='processing' AND claimed_by IS NOT NULL AND claim_token IS NOT NULL
-               AND claim_expires_at IS NOT NULL
-             ) OR (
-               status<>'processing' AND claimed_by IS NULL AND claim_token IS NULL
-               AND claim_expires_at IS NULL AND claim_target_started=false
-             ) OR (status='processing' AND claimed_by IS NULL)
-           )`,
-      );
-      await expect(probeShadowTargetPhasePath(database.pool))
-        .rejects.toThrow(/schema-036 shadow target/u);
     } finally {
       await restrictedPool?.end();
       if (roleCreated) {
