@@ -1,5 +1,32 @@
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ConfigMutationSchema } from '@cauce/protocol';
+
+const CONFIGURATION_ENTRY = fileURLToPath(
+  new URL('../../packages/store/src/configuration.ts', import.meta.url),
+);
+const CONFIGURATION_DIRECTORY = fileURLToPath(
+  new URL('../../packages/store/src/configuration/', import.meta.url),
+);
+
+async function configurationFiles(directory: string = CONFIGURATION_DIRECTORY): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(entries
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map(async (entry): Promise<string[]> => {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) return configurationFiles(path);
+      return entry.name.endsWith('.ts') ? [path] : [];
+    }));
+  return files.flat();
+}
+
+async function configurationSource(): Promise<string> {
+  const files = [CONFIGURATION_ENTRY, ...await configurationFiles()];
+  return (await Promise.all(files.map((file) => readFile(file, 'utf8')))).join('\n');
+}
 
 /**
  * 🔴 **CINCO TOPES QUE GOBIERNAN LA FLOTA Y NO SE PODÍAN TOCAR DESDE NINGUNA PANTALLA.**
@@ -119,9 +146,7 @@ describe('el snapshot y la inversa los llevan, o el botón de deshacer los borra
      * La consola no puede editar lo que no ve: si el snapshot no las trae, la pantalla pinta cajas
      * vacías y el primer guardado escribe esos vacíos encima de los topes que la flota tenía.
      */
-    const fuente = await import('node:fs/promises').then((fs) => fs.readFile(
-      new URL('../../packages/store/src/configuration.ts', import.meta.url), 'utf8'
-    ));
+    const fuente = await configurationSource();
     const snapshot = fuente.slice(fuente.indexOf('FROM agent_chain_policies ORDER BY id') - 600);
     for (const campo of [
       'delegation_caps_enabled', 'max_fanout_per_turn', 'max_edge_repeats_per_root',
@@ -137,9 +162,7 @@ describe('el snapshot y la inversa los llevan, o el botón de deshacer los borra
      * vuelve como ausente al deshacer, y el `update` la deja en su valor por defecto: deshacer un
      * cambio de umbral y que se muevan OTROS cuatro es peor que no tener el botón.
      */
-    const fuente = await import('node:fs/promises').then((fs) => fs.readFile(
-      new URL('../../packages/store/src/configuration.ts', import.meta.url), 'utf8'
-    ));
+    const fuente = await configurationSource();
     const desde = fuente.indexOf("resource: 'chain_policy', action: 'update', id: mutation.id");
     expect(desde).toBeGreaterThan(0);
     const inversa = fuente.slice(desde, desde + 800);
@@ -195,9 +218,7 @@ describe('el techo de entregas en vuelo de un agente se puede editar', () => {
   });
 
   it('el snapshot lo trae, o la consola pintaría una caja vacía y el primer guardado lo borraría', async () => {
-    const fuente = await import('node:fs/promises').then((fs) => fs.readFile(
-      new URL('../../packages/store/src/configuration.ts', import.meta.url), 'utf8'
-    ));
+    const fuente = await configurationSource();
     const desde = fuente.indexOf('FROM agents WHERE $1::text IS NULL OR tenant_id=$1');
     expect(desde).toBeGreaterThan(0);
     expect(fuente.slice(desde - 400, desde)).toContain('max_concurrent_deliveries');
@@ -209,9 +230,7 @@ describe('el techo de entregas en vuelo de un agente se puede editar', () => {
      * decisión deliberada del operador —«este agente no lleva techo»— que el deshacer revertiría
      * sin que nadie lo pidiera.
      */
-    const fuente = await import('node:fs/promises').then((fs) => fs.readFile(
-      new URL('../../packages/store/src/configuration.ts', import.meta.url), 'utf8'
-    ));
+    const fuente = await configurationSource();
     const desde = fuente.indexOf('FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE');
     expect(desde).toBeGreaterThan(0);
     expect(fuente.slice(desde - 400, desde)).toContain('max_concurrent_deliveries');
