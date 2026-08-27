@@ -16,3 +16,31 @@ Excelente cierre anterior (matriz en verde, health 295, authentic retirada, jera
 1. Intake de `ordenes/reportes/claude-revision-ola3.md` cuando llegue (lo tuyo).
 2. Verificación final: `wc -l` de los tres paquetes — CERO ficheros >800 sin justificación de una línea. Pega la lista.
 3. Gate GLOBAL por commit + push al cerrar cada oleada + reporte ≤5 líneas.
+
+## ANEXO — funciones muertas de tu sector (censo simbólico, evidencia en ordenes/reportes/claude-funciones-muertas.md)
+Borra cada una (con su test si aplica), re-verificando el grep antes (ediciones en vivo):
+- `CorrelationSchema` en packages/protocol/src/schemas.ts:84
+- `HttpAckSchema` en packages/protocol/src/schemas.ts:838
+- `ClaimedAckSchema` en packages/protocol/src/schemas.ts:762
+- `PreflightAckErrorCodeSchema` en packages/protocol/src/schemas.ts:48
+- `PreflightAckErrorCode` en packages/protocol/src/schemas.ts:49
+- `isPreflightAckErrorCode` en packages/protocol/src/schemas.ts:51
+- `AuthenticatedContext` en packages/protocol/src/schemas.ts:1094
+- `AttachmentContent` en packages/protocol/src/schemas.ts:1096
+- `ProfileRuntimeDocument` en packages/protocol/src/schemas.ts:1100
+- `ConfigChangeRequest` en packages/protocol/src/schemas.ts:1110
+- `QuotaWindowSample` en packages/protocol/src/schemas.ts:1113
+- `DELEGATION_DISCIPLINE_REJECTION_CODES` en packages/store/src/delegation-guard.ts:16
+- `AgentProfileRepository.readMany` en packages/store/src/agent-profile.ts:138
+- `OutboxSettlementRepository.retryExpiredOutbox` en packages/store/src/repository/outbox/settlement.ts:140
+- `HelloAck` en packages/adapter-sdk/src/sdk/types.ts:116
+- `HelloFrame` en packages/adapter-sdk/src/sdk/types.ts:117
+- `marcaDeTiempo` en packages/adapter-sdk/src/context/siembra-del-perfil.ts:534
+- `killSession` en packages/adapter-sdk/src/shared-session/tmux/operations.ts:130
+- `clearPaneInput` en packages/adapter-sdk/src/shared-session/tmux/operations.ts:468
+- `TERMINAL_MODES` en services/gateway/src/terminal/types.ts:9
+- `AgentProfileRepository.remove` en packages/store/src/agent-profile.ts:337
+- `AgentProfileRepository.write` en packages/store/src/agent-profile.ts:153
+- `resolveAccountCredentialEnv` en packages/adapter-sdk/src/sdk/account-credentials.ts:53
+- `SelectedAccount` en packages/adapter-sdk/src/sdk/account-credentials.ts:9
+- `CredentialRefusal` en packages/adapter-sdk/src/sdk/account-credentials.ts:16

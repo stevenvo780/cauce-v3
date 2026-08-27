@@ -24,3 +24,28 @@ Tabla por fichero en `ordenes/reportes/claude-censo-comentarios-basura.md`: borr
 Tests grandes restantes de consola/canales/tests, `ops/pty-agent/rollout-pty.py`, `ops/scripts/update-alias-config.py`: partir byte-puro. NO tocar `cauce_pty_agent.py` ni `cauce-container-runtime.py` (producción).
 
 Reporte final ≤5 líneas por tarea, con evidencia (comandos+salidas), y `git push origin main`.
+
+## ANEXO — funciones muertas de tu sector (censo simbólico, evidencia en ordenes/reportes/claude-funciones-muertas.md)
+Borra cada una (con su test si aplica), re-verificando el grep antes (ediciones en vivo):
+- `TEST_EXPIRED_AGENT_CERTIFICATE` en services/terminal-relay/src/relay-test-fixtures.ts:245
+- `TEST_EXPIRED_AGENT_PRIVATE_KEY` en services/terminal-relay/src/relay-test-fixtures.ts:266
+- `isValidCols` en services/terminal-relay/src/session-limits.ts:180
+- `isValidRows` en services/terminal-relay/src/session-limits.ts:184
+- `aliasError` en apps/console/src/features/accounts/registry.ts:423
+- `AgentKey` en apps/console/src/features/live/agent-state.ts:71
+- `DIARIO_DESDE` en apps/console/src/features/live/historial-rol.ts:25
+- `adapterSummary` en apps/console/src/features/terminal/fleet.ts:125
+- `SIN_DATO` en apps/console/src/lib.ts:7
+- `FairLaneScheduler` en services/dispatcher/src/scheduler.ts:4
+- `JobLane` en services/dispatcher/src/scheduler.ts:1
+- `extractCollectors` en apps/console/src/features/accounts/licenses.ts:471
+- `arnesesSinDirectivaPropia` en apps/console/src/features/config/arneses.ts:92
+- `ptySessionScroll` en apps/console/src/features/terminal/pty-session.ts:278
+- `LARGO_DESCRIPCION` en apps/console/src/features/config/areas.ts:26
+- `faltantesDelJuegoCerrado` en apps/console/src/features/config/arneses.ts:84
+- `sinConmutablesInertes` en apps/console/src/features/config/campos-inertes.ts:78
+- `ptySessionGeometria` en apps/console/src/features/terminal/pty-session.ts:286
+- `sePuedeEditar` en apps/console/src/features/live/ficheros.ts:42
+- `preferredTerminalMode` en apps/console/src/features/terminal/fleet.ts:322
+- `perfilYaExiste` en apps/console/src/features/live/perfil.ts:279
+- `ptySessionRedimensionar` en apps/console/src/features/terminal/pty-session.ts:282
