@@ -15,8 +15,7 @@ import { aclCaption, layoutHypergraph, type HyperEdge, type HyperNode } from './
  * abajo); `enabled` ausente se muestra como UNKNOWN y nunca como habilitado. Un gráfico que
  * rellena huecos es más peligroso que una tabla, porque parece completo.
  *
- * El SVG es decorativo a efectos de accesibilidad (`role="img"` con descripción): la fuente
- * verificable siguen siendo las tablas de `TopologyPage`, que quedan debajo y no se tocan.
+ * El SVG es decorativo a efectos de accesibilidad (`role="img"` con descripción).
  */
 
 const HUES = 6;

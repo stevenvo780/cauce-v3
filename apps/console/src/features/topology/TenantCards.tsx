@@ -5,11 +5,8 @@ import { EmptyState, Unknown } from '../../components/ui';
 /**
  * Las salas y sus miembros, tal cual las informa el control plane.
  *
- * Se extrajo de `TopologyPage` sin reescribir una línea de su render: ahora la usan las dos —la
- * ruta original, que sigue existiendo para quien la tenga guardada, y el desplegable «Permisos y
- * salas» de «La flota ahora», que se alimenta del MISMO `useResource('live-topology')` que el mapa
- * ya pidió. Mover el código en vez de reescribirlo tiene una razón concreta: los tests de la
- * página original siguen valiendo como prueba de esto.
+ * Utilizado en el desplegable «Permisos y salas» de «La flota ahora», alimentado del
+ * recurso `live-topology`.
  */
 export function TenantCards({ tenants }: { tenants: readonly TenantNode[] }) {
   if (tenants.length === 0) return <EmptyState>
