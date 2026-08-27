@@ -70,14 +70,7 @@ export function createGovernanceProbes(
   return {
     buildRelay: () => buildGovernanceRelay(config),
     register: (relayGovernance) => {
-      /*
-       * El default deja de ser «nadie ha medido nada nunca» y pasa a ser la presencia REAL que el
-       * pty-agent publica. Ver `hechos-del-registro.ts`: el `harness` ya viajaba y el `home` no, y ese
-       * hueco era lo que dejaba toda la vía de documentos contestando «no medido» para siempre.
-       *
-       * Sigue siendo inyectable para los tests, y sigue devolviendo `undefined` cuando el agente no
-       * publica su `home` —uno anterior a esta versión— o cuando su medición está vieja.
-       */
+      // Presencia real que el pty-agent publica. Inyectable para tests.
       const measuredFacts: MeasuredFactsSource = runtimeOptions.measuredFacts ?? hechosDelRegistro(registry);
 
       async function authorizeDirective(
@@ -86,9 +79,7 @@ export function createGovernanceProbes(
       ): Promise<{ tenant_id: string; alias: string } | undefined> {
         const request = raw as FastifyRequest;
         const actor = await principal(request);
-        // Mismo permiso Y misma visibilidad canónica que perfiles, documentos y listAgents: tenant
-        // propio o arista allow_read. Antes esta ruta exigía siempre el tenant del actor y por eso la
-        // flota visible mostraba el cajón de Miguel/Pablo/Isa pero su directiva contestaba 403.
+        // Mismo permiso y visibilidad canónica que perfiles, documentos y listAgents: tenant propio o arista allow_read.
         requirePermission(actor, 'read');
         const target = await repository.authorizeAgentTarget(
           actor.tenant_id, actor.alias, requested.tenant_id, requested.alias, 'read',

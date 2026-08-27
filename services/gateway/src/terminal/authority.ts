@@ -60,8 +60,8 @@ export function fleetPlacement(
  * Every alias sharing the requested alias' container, including the alias itself.
  *
  * SET RULE: authorizing target X requires routing authority AND a grant over EVERY member of
- * X's cohort. A shell in ws-humanizar sees the home of Miguel's three agents, so authority
- * over `iza` alone must not open `atlas` by the back door.
+ * X's cohort. A shell in a shared container sees all co-located agent directories, so authority
+ * over one member must not open others by the back door.
  */
 export function containerCohort(
   placements: readonly FleetPlacement[], tenantId: string, alias: string

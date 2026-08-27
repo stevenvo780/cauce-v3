@@ -155,10 +155,6 @@ function decodePayload(value: Buffer): TicketPayload {
   };
 }
 
-/**
- * Verifies signature first, then expiry. `nowSeconds` is injectable so the tests can pin the
- * clock; production callers pass nothing and get the wall clock.
- */
 /** Verifies the immutable credential and decodes its claims without consulting a process clock. */
 export function verifyTicketSignature(ticket: string, key: Buffer): TicketPayload {
   const parts = ticket.split('.');

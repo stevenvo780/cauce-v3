@@ -148,8 +148,7 @@ export interface FicheroDeLaVistaPrevia {
   readonly texto: string;
   /**
    * Unidades del texto, en la misma cuenta que usan el CHECK de Postgres y los topes de openclaw.
-   * Va medido y no se deja al navegador: dos cuentas del mismo número son dos sitios donde
-   * discrepar, y la discrepancia de agosto dejó un alias sordo.
+   * Va medido desde el servidor para garantizar coherencia con la base.
    */
   readonly unidades: number;
 }

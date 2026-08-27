@@ -244,19 +244,7 @@ export function buildDocumentsResponse(
 }
 
 export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDocumentsDeps): void {
-  /*
-   * EL CONTENIDO — las dos rutas que la consola llamaba y el servidor NO SERVÍA.
-   *
-   * `apps/console/src/api/client.ts` tiene `getAgentDocumentContent` y `putAgentDocumentContent`
-   * desde hace semanas, apuntando a `.../documents/:kind/content`. En el servidor no existía
-   * ninguna de las dos: `agent-documents.routes.ts` sólo declaraba el inventario. O sea que el
-   * editor de la consola pedía un 404 y guardaba contra un 404.
-   *
-   * Se implementan acá, y cuando no hay hechos medidos contestan 409 con el motivo. Si el probe no
-   * ofrece escritura, el PUT contesta 503: la función HTTP existe, pero no hay un canal que pueda
-   * acreditar la aplicación. Un 404 del manejador queda reservado para un destino ausente o no
-   * autorizado; la consola no lo disfraza como una ruta sin publicar.
-   */
+  // Rutas de lectura y escritura de contenido gobernado (:kind/content).
   const KINDS: readonly DocumentKind[] = [
     'directive', 'tools', 'prompts', 'mcp', 'identity', 'human',
     'memory', 'heartbeat', 'configuration',
