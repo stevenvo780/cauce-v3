@@ -362,18 +362,6 @@ def pid_exists(pid: int) -> bool:
         return False
 
 
-def pid_running(pid: int) -> bool:
-    # A zombie is a terminated process awaiting reaping: it executes nothing and is,
-    # for stop purposes, gone. Treating it as live would let a non-reaping init (or a
-    # parent blocked in a synchronous call) wedge a teardown that already succeeded.
-    if not pid_exists(pid):
-        return False
-    try:
-        return proc_stat(pid)["state"] != "Z"
-    except (ProcessLookupError, PermanentError):
-        return False
-
-
 def open_pidfd(pid: int) -> int:
     """Pin one numeric PID so later signals can never hit a reused PID."""
     if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):

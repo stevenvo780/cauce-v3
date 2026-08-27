@@ -11,14 +11,6 @@ FIELDS = ("tenant", "room", "container", "user", "home", "stateDirectory", "harn
 ALIAS_REQUIRED_FIELDS = (*FIELDS, "membershipRole", "systemdUser")
 ALIAS_OPTIONAL_FIELDS = ("registryContainer", "workspace", "dockerHost")
 PRINCIPAL_FIELDS = ("tenant", "room", "membershipRole")
-HISTORICAL_FIELDS = (
-    "tenant",
-    "expectedEnabled",
-    "placementPolicy",
-    "retiredByMigration",
-    "lastDeclaredRuntime",
-)
-HISTORICAL_RUNTIME_FIELDS = ("container", "user", "home", "stateDirectory", "harness")
 NAME_RE = re.compile(r"^[a-z][a-z0-9.-]*$")
 PLACEMENT_RE = re.compile(r"^(?:[a-z][a-z0-9.-]*|host:[a-z][a-z0-9.-]*)$")
 TENANT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
@@ -148,61 +140,3 @@ def load_system_principals(root: pathlib.Path) -> dict[str, dict[str, str]]:
     return validated
 
 
-def load_historical_aliases(root: pathlib.Path) -> dict[str, dict[str, str]]:
-    """Load retired identities without turning them back into runnable assignments."""
-    document = _document(root)
-    historical = _mapping(document["historicalAliases"], "historicalAliases")
-    validated: dict[str, dict[str, str]] = {}
-    for alias in sorted(historical):
-        if not NAME_RE.fullmatch(alias):
-            raise ContainerAliasError(f"invalid historical alias: {alias}")
-        entry = _mapping(historical[alias], f"historicalAliases.{alias}")
-        if set(entry) != set(HISTORICAL_FIELDS):
-            raise ContainerAliasError(
-                f"historical alias {alias} must have exact fields {HISTORICAL_FIELDS}"
-            )
-        tenant = entry["tenant"]
-        if not isinstance(tenant, str) or not TENANT_RE.fullmatch(tenant):
-            raise ContainerAliasError(f"historical alias {alias}.tenant is invalid")
-        if entry["expectedEnabled"] is not False:
-            raise ContainerAliasError(f"historical alias {alias} must remain disabled")
-        if entry["placementPolicy"] != "preserve-database":
-            raise ContainerAliasError(
-                f"historical alias {alias} must preserve database placement"
-            )
-        if entry["retiredByMigration"] != "029_reconcile_declared_fleet.sql":
-            raise ContainerAliasError(
-                f"historical alias {alias}.retiredByMigration is invalid"
-            )
-        runtime = entry["lastDeclaredRuntime"]
-        if runtime is not None:
-            runtime = _mapping(
-                runtime, f"historicalAliases.{alias}.lastDeclaredRuntime"
-            )
-            if set(runtime) != set(HISTORICAL_RUNTIME_FIELDS):
-                raise ContainerAliasError(
-                    f"historical alias {alias}.lastDeclaredRuntime must have exact fields "
-                    f"{HISTORICAL_RUNTIME_FIELDS}"
-                )
-            for field in ("container", "user"):
-                if not isinstance(runtime[field], str) or not NAME_RE.fullmatch(
-                    runtime[field]
-                ):
-                    raise ContainerAliasError(
-                        f"historical alias {alias}.{field} is invalid"
-                    )
-            for field in ("home", "stateDirectory"):
-                _absolute_path(runtime[field], f"historicalAliases.{alias}.{field}")
-            if runtime["harness"] not in HARNESS:
-                raise ContainerAliasError(
-                    f"historical alias {alias}.harness is invalid"
-                )
-        validated[alias] = {"tenant": tenant, "expectedEnabled": "false"}
-    overlap = set(validated) & (
-        set(load_container_aliases(root)) | set(load_system_principals(root))
-    )
-    if overlap:
-        raise ContainerAliasError(
-            f"historical aliases overlap active identities: {sorted(overlap)}"
-        )
-    return validated
